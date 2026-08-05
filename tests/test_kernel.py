@@ -730,7 +730,7 @@ class ViewBuilder(unittest.TestCase):
             self.assertEqual(calls[0], 0, "no incoming postal card → the whole-fleet scan is skipped")
             self.assertEqual(out, plain, "non-postal events pass through unchanged")
             # an incoming postal marker → the scan runs ONCE and its caption lands on the card
-            inc = [{"kind": "user", "md": "romp-msg-id: m9", "ts": T0, "uuid": "u2"}]
+            inc = [{"kind": "user", "md": "<!-- romp-msg-id: m9 -->", "ts": T0, "uuid": "u2"}]
             idx = {"m9": {"from": "peer", "fromId": None, "body": "the full body", "id": "m9",
                           "t": T0, "park": None}}
             cards = km._hydrate_postal(inc, idx)
@@ -746,7 +746,7 @@ class ViewBuilder(unittest.TestCase):
         saved = km._msg_summaries
         km._msg_summaries = lambda: {}
         try:
-            inc = [{"kind": "user", "md": "romp-msg-id: m10", "ts": T0, "uuid": "u3"}]
+            inc = [{"kind": "user", "md": "<!-- romp-msg-id: m10 -->", "ts": T0, "uuid": "u3"}]
             fid = "abcdef00-1234-0000-0000-000000000000"
             idx = {"m10": {"from": "unknown", "fromId": fid, "fromHost": "TESTHOST2",
                            "body": "the sensors are live", "id": "m10", "t": T0, "park": None}}
@@ -5987,7 +5987,7 @@ class TestPendingQueued(unittest.TestCase):
     def test_drops_postal_and_harness_injections(self):
         # romp delivers a peer message by ENQUEUEing it (carries romp-msg-id / 📬 / a #### banner); those
         # must not masquerade as the user's pending input — only the genuine typed message remains.
-        self._write(("enqueue", "#################### \U0001F4EC from peer\nromp-msg-id: 11111111-2222"),
+        self._write(("enqueue", "#################### \U0001F4EC from peer\n<!-- romp-msg-id: 11111111-2222 -->"),
                     ("enqueue", "my real queued ask"))
         self.assertEqual(km._pending_queued(self.p), ["my real queued ask"])
 
@@ -6000,7 +6000,7 @@ class TestPendingQueued(unittest.TestCase):
         self.assertTrue(km._genuine_queued("fix the bug"))
         self.assertFalse(km._genuine_queued(""))
         self.assertFalse(km._genuine_queued("   "))
-        self.assertFalse(km._genuine_queued("text with romp-msg-id: 11111111 inside"))
+        self.assertFalse(km._genuine_queued("text with <!-- romp-msg-id: 11111111 inside -->"))
         self.assertFalse(km._genuine_queued("\U0001F4EC delivered"))
         self.assertFalse(km._genuine_queued("####################\nbanner"))
 

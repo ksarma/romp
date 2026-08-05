@@ -45,8 +45,17 @@ END_STOPS = ("end_turn", "stop_sequence")
 # postal signal — never the generic "Stop hook feedback:" prefix (any blocking Stop
 # hook produces that). The sender rompUuid is resolved from timeline/messages.jsonl
 # by joining this id (the on-disk marker carries the id but not the sender).
-POSTAL_RE = re.compile(r"romp-msg-id:\s*(\S+)")
-POSTAL_KIND_RE = re.compile(r"romp-msg-kind:\s*(delegate|coordinate|question)")
+# COMMENT FORM ONLY (2026-08-05), the same rule ROMP_INJECT_RE/ROMP_AUTO_RE were given on 07-08 and
+# for the same reason: a bare word-match fires on text that merely MENTIONS the marker. Both real
+# emitters write the literal comment (postal_service _drain_body and the mailbox read), and every
+# delivered body carries it — so an agent quoting the mail it just received, or any tool output that
+# echoes one (a fetched page, a grep of a transcript, a peer's forwarded text), used to be read as a
+# postal DELIVERY: the quoting message re-rendered as an incoming card from the peer, authored to
+# them rather than to whoever actually wrote it. The ids are Maildir names (ts.pid_rand.host), so
+# they are neither secret nor unguessable; the comment form is what makes the marker romp's own
+# channel instead of anything that can say the words.
+POSTAL_RE = re.compile(r"<!--\s*romp-msg-id:\s*(\S+?)\s*-->")
+POSTAL_KIND_RE = re.compile(r"<!--\s*romp-msg-kind:\s*(delegate|coordinate|question)\s*-->")
 # romp's marker on a message IT injected straight into a pane (a feed NUDGE / auto-nudge / Retry — NOT a
 # peer message, and NOT a follow-up YOU typed). It means "render this as a romp-injected system message"
 # (the gray bubble), distinct from a human prompt or a peer's postal message. ONLY romp-injected authors
@@ -312,7 +321,10 @@ def author_of(blocks, prompt_source, postal_index, sdk_human=False):
         mids = POSTAL_RE.findall(text)
         if mids:
             peer = None
-            for mid in mids:
+            # LAST match first: the delivery appends its marker AFTER the body, so when a body itself
+            # carries one — a peer forwarding mail it received, an agent quoting its own — the real
+            # sender's marker is the trailing one. Taking the first let the quoted id name the author.
+            for mid in reversed(mids):
                 peer = postal_index.get(mid)
                 if peer:
                     break
