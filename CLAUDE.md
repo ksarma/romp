@@ -69,6 +69,31 @@ This repo may go public; assume every commit is permanent and world-readable.
   text only, so screenshots and recordings under `docs/assets/` must be
   eyeballed for on-screen session content before release.
 
+## This clone is a fork — everything ships to the fork (user rule, 2026-08-05)
+This repo is a fork of the romp project, kept for the user's own purposes. Two
+repos are in play and only ONE of them is ours to write to:
+- **`origin` is our fork.** Every branch, push and PR goes there, with no
+  exception that does not begin with the user saying so.
+- **`upstream` is the project we forked from, and it is FETCH-ONLY.** Never push
+  a branch, a tag or a commit to it, and never open a PR against it. Offering
+  work back upstream is a deliberate decision the user makes per change; until
+  they say those words, upstream is something we read.
+- **The guard is configuration, not care.** `scripts/fork-remotes.sh` sets
+  `upstream`'s push URL to a dead sentinel, so a stray `git push upstream` fails
+  loudly instead of landing on someone else's project, and points
+  `remote.pushDefault` at the fork so a bare `git push` cannot wander.
+  `scripts/fork-remotes.sh --check` verifies a clone without changing it — worth
+  a run in any new clone or worktree, since this lives in git config and a fresh
+  clone starts without it.
+- **Checking for upstream changes.** `scripts/upstream-check.sh` fetches and
+  reports what the project has added since we diverged, and which of those files
+  we have also changed — the ones a merge will actually cost attention on. It
+  reports and stops; taking the changes is the user's call, on a branch.
+- **Two upstream-facing scripts are not ours to run.** `scripts/release.sh`
+  cuts the project's releases (it defaults to the upstream repo and opens PRs
+  there) and `bootstrap.sh` clones the project for a fresh install. Neither is
+  wrong to read; both would act on upstream if run unthinkingly.
+
 ## Worktrees — work on an isolated worktree by default (user rule, 2026-06-29)
 Do ALL non-trivial work on its own git worktree, not the shared main tree — concurrent
 peer sessions clobber/commit each other's uncommitted edits in the shared tree (a peer's
@@ -86,16 +111,14 @@ broad `git add` will sweep up your work). Conventions:
   docs commits stranded on local `main`, already duplicated on a PR branch, blocking two
   other sessions).
 - **Standing green light to publish.** When the work is done and tests pass, publish it
-  without asking — through the fork (user rule, 2026-07-27): rulesets on the upstream
-  block EVERY direct branch push (`main` and feature branches alike, no bypass), so
-  publishing is always push-then-PR:
-  1. `git push -u fork <branch>` — the clone's `fork` remote is the maintainer's fork;
-     `remote.pushDefault` already points there, so a bare `git push` does the same.
-     Never push to `origin`: the server rejects it, and naming it in scripts bakes in
-     a failure.
-  2. `gh pr create --repo romp-on/romp` (gh detects the fork head), then
-     `gh pr merge --auto --merge` — it lands itself when the six required Linux
-     checks pass. There is no way to move `main` except a green PR.
+  without asking — to the fork, always (user rule, 2026-08-05, superseding the
+  upstream-PR flow this repo was written around):
+  1. `git push -u origin <branch>`. `origin` is the fork; `remote.pushDefault` points
+     there too, so a bare `git push` does the same. Never `git push upstream` — see
+     the fork section above, and `scripts/fork-remotes.sh` makes it fail if tried.
+  2. Land it on the fork's `main` the way the user prefers for that change — a PR
+     within the fork when it wants a read-through, a merge when it does not. Opening
+     a PR against the upstream project is a separate decision only the user makes.
 - **Clean up when finished.** After publishing, remove the worktree
   (`git worktree remove ../romp-<session>`) and delete its branch — don't leave stale
   worktrees lying around.
