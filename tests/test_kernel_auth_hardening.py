@@ -16,6 +16,7 @@ Synthetic only — no real session data; the gate decision touches no session st
 Mirrors tests/test_kernel_ws_auth.py's module load order.
 """
 import os
+import time
 import unittest
 from importlib.machinery import SourceFileLoader
 
@@ -126,6 +127,51 @@ class TokenRequiredEverywhere(unittest.TestCase):
         self.assertTrue(ok)
         ok, _, _ = _auth(headers={"Origin": "http://evil.example", "X-Romp-Token": TOK})
         self.assertTrue(ok)
+
+    def test_a_one_time_handoff_code_authorizes_and_sets_the_cookie(self):
+        """What `romp` puts in the browser's argv. The URL we open is readable by every other
+        account on the machine (/proc/<pid>/cmdline) for the browser's whole lifetime, so it
+        carries a code that does one job — seed the cookie — instead of the long-lived token."""
+        code = km._mint_handoff()
+        ok, cookie, _ = _auth(headers={}, token=None)
+        self.assertFalse(ok, "sanity: no credential without the code")
+        h = _inst("127.0.0.1", {})
+        ok, cookie, _ = h._authorize({"c": [code]})
+        self.assertTrue(ok)
+        self.assertEqual(cookie, TOK, "the handoff's whole purpose is to seed the cookie")
+
+    def test_a_handoff_code_works_exactly_once(self):
+        # The leak this defends against is a URL that persists; a code someone reads later must
+        # already be spent.
+        code = km._mint_handoff()
+        self.assertTrue(_inst("127.0.0.1", {})._authorize({"c": [code]})[0])
+        ok, _, why = _inst("127.0.0.1", {})._authorize({"c": [code]})
+        self.assertFalse(ok)
+        self.assertIn("token", why)
+
+    def test_an_expired_handoff_code_is_refused(self):
+        code = km._mint_handoff()
+        with km._HANDOFF_LOCK:
+            km._HANDOFF[code] = time.time() - 1        # as if the browser took too long to open
+        self.assertFalse(_inst("127.0.0.1", {})._authorize({"c": [code]})[0])
+
+    def test_an_unminted_code_is_refused(self):
+        self.assertFalse(_inst("127.0.0.1", {})._authorize({"c": ["not-a-real-code"]})[0])
+        self.assertFalse(_inst("127.0.0.1", {})._authorize({"c": [""]})[0])
+
+    def test_the_handoff_is_not_the_token(self):
+        # A code must never be the token itself, or the leak it exists to prevent is unchanged.
+        self.assertNotEqual(km._mint_handoff(), TOK)
+
+    def test_expired_codes_do_not_accumulate(self):
+        # A browser that never opens leaves its code behind; minting must sweep them.
+        before = len(km._HANDOFF)
+        stale = km._mint_handoff()
+        with km._HANDOFF_LOCK:
+            km._HANDOFF[stale] = time.time() - 1
+        km._mint_handoff()
+        self.assertNotIn(stale, km._HANDOFF)
+        self.assertLessEqual(len(km._HANDOFF), before + 1)
 
     def test_header_authorizes(self):
         # X-Romp-Token: the CLI/hook/daemon form (read from the 0600 file). Safe to accept

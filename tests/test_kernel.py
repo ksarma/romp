@@ -6733,8 +6733,12 @@ class CreateDirResolution(unittest.TestCase):
         os.environ["ROMP_DIR"] = "/no/such/install/xyz123"               # set, but not a real directory → ignored
         self.assertEqual(km._default_create_dir(), os.path.expanduser("~"), "a bogus ROMP_DIR falls through to ~")
 
-    def test_version_info_includes_default_dir(self):
-        self.assertIn("defaultDir", km._version_info())                  # the gear loads its field from here
+    def test_default_dir_reaches_the_gear_without_riding_auth_exempt_version(self):
+        # The gear's field used to load from /version, which needs no token — a path on an untokened
+        # route (2026-08-05). It rides the authenticated sessionList socket message instead, so the
+        # payload still exists; only its route changed.
+        self.assertNotIn("defaultDir", km._version_info())
+        self.assertIn('"defaultDir": _tilde(_default_create_dir())', Path(BIN, "romp-kernel").read_text())
 
     def test_gear_persists_default_dir_with_browse(self):
         self.assertIn("rs-defaultdir-browse", _gear_src())             # the gear's Browse button

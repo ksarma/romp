@@ -48,11 +48,14 @@ test("the drift prompt is ACTIONABLE — an Update extension button, not a bare 
 
 test("updateExtension rebuilds+reinstalls the VSIX, then offers a USER-gated reload", () => {
   const upd = slice("async function updateExtension", "function runInstall");
-  assert.ok(upd.includes('fetchJson("/version")') && upd.includes("info.rompDir"),
-    "learns the repo root from the kernel's /version rompDir");
-  assert.ok(upd.includes('path.join(os.homedir(), reported.slice(1))'),
-    "$HOME-collapses rompDir back to a real path (same machine as the local kernel)");
-  assert.ok(upd.includes("runInstall(script, extDir)") && upd.includes('"install.sh"'),
+  // The script it runs is resolved from THIS host — the VSIX's own path, else our own ROMP_DIR —
+  // never from a kernel response: /version is auth-exempt, so a rompDir off the wire would let
+  // whatever answers the port pick the directory a shell command runs from (update-target.ts).
+  assert.ok(upd.includes("resolveInstallScript(ctx?.extensionPath || \"\", process.env.ROMP_DIR"),
+    "the exec target is resolved locally from the extension's own installed path");
+  assert.ok(!/rompDir|fetchJson|homedir/.test(upd),
+    "nothing the kernel reports (and no $HOME expansion of it) reaches the exec target");
+  assert.ok(upd.includes("runInstall(script, extDir)") && upd.includes("target.script"),
     "runs vscode-extension/install.sh");
   assert.ok(upd.includes("packaged romp-chat-view\\.vsix") && upd.includes("install into:"),
     "a clean exit is not enough — require the packaged + installed markers (install.sh skips gracefully)");
@@ -62,6 +65,10 @@ test("updateExtension rebuilds+reinstalls the VSIX, then offers a USER-gated rel
     "reload only fires when the user clicks Reload window");
   assert.ok(upd.includes("showErrorMessage") && upd.includes("install.sh in a terminal"),
     "a failed/skipped update fails loudly with the manual remedy");
+  // A copy that can't rebuild itself (installed from a .vsix, no ROMP_DIR) says so and stops —
+  // it never falls back to running some other directory's install.sh.
+  assert.ok(upd.includes("if (!target)") && upd.includes("can't rebuild itself") && upd.includes("return;"),
+    "no resolvable checkout → a plain error and no shell-out");
 });
 
 test("runInstall shells out with the host's resolved env so node/npm/code resolve", () => {

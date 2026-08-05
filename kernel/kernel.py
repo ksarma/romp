@@ -379,8 +379,16 @@ def _kernel_ver():
 def _version_info():
     """What this kernel is running — code sha + per-bundle build mtimes + pid/uptime. Lets the feed's
     settings gear / `romp version` / a curl tell at a glance whether the browser is on a stale bundle
-    (compare the served ?v= against bundles[].mtime here). Any path here is $HOME-collapsed for privacy
-    (like defaultDir/rompDir) — never a raw /Users/<name> path."""
+    (compare the served ?v= against bundles[].mtime here).
+
+    NO FILESYSTEM PATHS. /version is auth-exempt — any local process reads it with no token, and it
+    also rides the remote poll between machines — so the exemption is justified as "no paths,
+    harmless" and this payload has to keep that true. It carried two until 2026-08-05: `rompDir`,
+    which the VS Code extension turned into an `execFile("bash", …)` target (so whatever answered
+    this port chose the directory a shell ran in — the extension now resolves its own install path
+    and never asks), and `defaultDir`, which the dashboard already receives on the authenticated
+    sessionList/defaultDirSaved socket messages. $HOME-collapsing hid the username, never the
+    checkout's location or its name, and a project directory name is identifying on its own."""
     bundles = {}
     try:
         for p in sorted(DIST.glob("*.js")) + sorted(DIST.glob("*.css")):
@@ -394,12 +402,7 @@ def _version_info():
             "uptime_s": int(time.time() - _STARTED), "dist_ver": _dist_ver(), "bundles": bundles,
             "autoNudge": _auto_nudge_on(),   # server-side toggle state → the gear checkbox reflects the kernel
             "judgeModel": jd._triage_model(), "indexModel": jd._index_model(),      # current per-tier judge models → the gear dropdowns
-            "judgeEffort": jd._triage_effort(), "indexEffort": jd._index_effort(),  # current per-tier judge efforts ("" = default/none)
-            "defaultDir": _tilde(_default_create_dir()),   # the resolved default new-session dir → the gear "Default directory" field
-            # The repo root ($HOME-collapsed), so the VS Code extension host can run vscode-extension/install.sh
-            # to self-update a drifted VSIX (a webview reload can't — the code is baked into the on-disk VSIX).
-            # ROMP_DIR is reliably exported by romp-serve/launchd; HERE.parent (kernel/ → repo root) backs it up.
-            "rompDir": _tilde(os.environ.get("ROMP_DIR") or str(HERE.parent))}
+            "judgeEffort": jd._triage_effort(), "indexEffort": jd._index_effort()}  # current per-tier judge efforts ("" = default/none)
 
 
 def _dist_ver():
@@ -435,13 +438,52 @@ def _load_token():
     v = base64.urlsafe_b64encode(os.urandom(18)).decode().rstrip("=")
     try:
         jd.STATE.mkdir(parents=True, exist_ok=True)
-        f.write_text(v)
-        os.chmod(f, 0o600)
+        # 0600 from birth, not written-then-chmod'd: between those two calls the file carried the
+        # token at the umask's mercy, and the whole same-user gate is this file's mode.
+        fd = os.open(str(f), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            os.write(fd, v.encode())
+        finally:
+            os.close(fd)
+        os.chmod(f, 0o600)                       # a PRE-EXISTING file keeps its old mode through O_CREAT
     except OSError:
         pass
     return v
 
 TOKEN = _load_token()
+
+# ── the one-time browser handoff ────────────────────────────────────────────────────────────
+# Opening the dashboard used to mean webbrowser.open(url + "/?token=" + TOKEN), which puts the
+# long-lived serve token in the BROWSER's argv — where it stays for the browser's whole lifetime,
+# and /proc/<pid>/cmdline hands it to every other account on the machine (one `ps aux` reads it).
+# A handoff code does that job — seed the cookie on the first open — and is worthless the moment
+# it is spent, so the same leak yields something already dead.
+_HANDOFF = {}                                    # code -> expiry; popped on use, so a code works ONCE
+_HANDOFF_LOCK = threading.Lock()
+_HANDOFF_TTL_S = 300                             # a slow browser launch, not a session
+
+
+def _mint_handoff():
+    c = base64.urlsafe_b64encode(os.urandom(18)).decode().rstrip("=")
+    with _HANDOFF_LOCK:
+        now = time.time()
+        for k, exp in list(_HANDOFF.items()):    # a browser that never opened must not accumulate
+            if exp <= now:
+                _HANDOFF.pop(k, None)
+        _HANDOFF[c] = now + _HANDOFF_TTL_S
+    return c
+
+
+def _spend_handoff(code):
+    """True exactly once per minted code, and only inside its TTL. Compared in constant time like
+    the token itself — a spent code is harmless, but an unspent one is briefly worth guessing."""
+    if not code:
+        return False
+    with _HANDOFF_LOCK:
+        for k in list(_HANDOFF):
+            if _ct_eq(k, code):
+                return _HANDOFF.pop(k, 0) > time.time()
+    return False
 
 def _ct_eq(a, b):
     """Constant-time string compare (no timing oracle on the serve token); never
@@ -18771,6 +18813,8 @@ class Handler(BaseHTTPRequestHandler):
         hub's own origin WITH ?token, and the VS Code webview origin is allowed by _origin_ok."""
         if TOKEN and _ct_eq((q.get("token") or [""])[0], TOKEN):
             return True, TOKEN, ""                    # valid ?token → authorize (any origin) + set cookie
+        if _spend_handoff((q.get("c") or [""])[0]):
+            return True, TOKEN, ""                    # one-time handoff (the browser we opened) → cookie, once
         if TOKEN and _ct_eq(self._cookie_token(), TOKEN) and self._origin_ok():
             return True, None, ""                     # valid token cookie + same-site origin
         if TOKEN and _ct_eq(self.headers.get("X-Romp-Token") or "", TOKEN):
@@ -18875,7 +18919,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, "ok", "text/plain",
                                   headers={"X-Romp-Boot": _BOOT_ID,
                                            "Access-Control-Expose-Headers": "X-Romp-Boot"})
-            if p == "/version":                               # build/version report — exempt from auth (no paths, harmless)
+            if p == "/version":                               # build/version report — exempt from auth (see _version_info: no paths)
                 return self._send(200, json.dumps(_version_info()), "application/json", cache="no-cache")
             if p == "/busy":
                 # In-flight SDK turn count — the manager's quiet-window gate for deferred deploy
@@ -20222,7 +20266,10 @@ def main():
     if not os.environ.get("ROMP_KERNEL_NO_OPEN"):
         try:
             import webbrowser
-            webbrowser.open(url + "/?token=" + TOKEN)   # seeds the year-long cookie on first open (Jupyter's URL flow)
+            # A one-time code, never the token: this URL becomes the browser's argv, readable by
+            # every other account on the machine for as long as the browser lives. It still seeds
+            # the year-long cookie on first open (Jupyter's URL flow), but what leaks is spent.
+            webbrowser.open(url + "/?c=" + _mint_handoff())
         except Exception:
             pass
     try:
