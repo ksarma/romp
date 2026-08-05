@@ -73,7 +73,8 @@ class AuthorClassification(unittest.TestCase):
         peer = "aaaa-bbbb"
         body = "COORDINATE: heads-up\n<!-- romp-msg-id: 1783.1_2.TESTHOST -->"
         self.assertEqual(em.author_of(_blocks(body), "sdk", {"1783.1_2.TESTHOST": peer}, sdk_human=True),
-                         {"peer": peer}, "a romp postal message is a peer, not a native teammate message")
+                         {"peer": peer, "mid": "1783.1_2.TESTHOST", "kind": ""},
+                         "a romp postal message is a peer, not a native teammate message")
 
     def test_text_that_merely_mentions_the_marker_is_not_a_delivery(self):
         """The 2026-07-08 bug class, which POSTAL_RE had kept: a bare word-match authored ANY text
@@ -85,7 +86,8 @@ class AuthorClassification(unittest.TestCase):
         for text in ("I got a message with romp-msg-id: 1783.1_2.TESTHOST in it — should I reply?",
                      "the log line was `romp-msg-id: 1783.1_2.TESTHOST`",
                      "romp-msg-id: 1783.1_2.TESTHOST"):
-            self.assertNotEqual(em.author_of(_blocks(text), "sdk", idx, sdk_human=True), {"peer": peer},
+            got = em.author_of(_blocks(text), "sdk", idx, sdk_human=True)
+            self.assertNotEqual(got.get("peer") if isinstance(got, dict) else None, peer,
                                 "a mention is not a delivery: %r" % text)
 
     def test_a_quoted_marker_cannot_outrank_the_real_trailing_one(self):
@@ -96,7 +98,7 @@ class AuthorClassification(unittest.TestCase):
         idx = {real: "real-sender", quoted: "someone-else"}
         body = ("forwarding what I got:\n<!-- romp-msg-id: %s -->\n"
                 "-- end quote --\n<!-- romp-msg-id: %s -->" % (quoted, real))
-        self.assertEqual(em.author_of(_blocks(body), "sdk", idx, sdk_human=True), {"peer": "real-sender"})
+        self.assertEqual(em.author_of(_blocks(body), "sdk", idx, sdk_human=True).get("peer"), "real-sender")
 
     def test_teammate_is_a_non_opener_so_it_pins_no_goal(self):
         # like 'system': a teammate ping folds into the current turn, never opens one — so high-frequency

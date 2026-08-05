@@ -183,7 +183,18 @@ echo "==> judge scratch"
 # that could only be romp's own scratch: absolute, at least two components deep, not $HOME
 # or any ancestor of it, and named for romp. Anything else is skipped loudly, never guessed at.
 _judge_ok=1
-_scratch_slug="${JUDGE_SCRATCH//\//-}"
+# Claude Code names a project dir after its cwd by replacing EVERY non-alphanumeric character with
+# '-', over the REALPATH — kernel/judge.py's _proj_dir implements exactly that, and this has to
+# agree with it or --purge sweeps a directory that does not exist. A shell `${p//\//-}` replaces
+# only the slashes, which agreed by luck while the scratch was /tmp/romp-judge (no other
+# non-alnum char in it) and stopped agreeing the moment it moved under ~/.local/state: the dot in
+# `.local` survives, so the two spell the same path differently and the transcripts are left
+# behind. Derived here the same way judge.py derives it, so they cannot drift apart again.
+_scratch_slug="$(python3 - "$JUDGE_SCRATCH" <<'PYEOF'
+import os, re, sys
+print(re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(sys.argv[1])))
+PYEOF
+)"
 case "$JUDGE_SCRATCH" in
     /*/?*) ;;                                    # absolute AND at least two components
     *)     _judge_ok="" ;;

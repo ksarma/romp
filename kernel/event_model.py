@@ -56,6 +56,26 @@ END_STOPS = ("end_turn", "stop_sequence")
 # channel instead of anything that can say the words.
 POSTAL_RE = re.compile(r"<!--\s*romp-msg-id:\s*(\S+?)\s*-->")
 POSTAL_KIND_RE = re.compile(r"<!--\s*romp-msg-kind:\s*(delegate|coordinate|question)\s*-->")
+# Both markers, IN ORDER, so a sender / message id / declared kind always describe the SAME message.
+# A drain writes id-then-kind per message and concatenates every pending message into one injected
+# text (postal_service format_inbox/format_push), so a two-message delivery carries two of each —
+# and three separate scans of that text picked three different answers: the author from the last
+# marker, the id and the kind from the first. That filed one peer's identity against another peer's
+# message, planting the delegation-tracking node on the wrong board.
+_POSTAL_ANY_RE = re.compile(r"<!--\s*romp-msg-(id|kind):\s*(\S+?)\s*-->")
+_POSTAL_KINDS = ("delegate", "coordinate", "question")
+
+
+def postal_pairs(text):
+    """[(mid, kind), ...] in delivery order; kind is "" when the sender declared none (CLI mail).
+    Position is the only thing that pairs them — the markers carry no cross-reference."""
+    pairs = []
+    for typ, val in _POSTAL_ANY_RE.findall(text or ""):
+        if typ == "id":
+            pairs.append([val, ""])
+        elif pairs and not pairs[-1][1] and val in _POSTAL_KINDS:
+            pairs[-1][1] = val                   # binds to the id it follows, never a later one
+    return [(a, b) for a, b in pairs]
 # romp's marker on a message IT injected straight into a pane (a feed NUDGE / auto-nudge / Retry — NOT a
 # peer message, and NOT a follow-up YOU typed). It means "render this as a romp-injected system message"
 # (the gray bubble), distinct from a human prompt or a peer's postal message. ONLY romp-injected authors
@@ -318,17 +338,19 @@ def author_of(blocks, prompt_source, postal_index, sdk_human=False):
             return "teammate"                     # → its own collapsed chat card; a non-opener (like 'system'), so
             #   high-frequency coordination pings never pin a junk goal. Checked before the postal marker: the
             #   OUTER native wrapper wins even if a forwarded body happened to carry a romp-msg-id.
-        mids = POSTAL_RE.findall(text)
-        if mids:
-            peer = None
-            # LAST match first: the delivery appends its marker AFTER the body, so when a body itself
+        pairs = postal_pairs(text)
+        if pairs:
+            # LAST first: the delivery appends its markers AFTER the body, so when a body itself
             # carries one — a peer forwarding mail it received, an agent quoting its own — the real
             # sender's marker is the trailing one. Taking the first let the quoted id name the author.
-            for mid in reversed(mids):
-                peer = postal_index.get(mid)
-                if peer:
+            peer, mid, kind = None, pairs[-1][0], pairs[-1][1]
+            for m, k in reversed(pairs):
+                if postal_index.get(m):
+                    peer, mid, kind = postal_index[m], m, k
                     break
-            return {"peer": peer}
+            # The chosen marker travels WITH the author, so the judge reads the same one rather than
+            # re-scanning and landing on a different message.
+            return {"peer": peer, "mid": mid, "kind": kind}
         if ROMP_INJECT_RE.search(text):           # romp pasted this into the pane (a feed nudge) → system, not human
             return "romp"
     if prompt_source == "sdk":
