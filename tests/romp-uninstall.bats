@@ -199,11 +199,30 @@ EOF
     [[ "$output" != *"token page"* ]]
 }
 
-# ── romp's judge scratch, which lives OUTSIDE the state dir ──────────────────
-# romp runs judges as `claude` rooted at /tmp/romp-judge, so Claude Code writes their
-# transcripts to a project dir keyed on that path — outside $STATE, so --purge missed them and a
-# reinstalled romp kept showing judge records from the PREVIOUS install. They are romp's own
-# droppings, never a session anyone started, so the teardown owns them.
+# ── the judge scratch's Claude Code project dir, which lives OUTSIDE the state dir ───────────
+# romp runs judges as `claude` rooted at JUDGE_SCRATCH, so Claude Code writes their transcripts to
+# a project dir keyed on that path — outside $STATE, so --purge missed them and a reinstalled romp
+# kept showing judge records from the PREVIOUS install. They are romp's own droppings, never a
+# session anyone started, so the teardown owns them.
+#
+# The scratch itself moved from /tmp/romp-judge into "$STATE/judge-scratch" on 2026-08-05, so
+# --purge now takes the directory as part of the state root; the DERIVED project dir is still keyed
+# on the path, which is what the default below has to track.
+
+@test "romp-uninstall: the judge scratch default follows the state root, not /tmp" {
+    # A stale default would leave the derived project dir behind — the 2026-07-27 incomplete-teardown
+    # symptom, returning under a new name. ROMP_JUDGE_SCRATCH is deliberately NOT set here.
+    export CLAUDE_CONFIG_DIR="$HOME/.claude"
+    scratch="$ROMP_STATE_DIR/judge-scratch"
+    mkdir -p "$scratch"
+    proj="$CLAUDE_CONFIG_DIR/projects/${scratch//\//-}"
+    mkdir -p "$proj"
+    echo '{"synthetic":"judge call"}' > "$proj/11111111-2222-3333-4444-555555555555.jsonl"
+
+    run "$CLONE/bin/romp-uninstall" --yes --purge
+    [ "$status" -eq 0 ]
+    [ ! -d "$proj" ]
+}
 
 @test "romp-uninstall: removes romp's judge scratch and its transcripts" {
     export ROMP_JUDGE_SCRATCH="$TEST_DIR/romp-judge"

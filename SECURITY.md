@@ -22,9 +22,16 @@ same-user gate**. Same-user clients (the CLI, hooks, the bus, the VS Code
 extension) read the file and send it as an `X-Romp-Token` header; the browser
 presents it once as `?token=` (print the ready-made link with `romp url`, or
 paste the token into the login page a bare open of the dashboard serves) and
-rides an `HttpOnly` cookie afterwards. An Origin check additionally protects
-the browser surfaces against cross-site requests, including the WebSocket
-upgrade. The only token-exempt routes are the no-side-effect liveness probes:
+rides an `HttpOnly` cookie afterwards. That cookie authorizes only from an
+accepted Origin, which is what protects the browser surfaces — the WebSocket
+upgrade included — against cross-site requests. The distinction matters because
+cookies are scoped by host and **not by port**: every `http://127.0.0.1:<port>`
+page on your machine is same-site with the dashboard, so anything else you run
+on loopback (a dev server in a repo an agent cloned) would otherwise ride your
+cookie into a live socket. A token presented explicitly, as `?token=` or
+`X-Romp-Token`, is accepted from any Origin — that is what federation needs, and
+a cross-site page cannot obtain it. The only token-exempt routes are the
+no-side-effect liveness probes:
 `/healthz`, `/version`, `/busy` on the kernel and `/ping` on the bus.
 
 The practical consequence: another local user on a **shared machine** cannot
@@ -89,7 +96,16 @@ The trust unit is the **machine**, not a session on it: any process on a remote
 box can write to that box's bus, so trust is set per host. Identity is provided
 by the ssh tunnel the message arrives on — no separate signing. The gate is
 enforced at the receiving bus's delivery point, so it holds regardless of which
-host originated the message (a forwarded message is judged by its true origin).
+host originated the message.
+
+A **forwarded** message is judged by the more restrictive of two tiers: the
+origin's and the forwarding host's. The origin stamp is written by the forwarder
+and nothing signs it, so trusting it alone would let any peer claim to speak for
+a host you tiered `trusted` and have its mail auto-injected — a `directed` host
+could promote itself simply by labelling its cargo. Capping at the forwarder's
+own tier means a directed relay stays directed whatever name it stamps, at the
+cost that mail from a trusted origin relayed through a directed hub is held for
+approval rather than delivered.
 
 The one thing romp can NOT firewall this way is same-machine peers: two sessions
 running as the same user share a UID, so mailbox trust between them is policy,

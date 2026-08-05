@@ -18696,6 +18696,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
+        # Take the declared type at its word. Without this a browser may sniff a response whose
+        # bytes look like markup and run it as HTML on the dashboard's own origin, which is the
+        # same escalation the /remote/…/file relay's own type check closes from the other side.
+        self.send_header("X-Content-Type-Options", "nosniff")
         for k, v in (headers or {}).items():
             self.send_header(k, v)
         if cache:                                     # e.g. "no-cache" — keeps a tab from running a stale bundle
@@ -18745,20 +18749,30 @@ class Handler(BaseHTTPRequestHandler):
         return ""
 
     def _authorize(self, q):
-        """(ok, cookie_to_set, reason). A valid token IS sufficient auth and bypasses the Origin gate.
-        This is what lets the FEDERATED dashboard work: a browser served by ANOTHER kernel opens a
-        tunnel'd /ws (or fetch) here carrying ?token — a foreign Origin, but the unguessable token is
-        the credential, and a cross-site page can't forge it. The token is REQUIRED for every gated
-        route, loopback included (Jupyter's model: loopback is reachable by every local user, so the
-        0600 token file — not the socket — is the same-user trust boundary). Browsers present ?token
-        once and ride the auto-set cookie; local CLIs/hooks read the file and send X-Romp-Token (a
-        custom header forces a CORS preflight through this same gate, so a cross-site page can't
-        forge it either). Token-less browser traffic still hits the Origin gate first (the
-        ClawJacked/WS hole) so a denial names the real reason."""
+        """(ok, cookie_to_set, reason). An EXPLICITLY PRESENTED token is sufficient auth and bypasses
+        the Origin gate. This is what lets the FEDERATED dashboard work: a browser served by ANOTHER
+        kernel opens a tunnel'd /ws (or fetch) here carrying ?token — a foreign Origin, but the
+        unguessable token is the credential, and a cross-site page can't forge it. The token is
+        REQUIRED for every gated route, loopback included (Jupyter's model: loopback is reachable by
+        every local user, so the 0600 token file — not the socket — is the same-user trust boundary).
+        Browsers present ?token once and ride the auto-set cookie; local CLIs/hooks read the file and
+        send X-Romp-Token (a custom header forces a CORS preflight through this same gate, so a
+        cross-site page can't forge it either). Token-less browser traffic still hits the Origin gate
+        first (the ClawJacked/WS hole) so a denial names the real reason.
+
+        The COOKIE is the one credential that does NOT bypass the Origin gate, because it is the one
+        the browser attaches for you: cookies are scoped by host and NOT by port (RFC 6265 §8.5), so
+        every `http://127.0.0.1:<any-port>` page is same-site with the dashboard and rides this
+        cookie — SameSite=Strict included. Without the Origin check below, any page served by
+        anything else on loopback (an agent-cloned repo's dev server) reached `/ws`, which streams
+        every session and accepts sendMessage. Presenting a token proves you are not a drive-by page;
+        carrying a cookie proves only that the browser had one. Nothing in the shipped UI needs the
+        cookie cross-origin: the dashboard's own socket is same-origin, federation relays through the
+        hub's own origin WITH ?token, and the VS Code webview origin is allowed by _origin_ok."""
         if TOKEN and _ct_eq((q.get("token") or [""])[0], TOKEN):
             return True, TOKEN, ""                    # valid ?token → authorize (any origin) + set cookie
-        if TOKEN and _ct_eq(self._cookie_token(), TOKEN):
-            return True, None, ""                     # valid token cookie → authorize (any origin)
+        if TOKEN and _ct_eq(self._cookie_token(), TOKEN) and self._origin_ok():
+            return True, None, ""                     # valid token cookie + same-site origin
         if TOKEN and _ct_eq(self.headers.get("X-Romp-Token") or "", TOKEN):
             return True, None, ""                     # header form — local CLI/hook/daemon clients
         if not self._origin_ok():
@@ -18783,6 +18797,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", mime)
             self.send_header("Content-Length", str(size))   # the real length, no body (HEAD semantics)
+            self.send_header("X-Content-Type-Options", "nosniff")   # _send's guarantee, restated on the HEAD path
             self.send_header("Cache-Control", "no-cache")
             if getattr(self, "_cors_origin", None):         # the chat's fetch-HEAD probe rides CORS too
                 self.send_header("Access-Control-Allow-Origin", self._cors_origin)
@@ -20032,13 +20047,26 @@ class Handler(BaseHTTPRequestHandler):
         is rewritten into the forwarded query (so the browser only ever needs its local credential,
         and the per-host trust boundary is unchanged — THAT kernel still runs its own allowlist,
         size cap and path resolution), and this kernel reads nothing but the reply it mirrors.
-        Deliberately /file only — a preview relay, not a general proxy."""
+        Deliberately /file only — a preview relay, not a general proxy.
+
+        The Content-Type is derived HERE, from the requested extension against _PREVIEW_MIME —
+        the same table and the same 404 the local /file route applies — and the remote's own
+        Content-Type header is discarded. Mirroring it let a compromised remote kernel answer
+        `text/html` for a path the preview lightbox opens in a SAME-ORIGIN, unsandboxed iframe
+        (ui/webview/preview.ts), i.e. script on the dashboard's origin with the token cookie
+        attached. An attached host is trusted to serve its own files, not to choose how this
+        browser interprets them."""
         with _remotes_lock:
             r = _remotes.get(host)
             port, rtok = (r or {}).get("local_port") or 0, (r or {}).get("token") or ""
         if not port:
             return self._send(404, b"" if head else ("no attached host %r" % host), "text/plain")
         q = parse_qs(query or "")
+        # Our own verdict on the type, before the remote gets a say. An extension the local route
+        # would 404 is 404'd here too, so the relay can never widen what a preview may render.
+        mime = _PREVIEW_MIME.get(os.path.splitext((q.get("path") or [""])[0])[1].lower())
+        if not mime:
+            return self._send(404, b"" if head else "not found", "text/plain")
         if rtok:
             q["token"] = [rtok]      # the remote's own credential; whatever the browser sent means nothing there
         conn = http.client.HTTPConnection("127.0.0.1", int(port), timeout=15)
@@ -20046,7 +20074,7 @@ class Handler(BaseHTTPRequestHandler):
             conn.request("HEAD" if head else "GET", "/file?" + urlencode(q, doseq=True))
             resp = conn.getresponse()
             body = b"" if head else resp.read(_PREVIEW_MAX_BYTES + 1)
-            status, ctype = resp.status, resp.getheader("Content-Type") or "application/octet-stream"
+            status, ctype = resp.status, mime          # OUR mime, never resp.getheader("Content-Type")
             clen = resp.getheader("Content-Length")
         except (OSError, http.client.HTTPException):
             return self._send(502, b"" if head else ("tunnel to %s is not answering" % host), "text/plain")
@@ -20063,6 +20091,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", ctype)
             if clen is not None:
                 self.send_header("Content-Length", clen)
+            self.send_header("X-Content-Type-Options", "nosniff")   # _send's guarantee, restated on the HEAD path
             self.send_header("Cache-Control", "no-cache")
             if getattr(self, "_cors_origin", None):
                 self.send_header("Access-Control-Allow-Origin", self._cors_origin)

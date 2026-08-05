@@ -86,6 +86,47 @@ class TokenRequiredEverywhere(unittest.TestCase):
         self.assertTrue(ok)
         self.assertIsNone(cookie)         # already has it — no re-set
 
+    def test_cookie_denied_from_a_foreign_origin(self):
+        """The loopback-dev-server hole. Cookies are scoped by host and NOT by port
+        (RFC 6265 8.5), so a page served by anything else on 127.0.0.1 — an agent-cloned
+        repo's dev server — is same-site with the dashboard and the browser attaches this
+        cookie for it, SameSite=Strict included. Before this gate that page could open /ws
+        (which streams every session and accepts sendMessage) with no credential of its own."""
+        ok, _, why = _auth(headers={"Cookie": "romp_token=" + TOK,
+                                    "Origin": "http://127.0.0.1:5173",
+                                    "Host": "127.0.0.1:%d" % km.PORT})
+        self.assertFalse(ok)
+        self.assertEqual(why, "cross-site origin")
+
+    def test_cookie_still_authorizes_the_dashboards_own_origin(self):
+        # The shipped dashboard socket (kernel.py's connect(): location.host, no token)
+        # rides the cookie same-origin — the gate must not cost it anything.
+        host = "127.0.0.1:%d" % km.PORT
+        ok, _, _ = _auth(headers={"Cookie": "romp_token=" + TOK,
+                                  "Origin": "http://" + host, "Host": host})
+        self.assertTrue(ok)
+
+    def test_cookie_still_authorizes_tailnet_self_access(self):
+        # Reaching the dashboard from the phone over the tailnet: Origin and Host are both
+        # the tailnet name, which is same-origin and must keep working.
+        ok, _, _ = _auth(headers={"Cookie": "romp_token=" + TOK,
+                                  "Origin": "http://TESTHOST:%d" % km.PORT,
+                                  "Host": "TESTHOST:%d" % km.PORT})
+        self.assertTrue(ok)
+
+    def test_cookie_still_authorizes_the_vscode_webview(self):
+        ok, _, _ = _auth(headers={"Cookie": "romp_token=" + TOK,
+                                  "Origin": "vscode-webview://abc123"})
+        self.assertTrue(ok)
+
+    def test_explicit_token_still_bypasses_origin_for_federation(self):
+        # The bypass that must SURVIVE: a foreign-origin browser presenting the token
+        # explicitly is federation, not a drive-by page. Both explicit forms keep it.
+        ok, _, _ = _auth(headers={"Origin": "http://evil.example"}, token=TOK)
+        self.assertTrue(ok)
+        ok, _, _ = _auth(headers={"Origin": "http://evil.example", "X-Romp-Token": TOK})
+        self.assertTrue(ok)
+
     def test_header_authorizes(self):
         # X-Romp-Token: the CLI/hook/daemon form (read from the 0600 file). Safe to accept
         # regardless of Origin: a cross-site page's custom header forces a CORS preflight,
