@@ -18,6 +18,7 @@ Mirrors tests/test_kernel_ws_auth.py's module load order.
 import os
 import time
 import unittest
+from pathlib import Path
 from importlib.machinery import SourceFileLoader
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -172,6 +173,23 @@ class TokenRequiredEverywhere(unittest.TestCase):
         km._mint_handoff()
         self.assertNotIn(stale, km._HANDOFF)
         self.assertLessEqual(len(km._HANDOFF), before + 1)
+
+    def test_the_handoff_route_is_gated(self):
+        # It mints a credential, so it must cost a credential: you have to already hold the token
+        # to get a code. Otherwise the CLI's fix would hand anyone on the machine a way in.
+        src = Path(BIN, "romp-kernel").read_text()
+        i_auth = src.index("ok, self._set_cookie, why = self._authorize(q)")
+        i_route = src.index('if p == "/handoff":')
+        self.assertGreater(i_route, i_auth,
+                           "/handoff must be served AFTER the auth gate, never beside /healthz")
+
+    def test_defaults_route_is_gated_and_carries_the_path(self):
+        # The gear's field moved here BECAUSE /version is auth-exempt and must stay path-free.
+        # Landing it on another ungated route would have moved the problem, not fixed it.
+        src = Path(BIN, "romp-kernel").read_text()
+        i_auth = src.index("ok, self._set_cookie, why = self._authorize(q)")
+        self.assertGreater(src.index('if p == "/defaults":'), i_auth)
+        self.assertNotIn("defaultDir", km._version_info())
 
     def test_header_authorizes(self):
         # X-Romp-Token: the CLI/hook/daemon form (read from the 0600 file). Safe to accept

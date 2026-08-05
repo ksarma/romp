@@ -744,7 +744,25 @@ if [[ $# -eq 0 ]]; then
         echo "romp: no serve token yet; the kernel mints it. Is romp running? (the login service starts it; \`romp up\` runs it by hand)" >&2
         exit 1
     fi
+    # Two URLs on purpose. The PRINTED one carries the token, because it is the thing you copy to
+    # a phone and it lands in your terminal, not in any process's argv. The OPENED one carries a
+    # one-time handoff code instead: the opener's argv is world-readable through /proc/<pid>/cmdline
+    # for as long as the browser lives, so a token there is full control of every session handed to
+    # any other account on the machine (2026-08-05). A code is spent the moment the page loads.
+    # No kernel answering /handoff (not up yet, older build) → open the BARE url: an established
+    # cookie still carries, and a cold browser lands on the login page, which tells you to run
+    # `romp url`. Never fall back to putting the token in argv.
     _url="http://127.0.0.1:$_kport/?token=$_tok"
+    # `|| true` is load-bearing under `set -euo pipefail`: no kernel answering means curl exits
+    # non-zero, pipefail propagates it, and the command substitution would kill `romp` outright
+    # instead of falling back — which is exactly what a machine whose kernel is not up yet does.
+    _code="$(_romp_token_cfg | curl -sf -m 3 --config - "http://127.0.0.1:$_kport/handoff" 2>/dev/null \
+             | sed -n 's/.*"code"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' || true)"
+    if [[ -n "$_code" ]]; then
+        _open_url="http://127.0.0.1:$_kport/?c=$_code"
+    else
+        _open_url="http://127.0.0.1:$_kport/"
+    fi
     # Is this a machine we could plausibly open a browser on? An ssh session or a Linux box with no
     # DISPLAY is headless — opening would silently do nothing, so say so instead of faking success.
     _headless=0
@@ -777,7 +795,7 @@ if [[ $# -eq 0 ]]; then
     elif command -v open >/dev/null 2>&1; then _opener=(open)
     elif command -v xdg-open >/dev/null 2>&1; then _opener=(xdg-open)
     else _opener=(); fi
-    if [[ ${#_opener[@]} -gt 0 ]] && "${_opener[@]}" "$_url" >/dev/null 2>&1; then
+    if [[ ${#_opener[@]} -gt 0 ]] && "${_opener[@]}" "$_open_url" >/dev/null 2>&1; then
         echo "    (opened in your browser — the link above still works if it didn't)"
     else
         echo "    (couldn't open a browser automatically — copy the link above)"

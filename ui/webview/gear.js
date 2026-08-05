@@ -234,7 +234,12 @@ function initGear(post) {
     if (im && typeof v.indexModel === 'string') im.value = v.indexModel;
     if (je && typeof v.judgeEffort === 'string') je.value = v.judgeEffort;
     if (ie && typeof v.indexEffort === 'string') ie.value = v.indexEffort;
-    if (dd && typeof v.defaultDir === 'string') dd.value = v.defaultDir;   // the kernel's persisted default is authoritative
+    // defaultDir moved OFF /version on 2026-08-05: that route is auth-exempt and must carry no
+    // filesystem paths. It comes from the gated /defaults now — a separate fetch, so a kernel that
+    // does not serve it yet leaves the field on its stored value rather than blanking it.
+    if (dd) fetch(ku('/defaults'), { cache: 'no-store' }).then(function (r) { return r.json(); })
+      .then(function (d) { if (typeof d.defaultDir === 'string') dd.value = d.defaultDir; })   // the kernel's persisted default is authoritative
+      .catch(function () {});
     var x = lv(); b.innerHTML = 'kernel ' + (v.kernel_sha || '?') + '\nserving v' + v.dist_ver + '\nthis tab v' + (x || '?');
   }).catch(function () { b.textContent = '(version unavailable)'; }); }
   // The settings modal is full-WINDOW in the web shell — ask it to expand the

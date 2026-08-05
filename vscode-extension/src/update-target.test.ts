@@ -9,7 +9,10 @@
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as path from "path";
-import { CHECKOUT_MARKERS, installCandidates, resolveInstallScript } from "./update-target";
+import {
+  CANT_REBUILD, CHECKOUT_MARKERS, COPY_ACTION, INSTALL_COMMAND, MANUAL_REMEDY, UPDATE_ACTION,
+  driftNotice, installCandidates, resolveInstallScript,
+} from "./update-target";
 
 // A tiny fake filesystem: the set of paths that "exist".
 function fsWith(...dirs: { dir: string; files: string[] }[]) {
@@ -64,4 +67,46 @@ test("both checkout markers are required — install.sh alone proves nothing", (
 test("an empty extension path contributes no candidate (no probing of /install.sh)", () => {
   assert.deepEqual(installCandidates("", undefined), []);
   assert.equal(resolveInstallScript("", undefined, () => true), null);
+});
+
+// ---- the drift toast only offers what can actually work here ----
+// Resolving locally made "nothing to rebuild from" the ordinary case: .vscodeignore keeps the build
+// inputs out of the VSIX and ROMP_DIR is exported into the kernel/service environment, not into the
+// shell or GUI that launches VS Code. The toast kept its "Update extension" button anyway, so on
+// essentially every installation its one action was guaranteed to fail (the review, 2026-08-05).
+
+test("no resolvable checkout: the toast offers no action that would fail, and says what to run", () => {
+  const n = driftNotice(null);
+  assert.ok(!n.actions.includes(UPDATE_ACTION), "an Update button here can only end in an error toast");
+  assert.deepEqual(n.actions, [COPY_ACTION], "the one offered action is client-side and cannot fail");
+  // The remedy is in the MESSAGE too — a toast fades, and the user should not need the button to
+  // learn what to do.
+  assert.ok(n.message.includes(INSTALL_COMMAND), "names the command to run");
+  assert.ok(n.message.includes("terminal"), "says where to run it");
+  assert.ok(n.message.includes(CANT_REBUILD) && n.message.includes(MANUAL_REMEDY));
+  assert.ok(n.message.includes("newer romp build"), "still leads with the drift itself");
+});
+
+test("a resolvable checkout keeps the one-click update, with nothing added to distract from it", () => {
+  const dir = CHECKOUT;
+  const n = driftNotice({ dir, script: path.join(dir, "install.sh") });
+  assert.deepEqual(n.actions, [UPDATE_ACTION], "the existing one-click flow is unchanged");
+  assert.equal(n.message, "A newer romp build is available — these panes run an older extension bundle.");
+  assert.ok(!n.message.includes(INSTALL_COMMAND), "no terminal instructions where the button works");
+});
+
+test("the notice's actions follow the SAME resolution the click will do — no second opinion", () => {
+  // Toast time and click time must agree about this host; a copy that resolves gets the button, one
+  // that doesn't never sees it. (They are separate CALLS, deliberately: the filesystem can change
+  // under a toast that is still on screen, and only the click-time check may shell out.)
+  const repo = path.join("/opt", "notes-api", "romp");
+  const checkout = fsWith({ dir: CHECKOUT, files: CHECKOUT_MARKERS });
+  const packaged = fsWith({ dir: INSTALLED, files: ["install.sh", "package.json"] });
+  for (const [ext, env, exists, want] of [
+    [CHECKOUT, undefined, checkout, [UPDATE_ACTION]],
+    [INSTALLED, undefined, packaged, [COPY_ACTION]],
+    [INSTALLED, repo, packaged, [COPY_ACTION]],       // ROMP_DIR set but no checkout under it
+  ] as [string, string | undefined, (p: string) => boolean, string[]][]) {
+    assert.deepEqual(driftNotice(resolveInstallScript(ext, env, exists)).actions, want);
+  }
 });

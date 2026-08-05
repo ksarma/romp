@@ -29,7 +29,10 @@ import { deriveStatus, freshNeedsYou, renderStatusBar, statusTooltipLines, Fleet
 import { citeText, sessionsForWorkspace, SessionInfo } from "./workspace-sessions";
 import { parsePorcelain } from "./session-diff";
 import { buildMenu, usageSummary } from "./romp-menu";
-import { resolveInstallScript } from "./update-target";
+import {
+  driftNotice, resolveInstallScript, InstallTarget,
+  UPDATE_ACTION, COPY_ACTION, INSTALL_COMMAND, CANT_REBUILD, MANUAL_REMEDY,
+} from "./update-target";
 
 const HOST = "127.0.0.1";
 
@@ -50,25 +53,38 @@ function serveToken(): string {
   }
 }
 
+// Where a self-update could run, resolved from THIS host every time it is asked — the extension's own
+// installed path, else ROMP_DIR out of our own environment (update-target.ts). Cheap (two existsSync
+// on a local dir) and never cached: the answer is a fact about the filesystem right now, and both the
+// toast and the click want it fresh.
+function resolveInstallTarget(): InstallTarget | null {
+  return resolveInstallScript(ctx?.extensionPath || "", process.env.ROMP_DIR, (p) => fs.existsSync(p));
+}
+
 // Build-drift banner (the user 2026-07-13, who wanted a banner when anything gets out of sync).
 // __ROMP_BUILD__ is baked by esbuild.js at bundle time (epoch seconds); every kernel keepalive carries
 // `dv`, the kernel's current dist token (newest dist/*.js mtime, same clock). dv newer than this bundle
 // means the shared webview sources were rebuilt after this VSIX was packaged — the panes are rendering
 // live kernel payloads with outdated code. Prompt ONCE per window; a webview reload can't fix it (the
-// code is baked into the on-disk VSIX), so unlike the browser's Reload the prompt offers a real
-// "Update extension" that rebuilds + reinstalls the VSIX for the user (updateExtension below). The
-// passive status pipe never calls this (it must not toast — vscode-four-surfaces).
+// code is baked into the on-disk VSIX), so where a rebuild is possible the prompt offers a real
+// "Update extension" that rebuilds + reinstalls the VSIX for the user (updateExtension below).
+//
+// The buttons come from driftNotice(), i.e. from a LIVE resolution — an installed-from-VSIX copy has
+// nothing to rebuild from, and offering it a button that always errors is worse than not offering one
+// (the review of the /version-rompDir fix, 2026-08-05). Checked HERE as well as at click time: this
+// is where we choose what to show, and the click-time check can't un-draw a button. The passive
+// status pipe never calls this (it must not toast — vscode-four-surfaces).
 declare const __ROMP_BUILD__: number;
 const BUILD_STAMP: number = typeof __ROMP_BUILD__ === "number" ? __ROMP_BUILD__ : 0;
 let buildNotified = false;
 function maybeBuildNotice(dv: unknown): void {
   if (buildNotified || !BUILD_STAMP || typeof dv !== "number" || dv <= BUILD_STAMP) return;
   buildNotified = true;
-  void vscode.window.showInformationMessage(
-    "A newer romp build is available — these panes run an older extension bundle.",
-    "Update extension").then((choice) => {
-      if (choice === "Update extension") void updateExtension();
-    });
+  const notice = driftNotice(resolveInstallTarget());
+  void vscode.window.showInformationMessage(notice.message, ...notice.actions).then((choice) => {
+    if (choice === UPDATE_ACTION) void updateExtension();
+    else if (choice === COPY_ACTION) void copyInstallCommand();
+  });
 }
 
 // Self-update: rebuild + repackage + reinstall the VSIX so a drifted pane heals with a click (the user
@@ -84,14 +100,19 @@ function maybeBuildNotice(dv: unknown): void {
 // shell command from, and drive the prompt that invites the click besides. When this copy isn't a
 // checkout it can't rebuild anything, so we say so and point at the terminal rather than running some
 // other install.sh. Reload stays a user click, never automatic (prefer-reload-banner-not-auto).
+//
+// The resolution is re-done HERE even though the toast already did it: this entry point is also the
+// palette command and the romp menu's Update row, neither of which ever saw a toast, and a toast can
+// sit on screen while the checkout it named is moved or removed. Notice time chooses what to OFFER;
+// click time decides whether to RUN, and only this end may shell out.
 let updating = false;
 async function updateExtension(): Promise<void> {
   if (updating) return;                                    // one run per host (double-click, or toast + palette)
-  const target = resolveInstallScript(ctx?.extensionPath || "", process.env.ROMP_DIR, (p) => fs.existsSync(p));
+  const target = resolveInstallTarget();
   if (!target) {
-    void vscode.window.showErrorMessage(
-      "romp: this copy of the extension can't rebuild itself — it runs from a packaged VSIX, not a romp checkout. " +
-      "Run vscode-extension/install.sh in your romp checkout from a terminal, then reload this window.");
+    // Same wording and the same always-works action as the toast — one voice, one remedy.
+    void vscode.window.showErrorMessage(`romp: ${CANT_REBUILD} ${MANUAL_REMEDY}`, COPY_ACTION)
+      .then((choice) => { if (choice === COPY_ACTION) void copyInstallCommand(); });
     return;
   }
   const extDir = target.dir;
@@ -112,8 +133,8 @@ async function updateExtension(): Promise<void> {
         });
     } else {
       void vscode.window.showErrorMessage(
-        "romp: the extension update didn't complete — " + updateHint(out) +
-        " You can run vscode-extension/install.sh in a terminal.");
+        "romp: the extension update didn't complete — " + updateHint(out) + " " + MANUAL_REMEDY,
+        COPY_ACTION).then((choice) => { if (choice === COPY_ACTION) void copyInstallCommand(); });
     }
   } finally {
     updating = false;
@@ -142,6 +163,16 @@ function updateHint(out: { code: number; text: string }): string {
   if (/No VS Code-family editor CLI found/.test(t)) return "no editor CLI was found to install into.";
   const last = t.trim().split(/\r?\n/).filter((l) => l.trim()).slice(-1)[0] || "";
   return last ? "the build reported: " + last.slice(0, 200) : "see the terminal for details.";
+}
+
+// The action a copy that can't rebuild itself gets instead of a doomed Update button: the exact
+// command on the clipboard, so the remedy is a paste rather than something to retype from a toast
+// that has already faded. Purely client-side (the clipboard is one of the few capabilities this host
+// owns outright), so unlike the update it cannot fail — and it acknowledges immediately.
+function copyInstallCommand(): void {
+  void vscode.env.clipboard.writeText(INSTALL_COMMAND).then(
+    () => vscode.window.setStatusBarMessage(`romp: copied "${INSTALL_COMMAND}" — run it in your romp checkout.`, 6000),
+    () => vscode.window.showWarningMessage(`romp: couldn't reach the clipboard. ${MANUAL_REMEDY}`));
 }
 
 // Ports are CONFIGURABLE so different VS Code windows can attach to different kernels (each kernel

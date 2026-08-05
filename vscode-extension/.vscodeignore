@@ -2,6 +2,7 @@ src/**
 .vscode/**
 node_modules/**
 esbuild.js
+install.sh
 tsconfig.json
 .gitignore
 **/*.map

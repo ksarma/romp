@@ -18968,6 +18968,22 @@ class Handler(BaseHTTPRequestHandler):
                     "colors": pal.colors(_pn), "active": _pn,
                     "palettes": [{"name": k, "label": v["label"], "colors": v["bg"]}
                                  for k, v in pal.PALETTES.items()]}), "application/json", cache="no-cache")
+            if p == "/defaults":
+                # The gear's "Default directory" field. It used to read this off /version, which is
+                # auth-exempt — a path on an untokened route (2026-08-05) — so the value moved here,
+                # behind the gate, rather than disappearing: dropping it from /version alone left the
+                # field rendering blank while the kernel held a real path. The new-session picker
+                # gets the same value on the sessionList socket message; the gear has no socket.
+                return self._send(200, json.dumps({"defaultDir": _tilde(_default_create_dir())}),
+                                  "application/json", cache="no-cache")
+            if p == "/handoff":
+                # Mint a one-time code for a browser we are about to open (see _mint_handoff). The
+                # CLI holds the token and would otherwise put it in the OPENER's argv, where
+                # /proc/<pid>/cmdline hands it to every other account on the machine for as long as
+                # the browser lives. Gated: you must already hold the token to get a code, so this
+                # trades a credential that never expires for one that dies on first use.
+                return self._send(200, json.dumps({"code": _mint_handoff()}),
+                                  "application/json", cache="no-cache")
             if p == "/models":                                # the ONE model + effort choice list — chat statusline, timeline lanes, AND judge settings all read it (the user 2026-07-02: no hardcoding in multiple places)
                 return self._send(200, json.dumps({"models": MODEL_CHOICES, "efforts": EFFORT_CHOICES}), "application/json", cache="no-cache")
             if p == "/usage":                                 # the /usage rate-limit bars, re-read on demand: the rail's
