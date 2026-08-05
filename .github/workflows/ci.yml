@@ -86,6 +86,52 @@ jobs:
       - name: Run bats
         run: bats --print-output-on-failure tests/*.bats
 
+  secrets:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    # Seconds in practice — the cap only exists so a wedged download cannot burn
+    # the 6h default while a required check sits pending.
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # THE load-bearing line. A secret's whole problem is that history is
+          # permanent, so the scan has to see history: the default depth-1
+          # checkout would scan one commit and report "no leaks found" for a repo
+          # with a token three commits back.
+          fetch-depth: 0
+      - name: Install gitleaks
+        env:
+          # Pinned, and checksummed against the publisher's own manifest
+          # (gitleaks_<v>_checksums.txt). Installing the binary rather than the
+          # marketplace action keeps a secret-scanning step from depending on a
+          # third-party action that gets a token, and on a licence key that
+          # gitleaks-action requires for organisation-owned repos.
+          # To bump: change both lines together, or the checksum check fails loudly.
+          GITLEAKS_VERSION: 8.28.0
+          GITLEAKS_SHA256: a65b5253807a68ac0cafa4414031fd740aeb55f54fb7e55f386acb52e6a840eb
+        run: |
+          set -euo pipefail
+          url="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -fsSL "$url" -o gitleaks.tar.gz
+          echo "${GITLEAKS_SHA256}  gitleaks.tar.gz" | sha256sum -c -
+          tar xzf gitleaks.tar.gz gitleaks
+          sudo install gitleaks /usr/local/bin/gitleaks
+          rm -f gitleaks gitleaks.tar.gz
+      - name: Scan every commit
+        # -v prints the file, line and rule of each hit; without it gitleaks
+        # reports a bare count, so a red job would not say what to fix.
+        # --redact so a hit does not reprint the secret into a public build log,
+        # where it would be MORE exposed than in the commit that tripped the
+        # scan. .gitleaks.toml is picked up from the repo root.
+        run: gitleaks git . --no-banner --redact -v --exit-code 1 --log-opts=--all
+      - name: Scan the tree as it stands
+        # The history scan reads commit diffs, so a secret in a file that is
+        # present but untouched by any scanned commit (a submodule tip, a file
+        # added before a rewrite) is only caught by scanning the tree itself.
+        if: always()   # both scans report on a bad push, not just the first to fail
+        run: gitleaks dir . --no-banner --redact -v --exit-code 1
+
   vscode-extension:
     name: vscode-extension (typecheck + test + build)
     runs-on: ubuntu-latest

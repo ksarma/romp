@@ -1,63 +1,132 @@
 #!/usr/bin/env bash
-# romp pre-push hook: refuse to publish a commit that carries a personal identifier.
+# romp pre-push hook: refuse to publish a commit that carries a personal
+# identifier or a credential.
 #
-# The repo may go public and history is permanent, so this scans the COMMITS
-# BEING PUSHED (every new commit's full tree, not the working tree) for the
-# strings in ~/.config/romp/private-strings.txt — one banned string per line,
-# `#` comments and blank lines ignored, matched case-insensitively. With no such
-# file it exits 0 and stays out of your way, so on a clone that never set one up
-# (any contributor's machine) it is a no-op.
+# The repo may go public and history is permanent, so both scans read the
+# COMMITS BEING PUSHED — not the working tree, which is not what gets published
+# and which hides a leak buried in an intermediate commit whose tip is clean.
+# Two scanners, because they catch opposite kinds of thing:
 #
-# Why pushed trees rather than a working-tree scan: the hook is symlinked into
-# the SHARED git hooks dir (by install.sh), so it fires from every worktree —
-# but a working-tree scan is only as good as the tree you happen to push from,
-# and an untracked scanner script exists in only one worktree. Reading the
-# denylist from $HOME and grepping the pushed shas arms every worktree equally,
-# and catches a string buried in an intermediate commit whose tip is clean.
+#   identifiers   strings only YOU can enumerate (names, hostnames, vault
+#                 names), read from ~/.config/romp/private-strings.txt.
+#   credentials   strings NOBODY can enumerate in advance — a token's text is
+#                 unknown until it leaks — matched by gitleaks' rules, tuned by
+#                 the repo's .gitleaks.toml.
 #
-# Bypass a false positive with `git push --no-verify`.
+# Both stay out of the way when unconfigured: no denylist file, no identifier
+# scan; no gitleaks binary, a one-line notice and no credential scan (CI runs
+# the same scan over the full history, so nothing goes unscanned for long). The
+# hook is symlinked into the SHARED git hooks dir by install.sh, so it fires
+# from every worktree, and reading its inputs from $HOME and $PATH rather than
+# from the tree arms every worktree equally.
+#
+# Env: ROMP_PRIVATE_STRINGS (denylist path), ROMP_GITLEAKS (binary path),
+# ROMP_NO_GITLEAKS=1 (skip the credential scan and its notice).
+# Bypass everything for one push with `git push --no-verify`.
 set -euo pipefail
 
-strings_file="${ROMP_PRIVATE_STRINGS:-${XDG_CONFIG_HOME:-$HOME/.config}/romp/private-strings.txt}"
-[ -f "$strings_file" ] || exit 0
-
-# Banned strings: strip comments and surrounding whitespace, drop blanks.
-grep_args=()
-while IFS= read -r line; do
-    line="${line%%#*}"
-    line="${line#"${line%%[![:space:]]*}"}"
-    line="${line%"${line##*[![:space:]]}"}"
-    [ -n "$line" ] && grep_args+=(-e "$line")
-done < "$strings_file"
-[ ${#grep_args[@]} -gt 0 ] || exit 0
-
+# git feeds the ref list on stdin and both scans need it, so read it once.
+refs="$(cat)"
 zero=0000000000000000000000000000000000000000
-blocked=0
-while read -r _local_ref local_sha _remote_ref remote_sha; do
-    [ -n "${local_sha:-}" ] || continue
-    [ "$local_sha" = "$zero" ] && continue          # deleting a remote ref pushes nothing
-    # Only the commits this push actually publishes: what the remote ref lacks,
-    # or (for a new ref) what no remote-tracking ref already has.
-    if [ "$remote_sha" = "$zero" ]; then
-        revs=$(git rev-list "$local_sha" --not --remotes 2>/dev/null || git rev-list "$local_sha")
-    else
-        revs=$(git rev-list "$remote_sha..$local_sha")
-    fi
-    for rev in $revs; do
-        # -I skips binaries; -l lists files; the tree at $rev is what ships.
-        if hits=$(git grep -i -I -l -F "${grep_args[@]}" "$rev" -- 2>/dev/null) && [ -n "$hits" ]; then
-            echo "romp pre-push: commit ${rev:0:10} would publish a personal identifier in:" >&2
-            echo "$hits" | sed "s/^$rev:/  /" >&2
-            blocked=1
-        fi
-    done
-done
+blocked_ids=0
+blocked_creds=0
 
-if [ "$blocked" -ne 0 ]; then
-    echo "" >&2
-    echo "romp pre-push: BLOCKED — a banned string from $strings_file is in a pushed commit." >&2
-    echo "  Replace it with synthetic data (see CONTRIBUTING.md), then push again." >&2
-    echo "  If the string is only in an INTERMEDIATE commit, squash or rewrite the branch." >&2
+# The commits THIS push publishes for one ref: what the remote ref lacks, or
+# (for a new ref) what no remote-tracking ref already has.
+rev_range() {   # <local_sha> <remote_sha> → a rev-list argument list
+    if [ "$2" = "$zero" ]; then
+        printf '%s --not --remotes' "$1"
+    else
+        printf '%s..%s' "$2" "$1"
+    fi
+}
+
+# ── identifiers ───────────────────────────────────────────────────────────
+scan_identifiers() {
+    local strings_file line rev revs hits
+    strings_file="${ROMP_PRIVATE_STRINGS:-${XDG_CONFIG_HOME:-$HOME/.config}/romp/private-strings.txt}"
+    [ -f "$strings_file" ] || return 0
+
+    # Banned strings: strip comments and surrounding whitespace, drop blanks.
+    local grep_args=()
+    while IFS= read -r line; do
+        line="${line%%#*}"
+        line="${line#"${line%%[![:space:]]*}"}"
+        line="${line%"${line##*[![:space:]]}"}"
+        [ -n "$line" ] && grep_args+=(-e "$line")
+    done < "$strings_file"
+    [ ${#grep_args[@]} -gt 0 ] || return 0
+
+    while read -r _local_ref local_sha _remote_ref remote_sha; do
+        [ -n "${local_sha:-}" ] || continue
+        [ "$local_sha" = "$zero" ] && continue      # deleting a remote ref pushes nothing
+        # shellcheck disable=SC2046  # the range is deliberately word-split
+        revs=$(git rev-list $(rev_range "$local_sha" "$remote_sha") 2>/dev/null \
+               || git rev-list "$local_sha")
+        for rev in $revs; do
+            # -I skips binaries; -l lists files; the tree at $rev is what ships.
+            if hits=$(git grep -i -I -l -F "${grep_args[@]}" "$rev" -- 2>/dev/null) && [ -n "$hits" ]; then
+                echo "romp pre-push: commit ${rev:0:10} would publish a personal identifier in:" >&2
+                echo "$hits" | sed "s/^$rev:/  /" >&2
+                blocked_ids=1
+            fi
+        done
+    done <<< "$refs"
+
+    if [ "$blocked_ids" -ne 0 ]; then
+        echo "" >&2
+        echo "romp pre-push: BLOCKED — a banned string from $strings_file is in a pushed commit." >&2
+        echo "  Replace it with synthetic data (see CONTRIBUTING.md), then push again." >&2
+        echo "  If the string is only in an INTERMEDIATE commit, squash or rewrite the branch." >&2
+    fi
+}
+
+# ── credentials ───────────────────────────────────────────────────────────
+scan_credentials() {
+    [ -n "${ROMP_NO_GITLEAKS:-}" ] && return 0
+
+    local gl root cfg range
+    gl="${ROMP_GITLEAKS:-$(command -v gitleaks || true)}"
+    if [ -z "$gl" ] || [ ! -x "$gl" ]; then
+        # Loud rather than silent, but not a blocker: requiring an install to
+        # push would break every clone that never wanted the scanner, and CI
+        # scans the full history regardless.
+        echo "romp pre-push: gitleaks not installed — pushing WITHOUT a secret scan." >&2
+        echo "  Install it (brew install gitleaks / see .github/workflows/ci.yml) or set ROMP_NO_GITLEAKS=1." >&2
+        return 0
+    fi
+
+    root="$(git rev-parse --show-toplevel)"
+    cfg=()
+    [ -f "$root/.gitleaks.toml" ] && cfg=(--config "$root/.gitleaks.toml")
+
+    while read -r _local_ref local_sha _remote_ref remote_sha; do
+        [ -n "${local_sha:-}" ] || continue
+        [ "$local_sha" = "$zero" ] && continue
+        range="$(rev_range "$local_sha" "$remote_sha")"
+        # -v is what prints the file, line and rule; without it gitleaks reports
+        # only a COUNT, which tells you a push was refused but not what to fix.
+        # --redact keeps the secret itself out of terminal scrollback — the
+        # location is what a fix needs, and the value has to be rotated anyway.
+        if ! "$gl" git "$root" --no-banner --redact -v --exit-code 1 \
+                "${cfg[@]}" --log-opts="$range" >&2; then
+            blocked_creds=1
+        fi
+    done <<< "$refs"
+
+    if [ "$blocked_creds" -ne 0 ]; then
+        echo "" >&2
+        echo "romp pre-push: BLOCKED — gitleaks found a credential in a pushed commit." >&2
+        echo "  Treat it as compromised the moment it exists in a commit: ROTATE it, then remove it." >&2
+        echo "  Removing it in a NEW commit is not enough — the old commit still carries it." >&2
+        echo "  A false positive belongs in .gitleaks.toml, narrowly, with a reason." >&2
+    fi
+}
+
+scan_identifiers
+scan_credentials
+
+if [ "$blocked_ids" -ne 0 ] || [ "$blocked_creds" -ne 0 ]; then
     echo "  To bypass for one push (you are sure it is fine): git push --no-verify" >&2
     exit 1
 fi
