@@ -92,6 +92,22 @@ MOCK
     [ "$status" -ne 0 ]
 }
 
+@test "bare romp on a headless box mints no code it will never spend" {
+    # A code is single-use with a 300s TTL. Minting one on a machine that exits before opening
+    # anything leaves a live credential nobody spends, and the curl delays the printed URL — which
+    # is the whole contract on exactly those machines.
+    cat > "$MOCK/curl" <<'MOCK'
+#!/usr/bin/env bash
+echo "$*" >> "$TEST_DIR/curl.log"
+echo '{"code": "HANDOFFCODE1"}'
+MOCK
+    chmod +x "$MOCK/curl"
+    SSH_CONNECTION="1 2 3 4" run "$ROMP_SCRIPT"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"no browser was opened"* ]]
+    [ ! -e "$TEST_DIR/curl.log" ]                # /handoff was never called
+}
+
 @test "bare romp on a remote/ssh box prints the URL but opens nothing" {
     SSH_CONNECTION="10.0.0.1 1 10.0.0.2 22" run "$ROMP_SCRIPT"
     [ "$status" -eq 0 ]

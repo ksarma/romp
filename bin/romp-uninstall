@@ -206,15 +206,25 @@ esac
 [[ "$JUDGE_SCRATCH" != "$HOME" ]]           || _judge_ok=""
 [[ "$HOME" != "$JUDGE_SCRATCH"/* ]]         || _judge_ok=""   # never an ancestor of $HOME
 [[ "$JUDGE_SCRATCH" != *".."* ]]            || _judge_ok=""
+# The guards above read the RAW string; the slug below is derived from the REALPATH, so a symlink
+# at the scratch path escapes every one of them — the validated string and the deleted target are
+# then different paths. With $STATE/judge-scratch symlinked at a checkout, a plain `romp-uninstall
+# --yes` (this section is NOT gated on --purge) resolved the slug to that checkout and deleted the
+# user's OWN Claude Code transcripts for it; a symlink to $HOME would take every home-rooted
+# session. kernel/judge.py's _ensure_judge_scratch lstat-REFUSES a symlinked scratch for exactly
+# this reason, and refusing here matches it: a symlinked scratch never hosted judge runs, so there
+# is nothing romp-owned under it to clean. A symlinked ANCESTOR (a relocated $STATE) stays fine —
+# only the final component is checked, which is what judge.py writes through too.
+[[ ! -L "$JUDGE_SCRATCH" ]]                 || _judge_ok=""
 
 if [[ -z "$_judge_ok" ]]; then
     echo "    skipped: '$JUDGE_SCRATCH' doesn't look like romp's judge scratch — remove it yourself" >&2
 else
     rm -rf "$JUDGE_SCRATCH"
     # The transcripts Claude Code wrote for those judge runs. It names a project dir after the
-    # cwd with '/' → '-'. Derived, not hardcoded, so it follows JUDGE_SCRATCH if that ever moves
-    # — and gated on the same validation above, so this can never resolve to the projects dir
-    # itself or to one of YOUR sessions.
+    # cwd with '/' → '-'. Derived, not hardcoded, so it follows JUDGE_SCRATCH if that ever moves.
+    # The validation above now covers the path this is derived FROM (the symlink check), so the
+    # string that was checked and the target that gets deleted are the same path.
     _judge_proj="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/$_scratch_slug"
     if [[ -d "$_judge_proj" && -n "$_scratch_slug" && "$_judge_proj" != */projects ]]; then
         rm -rf "$_judge_proj"

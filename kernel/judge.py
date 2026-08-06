@@ -8373,8 +8373,13 @@ def _seg_peer_kind(seg):
     # Same pairing rule as _seg_peer: the kind must describe the message whose peer we filed under,
     # or a coordinate from one sender could be read as a delegate from another.
     author = trig.get("author")
-    if isinstance(author, dict) and author.get("kind"):
-        return author["kind"]
+    # Keyed on MID, the same sentinel _seg_peer uses — not on the kind's truthiness. An empty kind
+    # is a legitimate resolved value (`romp mail send` leaves --kind optional, so plain CLI mail
+    # resolves with kind ""), and treating it as "no marker here" sent this back to a rescan that
+    # returned a DIFFERENT message's kind. A coordinate/question read off the wrong message files
+    # the segment fyi with no courier call at all, so a real handover in it is never tracked.
+    if isinstance(author, dict) and author.get("mid"):
+        return author.get("kind") or ""
     pairs = em.postal_pairs(_atom_text(trig))
     return pairs[-1][1] if pairs else ""
 

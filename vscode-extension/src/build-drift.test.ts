@@ -74,6 +74,14 @@ test("updateExtension rebuilds+reinstalls the VSIX, then offers a USER-gated rel
   // palette command and the menu's Update row (neither preceded by a toast), and a toast can sit on
   // screen while the checkout it named moves.
   assert.ok(upd.includes("resolveInstallTarget()"), "the click re-resolves rather than trusting a stale check");
+  // Scan the RESOLVER too, not just updateExtension. This delta moved resolution out into
+  // resolveInstallTarget(), and a guard that still slices only updateExtension stopped covering the
+  // very thing it exists for: a kernel-supplied rompDir reintroduced inside the helper passed this
+  // assertion untouched. The exec target may come from no network-supplied value, wherever it is
+  // computed.
+  const resolver = slice("function resolveInstallTarget", "// Build-drift banner");
+  assert.ok(!/rompDir|fetchJson|homedir/.test(resolver),
+    "the resolver takes nothing off the wire either — /version is unauthenticated");
   assert.ok(!/rompDir|fetchJson|homedir/.test(upd),
     "nothing the kernel reports (and no $HOME expansion of it) reaches the exec target");
   assert.ok(upd.includes("runInstall(script, extDir)") && upd.includes("target.script"),

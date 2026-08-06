@@ -272,6 +272,43 @@ EOF
     [ -d "$CLAUDE_CONFIG_DIR/projects" ]
 }
 
+@test "romp-uninstall: a SYMLINKED judge scratch is refused, never followed to someone's own sessions" {
+    # The guards read the raw $JUDGE_SCRATCH string while the project-dir slug is derived from its
+    # REALPATH, so a symlink there made the validated string and the deleted target two different
+    # paths. Reproduced before the fix: with the scratch symlinked at a checkout, a plain
+    # `romp-uninstall --yes` — this section is NOT gated on --purge — deleted that checkout's own
+    # Claude Code transcripts. kernel/judge.py refuses a symlinked scratch for the same reason.
+    export CLAUDE_CONFIG_DIR="$HOME/.claude"
+    mkdir -p "$TEST_DIR/someone-elses-project"
+    mine="$CLAUDE_CONFIG_DIR/projects/$(_proj_slug "$TEST_DIR/someone-elses-project")"
+    mkdir -p "$mine"
+    echo '{"synthetic":"my own session"}' > "$mine/11111111-2222-3333-4444-555555555555.jsonl"
+
+    ln -s "$TEST_DIR/someone-elses-project" "$ROMP_STATE_DIR/judge-scratch"
+    run "$CLONE/bin/romp-uninstall" --yes
+    [ "$status" -eq 0 ]                              # skipped loudly, never aborted
+    [[ "$output" == *"skipped"* ]]
+    [ -f "$mine/11111111-2222-3333-4444-555555555555.jsonl" ]
+}
+
+@test "romp-uninstall: a relocated state dir (symlinked ANCESTOR) is still cleaned" {
+    # Only the final component is checked. A symlinked $STATE is a legitimate setup — it is where
+    # judge.py writes too — so refusing that would be an over-correction.
+    export CLAUDE_CONFIG_DIR="$HOME/.claude"
+    mkdir -p "$TEST_DIR/elsewhere/romp"
+    rm -rf "$ROMP_STATE_DIR"
+    ln -s "$TEST_DIR/elsewhere/romp" "$ROMP_STATE_DIR"
+    scratch="$ROMP_STATE_DIR/judge-scratch"
+    mkdir -p "$scratch"
+    proj="$CLAUDE_CONFIG_DIR/projects/$(_proj_slug "$scratch")"
+    mkdir -p "$proj"
+    echo '{"synthetic":"judge call"}' > "$proj/11111111-2222-3333-4444-555555555555.jsonl"
+
+    run "$CLONE/bin/romp-uninstall" --yes --purge
+    [ "$status" -eq 0 ]
+    [ ! -d "$proj" ]
+}
+
 @test "romp-uninstall: a mangled judge scratch can never resolve to the projects dir itself" {
     export CLAUDE_CONFIG_DIR="$HOME/.claude"
     mine="$CLAUDE_CONFIG_DIR/projects/-home-someone-notes-api"

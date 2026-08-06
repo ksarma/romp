@@ -15,6 +15,8 @@
 Synthetic only — no real session data; the gate decision touches no session state.
 Mirrors tests/test_kernel_ws_auth.py's module load order.
 """
+import io
+import json
 import os
 import time
 import unittest
@@ -41,6 +43,36 @@ def _inst(peer="127.0.0.1", headers=None):
     h.client_address = None if peer is None else (peer, 0)
     h.headers = dict(headers or {})
     return h
+
+
+def _serve_get(path, headers=None):
+    """Drive the REAL do_GET dispatcher over a fake socket and return (status, body).
+
+    Asserting on a route's position in the source cannot catch a route served on the wrong side of
+    the gate; asking the handler is the only thing that can."""
+    h = km.Handler.__new__(km.Handler)
+    h.client_address = ("127.0.0.1", 0)
+    h.headers = dict(headers or {})
+    h.path = path
+    h.command = "GET"
+    h.request_version = "HTTP/1.1"
+    h.wfile = io.BytesIO()
+    h.rfile = io.BytesIO()
+    h.close_connection = True
+    captured = {}
+
+    def send_response(code, *a):
+        captured["status"] = code
+
+    def send_header(k, v):
+        captured.setdefault("headers", {})[k] = v
+
+    h.send_response = send_response
+    h.send_header = send_header
+    h.end_headers = lambda: None
+    h.log_message = lambda *a: None
+    h.do_GET()
+    return captured.get("status"), h.wfile.getvalue().decode("utf-8", "replace")
 
 
 def _auth(peer="127.0.0.1", headers=None, token=None):
@@ -174,21 +206,38 @@ class TokenRequiredEverywhere(unittest.TestCase):
         self.assertNotIn(stale, km._HANDOFF)
         self.assertLessEqual(len(km._HANDOFF), before + 1)
 
-    def test_the_handoff_route_is_gated(self):
-        # It mints a credential, so it must cost a credential: you have to already hold the token
-        # to get a code. Otherwise the CLI's fix would hand anyone on the machine a way in.
-        src = Path(BIN, "romp-kernel").read_text()
-        i_auth = src.index("ok, self._set_cookie, why = self._authorize(q)")
-        i_route = src.index('if p == "/handoff":')
-        self.assertGreater(i_route, i_auth,
-                           "/handoff must be served AFTER the auth gate, never beside /healthz")
+    def test_an_uncredentialed_request_mints_no_handoff_code(self):
+        """/handoff mints a credential, so reaching it must cost one.
 
-    def test_defaults_route_is_gated_and_carries_the_path(self):
-        # The gear's field moved here BECAUSE /version is auth-exempt and must stay path-free.
-        # Landing it on another ungated route would have moved the problem, not fixed it.
-        src = Path(BIN, "romp-kernel").read_text()
-        i_auth = src.index("ok, self._set_cookie, why = self._authorize(q)")
-        self.assertGreater(src.index('if p == "/defaults":'), i_auth)
+        This replaces a source-position assertion that could not fail: it compared the route's
+        offset against `src.index("ok, self._set_cookie, why = self._authorize(q)")`, and that line
+        occurs three times — do_HEAD's copy comes first, so the anchor was another function's gate
+        and the comparison held even with the route moved beside the auth-exempt /healthz. Drive
+        the real dispatcher instead, and count the codes: a refusal that still minted one would
+        leave a live credential behind for its whole TTL."""
+        for headers in ({}, {"Origin": "http://127.0.0.1:5173", "Host": "127.0.0.1:%d" % km.PORT},
+                        {"Cookie": "romp_token=wrong"}):
+            before = len(km._HANDOFF)
+            status, body = _serve_get("/handoff", headers)
+            self.assertEqual(status, 403, "no credential must not reach /handoff (%r)" % headers)
+            self.assertNotIn("code", body)
+            self.assertEqual(len(km._HANDOFF), before, "a refused request must mint nothing")
+
+    def test_a_credentialed_request_does_get_a_code(self):
+        # The other half: the gate must not be so tight that `romp` cannot open a browser.
+        before = len(km._HANDOFF)
+        status, body = _serve_get("/handoff", {"X-Romp-Token": TOK})
+        self.assertEqual(status, 200)
+        self.assertIn("code", json.loads(body))
+        self.assertEqual(len(km._HANDOFF), before + 1)
+
+    def test_defaults_needs_a_credential_and_carries_the_path(self):
+        status, _ = _serve_get("/defaults", {})
+        self.assertEqual(status, 403, "a filesystem path must not ride an ungated route")
+        status, body = _serve_get("/defaults", {"X-Romp-Token": TOK})
+        self.assertEqual(status, 200)
+        # ...and it really carries the value, so the gear's field is not silently empty.
+        self.assertIsInstance(json.loads(body).get("defaultDir"), str)
         self.assertNotIn("defaultDir", km._version_info())
 
     def test_header_authorizes(self):

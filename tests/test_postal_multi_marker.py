@@ -82,6 +82,27 @@ class OneDeliveryTwoMessages(unittest.TestCase):
         self.assertEqual(kind, "question", "the kind must be the SAME message's too")
         self.assertEqual(INDEX[mid], peer, "the id resolves back to the peer it was filed under")
 
+    def test_an_empty_declared_kind_is_a_value_not_a_missing_marker(self):
+        """`romp mail send` leaves --kind optional, so a resolved message legitimately carries "".
+        Reading that as "no marker on the author" sent the lookup back to a rescan, which returned
+        a DIFFERENT message's kind — and a coordinate/question read off the wrong message files the
+        segment fyi with no courier call at all, so a real handover in it is never tracked.
+
+        The second message here is unresolvable on purpose: mail sent from a plain terminal has no
+        session identity, so its row is skipped when the postal index is built."""
+        text = ("take the migration\n<!-- romp-msg-id: %s -->\n"
+                "which auth method?\n<!-- romp-msg-id: %s -->\n<!-- romp-msg-kind: question -->\n"
+                % (MID_BOB, MID_ALICE))
+        atom = {"uuid": "u1", "type": "user",
+                "message": {"role": "user", "content": [{"type": "text", "text": text}]},
+                "author": em.author_of([{"type": "text", "text": text}], "sdk",
+                                       {MID_BOB: BOB}, sdk_human=True)}   # ALICE deliberately absent
+        seg = {"atoms": [atom], "trigger": "u1"}
+        peer, mid = jd._seg_peer(seg)
+        self.assertEqual((peer, mid), (BOB, MID_BOB))
+        self.assertEqual(jd._seg_peer_kind(seg), "",
+                         "an undeclared kind is that message's answer — never the other message's")
+
     def test_a_single_message_delivery_is_unchanged(self):
         text = ("just this one\n<!-- romp-msg-id: %s -->\n<!-- romp-msg-kind: delegate -->\n" % MID_BOB)
         seg = _seg(text)
