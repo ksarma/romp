@@ -702,11 +702,17 @@ def _judge_run(model, sys_prompt, user, effort=None, judge=None, tier="triage", 
             # No scratch we can keep private → no judge call at all. The transcript this call would
             # write is session content, so falling back to /tmp or $HOME would publish it to whoever
             # owns the directory instead — the error is the useful outcome here. One row per distinct
-            # reason: a broken scratch is a per-call failure and would otherwise storm the error log.
+            # reason: it would otherwise storm the error log.
             if _SCRATCH_FAIL_LOGGED.get("why") != str(e):
                 _SCRATCH_FAIL_LOGGED["why"] = str(e)
                 sys.stderr.write("romp-judge: %s — judge calls skipped until it is fixed\n" % e)
                 _log_judge_error(judge or tier, fsid, "scratch", note=str(e)[:200])
+            # SKIPPED, not failed. A broken scratch is not the model's verdict, so ride the same paused
+            # flag the rate gate (:677) and retry-pause (:661) set. Without it the distiller/briefer/
+            # staller count each "" toward DISTILL_FAIL_CAP and blank the card's summary to the ""
+            # sentinel after three passes — irreversible content loss from a permissions problem
+            # (found on re-review 2026-08-06; the pre-fix test asserted the row but never this flag).
+            _judge_ctx.paused = True
             return ""
         try:
             p = subprocess.run(_judge_cmd(model, sys_prompt, effort), input=user,

@@ -96,6 +96,48 @@ upstream_commit() {  # <file> <text> <subject>
     [[ "$output" == *"PUSHABLE"* ]]
 }
 
+@test "--check catches origin's PUSH url repointed at the project" {
+    # The repo_id check only reads origin's FETCH url; a separately-set push url that aims at the
+    # project sends a bare push there while --check used to print the all-clear.
+    "$REPO/scripts/fork-remotes.sh"
+    git -C "$REPO" remote set-url --push origin "$UP"
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"origin PUSHES to"* ]]
+    # ...and configuring again fixes it, so the "run fork-remotes.sh to fix" advice is honest.
+    "$REPO/scripts/fork-remotes.sh"
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -eq 0 ]
+}
+
+@test "--check catches a branch.pushRemote that overrides pushDefault" {
+    # branch.<name>.pushRemote wins over remote.pushDefault, so a bare push from that branch can land
+    # on the project even with pushDefault=origin. --check must inspect it, and configure must clear it.
+    "$REPO/scripts/fork-remotes.sh"
+    git -C "$REPO" remote add proj "$UP"
+    git -C "$REPO" config branch.main.pushRemote proj
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -ne 0 ]
+    # git lowercases config keys in --get-regexp output, so match on the stable message tail.
+    [[ "$output" == *"a bare push from that branch would not go to your fork"* ]]
+    "$REPO/scripts/fork-remotes.sh"
+    run git -C "$REPO" config --get branch.main.pushRemote
+    [ "$status" -ne 0 ]                              # unset by configure
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -eq 0 ]
+}
+
+@test "--check leaves a branch.pushRemote that already points at origin alone" {
+    # Pointing a branch's pushRemote AT the fork is harmless and legitimate — the guard must not
+    # flag or strip it, only the ones aimed elsewhere.
+    "$REPO/scripts/fork-remotes.sh"
+    git -C "$REPO" config branch.main.pushRemote origin
+    run "$REPO/scripts/fork-remotes.sh" --check
+    [ "$status" -eq 0 ]
+    "$REPO/scripts/fork-remotes.sh"
+    [ "$(git -C "$REPO" config --get branch.main.pushRemote)" = "origin" ]
+}
+
 @test "it refuses a clone whose origin is the project itself" {
     git -C "$REPO" remote set-url origin "$UP"
     run "$REPO/scripts/fork-remotes.sh"
