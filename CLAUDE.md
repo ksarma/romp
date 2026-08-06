@@ -1,5 +1,9 @@
 # romp — repo instructions
 
+> **Picking up work in progress?** `HANDOFF.md` has the current state of the security branch
+> (PR #1): what landed, what is still open with file:line, the checks that need a live machine,
+> and the decisions that are the user's to make. Read it after this file.
+
 ## Philosophy
 The bottleneck in AI coding is human attention. romp lets one person direct many
 agents by spending that attention where it counts and surfacing only what is
