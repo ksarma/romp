@@ -652,6 +652,19 @@ _romp_token() {
     cat "${ROMP_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/romp}/serve-token" 2>/dev/null || true
 }
 
+# The auth header as a curl CONFIG on stdin, for `curl --config -`. Never `-H "X-Romp-Token: $tok"`:
+# argv is world-readable through /proc/<pid>/cmdline, so every other account on the machine can read
+# the token off a running curl — and the token is full control of every session (2026-08-05 security
+# pass). Short-lived processes make that a race rather than a certainty, which is not a boundary.
+# curl's config syntax is quoted, so a token carrying " or \ (only possible via ROMP_SERVE_TOKEN —
+# the minted one is base64url) is escaped rather than silently truncating the header.
+_romp_token_cfg() {
+    local _t _e
+    _t="$(_romp_token)"
+    _e="${_t//\\/\\\\}"; _e="${_e//\"/\\\"}"
+    printf 'header = "X-Romp-Token: %s"\n' "$_e"
+}
+
 # `romp url` — print the tokened dashboard URL, nothing else (scripting/piping; bare `romp` is the
 # human entry point). The first open seeds a year-long cookie; after that the bare URL works.
 # `--url` stays as a silent alias (agent-facing text names it).
@@ -701,7 +714,7 @@ if [[ "${1:-}" == "sessions" ]]; then
         *)      echo "usage: romp sessions [--json]" >&2; exit 2 ;;
     esac
     _kport="${ROMP_KERNEL_PORT:-29855}"
-    _resp="$(curl -sf -m 10 "http://127.0.0.1:$_kport/sessions" -H "X-Romp-Token: $(_romp_token)")" \
+    _resp="$(_romp_token_cfg | curl -sf -m 10 --config - "http://127.0.0.1:$_kport/sessions")" \
         || { echo "romp sessions: kernel not reachable on :$_kport (is romp running?)" >&2; exit 1; }
     if $_json; then
         printf '%s\n' "$_resp"
@@ -731,6 +744,14 @@ if [[ $# -eq 0 ]]; then
         echo "romp: no serve token yet; the kernel mints it. Is romp running? (the login service starts it; \`romp up\` runs it by hand)" >&2
         exit 1
     fi
+    # Two URLs on purpose. The PRINTED one carries the token, because it is the thing you copy to
+    # a phone and it lands in your terminal, not in any process's argv. The OPENED one carries a
+    # one-time handoff code instead: the opener's argv is world-readable through /proc/<pid>/cmdline
+    # for as long as the browser lives, so a token there is full control of every session handed to
+    # any other account on the machine (2026-08-05). A code is spent the moment the page loads.
+    # No kernel answering /handoff (not up yet, older build) → open the BARE url: an established
+    # cookie still carries, and a cold browser lands on the login page, which tells you to run
+    # `romp url`. Never fall back to putting the token in argv.
     _url="http://127.0.0.1:$_kport/?token=$_tok"
     # Is this a machine we could plausibly open a browser on? An ssh session or a Linux box with no
     # DISPLAY is headless — opening would silently do nothing, so say so instead of faking success.
@@ -751,6 +772,19 @@ if [[ $# -eq 0 ]]; then
         echo ""
         exit 0
     fi
+    # Minted only now, AFTER the headless early-exit above: a code is single-use with a 300s TTL,
+    # so minting one on a box that will never open a browser leaves a live credential nobody spends
+    # — and the curl would delay the printed URL, which is the contract on exactly those machines.
+    # `|| true` is load-bearing under `set -euo pipefail`: no kernel answering means curl exits
+    # non-zero, pipefail propagates it, and the command substitution would kill `romp` outright
+    # instead of falling back — which is exactly what a machine whose kernel is not up yet does.
+    _code="$(_romp_token_cfg | curl -sf -m 3 --config - "http://127.0.0.1:$_kport/handoff" 2>/dev/null \
+             | sed -n 's/.*"code"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' || true)"
+    if [[ -n "$_code" ]]; then
+        _open_url="http://127.0.0.1:$_kport/?c=$_code"
+    else
+        _open_url="http://127.0.0.1:$_kport/"
+    fi
     # Local machine: try to open it. Never fail the command if the opener is missing — the URL above
     # is the real deliverable (the user always has a working way in).
     # ROMP_OPENER overrides which command opens the URL; set it EMPTY to open nothing
@@ -764,7 +798,7 @@ if [[ $# -eq 0 ]]; then
     elif command -v open >/dev/null 2>&1; then _opener=(open)
     elif command -v xdg-open >/dev/null 2>&1; then _opener=(xdg-open)
     else _opener=(); fi
-    if [[ ${#_opener[@]} -gt 0 ]] && "${_opener[@]}" "$_url" >/dev/null 2>&1; then
+    if [[ ${#_opener[@]} -gt 0 ]] && "${_opener[@]}" "$_open_url" >/dev/null 2>&1; then
         echo "    (opened in your browser — the link above still works if it didn't)"
     else
         echo "    (couldn't open a browser automatically — copy the link above)"
@@ -782,8 +816,7 @@ if [[ "${1:-}" =~ ^(checkin|checkout)$ ]]; then
     if [[ -z "$_host" ]]; then echo "usage: romp $_verb <host>" >&2; exit 2; fi
     _kport="${ROMP_KERNEL_PORT:-29855}"
     _on="false"; [[ "$_verb" == "checkin" ]] && _on="true"
-    _resp="$(curl -sf -m 10 -X POST "http://127.0.0.1:$_kport/tunnels/checkin" \
-                  -H "X-Romp-Token: $(_romp_token)" \
+    _resp="$(_romp_token_cfg | curl -sf -m 10 --config - -X POST "http://127.0.0.1:$_kport/tunnels/checkin" \
                   -H 'Content-Type: application/json' -d "{\"host\": \"$_host\", \"on\": $_on}")" \
         || { echo "romp $_verb: kernel not reachable on :$_kport (is romp running?)" >&2; exit 1; }
     if [[ "$_resp" == *'"ok": true'* || "$_resp" == *'"ok":true'* ]]; then
@@ -813,8 +846,7 @@ if [[ "${1:-}" =~ ^(--)?(send|interrupt|end)$ ]]; then
     else
         _payload="$(python3 -c 'import json,sys; print(json.dumps({"name": sys.argv[1]}))' "$_who")"
     fi
-    _resp="$(curl -sf -m 10 -X POST "http://127.0.0.1:$_kport/$_verb" \
-                  -H "X-Romp-Token: $(_romp_token)" \
+    _resp="$(_romp_token_cfg | curl -sf -m 10 --config - -X POST "http://127.0.0.1:$_kport/$_verb" \
                   -H 'Content-Type: application/json' -d "$_payload")" \
         || { echo "romp $_verb: kernel not reachable on :$_kport (is romp running?)" >&2; exit 1; }
     if [[ "$_resp" == *'"ok": true'* || "$_resp" == *'"ok":true'* ]]; then
@@ -1081,8 +1113,7 @@ if [[ -n "$session_arg" ]] && ! $use_tmux && ! $resume; then
         exit 1
     fi
     _payload="$(python3 -c 'import json,sys; print(json.dumps({"name": sys.argv[1], "dir": sys.argv[2], "backend": "sdk"}))' "$session_arg" "$_dir")"
-    _resp="$(curl -sf -m 15 -X POST "http://127.0.0.1:$_kport/new" \
-                  -H "X-Romp-Token: $_tok" \
+    _resp="$(_romp_token_cfg | curl -sf -m 15 --config - -X POST "http://127.0.0.1:$_kport/new" \
                   -H 'Content-Type: application/json' -d "$_payload")" \
         || { echo "romp new: kernel not reachable on :$_kport (is romp running?). \`romp new -t $session_arg\` starts a terminal session without it." >&2; exit 1; }
     if [[ "$_resp" == *'"ok": true'* || "$_resp" == *'"ok":true'* ]]; then

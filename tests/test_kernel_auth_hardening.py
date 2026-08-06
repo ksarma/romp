@@ -15,8 +15,12 @@
 Synthetic only — no real session data; the gate decision touches no session state.
 Mirrors tests/test_kernel_ws_auth.py's module load order.
 """
+import io
+import json
 import os
+import time
 import unittest
+from pathlib import Path
 from importlib.machinery import SourceFileLoader
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -39,6 +43,36 @@ def _inst(peer="127.0.0.1", headers=None):
     h.client_address = None if peer is None else (peer, 0)
     h.headers = dict(headers or {})
     return h
+
+
+def _serve_get(path, headers=None):
+    """Drive the REAL do_GET dispatcher over a fake socket and return (status, body).
+
+    Asserting on a route's position in the source cannot catch a route served on the wrong side of
+    the gate; asking the handler is the only thing that can."""
+    h = km.Handler.__new__(km.Handler)
+    h.client_address = ("127.0.0.1", 0)
+    h.headers = dict(headers or {})
+    h.path = path
+    h.command = "GET"
+    h.request_version = "HTTP/1.1"
+    h.wfile = io.BytesIO()
+    h.rfile = io.BytesIO()
+    h.close_connection = True
+    captured = {}
+
+    def send_response(code, *a):
+        captured["status"] = code
+
+    def send_header(k, v):
+        captured.setdefault("headers", {})[k] = v
+
+    h.send_response = send_response
+    h.send_header = send_header
+    h.end_headers = lambda: None
+    h.log_message = lambda *a: None
+    h.do_GET()
+    return captured.get("status"), h.wfile.getvalue().decode("utf-8", "replace")
 
 
 def _auth(peer="127.0.0.1", headers=None, token=None):
@@ -85,6 +119,126 @@ class TokenRequiredEverywhere(unittest.TestCase):
         ok, cookie, _ = _auth(headers={"Cookie": "romp_token=" + TOK})
         self.assertTrue(ok)
         self.assertIsNone(cookie)         # already has it — no re-set
+
+    def test_cookie_denied_from_a_foreign_origin(self):
+        """The loopback-dev-server hole. Cookies are scoped by host and NOT by port
+        (RFC 6265 8.5), so a page served by anything else on 127.0.0.1 — an agent-cloned
+        repo's dev server — is same-site with the dashboard and the browser attaches this
+        cookie for it, SameSite=Strict included. Before this gate that page could open /ws
+        (which streams every session and accepts sendMessage) with no credential of its own."""
+        ok, _, why = _auth(headers={"Cookie": "romp_token=" + TOK,
+                                    "Origin": "http://127.0.0.1:5173",
+                                    "Host": "127.0.0.1:%d" % km.PORT})
+        self.assertFalse(ok)
+        self.assertEqual(why, "cross-site origin")
+
+    def test_cookie_still_authorizes_the_dashboards_own_origin(self):
+        # The shipped dashboard socket (kernel.py's connect(): location.host, no token)
+        # rides the cookie same-origin — the gate must not cost it anything.
+        host = "127.0.0.1:%d" % km.PORT
+        ok, _, _ = _auth(headers={"Cookie": "romp_token=" + TOK,
+                                  "Origin": "http://" + host, "Host": host})
+        self.assertTrue(ok)
+
+    def test_cookie_still_authorizes_tailnet_self_access(self):
+        # Reaching the dashboard from the phone over the tailnet: Origin and Host are both
+        # the tailnet name, which is same-origin and must keep working.
+        ok, _, _ = _auth(headers={"Cookie": "romp_token=" + TOK,
+                                  "Origin": "http://TESTHOST:%d" % km.PORT,
+                                  "Host": "TESTHOST:%d" % km.PORT})
+        self.assertTrue(ok)
+
+    def test_cookie_still_authorizes_the_vscode_webview(self):
+        ok, _, _ = _auth(headers={"Cookie": "romp_token=" + TOK,
+                                  "Origin": "vscode-webview://abc123"})
+        self.assertTrue(ok)
+
+    def test_explicit_token_still_bypasses_origin_for_federation(self):
+        # The bypass that must SURVIVE: a foreign-origin browser presenting the token
+        # explicitly is federation, not a drive-by page. Both explicit forms keep it.
+        ok, _, _ = _auth(headers={"Origin": "http://evil.example"}, token=TOK)
+        self.assertTrue(ok)
+        ok, _, _ = _auth(headers={"Origin": "http://evil.example", "X-Romp-Token": TOK})
+        self.assertTrue(ok)
+
+    def test_a_one_time_handoff_code_authorizes_and_sets_the_cookie(self):
+        """What `romp` puts in the browser's argv. The URL we open is readable by every other
+        account on the machine (/proc/<pid>/cmdline) for the browser's whole lifetime, so it
+        carries a code that does one job — seed the cookie — instead of the long-lived token."""
+        code = km._mint_handoff()
+        ok, cookie, _ = _auth(headers={}, token=None)
+        self.assertFalse(ok, "sanity: no credential without the code")
+        h = _inst("127.0.0.1", {})
+        ok, cookie, _ = h._authorize({"c": [code]})
+        self.assertTrue(ok)
+        self.assertEqual(cookie, TOK, "the handoff's whole purpose is to seed the cookie")
+
+    def test_a_handoff_code_works_exactly_once(self):
+        # The leak this defends against is a URL that persists; a code someone reads later must
+        # already be spent.
+        code = km._mint_handoff()
+        self.assertTrue(_inst("127.0.0.1", {})._authorize({"c": [code]})[0])
+        ok, _, why = _inst("127.0.0.1", {})._authorize({"c": [code]})
+        self.assertFalse(ok)
+        self.assertIn("token", why)
+
+    def test_an_expired_handoff_code_is_refused(self):
+        code = km._mint_handoff()
+        with km._HANDOFF_LOCK:
+            km._HANDOFF[code] = time.time() - 1        # as if the browser took too long to open
+        self.assertFalse(_inst("127.0.0.1", {})._authorize({"c": [code]})[0])
+
+    def test_an_unminted_code_is_refused(self):
+        self.assertFalse(_inst("127.0.0.1", {})._authorize({"c": ["not-a-real-code"]})[0])
+        self.assertFalse(_inst("127.0.0.1", {})._authorize({"c": [""]})[0])
+
+    def test_the_handoff_is_not_the_token(self):
+        # A code must never be the token itself, or the leak it exists to prevent is unchanged.
+        self.assertNotEqual(km._mint_handoff(), TOK)
+
+    def test_expired_codes_do_not_accumulate(self):
+        # A browser that never opens leaves its code behind; minting must sweep them.
+        before = len(km._HANDOFF)
+        stale = km._mint_handoff()
+        with km._HANDOFF_LOCK:
+            km._HANDOFF[stale] = time.time() - 1
+        km._mint_handoff()
+        self.assertNotIn(stale, km._HANDOFF)
+        self.assertLessEqual(len(km._HANDOFF), before + 1)
+
+    def test_an_uncredentialed_request_mints_no_handoff_code(self):
+        """/handoff mints a credential, so reaching it must cost one.
+
+        This replaces a source-position assertion that could not fail: it compared the route's
+        offset against `src.index("ok, self._set_cookie, why = self._authorize(q)")`, and that line
+        occurs three times — do_HEAD's copy comes first, so the anchor was another function's gate
+        and the comparison held even with the route moved beside the auth-exempt /healthz. Drive
+        the real dispatcher instead, and count the codes: a refusal that still minted one would
+        leave a live credential behind for its whole TTL."""
+        for headers in ({}, {"Origin": "http://127.0.0.1:5173", "Host": "127.0.0.1:%d" % km.PORT},
+                        {"Cookie": "romp_token=wrong"}):
+            before = len(km._HANDOFF)
+            status, body = _serve_get("/handoff", headers)
+            self.assertEqual(status, 403, "no credential must not reach /handoff (%r)" % headers)
+            self.assertNotIn("code", body)
+            self.assertEqual(len(km._HANDOFF), before, "a refused request must mint nothing")
+
+    def test_a_credentialed_request_does_get_a_code(self):
+        # The other half: the gate must not be so tight that `romp` cannot open a browser.
+        before = len(km._HANDOFF)
+        status, body = _serve_get("/handoff", {"X-Romp-Token": TOK})
+        self.assertEqual(status, 200)
+        self.assertIn("code", json.loads(body))
+        self.assertEqual(len(km._HANDOFF), before + 1)
+
+    def test_defaults_needs_a_credential_and_carries_the_path(self):
+        status, _ = _serve_get("/defaults", {})
+        self.assertEqual(status, 403, "a filesystem path must not ride an ungated route")
+        status, body = _serve_get("/defaults", {"X-Romp-Token": TOK})
+        self.assertEqual(status, 200)
+        # ...and it really carries the value, so the gear's field is not silently empty.
+        self.assertIsInstance(json.loads(body).get("defaultDir"), str)
+        self.assertNotIn("defaultDir", km._version_info())
 
     def test_header_authorizes(self):
         # X-Romp-Token: the CLI/hook/daemon form (read from the 0600 file). Safe to accept

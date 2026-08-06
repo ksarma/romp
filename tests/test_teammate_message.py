@@ -71,9 +71,38 @@ class AuthorClassification(unittest.TestCase):
 
     def test_the_postal_marker_still_wins_for_a_romp_peer_message(self):
         peer = "aaaa-bbbb"
-        body = "COORDINATE: heads-up\nromp-msg-id: 1783.1_2.TESTHOST"
+        body = "COORDINATE: heads-up\n<!-- romp-msg-id: 1783.1_2.TESTHOST -->"
         self.assertEqual(em.author_of(_blocks(body), "sdk", {"1783.1_2.TESTHOST": peer}, sdk_human=True),
-                         {"peer": peer}, "a romp postal message is a peer, not a native teammate message")
+                         {"peer": peer, "mid": "1783.1_2.TESTHOST", "kind": ""},
+                         "a romp postal message is a peer, not a native teammate message")
+
+    def test_text_that_merely_mentions_the_marker_is_not_a_delivery(self):
+        """The 2026-07-08 bug class, which POSTAL_RE had kept: a bare word-match authored ANY text
+        saying "romp-msg-id: <id>" to that peer. Every delivered body carries the marker, so an agent
+        quoting the mail it just received — or any tool output echoing one (a fetched page, a grep of
+        a transcript) — was read as a delivery FROM the peer. Only romp's comment form counts now."""
+        peer = "aaaa-bbbb"
+        idx = {"1783.1_2.TESTHOST": peer}
+        for text in ("I got a message with romp-msg-id: 1783.1_2.TESTHOST in it — should I reply?",
+                     "the log line was `romp-msg-id: 1783.1_2.TESTHOST`",
+                     "romp-msg-id: 1783.1_2.TESTHOST"):
+            got = em.author_of(_blocks(text), "sdk", idx, sdk_human=True)
+            self.assertNotEqual(got.get("peer") if isinstance(got, dict) else None, peer,
+                                "a mention is not a delivery: %r" % text)
+
+    def test_a_quoted_marker_cannot_outrank_the_real_trailing_one(self):
+        """A delivery appends its marker AFTER the body, so when the body itself carries one — a peer
+        forwarding mail it received — the real sender's marker is the LAST. Taking the first let the
+        quoted id name the author, i.e. one peer could dress its message as another's."""
+        real, quoted = "1783.1_2.TESTHOST", "1600.9_9.TESTHOST"
+        idx = {real: "real-sender", quoted: "someone-else"}
+        body = ("forwarding what I got:\n<!-- romp-msg-id: %s -->\n"
+                "-- end quote --\n<!-- romp-msg-id: %s -->" % (quoted, real))
+        got = em.author_of(_blocks(body), "sdk", idx, sdk_human=True)
+        self.assertEqual(got.get("peer"), "real-sender")
+        # ...and the MARKER travels with the sender. Checking the peer alone let the id and kind
+        # drift to the quoted message, which is exactly the split this delta was fixing.
+        self.assertEqual(got.get("mid"), real, "the id must be the real sender's, not the quoted one")
 
     def test_teammate_is_a_non_opener_so_it_pins_no_goal(self):
         # like 'system': a teammate ping folds into the current turn, never opens one — so high-frequency

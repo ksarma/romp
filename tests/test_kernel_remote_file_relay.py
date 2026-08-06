@@ -41,6 +41,7 @@ class _FakeRemoteFileHandler(BaseHTTPRequestHandler):
     """The attached host's kernel behind the ssh -L port, /file route only: serves PNG_BYTES for
     path=/tmp/plot.png (recording the request line), 404s anything else."""
     requests = []               # class-level: the recorded request lines
+    ctype = "image/png"         # what this remote CLAIMS the bytes are (a hostile one lies)
 
     def _serve(self, head):
         _FakeRemoteFileHandler.requests.append(self.path)
@@ -51,7 +52,7 @@ class _FakeRemoteFileHandler(BaseHTTPRequestHandler):
             self.end_headers()
             return
         self.send_response(200)
-        self.send_header("Content-Type", "image/png")
+        self.send_header("Content-Type", _FakeRemoteFileHandler.ctype)
         self.send_header("Content-Length", str(len(PNG_BYTES)))
         self.end_headers()
         if not head:
@@ -75,6 +76,7 @@ class RemoteFileRelay(unittest.TestCase):
         self.fake = ThreadingHTTPServer(("127.0.0.1", 0), _FakeRemoteFileHandler)
         threading.Thread(target=self.fake.serve_forever, daemon=True).start()
         _FakeRemoteFileHandler.requests = []
+        _FakeRemoteFileHandler.ctype = "image/png"
         self._saved_remotes = dict(km._remotes)
 
     def tearDown(self):
@@ -133,6 +135,36 @@ class RemoteFileRelay(unittest.TestCase):
         self._register("gpu1", self.fake.server_address[1])
         status, _, _ = self._get("/remote/gpu1/file?path=%2Ftmp%2Fgone.png")
         self.assertEqual(status, 404)
+
+    def test_a_lying_remote_cannot_choose_the_content_type(self):
+        """An attached host is trusted to serve its own files, not to decide how this browser
+        interprets them. Mirroring its Content-Type let a compromised remote answer text/html for
+        a path the preview lightbox opens in a SAME-ORIGIN, unsandboxed iframe — script on the
+        dashboard's origin, with the token cookie attached. The extension decides the type here."""
+        self._register("gpu1", self.fake.server_address[1])
+        _FakeRemoteFileHandler.ctype = "text/html"
+        status, body, headers = self._get("/remote/gpu1/file?path=%2Ftmp%2Fplot.png")
+        self.assertEqual(status, 200)
+        self.assertEqual(body, PNG_BYTES)
+        self.assertEqual(headers.get("Content-Type"), "image/png")
+        self.assertNotIn("html", (headers.get("Content-Type") or "").lower())
+
+    def test_the_relay_declines_an_extension_the_local_route_would_decline(self):
+        # The relay must never widen what a preview may render: an extension outside
+        # _PREVIEW_MIME 404s HERE, and the remote is not even asked.
+        self._register("gpu1", self.fake.server_address[1])
+        status, _, _ = self._get("/remote/gpu1/file?path=%2Ftmp%2Fevil.html")
+        self.assertEqual(status, 404)
+        self.assertEqual(_FakeRemoteFileHandler.requests, [],
+                         "an unpreviewable extension must not reach the remote at all")
+
+    def test_responses_forbid_content_type_sniffing(self):
+        # A declared type is only worth as much as the browser's willingness to believe it.
+        self._register("gpu1", self.fake.server_address[1])
+        _, _, headers = self._get("/remote/gpu1/file?path=%2Ftmp%2Fplot.png")
+        self.assertEqual(headers.get("X-Content-Type-Options"), "nosniff")
+        _, _, hh = self._get("/remote/gpu1/file?path=%2Ftmp%2Fplot.png", method="HEAD")
+        self.assertEqual(hh.get("X-Content-Type-Options"), "nosniff")
 
     def test_unknown_host_404s(self):
         status, _, _ = self._get("/remote/nosuch/file?path=%2Ftmp%2Fplot.png")

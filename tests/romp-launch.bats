@@ -42,7 +42,70 @@ teardown() { rm -rf "$TEST_DIR"; }
     run "$ROMP_SCRIPT"
     [ "$status" -eq 0 ]
     [ -s "$OPEN_LOG" ]
-    grep -q "token=TESTTOKEN123" "$OPEN_LOG"
+    grep -q "127.0.0.1:29855" "$OPEN_LOG"
+}
+
+@test "bare romp never hands the serve token to the opener" {
+    # The opener's argv is world-readable through /proc/<pid>/cmdline for as long as the browser
+    # lives, and the serve token is full control of every session — so any other account on the
+    # machine could read it off a running browser. This test USED to assert the opposite
+    # (grep -q "token=TESTTOKEN123" "$OPEN_LOG"), pinning the leak in place.
+    run "$ROMP_SCRIPT"
+    [ "$status" -eq 0 ]
+    [ -s "$OPEN_LOG" ]
+    # The printed link still carries it: that lands in the terminal, which is not argv, and it is
+    # what you copy to a phone. Asserted BEFORE the next `run`, which overwrites $output.
+    [[ "$output" == *"?token=TESTTOKEN123"* ]]
+    # `run` + an explicit status check, NOT a bare `! grep`: `!` is exempt from set -e, so a
+    # mid-test `! grep` asserts nothing at all — only the final command's status reaches bats.
+    run grep -q "TESTTOKEN123" "$OPEN_LOG"
+    [ "$status" -ne 0 ]
+}
+
+@test "bare romp opens the one-time code when the kernel mints one" {
+    # curl is stubbed to answer /handoff; the opened URL must carry ?c= and not the token.
+    cat > "$MOCK/curl" <<'MOCK'
+#!/usr/bin/env bash
+for a in "$@"; do case "$a" in *handoff*) echo '{"code": "HANDOFFCODE1"}'; exit 0 ;; esac; done
+exit 22
+MOCK
+    chmod +x "$MOCK/curl"
+    run "$ROMP_SCRIPT"
+    [ "$status" -eq 0 ]
+    grep -q "c=HANDOFFCODE1" "$OPEN_LOG"
+    run grep -q "TESTTOKEN123" "$OPEN_LOG"
+    [ "$status" -ne 0 ]
+}
+
+@test "bare romp opens the bare url when no kernel answers /handoff" {
+    # Never fall back to the token in argv: a cookie already set still carries, and a cold browser
+    # lands on the login page.
+    cat > "$MOCK/curl" <<'MOCK'
+#!/usr/bin/env bash
+exit 22
+MOCK
+    chmod +x "$MOCK/curl"
+    run "$ROMP_SCRIPT"
+    [ "$status" -eq 0 ]
+    [ -s "$OPEN_LOG" ]
+    run grep -qE "TESTTOKEN123|c=" "$OPEN_LOG"
+    [ "$status" -ne 0 ]
+}
+
+@test "bare romp on a headless box mints no code it will never spend" {
+    # A code is single-use with a 300s TTL. Minting one on a machine that exits before opening
+    # anything leaves a live credential nobody spends, and the curl delays the printed URL — which
+    # is the whole contract on exactly those machines.
+    cat > "$MOCK/curl" <<'MOCK'
+#!/usr/bin/env bash
+echo "$*" >> "$TEST_DIR/curl.log"
+echo '{"code": "HANDOFFCODE1"}'
+MOCK
+    chmod +x "$MOCK/curl"
+    SSH_CONNECTION="1 2 3 4" run "$ROMP_SCRIPT"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"no browser was opened"* ]]
+    [ ! -e "$TEST_DIR/curl.log" ]                # /handoff was never called
 }
 
 @test "bare romp on a remote/ssh box prints the URL but opens nothing" {
@@ -82,7 +145,8 @@ MOCK
     chmod +x "$MOCK/mybrowser"
     ROMP_OPENER=mybrowser run "$ROMP_SCRIPT"
     [ "$status" -eq 0 ]
-    [[ "$(cat "$OPEN_LOG")" == *"token=TESTTOKEN123"* ]]
+    [[ "$(cat "$OPEN_LOG")" == *"127.0.0.1:29855"* ]]      # a custom opener gets the URL...
+    [[ "$(cat "$OPEN_LOG")" != *"TESTTOKEN123"* ]]         # ...and no more of the token than any other opener
 }
 
 @test "bare romp fails loudly when no token has been minted yet" {

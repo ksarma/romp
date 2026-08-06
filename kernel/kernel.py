@@ -379,8 +379,16 @@ def _kernel_ver():
 def _version_info():
     """What this kernel is running — code sha + per-bundle build mtimes + pid/uptime. Lets the feed's
     settings gear / `romp version` / a curl tell at a glance whether the browser is on a stale bundle
-    (compare the served ?v= against bundles[].mtime here). Any path here is $HOME-collapsed for privacy
-    (like defaultDir/rompDir) — never a raw /Users/<name> path."""
+    (compare the served ?v= against bundles[].mtime here).
+
+    NO FILESYSTEM PATHS. /version is auth-exempt — any local process reads it with no token, and it
+    also rides the remote poll between machines — so the exemption is justified as "no paths,
+    harmless" and this payload has to keep that true. It carried two until 2026-08-05: `rompDir`,
+    which the VS Code extension turned into an `execFile("bash", …)` target (so whatever answered
+    this port chose the directory a shell ran in — the extension now resolves its own install path
+    and never asks), and `defaultDir`, which the dashboard already receives on the authenticated
+    sessionList/defaultDirSaved socket messages. $HOME-collapsing hid the username, never the
+    checkout's location or its name, and a project directory name is identifying on its own."""
     bundles = {}
     try:
         for p in sorted(DIST.glob("*.js")) + sorted(DIST.glob("*.css")):
@@ -394,12 +402,7 @@ def _version_info():
             "uptime_s": int(time.time() - _STARTED), "dist_ver": _dist_ver(), "bundles": bundles,
             "autoNudge": _auto_nudge_on(),   # server-side toggle state → the gear checkbox reflects the kernel
             "judgeModel": jd._triage_model(), "indexModel": jd._index_model(),      # current per-tier judge models → the gear dropdowns
-            "judgeEffort": jd._triage_effort(), "indexEffort": jd._index_effort(),  # current per-tier judge efforts ("" = default/none)
-            "defaultDir": _tilde(_default_create_dir()),   # the resolved default new-session dir → the gear "Default directory" field
-            # The repo root ($HOME-collapsed), so the VS Code extension host can run vscode-extension/install.sh
-            # to self-update a drifted VSIX (a webview reload can't — the code is baked into the on-disk VSIX).
-            # ROMP_DIR is reliably exported by romp-serve/launchd; HERE.parent (kernel/ → repo root) backs it up.
-            "rompDir": _tilde(os.environ.get("ROMP_DIR") or str(HERE.parent))}
+            "judgeEffort": jd._triage_effort(), "indexEffort": jd._index_effort()}  # current per-tier judge efforts ("" = default/none)
 
 
 def _dist_ver():
@@ -435,13 +438,52 @@ def _load_token():
     v = base64.urlsafe_b64encode(os.urandom(18)).decode().rstrip("=")
     try:
         jd.STATE.mkdir(parents=True, exist_ok=True)
-        f.write_text(v)
-        os.chmod(f, 0o600)
+        # 0600 from birth, not written-then-chmod'd: between those two calls the file carried the
+        # token at the umask's mercy, and the whole same-user gate is this file's mode.
+        fd = os.open(str(f), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            os.write(fd, v.encode())
+        finally:
+            os.close(fd)
+        os.chmod(f, 0o600)                       # a PRE-EXISTING file keeps its old mode through O_CREAT
     except OSError:
         pass
     return v
 
 TOKEN = _load_token()
+
+# ── the one-time browser handoff ────────────────────────────────────────────────────────────
+# Opening the dashboard used to mean webbrowser.open(url + "/?token=" + TOKEN), which puts the
+# long-lived serve token in the BROWSER's argv — where it stays for the browser's whole lifetime,
+# and /proc/<pid>/cmdline hands it to every other account on the machine (one `ps aux` reads it).
+# A handoff code does that job — seed the cookie on the first open — and is worthless the moment
+# it is spent, so the same leak yields something already dead.
+_HANDOFF = {}                                    # code -> expiry; popped on use, so a code works ONCE
+_HANDOFF_LOCK = threading.Lock()
+_HANDOFF_TTL_S = 300                             # a slow browser launch, not a session
+
+
+def _mint_handoff():
+    c = base64.urlsafe_b64encode(os.urandom(18)).decode().rstrip("=")
+    with _HANDOFF_LOCK:
+        now = time.time()
+        for k, exp in list(_HANDOFF.items()):    # a browser that never opened must not accumulate
+            if exp <= now:
+                _HANDOFF.pop(k, None)
+        _HANDOFF[c] = now + _HANDOFF_TTL_S
+    return c
+
+
+def _spend_handoff(code):
+    """True exactly once per minted code, and only inside its TTL. Compared in constant time like
+    the token itself — a spent code is harmless, but an unspent one is briefly worth guessing."""
+    if not code:
+        return False
+    with _HANDOFF_LOCK:
+        for k in list(_HANDOFF):
+            if _ct_eq(k, code):
+                return _HANDOFF.pop(k, 0) > time.time()
+    return False
 
 def _ct_eq(a, b):
     """Constant-time string compare (no timing oracle on the serve token); never
@@ -18696,6 +18738,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
+        # Take the declared type at its word. Without this a browser may sniff a response whose
+        # bytes look like markup and run it as HTML on the dashboard's own origin, which is the
+        # same escalation the /remote/…/file relay's own type check closes from the other side.
+        self.send_header("X-Content-Type-Options", "nosniff")
         for k, v in (headers or {}).items():
             self.send_header(k, v)
         if cache:                                     # e.g. "no-cache" — keeps a tab from running a stale bundle
@@ -18745,20 +18791,32 @@ class Handler(BaseHTTPRequestHandler):
         return ""
 
     def _authorize(self, q):
-        """(ok, cookie_to_set, reason). A valid token IS sufficient auth and bypasses the Origin gate.
-        This is what lets the FEDERATED dashboard work: a browser served by ANOTHER kernel opens a
-        tunnel'd /ws (or fetch) here carrying ?token — a foreign Origin, but the unguessable token is
-        the credential, and a cross-site page can't forge it. The token is REQUIRED for every gated
-        route, loopback included (Jupyter's model: loopback is reachable by every local user, so the
-        0600 token file — not the socket — is the same-user trust boundary). Browsers present ?token
-        once and ride the auto-set cookie; local CLIs/hooks read the file and send X-Romp-Token (a
-        custom header forces a CORS preflight through this same gate, so a cross-site page can't
-        forge it either). Token-less browser traffic still hits the Origin gate first (the
-        ClawJacked/WS hole) so a denial names the real reason."""
+        """(ok, cookie_to_set, reason). An EXPLICITLY PRESENTED token is sufficient auth and bypasses
+        the Origin gate. This is what lets the FEDERATED dashboard work: a browser served by ANOTHER
+        kernel opens a tunnel'd /ws (or fetch) here carrying ?token — a foreign Origin, but the
+        unguessable token is the credential, and a cross-site page can't forge it. The token is
+        REQUIRED for every gated route, loopback included (Jupyter's model: loopback is reachable by
+        every local user, so the 0600 token file — not the socket — is the same-user trust boundary).
+        Browsers present ?token once and ride the auto-set cookie; local CLIs/hooks read the file and
+        send X-Romp-Token (a custom header forces a CORS preflight through this same gate, so a
+        cross-site page can't forge it either). Token-less browser traffic still hits the Origin gate
+        first (the ClawJacked/WS hole) so a denial names the real reason.
+
+        The COOKIE is the one credential that does NOT bypass the Origin gate, because it is the one
+        the browser attaches for you: cookies are scoped by host and NOT by port (RFC 6265 §8.5), so
+        every `http://127.0.0.1:<any-port>` page is same-site with the dashboard and rides this
+        cookie — SameSite=Strict included. Without the Origin check below, any page served by
+        anything else on loopback (an agent-cloned repo's dev server) reached `/ws`, which streams
+        every session and accepts sendMessage. Presenting a token proves you are not a drive-by page;
+        carrying a cookie proves only that the browser had one. Nothing in the shipped UI needs the
+        cookie cross-origin: the dashboard's own socket is same-origin, federation relays through the
+        hub's own origin WITH ?token, and the VS Code webview origin is allowed by _origin_ok."""
         if TOKEN and _ct_eq((q.get("token") or [""])[0], TOKEN):
             return True, TOKEN, ""                    # valid ?token → authorize (any origin) + set cookie
-        if TOKEN and _ct_eq(self._cookie_token(), TOKEN):
-            return True, None, ""                     # valid token cookie → authorize (any origin)
+        if _spend_handoff((q.get("c") or [""])[0]):
+            return True, TOKEN, ""                    # one-time handoff (the browser we opened) → cookie, once
+        if TOKEN and _ct_eq(self._cookie_token(), TOKEN) and self._origin_ok():
+            return True, None, ""                     # valid token cookie + same-site origin
         if TOKEN and _ct_eq(self.headers.get("X-Romp-Token") or "", TOKEN):
             return True, None, ""                     # header form — local CLI/hook/daemon clients
         if not self._origin_ok():
@@ -18783,6 +18841,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", mime)
             self.send_header("Content-Length", str(size))   # the real length, no body (HEAD semantics)
+            self.send_header("X-Content-Type-Options", "nosniff")   # _send's guarantee, restated on the HEAD path
             self.send_header("Cache-Control", "no-cache")
             if getattr(self, "_cors_origin", None):         # the chat's fetch-HEAD probe rides CORS too
                 self.send_header("Access-Control-Allow-Origin", self._cors_origin)
@@ -18860,7 +18919,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, "ok", "text/plain",
                                   headers={"X-Romp-Boot": _BOOT_ID,
                                            "Access-Control-Expose-Headers": "X-Romp-Boot"})
-            if p == "/version":                               # build/version report — exempt from auth (no paths, harmless)
+            if p == "/version":                               # build/version report — exempt from auth (see _version_info: no paths)
                 return self._send(200, json.dumps(_version_info()), "application/json", cache="no-cache")
             if p == "/busy":
                 # In-flight SDK turn count — the manager's quiet-window gate for deferred deploy
@@ -18909,6 +18968,22 @@ class Handler(BaseHTTPRequestHandler):
                     "colors": pal.colors(_pn), "active": _pn,
                     "palettes": [{"name": k, "label": v["label"], "colors": v["bg"]}
                                  for k, v in pal.PALETTES.items()]}), "application/json", cache="no-cache")
+            if p == "/defaults":
+                # The gear's "Default directory" field. It used to read this off /version, which is
+                # auth-exempt — a path on an untokened route (2026-08-05) — so the value moved here,
+                # behind the gate, rather than disappearing: dropping it from /version alone left the
+                # field rendering blank while the kernel held a real path. The new-session picker
+                # gets the same value on the sessionList socket message; the gear has no socket.
+                return self._send(200, json.dumps({"defaultDir": _tilde(_default_create_dir())}),
+                                  "application/json", cache="no-cache")
+            if p == "/handoff":
+                # Mint a one-time code for a browser we are about to open (see _mint_handoff). The
+                # CLI holds the token and would otherwise put it in the OPENER's argv, where
+                # /proc/<pid>/cmdline hands it to every other account on the machine for as long as
+                # the browser lives. Gated: you must already hold the token to get a code, so this
+                # trades a credential that never expires for one that dies on first use.
+                return self._send(200, json.dumps({"code": _mint_handoff()}),
+                                  "application/json", cache="no-cache")
             if p == "/models":                                # the ONE model + effort choice list — chat statusline, timeline lanes, AND judge settings all read it (the user 2026-07-02: no hardcoding in multiple places)
                 return self._send(200, json.dumps({"models": MODEL_CHOICES, "efforts": EFFORT_CHOICES}), "application/json", cache="no-cache")
             if p == "/usage":                                 # the /usage rate-limit bars, re-read on demand: the rail's
@@ -20032,13 +20107,26 @@ class Handler(BaseHTTPRequestHandler):
         is rewritten into the forwarded query (so the browser only ever needs its local credential,
         and the per-host trust boundary is unchanged — THAT kernel still runs its own allowlist,
         size cap and path resolution), and this kernel reads nothing but the reply it mirrors.
-        Deliberately /file only — a preview relay, not a general proxy."""
+        Deliberately /file only — a preview relay, not a general proxy.
+
+        The Content-Type is derived HERE, from the requested extension against _PREVIEW_MIME —
+        the same table and the same 404 the local /file route applies — and the remote's own
+        Content-Type header is discarded. Mirroring it let a compromised remote kernel answer
+        `text/html` for a path the preview lightbox opens in a SAME-ORIGIN, unsandboxed iframe
+        (ui/webview/preview.ts), i.e. script on the dashboard's origin with the token cookie
+        attached. An attached host is trusted to serve its own files, not to choose how this
+        browser interprets them."""
         with _remotes_lock:
             r = _remotes.get(host)
             port, rtok = (r or {}).get("local_port") or 0, (r or {}).get("token") or ""
         if not port:
             return self._send(404, b"" if head else ("no attached host %r" % host), "text/plain")
         q = parse_qs(query or "")
+        # Our own verdict on the type, before the remote gets a say. An extension the local route
+        # would 404 is 404'd here too, so the relay can never widen what a preview may render.
+        mime = _PREVIEW_MIME.get(os.path.splitext((q.get("path") or [""])[0])[1].lower())
+        if not mime:
+            return self._send(404, b"" if head else "not found", "text/plain")
         if rtok:
             q["token"] = [rtok]      # the remote's own credential; whatever the browser sent means nothing there
         conn = http.client.HTTPConnection("127.0.0.1", int(port), timeout=15)
@@ -20046,7 +20134,7 @@ class Handler(BaseHTTPRequestHandler):
             conn.request("HEAD" if head else "GET", "/file?" + urlencode(q, doseq=True))
             resp = conn.getresponse()
             body = b"" if head else resp.read(_PREVIEW_MAX_BYTES + 1)
-            status, ctype = resp.status, resp.getheader("Content-Type") or "application/octet-stream"
+            status, ctype = resp.status, mime          # OUR mime, never resp.getheader("Content-Type")
             clen = resp.getheader("Content-Length")
         except (OSError, http.client.HTTPException):
             return self._send(502, b"" if head else ("tunnel to %s is not answering" % host), "text/plain")
@@ -20063,6 +20151,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", ctype)
             if clen is not None:
                 self.send_header("Content-Length", clen)
+            self.send_header("X-Content-Type-Options", "nosniff")   # _send's guarantee, restated on the HEAD path
             self.send_header("Cache-Control", "no-cache")
             if getattr(self, "_cors_origin", None):
                 self.send_header("Access-Control-Allow-Origin", self._cors_origin)
@@ -20193,7 +20282,10 @@ def main():
     if not os.environ.get("ROMP_KERNEL_NO_OPEN"):
         try:
             import webbrowser
-            webbrowser.open(url + "/?token=" + TOKEN)   # seeds the year-long cookie on first open (Jupyter's URL flow)
+            # A one-time code, never the token: this URL becomes the browser's argv, readable by
+            # every other account on the machine for as long as the browser lives. It still seeds
+            # the year-long cookie on first open (Jupyter's URL flow), but what leaks is spent.
+            webbrowser.open(url + "/?c=" + _mint_handoff())
         except Exception:
             pass
     try:

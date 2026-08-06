@@ -35,6 +35,17 @@ setup() {
     fake_clone
 }
 
+# Claude Code's project-dir encoding, as kernel/judge.py's _proj_dir implements it: every
+# non-alphanumeric character replaced, over the realpath. Tests must build the expected directory
+# with THIS, never with a shell ${p//\//-} — that only replaces slashes, and a test using it
+# agrees with a buggy implementation instead of with Claude Code.
+_proj_slug() {
+    python3 - "$1" <<'PYEOF'
+import os, re, sys
+print(re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(sys.argv[1])))
+PYEOF
+}
+
 teardown() { rm -rf "$TEST_DIR"; }
 
 hook_count() {   # how many romp hook commands are left registered across all events
@@ -199,17 +210,40 @@ EOF
     [[ "$output" != *"token page"* ]]
 }
 
-# ── romp's judge scratch, which lives OUTSIDE the state dir ──────────────────
-# romp runs judges as `claude` rooted at /tmp/romp-judge, so Claude Code writes their
-# transcripts to a project dir keyed on that path — outside $STATE, so --purge missed them and a
-# reinstalled romp kept showing judge records from the PREVIOUS install. They are romp's own
-# droppings, never a session anyone started, so the teardown owns them.
+# ── the judge scratch's Claude Code project dir, which lives OUTSIDE the state dir ───────────
+# romp runs judges as `claude` rooted at JUDGE_SCRATCH, so Claude Code writes their transcripts to
+# a project dir keyed on that path — outside $STATE, so --purge missed them and a reinstalled romp
+# kept showing judge records from the PREVIOUS install. They are romp's own droppings, never a
+# session anyone started, so the teardown owns them.
+#
+# The scratch itself moved from /tmp/romp-judge into "$STATE/judge-scratch" on 2026-08-05, so
+# --purge now takes the directory as part of the state root; the DERIVED project dir is still keyed
+# on the path, which is what the default below has to track.
+
+@test "romp-uninstall: the judge scratch default follows the state root, not /tmp" {
+    # A stale default would leave the derived project dir behind — the 2026-07-27 incomplete-teardown
+    # symptom, returning under a new name. ROMP_JUDGE_SCRATCH is deliberately NOT set here.
+    export CLAUDE_CONFIG_DIR="$HOME/.claude"
+    scratch="$ROMP_STATE_DIR/judge-scratch"
+    mkdir -p "$scratch"
+    # Build the expected directory the way CLAUDE CODE does — kernel/judge.py's _proj_dir rule,
+    # every non-alphanumeric replaced over the realpath — NOT with the shell substitution the
+    # script under test uses. Deriving it the same way the code does is how this test passed while
+    # --purge swept a directory that never existed: it asserted the implementation against itself.
+    proj="$CLAUDE_CONFIG_DIR/projects/$(_proj_slug "$scratch")"
+    mkdir -p "$proj"
+    echo '{"synthetic":"judge call"}' > "$proj/11111111-2222-3333-4444-555555555555.jsonl"
+
+    run "$CLONE/bin/romp-uninstall" --yes --purge
+    [ "$status" -eq 0 ]
+    [ ! -d "$proj" ]
+}
 
 @test "romp-uninstall: removes romp's judge scratch and its transcripts" {
     export ROMP_JUDGE_SCRATCH="$TEST_DIR/romp-judge"
     export CLAUDE_CONFIG_DIR="$HOME/.claude"
     mkdir -p "$ROMP_JUDGE_SCRATCH"
-    proj="$CLAUDE_CONFIG_DIR/projects/${ROMP_JUDGE_SCRATCH//\//-}"
+    proj="$CLAUDE_CONFIG_DIR/projects/$(_proj_slug "$ROMP_JUDGE_SCRATCH")"
     mkdir -p "$proj"
     echo '{"synthetic":"judge call"}' > "$proj/11111111-2222-3333-4444-555555555555.jsonl"
 
@@ -224,7 +258,7 @@ EOF
     export ROMP_JUDGE_SCRATCH="$TEST_DIR/romp-judge"
     export CLAUDE_CONFIG_DIR="$HOME/.claude"
     mkdir -p "$ROMP_JUDGE_SCRATCH"
-    mkdir -p "$CLAUDE_CONFIG_DIR/projects/${ROMP_JUDGE_SCRATCH//\//-}"
+    mkdir -p "$CLAUDE_CONFIG_DIR/projects/$(_proj_slug "$ROMP_JUDGE_SCRATCH")"
     # A real project dir of the user's, which must survive untouched — deleting it would
     # destroy their own Claude Code history, which is not romp's to remove.
     mine="$CLAUDE_CONFIG_DIR/projects/-home-someone-notes-api"
@@ -236,6 +270,43 @@ EOF
 
     [ -f "$mine/99999999-8888-7777-6666-555555555555.jsonl" ]
     [ -d "$CLAUDE_CONFIG_DIR/projects" ]
+}
+
+@test "romp-uninstall: a SYMLINKED judge scratch is refused, never followed to someone's own sessions" {
+    # The guards read the raw $JUDGE_SCRATCH string while the project-dir slug is derived from its
+    # REALPATH, so a symlink there made the validated string and the deleted target two different
+    # paths. Reproduced before the fix: with the scratch symlinked at a checkout, a plain
+    # `romp-uninstall --yes` — this section is NOT gated on --purge — deleted that checkout's own
+    # Claude Code transcripts. kernel/judge.py refuses a symlinked scratch for the same reason.
+    export CLAUDE_CONFIG_DIR="$HOME/.claude"
+    mkdir -p "$TEST_DIR/someone-elses-project"
+    mine="$CLAUDE_CONFIG_DIR/projects/$(_proj_slug "$TEST_DIR/someone-elses-project")"
+    mkdir -p "$mine"
+    echo '{"synthetic":"my own session"}' > "$mine/11111111-2222-3333-4444-555555555555.jsonl"
+
+    ln -s "$TEST_DIR/someone-elses-project" "$ROMP_STATE_DIR/judge-scratch"
+    run "$CLONE/bin/romp-uninstall" --yes
+    [ "$status" -eq 0 ]                              # skipped loudly, never aborted
+    [[ "$output" == *"skipped"* ]]
+    [ -f "$mine/11111111-2222-3333-4444-555555555555.jsonl" ]
+}
+
+@test "romp-uninstall: a relocated state dir (symlinked ANCESTOR) is still cleaned" {
+    # Only the final component is checked. A symlinked $STATE is a legitimate setup — it is where
+    # judge.py writes too — so refusing that would be an over-correction.
+    export CLAUDE_CONFIG_DIR="$HOME/.claude"
+    mkdir -p "$TEST_DIR/elsewhere/romp"
+    rm -rf "$ROMP_STATE_DIR"
+    ln -s "$TEST_DIR/elsewhere/romp" "$ROMP_STATE_DIR"
+    scratch="$ROMP_STATE_DIR/judge-scratch"
+    mkdir -p "$scratch"
+    proj="$CLAUDE_CONFIG_DIR/projects/$(_proj_slug "$scratch")"
+    mkdir -p "$proj"
+    echo '{"synthetic":"judge call"}' > "$proj/11111111-2222-3333-4444-555555555555.jsonl"
+
+    run "$CLONE/bin/romp-uninstall" --yes --purge
+    [ "$status" -eq 0 ]
+    [ ! -d "$proj" ]
 }
 
 @test "romp-uninstall: a mangled judge scratch can never resolve to the projects dir itself" {

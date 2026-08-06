@@ -291,6 +291,10 @@ PY
 # remote, with a SYNTHETIC denylist (never a real identifier) via XDG_CONFIG_HOME.
 setup_hook_repo() {
     export XDG_CONFIG_HOME="$TEST_DIR/cfg"
+    # Pin the credential half OFF for the identifier tests: whether the machine
+    # happens to have gitleaks on PATH must not change what they assert. The
+    # gitleaks tests below turn it back on with a stub.
+    export ROMP_NO_GITLEAKS=1
     mkdir -p "$XDG_CONFIG_HOME/romp"
     printf '# synthetic denylist\n\nZZBANNEDZZ\n' > "$XDG_CONFIG_HOME/romp/private-strings.txt"
     git init -q "$TEST_DIR/remote.git" --bare
@@ -367,4 +371,122 @@ setup_hook_repo() {
     git -C "$WORK" add -A && git -C "$WORK" commit -qm leak
     run git -C "$WORK" push origin HEAD:main
     [ "$status" -eq 0 ]
+}
+
+# ── the credential half of the same hook (gitleaks) ───────────────────────
+# A denylist can only catch strings you can enumerate, and nobody can enumerate
+# a token before it leaks — so the hook also runs gitleaks over the pushed
+# commits. These tests stub the scanner via ROMP_GITLEAKS: what is under test is
+# the hook's wiring (which commits it hands over, what it does with the verdict),
+# not gitleaks' own rules, and a stub keeps the suite deterministic on a machine
+# that has never installed it. The rules and .gitleaks.toml are exercised for
+# real in tests/gitleaks-config.bats and by CI's secret-scan job.
+
+setup_gitleaks_stub() {   # <exit-code> — records its args, then exits that code
+    unset ROMP_NO_GITLEAKS
+    GL_ARGS="$TEST_DIR/gitleaks.args"
+    export ROMP_GITLEAKS="$TEST_DIR/gitleaks-stub"
+    cat > "$ROMP_GITLEAKS" <<EOF
+#!/usr/bin/env bash
+echo "\$@" >> "$GL_ARGS"
+echo "stub scanner ran" >&2
+exit $1
+EOF
+    chmod +x "$ROMP_GITLEAKS"
+}
+
+@test "pre-push hook: a credential found in a pushed commit blocks the push" {
+    setup_hook_repo
+    setup_gitleaks_stub 1
+    echo "whatever" > "$WORK/f.txt"
+    git -C "$WORK" add -A && git -C "$WORK" commit -qm work
+    run git -C "$WORK" push origin HEAD:main
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"BLOCKED"* ]]
+    # The advice has to say rotate: a secret in a commit is already compromised,
+    # and deleting it in a later commit does not un-publish it.
+    [[ "$output" == *"ROTATE"* ]]
+}
+
+@test "pre-push hook: a clean scan lets the push through" {
+    setup_hook_repo
+    setup_gitleaks_stub 0
+    echo "whatever" > "$WORK/f.txt"
+    git -C "$WORK" add -A && git -C "$WORK" commit -qm work
+    run git -C "$WORK" push origin HEAD:main
+    [ "$status" -eq 0 ]
+    [ -f "$GL_ARGS" ]      # it really did run
+}
+
+@test "pre-push hook: only the commits being pushed are handed to the scanner" {
+    # The same rule the identifier scan follows: a secret that already escaped
+    # must not block every later push, and the tip alone is not what ships.
+    setup_hook_repo
+    setup_gitleaks_stub 0
+    echo "old" > "$WORK/old.txt"
+    git -C "$WORK" add -A && git -C "$WORK" commit -qm old
+    git -C "$WORK" push --no-verify -q origin HEAD:main
+    old_sha="$(git -C "$WORK" rev-parse HEAD)"
+    echo "new" > "$WORK/new.txt"
+    git -C "$WORK" add -A && git -C "$WORK" commit -qm new
+    new_sha="$(git -C "$WORK" rev-parse HEAD)"
+
+    run git -C "$WORK" push origin HEAD:main
+    [ "$status" -eq 0 ]
+    [[ "$(cat "$GL_ARGS")" == *"--log-opts=$old_sha..$new_sha"* ]]
+}
+
+@test "pre-push hook: a brand-new branch is scanned from its first commit" {
+    setup_hook_repo
+    setup_gitleaks_stub 0
+    echo "first" > "$WORK/f.txt"
+    git -C "$WORK" add -A && git -C "$WORK" commit -qm first
+    sha="$(git -C "$WORK" rev-parse HEAD)"
+    run git -C "$WORK" push origin HEAD:main
+    [ "$status" -eq 0 ]
+    [[ "$(cat "$GL_ARGS")" == *"--log-opts=$sha --not --remotes"* ]]
+}
+
+@test "pre-push hook: no gitleaks installed says so out loud and still pushes" {
+    # Requiring an install to push would break every clone that never asked for
+    # the scanner. Loud, not blocking — CI scans the whole history regardless.
+    setup_hook_repo
+    unset ROMP_NO_GITLEAKS
+    echo "whatever" > "$WORK/f.txt"
+    git -C "$WORK" add -A && git -C "$WORK" commit -qm work
+    ROMP_GITLEAKS="$TEST_DIR/not-a-binary" run git -C "$WORK" push origin HEAD:main
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"gitleaks not installed"* ]]
+    [[ "$output" == *"WITHOUT a secret scan"* ]]
+}
+
+@test "pre-push hook: ROMP_NO_GITLEAKS=1 silences the scan and its notice" {
+    setup_hook_repo
+    echo "whatever" > "$WORK/f.txt"
+    git -C "$WORK" add -A && git -C "$WORK" commit -qm work
+    run git -C "$WORK" push origin HEAD:main
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"gitleaks"* ]]
+}
+
+@test "pre-push hook: --no-verify bypasses the credential block too" {
+    setup_hook_repo
+    setup_gitleaks_stub 1
+    echo "whatever" > "$WORK/f.txt"
+    git -C "$WORK" add -A && git -C "$WORK" commit -qm work
+    run git -C "$WORK" push --no-verify origin HEAD:main
+    [ "$status" -eq 0 ]
+}
+
+@test "pre-push hook: both scanners report before the push is refused" {
+    # One push, two findings: the developer should learn about both in one go
+    # rather than fixing the identifier, pushing again, and meeting the secret.
+    setup_hook_repo
+    setup_gitleaks_stub 1
+    printf 'leak ZZBANNEDZZ here\n' > "$WORK/leak.txt"
+    git -C "$WORK" add -A && git -C "$WORK" commit -qm leak
+    run git -C "$WORK" push origin HEAD:main
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"personal identifier"* ]]
+    [[ "$output" == *"gitleaks found a credential"* ]]
 }

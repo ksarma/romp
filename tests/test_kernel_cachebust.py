@@ -37,19 +37,22 @@ def test_version_info_shape():
     assert isinstance(info["bundles"], dict)
 
 
-def test_version_info_reports_romp_dir():
-    # The VS Code extension host reads rompDir off /version to run vscode-extension/install.sh and
-    # self-update a drifted VSIX. It must (a) point at the repo root and (b) stay $HOME-collapsed for
-    # privacy — never a raw /Users/<name> path (like defaultDir).
+def test_version_info_carries_no_filesystem_paths():
+    """/version is auth-exempt — any local process reads it untokened, and it rides the remote poll
+    between machines — so the exemption's justification ("no paths, harmless") has to stay true.
+
+    It used to report `rompDir`, which the VS Code extension turned into an execFile("bash", ...)
+    target: whatever answered this port chose the directory a shell ran in. `defaultDir` went the
+    same way; the dashboard gets it on the authenticated sessionList socket message instead. This
+    fails if either comes back, or if some new path-shaped value is added to the payload."""
     info = km._version_info()
-    assert "rompDir" in info and isinstance(info["rompDir"], str) and info["rompDir"]
+    assert "rompDir" not in info
+    assert "defaultDir" not in info
     home = os.path.expanduser("~")
-    real = os.path.expanduser(info["rompDir"])
-    if real.startswith(home + os.sep):
-        assert info["rompDir"] == "~" or info["rompDir"].startswith("~" + os.sep), \
-            "a repo under $HOME must be reported home-collapsed (privacy)"
-    # Round-trips to the real repo root — the host expands ~ then runs vscode-extension/install.sh there.
-    assert os.path.isdir(os.path.join(real, "vscode-extension")), real
+    for k, v in info.items():
+        if isinstance(v, str):
+            assert not v.startswith(("/", "~/", home)), \
+                "%s=%r looks like a filesystem path on the auth-exempt /version" % (k, v)
 
 
 def test_send_emits_cache_control():
