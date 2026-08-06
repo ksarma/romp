@@ -108,8 +108,13 @@ scan_credentials() {
         # only a COUNT, which tells you a push was refused but not what to fix.
         # --redact keeps the secret itself out of terminal scrollback — the
         # location is what a fix needs, and the value has to be rotated anyway.
+        # --diff-merges=first-parent: `gitleaks git` runs `git log -p`, which shows
+        # NO diff for a merge commit by default, so a secret introduced during a
+        # conflict resolution (present in neither parent, only the merge tree) is
+        # scanned by nothing. The first-parent diff of each merge surfaces exactly
+        # that content; non-merges are unaffected (found on re-review 2026-08-06).
         if ! "$gl" git "$root" --no-banner --redact -v --exit-code 1 \
-                "${cfg[@]}" --log-opts="$range" >&2; then
+                "${cfg[@]}" --log-opts="$range --diff-merges=first-parent" >&2; then
             blocked_creds=1
         fi
     done <<< "$refs"

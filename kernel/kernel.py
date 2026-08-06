@@ -461,6 +461,8 @@ TOKEN = _load_token()
 _HANDOFF = {}                                    # code -> expiry; popped on use, so a code works ONCE
 _HANDOFF_LOCK = threading.Lock()
 _HANDOFF_TTL_S = 300                             # a slow browser launch, not a session
+_HANDOFF_MAX = 256                               # a real open mints ONE code and spends it at once; a
+                                                 # backlog this deep is a flood, not use (see the cap below)
 
 
 def _mint_handoff():
@@ -469,6 +471,14 @@ def _mint_handoff():
         now = time.time()
         for k, exp in list(_HANDOFF.items()):    # a browser that never opened must not accumulate
             if exp <= now:
+                _HANDOFF.pop(k, None)
+        # Mint is gated (you must already hold the token/cookie), but the cookie rides from any
+        # same-site loopback page, so a hostile dev server can mint without bound INSIDE the TTL
+        # window — unbounded memory, and an O(n)-under-lock sweep that turns quadratic under a flood.
+        # Cap it: drop the soonest-to-expire (oldest, and a real open never leaves one unspent) so the
+        # live set never exceeds _HANDOFF_MAX (found on re-review 2026-08-06).
+        if len(_HANDOFF) >= _HANDOFF_MAX:
+            for k in sorted(_HANDOFF, key=_HANDOFF.get)[: len(_HANDOFF) - _HANDOFF_MAX + 1]:
                 _HANDOFF.pop(k, None)
         _HANDOFF[c] = now + _HANDOFF_TTL_S
     return c
