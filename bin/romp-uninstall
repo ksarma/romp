@@ -176,6 +176,25 @@ rm -rf "$STATE/sdkvenv"
 JUDGE_SCRATCH="${ROMP_JUDGE_SCRATCH:-$STATE/judge-scratch}"
 echo "==> judge scratch"
 
+# One directory, one spelling — normalise BEFORE any guard reads the string. Every equality
+# guard below compares raw strings, and "$HOME/" or "$STATE/." names the same directory while
+# matching none of them, straight through to the rm. A trailing slash also switches off the
+# symlink refusal below: `[[ -L "$p/" ]]` is false for a symlink to a directory, because the
+# slash makes the test resolve the link instead of lstat'ing it. A loop, because the spellings
+# stack ("$HOME//", "$HOME/./").
+_trim_path() {
+    local p="$1"
+    while :; do
+        case "$p" in
+            */)  p="${p%/}" ;;
+            */.) p="${p%.}" ;;
+            *)   break ;;
+        esac
+    done
+    printf '%s' "$p"
+}
+JUDGE_SCRATCH="$(_trim_path "$JUDGE_SCRATCH")"
+
 # Validate BEFORE removing anything. Both paths below are derived from a variable, and an
 # `rm -rf` on a derived path is exactly where uninstallers destroy machines: an empty or
 # mangled value here would expand to `rm -rf /`. (An early draft did precisely that — the
@@ -205,6 +224,10 @@ esac
 [[ "$JUDGE_SCRATCH" == *romp* || "$JUDGE_SCRATCH" == "$STATE"/?* ]] || _judge_ok=""
 [[ "$JUDGE_SCRATCH" != "$HOME" ]]           || _judge_ok=""
 [[ "$HOME" != "$JUDGE_SCRATCH"/* ]]         || _judge_ok=""   # never an ancestor of $HOME
+# ...and never the state root ITSELF, which contains "romp" on every default install and so
+# passes the name check. The state dir is only removed by --purge behind its own confirmation;
+# this path must not become a second, unconfirmed way to delete it.
+[[ "$JUDGE_SCRATCH" != "$(_trim_path "$STATE")" ]] || _judge_ok=""
 [[ "$JUDGE_SCRATCH" != *".."* ]]            || _judge_ok=""
 # The guards above read the RAW string; the slug below is derived from the REALPATH, so a symlink
 # at the scratch path escapes every one of them — the validated string and the deleted target are
