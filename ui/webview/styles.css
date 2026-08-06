@@ -1355,6 +1355,15 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
 .ask-warn { color: var(--st-awaiting-bg); font-weight: 700; margin-bottom: 9px; line-height: 1.4; }
 
 .compacting-line { color: var(--st-compacting-bg); font-weight: 600; }
+/* "Opening session" + three staggered pulsing dots (the user 2026-08-05) — the loader idiom's smallest
+   form: accent-colored, event-cleared (first payload / first record), same line style as compacting */
+.opening-line { color: var(--accent); }
+.opening-line-dots { display: inline-flex; gap: 3px; margin-left: 5px; vertical-align: baseline; }
+.opening-line-dots span { width: 4px; height: 4px; border-radius: 50%; background: var(--accent);
+  animation: opening-line-pulse 1.2s ease-in-out infinite; }
+.opening-line-dots span:nth-child(2) { animation-delay: 0.2s; }
+.opening-line-dots span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes opening-line-pulse { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
 
 /* ---------- to-do checklist (Claude Code Task list, folded from TaskCreate/Update) ---------- */
 .turn-todo { padding-top: 6px; padding-bottom: 6px; }
@@ -2133,3 +2142,24 @@ body.picker-lifted > #picker { align-items: center; padding: 24px 16px; }
    and hid the sessions to announce that one machine had gone away. The drop now flashes the rail's
    network glyph — .rn-drop / @keyframes rnet-drop, in the shell the kernel serves — and the steady state
    stays on .tab.host-off and .host-prefix.off above, which cost no space to begin with.) */
+
+/* the MCP panel (the user 2026-08-05): rows inside the confirm overlay's chrome — no new fonts, the
+   sizes come from .confirm-detail; only layout and the status tint are new */
+.mcp-box { min-width: 420px; max-width: 620px; }
+.mcp-list { display: flex; flex-direction: column; gap: 8px; max-height: 60vh; overflow-y: auto; text-align: left; }
+.mcp-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px;
+  background: var(--code-bg); border: 1px solid var(--box-border); }
+.mcp-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); flex: 0 0 auto; }
+.mcp-connected { background: var(--st-ready-bg); }
+.mcp-failed, .mcp-needs-auth { background: #E5534B; }
+.mcp-pending { background: var(--st-working-bg); }
+.mcp-disabled { background: var(--dim); }
+.mcp-name { font-weight: 600; }
+.mcp-status, .mcp-meta { color: var(--dim); }
+.mcp-act { margin-left: auto; padding: 2px 8px; border-radius: 6px; cursor: pointer;
+  border: 1px solid var(--box-border); background: transparent; color: var(--fg); }
+.mcp-act + .mcp-act { margin-left: 0; }
+.mcp-act:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.mcp-act:disabled { opacity: 0.55; cursor: default; }
+.mcp-err { flex: 1 1 100%; color: #E5534B; }
+.mcp-none { color: var(--dim); }

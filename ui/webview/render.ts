@@ -195,7 +195,7 @@ type ChatEvent = (
 
 interface TodoTask { id: string; subject: string; activeForm?: string; status: string }
 
-type ChipState = "working" | "ready" | "awaiting" | "awaitingBg" | "idle" | "closed" | "compacting" | "clearing" | "blocked" | "retrying" | "interrupting";   // awaiting = a live permission/picker prompt (on YOU); awaitingBg = idle main thread waiting on background work it dispatched (straw, the user 2026-07-13)
+type ChipState = "working" | "ready" | "awaiting" | "awaitingBg" | "idle" | "closed" | "compacting" | "clearing" | "blocked" | "retrying" | "interrupting" | "opening";   // awaiting = a live permission/picker prompt (on YOU); awaitingBg = idle main thread waiting on background work it dispatched (straw, the user 2026-07-13)
 interface Status { state: ChipState; sinceEpoch: number | null; effort?: string; model?: string; modelPending?: boolean; effortPending?: boolean; mode?: string; ctx?: string; ctxColor?: number[]; modelColor?: number[]; effortColor?: number[]; faded?: boolean; backend?: string; apiTooLong?: boolean; apiSpendLimit?: boolean; apiModelLimit?: boolean; retrySuppressed?: boolean; retryNextAt?: number | null; retryTries?: number | null; }   // retrySuppressed = the user interrupted this thread's API-error storm → romp's auto-retry stays OFF for it until a successful turn re-arms (the user 2026-07-06). backend = "tmux" | "sdk"; apiTooLong = the "blocked" is a "prompt is too long" error (on you → red tab) vs a transient API error (amber/retrying); apiSpendLimit = a monthly spend cap (on you → raise it; NEVER auto-retried — retrying can't fix it, the user 2026-07-14); apiModelLimit = this session's MODEL is out of allowance (on you → switch model or add credits; not auto-retried either, the user 2026-08-01); ctxColor = the GLOBAL colormap's RGB for the context%, computed server-side; modelColor/effortColor = the same map's RGB tint for the model name + effort (by capability/effort rank), server-computed; modelPending = a /model switch is resolving → the badge shows switching-dots until the new name lands (server-driven, event-based, the user 2026-07-03)
 interface Color { bg: string; fg: string; }
 // A run_in_background task surfaced in the #bg-tasks box (the kernel's _bg_tasks): a one-line summary +
@@ -4553,6 +4553,81 @@ function showConfirm(title: string, detail: string, buttons: Array<{ label: stri
   document.addEventListener("keydown", onKey, true);
   (actions.firstElementChild as HTMLElement | null)?.focus();
 }
+// THE MCP PANEL (the user 2026-08-05). `/mcp` in a romp session used to be a dead end: the CLI's own
+// panel is an interactive TUI an SDK-driven session cannot render, so it replied "use a terminal". The
+// SDK exposes the same facts and repairs as control requests (get_mcp_status / toggle_mcp_server /
+// reconnect_mcp_server), so this renders them: one row per server with its status dot, tool count, the
+// error when it failed, and the two actions. Every action refetches — the panel only ever shows the
+// CLI's own status, never an optimistic guess. Reuses the confirm overlay's chrome (no new styles).
+let mcpPanelSid: string | null = null;
+function openMcpPanel(sid: string): void {
+  mcpPanelSid = sid;
+  document.getElementById("mcp-panel")?.remove();
+  const overlay = el("div", "picker-overlay confirm-overlay"); overlay.id = "mcp-panel";
+  const box = el("div", "picker-box confirm-box mcp-box");
+  const h = el("div", "confirm-title"); h.textContent = "MCP servers";
+  const body = el("div", "confirm-detail mcp-list");
+  body.textContent = "Loading…";
+  const actions = el("div", "confirm-actions");
+  const closeBtn = el("button", "picker-action confirm-btn"); closeBtn.textContent = "Close";
+  closeBtn.addEventListener("click", () => { mcpPanelSid = null; overlay.remove(); document.removeEventListener("keydown", onKey, true); });
+  actions.appendChild(closeBtn);
+  box.append(h, body, actions);
+  overlay.appendChild(box);
+  const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { e.stopPropagation(); closeBtn.click(); } };
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) closeBtn.click(); });
+  document.addEventListener("keydown", onKey, true);
+  document.body.appendChild(overlay);
+  loadMcpPanel(sid, body);
+}
+
+function loadMcpPanel(sid: string, body: HTMLElement): void {
+  fetch(kernelUrl("/mcp?sid=" + encodeURIComponent(sid)), { cache: "no-store" })
+    // a kernel from before this panel 404s here, and .json() on the error page read as a bare "parse
+    // error" (the user 2026-08-05) — name the actual situation instead
+    .then((r) => { if (!r.ok) throw new Error("this romp kernel predates the MCP panel — restart romp to update it"); return r.json(); })
+    .then((d) => {
+      if (mcpPanelSid !== sid) return;   // panel closed (or reopened for another tab) while loading
+      body.textContent = "";
+      const servers: any[] = Array.isArray(d?.servers) ? d.servers : [];
+      // FAIL LOUDLY: a refusal (tmux session, disconnected CLI) is named, never an empty list that
+      // reads as "no servers configured".
+      if (d?.error) {
+        const e = el("div", "mcp-err"); e.textContent = String(d.error); body.appendChild(e);
+      }
+      if (!servers.length) {
+        if (!d?.error) { const n = el("div", "mcp-none"); n.textContent = "No MCP servers configured for this session."; body.appendChild(n); }
+        return;
+      }
+      for (const srv of servers) {
+        const row = el("div", "mcp-row");
+        const dot = el("span", "mcp-dot mcp-" + String(srv.status || "unknown"));
+        const name = el("span", "mcp-name"); name.textContent = String(srv.name || "?");
+        const st = el("span", "mcp-status"); st.textContent = String(srv.status || "unknown");
+        const tools = Array.isArray(srv.tools) ? srv.tools.length : null;
+        const meta = el("span", "mcp-meta");
+        meta.textContent = [tools != null ? tools + " tool" + (tools === 1 ? "" : "s") : "",
+                            srv.scope ? String(srv.scope) : ""].filter(Boolean).join(" · ");
+        row.append(dot, name, st, meta);
+        const disabled = String(srv.status) === "disabled";
+        const act = (action: string, enabled: boolean, label: string, busy: string) => {
+          const b = el("button", "mcp-act") as HTMLButtonElement;
+          b.textContent = label;
+          b.addEventListener("click", () => {
+            b.disabled = true; b.textContent = busy;   // acknowledge before the round-trip
+            vscodeApi?.postMessage({ type: "mcpAction", id: sid, server: srv.name, action, enabled });
+          });
+          row.appendChild(b);
+        };
+        if (!disabled) act("reconnect", true, "Reconnect", "Reconnecting…");
+        act("toggle", disabled, disabled ? "Enable" : "Disable", disabled ? "Enabling…" : "Disabling…");
+        if (srv.error) { const er = el("div", "mcp-err"); er.textContent = String(srv.error); row.appendChild(er); }
+        body.appendChild(row);
+      }
+    })
+    .catch((e) => { if (mcpPanelSid === sid) body.textContent = "Couldn't load MCP status: " + ((e && e.message) || e); });
+}
+
 function closeConfirm(value: string | null) {
   const o = document.getElementById("confirm");
   if (o) {
@@ -6729,6 +6804,7 @@ const CHIP_LABEL: Record<ChipState, string> = {
   idle: "Idle", closed: "Closed", compacting: "Compacting", clearing: "Clearing", blocked: "API error",
   retrying: "API retrying…",   // a live session stalled on an API rate-limit/overload auto-retry (api 2026-06-23)
   interrupting: "Interrupting…",   // stop sent, turn not yet settled (the user 2026-07-02) — clears to READY on its own
+  opening: "Opening…",             // spawned, transcript not on disk yet — the first record clears it (the user 2026-08-05)
 };
 
 // A stop/interrupt button that lives beside the state badge in the statusline (the user 2026-06-19):
@@ -6764,10 +6840,30 @@ function stopButton(state?: ChipState): HTMLElement {
   return btn;
 }
 
+// The "Opening session" line + three staggered accent dots (the loading-state rule's small form): shown
+// while a tab has NO session payload yet AND while the kernel itself reports state "opening" (spawned,
+// transcript not on disk). Both clear on real events — the first payload, the first record.
+function openingLine(): HTMLElement {
+  const c = el("span", "compacting-line opening-line");
+  c.appendChild(document.createTextNode("Opening session"));
+  const dots = el("span", "opening-line-dots");
+  for (let i = 0; i < 3; i++) dots.appendChild(el("span"));
+  c.appendChild(dots);
+  return c;
+}
+
 function updateStatusline() {
   const sl = document.getElementById("statusline");
   const s = activeId ? sessions.get(activeId) : null;
-  if (!sl || !s) return;
+  if (!sl) return;
+  if (activeId && !s) {
+    // the tab is a loading placeholder (its session payload hasn't arrived) — the statusline said
+    // whatever the PREVIOUS tab said, or a spawn stub's "Working" over a broken clock (the user
+    // 2026-08-05, who wanted "opening" and animated dots until it's ready)
+    sl.replaceChildren(openingLine());
+    return;
+  }
+  if (!s) return;
   sl.replaceChildren();
   // Left: the state chip — WORKING gets a sine color-pulse + elapsed timer; idle
   // states get the plain chip (no timer). Right: model + effort · ctx%, always.
@@ -6802,6 +6898,8 @@ function updateStatusline() {
     const c = el("span", "compacting-line");   // same in-progress line treatment as compacting (one style per info type)
     c.textContent = "⟳ Clearing conversation…";
     sl.appendChild(c);
+  } else if (s.status.state === "opening") {
+    sl.appendChild(openingLine());             // spawned, transcript not on disk yet — dots until the first record
   } else {
     const chip = el("span", `chip chip-${s.status.state}`);
     chip.textContent = CHIP_LABEL[s.status.state] ?? (s.status.state[0].toUpperCase() + s.status.state.slice(1).toLowerCase());
@@ -7753,6 +7851,11 @@ window.addEventListener("message", (e: MessageEvent) => {
   else if (m.type === "dropCitationsAll") {
     if (composerCitations.size) { composerCitations.clear(); persistDrafts(); renderComposerChips(activeId); }
   }
+  else if (m.type === "mcpResult") {
+    if (m.error) warnToast("MCP " + (m.server || "server") + ": " + m.error);
+    const body = document.querySelector("#mcp-panel .mcp-list") as HTMLElement | null;
+    if (body && mcpPanelSid) loadMcpPanel(mcpPanelSid, body);   // refetch — never an optimistic row
+  }
   else if (m.type === "nextTab") cycleTab(1);
   else if (m.type === "prevTab") cycleTab(-1);
   else if (m.type === "warn" && typeof m.text === "string" && m.text) {
@@ -8030,6 +8133,16 @@ function setupComposer() {
     // session's open cards with it. The composer sees the command BEFORE it runs — the one
     // interception point — so open cards put an explicit confirm between Enter and the drop
     // (the user 2026-07-27). Cancel keeps the text in the box; no open cards → no modal.
+    // `/mcp` NEVER reaches the CLI (the user 2026-08-05): its own panel is an interactive TUI an
+    // SDK session can't render, so the CLI answers "use a terminal". romp shows the same facts from
+    // the SDK's control requests instead — status, enable/disable, reconnect. Intercepted here, the
+    // one point that sees a command before it runs (the /clear precedent below).
+    if (/^\/mcp\s*$/.test(text)) {
+      ta.value = ""; composerManualH = null; ta.style.height = "";
+      drafts.delete(sid); persistDrafts();
+      openMcpPanel(sid);
+      return;
+    }
     const dropDetail = isClearCmd(text) ? clearConfirmDetail(openTopTitles(ledgers.get(sid)?.tree)) : null;
     if (dropDetail) {
       showConfirm("Clear this conversation?", dropDetail,
