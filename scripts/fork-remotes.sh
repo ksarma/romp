@@ -88,10 +88,23 @@ if [ $check_only -eq 1 ]; then
     if [ -n "$up_fetch" ] && [ "$up_push" != "$NOPUSH" ]; then
         note "upstream is PUSHABLE ($up_push) — a stray push would land on the project"
     fi
+    # origin's PUSH url is separate from its fetch url; the repo_id check at the top read only fetch.
+    # A push url repointed at the project sends a bare push there while everything else looks fine.
+    origin_push="$(git remote get-url --push origin 2>/dev/null || true)"
+    if [ -n "$origin_push" ] && [ "$(repo_id "$origin_push")" != "$(repo_id "$origin_url")" ]; then
+        note "origin PUSHES to $origin_push, not your fork — a bare push would not land on the fork"
+    fi
     pd="$(git config --get remote.pushDefault || true)"
     if [ -n "$pd" ] && [ "$pd" != "origin" ]; then
         note "remote.pushDefault is '$pd' — a bare 'git push' would not go to your fork"
     fi
+    # branch.<name>.pushRemote OVERRIDES remote.pushDefault, so checking only pushDefault above misses
+    # a per-branch push aimed elsewhere. Anything but 'origin' is a bare push that skips the fork.
+    while read -r _pr_key _pr_val; do
+        [ -z "$_pr_key" ] && continue
+        [ "$_pr_val" = "origin" ] && continue
+        note "$_pr_key is '$_pr_val' — a bare push from that branch would not go to your fork"
+    done < <(git config --get-regexp '^branch\..*\.pushRemote$' 2>/dev/null || true)
     if [ $problems -eq 0 ]; then
         echo "  ✓ origin (your fork) is the only pushable remote"
         exit 0
@@ -107,6 +120,16 @@ else
 fi
 git remote set-url --push upstream "$NOPUSH"
 git config remote.pushDefault origin
+# Fix the two overrides --check now also inspects, so "run fork-remotes.sh to fix" is honest: a
+# repointed origin push url, and any per-branch pushRemote aimed away from the fork (these override
+# remote.pushDefault). origin's push url is reset to its own fetch url; a pushRemote pointing AT
+# origin is already safe and left alone.
+git remote set-url --push origin "$origin_url"
+while read -r _pr_key _pr_val; do
+    [ -z "$_pr_key" ] && continue
+    [ "$_pr_val" = "origin" ] && continue
+    git config --unset "$_pr_key" || true
+done < <(git config --get-regexp '^branch\..*\.pushRemote$' 2>/dev/null || true)
 
 echo "fork-remotes: configured"
 echo "  origin   $origin_url  (fetch + push — your fork)"

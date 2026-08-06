@@ -206,6 +206,18 @@ class TokenRequiredEverywhere(unittest.TestCase):
         self.assertNotIn(stale, km._HANDOFF)
         self.assertLessEqual(len(km._HANDOFF), before + 1)
 
+    def test_unspent_codes_within_the_ttl_are_bounded(self):
+        # The sweep above only reclaims EXPIRED codes; a flood inside the 300s window (a hostile
+        # same-site loopback page riding the cookie hits /handoff in a loop) would otherwise grow the
+        # dict without bound and turn the per-mint O(n) sweep quadratic. The cap holds the live set to
+        # _HANDOFF_MAX no matter how many are minted before any expires.
+        with km._HANDOFF_LOCK:
+            km._HANDOFF.clear()
+        for _ in range(km._HANDOFF_MAX * 3):
+            km._mint_handoff()
+        self.assertLessEqual(len(km._HANDOFF), km._HANDOFF_MAX,
+                             "unspent codes must stay bounded within the TTL window")
+
     def test_an_uncredentialed_request_mints_no_handoff_code(self):
         """/handoff mints a credential, so reaching it must cost one.
 

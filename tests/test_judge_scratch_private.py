@@ -111,6 +111,13 @@ class JudgeScratchPrivate(unittest.TestCase):
         rows = [json.loads(l) for l in Path(jd.ERRORS).read_text().splitlines() if l.strip()]
         self.assertTrue(any(r["err"] == "scratch" and r["judge"] == "captioner" for r in rows),
                         "the refusal is surfaced as an error row (`romp judges`), not swallowed")
+        # A scratch refusal is NOT the model's fault, so it must ride the same paused flag the rate
+        # gate and retry-pause set: a "" that means "skipped, try again" — NOT one that counts toward
+        # DISTILL_FAIL_CAP. Without the flag, three refusals in a row blank the card's summary to the
+        # "" sentinel (judge.py's distiller/briefer/staller each read _judge_ctx.paused to skip the
+        # count). The pre-fix test asserted only the return value and the row, so it ratified the bug.
+        self.assertTrue(getattr(jd._judge_ctx, "paused", False),
+                        "the give-up counters must treat a scratch-skip as a pause, not a failure")
 
     # ── the age-based cleanup follows the new location ───────────────────────
     def test_prune_sweeps_the_new_scratch_project_dir(self):

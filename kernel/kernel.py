@@ -461,6 +461,8 @@ TOKEN = _load_token()
 _HANDOFF = {}                                    # code -> expiry; popped on use, so a code works ONCE
 _HANDOFF_LOCK = threading.Lock()
 _HANDOFF_TTL_S = 300                             # a slow browser launch, not a session
+_HANDOFF_MAX = 256                               # a real open mints ONE code and spends it at once; a
+                                                 # backlog this deep is a flood, not use (see the cap below)
 
 
 def _mint_handoff():
@@ -469,6 +471,14 @@ def _mint_handoff():
         now = time.time()
         for k, exp in list(_HANDOFF.items()):    # a browser that never opened must not accumulate
             if exp <= now:
+                _HANDOFF.pop(k, None)
+        # Mint is gated (you must already hold the token/cookie), but the cookie rides from any
+        # same-site loopback page, so a hostile dev server can mint without bound INSIDE the TTL
+        # window — unbounded memory, and an O(n)-under-lock sweep that turns quadratic under a flood.
+        # Cap it: drop the soonest-to-expire (oldest, and a real open never leaves one unspent) so the
+        # live set never exceeds _HANDOFF_MAX (found on re-review 2026-08-06).
+        if len(_HANDOFF) >= _HANDOFF_MAX:
+            for k in sorted(_HANDOFF, key=_HANDOFF.get)[: len(_HANDOFF) - _HANDOFF_MAX + 1]:
                 _HANDOFF.pop(k, None)
         _HANDOFF[c] = now + _HANDOFF_TTL_S
     return c
@@ -4007,7 +4017,7 @@ def _drive(msg, client):
     t = msg.get("type")
     ID_OPS = ("sendMessage", "rewindSend", "rewindDelete", "interrupt", "compactSession", "dismissDialog", "answerAsk", "navAsk", "toggleAsk", "submitAsk",
               "addCustomAsk", "cancelAsk", "askText", "cancelQueued", "dismissEcho", "apiRetry", "setModel", "setEffort", "setMode",
-              "endSession", "renameSession", "stopTask", "rewindFiles")
+              "endSession", "renameSession", "stopTask", "rewindFiles", "mcpAction")
     if t in ID_OPS and msg.get("id"):
         sid = str(msg["id"])
     elif t in ("compact", "sendCommand") and msg.get("name"):
@@ -4251,6 +4261,14 @@ def _drive(msg, client):
         if not be.stop_task(sid, str(msg["taskId"])):
             client["send"](json.dumps({"type": "warn",
                                        "text": "Couldn't stop that background task — it may have already finished."}))
+        _push_soon()
+    elif t == "mcpAction" and msg.get("server"):
+        # enable / disable / reconnect ONE MCP server (SDK control requests). The panel refetches after,
+        # so the truth on screen is always the CLI's own status — never an optimistic guess.
+        err = be.mcp_action(sid, str(msg["server"]), str(msg.get("action") or "toggle"),
+                            bool(msg.get("enabled", True)))
+        client["send"](json.dumps({"type": "mcpResult", "id": sid, "server": str(msg["server"]),
+                                   "error": err or ""}))
         _push_soon()
     elif t == "rewindFiles" and msg.get("uuid"):
         # the SDK's file-checkpoint restore — the workspace, not the conversation. LOUD on refusal.
@@ -11738,6 +11756,12 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
         # compaction stalls. After that, blocked is the strongest signal — the turn ended in an error, so it
         # beats the live tmux states (the session can't simultaneously be at a permission prompt mid-error).
         chip = _session_chip(sid, sess["path"], session, tm, now)   # THE shared derivation — identical to the timeline lane (the user 2026-07-03)
+        # A session whose transcript DOESN'T EXIST YET is OPENING, whatever the snapshot claims (the
+        # user 2026-08-05: a just-spawned tab said "Working" over a clock with no honest base). The
+        # transcript's first record is the deciding event: it lands, discover() sees it, and the normal
+        # derivation takes over. Never for an override render (a closed episode's path is historical).
+        if chip in ("working", "ready") and not path_override and not os.path.exists(sess["path"]):
+            chip = "opening"
         faded = chip == "ready" and bool(tm["since"]) and now - tm["since"] > 3600
         # apiTooLong distinguishes a "prompt is too long" block (on YOU → red dashed tab) from a TRANSIENT API
         # error (auto-retrying → the tab renders amber/retrying, not alarm-red). chip stays "blocked" either way
@@ -19008,6 +19032,15 @@ class Handler(BaseHTTPRequestHandler):
                 except Exception:
                     pass
                 return self._send(200, json.dumps({"rows": _fleet_usage(), "host": _self_host()}),
+                                  "application/json", cache="no-cache")
+            if p == "/mcp":                                   # the MCP panel's data (the user 2026-08-05): `/mcp`
+                # in a romp session hits the CLI's INTERACTIVE panel, which an SDK session can't render — it
+                # just says "use a terminal". These are the SAME facts via the SDK's designed control request
+                # (get_mcp_status), so romp renders its own panel. Fails LOUDLY: the reason rides `error`.
+                sid = (q.get("sid") or [""])[0]
+                be = Sessions.backend_for(sid) if sid else None
+                servers, err = be.mcp_status(sid) if be else ([], "unknown session")
+                return self._send(200, json.dumps({"servers": servers, "error": err}),
                                   "application/json", cache="no-cache")
             if p == "/followup-preview":                      # the EXACT wrapped body a citation chip will send (the
                 # user 2026-07-01): clicking the composer chip shows this so you can AUDIT what romp is telling the

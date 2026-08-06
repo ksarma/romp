@@ -83,6 +83,24 @@ jobs:
       - name: Install bats + tmux (macOS)
         if: runner.os == 'macOS'
         run: brew install bats-core tmux
+      - name: Install gitleaks (Linux)
+        # tests/gitleaks-config.bats self-SKIPS when gitleaks is absent, so without this the
+        # config's own rules (the value-not-path allowlist, the merge-commit scan) are validated
+        # nowhere and a config regression ships green. Same pinned+checksummed binary as the
+        # secrets job — keep the two version/sha pairs in step. Linux only; the macOS shell cell is
+        # workflow_dispatch-only, and Linux is the arbiter for the config tests.
+        if: runner.os == 'Linux'
+        env:
+          GITLEAKS_VERSION: 8.28.0
+          GITLEAKS_SHA256: a65b5253807a68ac0cafa4414031fd740aeb55f54fb7e55f386acb52e6a840eb
+        run: |
+          set -euo pipefail
+          url="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -fsSL "$url" -o gitleaks.tar.gz
+          echo "${GITLEAKS_SHA256}  gitleaks.tar.gz" | sha256sum -c -
+          tar xzf gitleaks.tar.gz gitleaks
+          sudo install gitleaks /usr/local/bin/gitleaks
+          rm -f gitleaks gitleaks.tar.gz
       - name: Run bats
         run: bats --print-output-on-failure tests/*.bats
 
@@ -124,7 +142,11 @@ jobs:
         # --redact so a hit does not reprint the secret into a public build log,
         # where it would be MORE exposed than in the commit that tripped the
         # scan. .gitleaks.toml is picked up from the repo root.
-        run: gitleaks git . --no-banner --redact -v --exit-code 1 --log-opts=--all
+        # --diff-merges=first-parent: `gitleaks git` runs `git log -p`, which omits
+        # merge-commit diffs, so a secret introduced only in a merge (a conflict
+        # resolution) is invisible to --all too. The tree scan below catches it
+        # only while it is still at HEAD; this surfaces it in history permanently.
+        run: gitleaks git . --no-banner --redact -v --exit-code 1 --log-opts="--all --diff-merges=first-parent"
       - name: Scan the tree as it stands
         # The history scan reads commit diffs, so a secret in a file that is
         # present but untouched by any scanned commit (a submodule tip, a file
