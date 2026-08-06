@@ -176,78 +176,75 @@ rm -rf "$STATE/sdkvenv"
 JUDGE_SCRATCH="${ROMP_JUDGE_SCRATCH:-$STATE/judge-scratch}"
 echo "==> judge scratch"
 
-# One directory, one spelling — normalise BEFORE any guard reads the string. Every equality
-# guard below compares raw strings, and "$HOME/" or "$STATE/." names the same directory while
-# matching none of them, straight through to the rm. A trailing slash also switches off the
-# symlink refusal below: `[[ -L "$p/" ]]` is false for a symlink to a directory, because the
-# slash makes the test resolve the link instead of lstat'ing it. A loop, because the spellings
-# stack ("$HOME//", "$HOME/./").
-_trim_path() {
-    local p="$1"
-    while :; do
-        case "$p" in
-            */)  p="${p%/}" ;;
-            */.) p="${p%.}" ;;
-            *)   break ;;
-        esac
-    done
-    printf '%s' "$p"
-}
-JUDGE_SCRATCH="$(_trim_path "$JUDGE_SCRATCH")"
-
-# Validate BEFORE removing anything. Both paths below are derived from a variable, and an
-# `rm -rf` on a derived path is exactly where uninstallers destroy machines: an empty or
-# mangled value here would expand to `rm -rf /`. (An early draft did precisely that — the
-# guard test caught it, and only GNU rm's --preserve-root stopped it.) So require a path
-# that could only be romp's own scratch: absolute, at least two components deep, not $HOME
-# or any ancestor of it, and named for romp. Anything else is skipped loudly, never guessed at.
-_judge_ok=1
-# Claude Code names a project dir after its cwd by replacing EVERY non-alphanumeric character with
-# '-', over the REALPATH — kernel/judge.py's _proj_dir implements exactly that, and this has to
-# agree with it or --purge sweeps a directory that does not exist. A shell `${p//\//-}` replaces
-# only the slashes, which agreed by luck while the scratch was /tmp/romp-judge (no other
-# non-alnum char in it) and stopped agreeing the moment it moved under ~/.local/state: the dot in
-# `.local` survives, so the two spell the same path differently and the transcripts are left
-# behind. Derived here the same way judge.py derives it, so they cannot drift apart again.
-_scratch_slug="$(python3 - "$JUDGE_SCRATCH" <<'PYEOF'
+# Validate on the CANONICAL path, and delete the SAME path that was validated. Both the rm below
+# and the derived Claude-Code project dir hang off this value, and an `rm -rf` on a derived path is
+# exactly where uninstallers destroy machines: an empty or mangled value would expand to `rm -rf /`.
+# (An early draft did precisely that — only GNU rm's --preserve-root stopped it.)
+#
+# The trap that keeps recurring here is comparing the RAW string in the guards while the rm follows
+# the real DIRECTORY, because one directory has many spellings — "$HOME/", "$STATE//romp",
+# "$HOME/./x", a trailing newline (which $(...) strips only AFTER a shell suffix-trimmer has run, so
+# the trailing slash it left behind survives), or a case variant on a case-insensitive filesystem.
+# Every one is a different string for the same dir, so a string-equality guard misses it and reaches
+# rm -rf on $STATE or $HOME. A suffix-trimmer closes two spellings and leaves the class open (found
+# on re-review, 2026-08-06). So canonicalise ONCE — in the python3 call we already make for the slug
+# — and run every check against that: the checked object and the deleted object are then one path.
+# The final component is deliberately NOT symlink-resolved: a symlinked scratch is refused (its
+# target was never romp's, and kernel/judge.py's _ensure_judge_scratch lstat-refuses it for the same
+# reason), while a symlinked ANCESTOR — a relocated $STATE — stays fine, which is what judge.py
+# writes through too. The slug is Claude Code's project-dir name: every non-alphanumeric of the
+# realpath replaced with '-' (kernel/judge.py's _proj_dir rule), derived here the same way so the
+# swept dir and the one judge.py wrote cannot drift apart.
+_judge_info="$(python3 - "$JUDGE_SCRATCH" "$STATE" "$HOME" <<'PYEOF'
 import os, re, sys
-print(re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(sys.argv[1])))
+raw, state, home = sys.argv[1], sys.argv[2], sys.argv[3]
+
+def canon(p):
+    p = p.strip().rstrip("/")                       # trailing newline/space/slash: same dir, other string
+    if not p:
+        return None
+    parent, base = os.path.split(p)
+    if base in ("", ".", ".."):                     # no clean final component to key on
+        return None
+    return os.path.join(os.path.realpath(parent), base)   # parent resolved; final kept for the symlink check
+
+def skip():
+    sys.stdout.write("SKIP\n\n\n"); sys.exit(0)
+
+cp = canon(raw)
+if cp is None:
+    skip()
+cstate, chome = os.path.realpath(state), os.path.realpath(home)
+if not cp.startswith("/") or cp.count("/") < 2:     # absolute AND at least two components deep
+    skip()
+if os.path.islink(cp):                              # symlinked final component → rm would follow it off romp's scratch
+    skip()
+if cp == chome or (chome + "/").startswith(cp + "/"):   # $HOME itself, or an ancestor of it
+    skip()
+if cp == cstate:                                    # the state root itself — only --purge removes that, confirmed
+    skip()
+for danger in (chome, cstate):                      # a spelling the string checks missed (case-insensitive fs, a
+    try:                                            # symlinked $STATE, ...): the inode is the last word when it exists
+        if os.path.exists(cp) and os.path.samefile(cp, danger):
+            skip()
+    except OSError:
+        pass
+if "romp" not in cp and not (cp + "/").startswith(cstate + "/"):   # romp's own: named for romp, OR inside its state root
+    skip()
+sys.stdout.write("OK\n%s\n%s\n" % (cp, re.sub(r"[^A-Za-z0-9]", "-", cp)))
 PYEOF
 )"
-case "$JUDGE_SCRATCH" in
-    /*/?*) ;;                                    # absolute AND at least two components
-    *)     _judge_ok="" ;;
-esac
-# It is romp's scratch or it is not ours. Named for romp, OR sitting inside romp's own state root
-# — the default became "$STATE/judge-scratch" on 2026-08-05, and a custom ROMP_STATE_DIR with no
-# "romp" in it (say /data/agents) would otherwise fail this check and silently skip the teardown.
-[[ "$JUDGE_SCRATCH" == *romp* || "$JUDGE_SCRATCH" == "$STATE"/?* ]] || _judge_ok=""
-[[ "$JUDGE_SCRATCH" != "$HOME" ]]           || _judge_ok=""
-[[ "$HOME" != "$JUDGE_SCRATCH"/* ]]         || _judge_ok=""   # never an ancestor of $HOME
-# ...and never the state root ITSELF, which contains "romp" on every default install and so
-# passes the name check. The state dir is only removed by --purge behind its own confirmation;
-# this path must not become a second, unconfirmed way to delete it.
-[[ "$JUDGE_SCRATCH" != "$(_trim_path "$STATE")" ]] || _judge_ok=""
-[[ "$JUDGE_SCRATCH" != *".."* ]]            || _judge_ok=""
-# The guards above read the RAW string; the slug below is derived from the REALPATH, so a symlink
-# at the scratch path escapes every one of them — the validated string and the deleted target are
-# then different paths. With $STATE/judge-scratch symlinked at a checkout, a plain `romp-uninstall
-# --yes` (this section is NOT gated on --purge) resolved the slug to that checkout and deleted the
-# user's OWN Claude Code transcripts for it; a symlink to $HOME would take every home-rooted
-# session. kernel/judge.py's _ensure_judge_scratch lstat-REFUSES a symlinked scratch for exactly
-# this reason, and refusing here matches it: a symlinked scratch never hosted judge runs, so there
-# is nothing romp-owned under it to clean. A symlinked ANCESTOR (a relocated $STATE) stays fine —
-# only the final component is checked, which is what judge.py writes through too.
-[[ ! -L "$JUDGE_SCRATCH" ]]                 || _judge_ok=""
+# `|| true`: on a SKIP the helper prints one line, so the 2nd/3rd read hit EOF and return 1 —
+# harmless (they leave the vars empty, which is what SKIP means) but fatal under `set -e`.
+{ read -r _judge_verdict; read -r JUDGE_SCRATCH; read -r _scratch_slug; } <<<"$_judge_info" || true
 
-if [[ -z "$_judge_ok" ]]; then
-    echo "    skipped: '$JUDGE_SCRATCH' doesn't look like romp's judge scratch — remove it yourself" >&2
+if [[ "$_judge_verdict" != "OK" || -z "$JUDGE_SCRATCH" ]]; then
+    echo "    skipped: '${ROMP_JUDGE_SCRATCH:-$STATE/judge-scratch}' doesn't look like romp's judge scratch — remove it yourself" >&2
 else
     rm -rf "$JUDGE_SCRATCH"
-    # The transcripts Claude Code wrote for those judge runs. It names a project dir after the
-    # cwd with '/' → '-'. Derived, not hardcoded, so it follows JUDGE_SCRATCH if that ever moves.
-    # The validation above now covers the path this is derived FROM (the symlink check), so the
-    # string that was checked and the target that gets deleted are the same path.
+    # The transcripts Claude Code wrote for those judge runs, under the derived project dir. The
+    # slug was computed from the SAME canonical path the rm above deleted, so the string that was
+    # validated and the target removed here are the same directory.
     _judge_proj="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/$_scratch_slug"
     if [[ -d "$_judge_proj" && -n "$_scratch_slug" && "$_judge_proj" != */projects ]]; then
         rm -rf "$_judge_proj"
