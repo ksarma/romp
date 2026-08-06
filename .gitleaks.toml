@@ -22,6 +22,7 @@ client nonce the protocol requires to be random, so it trips the entropy rule in
 generic-api-key — but this exact string is the base64 of "the sample nonce",
 published in the RFC, and it is what the kernel's handshake tests hand a fake
 request. Allowlisted by exact value, so a real high-entropy key on the same line
-is still caught.
+is still caught. ANCHORED (^…$): unanchored, this would also excuse any secret
+that merely CONTAINS the nonce as a substring (found on re-review 2026-08-06).
 """
-regexes = ['''dGhlIHNhbXBsZSBub25jZQ==''']
+regexes = ['''^dGhlIHNhbXBsZSBub25jZQ==$''']

@@ -436,6 +436,20 @@ EOF
     [[ "$(cat "$GL_ARGS")" == *"--log-opts=$old_sha..$new_sha"* ]]
 }
 
+@test "pre-push hook: the scan asks git to show merge-commit diffs" {
+    # `gitleaks git` runs `git log -p`, which shows NO diff for a merge commit by default — so a
+    # secret introduced only in a conflict resolution would be handed to the scanner as empty. The
+    # hook must pass --diff-merges=first-parent so merge content is actually scanned. Wiring only;
+    # the real "the secret is caught" proof is in gitleaks-config.bats against real gitleaks.
+    setup_hook_repo
+    setup_gitleaks_stub 0
+    echo "whatever" > "$WORK/f.txt"
+    git -C "$WORK" add -A && git -C "$WORK" commit -qm work
+    run git -C "$WORK" push origin HEAD:main
+    [ "$status" -eq 0 ]
+    [[ "$(cat "$GL_ARGS")" == *"--diff-merges=first-parent"* ]]
+}
+
 @test "pre-push hook: a brand-new branch is scanned from its first commit" {
     setup_hook_repo
     setup_gitleaks_stub 0
