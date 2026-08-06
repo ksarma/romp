@@ -7,6 +7,24 @@ pushed.
 Read `CLAUDE.md` first — it is the repo's own rules and they are load-bearing here. This file is
 only what a fresh agent cannot reconstruct from the diff.
 
+## Do this first, in a fresh clone
+
+Three things this repo needs are not files, so cloning does not bring them: remotes live in
+`.git/config`, hooks in `.git/hooks/`, and `node_modules/` is gitignored. Run these before working:
+
+```bash
+scripts/fork-remotes.sh                   # adds upstream as FETCH-ONLY with a dead push URL
+scripts/fork-remotes.sh --check           # confirm: origin (the fork) is the only pushable remote
+npm install --prefix vscode-extension     # else its suite dies on "Cannot find module 'esbuild'"
+```
+
+And if you will push: `.githooks/pre-push` is armed only once `install.sh` symlinks it into
+`.git/hooks/`, and its credential half needs gitleaks on PATH. Skipping that is survivable — CI
+scans every push and all of history — but then nothing checks a commit before it is published.
+
+Skipping `fork-remotes.sh` is the one that matters: without it there is no guard against a push
+landing on the upstream project.
+
 ## What landed
 
 | | |
