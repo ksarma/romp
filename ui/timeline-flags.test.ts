@@ -14,11 +14,40 @@ const SRC = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "romp-timeli
 
 test("ONE gear column sits between the name and the model (live lanes only)", () => {
   assert.match(SRC, /const eyeColX = PADL \+ Math\.ceil\(maxName\) \+ COLGAP;/);
-  assert.match(SRC, /const modelColX = eyeColX \+ \(anyLive \? EYE_W \+ EYE_GAP : 0\);/);
+  assert.match(SRC, /const modelColX0 = eyeColX \+ \(anyLive \? EYE_W \+ EYE_GAP : 0\);/);
   // the three separate icon columns are gone
   assert.doesNotMatch(SRC, /const mailColX/, "the mailbox column folded into the gear");
   assert.doesNotMatch(SRC, /const bellColX/, "the bell column folded into the gear");
   assert.match(SRC, /if \(s\.live\) \{[\s\S]*?gearIcon\(gcx, gcy, MODEL_FG\)/);
+});
+
+// Deviation-only lane icons (the user 2026-08-07): a lane wears a toggle's icon inline ONLY when that
+// setting differs from its default, so the at-a-glance ask ("which sessions have notifications on?")
+// is answered without re-crowding the row — the 2026-07-28 ruling that killed three ALWAYS-ON icons.
+const { laneDeviations } = require(path.resolve(process.cwd(), "..", "ui", "romp-timeline-view.js"));
+
+test("a default-configured session wears no inline icons", () => {
+  assert.deepEqual(laneDeviations({}), []);
+  assert.deepEqual(laneDeviations({ hideFromFeed: false, postalServiceOff: false, notify: false }), []);
+});
+
+test("each deviation from default earns exactly its own icon", () => {
+  assert.deepEqual(laneDeviations({ notify: true }).map((t: any) => t.flag), ["notify"]);
+  assert.deepEqual(laneDeviations({ hideFromFeed: true }).map((t: any) => t.flag), ["hideFromFeed"]);
+  assert.deepEqual(laneDeviations({ postalServiceOff: true }).map((t: any) => t.flag), ["postalServiceOff"]);
+  assert.deepEqual(
+    laneDeviations({ hideFromFeed: true, postalServiceOff: true, notify: true }).map((t: any) => t.flag),
+    ["hideFromFeed", "postalServiceOff", "notify"]);
+});
+
+test("the deviation column is MEASURED (zero on a default board) and the icons open the gear menu", () => {
+  // reserved width comes from the widest actual deviation set among live lanes, not a constant
+  assert.match(SRC, /const maxDev = Math\.max\(0, \.\.\.vis\.map\(\(s\) => \(s\.live \? laneDeviations\(s\)\.length : 0\)\)\);/);
+  assert.match(SRC, /const modelColX = modelColX0 \+ maxDev \* \(EYE_W \+ EYE_GAP\);/);
+  // rendered with the SAME glyph treatment as the menu rows, and pointerdown opens the gear menu —
+  // an inline icon is a shortcut to the explained toggle, never a direct flip
+  assert.match(SRC, /laneDeviations\(s\)\.forEach\(\(t, i\) => \{[\s\S]*?t\.icon\(!on, dcx, dcy, on \? ROMP_BLUE : MODEL_FG\)[\s\S]*?dhit\.addEventListener\('pointerdown', \(e\) => \{[\s\S]*?this\._openLaneMenu\(s, dhit\);/);
+  assert.doesNotMatch(SRC, /laneDeviations\(s\)\.forEach[\s\S]{0,900}_setSessionFlag/, "inline icons must not toggle directly");
 });
 
 test("the gear is DRAWN (hollow toothed ring) and opens the menu on POINTERDOWN (redraw-proof)", () => {
