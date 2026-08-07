@@ -110,6 +110,9 @@ repos are in play and only ONE of them is ours to write to:
   a branch, a tag or a commit to it, and never open a PR against it. Offering
   work back upstream is a deliberate decision the user makes per change; until
   they say those words, upstream is something we read.
+- **`UPSTREAM.md` is the queue for those decisions** (user ask, 2026-08-07).
+  When you land something upstream-worthy — a fix in code upstream ships too,
+  not fork-only infrastructure — add a row there; the user prunes or promotes.
 - **The guard is configuration, not care.** `scripts/fork-remotes.sh` sets
   `upstream`'s push URL to a dead sentinel, so a stray `git push upstream` fails
   loudly instead of landing on someone else's project, and points
