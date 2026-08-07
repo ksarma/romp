@@ -32,11 +32,11 @@ test("a default-configured session wears no inline icons", () => {
 });
 
 test("each deviation from default earns exactly its own icon", () => {
-  assert.deepEqual(laneDeviations({ notify: true }).map((t) => t.flag), ["notify"]);
-  assert.deepEqual(laneDeviations({ hideFromFeed: true }).map((t) => t.flag), ["hideFromFeed"]);
-  assert.deepEqual(laneDeviations({ postalServiceOff: true }).map((t) => t.flag), ["postalServiceOff"]);
+  assert.deepEqual(laneDeviations({ notify: true }).map((t: any) => t.flag), ["notify"]);
+  assert.deepEqual(laneDeviations({ hideFromFeed: true }).map((t: any) => t.flag), ["hideFromFeed"]);
+  assert.deepEqual(laneDeviations({ postalServiceOff: true }).map((t: any) => t.flag), ["postalServiceOff"]);
   assert.deepEqual(
-    laneDeviations({ hideFromFeed: true, postalServiceOff: true, notify: true }).map((t) => t.flag),
+    laneDeviations({ hideFromFeed: true, postalServiceOff: true, notify: true }).map((t: any) => t.flag),
     ["hideFromFeed", "postalServiceOff", "notify"]);
 });
 
