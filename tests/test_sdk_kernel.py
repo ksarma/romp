@@ -48,6 +48,9 @@ class FakeBackend:
     def set_effort(self, sid, v):
         self.calls.append(("set_effort", sid, v)); return True
 
+    def set_fast(self, sid, on):
+        self.calls.append(("set_fast", sid, on)); return True
+
     def rename(self, sid, n):
         self.calls.append(("rename", sid, n)); return True
 
@@ -163,6 +166,28 @@ class KernelWiring(unittest.TestCase):
         self.assertIn(("set_effort", "sid-sdk", "high"), self.be.calls)
         self.assertFalse(any(c == ("send", "sid-sdk", "/effort high") for c in self.be.calls))
         self.assertIn(("send", "sid-sdk", "/compact"), [c for c in self.be.calls if c[0] == "send"])
+
+    def test_setfast_goes_to_the_backend_as_a_boolean(self):
+        # the wire carries the picker's "on"/"off"; the backend takes a bool
+        self._route({"type": "setFast", "id": "sid-sdk", "value": "on"})
+        self._route({"type": "setFast", "id": "sid-sdk", "value": "off"})
+        self.assertIn(("set_fast", "sid-sdk", True), self.be.calls)
+        self.assertIn(("set_fast", "sid-sdk", False), self.be.calls)
+
+    def test_setfast_mid_compaction_parks_like_model_and_effort(self):
+        import time as _time
+        km._compact_clicked["sid-sdk"] = _time.time()
+        self._route({"type": "setFast", "id": "sid-sdk", "value": "on"})
+        self.assertFalse(any(c[0] == "set_fast" for c in self.be.calls),
+                         "mid-compaction the backend is NOT touched — the same park model and effort get")
+        self.assertEqual(km._pending_ops.get("sid-sdk"), [("fast", True)])
+
+    def test_setfast_on_a_backend_without_fast_mode_refuses_instead_of_pretending(self):
+        # A tmux pane has no flag-settings layer to opt in through, so there is nothing to do but say so.
+        # It must not park either: a parked op would fire into the same missing method later.
+        tmuxish = type("NoFastBackend", (), {})()
+        km._set_fast_or_park(tmuxish, "sid-tmux", True)
+        self.assertIsNone(km._pending_ops.get("sid-tmux"), "nothing parked to fail later")
 
     def test_setmode_and_rename(self):
         self._route({"type": "setMode", "id": "sid-sdk", "value": "plan"})

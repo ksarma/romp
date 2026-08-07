@@ -18,6 +18,7 @@ but gated on something first) · **offered** · **landed** · **declined** · **
 | Seventeen mid-test `! grep` bats assertions that asserted nothing, armed | PR #3 (`b35a55a3`) | candidate | Pure test-quality fix, no security angle; could go independently of the disclosure. |
 | Judge scratch-refusal blanking card summaries (`""` counted as a model failure) | PR #4 (`a0e95cd7`) | candidate | User-visible bug upstream too, independent of the security work. |
 | Timeline drop-downs clip below the short bottom band (flip/clamp, then host-document render) | PRs #7 + #8 | offered | Confirmed live, then offered as romp-on/romp#221 (2026-08-07, the user's call): both halves squashed to one commit on `timeline-menu-clip`, cut off upstream/main. The fork branch backing the PR stays until upstream resolves it. |
+| Fast mode for SDK sessions (the `fastMode` flag-settings opt-in + a per-session chip) | branch `romp-qs-fastmode` | candidate | Upstream's SDK sessions hit the same refusal: the CLI declines fast mode to any non-interactive client that has not opted in, so `/fast` is unavailable there too. The fix is the CLI's own documented settings key, not a workaround. |
 
 When offering: work from a branch cut off the upstream default, carrying only that change —
 never a fork branch with fork-only commits tangled in. Security items follow `SECURITY.md`'s
