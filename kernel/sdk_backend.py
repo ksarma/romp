@@ -967,21 +967,42 @@ def list_regs(state_dir: Path) -> list[dict]:
 # Stored OUTSIDE sdk/ so list_regs' sdk/*.json glob never mistakes it for a session.
 # ---------------------------------------------------------------------------
 
-ULTRACODE_SETTINGS = "sdk-ultracode.json"   # the --settings payload for sessions whose effort is "ultracode"
+FLAG_SETTINGS_DIR = "sdk-flag-settings"   # per-session --settings payloads, one file per sid
 
 
-def ultracode_settings_path(state_dir) -> str:
+def flag_settings_path(state_dir, sid: str, *, ultracode: bool = False, fast: bool = False) -> str:
     """The settings file handed to the CLI (options.settings — the flag-settings layer, the CLI's
-    documented per-session hook for the `ultracode` key) when a session's effort is "ultracode". The
-    SDK's typed EffortLevel has no such value: ultracode IS xhigh plus standing dynamic-workflow
-    orchestration, so the typed field carries "xhigh" and this key switches the orchestration on.
-    Rewritten on every use (constant content, atomic enough for a one-key file)."""
-    p = os.path.join(str(state_dir), ULTRACODE_SETTINGS)
+    documented per-session hook for keys the SDK has no typed field for). Returns "" when a session
+    needs none, which is the common case.
+
+    Two keys ride here, both per-session:
+    - `ultracode`: the SDK's typed EffortLevel has no such value — ultracode IS xhigh plus standing
+      dynamic-workflow orchestration, so the typed field carries "xhigh" and this key switches the
+      orchestration on.
+    - `fastMode`: the CLI REFUSES fast mode to any non-interactive client ("Fast mode is not available
+      in the Agent SDK") unless this exact key is true in the flag-settings layer — that check is the
+      host's designed opt-in, not a loophole (verified against claude 2.1.224 on 2026-08-07: with the
+      key, a headless run reports fast_mode_state "on"; without it, "off" with the disabled reason
+      "sdk_opt_in_required").
+
+    One file PER SESSION (not the single shared file the ultracode key used to get): the content now
+    varies by session, so a shared file would hand one session's fast mode to every other one. Rewritten
+    on every use — a couple of boolean keys, atomic enough."""
+    keys = {}
+    if ultracode:
+        keys["ultracode"] = True
+    if fast:
+        keys["fastMode"] = True
+    if not keys:
+        return ""
+    d = os.path.join(str(state_dir), FLAG_SETTINGS_DIR)
+    p = os.path.join(d, "%s.json" % sid)
     try:
+        os.makedirs(d, exist_ok=True)
         with open(p, "w") as f:
-            f.write('{"ultracode": true}\n')
+            f.write(json.dumps(keys) + "\n")
     except OSError:
-        pass
+        return ""     # no settings file → the session still launches, just without these keys
     return p
 
 
@@ -1040,8 +1061,8 @@ class SdkSession:
         # in live_sessions). A FRESH construction makes them moot by definition: effort is a
         # connect-time flag this session's next _options applies, and the chosen model alias
         # (reg['model']) rides the same connect — the switch is effectively applied, so pending is over.
-        if reg.get("effortPending") or reg.get("modelPending"):
-            backend._update_reg(self.sid, effortPending=False, modelPending=False)
+        if reg.get("effortPending") or reg.get("modelPending") or reg.get("fastPending"):
+            backend._update_reg(self.sid, effortPending=False, modelPending=False, fastPending=False)
         # protocol/runtime state
         self.loop: asyncio.AbstractEventLoop | None = None
         self.client = None
@@ -1104,6 +1125,14 @@ class SdkSession:
         #   a connect-time flag, no runtime control): the effort badge shows the switching-dots + the chat shows a
         #   "Reloading session…" notice until the reconnect completes (the user 2026-07-06). Cleared the instant the
         #   new client connects (reconnect loop) — event-based, mirroring _model_pending's dots.
+        self.fast = bool(reg.get("fast"))            # fast mode — like --effort, a connect-time opt-in (the
+        #   `fastMode` flag-settings key), so a change RECONNECTS to apply. Per-session on purpose: it draws
+        #   usage credits at a higher rate and has its own rate limits, so it is never a remembered default.
+        self._fast_pending = False                   # a fast-mode switch is reconnecting → switching-dots
+        self.fast_state = ""                         # what the CLI REPORTS fast mode is doing: on / off /
+        #   cooldown. The AUTHORITATIVE value (init's fast_mode_state), which is not the same thing as what we
+        #   asked for: a rate-limited session reports cooldown, and one whose model isn't Opus reports off.
+        self.fast_reason = ""                        # the CLI's reason when it reports fast mode off
         self.perm_mode = self.mode
         # Pending conversation REWIND (the chat's edit-message branch): the target record uuid +
         # the transcript leaf recorded at request time (the one-shot guard — see rewind_disposition).
@@ -1622,6 +1651,14 @@ class SdkSession:
                         self._effort_pending = ""
                         self.backend._update_reg(self.sid, effortPending=False)
                         self.backend._poke()
+                    if self._fast_pending:
+                        # Same deal for a fast-mode switch: the `fastMode` key rode _options above, so this
+                        # connect IS the moment it took effect. What the CLI then makes of it arrives with the
+                        # first turn's init (fast_state) — clearing the dots here only says "we asked".
+                        self._fast_pending = False
+                        self.fast_state = self.fast_reason = ""   # the old connect's verdict is stale now
+                        self.backend._update_reg(self.sid, fastPending=False)
+                        self.backend._poke()
                     # PRE-TURN PUBLISH (the user 2026-06-27): pull the live model + context % the INSTANT we
                     # connect — before any turn — so a freshly-created SDK session shows its model and context on
                     # OPEN, like a tmux session does on launch. The old path keyed model/ctx resolution off the
@@ -1786,6 +1823,12 @@ class SdkSession:
             # the field is absent on a subscription login). An auth flip is the deciding event for the
             # rail's /usage bars — see _note_auth_source.
             self.backend._note_auth_source(self.name, d.get("apiKeySource"))
+            # What fast mode is ACTUALLY doing, straight from the CLI rather than inferred from what we
+            # asked for (the authoritative-source rule): "on" / "off" / "cooldown", plus a reason when the
+            # CLI declines. Our own opt-in can be true while this says off — a non-Opus model, exhausted
+            # credits — and the badge must show the CLI's answer, not our request.
+            self.fast_state = d.get("fast_mode_state") or ""
+            self.fast_reason = d.get("fast_mode_disabled_reason") or ""
             fsid = d.get("session_id")
             if fsid and fsid != self.resume_sid:
                 self.resume_sid = fsid
@@ -2307,6 +2350,11 @@ class SdkSession:
                 "model": model_label(self.model, self.chosen_model), "effort": self.effort,
                 "modelPending": bool(self._model_pending),   # a /model switch resolving → the badge shows switching-dots
                 "effortPending": bool(self._effort_pending),   # an /effort switch reconnecting → effort-badge dots + "Reloading session…"
+                # Fast mode, two values on purpose: what we ASKED the CLI for (fast), and what the CLI SAYS it
+                # is doing (fastState, from init). The badge reads the CLI's word once there is one — an
+                # opted-in session can still be off (wrong model) or cooling down (its own rate limit).
+                "fast": bool(self.fast), "fastPending": bool(self._fast_pending),
+                "fastState": self.fast_state, "fastReason": self.fast_reason,
                 "mode": self.perm_mode, "ctx": self._ctx_pct(), "summary": "",
                 "retryCount": self.retry_count,   # api_retry backoff attempts in the current storm → the live 'attempt N' in the chat's retrying element
                 "retryInfo": self.retry_info,     # the latest attempt's detail (attempt/max, error status+message, next-attempt epoch) → the retrying element's context lines (the user 2026-07-10)
@@ -2494,8 +2542,8 @@ class SdkBackend:
                     # The switch is moot at the next connect (effort + chosen alias both ride
                     # _options), so heal here for sessions that stay DORMANT; SdkSession.__init__
                     # heals the same way for ones that respawn.
-                    if r.get("effortPending") or r.get("modelPending"):
-                        self._update_reg(sid, effortPending=False, modelPending=False)
+                    if r.get("effortPending") or r.get("modelPending") or r.get("fastPending"):
+                        self._update_reg(sid, effortPending=False, modelPending=False, fastPending=False)
                     queued = [t for t in (r.get("queue") or []) if isinstance(t, str) and t]
                     cut = last_state_value(self.state_dir, sid) == "working"
                     # bg tasks the dead kernel's CLI took with it (the reg mirror, _on_task_event):
@@ -2994,8 +3042,12 @@ class SdkBackend:
                       % sess.name)
         if self.mcp_config:
             kw["mcp_servers"] = self.mcp_config
-        if (sess.effort or "") == "ultracode":
-            kw["settings"] = ultracode_settings_path(self.state_dir)   # the `ultracode` settings key, per session
+        # The flag-settings layer carries the two keys the SDK has no typed field for — ultracode
+        # (effort) and fastMode. Both are connect-time, which is why changing either reconnects.
+        fs = flag_settings_path(self.state_dir, sess.sid,
+                                ultracode=(sess.effort or "") == "ultracode", fast=sess.fast)
+        if fs:
+            kw["settings"] = fs
         return ClaudeAgentOptions(**kw)
 
     # ---- lifecycle (kernel-thread API) ----
@@ -3539,6 +3591,42 @@ class SdkBackend:
             self._wake_push()
         return True
 
+    def set_fast(self, sid: str, on: bool) -> bool:
+        """Turn fast mode on/off for one session. Like effort, the CLI takes this only at connect (the
+        `fastMode` flag-settings key), so this persists it and RECONNECTS to apply: immediately if the
+        session is idle, at the end of the current turn if it's busy.
+
+        Deliberately NOT remembered as the seed for new sessions (write_sdk_default), the same call
+        ultracode makes: fast mode draws usage credits at a higher rate and carries its own rate limits,
+        so it stays a per-session choice rather than something that quietly spreads to every session
+        romp starts next."""
+        on = bool(on)
+        reg = read_reg(self.state_dir, sid)
+        if not reg:
+            return False
+        if bool(reg.get("fast")) == on and not reg.get("fastPending"):
+            return True     # already there — no reconnect, nothing to say
+        reg["fast"] = on
+        reg["fastPending"] = True
+        write_reg(self.state_dir, sid, reg)
+        s = self.sessions.get(sid)
+        if s:
+            s.fast = on
+            s._fast_pending = True
+            s.request_reconnect()
+            # The synthesized "/fast on" atom, exactly as set_effort does for "/effort X": a reconnect
+            # leaves no transcript record, so without this the pick would land invisibly on an idle
+            # session while a parked one showed a queued chip.
+            t = int(time.time())
+            disp = "/fast " + ("on" if on else "off")
+            uid = "cmd:%d:fast" % t
+            self._live.setdefault(sid, {})[uid] = {
+                "type": "user", "uuid": uid, "session_id": sid, "fsid": s.resume_sid, "parentUuid": None,
+                "t": t, "author": "human", "command": "/fast", "_echo_text": disp,
+                "message": {"role": "user", "content": [{"type": "text", "text": disp}]}}
+            self._wake_push()
+        return True
+
     def owns(self, sid: str) -> bool:
         return read_reg(self.state_dir, sid) is not None
 
@@ -3575,6 +3663,8 @@ class SdkBackend:
                             "modelPending": bool(reg.get("modelPending")),
                             "effortPending": bool(reg.get("effortPending")),
                             "effort": reg.get("effort", ""),
+                            "fast": bool(reg.get("fast")), "fastPending": bool(reg.get("fastPending")),
+                            "fastState": "", "fastReason": "",   # only a LIVE CLI reports these
                             "mode": reg.get("mode", ""),
                             "ctx": lc if isinstance(lc, (int, float)) else "", "summary": ""}
         return out
@@ -3829,6 +3919,12 @@ class SdkBackend:
                 self._update_reg(sess.sid, effortPending=False)
             except Exception as e:
                 self._log("session gone (%s): effort-pending clear failed: %s" % (sess.name, e))
+        if sess._fast_pending:            # a fast-mode reconnect that never landed → same, don't trap the dots
+            sess._fast_pending = False
+            try:
+                self._update_reg(sess.sid, fastPending=False)
+            except Exception as e:
+                self._log("session gone (%s): fast-pending clear failed: %s" % (sess.name, e))
         # Background tasks are the CLI's children, so they just died too. A session idle-waiting on a
         # timer/watcher would wait FOREVER for a completion that can never arrive — tell it, visibly,
         # and wake it so it can relaunch what still matters (the user 2026-07-11: nimbus's campaign

@@ -405,6 +405,54 @@ class LiveTail(unittest.TestCase):
         self.assertTrue(be.set_effort(sid, "low"))
         self.assertEqual(be.live_atoms(sid), [])
 
+    def test_set_fast_synthesizes_the_command_atom_and_arms_the_reconnect(self):
+        """Fast mode is a connect-time opt-in, so the switch RECONNECTS and leaves no transcript record —
+        the same hole set_effort's synthesized atom fills, filled the same way."""
+        d = tempfile.mkdtemp()
+        be = sb.SdkBackend(d, "/bin/true", lambda *a, **k: None)
+        sid = "11111111-2222-3333-4444-777777777777"
+        sb.write_reg(d, sid, {"sid": sid, "name": "n", "cwd": "/tmp", "alive": True})
+        s = sb.SdkSession(be, {"sid": sid, "name": "n", "cwd": "/tmp"})
+        be.sessions[sid] = s
+        reconnects = []
+        s.request_reconnect = lambda: reconnects.append(1)
+        self.assertTrue(be.set_fast(sid, True))
+        self.assertEqual(len(reconnects), 1, "the CLI takes fastMode only at connect → reconnect to apply")
+        self.assertTrue(s.fast)
+        self.assertTrue(s._fast_pending, "switching-dots until the reconnect lands")
+        self.assertTrue(sb.read_reg(d, sid)["fast"], "persisted, so a resume comes back fast")
+        cmds = [a for a in be.live_atoms(sid) if a.get("command") == "/fast"]
+        self.assertEqual(len(cmds), 1)
+        self.assertEqual(cmds[0]["_echo_text"], "/fast on")
+        self.assertEqual(cmds[0]["author"], "human")
+
+    def test_set_fast_to_the_value_it_already_has_does_nothing(self):
+        # A card must move on new information only; re-picking the current value is not new information,
+        # and a reconnect for it would cut the session's turn for nothing.
+        d = tempfile.mkdtemp()
+        be = sb.SdkBackend(d, "/bin/true", lambda *a, **k: None)
+        sid = "11111111-2222-3333-4444-888888888888"
+        sb.write_reg(d, sid, {"sid": sid, "name": "n", "cwd": "/tmp", "alive": True})
+        s = sb.SdkSession(be, {"sid": sid, "name": "n", "cwd": "/tmp"})
+        be.sessions[sid] = s
+        reconnects = []
+        s.request_reconnect = lambda: reconnects.append(1)
+        self.assertTrue(be.set_fast(sid, False), "already off — accepted, but a no-op")
+        self.assertEqual(reconnects, [], "no reconnect for a pick that changes nothing")
+        self.assertEqual(be.live_atoms(sid), [], "and nothing to acknowledge in the chat")
+
+    def test_fast_mode_is_never_remembered_as_the_seed_for_new_sessions(self):
+        # Fast mode draws credits at a higher rate and has its own rate limit, so it stays per-session —
+        # the same call ultracode makes, and the reason romp never spreads it to every new session.
+        d = tempfile.mkdtemp()
+        be = sb.SdkBackend(d, "/bin/true", lambda *a, **k: None)
+        sid = be.spawn("a", d)
+        self.assertTrue(be.set_fast(sid, True))
+        self.assertNotIn("fast", sb.read_sdk_defaults(d), "never becomes the default for the next session")
+        self.assertFalse(sb.read_reg(d, be.spawn("b", d)).get("fast"), "a NEW session starts plain")
+        self.assertTrue(sb.read_reg(d, sid)["fast"], "but THIS session keeps it")
+        self.assertFalse(be.set_fast("no-such-sid", True), "an unknown sid is refused")
+
     def test_send_echo_authors_a_romp_nudge_as_romp_not_human(self):
         # the bug (the user 2026-06-28): an auto-nudge sent through send() echoed as a BLUE HUMAN "Follow-up"
         # instead of the GRAY "from romp" auto-nudge it is, because the echo hardcoded author="human". The echo
@@ -1563,7 +1611,7 @@ class OptionsAssembly(unittest.TestCase):
         sess.effort = "ultracode"
         opts = be._options(sess, _sdk.ClaudeAgentOptions)
         self.assertEqual(opts.effort, "xhigh", "the typed field carries the effort half of ultracode")
-        self.assertTrue(opts.settings and opts.settings.endswith(sb.ULTRACODE_SETTINGS))
+        self.assertTrue(opts.settings and sb.FLAG_SETTINGS_DIR in opts.settings)
         with open(opts.settings) as f:
             self.assertEqual(json.load(f), {"ultracode": True})
         self.assertNotIn("effort", opts.extra_args or {})
@@ -1574,7 +1622,45 @@ class OptionsAssembly(unittest.TestCase):
         sess.effort = "max"
         opts = be._options(sess, _sdk.ClaudeAgentOptions)
         self.assertEqual(opts.effort, "max")
-        self.assertIsNone(opts.settings, "no ultracode → no flag-settings file")
+        self.assertIsNone(opts.settings, "no ultracode and no fast mode → no flag-settings file")
+
+    def test_fast_mode_rides_the_flag_settings_opt_in(self):
+        # The CLI REFUSES fast mode to any non-interactive client ("Fast mode is not available in the
+        # Agent SDK") unless `fastMode` is true in the flag-settings layer — options.settings is that
+        # layer, and this key is the host's designed opt-in (verified against claude 2.1.224).
+        be = sb.SdkBackend(self.d, "/bin/true", lambda *a, **k: None)
+        sess = self._sess(be)
+        sess.fast = True
+        opts = be._options(sess, _sdk.ClaudeAgentOptions)
+        self.assertTrue(opts.settings, "fast mode needs a flag-settings file to opt in through")
+        with open(opts.settings) as f:
+            self.assertEqual(json.load(f), {"fastMode": True})
+
+    def test_ultracode_and_fast_mode_share_one_settings_file(self):
+        # options.settings takes ONE path, so both keys must compose — an earlier shape wrote a fixed
+        # single-key file and the second setting would have silently dropped the first.
+        be = sb.SdkBackend(self.d, "/bin/true", lambda *a, **k: None)
+        sess = self._sess(be)
+        sess.effort, sess.fast = "ultracode", True
+        opts = be._options(sess, _sdk.ClaudeAgentOptions)
+        with open(opts.settings) as f:
+            self.assertEqual(json.load(f), {"ultracode": True, "fastMode": True})
+
+    def test_each_session_gets_its_own_flag_settings_file(self):
+        # The file is per-sid, not one shared file: its content now VARIES by session, so a shared path
+        # would hand one session's fast mode to every other session that reads it.
+        be = sb.SdkBackend(self.d, "/bin/true", lambda *a, **k: None)
+        a, b = self._sess(be), self._sess(be)
+        b.sid = "99999999-8888-7777-6666-555555555555"
+        a.fast, b.fast = True, False
+        b.effort = "ultracode"
+        pa = be._options(a, _sdk.ClaudeAgentOptions).settings
+        pb = be._options(b, _sdk.ClaudeAgentOptions).settings
+        self.assertNotEqual(pa, pb, "two sessions, two settings files")
+        with open(pa) as f:
+            self.assertEqual(json.load(f), {"fastMode": True})
+        with open(pb) as f:
+            self.assertEqual(json.load(f), {"ultracode": True}, "b's file is untouched by a's fast mode")
 
     def test_ultracode_is_a_choice_everywhere_but_never_the_seeded_default(self):
         self.assertIn("ultracode", sb.EFFORT_LEVELS, "the SDK backend accepts the pick")
@@ -1599,6 +1685,67 @@ class OptionsAssembly(unittest.TestCase):
         self.assertEqual(opts.max_buffer_size, sb.SDK_MAX_BUFFER, "romp sets the buffer cap explicitly")
         self.assertGreaterEqual(opts.max_buffer_size, 32 * 1024 * 1024,
                                 "well past any realistic single message, so a picker never dies on overflow")
+
+
+@unittest.skipUnless(_HAVE_SDK, "claude_agent_sdk not installed")
+class FastModeReportedState(unittest.TestCase):
+    """What fast mode is DOING comes from the CLI's init message, not from what romp asked for. The two
+    genuinely differ — fast mode needs an Opus model and has its own rate limit — so an opted-in session
+    can be running off or cooling down, and the badge has to say the true thing (the authoritative-source
+    rule: read the real source, never a hopeful reconstruction of it)."""
+
+    def setUp(self):
+        import asyncio
+        # the init branch schedules a context refresh on the session's loop; give it one to schedule onto
+        # (never run — the coroutine is irrelevant here) so _on_message can be driven synchronously
+        self._loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self._loop)
+
+    def tearDown(self):
+        import asyncio
+        asyncio.set_event_loop(None)
+        self._loop.close()
+
+    def _sess(self, **reg):
+        d = tempfile.mkdtemp()
+        be = sb.SdkBackend(d, "/bin/true", lambda *a, **k: None)
+        s = sb.SdkSession(be, {"sid": "f1", "name": "n", "cwd": d, "mode": "acceptEdits", **reg})
+        s.loop = self._loop
+        return s
+
+    def _init(self, sess, data):
+        sess._on_message(_sdk.SystemMessage("init", data),
+                         _sdk.AssistantMessage, _sdk.ResultMessage, _sdk.SystemMessage)
+
+    def test_the_cli_report_lands_on_the_snapshot(self):
+        sess = self._sess(fast=True)
+        self.assertEqual(sess.snapshot()["fastState"], "", "nothing claimed before the CLI has said anything")
+        self._init(sess, {"fast_mode_state": "on"})
+        snap = sess.snapshot()
+        self.assertEqual(snap["fastState"], "on")
+        self.assertTrue(snap["fast"], "and what we asked for is still reported alongside it")
+
+    def test_an_opted_in_session_the_cli_refuses_reports_the_reason(self):
+        # e.g. fast mode asked for on a session whose model isn't Opus: we say on, the CLI says off.
+        sess = self._sess(fast=True)
+        self._init(sess, {"fast_mode_state": "off", "fast_mode_disabled_reason": "model_not_allowed"})
+        snap = sess.snapshot()
+        self.assertTrue(snap["fast"], "romp's opt-in is unchanged — the user did ask for it")
+        self.assertEqual(snap["fastState"], "off", "but the CLI's verdict is what the badge shows")
+        self.assertEqual(snap["fastReason"], "model_not_allowed")
+
+    def test_cooldown_is_reported_verbatim(self):
+        # fast mode has its own rate limit; a session that hit it runs normally until it resets, and the
+        # only way anyone finds out is that the CLI says so.
+        sess = self._sess(fast=True)
+        self._init(sess, {"fast_mode_state": "cooldown"})
+        self.assertEqual(sess.snapshot()["fastState"], "cooldown")
+
+    def test_a_session_with_no_report_yet_still_offers_the_chip(self):
+        sess = self._sess()
+        snap = sess.snapshot()
+        self.assertIn("fast", snap, "the key's PRESENCE is what tells the UI this session has fast mode")
+        self.assertFalse(snap["fast"])
 
 
 @unittest.skipUnless(_HAVE_SDK, "claude_agent_sdk not installed")

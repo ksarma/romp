@@ -14,7 +14,8 @@ const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "
 test("the effort badge shows switching-dots while a reconnect is pending, like the model badge", () => {
   assert.match(RENDER, /effortPending\?: boolean;/);   // status carries it
   assert.match(RENDER, /\(kind === "effort" && !!st\.effortPending\)/);          // effort feeds `pending`
-  assert.match(RENDER, /const showDots = pending && \(kind === "model" \|\| kind === "effort"\);/);   // dots for BOTH now
+  // dots for every badge whose change takes a round trip — model, effort, and now fast mode
+  assert.match(RENDER, /const showDots = pending && \(kind === "model" \|\| kind === "effort" \|\| kind === "fast"\);/);
 });
 
 test("a live reconnect has its own ChatEvent kind, dispatched to renderReconnecting", () => {
