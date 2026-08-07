@@ -439,16 +439,24 @@ function offsetRect(rect, frames) {
 // (hideFromFeed/postalServiceOff are off-flags; notify is an on-flag), `value` maps a desired
 // enabled-state back to the flag value _setSessionFlag persists.
 const LANE_TOGGLES = [
-  { flag: 'hideFromFeed', label: 'Feed cards', icon: feedCheckIcon,
+  { flag: 'hideFromFeed', label: 'Feed cards', icon: feedCheckIcon, defaultOn: true,
     enabled: (s) => !s.hideFromFeed, value: (enable) => !enable,
     desc: 'its prompts make cards on the feed; off, the lane stays here but new prompts mint none' },
-  { flag: 'postalServiceOff', label: 'Postal service', icon: mailboxIcon,
+  { flag: 'postalServiceOff', label: 'Postal service', icon: mailboxIcon, defaultOn: true,
     enabled: (s) => !s.postalServiceOff, value: (enable) => !enable,
     desc: 'visible to peer sessions, can send and receive their messages; off = fully isolated' },
-  { flag: 'notify', label: 'Notifications', icon: bellIcon,
+  { flag: 'notify', label: 'Notifications', icon: bellIcon, defaultOn: false,
     enabled: (s) => !!s.notify, value: (enable) => enable,
     desc: 'system notification when its work blocks on you or completes' },
 ];
+// The toggles a lane wears INLINE, beside its gear: exactly the ones that DEVIATE from their default
+// (the user 2026-08-07, who wanted at-a-glance state — e.g. which sessions have notifications armed).
+// Deviation-only keeps the 2026-07-28 ruling intact: THREE always-on icons crowded the row, so a
+// lane earns an icon only when it carries information (an armed bell, a hidden feed, a closed
+// mailbox). A default-configured board draws none, and the gear stays the mechanics level.
+function laneDeviations(s) {
+  return LANE_TOGGLES.filter((t) => t.enabled(s) !== t.defaultOn);
+}
 // Model + effort choices come from the kernel's /models — the ONE list shared with the chat statusline picker
 // and the judge-tier settings (the user 2026-07-02: no hardcoded model list per surface). Populated in place
 // on load so _openMetaMenu keeps its reference; the lane picker appends its own 'Default' sentinel (not a model).
@@ -2490,11 +2498,16 @@ class TimelinePanel {
     // 2026-06-19). Reserve its width only when there IS a live lane, so an all-historical view keeps the
     // tight [name][model] layout.
     const EYE_W = 13, EYE_GAP = 6, anyLive = vis.some((s) => s.live);
-    const eyeColX = PADL + Math.ceil(maxName) + COLGAP;                              // [name] [gear] [model+effort] [chip] [ctx]
+    const eyeColX = PADL + Math.ceil(maxName) + COLGAP;                              // [name] [gear] [devs] [model+effort] [chip] [ctx]
     // ONE settings-gear column again (the user 2026-07-28, round 3): the feed checkbox, postal mailbox
     // and notification bell folded into the gear's drop-down (LANE_TOGGLES), so the lane is back to a
     // single icon column between the name and the model.
-    const modelColX = eyeColX + (anyLive ? EYE_W + EYE_GAP : 0);
+    const modelColX0 = eyeColX + (anyLive ? EYE_W + EYE_GAP : 0);
+    // Deviation icons (laneDeviations) sit between the gear and the model. The column is MEASURED from
+    // the widest actual deviation set among visible live lanes — a default-configured board reserves
+    // zero width, so nothing shifts until some lane genuinely carries state worth a glance.
+    const maxDev = Math.max(0, ...vis.map((s) => (s.live ? laneDeviations(s).length : 0)));
+    const modelColX = modelColX0 + maxDev * (EYE_W + EYE_GAP);
     const effortColX = modelColX + Math.ceil(maxModelPiece) + effortGap;   // fixed left edge for EVERY lane's effort word
     const chipColX = modelColX + (maxModel > 0 ? Math.ceil(maxModel) + COLGAP : 0);
     const ctxColX = chipColX + (maxChip > 0 ? Math.ceil(maxChip) + COLGAP : 0);
@@ -2840,6 +2853,33 @@ class TimelinePanel {
           e.stopPropagation();
           this.hideTip();
           this._openLaneMenu(s, ghit);
+        });
+        // Deviation icons (the user 2026-08-07): each setting that differs from its default wears its
+        // own small icon right of the gear — blue when armed beyond default (the bell), slashed gray
+        // when something default-on is off (feed cards, postal) — the same rendering the gear menu's
+        // rows use, so the glyph reads identically at both levels. Clicking one is a shortcut into the
+        // gear menu (pointerdown, redraw-proof), NOT a direct toggle: the 2026-06-23 direct-toggle era
+        // ended for a reason, and the menu row explains the flag before it flips.
+        laneDeviations(s).forEach((t, i) => {
+          const on = t.enabled(s);
+          const dx = modelColX0 + i * (EYE_W + EYE_GAP), dcx = dx + 5, dcy = y + 0.5;
+          const dbox = el('g', {});
+          dbox.appendChild(t.icon(!on, dcx, dcy, on ? ROMP_BLUE : MODEL_FG));
+          dbox.setAttribute('opacity', on ? '0.9' : '0.6');
+          svg.appendChild(dbox);
+          const dhit = el('rect', { x: dx - 3, y: y - 9, width: EYE_W + 6, height: 18, fill: 'transparent', 'pointer-events': 'all' });
+          dhit.style.cursor = 'pointer';
+          dhit.setAttribute('aria-label', t.label + (on ? ' on' : ' off')); svg.appendChild(dhit);
+          const dtip = t.label + ' — ' + (on ? 'on' : 'off') +
+            "<div style='opacity:.65;margin-top:2px'>" + t.desc + '</div>';
+          dhit.addEventListener('mouseenter', (e) => { dbox.setAttribute('opacity', '1'); this.showTip(dtip, e); });
+          dhit.addEventListener('mousemove', (e) => this.moveTip(e));
+          dhit.addEventListener('mouseleave', () => { dbox.setAttribute('opacity', on ? '0.9' : '0.6'); this.hideTip(); });
+          dhit.addEventListener('pointerdown', (e) => {
+            e.stopPropagation();
+            this.hideTip();
+            this._openLaneMenu(s, dhit);
+          });
         });
       }
       // DEAD lane → a "Clear" pill just right of the struck name (the user 2026-07-02). A dead session lingers
@@ -3352,4 +3392,4 @@ class TimelinePanel {
   body(s) { return s ? '<div class="b">' + s + '</div>' : ''; }
 }
 
-module.exports = { TimelinePanel, badgeFor, roundedPath, crossX, workAnchorOf, idleGaps, fmtSpan, dotLit, barLit, interpNow, shouldReanchorEdge, reanchorEdge, isFreshNowSample, barEndT, dragAxis, stripRompMarks, collapseRepeat, reqText, menuTop, offsetRect };
+module.exports = { TimelinePanel, badgeFor, roundedPath, crossX, workAnchorOf, idleGaps, fmtSpan, dotLit, barLit, interpNow, shouldReanchorEdge, reanchorEdge, isFreshNowSample, barEndT, dragAxis, stripRompMarks, collapseRepeat, reqText, menuTop, offsetRect, laneDeviations };
