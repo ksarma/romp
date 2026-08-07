@@ -17,7 +17,7 @@ but gated on something first) · **offered** · **landed** · **declined** · **
 | Uninstaller scratch-path guard hardening (canonicalise before the checks; property tests over the spelling class) | PR #2 (`180e2bea` etc.) | waiting | Upstream's uninstaller has the same hole. Part of the disclosure bundle above — it aims an `rm -rf`. |
 | Seventeen mid-test `! grep` bats assertions that asserted nothing, armed | PR #3 (`b35a55a3`) | candidate | Pure test-quality fix, no security angle; could go independently of the disclosure. |
 | Judge scratch-refusal blanking card summaries (`""` counted as a model failure) | PR #4 (`a0e95cd7`) | candidate | User-visible bug upstream too, independent of the security work. |
-| Timeline drop-downs clip below the short bottom band (`menuTop` flip/clamp) | PR #7 | waiting | Confirm it works on the live dashboard first (the user 2026-08-07). Upstream ships the same `ui/romp-timeline-view.js`. |
+| Timeline drop-downs clip below the short bottom band (flip/clamp, then host-document render) | PRs #7 + #8 | offered | Confirmed live, then offered as romp-on/romp#221 (2026-08-07, the user's call): both halves squashed to one commit on `timeline-menu-clip`, cut off upstream/main. The fork branch backing the PR stays until upstream resolves it. |
 
 When offering: work from a branch cut off the upstream default, carrying only that change —
 never a fork branch with fork-only commits tangled in. Security items follow `SECURITY.md`'s
