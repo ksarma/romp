@@ -42,7 +42,9 @@ test("the CSS swap: gist shown collapsed, full text shown expanded — never bot
   assert.match(CSS, /\.romp-bubble\.nudge-collapsible \{ cursor: pointer; \}/);
 });
 
-test("the progressive-disclosure principle is recorded in CLAUDE.md's Design section", () => {
-  const doc = fs.readFileSync(path.resolve(process.cwd(), "..", "CLAUDE.md"), "utf8");
+test("the progressive-disclosure principle is recorded in ui/CLAUDE.md", () => {
+  // The UI design rules moved out of the root CLAUDE.md into ui/CLAUDE.md (loaded under ui/); this
+  // pins that the principle is still written down where UI work reads it.
+  const doc = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "CLAUDE.md"), "utf8");
   assert.match(doc, /### Progressive disclosure is the UI's organizing principle/);
 });
