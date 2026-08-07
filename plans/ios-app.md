@@ -1,6 +1,21 @@
 # iOS: the dashboard as a home-screen app
 
-Status: PROPOSED — not shipped. A design sketch; no part of this has landed.
+Status: proposals 1 and 2 IMPLEMENTED (2026-08-07, branch `romp-qs`) — manifest + icons + Apple
+metas + iOS-standalone safe-area, and Web Push end to end (`/sw.js`, `/push/*`, VAPID, the
+`_push_notify` sink beside `_system_notify`, the tab-bar bell). Proposal 3 (app badge) remains
+open. Implementation notes that amend this sketch:
+- The shell background is `#1e1e1e`, not the `#101418` guessed below (that is the login page);
+  the manifest and theme-color use `#1e1e1e`.
+- The manifest and the three icon PNGs are served auth-EXEMPT: browsers fetch a manifest (and
+  its icon list) with credentials omitted, so behind the token gate the install sheet gets a 403.
+  Fixed three-name allowlist; the rest of `/media/` stays gated.
+- Safe-area insets are gated to iOS standalone only (`navigator.standalone` sets
+  `html.ios-standalone` and flips `viewport-fit=cover` at runtime), because the browser-mode
+  cover/env() combinations regressed Android Chrome and Firefox twice in 2026-06 — see the
+  comments and tests around `#mtabs`.
+- Web Push's crypto rides the python `cryptography` package as the kernel's one soft dependency:
+  `/push/subscribe` answers a plain 500 naming it when missing (fail loudly), and CI installs it
+  so the tests run rather than skip.
 
 The user's ask (2026-08-07): they run the dashboard on an iPhone in a browser over their tailnet
 and want it to feel like a "main app" — its own icon, launched full-screen, present in the app
