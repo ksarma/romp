@@ -413,6 +413,20 @@ function gearIcon(cx, cy, color) {
   }
   return g;
 }
+// Vertical placement for the fixed-position drop-downs (_openLaneMenu / _openMetaMenu). The timeline
+// often renders as a SHORT bottom band — the web shell's f-timeline iframe — and position:fixed pins
+// to THAT band's viewport, so a menu hung unconditionally at anchor.bottom+4 from a gear near the
+// band's lower edge fell straight past the iframe's bottom and read as invisible / hidden behind the
+// shell (the user 2026-08-07). Prefer below the anchor; flip above when below can't hold the menu;
+// clamp to the viewport as the backstop when NEITHER side can (a band shorter than the menu keeps the
+// menu's top edge on-screen — a cropped last row beats no menu at all).
+function menuTop(anchor, menuH, viewH) {
+  const below = anchor.bottom + 4;
+  if (below + menuH <= viewH - 6) return below;
+  const above = anchor.top - 4 - menuH;
+  if (above >= 6) return above;
+  return Math.max(6, viewH - 6 - menuH);
+}
 // The gear menu's rows, one per per-session flag. `enabled` reads the toggle's MEANING off the session
 // (hideFromFeed/postalServiceOff are off-flags; notify is an on-flag), `value` maps a desired
 // enabled-state back to the flag value _setSessionFlag persists.
@@ -2159,7 +2173,7 @@ class TimelinePanel {
     // clamp to the viewport so a right-edge lane's menu stays on-screen
     const left = Math.min(Math.round(r.left), (window.innerWidth || 9999) - 140);
     menu.style.left = Math.max(6, left) + 'px';
-    menu.style.top = Math.round(r.bottom + 4) + 'px';
+    menu.style.top = Math.round(menuTop(r, menu.offsetHeight || 0, window.innerHeight || 9999)) + 'px';
     this._metaMenu = menu;
   }
 
@@ -2216,7 +2230,7 @@ class TimelinePanel {
     const r = anchorEl.getBoundingClientRect();
     const left = Math.min(Math.round(r.left), (window.innerWidth || 9999) - 300);   // clamp on-screen
     menu.style.left = Math.max(6, left) + 'px';
-    menu.style.top = Math.round(r.bottom + 4) + 'px';
+    menu.style.top = Math.round(menuTop(r, menu.offsetHeight || 0, window.innerHeight || 9999)) + 'px';
     this._laneMenu = menu;
   }
 
@@ -3293,4 +3307,4 @@ class TimelinePanel {
   body(s) { return s ? '<div class="b">' + s + '</div>' : ''; }
 }
 
-module.exports = { TimelinePanel, badgeFor, roundedPath, crossX, workAnchorOf, idleGaps, fmtSpan, dotLit, barLit, interpNow, shouldReanchorEdge, reanchorEdge, isFreshNowSample, barEndT, dragAxis, stripRompMarks, collapseRepeat, reqText };
+module.exports = { TimelinePanel, badgeFor, roundedPath, crossX, workAnchorOf, idleGaps, fmtSpan, dotLit, barLit, interpNow, shouldReanchorEdge, reanchorEdge, isFreshNowSample, barEndT, dragAxis, stripRompMarks, collapseRepeat, reqText, menuTop };
