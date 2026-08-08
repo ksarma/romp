@@ -338,7 +338,10 @@ function modelLabel(s) {
   return s.effort ? s.model + ' ' + s.effort : s.model;
 }
 
-// Fast mode on a lane is ONE character — an accent asterisk after the model name (the user 2026-08-08,
+// Fast mode's own colour, matching the chat badge's --fast and the CLI's (see styles.css). A STATUS
+// colour, not accent chrome — the lane draws it as a literal hex like its other colours.
+const FAST_ORANGE = '#ff6a00';
+// Fast mode on a lane is ONE character — an asterisk after the model name (the user 2026-08-08,
 // who wanted the compact form here rather than the chat's worded chip). The lane is a scanning surface:
 // the question it answers is "which of these are running hot", and a star answers it without spending a
 // column. The detail (and the off state) stays in the chat chip.
@@ -2446,6 +2449,24 @@ class TimelinePanel {
     // pending (queued / in-flight, not yet worked) it rides the live `now` edge (nowS); once processed
     // the data carries a FIXED past time so it can never equal now again (anti-"perpetual-just-landing").
     const execAt = (mm) => mm.pending ? nowS : mm.exec;
+    // RELAYED mail's exec refinement (the user 2026-08-06): a cross-host message's true process-start
+    // lives in the RECIPIENT's turns, which only meet the sender's connector HERE, in the merged view —
+    // the kernel's own binder (_bind_message_execs) never sees a remote lane's turns. The read receipt
+    // now carries the remote's delivery mid (dmid) — exactly what the recipient's transcript markers
+    // record — so the join is exact: the earliest bar on the recipient's lane whose mids carry the
+    // message's id or dmid, its start is the landing. Idempotent for local mail (the kernel already
+    // bound those to the same bar start), and a no-match leaves the receipt time as before.
+    if (data.messages && data.messages.length) {
+      const midStart = {};
+      Object.keys(data.turns || {}).forEach((sid) => (data.turns[sid] || []).forEach((b) => {
+        (b.mids || []).forEach((mid) => { const k = sid + '|' + mid; if (!(k in midStart) || b.start < midStart[k]) midStart[k] = b.start; });
+      }));
+      data.messages.forEach((mm) => {
+        const s1 = midStart[mm.toId + '|' + (mm.id || '')], s2 = midStart[mm.toId + '|' + (mm.dmid || '')];
+        const st = (s1 != null && s2 != null) ? Math.min(s1, s2) : (s1 != null ? s1 : s2);
+        if (st != null) { mm.exec = st; mm.pending = false; }
+      });
+    }
     const startAt = (t) => t.pending ? nowS : t.start;
     // LANE IDENTITY IS THE SID (data.turns + vidx + connectors all key by session.id, since two
     // live sessions can share a name and a rename keeps the id). `name` is display-only.
@@ -2994,7 +3015,7 @@ class TimelinePanel {
           // pointer-events auto for its own hover — a click still falls through to the model picker.
           if (starW) {
             const fx = modelColX + this.ctxWidth(s.model);
-            const ft = el('text', { x: fx, y: y + 3.5, 'text-anchor': 'start', 'font-size': 11, 'font-weight': 700, fill: F(ROMP_BLUE) });
+            const ft = el('text', { x: fx, y: y + 3.5, 'text-anchor': 'start', 'font-size': 11, 'font-weight': 700, fill: F(FAST_ORANGE) });
             ft.textContent = FAST_MARK; ft.style.cursor = 'pointer';
             // "fast mode: on" — the user's own words (2026-08-08). Leading with the same two words in both
             // states is the point: the star always means ON, and the cooldown is a qualifier on that, not a
@@ -3007,7 +3028,7 @@ class TimelinePanel {
             ft.addEventListener('mouseleave', () => this.hideTip());
             ft.addEventListener('click', (e) => { e.stopPropagation(); this.hideTip(); this._openMetaMenu('model', s, ft); });
             svg.appendChild(ft);
-            if (s.faded) fadedEls.push({ el: ft, full: ROMP_BLUE, faded: F(ROMP_BLUE) });
+            if (s.faded) fadedEls.push({ el: ft, full: FAST_ORANGE, faded: F(FAST_ORANGE) });
           }
         }
       }
@@ -3132,10 +3153,16 @@ class TimelinePanel {
       if (vidx[mm.fromId] == null || vidx[mm.toId] == null) return;
       if (execAt(mm) < t0 || mm.sent > t1) return;
       const sLane = vidx[mm.fromId], rLane = vidx[mm.toId];
-      const xs = x(Math.max(mm.sent, t0)), ys = laneY(sLane), xe = x(execAt(mm)), ye = laneY(rLane), col = colorOf(mm.fromId);
+      const offL = mm.sent < t0;   // sent BEFORE the visible window — only the delivery is in view
+      const xs = x(offL ? t0 : mm.sent), ys = laneY(sLane), xe = x(execAt(mm)), ye = laneY(rLane), col = colorOf(mm.fromId);
       const dir = (ys < ye) ? 1 : -1, track = ye - dir * MSG_DROP;
       const xc = crossX(sLane, rLane, xs, xe, obstacles);
-      const pts = (xc > xs + 0.5) ? [{ x: xs, y: ys }, { x: xc, y: ys }, { x: xc, y: track }, { x: xe, y: track }, { x: xe, y: ye }]
+      // An off-window send used to CLAMP to the left edge and hug the sender's lane all the way to the
+      // crossing — which read as "sent at the window's start", a send time that never existed (the user
+      // 2026-08-06: "a timing issue maybe?"). Enter from the edge at the crossing track height instead,
+      // so an off-screen send reads as exactly that; the tooltip carries the true send time.
+      const pts = offL ? [{ x: xs, y: track }, { x: xe, y: track }, { x: xe, y: ye }]
+                : (xc > xs + 0.5) ? [{ x: xs, y: ys }, { x: xc, y: ys }, { x: xc, y: track }, { x: xe, y: track }, { x: xe, y: ye }]
                                   : [{ x: xs, y: ys }, { x: xs, y: track }, { x: xe, y: track }, { x: xe, y: ye }];
       const d = roundedPath(pts, CORNER);
       const lineAttr = { d, fill: 'none', stroke: col, 'stroke-width': MSG_W0, opacity: mm.pending ? 0.4 : 0.5, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' };
