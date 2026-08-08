@@ -15063,6 +15063,9 @@ def build_timeline(now, tmux=None, with_bars=True, live_only=False):
             # the lane just applies these, like ctxColor. None → the lane keeps its default gray text.
             "modelColor": _model_color(tm["model"] if tm else "", ctx_stops),
             "effortColor": _effort_color(tm["effort"] if tm else "", ctx_stops),
+            # fast mode, the same word the chat chip reads — the lane spends it on a single asterisk after
+            # the model name (the user 2026-08-08, who wanted the compact form here)
+            "fast": _fast_word(tm),
             "context": (tm["context"] if tm else None),
             "ctxColor": (list(cm.ramp((tm["context"] or 0) / 100.0, ctx_stops))
                          if tm and tm["context"] is not None else None),   # context% on the GLOBAL colormap (bright = full)

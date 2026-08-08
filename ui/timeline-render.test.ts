@@ -695,3 +695,63 @@ test("a skeleton-only update preserves the bars from the last applyBars (no per-
   panel.update(next);
   assert.deepEqual(panel.data.turns, full.turns, "the prior bars survive a lanes-only update (carried over)");
 });
+
+// ── fast mode: one accent asterisk after the model name (the user 2026-08-08) ──────────────────────
+// The chat statusline spends a worded chip on fast mode; the timeline is a scanning surface, so it gets
+// the compact form — a star that answers "which of these are running hot" without costing a column.
+test("a fast-mode lane hangs a star off its model name, right where the name ends", () => {
+  const panel: any = new TimelinePanel(makeNode("div"));
+  const data: any = synthData();
+  data.sessions[0].fast = "on";
+  data.sessions[1].fast = "off";
+  panel.data = data;
+  assert.doesNotThrow(() => panel.draw());
+  const star = findText(panel.svg, "*");
+  assert.ok(star, "the fast lane is starred");
+  const name = findText(panel.svg, "Opus 4.8");
+  // it starts exactly where the model name ends — 6px per char in the measureText shim
+  assert.equal(Number(star.getAttribute("x")), Number(name.getAttribute("x")) + "Opus 4.8".length * 6);
+});
+
+test("a lane that is not in fast mode gets no star at all", () => {
+  const panel: any = new TimelinePanel(makeNode("div"));
+  const data: any = synthData();
+  data.sessions.forEach((s: any) => { s.fast = "off"; });
+  panel.data = data;
+  panel.draw();
+  assert.equal(findText(panel.svg, "*"), null, "off earns nothing — the chat chip carries that detail");
+});
+
+test("cooldown is starred too: fast mode is still on, just rate-limited", () => {
+  // a star that blinked off for the cooldown would flap across lanes nobody touched
+  const panel: any = new TimelinePanel(makeNode("div"));
+  const data: any = synthData();
+  data.sessions[0].fast = "cooldown";
+  data.sessions[1].fast = "off";
+  panel.data = data;
+  panel.draw();
+  assert.ok(findText(panel.svg, "*"), "a cooling-down lane keeps its star");
+});
+
+test("a DEAD lane is never starred — it is not running anything", () => {
+  const panel: any = new TimelinePanel(makeNode("div"));
+  const data: any = synthData();
+  Object.assign(data.sessions[0], { fast: "on", live: false, state: "closed" });
+  data.sessions[1].fast = "off";
+  panel.data = data;
+  panel.draw();
+  assert.equal(findText(panel.svg, "*"), null);
+});
+
+test("the star is measured into the model column, so the effort column does not shift under it", () => {
+  // the star sits between the name and the hover caret, inside the model PIECE the column reserves
+  const width = (fast: string) => {
+    const panel: any = new TimelinePanel(makeNode("div"));
+    const data: any = synthData();
+    data.sessions.forEach((s: any) => { s.fast = fast; s.model = "Opus 4.8"; s.effort = "xhigh"; });
+    panel.data = data;
+    panel.draw();
+    return Number(findText(panel.svg, "xhigh").getAttribute("x"));
+  };
+  assert.ok(width("on") > width("off"), "a starred board reserves the extra width in the model column");
+});
