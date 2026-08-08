@@ -4104,6 +4104,30 @@ function dirPrefill(host: string): string {
   return host ? "" : (kernelDefaultDir || loadSettings().defaultDir || "");
 }
 
+// Browse… is served by the kernel, and only when THAT machine can actually draw a dialog. Two ways it
+// can't: a REMOTE host, whose dialog would open on the local screen and list the wrong disk; and a kernel
+// with no desktop session at all — a server, a cloud VM — where the click used to reach a macOS-only
+// osascript and return nothing whatsoever (the user 2026-08-08). Neither is a reason to leave a button
+// that looks live, and neither costs anything to lose: the field beside it already does the job — the
+// completer asks the OWNING kernel, so a path on any host is typed with real folders offered as you go.
+// The capability rides in on the local sessionList; assume yes until a kernel says otherwise, so an older
+// kernel that doesn't send it keeps the button it always had.
+let kernelNativeDialogs = true;
+
+// The two cases are shown differently, because one of them can change and the other cannot. A REMOTE host
+// is one click back to local, so the button stays in place, disabled, saying so. A kernel with no desktop
+// can NEVER open a dialog, so the button is not rendered at all: a permanently grey control explained only
+// by a hover title is no explanation on a phone, and the field beside it is the whole affordance anyway.
+function applyBrowseState(host: string): void {
+  const b = document.querySelector("#picker .picker-browse") as HTMLButtonElement | null;
+  if (!b) return;
+  b.style.display = kernelNativeDialogs ? "" : "none";
+  b.disabled = !!host;
+  b.title = host
+    ? `The native dialog is local-only. Type the path on ${host} instead; it completes as you type.`
+    : "Pick a folder with the native dialog (opens on the kernel's machine — host-local)";
+}
+
 // Which host's sessions the picker list is currently showing ("" = this machine). The Host row picks the
 // machine a NEW session would be created on; it now also picks whose EXISTING sessions are listed, so a
 // remote session can be reopened or revived without going to that machine's own dashboard.
@@ -4321,7 +4345,7 @@ function openPicker(pick = false, prompt?: string, allowNew = false) {
     const dirList = document.createElement("datalist"); dirList.id = "picker-dir-list";
     const browseBtn = el("button", "picker-browse") as HTMLButtonElement;
     browseBtn.type = "button"; browseBtn.textContent = "Browse…";
-    browseBtn.title = "Pick a folder with the native macOS dialog (opens on the kernel's machine — host-local)";
+    browseBtn.title = "Pick a folder with the native dialog (opens on the kernel's machine — host-local)";
     browseBtn.addEventListener("click", () => { if (vscodeApi) vscodeApi.postMessage({ type: "browseDir" }); });
     // the completer's dropdown + the one-line status of whatever is typed, both fed by the owning kernel
     const dirMenu = el("div", "picker-dir-menu"); dirMenu.id = "picker-dir-menu"; dirMenu.style.display = "none";
@@ -4423,8 +4447,7 @@ function openPicker(pick = false, prompt?: string, allowNew = false) {
         hostWrapEl.querySelectorAll(".picker-be-opt").forEach((x) => x.classList.toggle("sel", x === b));
         // the native Browse… dialog opens on the LOCAL kernel's screen, so it can't stand for a remote
         // machine's disk; the inline completer can — it asks that host's own kernel (the user 2026-07-28)
-        const browse = overlay!.querySelector(".picker-browse") as HTMLButtonElement | null;
-        if (browse) { browse.disabled = !!h; browse.title = h ? `The native dialog is local-only. Type the path on ${h} instead; it completes as you type.` : "Pick a folder with the native macOS dialog (opens on the kernel's machine — host-local)"; }
+        applyBrowseState(h);
         const dirIn = document.getElementById("picker-dir") as HTMLInputElement | null;
         if (dirIn) dirIn.placeholder = h ? `New-session directory on ${h} (blank = its default)` : "New-session directory (blank = default)";
         // …and the SESSIONS listed above belong to that machine now too (the user 2026-07-29): the list
@@ -4443,9 +4466,8 @@ function openPicker(pick = false, prompt?: string, allowNew = false) {
       });
       hostWrapEl.appendChild(b);
     }
-    const browse0 = overlay.querySelector(".picker-browse") as HTMLButtonElement | null;
-    if (browse0) browse0.disabled = false;   // fresh open defaults back to local
   }
+  applyBrowseState("");   // fresh open defaults back to local — enabled unless this kernel has no desktop
   const di = document.getElementById("picker-dir") as HTMLInputElement | null;
   // the host row resets to local on every open, so this is the local prefill: what you last used here,
   // else the kernel's persisted default (file→env; localStorage is a same-tab cache)
@@ -7967,6 +7989,12 @@ window.addEventListener("message", (e: MessageEvent) => {
     const from = typeof m.host === "string" ? m.host : "";
     if (from !== pickerListHost) return;
     if (typeof m.defaultDir === "string" && !from) kernelDefaultDir = m.defaultDir;   // the LOCAL default dir
+    // …and whether that kernel can open a folder dialog at all. It arrives after the picker is already on
+    // screen, so re-settle the button now rather than leaving it live until the next open.
+    if (typeof m.nativeDialogs === "boolean" && !from) {
+      kernelNativeDialogs = m.nativeDialogs;
+      applyBrowseState(pickerHost());
+    }
     renderPicker(m.items || []);
   }
   else if (m.type === "browseResult" && typeof m.path === "string") {   // native Browse dialog returned a folder
