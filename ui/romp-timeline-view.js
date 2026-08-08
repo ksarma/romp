@@ -2996,10 +2996,13 @@ class TimelinePanel {
             const fx = modelColX + this.ctxWidth(s.model);
             const ft = el('text', { x: fx, y: y + 3.5, 'text-anchor': 'start', 'font-size': 11, 'font-weight': 700, fill: F(ROMP_BLUE) });
             ft.textContent = FAST_MARK; ft.style.cursor = 'pointer';
+            // "fast mode: on" — the user's own words (2026-08-08). Leading with the same two words in both
+            // states is the point: the star always means ON, and the cooldown is a qualifier on that, not a
+            // different answer.
             ft.addEventListener('mouseenter', (e) => this.showTip(
               s.fast === 'cooldown'
-                ? "Fast mode ON, rate-limited right now<div style='opacity:.65;margin-top:2px'>running at normal speed until the limit resets</div>"
-                : "Fast mode ON<div style='opacity:.65;margin-top:2px'>higher speed, higher credit draw</div>", e));
+                ? "fast mode: on, rate-limited<div style='opacity:.65;margin-top:2px'>running at normal speed until the limit resets</div>"
+                : "fast mode: on<div style='opacity:.65;margin-top:2px'>higher speed, higher credit draw</div>", e));
             ft.addEventListener('mousemove', (e) => this.moveTip(e));
             ft.addEventListener('mouseleave', () => this.hideTip());
             ft.addEventListener('click', (e) => { e.stopPropagation(); this.hideTip(); this._openMetaMenu('model', s, ft); });

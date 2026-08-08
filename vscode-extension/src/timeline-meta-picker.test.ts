@@ -33,3 +33,9 @@ test("the picker draws when EITHER model or effort is present, each piece guarde
   assert.match(SRC, /if \(s\.model\) drawPiece\('model', s\.model, modelColX, starW\);/);
   assert.match(SRC, /if \(s\.model\) staticPiece\(s\.model, modelColX\);/);
 });
+
+test("the fast star's hover leads with 'fast mode: on' in BOTH states (the user 2026-08-08)", () => {
+  // the star always means ON; the cooldown is a qualifier on that answer, not a different one
+  assert.match(SRC, /"fast mode: on<div/);
+  assert.match(SRC, /"fast mode: on, rate-limited<div/);
+});
