@@ -509,5 +509,25 @@ class LandingRevealPins(unittest.TestCase):
         self.assertIn("clearAppBadge", html)       # zero clears, never leaves a stale number
 
 
+class RailBell(unittest.TestCase):
+    """The desktop rail carries the same push bell as the mobile tab bar (the user 2026-08-08: a
+    laptop Chrome tab can receive Web Push with no install at all, but the opt-in bell rendered
+    only on the mobile layout, so a desktop tab had no way in)."""
+
+    def test_shell_serves_both_bells_and_one_flow_drives_them(self):
+        status, body = _serve_get("/", headers={"X-Romp-Token": km.TOKEN})
+        self.assertEqual(status, 200)
+        page = body.decode()
+        self.assertIn("id=rail-bell hidden", page, "the rail bell ships hidden, revealed on Push support")
+        self.assertIn("id=mbell hidden", page, "the mobile bell is unchanged")
+        # ONE wiring drives the pair — reveal, paint and busy all iterate the same list — so the
+        # two bells can never disagree about this device's subscription state
+        self.assertIn("querySelectorAll('#mbell,#rail-bell')", page)
+        self.assertNotIn("getElementById('mbell')", page, "the single-bell wiring is gone")
+        # the rail bell paints its states exactly like the mobile one
+        self.assertIn(".rail-acts #rail-bell.on{color:var(--accent)}", page)
+        self.assertIn(".rail-acts #rail-bell.busy{opacity:.45}", page)
+
+
 if __name__ == "__main__":
     unittest.main()
