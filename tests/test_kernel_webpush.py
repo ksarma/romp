@@ -43,6 +43,16 @@ BIN = os.path.join(os.path.dirname(HERE), "bin")
 
 SourceFileLoader("romp_event_model", os.path.join(BIN, "romp-event-model")).load_module()
 jd = SourceFileLoader("romp_judge", os.path.join(BIN, "romp-judge")).load_module()
+# Belt over conftest's suspenders. Under pytest, conftest.py rebinds XDG_STATE_HOME to a tempdir
+# before any test module imports — but a RAW `python3 tests/test_kernel_webpush.py` skips conftest,
+# and this file DELETES push state in _clear_push_state: on 2026-08-08 a raw run aimed that at the
+# LIVE store, wiping the maintainer's phone subscription and rotating the real VAPID key (which
+# orphans every subscription bound to it). Rebind the state root here, unconditionally, BEFORE the
+# kernel module loads and captures jd.STATE into its path constants.
+import tempfile
+from pathlib import Path
+_STATE_TD = tempfile.TemporaryDirectory()
+jd.STATE = Path(_STATE_TD.name)
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ.setdefault("ROMP_SERVE_TOKEN", "test-token-DO-NOT-USE")
 km = SourceFileLoader("romp_kernel_webpush", os.path.join(BIN, "romp-kernel")).load_module()
