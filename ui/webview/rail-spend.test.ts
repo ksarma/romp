@@ -64,3 +64,20 @@ test("the web landing copy carries the SAME builder — the two rails stay in st
   assert.ok(KERNEL.includes("el.innerHTML=hasBars(live[0].usage)?winsHTML(live[0].usage,det):spendWinsHTML(live[0].usage);return;}"));
   assert.ok(KERNEL.includes("(hasBars(r.usage)?winsHTML(r.usage,det):spendWinsHTML(r.usage))"));
 });
+
+// The two cost surfaces are measured differently, and only one of them sees fast mode (the user
+// 2026-08-08). The rail passes the CLI's own per-turn total_cost_usd through, premium included; the
+// gear's cost view prices session tokens from a per-model table that fast mode is invisible to, because
+// it changes no model id. That gap is a footnote in the view and a comment at the table — pinned here so
+// neither can quietly vanish while the gap is still real.
+test("the cost view says its session dollars are an estimate that fast mode exceeds", () => {
+  const GEAR = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "gear.js"), "utf8");
+  assert.match(GEAR, /session \$ estimated from token prices; fast mode draws more than shown/);
+  assert.match(GEAR, /raCost\(\) \? ' · session \$ estimated/, "shown only on the cost metric, not tokens");
+});
+
+test("the price table records the fast-mode gap for whoever maintains it", () => {
+  const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
+  assert.match(KERNEL, /KNOWN GAP — fast mode is not priced here/);
+  assert.match(KERNEL, /Deliberately NOT corrected with a hardcoded 2x/);
+});
