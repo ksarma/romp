@@ -64,6 +64,12 @@ class HumanBytes(unittest.TestCase):
         self.assertEqual(km._human_bytes(2048), "2.0 KB")
         self.assertEqual(km._human_bytes(3 * (1 << 20)), "3.0 MB")
 
+    def test_the_text_cap_reads_as_the_round_number_it_means(self):
+        # 2_000_000 divided by 1<<20 read "limit 1.9 MB" — a cap that sounds miscopied. The constant
+        # is a power of two now, so the 413 says "2.0 MB" (the user 2026-08-09).
+        self.assertEqual(km._TEXT_MAX_BYTES, 2 * 1024 * 1024)
+        self.assertEqual(km._human_bytes(km._TEXT_MAX_BYTES), "2.0 MB")
+
 
 class _Route(unittest.TestCase):
     """/file driven through the real Handler method, with _send captured."""
@@ -107,20 +113,28 @@ class ServeText(_Route):
         fp = self.write("archive.zip", b"PK\x03\x04stuff")
         self.assertEqual(self.get(fp)[0], 404)
 
-    def test_a_missing_file_404s(self):
-        self.assertEqual(self.get(os.path.join(self.tmp, "nope.py"))[0], 404)
+    def test_a_missing_file_404s_naming_the_path_it_tried(self):
+        # a bare "not found" told the user nothing about WHAT was tried — a relative link resolves
+        # against the session's cwd, which is exactly the part they can't see (the user 2026-08-09)
+        fp = os.path.join(self.tmp, "nope.py")
+        status, body = self.get(fp)[:2]
+        self.assertEqual(status, 404)
+        self.assertIn(km._tilde(fp), body)
 
     def test_a_binary_wearing_a_text_name_is_refused_rather_than_served_as_garbage(self):
         fp = self.write("weird.log", b"\x00\x01\x02 binary pretending")
         status, body = self.get(fp)[:2]
         self.assertEqual(status, 415)
         self.assertIn("not a text file", body)
+        self.assertIn(km._tilde(fp), body, "every /file error names the resolved path")
 
-    def test_oversize_text_413s_and_the_message_names_the_size_and_the_cap(self):
+    def test_oversize_text_413s_and_the_message_names_the_path_size_and_cap(self):
         fp = self.write("huge.log", b"x" * (km._TEXT_MAX_BYTES + 1))
         status, body = self.get(fp)[:2]
         self.assertEqual(status, 413)
         self.assertIn("too large", body)
+        self.assertIn(km._tilde(fp), body, "every /file error names the resolved path")
+        self.assertIn("2.0 MB", body, "the cap reads as the round number it means")
         self.assertIn(km._human_bytes(km._TEXT_MAX_BYTES), body, "say what the limit IS, not just that one exists")
 
     def test_the_text_cap_is_its_own_and_far_under_the_media_one(self):
