@@ -237,8 +237,14 @@ function initGear(post) {
     // defaultDir moved OFF /version on 2026-08-05: that route is auth-exempt and must carry no
     // filesystem paths. It comes from the gated /defaults now — a separate fetch, so a kernel that
     // does not serve it yet leaves the field on its stored value rather than blanking it.
-    if (dd) fetch(ku('/defaults'), { cache: 'no-store' }).then(function (r) { return r.json(); })
-      .then(function (d) { if (typeof d.defaultDir === 'string') dd.value = d.defaultDir; })   // the kernel's persisted default is authoritative
+    fetch(ku('/defaults'), { cache: 'no-store' }).then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (dd && typeof d.defaultDir === 'string') dd.value = d.defaultDir;   // the kernel's persisted default is authoritative
+        // Browse… draws on the KERNEL's screen, and a kernel with no desktop has none — the click used to
+        // vanish into a macOS-only dialog (the user 2026-08-08). Drop the button rather than offer one
+        // that cannot work; the field takes a typed path, which is what that machine has.
+        if (ddb && typeof d.nativeDialogs === 'boolean') ddb.style.display = d.nativeDialogs ? '' : 'none';
+      })
       .catch(function () {});
     var x = lv(); b.innerHTML = 'kernel ' + (v.kernel_sha || '?') + '\nserving v' + v.dist_ver + '\nthis tab v' + (x || '?');
   }).catch(function () { b.textContent = '(version unavailable)'; }); }
