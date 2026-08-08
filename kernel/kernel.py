@@ -16164,9 +16164,11 @@ def _cached_feed(now, tmux, sig, connect=False):
     feed = build_feed(now, tmux)         # instant may be invisible to the build below → must rebuild
     feed["buildId"] = bid
     _built_feed[:] = [sig, feed, time.time(), started]
-    for _t, _b in _feed_notifications(feed):              # armed bells: fresh builds are the transition event
+    _badge = _needs_you_count(feed)
+    for _t, _b, _sid in _feed_notifications(feed):        # armed bells: fresh builds are the transition event
         _system_notify(_t, _b)
-        _push_notify(_t, _b)                              # same events to subscribed phones (plans/ios-app.md)
+        _push_notify(_t, _b, _sid, _badge)                # same events to subscribed phones (plans/ios-app.md)
+    _badge_push(_badge)                                   # app-icon count for installed shells (proposal 3)
     return feed
 
 
@@ -16196,9 +16198,11 @@ def _system_notify(title, body):
 
 
 def _feed_notifications(feed):
-    """Diff this feed build against the last; return [(title, body)] for every ARMED card that newly
-    entered needs_input or completed (including a card appearing already there — work can surface
-    blocked). Also advances the prev map and prunes armed ids whose card left the feed."""
+    """Diff this feed build against the last; return [(title, body, sid)] for every ARMED card that
+    newly entered needs_input or completed (including a card appearing already there — work can
+    surface blocked). Also advances the prev map and prunes armed ids whose card left the feed.
+    sid rides along so a push notification's tap can land ON the session that fired (the user
+    2026-08-08, whose first real push opened the app on a different session)."""
     prev = _NOTIFY_PREV[0]
     cur = {}
     for a in feed.get("asks") or []:
@@ -16220,8 +16224,31 @@ def _feed_notifications(feed):
         what = "Needs you" if col == "needs_input" else "Completed"
         txt = str(a.get("text") or "").strip()
         out.append(("romp: %s" % (a.get("name") or "session"),
-                    "%s: %s" % (what, txt[:140] if txt else "a task changed state")))
+                    "%s: %s" % (what, txt[:140] if txt else "a task changed state"),
+                    str(a.get("sid") or "")))
     return out
+
+
+def _needs_you_count(feed):
+    """How many real (non-provisional) cards sit in needs_input — the number the app icon wears.
+    Counted from the same feed build the notifications diff, so badge and bell can never disagree."""
+    return sum(1 for a in (feed.get("asks") or [])
+               if not a.get("provisional") and a.get("column") == "needs_input")
+
+
+# The count the shell clients last heard (None = nothing sent since boot). The badge moves on feed
+# BUILDS — the exact event the columns move on — and only when the number actually changed.
+_BADGE_LAST = [None]
+
+
+def _badge_push(n):
+    """Tell every connected shell the current needs-you count when it CHANGES (proposal 3: the
+    app-icon badge, the glanceable "does anything need me"). The shell relays it to
+    navigator.setAppBadge, which only installed apps honor — everyone else ignores the message."""
+    if n == _BADGE_LAST[0]:
+        return
+    _BADGE_LAST[0] = n
+    _send_to_app("shell", {"type": "badge", "n": n})
 
 
 # ── Web Push: the same bell events, delivered to the phone (plans/ios-app.md proposal 2; the user
@@ -16370,10 +16397,13 @@ def _push_send_one(sub, payload):
         return True
 
 
-def _push_notify(title, body):
+def _push_notify(title, body, sid="", badge=0):
     """_system_notify's sibling sink: the same (title, body) — the card's gist and nothing more —
-    to every subscribed device. Runs on the pusher thread, so all network work moves to a daemon
-    thread (the _refresh_remote_prices discipline) and this never blocks or raises."""
+    to every subscribed device, plus two pieces of ROUTING metadata, not content: sid, so tapping
+    the notification lands on the session that fired (the user 2026-08-08), and badge, the
+    needs-you count the service worker paints on the app icon while the app is closed. Runs on
+    the pusher thread, so all network work moves to a daemon thread (the _refresh_remote_prices
+    discipline) and this never blocks or raises."""
     subs = _push_subs()
     if not subs:
         return
@@ -16383,7 +16413,8 @@ def _push_notify(title, body):
         print("romp: web push: %d subscription(s) on file but the python 'cryptography' package "
               "is missing — notification not delivered" % len(subs), file=sys.stderr)
         return
-    payload = json.dumps({"title": str(title), "body": str(body)}).encode()
+    payload = json.dumps({"title": str(title), "body": str(body),
+                          "sid": str(sid or ""), "badge": int(badge or 0)}).encode()
 
     def run():
         dead = []
@@ -16407,15 +16438,79 @@ def _push_notify(title, body):
 _SW_JS = """
 self.addEventListener('push',function(e){
 var d={};try{d=e.data?e.data.json():{};}catch(err){}
-e.waitUntil(self.registration.showNotification(d.title||'romp',
-{body:d.body||'',icon:'/media/romp-app-192.png',badge:'/media/romp-app-192.png'}));
+var work=[self.registration.showNotification(d.title||'romp',
+{body:d.body||'',icon:'/media/romp-app-192.png',badge:'/media/romp-app-192.png',data:{sid:d.sid||''}})];
+// the app-icon count, kept current while the app is CLOSED (the open shell re-paints it live over
+// its own WS). setAppBadge exists in the SW only where badging works at all (iOS installed apps).
+if('setAppBadge' in self.navigator)work.push(self.navigator.setAppBadge(d.badge||0)['catch'](function(){}));
+e.waitUntil(Promise.all(work));
 });
+// Land ON the thing that notified (the user 2026-08-08, whose first push opened a different
+// session): a live window gets focus + the sid over postMessage (the shell relays it into the
+// chat pane); no window -> open one with the sid in the URL, and the shell asks the kernel to
+// aim the focus at it once its chat pane connects (POST /reveal).
 self.addEventListener('notificationclick',function(e){
 e.notification.close();
+var sid=(e.notification.data&&e.notification.data.sid)||'';
 e.waitUntil(clients.matchAll({type:'window',includeUncontrolled:true}).then(function(ws){
-return ws.length?ws[0].focus():clients.openWindow('/');}));
+if(ws.length)return ws[0].focus().then(function(w){try{(w||ws[0]).postMessage({romp:'pushReveal',sid:sid});}catch(err){}});
+return clients.openWindow(sid?'/?push-reveal='+encodeURIComponent(sid):'/');}));
 });
 """
+
+
+# ── landing a push tap on the session that fired ─────────────────────────────────────────────────
+# The cold-start half of notificationclick: the app was closed, the SW opened '/?push-reveal=sid',
+# and the shell POSTs /reveal {sid, wid} at boot — necessarily BEFORE its chat pane's WS exists, so
+# the focus cannot be sent yet. It parks here and is delivered on the exact event it was waiting
+# for: that window's chat pane saying "ready" (matched by wid — the per-dashboard id the shell
+# mints and every same-window pane shares — so a second dashboard's reload cannot steal it). One
+# slot, latest wins: two taps before a boot completes should land on the newer notification.
+_PENDING_REVEAL = [None]                     # {"sid": ..., "wid": ...} or None
+
+
+def _reveal_msg(sid):
+    """What lands in the chat pane: a live session gets the focus (live=True → the live tail,
+    where the blocking prompt sits); a dead one gets the revive prompt, never a silent reveal —
+    the same split _reveal_or_confirm makes for feed/timeline taps."""
+    if sid and sid not in _tmux_sessions():
+        return {"type": "confirmRevive", "id": sid, "name": _name_of(sid) or sid}
+    return {"type": "focus", "id": sid, "live": True}
+
+
+def _reveal_request(sid, wid):
+    """POST /reveal: aim the focus at the dashboard whose wid asked. Its chat pane already
+    connected → deliver now; not yet (the cold-start norm — the shell's fetch beats the iframe's
+    WS) → park for _consume_pending_reveal. Returns whether it was delivered immediately."""
+    with _clients_lock:
+        targets = [c for c in _clients if c["app"] == "chat" and (c.get("wid") or "") == wid]
+    delivered = False
+    for c in targets:
+        try:
+            c["send"](json.dumps(_reveal_msg(sid)))
+            delivered = True
+        except Exception:
+            pass
+    if not delivered:
+        _PENDING_REVEAL[0] = {"sid": str(sid), "wid": str(wid or "")}
+    return delivered
+
+
+def _consume_pending_reveal(client):
+    """Called from the WS 'ready' handler: if this is the chat pane the parked reveal was aimed
+    at, deliver and clear. Runs AFTER the ready push, so the session tabs this focus names are
+    already on the client (same socket, ordered delivery). An empty parked wid matches the first
+    chat pane to arrive — the no-sessionStorage fallback, better than dropping the tap."""
+    p = _PENDING_REVEAL[0]
+    if not p or client.get("app") != "chat":
+        return
+    if p["wid"] and (client.get("wid") or "") != p["wid"]:
+        return
+    _PENDING_REVEAL[0] = None
+    try:
+        client["send"](json.dumps(_reveal_msg(p["sid"])))
+    except Exception:
+        pass
 
 
 def _cached_timeline(now, tmux, sig, connect=False):
@@ -18117,8 +18212,15 @@ window.addEventListener('message',function(e){var m=e.data;if(!m)return;if(m.rom
 if(m.romp==='toggleFleet')show(m.to==='chat'?'chat':'fleet');});
 function shellWS(){try{var proto=location.protocol==='https:'?'wss://':'ws://';
 var ws=new WebSocket(proto+location.host+'/ws?app=shell');
+// ready → the kernel sends the current needs-you count, so a relaunched installed app trues up
+// its icon badge immediately instead of waiting for the next change (plans/ios-app.md proposal 3)
+ws.onopen=function(){try{ws.send(JSON.stringify({type:'ready'}));}catch(e){}};
 ws.onmessage=function(ev){var m;try{m=JSON.parse(ev.data);}catch(e){return;}
-if(m&&m.type==='reveal'&&m.pane)show(m.pane);};
+if(m&&m.type==='reveal'&&m.pane)show(m.pane);
+// the app-icon badge: setAppBadge only exists where badging works (installed apps) — everyone
+// else falls through silently, so this needs no capability gymnastics
+else if(m&&m.type==='badge'&&'setAppBadge' in navigator){
+try{(m.n?navigator.setAppBadge(m.n):navigator.clearAppBadge())['catch'](function(e){});}catch(e){}}};
 ws.onclose=function(){setTimeout(shellWS,2000);};}catch(e){}}
 shellWS();
 var last='chat';try{var s=localStorage.getItem(KT);if(s&&F[s])last=s;}catch(e){}show(last);
@@ -18165,6 +18267,27 @@ return reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:b64u
 }).then(function(s){return post('/push/subscribe',s.toJSON());})
 .then(function(){isOn=true;paint();done();},function(e){fail(e);done();});
 });
+})();
+// Landing a push tap on the session that fired (the user 2026-08-08). Two arrivals:
+//  - live window: the SW focused us and posted {romp:'pushReveal',sid} — relay a focus straight
+//    into the chat iframe. Its own handler does the rest (tab select, come forward on mobile via
+//    revealSelfPane), same as a kernel-sent focus — the shim delivers those over postMessage too.
+//  - cold start: the SW opened '/?push-reveal=sid' — the chat pane's WS does not exist yet, so
+//    ask the kernel to park the focus for OUR wid (POST /reveal, consumed on the pane's ready).
+//    The param is then stripped so a later manual reload does not replay the jump.
+// Separate IIFE from the bell on purpose: the bell bails where the Push API is missing, but a
+// pushReveal can only ever arrive where it exists, and this block must not ride that bail.
+(function(){
+function reveal(sid){if(!sid)return;var f=document.getElementById('f-chat');
+try{f&&f.contentWindow&&f.contentWindow.postMessage({type:'focus',id:sid,live:true},'*');}catch(e){}}
+if('serviceWorker' in navigator&&navigator.serviceWorker.addEventListener){
+navigator.serviceWorker.addEventListener('message',function(ev){
+var m=ev.data;if(m&&m.romp==='pushReveal'&&m.sid)reveal(m.sid);});}
+var u=new URL(location.href),pr=u.searchParams.get('push-reveal');
+if(pr){var wid='';try{wid=sessionStorage.getItem('romp:wid')||'';}catch(e){}
+fetch('/reveal',{method:'POST',body:JSON.stringify({sid:pr,wid:wid})})['catch'](function(e){});
+u.searchParams['delete']('push-reveal');
+try{history.replaceState(null,'',u.pathname+(u.searchParams.toString()?'?'+u.searchParams.toString():''));}catch(e){}}
 })();
 """
 
@@ -19586,6 +19709,20 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(400, "bad json", "text/plain")
                 _del_push_sub(ep)
                 return self._send(200, json.dumps({"ok": True}), "application/json")
+            if u.path == "/reveal":
+                # The cold-start half of a push tap (see _PENDING_REVEAL): the freshly opened
+                # shell asks for the focus its ?push-reveal= URL named, aimed by its own wid so
+                # no other open dashboard gets dragged along (the 2026-07-29 rule).
+                try:
+                    body = json.loads(raw_body or b"{}")
+                    sid = str(body.get("sid") or "")
+                    wid = str(body.get("wid") or "")
+                except (ValueError, AttributeError):
+                    return self._send(400, "bad json", "text/plain")
+                if not sid:
+                    return self._send(400, "missing sid", "text/plain")
+                now_ = _reveal_request(sid, wid)
+                return self._send(200, json.dumps({"ok": True, "delivered": now_}), "application/json")
             if u.path == "/tick":
                 # Event-driven wake: the Stop / UserPromptSubmit hooks (and the postal drain) poke this the
                 # instant a turn ends / a prompt lands / a message arrives, so the judges run NOW instead of
@@ -20042,6 +20179,16 @@ class Handler(BaseHTTPRequestHandler):
                 client["send"](json.dumps({"type": "tabOrder", "order": _o, "tabs": _tabs}))
             except Exception:
                 pass
+            # a push tap parked a reveal for this window's chat pane → deliver it now, AFTER the
+            # ready push, so the tab it names already exists on the client (ordered socket)
+            _consume_pending_reveal(client)
+            # a shell that just connected paints the app-icon badge from the latest count — an
+            # installed app relaunching is exactly when the icon's number needs truing up
+            if client.get("app") == "shell" and _BADGE_LAST[0] is not None:
+                try:
+                    client["send"](json.dumps({"type": "badge", "n": _BADGE_LAST[0]}))
+                except Exception:
+                    pass
         elif msg and msg.get("type") == "setSessionFlag" and msg.get("id") and msg.get("flag"):
             # timeline lane gear → toggle a per-session view flag (e.g. hideFromFeed). Persisted +
             # re-broadcast so the feed drops/restores that session's cards immediately.
