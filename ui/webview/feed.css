@@ -1043,6 +1043,57 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
   border: 1px solid rgba(255, 255, 255, 0.18); }
 .romp-lightbox-close:hover { border-color: var(--accent); }
 
+/* ── file viewer (file-view.ts) ────────────────────────────────────────────────────────────────────
+   A file path clicked in the CHAT shows the file HERE, filling the feed pane (the user 2026-08-08).
+   Absolute over this document rather than a floating modal: the cards behind it are what you are least
+   likely to be mid-read on when you follow a path out of a transcript, and a whole pane is what long
+   source needs. `body.fileview-open` stops the cards underneath scrolling behind it. */
+.fileview { position: fixed; inset: 0; z-index: 900; display: flex; flex-direction: column;
+  background: var(--bg, #1e1e1e); }
+body.fileview-open { overflow: hidden; }
+.fileview-bar { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; min-width: 0;
+  padding: 7px 10px; border-bottom: 1px solid var(--box-border); }
+/* Only the DIRECTORY may be truncated: the filename identifies the file, so it holds its width however
+   deep the path is, and the dimmed directory in front of it gives up room first. */
+.fileview-name { flex: 1 1 auto; min-width: 0; font-size: 0.86em; color: var(--fg);
+  display: flex; align-items: baseline; white-space: nowrap; }
+.fileview-dir { flex: 0 1 auto; min-width: 0; color: var(--dim);
+  overflow: hidden; text-overflow: ellipsis; }
+.fileview-base { flex: 0 0 auto; }
+.fileview-acts { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; }
+.fileview-btn { font: inherit; font-size: 0.82em; cursor: pointer; flex: 0 0 auto;
+  padding: 3px 9px; border-radius: 6px; background: rgba(255, 255, 255, 0.08); color: var(--fg);
+  border: 1px solid var(--box-border); }
+.fileview-btn:hover { border-color: var(--accent); }
+.fileview-body { flex: 1 1 auto; min-height: 0; overflow: auto; }
+/* gutter + code as two columns of ONE scroller: the numbers stay put horizontally against long lines,
+   and because they are a sibling element a selection of the code copies without dragging them along */
+.fileview-code { display: flex; align-items: flex-start; min-height: 100%; }
+.fileview-gutter { flex: 0 0 auto; position: sticky; left: 0; z-index: 1;
+  padding: 10px 8px 10px 10px; text-align: right; user-select: none;
+  font-family: var(--mono, ui-monospace, monospace); font-size: 12px; line-height: 1.5;
+  color: var(--dim); opacity: 0.55; background: var(--bg, #1e1e1e);
+  border-right: 1px solid var(--box-border); white-space: pre; }
+.fileview-pre { flex: 1 1 auto; margin: 0; padding: 10px 12px;
+  font-family: var(--mono, ui-monospace, monospace); font-size: 12px; line-height: 1.5;
+  white-space: pre; tab-size: 4; }
+.fileview-pre code { background: none; padding: 0; font: inherit; }
+/* a refusal explains itself in place, in the kernel's own words (too large — with the size and the
+   cap; not a text file; not found) over the path it was asked for. Never a blank pane. */
+.fileview-err { padding: 18px 14px; font-size: 0.86em; color: #e0a030; }
+.fileview-err-hint { margin-top: 6px; color: var(--dim); font-size: 0.92em;
+  font-family: var(--mono, ui-monospace, monospace); word-break: break-all; }
+/* the romp loader, per the loading-state rule: swirl + wordmark + three pulsing accent dots */
+.fileview-load { display: flex; align-items: center; justify-content: center; gap: 7px;
+  padding: 30px 0; color: var(--dim); font-size: 0.86em; }
+.fileview-load img { width: 17px; height: 17px; animation: fileview-spin 1.6s linear infinite reverse; }
+.fileview-dot { width: 4px; height: 4px; border-radius: 50%; background: var(--accent);
+  animation: fileview-pulse 1.1s ease-in-out infinite; }
+.fileview-dot:nth-of-type(2) { animation-delay: 0.18s; }
+.fileview-dot:nth-of-type(3) { animation-delay: 0.36s; }
+@keyframes fileview-spin { to { transform: rotate(360deg); } }
+@keyframes fileview-pulse { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
+
 /* the "host:" prefix on a federated session's name — see styles.css (one treatment, two sheets) */
 .host-prefix { color: var(--dim); font-weight: 400; font-style: italic; font-size: 0.88em; }
 /* DISCONNECTED host (the user 2026-07-29): its sessions keep their tabs, lanes and cards — dropping them
