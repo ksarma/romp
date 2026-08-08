@@ -51,6 +51,13 @@ class FastModeIsSdkOnly(unittest.TestCase):
         import inspect
         self.assertIn('elif op[0] == "fast":', inspect.getsource(km._apply_pending_ops))
 
+    def test_both_surfaces_read_the_same_word(self):
+        # the chat chip and the timeline lane's asterisk are two renderings of ONE server-side answer,
+        # so neither can drift from the other (the user 2026-08-08 asked for the compact form on the lane)
+        import inspect
+        self.assertIn('"fast": _fast_word(tm)', inspect.getsource(km.build_session))
+        self.assertIn('"fast": _fast_word(tm)', inspect.getsource(km.build_timeline))
+
 
 if __name__ == "__main__":
     unittest.main()

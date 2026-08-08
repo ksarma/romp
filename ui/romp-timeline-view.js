@@ -338,6 +338,19 @@ function modelLabel(s) {
   return s.effort ? s.model + ' ' + s.effort : s.model;
 }
 
+// Fast mode on a lane is ONE character — an accent asterisk after the model name (the user 2026-08-08,
+// who wanted the compact form here rather than the chat's worded chip). The lane is a scanning surface:
+// the question it answers is "which of these are running hot", and a star answers it without spending a
+// column. The detail (and the off state) stays in the chat chip.
+const FAST_MARK = '*';
+// "cooldown" earns the star too. Fast mode is still ON for the session — it has just hit its own rate
+// limit and is running normally until that resets. A mark that vanished for the cooldown would blink off
+// and on across lanes nobody touched, which is exactly the flapping a glance surface must not do; the
+// hover says which of the two it is.
+function fastOn(s) {
+  return !!s && s.live && (s.fast === 'on' || s.fast === 'cooldown');
+}
+
 // The model + effort labels are little drop-down pickers (mirror of the chat statusline's): on a
 // LIVE lane, clicking the model or effort word opens a menu whose pick injects the matching /model or
 // /effort slash command into that session's pane (see _sendCommand → tmux, like _compactSession). The
@@ -2486,7 +2499,11 @@ class TimelinePanel {
     // user 2026-07-03): every effort word starts at the SAME offset regardless of its lane's model-name length,
     // so "high"/"xhigh"/… line up as a column instead of dangling right after each model. Reserve the widest
     // model PIECE (name + caret) and the widest effort PIECE (word + caret) independently.
-    const modelPieceW = (s) => (s.model ? this.ctxWidth(s.model) + caretW : 0);
+    // A fast-mode lane hangs a star off its model name, between the name and the caret — so it is part of
+    // the model PIECE and has to be measured in, or the widest fast lane's caret would sit under the
+    // effort column.
+    const fastMarkW = (s) => (s.model && fastOn(s) ? this.ctxWidth(FAST_MARK) : 0);
+    const modelPieceW = (s) => (s.model ? this.ctxWidth(s.model) + fastMarkW(s) + caretW : 0);
     const effortPieceW = (s) => (s.effort ? this.ctxWidth(s.effort) + caretW : 0);
     const maxModelPiece = Math.max(0, ...vis.map(modelPieceW));
     const maxEffortPiece = Math.max(0, ...vis.map(effortPieceW));
@@ -2942,8 +2959,10 @@ class TimelinePanel {
             if (cur !== p.was || nowMs > p.until) { delete this._metaPending[s.id + ':' + kind]; return false; }
             return true;
           };
-          const drawPiece = (kind, word, sx) => {
-            const pend = pendingOf(kind), ww = this.ctxWidth(word);
+          // caretPad: extra room between the word and its hover caret, so a fast lane's star isn't sitting
+          // underneath the ▾ when you hover the model name.
+          const drawPiece = (kind, word, sx, caretPad) => {
+            const pend = pendingOf(kind), ww = this.ctxWidth(word) + (caretPad || 0);
             // A switching MODEL shows the pulsing accent-blue dots (the chat badge's .meta-dots motif) in place
             // of the stale name, rather than just dimming it (the user 2026-07-03). The name <text> stays (fully
             // transparent) so it keeps its click target + reserves the column width; the dots overlay stands in.
@@ -2965,8 +2984,28 @@ class TimelinePanel {
             if (dots) { this._positionMetaDots(s.id, sx, y); metaSeen.add(s.id); }
           };
           // model @ its column, effort @ the FIXED effort column — so efforts line up across lanes
-          if (s.model) drawPiece('model', s.model, modelColX);
+          const starW = (s.model && fastOn(s)) ? this.ctxWidth(FAST_MARK) : 0;
+          if (s.model) drawPiece('model', s.model, modelColX, starW);
           if (s.effort) drawPiece('effort', s.effort, effortColX);
+          // the fast-mode star, hung off the END of the model name. Its own <text>, not appended to the
+          // word: the model name is a picker whose click target and caret are measured from that string,
+          // and it carries the colormap tint the star must not borrow. Effort sits at a FIXED column, so
+          // nothing downstream shifts. Drawn last so it lands over the name's hit area, hence
+          // pointer-events auto for its own hover — a click still falls through to the model picker.
+          if (starW) {
+            const fx = modelColX + this.ctxWidth(s.model);
+            const ft = el('text', { x: fx, y: y + 3.5, 'text-anchor': 'start', 'font-size': 11, 'font-weight': 700, fill: F(ROMP_BLUE) });
+            ft.textContent = FAST_MARK; ft.style.cursor = 'pointer';
+            ft.addEventListener('mouseenter', (e) => this.showTip(
+              s.fast === 'cooldown'
+                ? "Fast mode ON, rate-limited right now<div style='opacity:.65;margin-top:2px'>running at normal speed until the limit resets</div>"
+                : "Fast mode ON<div style='opacity:.65;margin-top:2px'>higher speed, higher credit draw</div>", e));
+            ft.addEventListener('mousemove', (e) => this.moveTip(e));
+            ft.addEventListener('mouseleave', () => this.hideTip());
+            ft.addEventListener('click', (e) => { e.stopPropagation(); this.hideTip(); this._openMetaMenu('model', s, ft); });
+            svg.appendChild(ft);
+            if (s.faded) fadedEls.push({ el: ft, full: ROMP_BLUE, faded: F(ROMP_BLUE) });
+          }
         }
       }
       const bdg = visB[i];

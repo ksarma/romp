@@ -14,7 +14,8 @@ test("modelLabel returns the effort alone when the model is not known yet", () =
 });
 
 test("model + effort reserve room independently for whichever piece is present (not 0 when model is blank)", () => {
-  assert.match(SRC, /const modelPieceW = \(s\) => \(s\.model \? this\.ctxWidth\(s\.model\) \+ caretW : 0\);/);
+  // the model piece also reserves the fast-mode star, which sits between the name and the caret
+  assert.match(SRC, /const modelPieceW = \(s\) => \(s\.model \? this\.ctxWidth\(s\.model\) \+ fastMarkW\(s\) \+ caretW : 0\);/);
   assert.match(SRC, /const effortPieceW = \(s\) => \(s\.effort \? this\.ctxWidth\(s\.effort\) \+ caretW : 0\);/);
   assert.match(SRC, /const maxEffortPiece = Math\.max\(0, \.\.\.vis\.map\(effortPieceW\)\);/);
 });
@@ -29,6 +30,6 @@ test("the effort is left-justified to a FIXED column (the user 2026-07-03): same
 
 test("the picker draws when EITHER model or effort is present, each piece guarded independently", () => {
   assert.match(SRC, /if \(s\.model \|\| s\.effort\) \{/);
-  assert.match(SRC, /if \(s\.model\) drawPiece\('model', s\.model, modelColX\);/);
+  assert.match(SRC, /if \(s\.model\) drawPiece\('model', s\.model, modelColX, starW\);/);
   assert.match(SRC, /if \(s\.model\) staticPiece\(s\.model, modelColX\);/);
 });
