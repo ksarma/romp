@@ -39,6 +39,17 @@ class SessionPrompt(unittest.TestCase):
         self.assertIn("preliminary step", self.flat,
                       "the prompt must say a preliminary step (reading/mapping/planning) is not finishing the work")
 
+    def test_file_mentions_carry_a_locating_path(self):
+        # A bare basename in a session's prose is an ambiguous (or dead) reference outside that
+        # session's own context — the user 2026-08-09, after clicking a `render.js` mention that could
+        # not resolve. The prompt asks for working-directory-relative or absolute paths. This is the
+        # NUDGE half; the kernel-side link resolver is the mechanism that verifies what actually gets
+        # linked — this line just shrinks the ambiguous residue the resolver refuses to guess about.
+        self.assertIn("relative to the working", self.flat,
+                      "the prompt must ask for paths that locate the file, not bare names")
+        self.assertIn("bare name", self.flat,
+                      "the prompt must name the failure mode (a bare basename) it steers away from")
+
     def test_housekeeping_note_preexplains_romp_artifacts(self):
         # The ONE place romp is named to a session (the user 2026-07-25): pre-explain the artifacts
         # every session eventually sees — [romp] notices and <!-- romp-* --> comments — so a kernel
