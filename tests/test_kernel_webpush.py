@@ -114,6 +114,10 @@ class ServiceWorkerRoute(unittest.TestCase):
         # which assumes the network serves every load (plans/ios-app.md)
         self.assertNotIn("'fetch'", js)
         self.assertNotIn("caches", js)
+        # an UPDATED worker must take over immediately — this one owns no caches, so 'waiting'
+        # only delays fixes (the sid-blind predecessor kept handling taps, the user 2026-08-08)
+        self.assertIn("skipWaiting()", js)
+        self.assertIn("clients.claim()", js)
 
     def test_sw_click_lands_on_the_session_that_fired(self):
         # the user 2026-08-08: the first real push opened the app on a DIFFERENT session. The sid

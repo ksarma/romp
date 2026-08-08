@@ -16450,6 +16450,13 @@ def _push_notify(title, body, sid="", badge=0):
 # Served at top-level /sw.js, not under /dist/: a worker's scope is capped at its URL's directory,
 # and this one must control '/' to own the app's notifications.
 _SW_JS = """
+// Take over IMMEDIATELY on update. The default lifecycle parks an updated worker in 'waiting'
+// until every client closes — right for cache-owning workers with state to hand over, wrong for
+// this one, which owns nothing but event handlers: the tap-to-open worker sat waiting behind its
+// sid-blind predecessor, so notification taps kept running the OLD handler and opened the app on
+// whatever session was last shown (the user 2026-08-08, testing the very fix that was parked).
+self.addEventListener('install',function(e){self.skipWaiting();});
+self.addEventListener('activate',function(e){e.waitUntil(clients.claim());});
 self.addEventListener('push',function(e){
 var d={};try{d=e.data?e.data.json():{};}catch(err){}
 var work=[self.registration.showNotification(d.title||'romp',
