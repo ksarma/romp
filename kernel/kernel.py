@@ -18238,13 +18238,13 @@ var last='chat';try{var s=localStorage.getItem(KT);if(s&&F[s])last=s;}catch(e){}
 # Notification.requestPermission runs synchronously in the tap (iOS voids the gesture across an
 # await), which is why the on/off branch keys on a state var painted at boot, not a fresh query.
 _LANDING_PUSH_JS = """
-(function(){var b=document.getElementById('mbell');if(!b)return;
+(function(){var bells=[].slice.call(document.querySelectorAll('#mbell,#rail-bell'));if(!bells.length)return;
 if(!('serviceWorker' in navigator)||!('PushManager' in window)||!('Notification' in window))return;
-b.hidden=false;
+bells.forEach(function(b){b.hidden=false;});
 var isOn=false,busy=false;
-function paint(){b.classList.toggle('on',isOn);
+function paint(){bells.forEach(function(b){b.classList.toggle('on',isOn);
 var t=isOn?'Notifications on for this device — tap to turn off':'Notify this device when a session needs you';
-b.setAttribute('title',t);b.setAttribute('aria-label',t);}
+b.setAttribute('title',t);b.setAttribute('aria-label',t);});}
 function sub(){return navigator.serviceWorker.getRegistration('/').then(function(r){return r?r.pushManager.getSubscription():null;});}
 sub().then(function(s){isOn=!!s;paint();}).catch(function(e){});
 function fail(e){try{window.__rompNotify&&window.__rompNotify('error','Notifications: '+((e&&e.message)||e));}catch(err){}}
@@ -18252,9 +18252,9 @@ function post(path,obj){return fetch(path,{method:'POST',body:JSON.stringify(obj
 if(!r.ok)return r.text().then(function(t){throw new Error(t||('HTTP '+r.status));});});}
 function b64u(s){var raw=atob((s+'==='.slice((s.length+3)%4)).replace(/-/g,'+').replace(/_/g,'/'));
 var a=new Uint8Array(raw.length);for(var i=0;i<raw.length;i++)a[i]=raw.charCodeAt(i);return a;}
-function done(){busy=false;b.classList.remove('busy');}
-b.addEventListener('click',function(){
-if(busy)return;busy=true;b.classList.add('busy');   // acknowledge the tap before any round-trip
+function done(){busy=false;bells.forEach(function(b){b.classList.remove('busy');});}
+bells.forEach(function(bl){bl.addEventListener('click',function(){
+if(busy)return;busy=true;bells.forEach(function(b){b.classList.add('busy');});   // acknowledge the tap before any round-trip
 if(isOn){
 sub().then(function(s){var ep=s?s.endpoint:'';
 return (s?s.unsubscribe():Promise.resolve()).then(function(){return post('/push/unsubscribe',{endpoint:ep});});})
@@ -18269,7 +18269,7 @@ if(!r.ok)return r.text().then(function(t){throw new Error(t||'no server key');})
 return reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:b64u(k.key)});});
 }).then(function(s){return post('/push/subscribe',s.toJSON());})
 .then(function(){isOn=true;paint();done();},function(e){fail(e);done();});
-});
+});});
 })();
 // Landing a push tap on the session that fired (the user 2026-08-08). Two arrivals:
 //  - live window: the SW focused us and posted {romp:'pushReveal',sid} — relay a focus straight
@@ -18943,6 +18943,8 @@ def _landing():
             "#mtabs button[hidden]{display:none}"
             "#mtabs #mbell.on{color:var(--accent)}"
             "#mtabs #mbell.busy{opacity:.45}"
+            ".rail-acts #rail-bell.on{color:var(--accent)}"
+            ".rail-acts #rail-bell.busy{opacity:.45}"
             "}"
             # default Chat + Feed + Timeline shown, Fleet off (the user 2026-06-25); the rail toggles + ?panes=
             # reconcile in _LANDING_COLLAPSE_JS.
@@ -19087,6 +19089,15 @@ def _landing():
             "<rect class=rn-me x='6' y='1' width='4' height='4' rx='0.6' fill='currentColor'/>"
             "<rect class=rn-a x='1' y='11' width='4' height='4' rx='0.6' fill='currentColor'/>"
             "<rect class=rn-b x='11' y='11' width='4' height='4' rx='0.6' fill='currentColor'/></svg></div>"
+            # the push bell, the desktop twin of #mbell (the user 2026-08-08: a laptop Chrome tab can
+            # receive Web Push with no install, but the opt-in bell only rendered on the mobile layout).
+            # Ships hidden; _LANDING_PUSH_JS reveals it wherever the Push API exists and drives both
+            # bells as ONE control (same subscription, same flow). No data-act — it owns its own tap flow.
+            "<div class=rail-act id=rail-bell hidden title=Notifications aria-label=Notifications>"
+            "<svg viewBox='0 0 16 16' width='18' height='18'>"
+            "<path d='M8 2 C5.7 2 4.3 3.8 4.3 6.2 L4.3 9 L3 11.2 L13 11.2 L11.7 9 L11.7 6.2 C11.7 3.8 10.3 2 8 2 Z'"
+            " fill='none' stroke='currentColor' stroke-width='1.2' stroke-linejoin='round'/>"
+            "<path d='M6.5 13 A1.7 1.7 0 0 0 9.5 13' fill='none' stroke='currentColor' stroke-width='1.2'/></svg></div>"
             "<div class=rail-act id=rail-gear title=Settings aria-label=Settings>⛭</div>"   # ⛭ (gear-without-hub): the bigger, bolder gear the user prefers (restored 2026-06-29)
             "</div>"   # /.rail-acts
             "</div>"   # /.pane-rail (bottom bar)
