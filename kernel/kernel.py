@@ -20810,20 +20810,40 @@ class Handler(BaseHTTPRequestHandler):
         #                                           serves the pusher-warmed feed/timeline (no rebuild) → instant
 
 
+def _bundle_inputs(cv):
+    """Every source file the bundles are BUILT FROM, for the staleness check. Must match
+    vscode-extension/esbuild.js's entry points — the check is only as good as this list, and a file
+    missing from it is a change that silently never ships.
+
+    Three roots, because the build has three (see esbuild.js):
+    - `vscode-extension/src` — the extension entry (src/extension.ts).
+    - `ui/webview` — the shared browser UI, and where render.ts + styles.css actually live. THIS is
+      the one the check used to miss (the user 2026-08-08: the fast-mode badge stayed blue in the chat
+      while the timeline's star went orange, because the timeline pane is served verbatim from source
+      and the chat is served from dist — so only the chat showed a stale bundle). The bug hid behind
+      luck: a change that happened to also touch src/ rebuilt everything, so it looked like it worked.
+    - `ui/romp-timeline-view.js` — not under either directory, but INLINED into timeline-main.ts for
+      the VS Code timeline view, so editing it leaves that bundle stale too.
+
+    Extensions matter as much as directories: a CSS-only change must trigger a rebuild (the user
+    2026-06-16 hit a shipped style that never went live because only *.ts was checked). That fix
+    covered the extensions and left the directory wrong, which is how the same bug came back."""
+    src, web = cv / "src", UI / "webview"
+    return [*src.rglob("*.ts"), *src.rglob("*.css"),
+            *web.rglob("*.ts"), *web.rglob("*.css"),
+            *[p for p in [UI / "romp-timeline-view.js"] if p.exists()]]
+
+
 def _ensure_bundles():
     """Build the shared webview bundles (the human's tuned UI) if missing/stale — keeps the
-    kernel a single command and auto-rebuilds after TS/CSS edits (mirrors bin/romp-serve). Watches
-    .css as well as .ts: a CSS-only change must still trigger a rebuild on restart (the user 2026-06-16
-    hit a shipped style that didn't go live because only *.ts was checked)."""
+    kernel a single command and auto-rebuilds after TS/CSS edits (mirrors bin/romp-serve)."""
     cv = ROOT / "vscode-extension"
     render = DIST / "render.js"
     if not (cv / "node_modules").exists():
         sys.stderr.write("romp-kernel: UI deps missing — run once: (cd %s && npm install)\n" % cv)
         return
-    src = cv / "src"
     stale = not render.exists() or any(
-        f.stat().st_mtime > render.stat().st_mtime
-        for f in [*src.rglob("*.ts"), *src.rglob("*.css")])
+        f.stat().st_mtime > render.stat().st_mtime for f in _bundle_inputs(cv))
     if stale:
         sys.stderr.write("romp-kernel: building UI bundles…\n")
         # --production (minified, no sourcemaps), matching vscode-extension/install.sh. Both
