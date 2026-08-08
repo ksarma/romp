@@ -40,3 +40,13 @@ test("the tooltip explains the CLI's refusal rather than leaving a raw reason co
   assert.match(RENDER, /reason === "model_not_allowed" \? "fast mode needs an Opus model"/);
   assert.match(RENDER, /higher speed, higher credit draw, its own rate limit/);
 });
+
+test("fast mode wears its own orange, not the blue accent", () => {
+  // Upstream picked this hex for the same badge; sharing it means the two read alike, and it is the
+  // right call independently — ui/CLAUDE.md reserves --accent for chrome, and this is a STATUS.
+  const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "styles.css"), "utf8");
+  const TIMELINE = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "romp-timeline-view.js"), "utf8");
+  assert.match(CSS, /--fast: #ff6a00;/);
+  assert.match(RENDER, /kind === "fast"\) return \(st\.fast \|\| ""\) === "on" \? "var\(--fast\)" : "";/);
+  assert.match(TIMELINE, /const FAST_ORANGE = '#ff6a00';/);   // the lane's star matches the chat's badge
+});

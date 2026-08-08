@@ -755,3 +755,52 @@ test("the star is measured into the model column, so the effort column does not 
   };
   assert.ok(width("on") > width("off"), "a starred board reserves the extra width in the model column");
 });
+
+// A message SENT before the visible window used to clamp its start to the left edge and hug the
+// sender's lane all the way to the crossing — reading as "sent at the window's start", a send time
+// that never existed (the user 2026-08-06: a connector spanning the whole window, "a timing issue
+// maybe?"). An off-window send now enters from the edge at the crossing track height: structurally a
+// SINGLE-corner path (track horizontal → one turn → arrival), where an in-window send keeps the full
+// elbow (two+ corners). The tooltip carries the true send time either way.
+test("an off-window send enters at track height — never a sender-lane hug from the left edge", () => {
+  const panel: any = new TimelinePanel(makeNode("div"));
+  const d0: any = synthData();   // messages: [] infers never[] — the synthetic payload is untyped by design
+  d0.sessions[0].color = "#f7768e";                                  // sender distinct, so its connector is findable
+  d0.messages = [
+    { id: "m-old", fromId: "S1", toId: "S2", from: "alpha", to: "beta",
+      sent: d0.now - 500_000, exec: d0.now - 30, pending: false, summary: "sent long before the window" } as any,
+    { id: "m-new", fromId: "S2", toId: "S1", from: "beta", to: "alpha",
+      sent: d0.now - 40, exec: d0.now - 10, pending: false, summary: "sent inside the window" } as any,
+  ];
+  panel.update(d0);
+  const paths: any[] = [];
+  (function walk(n: any) { for (const c of n.children || []) { if (c.tag === "path") paths.push(c); walk(c); } })(panel.svg);
+  const conns = paths.filter((p) => p._attrs && p._attrs.fill === "none" && p._attrs.opacity === 0.5);
+  const oldConn = conns.find((p) => p._attrs.stroke === "#f7768e");
+  const newConn = conns.find((p) => p._attrs.stroke === "#7aa2f7");
+  assert.ok(oldConn, "the off-window message still draws its connector");
+  assert.ok(newConn, "the in-window message draws too");
+  const corners = (d: string) => (String(d).match(/Q /g) || []).length;
+  assert.equal(corners(oldConn._attrs.d), 1, "off-window send: track entry + ONE corner up to the arrival");
+  assert.ok(corners(newConn._attrs.d) >= 2, "in-window send keeps the full elbow from its true send point");
+});
+
+// RELAYED mail's landing binds to the recipient's true process turn in the MERGED view (the user
+// 2026-08-06: a cross-host connector landed at the read-receipt time — the relay handoff — because the
+// kernel-side binder never sees a remote lane's turns). The receipt now carries the remote's delivery
+// mid; the view joins it against every lane's bar mids, including merged remote lanes.
+test("a relayed message's exec re-binds to the recipient turn whose mids carry its dmid", () => {
+  const panel: any = new TimelinePanel(makeNode("div"));
+  const d0: any = synthData();   // messages: [] infers never[] — the synthetic payload is untyped by design
+  d0.turns.S2[0].mids = ["dm-remote-1"];                             // the recipient turn knows its delivery mid
+  d0.messages = [{ id: "px-1", dmid: "dm-remote-1", fromId: "S1", toId: "S2", from: "alpha", to: "beta",
+                   sent: d0.now - 250, exec: d0.now - 20, pending: false, summary: "relayed" }];
+  panel.update(d0);
+  assert.equal(panel.data.messages[0].exec, d0.turns.S2[0].start,
+    "the landing is the recipient turn's start, not the receipt time");
+  const d1: any = synthData();
+  d1.messages = [{ id: "m-local", fromId: "S1", toId: "S2", from: "alpha", to: "beta",
+                   sent: d1.now - 250, exec: d1.now - 20, pending: false, summary: "no join" }];
+  panel.update(d1);
+  assert.equal(panel.data.messages[0].exec, d1.now - 20, "no matching mids → the receipt time stands");
+});

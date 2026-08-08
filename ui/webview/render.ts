@@ -6699,9 +6699,11 @@ function metaButton(kind: MetaKind, text: string): HTMLElement {
 // The model/effort label tint, from the server-computed colormap RGB (by capability/effort rank, the user
 // 2026-07-02) — "" for mode (untinted) or an unknown model/effort, which resets to the default gray.
 function metaColor(kind: MetaKind, st: Status): string {
-  // Fast mode isn't on the capability ramp — it's on or it isn't. Accent it when on so a session running
-  // hot (and drawing credits faster) is visible at a glance; leave it default gray otherwise.
-  if (kind === "fast") return (st.fast || "") === "on" ? "var(--accent)" : "";
+  // Fast mode isn't on the capability ramp — it's on or it isn't. It wears the CLI's own fast-mode
+  // orange when on, so a session running hot (and drawing credits faster) is visible at a glance and
+  // reads the same here as it does in the terminal; default gray otherwise. Orange rather than the blue
+  // accent on purpose: this is a STATUS, and ui/CLAUDE.md reserves --accent for chrome.
+  if (kind === "fast") return (st.fast || "") === "on" ? "var(--fast)" : "";
   const c = kind === "model" ? st.modelColor : kind === "effort" ? st.effortColor : undefined;
   return (c && c.length === 3) ? `rgb(${c[0]},${c[1]},${c[2]})` : "";
 }
