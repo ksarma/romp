@@ -1,9 +1,16 @@
 # iOS: the dashboard as a home-screen app
 
-Status: proposals 1 and 2 IMPLEMENTED (2026-08-07, branch `romp-qs`) — manifest + icons + Apple
-metas + iOS-standalone safe-area, and Web Push end to end (`/sw.js`, `/push/*`, VAPID, the
-`_push_notify` sink beside `_system_notify`, the tab-bar bell). Proposal 3 (app badge) remains
-open. Implementation notes that amend this sketch:
+Status: ALL THREE proposals IMPLEMENTED — 1 and 2 on 2026-08-07 (branch `romp-qs`: manifest +
+icons + Apple metas + iOS-standalone safe-area, and Web Push end to end — `/sw.js`, `/push/*`,
+VAPID, the `_push_notify` sink beside `_system_notify`, the tab-bar bell), live-verified on the
+phone the same day; 3 plus tap-to-open on 2026-08-08 (branch `romp-qs-pushlink`), after the first
+real push opened the app on a different session. A push now carries the firing card's sid and the
+needs-you count as routing metadata: the notification tap lands on that session (live window →
+SW postMessage → focus into the chat pane; cold start → `/?push-reveal=` → `POST /reveal` parks a
+wid-aimed focus consumed on that window's chat `ready` — an exact event, no delay heuristics),
+and the app icon wears the count (`navigator.setAppBadge` — the SW paints it while the app is
+closed, the shell trues it up over its WS on connect and on every change).
+Implementation notes that amend this sketch:
 - The shell background is `#1e1e1e`, not the `#101418` guessed below (that is the login page);
   the manifest and theme-color use `#1e1e1e`.
 - The manifest and the three icon PNGs are served auth-EXEMPT: browsers fetch a manifest (and
