@@ -8524,48 +8524,76 @@ function setupComposer() {
   });
   wirePasteFallback(ta); // belt-and-braces: native paste disarms it, so no double-insert
 
-  // The bulletproof path: 📎 asks the host to run a native open dialog (no
-  // workbench drop overlay to fight) and the picked path comes back as
-  // droppedPath → an attachment thumbnail (the user 2026-08-04; it used to insert
-  // the raw path at the cursor). Mousedown (not click) so the textarea keeps focus.
+  // 📎 opens a file picker on the machine whose SCREEN you are looking at, routed
+  // by host exactly like openPath/Browse… (the user 2026-08-09):
   //
-  // TOUCH devices (phone/tablet on the web dashboard) can't use the host dialog:
-  // it pops on the DESKTOP running the kernel, not the phone. So 📎 instead opens
-  // the phone's own photo picker (a hidden <input type=file accept=image/*>), and
-  // the chosen image's bytes ship to the host (shipFileToHost → dropFile), which
-  // saves them under ~/.local/state/romp/drops/ and posts the saved path back
-  // (droppedPath), landing as an attachment thumbnail — a screenshot reaches the
-  // session with no AirDrop/path gymnastics (the user 2026-06-17).
+  //   • VS Code webview → the host extension's native open dialog (pickFile): the
+  //     editor IS the local machine, so the dialog is on the right screen and the
+  //     picked path comes back as droppedPath → an attachment thumbnail (the user
+  //     2026-08-04; it used to insert the raw path at the cursor).
+  //   • Web dashboard (http/https) → the BROWSER's own picker (the hidden
+  //     <input type=file> below), and the chosen files' bytes ship to the kernel
+  //     (shipFileToHost → dropFile → droppedPath), the flow drag/paste already
+  //     rides. The old behavior posted pickFile to the kernel, whose native dialog
+  //     opens on the KERNEL's machine — the wrong screen entirely from a remote
+  //     browser, and on a headless kernel nothing but a warning.
+  //
+  // TOUCH devices keep the phone photo-picker UX (accept=image/*, the user
+  // 2026-06-17: a screenshot reaches the session with no AirDrop/path gymnastics);
+  // a desktop browser gets an unscoped, multi-select picker — attributes are set
+  // per open, at the moment the pointer type is known.
   const attach = document.getElementById("composer-attach") as HTMLButtonElement | null;
   const isTouch = isCoarsePointer;
+  const isWebPage = location.protocol === "http:" || location.protocol === "https:";
   const filePicker = document.createElement("input");
   filePicker.type = "file";
-  filePicker.accept = "image/*";
   filePicker.style.display = "none";
   filePicker.addEventListener("change", () => {
     Array.from(filePicker.files || []).forEach((f) => shipFileToHost(f));
     filePicker.value = ""; // let the same file be picked again
   });
   document.body.appendChild(filePicker);
-  // touch: open the phone's photo picker — must fire from a real click gesture (iOS)
-  attach?.addEventListener("click", (e) => { if (isTouch()) { e.preventDefault(); filePicker.click(); } });
-  // desktop: native host dialog; mousedown keeps the textarea focused for cursor-position insert
+  // web (touch or desktop): open the browser's picker — must fire from a real click gesture (iOS)
+  attach?.addEventListener("click", (e) => {
+    if (!isTouch() && !isWebPage) return;   // VS Code desktop → the host-dialog path (mousedown below)
+    e.preventDefault();
+    if (isTouch()) { filePicker.accept = "image/*"; filePicker.multiple = false; }
+    else { filePicker.removeAttribute("accept"); filePicker.multiple = true; }
+    filePicker.click();
+  });
+  // VS Code desktop: native host dialog; mousedown keeps the textarea focused for cursor-position insert
   attach?.addEventListener("mousedown", (e) => {
-    if (isTouch()) return;
+    if (isTouch() || isWebPage) return;
     e.preventDefault();
     vscodeApi?.postMessage({ type: "pickFile" });
   });
 }
 
-// No filesystem path available for a dropped/pasted file → ship the bytes to
-// the host, which saves them under ~/.local/state/romp/drops/ and posts back
-// {type:"droppedPath", path} — which lands as an attachment thumbnail.
+// No filesystem path available for a picked/dropped/pasted file → ship the bytes
+// to the kernel that OWNS the active session, which saves them under its state
+// dir's drops/ and posts back {type:"droppedPath", path} — which lands as an
+// attachment thumbnail. dropFile carries the session id so federation routes it
+// (routeOutbound's SCALAR_ID): the saved path rides the prompt and is read by the
+// agent on THAT machine, so bytes saved on any other kernel would hand the agent
+// a path that does not exist there (the user 2026-08-09).
+const SHIP_MAX_BYTES = 50 * 1024 * 1024;   // payload ceiling for shipped attachment bytes
 function shipFileToHost(f: File) {
-  if (f.size > 50 * 1024 * 1024) return;   // too big to ship over postMessage
+  if (f.size > SHIP_MAX_BYTES) {
+    // an oversize file must be REFUSED VISIBLY, never dropped silently (the user
+    // 2026-08-09: it just vanished) — name the file, its size and the cap, on the
+    // same loud surface a failed federation delivery uses.
+    warnToast((f.name || "This file") + " is " + (f.size / (1024 * 1024)).toFixed(1)
+      + " MB — attachments over 50 MB can't be shipped, so it was not attached.");
+    return;
+  }
   const reader = new FileReader();
   reader.onload = () => {
     const b64 = String(reader.result || "").split(",")[1] || "";
-    if (b64 && vscodeApi) vscodeApi.postMessage({ type: "dropFile", name: f.name || "pasted.png", b64 });
+    if (!b64 || !vscodeApi) return;
+    const msg: { type: string; name: string; b64: string; id?: string } =
+      { type: "dropFile", name: f.name || "pasted.png", b64 };
+    if (activeId) msg.id = activeId;   // the owning session → the owning kernel
+    vscodeApi.postMessage(msg);
   };
   reader.readAsDataURL(f);
 }
