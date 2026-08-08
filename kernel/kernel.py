@@ -14614,6 +14614,17 @@ def _token_windows(paths, now):
 # highest precedence: a baked-in DEFAULT table (so the view always works offline), a best-effort refresh
 # of the community LiteLLM price feed (cached, stale-while-revalidate, never fatal), and the user's
 # ~/.config/romp/model-prices.json override. Values are $ per token, keyed by our internal model ids.
+#
+# KNOWN GAP — fast mode is not priced here (the user 2026-08-08). A session running in fast mode costs
+# MORE per token than this table says, and the table cannot see it: fast mode changes no model id, so a
+# fast Opus 5 session prices exactly like a plain one and the cost view UNDERSTATES it. Measured against
+# claude 2.1.224 on 2026-08-08, the CLI's own reported cost for a fast turn came out ~2x the standard
+# rate — one probe against an inferred base rate, so treat the multiplier as indicative, not settled.
+# Deliberately NOT corrected with a hardcoded 2x: a wrong constant is worse than a known gap, and the
+# multiplier is not documented anywhere we can read. The cost view says so in its footnote (gear.js
+# raNote), and the RAIL's spend figure is unaffected either way — that one passes the CLI's own
+# per-turn total_cost_usd straight through, premium included, rather than pricing tokens itself.
+# Fixing this properly needs a real multiplier: the lane/status data already carries the fast word.
 PRICE_CONFIG = Path(os.path.expanduser("~/.config/romp/model-prices.json"))
 PRICE_FEED_URL = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
 PRICE_TTL = 6 * 3600

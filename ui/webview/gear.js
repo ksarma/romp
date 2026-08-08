@@ -299,7 +299,14 @@ function initGear(post) {
     var lg = segs.map(function (s) { return '<span class=ra-li><span class=ra-sw style="background:' + s.color + '"></span>' + raEsc(s.label) + ' <b>' + raFmt(raVal(s)) + '</b></span>'; }).join('');
     raLegend.innerHTML = '<span class=ra-li><span class="ra-sw" style="background:#7d8590"></span>sessions <b>' + raFmt(sessTot) + '</b></span>' + lg;
     var ratio = sessTot ? (judgeTot / sessTot * 100) : 0;
-    raNote.textContent = 'last ' + raState.periodLabel + ' · judges = ' + (sessTot ? ratio.toFixed(1) : '0') + '% of session ' + (raCost() ? 'cost' : 'tokens') + ' · combined ' + raFmt(sessTot + judgeTot); }
+    raNote.textContent = 'last ' + raState.periodLabel + ' · judges = ' + (sessTot ? ratio.toFixed(1) : '0') + '% of session ' + (raCost() ? 'cost' : 'tokens') + ' · combined ' + raFmt(sessTot + judgeTot)
+      // Say what the session dollars are, because they are not measured the way the judge dollars are:
+      // judges log claude -p's exact total_cost_usd, while sessions carry tokens only and get priced
+      // tokens × a per-model table. Fast mode is invisible to that table — it changes no model id — so a
+      // fast session's real draw is HIGHER than what this shows (the user 2026-08-08 asked that the gap be
+      // written down where someone would meet it). The rail's spend figure has no such gap: it passes the
+      // CLI's own per-turn cost through.
+      + (raCost() ? ' · session $ estimated from token prices; fast mode draws more than shown' : ''); }
   function raFetch() { raState.loading = true; raRender();
     fetch(ku('/analytics?window=' + raState.window), { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (d) { raState.loading = false; raState.data = d; raRender(); }).catch(function () { raState.loading = false; raChart.innerHTML = '<div class=ra-empty>analytics unavailable</div>'; raLegend.innerHTML = ''; raNote.textContent = ''; }); }
   if (raOpen) raOpen.onclick = function (e) { e.stopPropagation(); raBack.hidden = false; p.hidden = true; raFetch(); };
