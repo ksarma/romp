@@ -137,10 +137,15 @@ export function openFileView(path: string, sid?: string | null): void {
   }).catch((err) => {
     if (!document.getElementById("romp-fileview")) return;
     const why = el("div", "fileview-err");
-    why.textContent = String(err && err.message || err);
-    const hint = el("div", "fileview-err-hint");
-    hint.textContent = path;
-    why.appendChild(hint);
+    const msg = String(err && err.message || err);
+    why.textContent = msg;
+    if (!msg.includes(path)) {
+      // The kernel's 404/413/415 bodies name the RESOLVED path themselves now — the hint exists for
+      // errors that don't (a network failure, an old kernel), not to say the same path twice.
+      const hint = el("div", "fileview-err-hint");
+      hint.textContent = path;
+      why.appendChild(hint);
+    }
     body.replaceChildren(why);
   });
 }
