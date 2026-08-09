@@ -55,9 +55,11 @@ class RailUsage(unittest.TestCase):
         self.assertIn(".ru-track{position:relative;width:54px;height:5px", self.html, "narrower horizontal track")
         self.assertIn(".ru-fill{position:absolute;left:0;top:0;height:100%", self.html, "the fill grows in WIDTH")
         self.assertNotIn(".ru-mark{", self.html, "the single-track pace tick is gone (two bars now)")
-        # both fills render: used-% (colormap col) on top, elapsed-% (slate #6b7a8c) below
-        self.assertIn("ru-fill style=\"width:'+pct+'%;background:'+col", self.html, "the used-% bar")
-        self.assertIn("ru-fill style=\"width:'+(tp||0)+'%;background:#6b7a8c", self.html, "the elapsed-% bar below it")
+        # both fills render: used-% (colormap col) on top, elapsed-% (slate #6b7a8c) below. Since
+        # 2026-08-08 the drawn values come from the AGGREGATE (the worst known reading per window
+        # across every host — aggBarsHTML's `best`), never per-host rows.
+        self.assertIn("ru-fill style=\"width:'+best.pct+'%;background:'+best.col", self.html, "the used-% bar")
+        self.assertIn("ru-fill style=\"width:'+(best.tp||0)+'%;background:#6b7a8c", self.html, "the elapsed-% bar below it")
         # order within a window: label, then the bars, then % — all inline
         # anchor past the spend chip (it wears ru-name/ru-pct too, with no bars — the user 2026-08-04):
         # the slice must start at a WINDOW row, whose label is built from the WINS table
@@ -83,10 +85,10 @@ class RailUsage(unittest.TestCase):
         # "updated ... ago" (the user 2026-07-02): the bars lagged the CLI's own /usage with no cue the reading
         # was old — usage.json refreshes only when a statusline render or a rate-limit event produces a NEW
         # reading, so staleness must be VISIBLE, not silent. The footer formats usage.json's `t`.
-        # (2026-07-30: the snapshot time moved into the per-ACCOUNT detail object, since a second Claude
-        # login has its own reading with its own age — the footer itself is unchanged.)
-        self.assertIn("det._t=(typeof live[0].usage.t==='number')?live[0].usage.t:null", self.html,
-                      "the renderer keeps the snapshot time")
+        # (2026-07-30: the snapshot time moved into the per-account detail object; 2026-08-08: the
+        # detail is per HOST now, one object per fleet row — the footer itself is unchanged.)
+        self.assertIn("det._t=(typeof r.usage.t==='number')?r.usage.t:null", self.html,
+                      "the renderer keeps each host's snapshot time")
         self.assertIn("ru-tip-age", self.html, "the tooltip carries an age footer")
         self.assertIn("updated '+fmtAgo(d._t)", self.html, "formatted as 'updated ... ago'")
         self.assertIn("function fmtAgo(ep)", self.html)
@@ -95,7 +97,7 @@ class RailUsage(unittest.TestCase):
         # the included Fable 5 weekly allowance (the user 2026-07-02): a third bar in the rail, a third
         # window in the tooltip, and a third pair on the timeline's standalone toolbar copy
         import inspect
-        self.assertIn("['fable',7*86400,'F5','Fable 5','Fable 5']", self.html, "the rail renders a Fable 5 bar (expanded bottom-bar label)")
+        self.assertIn("['fable',7*86400,'Fable 5']", self.html, "the rail renders a Fable 5 bar (its ONE display name — the user 2026-08-09)")
         self.assertIn("['fiveHour','sevenDay','fable'].filter", self.html, "the tooltip covers it")
         self.assertIn('"fable": fable', inspect.getsource(km._usage), "_usage serves the fable window")
         tv = (pathlib.Path(BIN).parent / "ui" / "romp-timeline-view.js").read_text()
@@ -114,21 +116,29 @@ class RailUsage(unittest.TestCase):
                       "no pace bar against a window that already ended")
         # NO BARS at all (round 2): a fill of any length asserts a value we do not have, so the bars'
         # slot holds only a '?'. The last-known number survives in the tooltip, labelled as such.
-        self.assertIn("rolled?'<div class=ru-bars><div class=ru-qmark>?</div></div>'", self.html,
-                      "an unknown window draws a '?' where its bars would be")
+        # (2026-08-08: the aggregate draws the '?' only when EVERY host's reading of that window has
+        # rolled — one live reading is a real value, and an unknown never counts as one.)
+        self.assertIn("if(d.unk){anyRolled=true;return;}", self.html,
+                      "a rolled reading never competes as a value in the aggregate")
+        self.assertIn(":'<div class=ru-bars><div class=ru-qmark>?</div></div>'", self.html,
+                      "an all-unknown window draws a '?' where its bars would be")
         self.assertIn(".ru-qmark{width:54px", self.html, "the mark takes the bars' width, so rows stay aligned")
         self.assertNotIn(".ru-unk .ru-fill{opacity:.3}", self.html, "no faded fill on the face any more")
         self.assertIn("<span class=ru-tip-k>last known</span>", self.html,
                       "the hover is the ONE place the stale number appears, and it says what it is")
         self.assertIn("window reset '+esc(v.ago)", self.html, "the tooltip dates how stale the reading is")
-        self.assertIn("current usage unknown", self.html)
+        # "no reading since" carries the whole fact; "current usage unknown" restated what the '?' and
+        # the "last known" label already say (the user 2026-08-08 de-inking pass)
+        self.assertIn("; no reading since", self.html)
+        self.assertNotIn("current usage unknown", self.html)
         # the STANDALONE timeline copy (Obsidian) says the same thing — one rule, every surface
         tv = (pathlib.Path(BIN).parent / "ui" / "romp-timeline-view.js").read_text()
         self.assertIn("const rolled = !!(seg.resetsAt && nowS > seg.resetsAt);", tv)
         self.assertIn("b.usage.txt.textContent = rolled ? '?' : pct + '%';", tv)
         self.assertIn("if (track) track.style.display = rolled ? 'none' : '';", tv,
                       "the bar itself is hidden, not faded")
-        self.assertIn("current usage unknown (last known ", tv)
+        self.assertIn("; no reading since (last known ", tv)
+        self.assertNotIn("current usage unknown", tv)
 
     def test_the_timeline_forwards_usage_to_the_shell_and_hides_its_own_copy_when_embedded(self):
         tv = (pathlib.Path(BIN).parent / "ui" / "romp-timeline-view.js").read_text()

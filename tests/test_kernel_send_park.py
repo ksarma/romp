@@ -42,6 +42,10 @@ class _FakeBackend:
         self.calls.append(("effort", value))
         return True
 
+    def set_fast(self, sid, on):
+        self.calls.append(("fast", on))
+        return True
+
 
 class OpQueueParkOrDeliver(unittest.TestCase):
     def setUp(self):
@@ -88,6 +92,17 @@ class OpQueueParkOrDeliver(unittest.TestCase):
         km._send_or_park(self.be, SID, "second", echo=None)
         self.assertEqual(km._pending_ops.get(SID),
                          [("model", "sonnet"), ("send", "first", None), ("send", "second", None)])
+
+    def test_repeat_fast_pick_replaces_in_place_too(self):
+        # A fast-mode toggle parks like /model and /effort, and a re-pick while parked must UPDATE the
+        # parked op rather than append a second one: two parked fast ops would render duplicate queued
+        # chips and fire two applying reconnects back to back once the queue drains.
+        km._compacting_now = lambda sid: True
+        km._set_fast_or_park(self.be, SID, True)
+        km._send_or_park(self.be, SID, "keep going", echo=None)
+        km._set_fast_or_park(self.be, SID, False)         # re-pick → replaces the parked fast op IN PLACE
+        self.assertEqual(km._pending_ops.get(SID),
+                         [("fast", False), ("send", "keep going", None)])
 
     def test_apply_delivers_sequentially_when_quiet_and_not_before(self):
         # SEQUENTIAL delivery (the user 2026-07-02, compact-mid-turn): settings ops apply and delivery

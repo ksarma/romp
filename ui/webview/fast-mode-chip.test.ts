@@ -10,9 +10,9 @@ const RENDER = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview"
 const INTENT = fs.readFileSync(path.resolve(process.cwd(), "src", "pipe-intent.ts"), "utf8");
 
 test("fast is a meta kind with its own on/off choices", () => {
-  assert.match(RENDER, /type MetaKind = "mode" \| "model" \| "effort" \| "fast";/);
+  assert.match(RENDER, /type MetaKind = "mode" \| "model" \| "effort" \| "fast" \| "auth";/);
   assert.match(RENDER, /const FAST_CHOICES/);
-  assert.match(RENDER, /mode: MODE_CHOICES, model: MODEL_CHOICES, effort: EFFORT_CHOICES, fast: FAST_CHOICES,/);
+  assert.match(RENDER, /mode: MODE_CHOICES, model: MODEL_CHOICES, effort: EFFORT_CHOICES, fast: FAST_CHOICES, auth: AUTH_CHOICES,/);
 });
 
 test("the chip appears only where fast mode means something", () => {
