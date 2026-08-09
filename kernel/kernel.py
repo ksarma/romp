@@ -21804,8 +21804,13 @@ def _bundle_inputs(cv):
     2026-06-16 hit a shipped style that never went live because only *.ts was checked). That fix
     covered the extensions and left the directory wrong, which is how the same bug came back."""
     src, web = cv / "src", UI / "webview"
+    # *.js under ui/webview matters too (the third recurrence, 2026-08-09): gear.js is a plain-JS
+    # module feed.ts require()s into the chat bundle — not an entry point, so the entry-point-derived
+    # test never saw it either, and a gear-only change (the Fast judging checkbox) shipped dark
+    # through a kernel restart until a hand rebuild. Same lesson as the first two rounds: the check
+    # is only as good as this list, and the directories and the extensions have now each burned us.
     return [*src.rglob("*.ts"), *src.rglob("*.css"),
-            *web.rglob("*.ts"), *web.rglob("*.css"),
+            *web.rglob("*.ts"), *web.rglob("*.css"), *web.rglob("*.js"),
             *[p for p in [UI / "romp-timeline-view.js"] if p.exists()]]
 
 

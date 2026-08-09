@@ -44,6 +44,23 @@ class BundleInputs(unittest.TestCase):
         # not under either directory, but timeline-main.ts inlines it, so editing it staleness the bundle
         self.assertTrue(any(p.endswith("ui/romp-timeline-view.js") for p in self.inputs))
 
+    def test_webview_js_modules_required_by_the_bundles_are_watched(self):
+        """The third recurrence (2026-08-09): gear.js is a plain-JS module feed.ts require()s into the
+        chat bundle — not an esbuild entry point, so the entry-point-derived test below never saw it,
+        and a gear-only change (the Fast judging checkbox) shipped dark through a kernel restart.
+        Derive the requirement from the sources: every ./x.js a webview module require()s must be
+        watched, so the next required js module is covered the day it is added."""
+        import glob
+        web = os.path.join(ROOT, "ui", "webview")
+        mods = set()
+        for ts in glob.glob(os.path.join(web, "*.ts")):
+            mods.update(re.findall(r'require\("\./([\w-]+\.js)"\)', open(ts).read()))
+        self.assertIn("gear.js", mods, "the require() scan went stale — gear.js is the known case")
+        for m in sorted(mods):
+            self.assertTrue(any(p.endswith("ui/webview/" + m) for p in self.inputs),
+                            "ui/webview/%s is bundled via require() but the staleness check never "
+                            "looks at it, so editing it would not trigger a rebuild" % m)
+
     def test_every_esbuild_entry_point_is_covered_by_a_watch_root(self):
         """The check is only as good as its list — so derive the requirement from the BUILD, not from
         a second hand-written list that can drift out of step with it."""
