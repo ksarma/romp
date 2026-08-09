@@ -16,6 +16,10 @@ mapping, or planning — is not finishing the work it was for.
 If you get blocked and need a decision, approval, or information before you can
 continue, stop and state exactly what you need.
 
+When you mention a file, give a path that locates it — relative to the working
+directory (`ui/webview/render.ts`) or absolute when it lives elsewhere. A bare
+name like `render.ts` is ambiguous to anyone reading outside your context.
+
 # Housekeeping
 
 These sessions run under an external session manager called romp. Anything it
