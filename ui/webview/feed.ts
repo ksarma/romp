@@ -456,8 +456,27 @@ const collapsedThreads = new Set<string>();
 // names of sessions idle-but-AWAITING background work (the user 2026-07-13): the same dot in straw —
 // matching the chat chip's Awaiting color — so a held session reads differently from a working one.
 let awaitingSet = new Set<string>();
-type DotState = "" | "work" | "await";
-const dotFor = (name: string): DotState => workingSet.has(name) ? "work" : awaitingSet.has(name) ? "await" : "";
+// The other two quarters of the kernel's status partition (the user 2026-08-09): `ready` = alive and
+// quiet (state read, nothing running), `stateUnknown` = listed while the kernel could NOT read its live
+// state. Rendering these explicitly (hollow ready ring / gray unknown ring) reserves a BARE name for
+// "this payload predates the lists" (an old kernel, incl. an old REMOTE kernel in a federated merge —
+// its sessions are in none of the lists, so they keep the legacy look instead of a false "unknown").
+// Before: every state except work/await rendered as nothing, so a session whose state the kernel KNEW
+// (`waiting` in the state store) was indistinguishable from a rendering hole.
+let readySet = new Set<string>();
+let unknownSet = new Set<string>();
+type DotState = "" | "work" | "await" | "ready" | "unknown";
+const dotFor = (name: string): DotState =>
+  workingSet.has(name) ? "work" : awaitingSet.has(name) ? "await"
+  : readySet.has(name) ? "ready" : unknownSet.has(name) ? "unknown" : "";
+// The pip explains itself on hover (the user 2026-07-22: learn the states from tooltips, not the CLI).
+// It encodes TURN state — is anything running? — not attention; attention lives in the card's column.
+const DOT_TIP: Record<Exclude<DotState, "">, string> = {
+  work: "working — a turn is running right now",
+  await: "awaiting — idle, but background work it dispatched is still running",
+  ready: "idle — nothing running; finished its last turn",
+  unknown: "state unknown — romp couldn't read this session's live state",
+};
 // Ensure a `.fwork-dot` sits immediately before `nameEl` iff `state` is non-empty (idempotent on
 // re-render; an existing dot RETINTS in place when the state flips). The name's text/color are untouched.
 function setWorkDot(nameEl: HTMLElement | null, state: DotState | boolean) {
@@ -465,10 +484,14 @@ function setWorkDot(nameEl: HTMLElement | null, state: DotState | boolean) {
   const st: DotState = state === true ? "work" : state === false ? "" : state;
   const prev = nameEl.previousElementSibling;
   const has = !!prev && prev.classList.contains("fwork-dot");
+  const paint = (d: Element) => {   // one kind class at a time; "work" is the bare base class
+    for (const k of ["await", "ready", "unknown"]) d.classList.toggle(k, st === k);
+    (d as HTMLElement).title = st ? DOT_TIP[st] : "";
+  };
   if (st && !has) {
-    const d = el("span", "fwork-dot"); d.classList.toggle("await", st === "await");
+    const d = el("span", "fwork-dot"); paint(d);
     nameEl.parentElement?.insertBefore(d, nameEl);
-  } else if (st && has) prev!.classList.toggle("await", st === "await");
+  } else if (st && has) paint(prev!);
   else if (!st && has) prev!.remove();
 }
 
@@ -3478,6 +3501,8 @@ window.addEventListener("message", (e: MessageEvent) => {
       if (c > 0 && !a.name.includes(":")) sessionColors.set(a.sid.slice(0, c) + ":" + a.name, a.color.bg);
     }
     awaitingSet = new Set(Array.isArray(m.awaiting) ? m.awaiting : []);   // straw awaiting dots (the user 2026-07-13)
+    readySet = new Set(Array.isArray(m.ready) ? m.ready : []);            // alive-and-quiet → hollow ready ring (the user 2026-08-09)
+    unknownSet = new Set(Array.isArray(m.stateUnknown) ? m.stateUnknown : []);   // listed-but-unreadable → explicit unknown ring, never a blank
     bgServicesMap = m.bgServices && typeof m.bgServices === "object" ? m.bgServices : {};   // session name -> judge-classified service descs → the session-header chip (2026-07-24)
     if (Array.isArray(m.order)) sessionOrder = m.order.filter((x: any) => typeof x === "string");   // grouped-mode session rank (tab/lane order)
     hostNow = typeof m.now === "number" ? m.now : Math.floor(Date.now() / 1000);
