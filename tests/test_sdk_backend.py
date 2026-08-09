@@ -441,6 +441,17 @@ class LiveTail(unittest.TestCase):
         self.assertFalse(sb.read_reg(d, sid)["fast"], "the reg mirrors the off as well")
         self.assertEqual(reconnects, [], "an unlocked connection never reconnects for a toggle")
 
+    def test_a_live_toggle_arms_the_one_shot_expectation(self):
+        # The toggle's own turn opens with an init reporting the state at turn START — one word stale.
+        # set_fast arms _fast_expect so exactly that init yields (behavior in FastModeReportedState).
+        d = tempfile.mkdtemp()
+        sid = "11111111-2222-3333-4444-999999999999"
+        be, s = self._live_fast_session(d, sid, unlocked=True)
+        self.assertTrue(be.set_fast(sid, "on"))
+        self.assertEqual(s._fast_expect, "on")
+        self.assertTrue(be.set_fast(sid, "off"))
+        self.assertEqual(s._fast_expect, "off")
+
     def test_set_fast_first_opt_in_reconnects_to_apply_the_flag(self):
         # The current connection was made WITHOUT the flag, so the CLI would refuse the literal send;
         # the opt-in applies at the (re)connect that carries it — request_reconnect, the /effort
@@ -1880,6 +1891,38 @@ class FastModeReportedState(unittest.TestCase):
         self._init(sess, {})
         self.assertEqual(sess.snapshot()["fast"], "off")
         self.assertEqual(sess.snapshot()["fastReason"], "model_not_allowed")
+
+    def test_the_toggle_turns_own_init_yields_to_the_sent_word_once(self):
+        # A literal '/fast on' send opens a turn whose init still reports "off" — the state at turn
+        # START, before the toggle applied. Taking it verbatim stomped the optimistic flip for a whole
+        # turn (the user 2026-08-09: the transcript acknowledged the toggle, the badge read off until
+        # the next message). That single stale word yields; the NEXT init wins unconditionally.
+        sess = self._sess(fast=True)
+        sess.fast = "on"            # set_fast's optimistic flip…
+        sess._fast_expect = "on"    # …and its one-shot expectation
+        self._init(sess, {"fast_mode_state": "off"})
+        self.assertEqual(sess.snapshot()["fast"], "on", "the same-turn stale word yields")
+        self._init(sess, {"fast_mode_state": "off"})
+        self.assertEqual(sess.snapshot()["fast"], "off", "one-shot: the next init is authoritative")
+
+    def test_a_refusal_reason_always_beats_the_expectation(self):
+        # A disabled_reason is real refusal evidence (org/model/cooldown gating), not a stale word —
+        # the expectation never overrides it, so a refused toggle reads refused immediately.
+        sess = self._sess(fast=True)
+        sess.fast = "on"
+        sess._fast_expect = "on"
+        self._init(sess, {"fast_mode_state": "off", "fast_mode_disabled_reason": "org_disabled"})
+        self.assertEqual(sess.snapshot()["fast"], "off")
+        self.assertEqual(sess.snapshot()["fastReason"], "org_disabled")
+        self.assertEqual(sess._fast_expect, "", "spent either way")
+
+    def test_an_agreeing_init_spends_the_expectation(self):
+        sess = self._sess(fast=True)
+        sess.fast = "on"
+        sess._fast_expect = "on"
+        self._init(sess, {"fast_mode_state": "on"})
+        self.assertEqual(sess.snapshot()["fast"], "on")
+        self.assertEqual(sess._fast_expect, "")
 
 
 @unittest.skipUnless(_HAVE_SDK, "claude_agent_sdk not installed")
