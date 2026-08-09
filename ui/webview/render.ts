@@ -196,7 +196,7 @@ type ChatEvent = (
 interface TodoTask { id: string; subject: string; activeForm?: string; status: string }
 
 type ChipState = "working" | "ready" | "awaiting" | "awaitingBg" | "idle" | "closed" | "compacting" | "clearing" | "blocked" | "retrying" | "interrupting" | "opening";   // awaiting = a live permission/picker prompt (on YOU); awaitingBg = idle main thread waiting on background work it dispatched (straw, the user 2026-07-13)
-interface Status { state: ChipState; sinceEpoch: number | null; effort?: string; model?: string; modelPending?: boolean; effortPending?: boolean; fast?: string; fastPending?: boolean; fastReason?: string; mode?: string; ctx?: string; ctxColor?: number[]; modelColor?: number[]; effortColor?: number[]; faded?: boolean; backend?: string; apiTooLong?: boolean; apiSpendLimit?: boolean; apiModelLimit?: boolean; retrySuppressed?: boolean; retryNextAt?: number | null; retryTries?: number | null; }   // retrySuppressed = the user interrupted this thread's API-error storm → romp's auto-retry stays OFF for it until a successful turn re-arms (the user 2026-07-06). backend = "tmux" | "sdk"; apiTooLong = the "blocked" is a "prompt is too long" error (on you → red tab) vs a transient API error (amber/retrying); apiSpendLimit = a monthly spend cap (on you → raise it; NEVER auto-retried — retrying can't fix it, the user 2026-07-14); apiModelLimit = this session's MODEL is out of allowance (on you → switch model or add credits; not auto-retried either, the user 2026-08-01); ctxColor = the GLOBAL colormap's RGB for the context%, computed server-side; modelColor/effortColor = the same map's RGB tint for the model name + effort (by capability/effort rank), server-computed; modelPending = a /model switch is resolving → the badge shows switching-dots until the new name lands (server-driven, event-based, the user 2026-07-03)
+interface Status { state: ChipState; sinceEpoch: number | null; effort?: string; model?: string; modelPending?: boolean; effortPending?: boolean; mode?: string; fast?: string; fastPending?: boolean; fastReason?: string; auth?: string; authPending?: boolean; authBoth?: boolean; authAcct?: string; ctx?: string; ctxColor?: number[]; modelColor?: number[]; effortColor?: number[]; faded?: boolean; backend?: string; apiTooLong?: boolean; apiSpendLimit?: boolean; apiModelLimit?: boolean; apiAuthErr?: boolean; retrySuppressed?: boolean; retryNextAt?: number | null; retryTries?: number | null; }   // retrySuppressed = the user interrupted this thread's API-error storm → romp's auto-retry stays OFF for it until a successful turn re-arms (the user 2026-07-06). backend = "tmux" | "sdk"; apiTooLong = the "blocked" is a "prompt is too long" error (on you → red tab) vs a transient API error (amber/retrying); apiSpendLimit = a monthly spend cap (on you → raise it; NEVER auto-retried — retrying can't fix it, the user 2026-07-14); apiModelLimit = this session's MODEL is out of allowance (on you → switch model or add credits; not auto-retried either, the user 2026-08-01); ctxColor = the GLOBAL colormap's RGB for the context%, computed server-side; modelColor/effortColor = the same map's RGB tint for the model name + effort (by capability/effort rank), server-computed; modelPending = a /model switch is resolving → the badge shows switching-dots until the new name lands (server-driven, event-based, the user 2026-07-03); fast = the CLI's fast-mode state ("on"/"off"/"cooldown", from the SDK init's fast_mode_state; absent = unknown/unavailable → no fast badge)
 interface Color { bg: string; fg: string; }
 // A run_in_background task surfaced in the #bg-tasks box (the kernel's _bg_tasks): a one-line summary +
 // status, expandable to the command + its output. status = running | completed | failed.
@@ -247,7 +247,13 @@ const order: string[] = [];           // positional tab order (for cycling)
 const OPT_PREFIX = "optimistic:";
 const OPT_TTL_MS = 20_000;    // backstop: a real send always echoes within this; past it we stop asserting
 const OPT_TAIL_SCAN = 30;     // the kernel's version (user atom / queued bubble) always lands at the tail
-const pendingSent = new Map<string, { text: string; ts: number }[]>();   // sid → in-flight optimistic sends
+// sid → in-flight optimistic sends. `base` is how many LANDED user atoms carrying this text the tail
+// already held at send time (stamped on the first reconcile, -1 until then): only a count BEYOND base
+// means THIS send landed. The old retire test was a bare substring scan with no notion of which event
+// carried the text, so a resend — or any short message that substrings an older bubble ("continue",
+// "test") — retired its own entry in the very call that created it, and the send showed nothing at
+// all (the user 2026-08-09, who watched sends vanish for a beat before appearing).
+const pendingSent = new Map<string, { text: string; ts: number; base: number }[]>();
 const isOptimistic = (e: ChatEvent): boolean => !!e.uuid && e.uuid.startsWith(OPT_PREFIX);
 
 // The kernel's own queued group, if one is at the tail. Ours merges INTO it when present: the session is
@@ -274,33 +280,65 @@ function reconcileOptimistic(s: Session): void {
   if (!list || !list.length) return;
   const now = Date.now();
   const tail = s.events.slice(-OPT_TAIL_SCAN);
-  const landed = (t: string) => tail.some((e) =>
-    (e.kind === "user" && typeof e.md === "string" && e.md.includes(t)) ||
-    (e.kind === "queued" && Array.isArray(e.texts) && e.texts.some((x) => typeof x.md === "string" && x.md.includes(t))));
-  const keep = list.filter((p) => now - p.ts < OPT_TTL_MS && !landed(p.text));
+  // A LANDED copy of the text is a real user atom — never the kernel's own provisional echo, whose
+  // uuid keeps the backend's "echo:" prefix all the way into the payload. Retiring on the echo was
+  // the flash-out: the echo deleted our entry for good, then blinked in its own echo→landed handoff
+  // with nothing left to cover the gap (the user 2026-08-09). The header above always said "until
+  // the payload DEMONSTRABLY carries the message" — an unlanded echo demonstrates nothing yet.
+  const landedCount = (t: string) => tail.filter((e) =>
+    e.kind === "user" && typeof e.md === "string" && e.md.includes(t)
+    && !String((e as any).uuid || "").startsWith("echo:")).length;
+  // The kernel's own PROVISIONAL copy — its queued bubble, or its echo atom — SUPPRESSES our bubble
+  // for this push (injecting beside it would show the send twice) but never retires the entry: if
+  // the provisional blinks out on the next push, ours steps straight back in.
+  const shownProvisional = (t: string) => tail.some((e) =>
+    (e.kind === "queued" && Array.isArray(e.texts) && e.texts.some((x) => typeof x.md === "string" && x.md.includes(t))) ||
+    (e.kind === "user" && typeof e.md === "string" && String((e as any).uuid || "").startsWith("echo:") && e.md.includes(t)));
+  // First reconcile after the send (registerOptimistic calls this synchronously): whatever matching
+  // atoms the tail ALREADY holds are background — an older identical message, a bubble this text
+  // substrings — not this send. Only growth past this count is a landing.
+  for (const p of list) if (p.base < 0) p.base = landedCount(p.text);
+  const keep = list.filter((p) => now - p.ts < OPT_TTL_MS && landedCount(p.text) <= p.base);
   if (keep.length) pendingSent.set(s.id, keep); else pendingSent.delete(s.id);
-  if (!keep.length) return;
+  const inject = keep.filter((p) => !shownProvisional(p.text));
+  if (!inject.length) return;
   const mk = (p: { text: string }) => ({ md: p.text, optimistic: true, cancelable: false });
   const qj = tailQueuedIdx(s.events);
   if (qj >= 0) {
     // something IS queued here → ours queues behind it: show it in that group, under its header, counted
     const q = s.events[qj] as Extract<ChatEvent, { kind: "queued" }>;
-    s.events[qj] = { ...q, texts: [...q.texts, ...keep.map(mk)] };
+    s.events[qj] = { ...q, texts: [...q.texts, ...inject.map(mk)] };
   } else {
     // nothing known-queued → a BARE dashed bubble: no "N queued messages" header to claim what we can't back
-    s.events.push({ kind: "queued", bare: true, texts: keep.map(mk), uuid: OPT_PREFIX + keep[0].ts });
+    s.events.push({ kind: "queued", bare: true, texts: inject.map(mk), uuid: OPT_PREFIX + inject[0].ts });
   }
 }
 
 // Record a composer send as in-flight and show its optimistic bubble NOW (before any kernel push).
 function registerOptimistic(id: string, text: string): void {
   const arr = pendingSent.get(id) || [];
-  arr.push({ text, ts: Date.now() });
+  arr.push({ text, ts: Date.now(), base: -1 });   // base is stamped by the reconcile just below
   pendingSent.set(id, arr);
   const s = sessions.get(id);
   if (!s) return;
   reconcileOptimistic(s);
-  if (id === activeId) appendActive();
+  // The reconcile can mutate the tail IN PLACE — merging into an existing queued group, or pop+push
+  // on a repeat send — which leaves s.events.length unchanged, and syncView's no-op fast path
+  // (rendered === len) then skipped the repaint: the bubble waited for the next kernel push instead
+  // of this keystroke (the user 2026-08-07, who saw the delay on sends into a busy session). Marking
+  // the view stale takes the same window re-render a tool-group toggle uses, so the send paints NOW
+  // in every case, not just the length-growing bare-bubble one.
+  const v = views.get(id);
+  if (v) v.stale = true;
+  if (id === activeId) {
+    appendActive();
+    // Your OWN send always reveals itself: appendActive's stick rule keeps the viewport still when
+    // you're read up >80px from the bottom, so a send made while scrolled up painted below the fold
+    // and looked like it never appeared (the user 2026-08-09). Hitting Enter is the intent to see
+    // the message — scroll to it, exactly once, at send time.
+    const content = document.getElementById("content");
+    if (content) content.scrollTop = content.scrollHeight;
+  }
 }
 
 // ── conversation rewind (edit a past message, SDK sessions) ──────────────────────────────────────
@@ -330,7 +368,7 @@ function reconcileRewind(s: Session): void {
   if (s.status?.backend === "sdk") {
     for (let i = lastCompact + 1; i < s.events.length; i++) {
       const e = s.events[i] as any;
-      if (e.kind === "user" && e.human && e.uuid && !e.romp && !e.interruptMarker && !e.pending
+      if (e.kind === "user" && e.human && e.uuid && !e.romp && !e.interruptMarker
           && !e.uuid.startsWith(OPT_PREFIX)) editable.add(e.uuid);
     }
   }
@@ -2674,7 +2712,9 @@ function renderApiError(ev: Extract<ChatEvent, { kind: "apiError" }>): HTMLEleme
   const st = activeId ? sessions.get(activeId)?.status : undefined;
   // A spent MODEL allowance gets no Retry either (the user 2026-08-01): "retry" re-fails until the model
   // changes or its own window resets, so the card names the fix instead of offering a button that cannot work.
-  const spendCap = !!st?.apiSpendLimit || !!st?.apiModelLimit;
+  // A dead CREDENTIAL is the same shape (the user 2026-08-08, per-session auth): retrying re-presents the
+  // broken login/key forever — the fix is /login, the key, or switching which one the session bills.
+  const spendCap = !!st?.apiSpendLimit || !!st?.apiModelLimit || !!st?.apiAuthErr;
   if (!spendCap) {
     const retry = el("button", "apierror-retry") as HTMLButtonElement;
     retry.textContent = "Retry now";
@@ -2770,7 +2810,7 @@ function apiRetryTick(): void {
     // never auto-retried — the card asks you to raise it instead (the global pause it engages also gates this).
     // A spent MODEL allowance (apiModelLimit) is out for the same reason: every retry re-fails until the
     // user switches model or tops up, and the card says exactly that (the user 2026-08-01).
-    sessions.forEach((s, id) => { if (s.status.state === "blocked" && !s.status.retrySuppressed && !s.status.apiSpendLimit && !s.status.apiModelLimit) blocked.add(id); });
+    sessions.forEach((s, id) => { if (s.status.state === "blocked" && !s.status.retrySuppressed && !s.status.apiSpendLimit && !s.status.apiModelLimit && !s.status.apiAuthErr) blocked.add(id); });
     apiRetryNext.forEach((_, id) => { if (!blocked.has(id)) apiRetryNext.delete(id); });   // recovered / suppressed → stop
     blocked.forEach((id) => {
       // The kernel owns the cadence now (the user 2026-07-29): it backs each outage's attempts off up to
@@ -3313,6 +3353,11 @@ function showTabTip(tab: HTMLElement, s: Session): void {
   // Backend is a plain labelled FIELD now, under the others (the user 2026-07-08 — no longer a coloured
   // "SDK backend" badge at the top of the tooltip; it reads as one of the session's config fields).
   if (be === "sdk" || be === "tmux") rows.push(["Backend", be === "sdk" ? "SDK" : "tmux"]);
+  // Billing: whether this tab bills the API key or the Claude login — and WHICH login account (the
+  // user 2026-08-09: shown whenever the backend reports it, one-auth machines included; only a tmux
+  // session, whose CLI env romp does not control, reports nothing). No key material, ever.
+  if (s.status.auth) rows.push(["Billing", s.status.auth === "key" ? "API key"
+    : (s.status.authAcct ? `Login (${s.status.authAcct})` : "Login")]);
   for (const [k, v] of rows) {
     const r = el("div", "tab-tip-row");
     const ke = el("span", "tab-tip-k"); ke.textContent = k;
@@ -3445,6 +3490,22 @@ function syncNoSessionsPlaceholder(visibleCount: number) {
   content.appendChild(ph);
 }
 
+// The tab strip's vertical context gauge: fill height = context-used %, coloured by the SAME
+// server-computed global-colormap RGB the statusline battery / timeline use (setCtxBar), with the
+// same traffic-light fallback for an older kernel that doesn't ship ctxColor. Passive — a click
+// falls through to the tab's own select; the statusline battery keeps the click-to-/compact.
+function tabCtxGauge(ctxStr: string, ctxColor?: number[]): HTMLElement {
+  const pct = Math.max(0, Math.min(100, parseInt(ctxStr, 10) || 0));
+  const g = el("span", "tab-ctx");
+  const fill = el("span", "tab-ctx-fill");
+  fill.style.height = pct + "%";
+  fill.style.background = (ctxColor && ctxColor.length === 3) ? `rgb(${ctxColor.join(",")})`
+    : (pct >= 85 ? "#c0392b" : pct >= 60 ? "#e0b020" : "#54B204");
+  g.appendChild(fill);
+  g.title = `context ${pct}% used`;
+  return g;
+}
+
 function renderTabs() {
   if (renameActive) { renderPendingAfterRename = true; return; }
   if (tabPointerHeld) { renderPendingWhilePressed = true; return; }   // don't destroy a tab mid-click (see tabPointerHeld)
@@ -3522,7 +3583,7 @@ function renderTabs() {
     // "blocked" is an API error. An on-YOU one — "prompt is too long" (compact), a monthly spend cap (raise it,
     // the user 2026-07-14), or a spent model allowance (switch model, the user 2026-08-01) — is alarm-red dashed; a TRANSIENT API error is auto-retrying and needs no attention → the
     // amber retrying treatment, not red (the user 2026-06-29).
-    else if (st === "blocked") tab.classList.add((s.status.apiTooLong || s.status.apiSpendLimit || s.status.apiModelLimit) ? "tab-blocked" : "tab-retrying");
+    else if (st === "blocked") tab.classList.add((s.status.apiTooLong || s.status.apiSpendLimit || s.status.apiModelLimit || s.status.apiAuthErr) ? "tab-blocked" : "tab-retrying");
     else if (st === "awaiting") tab.classList.add("tab-awaiting");
     else if (st === "retrying") tab.classList.add("tab-retrying");       // amber: soft-blocked on an API auto-retry
     else if (st === "compacting" || st === "clearing") tab.classList.add("tab-compacting");   // both: a context op in flight
@@ -3563,6 +3624,16 @@ function renderTabs() {
       tab.addEventListener("mouseleave", () => { label.style.color = fadedColor(full); label.classList.add("name-faded"); });
     }
     tab.appendChild(label);
+    // Slim vertical context gauge right of the name (the user 2026-08-08): the statusline battery's
+    // fill % + colormap colour, rotated upright and with no % text — so "this session is filling up"
+    // reads at a glance across the whole strip. Skipped while compacting (the compacting bar owns that
+    // moment, and the % is about to be wrong) and on dead tabs. gear → Chat picks WHEN it shows:
+    // only once ≥50% full (the default — a gauge on every quiet tab is clutter; it appears when it
+    // has news), always, or never (the user 2026-08-08 v2, replacing the on/off toggle).
+    if (settings.tabCtx !== "never" && s.status.ctx && st !== "compacting" && st !== "closed") {
+      const pct = Math.max(0, Math.min(100, parseInt(s.status.ctx, 10) || 0));
+      if (settings.tabCtx === "always" || pct >= 50) tab.appendChild(tabCtxGauge(s.status.ctx, s.status.ctxColor));
+    }
     // Rich hover tooltip (custom DOM — a native title can't colour/bold): backend in its own colour, the
     // full dir path, and mode/model/effort/context each on a line (the user 2026-06-23). See showTabTip.
     tab.addEventListener("mouseenter", () => showTabTip(tab, s));
@@ -3584,7 +3655,7 @@ function renderTabs() {
     // double-click a tab to show/hide the ledger overview — same as the strip's caret
     tab.addEventListener("dblclick", (e) => { e.preventDefault(); toggleLedgerCollapsed(); });
     // right-click → context menu; "Rename" edits the title in place
-    tab.addEventListener("contextmenu", (e) => { e.preventDefault(); e.stopPropagation(); showTabMenu(e, tab, label, id); });
+    tab.addEventListener("contextmenu", (e) => { e.preventDefault(); e.stopPropagation(); showTabMenu(e, id); });
     bar.appendChild(tab);
   }
   const add = el("div", "tab tab-add");
@@ -3684,6 +3755,14 @@ function setSessionColor(id: string, bg: string) {
   const meta = tabMeta.get(id);
   if (meta) meta.color = color;
   renderTabs();
+  // OPTIMISTIC cross-pane echo (the user 2026-08-08): the tabs repaint on this very click, but the
+  // FEED kept the old colour until the kernel's next feed rebuild pushed — a second or two. Tell the
+  // other panes kernel-free, on the same host-matched pair settings sync rides: the browser's
+  // same-origin iframes hear the localStorage write (`storage` fires cross-document; `t` makes
+  // re-picking the same colour still fire it), and in VS Code — where each webview's localStorage is
+  // its own — the host fans {colorSync} to its other panels (__rompShowStrip marks that host).
+  try { localStorage.setItem("romp:color-echo", JSON.stringify({ sid: id, bg, t: Date.now() })); } catch { /* storage blocked */ }
+  if ((window as any).__rompShowStrip) vscodeApi?.postMessage({ type: "colorSync", sid: id, bg });
   if (vscodeApi) vscodeApi.postMessage({ type: "setSessionColor", id, bg });
 }
 
@@ -3702,12 +3781,15 @@ function ctxIcon(kind: "feed" | "mail" | "bell", off: boolean): HTMLElement {
   return span;
 }
 
-function showTabMenu(e: MouseEvent, tab: HTMLElement, label: HTMLElement, id: string) {
+function showTabMenu(e: MouseEvent, id: string) {
   dismissTabMenu();
   const menu = el("div", "ctx-menu");
   const rename = el("div", "ctx-item");
   rename.textContent = "Rename";
-  rename.addEventListener("click", (ev) => { ev.stopPropagation(); dismissTabMenu(); startTabRename(tab, label, id); });
+  // id only, never the tab node under the cursor: the menu (on document.body) outlives kernel pushes,
+  // but the tab it was opened from does not — renderTabs() swaps the strip on every push, so a node
+  // captured here is usually DETACHED by the time Rename is clicked (the click-safety rule).
+  rename.addEventListener("click", (ev) => { ev.stopPropagation(); dismissTabMenu(); startTabRename(id); });
   menu.appendChild(rename);
   // Feed + Mail per-session toggles (the user 2026-06-26) — the same controls as the timeline lane's feed
   // checkbox + postal mailbox, here as icon + label + a faint "what it does" sub-line. State from the session.
@@ -3775,9 +3857,20 @@ window.addEventListener("blur", () => dismissTabMenu());
 // "Rename" (tab context menu): swap the tab's label for an inline input. Enter
 // or clicking away commits (the host renames the tmux session and confirms with
 // a "renamed" message — the label only changes once that lands), Esc cancels.
-function startTabRename(tab: HTMLElement, label: HTMLElement, id: string) {
+function startTabRename(id: string) {
   const s = sessions.get(id);
-  if (!s || tab.querySelector(".tab-rename")) return;
+  if (!s) return;
+  // Resolve the tab NOW, by id. The old signature took the nodes captured at menu-open time, and a
+  // kernel push while the menu sat open replaced the strip under it — so the first Rename click did all
+  // its work on a detached orphan (invisible input, focus() a no-op) and left renameActive stuck true,
+  // since only that orphan input's Enter/Esc/blur could clear it. The frozen strip is why a SECOND
+  // attempt always worked, and why committing it healed everything (the user 2026-08-08: "rename only
+  // takes on the second try"). A vanished tab (session closed mid-menu) bails out BEFORE the flag.
+  const bar = document.getElementById("tabs");
+  const tab = bar && Array.from(bar.children).find(
+    (t): t is HTMLElement => t instanceof HTMLElement && t.dataset.id === id);
+  const label = tab && tab.querySelector<HTMLElement>(".tab-label");
+  if (!tab || !label || tab.querySelector(".tab-rename")) return;
   // A remote session displays as "host:name", where "host:" is METADATA this viewer added (see
   // ./host-prefix) — the far kernel knows the session by the bare name alone. Seeding the editor with
   // the whole display string handed the user the host to edit and sent it back on the other side of the
@@ -3927,6 +4020,23 @@ window.addEventListener("keydown", (e) => {
     if (focusComposerOrAsk()) e.preventDefault();   // the picker card if one's up, else the message box
   }
 });
+// Cmd/Ctrl+O and Cmd/Ctrl+Shift+O — the in-PAGE fallback, from anywhere including the composer, the
+// way Obsidian's quick switcher opens over the editor (the user 2026-08-08). Inside the romp shell
+// this handler STANDS DOWN: the shell owns both combos (palette-main.ts — plain O is the session jump
+// switcher up in the shell document, Shift+O this picker), and its per-pane capture handler sees the
+// keystroke once this window-capture one declines to stop it. Standalone and in VS Code (no shell
+// handler on this document) both combos fall back to the picker here. preventDefault cancels the
+// browser's own Cmd+O (open file) while this tab has focus, and only there.
+function inRompShell(): boolean {
+  try { return !!(window.parent && window.parent !== window && window.parent.document.getElementById("chat-pane")); }
+  catch (e) { return false; }   // cross-origin parent (VS Code) — not the romp shell
+}
+window.addEventListener("keydown", (e) => {
+  if (!(e.metaKey || e.ctrlKey) || e.altKey || (e.key || "").toLowerCase() !== "o") return;
+  if (inRompShell()) return;   // the shell's handler on this document takes it from here
+  e.preventDefault(); e.stopPropagation();
+  if (pickerVisible()) closePicker(); else openPicker();
+}, true);
 // Nearest tab in the row above (dir<0) or below (dir>0) the given tab, by column.
 function tabInAdjacentRow(id: string, dir: number): string | null {
   const bar = document.getElementById("tabs");
@@ -3967,6 +4077,12 @@ const provisionalQueue: string[] = [];
 let provisionalTimer: ReturnType<typeof setTimeout> | undefined;
 // Text typed into a provisional tab whose create had to ask something first, waiting for the retry's tab.
 let pendingCarry = "";
+// Provisional tabs whose create FAILED (the user 2026-08-08): the tab — and whatever was typed into
+// it — STAYS, foregrounded, with the failure dialog on top. It used to be torn down and the held text
+// dumped into whichever tab happened to be active, polluting an unrelated thread's draft. The set keys
+// the failed transcript placeholder, the send refusal, and the composer's read-only exemption; the
+// tab's ✕ discards tab and text together (an explicit choice, local-only — the kernel never knew it).
+const failedProvisionals = new Set<string>();
 // The backstop, for a create that fails with nothing said. Every failure the kernel CAN name arrives as a
 // warn / createDirMissing and lands the dialog at once; this covers a spawn that dies silently. It is
 // deliberately long — the point is that it is no longer what you wait on, the way the old 30s cue was.
@@ -4028,21 +4144,39 @@ function adoptProvisional(realId: string): void {
 
 // A create that FAILED. The kernel's own words are the message wherever it gave any (a bad name, an
 // unreadable parent, the SDK setup hint) — a dialog naming the reason beats the old cue, which simply
-// stopped after thirty seconds and left you to work out that nothing had happened. Whatever was typed
-// comes back in the box, because losing it would be the one unrecoverable part of this.
+// stopped after thirty seconds and left you to work out that nothing had happened. The TAB STAYS and is
+// foregrounded first, with whatever was typed back in ITS box (the user 2026-08-08): tearing it down
+// restored the text into whichever tab happened to be active, so a failure that landed while you were
+// reading another thread silently rewrote that thread's draft.
 function failProvisional(why: string): void {
   if (!provisionalId) return;
+  const id = provisionalId;
   const name = pendingNewSession || "that session";
-  const { queued, draft } = dropProvisional();
+  // retire the create MACHINERY only — dropProvisional() would dismiss the tab too
+  provisionalId = null;
+  pendingNewSession = null;
+  if (provisionalTimer) { clearTimeout(provisionalTimer); provisionalTimer = undefined; }
+  const queued = provisionalQueue.slice();
+  provisionalQueue.length = 0;
+  const ta0 = document.getElementById("composer-input") as HTMLTextAreaElement | null;
+  const draft = (activeId === id && ta0) ? ta0.value : (drafts.get(id) ?? "");
   const held = [...queued, draft].filter(Boolean).join("\n\n");
-  showConfirm("Couldn't start " + name,
-    why + (held ? "\n\nWhat you typed is back in the message box." : ""),
-    [{ label: "OK", value: "ok" }], () => { /* nothing to undo — the tab is already gone */ });
+  pendingSent.delete(id);            // the dashed "received" bubbles fold into the held text instead
+  failedProvisionals.add(id);
+  const s = sessions.get(id);
+  // "closed" gives the tab the dead treatment (struck label, plain ✕) — but the composer stays LIVE
+  // for a failed provisional (the read-only exemption below), since the held text must stay editable
+  if (s) s.status = { state: "closed", sinceEpoch: Math.floor(Date.now() / 1000) };
+  setActive(id);                     // jump back to the failed thread BEFORE saying anything
   if (held) {
+    drafts.set(id, held); persistDrafts();
     const ta = document.getElementById("composer-input") as HTMLTextAreaElement | null;
     if (ta) { ta.value = held; growComposer(ta); }
-    if (activeId) { drafts.set(activeId, held); persistDrafts(); }
   }
+  renderTabs();
+  showConfirm("Couldn't start " + name,
+    why + (held ? "\n\nWhat you typed is in this tab's message box." : ""),
+    [{ label: "OK", value: "ok" }], () => { /* the tab keeps the text until its ✕ discards both */ });
 }
 
 // The ✕ on a provisional tab: tell the kernel to abort the pending spawn too, so a slow-but-successful
@@ -4071,15 +4205,40 @@ function revealSelfPane(): void {
 // Mirror the settings bridge: tell the shell to lift #f-chat over the whole window (body.picker-open) while
 // the picker is up, so the overlay fills the screen and the list gets the full viewport height. Standalone
 // (no parent) is a no-op.
+//
+// While lifted, this page keeps PAINTING its content at the chat pane's old screen rect (--pane-* vars,
+// measured from the shell's pane div): the transcript stays exactly where it was, live and visible under
+// the overlay's dim like every other pane. The first cut hid the page's content instead, which left a
+// BLACK HOLE where the chat pane had been — the one region of the dashboard that changed behind the
+// centered modal (the user 2026-08-08). A pane we can't measure (hidden, or a cross-origin parent like
+// VS Code) falls back to that hiding via .pane-gone.
+function liftPaneRect(): DOMRect | null {
+  try {
+    const p = window.parent?.document?.getElementById("chat-pane");
+    return p ? p.getBoundingClientRect() : null;
+  } catch (e) { return null; }   // cross-origin parent (VS Code) — no shell pane to measure
+}
+function placeLifted(): void {
+  const r = liftPaneRect();
+  const gone = !r || r.width < 40 || r.height < 40;
+  document.body.classList.toggle("pane-gone", gone);
+  if (gone) return;
+  const st = document.documentElement.style;
+  st.setProperty("--pane-x", r!.left + "px");
+  st.setProperty("--pane-y", r!.top + "px");
+  st.setProperty("--pane-w", r!.width + "px");
+  st.setProperty("--pane-h", r!.height + "px");
+}
+function onLiftResize(): void { if (pickerVisible()) placeLifted(); }   // panes track the window; follow them
 function signalPickerOverlay(on: boolean) {
   try {
     if (window.parent && window.parent !== window) {
       window.parent.postMessage({ romp: "picker", on }, "*");
-      // …and get out of the way while lifted (the user 2026-07-29). The shell lifts this iframe over the
-      // whole window, and the iframe is OPAQUE, so the picker read as the chat pane blown up to full
-      // screen rather than as a dialog over the dashboard. Dropping this page's background and hiding
-      // its own content leaves only the picker drawn, so the timeline, feed and chat stay visible
-      // (dimmed by the picker's own backdrop) behind a modal that floats over all of them.
+      if (on) { placeLifted(); window.addEventListener("resize", onLiftResize); }
+      else window.removeEventListener("resize", onLiftResize);
+      // The class rides documentElement AND body (like the gear's rs-modal-open): THEME_CSS paints
+      // html and body separately, and an opaque html kept the lift a full black-out (the user 2026-08-08).
+      document.documentElement.classList.toggle("picker-lifted", on);
       document.body.classList.toggle("picker-lifted", on);
     }
   } catch (e) { /* standalone: no shell to lift */ }
@@ -4166,7 +4325,59 @@ let pickerListHost = "";
 
 function requestSessionList(host: string): void {
   pickerListHost = host;
+  // the billing choices on screen belong to the host that just stopped being selected — hide the auth
+  // row until ITS kernel's sessionList answers with its own availability (the same staleness rule the
+  // dir status follows; an older kernel never answers with one and the row simply stays away)
+  pickerAuthAvail = null;
+  syncPickerAuth();
   if (vscodeApi) vscodeApi.postMessage({ type: "requestSessions", host });
+}
+
+// Per-session BILLING for a NEW session (the user 2026-08-08): login vs the API key the selected host's
+// manager environment carries. The row is ALWAYS there for an SDK session (the user 2026-08-09):
+// segmented BUTTONS when the selected host offers both, and when it offers ONE, the same spot just
+// writes out which it is — informative, never a one-option selector (what the earlier disappearing
+// rule was really against). The row still disappears when the backend toggle says tmux (that CLI
+// lives in the tmux server's environment, which the kernel does not control) and until the host's
+// sessionList reply carries authAvail (an older kernel never answers with one).
+let pickerAuthAvail: { login?: boolean; key?: boolean; acct?: string; default?: string } | null = null;
+
+function syncPickerAuth(): void {
+  const wrap = document.querySelector("#picker .picker-auth") as HTMLElement | null;
+  if (!wrap) return;
+  const beSel = document.querySelector("#picker .picker-backend:not(.picker-host):not(.picker-auth) .picker-be-opt.sel") as HTMLElement | null;
+  const a = pickerAuthAvail;
+  const show = !pickMode && !!(a && (a.login || a.key)) && (beSel?.dataset.be || loadSettings().backend) === "sdk";
+  wrap.style.display = show ? "" : "none";
+  if (!show) return;
+  const both = !!(a!.login && a!.key);
+  wrap.querySelectorAll(".picker-be-opt").forEach((x) => ((x as HTMLElement).style.display = both ? "" : "none"));
+  const fixed = wrap.querySelector(".picker-auth-fixed") as HTMLElement | null;
+  if (fixed) {
+    fixed.style.display = both ? "none" : "";
+    // one real choice → written out in the buttons' place, naming the login account when known
+    fixed.textContent = both ? "" : (a!.key ? "API key" : (a!.acct ? `Login (${a!.acct})` : "Login"));
+  }
+  if (!both) return;   // the fixed text is the whole row — nothing to seed
+  // the Login button's hover names WHICH account (the user 2026-08-09)
+  const loginBtn = wrap.querySelector('.picker-be-opt[data-auth="login"]') as HTMLElement | null;
+  if (loginBtn && a!.acct) loginBtn.title = `Bill this session to the machine's Claude login (${a!.acct}).`;
+  // seed the selection from the host's default only when nothing is selected yet this open
+  if (!wrap.querySelector(".picker-be-opt.sel")) {
+    const def = a!.default === "key" ? "key" : "login";
+    wrap.querySelectorAll(".picker-be-opt").forEach((x) => x.classList.toggle("sel", (x as HTMLElement).dataset.auth === def));
+  }
+}
+
+// the picked billing for the create payload — "" when the row is hidden or written-out (one real
+// choice: the kernel default IS that choice, and a stale .sel from a previously-selected both-offering
+// host must not ride along)
+function pickerAuthChoice(): string {
+  const wrap = document.querySelector("#picker .picker-auth") as HTMLElement | null;
+  if (!wrap || wrap.style.display === "none") return "";
+  const sel = wrap.querySelector(".picker-be-opt.sel") as HTMLElement | null;
+  if (!sel || sel.style.display === "none") return "";
+  return sel.dataset.auth || "";
 }
 
 function pickerHost(): string {
@@ -4307,7 +4518,7 @@ function dirKey(e: KeyboardEvent): boolean {
 // warned into a toast the "Opening…" cue was covering, so the create looked like it silently did
 // nothing for 30 seconds (the user 2026-07-28). The request is remembered so "Create it" can re-send
 // exactly the same create with mkdir set, host and backend included.
-interface CreateReq { name: string; backend: string; dir: string; host: string }
+interface CreateReq { name: string; backend: string; dir: string; host: string; auth?: string }
 let lastCreate: CreateReq | null = null;
 
 function startCreate(req: CreateReq, mkdir = false): void {
@@ -4398,6 +4609,25 @@ function openPicker(pick = false, prompt?: string, allowNew = false) {
     };
     beWrap.append(beLabel, mkBe("sdk", "SDK", "Runs via the Claude Agent SDK."),   // not "headless" — same full chat UI (the user 2026-07-12)
                   mkBe("tmux", "tmux", "Drives a real terminal pane (tmux)."));   // SDK first — the de-facto default (the user 2026-07-02)
+    // the billing row exists only for SDK sessions — re-decide on every backend toggle
+    beWrap.addEventListener("click", () => syncPickerAuth());
+    // per-session BILLING row (the user 2026-08-08): Login | API key buttons when the selected host
+    // offers both; with ONE real choice the same spot writes it out as plain text (the user
+    // 2026-08-09) — see syncPickerAuth. Same segmented-toggle grammar as Backend above.
+    const auWrap = el("div", "picker-backend picker-auth");
+    auWrap.style.display = "none";   // hidden until a sessionList reply carries authAvail
+    const auLabel = el("span", "picker-backend-label"); auLabel.textContent = "Billing";
+    const mkAu = (val: string, txt: string, tip: string) => {
+      const b = el("button", "picker-be-opt") as HTMLButtonElement;
+      b.type = "button"; b.textContent = txt; b.title = tip; b.dataset.auth = val;
+      b.addEventListener("click", () => auWrap.querySelectorAll(".picker-be-opt").forEach((x) => x.classList.toggle("sel", x === b)));
+      return b;
+    };
+    const auFixed = el("span", "picker-auth-fixed");   // the written-out single choice
+    auFixed.style.display = "none";
+    auWrap.append(auLabel, mkAu("login", "Login", "Bill this session to the machine's Claude login (subscription usage)."),
+                  mkAu("key", "API key", "Bill this session to the API key the manager's environment carries (per-token)."),
+                  auFixed);
     // per-session HOST picker (federation, the user 2026-07-02): local | each attached SSH host — the new
     // session is created BY that host's kernel (over its tunnel) and appears prefixed `host:name`. The
     // options are rebuilt on every open (hosts attach/detach live); the row hides with no hosts attached.
@@ -4429,8 +4659,11 @@ function openPicker(pick = false, prompt?: string, allowNew = false) {
       const beSel = beWrap.querySelector(".picker-be-opt.sel") as HTMLElement | null;
       // host: local ("") or an attached SSH host — the federation manager routes createSession there.
       const hostSel = (hostWrap.querySelector(".picker-be-opt.sel") as HTMLElement | null)?.dataset.host || "";
+      // billing: the picker's Billing row when it is showing (both choices real on that host); ""
+      // omits the field and the kernel's own default stands (the user 2026-08-08)
+      const auth = pickerAuthChoice();
       startCreate({ name, backend: beSel?.dataset.be || loadSettings().backend,
-                    dir: dirInput.value.trim(), host: hostSel });
+                    dir: dirInput.value.trim(), host: hostSel, ...(auth ? { auth } : {}) });
     });
     const openAll = el("button", "picker-action");
     openAll.textContent = "↗ Open all running sessions";
@@ -4445,6 +4678,7 @@ function openPicker(pick = false, prompt?: string, allowNew = false) {
     box.appendChild(list);
     box.appendChild(dirWrap);
     box.appendChild(beWrap);
+    box.appendChild(auWrap);
     box.appendChild(hostWrap);
     box.appendChild(actions);
     overlay.appendChild(box);
@@ -4458,11 +4692,16 @@ function openPicker(pick = false, prompt?: string, allowNew = false) {
   if (actions) actions.style.display = pick ? "none" : "";
   const dirWrap = overlay.querySelector(".picker-dir") as HTMLElement | null;
   if (dirWrap) dirWrap.style.display = pick ? "none" : "";   // dir only matters when creating, not picking
-  const beWrapEl = overlay.querySelector(".picker-backend:not(.picker-host)") as HTMLElement | null;
+  const beWrapEl = overlay.querySelector(".picker-backend:not(.picker-host):not(.picker-auth)") as HTMLElement | null;
   if (beWrapEl) {   // reset the backend toggle to the gear default each open (overridable for this session)
     beWrapEl.style.display = pick ? "none" : "";
     const def = loadSettings().backend || "tmux";
     beWrapEl.querySelectorAll(".picker-be-opt").forEach((x) => x.classList.toggle("sel", (x as HTMLElement).dataset.be === def));
+  }
+  const auWrapEl = overlay.querySelector(".picker-auth") as HTMLElement | null;
+  if (auWrapEl) {   // fresh open: forget last time's pick + availability; the local sessionList reply re-arms it
+    auWrapEl.style.display = "none";
+    auWrapEl.querySelectorAll(".picker-be-opt").forEach((x) => x.classList.remove("sel"));
   }
   const hostWrapEl = overlay.querySelector(".picker-host") as HTMLElement | null;
   if (hostWrapEl) {   // rebuild the host options each open (attach/detach is live); hide with no remotes
@@ -4701,6 +4940,11 @@ function pickerError(msg: string | null) {
   if (!e) return;
   e.textContent = msg || "";
   e.classList.toggle("show", !!msg);
+}
+
+function pickerVisible(): boolean {
+  const o = document.getElementById("picker");
+  return !!o && o.style.display !== "none";
 }
 
 function closePicker() {
@@ -5142,13 +5386,20 @@ function syncView(id: string, atBottom?: boolean): View {
   // (the user 2026-06-19). Idempotent: leaves an existing placeholder in place; the first real event clears it.
   if (s.events.length === 0) {
     const only = v.el.childNodes.length === 1 ? (v.el.firstChild as HTMLElement) : null;
-    if (!only || !only.classList?.contains("tx-empty")) {
+    // …and rebuild a placeholder whose STARTING loader outlived its create (the failure flips it to
+    // the couldn't-start notice below — the spinning loader would be a lie on a failed tab)
+    const staleStart = !!only && only.classList?.contains("tx-starting") && failedProvisionals.has(id);
+    if (!only || !only.classList?.contains("tx-empty") || staleStart) {
       while (v.el.firstChild) v.el.removeChild(v.el.firstChild);
       const ph = el("div", "tx-empty"); v.el.appendChild(ph);
       // A PROVISIONAL tab is not empty, it is STARTING — so it wears the romp loader (the repo's rule for
       // any wait), not the placeholder that tells you to send something. The composer below it is live
-      // either way: anything typed here is held and flushed when the session lands.
-      if (isProvisionalId(id)) {
+      // either way: anything typed here is held and flushed when the session lands. A FAILED create's
+      // tab says what happened instead (the user 2026-08-08) — the loader would be a lie.
+      if (isProvisionalId(id) && failedProvisionals.has(id)) {
+        ph.textContent = "This session couldn't start. What you typed is kept in the box below; "
+          + "✕ on the tab discards both.";
+      } else if (isProvisionalId(id)) {
         ph.classList.add("tx-starting");
         const sw = el("img", "tx-starting-swirl") as HTMLImageElement;
         sw.src = mediaSrc("romp-swirl-glyph.svg"); sw.alt = ""; sw.onerror = () => sw.remove();
@@ -5570,7 +5821,9 @@ function showActive() {
   // while you're viewing it disables the box live; switching back to a live tab re-enables it.
   const composer = document.getElementById("composer-input") as HTMLTextAreaElement | null;
   if (composer) {
-    const closed = s.status.state === "closed";
+    // a FAILED provisional wears the closed treatment on its tab, but its composer stays LIVE: it holds
+    // the only copy of what was typed, which must stay editable/copyable (the send path refuses loudly)
+    const closed = s.status.state === "closed" && !failedProvisionals.has(activeId!);
     composer.disabled = closed;
     composer.placeholder = closed ? "Session closed — read-only" : composerRestingPlaceholder();
     const sendBtn = document.getElementById("composer-send") as HTMLButtonElement | null;
@@ -6623,7 +6876,7 @@ function elapsedMs(sinceMs: number | null): string {
 // Each value is a little dropdown: picking an entry has the host inject the matching
 // /model or /effort slash command into the session's pane; the label then updates
 // when the TUI's statusline republishes the tmux vars (meta-pending bridges the gap).
-type MetaKind = "mode" | "model" | "effort" | "fast";
+type MetaKind = "mode" | "model" | "effort" | "fast" | "auth";
 // Model + effort choices come from the kernel's /models — the ONE list shared with the timeline lanes and the
 // judge-tier settings (the user 2026-07-02, who wanted one shared code path, not hardcoded in multiple places), so
 // the client holds no model literals (mirrors paletteColors above). Populated in place on load so META_CHOICES
@@ -6642,6 +6895,20 @@ const MODE_CHOICES: { label: string; value: string }[] = [
   { label: "Auto", value: "auto" },
   { label: "Plan", value: "plan" },
 ];
+// Per-session billing (the user 2026-08-08): the Claude login vs the API key the manager's environment
+// carries. st.auth is now ALWAYS reported when the backend knows it (the user 2026-08-09 — the tab
+// hover says Billing everywhere), so this SWITCHING badge gates on st.authBoth instead: a one-auth
+// machine still shows no dead selector, while the hover stays informative. The key entry is labelled
+// 'API key', full stop — no fragment of the key, not even a last-4 tail, is shipped or shown (the
+// user 2026-08-08, evening: a tail is still key material and no surface needs it).
+const AUTH_CHOICES: { label: string; value: string }[] = [
+  { label: "Login", value: "login" },
+  { label: "API key", value: "key" },
+];
+// the per-session billing choice → the badge label (never any key material)
+function prettyAuth(st: Status): string {
+  return (st.auth || "").toLowerCase() === "key" ? "API key" : "Login";
+}
 // the @claude-permission-mode var → a short readable badge label
 function prettyMode(m: string | undefined): string {
   switch ((m || "").toLowerCase()) {
@@ -6660,12 +6927,12 @@ const FAST_CHOICES: { label: string; value: string }[] = [
   { label: "Fast off", value: "off" },
 ];
 const META_CHOICES: Record<MetaKind, { label: string; value: string }[]> = {
-  mode: MODE_CHOICES, model: MODEL_CHOICES, effort: EFFORT_CHOICES, fast: FAST_CHOICES,
+  mode: MODE_CHOICES, model: MODEL_CHOICES, effort: EFFORT_CHOICES, fast: FAST_CHOICES, auth: AUTH_CHOICES,
 };
 // the live value of a meta kind for the active session
 function metaCurrent(kind: MetaKind, st: Status): string {
-  return (kind === "model" ? st.model : kind === "effort" ? st.effort
-    : kind === "fast" ? st.fast : st.mode) || "";
+  return (kind === "model" ? st.model : kind === "effort" ? st.effort : kind === "fast" ? st.fast
+    : kind === "auth" ? st.auth : st.mode) || "";
 }
 
 // The fast chip's label. The bare word the server sends ("on") would be meaningless next to "Opus 5"
@@ -6700,6 +6967,7 @@ function isCurrentMeta(kind: MetaKind, st: Status, value: string): boolean {
   if (kind === "effort") return (st.effort || "").toLowerCase() === value;
   // "cooldown" is fast mode ON, just rate-limited right now — so the On entry is still the current one.
   if (kind === "fast") return ((st.fast || "").toLowerCase() === "off") === (value === "off");
+  if (kind === "auth") return (st.auth || "").toLowerCase() === value;
   if (kind === "mode") {
     const m = (st.mode || "").toLowerCase();
     if (value === "default") return m === "" || m === "default" || m === "normal";
@@ -6744,6 +7012,7 @@ function metaButton(kind: MetaKind, text: string): HTMLElement {
   btn.title = kind === "model" ? "change model (sends /model)"
     : kind === "effort" ? "change thinking effort (sends /effort)"
     : kind === "fast" ? "toggle fast mode"
+    : kind === "auth" ? "switch which account this session bills (login vs API key; reconnects to apply)"
     : "change permission mode (shift+tab cycle)";
   btn.addEventListener("click", (e) => { e.stopPropagation(); toggleMetaMenu(kind, btn); });
   return btn;
@@ -6764,11 +7033,13 @@ function metaColor(kind: MetaKind, st: Status): string {
 // Build or refresh the model/effort buttons inside #spinner-meta. Called from
 // updateStatusline (fresh container) and the 1s ticker (label refresh in place).
 function syncMetaControls(meta: HTMLElement, st: Status) {
-  // order left→right: mode · model · effort — the mode selector sits LEFT of the model name (the user 2026-06-16)
-  // st.fast is "" for anything with no fast mode to offer (a tmux pane), so the chip appears only where
-  // it means something — and it is shown even when off, because a session quietly drawing credits at a
-  // higher rate, or quietly rate-limited, is exactly the kind of thing the statusline exists to say.
-  const want = [st.mode ? "mode" : "", st.model ? "model" : "", st.effort ? "effort" : "", st.fast ? "fast" : ""].filter(Boolean).join();
+  // order left→right: mode · model · effort · fast · auth — the mode selector sits LEFT of the model name
+  // (the user 2026-06-16); fast/auth exist only when the session reports them (SDK init / a both-auth
+  // machine), so a machine with one billing choice shows no dead selector (the user 2026-08-08). st.fast
+  // is "" for anything with no fast mode to offer (a tmux pane), and it is shown even when off, because
+  // a session quietly drawing credits at a higher rate, or quietly rate-limited, is exactly the kind of
+  // thing the statusline exists to say.
+  const want = [st.mode ? "mode" : "", st.model ? "model" : "", st.effort ? "effort" : "", st.fast ? "fast" : "", (st.auth && st.authBoth) ? "auth" : ""].filter(Boolean).join();
   const btns = Array.from(meta.querySelectorAll(".meta-btn")) as HTMLElement[];
   if (btns.map((b) => b.dataset.kind).join() !== want) {
     meta.replaceChildren();
@@ -6776,10 +7047,12 @@ function syncMetaControls(meta: HTMLElement, st: Status) {
     if (st.model) meta.appendChild(metaButton("model", st.model));
     if (st.effort) meta.appendChild(metaButton("effort", st.effort));
     if (st.fast) meta.appendChild(metaButton("fast", prettyFast(st.fast)));
+    if (st.auth && st.authBoth) meta.appendChild(metaButton("auth", prettyAuth(st)));
   }
   for (const b of Array.from(meta.querySelectorAll(".meta-btn")) as HTMLElement[]) {
     const kind = b.dataset.kind as MetaKind;
-    const disp = kind === "mode" ? prettyMode(st.mode) : kind === "fast" ? prettyFast(st.fast) : metaCurrent(kind, st);
+    const disp = kind === "mode" ? prettyMode(st.mode) : kind === "fast" ? prettyFast(st.fast)
+      : kind === "auth" ? prettyAuth(st) : metaCurrent(kind, st);
     if (kind === "fast") b.title = fastTitle(st);   // the CLI's reason moves, so refresh it with the label
     const label = b.querySelector(".meta-label") as HTMLElement | null;
     // A switching MODEL shows animated dots, not the stale/premature name (the user 2026-07-03): the
@@ -6789,8 +7062,8 @@ function syncMetaControls(meta: HTMLElement, st: Status) {
     // dots from the server (st.modelPending / st.effortPending), with isMetaPending covering the sub-second
     // before the first server push (the user 2026-07-06).
     const pending = (kind === "model" && !!st.modelPending) || (kind === "effort" && !!st.effortPending)
-      || (kind === "fast" && !!st.fastPending) || isMetaPending(kind, st);
-    const showDots = pending && (kind === "model" || kind === "effort" || kind === "fast");
+      || (kind === "fast" && !!st.fastPending) || (kind === "auth" && !!st.authPending) || isMetaPending(kind, st);
+    const showDots = pending && (kind === "model" || kind === "effort" || kind === "fast" || kind === "auth");   // all four apply via a resolve/reconnect the server tracks
     if (label) {
       if (showDots) {
         if (!label.querySelector(".meta-dots")) label.replaceChildren(metaDots());
@@ -6825,7 +7098,7 @@ function toggleMetaMenu(kind: MetaKind, btn: HTMLElement) {
     item.addEventListener("click", (e) => {
       e.stopPropagation();
       if (activeId && vscodeApi) {
-        vscodeApi.postMessage({ type: kind === "model" ? "setModel" : kind === "effort" ? "setEffort" : kind === "fast" ? "setFast" : "setMode", id: activeId, value: c.value });
+        vscodeApi.postMessage({ type: kind === "model" ? "setModel" : kind === "effort" ? "setEffort" : kind === "fast" ? "setFast" : kind === "auth" ? "setAuth" : "setMode", id: activeId, value: c.value });
         const was = metaCurrent(kind, s.status);
         metaPending.set(`${activeId}:${kind}`, { was, until: Date.now() + 20_000 });
         btn.classList.add("meta-pending");
@@ -7512,7 +7785,29 @@ function restoreActiveDraftOnce(): void {
   renderComposerFiles(activeId);   // attachments persisted across the reload → thumbnails again → show its chip again
 }
 
+// Most-recently-ACTIVATED session ids, current first — the recency the shell's session jump
+// switcher (Cmd/Ctrl+O, palette-main.ts) sorts by, read directly off this window (same-origin).
+// Session order elsewhere stays kernel-authoritative; this is only "what did I look at last".
+const sessionMru: string[] = [];
+(window as any).__rompMru = sessionMru;
+// …and the sessions this page knows, for the same switcher: every tab in tab order — local AND
+// the federation-merged remote ones (host-prefixed ids), with the tab's identity colors — so the
+// switcher's rows carry the exact identity language the tabs do (the user 2026-08-08: bold name
+// in the session color, host: prefix in the dim italic). A snapshot accessor, not live state.
+(window as any).__rompSessionList = () =>
+  order.map((id) => {
+    const m = tabMeta.get(id);
+    return { id, name: m?.name || id, bg: m?.color?.bg || "", fg: m?.color?.fg || "" };
+  });
+function noteMru(id: string): void {
+  const i = sessionMru.indexOf(id);
+  if (i >= 0) sessionMru.splice(i, 1);
+  sessionMru.unshift(id);
+  if (sessionMru.length > 50) sessionMru.pop();
+}
+
 function setActive(id: string, anchor?: string, anchorT?: number, anchorKind?: string) {
+  noteMru(id);
   if (activeId === id && anchor == null && anchorT == null) return; // already active, nothing to do
   closeMetaMenu(); // an open model/effort menu targets the tab we're leaving
   pendingAnchorT = anchorT ?? null;
@@ -7701,7 +7996,14 @@ function chatTail(msg: any) {
   if (!s) return;                                  // no base yet → ignore; a full session must arrive first
   // msg.from is a GLOBAL transcript index; the resident events are the tail [headFrom, …) → map to local.
   const from = (msg.from | 0) - (s.headFrom || 0);
-  if (from > s.events.length) {
+  // The kernel's coordinate space ends at ITS OWN events — our injected optimistic tail is not in it.
+  // Comparing `from` against the inflated length masked a genuine 1-event gap (the repair below never
+  // fired, PR #107's desync class), and a delta starting exactly one past kernel truth landed BEYOND
+  // the injected bubble, freezing it into the resident events as fake history the reconcile's strip
+  // loop could never pop (the user 2026-08-09).
+  let kernelLen = s.events.length;
+  while (kernelLen > 0 && isOptimistic(s.events[kernelLen - 1])) kernelLen--;
+  if (from > kernelLen) {
     // GAP: the delta starts PAST what we hold, so the events in between never reached us. Applying it would
     // fabricate a transcript that silently skips them. This used to just `return` and "wait for the next
     // full" — but no full was ever coming: the kernel's per-client bookkeeping (_send_chat's echat) advances
@@ -7845,8 +8147,13 @@ function statusOnly(msg: any) {
 // must not be recorded as a close of ours, which is why the record is written HERE, not in there.)
 function closeTabLocally(id: string): void {
   // A provisional tab has no session to close — closing it means "never mind", so it cancels the spawn
-  // the kernel may still be running, the way the old cue's ✕ did.
-  if (isProvisionalId(id)) { cancelProvisional(); return; }
+  // the kernel may still be running, the way the old cue's ✕ did. A FAILED one has no spawn left either
+  // (and the kernel never knew the id): its ✕ is a plain local discard — tab, draft, and all.
+  if (isProvisionalId(id)) {
+    if (id === provisionalId) cancelProvisional();
+    else { failedProvisionals.delete(id); dismissSession(id); }
+    return;
+  }
   dismissSession(id);
   closingTabs.set(id, Date.now());
 }
@@ -8026,6 +8333,10 @@ window.addEventListener("message", (e: MessageEvent) => {
       kernelNativeDialogs = m.nativeDialogs;
       applyBrowseState(pickerHost());
     }
+    // the selected host's billing choices ride its own list reply — this is what arms (or hides) the
+    // picker's Billing row (the user 2026-08-08); an older kernel sends none and the row stays away
+    pickerAuthAvail = (m.authAvail && typeof m.authAvail === "object") ? m.authAvail : null;
+    syncPickerAuth();
     renderPicker(m.items || []);
   }
   else if (m.type === "browseResult" && typeof m.path === "string") {   // native Browse dialog returned a folder
@@ -8037,7 +8348,19 @@ window.addEventListener("message", (e: MessageEvent) => {
       if (di) { di.value = m.path; di.focus(); }
     }
   }
-  else if (m.type === "openPicker") openPicker(!!m.pick, m.prompt, !!m.allowNew);
+  // toggle:true is the hotkey form (Cmd/Ctrl+Shift+O relayed by the shell): a second press closes an
+  // open picker instead of re-opening it.
+  else if (m.type === "openPicker") {
+    if (m.toggle && pickerVisible()) closePicker();
+    else openPicker(!!m.pick, m.prompt, !!m.allowNew);
+  }
+  // The shell's session jump switcher (Cmd/Ctrl+O) picked a session: an open tab activates like a
+  // feed jump (the `focus` path above); one without a tab opens through the host, the exact message
+  // a picker row sends.
+  else if (m.type === "jumpSession" && typeof m.id === "string") {
+    if (order.includes(m.id)) { revealSelfPane(); closingTabs.delete(m.id); setActive(m.id); }
+    else if (vscodeApi) vscodeApi.postMessage({ type: "openSession", id: m.id });
+  }
   // The host asks US to confirm (in-page, no native dialogs): ending a live
   // session on tab-close, and reviving a dead one on open.
   else if (m.type === "confirmClose" && m.id) {
@@ -8199,6 +8522,13 @@ function setupComposer() {
         return;
       }
       if (isProvisionalId(sid)) {
+        // a FAILED create's tab: there is no pending spawn to queue onto, and never a session to send
+        // to — refuse loudly and leave the text exactly where it is (the box is the only copy)
+        if (sid !== provisionalId) {
+          warnToast("“" + (sessions.get(sid)?.name || "this session") + "” never started, so there's "
+            + "nowhere to send this. It stays in the box — create the session again to use it.");
+          return;
+        }
         provisionalQueue.push(text);
         registerOptimistic(sid, text);
         if (attached.length) { composerFiles.delete(sid); if (sid === activeId) renderComposerFiles(sid); }
@@ -8602,7 +8932,9 @@ function shipFileToHost(f: File) {
 // CONSUMES the shared 'romp:settings' (compact mode) — applying a change made there, in a same-origin
 // tab, live via the storage event; and reading it at startup. ----
 function setupSettings(): void {
-  onExternalSettingsChange((s) => { settings = s; rerenderAll(); });
+  // renderTabs too: the tab strip reads settings (the context gauge toggle) but rerenderAll only
+  // rebuilds the transcript views, so without it a gear change waited for the next kernel push.
+  onExternalSettingsChange((s) => { settings = s; renderTabs(); rerenderAll(); });
 }
 
 setupComposer();
@@ -8724,8 +9056,13 @@ setupSettings();
     close: (el) => {
       const id = el.dataset.id;
       if (!id || !vscodeApi) return;
-      // dead → just drop the read-only tab (optimistically too: it's the same kernel round-trip to wait on)
-      if (el.dataset.dead === "1") { vscodeApi.postMessage({ type: "closeTab", id }); closeTabLocally(id); return; }
+      // dead → just drop the read-only tab (optimistically too: it's the same kernel round-trip to wait
+      // on). A failed provisional is local-only — the kernel never knew its id, so nothing to post.
+      if (el.dataset.dead === "1") {
+        if (!isProvisionalId(id)) vscodeApi.postMessage({ type: "closeTab", id });
+        closeTabLocally(id);
+        return;
+      }
       // LIVE session: show the End/Close confirm IMMEDIATELY, client-side — NOT via a closeSession→confirmClose
       // kernel round-trip, which made the ✕ feel unresponsive (and sometimes never opened the modal when the
       // kernel was busy). The dialog is static; the kernel doesn't need to decide it (the user 2026-06-24).

@@ -754,6 +754,27 @@ def _open_leaf_bullets(nodes, subs, cap=12, indent="  "):
     return out
 
 
+# The Continue button's canned reply (the user 2026-08-08): one click on a needs-you card whose ask the
+# user has nothing to add to. Sent as an ORDINARY follow-up so the whole reply path applies: context
+# quote, goal marker, optimistic reopen + subtree unblock, judge reassert, and the followupAt floor.
+# The evidence behind the button (14 days of card history, 2026-07-25..08-08): 58% of blocked episodes
+# resolved with no user gesture on the card while the card sat a median 5 minutes (p90 72m) in
+# needs-you; a fifth of Clears landed on sessions visibly mid-turn, where Clear's wrap-up says the
+# opposite of what the user meant; and the short-reply tail was dominated by hand-typed go-aheads.
+# VOICE (test_injected_voice.py renders this through _followup_body): the person the agent works for,
+# no tracking-system nouns. Three arrival contexts, each with its own sentence (the user 2026-08-08,
+# same day): ALREADY WORKING is the commonest press by far (36% of blocked episodes had the session
+# busy through the blocked window — the card was wrong, not the agent), and the message lands at the
+# next turn boundary, so "keep going, no reply needed" makes that turn continue the work instead of
+# stopping for a status report. A pending question gets "open calls are yours". And the last line
+# licenses one sharp re-ask when the block is REAL (the agent needs something only the user has): the
+# judges then re-block from that reply, a correct move on new information, so a mispressed Continue
+# costs one turn and returns a tighter brief.
+CONTINUE_TEXT = ("Nothing needed from me here. If you're already on it, keep going, no reply needed. "
+                 "Any open calls are yours to make. "
+                 "If you can't proceed without me, say exactly what you need in one line.")
+
+
 def _followup_body(iid, title, text, injected=False, auto=False, stalled=False):
     """Pane message for a feed follow-up: QUOTE the ask being followed up ('> <ask>') above the user's
     text, so the recipient session knows what the reply answers. An explicit `title` (the group modal) is
@@ -1986,9 +2007,18 @@ def _record_interrupt_block(sid, ev):
     block rides — and remember the gid in auto-nudge.json so the LIFT on re-engage is cheap (only
     sessions we blocked get their store re-checked). Returns the gid blocked, or None.
 
-    `ev` = the STOP's own transcript time (_interrupt_marks), never wall-clock now: the diary is an
-    evidence-time ledger, and a wall-clock stamp on a store the judges also write is what deadlocked
-    the lift below."""
+    `ev` = the newest evidence of the stopped QUIET — the stop's own transcript time joined by the
+    tick with the transcript's newest event — never wall-clock now: the diary is an evidence-time
+    ledger, and a wall-clock stamp on a store the judges also write is what deadlocked the lift below.
+    The join matters (the user 2026-08-08): injected activity (a task notification, a peer message)
+    can run and settle AFTER the stop with the user silent throughout, and the judges file rows off
+    it — a block stamped at the bare stop folds UNDER those rows as a silent no-op.
+
+    Stands down (returns None, appending NOTHING) when the target's diary already holds a newer
+    unblock/reopen/done/settle row: the judges ruled on a newer world than this evidence, and the
+    fold would bury the row anyway. The tick retries every push, so a refused APPEND would grow the
+    diary at push cadence; refusing without one keeps it clean until newer evidence (the next settled
+    turn) makes the block land."""
     store = jd.load_goals(sid)
     gid = _interrupt_focus_top(store)
     if not gid:
@@ -1996,6 +2026,10 @@ def _record_interrupt_block(sid, ev):
     nd = store["nodes"][gid]
     why = jd.INTERRUPT_BLOCK_WHY      # shared constant, PROCEDURAL (see judge.procedural_block_why)
     ev = int(ev or 0)
+    ceil = max((e.get("ev_t") or 0 for e in (nd.get("log") or [])
+                if e.get("kind") in ("unblock", "reopen", "done", "settle")), default=0)
+    if ev <= ceil:
+        return None                   # the diary outranks this evidence — stand down (see docstring)
     if not jd.record_verdict(store, nd, "interrupt", "block", ev, why=why):
         return None
     nd["mt"] = max(nd.get("mt") or 0, ev)            # the event materialized blocked + blockWhy (never
@@ -2058,6 +2092,24 @@ def _set_intr_blocked(sid, gid):
     _write_auto_nudge(d)
 
 
+def _intr_block_stands(sid, gid):
+    """True while the block the intrBlocked marker points at still HOLDS its card: the node exists in
+    the live store and is blocked (any src — a real judge block owning the card counts; the episode's
+    job, surfacing the stop, is done either way). The marker alone is a CLAIM, not evidence: the world
+    moves under it — judges unblock or complete the goal off newer turns, the user clears the card,
+    compaction archives it — and a tick that trusts the bare marker skips the re-block forever while
+    the session's live focus goal sits in Working wearing only the 'interrupted' badge, auto-nudge
+    suppressed: invisible-blocked (the user 2026-08-08, whose stopped session's marker pointed at a
+    goal since ruled done, cleared, and archived)."""
+    if not gid:
+        return False
+    try:
+        nd = jd.load_goals(sid).get("nodes", {}).get(gid)
+    except Exception:
+        return False
+    return bool(nd and nd.get("blocked"))
+
+
 def _interrupt_block_tick(now, tmux):
     """Interrupt → Blocked, INDEPENDENT of the auto-nudge switch (the user 2026-07-14). A session the
     user genuinely STOPPED mid-turn is waiting on their next instruction: its focus goal needs THEM, so
@@ -2067,7 +2119,12 @@ def _interrupt_block_tick(now, tmux):
     process death) is NOT a user stop — _interrupt_marks already excludes it — so those are continued,
     never blocked. On re-engage (the user's next message, or once a machine cut is no longer the latest
     action) the block WE placed is lifted; a real judge verdict recorded since then stays. Both writes
-    are stamped with the EVENT they are about, never wall-clock now — see _lift_interrupt_block."""
+    are stamped with the EVENT they are about, never wall-clock now — see _lift_interrupt_block.
+
+    The once-per-episode marker is VERIFIED against the store each tick, never trusted (the user
+    2026-08-08): judges complete/clear the goal it points at off newer turns (or compaction archives
+    it), and trusting the bare marker skipped the re-block forever — the live focus goal sat in
+    Working wearing only the badge, auto-nudge suppressed: invisible-blocked."""
     changed = False
     for s in _alive_sessions(now, tmux):
         sid = s["sid"]
@@ -2086,8 +2143,20 @@ def _interrupt_block_tick(now, tmux):
         #                                                  evidence times both writes are stamped with
         block_it = bool(turns) and not _session_working(turns) and stop_t > human_t
         if block_it:                                     # a GENUINE user stop → block the focus goal on them,
-            if not _intr_blocked(sid):                   # once per interrupt episode (the intrBlocked marker)
-                g = _record_interrupt_block(sid, stop_t)
+            ib = _intr_blocked(sid)                      # once per interrupt episode (the intrBlocked marker) —
+            if ib and not _intr_block_stands(sid, ib):   # but VERIFY the marked block still holds its card (see
+                _set_intr_blocked(sid, None)             # _intr_block_stands): a stale marker is the 'already
+                ib = None                                # surfaced' claim with its evidence gone
+            if not ib:
+                # the evidence is the CURRENT quiet, not just the stop: the transcript's newest event
+                # time is the horizon the user has stayed silent through — injected activity (a task
+                # notification, a peer message) may have run and settled since the stop, and it can
+                # FOLD into the cut turn rather than open one, so the last turn's trigger undershoots.
+                # Stamped so, a re-block lands over the judges' rows off that activity instead of
+                # folding under them — see _record_interrupt_block's stand-down
+                ev = max([stop_t] + [a.get("t") or 0 for turn in turns
+                                     for a in (turn.get("atoms") or [])])
+                g = _record_interrupt_block(sid, ev)
                 if g:
                     _set_intr_blocked(sid, g); changed = True
         else:                                            # working / re-engaged / machine cut → lift OUR block if any
@@ -3647,7 +3716,7 @@ def _pick_identity_color(now=None):
     return bgs[i], fgs[i]
 
 
-def _create_sdk_session(nm, cwd):
+def _create_sdk_session(nm, cwd, auth=""):
     """Create + open a new SDK-backed session, ACK-FAST (the user 2026-07-14, who asked why it took so long
     to open a new SDK session). spawn() is file writes and connect() is threaded (~0.4s to a booting
     CLI) — the 7-10s the user waited was the handler's inline _push_all(): a new session invalidates the
@@ -3657,7 +3726,7 @@ def _create_sdk_session(nm, cwd):
     pusher's build arrives — then the dirty-mark wake. Never a synchronous fleet build on this path
     (the push-architecture rule, 2026-07-05)."""
     bg, fg = _pick_identity_color()   # fleet-aware: only the kernel sees BOTH backends' live sessions
-    sid = _sdk().spawn(nm, cwd, bg, fg)
+    sid = _sdk().spawn(nm, cwd, bg, fg, auth=auth)
     _sdk().connect(sid)    # eager-connect so the model lists immediately, not only after the 1st message
     _set_hidden_tab(sid, False)
     _reveal_chat({"type": "focus", "id": sid})
@@ -3770,6 +3839,49 @@ _SDK_BOOT_PROBLEMS = []
 def _sdk_problem(text):
     _SDK_BOOT_PROBLEMS.append({"seq": len(_SDK_BOOT_PROBLEMS) + 1, "t": time.time(), "text": str(text)})
     del _SDK_BOOT_PROBLEMS[:-20]
+
+
+def _auth_key_present():
+    """Whether the manager's environment carried an API key (now held by the SDK backend). A bool on
+    purpose: no fragment of the key — not even a last-4 tail — leaves the kernel process for a label
+    (the user 2026-08-08, who judged even a tail more key than any surface needs; 'API key' is the
+    display everywhere, and host names already tell keys apart in the per-host hover). Cheap: an
+    attribute read off the backend singleton, safe per-push."""
+    be = _sdk()
+    return bool(str(getattr(be, "work_key", "") or "") if be else "")
+
+
+def _auth_both():
+    """True when this machine offers BOTH billing choices (a signed-in login and a manager-env key) —
+    the condition for the per-session auth selector to exist anywhere (picker, gear). Cheap per-push:
+    _claude_account is mtime-cached and the key is an attribute read."""
+    return _auth_key_present() and bool(_claude_account())
+
+
+def _auth_avail():
+    """Which billing choices this machine can offer a session: {'login','key','acct','default'}. The
+    picker's Billing row is ALWAYS there for an SDK session (the user 2026-08-09): BUTTONS when both
+    choices are real, and when only one is, the same row simply WRITES OUT which one applies — informative,
+    not a one-option selector (which is what the earlier disappearing rule was really against, the user
+    2026-08-08). login = the credential store names a signed-in account (_claude_account — the same
+    authority the usage bars trust; a stale login still fails LOUDLY per session via apiKeySource/authErr
+    rather than being second-guessed here). key = the manager's environment carried ANTHROPIC_API_KEY,
+    now held by the SDK backend (work_api_key claimed it out of os.environ) — a bool only, never any
+    fragment of the key (see _auth_key_present). acct = the login's display name (_claude_account_label),
+    so 'Login' can say WHICH account it means. default = what a fresh session would use absent an
+    explicit pick."""
+    key = _auth_key_present()
+    d = {}
+    try:
+        d = json.loads((jd.STATE / "sdk-defaults.json").read_text())
+        d = d if isinstance(d, dict) else {}
+    except Exception:
+        d = {}
+    default = d.get("auth") if d.get("auth") in ("login", "key") else ("key" if key else "login")
+    if default == "key" and not key:
+        default = "login"
+    return {"login": bool(_claude_account()), "key": key,
+            "acct": _claude_account_label(), "default": default}
 
 
 def _sdk_problem_count():
@@ -4055,7 +4167,7 @@ def _drive(msg, client):
     t = msg.get("type")
     ID_OPS = ("sendMessage", "rewindSend", "rewindDelete", "interrupt", "compactSession", "dismissDialog", "answerAsk", "navAsk", "toggleAsk", "submitAsk",
               "addCustomAsk", "cancelAsk", "askText", "cancelQueued", "dismissEcho", "apiRetry", "setModel", "setEffort", "setMode", "setFast",
-              "endSession", "renameSession", "stopTask", "rewindFiles", "mcpAction")
+              "setAuth", "endSession", "renameSession", "stopTask", "rewindFiles", "mcpAction")
     if t in ID_OPS and msg.get("id"):
         sid = str(msg["id"])
     elif t in ("compact", "sendCommand") and msg.get("name"):
@@ -4128,8 +4240,16 @@ def _drive(msg, client):
         # (the user 2026-07-01): the SDK path used to take raw text, so an SDK follow-up got no context quote
         # and no header; wrapping unifies it (the SDK `send` is a plain text send, no injection of its own).
         # nudge:true (the canned Nudge button) → romp-authored gray bubble; a typed follow-up → blue human.
-        body = (_followup_body(iid, msg.get("title"), msg["text"], injected=bool(msg.get("nudge")))
-                if iid else str(msg["text"]))
+        # cont:true is the card's Continue button (the user 2026-08-08): the one-click "nothing needed
+        # from me, keep going" reply on a needs-you card. The TEXT is the kernel's (CONTINUE_TEXT: one
+        # source of truth, voice-tested); everything else rides this typed-reply arm UNCHANGED, because
+        # the button's design is a reply with a canned body, never a new mechanism. The removed
+        # messageless cardMove is the cautionary tale: a move with no message adds no information, so
+        # its natural end state was parked-in-Working. Human-authored like the modal's canned Check
+        # status (no romp-injected marker): the gesture asserts the USER's own state, in their voice.
+        text = CONTINUE_TEXT if msg.get("cont") else str(msg["text"])
+        body = (_followup_body(iid, msg.get("title"), text, injected=bool(msg.get("nudge")))
+                if iid else text)
         # Optimistic echo for a tmux follow-up/nudge (the user 2026-06-29): without it, a follow-up sent while
         # the session is WORKING showed as a queued bubble that VANISHED in the dequeue→landed gap (the queue-op
         # record resolves before the real user atom lands). The echo + the while-working queued fold keep it
@@ -4144,7 +4264,7 @@ def _drive(msg, client):
             #                                               next push confirms it against
             ok = False
             try:
-                ok = bool(jd.optimistic_followup(sid, iid, text=str(msg["text"]), now=int(time.time())))
+                ok = bool(jd.optimistic_followup(sid, iid, text=text, now=int(time.time())))
                 if ok:
                     # (the reopen event holds the top open + wears the chip; stub nodes retired 2026-07-07)
                     _note_user_goal_write(sid)            # …and it shows even mid-judge-pass (_feed_goals)
@@ -4297,6 +4417,15 @@ def _drive(msg, client):
         # SDK only: fast mode rides the CLI's flag-settings opt-in, which a tmux pane has no equivalent
         # for. _set_fast_or_park refuses rather than pretending (fail loudly, never degrade silently).
         _set_fast_or_park(be, sid, str(msg["value"]) == "on"); _push_soon()
+    elif t == "setAuth" and msg.get("value") in ("login", "key"):
+        # per-session billing (login vs the manager env's API key) — SDK-only, applied via reconnect
+        # like /effort; mid-compaction → parked in the same FIFO. LOUD on refusal (fail loudly): tmux
+        # sessions and a keyless manager can't apply it, and a silent swallow leaves a dead control.
+        if not _set_auth_or_park(be, sid, str(msg["value"])):
+            client["send"](json.dumps({"type": "warn",
+                                       "text": "Couldn't switch the account this session bills — "
+                                               "it isn't an SDK session, or no API key is configured."}))
+        _push_soon()
     elif t == "stopTask" and msg.get("taskId"):
         # the SDK's designed stop_task control request, addressed by the id the bg-task box shows.
         # LOUD on refusal (fail loudly, never degrade silently): unknown task / dead client / tmux
@@ -4748,7 +4877,7 @@ class TmuxBackend(sb.SessionBackend):
 
     # lifecycle — tmux sessions are launched by bin/romp (not the kernel) and revived via romp-postal, so
     # spawn/resume aren't backend primitives here; the kernel uses _spawn_session/_revive_session for those.
-    def spawn(self, name, cwd, bg="", fg="", sid=None):
+    def spawn(self, name, cwd, bg="", fg="", sid=None, auth=""):
         return None
 
     def resume(self, name, sid, cwd=None):
@@ -4814,6 +4943,22 @@ class TmuxBackend(sb.SessionBackend):
         state = (self.live_sessions().get(str(sid)) or {}).get("state", "")
         if state not in ("waiting", "idle", "working"):
             return False                                  # permission / unknown / picker → drain later
+        # Inbox-socket leg first (Claude Code ≥ 2.1.224): one JSON line to the CLI's own inbox
+        # socket — wakes an idle session, queues mid-turn, and never touches the composer, so
+        # every pane hazard below (copy-mode, no ❯ prompt, drafts) doesn't exist on this path.
+        # Gated on @romp-inbound-accept, the tag bin/romp writes at the same launch that passes
+        # the CLI --settings '{"crossSessionInbound":"accept"}': without that setting the CLI's
+        # inbound gate can HOLD an unverifiable sender's message and silently expire it after
+        # ~5min, and the socket sends no ack — a held-then-dropped banner would read as delivered
+        # here. The tag is written by the exact event that makes holds impossible, so it can
+        # never flap; untagged (old launch, old CLI) sessions keep pane injection unchanged.
+        try:
+            if self.show_var(name, "@romp-inbound-accept").strip() == "1":
+                sock = _messaging_socket_for(jd._sdk_last_sid(sid) or str(sid))
+                if sock and _socket_deliver(sock, text):
+                    return True
+        except Exception:
+            pass                                          # any socket hiccup → the pane path below
         if self.pane_in_mode(name):                       # scrolled up = copy-mode, where a paste's Enter is eaten
             self.send_keys(name, "-X", "cancel")          # exit it (drop to the live prompt) or bail
             if not _deliver_wait(lambda: not self.pane_in_mode(name), 1.0):
@@ -5047,7 +5192,10 @@ class Sessions:
                                 "fastState": st.get("fastState") or "", "fastReason": st.get("fastReason") or "",
                                 "retryCount": int(st.get("retryCount") or 0),   # api_retry backoff attempts → the chat's "API retrying — attempt N…" element
                                 "retryInfo": st.get("retryInfo") or None,   # the attempt's detail (attempt/max, error, next-attempt epoch) → the retrying element's context lines (the user 2026-07-10)
+                                "connected": bool(st.get("connected")),   # SDK handshake up → the opening-chip override stands down (fresh sessions have no transcript yet)
                                 "context": ctx if isinstance(ctx, (int, float)) else None, "compactPct": None,
+                                "auth": st.get("auth", ""),   # which account this session bills ('login'|'key') → gear badge
+                                "authPending": bool(st.get("authPending")),   # an /auth switch reconnecting → badge dots
                                 "color": (st.get("color") or None), "mode": st.get("mode", ""), "backend": "sdk",
                                 "subagents": st.get("subagents") or [],   # live Task subagents (SDK only) → lane pill
                                 # live BACKGROUND TASKS (the CLI's task lifecycle stream) — the awaiting
@@ -6276,6 +6424,21 @@ def known_share(host):
     return bool((e or {}).get("share"))
 
 
+def _host_trust(host):
+    """This kernel's trust tier for `host`: the attached row's level when it is attached, else the
+    level remembered from its last attachment, else "" (never seen here). Callers treat anything
+    but "trusted" as below the line, so unknown fails safe — the same by-origin judgment the bus
+    makes for inbound mail (see set_trust)."""
+    host = (host or "").strip()
+    if not host:
+        return ""
+    with _remotes_lock:
+        r = _remotes.get(host)
+        if r is not None:
+            return str(r.get("trust") or "directed")
+    return str(known_trust(host) or "")
+
+
 def known_forget(host):
     """Drop a remembered host (the popover's Forget). True if it was there."""
     host = (host or "").strip()
@@ -6450,26 +6613,22 @@ def _poll_remote_usage(r):
 
 
 def _fleet_usage():
-    """Every DISTINCT Claude account across the fleet, each with the usage to draw for it.
+    """One row per HOST whose usage is known — local always first (the notices read off it), each row
+    {host, acct, usage}.
 
-    The rail drew one set of bars for this machine alone, which is right exactly when every machine is
-    signed into the same account — the windows are account-wide, so drawing them per host would just
-    repeat one number. When accounts DIFFER the single set was wrong instead: two real allowances shown
-    as one (the user 2026-07-30). So group by account digest and emit one row per group, labelled with a
-    host that is on it. Rows whose account matches this machine's collapse into the local row, and a
-    remote that cannot report an account at all (an older kernel) is left out rather than guessed at —
-    a phantom second set of bars would be worse than the honest single one."""
+    This USED to emit one row per distinct account digest, because the rail drew every row as its own
+    set of bars and a shared login drawn twice reads as two allowances (the user 2026-07-30). The rail
+    no longer draws rows: it AGGREGATES one set of bars (worst window across accounts, deduped by
+    `acct` client-side) and breaks down PER HOST on hover (the user 2026-08-08) — so every reporting
+    host must ride along. That includes a host with no login at all (acct ""), whose API-key spend the
+    dedup used to drop entirely: with per-session auth a host's payload can carry bars AND spend, and
+    the spend half has no account digest to group by — the host IS its identity."""
     local = _usage() or {}
     rows = [{"host": "", "acct": local.get("acct") or "", "usage": local or None}]
-    seen = {rows[0]["acct"]} if rows[0]["acct"] else set()
     with _remotes_lock:
         cand = [(r["host"], r.get("usage")) for r in _remotes.values() if (r.get("status") == "up") and r.get("usage")]
     for host, u in sorted(cand):
-        acct = (u or {}).get("acct") or ""
-        if not acct or acct in seen:
-            continue      # same login as somewhere already drawn (or a kernel too old to say) → one set
-        seen.add(acct)
-        rows.append({"host": host, "acct": acct, "usage": u})
+        rows.append({"host": host, "acct": (u or {}).get("acct") or "", "usage": u})
     return rows
 
 
@@ -7539,6 +7698,73 @@ def _session_rows():
     return out
 
 
+# ── inbox-socket delivery (Claude Code ≥ 2.1.224) ──
+# The CLI binds a per-session Unix inbox socket and registers it — with its own session id and pid —
+# in ~/.claude/sessions/<pid>.json. One JSON line {"type":"user","message":{"role":"user","content":…}}
+# posted there injects a message with the CLI's own another-session framing: it wakes an idle session,
+# delivers between tool calls mid-turn, and never touches the composer, so a user's draft survives
+# with no stash dance. This is the CLI's designed external-injection surface (it prints exactly this
+# recipe in its startup log and exports the path to hooks as CLAUDE_CODE_MESSAGING_SOCKET). A session
+# on an older CLI has no registry row, so callers fall through to pane injection.
+
+
+def _claude_sessions_dir():
+    return os.environ.get("ROMP_CLAUDE_SESSIONS_DIR") or os.path.expanduser("~/.claude/sessions")
+
+
+def _messaging_socket_for(fsid):
+    """The inbox-socket path registered for CLI session id `fsid` (a romp row's lastSid), or None.
+    Rows are per-PID: a dead pid's row can linger (the CLI prunes lazily), and a resumed conversation
+    leaves the old pid's row behind with the same session id — so prefer a row whose pid is alive,
+    newest first. The real liveness proof stays the connect in _socket_deliver."""
+    fsid = str(fsid or "")
+    if not fsid:
+        return None
+    base = _claude_sessions_dir()
+    try:
+        names = os.listdir(base)
+    except OSError:
+        return None
+    rows = []
+    for n in names:
+        if not n.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(base, n)) as f:
+                d = json.load(f)
+        except Exception:
+            continue                                      # malformed/foreign row → skip
+        if not isinstance(d, dict) or d.get("sessionId") != fsid:
+            continue
+        sock = d.get("messagingSocketPath")
+        if isinstance(sock, str) and sock:
+            rows.append(d)
+    if not rows:
+        return None
+    rows.sort(key=lambda d: (bool(_pid_alive(d["pid"])) if isinstance(d.get("pid"), int) else False,
+                             d.get("startedAt") or 0), reverse=True)
+    return rows[0]["messagingSocketPath"]
+
+
+def _socket_deliver(sock_path, text, timeout=3.0):
+    """Post one user message down a session's inbox socket; True iff the write completed. Fire-and-
+    forget by design — the CLI acks nothing for a plain send. Returning True is still an honest
+    "injected": the caller only takes this path for sessions launched with the inbound-accept
+    setting (see TmuxBackend.deliver), where an accepted write cannot be held or dropped."""
+    try:
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            s.settimeout(timeout)
+            s.connect(sock_path)
+            s.sendall((json.dumps({"type": "user", "message": {"role": "user", "content": str(text)}})
+                       + "\n").encode("utf-8"))
+        finally:
+            s.close()
+        return True
+    except OSError:
+        return False
+
+
 # ── deliver-time prompt-box parsing (ported from the postal bus; PURE — operate on a captured pane) ──
 # Relied-on Claude Code TUI invariants: the input box sits between the last two ─── rules; the live prompt
 # carries a ❯ glyph; a ghost auto-suggestion is rendered DIM (\e[2m) while a real draft is not; a "› stashed"
@@ -8077,7 +8303,7 @@ def _session_stamp_read(sid):
         gs = (jd.GOALDIR / (sid + ".json")).stat()
         gkey = (gs.st_mtime, gs.st_size)
     except Exception:
-        return ((None, None, None), frozenset())       # no store yet → nothing to stamp
+        return ((None, None, None), frozenset(), ())   # no store yet → nothing to stamp, nothing delegated
     try:
         ostt = (jd._overrides_dir() / (sid + ".jsonl")).stat()
         okey = (ostt.st_mtime, ostt.st_size)
@@ -8092,7 +8318,7 @@ def _session_stamp_read(sid):
     hit = _SESSION_STAMP_CACHE.get(sid)
     if hit and hit[0] == key:
         return hit[1]
-    full, tops = (None, None, None), set()
+    full, tops, deleg = (None, None, None), set(), ()
     try:                                               # load_goals (not a raw read) so overrides replay —
         nodes = jd.load_goals(sid).get("nodes", {})    # the same view _goal_awaiting_stamp sees on the card
         best = None
@@ -8111,9 +8337,27 @@ def _session_stamp_read(sid):
                 tops.add(top)
         if best:
             full = (best[1], best[0], best[2])         # (gid, at, why)
+        # DELEGATION, the same pass (the user 2026-08-08, whose fully-delegated session wore the feed's
+        # green awaiting dot while chat/timeline/rail read plain ready): a top whose every OPEN leaf is a
+        # courier handoff node is work handed to PEERS — the exact evidence the feed's per-card flavor
+        # reads (_deleg_why in build_feed). Collect the PEER SIDS here (names resolve at read time, so a
+        # renamed peer never shows a stale name from this cache); _session_delegated_why formats them for
+        # _session_awaiting's stamp branch. A PURE-delegation top is excluded to mirror the feed exactly:
+        # its card is suppressed in every column, so it never lights the feed dot either.
+        peers = set()
+        for tid, td_ in nodes.items():
+            if td_.get("parentId") is not None or td_.get("nodeComplete") or td_.get("cleared"):
+                continue
+            if not _all_outstanding_delegated(nodes, tid) or _pure_delegation_top(nodes, tid):
+                continue
+            for x in _open_leaves(nodes, tid):
+                h = nodes.get(x, {}).get("handoff")
+                if isinstance(h, dict) and h.get("peer"):
+                    peers.add(str(h["peer"]))
+        deleg = tuple(sorted(peers))
     except Exception:
-        full, tops = (None, None, None), set()
-    val = (full, frozenset(tops))
+        full, tops, deleg = (None, None, None), set(), ()
+    val = (full, frozenset(tops), deleg)
     _SESSION_STAMP_CACHE[sid] = (key, val)
     return val
 
@@ -8136,6 +8380,21 @@ def _session_stamp_cached(sid):
     """The freshest durable ⏳ stamp's WHY for a session (or None) — the display surfaces' view; see
     _session_stamp_full for the gid + awaitingAt the awaiting backstop consumes."""
     return _session_stamp_full(sid)[2]
+
+
+def _session_delegated_why(sid):
+    """The session-scoped DELEGATION wait (or None): every open leaf of some inbox-visible top is a
+    courier handoff — the only outstanding work lives with peers. The SAME evidence the feed's per-card
+    flavor reads (_deleg_why in build_feed), reaching the rail chip / chat chip / timeline lane through
+    _session_awaiting's stamp branch — before this, a fully-delegated session wore the feed's green
+    awaiting dot while every session-scoped surface read plain ready (the user 2026-08-08, who asked why
+    three surfaces disagreed on one fact). Peer SIDS ride the mtime cache; names resolve here so a
+    renamed peer reads fresh."""
+    peers = _session_stamp_read(sid)[2]
+    if not peers:
+        return None
+    names = sorted(_name_of(p) or "a peer" for p in peers)
+    return "delegated to %s; waiting on their result" % ", ".join(names)
 
 
 def _session_awaiting(sid, path, idle, stamp=False):
@@ -8176,7 +8435,15 @@ def _session_awaiting(sid, path, idle, stamp=False):
          per session, for which "the session is awaiting" is the right summary). The FEED does NOT: it scopes
          the stamp per goal via _goal_awaiting_stamp, so a stamp on one goal never floors its siblings to
          awaiting (a session-wide _await_ok would). The nudge gates skip via their own per-goal stamp check.
-    Postal peer-waits are handled separately in build_feed."""
+      2.5 the DELEGATION wait (_session_delegated_why), same opt-in gate as source 2: a top whose every
+         open leaf is a courier handoff has all its outstanding work with PEERS — the same evidence the
+         feed card's _deleg_why reads, so the session dot and the card flavor answer alike (the user
+         2026-08-08). Ends on the graph's own events: run_propagate completes the handoff node when the
+         peer's linked goal lands, busting the store mtime this read is cached on.
+    The one remaining feed-only flavor is the blocked-card peer-wait flip (col blocked + _peer_wait in
+    build_feed): it corrects a needs-you verdict against the wait-for graph, which requires the card's
+    block context — a session-scoped mirror would light this badge for ANY unanswered peer ask, saying
+    MORE than the feed does. Postal peer-waits otherwise stay build_feed's."""
     if not idle:
         return None
     # Source 0 (the user 2026-07-05, jld_audit): the backend snapshot's LIVE subagent count — the designed
@@ -8227,7 +8494,11 @@ def _session_awaiting(sid, path, idle, stamp=False):
         # durable stamp below. Same stamp=True gate: the session-scoped surfaces want one summary answer,
         # while the FEED keeps scoping per goal — a session-wide _await_ok would floor every sibling card
         # to awaiting, which is exactly what that gate has always prevented.
-        return _owned_yield_why(sid, path) or _session_stamp_cached(sid)
+        # …and the DELEGATION wait (the courier handoff graph — the feed card's _deleg_why evidence),
+        # AFTER the judge's stamp, mirroring the feed's own precedence (its _deleg_why yields to
+        # _stamp_why/_await_ok). Without this arm a fully-delegated session was the feed's green dot
+        # and nobody else's (the user 2026-08-08): the three surfaces answered one question two ways.
+        return _owned_yield_why(sid, path) or _session_stamp_cached(sid) or _session_delegated_why(sid)
     return None
 
 
@@ -8676,32 +8947,11 @@ def _effort_changes(sid):
 _bgtasks_cache = {}   # path -> ((mtime,size), [task dicts, no output])
 
 
-def _result_text(content):
-    """The text of a tool_result's content, whether it's a plain string or a list of {type:text} blocks."""
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        return "\n".join(b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text")
-    return ""
-
-
-def _parse_task_notification(txt):
-    """Parse a <task-notification> block's fields, or None if it isn't one. Keys on the exact tags the
-    harness emits (status / summary / output-file / tool-use-id), not a guess. tool_use_id is the join
-    key back to the LAUNCHING tool_use — the standalone (string-content) notification shape carries it
-    only inside the text, unlike the older tool_result wrapper whose block names it."""
-    if not txt or "<task-notification>" not in txt:
-        return None
-
-    def fld(tag):
-        a = txt.find("<" + tag + ">")
-        if a < 0:
-            return ""
-        a += len(tag) + 2
-        b = txt.find("</" + tag + ">", a)
-        return txt[a:b].strip() if b >= 0 else ""
-    return {"status": (fld("status") or "completed").lower(), "summary": fld("summary"),
-            "output_file": fld("output-file"), "tool_use_id": fld("tool-use-id")}
+# _result_text / _parse_task_notification / _scan_bg_tasks moved to event_model (2026-08-08): the judge's
+# settled gate needs the same launch↔notification pairing and cannot import this module (importing the
+# kernel runs boot reconcile). Same names re-exported here so every kernel-side consumer is untouched.
+_result_text = em._result_text
+_parse_task_notification = em._parse_task_notification
 
 
 _task_out_cache = {}                                  # output-file path -> ((mtime, size), tail)
@@ -8759,96 +9009,15 @@ def _task_outputs_for(reminders, path):
     return out
 
 
-def _scan_bg_tasks(path, want_all=False):
-    """Walk the transcript pairing async LAUNCHES with their <task-notification> results, and surface a task
-    ONLY while it's still RUNNING (in flight across turns). A finished task drops out of the box the instant
-    its result lands — the box is a live "what's running now" indicator, and a task's COMPLETION is already
-    shown in the chat as its AGENT notice card (renderAgentNotif), so keeping it here lingered as an "empty"
-    bordered line the user didn't want (the user 2026-07-06). Newest-launched first, capped. No output content
-    here (read fresh in _bg_tasks — a running task's output grows independently of the transcript).
-
-    Launches come in TWO durable shapes: a Bash tool_use with run_in_background:true, and an async
-    Agent dispatch — its ack is a user record whose TOP-LEVEL toolUseResult says isAsync/"async_launched"
-    (the tool_result block names the launching tool_use id). Results come in THREE: the notification inside
-    a tool_result block (the older wrapper), a standalone user record whose message.content IS the
-    notification string (the current dominant shape — missing this left finished tasks reading 'running'
-    forever), and a queue-operation enqueue holding the notification while the session is busy — the task
-    itself is already finished the moment any of the three exists.
-    Returns [{id,status,summary,command,outputFile}]."""
-    tasks, order = {}, []
-
-    def _mark(note):
-        # a notification keyed by its INNER <tool-use-id> (the string/queue shapes have no wrapper block)
-        tid = (note or {}).get("tool_use_id")
-        if tid and tid in tasks:
-            tasks[tid].update(status=note["status"], outputFile=note["output_file"],
-                              summary=note["summary"] or tasks[tid]["summary"])
-
-    try:
-        with open(path, errors="replace") as f:
-            for line in f:
-                if '"type"' not in line:
-                    continue
-                try:
-                    o = json.loads(line)
-                except Exception:
-                    continue
-                t = o.get("type")
-                c = (o.get("message") or {}).get("content")
-                if t == "assistant" and isinstance(c, list):
-                    for b in c:
-                        if isinstance(b, dict) and b.get("type") == "tool_use" and (b.get("input") or {}).get("run_in_background"):
-                            tid, inp = b.get("id"), (b.get("input") or {})
-                            if tid and tid not in tasks:
-                                tasks[tid] = {"id": tid, "status": "running", "t": _msg_epoch(o),
-                                              "summary": (inp.get("description") or b.get("name") or "Background task"),
-                                              "command": inp.get("command") or "", "outputFile": ""}
-                                order.append(tid)
-                elif t == "user" and isinstance(c, list):
-                    tur = o.get("toolUseResult")
-                    tur = tur if isinstance(tur, dict) else {}
-                    async_launch = bool(tur.get("isAsync")) or tur.get("status") == "async_launched"
-                    for b in c:
-                        if isinstance(b, dict) and b.get("type") == "tool_result":
-                            tid = b.get("tool_use_id")
-                            if async_launch and tid and tid not in tasks:
-                                # an async Agent dispatch ack — the durable "this work is now running" record
-                                tasks[tid] = {"id": tid, "status": "running", "t": _msg_epoch(o),
-                                              "summary": (tur.get("description") or "Background agent"),
-                                              "command": "", "outputFile": tur.get("outputFile") or ""}
-                                order.append(tid)
-                                continue
-                            note = _parse_task_notification(_result_text(b.get("content")))
-                            if tid in tasks and note:      # its result landed → mark it done; the keep-filter drops it
-                                tasks[tid].update(status=note["status"], outputFile=note["output_file"],
-                                                  summary=note["summary"] or tasks[tid]["summary"])
-                elif t == "user" and isinstance(c, str):
-                    _mark(_parse_task_notification(c))
-                elif t == "queue-operation" and o.get("operation") == "enqueue":
-                    _mark(_parse_task_notification(o.get("content") or ""))
-    except OSError:
-        return []
-    if want_all:
-        # EVERY task the transcript knows, launch-ordered, each carrying its launch `t` and its CURRENT
-        # status (still "running", or the terminal status its notification reported). The awaiting-stamp
-        # lift (_lift_spent_awaiting) needs the RETURNED ones too: "this goal's dispatches have all come
-        # back" is precisely the event that ends a wait, and the running-only view cannot express it.
-        return [tasks[tid] for tid in order]
-    keep = [tasks[tid] for tid in order if tasks[tid]["status"] == "running"]
-    keep.reverse()
-    return keep[:60]
+_scan_bg_tasks = em._scan_bg_tasks   # moved to event_model (2026-08-08) — see the note above _result_text
 
 
 def _sdk_spawned_at(sid):
     """When this SDK session's CURRENT CLI spawned (reg spawnedAt, stamped by SdkSession._run), or None
     for tmux/never-spawned sessions. The bg-tasks ghost gate: a task launched before the live CLI died
-    with its old one — its <task-notification> can never arrive."""
-    try:
-        with open(jd.STATE / "sdk" / (sid + ".json")) as f:
-            v = json.load(f).get("spawnedAt")
-        return v if isinstance(v, (int, float)) else None
-    except Exception:
-        return None
+    with its old one — its <task-notification> can never arrive. Delegates to the judge's copy (its
+    settled gate applies the same ghost rule) so the two can never drift."""
+    return jd._sdk_spawned_at(sid)
 
 
 def _bg_scan_cached(path):
@@ -8956,6 +9125,22 @@ def _is_model_limit(text):
     return "limit" in low and ("/usage-credits" in low or "switch models" in low)
 
 
+# An AUTH failure — no working login ("Not logged in · Please run /login"), or a key the API refuses
+# (401 "API key is invalid", "Failed to authenticate", an expired OAuth token). On YOU like the three
+# limit classes: retrying re-presents the same dead credential forever, and with per-session auth
+# (2026-08-08) this is precisely how a session that picked a broken side surfaces — the alternative was
+# an unclassified "transient" error, i.e. an invisible working card that never works again. Matched on
+# the CLI's own phrasings plus the API's 401 wording; a transient 5xx/timeout matches none of these.
+def _is_auth_error(text):
+    low = (text or "").lower()
+    return ("not logged in" in low
+            or "api key is invalid" in low
+            or "invalid x-api-key" in low
+            or "failed to authenticate" in low
+            or ("oauth token" in low and ("expired" in low or "revoked" in low))
+            or "authentication_error" in low)
+
+
 def _spend_dialog_showing(pane):
     """Is the CLI's spend-cap MODAL currently up in this pane capture? When a tmux session hits the
     monthly cap MID-TURN the CLI drops into an interactive menu ("What do you want to do? / Adjust
@@ -9017,7 +9202,10 @@ def _api_error(path):
                                # a model's own allowance is spent — on YOU too (switch model / add
                                # credits), and the auto-retry keeps running only because the window does
                                # eventually reset; see _is_model_limit
-                               "modelLimit": _is_model_limit(text)}
+                               "modelLimit": _is_model_limit(text),
+                               # a dead credential (no login / refused key) — on YOU, never auto-retried;
+                               # see _is_auth_error (per-session auth, the user 2026-08-08)
+                               "authErr": _is_auth_error(text)}
                     elif (isinstance(c, list) and any(isinstance(b, dict)
                             and b.get("type") in ("text", "tool_use", "thinking") for b in c)) \
                             or (isinstance(c, str) and c.strip()):
@@ -10552,6 +10740,18 @@ def _set_effort_or_park(be, sid, value):
         be.set_effort(sid, value)
 
 
+def _set_auth_or_park(be, sid, value):
+    """Apply a billing-account change now — or park it while the session compacts, in the same FIFO as
+    /model and /effort (it reconnects the session, which mid-compaction would derail the compaction
+    exactly the way a model switch would). Returns the backend's verdict so the caller can be loud."""
+    if value not in ("login", "key"):
+        return False
+    if _ops_gate(sid):
+        _park_op(sid, ("auth", value))
+        return True
+    return be.set_auth(sid, value)
+
+
 def _set_fast_or_park(be, sid, on):
     """Apply a fast-mode change now — or park it while the session compacts, like model and effort.
 
@@ -10631,6 +10831,9 @@ def _apply_pending_ops():
                     ops.pop(0)
                 elif op[0] == "fast":
                     be.set_fast(sid, op[1])
+                    ops.pop(0)
+                elif op[0] == "auth":
+                    be.set_auth(sid, op[1])
                     ops.pop(0)
                 else:
                     ops.pop(0)                        # unknown op kind → drop, never wedge the queue
@@ -11854,9 +12057,15 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
         chip = _session_chip(sid, sess["path"], session, tm, now)   # THE shared derivation — identical to the timeline lane (the user 2026-07-03)
         # A session whose transcript DOESN'T EXIST YET is OPENING, whatever the snapshot claims (the
         # user 2026-08-05: a just-spawned tab said "Working" over a clock with no honest base). The
-        # transcript's first record is the deciding event: it lands, discover() sees it, and the normal
-        # derivation takes over. Never for an override render (a closed episode's path is historical).
-        if chip in ("working", "ready") and not path_override and not os.path.exists(sess["path"]):
+        # deciding event is per-backend. tmux: the transcript's first record — the only observable —
+        # lands, discover() sees it, and the normal derivation takes over. SDK: the backend KNOWS the
+        # earlier designed event, the handshake (tm.connected) — a fresh SDK session writes NO
+        # transcript until its first turn, so keying its chip on the file left a fully-up, idle
+        # session wearing the opening dots until the user's first message, indefinitely (the user
+        # 2026-08-08, who read minutes of dots as creation still running). Never for an override
+        # render (a closed episode's path is historical).
+        if chip in ("working", "ready") and not path_override and not os.path.exists(sess["path"]) \
+                and not tm.get("connected"):
             chip = "opening"
         faded = chip == "ready" and bool(tm["since"]) and now - tm["since"] > 3600
         # apiTooLong distinguishes a "prompt is too long" block (on YOU → red dashed tab) from a TRANSIENT API
@@ -11871,6 +12080,11 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
                   # client's retry-all skips it: nothing retries into it until the model changes or its
                   # window resets, and an amber "retrying" tab said the opposite (the user 2026-08-01)
                   "apiModelLimit": bool(aerr and aerr.get("modelLimit")),
+                  # an AUTH failure (not logged in / invalid or expired key) is on-you like the three
+                  # above — retrying can't fix a credential, only you can (claude /login, or fix
+                  # service.env) — and with per-session auth it's how a session that landed on a broken
+                  # side gets seen at all instead of idling as an invisible transient (the user 2026-08-08)
+                  "apiAuthErr": bool(aerr and aerr.get("authErr")),
                   # user interrupted this thread's retry/API-error storm → romp's auto-retry stays OFF for it
                   # until a successful turn re-arms (the user 2026-07-06); the card + retry loop read this
                   "retrySuppressed": _session_retry_suppressed(sid),
@@ -11881,6 +12095,18 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
                   "retryTries": _retry_gate_state(sid)[0] or None,
                   "backend": _session_backend(sid, tm),
                   "model": tm["model"], "effort": tm["effort"], "mode": tm.get("mode", ""),
+                  # which account this session bills ('login'|'key') — ALWAYS reported when the backend
+                  # knows it (the user 2026-08-09: the tab hover says Billing even on a one-auth
+                  # machine; tmux sessions report nothing, honestly — their CLI's env is not romp's).
+                  # The key is labelled 'API key', never any fragment of it (2026-08-08: even a last-4
+                  # tail is more key than a label needs); authAcct names WHICH login account.
+                  "auth": tm.get("auth", ""),
+                  # whether this machine offers BOTH choices — the gate for the CONTROLS (statusline
+                  # badge menu / picker buttons); display no longer hangs on it (the user 2026-08-09)
+                  "authBoth": _auth_both(),
+                  # the login's display name, shown beside 'Login' (the user 2026-08-09); "" when no login
+                  "authAcct": _claude_account_label(),
+                  "authPending": bool(tm.get("authPending")),   # an /auth reconnect applying → badge dots
                   "modelPending": _model_pending_now(sid, tm),   # switching-dots on the model badge until the pick lands, from EITHER surface (the user 2026-07-03)
                   "effortPending": bool(tm.get("effortPending")),   # switching-dots on the effort badge while the /effort reconnect applies (SDK-only; the user 2026-07-06)
                   # Fast mode. A WORD, not a boolean, so the statusline can key its chip off presence the way
@@ -13316,7 +13542,9 @@ def build_feed(now, tmux=None):
             # every OPEN leaf under this top is a handoff-tracking node → the only outstanding work lives
             # with peers, so the card reads ⏳ "delegated to <peer>" instead of plain working (which reads
             # as "this session should be doing something"). Ends on the graph's own event: run_propagate
-            # checks the handoff off the moment the peer's linked goal completes.
+            # checks the handoff off the moment the peer's linked goal completes. The session-scoped
+            # surfaces (rail/chat/timeline) read the SAME evidence via _session_delegated_why in
+            # _session_awaiting's stamp branch — keep the two in step (the user 2026-08-08).
             _deleg_why = None
             if col == "working" and not _stamp_why and not _await_ok \
                     and _all_outstanding_delegated(nodes, nid):
@@ -13435,7 +13663,7 @@ def build_feed(now, tmux=None):
             # a session nothing could move — not nudged (the api-error gate suppresses it), not blocked,
             # not awaiting, for 80 minutes.
             api_block = (nid == api_top and bool(aerr and (aerr.get("tooLong") or aerr.get("spendLimit")
-                                                          or aerr.get("modelLimit"))))
+                                                          or aerr.get("modelLimit") or aerr.get("authErr"))))
             # NUDGE FAILED (plans/stalled-open-todos-nudge.md, the user 2026-07-01): the tick stamped
             # `failed` on this goal's nudge record — the nudge-response turn completed (judged) and the goal
             # was still working-stalled; per the anti-loop rule it is never re-nudged, so the card carries
@@ -13598,11 +13826,15 @@ def build_feed(now, tmux=None):
                              "text": aerr.get("text"), "tooLong": bool(aerr.get("tooLong")),
                              "spendLimit": bool(aerr.get("spendLimit")),
                              "modelLimit": bool(aerr.get("modelLimit")),
+                             "authErr": bool(aerr.get("authErr")),
                              "what": ("this account hit its monthly spend limit — raise it at claude.ai/settings/usage to continue" if aerr.get("spendLimit")
                                       else "this session's prompt is too long — compact it to continue" if aerr.get("tooLong")
                                       # the CLI's own text names the model and the two remedies; the card
                                       # states them, because "Retry to resume" is false here (the user 2026-08-01)
                                       else "this session's model is out of allowance — switch its model or add credits to continue" if aerr.get("modelLimit")
+                                      # a dead credential: retrying re-presents it forever — name the fix
+                                      # (per-session auth, the user 2026-08-08)
+                                      else "this session's sign-in or API key isn't working — fix the login (claude /login) or the key, or switch which one it bills" if aerr.get("authErr")
                                       else "this session stopped on an API error — Retry to resume")} if nid == api_top
                             else {"state": perm_state,
                                   "what": ("this session is stopped awaiting your input" if perm_state == "picker"
@@ -13713,6 +13945,12 @@ def build_feed(now, tmux=None):
             # the shared session order (session-order.json — the tab/lane order): grouped mode sorts each
             # column's session runs by it (the user 2026-07-13); federation prefixes + concatenates per host
             "order": _session_order(),
+            # the chat tab strip's sessions, name+color resolved exactly as tab_meta resolves them: the
+            # feed footer's session-filter menu lists precisely the tabs (the user 2026-08-08) — including
+            # a session with no cards on the board, which filters to an empty board rather than being
+            # unlistable. Federation prefixes sid+name per host and concatenates.
+            "sessions": [{"sid": s["sid"], "name": s.get("name", ""), "color": _name_color(s["sid"])}
+                         for s in _chat_tab_sessions(now, tmux)],
             # /clear boundary settles, newest per session → the bell logs each once (the user 2026-07-27)
             "clearNotices": _boundary_clear_notices(alive),
             # SDK-backend failures → the same bell, one entry per occurrence (the user 2026-07-28)
@@ -13767,7 +14005,7 @@ def _state_intervals(sid, want, now):
     return out
 
 
-_ACCT_CACHE = {"mtime": -1.0, "val": ""}
+_ACCT_CACHE = {"mtime": -1.0, "val": "", "label": ""}
 
 
 def _claude_account():
@@ -13780,23 +14018,44 @@ def _claude_account():
     emailAddress — the comparison only needs "same or not", and an email is a personal identifier that
     would then travel to every federated host, sit in a payload and show up in any screenshot of the
     bars. A digest answers the question and carries nothing back. Cached on the file's mtime.
+
+    (_claude_account_label below is the deliberate, narrower exception: the login's own name, for the
+    login-facing UI rows the user asked to carry it. Cross-host equality stays on this digest.)
     """
+    _acct_read()
+    return _ACCT_CACHE["val"]
+
+
+def _claude_account_label():
+    """The signed-in login's display name — emailAddress (the identity `claude /login` itself shows),
+    falling back to displayName — or "" when there is none. FOR DISPLAY beside 'Login': the new-session
+    picker's Billing row and the chat tab's hover (the user 2026-08-09, who wanted to see WHICH account
+    'Login' means). The one sanctioned account-identity payload field; anything that only needs
+    same-or-not (the rail's per-host dedup) keeps the _claude_account digest, which carries nothing."""
+    _acct_read()
+    return _ACCT_CACHE["label"]
+
+
+def _acct_read():
+    """Refresh _ACCT_CACHE (digest + label) from ~/.claude.json, mtime-cached — one stat per push."""
     p = os.path.expanduser("~/.claude.json")
     try:
         m = os.stat(p).st_mtime
     except OSError:
-        return ""
+        _ACCT_CACHE["mtime"], _ACCT_CACHE["val"], _ACCT_CACHE["label"] = -1.0, "", ""
+        return
     if _ACCT_CACHE["mtime"] == m:
-        return _ACCT_CACHE["val"]
-    val = ""
+        return
+    val = label = ""
     try:
-        uuid = ((json.loads(open(p, encoding="utf-8").read()) or {}).get("oauthAccount") or {}).get("accountUuid")
+        oa = (json.loads(open(p, encoding="utf-8").read()) or {}).get("oauthAccount") or {}
+        uuid = oa.get("accountUuid")
         if uuid:
             val = hashlib.sha256(str(uuid).encode("utf-8")).hexdigest()[:12]
+        label = str(oa.get("emailAddress") or oa.get("displayName") or "")
     except Exception:
-        val = ""
-    _ACCT_CACHE["mtime"], _ACCT_CACHE["val"] = m, val
-    return val
+        val = label = ""
+    _ACCT_CACHE["mtime"], _ACCT_CACHE["val"], _ACCT_CACHE["label"] = m, val, label
 
 
 def _usage():
@@ -13834,14 +14093,24 @@ def _usage():
         if stamped and stamped != _claude_account():
             five = seven = fable = None
     if not five and not seven and not fable:
-        # No windows. An API-KEY account (the auth-flip marker _note_auth_source writes) shows SPEND
-        # where the bars sat (the user 2026-08-04): today's accumulated per-result total_cost_usd,
-        # from spend.json. A window-less file WITHOUT the marker stays None — nothing known, draw
-        # nothing (never a confident zero).
-        if o.get("apiKey"):
+        # No windows. A machine with NO Claude login shows SPEND where the bars sat (the user
+        # 2026-08-04): today's accumulated per-result cost from spend.json. The deciding evidence is
+        # the CREDENTIAL STORE (the login's own lifecycle), not a per-session auth report: one session
+        # using an API key never speaks for the login's windows (the user 2026-08-08 — _note_auth_source
+        # is per-session now and writes no marker; the legacy `apiKey` marker is still honored so a
+        # pre-upgrade file shows spend until the next snapshot heals it). The no-login arm additionally
+        # requires spend.json to EXIST: a keyless machine with no recorded spend has nothing to show —
+        # and the guard is what keeps unstamped fixtures/CI (temp STATE, no credential file, no spend)
+        # reading None instead of coupling to the runner's real login (the deliberate decoupling the
+        # acct-stamp comment above records). A window-less file on a LOGGED-IN machine stays None —
+        # nothing known, draw nothing (never a confident zero).
+        if o.get("apiKey") or (not _claude_account() and (jd.STATE / "spend.json").exists()):
             # The spend WINDOWS mirror the subscription bars (5h / 7d / month) so the two auth modes
             # read identically; _spend_windows always returns all three, zero-filled on a fresh kernel
-            # (an empty slot reads as broken — the user 2026-08-04, post-restart).
+            # (an empty slot reads as broken — the user 2026-08-04, post-restart). TOTAL sums, not the
+            # keyed split: on a no-login machine every turn bills the key, and legacy files predate
+            # the split. The rail's label is the constant 'API' — no fragment of the key travels
+            # (the user 2026-08-08; hosts are told apart by name in the hover, not by key).
             return {"apiKey": True, "spend": _spend_windows(),
                     "t": o.get("t") if isinstance(o.get("t"), (int, float)) else None,
                     "acct": _claude_account()}
@@ -13853,14 +14122,29 @@ def _usage():
         return bool(s and s.get("pct", 0) >= 100 and not (s.get("resetsAt") and time.time() > s["resetsAt"]))
     limited = {"fiveHour": _lim(five), "sevenDay": _lim(seven), "fable": _lim(fable)}
     t = o.get("t")
-    return {"fiveHour": five, "sevenDay": seven, "fable": fable,
-            "t": t if isinstance(t, (int, float)) else None,
-            # WHOSE allowance this is. These windows are account-wide, so two machines signed into the
-            # SAME account share one set of numbers and must not be drawn twice; two machines on
-            # DIFFERENT accounts have genuinely separate allowances and pooling them was a lie (the user
-            # 2026-07-30). An opaque digest — equality is the whole question, and no identifier travels.
-            "acct": _claude_account(),
-            "limited": limited if any(limited.values()) else None}
+    out = {"fiveHour": five, "sevenDay": seven, "fable": fable,
+           "t": t if isinstance(t, (int, float)) else None,
+           # WHOSE allowance this is. These windows are account-wide, so two machines signed into the
+           # SAME account share one set of numbers and must not be drawn twice; two machines on
+           # DIFFERENT accounts have genuinely separate allowances and pooling them was a lie (the user
+           # 2026-07-30). An opaque digest — equality is the whole question, and no identifier travels.
+           "acct": _claude_account(),
+           # …and its NAME, for the hover (the user 2026-08-09, who wanted the usage tip to say which
+           # account the windows belong to, the way the tab hover does). The dedup stays on the digest;
+           # this is display only, "" when no login.
+           "acctLabel": _claude_account_label(),
+           "limited": limited if any(limited.values()) else None}
+    # API-KEY spend BESIDE the bars — the KEYED split only (turns whose session billed the key; a login
+    # turn's computed cost is dollars nobody pays), attached only when key turns actually exist, so a
+    # host that never uses its key shows nothing extra. This supersedes the same-day rule that bars
+    # never carry spend (the user 2026-08-08, morning): that held for a machine whose sessions all
+    # share one auth; per-session auth (same day, evening) makes one host BOTH, and the key's real
+    # dollars belong on the rail next to the login's real %.
+    if _auth_key_present():
+        ksp = _spend_windows(keyed_only=True)
+        if any((ksp.get(k) or {}).get("turns") for k in ("fiveHour", "sevenDay", "month")):
+            out["spend"] = ksp
+    return out
 
 
 _jf_cache = {"fp": None, "val": None}                 # judge-failure scan, mtime-fingerprinted over the goals dir
@@ -13898,12 +14182,18 @@ def _spend_budgets():
         return {}
 
 
-def _spend_windows():
+def _spend_windows(keyed_only=False):
     """API-mode usage windows MIRRORING the subscription bars (the user 2026-08-04, who wanted the two
     auth modes to read identically at a glance): rolling 5h and 7d summed from spend.json's hour
     buckets, month-to-date from its day buckets — each {usd, tok, turns}, plus `budget` where
     spend-budgets.json names one. Always returns all three windows (zeros when nothing is recorded —
-    the day genuinely holds none; the honest-zero rule from the chip era)."""
+    the day genuinely holds none; the honest-zero rule from the chip era).
+
+    keyed_only=True sums each bucket's `key` sub-counters instead — the turns whose SESSION billed an
+    API key (see _record_spend). That is what the rail's API readout shows beside a login's bars on a
+    mixed host: the total would fold login turns' computed costs in — dollars nobody is billed (the
+    user 2026-08-08). The no-login machine keeps the total (everything there IS the key, and legacy
+    files predate the split)."""
     try:
         d = json.loads((jd.STATE / "spend.json").read_text())
     except Exception:
@@ -13915,9 +14205,15 @@ def _spend_windows():
         out = {"usd": 0.0, "tok": 0, "turns": 0}
         for e in entries:
             if isinstance(e, dict):
-                out["usd"] = round(out["usd"] + float(e.get("usd") or 0), 4)
-                out["turns"] += int(e.get("turns") or 0)
-                out["tok"] += sum(int(e.get(k) or 0) for k in ("tokIn", "tokOut", "tokCacheR", "tokCacheW"))
+                if keyed_only:
+                    e = e.get("key") if isinstance(e.get("key"), dict) else {}
+                    out["usd"] = round(out["usd"] + float(e.get("usd") or 0), 4)
+                    out["turns"] += int(e.get("turns") or 0)
+                    out["tok"] += int(e.get("tok") or 0)
+                else:
+                    out["usd"] = round(out["usd"] + float(e.get("usd") or 0), 4)
+                    out["turns"] += int(e.get("turns") or 0)
+                    out["tok"] += sum(int(e.get(k) or 0) for k in ("tokIn", "tokOut", "tokCacheR", "tokCacheW"))
         return out
 
     now = time.time()
@@ -16241,7 +16537,14 @@ def _push(targets, connect=False):
                                                          "reason": _retry_pause_reason()})   # "spend" → the card says 'raise your cap', no countdown
                 _send_client(c, ("taborder",), {"type": "tabOrder", "order": tab_order, "tabs": tab_meta})
             active = {c.get("active") for c in chat_clients if c.get("active")}
-            build_order = sorted(chat_list, key=lambda s: 0 if s["sid"] in active else 1)   # stable: active first
+            # Stable: active tabs first — and TRANSCRIPT-LESS sessions with them. A just-created session
+            # has no transcript, so its build is near-free, and its creator is guaranteed to be staring
+            # at its placeholder — yet the active-first hint can never name it: a client cannot declare
+            # a tab active before that tab's first payload arrives. Ranked last, the new session's
+            # payload waited out the whole fleet's builds (~22s measured), leaving "Opening session"
+            # dots on a session that had been ready for all of it (the user 2026-08-08).
+            build_order = sorted(chat_list, key=lambda s: 0 if s["sid"] in active
+                                 or not os.path.exists(s["path"]) else 1)
             for s in build_order:
                 is_active = s["sid"] in active           # the watched tab(s) always rebuild → stay live
                 sig = _chat_build_sig(s)
@@ -16504,9 +16807,15 @@ def _cached_feed(now, tmux, sig, connect=False):
     feed["buildId"] = bid
     _built_feed[:] = [sig, feed, time.time(), started]
     _badge = _needs_you_count(feed)
-    for _t, _b, _sid in _feed_notifications(feed):        # armed bells: fresh builds are the transition event
+    _fired = _feed_notifications(feed)                    # armed bells: fresh builds are the transition event
+    for _t, _b, _sid in _fired:
         _system_notify(_t, _b)
         _push_notify(_t, _b, _sid, _badge)                # same events to subscribed phones (plans/ios-app.md)
+    if _fired:
+        # …and to trusted peers' devices (plans/federated-push.md): the phone subscribed at the
+        # always-on box must buzz for THIS kernel's cards too — which kernel detected an event is
+        # romp's business, never the user's.
+        _push_forward([{"title": _t, "body": _b, "sid": _sid} for _t, _b, _sid in _fired])
     _badge_push(_badge)                                   # app-icon count for installed shells (proposal 3)
     return feed
 
@@ -16736,13 +17045,15 @@ def _push_send_one(sub, payload):
         return True
 
 
-def _push_notify(title, body, sid="", badge=0):
+def _push_notify(title, body, sid="", badge=None):
     """_system_notify's sibling sink: the same (title, body) — the card's gist and nothing more —
     to every subscribed device, plus two pieces of ROUTING metadata, not content: sid, so tapping
     the notification lands on the session that fired (the user 2026-08-08), and badge, the
-    needs-you count the service worker paints on the app icon while the app is closed. Runs on
-    the pusher thread, so all network work moves to a daemon thread (the _refresh_remote_prices
-    discipline) and this never blocks or raises."""
+    needs-you count the service worker paints on the app icon while the app is closed. badge=None
+    OMITS the key and the worker leaves the icon's count alone — the shape a mirrored federated
+    event wears, because the origin kernel's count is not this kernel's count
+    (plans/federated-push.md). Runs on the pusher thread, so all network work moves to a daemon
+    thread (the _refresh_remote_prices discipline) and this never blocks or raises."""
     subs = _push_subs()
     if not subs:
         return
@@ -16752,8 +17063,10 @@ def _push_notify(title, body, sid="", badge=0):
         print("romp: web push: %d subscription(s) on file but the python 'cryptography' package "
               "is missing — notification not delivered" % len(subs), file=sys.stderr)
         return
-    payload = json.dumps({"title": str(title), "body": str(body),
-                          "sid": str(sid or ""), "badge": int(badge or 0)}).encode()
+    d = {"title": str(title), "body": str(body), "sid": str(sid or "")}
+    if badge is not None:
+        d["badge"] = int(badge or 0)
+    payload = json.dumps(d).encode()
 
     def run():
         dead = []
@@ -16765,6 +17078,37 @@ def _push_notify(title, body, sid="", badge=0):
                 pass                               # one bad subscription must not block the rest
         for ep in dead:
             _del_push_sub(ep)
+
+    threading.Thread(target=run, daemon=True).start()
+
+
+def _push_forward(events):
+    """The federated half of the push sink (plans/federated-push.md; the user 2026-08-08, who wants
+    one device subscription to buzz for EVERY connected kernel): hand this kernel's fresh bell
+    events — [{title, body, sid}] — to every attached TRUSTED peer, and each peer delivers them to
+    the devices subscribed to IT. Rides the channel every kernel-to-kernel control call already
+    rides (_peer_call: the pair's tunnel + the token exchanged at attach) — no new legs, no new
+    trust surface. Only events THIS kernel detected are ever forwarded, and /push/relay mirrors to
+    devices only, never onward, so a cycle of attachments cannot echo an event back. Fire-and-forget
+    on a daemon thread (the _push_notify discipline); a peer that is down misses the moment by
+    design — its own dashboard was equally blind while it was down. No status filter on purpose: a
+    flapping tunnel mark must not cost a bell, and a dead peer just times out inside the thread."""
+    if not events:
+        return
+    with _remotes_lock:
+        peers = [dict(r) for r in _remotes.values()
+                 if (r.get("trust") or "directed") == "trusted"
+                 and r.get("local_port") and r.get("token")]
+    if not peers:
+        return
+    body = {"origin": _self_host(), "events": [dict(e) for e in events]}
+
+    def run():
+        for r in peers:
+            try:
+                _peer_call(r, "POST", "/push/relay", body, timeout=6)
+            except Exception:
+                pass                               # one unreachable peer must not block the rest
 
     threading.Thread(target=run, daemon=True).start()
 
@@ -16788,7 +17132,10 @@ var work=[self.registration.showNotification(d.title||'romp',
 {body:d.body||'',icon:'/media/romp-app-192.png',badge:'/media/romp-app-192.png',data:{sid:d.sid||''}})];
 // the app-icon count, kept current while the app is CLOSED (the open shell re-paints it live over
 // its own WS). setAppBadge exists in the SW only where badging works at all (iOS installed apps).
-if('setAppBadge' in self.navigator)work.push(self.navigator.setAppBadge(d.badge||0)['catch'](function(){}));
+// Numeric-only on purpose: a mirrored federated event omits badge (the ORIGIN kernel's count is
+// not this kernel's count — plans/federated-push.md), and repainting 0 for it would CLEAR a real
+// local count.
+if('setAppBadge' in self.navigator&&typeof d.badge==='number')work.push(self.navigator.setAppBadge(d.badge)['catch'](function(){}));
 e.waitUntil(Promise.all(work));
 });
 // Land ON the thing that notified (the user 2026-08-08, whose first push opened a different
@@ -16819,6 +17166,13 @@ def _reveal_msg(sid):
     """What lands in the chat pane: a live session gets the focus (live=True → the live tail,
     where the blocking prompt sits); a dead one gets the revive prompt, never a silent reveal —
     the same split _reveal_or_confirm makes for feed/timeline taps."""
+    if ":" in str(sid or ""):
+        # a federated session ("host:sid" — the prefix federation.js stamps on every remote id, and
+        # a local sid is a bare uuid that never carries a colon): its liveness is the ORIGIN
+        # kernel's truth, not ours, and the merged dashboard's own tabs route the prefixed id
+        # (plans/federated-push.md) — so hand the focus over as-is, never a confirmRevive minted
+        # from the wrong kernel's session list.
+        return {"type": "focus", "id": sid, "live": True}
     if sid and sid not in _tmux_sessions():
         return {"type": "confirmRevive", "id": sid, "name": _name_of(sid) or sid}
     return {"type": "focus", "id": sid, "live": True}
@@ -17767,7 +18121,37 @@ back.addEventListener('click',function(e){if(e.target===back)close();});
 if(x)x.addEventListener('click',close);
 if(clearBtn)clearBtn.addEventListener('click',function(){NOTES=[];save();renderList();paint();});
 window.__rompOpenErrs=open;   // the mobile bar's bell routes here (no rail on mobile)
+window.__rompCloseErrs=close;   // Escape routes here (_LANDING_ESC_JS) — close owns the state cleanup
 paint();})();
+"""
+
+
+# Escape closes the TOPMOST open shell modal (the user 2026-08-09: the usage/network/Log panels could
+# only be clicked away; Escape did nothing whenever focus sat inside a pane iframe, because a keydown
+# never crosses the iframe boundary). Same dual wiring as the palette (palette-main.ts) and the
+# Alt+Arrow nav (_LANDING_FOCUS_JS): capture on the shell document AND on every same-origin pane
+# document, re-attached on every iframe (re)load. Each panel exposes its OWN close (their state
+# cleanup lives in those closures); this block only decides which panel Escape means, topmost first
+# (shortcuts dialog z300 — whose close() first CANCELS an in-progress chord recording, one Escape
+# level at a time — then usage z300 > Log z210 > net z200). With no shell modal open it touches
+# nothing, so pane-local Escapes (dialogs, menus inside the chat) keep working.
+_LANDING_ESC_JS = """
+(function(){
+function onEsc(e){if(e.key!=='Escape')return;
+var closed=false;
+if(window.__rompKeysClose&&window.__rompKeysClose()){closed=true;}
+else{var ru=document.getElementById('ru-back');
+if(ru&&ru.classList.contains('on')&&window.__rompUsageClose){window.__rompUsageClose();closed=true;}
+else{var er=document.getElementById('rerr-back');
+if(er&&!er.hidden&&window.__rompCloseErrs){window.__rompCloseErrs();closed=true;}
+else{var nt=document.getElementById('rnet-back');
+if(nt&&!nt.hidden&&window.__rompCloseNet){window.__rompCloseNet();closed=true;}}}}
+if(closed){e.preventDefault();e.stopPropagation();}}
+document.addEventListener('keydown',onEsc,true);
+['f-chat','f-fleet','f-feed','f-timeline'].forEach(function(id){var f=document.getElementById(id);if(!f)return;
+var wire=function(){try{if(f.contentDocument)f.contentDocument.addEventListener('keydown',onEsc,true);}catch(e){}};
+f.addEventListener('load',wire);wire();});
+})();
 """
 
 
@@ -17789,12 +18173,16 @@ var m=Math.round(dt/60);if(m<60)return m+'m ago';var h=Math.floor(m/60);m-=h*60;
 return(h<24?h+'h '+(m?m+'m ':''):Math.floor(h/24)+'d ')+'ago';}
 function esc(s){return String(s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
 // [key, spanSec, shortTag (tooltip), name (tooltip), label (bottom-bar, expanded — plenty of horizontal room)]
-var WINS=[['fiveHour',5*3600,'5h','Session','5 hours'],
-          ['sevenDay',7*86400,'7d','Weekly','7 days'],
-          ['fable',7*86400,'F5','Fable 5','Fable 5']];
-// ROWS is one entry per DISTINCT Claude account across the fleet, local first (see /usage/fleet); LAST is
-// the tooltip detail for the ones actually drawn; SELF names this machine, for labelling the local set
-// when there is more than one. A one-account fleet keeps a single unlabelled set, exactly as before.
+// ONE display name per window, worn EVERYWHERE it appears — the collapsed bars, the hover's window
+// sections, the API cell's designators (the user 2026-08-09: '5 hours' on the bars but '5h' on the API
+// numbers, plus a third 'Session (5h)' in the hover, was three vocabularies for one thing; same words,
+// same font, same left-of-value position across all of it).
+var WINS=[['fiveHour',5*3600,'5 hours'],
+          ['sevenDay',7*86400,'7 days'],
+          ['fable',7*86400,'Fable 5']];
+// ROWS is one entry per HOST whose usage is known, local first (see /usage/fleet); LAST is the per-host
+// tooltip detail for the ones drawn into the aggregate; SELF names this machine for its hover heading
+// when there is more than one host.
 var ROWS=[],LAST=[],SELF='';
 // Limit / judge-degraded SIGNATURES (the user 2026-07-03; reshaped 2026-07-27): these used to gate fixed
 // top banners with a ✕ dismissal; the banners are gone — the same situations now log ONE entry each in
@@ -17829,85 +18217,116 @@ if(window.__rompNotify)window.__rompNotify('judge',nc+' '+noun+" couldn't be sum
 var lim=u&&u.limited,on=!!(lim&&(lim.fiveHour||lim.sevenDay));
 var sig=on?((lim.fiveHour?'5':'')+(lim.sevenDay?'7':'')):'';
 if(!on){_limPut('');}   // fully cleared -> forget the logged signature so a future limit logs again
-else if(sig!==_limGet()){_limPut(sig);var names=[];if(lim.fiveHour)names.push('Session (5h)');if(lim.sevenDay)names.push('Weekly (7d)');
+else if(sig!==_limGet()){_limPut(sig);var names=[];if(lim.fiveHour)names.push('5-hour');if(lim.sevenDay)names.push('7-day');
 if(window.__rompNotify)window.__rompNotify('limit',names.join(' and ')+' usage limit reached \u2014 retries paused until it resets');}}
 function hasBars(u){return !!(u&&(u.fiveHour||u.sevenDay||u.fable));}
-// API-key auth: no subscription windows exist — the rail shows SPEND where the bars sat (the user
-// 2026-08-04): today's accumulated per-result cost from the kernel's spend.json. strip.ts carries the
-// same branch; the two copies must stay in step (rail-spend pins).
-function hasSpend(u){return !!(u&&u.apiKey&&u.spend&&u.spend.fiveHour);}
+// API-key spend rides the payload's `spend` windows. It used to require the apiKey flag (a no-login
+// machine, spend INSTEAD of bars); with per-session auth one host carries bars AND its key's spend at
+// once (the user 2026-08-08), so presence of the windows is the whole test. strip.ts carries the same
+// branch; the two copies must stay in step (rail-spend pins).
+function hasSpend(u){return !!(u&&u.spend&&u.spend.fiveHour);}
 function fmtTok(n){if(n>=1e9)return (n/1e9).toFixed(1).replace(/\.0$/,'')+'B';
 if(n>=1e6)return (n/1e6).toFixed(1).replace(/\.0$/,'')+'M';
 if(n>=1e3)return (n/1e3).toFixed(1).replace(/\.0$/,'')+'k';return String(n);}
-// API-key auth: SPEND windows mirror the subscription bars' grammar exactly \u2014 same rows, labels,
-// twin tracks \u2014 so flipping auth modes reads instantly (the user 2026-08-04). A row FILLS only when
-// spend-budgets.json names that window's budget (the fill is spend-over-budget; no cap, no honest
-// fraction \u2014 plain dollars in the readout slot instead). Rolling windows have no reset boundary, so
-// only month-to-date draws the elapsed track. strip.ts carries the same builder \u2014 kept in step.
+function fmtUsd(v){return '$'+String(Math.round(v));}   // whole dollars everywhere — no cents (the user 2026-08-09)
 var SPEND_WINS=[['fiveHour','5 hours'],['sevenDay','7 days'],['month','Month']];
-function spendColor(p){return p>=90?'#c0392b':p>=70?'#e0b020':'#54B204';}
-function spendWinsHTML(u){var sp=u.spend||{},html='';
+// The per-host SPEND detail for the rich hover: plain NUMBERS per window (dollars, tokens, turns).
+// No bars anywhere for spend (the user 2026-08-08: the spend bar graphs told you nothing. The old
+// hover scaled each window's bar to the largest window, a shape with no meaning, and the budget-fill
+// tracks die with it): the numbers are the information, so the numbers are the rendering.
+function spendDet(u,det){var sp=u&&u.spend;if(!sp||!det)return;
 SPEND_WINS.forEach(function(w){var seg=sp[w[0]];if(!seg||typeof seg.usd!=='number')return;
-var budget=(typeof seg.budget==='number'&&seg.budget>0)?seg.budget:null;
-var pct=budget!=null?Math.max(0,Math.min(100,Math.round(seg.usd/budget*100))):null;
-var el2=null;
-if(w[0]==='month'&&budget!=null){var dd=new Date(),dim=new Date(dd.getFullYear(),dd.getMonth()+1,0).getDate();
-el2=Math.max(0,Math.min(100,Math.round(((dd.getDate()-1+dd.getHours()/24)/dim)*100)));}
-var turns=seg.turns||0,readout='$'+(seg.usd<100?seg.usd.toFixed(2):String(Math.round(seg.usd)))+' \u00b7 '+fmtTok(seg.tok||0)+' tok';
-html+='<div class="ru-w ru-spend" title="'+w[1]+' \u2014 $'+seg.usd.toFixed(2)+' \u00b7 '+fmtTok(seg.tok||0)+' tokens \u00b7 '+turns+' turn'+(turns===1?'':'s')+(budget!=null?' \u00b7 '+pct+'% of the $'+budget+' budget':' \u00b7 no budget set \u2014 dollars only, no fill (set one in spend-budgets.json)')+' \u00b7 API-key billing">'
-+'<div class=ru-name>'+w[1]+'</div>'
-+'<div class=ru-bars>'
-+(pct!=null?'<div class=ru-track><i class=ru-fill style="width:'+pct+'%;background:'+spendColor(pct)+'"></i></div>':'')
-+(el2!=null?'<div class=ru-track><i class=ru-fill style="width:'+el2+'%;background:#6b7a8c"></i></div>':'')
-+'</div>'
-+'<div class=ru-pct>'+readout+'</div>'
-+'</div>';});
-return html;}
-// One account's windows, as markup + the tooltip detail for them. Pure: the caller decides where it goes.
-function winsHTML(u,det){var nowS=Math.floor(Date.now()/1000),html='';
+(det._spend=det._spend||{})[w[0]]={label:w[1],usd:seg.usd,tok:seg.tok||0,turns:seg.turns||0};});}
+// One payload's WINDOW detail for the hover (used/elapsed/reset per window). Detail only, no markup:
+// the rail no longer draws each account's own bars (they aggregate, below), but the tip still tells
+// each host's story from this.
+function winDet(u,det){var nowS=Math.floor(Date.now()/1000);
+if(u.acctLabel)det._acct=u.acctLabel;   // WHICH login the windows belong to (the user 2026-08-09) — hover-only
 WINS.forEach(function(w){var seg=u[w[0]];if(!seg)return;
 // A ROLLED window (its reset passed since the last report) is UNKNOWN, not 0 (the user 2026-07-31: a
 // remote whose kernel had no live session to ask sat on a days-old snapshot, and the rail drew a
-// confident 0% beside a live account's real bars). Last-known fill drawn FADED + a '?' readout, so
-// unknown and genuinely-empty can never be confused; the tooltip dates the gap.
+// confident 0% beside a live account's real bars). The last-known number renders in the hover,
+// labelled as such; the rail's aggregate never counts an unknown as a value.
 var rolled=!!(seg.resetsAt&&nowS>seg.resetsAt),pct=Math.max(0,Math.min(100,seg.pct||0));
 var col=(seg.color&&seg.color.length===3)?('rgb('+seg.color.join(',')+')'):'#54B204';   // selected colormap (server-computed)
 var tp=(!rolled&&seg.resetsAt&&w[1])?Math.max(0,Math.min(100,Math.round((nowS-(seg.resetsAt-w[1]))/w[1]*100))):null;
-det[w[0]]={name:w[3],span:w[2],pct:pct,col:col,tp:tp,unk:rolled,ago:(rolled?fmtAgo(seg.resetsAt):null),reset:(!rolled&&seg.resetsAt)?fmtR(seg.resetsAt):null};
-// Horizontal fill bars (the user 2026-07-05): an expanded label, then TWO stacked horizontal tracks \u2014 the
+det[w[0]]={name:w[2],pct:pct,col:col,tp:tp,unk:rolled,ago:(rolled?fmtAgo(seg.resetsAt):null),reset:(!rolled&&seg.resetsAt)?fmtR(seg.resetsAt):null};});}
+// ONE aggregated set of bars for every account at once (the user 2026-08-08: never repeat the windows
+// per host; say '5 hours' once). Per window, the WORST known reading across the fleet: the windows are
+// allowances and the binding one is the fullest; each host's own number lives in the hover. A window
+// every reporter has ROLLED is unknown ('?'), exactly as a single account's was; a shared login on two
+// hosts reports the same number twice and the max collapses it for free.
+function aggBarsHTML(live){var html='';
+WINS.forEach(function(w){var best=null,anyRolled=false;
+live.forEach(function(e){var d=e.det[w[0]];if(!d)return;
+if(d.unk){anyRolled=true;return;}
+if(!best||d.pct>best.pct)best=d;});
+if(!best&&!anyRolled)return;
+// Horizontal fill bars (the user 2026-07-05): an expanded label, then TWO stacked horizontal tracks: the
 // used-% bar (colormap colour) ON TOP of the elapsed-% bar (slate) so you can compare pace at a glance (used
-// ahead of elapsed = burning too fast) \u2014 then the used-% readout. All inline (label \u00b7 bars \u00b7 %).
+// ahead of elapsed = burning too fast), then the used-% readout. All inline (label \u00b7 bars \u00b7 %).
 // An UNKNOWN window draws NO BARS (the user 2026-07-31, round 2): a faded last-known fill still
-// asserts a value we do not have \u2014 the length itself is the lie. Its slot holds a single '?' so the
-// rows stay aligned, and the last-known number moves to the hover, labelled as such.
-html+='<div class="ru-w'+(rolled?' ru-unk':'')+'" data-w="'+w[0]+'">'
-+'<div class=ru-name>'+w[4]+'</div>'
-+(rolled?'<div class=ru-bars><div class=ru-qmark>?</div></div>'
-:('<div class=ru-bars>'
-+'<div class=ru-track><i class=ru-fill style="width:'+pct+'%;background:'+col+'"></i></div>'
-+'<div class=ru-track><i class=ru-fill style="width:'+(tp||0)+'%;background:#6b7a8c"></i></div>'
+// asserts a value we do not have; the length itself is the lie. Its slot holds a single '?' so the
+// rows stay aligned, and the last-known number lives in the hover, labelled as such.
+html+='<div class="ru-w'+(best?'':' ru-unk')+'" data-w="'+w[0]+'">'
++'<div class=ru-name>'+w[2]+'</div>'
++(best?('<div class=ru-bars>'
++'<div class=ru-track><i class=ru-fill style="width:'+best.pct+'%;background:'+best.col+'"></i></div>'
++'<div class=ru-track><i class=ru-fill style="width:'+(best.tp||0)+'%;background:#6b7a8c"></i></div>'
 +'</div>'
-+'<div class=ru-pct>'+pct+'%</div>'))
++'<div class=ru-pct>'+best.pct+'%</div>')
+:'<div class=ru-bars><div class=ru-qmark>?</div></div>')
 +'</div>';});
 return html;}
-// ONE SET PER CLAUDE ACCOUNT (the user 2026-07-30). These windows are ACCOUNT-wide, so a fleet signed into
-// one login has one allowance and drawing it per host would repeat the same number \u2014 that is the common
-// case and it renders exactly as it always did, bare. Sign a machine into a SECOND account, though, and the
-// single set was flatly wrong: two independent allowances added up and shown as one. So the kernel groups
-// by account and each group gets its own bars, labelled with a host that is on it, in the quiet lowercase
-// italic `host:` the chat tabs already wear for a federated session \u2014 same idea, same treatment.
-function renderRows(rows,selfHost){ROWS=rows||[];LAST={};
+// The API cell (the user 2026-08-08): ONE compact entry for everything key-billed across the fleet \u2014
+// the 5-hour burn and the month-to-date, dollars AND tokens (the user 2026-08-09, who wanted the
+// tokens kept beside the spend). No bars (see spendDet). It wears the window cells' own grammar
+// (same day): each designator is the window's ONE display name, in the name font, LEFT of its value \u2014
+// never a '$12 5h' with the window trailing the number in a second vocabulary. The label is the
+// constant 'API' \u2014 no fragment of any key, not even a last-4 tail, reaches a surface (2026-08-08,
+// evening: a tail is still key material, and the hover's HOST names already tell whose spend is
+// whose). The full per-window, per-host breakdown is the hover's job.
+function apiCellHTML(live){var sum={fiveHour:{usd:0,tok:0},month:{usd:0,tok:0}},any=false;
+live.forEach(function(e){var sp=e.det._spend;if(!sp)return;any=true;
+['fiveHour','month'].forEach(function(k){var s=sp[k];if(s){sum[k].usd+=s.usd;sum[k].tok+=s.tok||0;}});});
+if(!any)return '';
+var seg=function(k,lbl){return '<div class=ru-name>'+lbl+'</div>'
++'<div class=ru-pct>'+fmtUsd(sum[k].usd)+' \u00b7 '+fmtTok(sum[k].tok)+' tok</div>';};
+return '<div class="ru-w ru-api">'
++'<div class=ru-name>API</div>'
++seg('fiveHour','5 hours')+seg('month','Month')
++'</div>';}
+// The collapsed rail is the AGGREGATE story (the user 2026-08-08; supersedes the one-set-per-account
+// rendering of 2026-07-30): one set of window bars for the whole fleet plus one API cell, never a
+// per-host repeat. Each host still computes its own detail (LAST), and the hover is where that breaks
+// down per host: with per-session auth a host can carry BOTH a login's windows and its key's spend.
+// The one-host common case renders the same bars it always did, just without a host label anywhere.
+// (No native title anywhere on the rail, the user 2026-08-08: the rich tip is the ONE hover surface.)
+// Same account, ONE truth (the user 2026-08-09): the windows are ACCOUNT-wide allowances, so two
+// hosts signed into the same login are reporting the SAME quantity — and a host that hasn't polled
+// in hours sat beside the live number contradicting it (stale %, rolled '?', an 'updated 2h ago'
+// footer). Hosts are grouped by the acct digest (equality is exactly what it exists for) and every
+// member takes the freshest member's window reading; each host keeps its OWN key spend — dollars
+// really are host-local. Copies stay per host, so the hover still reads per host, just agreeing.
+function shareFreshest(live){var by={};
+live.forEach(function(r){var a=r.usage&&r.usage.acct;if(a)(by[a]=by[a]||[]).push(r);});
+Object.keys(by).forEach(function(a){var g=by[a];if(g.length<2)return;
+var best=g[0];g.forEach(function(r){
+var tb=(typeof best.usage.t==='number')?best.usage.t:-1,tr=(typeof r.usage.t==='number')?r.usage.t:-1;
+if(tr>tb)best=r;});
+g.forEach(function(r){if(r===best)return;var v={},u=r.usage,b=best.usage,k;
+for(k in u)v[k]=u[k];
+['fiveHour','sevenDay','fable','t','limited','acctLabel'].forEach(function(w){
+if(b[w]!==undefined)v[w]=b[w];else delete v[w];});
+r.usage=v;});});}
+function renderRows(rows,selfHost){ROWS=rows||[];LAST=[];
 var live=ROWS.filter(function(r){return hasBars(r.usage)||hasSpend(r.usage);});
 if(!live.length){el.innerHTML='';tip.style.display='none';return;}
-if(live.length===1){var det={};det._t=(typeof live[0].usage.t==='number')?live[0].usage.t:null;
-LAST=[{host:'',det:det}];el.innerHTML=hasBars(live[0].usage)?winsHTML(live[0].usage,det):spendWinsHTML(live[0].usage);return;}
-var html='';LAST=[];
-live.forEach(function(r){var det={};det._t=(typeof r.usage.t==='number')?r.usage.t:null;
-var hn=r.host||selfHost||'this machine';
-LAST.push({host:hn,det:det});
-html+='<div class=ru-set title="The Claude account signed in on '+esc(hn)+'. Its allowance is separate from the others here, so each login gets its own bars.">'
-+'<span class=ru-host>'+esc(hn)+':</span>'+(hasBars(r.usage)?winsHTML(r.usage,det):spendWinsHTML(r.usage))+'</div>';});
-el.innerHTML=html;}
+shareFreshest(live);
+LAST=live.map(function(r){var det={};det._t=(typeof r.usage.t==='number')?r.usage.t:null;
+winDet(r.usage,det);spendDet(r.usage,det);
+return {host:r.host||selfHost||'this machine',det:det};});
+el.innerHTML=aggBarsHTML(LAST)+apiCellHTML(LAST);}
 // The single-payload path the timeline still posts (and the mobile panel's own fetch): treat it as this
 // machine's row, leaving any other account's bars alone.
 function render(u){notices(u);
@@ -17925,25 +18344,55 @@ function barRows(d){return (d.unk
 +(d.tp!=null?'<div class=ru-tip-row><span class=ru-tip-k>elapsed</span>'
 +'<span class=ru-tip-track><i style="width:'+d.tp+'%;background:#6b7a8c"></i></span>'
 +'<span class=ru-tip-v>'+d.tp+'%</span></div>':'');}
-// LAST is one entry per ACCOUNT (2026-07-30), so the tooltip is the same window rows it always was, once
-// per login \u2014 with the host heading it only when there IS more than one, so the ordinary single-account
-// hover is byte-for-byte what it used to be.
+// LAST is one entry per HOST (the user 2026-08-08: the hover is the per-host breakdown the collapsed
+// rail no longer draws), each with the window rows it always had, the host name heading it when there
+// is more than one. A host carries BOTH sections when it has both: its login's windows and its key's
+// spend (per-session auth). EVERY string here must carry data the reader acts on (the user 2026-08-08,
+// who found the tip overly verbose): the host name alone heads a section, the spend rows label
+// themselves, and config hints live in the docs, not a hover.
 function setHTML(e,many){var d=e.det,keys=['fiveHour','sevenDay','fable'].filter(function(k){return d[k];});
-if(!keys.length)return '';
-return (many?'<div class=ru-tip-host>'+esc(e.host)+'</div>':'')
-+keys.map(function(k){var v=d[k];
-return '<div class=ru-tip-win><div class=ru-tip-name><span>'+esc(v.name)+' ('+esc(v.span)+')</span>'
-+(v.unk?'<span class=ru-tip-reset>window reset '+esc(v.ago)+' \u2014 no reading since; current usage unknown</span>'
-:(v.reset?'<span class=ru-tip-reset>resets in '+esc(v.reset)+'</span>':''))+'</div>'+barRows(v)+'</div>';}).join('')
-+(d._t?'<div class=ru-tip-age>updated '+fmtAgo(d._t)+'</div>':'');}
+var sp=d._spend||null;
+if(!keys.length&&!sp)return '';
+var h=(many?'<div class=ru-tip-host>'+esc(e.host)+'</div>':'');
+// the account the window bars belong to, named the way the tab hover names it (the user 2026-08-09);
+// only beside actual window sections — a key-only host's spend already says whose dollars they are
+if(d._acct&&keys.length)h+='<div class=ru-tip-acct>'+esc(d._acct)+'</div>';
+h+=keys.map(function(k){var v=d[k];
+return '<div class=ru-tip-win><div class=ru-tip-name><span>'+esc(v.name)+'</span>'
++(v.unk?'<span class=ru-tip-reset>window reset '+esc(v.ago)+'; no reading since</span>'
+:(v.reset?'<span class=ru-tip-reset>resets in '+esc(v.reset)+'</span>':''))+'</div>'+barRows(v)+'</div>';}).join('');
+// The API-KEY SPEND rows (the user 2026-08-08): dollars, tokens and turns per window, NUMBERS ONLY.
+// The old token-volume graph scaled each window's bar to the largest window, a shape that told the
+// reader nothing; it is gone, and this section now renders for ANY host with key spend, beside that
+// host's own bars when it has both (per-session auth).
+if(sp){var ks=['fiveHour','sevenDay','month'].filter(function(k){return sp[k];});
+if(ks.length){
+h+='<div class=ru-tip-win><div class=ru-tip-name><span>API spend</span></div>'
++ks.map(function(k){var v=sp[k];
+return '<div class=ru-tip-row><span class=ru-tip-k>'+esc(v.label)+'</span>'
++'<span class=ru-tip-v>'+fmtUsd(v.usd)+' \u00b7 '+fmtTok(v.tok)+' tok \u00b7 '+(v.turns||0)+' turns</span></div>';}).join('')
++'</div>';}}
+h+=(d._t?'<div class=ru-tip-age>updated '+fmtAgo(d._t)+'</div>':'');
+return h;}
 function tipHTML(){var sets=LAST||[];if(!sets.length)return '';
 var many=sets.length>1;
-return sets.map(function(e){return setHTML(e,many);}).join('');}
-function showTip(){var h=tipHTML();
+var blocks=sets.map(function(e){return setHTML(e,many);}).filter(function(b){return b;});
+if(!blocks.length)return '';
+// Hosts sit SIDE BY SIDE, one column each (the user 2026-08-08: the breakdown used to stack every
+// host into one tall pillar; columns put them beside each other so hosts compare at a glance).
+// flex-wrap folds the columns back into a stack when width runs out — the mobile Usage modal
+// reuses this exact HTML, so narrow screens degrade on their own, no second layout.
+var h=many?('<div class=ru-tip-cols>'+blocks.map(function(b){return '<div class=ru-tip-col>'+b+'</div>';}).join('')+'</div>'):blocks[0];
+return h+'<div class=ru-tip-age>click to refresh</div>';}
+// The tip anchors ABOVE the rail, centered on the cursor (the user 2026-08-08: it used to pin to the
+// container's RIGHT edge, nowhere near a hover on the left end of a wide multi-account rail).
+function showTip(ev){var h=tipHTML();
 if(!h){tip.style.display='none';return;}
 tip.classList.remove('ru-modal');tip.innerHTML=h;
 var r=el.getBoundingClientRect();tip.style.display='block';
-tip.style.left=(r.right+9)+'px';tip.style.top=Math.max(6,Math.min(window.innerHeight-tip.offsetHeight-6,r.top-4))+'px';}
+var x=(ev&&typeof ev.clientX==='number')?ev.clientX:(r.left+r.width/2);
+tip.style.left=Math.max(6,Math.min(window.innerWidth-tip.offsetWidth-6,x-tip.offsetWidth/2))+'px';
+tip.style.top=Math.max(6,r.top-tip.offsetHeight-8)+'px';}
 // Mobile usage PANEL (the user 2026-07-11): the same window bars the desktop tooltip shows, opened as a
 // centered modal from the bottom bar's Usage button (the rail — and its hover — don't exist on mobile).
 // Pulls fresh first so the numbers aren't a stale boot snapshot; any tap or Escape dismisses.
@@ -17952,9 +18401,11 @@ function openIt(){var h=tipHTML();if(!h)return;
 tip.innerHTML=h;tip.classList.add('ru-modal');tip.style.left='';tip.style.top='';tip.style.display='block';
 back.classList.add('on');
 var off=function(){tip.style.display='none';tip.classList.remove('ru-modal');back.classList.remove('on');
-document.removeEventListener('keydown',esc2,true);};
-var esc2=function(e){if(e.key==='Escape')off();};
-back.onclick=off;document.addEventListener('keydown',esc2,true);}
+window.__rompUsageClose=null;};
+// Escape lands via _LANDING_ESC_JS (shell AND pane documents — the shell-only listener this modal
+// used to bind was deaf whenever focus sat inside a pane iframe); the backdrop tap stays.
+window.__rompUsageClose=off;
+back.onclick=off;}
 pullFleet().then(openIt,openIt);};
 el.addEventListener('mouseenter',showTip);
 el.addEventListener('mouseleave',function(){tip.style.display='none';});
@@ -17964,7 +18415,7 @@ el.addEventListener('mouseleave',function(){tip.style.display='none';});
 // rules); a 60s TIMER runs it silently as a BACKUP so the bars stay fresh even when the timeline iframe isn't
 // forwarding usage (idle, or the Timeline pane toggled off) — the gap that made them look stale until a click.
 // The listener sits on the STABLE #rail-usage container, so render()'s innerHTML swap can't drop it.
-el.style.cursor='pointer';el.title='Click to refresh usage';
+el.style.cursor='pointer';   // no native title (the user 2026-08-08) — the tip's footer carries the click hint
 var _ruBusy=false;
 // /usage/fleet is /usage plus one row per OTHER Claude account in the fleet (the remote readings come from
 // the tunnel supervisor's own cached poll, so this never dials anything). It collapses to a single row \u2014
@@ -18115,9 +18566,10 @@ if(more)more.onclick=function(){var on=sub.hidden;sub.hidden=!on;more.setAttribu
 more.textContent=on?'Hide':'How it works';};
 icon.onclick=function(e){e.stopPropagation();if(back.hidden)open();else close();};
 window.__rompOpenNet=open;   // the mobile bottom bar's Net button (the rail is hidden there)
+window.__rompCloseNet=close;   // Escape routes here (_LANDING_ESC_JS — shell AND pane documents; the
+                               // shell-only keydown this panel used to hold was deaf with focus in an iframe)
 back.onclick=function(e){if(e.target===back)close();};
 if(x)x.onclick=close;
-document.addEventListener('keydown',function(e){if(e.key==='Escape'&&!back.hidden)close();});
 function mruHost(){try{return localStorage.getItem('romp:lastRemoteHost')||'';}catch(e){return '';}}
 // SUGGESTIONS, not the menu. The box takes any ssh target: attach_remote validates it with _safe_ssh_host
 // and hands it to ssh as a positional arg, so ~/.ssh/config is one source of completions rather than the
@@ -18940,14 +19392,18 @@ def _landing():
             "body.settings-open #feed-pane{display:block!important}"
             # inset:0 alone sizes a fixed box to the viewport; the explicit 100vw/100vh OVERRODE it and
             # overshot on iOS, hanging the modal's own actions below the fold (the user 2026-07-29).
-            "body.settings-open #f-feed{display:block;position:fixed;inset:0;z-index:200}"
+            # background:transparent — the shell paints every iframe #1e1e1e (no white flash while a pane
+            # loads), but a LIFTED iframe must show the dashboard through it: its page goes transparent
+            # (rs-modal-open / picker-lifted), and with the element still opaque the modal's dim composited
+            # over solid #1e1e1e — the whole window went black (the user 2026-08-08).
+            "body.settings-open #f-feed{display:block;position:fixed;inset:0;z-index:200;background:transparent}"
             # New-session PICKER full-screen (the user 2026-07-05): the picker lives INSIDE the /chat iframe, so
             # its position:fixed;inset:0 only covered the chat PANE — a short pane couldn't scroll the session
             # list. Same bridge as settings: render.ts posts {romp:'picker',on} and the shell lifts the chat
             # iframe over the whole window (body.picker-open) so the overlay fills the screen and the list gets
             # the full height to scroll. Restored on close.
             "body.picker-open #chat-pane{display:block!important}"
-            "body.picker-open #f-chat{display:block;position:fixed;inset:0;z-index:200}"
+            "body.picker-open #f-chat{display:block;position:fixed;inset:0;z-index:200;background:transparent}"   # same transparency as the settings lift above
             # ── pane rail (the user 2026-06-24; rotated to a BOTTOM BAR the user 2026-07-05): a thin toolbar with
             # Chat / Timeline / Outline / Feed toggles. It used to be a vertical strip on the far LEFT; it now runs
             # HORIZONTALLY across the bottom of .col, BELOW the timeline band (last child of .col). Each toggle is
@@ -19180,30 +19636,33 @@ def _landing():
             "padding:8px 10px;font:500 11px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#cfd6dd;"
             "box-shadow:0 5px 18px rgba(0,0,0,0.45);pointer-events:none;line-height:1.4}"
             ".ru-tip-win{margin-bottom:8px}#ru-tip .ru-tip-win:last-child{margin-bottom:0}"
+            # Multi-host breakdown: one COLUMN per host, side by side (the user 2026-08-08 — not one
+            # tall stack). flex-wrap lets the mobile modal (92vw cap) fold back to a stack on its own.
+            ".ru-tip-cols{display:flex;gap:18px;align-items:flex-start;flex-wrap:wrap}"
+            ".ru-tip-col{flex:0 1 auto;min-width:150px}"
             ".ru-tip-name{font-weight:700;color:#e8eef5;display:flex;justify-content:space-between;gap:14px;margin-bottom:3px}"
             ".ru-tip-reset{font-weight:400;opacity:.6;font-size:10px}"
             ".ru-tip-row{display:flex;align-items:center;gap:6px;margin-top:3px}"
             ".ru-tip-k{opacity:.55;min-width:46px}"
             ".ru-tip-track{width:64px;height:6px;border-radius:3px;background:rgba(255,255,255,0.10);overflow:hidden;display:inline-block}"
             ".ru-tip-track i{display:block;height:100%;border-radius:3px;transition:width .3s ease}"
-            ".ru-tip-v{min-width:30px;text-align:right;font-variant-numeric:tabular-nums}"
+            # margin-left:auto right-aligns every value to one edge, so the bar rows and the numbers-only
+            # spend rows (no track span, the user 2026-08-08) read as one table.
+            ".ru-tip-v{min-width:30px;text-align:right;font-variant-numeric:tabular-nums;margin-left:auto}"
             ".ru-tip-age{margin-top:7px;padding-top:5px;border-top:1px solid rgba(255,255,255,0.08);"
             "opacity:.55;font-size:10px}"
-            # PER-ACCOUNT bar sets (the user 2026-07-30): a machine on a different Claude login has its own
-            # allowance, so it gets its own set, named by a host that is on it. The label is the exact
-            # treatment a federated session's name wears in the chat tabs — quiet, lowercase, italic, and
-            # visibly metadata rather than part of the reading. Only rendered when there IS more than one
-            # account; a same-login fleet keeps a single bare set and this costs nothing.
-            ".ru-set{display:flex;flex-direction:row;align-items:center;gap:10px;flex:0 0 auto}"
-            # a hairline between allowances, so two sets of bars read as two accounts rather than one long
-            # run of windows. Only ever drawn between sets, so the single-account rail is untouched.
-            ".ru-set+.ru-set{padding-left:16px;border-left:1px solid #313234}"
-            ".ru-host{font:italic 400 10px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
-            "color:#6e7681;white-space:nowrap;text-transform:lowercase}"
+            # (The per-host .ru-set/.ru-host rail sets are gone, the user 2026-08-08: the collapsed rail
+            # aggregates one set of bars + one API cell, and the per-host story lives in the hover, whose
+            # .ru-tip-host heading keeps the quiet lowercase-italic treatment a federated session's name
+            # wears in the chat tabs.)
             ".ru-tip-host{font:italic 400 10px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
             "color:#9aa0a6;text-transform:lowercase;margin:0 0 4px}"
             "#ru-tip .ru-tip-host:not(:first-child){margin-top:10px;padding-top:8px;"
             "border-top:1px solid rgba(255,255,255,0.08)}"
+            # the login the window bars belong to (the user 2026-08-09) — quiet, above the sections,
+            # the host heading's size without its lowercase-italic host vocabulary
+            ".ru-tip-acct{font:400 10px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
+            "color:#9aa0a6;margin:0 0 4px}"
             # the three TOP panes flex-grow by a per-pane var (resized by the gutters, persisted); toggling one
             # off hides it AND the now-orphaned gutters. Fixed order: chat, fleet, feed. Timeline is the band.
             "#chat-pane{flex:var(--g-chat,60) 1 0}#fleet-pane{flex:var(--g-fleet,34) 1 0}#feed-pane{flex:var(--g-feed,40) 1 0}"
@@ -19315,16 +19774,19 @@ def _landing():
             "#romp-boot .rl-dots{gap:9px}#romp-boot .rl-dots i{width:11px;height:11px}"
             # The notification center (the user 2026-07-27; replaces the fixed top banners — offline /
             # usage-limit / judge-degraded — which got in the way): the bell in the bottom bar's action
-            # cluster goes RED when an error lands; the popover is a panel anchored above the bell
-            # (bottom-right), newest first, per-row clear + Clear all.
+            # cluster goes RED when an error lands; clicking it opens the Log as a centered modal
+            # (the one panel treatment, the user 2026-08-08), newest first, per-row clear + Clear all.
             "#rail-errs.has,#merr.has{color:#ff6b6b}"   # red bell = something unread / a live problem; no count badge (it clipped, and the number added nothing — the user 2026-07-27)
-            "#rerr-back{position:fixed;inset:0;z-index:210;background:rgba(0,0,0,.35)}"
+            # centered like every other panel (the user 2026-08-08: one modal treatment — centered card,
+            # 0.55 dim, dashboard unchanged behind it; it used to sit bottom-right over the feed)
+            "#rerr-back{position:fixed;inset:0;z-index:210;display:flex;align-items:center;justify-content:center;"
+            "background:rgba(0,0,0,0.55)}#rerr-back[hidden]{display:none}"
             # The panel wears the SAME modal vocabulary as the settings card / network panel (the user
             # 2026-07-27: the first cut's font shorthand leaned on --vscode-font-family, which the browser
             # shell never defines, so the whole shorthand was invalid and the text rendered oversized in
             # the page default): #252526 card, 13px system-ui body, 14px/600 header, 11.5px rows + 11px
             # dim times (the network panel's information-type sizes), rnet-style action button + close.
-            "#rerr-panel{position:absolute;right:10px;bottom:44px;width:min(700px,94vw);max-height:min(60vh,480px);"   # 60% wider (the user 2026-07-28)
+            "#rerr-panel{width:min(700px,94vw);max-height:min(60vh,480px);"   # 60% wider (the user 2026-07-28); a flex child of the centered backdrop, no own positioning
             "display:flex;flex-direction:column;background:#252526;border:1px solid #3a3a3a;border-radius:10px;"
             "box-shadow:0 12px 36px #000000aa;color:#ccc;font:13px/1.6 system-ui,-apple-system,'Segoe UI',sans-serif}"
             "#rerr-panel .rerr-top{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;color:#e8eaed;"
@@ -19579,6 +20041,7 @@ def _landing():
             "<script>" + _LANDING_USAGE_JS + "</script>"
             "<script>" + _LANDING_JS + "</script>"
             "<script>" + _LANDING_FOCUS_JS + "</script>"
+            "<script>" + _LANDING_ESC_JS + "</script>"
             "<script>" + _LANDING_FLEET_JS + "</script>"
             # the restart flow needs this kernel's boot id (to detect the NEW kernel answering /healthz)
             # and the loader markup (to rebuild the boot splash the boot JS removed) — spliced, not
@@ -19590,6 +20053,10 @@ def _landing():
             "<script>" + _LANDING_MOBILE_JS + "</script>"
             "<script>" + _LANDING_PUSH_JS + "</script>"
             "<script>" + _LANDING_COLLAPSE_JS + "</script>"
+            # the command palette (Cmd/Ctrl+P) and the session quick-switcher hotkey (Cmd/Ctrl+O):
+            # a dist bundle (ui/webview/palette-main.ts) like age-color-global above. Loaded last —
+            # it reads the __romp* globals lazily, at command run time, so order is cosmetic.
+            + ("<script src=/dist/palette-main.js?v=%d></script>" % v)
             + _stale_block(v) + _rdrift_block() +
             "</body></html>")
 
@@ -19622,8 +20089,14 @@ class Handler(BaseHTTPRequestHandler):
         if getattr(self, "_set_cookie", None):       # auto-inject the token so a client never 401-loops
             # Max-Age=1yr so the phone persists the token past its browser session (no re-prompt on
             # the tailnet after the tab is closed) — for simplify's auto-serve/permanence work.
+            # SameSite=Lax, NOT Strict (the user 2026-08-08): Android launches an installed
+            # home-screen app through a launcher INTENT, which Chrome scores as a cross-site
+            # top-level navigation — Strict withheld the cookie on every launch and the app opened
+            # on the login page each time, a token re-ask per launch. Lax still attaches only on
+            # top-level navigations (never on a cross-site POST/subresource, and every
+            # state-changing route here is a POST), so the gate the token provides is unchanged.
             self.send_header("Set-Cookie", "romp_token=%s; Path=/; Max-Age=31536000; "
-                             "SameSite=Strict; HttpOnly" % self._set_cookie)
+                             "SameSite=Lax; HttpOnly" % self._set_cookie)
         # CORS delivery for an AUTHORIZED browser origin (set at the _authorize call sites).
         # A VS Code webview's synthetic origin makes every kernel fetch cross-origin, and
         # without an echoed Access-Control-Allow-Origin the browser withholds the response
@@ -20143,6 +20616,51 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(400, "bad json", "text/plain")
                 _del_push_sub(ep)
                 return self._send(200, json.dumps({"ok": True}), "application/json")
+            if u.path == "/push/relay":
+                # A federated peer mirroring its bell events into THIS kernel's subscriptions
+                # (plans/federated-push.md): deliver to the devices subscribed HERE and stop — a
+                # relayed event is terminal (never re-forwarded), so attachment cycles cannot echo.
+                # The serve token already authorized the caller like any client; the ORIGIN's tier
+                # is the HUMAN boundary on top of it: only a host the user marked trusted may buzz
+                # their pocket, and anything else drops with its reason on stderr (fail loudly),
+                # never a silent buzz and never a silent drop.
+                try:
+                    body = json.loads(raw_body or b"{}")
+                    origin = str(body.get("origin") or "").strip()
+                    events = body.get("events")
+                except (ValueError, AttributeError):
+                    return self._send(400, "bad json", "text/plain")
+                if not origin or not isinstance(events, list):
+                    return self._send(400, "missing origin or events", "text/plain")
+                tier = _host_trust(origin)
+                if tier != "trusted":
+                    print("romp: web push: dropped %d bell event(s) relayed from '%s' (its trust "
+                          "here is '%s'; only a trusted host's events reach this kernel's devices "
+                          "— the network panel's per-host selector raises it)"
+                          % (len(events), origin, tier or "unknown"), file=sys.stderr)
+                    return self._send(200, json.dumps({"ok": False, "mirrored": 0,
+                                                       "tier": tier or "unknown"}), "application/json")
+                n = 0
+                for ev in events[:16]:            # a bell mirror, not a bulk pipe — cap the fan-in
+                    if not isinstance(ev, dict):
+                        continue
+                    t = str(ev.get("title") or "")
+                    b = str(ev.get("body") or "")
+                    sid = str(ev.get("sid") or "")
+                    if not (t or b):
+                        continue
+                    # Wear the origin the way every federated surface wears it (host-prefix.ts):
+                    # the sid gains "origin:" so a tap routes through the merged dashboard's own
+                    # tabs, and the title's session name gains the same prefix. Tolerant surgery:
+                    # a title a different build composed passes through unprefixed rather than
+                    # mangled — version skew between peers is a normal state, not an error.
+                    if sid and ":" not in sid:
+                        sid = "%s:%s" % (origin, sid)
+                    if t.startswith("romp: "):
+                        t = "romp: %s:%s" % (origin, t[len("romp: "):])
+                    _push_notify(t, b, sid)       # badge omitted: the origin's count is not ours
+                    n += 1
+                return self._send(200, json.dumps({"ok": True, "mirrored": n}), "application/json")
             if u.path == "/reveal":
                 # The cold-start half of a push tap (see _PENDING_REVEAL): the freshly opened
                 # shell asks for the focus its ?push-reveal= URL named, aimed by its own wid so
@@ -20261,7 +20779,8 @@ class Handler(BaseHTTPRequestHandler):
                     if not _sdk_ready():          # see _sdk_ready — a built backend is not a working one
                         return self._send(200, json.dumps({"ok": False, "error": SDK_SETUP_HINT}),
                                           "application/json")
-                    sid = _create_sdk_session(nm, cwd)
+                    a = (b or {}).get("auth")
+                    sid = _create_sdk_session(nm, cwd, auth=(a if a in ("login", "key") else ""))
                     return self._send(200, json.dumps({"ok": True, "id": sid, "dir": cwd}),
                                       "application/json")
                 threading.Thread(target=_spawn_session, args=(nm, cwd), daemon=True).start()
@@ -20791,7 +21310,10 @@ class Handler(BaseHTTPRequestHandler):
                     # missing, so the old check took it as a yes and created a session that could never
                     # run — silently, which is the whole failure (the user 2026-07-28).
                     if _sdk_ready():
-                        _create_sdk_session(nm, cwd)
+                        # auth ('login'|'key') is the picker's per-session billing pick; anything else
+                        # (older clients, no pick) means the remembered/ambient default (spawn's seed).
+                        a = msg.get("auth")
+                        _create_sdk_session(nm, cwd, auth=(a if a in ("login", "key") else ""))
                     else:
                         # NEVER silently fall back to tmux (the user asked for SDK and got a mystery tmux
                         # session on a remote host without the venv, 2026-07-02). Say what's missing.
@@ -20819,7 +21341,10 @@ class Handler(BaseHTTPRequestHandler):
                                        "defaultDir": _tilde(_default_create_dir()),   # prefill the new-session dir field
                                        # …and whether Browse… can do anything here, so a kernel with no
                                        # desktop shows the button as unavailable rather than inert.
-                                       "nativeDialogs": _native_dialogs()}))
+                                       "nativeDialogs": _native_dialogs(),
+                                       # billing choices THIS host can offer a new session — the picker
+                                       # shows its auth control only when both are real (see _auth_avail)
+                                       "authAvail": _auth_avail()}))
         elif msg and msg.get("type") in ("pickResult", "openByName") and (msg.get("id") or msg.get("name")):
             sid = msg.get("id") or _live_names(_tmux_sessions()).get(str(msg.get("name")))
             if sid:

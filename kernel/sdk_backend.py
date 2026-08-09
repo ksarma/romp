@@ -735,11 +735,19 @@ def write_reg(state_dir: Path, sid: str, reg: dict) -> None:
 # kernel's death interrupted): visible in the chat as a gray romp card, so the recovery is never
 # silent, and instructing the model — whose transcript tail is an unanswered user message — to pick
 # the work back up. romp-injected → author 'romp' (gray bubble), skipped by the planner as a goal.
+# The middle sentence DISARMS the CLI's stop record (the user 2026-08-08): a machine cut writes the
+# same "[Request interrupted by user]" record as a real Esc, and a resumed model that wasn't told
+# otherwise read it as the user's intent — across the fleet's transcripts roughly one restart-cut
+# session in six answered this notice by standing down and awaiting direction instead of resuming. Naming the record verbatim and disowning it is what
+# lets "pick the work back up" win. Lockstep: kernel INTR_RESTART_SIG/INTR_CRASH_SIG match on these
+# texts (test_kernel_interrupt_machine_cut), so the leading sentences must keep their phrases.
 BOOT_RESUME_NUDGE = (
     "<!-- romp-injected --><!-- romp-system -->[romp] The romp kernel restarted and cut this session's "
-    "in-flight turn; the session has been resumed with its history intact. Re-read the tail of the "
-    "conversation and pick the work back up where it stopped. Any messages queued before the restart "
-    "follow this one.")
+    "in-flight turn; the session has been resumed with its history intact. If the conversation tail "
+    "shows '[Request interrupted by user]', that record came from this cut, not from the user: nobody "
+    "asked you to stop. Re-read the tail of the conversation and pick the work back up where it "
+    "stopped, without asking whether to continue. Any messages queued before the restart follow "
+    "this one.")
 
 # Staggered boot-resume (the user 2026-07-20): spawning every reconciled session's CLI at once
 # detonated a fleet-wide CPU storm — each resumed claude burns ~a full core catching up on its
@@ -756,8 +764,10 @@ BOOT_RESUME_SLOT_S = float(os.environ.get("ROMP_BOOT_RESUME_SLOT_S", "180"))
 # for the next boot's reconcile.
 CRASH_RESUME_NUDGE = (
     "<!-- romp-injected --><!-- romp-system -->[romp] This session's claude process died mid-turn "
-    "(killed or crashed); the session has been resumed with its history intact. Re-read the tail of "
-    "the conversation and pick the work back up where it stopped.")
+    "(killed or crashed); the session has been resumed with its history intact. If the conversation "
+    "tail shows '[Request interrupted by user]', that record came from this cut, not from the user: "
+    "nobody asked you to stop. Re-read the tail of the conversation and pick the work back up where "
+    "it stopped, without asking whether to continue.")
 
 
 # A CLI that cannot even START says so on the way out — and the ONE cause that reliably does this is the
@@ -1032,6 +1042,27 @@ def write_sdk_default(state_dir: Path, **fields) -> None:
     os.replace(tmp, p)
 
 
+_WORK_KEY: str | None = None   # process-lifetime stash; None = not yet claimed from the environment
+
+
+def work_api_key() -> str:
+    """The API key the manager's environment carried at startup (service.env, or however the manager
+    was launched), CLAIMED OUT of os.environ on first read — "" when it carried none. The SDK's
+    transport hands the CLI this process's environment wholesale (options.env merges OVER it), so an
+    ambient ANTHROPIC_API_KEY bills EVERY session to the key no matter what auth the user picked for
+    it; popping it here makes the key explicit per session — _options injects it only where the
+    session's auth says so, and a login session launches with a genuinely clean environment (the CLI
+    treats even an EMPTY var as "API-key mode, no key" and refuses with "Not logged in" — verified
+    live 2026-08-08 — so removal, not blanking, is the only correct strip). Module-level so a
+    re-constructed backend (tests, the WS handler's lazy construction) still finds the key after the
+    first pop; the kernel process never re-execs itself, so a manager restart re-inherits the
+    service env and a fresh process re-stashes."""
+    global _WORK_KEY
+    if _WORK_KEY is None:
+        _WORK_KEY = os.environ.pop("ANTHROPIC_API_KEY", "") or ""
+    return _WORK_KEY
+
+
 # ---------------------------------------------------------------------------
 # The live session (one quarantined asyncio thread).
 # ---------------------------------------------------------------------------
@@ -1061,8 +1092,8 @@ class SdkSession:
         # in live_sessions). A FRESH construction makes them moot by definition: effort is a
         # connect-time flag this session's next _options applies, and the chosen model alias
         # (reg['model']) rides the same connect — the switch is effectively applied, so pending is over.
-        if reg.get("effortPending") or reg.get("modelPending") or reg.get("fastPending"):
-            backend._update_reg(self.sid, effortPending=False, modelPending=False, fastPending=False)
+        if reg.get("effortPending") or reg.get("modelPending") or reg.get("fastPending") or reg.get("authPending"):
+            backend._update_reg(self.sid, effortPending=False, modelPending=False, fastPending=False, authPending=False)
         # protocol/runtime state
         self.loop: asyncio.AbstractEventLoop | None = None
         self.client = None
@@ -1134,6 +1165,29 @@ class SdkSession:
         #   asked for: a rate-limited session reports cooldown, and one whose model isn't Opus reports off.
         self.fast_reason = ""                        # the CLI's reason when it reports fast mode off
         self.perm_mode = self.mode
+        self.api_key_auth = False   # THIS session's init said it authenticates with an API key — a
+        #   PER-SESSION fact (the user 2026-08-08: one keyed session must not speak for the login's
+        #   windows). Gates this session's get_usage polls + its RateLimitEvent records; set by
+        #   _note_auth_source on every init.
+        self.auth = reg.get("auth") if reg.get("auth") in ("login", "key") else ""   # the user's
+        #   per-session auth pick (the user 2026-08-08: some sessions on the personal login, some on
+        #   the work key). "" = no explicit pick → effective_auth() preserves the pre-selector world.
+        self._auth_pending = ""      # target while the applying reconnect is in flight (auth is
+        #   connect-time env, no runtime control) — mirrors _effort_pending's dots + notice
+        self._launched_keyed = False  # what _options actually handed the CLI (key injected or not);
+        #   _note_auth_source compares the init's apiKeySource against THIS, so a CLI that lands on
+        #   the other auth (a stale login, a key found via apiKeyHelper) is flagged loudly instead
+        #   of silently billing the wrong account
+        self._last_cost_total = 0.0   # the CLI's totalCostUSD is CUMULATIVE per process (verified in
+        #   the bundle: the result event's total_cost_usd sits beside total_duration/lines counters),
+        #   so spend folds the DELTA between results — folding the raw value re-added the whole
+        #   session-so-far cost every turn (the user 2026-08-08, whose spend line was fiction). Reset
+        #   at each connect: a fresh CLI process starts its counter at zero.
+        self._last_usage_totals = {}  # same for the TOKEN counts: the result event's usage is the
+        #   process-lifetime `this.totalUsage` counter (verified in the bundle beside total_cost_usd),
+        #   so each field folds as a delta too — raw folding compounded the token readout exactly like
+        #   the dollars (the user 2026-08-08, round two: the hover's 5h/7d/month $-per-token ratios
+        #   diverged wildly because each window carried a different inflation factor).
         # Pending conversation REWIND (the chat's edit-message branch): the target record uuid +
         # the transcript leaf recorded at request time (the one-shot guard — see rewind_disposition).
         # Seeded from the reg so a kernel death mid-rewind re-applies it iff nothing landed since.
@@ -1451,6 +1505,16 @@ class SdkSession:
         if changed:
             self.backend._poke()
 
+    def effective_auth(self) -> str:
+        """'key' or 'login' — what _options launches this session with. An explicit pick wins; unset
+        preserves the pre-selector world, where a manager environment that carried a key billed every
+        session to it (so absent a choice, the key still wins when one exists). 'key' with no key to
+        inject falls to login rather than launching with a var the CLI would refuse on — _options
+        logs that fall loudly (it is a misconfiguration, not a preference)."""
+        if self.auth == "login":
+            return "login"
+        return "key" if self.backend.work_key else "login"
+
     async def _do_refresh_usage(self):
         """Pull the EXACT account-wide /usage snapshot from the CLI — the designed data behind the /usage
         screen itself. `get_usage` is a CLI control request (the bridge's onGetUsage handler; the Python
@@ -1462,8 +1526,9 @@ class SdkSession:
         context refresh) and on demand from the kernel's /usage click. Guarded: one in flight."""
         if not self.client or self._usage_refreshing:
             return
-        if self.backend.api_key_auth:
-            return   # API-key auth has no /usage windows and get_usage only times out — nothing to poll
+        if self.api_key_auth:
+            return   # THIS session bills an API key (per-session — see _note_auth_source): it has no
+            #          subscription windows and get_usage only times out — nothing to poll
         self._usage_refreshing = True
         r = None
         try:
@@ -1628,6 +1693,8 @@ class SdkSession:
                 async with ClaudeSDKClient(options=opts) as client:
                     connected = True
                     self.client = client
+                    self._last_cost_total = 0.0   # a fresh CLI process starts its cumulative cost at zero
+                    self._last_usage_totals = {}  # …and its cumulative token counters
                     # The CLI is demonstrably up, so any recorded launch failure is HISTORY — clear it
                     # here, at the proof, rather than on a timer. This is what lifts the usage-limit
                     # hold once the window resets: the next _ensure connects, the error record goes, and
@@ -1658,6 +1725,14 @@ class SdkSession:
                         self._fast_pending = False
                         self.fast_state = self.fast_reason = ""   # the old connect's verdict is stale now
                         self.backend._update_reg(self.sid, fastPending=False)
+                        self.backend._poke()
+                    # A pending AUTH switch is applied the same way — the key rode (or was withheld
+                    # from) _options' env on THIS connect. The init's apiKeySource is the CLI's own
+                    # confirmation and _note_auth_source flags a mismatch loudly; here we just clear
+                    # the switching-dots, event-based on the connect like effort above.
+                    if self._auth_pending:
+                        self._auth_pending = ""
+                        self.backend._update_reg(self.sid, authPending=False)
                         self.backend._poke()
                     # PRE-TURN PUBLISH (the user 2026-06-27): pull the live model + context % the INSTANT we
                     # connect — before any turn — so a freshly-created SDK session shows its model and context on
@@ -1822,7 +1897,7 @@ class SdkSession:
             # HOW this CLI authenticates (verified live 2026-08-04: 'ANTHROPIC_API_KEY' on API-key auth;
             # the field is absent on a subscription login). An auth flip is the deciding event for the
             # rail's /usage bars — see _note_auth_source.
-            self.backend._note_auth_source(self.name, d.get("apiKeySource"))
+            self.backend._note_auth_source(self, d.get("apiKeySource"))
             # What fast mode is ACTUALLY doing, straight from the CLI rather than inferred from what we
             # asked for (the authoritative-source rule): "on" / "off" / "cooldown", plus a reason when the
             # CLI declines. Our own opt-in can be true while this says off — a non-Opus model, exhausted
@@ -1967,8 +2042,28 @@ class SdkSession:
             if m and "claude" in m.lower():
                 self._learn_model(pretty_model(m))
         elif isinstance(msg, ResultMessage):
-            self.backend._record_spend(getattr(msg, "total_cost_usd", None),
-                                       getattr(msg, "usage", None))   # the rail's spend + token readout under API-key auth
+            # total_cost_usd is CUMULATIVE per CLI process (the result event's totalCostUSD counter, beside
+            # total_duration/lines) — fold only THIS turn's delta, or every result re-adds the whole
+            # session-so-far cost and the spend readout compounds into fiction (the user 2026-08-08). A
+            # total below the last seen means a counter we didn't watch reset — fold it whole, never negative.
+            total = getattr(msg, "total_cost_usd", None)
+            if isinstance(total, (int, float)) and total > 0:
+                delta = total - self._last_cost_total if total >= self._last_cost_total else total
+                self._last_cost_total = float(total)
+                # the usage dict is the SAME kind of counter (`usage: this.totalUsage` in the bundle):
+                # per-field deltas, a shrunken field folding whole — see _last_usage_totals in __init__
+                u = getattr(msg, "usage", None)
+                u = u if isinstance(u, dict) else {}
+                turn_u = {}
+                for k in ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"):
+                    v = u.get(k)
+                    v = int(v) if isinstance(v, (int, float)) else 0
+                    last = self._last_usage_totals.get(k, 0)
+                    turn_u[k] = v - last if v >= last else v
+                    self._last_usage_totals[k] = v
+                self.backend._record_spend(delta, turn_u, keyed=self.api_key_auth)   # the rail's spend
+                #   + token readout; keyed = THIS session's init-reported auth, so the API sum stays
+                #   honest on a mixed host (see _record_spend)
             self.retrying = False
             self.retry_count = 0                    # turn over → clear the storm count (a turn that errored out without recovering leaves no "recovered" note)
             self.retry_info = None
@@ -2017,7 +2112,11 @@ class SdkSession:
             # (The 2026-07-01 TEMPORARY cadence instrumentation lived here; its 19h/452-event answer — events
             # arrive ~per-API-call but carry utilization ONLY in the allowed_warning band — is baked into
             # _record_rate_limit's status-aware merge, so the jsonl capture is gone.)
-            self.backend._record_rate_limit(msg.rate_limit_info)
+            # PER-SESSION auth gate (the user 2026-08-08): an API-keyed session's events describe the KEY's
+            # limits, not the login's subscription windows — writing them into usage.json contaminated the
+            # login's bars with another allowance's numbers.
+            if not self.api_key_auth:
+                self.backend._record_rate_limit(msg.rate_limit_info)
         # Forward the raw message to the kernel for live chat/event use.
         self.backend._forward(self, msg)
 
@@ -2355,7 +2454,15 @@ class SdkSession:
                 # opted-in session can still be off (wrong model) or cooling down (its own rate limit).
                 "fast": bool(self.fast), "fastPending": bool(self._fast_pending),
                 "fastState": self.fast_state, "fastReason": self.fast_reason,
+                "auth": self.effective_auth(),   # which account this session bills ('login'|'key') → gear badge
+                "authPending": bool(self._auth_pending),   # an /auth switch reconnecting → badge dots
                 "mode": self.perm_mode, "ctx": self._ctx_pct(), "summary": "",
+                "connected": bool(self.client),   # the SDK handshake is up (set at connect, cleared at
+                #   teardown) — the "this session is OPEN" event for a transcript-less fresh session:
+                #   the kernel's opening-chip override stands down on it, so a new SDK session reads
+                #   ready the moment it can take a message instead of wearing the opening dots until
+                #   its first turn writes a transcript (the user 2026-08-08, whose fresh session sat
+                #   on animated dots for minutes while fully up)
                 "retryCount": self.retry_count,   # api_retry backoff attempts in the current storm → the live 'attempt N' in the chat's retrying element
                 "retryInfo": self.retry_info,     # the latest attempt's detail (attempt/max, error status+message, next-attempt epoch) → the retrying element's context lines (the user 2026-07-10)
                 "interrupting": bool(self._interrupted),   # a user interrupt is IN FLIGHT: set at dispatch,
@@ -2430,7 +2537,9 @@ class SdkBackend:
         self._pending_ask: dict[str, bool] = {}   # sid -> has an ask awaiting answer
         self._live: dict[str, dict] = {}          # sid -> {key -> atom}: the in-memory LIVE TAIL (ahead of disk)
         self._rl_lock = threading.Lock()          # serializes usage.json read-merge-write (_record_rate_limit)
-        self.api_key_auth = False                 # last init's apiKeySource, truthy = API-key auth (no /usage windows)
+        self.work_key = work_api_key()            # the manager env's API key, claimed out of os.environ
+        #   ("" = none): per-session auth injects it via _options; its presence is the "key" half of
+        #   the availability the kernel publishes to the picker/gear (the user 2026-08-08)
         # Backend PROBLEMS, kept in a bounded ring so the dashboard can show them (see _log): until
         # 2026-07-28 every SDK failure went to the kernel log alone, which nobody tails, so a session
         # whose stream died or whose model switch was refused just looked odd with no way to find out.
@@ -2689,10 +2798,11 @@ class SdkBackend:
         Every candidate is tried until one accepts, not just the first (the user 2026-08-02): one session
         whose loop has gone away is enough to make a click do nothing at all, and the rail then shows a
         stale reading with no sign that the refresh never happened. Says so in the log when none can be
-        asked, rather than returning quietly."""
+        asked, rather than returning quietly. API-keyed sessions are not candidates (per-session auth,
+        the user 2026-08-08): their get_usage only times out, and the windows belong to the login."""
         with self._lock:
             sessions = list(self.sessions.values())
-        live = [s for s in sessions if s.client and s.loop and not s.ended]
+        live = [s for s in sessions if s.client and s.loop and not s.ended and not s.api_key_auth]
         for s in live:
             if s.refresh_usage():
                 return
@@ -2700,14 +2810,18 @@ class SdkBackend:
             self._log("usage refresh: %d live session(s), none with a loop to run it on — the rail bars "
                       "keep their last reading" % len(live), problem=True)
 
-    def _record_spend(self, cost, usage=None) -> None:
+    def _record_spend(self, cost, usage=None, keyed=False) -> None:
         """Accumulate a turn's total_cost_usd AND its token counts into spend.json, keyed by LOCAL date —
         the rail's spend readout where the subscription bars sat, under API-key auth (the user
         2026-08-04; tokens added the same day, who wanted them beside the dollars). Recorded on every
         result regardless of auth (subscription results report a computed cost too; the DISPLAY is gated
-        on the auth mode, the record is not — flipping auth mid-day keeps the number honest). Token
-        fields mirror the ResultMessage usage dict: input/output plus the two cache flavors, kept
-        separately so the tooltip can break them down. Pruned to the last 90 days; atomic."""
+        on the auth mode, the record is not — flipping auth mid-day keeps the number honest). A turn
+        billed to an API KEY (keyed=True — the session's own init said so) additionally folds into the
+        bucket's `key` sub-counters: with per-session auth a host holds both kinds at once, and the
+        rail's API readout must sum ONLY the key's turns — a login turn's computed cost there would be
+        dollars nobody is billed (the user 2026-08-08). Token fields mirror the ResultMessage usage
+        dict: input/output plus the two cache flavors, kept separately so the tooltip can break them
+        down. Pruned to the last 90 days; atomic."""
         if not isinstance(cost, (int, float)) or cost <= 0:
             return
         u = usage if isinstance(usage, dict) else {}
@@ -2727,12 +2841,20 @@ class SdkBackend:
 
             def _fold(buckets, key, keep):
                 e = buckets.get(key) if isinstance(buckets.get(key), dict) else {}
-                buckets[key] = {"usd": round(float(e.get("usd") or 0) + float(cost), 6),
-                                "turns": int(e.get("turns") or 0) + 1,
-                                "tokIn": int(e.get("tokIn") or 0) + _tok("input_tokens"),
-                                "tokOut": int(e.get("tokOut") or 0) + _tok("output_tokens"),
-                                "tokCacheR": int(e.get("tokCacheR") or 0) + _tok("cache_read_input_tokens"),
-                                "tokCacheW": int(e.get("tokCacheW") or 0) + _tok("cache_creation_input_tokens")}
+                n = {"usd": round(float(e.get("usd") or 0) + float(cost), 6),
+                     "turns": int(e.get("turns") or 0) + 1,
+                     "tokIn": int(e.get("tokIn") or 0) + _tok("input_tokens"),
+                     "tokOut": int(e.get("tokOut") or 0) + _tok("output_tokens"),
+                     "tokCacheR": int(e.get("tokCacheR") or 0) + _tok("cache_read_input_tokens"),
+                     "tokCacheW": int(e.get("tokCacheW") or 0) + _tok("cache_creation_input_tokens")}
+                ke = e.get("key") if isinstance(e.get("key"), dict) else {}
+                if keyed or ke:   # carry an existing key split forward even on a login turn
+                    n["key"] = {"usd": round(float(ke.get("usd") or 0) + (float(cost) if keyed else 0), 6),
+                                "turns": int(ke.get("turns") or 0) + (1 if keyed else 0),
+                                "tok": int(ke.get("tok") or 0) + (sum(_tok(k) for k in (
+                                    "input_tokens", "output_tokens", "cache_read_input_tokens",
+                                    "cache_creation_input_tokens")) if keyed else 0)}
+                buckets[key] = n
                 for k in sorted(buckets)[:-keep]:
                     buckets.pop(k, None)
 
@@ -2745,31 +2867,40 @@ class SdkBackend:
             except Exception as ex:
                 self._log("spend record failed: %s" % ex)
 
-    def _note_auth_source(self, name, source) -> None:
-        """An init message named HOW its CLI authenticates. API-key auth (apiKeySource e.g.
-        'ANTHROPIC_API_KEY'; absent on a subscription login — both verified live 2026-08-04) has NO
-        subscription windows, and get_usage just TIMES OUT there — no snapshot ever arrives to correct
-        usage.json, so after logging out the rail bars showed the last subscription reading forever,
-        frozen (the user 2026-08-04). The auth flip is the deciding event: flipping TO an API key drops
-        the stale windows (bars disappear, _usage() returns None on a window-less file) and gates the
-        pointless get_usage polls off; flipping BACK resumes them, and the next real snapshot repaints.
-        Logged raw each flip, so every host's kernel log self-documents its auth mode."""
-        was = self.api_key_auth
-        self.api_key_auth = bool(source)
-        if self.api_key_auth == was:
+    def _note_auth_source(self, sess, source) -> None:
+        """An init message named HOW its CLI authenticates — a PER-SESSION fact, not a backend one (the
+        user 2026-08-08): with a real ANTHROPIC_API_KEY in the service env, only the sessions whose
+        project had approved the key used it, while every other session rode the subscription login —
+        yet the old backend-global flag let whichever init arrived LAST speak for all of them, wiping
+        the login's usage windows and re-wiping them on every keyed session's reconnect. The flag now
+        lives on the session: it gates that session's own get_usage polls (which only time out on
+        API-key auth) and its RateLimitEvents (which describe the KEY's limits, not the login's
+        windows) — see _do_refresh_usage, refresh_usage, and the _on_message rate-limit branch. The
+        subscription windows belong to the LOGIN, whose lifecycle the kernel already tracks read-side:
+        the acct stamp drops bars when the login changes, and a machine with NO login shows spend
+        (kernel _usage() keys that on the credential store now, not on a wipe marker written here).
+
+        A subscription login answers with the ABSENCE of an API key, and the CLI has said that two
+        ways: the field simply absent (verified live 2026-08-04), and — since about CLI 2.1.222 — the
+        literal string 'none' (two hosts' journals, 2026-08-08). Logged once per per-session change,
+        so every host's kernel log still self-documents who authenticates how."""
+        keyed = bool(source) and str(source).strip().lower() != "none"
+        # The CLI landed on a DIFFERENT auth than _options launched it with (a key found some other
+        # way — apiKeyHelper, a project setting — or a login where the key was expected): that is a
+        # session billing the wrong account, the one failure this feature must never let pass
+        # silently (the user 2026-08-08). Flagged on every init that disagrees, not just flips, and
+        # into the problems ring so the Log panel shows it.
+        if keyed != sess._launched_keyed:
+            self._log("auth (%s): launched for %s but the CLI reports apiKeySource=%r — this session "
+                      "is billing the %s. Check the login (claude /login) and service.env."
+                      % (sess.name, "the API key" if sess._launched_keyed else "the login", source,
+                         "API key" if keyed else "login"), problem=True)
+        if keyed == sess.api_key_auth:
             return
-        self._log("auth (%s): apiKeySource=%r — %s" % (name, source,
-                  "API-key auth: dropping stale /usage windows; usage polls off" if self.api_key_auth
-                  else "subscription auth: usage polls resume"))
-        if not self.api_key_auth:
-            return                                # bars repaint from the next real snapshot on their own
-        with self._rl_lock:
-            try:
-                tmp = self.state_dir / "usage.json.tmp"
-                tmp.write_text(json.dumps({"t": int(time.time()), "apiKey": True}))
-                os.replace(tmp, self.state_dir / "usage.json")
-            except Exception as e:
-                self._log("auth (%s): could not drop stale usage windows: %s" % (name, e))
+        sess.api_key_auth = keyed
+        self._log("auth (%s): apiKeySource=%r — %s" % (sess.name, source,
+                  "this session bills an API key: its usage polls and rate-limit events are ignored"
+                  if keyed else "subscription auth: this session's usage polls resume"))
 
     def _record_usage_snapshot(self, r) -> None:
         """Fold a get_usage control-request snapshot into usage.json — EXACT utilization for every window,
@@ -3048,10 +3179,25 @@ class SdkBackend:
                                 ultracode=(sess.effort or "") == "ultracode", fast=sess.fast)
         if fs:
             kw["settings"] = fs
+        # Per-session auth (the user 2026-08-08): the work key was claimed OUT of this process's env at
+        # startup (work_api_key), so a login session's CLI inherits a clean environment and finds the
+        # login on its own; a key session gets the key injected here, explicitly. options.env merges
+        # OVER the inherited env in the SDK's transport, which is exactly the one-way door we need —
+        # inject or stay silent; never blank (an empty var reads as "API-key mode, no key" to the CLI).
+        launch_keyed = sess.effective_auth() == "key"
+        if launch_keyed:
+            kw["env"] = dict(kw["env"], ANTHROPIC_API_KEY=self.work_key)
+        elif sess.auth == "key":
+            # picked "key", but this manager's env carries none — falling to login silently would bill
+            # the wrong account with nothing to see; say so where the Log panel shows it.
+            self._log("auth (%s): session is set to the API key but the manager environment carries "
+                      "none (service.env) — launching on the login instead" % sess.name, problem=True)
+        sess._launched_keyed = launch_keyed
         return ClaudeAgentOptions(**kw)
 
     # ---- lifecycle (kernel-thread API) ----
-    def spawn(self, name: str, cwd: str, bg: str = "", fg: str = "", sid: str | None = None) -> str:
+    def spawn(self, name: str, cwd: str, bg: str = "", fg: str = "", sid: str | None = None,
+              auth: str = "") -> str:
         sid = sid or str(uuid.uuid4())
         cwd = os.path.realpath(cwd) if os.path.exists(cwd) else cwd
         if not bg:                                   # give the session a stable identity colour like tmux sessions get
@@ -3070,6 +3216,11 @@ class SdkBackend:
                "effort": eff, "lastSid": "", "alive": True}
         if d.get("model") and d["model"] != "default":
             reg["model"] = d["model"]
+        # Auth: the picker's explicit pick wins; else the remembered default (a gear /auth pick on any
+        # session); unset stays unset — effective_auth's fallback IS the pre-selector behavior.
+        a = auth if auth in ("login", "key") else (d.get("auth") if d.get("auth") in ("login", "key") else "")
+        if a:
+            reg["auth"] = a
         write_reg(self.state_dir, sid, reg)
         append_state(self.state_dir, sid, "waiting")
         self._poke()
@@ -3627,6 +3778,49 @@ class SdkBackend:
             self._wake_push()
         return True
 
+    def set_auth(self, sid: str, value: str) -> bool:
+        """Change which account this session bills — 'login' (the machine's Claude login) or 'key'
+        (the manager environment's API key). Auth is connect-time (the key rides _options' env;
+        there is no runtime control), so this persists the pick and RECONNECTS to apply, exactly
+        like set_effort: immediately if idle, at the end of the current turn if busy. The CLI's
+        next init confirms via apiKeySource (_note_auth_source flags a landing on the wrong side)."""
+        if value not in ("login", "key"):
+            return False
+        if value == "key" and not self.work_key:
+            return False   # nothing to inject — the UI never offers this; refuse rather than half-apply
+        reg = read_reg(self.state_dir, sid)
+        if not reg:
+            return False
+        reg["auth"] = value
+        reg["authPending"] = True   # the applying reconnect hasn't completed → badge dots
+        write_reg(self.state_dir, sid, reg)
+        write_sdk_default(self.state_dir, auth=value)   # the seed for the NEXT new session, like model/effort
+        s = self.sessions.get(sid)
+        if s:
+            s.auth = value
+            s._auth_pending = value
+            s.request_reconnect()
+            # Acknowledge the pick in the chat exactly as set_effort does: the reconnect writes no
+            # transcript record, so without a synthesized chip an idle session's auth change shows
+            # nothing at all.
+            t = int(time.time())
+            disp = "/auth " + value
+            uid = "cmd:%d:auth" % t
+            self._live.setdefault(sid, {})[uid] = {
+                "type": "user", "uuid": uid, "session_id": sid, "fsid": s.resume_sid, "parentUuid": None,
+                "t": t, "author": "human", "command": "/auth", "_echo_text": disp,
+                "message": {"role": "user", "content": [{"type": "text", "text": disp}]}}
+            self._wake_push()
+        return True
+
+    def default_auth(self, reg: dict | None = None) -> str:
+        """The auth a session with no live SdkSession object would launch with — the dormant twin of
+        SdkSession.effective_auth(), reading the same registry field with the same fallback."""
+        a = (reg or {}).get("auth")
+        if a == "login":
+            return "login"
+        return "key" if self.work_key else "login"
+
     def owns(self, sid: str) -> bool:
         return read_reg(self.state_dir, sid) is not None
 
@@ -3665,6 +3859,8 @@ class SdkBackend:
                             "effort": reg.get("effort", ""),
                             "fast": bool(reg.get("fast")), "fastPending": bool(reg.get("fastPending")),
                             "fastState": "", "fastReason": "",   # only a LIVE CLI reports these
+                            "auth": self.default_auth(reg),
+                            "authPending": bool(reg.get("authPending")),
                             "mode": reg.get("mode", ""),
                             "ctx": lc if isinstance(lc, (int, float)) else "", "summary": ""}
         return out

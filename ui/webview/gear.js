@@ -27,13 +27,16 @@ function ku(path) {
   return kb() + path + (path.indexOf('?') >= 0 ? '&' : '?') + 'token=' + encodeURIComponent(tok);
 }
 
-// Static port of the kernel's _shortcut_rows() (the chat-surface shortcuts).
+// The keyboard-shortcuts SECTION is one link now (the user 2026-08-09): the full list — bindable
+// commands, recording, conflicts — lives in the shell's shortcuts dialog (shortcuts-modal.ts), and
+// this row just opens it. Web shell only: in VS Code the same actions are contributed rompChat.*
+// commands, rebindable in VS Code's own Keyboard Shortcuts editor, so the row says that instead
+// (a second editor there would fight the native one). The old static list is gone with the section
+// (it opened with "Enter — send message", a typing key nobody looks up, and went stale per surface).
 var SHORTCUT_ROWS =
-  '<div class=rs-key><span class=rs-key-combo><kbd>Enter</kbd></span><span class=rs-key-desc>Send message</span></div>' +
-  '<div class=rs-key><span class=rs-key-combo><kbd>Shift</kbd> + <kbd>Enter</kbd></span><span class=rs-key-desc>New line</span></div>' +
-  '<div class=rs-key><span class=rs-key-combo><kbd>Esc</kbd></span><span class=rs-key-desc>Jump to the session tabs</span></div>' +
-  '<div class=rs-key><span class=rs-key-combo><kbd>←</kbd> / <kbd>→</kbd></span><span class=rs-key-desc>Switch session (from the tabs)</span></div>' +
-  '<div class=rs-key><span class=rs-key-combo><kbd>Ctrl</kbd> + <kbd>C</kbd></span><span class=rs-key-desc>Interrupt the session</span></div>';
+  '<div class=rs-key id=rs-keys-web hidden><button id=rs-keys-btn type=button>Customize shortcuts…</button>' +
+  '<span class=rs-key-desc>view, record and rebind every dashboard shortcut</span></div>' +
+  '<div class=rs-key id=rs-keys-vsc hidden><span class=rs-key-desc>Shortcuts are VS Code keybindings here — search "rompChat" in Keyboard Shortcuts.</span></div>';
 
 // The modal markup — ported verbatim from the kernel's _gear_html; the model/
 // effort selects start empty and are filled from /models (see fill()).
@@ -74,6 +77,12 @@ var GEAR_HTML =
   '<span><b>Show git branch</b>' +
   "<span class=rs-sub>Show the session's git branch (when it's in a repo) in the chat bottom bar, beside the directory.</span>" +
   '</span></label>' +
+  "<div class='rs-row' style='cursor:default'><span style='flex:1 1 auto'><b>Context gauge in tabs</b>" +
+  "<span class=rs-sub>A slim vertical bar beside each session's name in the tab strip, filling as its context fills — the same colors as the context battery, no number. By default it appears only once a session is half full, so quiet tabs stay clean.</span>" +
+  "<select id=rs-tabctx style='margin-top:5px;width:100%;background:#1e1e1e;color:#ccc;" +
+  "border:1px solid #3a3a3a;border-radius:5px;padding:3px 4px;cursor:pointer'>" +
+  '<option value=over50>When above 50%</option><option value=always>Always</option><option value=never>Never</option>' +
+  '</select></span></div>' +
   '<div class=rs-sec>Timeline</div>' +
   '<label class=rs-row><input type=checkbox id=rs-collapsegaps checked>' +
   '<span><b>Collapse idle gaps</b>' +
@@ -133,10 +142,14 @@ function initGear(post) {
     jix = document.getElementById('rs-judges-index'), jtr = document.getElementById('rs-judges-triage'),
     an = document.getElementById('rs-autonudge'), bk = document.getElementById('rs-backend'),
     dd = document.getElementById('rs-defaultdir'), gb = document.getElementById('rs-branch'),
+    tc = document.getElementById('rs-tabctx'),
     cg = document.getElementById('rs-collapsegaps'), jm = document.getElementById('rs-judgemodel'),
     im = document.getElementById('rs-indexmodel'), je = document.getElementById('rs-judgeeffort'),
     ie = document.getElementById('rs-indexeffort');
-  function load() { try { return Object.assign({ compact: true, colormap: 'aurora', subgoals: true, debug: false, backend: 'sdk', defaultDir: '', showBranch: true, collapseGaps: true }, JSON.parse(localStorage.getItem('romp:settings') || 'null')); } catch (e) { return { compact: true, colormap: 'aurora', subgoals: true, debug: false, backend: 'sdk', defaultDir: '', showBranch: true, collapseGaps: true }; } }
+  function load() { try { return Object.assign({ compact: true, colormap: 'aurora', subgoals: true, debug: false, backend: 'sdk', defaultDir: '', showBranch: true, tabCtx: 'over50', collapseGaps: true }, JSON.parse(localStorage.getItem('romp:settings') || 'null')); } catch (e) { return { compact: true, colormap: 'aurora', subgoals: true, debug: false, backend: 'sdk', defaultDir: '', showBranch: true, tabCtx: 'over50', collapseGaps: true }; } }
+  // mirrors settings.ts tabCtxMode (this file can't import the TS module): the gauge shipped for a
+  // few hours as a boolean toggle — false was an explicit hide, true the default nobody chose.
+  function tabCtxMode(v) { return (v === 'always' || v === 'never') ? v : (v === false ? 'never' : 'over50'); }
   // save() ALWAYS dispatches the same-doc 'romp:settings' signal: consumers in
   // THIS document (the feed's card gates, and the chat transcript now that it
   // hosts its own gear) never get a 'storage' event for a same-document write —
@@ -152,6 +165,7 @@ function initGear(post) {
   }
   cc.addEventListener('change', function () { var s = load(); s.compact = cc.checked; save(s); });
   if (gb) gb.addEventListener('change', function () { var s = load(); s.showBranch = gb.checked; save(s); });
+  if (tc) tc.addEventListener('change', function () { var s = load(); s.tabCtx = tc.value; save(s); });
   jix.addEventListener('change', function () { var s = load(); s.showIndexJudges = jix.checked; save(s); });
   jtr.addEventListener('change', function () { var s = load(); s.showTriageJudges = jtr.checked; save(s); });
   if (cg) cg.addEventListener('change', function () { var s = load(); s.collapseGaps = cg.checked; save(s); });
@@ -251,13 +265,55 @@ function initGear(post) {
   // The settings modal is full-WINDOW in the web shell — ask it to expand the
   // feed iframe while open (no-op elsewhere: VS Code's feed panel IS the window).
   function feedFull(on) { try { if (window.parent !== window) window.parent.postMessage({ romp: 'settings', on: !!on }, '*'); } catch (e) {} }
+  // While lifted, pin the BODY to the feed pane's old screen rect and keep painting (rs-lifted +
+  // --pane-* vars), so the feed stays exactly where it was — live and visible under the dim like every
+  // other pane — instead of leaving a black hole where its pane had been (the user 2026-08-08; same
+  // technique as the chat picker's placeLifted). A pane we can't measure (hidden pane, or a
+  // cross-origin parent like VS Code) falls back to hiding the feed's content (rs-pane-gone). The
+  // measurement retries a few frames: opening from a hidden feed pane, the shell's settings-open class
+  // (which forces the pane visible) lands only after the postMessage round-trip.
+  function paneRect() { try { var el = window.parent !== window ? window.parent.document.getElementById('feed-pane') : null;
+    return el ? el.getBoundingClientRect() : null; } catch (e) { return null; } }
+  function placeLifted(tries) {
+    if (p.hidden || !document.body.classList.contains('rs-lifted')) return;   // closed while retrying
+    var r = paneRect(), gone = !r || r.width < 40 || r.height < 40;
+    document.body.classList.toggle('rs-pane-gone', gone);
+    if (!gone) { var st = document.documentElement.style;
+      st.setProperty('--pane-x', r.left + 'px'); st.setProperty('--pane-y', r.top + 'px');
+      st.setProperty('--pane-w', r.width + 'px'); st.setProperty('--pane-h', r.height + 'px'); }
+    else if (tries > 0) requestAnimationFrame(function () { placeLifted(tries - 1); });
+  }
+  function onRsResize() { placeLifted(0); }   // panes track the window; follow them while open
+  function clearPaneVars() { var st = document.documentElement.style;   // a stale rect from THIS open must not
+    ['--pane-x', '--pane-y', '--pane-w', '--pane-h'].forEach(function (k) { st.removeProperty(k); }); }   // place the NEXT one (the user 2026-08-09)
   function setModalCls(on) { var de = document.documentElement, m = 'rs-modal-open';
-    if (on) { de.classList.add(m); document.body.classList.add(m); } else { de.classList.remove(m); document.body.classList.remove(m); } }
+    if (on) { de.classList.add(m); document.body.classList.add(m);
+      if (window.parent !== window) { document.body.classList.add('rs-lifted'); placeLifted(5); window.addEventListener('resize', onRsResize); } }
+    else { de.classList.remove(m); document.body.classList.remove(m);
+      document.body.classList.remove('rs-lifted'); document.body.classList.remove('rs-pane-gone');
+      clearPaneVars();
+      window.removeEventListener('resize', onRsResize); } }
   function closeSettings() { p.hidden = true; setModalCls(false); feedFull(false); }
   function openSettings() { if (!p.hidden) { closeSettings(); return; }   // the opener toggles the modal
-    p.hidden = false; setModalCls(true); feedFull(true); var s = load(); cc.checked = !!s.compact; jix.checked = (s.showIndexJudges !== undefined ? !!s.showIndexJudges : !!s.debug); jtr.checked = (s.showTriageJudges !== undefined ? !!s.showTriageJudges : !!s.debug); if (gb) gb.checked = s.showBranch !== false; if (cg) cg.checked = s.collapseGaps !== false; cmBuild(); cmPaint(s.colormap || 'aurora'); if (bk) bk.value = s.backend || 'sdk'; if (dd) dd.value = s.defaultDir || ''; plFill(); fill(); }
+    // Signal the SHELL first, then measure (the picker's order, adopted 2026-08-09): feedFull posts
+    // settings-open, which is what un-hides #feed-pane when the feed is toggled off — measuring first
+    // burned the whole 5-frame retry against a display:none pane, latched rs-pane-gone, and the
+    // full-viewport fallback box blacked out every pane behind the modal.
+    p.hidden = false; feedFull(true); setModalCls(true); var s = load(); cc.checked = !!s.compact; jix.checked = (s.showIndexJudges !== undefined ? !!s.showIndexJudges : !!s.debug); jtr.checked = (s.showTriageJudges !== undefined ? !!s.showTriageJudges : !!s.debug); if (gb) gb.checked = s.showBranch !== false; if (tc) tc.value = tabCtxMode(s.tabCtx); if (cg) cg.checked = s.collapseGaps !== false; cmBuild(); cmPaint(s.colormap || 'aurora'); if (bk) bk.value = s.backend || 'sdk'; if (dd) dd.value = s.defaultDir || ''; plFill(); fill(); }
   if (g) g.onclick = function (e) { e.stopPropagation(); openSettings(); };   // hidden anchor; hosts open via the message below
   window.addEventListener('message', function (e) { if (e.data && e.data.romp === 'openSettings') openSettings(); });
+  // The shortcuts row: the web shell (same-origin parent) gets the customize link — it opens the
+  // shell's shortcuts dialog and closes this modal so the two never stack; VS Code (cross-origin
+  // parent) gets the pointer at its own Keyboard Shortcuts editor instead (the user 2026-08-09).
+  (function () {
+    var web = false;
+    try { web = window.parent !== window && !!window.parent.document; } catch (e) { web = false; }
+    var wrow = document.getElementById('rs-keys-web'), vrow = document.getElementById('rs-keys-vsc');
+    if (wrow) wrow.hidden = !web;
+    if (vrow) vrow.hidden = web;
+    var kb2 = document.getElementById('rs-keys-btn');
+    if (kb2) kb2.onclick = function () { closeSettings(); try { window.parent.postMessage({ romp: 'openKeys' }, '*'); } catch (e) { /* no shell to ask */ } };
+  })();
   p.addEventListener('click', function (e) { if (e.target === p) closeSettings(); });   // click the dimmed backdrop (not the card) → close
   document.addEventListener('click', function (e) { if (!p.hidden && e.target !== g && !p.contains(e.target)) closeSettings(); });
   var rf = document.getElementById('rrefresh');   // ↻ (web shell rail only): POST /restart, poll /healthz, reload

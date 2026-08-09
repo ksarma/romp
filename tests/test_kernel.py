@@ -563,6 +563,19 @@ class ViewBuilder(unittest.TestCase):
         feed = km.build_feed(NOW)
         self.assertNotIn("testsess", feed["awaiting"])
 
+    def test_feed_payload_lists_the_tab_sessions_for_the_footer_filter(self):
+        """The footer's session-filter menu lists exactly the chat tab strip (the user 2026-08-08): the
+        payload carries the SAME list _chat_tab_sessions renders, in ITS order, name+colour resolved
+        like tab_meta — so the menu, the tabs, and the grouped headers can never disagree. A session
+        with no cards still appears (filtering to it shows an empty board, it is never unlistable)."""
+        feed = km.build_feed(NOW)
+        rows = feed["sessions"]
+        self.assertEqual([r["sid"] for r in rows],
+                         [s["sid"] for s in km._chat_tab_sessions(NOW, km._tmux_sessions())])
+        me = next(r for r in rows if r["sid"] == SID)
+        self.assertEqual(me["name"], "testsess")
+        self.assertEqual(me["color"], km._name_color(SID), "the tab_meta colour resolution, verbatim")
+
     def test_judge_awaiting_stamp_suppresses_the_stalled_chip(self):
         """The false-'stalled' chain, reproduced end to end: a failed-nudge record exists, the live
         awaiting sources are dark, but the goal store carries the judge's stamp — the card must wear
@@ -1140,6 +1153,27 @@ class ViewBuilder(unittest.TestCase):
         import inspect
         src = inspect.getsource(km._drive)
         self.assertIn('echo=("romp" if msg.get("nudge") else "human") if be is _TMUX else None', src)
+
+    def test_continue_button_rides_the_followup_arm_with_the_kernel_canned_body(self):
+        # the Continue button (the user 2026-08-08) posts askFollowUp cont:true; the kernel substitutes
+        # CONTINUE_TEXT and the arm otherwise IS the typed-reply path — same body compose, same optimistic
+        # reopen, same ack. A reply with a canned body, never a new mechanism: the removed messageless
+        # cardMove showed that a move with no message adds no information and parks the card in Working.
+        import inspect
+        src = inspect.getsource(km._drive)
+        self.assertIn('text = CONTINUE_TEXT if msg.get("cont") else str(msg["text"])', src)
+        self.assertIn("jd.optimistic_followup(sid, iid, text=text, now=int(time.time()))", src)
+        # the canned body covers its three arrival contexts (the user 2026-08-08). ALREADY WORKING is
+        # the commonest press — the judge missed a continuation and the user sees the session busy —
+        # and the message lands at the next turn boundary, so it must read as "carry on, don't stop
+        # to reply", not as a question that stops the work for a status report:
+        self.assertIn("If you're already on it, keep going, no reply needed", km.CONTINUE_TEXT)
+        # a pending question is delegated, not answered:
+        self.assertIn("open calls are yours", km.CONTINUE_TEXT)
+        # and it ends with the one-line escape hatch: a REAL block (the agent needs something only the
+        # user has) comes back as one sharp re-ask, which the judges re-block from — the correct move
+        # on new information, so a mispressed Continue costs one turn, not the thread
+        self.assertIn("say exactly what you need in one line", km.CONTINUE_TEXT)
 
     def test_feed_awaiting_via_session_signal_is_held_in_working_with_a_badge(self):
         # AWAITING = a flavor of WORKING (the user 2026-06-22): when the EVENT-MODEL signal says the session
@@ -2318,7 +2352,9 @@ class ViewBuilder(unittest.TestCase):
         saved = (km._tmux_sessions, km._chat_tab_sessions, km.build_session, km.build_feed,
                  km.build_timeline, km._send_client)
         km._tmux_sessions = lambda: {}
-        km._chat_tab_sessions = lambda now, tmux: [{"sid": "A"}, {"sid": "B"}, {"sid": "C"}]
+        p = str(self.tpath)   # a transcript ON DISK — a pathless fake would rank as just-created (top tier)
+        km._chat_tab_sessions = lambda now, tmux: [{"sid": "A", "path": p}, {"sid": "B", "path": p},
+                                                   {"sid": "C", "path": p}]
         km.build_session = lambda sid, now, tmux: {"id": sid, "name": sid, "color": None,
                                                    "status": None, "ledger": None}
         km.build_feed = lambda now, tmux: {"working": [], "asks": []}
@@ -2344,7 +2380,9 @@ class ViewBuilder(unittest.TestCase):
         saved = (km._tmux_sessions, km._chat_tab_sessions, km.build_session, km.build_feed,
                  km.build_timeline, km._send_client)
         km._tmux_sessions = lambda: {}
-        km._chat_tab_sessions = lambda now, tmux: [{"sid": "A"}, {"sid": "B"}, {"sid": "C"}]
+        p = str(self.tpath)
+        km._chat_tab_sessions = lambda now, tmux: [{"sid": "A", "path": p}, {"sid": "B", "path": p},
+                                                   {"sid": "C", "path": p}]
         km.build_session = lambda sid, now, tmux: {"id": sid, "name": sid, "color": None,
                                                    "status": None, "ledger": None}
         km.build_feed = lambda now, tmux: {"working": [], "asks": []}
@@ -2357,6 +2395,35 @@ class ViewBuilder(unittest.TestCase):
              km.build_timeline, km._send_client) = saved
         self.assertEqual([key[1] for (key, _) in sent if key[0] == "chat"], ["A", "B", "C"],
                          "no active hint → tab order, all tabs still delivered")
+
+    def test_push_builds_a_transcript_less_session_at_active_priority(self):
+        """A JUST-CREATED session has no transcript, and its creator cannot declare it active — a
+        client can't post activeTab for a tab whose first payload hasn't arrived — so ranked last it
+        waited out the whole fleet's builds (~22s measured live), leaving "Opening session" dots on a
+        session that had been ready the whole time (the user 2026-08-08). Its build is near-free, so
+        it rides the ACTIVE tier and its payload streams at the top of the cycle."""
+        sent = []
+        saved = (km._tmux_sessions, km._chat_tab_sessions, km.build_session, km.build_feed,
+                 km.build_timeline, km._send_client)
+        km._tmux_sessions = lambda: {}
+        p = str(self.tpath)
+        km._chat_tab_sessions = lambda now, tmux: [
+            {"sid": "A", "path": p},
+            {"sid": "NEW", "path": p + ".does-not-exist"},   # just created: nothing on disk yet
+            {"sid": "C", "path": p}]
+        km.build_session = lambda sid, now, tmux: {"id": sid, "name": sid, "color": None,
+                                                   "status": None, "ledger": None}
+        km.build_feed = lambda now, tmux: {"working": [], "asks": []}
+        km.build_timeline = lambda now, tmux: None
+        km._send_client = lambda c, key, msg, pre=None: sent.append((key, msg))
+        try:
+            km._push([{"app": "chat", "active": "C", "alive": True}])
+        finally:
+            (km._tmux_sessions, km._chat_tab_sessions, km.build_session, km.build_feed,
+             km.build_timeline, km._send_client) = saved
+        chat_order = [key[1] for (key, _) in sent if key[0] == "chat"]
+        self.assertEqual(chat_order, ["NEW", "C", "A"],
+                         "the transcript-less session shares the active tier (stable within it)")
 
     def test_push_caches_unchanged_background_tabs_but_always_rebuilds_active(self):
         # the user 2026-06-24 (sluggish UI): the 0.5s pusher rebuilt EVERY open tab — a full transcript reshape
@@ -6204,20 +6271,29 @@ class ServeSecurity(unittest.TestCase):
     def test_settings_is_a_fullscreen_modal(self):
         # the user 2026-06-23: the gear's settings is a full-WINDOW modal (was a cramped 240px corner panel).
         # #rsettings is the backdrop + .rs-card the centered card. The gear lives in the feed iframe, so it
-        # asks the shell to lift the feed iframe over the whole window; the feed then goes TRANSPARENT and
-        # hides its own content (rs-modal-open), so the dimmed three-pane DASHBOARD shows through behind the
-        # card — not the feed cards blown up full-screen.
-        self.assertIn("#rsettings { position: fixed; inset: 0; z-index: 60; background: #0000009c;", _gear_css_src())
+        # asks the shell to lift the feed iframe over the whole window; the feed's html then goes TRANSPARENT
+        # and its BODY is pinned to the feed pane's old screen rect, still painting (rs-lifted + --pane-*
+        # vars) — so the dimmed dashboard shows through with the feed cards live and visible in place, not
+        # a black hole where the pane was (the user 2026-08-08). Only an unmeasurable pane (hidden, or a
+        # cross-origin parent like VS Code) hides the feed's content instead (rs-pane-gone).
+        self.assertIn("#rsettings { position: fixed; inset: 0; z-index: 60; background: rgba(0, 0, 0, 0.55);", _gear_css_src())   # the one modal dim (the user 2026-08-08)
         self.assertIn(".rs-card {", _gear_css_src())
-        self.assertIn(".rs-modal-open { background: transparent; }", _gear_css_src())            # feed iframe transparent while open
-        self.assertIn("body.rs-modal-open #feed-list", _gear_css_src())                     # feed cards hidden while open
+        self.assertIn(".rs-modal-open { background: transparent; }", _gear_css_src())            # the page's html steps aside
+        self.assertIn("body.rs-lifted { position: fixed; left: var(--pane-x, 0); top: var(--pane-y, 0);", _gear_css_src())
+        self.assertIn("body.rs-pane-gone #feed-head, body.rs-pane-gone #feed-list, body.rs-pane-gone #feed-foot { visibility: hidden; }",
+                      _gear_css_src())
         self.assertIn("<div id=rsettings hidden><div class=rs-card>", _gear_src())
         self.assertIn("feedFull(true)", _gear_src())              # open → ask the shell to go full-window
-        self.assertIn("setModalCls(true)", _gear_src())          # open → feed goes transparent + hides content
+        self.assertIn("setModalCls(true)", _gear_src())          # open → transparent html + body pinned in place
+        self.assertIn("placeLifted(5)", _gear_src())             # measure the pane rect (retrying while the shell reacts)
+        self.assertIn("getElementById('feed-pane')", _gear_src())
         self.assertIn("if (e.target === p) closeSettings()", _gear_src())   # backdrop click closes
-        # shell side: the feed iframe lifts to cover the whole window (the panes show THROUGH the transparent feed)
+        # shell side: the feed iframe lifts to cover the whole window (the panes show THROUGH the transparent
+        # feed). background:transparent on the LIFTED IFRAME ELEMENT is load-bearing: the shell's default
+        # iframe{background:#1e1e1e} otherwise sits under the transparent page and turns the modal's dim
+        # into a full-window black-out (the user 2026-08-08).
         html = km._landing()
-        self.assertIn("body.settings-open #f-feed{display:block;position:fixed;inset:0;z-index:200", html)   # display:block beats the mobile iframe-hiding
+        self.assertIn("body.settings-open #f-feed{display:block;position:fixed;inset:0;z-index:200;background:transparent}", html)
         self.assertIn("m.romp==='settings'", html)
         self.assertIn("document.body.classList.toggle('settings-open',!!m.on)", html)
 
@@ -6227,12 +6303,29 @@ class ServeSecurity(unittest.TestCase):
         # render.ts posts {romp:'picker',on} and the shell lifts the chat iframe over the whole window
         # (body.picker-open), so the overlay fills the screen and the list gets the full height to scroll.
         html = km._landing()
-        self.assertIn("body.picker-open #f-chat{display:block;position:fixed;inset:0;z-index:200", html)  # lift the chat iframe full-window (display:block beats the mobile hiding)
+        # background:transparent — same as the settings lift: the opaque iframe element was the black-out
+        self.assertIn("body.picker-open #f-chat{display:block;position:fixed;inset:0;z-index:200;background:transparent}", html)
         self.assertIn("body.picker-open #chat-pane{display:block!important}", html)         # un-hide it even if chat is toggled off
         self.assertIn("m.romp==='picker'", html)                                            # the shell listens for the picker post
         self.assertIn("document.body.classList.toggle('picker-open',!!m.on)", html)
         # the settings bridge is untouched (both share the one message handler)
         self.assertIn("document.body.classList.toggle('settings-open',!!m.on)", html)
+
+    def test_log_panel_is_a_centered_modal(self):
+        # the user 2026-08-08: ONE panel treatment — the Log wore the network modal's card but sat
+        # anchored bottom-right over the feed; now its backdrop centers it like #rnet-back, at the
+        # standard 0.55 dim, with the dashboard unchanged (dimmed, visible) behind it.
+        html = km._landing()
+        self.assertIn("#rerr-back{position:fixed;inset:0;z-index:210;display:flex;align-items:center;justify-content:center;", html)
+        self.assertIn("background:rgba(0,0,0,0.55)}#rerr-back[hidden]{display:none}", html)
+        # the panel is a flex child of the centered backdrop — no anchored positioning of its own
+        self.assertNotIn("#rerr-panel{position:absolute", html)
+
+    def test_palette_bundle_wired(self):
+        # the command palette (Cmd/Ctrl+P) + quick-switcher hotkey (Cmd/Ctrl+O): a dist bundle the
+        # shell page loads like age-color-global; behavior is pinned in ui/webview/palette.test.ts.
+        html = km._landing()
+        self.assertIn("<script src=/dist/palette-main.js?v=", html)
 
     def test_fleet_page_served(self):
         # Fleet (the user 2026-06-23): /fleet serves the by-session open-work view, rendered by dist/fleet.js.
@@ -7300,12 +7393,12 @@ class WaitGraphDelegatesAndStampSupersede(unittest.TestCase):
                           "awaitingAt": NOW - 500}},
             "placements": {}, "status": {g: "working"}}))
         self._log(self._msg(self.A, self.B, NOW - 600, "delegate"))
-        full, tops = km._session_stamp_read(self.A)
+        full, tops, _deleg = km._session_stamp_read(self.A)   # 3rd slot = delegated-peer sids (2026-08-08)
         self.assertEqual(full[2], "sent to a peer to build the flag parser")
         self.assertEqual(tops, frozenset({g}))
         # the peer's reply lands (also busts the postal-key on the stamp cache) → the stamp view lifts
         self._log(self._msg(self.B, self.A, NOW - 100, "coordinate", body="built and merged"))
-        full, tops = km._session_stamp_read(self.A)
+        full, tops, _deleg = km._session_stamp_read(self.A)
         self.assertEqual(full, (None, None, None), "the answered handoff supersedes the older stamp")
         self.assertEqual(tops, frozenset())
 

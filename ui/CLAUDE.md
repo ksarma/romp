@@ -13,6 +13,36 @@ collapsed tool-group runs, notice cards, postal/teammate cards, nudge gists,
 Task/Agent prompt+report. This is the "Glanceable by default; mechanics one click
 away" bullet of the Philosophy, stated as the standing rule for every new surface.
 
+### Panels open as centered modals over a dimmed, UNCHANGED dashboard (user rule, 2026-08-08)
+Every panel that opens over the dashboard — settings, the new-session picker, the
+Log, remote kernels, the command palette, and every future one — wears ONE
+treatment: a centered card over a translucent `rgba(0,0,0,0.55)` backdrop, with
+everything behind it left exactly as it was (dimmed but visible — never hidden,
+never solid black, never a layout change). Shell-native panels (`#rnet-back`,
+`#rerr-back`, `#rpal-back`) get this for free: their backdrop composites over the
+real panes. A panel living INSIDE a pane iframe that must cover the whole window
+(settings, picker) is lifted by the shell (`body.settings-open` /
+`body.picker-open`) and must then keep every pixel behind its backdrop looking
+untouched: the page's `html` goes transparent AND the shell's lift rule sets the
+iframe ELEMENT's own `background:transparent` (the default
+`iframe{background:#1e1e1e}` otherwise turns the dim into a full-window black-out
+— the 2026-08-08 bug, twice); and the page's BODY is pinned to the pane's old
+screen rect and KEEPS PAINTING (`--pane-*` vars measured from the shell's pane
+div: `placeLifted()` in render.ts / gear.js), because hiding the content instead
+leaves a black hole where that pane was — the same bug's third form. The pinned
+body's own `background` must stay TRANSPARENT, with the pane-rect backing on a
+`::before` child (absolute inset 0, `--bg`, z-index -1): with the root
+transparent, CSS promotes the BODY's background to the CANVAS — the whole
+viewport — so an opaque body background painted a full-window sheet under the dim
+and blacked out every pane outside the pinned rect. That is the bug's FOURTH form
+(2026-08-09, found by headless pixel comparison after the third fix; a child's
+background never propagates). Only an unmeasurable pane (hidden, or a
+cross-origin parent like VS Code) falls back to hiding its content (`.pane-gone`
+/ `.rs-pane-gone`), which also hides the backing pseudo — its var-less box spans
+the viewport. Small pane-local dialogs
+(confirm boxes, the feed's card modal) stay pane-local by design; this rule is
+for panels that present over the dashboard as a whole.
+
 ### Font sizes: few, and consistent by information type (user rule, 2026-07-02)
 Do not multiply font sizes. Similar kinds of information wear the SAME size — labels
 match labels, times match the lines they annotate, section bodies match each other.

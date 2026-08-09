@@ -89,6 +89,15 @@ romp mail remote                 # connect this remote machine to your laptop's 
 | `check_sent()` | Whether your sent messages were read yet |
 | `recall_message(to, id?)` | Unsend a message the recipient hasn't read |
 
+### Claude Code 2.1.224 or newer
+
+Mail to a terminal (tmux) session delivers through Claude Code's per-session
+inbox socket, which the CLI added in 2.1.224: delivery is instant and never
+touches a half-typed draft. An older Claude Code still works — delivery falls
+back to typing the mail into the pane, which is slower and waits for a free
+prompt — and `romp` says so at launch, with the upgrade being one
+`claude update` away.
+
 ## Configuration
 
 ### Folder click, in your terminal or editor
@@ -106,6 +115,64 @@ open -a Ghostty {dir}               # macOS: a new Ghostty window there
 ghostty --working-directory={dir}   # Linux: Ghostty
 code {dir}                          # VS Code instead
 ```
+
+### Fast mode, from the chat statusline
+
+The statusline's badges — permission mode, model, effort — are each a small
+dropdown. A fourth, **Fast**, appears when the session reports Claude Code's
+fast-mode state (an Opus-only research preview, billed at a premium). Fast
+mode is a connect-time flag for an SDK session, so picking On or Off persists
+the per-session setting and reconnects to apply — immediately when the
+session is idle, at the end of the turn when it is busy, with the same
+switching-dots the effort badge wears. The badge reads the state the CLI
+reports — orange while on, and a cooldown label while fast requests are
+rate-limited — and never appears on a session that cannot run fast mode. The
+pick is per session and never seeds new sessions: fast mode draws credits at
+a higher rate and carries its own rate limit, so it should not quietly
+spread across everything romp starts next.
+
+### Per-session billing (login vs API key)
+
+An SDK session can bill either the machine's Claude login (subscription usage)
+or the `ANTHROPIC_API_KEY` the manager's environment carries — per session.
+
+The new-session picker's **Billing** row states the case whenever the backend
+toggle says SDK: segmented buttons when the selected host offers both choices,
+and with only one real choice, the same spot simply writes out which applies —
+`Login (name@example.com)` or `API key` — so what a session will bill is never
+a mystery. A live session additionally wears a statusline badge for
+*switching*, beside mode/model/effort, and that control keeps the stricter
+rule: it exists only when both choices are real (a one-option selector is
+noise). Switching reconnects the session to apply (the key rides the launch
+environment), with the same switching-dots the effort badge wears.
+
+The login is named by its account (the email the credential store records);
+the key option is labelled plainly `API key` — no fragment of the key, not
+even a last-4 tail, ever reaches a browser or a screen. A new session
+defaults to the last pick made anywhere, and before any pick to the key when
+one is configured — exactly what an ambient key did before the selector
+existed. tmux sessions are not covered: their CLI lives in the tmux server's
+environment, which the kernel does not control.
+
+Each chat tab's hover tooltip carries the same fact as a `Billing` row —
+`API key`, or `Login (name@example.com)` — whenever the session's backend
+reports it, one-auth machines included; only tmux sessions, whose billing romp
+cannot know, show no row.
+
+Failures are loud rather than silent: a session that lands on the other auth
+than it was launched for (say, a key found through `apiKeyHelper`) is flagged
+in the Log panel, and a dead credential — "Not logged in", an invalid or
+expired key — blocks the session's card with the fix named, and is never
+auto-retried.
+
+The usage rail reflects a mixed machine: the window bars (5 hours / 7 days /
+Fable 5) are drawn once, aggregated across every connected host's login as the
+worst reading per window, and an `API` cell beside them carries the
+key-billed dollars (5-hour burn and month-to-date, numbers only). Hovering
+breaks both down per host — one column per host, side by side — and a host
+can show its login's windows and its key's spend together. Only turns whose
+session billed the key count toward the API numbers — a login turn's computed
+cost is dollars nobody pays.
 
 ### Install-time switches
 

@@ -1,10 +1,11 @@
 # iOS: the dashboard as a home-screen app
 
-Status: ALL THREE proposals IMPLEMENTED — 1 and 2 on 2026-08-07 (branch `romp-qs`: manifest +
-icons + Apple metas + iOS-standalone safe-area, and Web Push end to end — `/sw.js`, `/push/*`,
-VAPID, the `_push_notify` sink beside `_system_notify`, the tab-bar bell), live-verified on the
-phone the same day; 3 plus tap-to-open on 2026-08-08 (branch `romp-qs-pushlink`), after the first
-real push opened the app on a different session. A push now carries the firing card's sid and the
+Status: ALL THREE proposals IMPLEMENTED, landing in the commit that adds this file. Proposals 1
+and 2 came first (manifest + icons + Apple metas + iOS-standalone safe-area, and Web Push end to
+end — `/sw.js`, `/push/*`, VAPID, the `_push_notify` sink beside `_system_notify`, the tab-bar
+bell), live-verified on a real iPhone on 2026-08-07; then 3 plus tap-to-open on 2026-08-08, after
+the first real push opened the app on a session OTHER than the one that fired it — the bug that
+motivated the routing metadata below. A push now carries the firing card's sid and the
 needs-you count as routing metadata: the notification tap lands on that session (live window →
 SW postMessage → focus into the chat pane; cold start → `/?push-reveal=` → `POST /reveal` parks a
 wid-aimed focus consumed on that window's chat `ready` — an exact event, no delay heuristics),
