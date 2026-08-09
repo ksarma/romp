@@ -421,7 +421,8 @@ def _version_info():
             "uptime_s": int(time.time() - _STARTED), "dist_ver": _dist_ver(), "bundles": bundles,
             "autoNudge": _auto_nudge_on(),   # server-side toggle state → the gear checkbox reflects the kernel
             "judgeModel": jd._triage_model(), "indexModel": jd._index_model(),      # current per-tier judge models → the gear dropdowns
-            "judgeEffort": jd._triage_effort(), "indexEffort": jd._index_effort()}  # current per-tier judge efforts ("" = default/none)
+            "judgeEffort": jd._triage_effort(), "indexEffort": jd._index_effort(),  # current per-tier judge efforts ("" = default/none)
+            "judgeFast": jd._judge_fast()}   # gear "Fast judging" checkbox state (Opus fast mode on judge calls)
 
 
 def _dist_ver():
@@ -15988,6 +15989,7 @@ def _set_judge_state(fname, value, allowed, allow_empty=False):
             pass
 
 
+def _set_judge_fast(v):  _set_judge_state("judge-fast", v, ("on",), allow_empty=True)
 def _set_judge_model(v):  _set_judge_state("judge-model", v, _MODEL_VALUES)
 def _set_index_model(v):  _set_judge_state("index-model", v, _MODEL_VALUES)
 def _set_judge_effort(v): _set_judge_state("judge-effort", v, _EFFORT_VALUES, allow_empty=True)
@@ -21511,6 +21513,8 @@ class Handler(BaseHTTPRequestHandler):
             _set_judge_effort(str(msg.get("effort") or ""))   # gear "Triage effort" ("" = default/none)
         elif msg and msg.get("type") == "setIndexEffort":
             _set_index_effort(str(msg.get("effort") or ""))   # gear "Indexing effort"
+        elif msg and msg.get("type") == "setJudgeFast":
+            _set_judge_fast("on" if msg.get("on") else "")    # gear "Fast judging" — Opus fast mode on judge calls
 
     def _ws(self):
         key = self.headers.get("Sec-WebSocket-Key")

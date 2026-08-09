@@ -65,6 +65,7 @@ var GEAR_HTML =
   '<div class=rs-sec>Judges</div>' +
   "<div class='rs-row rs-jrow'><b>Triage model</b><span class=rs-sub>The model the triage judges use — planner, grouper, closer, distiller, courier (the judgment-heavy tier). Applies on the judges' next pass; no restart.</span><select id=rs-judgemodel></select></div>" +
   "<div class='rs-row rs-jrow'><b>Triage effort</b><span class=rs-sub>Thinking effort for the triage judges. Default = no effort flag (the judges' standard behavior). Not every model accepts every level.</span><select id=rs-judgeeffort></select></div>" +
+  "<div class='rs-row rs-jrow'><b>Fast judging</b><span class=rs-sub>Run judge calls in fast mode (an Opus-only research preview). Only engages when the judge model is Opus; costs 2x Opus rates and draws on fast mode's own rate limits — the same pool your sessions' fast toggles use. Applies on the judges' next pass.</span><input type=checkbox id=rs-judgefast></div>" +
   "<div class='rs-row rs-jrow'><b>Indexing model</b><span class=rs-sub>The model the indexing judges use — captioner + archiver (high-volume, low-stakes summarization). Haiku by default for cost.</span><select id=rs-indexmodel></select></div>" +
   "<div class='rs-row rs-jrow'><b>Indexing effort</b><span class=rs-sub>Thinking effort for the indexing judges. Default = none (indexing runs with thinking disabled as a cost lever; leave Default unless you know you want it).</span><select id=rs-indexeffort></select></div>" +
   '<div class=rs-sec>Keyboard shortcuts</div>' + SHORTCUT_ROWS +
@@ -145,6 +146,7 @@ function initGear(post) {
     tc = document.getElementById('rs-tabctx'),
     cg = document.getElementById('rs-collapsegaps'), jm = document.getElementById('rs-judgemodel'),
     im = document.getElementById('rs-indexmodel'), je = document.getElementById('rs-judgeeffort'),
+    jf = document.getElementById('rs-judgefast'),
     ie = document.getElementById('rs-indexeffort');
   function load() { try { return Object.assign({ compact: true, colormap: 'aurora', subgoals: true, debug: false, backend: 'sdk', defaultDir: '', showBranch: true, tabCtx: 'over50', collapseGaps: true }, JSON.parse(localStorage.getItem('romp:settings') || 'null')); } catch (e) { return { compact: true, colormap: 'aurora', subgoals: true, debug: false, backend: 'sdk', defaultDir: '', showBranch: true, tabCtx: 'over50', collapseGaps: true }; } }
   // mirrors settings.ts tabCtxMode (this file can't import the TS module): the gauge shipped for a
@@ -175,6 +177,7 @@ function initGear(post) {
   if (jm) jm.addEventListener('change', function () { post({ type: 'setJudgeModel', model: jm.value }); });
   if (im) im.addEventListener('change', function () { post({ type: 'setIndexModel', model: im.value }); });
   if (je) je.addEventListener('change', function () { post({ type: 'setJudgeEffort', effort: je.value }); });
+  if (jf) jf.addEventListener('change', function () { post({ type: 'setJudgeFast', on: jf.checked }); });
   if (ie) ie.addEventListener('change', function () { post({ type: 'setIndexEffort', effort: ie.value }); });
   // feed-colormap preview bar: a horizontal gradient of the SELECTED map's stops (mirrors render.ts COLORMAPS).
   var CMAPS = { aurora: [[84, 178, 4], [0, 180, 115], [35, 175, 156], [66, 169, 176], [25, 168, 201], [14, 164, 227], [74, 155, 241], [113, 145, 244], [144, 136, 240]],
@@ -247,6 +250,7 @@ function initGear(post) {
     if (jm && typeof v.judgeModel === 'string') jm.value = v.judgeModel;   // the judge's ACTUAL current model/effort per tier is authoritative
     if (im && typeof v.indexModel === 'string') im.value = v.indexModel;
     if (je && typeof v.judgeEffort === 'string') je.value = v.judgeEffort;
+    if (jf) jf.checked = !!v.judgeFast;   // server-side toggle: the kernel's state is authoritative
     if (ie && typeof v.indexEffort === 'string') ie.value = v.indexEffort;
     // defaultDir moved OFF /version on 2026-08-05: that route is auth-exempt and must carry no
     // filesystem paths. It comes from the gated /defaults now — a separate fetch, so a kernel that

@@ -149,6 +149,9 @@ def _triage_model():  return _state_str("judge-model", TRIAGE_MODEL)   # gear "T
 def _index_model():   return _state_str("index-model", INDEX_MODEL)    # gear "Indexing model" → STATE/index-model
 def _triage_effort(): return _state_str("judge-effort", "")   # "" → pass NO --effort (the long-standing default)
 def _index_effort():  return _state_str("index-effort", "")
+def _judge_fast():    return _state_str("judge-fast", "") == "on"   # gear "Fast judging" → STATE/judge-fast
+_FAST_MODELS = ("opus",)   # fast mode is an Opus-only research preview; the flag on any other model is
+#                            accepted by the CLI but fast never engages, so gate here and skip the argv noise
 WINDOW      = 48 * 3600                  # only caption transcripts touched in the last N hours (matches the parse horizon)
 COURIER_RETRY_HORIZON = WINDOW           # a usage-limited courier call comes back empty and retries every pass, but a
 #                                          peer message still unsummarized past this many seconds (matches discover()'s
@@ -476,7 +479,29 @@ def _judge_cmd(model, sys_prompt, effort=None):
            "--output-format", "json"]                 # stdout = {"result", "usage", "duration_ms", "total_cost_usd"}
     if effort:
         cmd += ["--effort", effort]
+    # Fast mode (gear "Fast judging", the user 2026-08-09 — a trial): the CLI ignores fast entirely in
+    # non-interactive runs unless the flag-settings layer carries the fastMode opt-in, so pass a static
+    # settings file when the toggle is on AND the model can run fast (Opus-only research preview; the
+    # result JSON's fast_mode_state reports whether it actually engaged). --safe-mode drops only the
+    # AUTO-DISCOVERED settings; an explicit --settings still loads. Costs 2x Opus rates and draws on
+    # fast mode's own rate-limit pool — the same pool interactive sessions' fast toggles use.
+    if model in _FAST_MODELS and _judge_fast():
+        cmd += ["--settings", _judge_fast_settings()]
     return cmd
+
+
+def _judge_fast_settings():
+    """Path to the static flag-settings file carrying the fastMode opt-in. Written on demand with
+    constant content, so the argv is stable and the file survives STATE wipes."""
+    p = STATE / "judge-fast-settings.json"
+    want = '{"fastMode": true}'
+    try:
+        if not p.exists() or p.read_text() != want:
+            STATE.mkdir(parents=True, exist_ok=True)
+            p.write_text(want)
+    except OSError:
+        pass
+    return str(p)
 
 
 _DEBUG_CACHE = [None, None]                # (mtime_ns_or_None, bool) — one stat per check
@@ -621,6 +646,10 @@ def _log_judge_usage(judge, tier, model, fsid, wrap, sent=None, recv=None):
                                 "in": u.get("input_tokens"), "out": u.get("output_tokens"),
                                 "cache_w": u.get("cache_creation_input_tokens"),
                                 "cache_r": u.get("cache_read_input_tokens"),
+                                # the CLI's own word on whether fast mode ran this call ("on"/"off"/
+                                # "cooldown"; absent on CLIs that don't report it) — the observable for
+                                # the gear's "Fast judging" trial (the user 2026-08-09)
+                                "fast": wrap.get("fast_mode_state"),
                                 "cost": wrap.get("total_cost_usd")}) + "\n")
     except Exception:
         pass
