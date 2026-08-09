@@ -3714,6 +3714,7 @@ class SdkBackend:
         s.fast = "on"                          # optimistic for the badge; init re-asserts the truth
         self._wake_push()
         return True
+
     def set_mode(self, sid: str, mode: str) -> bool:
         """Change the permission mode. Persisted in the registry and applied LIVE via the SDK control
         channel (set_permission_mode) — not merely stored for the next reconnect."""
