@@ -68,9 +68,13 @@ class BundleBuildMode(unittest.TestCase):
         src = _read(KERNEL)
         m = re.search(r"def _ensure_bundles\(\):.*?(?=\ndef )", src, re.S)
         body = m.group(0)
-        self.assertIn('ROOT / "ui" / "webview"', body,
+        self.assertIn("_bundle_inputs", body,
+                      "the staleness scan must read the shared input list (_bundle_inputs)")
+        m2 = re.search(r"def _bundle_inputs\(cv\):.*?(?=\ndef )", src, re.S)
+        inputs = m2.group(0)
+        self.assertIn('UI / "webview"', inputs,
                       "the staleness scan must watch ui/webview, where the webview sources live")
-        self.assertIn("for src in srcs", body, "…as one scan over every source root")
+        self.assertIn('rglob("*.css")', inputs, "…including CSS, not just TypeScript")
 
 
 if __name__ == "__main__":
