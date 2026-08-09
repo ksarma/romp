@@ -35,9 +35,8 @@
      (selected toggles, in-progress loading dots, the Fleet pill, focus) — NOT for STATUS colors, which keep
      their own meaning (--st-working-bg yellow = working, --st-blocked-bg red, etc.). --accent-fg reads on it. */
   --accent: #9cd2ff; --accent-fg: #0c1a2e;
-  /* Fast mode's own colour, matching the CLI's (upstream picked this hex first, and it is worth
-     sharing so the badge reads the same in both). A STATUS colour, not accent chrome — which is why
-     fast mode does NOT wear --accent: the rule above reserves the blue for chrome. */
+  /* fast mode ON — the CLI's own fastMode orange, a STATUS color (means "this session runs fast
+     mode"), so the badge reads the same here as in the Claude Code TUI. Not the accent. */
   --fast: #ff6a00;
 
   /* romp dashboard badge colors */

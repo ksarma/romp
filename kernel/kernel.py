@@ -4231,6 +4231,8 @@ def _drive(msg, client):
             _set_model_or_park(be, sid, cmd[len("/model "):].strip())   # mid-compaction → parked as a queued command
         elif cmd.startswith("/effort "):
             _set_effort_or_park(be, sid, cmd[len("/effort "):].strip())   # mid-compaction → parked as a queued command
+        elif cmd.startswith("/fast "):
+            _set_fast_or_park(be, sid, cmd[len("/fast "):].strip())   # mid-compaction → parked as a queued command
         else:
             _send_or_park(be, sid, cmd)   # mid-compaction → parked as a queued command
     elif t == "askFollowUp":
@@ -4411,12 +4413,16 @@ def _drive(msg, client):
         _set_model_or_park(be, sid, str(msg["value"])); _push_soon()   # mid-compaction → parked as a queued command
     elif t == "setEffort" and msg.get("value"):
         _set_effort_or_park(be, sid, str(msg["value"])); _push_soon()   # tmux: /effort; SDK: reconnect with --effort; mid-compaction → parked
+    elif t == "setFast" and msg.get("value") in ("on", "off"):
+        # the chat's fast badge — /fast on|off delivered like any slash command; mid-compaction → parked.
+        # LOUD on refusal (fail loudly, never degrade silently): a dormant SDK session has no live CLI to
+        # apply it, and silently swallowing the click would leave a toggle that "did nothing".
+        if not _set_fast_or_park(be, sid, str(msg["value"])):
+            client["send"](json.dumps({"type": "warn",
+                                       "text": "Couldn't toggle fast mode — the session isn't connected right now."}))
+        _push_soon()
     elif t == "setMode" and msg.get("value"):
         be.set_mode(sid, str(msg["value"])); _push_soon()
-    elif t == "setFast" and msg.get("value"):
-        # SDK only: fast mode rides the CLI's flag-settings opt-in, which a tmux pane has no equivalent
-        # for. _set_fast_or_park refuses rather than pretending (fail loudly, never degrade silently).
-        _set_fast_or_park(be, sid, str(msg["value"]) == "on"); _push_soon()
     elif t == "setAuth" and msg.get("value") in ("login", "key"):
         # per-session billing (login vs the manager env's API key) — SDK-only, applied via reconnect
         # like /effort; mid-compaction → parked in the same FIFO. LOUD on refusal (fail loudly): tmux
@@ -4875,6 +4881,12 @@ class TmuxBackend(sb.SessionBackend):
         _tmux_send(_name_of(sid) or sid, "/effort " + value)
         return True
 
+    def set_fast(self, sid, value):
+        if value not in ("on", "off"):
+            return False
+        _tmux_send(_name_of(sid) or sid, "/fast " + value)   # args form applies directly (no picker/confirm)
+        return True
+
     # lifecycle — tmux sessions are launched by bin/romp (not the kernel) and revived via romp-postal, so
     # spawn/resume aren't backend primitives here; the kernel uses _spawn_session/_revive_session for those.
     def spawn(self, name, cwd, bg="", fg="", sid=None, auth=""):
@@ -5184,16 +5196,12 @@ class Sessions:
                                 "model": st.get("model", ""), "effort": st.get("effort", ""),
                                 "modelPending": bool(st.get("modelPending")),   # a /model switch resolving → badge shows switching-dots
                                 "effortPending": bool(st.get("effortPending")),   # an /effort switch reconnecting → effort-badge dots + "Reloading session…"
-                                # Fast mode: our opt-in, its pending reconnect, and the CLI's own verdict.
-                                # Present on every SDK row and absent from every tmux one — which is exactly
-                                # what _fast_word keys the chip's existence off, since only an SDK session has
-                                # the flag-settings layer fast mode opts in through.
-                                "fast": bool(st.get("fast")), "fastPending": bool(st.get("fastPending")),
-                                "fastState": st.get("fastState") or "", "fastReason": st.get("fastReason") or "",
                                 "retryCount": int(st.get("retryCount") or 0),   # api_retry backoff attempts → the chat's "API retrying — attempt N…" element
                                 "retryInfo": st.get("retryInfo") or None,   # the attempt's detail (attempt/max, error, next-attempt epoch) → the retrying element's context lines (the user 2026-07-10)
                                 "connected": bool(st.get("connected")),   # SDK handshake up → the opening-chip override stands down (fresh sessions have no transcript yet)
                                 "context": ctx if isinstance(ctx, (int, float)) else None, "compactPct": None,
+                                "fast": st.get("fast", ""),   # fast-mode state from the CLI's init ("on"/"off"/"cooldown"; "" = unknown → no badge)
+                                "fastReason": st.get("fastReason", ""),   # init's disabled_reason — non-empty hides the chat toggle
                                 "auth": st.get("auth", ""),   # which account this session bills ('login'|'key') → gear badge
                                 "authPending": bool(st.get("authPending")),   # an /auth switch reconnecting → badge dots
                                 "color": (st.get("color") or None), "mode": st.get("mode", ""), "backend": "sdk",
@@ -10315,28 +10323,6 @@ def _model_pending_now(sid, tm):
         _model_switch_pending.pop(sid, None)
         return False
     return True
-
-
-FAST_WORDS = ("on", "off", "cooldown")   # what the CLI reports fast mode as doing
-
-
-def _fast_word(tm):
-    """The fast-mode label for the statusline chip: "on" / "off" / "cooldown", or "" for a session that
-    has no fast mode at all — a tmux pane, which has no flag-settings layer to opt in through, and whose
-    snapshot therefore carries no 'fast' key. "" keeps the chip away entirely, the same way an empty
-    model or effort does.
-
-    The CLI's report (fastState, from its init message) WINS over what romp asked for, because they
-    genuinely differ: fast mode needs an Opus model and has its own rate limit, so a session we opted in
-    can be reporting off or cooldown. Until the first turn brings an init there is no report — the CLI
-    sends none on a turn-less connect — so the request stands in, which is the honest answer for a
-    session that hasn't run anything yet."""
-    if tm is None or "fast" not in tm:
-        return ""
-    st = (tm.get("fastState") or "").strip().lower()
-    if st in FAST_WORDS:
-        return st
-    return "on" if tm.get("fast") else "off"
 # Dead-lane dismissals (the user 2026-07-02): a DEAD session lingers in the timeline as a faded/struck lane
 # while it's still in the activity window; its Clear button adds the sid here to drop it. DELIBERATELY in
 # memory only (never persisted) — a kernel restart forgets it, so `romp refresh` brings a mistakenly-cleared
@@ -10466,7 +10452,7 @@ def _save_pending_ops():
         sys.stderr.write("pending-ops save: %s\n" % traceback.format_exc())
 
 
-_pending_ops = _load_pending_ops()   # sid -> [("send", text, echo) | ("model", v) | ("effort", v) | ("fast", on) | ("compact",), …] in park order
+_pending_ops = _load_pending_ops()   # sid -> [("send", text, echo) | ("model", v) | ("effort", v) | ("fast", v) | ("compact",), …] in park order
 
 
 def _compacting_now(sid):
@@ -10752,20 +10738,16 @@ def _set_auth_or_park(be, sid, value):
     return be.set_auth(sid, value)
 
 
-def _set_fast_or_park(be, sid, on):
-    """Apply a fast-mode change now — or park it while the session compacts, like model and effort.
-
-    Only the SDK backend has a set_fast: fast mode is the CLI's flag-settings opt-in, taken at connect,
-    and a tmux pane offers nothing equivalent. Say so in the log rather than dropping the click on the
-    floor (the authoritative-source rule: a visible refusal beats a silent no-op)."""
-    if not hasattr(be, "set_fast"):
-        sys.stderr.write("setFast: %s is not an SDK session — fast mode needs the SDK backend's "
-                         "connect-time opt-in\n" % sid)
-        return
+def _set_fast_or_park(be, sid, value):
+    """Apply a fast-mode toggle now — or park it while the session compacts, exactly like /model and
+    /effort (it is a slash command and must keep press order in the same FIFO). Returns the backend's
+    verdict so the caller can be loud when a live apply refuses (dormant SDK session)."""
+    if value not in ("on", "off"):
+        return False
     if _ops_gate(sid):
-        _park_op(sid, ("fast", on))
-    else:
-        be.set_fast(sid, on)
+        _park_op(sid, ("fast", value))
+        return True
+    return be.set_fast(sid, value)
 
 
 def _deliver_send_batch(be, sid, run):
@@ -10830,7 +10812,10 @@ def _apply_pending_ops():
                     be.set_effort(sid, op[1])
                     ops.pop(0)
                 elif op[0] == "fast":
-                    be.set_fast(sid, op[1])
+                    # fast ops parked by a pre-2026-08-09 kernel stored a BOOL; set_fast validates
+                    # against "on"/"off", so coerce here or a queue that survived the upgrade wedges.
+                    v = op[1] if isinstance(op[1], str) else ("on" if op[1] else "off")
+                    be.set_fast(sid, v)
                     ops.pop(0)
                 elif op[0] == "auth":
                     be.set_auth(sid, op[1])
@@ -12095,6 +12080,10 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
                   "retryTries": _retry_gate_state(sid)[0] or None,
                   "backend": _session_backend(sid, tm),
                   "model": tm["model"], "effort": tm["effort"], "mode": tm.get("mode", ""),
+                  # fast-mode badge (SDK sessions; the CLI's init reports on/off/cooldown, "" = unknown →
+                  # no badge — tmux stays "" until its statusline publishes a fast var). A non-empty
+                  # disabled_reason means /fast would refuse, so the chat hides the toggle.
+                  "fast": "" if tm.get("fastReason") else tm.get("fast", ""),
                   # which account this session bills ('login'|'key') — ALWAYS reported when the backend
                   # knows it (the user 2026-08-09: the tab hover says Billing even on a one-auth
                   # machine; tmux sessions report nothing, honestly — their CLI's env is not romp's).
@@ -12109,13 +12098,6 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
                   "authPending": bool(tm.get("authPending")),   # an /auth reconnect applying → badge dots
                   "modelPending": _model_pending_now(sid, tm),   # switching-dots on the model badge until the pick lands, from EITHER surface (the user 2026-07-03)
                   "effortPending": bool(tm.get("effortPending")),   # switching-dots on the effort badge while the /effort reconnect applies (SDK-only; the user 2026-07-06)
-                  # Fast mode. A WORD, not a boolean, so the statusline can key its chip off presence the way
-                  # it does for model/effort — "" means this session has no fast mode to offer (a tmux pane),
-                  # and the chip stays away. The CLI's own report wins when there is one: an opted-in session
-                  # can be running "off" (its model isn't Opus) or "cooldown" (fast mode's own rate limit),
-                  # and the badge must say what is TRUE, not what we asked for.
-                  "fast": _fast_word(tm), "fastPending": bool(tm.get("fastPending")),
-                  "fastReason": tm.get("fastReason") or "",
                   "ctx": str(tm["context"]) if tm["context"] is not None else "",
                   # model name + effort tinted on the GLOBAL colormap by capability/effort rank (the user
                   # 2026-07-02): the statusline meta buttons just apply these (mirrors ctxColor). None = default.
@@ -15424,9 +15406,10 @@ def build_timeline(now, tmux=None, with_bars=True, live_only=False):
             # the lane just applies these, like ctxColor. None → the lane keeps its default gray text.
             "modelColor": _model_color(tm["model"] if tm else "", ctx_stops),
             "effortColor": _effort_color(tm["effort"] if tm else "", ctx_stops),
-            # fast mode, the same word the chat chip reads — the lane spends it on a single asterisk after
+            # fast mode, the same word the chat chip reads (the CLI's init state, blanked when a
+            # disabled_reason means /fast would refuse) — the lane spends it on a single asterisk after
             # the model name (the user 2026-08-08, who wanted the compact form here)
-            "fast": _fast_word(tm),
+            "fast": ("" if tm.get("fastReason") else tm.get("fast", "")) if tm else "",
             "context": (tm["context"] if tm else None),
             "ctxColor": (list(cm.ramp((tm["context"] or 0) / 100.0, ctx_stops))
                          if tm and tm["context"] is not None else None),   # context% on the GLOBAL colormap (bright = full)
@@ -16780,7 +16763,7 @@ def _fleet_view_sig(now, tmux):
             pass
     for s in sorted(tmux):
         t = tmux[s]
-        sig["t:" + s] = (t.get("state"), t.get("model"), t.get("ctx"), t.get("effort"), t.get("mode"), t.get("since"))
+        sig["t:" + s] = (t.get("state"), t.get("model"), t.get("ctx"), t.get("effort"), t.get("mode"), t.get("fast"), t.get("since"))
     return tuple(sorted(sig.items()))
 
 
