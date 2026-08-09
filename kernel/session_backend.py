@@ -15,7 +15,7 @@ A conformance test asserts SdkBackend implements every abstract method, so the d
 
 Method groups:
   liveness/identity — owns, live_sessions
-  control           — send, interrupt, set_model, set_mode, set_effort
+  control           — send, interrupt, set_model, set_mode, set_effort, set_fast
   lifecycle         — spawn, resume, connect, kill, rename
   coordination      — working_note, set_working_note, wake   (backend-agnostic; tmux used @romp-working +
                       send-keys, the SDK now gets a store + an enqueue-wake so it has both too)
@@ -114,6 +114,13 @@ class SessionBackend(ABC):
 
     @abstractmethod
     def set_effort(self, sid: str, value: str) -> bool: ...
+
+    @abstractmethod
+    def set_fast(self, sid: str, value: str) -> bool:
+        """Toggle fast mode (value 'on'|'off'). tmux delivers the literal '/fast on|off' text into the
+        pane; the SDK opts in at connect (the `fastMode` flag-settings key) and takes the literal text
+        only on a connection made with that flag — see SdkBackend.set_fast for the hybrid. False when
+        it can't be applied (bad value, unknown sid) so the kernel can be loud instead of pretending."""
 
     def set_auth(self, sid: str, value: str) -> bool:
         """Pick which account this session bills — 'login' (the machine's Claude login) or 'key' (the

@@ -196,7 +196,7 @@ type ChatEvent = (
 interface TodoTask { id: string; subject: string; activeForm?: string; status: string }
 
 type ChipState = "working" | "ready" | "awaiting" | "awaitingBg" | "idle" | "closed" | "compacting" | "clearing" | "blocked" | "retrying" | "interrupting" | "opening";   // awaiting = a live permission/picker prompt (on YOU); awaitingBg = idle main thread waiting on background work it dispatched (straw, the user 2026-07-13)
-interface Status { state: ChipState; sinceEpoch: number | null; effort?: string; model?: string; modelPending?: boolean; effortPending?: boolean; mode?: string; fast?: string; fastPending?: boolean; fastReason?: string; auth?: string; authPending?: boolean; authBoth?: boolean; authAcct?: string; ctx?: string; ctxColor?: number[]; modelColor?: number[]; effortColor?: number[]; faded?: boolean; backend?: string; apiTooLong?: boolean; apiSpendLimit?: boolean; apiModelLimit?: boolean; apiAuthErr?: boolean; retrySuppressed?: boolean; retryNextAt?: number | null; retryTries?: number | null; }   // retrySuppressed = the user interrupted this thread's API-error storm → romp's auto-retry stays OFF for it until a successful turn re-arms (the user 2026-07-06). backend = "tmux" | "sdk"; apiTooLong = the "blocked" is a "prompt is too long" error (on you → red tab) vs a transient API error (amber/retrying); apiSpendLimit = a monthly spend cap (on you → raise it; NEVER auto-retried — retrying can't fix it, the user 2026-07-14); apiModelLimit = this session's MODEL is out of allowance (on you → switch model or add credits; not auto-retried either, the user 2026-08-01); ctxColor = the GLOBAL colormap's RGB for the context%, computed server-side; modelColor/effortColor = the same map's RGB tint for the model name + effort (by capability/effort rank), server-computed; modelPending = a /model switch is resolving → the badge shows switching-dots until the new name lands (server-driven, event-based, the user 2026-07-03); fast = the CLI's fast-mode state ("on"/"off"/"cooldown", from the SDK init's fast_mode_state; absent = unknown/unavailable → no fast badge)
+interface Status { state: ChipState; sinceEpoch: number | null; effort?: string; model?: string; modelPending?: boolean; effortPending?: boolean; mode?: string; fast?: string; auth?: string; authPending?: boolean; authBoth?: boolean; authAcct?: string; ctx?: string; ctxColor?: number[]; modelColor?: number[]; effortColor?: number[]; faded?: boolean; backend?: string; apiTooLong?: boolean; apiSpendLimit?: boolean; apiModelLimit?: boolean; apiAuthErr?: boolean; retrySuppressed?: boolean; retryNextAt?: number | null; retryTries?: number | null; }   // retrySuppressed = the user interrupted this thread's API-error storm → romp's auto-retry stays OFF for it until a successful turn re-arms (the user 2026-07-06). backend = "tmux" | "sdk"; apiTooLong = the "blocked" is a "prompt is too long" error (on you → red tab) vs a transient API error (amber/retrying); apiSpendLimit = a monthly spend cap (on you → raise it; NEVER auto-retried — retrying can't fix it, the user 2026-07-14); apiModelLimit = this session's MODEL is out of allowance (on you → switch model or add credits; not auto-retried either, the user 2026-08-01); ctxColor = the GLOBAL colormap's RGB for the context%, computed server-side; modelColor/effortColor = the same map's RGB tint for the model name + effort (by capability/effort rank), server-computed; modelPending = a /model switch is resolving → the badge shows switching-dots until the new name lands (server-driven, event-based, the user 2026-07-03); fast = the CLI's fast-mode state ("on"/"off"/"cooldown", from the SDK init's fast_mode_state; absent = unknown/unavailable → no fast badge)
 interface Color { bg: string; fg: string; }
 // A run_in_background task surfaced in the #bg-tasks box (the kernel's _bg_tasks): a one-line summary +
 // status, expandable to the command + its output. status = running | completed | failed.
@@ -3348,8 +3348,6 @@ function showTabTip(tab: HTMLElement, s: Session): void {
   if (s.status.mode) rows.push(["Mode", prettyMode(s.status.mode)]);
   if (s.status.model) rows.push(["Model", s.status.model]);
   if (s.status.effort) rows.push(["Effort", s.status.effort]);
-  // only worth a tooltip row when it's actually doing something — an "off" row on every session is noise
-  if (s.status.fast && s.status.fast !== "off") rows.push(["Fast mode", s.status.fast]);
   // Backend is a plain labelled FIELD now, under the others (the user 2026-07-08 — no longer a coloured
   // "SDK backend" badge at the top of the tooltip; it reads as one of the session's config fields).
   if (be === "sdk" || be === "tmux") rows.push(["Backend", be === "sdk" ? "SDK" : "tmux"]);
@@ -6895,6 +6893,14 @@ const MODE_CHOICES: { label: string; value: string }[] = [
   { label: "Auto", value: "auto" },
   { label: "Plan", value: "plan" },
 ];
+// Fast mode (the CLI's /fast — Opus-only research preview): a two-state toggle offered as the same
+// dropdown shape as the other badges. The badge exists only when the session REPORTS a fast state
+// (st.fast, from the SDK init's fast_mode_state) — a session that can't run it, or a tmux session
+// whose statusline doesn't publish it yet, shows no dead control.
+const FAST_CHOICES: { label: string; value: string }[] = [
+  { label: "On", value: "on" },
+  { label: "Off", value: "off" },
+];
 // Per-session billing (the user 2026-08-08): the Claude login vs the API key the manager's environment
 // carries. st.auth is now ALWAYS reported when the backend knows it (the user 2026-08-09 — the tab
 // hover says Billing everywhere), so this SWITCHING badge gates on st.authBoth instead: a one-auth
@@ -6905,6 +6911,14 @@ const AUTH_CHOICES: { label: string; value: string }[] = [
   { label: "Login", value: "login" },
   { label: "API key", value: "key" },
 ];
+// the fast-mode state ("on"/"off"/"cooldown") → the badge label
+function prettyFast(f: string | undefined): string {
+  switch ((f || "").toLowerCase()) {
+    case "on": return "Fast on";
+    case "cooldown": return "Fast cooldown";   // rate-limited: the CLI resumes fast mode when the limit resets
+    default: return "Fast off";
+  }
+}
 // the per-session billing choice → the badge label (never any key material)
 function prettyAuth(st: Status): string {
   return (st.auth || "").toLowerCase() === "key" ? "API key" : "Login";
@@ -6920,12 +6934,6 @@ function prettyMode(m: string | undefined): string {
     default: return "Normal";   // default / normal / unknown
   }
 }
-// Fast mode is a plain on/off the user owns; "cooldown" is a state the CLI reports back (fast mode has
-// its own rate limit), never something to pick — so it shows in the label but isn't in the menu.
-const FAST_CHOICES: { label: string; value: string }[] = [
-  { label: "Fast on", value: "on" },
-  { label: "Fast off", value: "off" },
-];
 const META_CHOICES: Record<MetaKind, { label: string; value: string }[]> = {
   mode: MODE_CHOICES, model: MODEL_CHOICES, effort: EFFORT_CHOICES, fast: FAST_CHOICES, auth: AUTH_CHOICES,
 };
@@ -6935,38 +6943,11 @@ function metaCurrent(kind: MetaKind, st: Status): string {
     : kind === "auth" ? st.auth : st.mode) || "";
 }
 
-// The fast chip's label. The bare word the server sends ("on") would be meaningless next to "Opus 5"
-// and "xhigh", which label themselves — so this one carries its key. "limited" for the CLI's cooldown:
-// fast mode has hit its own rate limit and this session is running normally until it resets.
-function prettyFast(f: string | undefined): string {
-  switch ((f || "").toLowerCase()) {
-    case "on": return "fast on";
-    case "cooldown": return "fast limited";
-    default: return "fast off";
-  }
-}
-
-// Why the CLI says fast mode is off, in the chip's tooltip — its own reason codes, which are the useful
-// answer when you asked for fast and got off (wrong model, credits, an org policy).
-function fastTitle(st: Status): string {
-  const reason = (st.fastReason || "").trim();
-  const why = reason === "model_not_allowed" ? "fast mode needs an Opus model"
-    : reason === "sdk_opt_in_required" ? "the session has not opted in yet"
-    : reason === "not_first_party" ? "fast mode needs Anthropic API auth"
-    : reason === "extra_usage_disabled" ? "fast mode needs usage credits turned on"
-    : reason === "preference" ? "fast mode is turned off for your organization"
-    : reason ? reason.replace(/_/g, " ")
-    : "";
-  const base = "toggle fast mode · higher speed, higher credit draw, its own rate limit";
-  return why ? base + " · currently off: " + why : base;
-}
-
 // Is this menu entry the session's current value? Effort matches exactly; the
 // model var holds a display name ("Opus 4.8"), so match on the leading word.
 function isCurrentMeta(kind: MetaKind, st: Status, value: string): boolean {
   if (kind === "effort") return (st.effort || "").toLowerCase() === value;
-  // "cooldown" is fast mode ON, just rate-limited right now — so the On entry is still the current one.
-  if (kind === "fast") return ((st.fast || "").toLowerCase() === "off") === (value === "off");
+  if (kind === "fast") return (st.fast || "").toLowerCase() === value;   // "cooldown" marks neither entry
   if (kind === "auth") return (st.auth || "").toLowerCase() === value;
   if (kind === "mode") {
     const m = (st.mode || "").toLowerCase();
@@ -7011,7 +6992,7 @@ function metaButton(kind: MetaKind, text: string): HTMLElement {
   btn.appendChild(caret);
   btn.title = kind === "model" ? "change model (sends /model)"
     : kind === "effort" ? "change thinking effort (sends /effort)"
-    : kind === "fast" ? "toggle fast mode"
+    : kind === "fast" ? "toggle fast mode (sends /fast)"
     : kind === "auth" ? "switch which account this session bills (login vs API key; reconnects to apply)"
     : "change permission mode (shift+tab cycle)";
   btn.addEventListener("click", (e) => { e.stopPropagation(); toggleMetaMenu(kind, btn); });
@@ -7021,11 +7002,9 @@ function metaButton(kind: MetaKind, text: string): HTMLElement {
 // The model/effort label tint, from the server-computed colormap RGB (by capability/effort rank, the user
 // 2026-07-02) — "" for mode (untinted) or an unknown model/effort, which resets to the default gray.
 function metaColor(kind: MetaKind, st: Status): string {
-  // Fast mode isn't on the capability ramp — it's on or it isn't. It wears the CLI's own fast-mode
-  // orange when on, so a session running hot (and drawing credits faster) is visible at a glance and
-  // reads the same here as it does in the terminal; default gray otherwise. Orange rather than the blue
-  // accent on purpose: this is a STATUS, and ui/CLAUDE.md reserves --accent for chrome.
-  if (kind === "fast") return (st.fast || "") === "on" ? "var(--fast)" : "";
+  // fast ON wears the CLI's own fast-mode orange (--fast, a status color) so the badge reads the same
+  // here as in the Claude Code TUI; off/cooldown stay the default gray.
+  if (kind === "fast") return (st.fast || "").toLowerCase() === "on" ? "var(--fast)" : "";
   const c = kind === "model" ? st.modelColor : kind === "effort" ? st.effortColor : undefined;
   return (c && c.length === 3) ? `rgb(${c[0]},${c[1]},${c[2]})` : "";
 }
@@ -7035,10 +7014,7 @@ function metaColor(kind: MetaKind, st: Status): string {
 function syncMetaControls(meta: HTMLElement, st: Status) {
   // order left→right: mode · model · effort · fast · auth — the mode selector sits LEFT of the model name
   // (the user 2026-06-16); fast/auth exist only when the session reports them (SDK init / a both-auth
-  // machine), so a machine with one billing choice shows no dead selector (the user 2026-08-08). st.fast
-  // is "" for anything with no fast mode to offer (a tmux pane), and it is shown even when off, because
-  // a session quietly drawing credits at a higher rate, or quietly rate-limited, is exactly the kind of
-  // thing the statusline exists to say.
+  // machine), so a machine with one billing choice shows no dead selector (the user 2026-08-08).
   const want = [st.mode ? "mode" : "", st.model ? "model" : "", st.effort ? "effort" : "", st.fast ? "fast" : "", (st.auth && st.authBoth) ? "auth" : ""].filter(Boolean).join();
   const btns = Array.from(meta.querySelectorAll(".meta-btn")) as HTMLElement[];
   if (btns.map((b) => b.dataset.kind).join() !== want) {
@@ -7053,7 +7029,6 @@ function syncMetaControls(meta: HTMLElement, st: Status) {
     const kind = b.dataset.kind as MetaKind;
     const disp = kind === "mode" ? prettyMode(st.mode) : kind === "fast" ? prettyFast(st.fast)
       : kind === "auth" ? prettyAuth(st) : metaCurrent(kind, st);
-    if (kind === "fast") b.title = fastTitle(st);   // the CLI's reason moves, so refresh it with the label
     const label = b.querySelector(".meta-label") as HTMLElement | null;
     // A switching MODEL shows animated dots, not the stale/premature name (the user 2026-07-03): the
     // server drives it (st.modelPending) — event-based, cleared the instant the new model actually lands —
@@ -7062,8 +7037,8 @@ function syncMetaControls(meta: HTMLElement, st: Status) {
     // dots from the server (st.modelPending / st.effortPending), with isMetaPending covering the sub-second
     // before the first server push (the user 2026-07-06).
     const pending = (kind === "model" && !!st.modelPending) || (kind === "effort" && !!st.effortPending)
-      || (kind === "fast" && !!st.fastPending) || (kind === "auth" && !!st.authPending) || isMetaPending(kind, st);
-    const showDots = pending && (kind === "model" || kind === "effort" || kind === "fast" || kind === "auth");   // all four apply via a resolve/reconnect the server tracks
+      || (kind === "auth" && !!st.authPending) || isMetaPending(kind, st);
+    const showDots = pending && (kind === "model" || kind === "effort" || kind === "auth");   // all three apply via a resolve/reconnect the server tracks
     if (label) {
       if (showDots) {
         if (!label.querySelector(".meta-dots")) label.replaceChildren(metaDots());
