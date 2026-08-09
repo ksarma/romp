@@ -65,12 +65,14 @@ class SettingsSectionsTest(unittest.TestCase):
         self.assertNotIn("headless", h)
 
     def test_judge_rows_are_one_line_label_plus_picker(self):
-        # label + picker share the line (the user 2026-07-12): four .rs-jrow rows, the select right after
-        # the hover sub, no full-width select stacked under the label; the flex CSS carries the layout
+        # label + picker share the line (the user 2026-07-12): five .rs-jrow rows — four selects plus
+        # the Fast judging checkbox (the user 2026-08-09) — the control right after the hover sub, no
+        # full-width control stacked under the label; the flex CSS carries the layout
         h = _gear_src()
-        self.assertEqual(h.count("rs-jrow"), 4)
+        self.assertEqual(h.count("rs-jrow"), 5)
         for sel in ("rs-judgemodel", "rs-judgeeffort", "rs-indexmodel", "rs-indexeffort"):
             self.assertRegex(h, r"rs-jrow'><b>[^<]+</b><span class=rs-sub>[^<]*</span><select id=" + sel)
+        self.assertRegex(h, r"rs-jrow'><b>[^<]+</b><span class=rs-sub>[^<]*</span><input type=checkbox id=rs-judgefast")
         self.assertIn("#rsettings .rs-jrow select {", _gear_css_src())
 
     def test_collapse_gaps_is_wired_to_the_shared_collapseGaps_setting(self):
