@@ -35,21 +35,39 @@ km = SourceFileLoader("romp_kernel", os.path.join(BIN, "romp-kernel")).load_modu
 
 REMOTE_TOKEN = "remote-token-DO-NOT-USE"
 PNG_BYTES = b"\x89PNG\r\n\x1a\nfake-png-bytes"
+# the download fixture: NUL-ridden, off every view allowlist, and BIGGER than one relay stream chunk,
+# so the pass-through provably crosses a chunk boundary intact
+BIN_BYTES = bytes(range(256)) * ((km._DOWNLOAD_CHUNK // 256) + 60)
 
 
 class _FakeRemoteFileHandler(BaseHTTPRequestHandler):
     """The attached host's kernel behind the ssh -L port, /file route only: serves PNG_BYTES for
-    path=/tmp/plot.png (recording the request line), 404s anything else."""
+    path=/tmp/plot.png and BIN_BYTES for path=/tmp/data.bin&download=1 (recording the request
+    lines), 404s anything else."""
     requests = []               # class-level: the recorded request lines
     ctype = "image/png"         # what this remote CLAIMS the bytes are (a hostile one lies)
+    dl_ctype = "application/octet-stream"          # …and the download-side claims (a hostile one lies)
+    dl_disp = 'attachment; filename="data.bin"'
 
     def _serve(self, head):
         _FakeRemoteFileHandler.requests.append(self.path)
+        if "download=1" in self.path and "data.bin" in self.path:
+            self.send_response(200)
+            self.send_header("Content-Type", _FakeRemoteFileHandler.dl_ctype)
+            self.send_header("Content-Disposition", _FakeRemoteFileHandler.dl_disp)
+            self.send_header("Content-Length", str(len(BIN_BYTES)))
+            self.end_headers()
+            if not head:
+                self.wfile.write(BIN_BYTES)
+            return
         if "plot.png" not in self.path:
+            body = b"not found: /tmp/gone" if "download=1" in self.path else b""
             self.send_response(404)
             self.send_header("Content-Type", "text/plain")
-            self.send_header("Content-Length", "0")
+            self.send_header("Content-Length", str(len(body)))
             self.end_headers()
+            if not head:
+                self.wfile.write(body)
             return
         self.send_response(200)
         self.send_header("Content-Type", _FakeRemoteFileHandler.ctype)
@@ -77,6 +95,8 @@ class RemoteFileRelay(unittest.TestCase):
         threading.Thread(target=self.fake.serve_forever, daemon=True).start()
         _FakeRemoteFileHandler.requests = []
         _FakeRemoteFileHandler.ctype = "image/png"
+        _FakeRemoteFileHandler.dl_ctype = "application/octet-stream"
+        _FakeRemoteFileHandler.dl_disp = 'attachment; filename="data.bin"'
         self._saved_remotes = dict(km._remotes)
 
     def tearDown(self):
@@ -177,6 +197,69 @@ class RemoteFileRelay(unittest.TestCase):
         self.assertEqual(status, 403, "the local auth gate must run before the relay")
         self.assertEqual(_FakeRemoteFileHandler.requests, [],
                          "an unauthorized request must never touch the tunnel")
+
+    # ── the download half (the user 2026-08-09): /remote/<host>/file?download=1 relays ANY file the
+    # remote will serve, streamed through, with the attachment headers derived on THIS side ──
+
+    def test_download_relays_any_extension_and_the_disposition_survives(self):
+        self._register("gpu1", self.fake.server_address[1])
+        status, body, headers = self._get(
+            "/remote/gpu1/file?path=%2Ftmp%2Fdata.bin&download=1&token=whatever-the-browser-sent")
+        self.assertEqual(status, 200)
+        self.assertEqual(body, BIN_BYTES,
+                         "bigger than one stream chunk, so the pass-through crossed a boundary intact")
+        self.assertEqual(headers.get("Content-Disposition"), 'attachment; filename="data.bin"')
+        self.assertEqual(headers.get("Content-Type"), "application/octet-stream")
+        self.assertEqual(headers.get("Content-Length"), str(len(BIN_BYTES)))
+        self.assertEqual(headers.get("X-Content-Type-Options"), "nosniff")
+        # forwarded intact: download=1 rides through, the REMOTE's token replaces the browser's
+        (req,) = _FakeRemoteFileHandler.requests
+        self.assertIn("download=1", req)
+        self.assertIn("token=" + REMOTE_TOKEN, req)
+        self.assertNotIn("whatever-the-browser-sent", req)
+
+    def test_download_headers_are_derived_locally_never_mirrored_from_the_remote(self):
+        # the lying-remote rule, download edition: an attached host serves its own bytes but never
+        # chooses how this browser handles them — a hostile Content-Type/Disposition is discarded
+        self._register("gpu1", self.fake.server_address[1])
+        _FakeRemoteFileHandler.dl_ctype = "text/html"
+        _FakeRemoteFileHandler.dl_disp = "inline"
+        status, body, headers = self._get("/remote/gpu1/file?path=%2Ftmp%2Fdata.bin&download=1")
+        self.assertEqual(status, 200)
+        self.assertEqual(body, BIN_BYTES)
+        self.assertEqual(headers.get("Content-Type"), "application/octet-stream")
+        self.assertEqual(headers.get("Content-Disposition"), 'attachment; filename="data.bin"')
+
+    def test_the_view_relay_still_declines_that_same_extension(self):
+        # without download=1 nothing changed: a .bin is off _PREVIEW_MIME, 404'd HERE, remote unasked
+        self._register("gpu1", self.fake.server_address[1])
+        status, _, _ = self._get("/remote/gpu1/file?path=%2Ftmp%2Fdata.bin")
+        self.assertEqual(status, 404)
+        self.assertEqual(_FakeRemoteFileHandler.requests, [])
+
+    def test_a_remote_download_404_passes_through(self):
+        self._register("gpu1", self.fake.server_address[1])
+        status, body, _ = self._get("/remote/gpu1/file?path=%2Ftmp%2Fgone.bin&download=1")
+        self.assertEqual(status, 404)
+        self.assertIn(b"not found", body, "the remote's own verdict, which names the path IT resolved")
+
+    def test_head_download_relays_the_attachment_without_a_body(self):
+        self._register("gpu1", self.fake.server_address[1])
+        status, body, headers = self._get("/remote/gpu1/file?path=%2Ftmp%2Fdata.bin&download=1",
+                                          method="HEAD")
+        self.assertEqual(status, 200)
+        self.assertEqual(body, b"")
+        self.assertEqual(headers.get("Content-Disposition"), 'attachment; filename="data.bin"')
+        self.assertEqual(headers.get("Content-Length"), str(len(BIN_BYTES)))
+
+    def test_a_dead_tunnel_502s_the_download_too(self):
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        probe.bind(("127.0.0.1", 0))
+        dead_port = probe.getsockname()[1]
+        probe.close()
+        self._register("gpu1", dead_port)
+        status, _, _ = self._get("/remote/gpu1/file?path=%2Ftmp%2Fdata.bin&download=1")
+        self.assertEqual(status, 502)
 
     def test_dead_tunnel_502s(self):
         # a registered host whose forwarded port has no listener (the ssh died mid-flight)
