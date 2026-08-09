@@ -70,7 +70,7 @@ test("the statusline auth badge — the switching CONTROL — still gates on bot
   // the pick posts setAuth, and the applying reconnect drives the switching-dots
   assert.match(RENDER, /kind === "auth" \? "setAuth"/);
   assert.match(RENDER, /\(kind === "auth" && !!st\.authPending\)/);
-  assert.match(RENDER, /kind === "model" \|\| kind === "effort" \|\| kind === "auth"\);/);
+  assert.match(RENDER, /kind === "model" \|\| kind === "effort" \|\| kind === "fast" \|\| kind === "auth"\);/);
   assert.match(RENDER, /auth\?: string; authPending\?: boolean; authBoth\?: boolean; authAcct\?: string;/);
 });
 
