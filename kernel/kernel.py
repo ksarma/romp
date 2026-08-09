@@ -10591,7 +10591,7 @@ def _park_op(sid, op):
     earlier parked op of the same kind IN PLACE — its queue position stands, its value updates — so the
     chat shows one "/model …" chip carrying the latest pick. Messages always append."""
     q = _pending_ops.setdefault(str(sid), [])
-    if op[0] in ("model", "effort"):
+    if op[0] in ("model", "effort", "fast"):
         for i, o in enumerate(q):
             if o[0] == op[0]:
                 q[i] = op
