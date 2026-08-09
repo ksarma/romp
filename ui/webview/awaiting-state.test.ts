@@ -43,13 +43,15 @@ test("the feed dot matches too: dotFor picks work/await per name, the dot retint
   assert.match(KERNEL, /if sess_awaiting_why and not who_working:\s*\n\s*awaiting\.append\(name\)/);
   assert.match(KERNEL, /\{"type": "working", "names": feed\["working"\],\s*\n\s*"awaiting": feed\.get\("awaiting"\) or \[\]\}/);
   assert.match(FEED, /awaitingSet = new Set\(Array\.isArray\(m\.awaiting\) \? m\.awaiting : \[\]\);/);
-  assert.match(FEED, /const dotFor = \(name: string\): DotState => workingSet\.has\(name\) \? "work" : awaitingSet\.has\(name\) \? "await" : "";/);
+  // dotFor still ranks work over await; the ready/unknown quarters follow (see feed-status-pips.test.ts)
+  assert.match(FEED, /workingSet\.has\(name\) \? "work" : awaitingSet\.has\(name\) \? "await"/);
   // an existing dot RETINTS when the state flips (working → awaiting), instead of only add/remove
-  assert.match(FEED, /else if \(st && has\) prev!\.classList\.toggle\("await", st === "await"\);/);
+  assert.match(FEED, /else if \(st && has\) paint\(prev!\);/);
+  assert.match(FEED, /d\.classList\.toggle\(k, st === k\);/);
   // every name-dot site routes through dotFor: cards, group cards, both modal headers, grouped headers
   assert.equal((FEED.match(/setWorkDot\((?:a\._name|agent|nm), dotFor\(/g) || []).length, 5);
   assert.match(FEEDCSS, /\.fwork-dot\.await \{ background: #54B204; \}/);
-  assert.match(FED, /const ARRAY_ID = \["order", "names", "working", "awaiting"\];/);
+  assert.match(FED, /const ARRAY_ID = \["order", "names", "working", "awaiting", "ready", "stateUnknown"\];/);
   assert.match(FED, /if \(Array\.isArray\(f\.awaiting\)\) merged\.awaiting\.push\(\.\.\.f\.awaiting\);/);
 });
 

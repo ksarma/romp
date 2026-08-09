@@ -12946,6 +12946,27 @@ def _boundary_clear_notices(alive):
     return out
 
 
+def _feed_status_names(alive, tmux, working, awaiting):
+    """The two lists that COMPLETE the feed's per-session status partition: `ready` = alive and quiet
+    (live state read; not in `working`/`awaiting`), `stateUnknown` = listed while its live state could
+    NOT be read (no row in the merged live map — e.g. the headless file-derived fallback). With these,
+    every session build_feed lists lands in exactly ONE of the four lists, so the client can render each
+    state explicitly and a BLANK pip can only mean "payload predates these lists" (an old kernel), never
+    a state that means something. (the user 2026-08-09: sessions in a known `waiting` state drew no pip
+    at all — indistinguishable from a rendering hole. Fail loudly / render the known state, don't encode
+    it as nothing.) Mirrors build_feed's own filters: hideFromFeed sessions are in no list, matching
+    their absence from the cards."""
+    ready, unknown = [], []
+    for s in alive:
+        if _session_flag(s["sid"], "hideFromFeed"):
+            continue
+        nm = s["name"]
+        if nm in working or nm in awaiting:
+            continue
+        (ready if tmux.get(s["sid"]) is not None else unknown).append(nm)
+    return ready, unknown
+
+
 def build_feed(now, tmux=None):
     """The {type:"feed"} message the tuned feed.js bundle consumes (ui-parity.md: feed = ADAPT).
     Goals map onto the AskItem/AskTreeNode shape the render already speaks: the goal tree IS the
@@ -13679,8 +13700,12 @@ def build_feed(now, tmux=None):
     _ncards = _notify_cards()
     for _a in asks:
         _a["notify"] = True if _ncards.get(_a["itemId"]) else None
+    # the ready/unknown halves of the status partition (see _feed_status_names): every listed session is
+    # in exactly one of the four lists, so the pip renderer never has to encode a KNOWN state as nothing
+    ready, state_unknown = _feed_status_names(alive, tmux, working, awaiting)
     return {"type": "feed", "asks": asks, "now": now,
             "working": working, "awaiting": awaiting,   # awaiting = idle-but-waiting-on-bg-work names → straw dot (the user 2026-07-13)
+            "ready": ready, "stateUnknown": state_unknown,   # alive-and-quiet names / listed-but-unreadable names (the user 2026-08-09)
             # session name -> live judge-classified SERVICE descs (a dev server the session keeps around;
             # _bg_split) → the grouped-mode session header's neutral chip, never a waiting state (2026-07-24)
             "bgServices": bg_services,
