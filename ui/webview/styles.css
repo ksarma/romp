@@ -148,6 +148,13 @@ body { display: flex; flex-direction: column; }
 /* WORKING: a small yellow dot left of the name (replaces the old yellow outline). */
 .tab-dot { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; background: var(--st-working-bg); }   /* solid — dot oscillation was distracting (the user 2026-06-16) */
 .tab-dot.await { background: var(--st-awaitbg-bg); }   /* awaiting-bg: the dot matches the straw chip (the user 2026-07-13) */
+/* ...completed to the SAME four-state pip language the feed's .fwork-dot and the sessions pane's
+   .fl-workdot speak (the user 2026-08-10): hollow steel ring = ready/idle, gray ring = the state is
+   MISSING outright — rendered explicitly, never as a blank, so a bare tab can only mean a state with
+   its own tab treatment (dashed blocked ring, compacting bar, struck-through closed), never a hole.
+   Hexes mirror feed.css/.fleet-pane.css (those sheets load standalone, so no shared var). */
+.tab-dot.ready { background: transparent; box-shadow: inset 0 0 0 1.5px #2b7fb8; }
+.tab-dot.unknown { background: transparent; box-shadow: inset 0 0 0 1.5px #8a8a8a; }
 /* Vertical context gauge right of the name (the user 2026-08-08): the statusline battery rotated
    upright — fills bottom-up with the context-used %, in the SAME global-colormap colour (fill set
    inline by tabCtxGauge, render.ts), no % text. A faint track so an empty gauge still reads as

@@ -3587,11 +3587,25 @@ function renderTabs() {
     else if (st === "compacting" || st === "clearing") tab.classList.add("tab-compacting");   // both: a context op in flight
     else if (st === "closed") tab.classList.add("tab-closed");       // dead session: read-only, struck-through label
     if (s.status.faded) tab.classList.add("at-rest");
-    // WORKING shows a yellow dot; AWAITING-BG the same dot in straw — matching the chip's color, so the
-    // tab reads the split at a glance (the user 2026-07-13); BLOCKED (API error) gets NO dot — the dashed
-    // red tab highlight instead (the user 2026-06-16).
-    if (st === "working") tab.appendChild(el("span", "tab-dot"));
-    else if (st === "awaitingBg") tab.appendChild(el("span", "tab-dot await"));
+    // The FULL four-state pip language the feed's .fwork-dot and the sessions pane's .fl-workdot speak
+    // (the user 2026-08-10, closing the strip's two-state gap): WORKING a gold dot; AWAITING-BG the same
+    // dot in straw — matching the chip's color, so the tab reads the split at a glance (the user
+    // 2026-07-13); READY/IDLE a hollow steel ring; a MISSING state an explicit gray ring — so a bare tab
+    // can only mean a state with its own tab treatment, never a rendering hole. BLOCKED (API error) keeps
+    // NO dot — the dashed red tab highlight instead (the user 2026-06-16) — and likewise every other
+    // state with its own tab treatment (awaiting/retrying/compacting/clearing/closed/opening). Each pip
+    // explains itself on hover, the same titles the feed's DOT_TIP speaks (the user 2026-07-22).
+    const dot: [string, string] | null =
+      st === "working" ? ["", "working — a turn is running right now"]
+      : st === "awaitingBg" ? ["await", "awaiting — idle, but background work it dispatched is still running"]
+      : st === "ready" || st === "idle" ? ["ready", "idle — nothing running; finished its last turn"]
+      : !st ? ["unknown", "state unknown — romp couldn't read this session's live state"]
+      : null;
+    if (dot) {
+      const d = el("span", "tab-dot" + (dot[0] ? " " + dot[0] : ""));
+      d.title = dot[1];
+      tab.appendChild(d);
+    }
     // compacting → a tiny animated compaction bar before the name (the tab gets no outline for this state,
     // so the bar IS the cue). A teal fill whose right edge slides left and loops — the same "compression"
     // motion as the statusline ctx-scan bar (.ctx-compress), miniaturised. Replaces the static ⇲ glyph the

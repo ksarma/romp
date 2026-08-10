@@ -31,7 +31,10 @@ test("the chat chip knows awaitingBg: its own straw chip, label 'Awaiting', with
 });
 
 test("the chat tab dot matches the chip: straw for awaitingBg, yellow for working", () => {
-  assert.match(RENDER, /if \(st === "working"\) tab\.appendChild\(el\("span", "tab-dot"\)\);\s*\n\s*else if \(st === "awaitingBg"\) tab\.appendChild\(el\("span", "tab-dot await"\)\);/);
+  // the strip now speaks the FULL four-state pip language (the user 2026-08-10; the two extra
+  // quarters are pinned in tests/test_tab_strip_pips.py) — working/awaitingBg keep their classes
+  assert.match(RENDER, /st === "working" \? \["", [\s\S]{0,80}?: st === "awaitingBg" \? \["await", /);
+  assert.match(RENDER, /el\("span", "tab-dot" \+ \(dot\[0\] \? " " \+ dot\[0\] : ""\)\)/);
   assert.match(STYLES, /--st-awaitbg-bg: #54B204; --st-awaitbg-fg: #0c1a00;/);
   assert.match(STYLES, /\.chip-awaitingBg \{ background: var\(--st-awaitbg-bg\); color: var\(--st-awaitbg-fg\); \}/);
   assert.match(STYLES, /\.tab-dot\.await \{ background: var\(--st-awaitbg-bg\); \}/);
