@@ -6758,7 +6758,7 @@ class WsLoopResilience(unittest.TestCase):
 
         seq = list(frames)
         saved = km._ws_recv
-        km._ws_recv = lambda rfile: seq.pop(0) if seq else (0x8, b"")   # script the frames; (0x8)=close
+        km._ws_recv = lambda rfile, pong=None: seq.pop(0) if seq else (0x8, b"")   # script the frames; (0x8)=close
         try:
             with contextlib.redirect_stderr(io.StringIO()):             # swallow the logged traceback
                 km.Handler._ws(FakeSelf())                              # returns normally on close / socket error

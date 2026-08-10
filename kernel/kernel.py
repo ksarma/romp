@@ -15550,23 +15550,67 @@ def _ws_pong(wfile, lock, payload):
         wfile.flush()
 
 
-def _ws_recv(rfile):
-    """Read one client (masked) frame → (opcode, payload bytes), or (None, None) on close/EOF."""
-    b = rfile.read(2)
-    if len(b) < 2:
-        return None, None
-    opcode = b[0] & 0x0F
-    masked = b[1] & 0x80
-    ln = b[1] & 0x7F
-    if ln == 126:
-        ln = struct.unpack(">H", rfile.read(2))[0]
-    elif ln == 127:
-        ln = struct.unpack(">Q", rfile.read(8))[0]
-    mask = rfile.read(4) if masked else b"\x00\x00\x00\x00"
-    payload = bytearray(rfile.read(ln))
-    for i in range(len(payload)):
-        payload[i] ^= mask[i % 4]
-    return opcode, bytes(payload)
+# Client-message ceiling for _ws_recv: the composer's 50 MB attachment cap (render.ts SHIP_MAX_BYTES)
+# base64-encodes to ~67 MB plus JSON framing; anything larger is corrupt or hostile → drop the link.
+WS_RECV_MAX = 96 * 1024 * 1024
+
+def _ws_recv(rfile, pong=None):
+    """Read one client (masked) MESSAGE → (opcode, payload bytes), or (None, None) on close/EOF.
+
+    Reassembles FRAGMENTED messages (RFC 6455 §5.4). Browsers and proxies split large sends into
+    continuation frames — Chrome fragments a multi-MB message into dozens — and the old
+    single-frame read handed each fragment to json.loads alone, so every large client message
+    evaporated with no log and no reply: the composer's 📎 picked a photo, its dropFile bytes
+    shipped, and nothing ever arrived or answered (the user 2026-08-10; small files rode a single
+    frame, which is why every other client message worked). Control frames may interleave a
+    fragmented message (§5.5): a mid-message ping is answered in place via `pong` and reading
+    continues; a close ends the read. A control frame BETWEEN messages returns to the caller
+    unchanged, so the caller's ping/close handling is untouched."""
+    op0, buf = None, bytearray()
+    while True:
+        b = rfile.read(2)
+        if len(b) < 2:
+            return None, None
+        fin, opcode = b[0] & 0x80, b[0] & 0x0F
+        masked = b[1] & 0x80
+        ln = b[1] & 0x7F
+        if ln == 126:
+            ext = rfile.read(2)
+            if len(ext) < 2:
+                return None, None
+            ln = struct.unpack(">H", ext)[0]
+        elif ln == 127:
+            ext = rfile.read(8)
+            if len(ext) < 8:
+                return None, None
+            ln = struct.unpack(">Q", ext)[0]
+        mask = rfile.read(4) if masked else b"\x00\x00\x00\x00"
+        payload = rfile.read(ln)
+        if len(mask) < 4 or len(payload) < ln:       # EOF mid-frame → dead connection
+            return None, None
+        if masked and ln:
+            # C-speed unmask via big-int XOR: the old per-byte Python loop took seconds on a
+            # multi-MB attachment frame, blocking this client's reader thread the whole time.
+            rep = (mask * (ln // 4 + 1))[:ln]
+            payload = (int.from_bytes(payload, "big") ^ int.from_bytes(rep, "big")).to_bytes(ln, "big")
+        if opcode >= 0x8:                            # control frame (never fragmented, ≤125 bytes)
+            if op0 is None:
+                return opcode, bytes(payload)        # between messages → caller answers ping / handles close
+            if opcode == 0x9 and pong is not None:
+                pong(bytes(payload))                 # mid-message ping → answer in place, keep reassembling
+                continue
+            if opcode == 0xA:
+                continue                             # a stray pong never interrupts a message
+            return opcode, bytes(payload)            # close mid-message → surface it; the partial is moot
+        if op0 is None:
+            op0 = opcode                             # 0x1/0x2 opens a message. (A bare 0x0 here is protocol
+            #                                          garbage; it passes through and the caller's json.loads
+            #                                          rejects it, same as any undecodable frame.)
+        buf += payload
+        if len(buf) > WS_RECV_MAX:
+            return None, None                        # oversized → drop the link; the page shim reconnects
+        if fin:
+            return op0, bytes(buf)
 
 
 def _send_to_app(app, msg):
@@ -16140,6 +16184,8 @@ def _save_dropped_file(name, b64):
         f.write_bytes(base64.b64decode(b64))
         return str(f)
     except (OSError, ValueError):
+        # the caller warns the client; this names the actual cause (fail loudly, CLAUDE.md)
+        sys.stderr.write("drop save failed (%r): %s\n" % (name, traceback.format_exc()))
         return None
 
 
@@ -21453,6 +21499,12 @@ class Handler(BaseHTTPRequestHandler):
             fp = _save_dropped_file(str(msg["name"]), str(msg["b64"]))   # bytes → saved file → insert its path
             if fp:
                 _reply(client, {"type": "droppedPath", "path": fp})
+            else:
+                # the save failed → SAY so (fail loudly, CLAUDE.md): the silent branch here meant a
+                # picked file simply never appeared, with nothing to debug from (the user 2026-08-10)
+                client["send"](json.dumps({"type": "warn", "text":
+                    "Could not save the attachment %s on %s — its bytes didn't decode, or the state dir isn't writable."
+                    % (os.path.basename(str(msg["name"])) or "file", _self_host())}))
         elif msg and msg.get("type") == "openFile" and msg.get("path"):
             # caption / linkified path click → open it on the kernel's machine (relative → resolved vs
             # the session cwd). The web dashboard sends this only where it IS the right answer; a remote
@@ -21546,7 +21598,9 @@ class Handler(BaseHTTPRequestHandler):
             _clients.append(client)
         try:
             while client["alive"]:
-                op, payload = _ws_recv(self.rfile)
+                # pong= answers a ping that interleaves a fragmented message (the between-messages
+                # ping still returns as op 0x9 below, unchanged)
+                op, payload = _ws_recv(self.rfile, pong=lambda p: _ws_pong(self.wfile, lock, p))
                 if op is None or op == 0x8:           # EOF / close
                     break
                 if op == 0x9:                          # ping → pong (libraries ping by default and hang up without one)
@@ -21557,6 +21611,10 @@ class Handler(BaseHTTPRequestHandler):
                     msg = json.loads(payload.decode("utf-8", "replace"))
                 except Exception:
                     msg = None
+                    # an undecodable client frame is DROPPED — say so (fail loudly, CLAUDE.md): this
+                    # exact silence hid the fragmented-attachment bug for two days (the user 2026-08-10)
+                    sys.stderr.write("ws: undecodable client frame dropped (op 0x%x, %d bytes)\n"
+                                     % (op, len(payload or b"")))
                 try:
                     self._dispatch_ws(msg, client)
                 except (BrokenPipeError, ConnectionResetError, OSError):
