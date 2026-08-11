@@ -97,7 +97,7 @@ class FireListSeenTurn(unittest.TestCase):
         held = []
         self.assertEqual(km._nudge_fire_list(self._fresh(), [(G1, 1, False)],
                                              arm_t=ARM_T, seen_t=ARM_T, held=held), [])
-        self.assertEqual([f[0] for f in held], [G1],
+        self.assertEqual([f[0] for f, _why in held], [G1],   # held rows carry (goal, why) since 2026-08-11
                          "the hold must reach the caller so it can be recorded, not silently dropped")
 
     def test_a_resolved_goal_is_never_held(self):
