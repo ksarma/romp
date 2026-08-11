@@ -520,6 +520,207 @@ class LiveTail(unittest.TestCase):
         self.assertFalse(sb.read_reg(d, be.spawn("b", d)).get("fast"), "a NEW session starts plain")
         self.assertTrue(sb.read_reg(d, sid)["fast"], "but THIS session keeps it")
 
+    def test_init_reports_fast_mode_state_into_the_snapshot(self):
+        """fast_mode_state rides the CLI's init message ("on"/"off"/"cooldown", plus a disabled_reason
+        when the org/model can't use it) — the AUTHORITATIVE source behind the chat's fast badge. An
+        init WITHOUT the field (older CLI) must leave the state unknown, never fabricate "off"."""
+        import asyncio
+        class _Sys:
+            def __init__(self, data): self.subtype = "init"; self.data = data
+        d = tempfile.mkdtemp()
+        be = sb.SdkBackend(d, "/bin/true", lambda *a, **k: None)
+        sid = "11111111-2222-3333-4444-aaaaaaaaaaaa"
+        sb.write_reg(d, sid, {"sid": sid, "name": "n", "cwd": "/tmp", "alive": True})
+        s = sb.SdkSession(be, {"sid": sid, "name": "n", "cwd": "/tmp"})
+        async def _noop(): pass
+        s._do_refresh_context = _noop
+        self.assertEqual(s.snapshot()["fast"], "", "unknown until an init lands → no badge")
+
+        async def run(data):
+            s._on_message(_Sys(data), _AssistantMessage, _ResultMessage, _Sys)
+            await asyncio.sleep(0)                       # let the ensure_future'd refresh run
+        asyncio.run(run({"fast_mode_state": "on"}))
+        self.assertEqual(s.fast, "on")
+        self.assertEqual(s.snapshot()["fast"], "on")
+        self.assertEqual(s.snapshot()["fastReason"], "")
+        asyncio.run(run({"fast_mode_state": "off", "fast_mode_disabled_reason": "Fast mode is org-disabled"}))
+        self.assertEqual(s.fast, "off")
+        self.assertEqual(s.snapshot()["fastReason"], "Fast mode is org-disabled",
+                         "a disabled_reason rides along so the kernel can hide the toggle")
+        asyncio.run(run({}))                             # an init with no field → the last truth STANDS
+        self.assertEqual(s.fast, "off", "absent field never overwrites the known state")
+
+    def test_the_opt_in_required_reason_never_hides_the_toggle(self):
+        """The CLI stamps 'sdk_opt_in_required' on EVERY connect made without the fastMode
+        flag-settings opt-in (verified live 2026-08-10 on 2.1.226 — opus/fable/sonnet headless
+        connects alike). Treating it like a real refusal hid the chat toggle on every SDK session:
+        the control that GRANTS the opt-in was gated on already having it (the user 2026-08-10,
+        who switched to Opus and found no toggle anywhere). It reads as 'available, currently off';
+        every other reason still hides the dead control."""
+        import asyncio
+        class _Sys:
+            def __init__(self, data): self.subtype = "init"; self.data = data
+        d = tempfile.mkdtemp()
+        be = sb.SdkBackend(d, "/bin/true", lambda *a, **k: None)
+        sid = "11111111-2222-3333-4444-cccccccccccc"
+        sb.write_reg(d, sid, {"sid": sid, "name": "n", "cwd": "/tmp", "alive": True})
+        s = sb.SdkSession(be, {"sid": sid, "name": "n", "cwd": "/tmp"})
+        async def _noop(): pass
+        s._do_refresh_context = _noop
+
+        async def run(data):
+            s._on_message(_Sys(data), _AssistantMessage, _ResultMessage, _Sys)
+            await asyncio.sleep(0)
+        asyncio.run(run({"fast_mode_state": "off", "fast_mode_disabled_reason": "sdk_opt_in_required"}))
+        self.assertEqual(s.fast, "off")
+        self.assertEqual(s.snapshot()["fastReason"], "", "the curable opt-in reason shows the badge")
+        asyncio.run(run({"fast_mode_state": "off", "fast_mode_disabled_reason": "Fast mode is org-disabled"}))
+        self.assertEqual(s.snapshot()["fastReason"], "Fast mode is org-disabled",
+                         "a real refusal still hides the toggle")
+
+    def test_a_refusal_answering_the_users_ask_warns_clears_it_and_restores_the_badge(self):
+        """A disabled_reason that lands while the user's ask is ARMED (fast_opt — they picked On) is
+        the CLI ANSWERING that ask, not standing state to hide behind. Adopting it silently was the
+        vanishing-button bug (the user 2026-08-11, whose tap on a phone-width statusline was refused
+        with extra_usage_disabled): the reason hid the very toggle they had just clicked, no word
+        why, and the reg's ask stayed armed forever. The refusal is LOUD now — one warn toast naming
+        the humanized reason — the ask clears (fast_opt + reg, so the opt-in flag doesn't linger),
+        and a flagless reconnect is requested: its connect-time re-probe reports the blanked
+        sdk_opt_in_required, so the badge comes BACK instead of staying vanished."""
+        import asyncio
+        class _Sys:
+            def __init__(self, data): self.subtype = "init"; self.data = data
+        d = tempfile.mkdtemp()
+        notes = []
+        be = sb.SdkBackend(d, "/bin/true", lambda app, msg: notes.append((app, msg)))
+        sid = "11111111-2222-3333-4444-eeeeeeeeeeee"
+        sb.write_reg(d, sid, {"sid": sid, "name": "n", "cwd": "/tmp", "alive": True})
+        s = sb.SdkSession(be, {"sid": sid, "name": "n", "cwd": "/tmp"})
+        s.thread = type("T", (), {"is_alive": lambda self: True})()
+        be.sessions[sid] = s
+        async def _noop(): pass
+        s._do_refresh_context = _noop
+        reconnects = []
+        s.request_reconnect = lambda: reconnects.append(1)
+        async def run(data):
+            s._on_message(_Sys(data), _AssistantMessage, _ResultMessage, _Sys)
+            await asyncio.sleep(0)
+
+        def warns():
+            return [m for _, m in notes if isinstance(m, dict) and m.get("type") == "warn"]
+
+        self.assertTrue(be.set_fast(sid, "on"))          # arms the ask (locked connection → reconnect)
+        self.assertEqual(len(reconnects), 1)
+        asyncio.run(run({"fast_mode_state": "off",
+                         "fast_mode_disabled_reason": "extra_usage_disabled"}))
+        self.assertEqual(len(warns()), 1, "ONE toast says why — a refusal is never a silent vanish")
+        self.assertIn("extra usage", warns()[0]["text"], "the reason is humanized, not the raw token")
+        self.assertFalse(s.fast_opt, "the ask is answered — cleared, not left armed forever")
+        self.assertFalse(sb.read_reg(d, sid)["fast"], "…and cleared on disk, so the next connect is plain")
+        self.assertEqual(len(reconnects), 2, "a flagless reconnect re-probes so the badge comes back")
+        # the same refusal WITHOUT an armed ask stays the quiet dead-control hide it always was
+        asyncio.run(run({"fast_mode_state": "off",
+                         "fast_mode_disabled_reason": "extra_usage_disabled"}))
+        self.assertEqual(len(warns()), 1, "no fresh ask → no re-warn")
+        self.assertEqual(len(reconnects), 2, "…and no reconnect churn")
+        self.assertEqual(s.snapshot()["fastReason"], "extra_usage_disabled",
+                         "the reason still hides the dead control when nobody asked")
+
+    def test_the_toggle_turns_own_init_yields_to_the_sent_word_once(self):
+        """A literal '/fast on' send opens a turn whose init still reports the state at turn START —
+        one word stale, since the toggle applies after it. Taking it verbatim stomps set_fast's
+        optimistic flip until the NEXT turn's init, so the badge reads off for a whole turn right
+        after the CLI acknowledged the toggle. That single stale, reason-less word yields to the
+        send's one-shot expectation; the next init wins unconditionally, and a disabled_reason
+        (real refusal evidence) always wins immediately."""
+        import asyncio
+        class _Sys:
+            def __init__(self, data): self.subtype = "init"; self.data = data
+        d = tempfile.mkdtemp()
+        be = sb.SdkBackend(d, "/bin/true", lambda *a, **k: None)
+        sid = "11111111-2222-3333-4444-bbbbbbbbbbbb"
+        sb.write_reg(d, sid, {"sid": sid, "name": "n", "cwd": "/tmp", "alive": True})
+        s = sb.SdkSession(be, {"sid": sid, "name": "n", "cwd": "/tmp"})
+        s.thread = type("T", (), {"is_alive": lambda self: True})()
+        s._fast_unlocked = True
+        be.sessions[sid] = s
+        async def _noop(): pass
+        s._do_refresh_context = _noop
+        async def run(data):
+            s._on_message(_Sys(data), _AssistantMessage, _ResultMessage, _Sys)
+            await asyncio.sleep(0)
+
+        self.assertTrue(be.set_fast(sid, "on"))
+        self.assertEqual(s.fast, "on", "optimistic flip on the live send")
+        self.assertEqual(s._fast_expect, "on", "…armed for the send's own turn-init")
+        asyncio.run(run({"fast_mode_state": "off"}))     # the toggle turn's init: one word stale
+        self.assertEqual(s.fast, "on", "the same-turn stale word yields")
+        asyncio.run(run({"fast_mode_state": "off"}))     # any LATER init is authoritative
+        self.assertEqual(s.fast, "off", "one-shot — the next init wins")
+
+        self.assertTrue(be.set_fast(sid, "on"))          # armed again…
+        asyncio.run(run({"fast_mode_state": "off",
+                         "fast_mode_disabled_reason": "Fast mode is org-disabled"}))
+        self.assertEqual(s.fast, "off", "…but a disabled_reason beats the expectation immediately")
+        self.assertEqual(s.snapshot()["fastReason"], "Fast mode is org-disabled")
+
+    def test_fast_state_survives_a_kernel_restart_via_the_reg(self):
+        """The init message only streams WITH a turn, so in-memory-only fast state meant every kernel
+        restart blanked every session's badge until it next spoke (the user 2026-08-10, who found the
+        toggle nowhere). The state persists to the reg on adoption (liveFast/liveFastReason, the
+        liveModel pattern) and seeds the next construction — and a DORMANT session (no thread at all
+        after a restart) reports it straight from the reg in live_sessions."""
+        import asyncio
+        class _Sys:
+            def __init__(self, data): self.subtype = "init"; self.data = data
+        d = tempfile.mkdtemp()
+        be = sb.SdkBackend(d, "/bin/true", lambda *a, **k: None)
+        sid = "11111111-2222-3333-4444-dddddddddddd"
+        sb.write_reg(d, sid, {"sid": sid, "name": "n", "cwd": "/tmp", "alive": True})
+        s = sb.SdkSession(be, {"sid": sid, "name": "n", "cwd": "/tmp"})
+        async def _noop(): pass
+        s._do_refresh_context = _noop
+        async def run(data):
+            s._on_message(_Sys(data), _AssistantMessage, _ResultMessage, _Sys)
+            await asyncio.sleep(0)
+        asyncio.run(run({"fast_mode_state": "off", "fast_mode_disabled_reason": "sdk_opt_in_required"}))
+        reg = sb.read_reg(d, sid)
+        self.assertEqual(reg["liveFast"], "off", "adoption persists the state")
+        self.assertEqual(reg["liveFastReason"], "", "…with the curable reason already blanked")
+        # "the kernel restarts": a fresh construction from the same reg — the badge is there pre-turn
+        s2 = sb.SdkSession(be, sb.read_reg(d, sid))
+        self.assertEqual(s2.fast, "off", "seeded from the reg, no init needed")
+        self.assertEqual(s2.fast_reason, "")
+        # …and a session with NO thread at all reports it straight from the reg
+        live = be.live_sessions()
+        self.assertEqual(live[sid]["fast"], "off", "a dormant session's badge survives the restart")
+        self.assertEqual(live[sid]["fastReason"], "")
+
+    def test_connect_adopts_fast_state_from_the_initialize_response(self):
+        """A turn-less connect emits NO init message, so a session that merely reconnected (every
+        session, after a kernel restart) knew nothing until it next spoke — and a /model switch never
+        produced a badge at all. The initialize response the SDK stores at connect (get_server_info)
+        carries the same fast_mode_state/fast_mode_disabled_reason fields (verified live 2026-08-10 on
+        2.1.226), and _connect_once adopts it right beside the pre-turn context/model refresh."""
+        import asyncio
+        import inspect
+        d = tempfile.mkdtemp()
+        be = sb.SdkBackend(d, "/bin/true", lambda *a, **k: None)
+        sid = "11111111-2222-3333-4444-eeeeeeeeeeee"
+        sb.write_reg(d, sid, {"sid": sid, "name": "n", "cwd": "/tmp", "alive": True})
+        s = sb.SdkSession(be, {"sid": sid, "name": "n", "cwd": "/tmp"})
+        self.assertEqual(s.fast, "", "unknown before the connect")
+        class _Client:
+            async def get_server_info(self):
+                return {"fast_mode_state": "off", "fast_mode_disabled_reason": "sdk_opt_in_required"}
+        s.client = _Client()
+        asyncio.run(s._do_adopt_server_info())
+        self.assertEqual(s.fast, "off", "the badge exists pre-turn")
+        self.assertEqual(s.fast_reason, "", "the curable opt-in reason never hides the toggle")
+        self.assertEqual(sb.read_reg(d, sid)["liveFast"], "off", "…and it persisted")
+        # the adoption is wired into the connect path, beside the pre-turn context refresh
+        self.assertIn("_do_adopt_server_info", inspect.getsource(sb.SdkSession._amain))
+
     def test_send_echo_authors_a_romp_nudge_as_romp_not_human(self):
         # the bug (the user 2026-06-28): an auto-nudge sent through send() echoed as a BLUE HUMAN "Follow-up"
         # instead of the GRAY "from romp" auto-nudge it is, because the echo hardcoded author="human". The echo
@@ -2833,6 +3034,86 @@ class LiveAtomKinds(unittest.TestCase):
                          ("assistant", True, False))
         self.assertTrue(got["u2"]["echo"])
         self.assertEqual(len(be._live[sid]), 3, "read-only: the live tail is untouched")
+
+
+class RegListCache(unittest.TestCase):
+    """list_regs' per-file parse cache (the 2026-08-10 CPU fix): the registry keeps a reg for every
+    session EVER created, and list_regs sits on the liveness snapshot the kernel takes several times
+    a second — re-parsing hundreds of unchanged files per sweep was a measured slice of the pusher's
+    CPU burn. The cache keys on (mtime_ns, size, inode) — the file stays the truth — and hands out
+    copies, so the _update_reg read-modify-write pattern can never corrupt it."""
+
+    def setUp(self):
+        self.sd = Path(tempfile.mkdtemp())
+        (self.sd / "sdk").mkdir()
+        sb.write_reg(self.sd, "aaaa", {"sid": "aaaa", "alive": True, "name": "web"})
+        sb.write_reg(self.sd, "bbbb", {"sid": "bbbb", "alive": False, "name": "api"})
+
+    def test_unchanged_files_serve_cached_parses_with_equal_content(self):
+        first = sorted(sb.list_regs(self.sd), key=lambda r: r["sid"])
+        second = sorted(sb.list_regs(self.sd), key=lambda r: r["sid"])
+        self.assertEqual(first, second)
+        self.assertEqual([r["sid"] for r in first], ["aaaa", "bbbb"])
+
+    def test_a_mutated_result_never_leaks_into_the_cache(self):
+        one = next(r for r in sb.list_regs(self.sd) if r["sid"] == "aaaa")
+        one["name"] = "clobbered"          # the _update_reg pattern mutates its read
+        again = next(r for r in sb.list_regs(self.sd) if r["sid"] == "aaaa")
+        self.assertEqual(again["name"], "web", "the cache hands out copies, never its own dict")
+
+    def test_a_rewrite_is_picked_up(self):
+        # write_reg replaces the file (new inode), so even a same-instant rewrite misses the cache
+        sb.list_regs(self.sd)              # warm
+        sb.write_reg(self.sd, "aaaa", {"sid": "aaaa", "alive": True, "name": "renamed"})
+        got = next(r for r in sb.list_regs(self.sd) if r["sid"] == "aaaa")
+        self.assertEqual(got["name"], "renamed")
+
+    def test_a_deleted_reg_drops_out(self):
+        sb.list_regs(self.sd)              # warm
+        (self.sd / "sdk" / "bbbb.json").unlink()
+        self.assertEqual([r["sid"] for r in sb.list_regs(self.sd)], ["aaaa"])
+
+
+class PushSessionCallback(unittest.TestCase):
+    """_push_session — the connect handshake's targeted one-session push (2026-08-10). The handshake is
+    the exact event the kernel's opening chip stands down on, and a plain pusher wake left that flip
+    riding the next FULL push cycle (seconds on a busy fleet) — so the flip pushes its one session
+    directly. Threaded, because the callback builds+serializes a payload and must never run on the
+    session's asyncio loop thread."""
+
+    SID = "11111111-2222-3333-4444-555555555555"
+
+    def test_threaded_callback_receives_the_sid(self):
+        got, done = [], threading.Event()
+        be = sb.SdkBackend(tempfile.mkdtemp(), "/bin/true", lambda *a, **k: None,
+                           push_session=lambda sid: (got.append(sid), done.set()))
+        be._push_session(self.SID)
+        self.assertTrue(done.wait(5), "the callback fires, on its own thread")
+        self.assertEqual(got, [self.SID])
+
+    def test_without_the_callback_it_falls_back_to_the_pusher_wake(self):
+        # an older kernel (or a test) that didn't wire push_session still gets the pre-existing
+        # behavior: the periodic pusher wake, never a silent no-op
+        woke = []
+        be = sb.SdkBackend(tempfile.mkdtemp(), "/bin/true", lambda *a, **k: None,
+                           push=lambda: woke.append(True))
+        be._push_session(self.SID)
+        self.assertEqual(woke, [True])
+
+    def test_a_failing_callback_is_contained_and_logged(self):
+        logs = []   # the ctor may log too (a missing-SDK note) — poll for THIS failure's line
+
+        def boom(sid):
+            raise RuntimeError("nope")
+
+        be = sb.SdkBackend(tempfile.mkdtemp(), "/bin/true", lambda *a, **k: None,
+                           push_session=boom, log=logs.append)
+        be._push_session(self.SID)   # must not raise into the caller (the connect path)
+        deadline = time.time() + 5
+        while time.time() < deadline and not any("session push" in str(m) for m in logs):
+            time.sleep(0.01)
+        self.assertTrue(any("session push" in str(m) for m in logs),
+                        "the failure is reported, not swallowed: %r" % logs)
 
 
 if __name__ == "__main__":

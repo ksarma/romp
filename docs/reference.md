@@ -119,17 +119,16 @@ code {dir}                          # VS Code instead
 ### Fast mode, from the chat statusline
 
 The statusline's badges — permission mode, model, effort — are each a small
-dropdown. A fourth, **Fast**, appears when the session reports Claude Code's
-fast-mode state (an Opus-only research preview, billed at a premium). Fast
-mode is a connect-time flag for an SDK session, so picking On or Off persists
-the per-session setting and reconnects to apply — immediately when the
-session is idle, at the end of the turn when it is busy, with the same
-switching-dots the effort badge wears. The badge reads the state the CLI
-reports — orange while on, and a cooldown label while fast requests are
-rate-limited — and never appears on a session that cannot run fast mode. The
-pick is per session and never seeds new sessions: fast mode draws credits at
-a higher rate and carries its own rate limit, so it should not quietly
-spread across everything romp starts next.
+dropdown. A fourth appears when the session reports Claude Code's fast-mode
+state (an Opus-only research preview, billed at a premium): it reads **Fast**
+in orange while fast mode is on, **Slow** while it's off, and **Cooldown**
+while fast requests are rate-limited. Picking On or Off sends the CLI's own
+`/fast` command; the badge never appears on a session that cannot run fast
+mode. Turning it on while the session is on a non-Opus model makes the CLI
+switch to a fast-capable one, which the chat shows as the command's own
+confirmation. If the CLI refuses the toggle (for example, the account has
+extra usage turned off), a toast says why and the pick reverts to off —
+the control never silently disappears.
 
 ### Per-session billing (login vs API key)
 
@@ -206,6 +205,27 @@ whole environment sees them rather than for one command.
 Run `romp-service install` again after changing one. The service unit bakes in
 whatever is set at install time, so a renumbered port that only lives in your
 shell leaves the supervised manager on the old one, and the two collide.
+
+### Service environment (secrets)
+
+The manager runs as a login service (launchd on macOS, systemd --user on
+Linux), so it never sees variables your shell rc exports — a terminal having
+`ANTHROPIC_API_KEY` does nothing for the sessions the kernel spawns. On a
+machine where Claude authenticates through an OAuth login this gap is
+invisible (the credentials live in a file any process can read); on an
+API-key-only machine it means SDK sessions come up unauthenticated while
+`claude` in your terminal works fine.
+
+Env like that goes in `~/.config/romp/service.env` — plain `KEY=VALUE` lines,
+`chmod 600`:
+
+    ANTHROPIC_API_KEY=sk-ant-...
+
+Unlike the ports above it is NOT baked at install: it is read each time the
+manager starts (the systemd unit via `EnvironmentFile=-`, the macOS login
+agent's launcher by parsing it — line by line, never sourced, so a malformed
+line is skipped rather than executed). Rotate a value by editing the file and
+restarting the manager (`romp-service install`); a missing file is a no-op.
 
 ## Where things live
 

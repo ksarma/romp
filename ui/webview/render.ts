@@ -21,6 +21,7 @@ import { isClearCmd, openTopTitles, clearConfirmDetail } from "./clear-confirm";
 import { prebuildPlan, type ViewState } from "./prebuild";
 import { reconcileTabOrder } from "./tab-order";
 import { writeViewOrder } from "./view-order";
+import { titleWithKey } from "./keybindings";
 import { mintProvisionalId, isProvisionalId, provisionalName, adoptsProvisional } from "./provisional";
 import { onlyTag, matchesOnly } from "./only-filter";
 import { numberDiff, type DiffRow } from "./diff-lines";
@@ -409,9 +410,9 @@ const tabMeta = new Map<string, { name: string; color: Color | null }>();
 // swirl, looking like a shutdown you had to wait out (the user 2026-07-24, who wanted the tab to just go and
 // the shutdown to run behind it). Cleared on the kernel's ack — its push dropping the id — not on a timer.
 const closingTabs = new Map<string, number>();
-// …with a backstop for the ack that never comes. `closeTab` only flips a hidden flag kernel-side, so there is
-// no failure EVENT to key on: the sole evidence a close didn't take is the kernel still listing the tab long
-// after. Past this we say so and let the tab back, rather than hiding a session that's really still open.
+// …with a backstop for the ack that never comes. A refused/failed end leaves no failure EVENT to key on:
+// the sole evidence a close didn't take is the kernel still listing the tab long after. Past this we say
+// so and let the tab back, rather than hiding a session that's really still open.
 const CLOSE_ACK_MS = 15_000;
 // The romp identity palette for the tab right-click color picker (the user 2026-06-29). Fetched once from the
 // kernel's /palette so the client holds no color literals; empty until it lands (the menu just omits the row).
@@ -3271,6 +3272,16 @@ function ackClosingTabs(kernelOrder: readonly string[]): void {
 }
 
 // Apply the kernel's authoritative tab order (its tabOrder push, also re-sent after a timeline drag).
+// Ids any kernel tabOrder push has EVER carried, for the page's whole life. A tab on this list is
+// kernel-owned: when a later push stops carrying it, that omission is the removal event and the tab is
+// dismissed below — the continuous push is the authority, the one-shot `closed` frame just the fast path.
+// Before this, `closed` was the ONLY remover: a client whose socket was down at the kill (a frozen webview
+// force-dropped at the send-queue cap, a sleep, a network blip) missed that single frame forever, and the
+// dead session's tab rode the reconcile keep on every later push — frozen on its last live status, fully
+// clickable, reading as a running session (the 2026-08-11 ghost: an ended session stayed on the strip
+// looking alive). Add-only, never pruned: dropping an entry would hand a late stale `session` frame the
+// never-listed keep and re-mint the ghost. Client-minted ids (the create placeholder) never enter it.
+const kernelListed = new Set<string>();
 function applyTabOrder(o: any, tabs?: any) {
   // name+color per tab → renderTabs paints placeholders for tabs whose session hasn't arrived yet (tabs-first).
   // The payload is the kernel's AUTHORITATIVE current tab set, so REBUILD (not merge) — a closed tab drops out
@@ -3287,9 +3298,19 @@ function applyTabOrder(o: any, tabs?: any) {
   // Adopt the kernel order verbatim, keeping any just-arrived tab the push doesn't carry yet (see tab-order.ts).
   const kernelOrder = Array.isArray(o) ? o.filter((x: any) => typeof x === "string") : [];
   ackClosingTabs(kernelOrder);
-  const next = reconcileTabOrder(kernelOrder, order, (id) => sessions.has(id) || tabMeta.has(id));
+  // A kernel-owned tab the push no longer carries gets the SAME teardown the `closed` event runs — the
+  // session map, its view, drafts and the active-tab reselect all go, not just the strip entry. Under
+  // federation the merged order only omits an id when its OWNING host affirmatively reported it gone
+  // (per-host slices persist across down/detached hosts), so this never fires on a tunnel blip.
+  const inKernel = new Set<string>(kernelOrder);
+  for (const id of order.slice()) {
+    if (kernelListed.has(id) && !inKernel.has(id)) dismissSession(id);
+  }
+  const next = reconcileTabOrder(kernelOrder, order, (id) => sessions.has(id) || tabMeta.has(id),
+                                 (id) => kernelListed.has(id));
   order.length = 0;
   for (const id of next) order.push(id);
+  for (const id of kernelOrder) kernelListed.add(id);
   renderTabs();
 }
 // Order-audit instrumentation (the user 2026-07-02): tabs STILL occasionally reorder themselves and code
@@ -3593,11 +3614,16 @@ function renderTabs() {
     // 2026-07-13); READY/IDLE a hollow steel ring; a MISSING state an explicit gray ring — so a bare tab
     // can only mean a state with its own tab treatment, never a rendering hole. BLOCKED (API error) keeps
     // NO dot — the dashed red tab highlight instead (the user 2026-06-16) — and likewise every other
-    // state with its own tab treatment (awaiting/retrying/compacting/clearing/closed/opening). Each pip
+    // state with its own tab treatment (awaiting/retrying/compacting/clearing/closed). Each pip
     // explains itself on hover, the same titles the feed's DOT_TIP speaks (the user 2026-07-22).
     const dot: [string, string] | null =
       st === "working" ? ["", "working — a turn is running right now"]
       : st === "awaitingBg" ? ["await", "awaiting — idle, but background work it dispatched is still running"]
+      // OPENING (a provisional tab, or the kernel's own opening chip): the accent loader dot — the
+      // session is starting, and a tab with no cue at all read as dead (the user 2026-08-10). Same
+      // pulse as the statusline's opening dots; never the solid working yellow, which claims work
+      // that isn't happening.
+      : st === "opening" ? ["opening", "opening — this session is still starting up"]
       : st === "ready" || st === "idle" ? ["ready", "idle — nothing running; finished its last turn"]
       : !st ? ["unknown", "state unknown — romp couldn't read this session's live state"]
       : null;
@@ -3656,7 +3682,7 @@ function renderTabs() {
     // "End session?" confirm (the user 2026-06-16). A live session still routes through the host's
     // Close-tab / End-session confirm (closeSession → confirmClose).
     const dead = st === "closed";
-    close.title = dead ? "Close tab" : "Close tab (or end the session)";
+    close.title = dead ? "Close tab" : "End session";
     // Click-safe (see ./actions): renderTabs() does `#tabs`.replaceChildren() on every kernel push, so a
     // handler hung on this ✕ is destroyed mid-click and the click is dropped (the "had to click End session
     // several times" bug). The action lives on the stable #tabs delegate instead; this node just declares it.
@@ -3672,7 +3698,11 @@ function renderTabs() {
   }
   const add = el("div", "tab tab-add");
   add.textContent = "+";
-  add.title = "Open a session";
+  // tooltip carries the CURRENT binding (the user 2026-08-10: shortcuts discoverable by hover). True on
+  // every surface: the shell dispatches the effective chord from the same store this reads, and outside
+  // the shell (VS Code / standalone, their own localStorage → the default) the in-page Cmd+O fallback
+  // below answers it. Rebuilt with the strip each push, so a rebind shows on the next render.
+  add.title = titleWithKey("Open a session", "session.new");
   add.addEventListener("click", () => openPicker());
   bar.appendChild(add);
   // Restore tab-mode focus if a tab held it before this rebuild (see the top of renderTabs).
@@ -3780,14 +3810,16 @@ function setSessionColor(id: string, bg: string) {
 
 // Small inline-SVG icon for the tab menu's toggle items (trusted constant markup; `off` slashes + dims it,
 // matching the timeline lane toggles). 16-unit viewBox; currentColor so .ctx-icon/.off set the tint.
-function ctxIcon(kind: "feed" | "mail" | "bell", off: boolean): HTMLElement {
+function ctxIcon(kind: "feed" | "mail" | "bell" | "bill", off: boolean): HTMLElement {
   const span = el("span", "ctx-icon" + (off ? " off" : ""));
   const slash = off ? '<line x1="1.6" y1="14.4" x2="14.4" y2="1.6"/>' : "";
   const body = kind === "feed"
     ? '<circle cx="8" cy="8" r="6"/><path d="M5 8.3 L7.2 10.7 L11.4 5.3"/>'              // circle + check (on the feed)
     : kind === "mail"
       ? '<rect x="2" y="4" width="12" height="8" rx="1.5"/><path d="M2.5 5 L8 9 L13.5 5"/>'  // envelope (on the postal service)
-      : '<path d="M8 2 C5.9 2.2 4.7 3.8 4.7 5.8 L4.7 8 L3.4 9.9 L12.6 9.9 L11.3 8 L11.3 5.8 C11.3 3.8 10.1 2.2 8 2 Z"/><path d="M6.6 11.6 A1.5 1.5 0 0 0 9.4 11.6"/>';  // bell (system notifications)
+      : kind === "bill"
+        ? '<rect x="2" y="4" width="12" height="8" rx="1.5"/><line x1="2" y1="6.8" x2="14" y2="6.8"/><line x1="4.2" y1="9.6" x2="7.4" y2="9.6"/>'  // payment card (billing)
+        : '<path d="M8 2 C5.9 2.2 4.7 3.8 4.7 5.8 L4.7 8 L3.4 9.9 L12.6 9.9 L11.3 8 L11.3 5.8 C11.3 3.8 10.1 2.2 8 2 Z"/><path d="M6.6 11.6 A1.5 1.5 0 0 0 9.4 11.6"/>';  // bell (system notifications)
   span.innerHTML = '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" '
     + 'stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">' + body + slash + "</svg>";
   return span;
@@ -3834,6 +3866,51 @@ function showTabMenu(e: MouseEvent, id: string) {
     onBell ? "Stop notifying" : "Notify me",
     onBell ? "no more system notifications for this session" : "system notification when its work blocks on you or completes",
     () => setSessionFlag(id, "notify", !onBell));
+  // Billing submenu (the user 2026-08-09, who wants the login/API-key switch here rather than as a
+  // statusline badge). Only when the machine offers BOTH choices (st.authBoth) — a one-auth machine
+  // keeps the fact on the tab hover, never a dead selector — and the key stays labelled plainly
+  // 'API key', no fragment of it anywhere. Clicking opens a flyout with the two choices, the
+  // session's current one check-marked; a pick posts the same setAuth the badge used (the session
+  // reconnects to apply, so the sub-line says "applying…" while st.authPending rides the status).
+  const st = s ? s.status : null;
+  if (st && st.auth && st.authBoth) {
+    menu.appendChild(el("div", "ctx-sep"));
+    const item = el("div", "ctx-item ctx-item-toggle ctx-item-billing");
+    item.appendChild(ctxIcon("bill", false));
+    const bodyEl = el("span", "ctx-item-body");
+    const l = el("span", "ctx-item-label"); l.textContent = "Billing"; bodyEl.appendChild(l);
+    const sb = el("span", "ctx-item-sub");
+    sb.textContent = st.authPending ? "applying…"
+      : (st.auth === "key" ? "API key" : (st.authAcct ? `Login (${st.authAcct})` : "Login"));
+    bodyEl.appendChild(sb);
+    item.appendChild(bodyEl);
+    const caret = el("span", "ctx-caret"); caret.textContent = "▸"; item.appendChild(caret);
+    item.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      const open = menu.querySelector(".ctx-sub");
+      if (open) { open.remove(); return; }                       // second click folds the flyout
+      const sub = el("div", "ctx-menu ctx-sub");
+      for (const c of [{ label: st.authAcct ? `Login (${st.authAcct})` : "Login", value: "login" },
+                       { label: "API key", value: "key" }]) {
+        const opt = el("div", "ctx-item" + (st.auth === c.value ? " current" : ""));
+        opt.textContent = c.label;
+        opt.addEventListener("click", (ev2) => {
+          ev2.stopPropagation();
+          dismissTabMenu();
+          if (st.auth !== c.value && vscodeApi) vscodeApi.postMessage({ type: "setAuth", id, value: c.value });
+        });
+        sub.appendChild(opt);
+      }
+      // INSIDE the menu node (so dismissTabMenu and the outside-mousedown check cover it), placed
+      // beside the item — .ctx-menu is position:fixed, so the coords are viewport-space, clamped
+      menu.appendChild(sub);
+      const ir = item.getBoundingClientRect();
+      const sr = sub.getBoundingClientRect();
+      sub.style.left = Math.max(0, Math.min(ir.right + 2, window.innerWidth - sr.width - 4)) + "px";
+      sub.style.top = Math.max(0, Math.min(ir.top, window.innerHeight - sr.height - 4)) + "px";
+    });
+    menu.appendChild(item);
+  }
   // Color swatches (the user 2026-06-29): the romp identity palette as circles, the session's current one
   // ringed. Click one to recolor the session. Omitted until /palette has loaded (paletteColors empty).
   if (paletteColors.length) {
@@ -4081,8 +4158,10 @@ let pickAllowNew = false;
 // could do nothing with, watching three dots. See ./provisional.ts for why the id carries no colon.
 //
 // `pendingNewSession` is the NAME the created session will arrive under; it is the only join available,
-// since the kernel mints the id. The provisional tab carries a working chip (romp genuinely is starting
-// it), a live composer, and anything typed into it, held until the real session lands.
+// since the kernel mints the id. The provisional tab carries the OPENING state (the same "Opening
+// session" dots the kernel's own opening chip renders — it seeded "working" once, which put a Working
+// chip over an epoch-sized clock in the statusline until the first real payload arrived; the user
+// 2026-08-10), a live composer, and anything typed into it, held until the real session lands.
 let pendingNewSession: string | null = null;
 let provisionalId: string | null = null;
 const provisionalQueue: string[] = [];
@@ -4106,8 +4185,13 @@ function openProvisional(req: CreateReq): void {
   pendingNewSession = display;
   const id = mintProvisionalId(Date.now().toString(36) + Math.random().toString(36).slice(2));
   provisionalId = id;
+  // state "opening", NOT "working": updateStatusline renders the working chip with an elapsed timer off
+  // sinceEpoch, and a provisional tab has no honest work clock — the seed showed "Working" + a giant
+  // number for however long the first kernel payload took (the user 2026-08-10, who read it as "a random
+  // string of numbers"). "opening" is the designed vocabulary for exactly this phase, and the kernel's
+  // first payload for the real session continues it seamlessly. sinceEpoch is MILLISECONDS everywhere.
   sessions.set(id, { id, name: display, color: null, events: [],
-                     status: { state: "working", sinceEpoch: Math.floor(Date.now() / 1000) } });
+                     status: { state: "opening", sinceEpoch: Date.now() } });
   order.push(id);                          // a tab the kernel does not know yet survives reconcileTabOrder
   renderTabs();
   setActive(id);
@@ -4178,7 +4262,7 @@ function failProvisional(why: string): void {
   const s = sessions.get(id);
   // "closed" gives the tab the dead treatment (struck label, plain ✕) — but the composer stays LIVE
   // for a failed provisional (the read-only exemption below), since the held text must stay editable
-  if (s) s.status = { state: "closed", sinceEpoch: Math.floor(Date.now() / 1000) };
+  if (s) s.status = { state: "closed", sinceEpoch: Date.now() };   // ms, like every kernel payload
   setActive(id);                     // jump back to the failed thread BEFORE saying anything
   if (held) {
     drafts.set(id, held); persistDrafts();
@@ -4586,17 +4670,21 @@ function openPicker(pick = false, prompt?: string, allowNew = false) {
       if (row) setActiveRow(row as HTMLElement);
     });
     // Directory for a NEW session — fixed once the session starts, so it's chosen here. Prefilled with the
-    // gear's "Default directory" on open; recent dirs autocomplete from the datalist; the kernel expands
-    // ~ / $VARs and validates it exists. Hidden in pick-mode (choosing an existing session).
+    // gear's "Default directory" on open; the kernel-fed completer below offers real folders as you type
+    // and the kernel expands ~ / $VARs and validates it exists. Hidden in pick-mode (choosing an existing
+    // session). ONE suggestion surface, deliberately: this field once ALSO carried a native datalist of
+    // every listed session's recorded dir, superseded by the completer (2026-07-28) but left wired — and
+    // autocomplete="off" does NOT suppress a list-attribute dropdown in Chromium, so TWO boxes popped over
+    // the field, the native one offering dirs that no longer exist (a session's dir outlives a rename; the
+    // user 2026-08-11, offered a long-gone folder next to the real one). The completer asks the OWNING
+    // kernel — the authoritative source — so the stale-capable history list is gone, not merely hidden.
     const dirWrap = el("div", "picker-dir");
     const dirInput = el("input", "picker-dir-input") as HTMLInputElement;
     dirInput.id = "picker-dir";
     dirInput.spellcheck = false;
     dirInput.placeholder = "New-session directory (blank = default)";
     dirInput.title = "Working directory for a NEW session — fixed once it starts. Blank uses the kernel's default. ~ and $VARs expand; type to complete folders (Tab walks into one), on this machine or the selected host.";
-    dirInput.setAttribute("list", "picker-dir-list");
-    dirInput.setAttribute("autocomplete", "off");   // the browser's own dropdown would fight the completer
-    const dirList = document.createElement("datalist"); dirList.id = "picker-dir-list";
+    dirInput.setAttribute("autocomplete", "off");   // belt: no browser dropdown of past form values either
     const browseBtn = el("button", "picker-browse") as HTMLButtonElement;
     browseBtn.type = "button"; browseBtn.textContent = "Browse…";
     browseBtn.title = "Pick a folder with the native dialog (opens on the kernel's machine — host-local)";
@@ -4607,7 +4695,7 @@ function openPicker(pick = false, prompt?: string, allowNew = false) {
     dirInput.addEventListener("input", () => askDirComplete(dirInput.value));
     dirInput.addEventListener("focus", () => askDirComplete(dirInput.value));
     dirInput.addEventListener("blur", () => closeDirMenu());   // a row's mousedown preventDefaults, so it never blurs
-    dirWrap.appendChild(dirInput); dirWrap.appendChild(dirList); dirWrap.appendChild(browseBtn);
+    dirWrap.appendChild(dirInput); dirWrap.appendChild(browseBtn);
     dirWrap.appendChild(dirMenu); dirWrap.appendChild(dirStat);
     // per-session BACKEND picker (the user 2026-06-23): a tmux | SDK segmented toggle, defaulting to the
     // gear's Default backend but overridable for THIS new session. Hidden in pick-mode (like dirWrap).
@@ -4677,14 +4765,7 @@ function openPicker(pick = false, prompt?: string, allowNew = false) {
       startCreate({ name, backend: beSel?.dataset.be || loadSettings().backend,
                     dir: dirInput.value.trim(), host: hostSel, ...(auth ? { auth } : {}) });
     });
-    const openAll = el("button", "picker-action");
-    openAll.textContent = "↗ Open all running sessions";
-    openAll.addEventListener("click", () => {
-      if (vscodeApi) vscodeApi.postMessage({ type: "openAll" });
-      closePicker();
-    });
     actions.appendChild(newSess);
-    actions.appendChild(openAll);
     box.appendChild(search);
     box.appendChild(errLine);
     box.appendChild(list);
@@ -4697,6 +4778,17 @@ function openPicker(pick = false, prompt?: string, allowNew = false) {
     overlay.addEventListener("click", (e) => { if (e.target === overlay) closePicker(); });
     document.body.appendChild(overlay);
     document.addEventListener("keydown", pickerKey);
+    // SHORT-WINDOW FOLD (the user 2026-08-10, Chrome on a phone): with the on-screen keyboard up, the
+    // picker's lower rows sat behind it and nothing gave. The shell sizes this lifted iframe to the
+    // VISIBLE height (--app-h ← the top-level visualViewport, which the keyboard shrinks), so the
+    // keyboard opening/closing lands here as this window's own resize — the exact event to key on, no
+    // timers, no UA sniffing. Short window → kb-tight folds the advanced create rows (dir, backend,
+    // billing, host — styles.css) so the essentials share the height with the keyboard; the same
+    // resize expands them back the moment there is room again (a genuinely small screen folds too,
+    // which is the right call there as well).
+    const kbFit = () => document.getElementById("picker")?.classList.toggle("kb-tight", window.innerHeight < 480);
+    window.addEventListener("resize", kbFit);
+    kbFit();
   }
   overlay.style.display = "flex";
   signalPickerOverlay(true);   // lift the chat iframe full-window so the picker covers the whole screen
@@ -5128,16 +5220,8 @@ function renderPicker(items: any[]) {
     });
     list.appendChild(row);
   }
-  // Recent dirs → the new-session field's autocomplete (unique, non-empty, in list order).
-  const dl = document.getElementById("picker-dir-list");
-  if (dl) {
-    dl.replaceChildren();
-    const seen = new Set<string>();
-    for (const it of items) {
-      const d = (it.dir || "").trim();
-      if (d && !seen.has(d)) { seen.add(d); const o = document.createElement("option"); o.value = d; dl.appendChild(o); }
-    }
-  }
+  // (The recent-dirs datalist that was refilled here is gone — the kernel-fed completer is the ONE
+  // suggestion surface for the dir field; see the field's construction for the two-boxes story.)
   // Prefill the dir field with the kernel's real default path once it arrives (only if untouched + no gear
   // default) — so the actual default is written in there as an editable starting point (the user 2026-06-23).
   const di = document.getElementById("picker-dir") as HTMLInputElement | null;
@@ -6888,7 +6972,7 @@ function elapsedMs(sinceMs: number | null): string {
 // Each value is a little dropdown: picking an entry has the host inject the matching
 // /model or /effort slash command into the session's pane; the label then updates
 // when the TUI's statusline republishes the tmux vars (meta-pending bridges the gap).
-type MetaKind = "mode" | "model" | "effort" | "fast" | "auth";
+type MetaKind = "mode" | "model" | "effort" | "fast";
 // Model + effort choices come from the kernel's /models — the ONE list shared with the timeline lanes and the
 // judge-tier settings (the user 2026-07-02, who wanted one shared code path, not hardcoded in multiple places), so
 // the client holds no model literals (mirrors paletteColors above). Populated in place on load so META_CHOICES
@@ -6915,27 +6999,30 @@ const FAST_CHOICES: { label: string; value: string }[] = [
   { label: "On", value: "on" },
   { label: "Off", value: "off" },
 ];
-// Per-session billing (the user 2026-08-08): the Claude login vs the API key the manager's environment
-// carries. st.auth is now ALWAYS reported when the backend knows it (the user 2026-08-09 — the tab
-// hover says Billing everywhere), so this SWITCHING badge gates on st.authBoth instead: a one-auth
-// machine still shows no dead selector, while the hover stays informative. The key entry is labelled
-// 'API key', full stop — no fragment of the key, not even a last-4 tail, is shipped or shown (the
-// user 2026-08-08, evening: a tail is still key material and no surface needs it).
-const AUTH_CHOICES: { label: string; value: string }[] = [
-  { label: "Login", value: "login" },
-  { label: "API key", value: "key" },
-];
-// the fast-mode state ("on"/"off"/"cooldown") → the badge label
+// Per-session billing (the user 2026-08-08) — the Claude login vs the API key the manager's
+// environment carries — is no longer a statusline badge: the SWITCHING control lives in the tab's
+// right-click menu (showTabMenu's Billing flyout, the user 2026-08-09), still gated on st.authBoth
+// so a one-auth machine shows no dead selector, and still labelled plainly 'API key' — no fragment
+// of the key, not even a last-4 tail, is shipped or shown (2026-08-08, evening). The tab hover's
+// Billing row keeps carrying the fact everywhere.
+// the fast-mode state ("on"/"off"/"cooldown") → the badge label. ONE WORD (the user 2026-08-10, on a
+// phone-width statusline), but the WORD carries the state: off reads "Slow", not a second "Fast" —
+// tint alone (orange on, dim off) didn't say which side the toggle was on (the user 2026-08-11).
+// ON keeps the CLI's fast orange (metaColor); the picker's ✓ names the state on click.
 function prettyFast(f: string | undefined): string {
-  switch ((f || "").toLowerCase()) {
-    case "on": return "Fast on";
-    case "cooldown": return "Fast cooldown";   // rate-limited: the CLI resumes fast mode when the limit resets
-    default: return "Fast off";
-  }
+  const s = (f || "").toLowerCase();
+  return s === "cooldown" ? "Cooldown"   // rate-limited: the CLI resumes fast mode when the limit resets
+    : s === "on" ? "Fast" : "Slow";
 }
-// the per-session billing choice → the badge label (never any key material)
-function prettyAuth(st: Status): string {
-  return (st.auth || "").toLowerCase() === "key" ? "API key" : "Login";
+// Whether the session's MODEL can run fast mode at all (the CLI's /fast is an Opus-only research
+// preview). Gated HERE, on the model, because the CLI is no help: fast_mode_state arrives "off" with
+// an EMPTY fast_mode_disabled_reason on a non-Opus session (verified 2026-08-10 against 2.1.226 on a
+// fable session), so state alone would leave a dead toggle on every model /fast refuses (the user
+// 2026-08-10). Unknown/default stays visible: the account default may be Opus, and hiding a live
+// control is worse than a rare dead one.
+function fastAvailable(st: Status): boolean {
+  const m = (st.model || "").toLowerCase();
+  return !m || m === "default" || m.includes("opus");
 }
 // the @claude-permission-mode var → a short readable badge label
 function prettyMode(m: string | undefined): string {
@@ -6949,12 +7036,12 @@ function prettyMode(m: string | undefined): string {
   }
 }
 const META_CHOICES: Record<MetaKind, { label: string; value: string }[]> = {
-  mode: MODE_CHOICES, model: MODEL_CHOICES, effort: EFFORT_CHOICES, fast: FAST_CHOICES, auth: AUTH_CHOICES,
+  mode: MODE_CHOICES, model: MODEL_CHOICES, effort: EFFORT_CHOICES, fast: FAST_CHOICES,
 };
 // the live value of a meta kind for the active session
 function metaCurrent(kind: MetaKind, st: Status): string {
   return (kind === "model" ? st.model : kind === "effort" ? st.effort : kind === "fast" ? st.fast
-    : kind === "auth" ? st.auth : st.mode) || "";
+    : st.mode) || "";
 }
 
 // Is this menu entry the session's current value? Effort matches exactly; the
@@ -6962,7 +7049,6 @@ function metaCurrent(kind: MetaKind, st: Status): string {
 function isCurrentMeta(kind: MetaKind, st: Status, value: string): boolean {
   if (kind === "effort") return (st.effort || "").toLowerCase() === value;
   if (kind === "fast") return (st.fast || "").toLowerCase() === value;   // "cooldown" marks neither entry
-  if (kind === "auth") return (st.auth || "").toLowerCase() === value;
   if (kind === "mode") {
     const m = (st.mode || "").toLowerCase();
     if (value === "default") return m === "" || m === "default" || m === "normal";
@@ -7007,7 +7093,6 @@ function metaButton(kind: MetaKind, text: string): HTMLElement {
   btn.title = kind === "model" ? "change model (sends /model)"
     : kind === "effort" ? "change thinking effort (sends /effort)"
     : kind === "fast" ? "toggle fast mode (sends /fast)"
-    : kind === "auth" ? "switch which account this session bills (login vs API key; reconnects to apply)"
     : "change permission mode (shift+tab cycle)";
   btn.addEventListener("click", (e) => { e.stopPropagation(); toggleMetaMenu(kind, btn); });
   return btn;
@@ -7026,23 +7111,24 @@ function metaColor(kind: MetaKind, st: Status): string {
 // Build or refresh the model/effort buttons inside #spinner-meta. Called from
 // updateStatusline (fresh container) and the 1s ticker (label refresh in place).
 function syncMetaControls(meta: HTMLElement, st: Status) {
-  // order left→right: mode · model · effort · fast · auth — the mode selector sits LEFT of the model name
-  // (the user 2026-06-16); fast/auth exist only when the session reports them (SDK init / a both-auth
-  // machine), so a machine with one billing choice shows no dead selector (the user 2026-08-08).
-  const want = [st.mode ? "mode" : "", st.model ? "model" : "", st.effort ? "effort" : "", st.fast ? "fast" : "", (st.auth && st.authBoth) ? "auth" : ""].filter(Boolean).join();
+  // order left→right: mode · model · effort · fast — the mode selector sits LEFT of the model name
+  // (the user 2026-06-16); fast exists only when the session reports it (SDK init) AND the model can
+  // run it (fastAvailable). Billing moved to the tab's right-click menu (the user 2026-08-09) — no
+  // badge here.
+  const fast = st.fast && fastAvailable(st) ? st.fast : "";   // reported AND the model can run it — else no dead control
+  const want = [st.mode ? "mode" : "", st.model ? "model" : "", st.effort ? "effort" : "", fast ? "fast" : ""].filter(Boolean).join();
   const btns = Array.from(meta.querySelectorAll(".meta-btn")) as HTMLElement[];
   if (btns.map((b) => b.dataset.kind).join() !== want) {
     meta.replaceChildren();
     if (st.mode) meta.appendChild(metaButton("mode", prettyMode(st.mode)));
     if (st.model) meta.appendChild(metaButton("model", st.model));
     if (st.effort) meta.appendChild(metaButton("effort", st.effort));
-    if (st.fast) meta.appendChild(metaButton("fast", prettyFast(st.fast)));
-    if (st.auth && st.authBoth) meta.appendChild(metaButton("auth", prettyAuth(st)));
+    if (fast) meta.appendChild(metaButton("fast", prettyFast(fast)));
   }
   for (const b of Array.from(meta.querySelectorAll(".meta-btn")) as HTMLElement[]) {
     const kind = b.dataset.kind as MetaKind;
     const disp = kind === "mode" ? prettyMode(st.mode) : kind === "fast" ? prettyFast(st.fast)
-      : kind === "auth" ? prettyAuth(st) : metaCurrent(kind, st);
+      : metaCurrent(kind, st);
     const label = b.querySelector(".meta-label") as HTMLElement | null;
     // A switching MODEL shows animated dots, not the stale/premature name (the user 2026-07-03): the
     // server drives it (st.modelPending) — event-based, cleared the instant the new model actually lands —
@@ -7051,8 +7137,8 @@ function syncMetaControls(meta: HTMLElement, st: Status) {
     // dots from the server (st.modelPending / st.effortPending), with isMetaPending covering the sub-second
     // before the first server push (the user 2026-07-06).
     const pending = (kind === "model" && !!st.modelPending) || (kind === "effort" && !!st.effortPending)
-      || (kind === "auth" && !!st.authPending) || isMetaPending(kind, st);
-    const showDots = pending && (kind === "model" || kind === "effort" || kind === "auth");   // all three apply via a resolve/reconnect the server tracks
+      || isMetaPending(kind, st);
+    const showDots = pending && (kind === "model" || kind === "effort");   // both apply via a resolve/reconnect the server tracks
     if (label) {
       if (showDots) {
         if (!label.querySelector(".meta-dots")) label.replaceChildren(metaDots());
@@ -7087,7 +7173,7 @@ function toggleMetaMenu(kind: MetaKind, btn: HTMLElement) {
     item.addEventListener("click", (e) => {
       e.stopPropagation();
       if (activeId && vscodeApi) {
-        vscodeApi.postMessage({ type: kind === "model" ? "setModel" : kind === "effort" ? "setEffort" : kind === "fast" ? "setFast" : kind === "auth" ? "setAuth" : "setMode", id: activeId, value: c.value });
+        vscodeApi.postMessage({ type: kind === "model" ? "setModel" : kind === "effort" ? "setEffort" : kind === "fast" ? "setFast" : "setMode", id: activeId, value: c.value });
         const was = metaCurrent(kind, s.status);
         metaPending.set(`${activeId}:${kind}`, { was, until: Date.now() + 20_000 });
         btn.classList.add("meta-pending");
@@ -7275,9 +7361,15 @@ function updateStatusline() {
   // INTERRUPTING (the stop is already in flight; re-pressing it is a lie — the user 2026-07-02).
   if (s.status.state === "working" || s.status.state === "compacting"
       || s.status.state === "retrying" || s.status.state === "blocked") sl.appendChild(stopButton(s.status.state));
+  // The right-side cluster — dir · branch · mode/model/effort/fast badges · ctx battery — grouped in ONE
+  // container (.sl-right) that carries the right-justify margin and wraps INTERNALLY with right-aligned
+  // rows. Grouped, not flat: when a narrow pane wraps the statusline, flat children restart each extra row
+  // at the LEFT edge (justify only reaches the row holding the auto margin) — the user 2026-08-10, on a
+  // phone, wanted the wrapped controls to stay clustered on the right.
+  const right = el("span", "sl-right");
   // The session's working directory (fixed at creation), leading the right-side cluster — just left of the
-  // mode/model/effort controls (the user 2026-06-23). Basename only; full path on hover. It carries the
-  // right-justify margin so it anchors the cluster; empty (rare, no cwd) it's a zero-width spacer.
+  // mode/model/effort controls (the user 2026-06-23). Basename only; full path on hover. Empty (rare, no
+  // cwd) it's a zero-width spacer.
   const dir = el("span", "status-dir");
   if (s.cwd) {
     dir.appendChild(folderIcon());
@@ -7288,24 +7380,26 @@ function updateStatusline() {
     // activeId rides along so a REMOTE session's click SSHes out instead of no-op'ing on a local path (2026-07-03).
     asFolderLink(dir, s.cwd, activeId || undefined);
   }
-  sl.appendChild(dir);
-  // The session's git branch, just right of the dir — only when known and only if the user hasn't hidden it
-  // (Settings → "Show git branch", on by default — the user 2026-06-23). Read from the TOP-LEVEL session field,
+  right.appendChild(dir);
+  // The session's git branch, just right of the dir — only when known and only if the user has OPTED IN
+  // (Settings → Chat → "Show git branch"; off by default — the user 2026-08-10, trimming the statusline
+  // for narrow panes; it shipped on by default 2026-06-23). Read from the TOP-LEVEL session field,
   // never the head system event: that event is windowed out of the wire tail on any >250-event session, which
   // used to blank the branch on most sessions (the user 2026-06-30).
-  if (loadSettings().showBranch !== false && s.gitBranch) {
+  if (loadSettings().showBranch === true && s.gitBranch) {
     const br = el("span", "status-branch");
     br.textContent = "⎇ " + s.gitBranch;
     br.title = "git branch: " + s.gitBranch;
-    sl.appendChild(br);
+    right.appendChild(br);
   }
   const meta = el("span", "spinner-meta");
   meta.id = "spinner-meta";
   syncMetaControls(meta, s.status);
-  sl.appendChild(meta);
+  right.appendChild(meta);
   const bar = ctxBar();
   setCtxBar(bar, s.status.ctx, s.status.state === "compacting", s.status.ctxColor);
-  sl.appendChild(bar);
+  right.appendChild(bar);
+  sl.appendChild(right);
 }
 
 // Unsent composer text, per session — a draft belongs to the tab it was typed
@@ -7337,6 +7431,49 @@ const composerCitations = new Map<string, Citation[]>();
 // ride the outgoing text as a trailing line, quoted when they contain spaces — the same thing the old
 // insert-at-cursor produced, now legible while you compose.
 const composerFiles = new Map<string, string[]>();   // sid -> attachment paths, in drop order
+
+// Files whose BYTES are still in flight to the kernel (shipFileToHost → dropFile → droppedPath ack).
+// On a phone that round trip is seconds long — base64 + a fragmented WS send + the kernel write — and
+// with nothing on screen it reads as a dead click (the user 2026-08-11). So the strip shows a pending
+// chip (name + pulsing dots) from the instant the file is picked, replaced by the real thumbnail when
+// the ack lands, or removed with a loud toast when the kernel nacks (dropSaveFailed). In-memory only,
+// NOT persisted with drafts: a reload kills the page whose socket the ack would ride.
+const pendingShips = new Map<string, string[]>();    // sid -> shipped names awaiting droppedPath
+
+// The kernel saves a shipped file as drops/<ms>-<sanitized name> (_save_dropped_file). Mirror its
+// sanitizer so an ack can be matched back to the pending chip it retires by basename suffix; the
+// FIFO fallback in resolvePendingShip covers any mismatch (e.g. non-ASCII, where Python's \w and
+// JS's \w disagree).
+function shipSafeName(name: string): string {
+  return (name.replace(/[^\w.-]+/g, "_").slice(-80)) || "drop";
+}
+
+function addPendingShip(id: string | null, name: string): void {
+  if (!id) return;
+  const list = pendingShips.get(id) || [];
+  list.push(name);
+  pendingShips.set(id, list);
+  if (id === activeId) renderComposerFiles(id);
+}
+
+// An ack (or nack) retires ONE pending chip: the entry whose sanitized name `key` ends with — `key`
+// is the saved path on ack (basename <ms>-<safe name>) or the raw name on nack, and both end with
+// the sanitized original — else the oldest (the kernel answers a connection's dropFiles in order).
+// Searched active-tab-first across all sessions because the ack carries no session id — like the
+// attachment itself, it lands wherever the user now is.
+function retirePendingShip(key: string): void {
+  const k = "-" + shipSafeName(key.split("/").pop() || key);
+  const ids = activeId ? [activeId, ...pendingShips.keys()] : [...pendingShips.keys()];
+  for (const id of ids) {
+    const list = pendingShips.get(id);
+    if (!list || !list.length) continue;
+    const i = list.findIndex((n) => k.endsWith("-" + shipSafeName(n)));
+    list.splice(i >= 0 ? i : 0, 1);
+    if (!list.length) pendingShips.delete(id);
+    if (id === activeId) renderComposerFiles(id);
+    return;
+  }
+}
 
 // Persist drafts across a full RELOAD (the user 2026-06-25: a half-typed message must survive a refresh, not
 // only a tab switch). The Map is in-memory, so mirror it into the webview's persisted state — the same store
@@ -7465,8 +7602,9 @@ function renderComposerFiles(id: string | null): void {
   const strip = document.getElementById("composer-files");
   if (!strip) return;
   strip.replaceChildren();
-  const paths = id ? composerFiles.get(id) : undefined;
-  if (!paths || !paths.length) { strip.style.display = "none"; return; }
+  const paths = (id ? composerFiles.get(id) : undefined) || [];
+  const pending = (id ? pendingShips.get(id) : undefined) || [];
+  if (!paths.length && !pending.length) { strip.style.display = "none"; return; }
   strip.style.display = "flex";
   paths.forEach((p, i) => {
     const box = el("span", "composer-file");
@@ -7496,6 +7634,31 @@ function renderComposerFiles(id: string | null): void {
     x.setAttribute("aria-label", "Remove attachment");
     x.textContent = "\u2715";
     x.addEventListener("click", (e) => { e.stopPropagation(); if (id) removeComposerFile(id, i); });
+    box.appendChild(x);
+    strip.appendChild(box);
+  });
+  // In-flight ships, after the real thumbnails: name + pulsing dots until the droppedPath ack swaps
+  // in the thumbnail above. The ✕ removes just the CHIP (there is no cancelling a send in flight) —
+  // the escape hatch for an ack lost to a mid-ship disconnect, so a stuck chip is never trapped.
+  pending.forEach((n, i) => {
+    const box = el("span", "composer-file composer-file-pending");
+    box.title = n + " — uploading";
+    const nm = el("span", "composer-file-name");
+    nm.textContent = n;
+    const dots = el("span", "composer-ship-dots");
+    dots.append(el("i"), el("i"), el("i"));
+    box.append(nm, dots);
+    const x = el("button", "composer-file-x");
+    x.setAttribute("aria-label", "Dismiss pending attachment");
+    x.textContent = "✕";
+    x.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const list = id ? pendingShips.get(id) : undefined;
+      if (!list) return;
+      list.splice(i, 1);
+      if (!list.length && id) pendingShips.delete(id);
+      renderComposerFiles(id);
+    });
     box.appendChild(x);
     strip.appendChild(box);
   });
@@ -8353,16 +8516,19 @@ window.addEventListener("message", (e: MessageEvent) => {
   // The host asks US to confirm (in-page, no native dialogs): ending a live
   // session on tab-close, and reviving a dead one on open.
   else if (m.type === "confirmClose" && m.id) {
+    // × = End session, full stop (the user 2026-08-11): the old "Close tab" branch hid a RUNNING session
+    // — no tab, no Fleet row, still judged and billed — a secret running session with no SDK-era use
+    // case. Close-and-reopen is End + Revive, which keeps the whole history.
     const nm = String(m.name || "");
     showConfirm(`End “${nm}”?`,
-      "“Close tab” just removes it from this panel and leaves the session running. “End session” shuts it down (the transcript stays on disk).",
-      [{ label: "Close tab", value: "close" }, { label: "End session", value: "end", danger: true }, { label: "Cancel", value: "" }],
+      "The session shuts down. Its history stays on disk — revive it any time from the picker or timeline.",
+      [{ label: "End session", value: "end", danger: true }, { label: "Cancel", value: "" }],
       (v) => {
-        if (v !== "close" && v !== "end") return;   // Cancel → nothing
+        if (v !== "end") return;   // Cancel → nothing
         // End session = shut it down AND remove the tab (the user 2026-06-16: an explicitly-ended session
         // shouldn't linger as a struck-through read-only tab — that's only for sessions that die on their
-        // own). closeTab must durably dismiss it so the death event doesn't re-add the struck tab.
-        if (v === "end") vscodeApi?.postMessage({ type: "endSession", id: m.id });
+        // own). closeTab durably forgets a kept read-only tab so the death event doesn't re-add it.
+        vscodeApi?.postMessage({ type: "endSession", id: m.id });
         vscodeApi?.postMessage({ type: "closeTab", id: m.id });
         closeTabLocally(m.id);   // same optimistic drop as the in-page ✕ — this path used to sit and wait
       });
@@ -8397,7 +8563,15 @@ window.addEventListener("message", (e: MessageEvent) => {
     const s = sessions.get(m.id);
     if (s && s.name !== m.name) { s.name = m.name; renderTabs(); }
   }
-  else if (m.type === "droppedPath" && typeof m.path === "string") addComposerFile(activeId, m.path);   // host-saved drop/paste/pick → a thumbnail, not path text (the user 2026-08-04)
+  else if (m.type === "droppedPath" && typeof m.path === "string") {   // host-saved drop/paste/pick → a thumbnail, not path text (the user 2026-08-04)
+    retirePendingShip(m.path);                                         // the in-flight chip this ack answers (no-op for pickFile, which never ships)
+    addComposerFile(activeId, m.path);
+  } else if (m.type === "dropSaveFailed" && typeof m.name === "string") {
+    // the kernel could not SAVE the shipped bytes — clear the pending chip and say so loudly,
+    // never leave dots pulsing over a file that is not coming (fail loudly, don't degrade silently)
+    retirePendingShip(m.name);
+    warnToast(m.name + " couldn't be saved on the kernel, so it was not attached — try again.");
+  }
   // an EDITOR highlight (VS Code host, onDidChangeTextEditorSelection — the user 2026-07-13) seeds the
   // same quote chip a transcript highlight does, labeled + wrapped with its file:lines origin (m.src)
   else if (m.type === "editorSelection" && typeof m.text === "string" && m.text.trim() && activeId)
@@ -8905,15 +9079,22 @@ function shipFileToHost(f: File) {
       + " MB — attachments over 50 MB can't be shipped, so it was not attached.");
     return;
   }
+  // The pending chip goes up NOW, before the encode even starts — on a phone the encode + fragmented
+  // WS send + kernel round trip is seconds of otherwise-blank time that read as a dead click (the
+  // user 2026-08-11). Retired by the droppedPath ack / dropSaveFailed nack (see retirePendingShip).
+  const name = f.name || "pasted.png";
+  const sid = activeId;
+  addPendingShip(sid, name);
   const reader = new FileReader();
   reader.onload = () => {
     const b64 = String(reader.result || "").split(",")[1] || "";
-    if (!b64 || !vscodeApi) return;
+    if (!b64 || !vscodeApi) { retirePendingShip(name); return; }
     const msg: { type: string; name: string; b64: string; id?: string } =
-      { type: "dropFile", name: f.name || "pasted.png", b64 };
-    if (activeId) msg.id = activeId;   // the owning session → the owning kernel
+      { type: "dropFile", name, b64 };
+    if (sid) msg.id = sid;   // the owning session → the owning kernel
     vscodeApi.postMessage(msg);
   };
+  reader.onerror = () => retirePendingShip(name);   // an unreadable file must not leave a stuck chip
   reader.readAsDataURL(f);
 }
 
@@ -9052,16 +9233,19 @@ setupSettings();
         closeTabLocally(id);
         return;
       }
-      // LIVE session: show the End/Close confirm IMMEDIATELY, client-side — NOT via a closeSession→confirmClose
+      // LIVE session: show the End confirm IMMEDIATELY, client-side — NOT via a closeSession→confirmClose
       // kernel round-trip, which made the ✕ feel unresponsive (and sometimes never opened the modal when the
       // kernel was busy). The dialog is static; the kernel doesn't need to decide it (the user 2026-06-24).
+      // × = End session, full stop (the user 2026-08-11): the old "Close tab" branch hid a RUNNING
+      // session — still judged and billed, but invisible — a tmux-era affordance with no SDK-era use
+      // case. Close-and-reopen is End + Revive, which keeps the whole history.
       const nm = sessions.get(id)?.name || "";
       showConfirm(`End “${nm}”?`,
-        "“Close tab” just removes it from this panel and leaves the session running. “End session” shuts it down (the transcript stays on disk).",
-        [{ label: "Close tab", value: "close" }, { label: "End session", value: "end", danger: true }, { label: "Cancel", value: "" }],
+        "The session shuts down. Its history stays on disk — revive it any time from the picker or timeline.",
+        [{ label: "End session", value: "end", danger: true }, { label: "Cancel", value: "" }],
         (v) => {
-          if (v !== "close" && v !== "end") return;   // Cancel → nothing
-          if (v === "end") vscodeApi?.postMessage({ type: "endSession", id });
+          if (v !== "end") return;   // Cancel → nothing
+          vscodeApi?.postMessage({ type: "endSession", id });
           vscodeApi?.postMessage({ type: "closeTab", id });
           closeTabLocally(id);   // drop the tab + reselect NOW, and keep it gone while the kernel catches up
         });

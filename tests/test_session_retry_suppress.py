@@ -108,16 +108,17 @@ class SessionRetrySuppressWiring(unittest.TestCase):
                       "interrupting a thread arms its per-session retry-suppression")
 
     def test_apiretry_gate_checks_per_session_suppression(self):
-        ap = SRC.split('t == "apiRetry"', 1)[1].split("elif t ==", 1)[0]
-        self.assertIn("_session_retry_suppressed(sid)", ap,
-                      "the apiRetry drive-op skips a thread the user interrupted, not just the global pause")
+        fn = SRC.split("def _fire_api_retry(", 1)[1].split("\ndef ", 1)[0]
+        self.assertIn("_session_retry_suppressed(sid)", fn,
+                      "the retry decision skips a thread the user interrupted, not just the global pause")
 
     def test_status_carries_the_flag(self):
         self.assertIn('"retrySuppressed": _session_retry_suppressed(sid)', SRC,
                       "the chat status exposes retrySuppressed so the client retry loop + card can read it")
 
     def test_pusher_runs_the_per_session_resume_sweep(self):
-        self.assertIn("_auto_resume_session_retry(int(time.time()), _tmux_sessions())", SRC,
+        # (now, tmux) — the cycle's ONE liveness snapshot, not a per-job fresh read (2026-08-10 CPU fix)
+        self.assertIn("_auto_resume_session_retry(now, tmux)", SRC,
                       "the pusher tick re-arms suppressed threads that land a clean turn")
 
 

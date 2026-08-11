@@ -49,6 +49,14 @@ class SessionPrompt(unittest.TestCase):
                       "the prompt must ask for paths that locate the file, not bare names")
         self.assertIn("bare name", self.flat,
                       "the prompt must name the failure mode (a bare basename) it steers away from")
+    def test_licenses_persisting_through_daunting_work(self):
+        # the user 2026-08-11 (after Anthropic's riemann-zeta post, where the operator's whole input was
+        # keep-going encouragement): the prompt must license continuing on work that merely LOOKS too big
+        # or uncertain — stopping is reserved for decisions that are genuinely the user's to make.
+        self.assertIn("talk yourself out of", self.flat,
+                      "the prompt must tell the session not to abandon work that merely looks daunting")
+        self.assertIn("make progress", self.flat,
+                      "the prompt must license taking any visible path to progress without checking in")
 
     def test_housekeeping_note_preexplains_romp_artifacts(self):
         # The ONE place romp is named to a session (the user 2026-07-25): pre-explain the artifacts
