@@ -306,6 +306,16 @@ _WHY_JUDGING_LEGACY = "a judge pass is mid-flight"
 # INSPECTABLE: this drop used to leave NO record anywhere, which is how a card sat in Working for half an
 # hour with nothing to read (see the kernel's _nudge_fire_list).
 WHY_TURN_IN_FLIGHT = "a judge has ruled on a turn that hasn't finished yet"
+# The fire list's THIRD hold (2026-08-11): a goal whose diary ENDS on a judge's UNBLOCK, with an
+# EARLIER judge unblock already on record, is mid-OSCILLATION — the column has ping-ponged
+# blocked↔working at least once without settling, and the closer's next word is pending. Five false
+# status checks in one live weekend fired in that window: a blocked-on-the-user goal was repeatedly
+# flipped to 'working' by "new work filed" / "answered in passing" rulings while the user's decision was
+# still outstanding, and the nudge read each flip as a stall. A goal's FIRST unblock never holds — that
+# is the 2026-07-30 considered-verdict case, whose own incident was a wrongly-gagged nudge. Same
+# never-paint rule as the holds above; clears on the closer's next word (any newer judge row on the
+# goal) or the deferral backstop.
+WHY_UNBLOCK_UNSETTLED = "an unblock is awaiting the closer's next word on this goal"
 # The CONSOLIDATOR (the user 2026-06-19): the grouper's twin for the COMPLETED column. The working grouper
 # only ever sees OPEN tops, so related goals that finish before they get
 # grouped land as separate cards. The consolidator groups related ALL-COMPLETED sibling tops under a
@@ -7962,8 +7972,10 @@ def stall_why_stands(why, fsid):
     decides what the stall surfaces say. Other reasons pass through: their truth lives in stores this
     predicate can't reach, and their own passes reconcile the records that carry them. `fsid` is the
     record's session, kept for the next reason that needs live verification against it (the retired
-    judging branch checked active_runs here)."""
-    return why not in (WHY_JUDGING, _WHY_JUDGING_LEGACY, WHY_TURN_IN_FLIGHT)
+    judging branch checked active_runs here). The unblock-unsettled hold (2026-08-11) is screened for
+    the same reason as the turn-in-flight one: the closer's next pass is romp's own review mid-flight,
+    not a state the user needs to act on."""
+    return why not in (WHY_JUDGING, _WHY_JUDGING_LEGACY, WHY_TURN_IN_FLIGHT, WHY_UNBLOCK_UNSETTLED)
 
 
 def stalled_facts(fsid):

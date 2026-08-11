@@ -188,7 +188,7 @@ class TheNudgeIsNotHeldByTheLift(unittest.TestCase):
         held = []
         keep = km._nudge_fire_list(fresh, [(GID, 0, True)], arm_t=CUT_T, seen_t=RESUME_T, held=held)
         self.assertEqual(keep, [])
-        self.assertEqual([f[0] for f in held], [GID])
+        self.assertEqual([(f[0], why) for f, why in held], [(GID, jd.WHY_TURN_IN_FLIGHT)])
         self.assertFalse(jd.stall_why_stands(jd.WHY_TURN_IN_FLIGHT, SID),
                          "and the hold's why is screened off the stall surface — hence a silent card")
 
