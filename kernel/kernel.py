@@ -3150,7 +3150,7 @@ def _auto_nudge_session(s, now, tmux, nudged, waitfor, alive_ids=None):
             held = []
             to_fire = _nudge_fire_list(jd.load_goals(sid), to_fire, arm_t=arm.get("t") or 0,
                                        seen_t=(seen.get("t") or 0) if seen else 0, held=held)
-            to_fire += [f for f in held if _nudge_deferred_ok(f[0], jd.WHY_TURN_IN_FLIGHT, now, sid)]
+            to_fire += [f for f, why in held if _nudge_deferred_ok(f[0], why, now, sid)]
         except Exception:
             pass
     if len(to_fire) == 1:
@@ -3238,9 +3238,27 @@ def _nudge_fire_list(fresh, to_fire, arm_t=None, seen_t=None, held=None):
     the writer). A user gesture is exempt for the same reason and one more: it is the event that RE-ARMS
     the nudge, so treating it as grounds to withhold one inverts it.
 
-    `held` (optional list) collects the goals dropped for newer evidence, so the caller can record the
-    hold as a DEFERRAL instead of a silent drop — every other nudge hold leaves a why and rides the 6h
-    backstop, and this one leaving nothing is what made the deadlock unreadable from the state dir."""
+    A REPEATED unblock as the goal's newest judge row is its own hold (2026-08-11; see
+    jd.WHY_UNBLOCK_UNSETTLED). Five false status checks in one live weekend fired in the same window: a
+    goal blocked on the USER's decision was flipped to 'working' by "new work filed" / "answered in
+    passing" rulings while the decision was still outstanding, the nudge read each flip as a stall, and
+    the closer re-filed essentially the same block minutes later — a blocked↔working ping-pong with no
+    user action. The ev_t guard above can't see it: those unblocks rule on turns romp HAS seen end,
+    which the 2026-07-30 "considered verdict" reasoning deliberately treats as nudgeable — and for a
+    goal's FIRST unblock that reasoning stands (its own incident was a wrongly-gagged nudge, pinned in
+    tests/test_awaiting_same_trigger_wedge.py). The discriminator between the two incidents is the
+    diary itself: every flap fire had a PRIOR judge unblock already on the goal. So the hold takes only
+    a goal whose newest judge row is an unblock AND whose diary holds an earlier judge unblock — the
+    column has already ping-ponged once without settling, which is the cards-move rule's named
+    anti-pattern, and a status ask adds nothing until the judges stop moving it. Only JUDGE unblocks
+    count on both ends: a user's own unblock (an interrupt re-engage) is the event that re-ARMS the
+    nudge, and holding on it would invert it. The hold clears on the closer's next word — any newer
+    judge row on the goal — or the deferral backstop.
+
+    `held` (optional list) collects (goal, why) pairs for the goals dropped by either hold, so the
+    caller can record each as a DEFERRAL instead of a silent drop — every other nudge hold leaves a why
+    and rides the 6h backstop, and this one leaving nothing is what made the deadlock unreadable from
+    the state dir."""
     nodes, status = fresh.get("nodes", {}) or {}, fresh.get("status", {}) or {}
     cut = max(arm_t or 0, seen_t or 0)
     keep = []
@@ -3258,7 +3276,13 @@ def _nudge_fire_list(fresh, to_fire, arm_t=None, seen_t=None, held=None):
                        and (e.get("ev_t") or e.get("at") or 0) > cut
                        for e in nd.get("log") or []):
             if held is not None:                     # a ruling on EVIDENCE from a turn romp hasn't seen end —
-                held.append(f)                       # the stall read is a world old; hold it, don't lose it
+                held.append((f, jd.WHY_TURN_IN_FLIGHT))   # the stall read is a world old; hold it, don't lose it
+            continue
+        judge_rows = [e for e in nd.get("log") or [] if e.get("src") not in NUDGE_HOLD_EXEMPT_SRC]
+        if judge_rows and judge_rows[-1].get("kind") == "unblock" \
+                and any(e.get("kind") == "unblock" for e in judge_rows[:-1]):
+            if held is not None:                     # a REPEAT unblock mid-oscillation: the unblocker spoke
+                held.append((f, jd.WHY_UNBLOCK_UNSETTLED))   # again, the closer hasn't answered (see docstring)
             continue
         keep.append(f)
     return keep

@@ -49,7 +49,7 @@ def _run(rows, **kw):
     held = []
     keep = km._nudge_fire_list(_fresh(rows, **kw), [(GID, 0, True)],
                                arm_t=SEEN_T, seen_t=SEEN_T, held=held)
-    return [f[0] for f in keep], [f[0] for f in held]
+    return [f[0] for f in keep], [f[0] for f, _why in held]   # held rows carry (goal, why) since 2026-08-11
 
 
 class RompsOwnBookkeepingNeverHolds(unittest.TestCase):
