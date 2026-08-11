@@ -64,7 +64,8 @@ test("creating a session opens the provisional tab instead of a modal", () => {
     "the chip says what this phase IS — the session is opening");
   assert.doesNotMatch(RENDER, /state: "working", sinceEpoch: Math\.floor/, "the broken-clock seed is gone");
   // …and the tab strip shows the accent loader dot for the opening state, so the starting tab has a cue
-  assert.match(RENDER, /else if \(st === "opening"\) tab\.appendChild\(el\("span", "tab-dot opening"\)\);/);
+  // (the opening state is one branch of the fork's four-state pip ladder — see tab-strip-pips tests)
+  assert.match(RENDER, /: st === "opening" \? \["opening", "opening — this session is still starting up"\]/);
   assert.match(CSS, /\.tab-dot\.opening \{ background: var\(--accent\); animation: opening-line-pulse/);
   assert.match(RENDER, /order\.push\(id\);/, "the tab survives reconcileTabOrder as a not-yet-kernel-known extra");
 });
