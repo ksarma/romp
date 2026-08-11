@@ -1,8 +1,14 @@
 # Handoff — security pass on the fork (2026-08-06)
 
-For whoever picks this up next. Branch `claude/romp-fork-setup-p4myn7`, open as **PR #1** against
-the fork's `main`. Nine commits, CI green on all seven checks. Working tree clean, everything
-pushed.
+> **Status update (2026-08-11):** PR #1 has since MERGED, so this file is now the security work's
+> design history, not an open-branch handoff. Still current: the disclosure decisions that are the
+> user's to make (the bundle is parked, per `UPSTREAM.md`'s waiting rows), and the live checks
+> never run (phone / webview / macOS — the three runnable ones passed 2026-08-07). NO LONGER
+> current: the file:line references below — they predate the 2026-08-09 upstream v0.6.0 merge, and
+> the security findings themselves need re-verification against v0.6.0 before any disclosure.
+
+For whoever picks this up next. Branch `claude/romp-fork-setup-p4myn7`, landed as **PR #1** on
+the fork's `main`. Nine commits, CI green on all seven checks.
 
 Read `CLAUDE.md` first — it is the repo's own rules and they are load-bearing here. This file is
 only what a fresh agent cannot reconstruct from the diff.

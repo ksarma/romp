@@ -116,8 +116,10 @@ Chips on cards:
 - **interrupted** (yellow): you stopped the session mid-turn and haven't
   spoken since; auto-nudge holds off until your next message. Yields to
   stalled.
-- **stalled**: the one auto-nudge didn't resolve the goal; it is never
-  re-asked, and the failure records a block (src `nudge`) so the card sits
+- **stalled**: an auto-nudge didn't resolve the goal. A nudge fires at most
+  once per stall episode and re-arms only when a genuinely new turn ends and
+  the goal still reads working; a stall that persists without new work is not
+  nudged forever — the failure records a block (src `nudge`) so the card sits
   in Needs-you with this chip as the explanation. Yields once a real judge
   verdict takes over. Tooltip carries the nudge history.
 - **re-judging** (dotted): you answered a soft-blocked card with a
