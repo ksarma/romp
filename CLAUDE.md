@@ -1,8 +1,9 @@
 # romp — repo instructions
 
-> **Picking up work in progress?** `HANDOFF.md` has the current state of the security branch
-> (PR #1): what landed, what is still open with file:line, the checks that need a live machine,
-> and the decisions that are the user's to make. Read it after this file.
+> **Picking up the security work?** `HANDOFF.md` is that project's design history (PR #1 merged
+> 2026-08; its file:line refs predate the v0.6.0 merge): the checks that were never run, the
+> disclosure decisions that are the user's to make, and the re-verification the findings need
+> against v0.6.0 before any disclosure. Read it after this file when touching that work.
 
 ## Philosophy
 The bottleneck in AI coding is human attention. romp lets one person direct many
