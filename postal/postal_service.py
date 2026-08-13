@@ -201,8 +201,10 @@ def _mailbox(sid):
     return mb
 
 def _unique():
-    host = socket.gethostname().split(".")[0] or "host"
-    return f"{int(time.time())}.{os.getpid()}_{random.randint(0, 99999)}.{host}"
+    # self_host(), not raw gethostname: the mid is a path component under mail/ and the peer's
+    # outbox (_safe_id-checked at outbox_put), so a stomped hostname baked in here silently killed
+    # every OUTBOUND cross-host send too — same 2026-08-11 breakage as self_host's docstring.
+    return f"{int(time.time())}.{os.getpid()}_{random.randint(0, 99999)}.{self_host()}"
 
 def _mark_pending(sid):
     """Reconcile the on-disk pending-mail marker with reality: mail-pending/<sid>
@@ -521,6 +523,24 @@ def _kernel_post(path, body, timeout=2):
             return json.loads(r.read().decode("utf-8") or "{}")
     except Exception:
         return None
+
+
+def _kernel_up():
+    """True when THIS machine's kernel answers /healthz (auth-exempt, so no token dance). The
+    autostop gate reads it: a machine whose kernel is up is a live romp installation — peer buses
+    dial ITS bus for presence and INBOUND mail — so the bus must keep listening even with zero
+    local sessions. A quiet hub's bus used to self-stop on local-session count alone, and every
+    cross-host message through it silently parked until a manual `ensure` (verified twice,
+    2026-08-12); local sessions are the wrong liveness signal for a hub. False under the
+    ROMP_SESSIONS_FILE seam, like _kernel_post: that seam means a test with no live kernel."""
+    if os.environ.get("ROMP_SESSIONS_FILE"):
+        return False
+    import urllib.request
+    try:
+        with urllib.request.urlopen(KERNEL_BASE + "/healthz", timeout=2) as r:
+            return getattr(r, "status", 200) // 100 == 2
+    except Exception:
+        return False
 
 
 def _publish_working(sid, text):
@@ -1072,11 +1092,23 @@ class Handler(BaseHTTPRequestHandler):
                 # Peer-bus fleet view (DISPLAY only — all_agents() itself stays local so the delivery
                 # paths can never mistake a peer entry for a local maildir): each peer's last-gossiped
                 # presence, with honest staleness. Address cross-host with 'host:name' on collisions.
+                # Gossip that duplicates a direct peer's row is folded (_via_duplicate), and a session
+                # already listed never lists again under a second path — the doubled '[remote]' rows
+                # (the user 2026-08-12).
                 now = time.time()
+                direct_bus = _direct_bus_ids()
+                listed = {a["id"] for a in agents if a.get("id")}
                 for host, st in PEER_STATE.items():
                     age = int(now - (st.get("seenAt") or 0))
                     for pa in st.get("presence") or []:
-                        agents.append({"name": pa.get("name") or "?", "id": pa.get("id") or "",
+                        if _via_duplicate(pa, direct_bus):
+                            continue
+                        sid = pa.get("id") or ""
+                        if sid and sid in listed:
+                            continue
+                        if sid:
+                            listed.add(sid)
+                        agents.append({"name": pa.get("name") or "?", "id": sid,
                                        "remote": True, "peer": host, "seenAgo": age})
             return self._send({"agents": agents, "me": me})
         if u.path == "/sent":
@@ -1242,6 +1274,16 @@ def _maybe_restart_for_code(boot_fp):
         return True
     return False
 
+def _idle_tick(n, idle):
+    """One autostop decision: (new_idle, stop). Factored out so the gate is unit-testable (the
+    monitor loop sleeps). Local clients OR a live local kernel reset the count — a hub with zero
+    local sessions still serves inbound peer exchanges as long as its kernel runs (_kernel_up)."""
+    if n > 0 or _kernel_up():
+        return 0, False
+    idle += 1
+    return idle, idle >= IDLE_GRACE
+
+
 def _monitor(httpd, boot_fp=""):
     idle = 0
     while True:
@@ -1259,14 +1301,11 @@ def _monitor(httpd, boot_fp=""):
             n = present_count()
         except Exception:
             n = 1   # on error, err on the side of staying up
-        if n <= 0:
-            idle += 1
-            if idle >= IDLE_GRACE:
-                _log("no romp clients remain; shutting down")
-                threading.Thread(target=httpd.shutdown, daemon=True).start()
-                return
-        else:
-            idle = 0
+        idle, stop = _idle_tick(n, idle)
+        if stop:
+            _log("no romp clients remain (and no local kernel); shutting down")
+            threading.Thread(target=httpd.shutdown, daemon=True).start()
+            return
 
 def _retry_pending():
     """RETRY deferred deliveries — the fix for stranded mail. _push (and the revive
@@ -1436,19 +1475,49 @@ def peer_update(data):
     _peer_threads_reconcile(host)                    # an up peer gets its dialer; a down one is woken to exit
     return {"ok": True, "up": sum(1 for p in PEERS.values() if p["up"])}, 200
 
+def _direct_bus_ids():
+    """The bus ids of every DIRECTLY-peered bus (a dialable PEERS row): the identity set the
+    via-row consumers test gossip against. The id — proven by the peer exchange itself — is what
+    "same box" means; a NICKNAME can't say it, because the same machine wears different ssh
+    aliases on different hosts (the user 2026-08-12, whose directly connected box was also listed
+    "reachable via relay" under the hub's name for it, and whose mail could hop the hub)."""
+    out = set()
+    for h, st in PEER_STATE.items():
+        if (PEERS.get(h) or {}).get("port") and st.get("busId"):
+            out.add(st["busId"])
+    return out
+
+
+def _via_duplicate(pa, direct_bus):
+    """True when a GOSSIPED presence row (via set) names a box that is also a direct peer here —
+    by bus id when the hub gossips it (viaBus, the nickname-proof identity), by name for a hub
+    that predates the field. Duplicates are folded everywhere gossip is consumed: display
+    (via_reach), addressing (peer_route), and the agent list — a direct link always wins over a
+    relay hop, and never renders beside it."""
+    far = pa.get("via")
+    if not far:
+        return False
+    if (PEERS.get(far) or {}).get("port"):
+        return True
+    return bool(pa.get("viaBus")) and pa.get("viaBus") in direct_bus
+
+
 def via_reach():
     """Hosts reachable only THROUGH a directly-peered hub: the far spokes whose sessions a hub
     gossips with `via` labels (fleet_presence — one hop, never re-gossiped). One row per far host:
     {"host", "via", "agents", "seenAgo", "trust"} — the popover's "reachable via relay" section, and
-    the hook a trust-by-origin tier hangs on even though no tunnel to that host exists here."""
+    the hook a trust-by-origin tier hangs on even though no tunnel to that host exists here.
+    A spoke we ALSO hold a direct link to is folded (_via_duplicate: bus-id identity, so a nickname
+    difference can't sneak the duplicate back in)."""
     now, out = int(time.time()), {}
+    direct_bus = _direct_bus_ids()
     for hub, st in PEER_STATE.items():
         age = int(now - (st.get("seenAt") or 0))
         for pa in st.get("presence") or []:
             far = pa.get("via")
             if not far:      # a hub's exchange never gossips OUR sessions back (fleet_presence
                 continue     # excludes the asking host), so no self-row can appear here
-            if (PEERS.get(far) or {}).get("port"):    # directly peered here → its own row, not via
+            if _via_duplicate(pa, direct_bus):        # directly peered here → its own row, not via
                 continue
             e = out.setdefault(far, {"host": far, "via": hub, "agents": 0, "seenAgo": age,
                                      "trust": (PEERS.get(far) or {}).get("trust") or "directed"})
@@ -1564,10 +1633,82 @@ _peer_threads = {}                         # host -> Thread (one dialer loop per
 _peer_pending = {}                         # host -> {"acks": [mid], "bounces": [{mid, why}]} for the NEXT request
 _peer_lock = threading.Lock()
 
+def _host_name_candidates():
+    """Raw machine-name candidates for the self_host fallback, most meaningful first. macOS keeps
+    user-set names in scutil (LocalHostName is mDNS-restricted, ComputerName is free-form);
+    elsewhere there is no second authority — the minted id below is the fallback."""
+    if sys.platform != "darwin":
+        return []
+    out = []
+    for key in ("LocalHostName", "ComputerName"):
+        try:
+            r = subprocess.run(["scutil", "--get", key], capture_output=True, text=True, timeout=3)
+            if r.returncode == 0 and r.stdout.strip():
+                out.append(r.stdout.strip())
+        except Exception:
+            pass
+    return out
+
+def _sanitize_host_name(name):
+    """A candidate machine name reduced to a _safe_id-safe label: first dot-label, runs of unsafe
+    chars folded to '-', trimmed. "" when nothing meaningful survives (a 1-char remnant of junk is
+    an unstable identity, not a name)."""
+    name = re.sub(r"[^A-Za-z0-9._-]+", "-", str(name or "").split(".")[0]).strip("-._")
+    return name if len(name) >= 2 and _safe_id(name) else ""
+
+_HOST_ID_FILE = STATE.parent / "self-host"   # minted-once stable identity; the kernel's _self_host shares it
+
+def _minted_host_id():
+    """Last-resort stable identity: mint once, persist, reuse. O_EXCL so two processes (bus and
+    kernel) racing to mint converge on whoever wrote first."""
+    try:
+        name = _HOST_ID_FILE.read_text().strip()
+        if _safe_id(name):
+            return name
+    except OSError:
+        pass
+    name = "host-%08x" % random.getrandbits(32)
+    try:
+        _HOST_ID_FILE.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(str(_HOST_ID_FILE), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        os.write(fd, (name + "\n").encode())
+        os.close(fd)
+    except FileExistsError:
+        try:
+            prior = _HOST_ID_FILE.read_text().strip()
+            if _safe_id(prior):
+                return prior
+        except OSError:
+            pass
+    except OSError:
+        pass                                 # unwritable state root: stable per-process only, still safe
+    return name
+
+_self_host_fb = None                         # resolved fallback identity, cached after the first (logged) resolve
+
 def self_host():
     """This machine's postal identity: short hostname (each side keys the OTHER by its own name for
-    it, so exact agreement across machines is not required). ROMP_POSTAL_HOST overrides (tests)."""
-    return os.environ.get("ROMP_POSTAL_HOST") or socket.gethostname().split(".")[0]
+    it, so exact agreement across machines is not required). ROMP_POSTAL_HOST overrides (tests).
+    The name MUST clear _safe_id: peers key the outbox that holds mail FOR us by it, as a path
+    component, so an unkeyable kernel hostname half-works — presence still crosses (PEER_STATE is a
+    dict), but outbox_put on the peer refuses every message back, parked "unreachable" forever with
+    the only trace a server-log line (2026-08-11, a kern.hostname stomped with control bytes). An
+    unsafe name falls back, loudly: the platform's user-set machine name, else a minted persisted
+    id. gethostname stays first and live, so fixing the machine's hostname takes effect on the next
+    call with no restart."""
+    env = os.environ.get("ROMP_POSTAL_HOST")
+    if env:
+        return env
+    name = socket.gethostname().split(".")[0]
+    if _safe_id(name):
+        return name
+    global _self_host_fb
+    if _self_host_fb is None:
+        _self_host_fb = next((s for s in map(_sanitize_host_name, _host_name_candidates()) if s),
+                             "") or _minted_host_id()
+        _log("self_host: kernel hostname %r fails path-safety; declaring %r to peers instead "
+             "(fix the machine's hostname to control the name)" % (name, _self_host_fb))
+    return _self_host_fb
 
 def _peer_wake(host):
     with _peer_lock:
@@ -1729,7 +1870,10 @@ def fleet_presence(exclude_host):
     """Presence for an exchange payload: local agents + ONE hop of gossip from our other peers, each
     labeled `via` (plans/postal-peer-buses.md 3b) — so a spoke can address the far spoke through the
     hub. A via-entry is never re-gossiped (one-hop reach only; a topology needing two hops should
-    check the second spoke in to the hub directly)."""
+    check the second spoke in to the hub directly). Each via row also carries the far bus's own id
+    (`viaBus`): the receiver folds gossip about a box it ALREADY peers with directly, and the id is
+    the identity that survives nickname drift — the same machine wears different ssh aliases on
+    different hosts, so a name can't say "same box" (the user 2026-08-12; see _via_duplicate)."""
     out = list(local_agents())
     for h, st in PEER_STATE.items():
         if h == exclude_host:
@@ -1737,7 +1881,7 @@ def fleet_presence(exclude_host):
         for pa in st.get("presence") or []:
             if pa.get("via"):
                 continue
-            out.append(dict(pa, via=h))
+            out.append(dict(pa, via=h, viaBus=st.get("busId") or ""))
     return out
 
 # ── quarantine (per-host trust model) ───────────────────────────────────────────
@@ -1979,6 +2123,15 @@ def peer_exchange_handle(data):
     # session rows), and the relays below are trust-judged under the alias the user actually tiered.
     bus_id = str((data or {}).get("busId") or "")
     host = _canon_peer_name(host, bus_id)
+    if not _safe_id(host):
+        # An unkeyable name would HALF-work: presence lands (PEER_STATE is a dict), but outbox_put
+        # refuses it as a path component, so every reply parks "unreachable" with no error anywhere
+        # (2026-08-11). Refuse the whole exchange instead — loud on the dialer's side (_peer_loop
+        # logs the refusal) — unless the canonicalization above already folded the junk into a
+        # checked-in alias, which is the existing self-heal and still works. Updated dialers never
+        # declare such a name (self_host falls back); this guards against un-updated ones.
+        return {"error": "unsafe host name %r — this machine's hostname fails path-safety; fix its "
+                         "hostname (or set ROMP_POSTAL_HOST) and redial" % host}, 400
     PEER_STATE[host] = {"presence": data.get("presence") or [], "epoch": data.get("epoch"),
                         "holds": data.get("holds") or [], "seenAt": int(time.time())}
     if bus_id:
@@ -2075,17 +2228,34 @@ def peer_exchange_apply(host, req_sent, resp):
 
 def peer_route(to):
     """Where a non-local name lives: (host, agent) for exactly ONE peer match; (None, candidates) on
-    ambiguity; (None, []) when unknown. Accepts the explicit 'host:name' form to break ties."""
+    ambiguity; (None, []) when unknown. Accepts the explicit 'host:name' form to break ties.
+    Gossiped duplicates are folded BEFORE the ambiguity count: a session on a directly-peered box
+    also arrives via a hub's gossip (under the hub's nickname for that box), and counting both read
+    as two sessions — a false ambiguity — or, picked, would relay mail through the hub a direct
+    link already covers (the user 2026-08-12). Same session seen from two hubs folds too (one id,
+    one candidate); the direct row always wins."""
     want_host = None
     if ":" in to:
         want_host, to = to.split(":", 1)
-    hits = []
+    direct_bus = _direct_bus_ids()
+    hits, seen_ids = [], {}
     for host, st in PEER_STATE.items():
         if want_host and host != want_host:
             continue
         for a in st.get("presence") or []:
-            if a.get("name") == to:
-                hits.append((host, a))
+            if a.get("name") != to or _via_duplicate(a, direct_bus):
+                continue
+            sid = a.get("id") or ""
+            if sid and sid in seen_ids:                # one session, two gossip paths → one candidate;
+                if a.get("via") and not hits[seen_ids[sid]][1].get("via"):
+                    continue                           # …and a direct row beats a relayed one
+                if not a.get("via") and hits[seen_ids[sid]][1].get("via"):
+                    hits[seen_ids[sid]] = (host, a)
+                    continue
+                continue
+            if sid:
+                seen_ids[sid] = len(hits)
+            hits.append((host, a))
     if len(hits) == 1:
         return hits[0]
     return None, hits
@@ -2122,6 +2292,15 @@ def _peer_loop(host):
                 _peer_wake(host).clear()
                 _peer_wake(host).wait(60)
                 continue
+            body = ""
+            try:
+                body = " ".join((e.read() or b"").decode("utf-8", "replace").split())[:200]
+            except Exception:
+                pass
+            st = PEER_STATE.setdefault(host, {})
+            if st.get("refused") != (e.code, body):      # each DISTINCT refusal once, not per retry —
+                st["refused"] = (e.code, body)           # a 4xx (e.g. the unsafe-host gate) otherwise
+                _log("peer %s: exchange refused (HTTP %s) %s" % (host, e.code, body))   # retries silently forever
             fails += 1
             _peer_wake(host).clear()
             _peer_wake(host).wait(min(30, 2 ** min(fails, 5)))

@@ -27,8 +27,9 @@ import { onlyTag, matchesOnly } from "./only-filter";
 import { numberDiff, type DiffRow } from "./diff-lines";
 import { parseAgentNotif, type AgentNotif } from "./agent-notif";
 import { previewKind, previewFull, canPreview, fileUrl } from "./preview";
-import { hostNameNodes, hostPrefix, hostIsDown, hostDownNote } from "./host-prefix";
-import { dirStatusLine, nextDirActive, createDirPrompt, type DirStatus } from "./dir-complete";
+import { pastedFilePath } from "./paste-path";
+import { hostNameNodes, hostPrefix, hostOf, hostIsDown, hostDownNote } from "./host-prefix";
+import { dirStatusHint, nextDirActive, createDirPrompt, type DirStatus } from "./dir-complete";
 import { mediaSrc, kernelUrl } from "./media";
 import { initStrip, fmtReset } from "./strip";
 import { apiErrorReason } from "./api-error-reason";
@@ -190,7 +191,7 @@ type ChatEvent = (
   // Pinned, collapsed "system context" card at the top of the transcript (the user 2026-06-19): the
   // CLAUDE.md instructions in effect + session config. NOT the verbatim harness prompt — it's never
   // recorded, so it can't be shown (renderSystem says so). No ts/uuid → off the rail (no dot/hover).
-  | { kind: "system"; model?: string; cwd?: string; gitBranch?: string; version?: string; mode?: string;
+  | { kind: "system"; model?: string; cwd?: string; gitBranch?: string; workTree?: { dir: string; branch: string } | null; version?: string; mode?: string;
       claudemd?: { path: string; scope: string; text: string }[]; uuid?: string; ts?: string }
 ) & { tlId?: string };   // tlId: the timeline atom this event's hover lights — a prompt → the DOT, work → the BAR
 
@@ -208,7 +209,7 @@ interface BgTasks { count: number; tasks: BgTask[]; }
 // kernel ships only the last WIRE_TAIL events (headFrom > 0) to keep startup light; older history streams in
 // on scroll-back (loadOlder → chatHead prepends, lowering headFrom). headFrom 0 = the whole transcript is
 // resident. chatTail's `from` is GLOBAL and mapped through headFrom.
-interface Session { id: string; name: string; color: Color | null; events: ChatEvent[]; status: Status; firstSeen?: number; cwd?: string; gitBranch?: string; headFrom?: number; headTotal?: number; bgTasks?: BgTasks; hideFromFeed?: boolean; postalServiceOff?: boolean; notify?: boolean; }
+interface Session { id: string; name: string; color: Color | null; events: ChatEvent[]; status: Status; firstSeen?: number; cwd?: string; gitBranch?: string; workTree?: { dir: string; branch: string } | null; headFrom?: number; headTotal?: number; bgTasks?: BgTasks; hideFromFeed?: boolean; postalServiceOff?: boolean; notify?: boolean; }
 
 const vscodeApi =
   typeof (window as any).acquireVsCodeApi === "function" ? (window as any).acquireVsCodeApi() : undefined;
@@ -1692,7 +1693,11 @@ function renderEventInner(ev: ChatEvent): HTMLElement {
         .flatMap((im) => [im.path, im.src.startsWith("path:") ? im.src.slice(5) : ""])
         .filter((p): p is string => !!p);
       if (!romp && !injected && ev.md && renderSlashCmd(bubble, ev.md)) {
-        /* rendered as a command chip */
+        // a COMMAND is a user GESTURE, not a user message (the user 2026-08-13): it changes something
+        // rather than saying something, so it sheds the blue said-thing bubble and reads in the
+        // system-event family (the ✦ dividers) — a dim left-aligned row: ✦ mark, mono chip, args
+        turn.classList.add("turn-cmd");
+        bubble.classList.add("cmd-row");
       } else if (romp && ev.md) {
         // A romp-injected NUDGE (auto status-check, Nudge button, injected follow-up) is mechanical
         // bookkeeping — progressive disclosure (the user 2026-07-17): default is a ONE-LINE gist with a
@@ -1820,10 +1825,20 @@ function renderEventInner(ev: ChatEvent): HTMLElement {
         });
         rf.addEventListener("blur", rfDisarm);
         rf.addEventListener("pointerleave", rfDisarm);
+        // FORK affordance (the user 2026-08-13): branch a NEW parallel session from just before this
+        // message — old and new then run as separate threads (the rewind family above edits THIS
+        // session; fork leaves it untouched). Non-destructive, so no two-click arm: the name modal is
+        // the confirmation.
+        const fk = el("button", "msg-fork") as HTMLButtonElement;
+        fk.type = "button";
+        fk.textContent = "fork";
+        fk.title = "Fork the session from just before this message — a new parallel session carries the conversation up to here; this one is untouched";
+        fk.addEventListener("click", (e) => { e.stopPropagation(); showForkPrompt(editSid, uuid); });
         const acts = el("div", "msg-acts");   // one row under the bubble (the turn is a column flex)
         acts.appendChild(edit);
         acts.appendChild(del);
         acts.appendChild(rf);
+        acts.appendChild(fk);
         turn.appendChild(acts);
       }
     }
@@ -1978,6 +1993,10 @@ function renderSystem(ev: Extract<ChatEvent, { kind: "system" }>): HTMLElement {
   if (ev.mode) rows.push(["Permission mode", ev.mode]);
   if (ev.cwd) rows.push(["Directory", ev.cwd]);
   if (ev.gitBranch) rows.push(["Git branch", ev.gitBranch]);
+  // where the work ACTUALLY lands (the user 2026-08-13): the repo convention here does real work on
+  // per-session worktrees beside the registered clone, so the Directory/branch rows alone read 'main'
+  // forever; the kernel derives this from the newest edit event and sends it only when it differs.
+  if (ev.workTree) rows.push(["Worktree", ev.workTree.dir + (ev.workTree.branch ? "  ⎇ " + ev.workTree.branch : "")]);
   if (ev.version) rows.push(["Claude Code", ev.version]);
   if (rows.length) {
     const grid = el("div", "sys-meta");
@@ -3361,11 +3380,15 @@ function showTabTip(tab: HTMLElement, s: Session): void {
   tip.replaceChildren();
   const now = Date.now() / 1000;
   const be = s.status.backend;
-  if (s.cwd) { const d = el("div", "tab-tip-path"); d.textContent = s.cwd; tip.appendChild(d); }
-  // labelled rows: git branch (top-level session field, resident even when the head system event is windowed
-  // out of the wire tail — the user 2026-06-30) + mode / model / effort + backend
+  // labelled rows, one visual grammar (the user 2026-08-13): the directory is a ROW like the others —
+  // the 📁 glyph in the label slot, path right of it, aligned — not a naked line floating on top; the
+  // branch row wears the ⎇ glyph in its label slot for the same consistency. Branch is the top-level
+  // session field, resident even when the head system event is windowed out of the wire tail (the user
+  // 2026-06-30), and the worktree row shows where the work actually lands when that differs.
   const rows: Array<[string, string]> = [];
-  if (s.gitBranch) rows.push(["Branch", s.gitBranch]);
+  if (s.cwd) rows.push(["📁", s.cwd]);
+  if (s.gitBranch) rows.push(["⎇", s.gitBranch]);
+  if (s.workTree) rows.push(["Worktree", s.workTree.dir + (s.workTree.branch ? "  ⎇ " + s.workTree.branch : "")]);
   if (s.status.mode) rows.push(["Mode", prettyMode(s.status.mode)]);
   if (s.status.model) rows.push(["Model", s.status.model]);
   if (s.status.effort) rows.push(["Effort", s.status.effort]);
@@ -4519,30 +4542,35 @@ function closeDirMenu(): void {
   dirActive = -1;
 }
 
-// The status line is the one-glance version: what this path is right now. The menu underneath is the
-// deeper level, and it only exists while there is something to choose.
+// The verdict is the one-glance version: what this path is right now, folded INTO the field's right
+// end (the user 2026-08-11, trading the second row for an in-box hint) — the full sentence rides on
+// hover. The menu underneath is the deeper level, and it only exists while there is something to choose.
 function renderDirMenu(truncated: boolean): void {
-  const line = document.getElementById("picker-dir-status");
-  const said = dirStatus || !dirInFlight ? dirStatusLine(dirStatus)
-    : { text: dirAskedHost ? `checking on ${dirAskedHost}…` : "checking…", cls: "" };
-  if (line) {
-    line.className = "picker-dir-status" + (said.cls ? " " + said.cls : "");
-    line.textContent = said.text;
+  const hint = document.getElementById("picker-dir-hint");
+  const said = dirStatus || !dirInFlight ? dirStatusHint(dirStatus)
+    : { text: dirAskedHost ? `checking on ${dirAskedHost}…` : "checking…", cls: "", title: "" };
+  const input = document.getElementById("picker-dir") as HTMLInputElement | null;
+  if (hint) {
+    hint.className = "picker-dir-hint" + (said.cls ? " " + said.cls : "");
+    hint.textContent = said.text;
+    hint.title = said.title;
+    // the hint borrows the box's right end, so the typed text must stop where it starts — measured,
+    // not guessed (the width varies by verdict and ellipsis cap; 0 = the field is folded away)
+    const w = hint.offsetWidth;
+    if (input) input.style.paddingRight = said.text && w ? w + 16 + "px" : "";
   }
   // and the FIELD itself carries it (the user 2026-07-29): a path that cannot work goes red where the
-  // path is, not only in a line under it, so the problem is visible without reading anything.
-  const box = document.getElementById("picker-dir");
-  if (box) {
-    box.classList.toggle("bad", said.cls === "bad");
-    box.classList.toggle("warn", said.cls === "warn");
+  // path is, not only in a hint at its edge, so the problem is visible without reading anything.
+  if (input) {
+    input.classList.toggle("bad", said.cls === "bad");
+    input.classList.toggle("warn", said.cls === "warn");
   }
-  const input = document.getElementById("picker-dir");
   const menu = document.getElementById("picker-dir-menu");
   if (!menu) return;
   menu.replaceChildren();
   // Only when you are IN the field (the user 2026-07-29): opening the + picker asks the kernel about the
-  // prefilled path so the status line can vet it straight away, and that answer used to drop a folder
-  // list over the dialog before anyone had touched it. The status is the passive half; the menu is the
+  // prefilled path so the hint can vet it straight away, and that answer used to drop a folder
+  // list over the dialog before anyone had touched it. The hint is the passive half; the menu is the
   // half you asked for by putting the cursor there.
   if (!dirItems.length || document.activeElement !== input) { menu.style.display = "none"; return; }
   dirItems.forEach((it, i) => {
@@ -4661,6 +4689,16 @@ function openPicker(pick = false, prompt?: string, allowNew = false) {
     search.id = "picker-search";
     search.placeholder = "Search sessions…";
     search.spellcheck = false;
+    // The phone keyboard's prediction bar had learned the user's session names and offered them over
+    // this box — redundant next to the real session list right below it, and mistakable for romp UI
+    // (the user 2026-08-12, Samsung keyboard). These are the standard opt-out HINTS: autocomplete
+    // also keeps the browser's own form-history dropdown off (the dir field wears the same belt),
+    // autocapitalize suits session names anyway ("dev", not "Dev"), autocorrect is iOS's spelling of
+    // the same ask. A keyboard may still ignore them — its predictive-text setting is the only sure
+    // switch, so nothing here may claim the bar is gone, only unrequested.
+    search.setAttribute("autocomplete", "off");
+    search.autocapitalize = "none";
+    search.setAttribute("autocorrect", "off");
     search.addEventListener("input", () => { filterPicker(search.value); pickerError(null); });
     const errLine = el("div", "picker-error"); errLine.id = "picker-error";
     const list = el("div", "picker-list"); list.id = "picker-list";
@@ -4679,6 +4717,7 @@ function openPicker(pick = false, prompt?: string, allowNew = false) {
     // user 2026-08-11, offered a long-gone folder next to the real one). The completer asks the OWNING
     // kernel — the authoritative source — so the stale-capable history list is gone, not merely hidden.
     const dirWrap = el("div", "picker-dir");
+    const dirField = el("span", "picker-dir-field");   // input + its in-box verdict share one box
     const dirInput = el("input", "picker-dir-input") as HTMLInputElement;
     dirInput.id = "picker-dir";
     dirInput.spellcheck = false;
@@ -4689,14 +4728,21 @@ function openPicker(pick = false, prompt?: string, allowNew = false) {
     browseBtn.type = "button"; browseBtn.textContent = "Browse…";
     browseBtn.title = "Pick a folder with the native dialog (opens on the kernel's machine — host-local)";
     browseBtn.addEventListener("click", () => { if (vscodeApi) vscodeApi.postMessage({ type: "browseDir" }); });
-    // the completer's dropdown + the one-line status of whatever is typed, both fed by the owning kernel
+    // the completer's dropdown + the typed path's verdict, both fed by the owning kernel. The verdict
+    // sits IN the box, right-aligned and non-editable (the user 2026-08-11); a press on it belongs to
+    // the input underneath, so it hands the focus (and the caret's usual click-the-empty-end spot) over.
     const dirMenu = el("div", "picker-dir-menu"); dirMenu.id = "picker-dir-menu"; dirMenu.style.display = "none";
-    const dirStat = el("div", "picker-dir-status"); dirStat.id = "picker-dir-status";
+    const dirHint = el("span", "picker-dir-hint"); dirHint.id = "picker-dir-hint";
+    dirHint.addEventListener("mousedown", (e) => {
+      e.preventDefault(); dirInput.focus();
+      dirInput.setSelectionRange(dirInput.value.length, dirInput.value.length);
+    });
     dirInput.addEventListener("input", () => askDirComplete(dirInput.value));
     dirInput.addEventListener("focus", () => askDirComplete(dirInput.value));
     dirInput.addEventListener("blur", () => closeDirMenu());   // a row's mousedown preventDefaults, so it never blurs
-    dirWrap.appendChild(dirInput); dirWrap.appendChild(browseBtn);
-    dirWrap.appendChild(dirMenu); dirWrap.appendChild(dirStat);
+    dirField.appendChild(dirInput); dirField.appendChild(dirHint);
+    dirWrap.appendChild(dirField); dirWrap.appendChild(browseBtn);
+    dirWrap.appendChild(dirMenu);
     // per-session BACKEND picker (the user 2026-06-23): a tmux | SDK segmented toggle, defaulting to the
     // gear's Default backend but overridable for THIS new session. Hidden in pick-mode (like dirWrap).
     const beWrap = el("div", "picker-backend");
@@ -4737,7 +4783,10 @@ function openPicker(pick = false, prompt?: string, allowNew = false) {
     const actions = el("div", "picker-actions");
     const newSess = el("button", "picker-action");
     newSess.id = "picker-new-btn";
-    newSess.textContent = "✛ New session";
+    // "Create session", not "New session" (the user 2026-08-12): you already pressed New session to
+    // open this dialog — the button here is the ACT, not the door. (The palette command that opens
+    // the picker keeps the New session name; that one IS the door.)
+    newSess.textContent = "✛ Create session";
     newSess.title = "create a fresh romp session, named by the search box, and open it as a tab";
     newSess.addEventListener("click", () => {
       // The search box doubles as the name field — no native dialog.
@@ -4766,14 +4815,27 @@ function openPicker(pick = false, prompt?: string, allowNew = false) {
                     dir: dirInput.value.trim(), host: hostSel, ...(auth ? { auth } : {}) });
     });
     actions.appendChild(newSess);
+    // CREATE controls first, the resume list LAST (the user 2026-08-12): typing in the name box
+    // re-filters the list, whose height changes with every keystroke — with the list mid-dialog the
+    // controls below it jumped around exactly when you were reaching for them. The stable, most-used
+    // half (name → directory → backend → billing → host → New session) now holds still at the top,
+    // and the list — the occasional alternative, not the main act — grows and shrinks harmlessly at
+    // the bottom, under a label that says what it is. In pick-mode the list IS the dialog, so the
+    // label hides with the create rows (openPicker below).
+    const altHead = el("div", "picker-alt-head");
+    altHead.id = "picker-alt-head";
+    // "(last 30 days)" is the kernel's real reach — PICKER_WINDOW in kernel.py; picker-order.test.ts
+    // holds the two in step so a widened window can't leave this label lying.
+    altHead.textContent = "Or reopen an existing session (last 30 days)";
     box.appendChild(search);
     box.appendChild(errLine);
-    box.appendChild(list);
     box.appendChild(dirWrap);
     box.appendChild(beWrap);
     box.appendChild(auWrap);
     box.appendChild(hostWrap);
     box.appendChild(actions);
+    box.appendChild(altHead);
+    box.appendChild(list);
     overlay.appendChild(box);
     overlay.addEventListener("click", (e) => { if (e.target === overlay) closePicker(); });
     document.body.appendChild(overlay);
@@ -4782,10 +4844,12 @@ function openPicker(pick = false, prompt?: string, allowNew = false) {
     // picker's lower rows sat behind it and nothing gave. The shell sizes this lifted iframe to the
     // VISIBLE height (--app-h ← the top-level visualViewport, which the keyboard shrinks), so the
     // keyboard opening/closing lands here as this window's own resize — the exact event to key on, no
-    // timers, no UA sniffing. Short window → kb-tight folds the advanced create rows (dir, backend,
-    // billing, host — styles.css) so the essentials share the height with the keyboard; the same
-    // resize expands them back the moment there is room again (a genuinely small screen folds too,
-    // which is the right call there as well).
+    // timers, no UA sniffing. Short window → kb-tight tightens the frame and lets the RESUME LIST
+    // give way (styles.css; the user 2026-08-12, after two folds that each hid the wrong half): the
+    // keyboard is up because a new session's name is being typed, so every create control stays on
+    // screen and the list collapses to the leftover height. The same resize expands the list back the
+    // moment there is room again (a genuinely small screen folds too, which is the right call there
+    // as well).
     const kbFit = () => document.getElementById("picker")?.classList.toggle("kb-tight", window.innerHeight < 480);
     window.addEventListener("resize", kbFit);
     kbFit();
@@ -4794,6 +4858,8 @@ function openPicker(pick = false, prompt?: string, allowNew = false) {
   signalPickerOverlay(true);   // lift the chat iframe full-window so the picker covers the whole screen
   const actions = overlay.querySelector(".picker-actions") as HTMLElement | null;
   if (actions) actions.style.display = pick ? "none" : "";
+  const altHeadEl = document.getElementById("picker-alt-head");
+  if (altHeadEl) altHeadEl.style.display = pick ? "none" : "";   // pick-mode: the list IS the dialog, not an alternative
   const dirWrap = overlay.querySelector(".picker-dir") as HTMLElement | null;
   if (dirWrap) dirWrap.style.display = pick ? "none" : "";   // dir only matters when creating, not picking
   const beWrapEl = overlay.querySelector(".picker-backend:not(.picker-host):not(.picker-auth)") as HTMLElement | null;
@@ -4814,7 +4880,11 @@ function openPicker(pick = false, prompt?: string, allowNew = false) {
     hostWrapEl.querySelectorAll(".picker-be-opt").forEach((x) => x.remove());
     for (const h of ["", ...hosts]) {
       const b = el("button", "picker-be-opt" + (h === "" ? " sel" : "")) as HTMLButtonElement;
-      b.type = "button"; b.textContent = h || "local"; b.dataset.host = h;
+      // This machine wears its REAL name, like the remote options wear theirs (the user 2026-08-12):
+      // "local" made the row read as one named machine plus an unnamed one. The name rides the local
+      // sessionList reply (selfHost), so the very first open may briefly say "local" until it lands —
+      // the handler below relabels the button in place.
+      b.type = "button"; b.textContent = h || localSelfHost || "local"; b.dataset.host = h;
       b.title = h ? `Create the session on ${h} (its kernel spawns it; the tab shows as ${h}:name).`
                   : "Create the session on this machine.";
       b.addEventListener("click", () => {
@@ -4951,6 +5021,51 @@ function showConfirm(title: string, detail: string, buttons: Array<{ label: stri
   document.addEventListener("keydown", onKey, true);
   (actions.firstElementChild as HTMLElement | null)?.focus();
 }
+// THE FORK MODAL (the user 2026-08-13): fork this conversation into a NEW parallel session — from just
+// before a given user message (the bubble's fork button) or from the tip (the palette command, uuid "").
+// One small dialog on the confirm chrome: a name box prefilled "<session>-fork" (editable), Fork/Cancel.
+// The kernel owns the mechanics (forkSession op); the provisional tab is the instant acknowledgement,
+// joined by NAME when the real session lands — exactly the picker-create flow.
+function showForkPrompt(sid: string, uuid: string): void {
+  const sess = sessions.get(sid);
+  const base = (sess?.name || "session").replace(/[^A-Za-z0-9._-]/g, "-");
+  document.getElementById("fork-prompt")?.remove();
+  const overlay = el("div", "picker-overlay confirm-overlay"); overlay.id = "fork-prompt";
+  const box = el("div", "picker-box confirm-box");
+  const h = el("div", "confirm-title"); h.textContent = "Fork session";
+  const d = el("div", "confirm-detail");
+  d.textContent = uuid
+    ? "A new session continues from just before this message; this one is untouched."
+    : "A new session continues this whole conversation; this one is untouched.";
+  const input = document.createElement("input");
+  input.type = "text"; input.className = "fork-name"; input.value = base + "-fork";
+  input.setAttribute("autocapitalize", "off"); input.setAttribute("autocomplete", "off");
+  input.setAttribute("autocorrect", "off"); input.setAttribute("spellcheck", "false");
+  const actions = el("div", "confirm-actions");
+  const cancel = el("button", "picker-action confirm-btn"); cancel.textContent = "Cancel";
+  const create = el("button", "picker-action confirm-btn"); create.textContent = "Fork";
+  const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { e.stopPropagation(); close(); } };
+  const close = () => { overlay.remove(); document.removeEventListener("keydown", onKey, true); };
+  const go = () => {
+    const name = input.value.trim();
+    if (!/^[A-Za-z0-9._-]+$/.test(name)) { input.classList.add("bad"); input.focus(); return; }
+    vscodeApi?.postMessage({ type: "forkSession", id: sid, uuid, name });
+    close();
+    openProvisional({ name, backend: "sdk", dir: "", host: hostOf(sid) });
+  };
+  cancel.addEventListener("click", close);
+  create.addEventListener("click", go);
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); go(); } });
+  input.addEventListener("input", () => input.classList.remove("bad"));
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+  box.append(h, d, input, actions);
+  actions.append(cancel, create);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+  document.addEventListener("keydown", onKey, true);
+  input.focus(); input.setSelectionRange(0, input.value.length);
+}
+
 // THE MCP PANEL (the user 2026-08-05). `/mcp` in a romp session used to be a dead end: the CLI's own
 // panel is an interactive TUI an SDK-driven session cannot render, so it replied "use a terminal". The
 // SDK exposes the same facts and repairs as control requests (get_mcp_status / toggle_mcp_server /
@@ -5071,7 +5186,7 @@ function setActiveRow(row: HTMLElement | null) {
   syncNewButton();   // an active row and an armed New-session button are mutually exclusive Enter targets
 }
 
-// Arm the "✛ New session" button exactly when Enter should CREATE: create mode (the + flow), a name
+// Arm the "✛ Create session" button exactly when Enter should CREATE: create mode (the + flow), a name
 // typed, and no row explicitly active. A typed name belongs to "create" (the user 2026-07-28) — it
 // must never be re-routed onto a fuzzy match — so matches don't steal the arm; stepping onto a row
 // with ArrowDown (or hovering one) is the explicit act that hands Enter to that row instead.
@@ -5127,6 +5242,10 @@ function pickerKey(e: KeyboardEvent) {
 // The kernel's real default new-session directory (its serve cwd, ~-ified), from the sessionList payload —
 // prefilled into the dir field when there's no gear default, so "the default path is written in there".
 let kernelDefaultDir = "";
+// This machine's name as the kernel's peers know it (_self_host — short hostname, ROMP_HOST_NAME
+// override), from the same payload. The + picker's Host row labels its first option with it, so the
+// row reads as a list of machines by name rather than named hosts plus a "local" (the user 2026-08-12).
+let localSelfHost = "";
 // Is this session already an open tab in THIS dashboard? (loaded session, or a not-yet-loaded placeholder tab
 // the kernel's order carries.) The + picker uses it to hide sessions you can already reach by a tab-click.
 function isOpenTab(id: string): boolean {
@@ -6994,10 +7113,13 @@ const MODE_CHOICES: { label: string; value: string }[] = [
 // Fast mode (the CLI's /fast — Opus-only research preview): a two-state toggle offered as the same
 // dropdown shape as the other badges. The badge exists only when the session REPORTS a fast state
 // (st.fast, from the SDK init's fast_mode_state) — a session that can't run it, or a tmux session
-// whose statusline doesn't publish it yet, shows no dead control.
+// whose statusline doesn't publish it yet, shows no dead control. The options speak the BADGE's two
+// words — Fast/Slow, never On/Off (the user 2026-08-11: a badge reading "Slow" opened a menu of
+// "On"/"Off", two vocabularies for one toggle; prettyFast is the one wording, the values stay the
+// wire's on/off).
 const FAST_CHOICES: { label: string; value: string }[] = [
-  { label: "On", value: "on" },
-  { label: "Off", value: "off" },
+  { label: "Fast", value: "on" },
+  { label: "Slow", value: "off" },
 ];
 // Per-session billing (the user 2026-08-08) — the Claude login vs the API key the manager's
 // environment carries — is no longer a statusline badge: the SWITCHING control lives in the tab's
@@ -7386,10 +7508,11 @@ function updateStatusline() {
   // for narrow panes; it shipped on by default 2026-06-23). Read from the TOP-LEVEL session field,
   // never the head system event: that event is windowed out of the wire tail on any >250-event session, which
   // used to blank the branch on most sessions (the user 2026-06-30).
-  if (loadSettings().showBranch === true && s.gitBranch) {
+  if (loadSettings().showBranch === true && ((s.workTree && s.workTree.branch) || s.gitBranch)) {
     const br = el("span", "status-branch");
-    br.textContent = "⎇ " + s.gitBranch;
-    br.title = "git branch: " + s.gitBranch;
+    const liveBr = (s.workTree && s.workTree.branch) || s.gitBranch;
+    br.textContent = "⎇ " + liveBr;
+    br.title = s.workTree ? `worktree ${s.workTree.dir} — git branch: ${liveBr}` : "git branch: " + liveBr;
     right.appendChild(br);
   }
   const meta = el("span", "spinner-meta");
@@ -8034,6 +8157,7 @@ function upsert(msg: any) {
     // system event — that event lives at events[0] and the WIRE_TAIL window drops it on any >250-event session,
     // so the branch used to vanish there. A chatTail delta omits it → keep the last-known via prev.
     gitBranch: msg.gitBranch ?? (prev ? prev.gitBranch : ""),
+    workTree: msg.workTree ?? (prev ? prev.workTree : null),
     // A trimmed full send carries headFrom/headTotal; a whole-transcript send omits them (headFrom 0).
     headFrom: msg.headFrom ?? 0,
     headTotal: msg.headTotal ?? ((msg.events || (prev ? prev.events : [])).length),
@@ -8368,6 +8492,11 @@ function pipeBanner(up: boolean, queued: number): void {
 window.addEventListener("message", (e: MessageEvent) => {
   const m = e.data;
   if (!m) return;
+  // the shell's palette: "Fork this session…" → the fork modal for the ACTIVE session, from the tip
+  if (m.romp === "forkSession") {
+    if (activeId && !isProvisionalId(activeId) && sessions.get(activeId)) showForkPrompt(activeId, "");
+    return;
+  }
   if (m.type === "pipeState") { pipeBanner(!!m.up, Number(m.queued) || 0); return; }
   if (m.type === "session") upsert(m);
   else if (m.type === "globalRetryPaused") {
@@ -8477,6 +8606,17 @@ window.addEventListener("message", (e: MessageEvent) => {
     // host the picker has since switched away from is dropped rather than painted over the current one
     // (the user 2026-07-29) — two kernels answer at their own speeds, so order is not a given.
     const from = typeof m.host === "string" ? m.host : "";
+    // The LOCAL kernel's own machine name — adopted BEFORE the stale-list drop below, on purpose:
+    // the name is this machine's identity, not list data, so it must not die with a reply whose
+    // LIST is stale (picker already switched to a remote host — the drop's one job). The Host row
+    // is built before this reply lands (its options rebuild on every open), so also relabel the
+    // this-machine button in place — the row's first-ever open is the only one that shows the
+    // "local" placeholder.
+    if (typeof m.selfHost === "string" && m.selfHost && !from) {
+      localSelfHost = m.selfHost;
+      const lb = document.querySelector('#picker .picker-host .picker-be-opt[data-host=""]') as HTMLElement | null;
+      if (lb) lb.textContent = localSelfHost;
+    }
     if (from !== pickerListHost) return;
     if (typeof m.defaultDir === "string" && !from) kernelDefaultDir = m.defaultDir;   // the LOCAL default dir
     // …and whether that kernel can open a folder dialog at all. It arrives after the picker is already on
@@ -8814,6 +8954,11 @@ function setupComposer() {
   // out, typing more of the same "/token" must NOT re-pop it — only deleting back past the "/" (slashQuery →
   // null) re-arms it. Latched here; set on Esc, cleared the moment the "/token" context is gone.
   let slashDismissed = false;
+  // The list is strictly one line per command; → on the selected row opens its FULL name + arg hint +
+  // description, wrapped, and ←/Esc return to the list (the user 2026-08-13, after /code-review's long arg
+  // hint squeezed a wrapping description into a one-letter-wide column). A mode, not a per-row bit: ↑/↓
+  // while expanded browse the full texts.
+  let slashExpanded = false;
   const loadCmds = (sid: string, then?: () => void) => {
     fetch(kernelUrl("/commands?sid=" + encodeURIComponent(sid)), { cache: "no-store" })
       .then((r) => r.json())
@@ -8841,7 +8986,15 @@ function setupComposer() {
       .sort((a, b) => b.best - a.best || a.c.name.localeCompare(b.c.name))
       .map((x) => x.c).slice(0, 60);
   };
-  const closeSlash = () => { if (pop) { pop.remove(); pop = null; } if (slashPoll) { clearTimeout(slashPoll); slashPoll = undefined; } };
+  // The expanded view lists a multi-group arg hint one bracketed group per line ("[--fix] [--comment]" →
+  // two lines) — but ONLY when the whole hint is bracketed groups; any free-form hint stays one line
+  // rather than being split by a guess.
+  const argLines = (hint: string): string[] => {
+    const groups = hint.match(/\[[^\]]*\]/g) || [];
+    const residue = hint.replace(/\[[^\]]*\]/g, "").trim();
+    return groups.length >= 2 && !residue ? groups : [hint.trim()];
+  };
+  const closeSlash = () => { if (pop) { pop.remove(); pop = null; } if (slashPoll) { clearTimeout(slashPoll); slashPoll = undefined; } slashExpanded = false; };
   const positionSlash = () => {
     if (!pop) return;
     const r = ta.getBoundingClientRect();
@@ -8872,13 +9025,39 @@ function setupComposer() {
       pop.appendChild(e); positionSlash(); return;
     }
     items.forEach((c, i) => {
-      const row = document.createElement("div"); row.className = "slash-row" + (i === sel ? " sel" : "");
-      const nm = document.createElement("span"); nm.className = "slash-name"; nm.textContent = "/" + c.name;
-      if (c.argumentHint) { const a = document.createElement("span"); a.className = "slash-arg"; a.textContent = " " + c.argumentHint; nm.appendChild(a); }
-      const ds = document.createElement("span"); ds.className = "slash-desc"; ds.textContent = c.description || "";
-      row.append(nm, ds);
+      const expanded = i === sel && slashExpanded;
+      const row = document.createElement("div");
+      row.className = "slash-row" + (i === sel ? " sel" : "") + (expanded ? " expanded" : "");
+      if (expanded) {
+        // full text, stacked for reading: /name (+ the ← key hint), then each bracketed arg group on its
+        // own line, then the whole description (the user 2026-08-13, round 2: one wrapped soup was legal
+        // but not readable)
+        const head = document.createElement("div"); head.className = "slash-x-head";
+        const nm = document.createElement("span"); nm.className = "slash-name"; nm.textContent = "/" + c.name;
+        const k = document.createElement("span"); k.className = "slash-key-hint"; k.textContent = "← all commands";
+        head.append(nm, k);
+        row.appendChild(head);
+        if (c.argumentHint) {
+          const args = document.createElement("div"); args.className = "slash-x-args";
+          for (const g of argLines(c.argumentHint)) {
+            const a = document.createElement("div"); a.className = "slash-arg"; a.textContent = g; args.appendChild(a);
+          }
+          row.appendChild(args);
+        }
+        if (c.description) { const ds = document.createElement("div"); ds.className = "slash-desc"; ds.textContent = c.description; row.appendChild(ds); }
+      } else {
+        const nm = document.createElement("span"); nm.className = "slash-name"; nm.textContent = "/" + c.name;
+        if (c.argumentHint) { const a = document.createElement("span"); a.className = "slash-arg"; a.textContent = " " + c.argumentHint; nm.appendChild(a); }
+        const ds = document.createElement("span"); ds.className = "slash-desc"; ds.textContent = c.description || "";
+        row.append(nm, ds);
+        // the → key hint rides the SELECTED row itself — a popup-bottom footer sat below the fold of the
+        // scrolling list (the user 2026-08-13, round 2); the selected row is always scrolled into view
+        if (i === sel) { const k = document.createElement("span"); k.className = "slash-key-hint"; k.textContent = "→ expand"; row.appendChild(k); }
+      }
       row.addEventListener("mousedown", (ev) => { ev.preventDefault(); pickSlash(c); });   // mousedown keeps focus
-      row.addEventListener("mousemove", () => { if (sel !== i) { sel = i; paintSlash(); } });
+      // hover-select is frozen while expanded: the tall row re-flows heights under the cursor, and a repaint
+      // per crossed row would flap the expansion around; ↑/↓ still browse
+      row.addEventListener("mousemove", () => { if (!slashExpanded && sel !== i) { sel = i; paintSlash(); } });
       pop!.appendChild(row);
     });
     positionSlash();
@@ -8902,7 +9081,18 @@ function setupComposer() {
     if (e.key === "ArrowDown") { e.preventDefault(); if (items.length) { sel = (sel + 1) % items.length; paintSlash(); } return true; }
     if (e.key === "ArrowUp") { e.preventDefault(); if (items.length) { sel = (sel - 1 + items.length) % items.length; paintSlash(); } return true; }
     if ((e.key === "Enter" || e.key === "Tab") && items.length) { e.preventDefault(); pickSlash(items[sel]); return true; }
-    if (e.key === "Escape") { e.preventDefault(); slashDismissed = true; closeSlash(); return true; }   // stays dismissed until the "/" is cleared
+    // → expands the selected row — but only with the caret at the END of the query, where the key has no
+    // text left to cross; anywhere else it stays an ordinary caret move. ← is consumed only while expanded.
+    if (e.key === "ArrowRight" && items.length && !slashExpanded
+        && ta.selectionStart === ta.value.length && ta.selectionEnd === ta.value.length) {
+      e.preventDefault(); slashExpanded = true; paintSlash(); return true;
+    }
+    if (e.key === "ArrowLeft" && slashExpanded) { e.preventDefault(); slashExpanded = false; paintSlash(); return true; }
+    if (e.key === "Escape") {
+      // Esc peels one layer: the full text first, then the menu (which stays dismissed until the "/" is cleared)
+      if (slashExpanded) { e.preventDefault(); slashExpanded = false; paintSlash(); return true; }
+      e.preventDefault(); slashDismissed = true; closeSlash(); return true;
+    }
     return false;
   };
   ta.addEventListener("focus", () => { if (slashSid !== (activeId || "")) loadCmds(activeId || ""); });   // pre-warm the cache before "/"
@@ -8975,10 +9165,17 @@ function setupComposer() {
   // group ("drop to open", which is why a bare drop opened the PNG) before the
   // webview sees them — hold SHIFT while dropping to suppress the overlay and
   // hand the drop here. Pasting (below) is overlay-free and covers the same
-  // need. Best path source first: File.path (Electron, when exposed), then
-  // text/uri-list file:// entries (explorer drags), else the bytes go to the
-  // host, which saves them and posts the saved path back ("droppedPath") —
-  // sandboxed webviews expose NO filesystem path for OS drags, only content.
+  // need. Best path source first — but ONLY for a session this machine owns:
+  // File.path (Electron, when exposed), then text/uri-list file:// entries
+  // (explorer drags), else the bytes go to the owning kernel, which saves them
+  // and posts the saved path back ("droppedPath") — sandboxed webviews expose
+  // NO filesystem path for OS drags, only content. A REMOTE host's session
+  // (hostOf) never takes the path branches: a path on this machine means
+  // nothing on that kernel's disk — the user 2026-08-11 dragged a laptop
+  // screenshot into a server session and the agent there got a path it could
+  // not open. Its drops/pastes ship the BYTES instead, the same dropFile route
+  // federation already carries for the phone, and the saved path comes back
+  // valid on the machine the agent actually reads.
   ta.addEventListener("dragover", (e) => {
     e.preventDefault(); e.stopPropagation();
     if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
@@ -8990,30 +9187,83 @@ function setupComposer() {
     ta.classList.remove("drop-target");
     const dt = e.dataTransfer;
     if (!dt) return;
+    const remote = hostOf(activeId || "");
     const uris = (dt.getData("text/uri-list") || "").split(/\r?\n/).filter((u) => u && !u.startsWith("#"));
     const fromUri = (u: string) => addComposerFile(activeId, decodeURIComponent(u.replace(/^file:\/\//, "")));
     const files = Array.from(dt.files || []);
-    if (!files.length) { for (const u of uris) if (u.startsWith("file://")) fromUri(u); return; }
+    if (!files.length) {
+      // a path-only drag (no File objects) can't be shipped — a browser can't read file:// bytes.
+      // For a remote session that is a dead end, and it must be said, not silently mis-attached.
+      for (const u of uris) if (u.startsWith("file://")) {
+        if (remote) warnToast("That drag carried only this machine's path, which " + remote
+          + " can't read — drop the file itself (or paste it) and the bytes will be shipped over.");
+        else fromUri(u);
+      }
+      return;
+    }
     files.forEach((f, i) => {
-      const p = (f as any).path as string | undefined;
-      if (p) { addComposerFile(activeId, p); return; }
-      if (uris[i] && uris[i].startsWith("file://")) { fromUri(uris[i]); return; }
+      if (!remote) {
+        const p = (f as any).path as string | undefined;
+        if (p) { addComposerFile(activeId, p); return; }
+        if (uris[i] && uris[i].startsWith("file://")) { fromUri(uris[i]); return; }
+      }
       shipFileToHost(f);
     });
   });
 
   // Cmd+V a copied file (Finder "Copy") or a clipboard screenshot → insert its
-  // path, same pipeline as drops. Plain text pastes have no files on the
-  // clipboard and keep the default behavior.
+  // path, same pipeline as drops (including the remote rule: a local path only
+  // for a locally-owned session). Plain text pastes keep the default behavior —
+  // EXCEPT a paste that IS a local file's path (pastedFilePath: the whole paste
+  // one line, absolute or ~, a kind /file serves). The user (2026-08-11) pasted
+  // a screenshot's PATH into a remote session's box: the text rode the prompt
+  // to a machine where that path doesn't exist, while dragging the same file
+  // worked. A path-shaped paste is verified against the PAGE's own kernel
+  // (/file — the machine the paste came from, auth-gated, existence-checked;
+  // no sid, so it never routes to some other kernel's disk) and converted to
+  // the same visible attachment chip a drop produces: the zero-copy path for a
+  // locally-owned session, shipped bytes for a remote one. A miss puts the
+  // EXACT text back at the cursor, so a path that isn't a local file pastes as
+  // plain text exactly like today. Web dashboard only (canPreview): the
+  // VS Code webview can't reach /file, and its Electron drops carry File.path.
   ta.addEventListener("paste", (e) => {
     const files = Array.from(e.clipboardData?.files || []);
-    if (!files.length) return;
+    if (files.length) {
+      e.preventDefault();
+      files.forEach((f) => {
+        const p = (f as any).path as string | undefined;
+        if (p && !hostOf(activeId || "")) addComposerFile(activeId, p);
+        else shipFileToHost(f);
+      });
+      return;
+    }
+    const raw = e.clipboardData?.getData("text/plain") || "";
+    const pasted = pastedFilePath(raw);
+    if (!pasted || !canPreview()) return;              // ordinary text → default paste
     e.preventDefault();
-    files.forEach((f) => {
-      const p = (f as any).path as string | undefined;
-      if (p) addComposerFile(activeId, p);
-      else shipFileToHost(f);
-    });
+    const sid = activeId;
+    const selS = ta.selectionStart, selE = ta.selectionEnd;
+    const putBack = () => {                            // miss → the default outcome, a beat late
+      if (activeId === sid && document.contains(ta)) {
+        ta.setRangeText(raw, selS, selE, "end");
+        ta.dispatchEvent(new Event("input", { bubbles: true }));   // draft/grow/slash stay in sync
+      } else if (sid) {                                // tab switched mid-verify → land in that draft
+        drafts.set(sid, (drafts.get(sid) || "") + raw);
+        persistDrafts();
+      }
+    };
+    const remote = hostOf(sid || "");
+    fetch(fileUrl(pasted.path), { method: remote ? "GET" : "HEAD" }).then(async (r) => {
+      if (r.status === 413) {                          // refused LOUDLY, like every oversize arrival
+        warnToast((pasted.path.split("/").pop() || "That file") + " is too large to attach from a "
+          + "pasted path — it was pasted as text instead.");
+        return putBack();
+      }
+      if (!r.ok) return putBack();
+      if (!remote) { addComposerFile(sid, pasted.path); return; }  // zero-copy, like a local drop
+      const blob = await r.blob();                     // ship the BYTES — the remote can't read our path
+      shipFileToHost(new File([blob], pasted.path.split("/").pop() || "pasted", { type: blob.type }), sid);
+    }).catch(putBack);
   });
   wirePasteFallback(ta); // belt-and-braces: native paste disarms it, so no double-insert
 
@@ -9070,7 +9320,7 @@ function setupComposer() {
 // agent on THAT machine, so bytes saved on any other kernel would hand the agent
 // a path that does not exist there (the user 2026-08-09).
 const SHIP_MAX_BYTES = 50 * 1024 * 1024;   // payload ceiling for shipped attachment bytes
-function shipFileToHost(f: File) {
+function shipFileToHost(f: File, sidAt: string | null = activeId) {
   if (f.size > SHIP_MAX_BYTES) {
     // an oversize file must be REFUSED VISIBLY, never dropped silently (the user
     // 2026-08-09: it just vanished) — name the file, its size and the cap, on the
@@ -9083,8 +9333,8 @@ function shipFileToHost(f: File) {
   // WS send + kernel round trip is seconds of otherwise-blank time that read as a dead click (the
   // user 2026-08-11). Retired by the droppedPath ack / dropSaveFailed nack (see retirePendingShip).
   const name = f.name || "pasted.png";
-  const sid = activeId;
-  addPendingShip(sid, name);
+  const sid = sidAt;   // captured at CALL (= ship) time via the default param — a tab switch
+  addPendingShip(sid, name);   // mid-encode (or mid-verify, for a pasted path) must not reroute
   const reader = new FileReader();
   reader.onload = () => {
     const b64 = String(reader.result || "").split(",")[1] || "";

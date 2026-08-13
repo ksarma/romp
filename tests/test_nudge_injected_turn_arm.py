@@ -37,6 +37,10 @@ HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
+# Hermetic state BEFORE the loads — they resolve their state root at import time, and only
+# pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
+os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
+os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 km = SourceFileLoader("romp_kernel_injarm", os.path.join(BIN, "romp-kernel")).load_module()
 jd = km.jd
 
@@ -97,8 +101,10 @@ class FireListSeenTurn(unittest.TestCase):
         held = []
         self.assertEqual(km._nudge_fire_list(self._fresh(), [(G1, 1, False)],
                                              arm_t=ARM_T, seen_t=ARM_T, held=held), [])
-        self.assertEqual([f[0] for f, _why in held], [G1],   # held rows carry (goal, why) since 2026-08-11
+        self.assertEqual([f[0] for f, _why, _ev in held], [G1],   # held rows carry (goal, why, ev_t)
                          "the hold must reach the caller so it can be recorded, not silently dropped")
+        self.assertTrue(all(isinstance(_ev, int) and _ev for _f, _ev in held),
+                        "…with the offending evidence time riding along (the sweep's retire event)")
 
     def test_a_resolved_goal_is_never_held(self):
         # the status re-read runs FIRST: a goal the judges finished mid-tick is out of the tick
@@ -114,9 +120,10 @@ class FireListSeenTurn(unittest.TestCase):
         self.assertEqual(km._nudge_fire_list(self._fresh(), [(G1, 1, False)], arm_t=ARM_T), [],
                          "the arm alone stays the floor — the pre-fix contract for existing callers")
 
-    def test_the_hold_why_never_presents_as_a_stall(self):
-        self.assertFalse(jd.stall_why_stands(jd.WHY_TURN_IN_FLIGHT, SID),
-                         "a wait that ends on the turn's own end event is not a wedge to act on")
+    def test_the_hold_why_is_in_flight_class(self):
+        self.assertIn(jd.WHY_TURN_IN_FLIGHT, jd.WHY_IN_FLIGHT,
+                      "a wait that ends on the turn's own end event presents as the Analyzing… "
+                      "swirl, never the stalled chip (routing replaced the screen, 2026-08-13)")
 
 
 class InjectedTurnDeadlockEndToEnd(unittest.TestCase):
@@ -139,7 +146,7 @@ class InjectedTurnDeadlockEndToEnd(unittest.TestCase):
         km._compacting_now = lambda sid: False
         km._api_error = lambda path: None
         km._session_working = lambda turns: False
-        km._interrupt_suppresses_nudge = lambda turns: False
+        km._interrupt_suppresses_nudge = lambda turns, sid="": False
         km._backend_queued = lambda sid: False
         km._backend_rewind_pending = lambda sid: False
         km._last_state = lambda sid: ("", 0)

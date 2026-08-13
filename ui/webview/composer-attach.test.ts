@@ -60,9 +60,30 @@ test("shipFileToHost stamps the session id so federation routes the bytes to the
   // routeOutbound routes any `id` field by host prefix (SCALAR_ID); the stamp is what
   // engages it (multi-kernel-merge.test.ts pins the routing itself). The sid is captured
   // at SHIP time (with the pending chip), not at encode time — a tab switch mid-encode
-  // must not reroute the bytes away from the session the user attached them to.
-  assert.match(RENDER, /const sid = activeId;/);
+  // must not reroute the bytes away from the session the user attached them to. Callers
+  // that already verified against a session (the pasted-path flow) pass THEIR captured
+  // sid; the default keeps ship-time capture for everyone else.
+  assert.match(RENDER, /function shipFileToHost\(f: File, sidAt: string \| null = activeId\)/);
+  assert.match(RENDER, /const sid = sidAt;/);
   assert.match(RENDER, /if \(sid\) msg\.id = sid;\s*\/\/ the owning session → the owning kernel/);
+});
+
+test("a REMOTE session's drops and pastes ship BYTES — a local path never rides its prompt", () => {
+  // The user (2026-08-11) dragged a laptop screenshot into a server-hosted session's chat: the drop
+  // handler preferred the path branches (File.path / text/uri-list), so the prompt carried a path
+  // that exists only on the laptop, and the agent on the server couldn't open it. The path branches
+  // are a LOCAL-session fast path (zero-copy, the agent reads the original file); a session owned by
+  // a remote host (hostOf) skips them and ships the bytes through the same dropFile route the phone
+  // already rides — the saved drops/ path comes back valid on the machine the agent reads.
+  assert.match(RENDER, /const remote = hostOf\(activeId \|\| ""\);/);
+  assert.match(RENDER, /if \(!remote\) \{\s*\n\s*const p = \(f as any\)\.path as string \| undefined;/,
+    "the drop's path branches are gated on local ownership");
+  assert.match(RENDER, /if \(p && !hostOf\(activeId \|\| ""\)\) addComposerFile\(activeId, p\);/,
+    "the paste's path branch wears the same gate");
+  // a path-only drag (no File objects — nothing to ship) is a dead end for a remote session,
+  // and it is SAID, never silently mis-attached
+  assert.match(RENDER, /That drag carried only this machine's path, which/);
+  assert.match(RENDER, /drop the file itself \(or paste it\) and the bytes will be shipped over\./);
 });
 
 test("an oversize file is refused LOUDLY — named size and cap in a toast, never a silent return", () => {

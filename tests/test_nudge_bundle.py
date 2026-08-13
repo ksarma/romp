@@ -32,6 +32,10 @@ HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
+# Hermetic state BEFORE the loads — they resolve their state root at import time, and only
+# pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
+os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
+os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 km = SourceFileLoader("romp_kernel_bundle", os.path.join(BIN, "romp-kernel")).load_module()
 jd = km.jd
 
@@ -168,6 +172,9 @@ class NudgeFireList(unittest.TestCase):
 
     def test_cleared_and_vanished_goals_drop(self):
         fresh = _store({G1: _node(G1, "crossed off", cleared=True)})
+        fresh["status"][G1] = "cleared"                # the rollup's export (one truth, 2026-08-13):
+        #                                                every writer rollups before save, and a cleared
+        #                                                node's status IS "cleared" (judge rollup_status)
         self.assertEqual(km._nudge_fire_list(fresh, [(G1, 1, False), (G2, 1, False)]), [],
                          "a cleared card and a compacted-away card both lose their nudge")
 
@@ -258,7 +265,7 @@ class AutoNudgeBundlesSameTick(unittest.TestCase):
         km._compacting_now = lambda sid: False
         km._api_error = lambda path: None
         km._session_working = lambda turns: False
-        km._interrupt_suppresses_nudge = lambda turns: False
+        km._interrupt_suppresses_nudge = lambda turns, sid="": False
         km._backend_queued = lambda sid: False
         km._backend_rewind_pending = lambda sid: False
         km._last_state = lambda sid: ("", 0)

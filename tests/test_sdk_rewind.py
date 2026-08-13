@@ -22,6 +22,10 @@ from importlib.machinery import SourceFileLoader
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
+# Hermetic state BEFORE the loads — they resolve their state root at import time, and only
+# pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
+os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
+os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 sb = SourceFileLoader("romp_sdk_backend_rw", os.path.join(BIN, "romp_sdk_backend.py")).load_module()
 BACKEND_SRC = open(os.path.join(BIN, "romp_sdk_backend.py")).read()
 
@@ -96,8 +100,8 @@ class RewindDisposition(unittest.TestCase):
 class WiringPins(unittest.TestCase):
     def test_options_arms_via_extra_args_one_shot(self):
         # the SDK has no typed field for --resume-session-at → extra_args (designed passthrough),
-        # applied only on rewind_disposition's say-so
-        self.assertIn('kw["extra_args"] = {"resume-session-at": sess._rewind_to}', BACKEND_SRC)
+        # applied only on rewind_disposition's say-so; merge-safe beside the fork's own extra_args
+        self.assertIn('kw.setdefault("extra_args", {})["resume-session-at"] = sess._rewind_to', BACKEND_SRC)
         self.assertIn('disp = rewind_disposition(sess._rewind_to, sess._rewind_leaf,', BACKEND_SRC)
         self.assertIn('sess._rewind_armed = True', BACKEND_SRC)
 

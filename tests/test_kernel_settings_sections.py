@@ -8,11 +8,16 @@ global Colormap, lives under Colors now.)
 import os
 import unittest
 from importlib.machinery import SourceFileLoader
+import tempfile
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
+# Hermetic state BEFORE the loads — they resolve their state root at import time, and only
+# pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
+os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
+os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 km = SourceFileLoader("romp_kernel", os.path.join(BIN, "romp-kernel")).load_module()
 
 
@@ -79,6 +84,15 @@ class SettingsSectionsTest(unittest.TestCase):
         # the gear JS persists/loads romp:settings.collapseGaps; the timeline reads it (see romp-timeline-view.js)
         self.assertIn("collapseGaps: true", _gear_src())
         self.assertIn("s.collapseGaps = cg.checked", _gear_src())
+
+    def test_show_active_only_is_wired_to_the_shared_activeOnly_setting(self):
+        # "Show active sessions only" (the user 2026-08-12): a Timeline-section checkbox, default ON,
+        # persisted as romp:settings.activeOnly; the timeline hides lanes with no activity in the
+        # visible window and re-shows them when zoom/pan reaches their work (romp-timeline-view.js).
+        self.assertIn("id=rs-activeonly checked", _gear_src())
+        self.assertIn("activeOnly: true", _gear_src())
+        self.assertIn("s.activeOnly = ao.checked", _gear_src())
+        self.assertIn("ao.checked = s.activeOnly !== false", _gear_src())
 
     def test_section_header_styling_exists(self):
         self.assertIn("#rsettings .rs-sec {", _gear_css_src())

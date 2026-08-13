@@ -24,6 +24,10 @@ HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
+# Hermetic state BEFORE the loads — they resolve their state root at import time, and only
+# pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
+os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
+os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 km = SourceFileLoader("romp_kernel_awstamp", os.path.join(BIN, "romp-kernel")).load_module()
 
 SID = "11111111-2222-3333-4444-999999999999"
@@ -587,8 +591,11 @@ class AwaitingWakeOutcomeSweep(unittest.TestCase):
     def test_sweep_ignores_a_goal_the_world_moved_past(self):
         now = 1_000_000
         self._seed_goal(at=now - 20 * 3600)
-        d = json.loads((km.jd.GOALDIR / (SID + ".json")).read_text())
-        d["nodes"][self.gid]["nodeComplete"] = True
+        d = km.jd._guard_nodes(json.loads((km.jd.GOALDIR / (SID + ".json")).read_text()))
+        # a COHERENT completed goal (one truth, 2026-08-13): completion is a VERDICT in the log —
+        # rollup re-derives the flags from it — never a bare hand-set nodeComplete
+        km.jd.record_verdict(d, d["nodes"][self.gid], "closer", "done", now - 3600, why="test done")
+        km.jd.rollup_status(d, session_closed=False)
         (km.jd.GOALDIR / (SID + ".json")).write_text(json.dumps(d))
         self._seed_rec({"wake": True, "anchor": now - 20 * 3600, "count": 1, "lastTurnId": "t0",
                         "armAtoms": 0, "at": now - 7 * 3600})

@@ -4,6 +4,7 @@ scenes. `POST /tunnels/update` runs the ssh git-pull + restart; the rail popover
 SYNTHETIC hosts; subprocess/http are stubbed so nothing actually launches or connects."""
 import json
 import os
+import pathlib
 import shutil
 import subprocess
 import tempfile
@@ -14,6 +15,10 @@ HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
+# Hermetic state BEFORE the loads — they resolve their state root at import time, and only
+# pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
+os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
+os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 km = SourceFileLoader("romp_kernel", os.path.join(BIN, "romp-kernel")).load_module()
 
 
@@ -403,6 +408,22 @@ class DriftWordingUI(unittest.TestCase):
         self.assertIn("up=ab>0?('ahead '+ab):''", js)
         self.assertIn("'diverged: '", js)
         self.assertIn("'different build'", js, "an unknown sha says so instead of guessing")
+
+    def test_a_buildless_connected_host_reads_unversioned_not_blank(self):
+        # A connected host that reports NO build at all (a plain file copy, no git checkout) used to
+        # show a bare "connected" — indistinguishable from healthy-and-in-sync, while running
+        # arbitrarily old code drift detection cannot see (the user 2026-08-11, whose devbox sat
+        # months behind beside a blank). The row says "unversioned copy" where the build word sits,
+        # and the tooltip says why and what restores updates. Fail loudly, never a blank that reads
+        # as fine.
+        js = km._LANDING_REMOTES_JS
+        self.assertIn("else if(t.status==='up'){ver=' \\u00b7 <span class=\"rnet-old\"", js)
+        self.assertIn("unversioned copy", js)
+        self.assertIn("Reinstall it as a git clone to restore the build name and updates.", js)
+        # the VS Code strip's popover row carries the same word — the two surfaces must not drift
+        strip = (pathlib.Path(__file__).resolve().parents[1] / "ui" / "webview" / "strip.ts").read_text()
+        self.assertIn('ver = " · unversioned copy";', strip)
+        self.assertIn("!t.kernelSha && !t.kernelVer", strip)
 
     def test_tooltip_carries_the_shas_and_date(self):
         js = km._LANDING_REMOTES_JS

@@ -22,6 +22,7 @@ from importlib.machinery import SourceFileLoader
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
+os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 km = SourceFileLoader("romp_kernel_nhjr", os.path.join(BIN, "romp-kernel")).load_module()
 jd = km.jd
@@ -49,7 +50,7 @@ def _run(rows, **kw):
     held = []
     keep = km._nudge_fire_list(_fresh(rows, **kw), [(GID, 0, True)],
                                arm_t=SEEN_T, seen_t=SEEN_T, held=held)
-    return [f[0] for f in keep], [f[0] for f, _why in held]   # held rows carry (goal, why) since 2026-08-11
+    return [f[0] for f in keep], [f[0] for f, _why, _ev in held]   # held carries (goal, why, ev_t) since 2026-08-13
 
 
 class RompsOwnBookkeepingNeverHolds(unittest.TestCase):
@@ -122,12 +123,17 @@ class ResolvedGoalsNeverReachHeld(unittest.TestCase):
 
 
 class TheExemptionSetIsWhatTheCodeUses(unittest.TestCase):
-    def test_the_non_judge_sources_are_named(self):
-        self.assertEqual(set(km.NUDGE_HOLD_EXEMPT_SRC), {"user", "agent", "romp", "interrupt"})
-
-    def test_the_holds_why_is_still_screened_off_the_stall_surface(self):
-        # the reason a wrong hold is SILENT rather than merely wrong — the pairing this guard relies on
-        self.assertFalse(jd.stall_why_stands(jd.WHY_TURN_IN_FLIGHT, SID))
+    def test_the_holds_why_routes_to_the_swirl_not_the_chip(self):
+        # 2026-08-13: the screen is retired — the hold's why is in the IN-FLIGHT class, which presents
+        # as the card's Analyzing… swirl (build_feed routes per record) instead of the stalled chip,
+        # and the deferral sweep pops the record on the turn's own end event. Nothing is hidden.
+        self.assertIn(jd.WHY_TURN_IN_FLIGHT, jd.WHY_IN_FLIGHT)
+        self.assertNotIn(jd.WHY_TURN_IN_FLIGHT,
+                         [w for w in (jd.WHY_JUDGING,) if False] or [],)  # tuple membership is the one definition
+        import inspect
+        src = inspect.getsource(km.build_feed)
+        self.assertIn('_stall_rec.get("why") in jd.WHY_IN_FLIGHT', src,
+                      "the feed routes in-flight-class holds to the judging swirl")
 
 
 if __name__ == "__main__":

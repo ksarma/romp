@@ -6,7 +6,7 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { usageColor, fmtAgo, fmtReset, usageWindows, STRIP_PANES } from "./strip";
+import { usageColor, fmtAgo, fmtReset, fmtUsd, usageWindows, apiCell, STRIP_PANES } from "./strip";
 
 test("usageColor mirrors the rail's green/amber/red ramp", () => {
   assert.equal(usageColor(0), "#54B204");
@@ -102,6 +102,17 @@ test("the strip compresses by measurement: fluid bars, fit()-stepped tiers, wrap
   assert.ok(!src.includes("strip-spacer"), "no spacer item — margin-left:auto keeps the pin across wrapped rows");
 });
 
+test("a buildless connected host reads 'unversioned copy', matching the web popover", () => {
+  // a plain file copy (no git checkout) reports no sha/version, so drift detection is blind to it —
+  // the row must say so where the build word sits, never a bare "connected" that reads as in-sync
+  // (the user 2026-08-11, devbox). test_kernel_remote_update.py pins the web popover's twin wording.
+  const ROOT = path.resolve(process.cwd(), "..");
+  const src = fs.readFileSync(path.join(ROOT, "ui", "webview", "strip.ts"), "utf8");
+  assert.match(src, /const unversioned = t\.status === "up" && !t\.outOfDate && !t\.kernelSha && !t\.kernelVer;/);
+  assert.match(src, /if \(unversioned\) ver = " · unversioned copy";/);
+  assert.match(src, /Reinstall it as a git clone to restore the build name and updates\./);
+});
+
 // The network button must acknowledge and fail LOUDLY (the user 2026-07-14
 // reported it "doing nothing" in VS Code while every repro elsewhere works):
 // instant .open chrome on the button, instant popover content before any
@@ -145,6 +156,47 @@ test("both bundles init the strip; the web pages never opt in", () => {
   assert.ok(read("feed.ts").includes("initStrip("), "feed bundle must init the strip");
   const kernel = fs.readFileSync(path.join(ROOT, "bin", "romp-kernel"), "utf8");
   assert.ok(!kernel.includes("__rompShowStrip"), "the web shell keeps its own rail — no strip opt-in kernel-side");
+});
+
+// ── the API spend CELL (the user 2026-08-11): the rail moved key spend to one compact cell — "API",
+// then the 5-hour burn and the month-to-date as designator → dollars·tokens pairs, no bars — and the
+// strip must mirror it. Spend-as-rows was the old grammar; on a key-billed machine it read as broken.
+test("apiCell arms on the spend windows' presence and carries the 5-hour burn + month-to-date", () => {
+  const cell = apiCell({ spend: {
+    fiveHour: { usd: 12.34, tok: 3_456_000, turns: 5 },
+    sevenDay: { usd: 40.2, tok: 9_000_000, turns: 21 },
+    month: { usd: 87.9, tok: 20_500_000, turns: 60 },
+  } });
+  assert.ok(cell);
+  assert.deepEqual(cell!.segs.map((s) => [s.key, s.label, s.short]),
+    [["fiveHour", "5 hours", "5h"], ["month", "Month", "mo"]],
+    "the collapsed cell shows 5h + month only — 7 days lives in the hover");
+  assert.deepEqual(cell!.segs.map((s) => fmtUsd(s.usd)), ["$12", "$88"], "whole dollars, no cents");
+  assert.match(cell!.title, /^API-key spend\n/);
+  assert.match(cell!.title, /7 days — \$40 · 9M tok · 21 turns/, "the hover keeps the full breakdown");
+  assert.match(cell!.title, /5 hours — \$12 · 3\.5M tok · 5 turns/);
+});
+
+test("no key spend → no cell; and no fragment of any key ever reaches the strip", () => {
+  assert.equal(apiCell(null), null);
+  assert.equal(apiCell({ spend: {} }), null, "presence of the 5h window is the whole test — the rail's hasSpend branch");
+  const ROOT = path.resolve(process.cwd(), "..");
+  const src = fs.readFileSync(path.join(ROOT, "ui", "webview", "strip.ts"), "utf8");
+  assert.ok(!src.includes("apiTail") && !src.includes("authTail"), "constant 'API' label — no key-tail plumbing");
+});
+
+test("the cell's dollars survive every tier; tokens fold at tier 2, labels at 3 (source pins)", () => {
+  const ROOT = path.resolve(process.cwd(), "..");
+  const src = fs.readFileSync(path.join(ROOT, "ui", "webview", "strip.ts"), "utf8");
+  assert.match(src, /box\.className = "ru-w ru-api";/);
+  assert.match(src, /lbl\.textContent = "API";/);
+  assert.match(src, /val\.className = "ru-apiv";/, "dollars wear their own class, never .ru-pct");
+  assert.match(src, /tok\.className = "ru-apitok";/);
+  assert.doesNotMatch(src, /spendWindows/, "spend-as-rows is gone, not merely unused");
+  const css = fs.readFileSync(path.join(ROOT, "ui", "webview", "strip.css"), "utf8");
+  assert.match(css, /\.ru-apiv \{ font: 600 10px/);
+  assert.match(css, /#romp-strip\[data-tier="2"\] \.ru-apitok, #romp-strip\[data-tier="3"\] \.ru-apitok \{ display: none; \}/);
+  assert.doesNotMatch(css, /ru-textonly/, "the ghost-row mechanism died with spend-as-rows");
 });
 
 test("an unknown window draws NO bars — just a '?' in their slot (the user 2026-07-31, round 2)", () => {
