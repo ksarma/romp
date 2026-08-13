@@ -17,6 +17,7 @@ the fork grafted into _ws_recv when the two independent fixes merged (2026-08-11
 import io
 import json
 import os
+import tempfile
 import struct
 import unittest
 from importlib.machinery import SourceFileLoader
@@ -26,6 +27,8 @@ ROOT = os.path.dirname(HERE)
 BIN = os.path.join(ROOT, "bin")
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
+os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()   # hermetic BEFORE any romp code loads
+os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 km = SourceFileLoader("romp_kernel", os.path.join(BIN, "romp-kernel")).load_module()
 
 KERNEL_SRC = open(os.path.join(ROOT, "kernel", "kernel.py"), encoding="utf-8").read()

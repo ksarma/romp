@@ -69,7 +69,8 @@ interface AskItem {
   recheck?: boolean;                               // soft-block you answered with a TARGETED follow-up → de-urgented (dotted), moved to Working, dropped from the "need input" count, until the judge resolves or re-blocks it (kernel build_feed; the user 2026-06-27)
   rejudging?: boolean;                             // soft-block + a PLAIN thread reply after it → moves to WORKING while the reply is in flight (echo/open turn), with a "Re-judging…" swirl; returns to Needs-You on its own if the judge leaves it blocked (kernel build_feed; the user 2026-07-02, immediate)
   nudgeFailed?: boolean;                           // the ONE auto-nudge on this stalled goal didn't resolve it → red "follow-up failed" chip (renamed off "stalled" 2026-07-23 — that word is the yellow romp-holding section's now); the failure also records a BLOCK verdict, so the card reaches Needs-you via the normal ladder (kernel _mark_nudge_failed, 2026-07-07)
-  stalled?: { why: string; since: number; note?: string | null } | null;   // romp's nudge gate is HOLDING this working card behind a reviver that isn't retiring, so nothing is moving it (kernel _stalled_goals; the user 2026-07-23). `why` = the kernel's mechanical reason, always present; `note` = the staller's plain-language version, null until the judge writes one. Drives the Stalled section button — its own colour, since this is romp being the bottleneck, not you
+  stalled?: { why: string; since: number; note?: string | null; blocked?: boolean } | null;
+  working?: { since?: number | null; toolUses?: number | null } | null;   // open-turn narration: tool count + start (kernel _open_turn_progress; the user 2026-08-13)   // romp's nudge gate is HOLDING this working card behind a reviver that isn't retiring, so nothing is moving it (kernel _stalled_goals; the user 2026-07-23). `why` = the kernel's mechanical reason, always present; `note` = the staller's plain-language version, null until the judge writes one. Drives the Stalled section button — its own colour, since this is romp being the bottleneck, not you
   interrupting?: boolean;                          // a user interrupt is IN FLIGHT (dispatched, not yet settled) → steady "interrupting…" badge from the click until it settles, THEN yields to `interrupted` — never flickering to "working" in between (kernel build_feed; the user 2026-07-07)
   interrupted?: boolean;                           // the user STOPPED this session mid-turn and hasn't messaged it since → "interrupted" badge; its quiet is user-chosen, auto-nudge holds off until their next message (kernel build_feed; the user 2026-07-05)
   retrying?: { since?: number | null; count?: number } | null;   // the OPEN turn is inside an api-retry storm (kernel _session_retrying, live backend state) → "⚠ retrying since HH:MM" chip on the working card; without it a storm reads as plain healthy Working (the user 2026-07-09)
@@ -81,6 +82,7 @@ interface AskItem {
               tooLong?: boolean;   // apiError: a "prompt is too long" error (on you → compact) vs a transient API error
               spendLimit?: boolean;   // apiError: a monthly spend cap (on you → raise it, never auto-retried; the user 2026-07-14)
               modelLimit?: boolean;   // apiError: this session's MODEL is out of allowance (on you → switch model or add credits; the user 2026-08-01)
+              mode?: string; since?: number;   // judgeAuth adds these: which billing its judges ride ('key'|'login') + the first refusal time — romp can't analyze the session until the credential is fixed (the user 2026-08-12)
               toName?: string; toSid?: string;    // parkedHandoff adds to*
               mid?: string; frm?: string; to?: string; origin?: string; body?: string; gist?: string };   // quarantine (held peer mail) adds these; gist = the bus's 90-char collapse for the compact card line
   summary?: string | null;                         // distiller's key takeaway for a COMPLETED goal → the done card's one auto-written line (kernel asks.append); null until produced
@@ -813,6 +815,10 @@ function makeAskCard(it: AskItem): HTMLElement {
   const waitOnBadge = el("span", "fask-waiton"); waitOnBadge.style.display = "none";   // "Awaiting <peer>" / "Deadlock <peer>", peer name in native colour (the user 2026-06-22)
   const blkBadge = el("a", "fask-blocked"); blkBadge.style.display = "none";   // ⏸ live permission/picker block → click opens the session
   const apiBadge = el("span", "fask-apierror"); apiBadge.textContent = "⚠ API error"; apiBadge.style.display = "none";   // red: session stopped on an API error
+  // filled red (a new chip, deliberately distinct from the outlined api-trouble family): romp's OWN
+  // analysis of this session is refused on its credential — the session may be fine; the judges are
+  // down, and every card here is frozen until the user fixes the key/login (the user 2026-08-12)
+  const jauthBadge = el("span", "fask-jauth"); jauthBadge.style.display = "none";
   // "⚠ retrying since HH:MM" (the user 2026-07-09): the session's OPEN turn is inside an api-retry storm —
   // still in motion, so the card stays in Working, but the storm must be visible: the API-error badge above
   // only fires once the session is idle-stalled, and nimbus's card read plain healthy "Working" through an
@@ -865,7 +871,7 @@ function makeAskCard(it: AskItem): HTMLElement {
   // name — they describe the session's live state, and keeping them OFF the action row stops them shoving
   // the buttons past the card's right edge on a narrow card (the user 2026-06-19; mirrors the ↻ Followed-up
   // chip moved up 2026-06-18). idwrap is flex:1 so the name ellipsizes before the badge is ever clipped.
-  idwrap.append(retryBadge, apiBadge, blkBadge);
+  idwrap.append(retryBadge, apiBadge, jauthBadge, blkBadge);
   // COMPACTNESS (the user 2026-07-07): Clear rides the NAME row (right side, after the chips) and the
   // Background/Summary toggles ride the TIME row — freeing a whole action row. So the action row holds only
   // Retry / Revive (rare states); both rows flex-WRAP so nothing overflows or overlaps on a narrow card.
@@ -1085,6 +1091,7 @@ function makeAskCard(it: AskItem): HTMLElement {
   a._waitOn = waitOnBadge;
   a._blocked = blkBadge;
   a._apiBadge = apiBadge; a._apiRetry = apiRetry; a._retryBadge = retryBadge; a._revive = revive; a._clr = clr;
+  a._jauthBadge = jauthBadge;
   a._cont = cont;
   a._qApprove = qApprove; a._qDeny = qDeny; a._qBody = qbody;
   a._delegations = delegations;
@@ -1513,7 +1520,7 @@ function updateAskCard(card: HTMLElement, it: AskItem) {
   // The card is not left mute in that window: the Working displacement only happens under recheck/rejudging,
   // and both raise the "Analyzing…" swirl below, which says the judge is looking at it again.
   const spin = spinFor(it, distillPending(dCompleted, dBlocked, it.summary, it.blockSummary, !!it.blocked),
-                       dCompleted);
+                       dCompleted, Date.now() / 1000);
   const spinCaption = spin.caption, spinTip = spin.tip, awaitingBg = spin.awaitingBg;
   a._awaitSpin.style.display = spinCaption ? "" : "none";
   // The AWAITING case gets a rounded box (its distinct read); the swirl spins in every case now.
@@ -1526,9 +1533,10 @@ function updateAskCard(card: HTMLElement, it: AskItem) {
   // ⏸ live block badge: the session is stopped mid-turn on a permission prompt /
   // picker FOR THIS CARD's work — the card files under BLOCKED while it lasts
   const isApiErr = it.blocked?.state === "apiError";
+  const isJudgeAuth = it.blocked?.state === "judgeAuth";
   // the resume-gate card carries its own explanatory text + Proceed/Compact/Skip buttons, so the ⏸ chip
   // (which only speaks permission/picker) would just misread — suppress it there (the user 2026-07-21).
-  const showBlk = !!it.blocked && !isApiErr && it.blocked.state !== "quarantine";
+  const showBlk = !!it.blocked && !isApiErr && !isJudgeAuth && it.blocked.state !== "quarantine";
   a._blocked.style.display = showBlk ? "" : "none";
   if (showBlk && it.blocked) {
     // live prompts only — the paused-stall badge retired with the floor (2026-07-07; a failed nudge now
@@ -1546,6 +1554,15 @@ function updateAskCard(card: HTMLElement, it: AskItem) {
   // turn off once — the user 2026-06-29). updateAskCard runs every push, so this re-applies on every refresh.
   const distillShown = applyDistillLine(a._distill as HTMLElement, dCompleted, dBlocked,
                    it.summary, it.blockSummary);
+  // A judge-auth card explains itself ON THE CARD FACE (the user 2026-08-12: a message, not just a
+  // chip): no decision brief can exist here — the distiller is one of the very judges that are down —
+  // so the distill line carries blocked.what instead of sitting empty. applyDistillLine re-runs every
+  // push, so the line restores itself the moment the latch clears and a real brief/takeaway returns.
+  if (isJudgeAuth && it.blocked && !distillShown) {
+    const dle = a._distill as HTMLElement;
+    dle.textContent = it.blocked.what || "";
+    dle.style.display = it.blocked.what ? "" : "none";
+  }
   // PER-PARAGRAPH ages (the user 2026-07-24): a MULTI-item decision brief writes one paragraph per
   // owed item IN ORDER (judge BLOCK_BRIEF_SYS 2026-07-21 + briefParts), so each paragraph can wear
   // the age of ITS OWN ask — the exact block-event time — and a stale re-surfaced ask shows its real
@@ -1656,6 +1673,16 @@ function updateAskCard(card: HTMLElement, it: AskItem) {
       vscodeApi?.postMessage({ type: "apiRetry", id: it.sid });
       a._apiRetry.disabled = true; a._apiRetry.textContent = "Retrying…";
     };
+  }
+  // JUDGE-AUTH (the user 2026-08-12): romp's own analysis of this session is refused on its credential —
+  // the judges bill what the session bills (kernel _judge_auth), that credential is failing, and no card
+  // here can move until the user fixes it. The chip names which credential; no Retry (nothing in-session
+  // to resume — the latch clears itself on the judges' next successful call once the credential works).
+  (a._jauthBadge as HTMLElement).style.display = isJudgeAuth ? "" : "none";
+  if (isJudgeAuth && it.blocked) {
+    a._jauthBadge.textContent = it.blocked.mode === "key" ? "⚠ Can't analyze · API key" : "⚠ Can't analyze · login";
+    a._jauthBadge.title = (it.blocked.what || "")
+      + (it.blocked.text ? ` — the CLI said: ${it.blocked.text}` : "");
   }
   // "⚠ retrying since HH:MM" — the OPEN turn is inside an api-retry storm (kernel `retrying`: the live
   // backend state, with the storm's start from the states log). The card stays in Working — the storm is

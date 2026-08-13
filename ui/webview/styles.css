@@ -287,7 +287,6 @@ body { display: flex; flex-direction: column; }
      positioner (render.ts) clamps it to a small left margin once it's this wide; short tips stay content-sized. */
   max-width: calc(100vw - 12px);
 }
-.tab-tip-path { color: var(--dim); word-break: break-all; margin-bottom: 4px; }
 .tab-tip-row { display: flex; gap: 8px; align-items: baseline; }   /* baseline so a wrapping Summary/Latest value aligns to its label */
 .tab-tip-ctx { margin: 4px 0; align-items: center; }   /* the context battery is tall → give it vertical breathing room */
 .tab-tip-k { color: var(--dim); flex: 0 0 auto; min-width: 58px; }
@@ -584,11 +583,32 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
 }
 .slash-row { display: flex; align-items: baseline; gap: 9px; padding: 5px 9px; border-radius: 5px; cursor: pointer; }
 .slash-row.sel { background: var(--accent); }
-.slash-row.sel .slash-name, .slash-row.sel .slash-desc, .slash-row.sel .slash-arg { color: var(--accent-fg); }
-.slash-name { flex: 0 0 auto; font-weight: 650; color: var(--fg); white-space: nowrap; }
+.slash-row.sel .slash-name, .slash-row.sel .slash-desc, .slash-row.sel .slash-arg,
+.slash-row.sel .slash-key-hint { color: var(--accent-fg); }
+/* One line per command, ALWAYS: the name+arg-hint keeps at most ~2/3 of the row and the description gets
+   the rest — both ellipsize, and → on the selected row shows the full text instead (the user 2026-08-13:
+   letting the description wrap in place meant /code-review's long arg hint squeezed it to a one-letter-wide
+   column hundreds of lines tall). */
+.slash-name { flex: 0 1 auto; min-width: 0; max-width: 68%; overflow: hidden; text-overflow: ellipsis;
+  font-weight: 650; color: var(--fg); white-space: nowrap; }
 .slash-arg { font-weight: 400; opacity: 0.7; font-style: italic; }
-.slash-desc { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+.slash-desc { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  /* basis 0, not auto: with auto, the description's huge natural width out-weighs the name in shrink
+     arithmetic and truncates even a short arg hint; at 0 the name takes what it needs (to its cap) first */
   color: var(--vscode-descriptionForeground, #9a9a9a); }
+/* The ←/→ key hints ride the SELECTED row (right-aligned), never a popup-bottom footer — a footer sat
+   below the fold of the scrolling list, and the selected row is always scrolled into view (the user
+   2026-08-13, round 2). Menu sub-line size/opacity. */
+.slash-key-hint { flex: 0 0 auto; margin-left: auto; font-size: 0.82em; opacity: 0.6; white-space: nowrap; }
+/* the → expansion, stacked for reading: /name + hint, one arg GROUP per line, then the full description */
+.slash-row.expanded { display: block; }
+.slash-row.expanded .slash-name, .slash-row.expanded .slash-desc { display: block; max-width: none;
+  overflow: visible; text-overflow: clip; white-space: normal; overflow-wrap: break-word; }
+.slash-row.expanded .slash-desc { margin-top: 2px; }
+.slash-x-head { display: flex; align-items: baseline; gap: 9px; }
+.slash-x-head .slash-name { flex: 0 1 auto; min-width: 0; }
+.slash-x-args { margin-top: 2px; padding-left: 12px; }
+.slash-x-args .slash-arg { display: block; white-space: normal; overflow-wrap: break-word; }
 .slash-empty, .slash-loading { padding: 8px 10px; color: var(--vscode-descriptionForeground, #9a9a9a);
   display: flex; align-items: center; gap: 8px; }
 .slash-spin { display: inline-block; width: 13px; height: 13px; flex: 0 0 auto;
@@ -1113,7 +1133,7 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
 /* edit + delete share one row under the bubble (the turn is a column flex; the row is the flex item) */
 .msg-acts { display: flex; gap: 4px; align-self: flex-end; }
 /* the DELETE affordance wears the edit button's exact clothes (one size, one shape — labels differ) */
-.msg-del, .msg-restorefiles {
+.msg-del, .msg-restorefiles, .msg-fork {
   align-self: flex-end; margin-top: 3px;
   font-family: var(--sans); font-size: 11px; line-height: 1; padding: 3px 7px; border-radius: 4px;
   border: 1px solid var(--box-border); background: var(--code-bg); color: var(--dim);
@@ -1121,11 +1141,19 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
   transition: opacity 0.12s ease, color 0.12s ease, border-color 0.12s ease;
 }
 .turn-user:hover .msg-del, .msg-del:focus-visible,
-.turn-user:hover .msg-restorefiles, .msg-restorefiles:focus-visible { opacity: 0.9; }
+.turn-user:hover .msg-restorefiles, .msg-restorefiles:focus-visible,
+.turn-user:hover .msg-fork, .msg-fork:focus-visible { opacity: 0.9; }
 .msg-del:hover, .msg-restorefiles:hover { color: var(--fg); border-color: #ff6a6a; }
+.msg-fork:hover { color: var(--fg); border-color: var(--accent); }   /* non-destructive: accent, never the rewind red */
 /* armed = one click from rolling back: destructive red, holds until blur/pointerleave/re-render */
 .msg-del.armed, .msg-restorefiles.armed { color: #ff6a6a; border-color: #ff6a6a; opacity: 0.95; }
-@media (hover: none) { .msg-del, .msg-restorefiles { opacity: 0.6; } }   /* touch: no hover state, so keep it visible */
+@media (hover: none) { .msg-del, .msg-restorefiles, .msg-fork { opacity: 0.6; } }   /* touch: no hover state, so keep it visible */
+/* the fork modal's name box (the user 2026-08-13): the confirm chrome + one text input */
+.fork-name { display: block; width: 100%; box-sizing: border-box; margin: 10px 0 2px; padding: 7px 9px;
+  font: inherit; color: var(--fg); background: var(--code-bg);
+  border: 1px solid var(--box-border); border-radius: 6px; outline: none; }
+.fork-name:focus { border-color: var(--accent); }
+.fork-name.bad { border-color: #ff6a6a; }
 /* pending-rewind overlay: turns after an edited message belong to the branch being abandoned — they
    dim until the kernel's rewound payload replaces them (reconcileRewind retires the flag then). */
 .turn.rewound { opacity: 0.35; transition: opacity 0.2s ease; }
@@ -1142,6 +1170,17 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
   padding: 1px 7px; line-height: 1.5; white-space: nowrap;
 }
 .slash-cmd-args { margin-left: 7px; }
+/* A slash COMMAND turn is a user GESTURE, not a message (the user 2026-08-13): it changes something
+   rather than saying something — so it sheds the blue bubble and reads in the system-event family
+   (the ✦ dividers): a dim, left-aligned, full-width row with the ✦ mark, the mono chip, the args. */
+.turn-user.turn-cmd:not(.injected) { align-items: flex-start; }
+.user-bubble.cmd-row { max-width: none; background: none; border: none; border-radius: 0;
+  padding: 2px 0; color: var(--dim); }
+.user-bubble.cmd-row::before { content: "✦"; margin-right: 8px; color: var(--dim); }
+.user-bubble.cmd-row .slash-cmd-chip { background: var(--code-bg); color: var(--fg);
+  border-color: var(--box-border); }
+.user-bubble.cmd-row .slash-cmd-args { color: var(--dim); }
+.turn-cmd .msg-acts { align-self: flex-start; }   /* the hover actions follow the row to the left */
 /* ---------- romp-injected message (a feed nudge / follow-up) ----------
    A GRAY bubble in the SAME right-aligned spot as the blue user bubble (so it sits where "an outgoing
    message" goes), but clearly NOT you — gray, with a small "↯ romp" tag above it (the user 2026-06-19).
@@ -1830,19 +1869,41 @@ body.picker-lifted::before { content: ""; position: absolute; inset: 0; backgrou
 body.picker-lifted.pane-gone > * { visibility: hidden; }
 body.picker-lifted.pane-gone > #picker { visibility: visible; }
 body.picker-lifted.pane-gone::before { display: none; }
-/* centred, like every other modal. Top-aligned made sense when this filled the screen and the list
-   wanted every pixel of height; as a dialog over the dashboard it should sit in the middle. */
-body.picker-lifted > #picker { align-items: center; padding: 24px 16px; }
+/* TOP-ANCHORED, like the base overlay rule and the command palette (the user 2026-08-12): vertical
+   centering re-centered the whole card every time typing re-filtered the resume list — the create
+   controls at the top slid up and down exactly while being used. With the top pinned, the card only
+   ever grows or collapses at its BOTTOM edge, which since the 2026-08-12 reorder is the list's edge:
+   the controls hold perfectly still. (Same 56px anchor as the un-lifted rule, so the two contexts
+   agree; kb-tight below keeps its tighter fold.) */
+body.picker-lifted > #picker { align-items: flex-start; padding: 56px 16px 16px; }
 /* SHORT WINDOW (the on-screen keyboard is up — the shell's --app-h sizing turns that into this
    window's own height — or a genuinely small screen; render.ts toggles kb-tight on resize): the
-   ADVANCED create rows fold so the essentials — name box, session list, actions — share the height
-   with the keyboard, and expand back on the resize that restores the room (the user 2026-08-10,
-   Chrome on a phone). !important: these rows' visibility is otherwise driven by inline styles
-   (pick-mode, auth availability), and the fold must win while it holds. */
+   frame tightens and the RESUME LIST is what gives way (the user 2026-08-12, revising two earlier
+   folds that each hid the wrong half — 2026-08-10 hid the advanced create rows, then the first cut
+   of this rule let the list fill the screen instead). The keyboard is up because you are TYPING a
+   new session's name, so every create control — name, directory, backend, billing, host, Create —
+   stays on screen exactly as laid out; the list of previous sessions is the occasional alternative,
+   already shrinkable (it scrolls), and it collapses to whatever height is left. No row hides and
+   nothing reorders: the tall layout and the folded one differ only in frame and cap, so the resize
+   that restores the room changes nothing but how much list you see. */
+/* BOTH contexts — lifted and standalone — tighten to the same 12px frame: a context still wearing
+   the tall 56px anchor would push the bottom of the box off-screen. (The lifted selector must keep
+   its own line: the base lifted rule carries #picker, which outweighs a class-only override.) */
+#picker.kb-tight,
 body.picker-lifted > #picker.kb-tight { align-items: flex-start; padding: 12px 16px; }
-.picker-overlay.kb-tight .picker-dir,
-.picker-overlay.kb-tight .picker-backend { display: none !important; }
-.picker-overlay.kb-tight .picker-box { max-height: calc(100vh - 24px); }
+/* dvh, not vh: lifted, the shell sizes this iframe to the visible height so the two agree, but
+   STANDALONE on a phone 100vh is the largest viewport (URL bar collapsed) while the fold keys on
+   the current innerHeight — a vh-sized box ran past the visible bottom by exactly the browser
+   chrome. dvh tracks the real visible height in both contexts (the shell's own --app-h fallback
+   unit). overflow-y:auto is the backstop for a window too short for even the control rows alone
+   (a landscape phone): the box scrolls rather than the Create button becoming unreachable. */
+.picker-overlay.kb-tight .picker-box { max-height: calc(100dvh - 24px); overflow-y: auto; }
+/* …the list gives way, but never to NOTHING. In the backstop geometry the control rows alone
+   overflow the cap, and the list — the only child with a zero flex floor — would resolve to 0px
+   while its "Or reopen…" heading still rendered: a labeled section with no way to see, scroll,
+   or click a single row (a dead-end, which a compact view must never be). One row's floor keeps
+   the resume path alive at every height; the list scrolls the rest within itself. */
+.picker-overlay.kb-tight .picker-list { min-height: 52px; }
 
 .picker-box {
   /* two thirds of the window, not a narrow column: it is a dialog over the whole dashboard now, and the
@@ -1875,10 +1936,15 @@ body.picker-lifted > #picker.kb-tight { align-items: flex-start; padding: 12px 1
   border-bottom: 1px solid var(--box-border);
 }
 .picker-error.show { display: block; }
-/* the row wraps so the completer's status line gets its own line under the field; the folder menu is
-   absolutely positioned so it lays OVER the rows below instead of shoving the dialog around */
-.picker-dir { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 14px; border-top: 1px solid var(--box-border); position: relative; }
+/* one line: the verdict lives inside the field now, not on a second row; the folder menu is
+   absolutely positioned so it lays OVER the rows below instead of shoving the dialog around.
+   (No border-top: the dir row sits directly under the name box now — create controls first, the
+   resume list last, the user 2026-08-12 — and the search box's own border-bottom draws that seam.) */
+.picker-dir { display: flex; align-items: center; gap: 6px; padding: 8px 14px; position: relative; }
 .picker-dir::before { content: "📁"; opacity: 0.55; font-size: 0.9em; flex: 0 0 auto; }
+/* the input and its in-box verdict share one box: the hint overlays the input's right end, and
+   render.ts reserves that much input padding so the typed path never runs under it */
+.picker-dir-field { position: relative; flex: 1 1 auto; display: flex; min-width: 0; }
 .picker-dir-input {
   flex: 1 1 auto; min-width: 0;
   background: rgba(255, 255, 255, 0.05);
@@ -1905,15 +1971,18 @@ body.picker-lifted > #picker.kb-tight { align-items: flex-start; padding: 12px 1
    drop the hover lift so it says unavailable. The title explains, and the field beside it still works. */
 .picker-browse:disabled { opacity: 0.4; cursor: not-allowed; }
 .picker-browse:disabled:hover { background: rgba(255, 255, 255, 0.06); }
-/* the typed path's one-line verdict from the kernel that would own the session (exists / will be
-   created / is a file), so the answer arrives before the create does (the user 2026-07-28) */
-.picker-dir-status {
-  flex: 1 0 100%; margin-top: 4px; min-width: 0;
+/* the typed path's verdict from the kernel that would own the session (exists / will be created / is
+   a file), so the answer arrives before the create does (the user 2026-07-28) — folded into the
+   field's right end as non-editable text (the user 2026-08-11): compact by default, the full sentence
+   on hover. cursor:text because a press on it falls through to the input. */
+.picker-dir-hint {
+  position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+  max-width: 55%; cursor: text;
   color: var(--dim); font-family: var(--mono, monospace); font-size: 0.82em;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.picker-dir-status.warn { color: #e0a030; }
-.picker-dir-status.bad { color: #e5484d; }
+.picker-dir-hint.warn { color: #e0a030; }
+.picker-dir-hint.bad { color: #e5484d; }
 /* folder completions: Tab walks into one, so a path is assembled without a modal or a native dialog */
 .picker-dir-menu {
   position: absolute; left: 14px; right: 14px; top: calc(100% - 4px); z-index: 6;
@@ -1942,6 +2011,12 @@ body.picker-lifted > #picker.kb-tight { align-items: flex-start; padding: 12px 1
    the buttons' 0.82em, plain, no button chrome (it is a fact, not a control) */
 .picker-auth-fixed { flex: 0 0 auto; color: var(--fg); font-size: 0.82em; padding: 4px 0; }
 .picker-list { overflow-y: auto; }
+/* The resume list's heading (the user 2026-08-12): the list sits LAST in the dialog — typing in the
+   name box re-filters it, and its changing height used to jump every control below it — so this line
+   both names the section and presents it as the alternative to creating. Same quiet label vocabulary
+   as the row labels (0.82em dim); hidden in pick-mode, where the list IS the dialog. */
+.picker-alt-head { flex: 0 0 auto; color: var(--dim); font-family: var(--sans); font-size: 0.82em;
+  padding: 9px 14px 3px; border-top: 1px solid var(--box-border); }
 .picker-row {
   padding: 9px 14px; cursor: pointer;
   border-bottom: 1px solid rgba(255, 255, 255, 0.04);

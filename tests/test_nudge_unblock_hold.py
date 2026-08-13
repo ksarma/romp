@@ -21,6 +21,7 @@ USER's own unblock (an interrupt re-engage) never counts on either end.
 Synthetic fixtures throughout (invented goal text, placeholder ids).
 """
 import os
+import tempfile
 import unittest
 from importlib.machinery import SourceFileLoader
 
@@ -28,6 +29,8 @@ HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
+os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()   # hermetic BEFORE any romp code loads
+os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 jd = SourceFileLoader("romp_judge_ubh", os.path.join(BIN, "romp-judge")).load_module()
 km = SourceFileLoader("romp_kernel_ubh", os.path.join(BIN, "romp-kernel")).load_module()
 
@@ -62,7 +65,7 @@ class RepeatUnblockHoldsTheNudge(unittest.TestCase):
     def test_the_incident_shape_a_repeat_trailing_unblock_holds(self):
         keep, held = self._run(FLAP)
         self.assertEqual(keep, [])
-        self.assertEqual([(f[0], why) for f, why in held], [(GID, jd.WHY_UNBLOCK_UNSETTLED)],
+        self.assertEqual([(f[0], why) for f, why, _ev in held], [(GID, jd.WHY_UNBLOCK_UNSETTLED)],
                          "the column already ping-ponged and the closer hasn't answered — never a stall")
 
     def test_a_goals_first_unblock_still_fires_the_pinned_doctrine(self):
@@ -100,28 +103,40 @@ class RepeatUnblockHoldsTheNudge(unittest.TestCase):
             {"ev_t": UNBLOCK_T + 10, "src": "user", "kind": "unblock", "at": UNBLOCK_T + 10},
             {"ev_t": UNBLOCK_T + 12, "src": "romp", "kind": "awaiting", "lift": True, "at": UNBLOCK_T + 12}])
         self.assertEqual(keep, [])
-        self.assertEqual([why for _, why in held], [jd.WHY_UNBLOCK_UNSETTLED])
+        self.assertEqual([why for _, why, _ev in held], [jd.WHY_UNBLOCK_UNSETTLED])
 
     def test_a_settled_diary_still_fires(self):
         keep, held = self._run(FLAP + [{"ev_t": UNBLOCK_T, "src": "planner", "kind": "done",
                                         "at": UNBLOCK_T + 30}])
         self.assertEqual([f[0] for f in keep], [GID], "a diary ending on a non-unblock is nudgeable")
 
-    def test_the_hold_is_screened_off_the_stall_surface(self):
-        self.assertFalse(jd.stall_why_stands(jd.WHY_UNBLOCK_UNSETTLED, SID),
-                         "the closer's next pass is romp's own review — never presented as a stall")
+    def test_the_hold_presents_as_in_flight_and_the_sweep_retires_it_on_the_closers_word(self):
+        # stall_why_stands is gone (2026-08-13): every hold presents somewhere. Ours joins the
+        # in-flight class — the Analyzing… swirl, never the stalled chip — and the sweep's own case
+        # must sit ABOVE the class branch, whose no-judge-running event would retire it early.
+        self.assertIn(jd.WHY_UNBLOCK_UNSETTLED, jd.WHY_IN_FLIGHT,
+                      "the closer's next pass is romp's own review — never presented as a stall")
+        src = open(os.path.join(os.path.dirname(HERE), "kernel", "kernel.py"), encoding="utf-8").read()
+        sweep = src[src.index("def _deferral_sweep_tick"):]
+        sweep = sweep[:sweep.index("\ndef ")]
+        ours = sweep.index("why == jd.WHY_UNBLOCK_UNSETTLED")
+        cls = sweep.index("why in jd.WHY_IN_FLIGHT")
+        self.assertLess(ours, cls, "the specific retirement event must be checked before the class branch")
+        self.assertIn('rows[-1].get("kind") != "unblock"', sweep,
+                      "retired by the closer's next filed word, not by no-judge-running")
 
     def test_the_ev_t_hold_still_wins_first_and_carries_its_own_why(self):
         newer = {"ev_t": ARM_T + 50, "src": "closer", "kind": "block", "at": ARM_T + 60}
         keep, held = self._run(FLAP + [newer])
         self.assertEqual(keep, [])
-        self.assertEqual([why for _, why in held], [jd.WHY_TURN_IN_FLIGHT])
+        self.assertEqual([why for _, why, _ev in held], [jd.WHY_TURN_IN_FLIGHT])
 
 
 class TheCallSiteDefersPerWhy(unittest.TestCase):
     def test_the_tick_records_each_held_goal_under_its_own_why(self):
         src = open(os.path.join(os.path.dirname(HERE), "kernel", "kernel.py"), encoding="utf-8").read()
-        self.assertIn("to_fire += [f for f, why in held if _nudge_deferred_ok(f[0], why, now, sid)]", src)
+        self.assertIn("to_fire += [f for f, _why, _ev in held", src)
+        self.assertIn("if _nudge_deferred_ok(f[0], _why, now, sid, ev_t=_ev or None)]", src)
 
 
 if __name__ == "__main__":

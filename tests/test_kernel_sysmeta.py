@@ -12,6 +12,10 @@ from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
 BIN = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "bin")
+# Hermetic state BEFORE the loads — they resolve their state root at import time, and only
+# pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
+os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
+os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 SourceFileLoader("romp_event_model", os.path.join(BIN, "romp-event-model")).load_module()
 SourceFileLoader("romp_judge", os.path.join(BIN, "romp-judge")).load_module()
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
@@ -43,7 +47,8 @@ class SessionMeta(unittest.TestCase):
 
     def test_missing_file_is_empty_not_an_error(self):
         meta = km._session_meta("/no/such/transcript.jsonl")
-        self.assertEqual(meta, {"cwd": "", "gitBranch": "", "version": "", "permissionMode": ""})
+        self.assertEqual(meta, {"cwd": "", "gitBranch": "", "version": "", "permissionMode": "",
+                                "lastEditPath": ""})
 
     def test_cache_keys_on_mtime_size(self):
         with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as f:

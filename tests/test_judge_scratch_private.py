@@ -23,6 +23,8 @@ from pathlib import Path
 from unittest import mock
 
 BIN = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "bin")
+os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()   # hermetic BEFORE any romp code loads
+os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 jd = SourceFileLoader("romp_judge_scratch", os.path.join(BIN, "romp-judge")).load_module()
 
 SID = "11111111-2222-3333-4444-555555555555"

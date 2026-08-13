@@ -10,10 +10,15 @@ import json
 import os
 import unittest
 from importlib.machinery import SourceFileLoader
+import tempfile
 
 BIN = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "bin")
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
+# Hermetic state BEFORE the loads — they resolve their state root at import time, and only
+# pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
+os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
+os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 km = SourceFileLoader("romp_kernel_debt", os.path.join(BIN, "romp-kernel")).load_module()
 
 DEBTOR = "11111111-2222-3333-4444-555555555555"     # the idle session that owes replies
@@ -242,9 +247,11 @@ class DebtEscalate(DebtBase):
     def test_nothing_eligible_is_a_quiet_no_op(self):
         import json as _json
         p = km.jd.GOALDIR / (ASKER + ".json")
-        s = _json.loads(p.read_text())
-        for nd in s["nodes"].values():
-            nd["nodeComplete"] = True
+        s = km.jd._guard_nodes(_json.loads(p.read_text()))
+        # coherent completion is a VERDICT in the log (one truth, 2026-08-13), never a bare flag
+        for nd in list(s["nodes"].values()):
+            km.jd.record_verdict(s, nd, "closer", "done", NOW - 10, why="test done")
+        km.jd.rollup_status(s, session_closed=False)
         p.write_text(_json.dumps(s))
         self.assertFalse(km._debt_escalate(ASKER, DEBTOR, T_ASK, NOW))
 

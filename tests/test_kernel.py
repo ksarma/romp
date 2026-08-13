@@ -17,6 +17,10 @@ from pathlib import Path
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
+# Hermetic state BEFORE the loads — they resolve their state root at import time, and only
+# pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
+os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
+os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 em = SourceFileLoader("romp_event_model", os.path.join(BIN, "romp-event-model")).load_module()
 jd = SourceFileLoader("romp_judge", os.path.join(BIN, "romp-judge")).load_module()
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
@@ -5606,6 +5610,28 @@ class ViewBuilder(unittest.TestCase):
         sl = next((m for m in sent if m.get("type") == "sessionList"), None)
         self.assertIsNotNone(sl, "requestSessions returns a sessionList")
         self.assertEqual(sl.get("defaultDir"), km._tilde(wd), "the dir field prefills the kernel's default path")
+
+    def test_requestSessions_payload_carries_self_host(self):
+        """The picker's Host row labels its this-machine option with the machine's real name instead of
+        'local' (the user 2026-08-12). The name rides the sessionList payload as selfHost, and it is the
+        SAME identity peers see (_self_host — short hostname, ROMP_HOST_NAME override), so the picker
+        and federation never disagree about what this machine is called."""
+        saved_sdk, saved_hn = km._sdk, os.environ.get("ROMP_HOST_NAME")
+        km._sdk = lambda: None                               # don't construct the real SDK backend
+        os.environ["ROMP_HOST_NAME"] = "TESTHOST"
+        sent = []
+        client = {"send": lambda s: sent.append(json.loads(s)), "app": "chat"}
+        try:
+            km.Handler._dispatch_ws(None, {"type": "requestSessions"}, client)
+        finally:
+            km._sdk = saved_sdk
+            if saved_hn is None:
+                os.environ.pop("ROMP_HOST_NAME", None)
+            else:
+                os.environ["ROMP_HOST_NAME"] = saved_hn
+        sl = next((m for m in sent if m.get("type") == "sessionList"), None)
+        self.assertIsNotNone(sl, "requestSessions returns a sessionList")
+        self.assertEqual(sl.get("selfHost"), "TESTHOST", "the payload names this machine as peers know it")
 
     def test_createSession_sdk_backend_unavailable_warns_instead_of_tmux_fallback(self):
         """The user asked for an SDK session on a kernel without the SDK venv and got a MYSTERY TMUX session

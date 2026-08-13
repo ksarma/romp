@@ -11,7 +11,7 @@ zero protocol change at switchover. WS is hand-rolled on the stdlib socket (no d
 
 Run:  bin/romp-kernel   → opens http://127.0.0.1:29855
 """
-import json, os, queue, re, signal, socket, sys, time, threading, traceback, base64, bisect, errno, hashlib, hmac, struct, subprocess, shutil, shlex, http.client, uuid
+import json, os, queue, random, re, signal, socket, sys, time, threading, traceback, base64, bisect, errno, hashlib, hmac, struct, subprocess, shutil, shlex, http.client, uuid
 from pathlib import Path
 from datetime import datetime, timezone
 from importlib.machinery import SourceFileLoader
@@ -124,6 +124,32 @@ def _suspended_after(t):
     return any(start > (t or 0) for (start, _e) in _downtime)
 
 
+def _open_turn_progress(turns):
+    """{"since", "toolUses"} for the session's OPEN turn — the live narration every working card wears
+    (the user 2026-08-13: "always some detail about why they're working" — a tool count that climbs
+    and a timer that runs make a silently-stuck session visible at a glance, because a frozen count
+    under a climbing timer LOOKS wrong). None when the last turn ended: the other spin states
+    (Analyzing…, Awaiting…, the stall chip, the Blocked floors) own every idle beat, so this covers
+    exactly the case that used to be mute — an ordinary working card with its turn open. Derived from
+    the same cached parse as the working dot; a tool use is an assistant record's tool_use block."""
+    if not turns:
+        return None
+    lt = turns[-1]
+    if lt.get("ended"):
+        return None
+    n = 0
+    for a in (lt.get("atoms") or []):
+        if a.get("type") != "assistant":
+            continue
+        try:
+            for blk in ((a.get("message") or {}).get("content") or []):
+                if isinstance(blk, dict) and blk.get("type") == "tool_use":
+                    n += 1
+        except Exception:
+            pass
+    return {"since": lt.get("t"), "toolUses": n}
+
+
 def _session_working(turns):
     """Whether a session is ACTIVELY WORKING — the single source of truth for the working signal (the yellow
     dot on every surface, the auto-nudge orphan check). Derived from the EVENT MODEL: its last turn is OPEN
@@ -190,7 +216,45 @@ def _interrupt_cause(nxt_atom):
     return None
 
 
-def _machine_cut_cause(users, i):
+_machine_cut_cache = {}   # str(path) -> ((mtime_ns, size), (t, cause))
+
+
+def _last_machine_cut(sid):
+    """(t, cause) of the newest machineCut marker in states/<sid>.jsonl — the backend's own record that
+    ROMP cut this session's turn and queued a resume notice (sdk_backend.append_machine_cut) — or (0, "").
+    The authoritative answer to "whose stop was this?", written by the component that did the cutting,
+    instead of inferred from the transcript.
+
+    mtime+size cached (one stat per call while the file is quiet, the _jerr_cache idiom): the callers run
+    per session on EVERY push, and these files reach ~1MB / 4k lines on a long-lived session, so an
+    uncached scan would add megabytes of reading per push cycle to a loop that is already CPU-bound."""
+    p = jd.STATE / "states" / ("%s.jsonl" % sid)
+    try:
+        st = p.stat(); key = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return 0.0, ""
+    hit = _machine_cut_cache.get(str(p))
+    if hit is not None and hit[0] == key:
+        return hit[1]
+    t, cause = 0.0, ""
+    try:
+        with open(p, errors="replace") as f:
+            for line in f:
+                if '"machineCut"' not in line:
+                    continue
+                try:
+                    o = json.loads(line)
+                except Exception:
+                    continue
+                if isinstance(o, dict) and o.get("machineCut"):
+                    t, cause = float(o.get("t") or 0), str(o["machineCut"])
+    except OSError:
+        return 0.0, ""
+    _machine_cut_cache[str(p)] = (key, (t, cause))
+    return t, cause
+
+
+def _machine_cut_cause(users, i, cut_t=0.0, cut_cause=""):
     """The machine-cut cause for the interrupt record at users[i], or None for a genuine user stop.
     Scans FORWARD for romp's resume notice instead of trusting users[i + 1] alone (the user
     2026-08-10): the restart that cuts a turn kills its background tasks too, and their
@@ -201,29 +265,44 @@ def _machine_cut_cause(users, i):
     romp-injected marker, so they always author 'romp' — and a task notification whose output tail
     happens to QUOTE a signature never reads as a notice). The scan stops at the first genuine human
     message or the next interrupt record: past either, a notice belongs to a LATER cut, never this
-    one. Everything else (system notifications, peers, sdk, tool_result-only) is wedge — read past."""
+    one. Everything else (system notifications, peers, sdk, tool_result-only) is wedge — read past.
+
+    `cut_t`/`cut_cause` (from _last_machine_cut) settle the case the scan CANNOT: the notice does not
+    exist yet. The stop record hits disk the instant the turn is cut; romp's notice only lands once the
+    resumed CLI writes it, seconds later — and a tick inside that window saw a bare trailing stop and
+    blamed the user, 30 times in 30 hours on the live machine (the user 2026-08-12). So when the scan
+    runs off the end INCONCLUSIVE — no notice, and no human message or later interrupt to prove the stop
+    was theirs — defer to the backend's stamp: an interrupt at or before the moment romp queued a resume
+    IS that cut. Ordering alone makes this exact (the cut always precedes its resume), so a genuine stop
+    made later is always past the stamp and still reads as the user's; no window, no expiry. A scan that
+    reaches a terminator never consults the stamp: there the transcript already answered."""
     for nxt in users[i + 1:]:
         if nxt.get("author") == "romp":
             cause = _interrupt_cause(nxt)
             if cause:
                 return cause
         elif em.is_interrupt_record(nxt) or nxt.get("author") == "human":
-            return None
+            return None                                  # the transcript settled it — the stamp says nothing new
+    if cut_cause and (users[i].get("t") or 0) <= cut_t:   # notice not on disk yet → the backend's own record
+        return cut_cause
     return None
 
 
-def _interrupt_marks(turns):
+def _interrupt_marks(turns, sid=""):
     """(newest genuine user STOP, newest genuine human PROMPT) on this thread, in transcript time —
     the one place the two are tallied, so the predicate below and the interrupt block's EVIDENCE stamp
     read the same events. A MACHINE cut (kernel restart / process death) mints the same stop record but
     is romp's own, so it never counts as a stop (_machine_cut_cause, via the resume notice that follows
-    it). The interrupt record itself authors 'human', so it's classified FIRST."""
+    it, or — before that notice reaches disk — the backend's machineCut stamp). The interrupt record
+    itself authors 'human', so it's classified FIRST. `sid` is optional only so the pure-atom callers in
+    the tests stay pure: pass it wherever it is known, or a cut still on its way to disk reads as a stop."""
     users = [a for turn in turns for a in (turn.get("atoms") or []) if a.get("type") == "user"]
+    cut_t, cut_cause = _last_machine_cut(sid) if sid else (0.0, "")
     last_intr = last_human = 0
     for i, a in enumerate(users):
         t = a.get("t", 0)
         if em.is_interrupt_record(a):
-            if _machine_cut_cause(users, i):
+            if _machine_cut_cause(users, i, cut_t, cut_cause):
                 continue                                 # machine cut → romp re-engaged, not the user
             last_intr = max(last_intr, t)
         elif a.get("author") == "human":
@@ -231,7 +310,7 @@ def _interrupt_marks(turns):
     return last_intr, last_human
 
 
-def _interrupt_suppresses_nudge(turns):
+def _interrupt_suppresses_nudge(turns, sid=""):
     """True while the session's most recent USER action is a GENUINE user INTERRUPT: the user stopped
     the agent and hasn't spoken since, so they're at the controls — auto-nudge stays suppressed until
     their NEXT message (the user 2026-07-05, refined via ui: re-engage on the user-message EVENT, never
@@ -245,8 +324,9 @@ def _interrupt_suppresses_nudge(turns):
     work, so it must never suppress the nudge nor paint "you stopped this — romp won't follow up" (the
     user 2026-07-14: restart-cut SDK sessions sat inertly in Working wearing that false badge, and
     auto-nudge stayed off so a genuine RE-stall was never caught). Such a cut is identified by the romp
-    resume notice that FOLLOWS its record (_interrupt_cause) and is EXCLUDED from the user-stop tally."""
-    last_intr, last_human = _interrupt_marks(turns)
+    resume notice that FOLLOWS its record (_interrupt_cause) and is EXCLUDED from the user-stop tally —
+    or, in the window before that notice reaches disk, by the backend's machineCut stamp (pass `sid`)."""
+    last_intr, last_human = _interrupt_marks(turns, sid)
     return last_intr > last_human
 
 
@@ -540,6 +620,22 @@ def _spend_handoff(code):
             if _ct_eq(k, code):
                 return _HANDOFF.pop(k, 0) > time.time()
     return False
+
+
+def _persist_repo_root():
+    """The kernel's own repo root, written into state at boot (state/romp/repo-root). This is the
+    AUTHORITATIVE answer for a peer kernel's clone-discovery probes (_start_remote_kernel,
+    _discover_remote_clone): the running kernel knows exactly where it lives, so probes read this
+    file over ssh FIRST instead of guessing conventional dirs — the guess list missed a clone at
+    ~/projects/romp while that machine's kernel was literally up, reporting "romp not installed"
+    (the user 2026-08-11). Best-effort, like the serve-token mint above."""
+    try:
+        jd.STATE.mkdir(parents=True, exist_ok=True)
+        (jd.STATE / "repo-root").write_text(str(ROOT) + "\n")
+    except OSError:
+        pass
+
+_persist_repo_root()
 
 def _ct_eq(a, b):
     """Constant-time string compare (no timing oracle on the serve token); never
@@ -1072,9 +1168,10 @@ def _debt_escalate(asker, debtor, ask_ts, now):
     try:
         store = jd.load_goals(asker)
         nodes, status = store.get("nodes", {}), store.get("status", {})
+        _confirming = set(store.get("confirming") or ())
         cands = [nd for gid, nd in nodes.items()
                  if nd.get("parentId") is None and status.get(gid) == "working"
-                 and not nd.get("blocked") and not nd.get("cleared") and not nd.get("nodeComplete")
+                 and gid not in _confirming            # one completion truth: the rollup exports (2026-08-13)
                  and (nd.get("t") or 0) <= ask_ts]
         if not cands:
             return False
@@ -2507,7 +2604,7 @@ def _interrupt_block_tick(now, tmux):
             turns = jd.parsed_session(sid, [s["path"]], now)["turns"]
         except Exception:
             continue
-        stop_t, human_t = _interrupt_marks(turns)        # the two EVENTS this tick reasons about — and the
+        stop_t, human_t = _interrupt_marks(turns, sid)   # the two EVENTS this tick reasons about — and the
         #                                                  evidence times both writes are stamped with
         block_it = bool(turns) and not _session_working(turns) and stop_t > human_t
         if block_it:                                     # a GENUINE user stop → block the focus goal on them,
@@ -3059,9 +3156,10 @@ def _awaiting_wake_outcomes(now):
             sid = gid.rsplit(":", 1)[0]
             store = jd.load_goals(sid)
             nd = store.get("nodes", {}).get(gid)
-            if (nd is None or nd.get("cleared") or nd.get("nodeComplete") or nd.get("blocked")
-                    or store.get("status", {}).get(gid, "working") != "working"):
-                continue                             # the world moved on; the record is inert
+            if (nd is None or store.get("status", {}).get(gid, "working") != "working"
+                    or gid in set(store.get("confirming") or ())):
+                continue                             # the world moved on; the record is inert (one
+                #                                      completion truth: the rollup exports, 2026-08-13)
             path = _path_of(sid) or ""
             turns = jd.parsed_session(sid, [path], now).get("turns", []) if path else []
             if turns and _session_working(turns):
@@ -3133,10 +3231,6 @@ def _backend_rewind_pending(sid):
 # threshold is the backstop below, and only for the reason the awaiting backstop already admits: a
 # WEDGED reviver is a MISSING event, and no event announces it.
 NUDGE_DEFER_BACKSTOP_SECS = 6 * 3600     # mirrors AWAITING_BACKSTOP_SECS, and for the same reason
-_STALL_SEEN = jd.STALL_SEEN               # consecutive gate runs reporting the SAME deferral reason before the
-                                          # card calls itself stalled (see jd.STALL_SEEN — one definition, since
-                                          # the kernel WRITES the record and the judge READS it)
-
 _task_plan_cache = {}                    # fsid -> ((mtime, count), plan | None)
 
 
@@ -3227,11 +3321,15 @@ def _revivers_pending(sid, store, turns, gid):
             # between that call returning and its save is covered by the fire path's last-moment store
             # re-read (_nudge_fire_list). This reason defers the nudge but NEVER presents as a stall
             # (the user 2026-07-31): romp reviewing the session is romp working the card, and the
-            # Analyzing… swirl already says so — see jd.stall_why_stands.
+            # Analyzing… swirl already says so — see jd.WHY_IN_FLIGHT.
             return jd.WHY_JUDGING
         if nd.get("followupPending"):
             return "your reply to the card is still being judged"
-        if nd.get("nodeComplete"):
+        if gid in set(store.get("confirming") or ()):
+            # the rollup's own export of exactly this sentence (done verdict in, settle pending). NOT the
+            # raw nodeComplete flag (2026-08-13): a vetoed umbrella — done-flagged but refused by the
+            # open_task authority — read "complete and merely unsettled" here forever, deferring the very
+            # nudge that was its only path to completion (g17's 20h dark deferral)
             return "the card is already complete and merely unsettled"
         if _plan_sync_pending(sid, nodes):
             return "the agent's to-do sync is due"
@@ -3268,31 +3366,19 @@ def _deferral_why(rec):
     return (rec.get("why") or "") if isinstance(rec, dict) else ""
 
 
-def _deferral_seen(rec):
-    """How many CONSECUTIVE gate runs have reported this same reason. A legacy int record predates the
-    counter, and it only ever existed because the reason kept repeating, so read it as settled (2)."""
-    if isinstance(rec, dict):
-        try:
-            return int(rec.get("seen") or 1)
-        except (TypeError, ValueError):
-            return 1
-    return 2
-
-
-def _nudge_deferred_ok(gid, reason, now, sid=None):
+def _nudge_deferred_ok(gid, reason, now, sid=None, ev_t=None):
     """True when a deferral has run past the backstop and the nudge must go anyway. A reviver that never
     clears is a MISSING event — exactly the case the awaiting backstop exists for — and "never miss a
     nudge" outranks "wait for everything" once the wait itself looks wedged.
 
-    Records WHY it deferred and how many consecutive gate runs have said the same thing, not just when it
-    started (the user 2026-07-23, who wanted a stalled card to say what the wait is on). The why is what
-    the stall brief is grounded in; `seen` is what separates a real stall from the churn. A reason still
-    standing on the NEXT run is one no mechanism is retiring, which is the wedge worth explaining. That
-    second observation is the event; nothing here consults a clock (the backstop above is the one
-    deliberate exception). `sid` rides the record so the stall readers can live-verify a session-scoped
-    reason (jd.stall_why_stands) — the record freezes whenever the gate walk stops running for its
-    session, and a frozen claim must be verifiable or it is not presented. (No reason currently
-    verifies against it: the judging hold, which did, never presents at all since 2026-07-31.)"""
+    Records WHY it deferred (the user 2026-07-23, who wanted a stalled card to say what the wait is
+    on). ONE writer per duty (2026-08-13): the WALK here mints the record and updates a changed why
+    (keeping the original clock — the card has been stuck since `first` either way); the per-tick
+    DEFERRAL SWEEP (_deferral_sweep_tick) owns retirement, popping each record on its reason's own
+    event — so a record's existence IS the standing hold and every stall surface presents it without
+    a seen counter or a screen (both retired; a frozen record can no longer hide a stale claim,
+    because nothing freezes). `ev_t` rides WHY_TURN_IN_FLIGHT records: the newest diary evidence the
+    hold is waiting to see END, which is exactly the event the sweep retires it on."""
     d = _auto_nudge_data()
     dd = dict(d.get("deferred") or {})
     if not reason:
@@ -3304,19 +3390,14 @@ def _nudge_deferred_ok(gid, reason, now, sid=None):
     rec = dd.get(gid)
     first = _deferral_at(rec)
     if first is None:
-        dd[gid] = {"at": int(now), "why": reason, "seen": 1, "sid": sid}
+        dd[gid] = {"at": int(now), "why": reason, "sid": sid,
+                   **({"evT": int(ev_t)} if ev_t else {})}
         d["deferred"] = dd
         _write_auto_nudge(d)
         return False
-    if _deferral_why(rec) != reason:                     # the wait moved to a DIFFERENT reviver: keep the
-        # clock (the card has been stuck since `first` either way) but restart the run count, so a goal
-        # bouncing between two momentary reasons never reads as wedged on either one.
-        dd[gid] = {"at": first, "why": reason, "seen": 1, "sid": sid}
-        d["deferred"] = dd
-        _write_auto_nudge(d)
-    elif _deferral_seen(rec) < _STALL_SEEN:              # same reason again → it is not self-clearing.
-        # Stops counting at the threshold so a long wedge isn't a write per tick.
-        dd[gid] = {"at": first, "why": reason, "seen": _deferral_seen(rec) + 1, "sid": sid}
+    if _deferral_why(rec) != reason:                     # the wait moved to a DIFFERENT reviver: keep the clock
+        dd[gid] = {"at": first, "why": reason, "sid": sid,
+                   **({"evT": int(ev_t)} if ev_t else {})}
         d["deferred"] = dd
         _write_auto_nudge(d)
     return (now - first) > NUDGE_DEFER_BACKSTOP_SECS
@@ -3329,24 +3410,107 @@ def _stalled_goals():
     is NOT here: that one is visibly in flight, and it escalates to a real block through _mark_nudge_failed,
     which carries its own decision brief.
 
-    A hold on romp's OWN review (jd.WHY_JUDGING) is screened out entirely (the user 2026-07-31): that is
-    romp working the card, not a stall — the Analyzing… swirl carries it (spin-caption.ts), and a yellow
-    chip there drew the eye to a state nobody needs to act on. Reasons whose truth is checkable right now
-    must check out, or the record is skipped (it still pops normally on the next gate walk — a deferral
-    record only pops when the gate walk re-runs, and the walk stops the moment its session leaves
-    idle-and-due, so a record freezes with whatever reason it last held); reasons whose truth lives in
-    the stores pass through — their own passes reconcile them."""
+    Every record with a why presents (2026-08-13): the per-tick sweep (_deferral_sweep_tick) pops each
+    record on its reason's own event, so existence IS the standing hold — no seen counter, no screen,
+    no live re-verification (all three were heuristics compensating for records that could freeze; the
+    sweep is why they can't). The READERS route by class: an in-flight-class why (jd.WHY_IN_FLIGHT)
+    presents as the card's Analyzing… swirl — romp working the card, not a stall — and every other why
+    paints the Stalled section as before (build_feed does the routing)."""
     out = {}
     for gid, rec in (_auto_nudge_data().get("deferred") or {}).items():
         why, at = _deferral_why(rec), _deferral_at(rec)
-        if not (why and at and _deferral_seen(rec) >= _STALL_SEEN):
-            continue
-        if not jd.stall_why_stands(why, rec.get("sid") if isinstance(rec, dict) else None):
-            continue                                     # a judging hold (presents as Analyzing, never a stall)
-        if why.startswith("the judge tiers are paused") and not _retry_paused_on():
-            continue                                     # tiers resumed while the record was frozen
-        out[gid] = {"why": why, "since": at}
+        if why and at:
+            out[gid] = {"why": why, "since": at}
     return out
+
+
+def _deferral_sweep_tick(now):
+    """Retire deferral records on their reasons' OWN events — one sweep over auto-nudge.json's deferred
+    map per pusher tick, independent of the auto-nudge toggle (the records also feed the stall/swirl
+    surfaces, which run regardless). This is retirement's SINGLE owner (2026-08-13): the goal walk
+    mints records and updates a changed why, and this sweep pops them — the per-walk seen counter and
+    the presentation screen are both retired, because the failure they compensated for (a record
+    frozen wherever the walk stopped, holding a stale claim) cannot happen when retirement rides the
+    records file itself rather than the walk's position. Modeled on _debt_backstop_tick. Per reason,
+    the exact event:
+      * the goal left plain 'working' (resolved/cleared/gone) — pop, whatever the why;
+      * WHY_TURN_IN_FLIGHT — the held-on evidence's turn has ENDED: newest ended-turn watermark
+        >= the record's evT (stamped at mint from the offending diary row);
+      * WHY_UNBLOCK_UNSETTLED — the closer's next word: the goal's newest judge row is no
+        longer an unblock (fork, 2026-08-11);
+      * WHY_JUDGING (+ legacy) — no judge call in flight for the session (jd.active_runs, the
+        registry that deregisters in a finally);
+      * "the judge tiers are paused" — retry-paused.json cleared;
+      * "your reply to the card is still being judged" — the fold's followupPending ended;
+      * "the card is already complete and merely unsettled" — the rollup no longer exports it as
+        confirming (the settle landed, or completion was refused and the card must nudge again);
+      * "the agent's to-do sync is due" — the mirror sync ran (plan-sync pending no more).
+    An unknown/future why stands (and presents) until the walk re-runs it — the honest default. The
+    sweep only POPS; it never rewrites a why (one writer per duty: rewriting here raced the walk and
+    could re-dress a durable hold as in-flight whenever any judge call happened to be running)."""
+    d = _auto_nudge_data()
+    dd = dict(d.get("deferred") or {})
+    if not dd:
+        return
+    by_sid = {}
+    for gid, rec in dd.items():
+        sid = (rec.get("sid") if isinstance(rec, dict) else None) or str(gid).rsplit(":", 1)[0]
+        by_sid.setdefault(sid, []).append((gid, rec))
+    active = {r.get("fsid") for r in jd.active_runs()}
+    changed = False
+    for sid, recs in by_sid.items():
+        try:
+            store = jd.load_goals(sid)
+        except Exception:
+            continue                                   # unreadable store → records stand; nothing silent
+        nodes, status = store.get("nodes", {}) or {}, store.get("status", {}) or {}
+        confirming = set(store.get("confirming") or ())
+        turns = None
+        for gid, rec in recs:
+            why = _deferral_why(rec)
+            nd = nodes.get(gid)
+            top = gid
+            while nd is not None and nd.get("parentId") is not None:
+                top = nd["parentId"]
+                nd = nodes.get(top)
+            gone = gid not in nodes
+            resolved = status.get(top, "working") != "working" if not gone else True
+            pop = gone or resolved
+            if not pop and why == jd.WHY_TURN_IN_FLIGHT:
+                ev = int(rec.get("evT") or 0) if isinstance(rec, dict) else 0
+                if ev:
+                    if turns is None:
+                        path = _path_of(sid) or ""
+                        turns = (jd.parsed_session(sid, [path], now).get("turns", [])
+                                 if path else [])
+                    seen_t = max((t.get("end") or 0) for t in turns if t.get("ended"))                         if any(t.get("ended") for t in turns) else 0
+                    pop = seen_t >= ev                 # the held-on turn ENDED — the exact event
+            elif not pop and why == jd.WHY_UNBLOCK_UNSETTLED:
+                # the fork's repeat-unblock hold (2026-08-11): retired by the closer's next filed word —
+                # the goal's newest judge row is no longer an unblock. Sits ABOVE the class branch: this
+                # why is in jd.WHY_IN_FLIGHT for presentation, but no-judge-running is not its event.
+                rows = [e for e in (nodes.get(gid) or {}).get("log") or []
+                        if e.get("src") not in NUDGE_HOLD_EXEMPT_SRC]
+                pop = bool(rows) and rows[-1].get("kind") != "unblock"
+            elif not pop and why in jd.WHY_IN_FLIGHT:  # judging-class (incl. legacy): the call returned
+                pop = sid not in active
+            elif not pop and why and why.startswith("the judge tiers are paused"):
+                pop = not _retry_paused_on()
+            elif not pop and why == "your reply to the card is still being judged":
+                pop = not (nodes.get(gid) or {}).get("followupPending")
+            elif not pop and why == "the card is already complete and merely unsettled":
+                pop = gid not in confirming
+            elif not pop and why == "the agent's to-do sync is due":
+                try:
+                    pop = not _plan_sync_pending(sid, nodes)
+                except Exception:
+                    pop = False
+            if pop:
+                dd.pop(gid, None)
+                changed = True
+    if changed:
+        d["deferred"] = dd
+        _write_auto_nudge(d)
 
 
 def _nudge_response_ready(turns, store, rec, gid, now):
@@ -3439,7 +3603,7 @@ def _auto_nudge_session(s, now, tmux, nudged, waitfor, alive_ids=None):
     lt = turns[-1]
     if _session_working(turns):                      # still actively working (event model) → not orphaned
         return False
-    if _interrupt_suppresses_nudge(turns):           # the user's LAST action was a GENUINE interrupt → they're
+    if _interrupt_suppresses_nudge(turns, sid):      # the user's LAST action was a GENUINE interrupt → they're
         return False                                # driving; suppressed until their NEXT message. The stopped
         #                                              focus goal's BLOCKED-on-you flip is owned by the always-on
         #                                              _interrupt_block_tick (a needs-you rule, not a nudge feature).
@@ -3618,7 +3782,8 @@ def _auto_nudge_session(s, now, tmux, nudged, waitfor, alive_ids=None):
             held = []
             to_fire = _nudge_fire_list(jd.load_goals(sid), to_fire, arm_t=arm.get("t") or 0,
                                        seen_t=(seen.get("t") or 0) if seen else 0, held=held)
-            to_fire += [f for f, why in held if _nudge_deferred_ok(f[0], why, now, sid)]
+            to_fire += [f for f, _why, _ev in held
+                        if _nudge_deferred_ok(f[0], _why, now, sid, ev_t=_ev or None)]
         except Exception:
             pass
     if len(to_fire) == 1:
@@ -3723,34 +3888,49 @@ def _nudge_fire_list(fresh, to_fire, arm_t=None, seen_t=None, held=None):
     nudge, and holding on it would invert it. The hold clears on the closer's next word — any newer
     judge row on the goal — or the deferral backstop.
 
-    `held` (optional list) collects (goal, why) pairs for the goals dropped by either hold, so the
+    `held` (optional list) collects (goal, why, ev_t) triples for the goals dropped by either hold
+    (ev_t = 0 when the why's retirement event is not a turn end), so the
     caller can record each as a DEFERRAL instead of a silent drop — every other nudge hold leaves a why
     and rides the 6h backstop, and this one leaving nothing is what made the deadlock unreadable from
     the state dir."""
     nodes, status = fresh.get("nodes", {}) or {}, fresh.get("status", {}) or {}
+    confirming = set(fresh.get("confirming") or ())
     cut = max(arm_t or 0, seen_t or 0)
     keep = []
     for f in to_fire:
         if f[0] not in nodes:
             continue                                 # gone from the fresh store: cleared + compacted mid-tick
         nd = nodes[f[0]]
-        if status.get(f[0], "working") != "working" or nd.get("cleared") \
-                or nd.get("nodeComplete") or nd.get("blocked"):
+        if status.get(f[0], "working") != "working" or f[0] in confirming:
             continue                                 # the judges resolved it since the tick's snapshot: no
             #                                          status check, and nothing to hold either — a RESOLVED
             #                                          goal must never reach `held`, or the backstop below
-            #                                          would eventually nudge a card that is already done
-        if cut and any(e.get("src") not in NUDGE_HOLD_EXEMPT_SRC
-                       and (e.get("ev_t") or e.get("at") or 0) > cut
-                       for e in nd.get("log") or []):
+            #                                          would eventually nudge a card that is already done.
+            #                                          ONE completion truth (2026-08-13): the rollup's own
+            #                                          exports — status + confirming — never the raw flags.
+            #                                          The raw nodeComplete arm silently dropped a VETOED
+            #                                          umbrella (done-flagged, to-do still open, status
+            #                                          'working') every tick, which killed the one backstop
+            #                                          the wedged g17 had; a done-but-unsettled top keeps
+            #                                          its no-nudge behavior via `confirming`, and every
+            #                                          verdict writer runs rollup_status before save_goals,
+            #                                          so the exports are never staler than the flags
+        _offending = [int(e.get("ev_t") or e.get("at") or 0) for e in nd.get("log") or []
+                      if e.get("src") not in NUDGE_HOLD_EXEMPT_SRC
+                      and (e.get("ev_t") or e.get("at") or 0) > cut] if cut else []
+        if _offending:
             if held is not None:                     # a ruling on EVIDENCE from a turn romp hasn't seen end —
-                held.append((f, jd.WHY_TURN_IN_FLIGHT))   # the stall read is a world old; hold it, don't lose it
+                held.append((f, jd.WHY_TURN_IN_FLIGHT, max(_offending)))
+                #                                      the stall read is a world old; hold it, don't lose
+                #                                      it. The max offending ev_t rides along: the deferral
+                #                                      record stamps it (evT) so the sweep can retire the
+                #                                      hold on that turn's own END event (2026-08-13)
             continue
         judge_rows = [e for e in nd.get("log") or [] if e.get("src") not in NUDGE_HOLD_EXEMPT_SRC]
         if judge_rows and judge_rows[-1].get("kind") == "unblock" \
                 and any(e.get("kind") == "unblock" for e in judge_rows[:-1]):
             if held is not None:                     # a REPEAT unblock mid-oscillation: the unblocker spoke
-                held.append((f, jd.WHY_UNBLOCK_UNSETTLED))   # again, the closer hasn't answered (see docstring)
+                held.append((f, jd.WHY_UNBLOCK_UNSETTLED, 0))   # again, the closer hasn't answered (see docstring)
             continue
         keep.append(f)
     return keep
@@ -4244,6 +4424,121 @@ def _create_sdk_session(nm, cwd, auth=""):
     return sid
 
 
+def _fork_session(parent_sid, cut_msg_uuid, new_name, now=None):
+    """Fork `parent_sid`'s conversation into a NEW parallel session named `new_name` — from just BEFORE
+    user message `cut_msg_uuid` when given (the chat's fork button; same _rewind_target resolution and
+    guards as the edit/delete rewind, so "before this message" means the same thing everywhere), the
+    whole conversation otherwise (the palette's fork-from-tip). The parent is untouched: both continue
+    as separate threads (the user 2026-08-13). Returns an error string for the caller to warn-toast
+    (fail loudly), None on success. SDK sessions only in v1 — the mechanism IS the SDK's
+    resume+fork_session contract; a tmux session says so instead of degrading.
+
+    ORDER MATTERS: the judge stores are seeded BEFORE be.fork writes the names/ entry — discover()
+    iterates names/, so an unseeded fork must not be discoverable even for one judge pass (the replay
+    storm: every copied prompt re-minted as a fresh card, every turn re-captioned). Seeding failure
+    aborts the fork loudly rather than creating an unprotected session. Then the same ACK-FAST shape
+    as _create_sdk_session: focus first, dirty-mark wake, one direct push of the new tab."""
+    nm = (new_name or "").strip()
+    if not NAME_RE.match(nm):
+        return "session names use letters, digits, . _ - only."
+    be = Sessions.backend_for(parent_sid)
+    if not (hasattr(be, "fork") and _sdk_ready()):
+        return "fork needs the SDK backend — this session runs on tmux, so there is nothing to fork from."
+    now = now or time.time()
+    sess = next((s for s in _sessions(now) if s["sid"] == parent_sid), None)
+    if not sess:
+        return "no transcript for this session yet — nothing to fork."
+    cut_uuid = ""
+    if cut_msg_uuid:
+        cut_uuid, err = _rewind_target(sess["path"], parent_sid, str(cut_msg_uuid))
+        if err:
+            return err
+    sid = str(uuid.uuid4())
+    err = _seed_fork_stores(parent_sid, sid, sess["path"], cut_uuid)
+    if err:
+        return err
+    bg, fg = _pick_identity_color()
+    be.fork(nm, parent_sid, cut_uuid, bg, fg, sid=sid)
+    be.connect(sid)          # eager-connect: the CLI copies the conversation and the tab fills in
+    _reveal_chat({"type": "focus", "id": sid})
+    _mark_views_dirty()
+    _push_session_now(sid)
+    return None
+
+
+def _seed_fork_stores(parent_sid, sid, path, cut_uuid):
+    """Judge-store hygiene for a session born as a FORK: its transcript carries the parent's history
+    VERBATIM (uuids + timestamps survive the CLI's fork copy — verified live 2026-08-13), which the
+    judges must not re-judge as fresh work. Three seeds, each preventing a distinct storm:
+      1. episodes/<sid>.jsonl seed+boundary rows → episode_floor(sid) = the cut record's t, so the
+         planner retires every copied unit before any model call (units are time-keyed, so this
+         survives seg-id derivation drift). The seed row carries the conversation ROOT uuid — the
+         boundary tick dedups on it when it sights the fork's head (same uuid, copied), and a
+         chained-head fork (root:false) skips the tick entirely; either way the floor stands.
+      2. captions/<sid>.jsonl transform-copied from the parent (non-live rows at/before the cut, id
+         prefix resid'd) → no Haiku re-caption storm, and the copied history's hovers arrive filled.
+      3. goals/<sid>.json born with the parent's placements SEALED (keys resid'd, every value None =
+         "processed, no goal") — covers the courier, which scans unplaced peer segments, and
+         belts-and-braces the planner. No nodes are copied: copied cards would duplicate across the
+         parent and fork boards.
+    Returns an error string (the fork is aborted) or None — a fork without this seeding re-judges the
+    whole copied history, so failing loudly beats creating it unprotected."""
+    try:
+        cands = [path]
+        anchor = os.path.join(os.path.dirname(path), parent_sid + ".jsonl")
+        if os.path.basename(path) != parent_sid + ".jsonl" and os.path.exists(anchor):
+            cands.append(anchor)
+        ad = em.FileAdapter(cands, path)
+        u, root, hops = ad.leaf_uuid, None, 0
+        while u is not None and hops < 500000:          # active chain leaf → oldest record = the root
+            root = u
+            u = ad.parent_of.get(u); hops += 1
+        if not root:
+            return "no transcript records yet — nothing to fork."
+        cut = cut_uuid or ad.leaf_uuid
+        cut_rec = ad.by_uuid.get(cut) or {}
+        cut_t = int(em.parse_z(cut_rec.get("timestamp")) or time.time())
+        root_rec = ad.by_uuid.get(root) or {}
+        root_t = int(em.parse_z(root_rec.get("timestamp")) or cut_t)
+        parent_fsid = jd._sdk_last_sid(parent_sid) or parent_sid
+        # 1) the episode floor: seed (conversation root) + boundary (the cut) — floor = cut_t
+        jd.append_episode(sid, root, parent_fsid, root_t)
+        jd.append_episode(sid, cut, sid, cut_t)
+        # 2) captions: transform-copy the parent's settled rows at/before the cut
+        src = jd.CAPDIR / (parent_sid + ".jsonl")
+        pref = parent_sid + ":"
+        rows = []
+        if src.exists():
+            for line in src.read_text(errors="replace").splitlines():
+                try:
+                    o = json.loads(line)
+                except ValueError:
+                    continue
+                cid = o.get("id") or ""
+                if o.get("live") or not cid.startswith(pref):
+                    continue
+                parts = cid.rsplit(":", 2)              # <sid>:<t>:<hash> — sids may contain ':', so rsplit
+                try:
+                    if len(parts) != 3 or int(parts[1]) > cut_t:
+                        continue                        # after the cut (not copied), or not id-shaped
+                except ValueError:
+                    continue
+                o["id"] = sid + cid[len(parent_sid):]
+                rows.append(json.dumps(o))
+        if rows:
+            jd.CAPDIR.mkdir(parents=True, exist_ok=True)
+            (jd.CAPDIR / (sid + ".jsonl")).write_text("\n".join(rows) + "\n")
+        # 3) the goal store: fresh skeleton whose placements are the parent's, sealed
+        pstore = jd.load_goals(parent_sid)
+        store = jd.load_goals(sid)                      # the fresh-skeleton path (rompUuid=sid, CAS base set)
+        store["placements"] = {sid + k[len(parent_sid):]: None
+                               for k in (pstore.get("placements") or {}) if k.startswith(pref)}
+        jd.save_goals(sid, store)
+    except Exception as e:
+        return "fork not created — seeding its judge state failed: %s" % e
+    return None
+
+
 # --- optional SDK (non-tmux) session backend (docs/sdk-backend.md) --------------------
 # A second SessionBackend that drives Claude via the Agent SDK instead of a tmux TUI,
 # selectable per session. Built lazily so the tmux-only path never imports the SDK and the
@@ -4322,6 +4617,13 @@ def _sdk_locked():
                 # that, a fresh install whose romp-sdk-setup had bailed looked like romp silently eating
                 # every message (the user 2026-07-28).
             sbmod = SourceFileLoader("romp_sdk_backend", str(HERE / "sdk_backend.py")).load_module()
+            # ONE claimer for the manager env's API key: the backend's work_api_key pops it out of
+            # os.environ (so no session CLI inherits it ambiently), and judges read that same stash
+            # through this wire. Before it lands the key is still in os.environ and judge._work_key
+            # reads it there — the handoff is order-independent, no second claim to race (2026-08-12:
+            # the unwired judges inherited the post-claim env on a login-less host and every call
+            # refused "Not logged in" for 13 hours while the cards sat parked in Working).
+            jd._WORK_KEY_FN = sbmod.work_api_key
             _sdk_backend = sbmod.SdkBackend(
                 jd.STATE, _claude_bin(), _send_to_app,
                 poke=_producer_wake.set, push=_pusher_wake.set,
@@ -4774,12 +5076,18 @@ def _drive(msg, client):
     t = msg.get("type")
     ID_OPS = ("sendMessage", "rewindSend", "rewindDelete", "interrupt", "compactSession", "dismissDialog", "answerAsk", "navAsk", "toggleAsk", "submitAsk",
               "addCustomAsk", "cancelAsk", "askText", "cancelQueued", "dismissEcho", "apiRetry", "setModel", "setEffort", "setMode", "setFast",
-              "setAuth", "endSession", "renameSession", "stopTask", "rewindFiles", "mcpAction")
+              "setAuth", "endSession", "renameSession", "stopTask", "rewindFiles", "mcpAction", "forkSession")
     if t in ID_OPS and msg.get("id"):
         sid = str(msg["id"])
     elif t in ("compact", "sendCommand") and msg.get("name"):
         sid = _sid_of(str(msg["name"]))                   # the timeline keys these by session NAME
-    elif t == "askFollowUp" and (msg.get("itemId") or msg.get("id")) and msg.get("text"):
+    elif t == "askFollowUp" and (msg.get("itemId") or msg.get("id")) and (msg.get("text") or msg.get("cont")):
+        # cont:true is the Continue button (2026-08-08), which deliberately carries NO text — the kernel
+        # supplies CONTINUE_TEXT in the handler body below. The old text-only guard turned every Continue
+        # press into a dropped message: no send, no reopen, no cardMoveAck — so the feed's optimistic move
+        # timed out and bounced the card back with "romp didn't confirm that move" on EVERY click (the
+        # user 2026-08-13, who reasonably concluded the button was useless). The handler always supported
+        # cont; its front door never let it in.
         sid = str(msg["itemId"]).rsplit(":", 1)[0] if msg.get("itemId") else str(msg["id"])
     else:
         return False                                      # not a drive op (UI/nav) → _dispatch_ws handles it
@@ -4797,7 +5105,7 @@ def _drive(msg, client):
     be = Sessions.backend_for(sid)
     if t == "sendMessage" and msg.get("text"):
 
-        _send_or_park(be, sid, str(msg["text"]), echo="human"); _push_soon()  # idle → instant echo; SDK busy → queued bubble forwarded mid-turn + folded; tmux busy → held + merged at turn end
+        _send_or_park(be, sid, str(msg["text"]), echo="human"); _push_soon()  # idle → instant echo; SDK busy → queued bubble forwarded mid-turn + folded (but a SLASH COMMAND parks to fire alone at turn end — mid-turn it would land as text, not execute); tmux busy → held + merged at turn end
     elif t == "rewindSend" and msg.get("uuid") and msg.get("text"):
         # Edit a past message (SDK sessions): rewind the conversation to just before it and send the
         # edited text as the branch's next turn. NO optimistic kernel echo — the edit lands mid-chat
@@ -5009,6 +5317,13 @@ def _drive(msg, client):
             client["send"](json.dumps({"type": "warn",
                                        "text": "Couldn't restore files — this session's backend doesn't support it or isn't connected."}))
         _push_soon()
+    elif t == "forkSession" and msg.get("name"):
+        # Fork this conversation into a NEW parallel session (the user 2026-08-13). uuid (optional) is the
+        # user message the fork cuts just BEFORE — absent means the whole conversation. LOUD on refusal;
+        # on success the new tab arrives focused via _fork_session's own push.
+        err = _fork_session(sid, str(msg.get("uuid") or ""), str(msg["name"]))
+        if err:
+            client["send"](json.dumps({"type": "warn", "text": err}))
     elif t == "endSession":
         sys.stderr.write("kill: %s via endSession WS op\n" % sid)   # kill attribution (the user 2026-07-16)
         be.kill(sid); _send_to_app("chat", {"type": "closed", "id": sid}); _push_soon()
@@ -6058,6 +6373,26 @@ def _ensure_postal_bus():
         sys.stderr.write("postal bus ensure failed:\n%s" % traceback.format_exc())
 
 
+_bus_revive_lock = threading.Lock()
+_bus_reviving = [False]                      # one ensure in flight at a time; concurrent kicks coalesce
+
+def _revive_postal_bus():
+    """Re-ensure the bus when a bus call is REFUSED — the bus died under a running kernel (it
+    self-stopped in a window its gate didn't cover, or crashed), and boot-time ensure can't help a
+    kernel that is already up. Event-based: the refusal IS the signal (never a poll). Single-flight
+    so a burst of refused notifies — one per tunnel per supervisor pass — coalesces into one ensure.
+    A quiet hub went dark exactly this way twice on 2026-08-12: bus gone, kernel up, every /peer
+    notify failing silently, cross-host mail parked until a manual ensure."""
+    with _bus_revive_lock:
+        if _bus_reviving[0]:
+            return
+        _bus_reviving[0] = True
+    try:
+        _ensure_postal_bus()
+    finally:
+        _bus_reviving[0] = False
+
+
 def _ssh_config_hosts():
     """Host aliases declared in ~/.ssh/config (the 'find the things' for the attach UI). Concrete 'Host'
     patterns only — wildcards/negations are skipped (not connectable targets). Best-effort: a missing or
@@ -6217,7 +6552,9 @@ def _notify_bus_peer(host, port, up, peer_token="", trust="directed"):
     local bus with OUR serve token; peer_token is the PEER machine's serve token (r["token"]), which the
     bus needs to dial that peer's /peer-exchange through the tunnel — both buses are token-gated now.
     trust rides too: the bus gates inbound mail from a 'directed' peer into quarantine and drops an
-    'isolated' peer's mail — it needs the per-host level to make that call at delivery time."""
+    'isolated' peer's mail — it needs the per-host level to make that call at delivery time.
+    A refusal ALSO kicks _revive_postal_bus: a dead bus must not stay dead until the next kernel
+    boot while the supervisor retries into it forever (the 2026-08-12 quiet-hub outage)."""
     try:
         conn = http.client.HTTPConnection("127.0.0.1", BUS_PORT, timeout=2)
         conn.request("POST", "/peer", json.dumps({"host": host, "port": port, "up": bool(up),
@@ -6227,6 +6564,7 @@ def _notify_bus_peer(host, port, up, peer_token="", trust="directed"):
         conn.close()
         return ok
     except Exception:
+        threading.Thread(target=_revive_postal_bus, daemon=True).start()
         return False
 
 
@@ -6235,7 +6573,7 @@ def _notify_bus_origin_trust(host, trust):
     reads when mail from `host` arrives RELAYED through a hub (trust is judged by true origin, never
     by the tunnel it rode in on — the user 2026-07-25). Guarded like _notify_bus_peer: postal being
     down never breaks the caller; the supervisor re-pushes, and a restarted bus re-seeds from
-    /tunnels' `known` rows."""
+    /tunnels' `known` rows. A refusal kicks _revive_postal_bus, like _notify_bus_peer's."""
     try:
         conn = http.client.HTTPConnection("127.0.0.1", BUS_PORT, timeout=2)
         conn.request("POST", "/peer", json.dumps({"host": host, "trust": trust or "directed",
@@ -6245,6 +6583,7 @@ def _notify_bus_origin_trust(host, trust):
         conn.close()
         return ok
     except Exception:
+        threading.Thread(target=_revive_postal_bus, daemon=True).start()
         return False
 
 
@@ -6339,11 +6678,99 @@ def _bus_quarantine_act(body):
 # except it owns no ssh — the mobile supervises its own tunnel, so the attach supervisor's keep-alive IS
 # the keep-connected behavior. Unchecking = checkout: the hub forgets the row + token.
 
+# ── self-host safety (KEEP IN SYNC with postal_service.py: _safe_id, _host_name_candidates,
+# _sanitize_host_name, _minted_host_id, self_host — the postal copy is the reference and carries
+# the full 2026-08-11 story). Peers key the mail they hold FOR this machine by the name we declare,
+# as a path component, so a kern.hostname stomped with junk that fails path-safety half-breaks
+# peering: presence crosses, every reply back is refused and parks "unreachable". Kernel and bus
+# must fall back IDENTICALLY — the minted last-resort id is persisted at jd.STATE/"self-host", the
+# SAME file the bus uses (its STATE.parent == jd.STATE) — so this machine can never check in under
+# one name while its bus declares another.
+
+_SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+def _safe_id(s):
+    """True iff `s` is safe as a single path component (postal_service._safe_id, duplicated)."""
+    if not s or len(s) > 128:
+        return False
+    if "/" in s or "\\" in s or "\x00" in s or s.startswith("."):
+        return False
+    return bool(_SAFE_ID_RE.match(s))
+
+def _host_name_candidates():
+    """Raw machine-name candidates for the self-host fallback, most meaningful first. macOS keeps
+    user-set names in scutil (LocalHostName is mDNS-restricted, ComputerName is free-form);
+    elsewhere there is no second authority — the minted id below is the fallback."""
+    if sys.platform != "darwin":
+        return []
+    out = []
+    for key in ("LocalHostName", "ComputerName"):
+        try:
+            r = subprocess.run(["scutil", "--get", key], capture_output=True, text=True, timeout=3)
+            if r.returncode == 0 and r.stdout.strip():
+                out.append(r.stdout.strip())
+        except Exception:
+            pass
+    return out
+
+def _sanitize_host_name(name):
+    """A candidate machine name reduced to a _safe_id-safe label: first dot-label, runs of unsafe
+    chars folded to '-', trimmed. "" when nothing meaningful survives (a 1-char remnant of junk is
+    an unstable identity, not a name)."""
+    name = re.sub(r"[^A-Za-z0-9._-]+", "-", str(name or "").split(".")[0]).strip("-._")
+    return name if len(name) >= 2 and _safe_id(name) else ""
+
+_HOST_ID_FILE = jd.STATE / "self-host"   # minted-once stable identity; the bus's STATE.parent/"self-host" — the SAME file
+
+def _minted_host_id():
+    """Last-resort stable identity: mint once, persist, reuse. O_EXCL so two processes (bus and
+    kernel) racing to mint converge on whoever wrote first."""
+    try:
+        name = _HOST_ID_FILE.read_text().strip()
+        if _safe_id(name):
+            return name
+    except OSError:
+        pass
+    name = "host-%08x" % random.getrandbits(32)
+    try:
+        _HOST_ID_FILE.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(str(_HOST_ID_FILE), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        os.write(fd, (name + "\n").encode())
+        os.close(fd)
+    except FileExistsError:
+        try:
+            prior = _HOST_ID_FILE.read_text().strip()
+            if _safe_id(prior):
+                return prior
+        except OSError:
+            pass
+    except OSError:
+        pass                                 # unwritable state root: stable per-process only, still safe
+    return name
+
+_self_host_fb = None                         # resolved fallback identity, cached after the first (logged) resolve
+
 def _self_host():
-    """This machine's name in a check-in handshake (the hub's key for us). Short hostname;
-    ROMP_HOST_NAME overrides (tests; unusual naming)."""
-    import socket
-    return os.environ.get("ROMP_HOST_NAME") or socket.gethostname().split(".")[0]
+    """This machine's name to peers (the check-in handshake, trust pushes, usage rows). Short
+    hostname; ROMP_HOST_NAME overrides (tests; unusual naming). The name MUST clear _safe_id — the
+    hub keys the mail it holds for us by it, as a path component — so an unsafe kernel hostname
+    falls back loudly, exactly like the bus's self_host(): the platform's user-set machine name,
+    else the minted id persisted in the SHARED file above (kernel and bus converge on one identity).
+    gethostname stays first and live — fixing the machine's hostname takes effect on the next call
+    with no restart."""
+    env = os.environ.get("ROMP_HOST_NAME")
+    if env:
+        return env
+    name = socket.gethostname().split(".")[0]
+    if _safe_id(name):
+        return name
+    global _self_host_fb
+    if _self_host_fb is None:
+        _self_host_fb = next((s for s in map(_sanitize_host_name, _host_name_candidates()) if s),
+                             "") or _minted_host_id()
+        sys.stderr.write("self-host: kernel hostname %r fails path-safety; using %r for peering "
+                         "(fix the machine's hostname to control the name)\n" % (name, _self_host_fb))
+    return _self_host_fb
 
 
 def checkin_set(host, on):
@@ -6369,7 +6796,7 @@ def checkin_set(host, on):
         except Exception:
             pass
     _tunnel_wake.set()
-    _known_note(host, share=bool(on))      # …and REMEMBER it, so a detach + re-attach keeps publishing
+    _known_note(host, share=bool(on), attached=True)   # …and REMEMBER it, so a detach + re-attach keeps publishing
     _remotes_save()
     with _remotes_lock:
         return _remote_public(_remotes[host]) if host in _remotes else None
@@ -6411,6 +6838,31 @@ def set_trust(host, level):
         return (_remote_public(_remotes[host]) if host in _remotes else None), None
 
 
+def _remote_kernel_call(r, method, path, payload=None, timeout=8):
+    """One HTTP call to an attached host's kernel: through the tunnel's local forward, authorized with
+    THAT machine's own serve token (the admin access the user already holds). This is mirror_trust's
+    transport, shared by the pair-trust routes. `r` is a remotes-row snapshot.
+    Returns (status, parsed_json, None) or (None, None, error)."""
+    host = r.get("host") or "?"
+    port, tok = r.get("local_port") or 0, r.get("token") or ""
+    if not port or not tok:
+        return None, None, "no admin path to '%s' (missing forward or token)" % host
+    try:
+        conn = http.client.HTTPConnection("127.0.0.1", int(port), timeout=timeout)
+        hdrs = {"X-Romp-Token": tok}
+        body = None
+        if payload is not None:
+            body = json.dumps(payload)
+            hdrs["Content-Type"] = "application/json"
+        conn.request(method, path, body, hdrs)
+        resp = conn.getresponse()
+        data = resp.read()
+        conn.close()
+        return resp.status, json.loads(data.decode() or "{}"), None
+    except Exception as e:
+        return None, None, "could not reach %s's kernel: %s" % (host, e)
+
+
 def mirror_trust(host):
     """Set OUR current trust level for `host` as ITS trust level for US — through the admin access the
     user already holds on that machine (the attached tunnel's local forward + that machine's serve
@@ -6426,23 +6878,152 @@ def mirror_trust(host):
     if not r:
         return None, "no attached tunnel to '%s' — set trust from that machine's own dashboard" % host
     level = r.get("trust") or "directed"
-    port, tok = r.get("local_port") or 0, r.get("token") or ""
-    if not port or not tok:
-        return None, "no admin path to '%s' (missing forward or token) — set trust from its dashboard" % host
-    try:
-        conn = http.client.HTTPConnection("127.0.0.1", int(port), timeout=8)
-        conn.request("POST", "/tunnels/trust",
-                     json.dumps({"host": _self_host(), "trust": level}),
-                     {"Content-Type": "application/json", "X-Romp-Token": tok})
-        resp = conn.getresponse()
-        data = resp.read()
-        conn.close()
-        j = json.loads(data.decode() or "{}")
-    except Exception as e:
-        return None, "could not reach %s's kernel: %s" % (host, e)
+    st, j, err = _remote_kernel_call(r, "POST", "/tunnels/trust", {"host": _self_host(), "trust": level})
+    if err:
+        return None, err + (" — set trust from its dashboard" if err.startswith("no admin path") else "")
     if not j.get("ok"):
-        return None, j.get("error") or ("HTTP %s from %s" % (resp.status, host))
+        return None, j.get("error") or ("HTTP %s from %s" % (st, host))
     return {"host": host, "trust": level}, None
+
+
+def remote_trust(on_host, of_host, level):
+    """Set ON one attached machine ITS trust level for another host — the popover's 'Between your
+    machines' rows (the user 2026-08-11, who wanted to say from the laptop that two of their machines
+    trust each other, instead of opening each machine's own dashboard). The write crosses the on-host
+    tunnel with that machine's own serve token and lands on its /tunnels/trust, so it persists there
+    exactly like a locally-set level (remotes row, or origin-only known entry — a pair usually has no
+    direct tunnel between its ends, only relay reach). Same trust boundary as mirror_trust: the human
+    holding admin on the machine acts; a peer can never raise its own standing.
+    Returns ({onHost, host, trust}, None) or (None, error)."""
+    if level not in TRUST_LEVELS:
+        return None, "trust must be one of %s" % ", ".join(TRUST_LEVELS)
+    on_host, of_host = (on_host or "").strip(), (of_host or "").strip()
+    if not on_host or not of_host:
+        return None, "onHost and host required"
+    if on_host == of_host:
+        return None, "a machine does not tier its own mail"
+    with _remotes_lock:
+        r = dict(_remotes.get(on_host) or {})
+    if not r:
+        return None, "no attached tunnel to '%s' — its trust table is set through your own tunnel" % on_host
+    st, j, err = _remote_kernel_call(r, "POST", "/tunnels/trust", {"host": of_host, "trust": level})
+    if err:
+        return None, err
+    if not j.get("ok"):
+        return None, j.get("error") or ("HTTP %s from %s" % (st, on_host))
+    return {"onHost": on_host, "host": of_host, "trust": level}, None
+
+
+def pairs_snapshot():
+    """How each pair of attached machines holds EACH OTHER's mail, read live from each machine's own
+    kernel through its tunnel + token — the authoritative tables (the bus gossip only carries how
+    peers hold THIS machine's mail, so a third-party link is invisible to it). Feeds the popover's
+    'Between your machines' section; /tunnels/trust-remote writes back. Hosts are read in parallel,
+    and one that cannot be read carries its error instead of silently dropping its directions (fail
+    loudly). A direction with no explicit row on the holding machine reads "" — effectively directed,
+    the inbound default for a relayed origin."""
+    with _remotes_lock:
+        rows = {h: dict(r) for h, r in _remotes.items()}
+    hosts, tables = {}, {}
+
+    def one(h, r):
+        if (r.get("status") or "") != "up":
+            hosts[h] = {"ok": False, "error": "not connected"}
+            return
+        st, j, err = _remote_kernel_call(r, "GET", "/tunnels", timeout=6)
+        if err or not isinstance(j, dict):
+            hosts[h] = {"ok": False, "error": err or ("HTTP %s" % st)}
+            return
+        t = {}
+        for row in (j.get("tunnels") or []):          # attached rows are that kernel's authority…
+            if row.get("host"):
+                t[row["host"]] = row.get("trust") or "directed"
+        for row in (j.get("known") or []):            # …then remembered hosts, then relay-known rows
+            if row.get("host"):
+                t.setdefault(row["host"], row.get("trust") or "directed")
+        for row in (j.get("viaReach") or []):
+            if row.get("host"):
+                t.setdefault(row["host"], row.get("trust") or "directed")
+        hosts[h] = {"ok": True}
+        tables[h] = t
+
+    ths = [threading.Thread(target=one, args=(h, r), daemon=True) for h, r in rows.items()]
+    for t in ths:
+        t.start()
+    for t in ths:
+        t.join(timeout=8)
+    for h in rows:
+        if h not in hosts:                            # a reader still past the join deadline
+            hosts[h] = {"ok": False, "error": "timed out"}
+    pairs, names = [], sorted(rows)
+    for i, a in enumerate(names):
+        for b in names[i + 1:]:
+            pairs.append({"a": a, "b": b,
+                          "ab": (tables.get(a) or {}).get(b, "") if hosts[a]["ok"] else None,
+                          "ba": (tables.get(b) or {}).get(a, "") if hosts[b]["ok"] else None})
+    return {"ok": True, "hosts": hosts, "pairs": pairs}
+
+
+def tunnels_of(host):
+    """ONE attached host's own /tunnels payload, read live through its tunnel + serve token
+    (pairs_snapshot's transport, single host, FULL rows) — the popover's per-host "connections"
+    expand: the dashboard renders THAT machine's attached-host list with the same fields its own
+    popover uses (status, kernelVer/kernelSha, outOfDate/behindBy/aheadBy, fastForward/fastPull/
+    askPull, trust, autoPush…), so what's connected to what is managed from one place (the user
+    2026-08-11). Fetched on demand — expand, or after a forwarded action — never in the popover's
+    3s poll, the /tunnels/pairs rule. Loud errors, never a silent empty list."""
+    host = str(host or "").strip()
+    if not host:
+        return {"ok": False, "error": "host required"}
+    with _remotes_lock:
+        r = dict(_remotes.get(host) or {})
+    if not r:
+        return {"ok": False, "error": "no attached tunnel to '%s'" % host}
+    if (r.get("status") or "") != "up":
+        return {"ok": False, "error": "'%s' is %s — its connections are readable only while it is up"
+                                      % (host, r.get("status") or "down")}
+    st, j, err = _remote_kernel_call(r, "GET", "/tunnels", timeout=6)
+    if err or not isinstance(j, dict):
+        return {"ok": False, "error": err or ("HTTP %s from %s" % (st, host))}
+    j = dict(j)
+    j["ok"] = True
+    j["of"] = host
+    return j
+
+
+# Forwarded row actions block on the via machine's own ssh work; update/start push code and wait
+# out a boot, so they get the long leash — everything else is a quick local flip there.
+_VIA_TIMEOUT = {"/tunnels/update": 180, "/tunnels/pull": 120, "/tunnels/askpull": 120,
+                "/tunnels/start": 120}
+
+def _via_forward(body, path):
+    """A popover action carrying {"via": <attached host>} is relayed to THAT machine's kernel over
+    its tunnel + its own serve token — the attach route's "from" forwarding (2026-07-25),
+    generalized to the rest of the row controls so every machine's connections are manageable from
+    one dashboard (the user 2026-08-11). The via machine owns the tunnel being acted on and judges
+    the action itself — ssh reachability, credentials, dirty-tree refusals all happen THERE; we
+    only relay the ask and bubble its answer back tagged with `via`. Same trust boundary as
+    mirror_trust: this only ever dials a tunnel THIS user attached, with the token they already
+    hold. Returns None when the body carries no via — the caller handles the action locally,
+    exactly as before."""
+    via = str((body or {}).get("via") or "").strip() if isinstance(body, dict) else ""
+    if not via:
+        return None
+    with _remotes_lock:
+        r = dict(_remotes.get(via) or {})
+    if not r or r.get("status") != "up":
+        return {"ok": False, "via": via,
+                "error": "'%s' is not an attached, connected host — its connections can't be driven "
+                         "from here until it is" % via}
+    fwd = {k: v for k, v in body.items() if k != "via"}
+    st, j, err = _remote_kernel_call(r, "POST", path, fwd, timeout=_VIA_TIMEOUT.get(path, 15))
+    if err:
+        return {"ok": False, "error": err, "via": via}
+    res = j if isinstance(j, dict) else {"error": "bad answer (HTTP %s) from %s" % (st, via)}
+    if "ok" not in res:
+        res["ok"] = (st == 200)
+    res["via"] = via
+    return res
 
 
 def _checkin_payload(r):
@@ -6526,7 +7107,7 @@ def checkin_apply(body):
                           "bus_port": bp, "token": str((body or {}).get("token") or ""),
                           "trust": trust,
                           "proc": None, "status": "connecting", "detail": "", "sids": []}
-    _known_note(host, trust)                   # …and remember it, so a later re-check-in finds it again
+    _known_note(host, trust, attached=True)    # …and remember it, so a later re-check-in finds it again
     _remotes_save()
     _tunnel_wake.set()                     # poll it now: the row reads up within one supervisor pass
     return {"ok": True, "host": host}, 200
@@ -6558,12 +7139,18 @@ def _remote_kernel_up(host, port):
 
 
 def _start_remote_kernel(host):
-    """Start the remote kernel: nohup romp-serve, found on PATH or in conventional clone locations
-    (a non-login ssh shell often lacks the user's PATH additions). romp-serve itself picks the right
-    python (its pick_python) and self-builds stale UI bundles, so a plain clone is enough. Returns
-    (started, detail) — detail names the next step when romp isn't installed there."""
-    cmd = ('S="$(command -v romp-serve || true)"; '
-           'if [ -z "$S" ]; then for d in "$HOME/GitRepos/romp" "$HOME/romp" "$HOME/code/romp" "$HOME/src/romp"; do '
+    """Start the remote kernel: nohup romp-serve, found via the remote's OWN authority first — the
+    repo-root file its kernel persists at boot (_persist_repo_root; ROMP_REPO_ROOT on the target
+    overrides), never a guess (the authoritative-sources rule; the old guess list missed a clone at
+    ~/projects/romp, the user 2026-08-11) — then PATH (non-login, then a login shell: a non-login
+    ssh shell often lacks the user's PATH additions), then conventional clone locations. romp-serve
+    itself picks the right python (its pick_python) and self-builds stale UI bundles, so a plain
+    clone is enough. Returns (started, detail) — detail names everything the probe tried when romp
+    isn't installed there. KEEP the source order IN SYNC with _discover_remote_clone."""
+    cmd = ('S=""; SR="${ROMP_REPO_ROOT:-$(cat "${ROMP_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/romp}/repo-root" 2>/dev/null)}"; '
+           'if [ -n "$SR" ] && [ -x "$SR/bin/romp-serve" ]; then S="$SR/bin/romp-serve"; fi; '
+           'if [ -z "$S" ]; then S="$(command -v romp-serve || bash -lc "command -v romp-serve" 2>/dev/null || true)"; fi; '
+           'if [ -z "$S" ]; then for d in "$HOME/projects/romp" "$HOME/GitRepos/romp" "$HOME/romp" "$HOME/code/romp" "$HOME/src/romp"; do '
            'if [ -x "$d/bin/romp-serve" ]; then S="$d/bin/romp-serve"; break; fi; done; fi; '
            'if [ -z "$S" ]; then echo NOROMP; exit 0; fi; '
            'LOGDIR="${ROMP_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/romp}"; mkdir -p "$LOGDIR"; '
@@ -6574,7 +7161,11 @@ def _start_remote_kernel(host):
         if "STARTED" in out:
             return True, out.partition(":")[2]
         if "NOROMP" in out:
-            return False, "romp not installed on %s — clone it and run ./install.sh" % host
+            return False, ("romp not installed on %s — no repo-root state file (a kernel that has "
+                           "run there writes one; ROMP_REPO_ROOT on that machine also works), no "
+                           "romp-serve on PATH (login shell included), and no clone in "
+                           "~/projects/romp, ~/GitRepos/romp, ~/romp, ~/code/romp, ~/src/romp. "
+                           "Clone romp there and run ./install.sh." % host)
         return False, (_ssh_err(r.stderr) or out or "ssh failed").strip()[:200]
     except Exception as e:
         return False, str(e)
@@ -6856,7 +7447,7 @@ def attach_remote(host, kernel_port=None):
         r["fails"], r["next_try"] = 0, 0
         r.pop("gave_up", None)
         _attach_trust = r.get("trust")
-    _known_note(host, _attach_trust)               # remember it for the popover's past-hosts list
+    _known_note(host, _attach_trust, attached=True)   # remember it for the popover's past-hosts list
     token = _fetch_remote_token(host)              # ssh round-trip, outside the lock
     # SAME MACHINE, SECOND NAME (the user 2026-07-27, whose box sat in the registry as both its
     # hostname and its ssh alias — every session listed twice, bare postal names ambiguous). The serve
@@ -6884,7 +7475,7 @@ def attach_remote(host, kernel_port=None):
         if _postal_peers_on():                     # the old peer NAME is gone on purpose — tell the bus
             _notify_bus_peer(absorbed["host"], absorbed.get("bus_port"), False, absorbed.get("token") or "")
         known_forget(absorbed["host"])             # never re-offer the duplicate name in the popover
-        _known_note(host, _attach_trust)           # the surviving name carries the machine's trust level
+        _known_note(host, _attach_trust, attached=True)   # the surviving name carries the machine's trust level
     # BOOTSTRAP: no token yet (the kernel there never ran) or nothing listening on its port → start
     # romp-serve over ssh and wait for the port, so "install romp on the box, click attach" is the
     # whole story. A healthy remote costs one extra ssh probe; a romp-less host gets a next-step
@@ -6952,6 +7543,8 @@ def _known_load():
                                        "lastAttachedAt": row.get("lastAttachedAt") or 0,
                                        "trust": row.get("trust") or "directed",
                                        "share": bool(row.get("share"))}
+                if row.get("attached"):               # set only when proven (absent = trust-only row)
+                    _known[row["host"]]["attached"] = True
 
 
 def _known_save():
@@ -6963,7 +7556,7 @@ def _known_save():
         sys.stderr.write("known-hosts save: %s\n" % traceback.format_exc())
 
 
-def _known_note(host, trust=None, share=None):
+def _known_note(host, trust=None, share=None, attached=None):
     """Record (or refresh) a host you attached. Called on attach and whenever its trust changes, so the
     remembered entry always carries the level you last chose for it.
 
@@ -6971,7 +7564,13 @@ def _known_note(host, trust=None, share=None):
     box kept coming back unchecked. Detach POPS the live row, so the flag lived nowhere else and a
     re-attach rebuilt the row without it — the identical disease trust had before known_trust, and it
     reads exactly the same way from the outside: a setting you deliberately turned on, silently off
-    again later. None means "don't touch" (an attach that only refreshes trust must not clear it)."""
+    again later. None means "don't touch" (an attach that only refreshes trust must not clear it).
+
+    `attached=True` marks that a real connection existed here (attach/detach/check-in paths); the
+    trust-only writers never pass it. A row without the flag records ONLY a remembered mail-trust
+    tier (a relayed origin the user tiered), and the popover labels it that way instead of
+    "previously attached" — that label sent the user hunting for an ssh session that never happened
+    (2026-08-12). Absent-on-legacy reads as not-proven-attached: the softer claim is the true one."""
     host = (host or "").strip()
     if not host:
         return
@@ -6982,6 +7581,8 @@ def _known_note(host, trust=None, share=None):
             e["trust"] = trust
         if share is not None:
             e["share"] = bool(share)
+        if attached:
+            e["attached"] = True
     _known_save()
 
 
@@ -7046,7 +7647,7 @@ def detach_remote(host):
         # Remember it, its level AND its publish flag on the way out — this is the moment the live row
         # (the only place `checkin` lived) is destroyed, so a row carried in from remotes.json and never
         # re-toggled this process is captured here rather than lost.
-        _known_note(host, r.get("trust"), share=bool(r.get("checkin")))
+        _known_note(host, r.get("trust"), share=bool(r.get("checkin")), attached=True)
     if r and r.get("proc"):
         try:
             r["proc"].terminate()
@@ -7485,12 +8086,20 @@ _P2P_REF = "romp-p2p-sync"   # scratch branch the local kernel force-pushes its 
 
 
 def _discover_remote_clone(host):
-    """ssh-discover the remote romp clone (conventional dirs, mirrors _start_remote_kernel) and its
-    state. Returns (dir, head, dirty, error) — error set (and the rest blank) on any failure. Shared
-    by the push (_update_remote) and pull (_pull_remote) directions."""
+    """ssh-discover the remote romp clone and its state. The remote's OWN authority first — the
+    repo-root file its kernel persists at boot (_persist_repo_root; ROMP_REPO_ROOT on the target
+    overrides) — then a romp-serve found on PATH (non-login, then login shell) resolved to the repo
+    that holds it, then conventional dirs. KEEP the source order IN SYNC with _start_remote_kernel.
+    Returns (dir, head, dirty, error) — error set (and the rest blank) on any failure, naming
+    everything tried. Shared by the push (_update_remote) and pull (_pull_remote) directions."""
     disc = (
-        'R=""; for d in "$HOME/GitRepos/romp" "$HOME/romp" "$HOME/code/romp" "$HOME/src/romp"; do '
-        'if [ -d "$d/.git" ]; then R="$d"; break; fi; done; '
+        'R=""; SR="${ROMP_REPO_ROOT:-$(cat "${ROMP_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/romp}/repo-root" 2>/dev/null)}"; '
+        'if [ -n "$SR" ] && [ -d "$SR/.git" ]; then R="$SR"; fi; '
+        'if [ -z "$R" ]; then B="$(command -v romp-serve || bash -lc "command -v romp-serve" 2>/dev/null || true)"; '
+        'if [ -n "$B" ]; then B="$(readlink -f "$B" 2>/dev/null || echo "$B")"; D="$(dirname "$(dirname "$B")")"; '
+        'if [ -d "$D/.git" ]; then R="$D"; fi; fi; fi; '
+        'if [ -z "$R" ]; then for d in "$HOME/projects/romp" "$HOME/GitRepos/romp" "$HOME/romp" "$HOME/code/romp" "$HOME/src/romp"; do '
+        'if [ -d "$d/.git" ]; then R="$d"; break; fi; done; fi; '
         'if [ -z "$R" ]; then echo NOROMP; exit 0; fi; '
         'echo "DIR:$R"; echo "HEAD:$(git -C "$R" rev-parse HEAD 2>/dev/null)"; '
         'echo "DIRTY:$(git -C "$R" status --porcelain 2>/dev/null | head -c 1)"')
@@ -7500,7 +8109,9 @@ def _discover_remote_clone(host):
         return "", "", "", str(e)[:200]
     out = d.stdout or ""
     if "NOROMP" in out:
-        return "", "", "", "romp not installed on %s (looked in ~/GitRepos/romp, ~/romp, ~/code/romp, ~/src/romp)" % host
+        return "", "", "", ("romp not installed on %s (no repo-root state file, no romp-serve on "
+                            "PATH — login shell included — and no clone in ~/projects/romp, "
+                            "~/GitRepos/romp, ~/romp, ~/code/romp, ~/src/romp)" % host)
     info = dict((l.split(":", 1) + [""])[:2] for l in out.splitlines() if ":" in l)
     rdir, rhead, rdirty = info.get("DIR", "").strip(), info.get("HEAD", "").strip(), info.get("DIRTY", "").strip()
     if not rdir:
@@ -11164,6 +11775,8 @@ def _parked_md(op):
     matches the park slot before removing it (the user 2026-07-08)."""
     if op[0] == "send":
         return _split_followup(op[1])[1]
+    if op[0] == "command":
+        return op[1]                     # the typed slash command IS the bubble (so the running-/compact fold matches it too)
     if op[0] == "compact":
         return "/compact"
     return "/%s %s" % (op[0], op[1])
@@ -11247,6 +11860,18 @@ def _forwards_sends(be):
         return False
 
 
+# A leading slash-COMMAND token ("/autocompact auto", "/compact"), not a path ("/tmp/x is broken",
+# "/Users/…"): the token must end at whitespace/EOL before any second "/". Shape-matched, not matched
+# against the session's command list, deliberately — the CLI owns what executes; romp only decides WHEN
+# it can execute (as a fresh top-level prompt). A slash-shaped non-command just arrives at turn end as
+# text, same as it always did, a beat later.
+_SLASH_CMD_RE = re.compile(r"^/[A-Za-z0-9][\w:-]*(\s|$)")
+
+
+def _is_slash_command(text):
+    return bool(_SLASH_CMD_RE.match((text or "").strip()))
+
+
 def _send_or_park(be, sid, text, echo=None):
     """Deliver `text` now — or PARK it in the sid's FIFO. Park when: (a) the session is COMPACTING (the user
     2026-07-02: a mid-compaction send's live-tail echo opened a turn that KILLED the 'compacting' cue — a
@@ -11261,12 +11886,20 @@ def _send_or_park(be, sid, text, echo=None):
     boundary, folds several queued sends into one turn, and holds them across an interrupt (the user
     2026-07-17: "get user messages in as soon as possible; we don't have to interrupt but get them in"); the
     still-waiting message renders as a queued bubble (its echo is suppressed) until it forwards. `echo` is
-    the _optimistic_echo author stamped when the send actually fires (None = the backend echoes for itself)."""
+    the _optimistic_echo author stamped when the send actually fires (None = the backend echoes for itself).
+
+    EXCEPTION to the forward-now rule: a typed SLASH COMMAND ("/autocompact auto") parks whenever a turn is
+    open, even on a forwards_sends backend (the user 2026-08-13): the CLI only EXECUTES a slash command
+    arriving as a fresh top-level prompt — forwarded into a running turn it lands as plain user text, the
+    model politely replies to it, and the setting never changes. Parked as a ("command",) op, it fires ALONE
+    at turn end (never folded into a send batch, which would bury it as text the same way)."""
+    cmd = _is_slash_command(text)
+    op = ("command", text, echo) if cmd else ("send", text, echo)
     if _compacting_now(sid) or _pending_ops.get(sid) or _limit_hold(sid):
-        _park_op(sid, ("send", text, echo))
+        _park_op(sid, op)
         return
-    if _working_now(sid) and not _forwards_sends(be):
-        _park_op(sid, ("send", text, echo))
+    if _working_now(sid) and (cmd or not _forwards_sends(be)):
+        _park_op(sid, op)
         return
     be.send(sid, text)
     if echo:
@@ -11368,6 +12001,18 @@ def _apply_pending_ops():
                         run.append(ops.pop(0))
                     _deliver_send_batch(be, sid, run)
                     break                             # the delivered turn must END before any op behind it fires
+                elif op[0] == "command":
+                    # a typed slash command fires ALONE as its own fresh top-level prompt — folded into a
+                    # send batch (or forwarded mid-turn) it reaches the model as text instead of executing
+                    # (the user 2026-08-13: /autocompact absorbed mid-turn got a polite reply and no
+                    # setting change). Echo stamped at fire time, like a delivered send.
+                    be.send(sid, op[1])
+                    if len(op) > 2 and op[2]:
+                        _optimistic_echo(sid, op[1], author=op[2])
+                    if op[1].strip().split()[0] == "/compact":
+                        _mark_compacting(sid)         # a TYPED /compact gets the same instant cue as the button's op
+                    ops.pop(0)
+                    break                             # its turn must end before anything behind it fires
                 elif op[0] == "compact":
                     be.send(sid, "/compact")
                     _mark_compacting(sid)
@@ -11420,6 +12065,41 @@ def _tilde(p):
     return p
 
 
+def _norm_branch(br):
+    """Claude Code stamps the transcript's gitBranch verbatim — a detached checkout stamps the literal
+    string 'HEAD', which is not a branch and was displayed as one on every surface (the user 2026-08-13:
+    "HEAD isn't a branch"). The folder-derived path (_git_branch below) already maps detached to '' —
+    this applies the same rule to the transcript path, at the one merge point."""
+    br = (br or "").strip()
+    return "" if br == "HEAD" else br
+
+
+_tree_cache = {}   # dir -> git toplevel ("" = not a repo) — where a path's tree ROOT is; branch stays live
+
+
+def _tree_of(d):
+    """(toplevel, branch) of the git tree containing directory `d`, ("", "") when not in one. The toplevel
+    mapping is cached per directory (it changes only if the tree is moved/deleted — then the branch read
+    below comes back empty and every consumer hides the row); the branch rides _git_branch's own
+    HEAD-mtime cache so it stays current without a second discipline."""
+    if not d:
+        return "", ""
+    top = _tree_cache.get(d)
+    if top is None:
+        top = ""
+        try:
+            r = subprocess.run(["git", "-C", d, "rev-parse", "--show-toplevel"],
+                               capture_output=True, text=True, timeout=2)
+            if r.returncode == 0:
+                top = r.stdout.strip()
+        except Exception:
+            top = ""
+        if len(_tree_cache) > 512:                     # bounded: distinct edit dirs, not unbounded growth
+            _tree_cache.clear()
+        _tree_cache[d] = top
+    return top, (_git_branch(top) if top else "")
+
+
 _branch_cache = {}   # cwd -> (branch, head_mtime) — git branch derived straight from the FOLDER
 
 
@@ -11454,10 +12134,17 @@ def _git_branch(cwd):
     return br
 
 
+_EDIT_TOOLS = ("Edit", "Write", "MultiEdit", "NotebookEdit")   # tools whose file_path proves WHERE work lands
+
+
 def _session_meta(path):
-    """Latest cwd / gitBranch / Claude Code version / permission mode for a session, read straight from the
-    raw transcript (the event model drops these). Cached by (mtime,size) like _parse/_api_error, since
-    build_session runs per push."""
+    """Latest cwd / gitBranch / Claude Code version / permission mode / last EDITED file for a session, read
+    straight from the raw transcript (the event model drops these). Cached by (mtime,size) like
+    _parse/_api_error, since build_session runs per push. lastEditPath is the newest write-tool file_path —
+    the event that proves where the session actually works (repo convention puts real work on per-session
+    worktrees beside the registered clone, so the registered dir alone reads 'main' forever; the user
+    2026-08-13). Zero extra parsing: every assistant record already passes the line filter (each carries
+    cwd/version stamps), so this only walks content blocks of lines the loop was parsing anyway."""
     try:
         sti = os.stat(path)
         key = (sti.st_mtime, sti.st_size)
@@ -11466,7 +12153,7 @@ def _session_meta(path):
     hit = _session_meta_cache.get(path)
     if hit is not None and key is not None and hit[0] == key:
         return hit[1]
-    meta = {"cwd": "", "gitBranch": "", "version": "", "permissionMode": ""}
+    meta = {"cwd": "", "gitBranch": "", "version": "", "permissionMode": "", "lastEditPath": ""}
     try:
         with open(path, errors="replace") as f:
             for line in f:
@@ -11484,6 +12171,17 @@ def _session_meta(path):
                     meta["version"] = o["version"]
                 if o.get("type") == "user" and o.get("permissionMode"):
                     meta["permissionMode"] = o["permissionMode"]
+                if o.get("type") == "assistant":
+                    try:
+                        for blk in (o.get("message") or {}).get("content") or []:
+                            if (isinstance(blk, dict) and blk.get("type") == "tool_use"
+                                    and blk.get("name") in _EDIT_TOOLS):
+                                fp = (blk.get("input") or {}).get("file_path") or \
+                                     (blk.get("input") or {}).get("notebook_path")
+                                if isinstance(fp, str) and fp.startswith("/"):
+                                    meta["lastEditPath"] = fp
+                    except Exception:
+                        pass
     except OSError:
         pass
     if key is not None:
@@ -12700,10 +13398,23 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
     meta = _session_meta(sess["path"])
     scwd = _cwd_of(sid) or meta.get("cwd") or ""    # the session's fixed dir — known even before the first turn
     docs = _claudemd_docs(meta.get("cwd") or scwd)
+    # The WORKTREE the session actually works in (the user 2026-08-13): the repo convention here puts real
+    # work on per-session worktrees beside the registered clone, so the registered dir's branch read 'main'
+    # forever and the real location showed nowhere. The newest write-tool file_path names the tree — the
+    # edit EVENT is the proof of where work happens (no declared source exists; the CLI doesn't know
+    # either) — and it latches until a newer edit lands elsewhere. Shown only when that tree differs from
+    # the registered dir's own: same-tree work needs no second row.
+    _wt_top, _wt_br = _tree_of(os.path.dirname(meta.get("lastEditPath") or "") or "")
+    _reg_top, _ = _tree_of(os.path.expanduser(scwd)) if scwd else ("", "")
+    work_tree = ({"dir": _tilde(_wt_top), "branch": _wt_br}
+                 if _wt_top and os.path.realpath(_wt_top) != os.path.realpath(_reg_top or "/nonexistent")
+                 else None)
     sysinfo = {"kind": "system", "model": last_model, "cwd": _tilde(meta.get("cwd") or scwd),
-               # branch from the transcript if present, else derived straight from the folder so it shows on
-               # open (the user 2026-06-24) — works for a never-run session of EITHER backend.
-               "gitBranch": meta.get("gitBranch") or _git_branch(scwd), "version": meta.get("version") or "",
+               # branch from the transcript if present (normalized: a detached stamp says 'HEAD', not a
+               # branch), else derived straight from the folder so it shows on open (the user 2026-06-24) —
+               # works for a never-run session of EITHER backend.
+               "gitBranch": _norm_branch(meta.get("gitBranch")) or _git_branch(scwd),
+               "workTree": work_tree, "version": meta.get("version") or "",
                "mode": meta.get("permissionMode") or "", "claudemd": docs}
     # The /clear boundary card (the user 2026-07-27): a session whose episodes log records ≥2 episodes had
     # its conversation cleared — the chat's fresh episode opens with a collapsed "Conversation cleared"
@@ -12733,6 +13444,8 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
             # system event (and its branch) fell off the wire and the branch vanished (the user 2026-06-30). A
             # top-level field is never windowed, so the branch is always resident.
             "gitBranch": sysinfo["gitBranch"],
+            # the detected worktree rides top-level for the same windowing reason as gitBranch above
+            "workTree": sysinfo["workTree"],
             "events": events, "status": status, "ledger": ledger,
             # SDK sessions gate the box on the backend's LIVE task set (the CLI's task lifecycle stream —
             # authoritative, terminal-cleared); the spawned_at heuristic remains the tmux/no-snapshot fallback.
@@ -13777,6 +14490,8 @@ def build_feed(now, tmux=None):
     alive = _alive_sessions(now, tmux)               # hard filter: living sessions only
     wmap = _wait_for_graph(now, {s["sid"] for s in alive})   # per-session 'waiting on a live peer' (the user 2026-06-22)
     _stalls = _stalled_goals()                       # goals romp's nudge gate is holding → the card's Stalled section
+    _jauth_map = jd._auth_down_map()                 # judge-auth-down latch → the per-session card floor below
+    _jactive = {r.get("fsid") for r in jd.active_runs()}   # judge calls in flight NOW → the Analyzing… prong
     cold_parse = False                               # any living session not yet parsed → warm it in the background
     for s in alive:
         fsid, name = s["sid"], s["name"]
@@ -13800,12 +14515,15 @@ def build_feed(now, tmux=None):
             who_working = False
         if who_working:
             working.append(name)
+        # the open turn's live narration (the user 2026-08-13) — computed once per session, ridden by
+        # every working card below; cache-warm like the dot (a cold start paints plain, then snaps in)
+        sess_progress = _open_turn_progress(ps["turns"]) if (ps and who_working) else None
         # The user's LAST action on this session was an INTERRUPT (no message from them since): its quiet
         # is user-chosen, not a stall — auto-nudge is suppressed (same predicate, _auto_nudge_tick) and
         # the working card wears an "interrupted" badge saying so (the user 2026-07-05). Cache-only,
         # like the working dot: the badge snaps in once _warm_fleet_bg fills the parse.
         try:
-            sess_interrupted = bool(ps) and not who_working and _interrupt_suppresses_nudge(ps["turns"])
+            sess_interrupted = bool(ps) and not who_working and _interrupt_suppresses_nudge(ps["turns"], fsid)
         except Exception:
             sess_interrupted = False
         # A user interrupt still IN FLIGHT (dispatched, not yet settled): the card wears a steady
@@ -13821,13 +14539,24 @@ def build_feed(now, tmux=None):
         sess_retrying = _session_retrying(fsid, tm)
         store = _feed_goals(fsid)                # pre-pass snapshot while a judge pass is mid-flight → the card's
                                                  # status never shows a half-applied intermediate (atomic visibility)
-        # ANALYZING gap (the user 2026-07-13): the turn just SETTLED but the closer hasn't delivered its
-        # verdict yet — without this the card sits inertly in Working after the session finished, until the
-        # judge's pass lands. Session-scoped (we don't know WHICH goal the turn resolved until the verdict);
-        # each working card wears the Analyzing… swirl meanwhile (feed.ts spinCaption). Cache-warm only,
-        # like the working dot: a cold start paints plain and the swirl snaps in after _warm_fleet_bg.
-        sess_judging = bool(live and ps and not who_working
-                            and _closer_pending(fsid, s["path"], now, store))
+        # ANALYZING (the user 2026-07-13; broadened 2026-08-12): the card must say when romp is working
+        # on it. Two prongs, either lights the swirl:
+        #   * the SETTLE GAP — the turn just settled but the closer hasn't delivered its verdict yet
+        #     (cache-warm only: it needs the parse; the swirl snaps in after _warm_fleet_bg);
+        #   * a judge call for this session ACTUALLY IN FLIGHT — jd.active_runs(), the same in-process
+        #     registry the nudge gate trusts (_revivers_pending), whose comment always claimed "the
+        #     Analyzing… swirl already says so"; now it does. This is what a backlog drain looks like:
+        #     when the judge-auth outage healed, 201 calls swept an 18-hour backlog while every card
+        #     sat inertly in Working (the user 2026-08-12, who asked for the queue to be visible on
+        #     the card) — planner/grouper work on OLDER turns never trips the settle gap, and a fresh
+        #     kernel's caches are cold exactly when the drain runs, so the closer prong alone stayed
+        #     dark. The active prong deliberately needs neither `live` nor a warm parse: the registry
+        #     is an in-process fact, free to read.
+        # Session-scoped (we don't know WHICH goal a verdict will land on until it does); each working
+        # card wears the Analyzing… swirl meanwhile (feed.ts spinCaption).
+        sess_judging = bool(not who_working
+                            and (fsid in _jactive
+                                 or (live and ps and _closer_pending(fsid, s["path"], now, store))))
         nodes, status = store.get("nodes", {}), store.get("status", {})
         confirming = set(store.get("confirming") or ())   # rollup export: done verdict in, settle pending (judge rollup_status, the user 2026-07-24)
         # Exact click-to-jump anchors: map each goal segment → the work/reply uuid — the SAME anchors the
@@ -14043,6 +14772,22 @@ def build_feed(now, tmux=None):
                 f = nodes[f]["parentId"]
             if f in nodes and status.get(f) not in ("completed", "cleared"):   # rollup status, not raw nodeComplete (see perm floor)
                 api_top = f
+        # JUDGE-AUTH floor (the user 2026-08-12): this session's judges are failing on their CREDENTIAL
+        # (judge.py latched a credential-class error envelope; its next successful call clears it) — romp
+        # cannot analyze the session, so no card here can move on its own, and only the user can fix it
+        # (the key, the login, or the session's billing pick). Floor the focus top to needs-you wearing
+        # the story: the alternative was a board silently frozen in Working, which is exactly how a
+        # login-less host spent 13 hours and ~53k refused calls without a pixel changing. Yields to the
+        # LIVE floors (a permission prompt, the session's own API error): one interrupt at a time, the
+        # present event first — and the api floor's authErr copy already names the same credential fix.
+        jerr = _jauth_map.get(fsid)
+        jauth_top = None
+        if jerr and api_top is None and perm_top is None:
+            f = store.get("lastNode")
+            while f and nodes.get(f, {}).get("parentId") is not None:
+                f = nodes[f]["parentId"]
+            if f in nodes and status.get(f) not in ("completed", "cleared"):
+                jauth_top = f
         plain_user_t = _last_plain_user_turn_t(ps["turns"]) if ps else 0   # re-check: a plain reply after a soft block de-urgents it
         had_working = False                          # does this session show ANY working card? → drives the provisional placeholder
         had_awaiting = False                         # …and does any of them read AWAITING? → the session's straw dot (below)
@@ -14242,6 +14987,21 @@ def build_feed(now, tmux=None):
             # still win (the present event).
             nrec = _auto_nudge_data().get("nudged", {}).get(nid) or {}
             _stall_rec = _stalls.get(nid)             # romp is holding this card (see "stalled" in the payload)
+            # ROUTING (2026-08-13): an in-flight-class hold (jd.WHY_IN_FLIGHT — romp's own review is the
+            # wait) presents as the Analyzing… swirl, never the stalled chip; every other hold paints the
+            # Stalled section. The old screen hid the in-flight records from BOTH surfaces, so one frozen
+            # between retries showed nothing — now the sweep retires them on their events and whatever
+            # stands presents somewhere by definition.
+            _stall_inflight = bool(_stall_rec and _stall_rec.get("why") in jd.WHY_IN_FLIGHT)
+            if _stall_inflight:
+                _stall_rec = None
+            # HARD RULE (the user 2026-08-13): a stalled card on a session that isn't doing anything
+            # files under BLOCKED — it needs eyes, whoever's bottleneck it is; Working is where it hid.
+            # This supersedes the 2026-07-23 "Working column only" stance. Keyed on the stall RECORD
+            # (event-latched: minted by the walk, popped by the sweep) plus the session's idle read —
+            # the same displacement precedent as recheck/rejudging's de-urgent smoothing: the session
+            # taking a turn IS new information, and the card returns to Blocked if the hold outlives it.
+            _stall_block = bool(_stall_rec and not who_working and not sess_awaiting_why)
             # the chip shows while the failure is the live story: the goal still working, OR blocked BY the
             # failure itself (the diary's latest block has src "nudge", 2026-07-07). A real judge verdict
             # (planner/closer block, or completion) takes the story over and the chip yields.
@@ -14275,7 +15035,7 @@ def build_feed(now, tmux=None):
             # the truth: build_feed said working while the card showed under Blocked, and the distiller line,
             # keyed on it.column, then stayed hidden). Now it.column is authoritative: the card IS blocked, the
             # client files by it.column, and the distiller line shows (the user 2026-06-29).
-            column = ("needs_input" if (api_block or nid == perm_top
+            column = ("needs_input" if (api_block or nid == jauth_top or nid == perm_top or _stall_block
                                         or (col == "blocked" and not recheck and not rejudging))
                       else "completed" if col == "completed" else "working")
             had_working = had_working or column == "working"
@@ -14288,7 +15048,8 @@ def build_feed(now, tmux=None):
             # perm_top / col=="blocked"), so the brief/takeaway stays put through the re-judge window; the
             # column still moves for placement. Completed is stable (never recheck/rejudged), so it matches.
             distill_state = ("completed" if col == "completed"
-                             else "blocked" if (api_block or nid == perm_top or col == "blocked")
+                             else "blocked" if (api_block or nid == jauth_top or nid == perm_top
+                                                or col == "blocked")
                              else None)
             # summaryAnchorUuid: where a click on the distilled summary line lands.
             # COMPLETED goals pin to the COMPLETION TURN'S wrap-up — event-derived, not a guess: the
@@ -14402,6 +15163,13 @@ def build_feed(now, tmux=None):
                                       # (per-session auth, the user 2026-08-08)
                                       else "this session's sign-in or API key isn't working — fix the login (claude /login) or the key, or switch which one it bills" if aerr.get("authErr")
                                       else "this session stopped on an API error — Retry to resume")} if nid == api_top
+                            # the session itself is fine — it's romp's ANALYSIS of it whose credential is
+                            # refused, so the copy blames the judges, not the session (the user 2026-08-12)
+                            else {"state": "judgeAuth", "mode": jerr.get("mode"),
+                                  "since": jerr.get("t"), "text": jerr.get("note") or "",
+                                  "what": ("romp can't analyze this session — the API key its judges bill is being refused. Fix the key (service.env) or switch which account this session bills"
+                                           if jerr.get("mode") == "key" else
+                                           "romp can't analyze this session — the login its judges bill is being refused. Sign in again (claude /login) or switch which account this session bills")} if nid == jauth_top
                             else {"state": perm_state,
                                   "what": ("this session is stopped awaiting your input" if perm_state == "picker"
                                            else "this session is stopped awaiting your approval")} if nid == perm_top
@@ -14415,14 +15183,17 @@ def build_feed(now, tmux=None):
                 # wait clears, without anyone having to erase it. Working column only: a stall is romp being
                 # the bottleneck, never the user, so it must not read as needs-you.
                 "stalled": ({"why": _stall_rec["why"], "since": _stall_rec["since"],
-                             "note": nodes[nid].get("stallSummary") or None}
-                            if (_stall_rec and column == "working" and not nudge_failed) else None),
+                             "note": nodes[nid].get("stallSummary") or None,
+                             "blocked": _stall_block}
+                            if (_stall_rec and not nudge_failed
+                                and (column == "working" or _stall_block)) else None),
                 "interrupting": bool(sess_interrupting and (column == "working" or (col == "blocked" and _lastblk == "interrupt"))),   # a user interrupt is IN FLIGHT → steady "interrupting…" badge until it settles (the user 2026-07-07)
                 "interrupted": bool(sess_interrupted and not sess_interrupting and (column == "working" or (col == "blocked" and _lastblk == "interrupt"))),   # the user stopped this session and hasn't re-engaged → "interrupted" badge (only ONCE the interrupt has settled); nudge suppressed until their next message (the user 2026-07-05)
                 "column": column,
                 "recheck": recheck,                  # targeted follow-up on a soft-block → de-urgented (dotted), moved to Working, pending re-judge
                 "rejudging": rejudging,              # plain thread reply after a block → STAYS in Needs-You, "Re-judging…" swirl while a turn is in flight (the user 2026-06-30)
-                "judging": bool(sess_judging and column == "working"),   # turn settled, closer verdict pending → "Analyzing…" swirl covers the finished-but-still-Working beat (the user 2026-07-13); same key the provisional card wears
+                "judging": bool((sess_judging or _stall_inflight) and column == "working"),
+                "working": (sess_progress if column == "working" else None),   # open-turn narration: tool count + since (the user 2026-08-13)   # turn settled, closer verdict pending → "Analyzing…" swirl covers the finished-but-still-Working beat (the user 2026-07-13); same key the provisional card wears
                 "warnRows": (_card_warn_rows(dbg_rows, fsid, set(_subtree(nid)),
                                              store.get("placements") or {}) or None)
                             if dbg_rows is not None else None,   # debug mode only: the card's judge failures, modal "Warnings" section
@@ -16646,6 +17417,48 @@ def _set_judge_effort(v): _set_judge_state("judge-effort", v, _EFFORT_VALUES, al
 def _set_index_effort(v): _set_judge_state("index-effort", v, _EFFORT_VALUES, allow_empty=True)
 
 
+# The four judge-tier settings PROPAGATE: a pick made here follows to every linked kernel (the user
+# 2026-08-12, who set the triage model to a new family and wanted all machines on it — per-machine
+# judge tiers are a surprise, not a feature). The gear's WS ops apply locally and then fan out
+# (_propagate_judge_settings) to each up remote over its tunnel + its own serve token —
+# mirror_trust's transport and trust boundary: only the human holding the tokens can set another
+# machine's judges. The receiving kernel's /judge-settings route applies WITHOUT re-propagating, so
+# the machines converge in one hop from the machine the user touched and can never ping-pong. A
+# machine reachable only through a relay holds no admin path from here; it adopts when the pick is
+# made from (or forwarded via) the machine that owns its tunnel.
+
+_JUDGE_SETTING_FIELDS = (("judgeModel", _set_judge_model), ("indexModel", _set_index_model),
+                         ("judgeEffort", _set_judge_effort), ("indexEffort", _set_index_effort))
+
+
+def _apply_judge_settings(body):
+    """Apply any of the four judge-tier fields in `body` through the validated setters (garbage
+    never reaches the state files or `claude --model`), and answer with the CURRENT four values —
+    the ack shows what actually landed, since an invalid value is deliberately ignored."""
+    for key, setter in _JUDGE_SETTING_FIELDS:
+        if isinstance(body, dict) and key in body:
+            setter(str(body.get(key) or ""))
+    return {"ok": True, "judgeModel": jd._triage_model(), "indexModel": jd._index_model(),
+            "judgeEffort": jd._triage_effort(), "indexEffort": jd._index_effort()}
+
+
+def _propagate_judge_settings(body):
+    """Fan `body` (already applied locally) to every up linked kernel's /judge-settings — one call
+    per machine over its tunnel + its own token. Callers run this on a daemon thread: the pick
+    itself never blocks on the machines. A miss is LOUD (a machine that missed the pick would
+    silently run its judges on another model forever) but not retried — the next change re-fans,
+    and /judge-settings with {"propagate": true} re-syncs on demand."""
+    with _remotes_lock:
+        rows = [dict(r) for r in _remotes.values()
+                if r.get("status") == "up" and r.get("local_port") and r.get("token")]
+    for r in rows:
+        st, _j, err = _remote_kernel_call(r, "POST", "/judge-settings", body, timeout=8)
+        if err or st != 200:
+            sys.stderr.write("judge-settings: %s did not take the pick (%s) — its judges keep "
+                             "their old model/effort until the next change\n"
+                             % (r.get("host"), err or ("HTTP %s" % st)))
+
+
 def _reply(c, msg):
     """Send a one-shot reply to ONE client (no per-key dedup; for request/response like imgData)."""
     try:
@@ -18058,6 +18871,10 @@ def _pusher_cycle_jobs(now, tmux, any_client):
         _lift_spent_awaiting(now, tmux)   # so the nudge tick below never wakes a wait that already ended
     except Exception:
         sys.stderr.write("awaiting-lift: %s\n" % traceback.format_exc())
+    try:                                  # deferral records retire on their reasons' own events — BEFORE
+        _deferral_sweep_tick(now)         # the walk, independent of the nudge toggle (the stall/swirl
+    except Exception:                     # surfaces read these records regardless)
+        sys.stderr.write("deferral-sweep: %s\n" % traceback.format_exc())
     try:                                  # Auto Nudge runs server-side even with no browser open (cheap when
         _auto_nudge_tick(now, tmux)       # off); the awaiting WAKE rides its goal walk (see _wake_goal)
     except Exception:
@@ -19313,7 +20130,7 @@ function showAdd(on){if(!addBox)return;addBox.hidden=!on;hint.hidden=!on;plus.hi
 if(on&&hostIn){hostIn.value=hostIn.value||mruHost();try{hostIn.focus();hostIn.select();}catch(e){}}}
 var _autoAdd=false;
 var _auto=false;   // "Automatically update" — mirrored from the KERNEL each refresh, never a local guess
-function open(){back.hidden=false;_autoAdd=false;showAdd(false);trustEngaged=false;deferredRender=null;loadHosts();refresh();}
+function open(){back.hidden=false;_autoAdd=false;showAdd(false);trustEngaged=false;deferredRender=null;_pairs=null;loadHosts();refresh();}
 function close(){back.hidden=true;trustEngaged=false;deferredRender=null;}
 if(plus)plus.onclick=function(){showAdd(true);};
 // "How it works" — the gist reads by itself; the mechanics are one click under it.
@@ -19337,6 +20154,26 @@ var _cfg=[],_seen=[];
 // (the user 2026-07-27). Pending is keyed per host and survives re-renders: rows show the CHOSEN
 // level, disabled with an applying cue, until a snapshot agrees (the confirming EVENT — no timer).
 var _pendTrust={},_pendMirror={};
+// BETWEEN YOUR MACHINES state (the user 2026-08-11): _pairs is the last /tunnels/pairs answer (null =
+// not read yet this opening), _pendPair the per-direction pending map (keyed holder|sender — a host
+// name cannot contain '|' — with _pendTrust's confirm-by-snapshot discipline). Reading pairs dials EACH machine's kernel over its
+// tunnel, so it never rides the 3s poll itself: refresh() kicks it, one in flight at a time
+// (_pairsBusy), and the answer repaints from the poll's cached args (_lastArgs) — no fetch loop.
+var _pendPair={},_pairs=null,_pairsBusy=false,_lastArgs=null,_lastUp=0;
+// ITS CONNECTIONS (the user 2026-08-11): every up host's row expands into THAT machine's own
+// attached-host list — same row treatment, working controls — so what's connected to what is
+// managed from one dashboard. Rows come from /tunnels/of (its own /tunnels over your tunnel + its
+// serve token), fetched on EXPAND and after a forwarded action, never in the 3s poll (the
+// /tunnels/pairs rule). Actions post the normal routes with {via}; the kernel relays them to the
+// machine that owns the tunnel (_via_forward). Keyed expand state + a via|host pending-trust
+// latch survive re-renders. strip.ts carries the same feature; the copies must stay in step
+// (net-remote-controls.test.ts pins both).
+var _openSub={},_subInfo={},_subBusy={},_pendSub={};
+function fetchSub(h){if(_subBusy[h])return;_subBusy[h]=1;
+fetch('/tunnels/of?host='+encodeURIComponent(h),{cache:'no-store'}).then(function(r){return r.json();})
+.catch(function(e){return {ok:false,error:String((e&&(e.message||e.name))||e)};})
+.then(function(d){delete _subBusy[h];_subInfo[h]=d||{ok:false,error:'empty answer'};
+if(_openSub[h])repaint();});}
 function pendLvl(map,host,current){var p=map[host];if(p&&current===p){delete map[host];p=null;}return p;}
 function fillHosts(){if(!dl)return;var hs=[];
 [[mruHost()],_seen,_cfg].forEach(function(g){(g||[]).forEach(function(h){if(h&&hs.indexOf(h)<0)hs.push(h);});});   // most-recently-connected first, not just ssh-config order
@@ -19447,7 +20284,9 @@ icon.title=ts.length?('Remote kernels \\u00b7 '+_head+'\\n'+ts.map(function(t){v
 var ap=t.autoPush?('\\n    auto-update: '+(t.autoPush.detail||t.autoPush.phase)):'';
 var dw=t.outOfDate?(' \\u00b7 '+(t.status==='up'?'':'last known ')+driftWord(t)):'';
 return '\\u2022 '+t.host+': '+(LBL[t.status]||t.status)+' ('+n+' session'+(n===1?'':'s')+')'+dw+(t.token?'':' \\u00b7 no token')+ap;}).join('\\n')):'Remote kernels \\u2014 none attached (click to connect)';
-if(!back.hidden)render(ts,(d&&d.known)||[],pmode,(d&&d.viaReach)||[],(d&&d.remoteHolds)||[],(d&&d.peerTiers)||{});   // pmode is refresh-local — render must be GIVEN it
+_lastArgs=[ts,(d&&d.known)||[],pmode,(d&&d.viaReach)||[],(d&&d.remoteHolds)||[],(d&&d.peerTiers)||{}];
+_lastUp=ts.filter(function(t){return t.status==='up';}).length;
+if(!back.hidden){render.apply(null,_lastArgs);refreshPairs();}   // pmode is refresh-local — render must be GIVEN it (it rides _lastArgs)
 // while any tunnel is mid-attach, poll fast so the phase words (authorizing -> connecting -> connected)
 // are actually visible in the couple seconds it takes; settle to a slow keep-alive once all up/down.
 schedule((busy||pushing.length)?600:3000);   // poll fast while an auto-push runs, so its progress reads live
@@ -19474,6 +20313,15 @@ function releaseTrust(){trustEngaged=false;var f=deferredRender;deferredRender=n
 list.addEventListener('mousedown',function(e){if(e.target&&e.target.classList&&e.target.classList.contains('rnet-trust'))trustEngaged=true;},true);
 list.addEventListener('focusin',function(e){if(e.target&&e.target.classList&&e.target.classList.contains('rnet-trust'))trustEngaged=true;});
 list.addEventListener('focusout',function(e){if(e.target&&e.target.classList&&e.target.classList.contains('rnet-trust'))releaseTrust();});
+// Fetch the pair table when it can mean anything (two live hosts), at most one dial in flight; the
+// answer repaints from the poll's cached args rather than forcing another /tunnels round trip.
+function refreshPairs(){if(_lastUp<2){_pairs=null;return;}
+if(_pairsBusy)return;
+_pairsBusy=true;
+fetch('/tunnels/pairs',{cache:'no-store'}).then(function(r){return r.json();}).then(function(d){
+_pairsBusy=false;_pairs=(d&&d.ok)?d:{error:(d&&d.error)||'unreadable'};repaint();
+}).catch(function(e){_pairsBusy=false;_pairs={error:String((e&&(e.message||e.name))||e)};repaint();});}
+function repaint(){if(!back.hidden&&_lastArgs)render.apply(null,_lastArgs);}
 function render(ts,known,pmode,via,rholds,tiers){
 if(trustEngaged){deferredRender=function(){render(ts,known,pmode,via,rholds,tiers);};return;}
 list.innerHTML='';known=known||[];via=via||[];rholds=rholds||[];tiers=tiers||{};
@@ -19489,6 +20337,41 @@ via=via.filter(function(v){return !live[v.host];});
 var viaHosts={};via.forEach(function(v){viaHosts[v.host]=1;});
 known=known.filter(function(k){return !viaHosts[k.host];});   // a relay row shows the SAME trust select, plus live reach
 var TRUSTW={trusted:'trusted (auto-accept)',directed:'directed (held for you)',isolated:'isolated (no mail)'};
+// The expanded "connections" block under an up host: THAT machine's attached rows, indented, with
+// the controls its own popover would offer — drift there is measured between the via machine and
+// its remote (its own numbers), and every action rides the normal route + {via}. Loading and a
+// failed read say so (with Retry), never a silent blank.
+function subBlock(via){var box=document.createElement('div');box.className='rnet-subwrap';
+var d=_subInfo[via];
+if(!d){box.innerHTML='<div class=\"rnet-empty rnet-subnote\">'+spin()+'Reading '+via+'\\u2019s connections\\u2026</div>';return box;}
+if(!d.ok){box.innerHTML='<div class=\"rnet-empty rnet-subnote\">Couldn\\u2019t read '+via+'\\u2019s connections: '+(d.error||'unknown error')+' <button data-xr=\"'+via+'\">Retry</button></div>';return box;}
+var rows=d.tunnels||[];
+if(!rows.length){box.innerHTML='<div class=\"rnet-empty rnet-subnote\">'+via+' has no hosts attached.</div>';return box;}
+rows.forEach(function(s){
+var sr=document.createElement('div');sr.className='rnet-row rnet-subrow';
+var sdot=s.status==='up'?'background:var(--accent)':(s.status==='error'||s.status==='no-kernel')?'background:#E5534B':(s.status==='down')?'background:#8a8a8a':'background:transparent;box-shadow:inset 0 0 0 1.5px var(--accent)';
+var sver='',sbw=buildWord(s.kernelVer,s.kernelSha);
+if(s.outOfDate){var sar=driftCounts(s);
+sver=' \\u00b7 <span class=rnet-old title=\"'+s.host+' runs '+(sbw||'?')+'; '+via+' is at '+(buildWord(s.localVer,s.localSha)||'?')+' \\u2014 drift here is between THOSE two machines, not this one.\">'+(sbw?sbw+' ':'')+(sar?'('+sar+')':driftWord(s))+'</span>';}
+else if(sbw){sver=' \\u00b7 <span class=rnet-sha title=\"same build as '+via+'\">'+sbw+'</span>';}
+var vk=via+'|'+s.host;
+var spd=pendLvl(_pendSub,vk,s.trust||'directed');
+var scur=spd||s.trust||'directed';
+var strust='<select class=\"rnet-trust'+(spd?' rnet-applying':'')+'\"'+(spd?' disabled':'')+' data-vt=\"'+vk+'\" title=\"What '+via+' does with postal mail from '+s.host+'. Set on '+via+', over your tunnel + its own token \\u2014 the you-with-both-tokens boundary.\">'+
+['trusted','directed','isolated'].map(function(v){return '<option value='+v+(scur===v?' selected':'')+'>'+TRUSTW[v]+'</option>';}).join('')+'</select>'+(spd?'<span class=rnet-pend>'+spin()+'applying\\u2026</span>':'');
+// the same provably-possible gating as the top rows, judged with the fields VIA computed about
+// ITS remote (fastForward/fastPull/askPull are relative to via's own build).
+var sapx=s.autoPush&&apBusy(s.autoPush.phase);
+var sb='';
+if(s.status==='up'&&s.fastForward&&!sapx&&!s.checkinPeer)sb+='<button class=rnet-upd data-vu=\"'+vk+'\" title=\"Push '+via+'\\u2019s committed romp to '+s.host+' and restart its kernel \\u2014 the work runs on '+via+'.\">Push</button>';
+if(s.status==='up'&&s.askPull&&!sapx)sb+='<button class=rnet-upd data-va=\"'+vk+'\" title=\"'+s.host+' checked in to '+via+' over its own tunnel, so '+via+' cannot push to it. This asks it to pull '+via+'\\u2019s commits over the link it already holds.\">Update</button>';
+if(s.status==='up'&&s.fastPull&&!sapx&&!s.checkinPeer)sb+='<button class=rnet-upd data-vp=\"'+vk+'\" title=\"Pull '+s.host+'\\u2019s newer commits into '+via+'\\u2019s romp (fast-forward only) \\u2014 the work runs on '+via+'.\">Pull</button>';
+if(s.status==='no-kernel')sb+='<button class=rnet-upd data-vs=\"'+vk+'\" title=\"No kernel answers '+via+'\\u2019s tunnel to '+s.host+'. This has '+via+' push its romp there and boot it.\">Start</button>';
+sr.innerHTML='<span class=rnet-dot style=\"'+sdot+'\" title=\"'+(TIP[s.status]||'')+'\"></span>'+
+'<span class=nm><b>'+s.host+'</b> <span class=st title=\"'+via+'\\u2019s tunnel to '+s.host+'. '+(TIP[s.status]||'')+'\">'+(busyStatus(s.status)?spin():'')+(LBL[s.status]||s.status)+sver+'</span></span>'+
+strust+sb+'<button data-vh=\"'+vk+'\" title=\"Close '+via+'\\u2019s ssh tunnel to '+s.host+'. It stays in '+via+'\\u2019s previously-attached list.\">Detach</button>';
+box.appendChild(sr);});
+return box;}
 // Every host romp knows about feeds the add box's completions, so a machine you typed in once is a
 // couple of keystrokes the next time even after you forget its exact spelling.
 _seen=ts.map(function(t){return t.host;}).concat(known.map(function(k){return k.host;}));fillHosts();
@@ -19523,6 +20406,12 @@ var tt='running '+(buildWord(t.kernelVer,t.kernelSha)||'?')+(t.kernelDate?' from
 +(t.checkinPeer?(t.askPull?' No ssh path from this machine (it checked in over its own tunnel), so Update asks it to fast-forward itself over the link it holds.':' No ssh path from this machine (it checked in over its own tunnel) \\u2014 sync from its own dashboard.'):'');
 ver=' \\u00b7 <span class=\"rnet-old'+(stl?' rnet-stale':'')+'\" title=\"'+tt+sq+'\">'+(stl?'last known: ':'')+(bw?bw+' ':'')+(ar?'('+ar+')':w)+'</span>';}
 else if(bw){ver=' \\u00b7 <span class=\"rnet-sha'+(stl?' rnet-stale':'')+'\" title=\"'+(stl?'same build as this machine when last reached.'+sq:'same build as this machine')+'\">'+(stl?'last known: ':'')+bw+'</span>';}
+// A connected host that reports NO build at all is running a plain file copy — no git checkout, so its
+// kernel cannot name a release or commit, and drift against this machine cannot be measured (it may be
+// months behind and never say so; the user 2026-08-11, whose devbox ran months-old code beside a bare
+// "connected"). Fail loudly where the build word would sit, never a silent blank that reads as fine.
+// strip.ts's popover row carries the same word (rnet parity pins).
+else if(t.status==='up'){ver=' \\u00b7 <span class=\"rnet-old\" title=\"'+t.host+' is running romp from a plain file copy \\u2014 not a git checkout \\u2014 so it cannot name its release or commit, and how far it is from this machine cannot be measured: it may be far behind and never say so. Reinstall it as a git clone to restore the build name and updates.\">unversioned copy</span>';}
 // A push romp is ALREADY doing needs no button — offering one would just invite a duplicate of the work in
 // flight. The row shows the live phase instead (below), and the manual Push returns if it fails.
 var apx=t.autoPush&&(t.autoPush.phase==='pushing'||t.autoPush.phase==='waiting'||t.autoPush.phase==='pulling'||t.autoPush.phase==='asking');
@@ -19581,7 +20470,10 @@ row.innerHTML='<span class=rnet-dot style=\"'+dot+'\" title=\"'+(TIP[t.status]||
 // the status word, so "connecting" reads as something HAPPENING rather than a label that might be stuck.
 // The repo's loading rule spelled small: same glyph, same reverse spin as the composer's slash spinner.
 '<span class=nm><b>'+t.host+'</b> <span class=st title=\"'+(TIP[t.status]||'')+'\">'+(busyStatus(t.status)?spin():'')+(LBL[t.status]||t.status)+(t.checkinPeer?' \\u00b7 checked in here':'')+(t.token?'':' \\u00b7 no token')+(again?' \\u00b7 '+again:'')+ver+'</span></span>'+
-retry+pull+ask+upd+strt+'<button data-h=\"'+t.host+'\" title=\"Close the ssh tunnel to '+t.host+'. It stays in this list as a previously-attached host, keeping its trust level, so you can re-attach in one click.\">Detach</button>';
+retry+pull+ask+upd+strt+'<button data-h=\"'+t.host+'\" title=\"Close the ssh tunnel to '+t.host+'. It stays in this list as a previously-attached host, keeping its trust level, so you can re-attach in one click.\">Detach</button>'+
+// ITS CONNECTIONS toggle — the keyed expand (progressive disclosure): compact row by default,
+// that machine's own attached list one click deeper, fetched on the click, never the poll.
+(t.status==='up'?'<button class=rnet-subtoggle data-x=\"'+t.host+'\" title=\"'+t.host+'\\u2019s own attached hosts \\u2014 see and manage what IT is connected to, from here. Rows read live from its kernel over your tunnel + its own token; actions run there.\">'+(_openSub[t.host]?'\\u25be':'\\u25b8')+' connections</button>':'');
 item.appendChild(row);
 // Live automatic-update phase, on its own line under the row — this is the whole reason the modal could
 // go away: the work still announces itself, it just does it here instead of over your screen. A FAILURE
@@ -19598,12 +20490,13 @@ ap.title=t.autoPush.phase==='failed'?'romp tried to update this host automatical
 item.appendChild(ap);}
 var r2=document.createElement('div');r2.className='rnet-row2';r2.innerHTML=trust+keep;
 item.appendChild(r2);
+if(t.status==='up'&&_openSub[t.host])item.appendChild(subBlock(t.host));
 list.appendChild(item);});
 // PREVIOUSLY ATTACHED (the user 2026-07-22): hosts you attached before, kept after detach so they are
 // one click away instead of something you retype. Dimmed, and each remembers the trust
 // level you last set for it — re-attaching a box you marked `trusted` will not silently drop to directed.
 if(known.length){var hd=document.createElement('div');hd.className='rnet-khead';
-hd.textContent='Previously attached';hd.title='Hosts you have attached before. They keep the trust level you last chose, so re-attaching restores it. Forget removes a host from this list.';
+hd.textContent='Previously attached';hd.title='Hosts romp remembers. Most were attached before and keep the trust level you last chose, so re-attaching restores it. A row marked \\u201ctrust remembered\\u201d was never attached from this machine \\u2014 it only records how to hold that host\\u2019s mail. Forget removes a host from this list.';
 list.appendChild(hd);
 known.forEach(function(k){var kr=document.createElement('div');kr.className='rnet-row rnet-known';
 var kpd=pendLvl(_pendTrust,k.host,k.trust||'directed');
@@ -19613,9 +20506,18 @@ var kcur=kpd||k.trust||'directed';
 // no tunnel required to set it (the user 2026-07-25).
 var ktrust='<select class=\"rnet-trust'+(kpd?' rnet-applying':'')+'\"'+(kpd?' disabled':'')+' data-t=\"'+k.host+'\" title=\"What happens to postal mail from '+k.host+', however it arrives (a direct tunnel later, or relayed through a hub now): trusted = delivered straight to your sessions; directed = held for your approval; isolated = none.\">'+
 ['trusted','directed','isolated'].map(function(v){return '<option value='+v+(kcur===v?' selected':'')+'>'+TRUSTW[v]+'</option>';}).join('')+'</select>'+(kpd?'<span class=rnet-pend>'+spin()+'applying\\u2026</span>':'');
+// A row that only remembers a mail-trust tier must SAY so (the user 2026-08-12, who read
+// "Previously attached: <host>" on a machine that never held that tunnel and went looking for an
+// ssh session that never happened). k.attached is stamped by the attach/detach/check-in writers
+// (_known_note attached=True); a trust-only row never gets it, and its button says Attach.
+// strip.ts's known rows carry the same split (both-copies discipline).
+var kwas=!!k.attached;
+var kst=kwas?'not attached':'trust remembered \\u00b7 never attached here';
+var kstt=kwas?'Not attached; the trust level applies to its mail by origin, and re-attaching keeps it.'
+:'No tunnel to '+k.host+' has ever been attached from this machine \\u2014 this row only records how its mail is held (trust is judged by origin, e.g. for a relayed peer). Attaching is still one click.';
 kr.innerHTML='<span class=rnet-dot style=\"background:transparent;box-shadow:inset 0 0 0 1.5px #5a5a5a\" title=\"Not attached right now.\"></span>'+
-'<span class=nm><b>'+k.host+'</b> <span class=st title=\"Not attached; the trust level applies to its mail by origin, and re-attaching keeps it.\">not attached</span></span>'+ktrust+
-'<button data-ra=\"'+k.host+'\" title=\"Open the ssh tunnel to '+k.host+' again, restoring its remembered trust level.\">Re-attach</button>'+
+'<span class=nm><b>'+k.host+'</b> <span class=st title=\"'+kstt+'\">'+kst+'</span></span>'+ktrust+
+'<button data-ra=\"'+k.host+'\" title=\"'+(kwas?'Open the ssh tunnel to '+k.host+' again, restoring its remembered trust level.':'Open an ssh tunnel to '+k.host+' (first attach from this machine); its remembered trust level rides along.')+'\">'+(kwas?'Re-attach':'Attach')+'</button>'+
 '<button data-fg=\"'+k.host+'\" title=\"Remove '+k.host+' from this list. It does not touch the host itself; attaching again will re-add it.\">Forget</button>';
 list.appendChild(kr);});}
 // REACHABLE VIA RELAY (the user 2026-07-25): machines with no direct tunnel from here, one relay hop
@@ -19632,6 +20534,38 @@ var vtrust='<select class=\"rnet-trust'+(vpd?' rnet-applying':'')+'\"'+(vpd?' di
 vr.innerHTML='<span class=rnet-dot style=\"background:transparent;box-shadow:inset 0 0 0 1.5px #7a6a3a\" title=\"No direct tunnel; reachable one hop through '+v.via+'.\"></span>'+
 '<span class=nm><b>'+v.host+'</b> <span class=st title=\"Its sessions are gossiped one hop by '+v.via+'; attach it directly for full control.\">via '+v.via+' \\u00b7 '+(v.agents||0)+' session'+((v.agents||0)===1?'':'s')+'</span></span>'+vtrust;
 list.appendChild(vr);});}
+// BETWEEN YOUR MACHINES (the user 2026-08-11): how attached machines hold EACH OTHER's mail. The
+// pair link a\\u2194b appears nowhere above — every list in this panel manages only THIS machine's own
+// gates — so making two remote boxes trust each other used to mean opening each box's own dashboard.
+// One row per direction, read live from each machine's kernel (/tunnels/pairs) and written back
+// through your tunnel + that machine's own serve token (/tunnels/trust-remote): the same
+// you-with-both-tokens boundary as Match, so a peer still can never raise its own standing.
+var upn=ts.filter(function(t){return t.status==='up';});
+if(upn.length>=2){
+var bh=document.createElement('div');bh.className='rnet-khead';bh.textContent='Between your machines';
+bh.title='How your attached machines hold each other\\u2019s postal mail, one line per direction, read live from each machine\\u2019s own kernel. Changing a line writes to the holding machine through your tunnel and its own access token (like Match): you are acting on both ends; the machines never set each other\\u2019s trust.';
+list.appendChild(bh);
+if(_pairs&&_pairs.pairs){_pairs.pairs.forEach(function(pr){
+[[pr.a,pr.b,pr.ab],[pr.b,pr.a,pr.ba]].forEach(function(dd){var hold=dd[0],frm=dd[1],tier=dd[2];
+var br=document.createElement('div');br.className='rnet-row rnet-known';
+// null = that machine's table was unreadable this pass (named error, retried next kick); '' = no
+// explicit row there yet, which the receiving bus treats as directed for a relayed origin.
+if(tier===null){var he=(_pairs.hosts&&_pairs.hosts[hold]&&_pairs.hosts[hold].error)||'unreadable';
+br.innerHTML='<span class=nm><b>'+hold+'</b> holds <b>'+frm+'</b>\\u2019s mail: <span class=st title=\"Could not read '+hold+'\\u2019s trust table over the tunnel: '+he+'. It keeps gating mail by its own last-set levels; retried on the next refresh.\">unreadable \\u2014 '+he+'</span></span>';
+list.appendChild(br);return;}
+var pk=hold+'|'+frm;
+var ppd=pendLvl(_pendPair,pk,tier||'');   // confirmed when the holder's own table shows the chosen level
+var pcur=ppd||tier||'directed';
+var imp=(!tier&&!ppd)?' Never set explicitly \\u2014 directed is its default.':'';
+br.innerHTML='<span class=nm><b>'+hold+'</b> holds <b>'+frm+'</b>\\u2019s mail</span>'+
+'<span class=rnet-set><select class=\"rnet-trust'+(ppd?' rnet-applying':'')+'\"'+(ppd?' disabled':'')+' data-pt-on=\"'+hold+'\" data-pt-of=\"'+frm+'\" title=\"What '+hold+' does with postal mail from '+frm+'.'+imp+' trusted: delivered straight to its sessions. directed: held on '+hold+' for your approval. isolated: none.\">'+
+['trusted','directed','isolated'].map(function(v){return '<option value='+v+(pcur===v?' selected':'')+'>'+TRUSTW[v]+'</option>';}).join('')+'</select>'+(ppd?'<span class=rnet-pend>'+spin()+'applying\\u2026</span>':'')+'</span>';
+list.appendChild(br);});});}
+else if(_pairs&&_pairs.error){var be=document.createElement('div');be.className='rnet-row rnet-known';
+be.innerHTML='<span class=st>Could not read how your machines hold each other: '+_pairs.error+' \\u2014 retrying.</span>';list.appendChild(be);}
+else{var bl=document.createElement('div');bl.className='rnet-row rnet-known';
+bl.innerHTML='<span class=st>'+spin()+'reading how your machines hold each other\\u2026</span>';list.appendChild(bl);}
+}
 // HELD ELSEWHERE (the user 2026-07-25): mail waiting for approval on OTHER machines — direct peers
 // and one relay hop — which used to be visible only on the holding machine's own dashboard. One
 // line per machine (count first, gists on hover); acting on them still happens on that machine.
@@ -19659,6 +20593,14 @@ _pendMirror[h]=b.getAttribute('data-lvl')||'';b.disabled=true;b.textContent='Mat
 fetch('/tunnels/trust-mirror',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({host:h})}).then(function(r){return r.json();}).then(function(d){
 if(!(d&&d.ok)){delete _pendMirror[h];alert('trust match on '+h+' failed: '+((d&&d.error)||'unknown'));}   // fail LOUDLY (CLAUDE.md)
 refresh();}).catch(function(){delete _pendMirror[h];alert('trust match on '+h+' failed to reach the kernel.');refresh();});};});
+// A pair direction: pending on the click (ack now), written to the HOLDING machine via the kernel's
+// trust-remote proxy, confirmed only when a later pairs read shows the level on that machine's table.
+list.querySelectorAll('select[data-pt-on]').forEach(function(s){s.onchange=function(){
+var on=s.getAttribute('data-pt-on'),of=s.getAttribute('data-pt-of');
+_pendPair[on+'|'+of]=s.value;s.disabled=true;s.classList.add('rnet-applying');releaseTrust();
+fetch('/tunnels/trust-remote',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({onHost:on,host:of,trust:s.value})}).then(function(r){return r.json();}).then(function(d){
+if(!(d&&d.ok)){delete _pendPair[on+'|'+of];alert('trust change on '+on+' for '+of+'\\u2019s mail failed: '+((d&&d.error)||'unknown'));repaint();}   // fail LOUDLY (CLAUDE.md)
+refreshPairs();}).catch(function(){delete _pendPair[on+'|'+of];alert('trust change on '+on+' for '+of+'\\u2019s mail failed to reach the kernel.');repaint();refreshPairs();});};});
 list.querySelectorAll('input[data-k]').forEach(function(c){c.onchange=function(){var h=c.getAttribute('data-k');
 c.disabled=true;fetch('/tunnels/checkin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({host:h,on:c.checked})}).then(function(r){return r.json();}).then(function(d){
 if(!(d&&d.ok)){c.checked=!c.checked;alert('keep-connected on '+h+' failed: '+((d&&d.error)||'unknown'));}   // fail LOUDLY (CLAUDE.md)
@@ -19697,7 +20639,32 @@ b.disabled=true;b.textContent='Asking\\u2026';   // the work runs on the PEER, o
 fetch('/tunnels/askpull',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({host:h})}).then(function(r){return r.json();}).then(function(d){
 if(d&&d.ok){b.textContent='Updating';schedule(2000);}   // it pulled + is restarting → its next /version clears the flag
 else{b.disabled=false;b.textContent='Retry';alert('Updating '+h+' failed: '+((d&&d.detail)||'unknown'));}   // fail LOUDLY (CLAUDE.md)
-}).catch(function(){b.disabled=false;b.textContent='Retry';alert('Updating '+h+' failed to reach the kernel.');});};});}
+}).catch(function(){b.disabled=false;b.textContent='Retry';alert('Updating '+h+' failed to reach the kernel.');});};});
+// ITS CONNECTIONS wiring: the expand toggle, the failed-read Retry, and the forwarded row actions —
+// one shape (vact) for all five, posting the normal route + {via} and re-reading the via machine's
+// list when it lands. Refusals alert with the via machine named (fail LOUDLY, CLAUDE.md).
+list.querySelectorAll('button[data-x]').forEach(function(b){b.onclick=function(){var h=b.getAttribute('data-x');
+if(_openSub[h])delete _openSub[h];else{_openSub[h]=1;if(!_subInfo[h])fetchSub(h);}
+repaint();};});
+list.querySelectorAll('button[data-xr]').forEach(function(b){b.onclick=function(){var h=b.getAttribute('data-xr');
+delete _subInfo[h];fetchSub(h);repaint();};});
+function vparts(s){var i=s.indexOf('|');return [s.slice(0,i),s.slice(i+1)];}
+function vact(b,attr,path,busyT,doneT,word){var vp=vparts(b.getAttribute(attr)),via=vp[0],h=vp[1];
+b.disabled=true;b.textContent=busyT;
+fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({host:h,via:via})}).then(function(r){return r.json();}).then(function(d){
+if(d&&d.ok){b.textContent=doneT;fetchSub(via);schedule(1000);}
+else{b.disabled=false;b.textContent='Retry';alert(word+' on '+via+'\\u2019s '+h+' failed: '+((d&&(d.detail||d.error))||'unknown'));}   // fail LOUDLY (CLAUDE.md)
+}).catch(function(){b.disabled=false;b.textContent='Retry';alert(word+' on '+via+'\\u2019s '+h+' failed to reach the kernel.');});}
+list.querySelectorAll('button[data-vu]').forEach(function(b){b.onclick=function(){vact(b,'data-vu','/tunnels/update','Pushing\\u2026','Pushed','Push');};});
+list.querySelectorAll('button[data-va]').forEach(function(b){b.onclick=function(){vact(b,'data-va','/tunnels/askpull','Asking\\u2026','Updating','Update');};});
+list.querySelectorAll('button[data-vp]').forEach(function(b){b.onclick=function(){vact(b,'data-vp','/tunnels/pull','Pulling\\u2026','Pulled','Pull');};});
+list.querySelectorAll('button[data-vs]').forEach(function(b){b.onclick=function(){vact(b,'data-vs','/tunnels/start','Starting\\u2026','Started','Start');};});
+list.querySelectorAll('button[data-vh]').forEach(function(b){b.onclick=function(){vact(b,'data-vh','/tunnels/detach','\\u2026','Detached','Detach');};});
+list.querySelectorAll('select[data-vt]').forEach(function(s){s.onchange=function(){var vp=vparts(s.getAttribute('data-vt')),via=vp[0],h=vp[1],vk=via+'|'+h;
+_pendSub[vk]=s.value;s.disabled=true;s.classList.add('rnet-applying');releaseTrust();
+fetch('/tunnels/trust',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({host:h,via:via,trust:s.value})}).then(function(r){return r.json();}).then(function(d){
+if(!(d&&d.ok)){delete _pendSub[vk];alert('trust change on '+via+' for '+h+'\\u2019s mail failed: '+((d&&d.error)||'unknown'));}   // fail LOUDLY (CLAUDE.md)
+fetchSub(via);}).catch(function(){delete _pendSub[vk];alert('trust change on '+via+' for '+h+'\\u2019s mail failed to reach the kernel.');fetchSub(via);});};});}
 attach.onclick=function(){var h=(hostIn.value||'').trim();if(!h)return;
 try{localStorage.setItem('romp:lastRemoteHost',h);}catch(e){}   // remember for MRU-first ordering next time
 attach.disabled=true;attach.textContent='Attaching\\u2026';
@@ -20441,6 +21408,11 @@ def _landing():
             # the live auto-push phase on a row: accent while it works, red when it failed and needs a look
             ".rnet-ap{display:block;color:var(--accent);font-size:11px;margin:2px 0 0 16px}"
             ".rnet-ap.bad{color:#E5534B}"
+            # "connections" sub-rows: an up host's OWN attached list, indented one level under its row —
+            # compact by default (the toggle), rows read live from that machine (strip.css parity)
+            ".rnet-row.rnet-subrow{margin-left:20px}"
+            ".rnet-empty.rnet-subnote{margin-left:20px;text-align:left;padding:4px 0}"
+            ".rnet-subtoggle{flex:0 0 auto}"
             # usage rate-limit bars in the bottom bar (the user 2026-06-26; HORIZONTAL redesign 2026-07-05): per
             # window, an expanded label ("5 hours" / "7 days" / "Fable 5"), then TWO stacked horizontal tracks — the
             # used-% bar (.ru-fill in the colormap colour) OVER the elapsed-% bar (slate) so you can compare pace at
@@ -21317,6 +22289,16 @@ class Handler(BaseHTTPRequestHandler):
                                                              "host": _self_host()},
                                                    "peersMode": _postal_peers_on()}),
                                   "application/json", cache="no-cache")
+            if p == "/tunnels/pairs":                         # how attached machines hold EACH OTHER's mail —
+                # read live from each machine's kernel through its tunnel (the popover's "Between your
+                # machines" rows). Fetched on demand, never folded into /tunnels: this one fans out
+                # over ssh and must not tax the popover's 3s poll.
+                return self._send(200, json.dumps(pairs_snapshot()), "application/json", cache="no-cache")
+            if p == "/tunnels/of":                            # ONE attached host's own /tunnels, live through
+                # its tunnel + token — the popover's per-host "connections" expand (fetched on demand,
+                # never in the 3s poll; same rule as /tunnels/pairs).
+                return self._send(200, json.dumps(tunnels_of((q.get("host") or [""])[0])),
+                                  "application/json", cache="no-cache")
             # HTML pages are served no-cache so a reload always gets the freshest markup — which carries
             # the latest ?v= bundle url, so even a cached old bundle is bypassed (stale-client fix).
             if p in ("/", ""):
@@ -21798,11 +22780,16 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(500, json.dumps({"ok": False, "error": str(e)}), "application/json")
                 return self._send(200, json.dumps({"ok": True, "tunnel": pub}), "application/json")
             if u.path == "/tunnels/detach":
-                # Detach a remote: kill its tunnel + forget it. Body: {"host": <ssh alias>}.
+                # Detach a remote: kill its tunnel + forget it. Body: {"host": <ssh alias>}. With
+                # {"via": <attached host>} the action runs on THAT machine's kernel (_via_forward)
+                # — the pattern every row-action route below follows.
                 try:
                     body = json.loads(raw_body or b"{}")
                 except Exception:
                     body = None
+                fw = _via_forward(body, "/tunnels/detach")
+                if fw is not None:
+                    return self._send(200, json.dumps(fw), "application/json")
                 host = str((body or {}).get("host") or "").strip() if isinstance(body, dict) else ""
                 if not host:
                     return self._send(400, json.dumps({"ok": False, "error": "host required"}), "application/json")
@@ -21813,6 +22800,9 @@ class Handler(BaseHTTPRequestHandler):
                     body = json.loads(raw_body or b"{}")
                 except Exception:
                     body = None
+                fw = _via_forward(body, "/tunnels/checkin")
+                if fw is not None:
+                    return self._send(200, json.dumps(fw), "application/json")
                 host = str((body or {}).get("host") or "").strip() if isinstance(body, dict) else ""
                 if not host:
                     return self._send(400, json.dumps({"ok": False, "error": "host required"}), "application/json")
@@ -21827,6 +22817,9 @@ class Handler(BaseHTTPRequestHandler):
                     body = json.loads(raw_body or b"{}")
                 except Exception:
                     body = None
+                fw = _via_forward(body, "/tunnels/autoupdate")
+                if fw is not None:
+                    return self._send(200, json.dumps(fw), "application/json")
                 if not isinstance(body, dict) or "on" not in body:
                     return self._send(400, json.dumps({"ok": False, "error": "on required"}), "application/json")
                 _set_auto_update_remotes(bool(body.get("on")))
@@ -21839,6 +22832,9 @@ class Handler(BaseHTTPRequestHandler):
                     body = json.loads(raw_body or b"{}")
                 except Exception:
                     body = None
+                fw = _via_forward(body, "/tunnels/forget")
+                if fw is not None:
+                    return self._send(200, json.dumps(fw), "application/json")
                 host = str((body or {}).get("host") or "").strip() if isinstance(body, dict) else ""
                 if not host:
                     return self._send(400, json.dumps({"ok": False, "error": "host required"}), "application/json")
@@ -21851,6 +22847,9 @@ class Handler(BaseHTTPRequestHandler):
                     body = json.loads(raw_body or b"{}")
                 except Exception:
                     body = None
+                fw = _via_forward(body, "/tunnels/trust")
+                if fw is not None:
+                    return self._send(200, json.dumps(fw), "application/json")
                 host = str((body or {}).get("host") or "").strip() if isinstance(body, dict) else ""
                 level = str((body or {}).get("trust") or "").strip() if isinstance(body, dict) else ""
                 if not host:
@@ -21876,6 +22875,27 @@ class Handler(BaseHTTPRequestHandler):
                     code = 404 if err.startswith("no attached") else 502
                     return self._send(code, json.dumps({"ok": False, "error": err}), "application/json")
                 return self._send(200, json.dumps({"ok": True, "mirrored": res}), "application/json")
+            if u.path == "/tunnels/trust-remote":
+                # Set on ONE attached machine its trust level for ANOTHER host — the popover's
+                # "Between your machines" rows (the user 2026-08-11). Body: {"onHost", "host",
+                # "trust"}. The write crosses onHost's tunnel with its own serve token: the human
+                # with admin on that machine acting, exactly like Match; a peer can never set
+                # another machine's trust, and this route never lets one (it only ever dials a
+                # tunnel THIS user attached).
+                try:
+                    body = json.loads(raw_body or b"{}")
+                except Exception:
+                    body = None
+                on_h = str((body or {}).get("onHost") or "").strip() if isinstance(body, dict) else ""
+                of_h = str((body or {}).get("host") or "").strip() if isinstance(body, dict) else ""
+                level = str((body or {}).get("trust") or "").strip() if isinstance(body, dict) else ""
+                res, err = remote_trust(on_h, of_h, level)
+                if err:
+                    code = (404 if err.startswith("no attached")
+                            else 400 if (err.startswith("trust must be") or err.endswith("required")
+                                         or err.endswith("own mail")) else 502)
+                    return self._send(code, json.dumps({"ok": False, "error": err}), "application/json")
+                return self._send(200, json.dumps({"ok": True, "set": res}), "application/json")
             if u.path == "/checkin":
                 # A mobile machine's check-in handshake arriving through its own reverse forward.
                 try:
@@ -21902,6 +22922,9 @@ class Handler(BaseHTTPRequestHandler):
                     body = json.loads(raw_body or b"{}")
                 except Exception:
                     body = None
+                fw = _via_forward(body, "/tunnels/update")
+                if fw is not None:
+                    return self._send(200, json.dumps(fw), "application/json")
                 host = str((body or {}).get("host") or "").strip() if isinstance(body, dict) else ""
                 if not host:
                     return self._send(400, json.dumps({"ok": False, "error": "host required"}), "application/json")
@@ -21916,6 +22939,9 @@ class Handler(BaseHTTPRequestHandler):
                     body = json.loads(raw_body or b"{}")
                 except Exception:
                     body = None
+                fw = _via_forward(body, "/tunnels/pull")
+                if fw is not None:
+                    return self._send(200, json.dumps(fw), "application/json")
                 host = str((body or {}).get("host") or "").strip() if isinstance(body, dict) else ""
                 if not host:
                     return self._send(400, json.dumps({"ok": False, "error": "host required"}), "application/json")
@@ -21930,6 +22956,9 @@ class Handler(BaseHTTPRequestHandler):
                     body = json.loads(raw_body or b"{}")
                 except Exception:
                     body = None
+                fw = _via_forward(body, "/tunnels/askpull")
+                if fw is not None:
+                    return self._send(200, json.dumps(fw), "application/json")
                 host = str((body or {}).get("host") or "").strip() if isinstance(body, dict) else ""
                 if not host:
                     return self._send(400, json.dumps({"ok": False, "error": "host required"}), "application/json")
@@ -21944,11 +22973,30 @@ class Handler(BaseHTTPRequestHandler):
                     body = json.loads(raw_body or b"{}")
                 except Exception:
                     body = None
+                fw = _via_forward(body, "/tunnels/start")
+                if fw is not None:
+                    return self._send(200, json.dumps(fw), "application/json")
                 host = str((body or {}).get("host") or "").strip() if isinstance(body, dict) else ""
                 if not host:
                     return self._send(400, json.dumps({"ok": False, "error": "host required"}), "application/json")
                 ok, detail = _start_remote(host)
                 return self._send(200 if ok else 502, json.dumps({"ok": ok, "detail": detail}), "application/json")
+            if u.path == "/judge-settings":
+                # The judge-tier settings surface a peer kernel drives when a pick propagates —
+                # mirror_trust's trust boundary: only the human's own tunnels + tokens reach here.
+                # Applies via the validated setters, answers with the CURRENT four values.
+                # {"propagate": true} additionally fans the pick out from THIS machine (the manual /
+                # scripted re-sync); forwarded bodies never carry it, so propagation is one hop and
+                # can never ping-pong around the mesh.
+                try:
+                    body = json.loads(raw_body or b"{}")
+                except Exception:
+                    body = None
+                res = _apply_judge_settings(body if isinstance(body, dict) else {})
+                if isinstance(body, dict) and body.get("propagate"):
+                    fwd = {k: v for k, v in body.items() if k != "propagate"}
+                    threading.Thread(target=_propagate_judge_settings, args=(fwd,), daemon=True).start()
+                return self._send(200, json.dumps(res), "application/json")
             return self._send(404, "not found", "text/plain")
         except (BrokenPipeError, ConnectionResetError):
             pass
@@ -22243,7 +23291,11 @@ class Handler(BaseHTTPRequestHandler):
                                        "nativeDialogs": _native_dialogs(),
                                        # billing choices THIS host can offer a new session — the picker
                                        # shows its auth control only when both are real (see _auth_avail)
-                                       "authAvail": _auth_avail()}))
+                                       "authAvail": _auth_avail(),
+                                       # this machine's name (the identity peers see) — the picker's
+                                       # Host row labels its this-machine option with it, so every
+                                       # option is a machine by name (the user 2026-08-12)
+                                       "selfHost": _self_host()}))
         elif msg and msg.get("type") in ("pickResult", "openByName") and (msg.get("id") or msg.get("name")):
             sid = msg.get("id") or _live_names(_tmux_sessions()).get(str(msg.get("name")))
             if sid:
@@ -22424,12 +23476,20 @@ class Handler(BaseHTTPRequestHandler):
             _set_palette(str(msg["name"]))     # gear "Session colors" → remap the fleet onto the chosen set
         elif msg and msg.get("type") == "setJudgeModel" and msg.get("model"):
             _set_judge_model(str(msg["model"]))     # gear "Triage model" dropdown → the judge uses it next pass
+            threading.Thread(target=_propagate_judge_settings,   # …and every linked kernel's judges with it
+                             args=({"judgeModel": str(msg["model"])},), daemon=True).start()
         elif msg and msg.get("type") == "setIndexModel" and msg.get("model"):
             _set_index_model(str(msg["model"]))     # gear "Indexing model" dropdown
+            threading.Thread(target=_propagate_judge_settings,
+                             args=({"indexModel": str(msg["model"])},), daemon=True).start()
         elif msg and msg.get("type") == "setJudgeEffort":
             _set_judge_effort(str(msg.get("effort") or ""))   # gear "Triage effort" ("" = default/none)
+            threading.Thread(target=_propagate_judge_settings,
+                             args=({"judgeEffort": str(msg.get("effort") or "")},), daemon=True).start()
         elif msg and msg.get("type") == "setIndexEffort":
             _set_index_effort(str(msg.get("effort") or ""))   # gear "Indexing effort"
+            threading.Thread(target=_propagate_judge_settings,
+                             args=({"indexEffort": str(msg.get("effort") or "")},), daemon=True).start()
         elif msg and msg.get("type") == "setJudgeFast":
             _set_judge_fast("on" if msg.get("on") else "")    # gear "Fast judging" — Opus fast mode on judge calls
 

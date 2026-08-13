@@ -50,6 +50,8 @@ PCACHE   = STATE / "judge-units-cache"   # (mtime,size) cache of a transcript's 
 MESSAGES = STATE / "timeline" / "messages.jsonl"
 ERRORS   = STATE / "judge-errors.jsonl"  # swallowed judge-call failures (parse-fails, call timeouts/exceptions) — surfaced by `romp judges`
 USAGE    = STATE / "judge-usage.jsonl"   # one line per successful judge call: tokens/cost/ms — the kernel/UI roll up pipeline cost
+JUDGE_AUTH = STATE / "judge-auth.json"   # judge-auth-down latch {fsid: {t, mode, note}}: set by a credential-class error
+                                         #   envelope, cleared by the session's next successful call — build_feed floors from it
 SDKDIR   = STATE / "sdk"                 # the SDK backend's per-session registry — lastSid tracks the CURRENT transcript fsid
 # Judge scratch cwd (the user 2026-07-20): every one-shot `claude -p` judge call writes a transcript
 # under the project dir of its CWD. With cwd=/tmp those piled into the SHARED -private-tmp project
@@ -280,22 +282,16 @@ GROUPER_ON = os.environ.get("ROMP_GROUPER", "1") != "0"
 # vs mt): it re-distills only when the goal (re-)completes. Toggleable: set ROMP_DISTILLER=0 to disable.
 DISTILLER_ON = os.environ.get("ROMP_DISTILLER", "1") != "0"
 STALLER_ON = os.environ.get("ROMP_STALLER", "1") != "0"   # the stall note (2026-07-23); same kill switch shape
-# Consecutive nudge-gate runs that must report the SAME deferral reason before a card counts as STALLED.
-# Defined here, not in the kernel, because the kernel WRITES the record and this module READS it back — one
-# definition or the two drift. 2 = "the reason survived the next gate run", which is the EVENT that separates
-# a genuine wedge from the momentary reasons (a judge pass in flight) every working goal reports in passing.
-STALL_SEEN = 2
-# The nudge gate's "the judge itself could still move this card" reason — same one-definition rule as
-# STALL_SEEN: the kernel mints it (_revivers_pending) and both stall readers (kernel _stalled_goals,
-# stalled_facts below) screen it out through stall_why_stands. Neither string EVER presents as a stall
-# (the user 2026-07-31): a goal held only because romp's own review is mid-flight is a goal romp is
-# WORKING, and the card already says so — the Analyzing… swirl (spin-caption.ts) covers exactly this
-# beat, its tip naming the nudge hold. The hold itself stays real in the gate (with its backstop); only
-# the yellow chip is retired, so "stalled" keeps meaning "nothing romp does is moving this". The LEGACY
-# string is the pre-2026-07-25 GLOBAL form, deferred on ANY judge activity anywhere — but the producer
-# opens a fleet-wide pass every ~3s, so that was cadence, not a reviver, and false "stalled" cards
-# minted fleet-wide. Screening both strings also ends the frozen-record problem the 2026-07-25
-# live-verify existed for: a record that freezes holding a judging claim now simply says nothing.
+# The nudge gate's "the judge itself could still move this card" reason — one definition here because
+# the kernel WRITES the record and this module READS it back. The in-flight CLASS (WHY_IN_FLIGHT
+# below) never paints the yellow stalled chip: a goal held only because romp's own review is mid-
+# flight is a goal romp is WORKING, and the card says so as the Analyzing… swirl instead (the user
+# 2026-07-31; routed per record since 2026-08-13). The per-walk seen counter and the screening
+# predicate that USED to hide these records entirely are retired (2026-08-13): retirement is owned by
+# the kernel's per-tick deferral sweep, which pops each record on its reason's own event — a record
+# that exists therefore genuinely stands, and everything standing PRESENTS (swirl or chip; a frozen
+# record can no longer hide holding a stale claim, because it no longer freezes). The LEGACY string is
+# the pre-2026-07-25 GLOBAL form, kept only so old records retire cleanly.
 WHY_JUDGING = "romp's own review of this session is mid-flight"
 _WHY_JUDGING_LEGACY = "a judge pass is mid-flight"
 # The fire list's own hold (2026-08-01), minted by the kernel under the same one-definition rule and
@@ -665,7 +661,126 @@ def _log_judge_usage(judge, tier, model, fsid, wrap, sent=None, recv=None):
         pass
 
 
-def _judge_env(tier):
+_WORK_KEY_FN = None   # the kernel wires this to sdk_backend.work_api_key when it loads that module
+                      # (_sdk_locked), so judges read the SAME once-per-process stash sessions bill from
+
+
+def _work_key():
+    """The manager-environment API key available for key-mode judge billing — READ, never claimed.
+    In the kernel process the SDK backend is the one claimer (work_api_key pops os.environ so its
+    transport can't hand session CLIs an ambient key), and the kernel wires _WORK_KEY_FN to that
+    stash; until that wire lands — or standalone (romp-judge --once/--test, tests) — the key is
+    still sitting in os.environ and the plain read returns the same value. Neither path mutates the
+    environment: _judge_env strips the ambient var from every child env itself, and a second claimer
+    would only race the backend's pop (whoever popped second would stash "" — sessions or judges
+    losing the key on thread timing). This is what broke on 2026-08-12: judges inherited the
+    post-claim environment on a host with no login, and every call refused "Not logged in" for
+    13 hours (~53k errors) while the cards sat parked in Working."""
+    if _WORK_KEY_FN is not None:
+        try:
+            return _WORK_KEY_FN() or ""
+        except Exception:
+            return ""
+    return os.environ.get("ANTHROPIC_API_KEY", "") or ""
+
+
+def _judge_auth(fsid):
+    """'key' or 'login' — which account THIS judge call bills: the judged session's own billing (the
+    user 2026-08-12: a judge rides the account of the session it judges, never a third choice and
+    never a silent fall to the other one — a judge quietly billing the login on a session the user
+    put on the key is the same wrong-account failure the per-session picker exists to prevent).
+    Same resolution as the picker (sdk_backend default_auth / effective_auth), read from the same
+    registry file: an explicit 'login' pick → login; anything else → the key when the environment
+    carries one, else login. A call with no session (fleet-level rows) takes the same default a
+    fresh session would."""
+    a = ""
+    if fsid:
+        try:
+            a = json.loads((SDKDIR / (fsid + ".json")).read_text()).get("auth") or ""
+        except Exception:
+            a = ""
+    if a == "login":
+        return "login"
+    return "key" if _work_key() else "login"
+
+
+def _is_auth_error(text):
+    """A credential-class failure — the latch trigger: no retry can fix it, only the user can (fix the
+    key / sign in / switch the session's billing). Mirror of the kernel's _is_auth_error over session
+    transcripts, kept in sync by tests rather than imports (judge.py loads standalone)."""
+    low = (text or "").lower()
+    return ("not logged in" in low
+            or "api key is invalid" in low
+            or "invalid x-api-key" in low
+            or "failed to authenticate" in low
+            or ("oauth token" in low and ("expired" in low or "revoked" in low))
+            or "authentication_error" in low)
+
+
+_auth_lock = threading.Lock()            # guards the read-modify-write of JUDGE_AUTH
+_auth_cache = [None, {}]                 # (mtime_ns_or_None, dict) — one stat per read, like _DEBUG_CACHE
+
+
+def _auth_down_map():
+    """{fsid: {"t": first-failure, "mode": "key"|"login", "note": the CLI's own words}} — the
+    judge-auth-down latch build_feed floors cards from. mtime-cached; {} when absent/unreadable."""
+    try:
+        key = JUDGE_AUTH.stat().st_mtime_ns
+    except OSError:
+        return {}
+    if _auth_cache[0] != key:
+        try:
+            d = json.loads(JUDGE_AUTH.read_text())
+            _auth_cache[:] = [key, d if isinstance(d, dict) else {}]
+        except Exception:
+            _auth_cache[:] = [key, {}]
+    return _auth_cache[1]
+
+
+def _auth_write_locked(d):
+    """Atomic tmp+rename (callers hold _auth_lock). Best-effort like every latch write: a failed write
+    means a stale latch, and the next mark/clear retries it."""
+    try:
+        tmp = JUDGE_AUTH.with_suffix(".tmp")
+        tmp.write_text(json.dumps(d))
+        os.replace(tmp, JUDGE_AUTH)
+    except Exception:
+        pass
+
+
+def _auth_down_mark(fsid, mode, note):
+    """LATCH judge-auth-down for one session: its judge call just failed with a credential-class error.
+    That error is the deciding event — credentials are binary state, not noise, so the FIRST one is
+    decisive (the user 2026-08-12: loud and quick, on the card) — and the latch holds until the
+    deciding event in the other direction (_auth_down_clear on a successful call), never re-derived
+    per build. Keeps the first failure time across repeats so the card can say how long judging has
+    been down; skips the write when the evidence is unchanged (no mtime churn at retry rate). No-op
+    without a session to pin it on (fleet-level rows stay in judge-errors.jsonl)."""
+    if not fsid:
+        return
+    note = str(note or "")[:300]
+    with _auth_lock:
+        d = dict(_auth_down_map())
+        row = d.get(fsid) or {}
+        if row.get("mode") == mode and row.get("note") == note:
+            return
+        d[fsid] = {"t": int(row.get("t") or time.time()), "mode": mode, "note": note}
+        _auth_write_locked(d)
+
+
+def _auth_down_clear(fsid):
+    """Unlatch on the deciding event in the other direction: a judge call for this session SUCCEEDED,
+    so its billing works again — the floored card returns to its judged column on the next build.
+    Cheap when unlatched (one cached read, zero writes): this runs on every successful call."""
+    if not fsid or fsid not in _auth_down_map():
+        return
+    with _auth_lock:
+        d = dict(_auth_down_map())
+        if d.pop(fsid, None) is not None:
+            _auth_write_locked(d)
+
+
+def _judge_env(tier, auth="login"):
     """The subprocess env for ONE judge call. Drops the TMUX vars (so the child isn't taken for a live
     pane) and trips the Stop-hook recursion guard. For the INDEX tier it also disables extended thinking
     (MAX_THINKING_TOKENS=0): the captioner + archiver do mechanical one-shot summarization, where Haiku's
@@ -673,13 +788,24 @@ def _judge_env(tier):
     caption (722 -> 24 output tokens, 7.1s -> 0.9s per call, ~92% cheaper, identical caption). TRIAGE keeps
     thinking: the planner / closer / grouper / distiller make real placement + closure judgments. Output is
     the expensive half (Haiku $5/Mtok out) AND the latency driver (~58 tok/s, serial), so this is the
-    captioner's biggest single lever — and it's what makes any future batching latency-safe."""
+    captioner's biggest single lever — and it's what makes any future batching latency-safe.
+
+    `auth` is the call's resolved billing (_judge_auth). The ambient ANTHROPIC_API_KEY is stripped
+    unconditionally — in the kernel process the SDK backend already claimed it out of os.environ, and
+    standalone the var is still there, where a login-mode child would otherwise bill the key by mere
+    inheritance — and injected back EXPLICITLY for a key-mode call only. Removal, not blanking, same
+    rule as sdk_backend._options: the CLI treats even an empty var as key-mode-without-a-key and
+    refuses with "Not logged in"."""
+    wk = _work_key()                                  # read before the strip (standalone: same env)
     env = dict(os.environ)
+    env.pop("ANTHROPIC_API_KEY", None)                # never ambient: billing is an explicit choice per call
     for k in ("TMUX", "TMUX_PANE"):
         env.pop(k, None)
     env["ROMP_SUMMARIZING"] = "1"                     # trips the Stop-hook recursion guard
     if tier == "index":
         env["MAX_THINKING_TOKENS"] = "0"              # no thinking for mechanical summarization (the cost lever)
+    if auth == "key" and wk:
+        env["ANTHROPIC_API_KEY"] = wk
     return env
 
 
@@ -722,12 +848,13 @@ def _judge_run(model, sys_prompt, user, effort=None, judge=None, tier="triage", 
                 return ""
     except Exception:
         pass
-    env = _judge_env(tier)
+    fsid = getattr(_judge_ctx, "fsid", None)
+    auth = _judge_auth(fsid)                          # this call bills what the judged session bills
+    env = _judge_env(tier, auth)
     # Per-tier effort from the gear (STATE/judge-effort | index-effort) when the caller didn't pass one — "" or
     # None means NO --effort flag, the long-standing default. An explicit caller effort (the plan A/B) still wins.
     if effort is None:
         effort = (_index_effort() if tier == "index" else _triage_effort()) or None
-    fsid = getattr(_judge_ctx, "fsid", None)
     # Stash this call for the debug view: if the CALLER later rejects the reply, _log_judge_error attaches
     # this input+reply pair to the failure row (debug mode only), so a rejection is inspectable from the
     # card modal. Per-thread and overwritten per call: only the failing call's pair can ever be attached.
@@ -774,13 +901,19 @@ def _judge_run(model, sys_prompt, user, effort=None, judge=None, tier="triage", 
                 # on 07-06: every parser rejected the error text, every caller retried. Log the truth (a
                 # CALL failure, message attached) and return "" so callers treat it like any failed call.
                 # No usage row: a zero-cost error envelope is not a model call the cost rollup should count.
+                msg = str(wrap.get("result") or wrap.get("subtype") or "")
                 _judge_ctx.last["reply"] = str(wrap.get("result") or "")[:2000]
                 _log_judge_error(judge or tier, fsid, "call",
-                                 note="error envelope: %r" % str(wrap.get("result") or wrap.get("subtype") or "")[:160])
+                                 note="error envelope: %r" % msg[:160])
+                if _is_auth_error(msg):
+                    # credential-class: only the user can fix it — latch, so build_feed floors this
+                    # session's focus card instead of leaving the board silently frozen (2026-08-12)
+                    _auth_down_mark(fsid, auth, msg[:160])
                 return ""
             if isinstance(wrap, dict) and isinstance(wrap.get("result"), str):
                 _judge_ctx.last["reply"] = _mid_elide(wrap["result"])
                 _log_judge_usage(judge or tier, tier, model, fsid, wrap, sent, recv)
+                _auth_down_clear(fsid)                # billing works → unlatch (cheap no-op when unlatched)
                 return wrap["result"]
         except Exception:
             pass
@@ -1758,7 +1891,11 @@ def load_goals(fsid):
                  "placementsV": PLACEMENTS_V}
         store["_baseRev"] = 0            # no file yet; a writer that CREATES one still trips the CAS
         return store
-    _replay_overrides(fsid, store)
+    if _replay_overrides(fsid, store):
+        # the replay WROTE (a clobbered user resolve/clear re-flagged): the published status/confirming
+        # predate it, and every reader now trusts those exports as the one truth (no raw-flag second
+        # opinions since 2026-08-13) — so re-derive them at the replay's own write, never serve stale
+        rollup_status(store, session_closed=False)
     # OPTIMISTIC-CONCURRENCY BASE (the user 2026-07-22): remember the revision we read, so save_goals can
     # tell whether anyone else published while we were away (a judge pass holds its store across a
     # minutes-long model call). Transient — popped before the store is ever serialized.
@@ -1791,10 +1928,45 @@ def _rebase_onto_disk(fsid, store):
     except Exception:
         return                                       # nothing readable to rebase onto → publish as-is
     d_nodes, m_nodes = disk.get("nodes") or {}, store.get("nodes") or {}
+    # MERGE TOMBSTONES (2026-08-13): presence-in-a-snapshot is not truth — a stale pre-merge writer
+    # publishing across a grouper merge used to RESURRECT the merged-away node (its id absent from the
+    # newer side, so the adopt-wholesale branch below re-minted it), and the twin then held a duplicate
+    # agentTask key that wedged plan-sync + the open_task veto for 19 hours (g17's g32/g40, 2026-08-12).
+    # The merge already records its own deletion event durably — surv["mergedFrom"] — so key on that
+    # exact event: an id named there, on EITHER side, is deleted; its unseen log rows fold into the
+    # survivor (the append-only covenant: both writers' EVENTS survive, the dead identity does not) and
+    # its placements re-point to the survivor, mirroring _merge_nodes' own rewiring.
+    tomb = {}                                        # dead id -> surviving id
+    for nmap in (d_nodes, m_nodes):
+        for sid_, snd in nmap.items():
+            for rec in (snd.get("mergedFrom") or []):
+                if rec.get("id"):
+                    tomb[rec["id"]] = sid_
+
+    def _fold_log(dead, surv):
+        seen = {(e.get("ev_t"), e.get("src"), e.get("kind")) for e in (surv.get("log") or [])}
+        add = [e for e in (dead.get("log") or [])
+               if (e.get("ev_t"), e.get("src"), e.get("kind")) not in seen]
+        if add:
+            with _authority():
+                surv["log"] = sorted((surv.get("log") or []) + add,
+                                     key=lambda e: (int(e.get("ev_t") or 0), int(e.get("at") or 0)))
+
+    for nid in [n for n in list(m_nodes) if n in tomb]:
+        dead = m_nodes.pop(nid)
+        surv = m_nodes.get(tomb[nid]) or d_nodes.get(tomb[nid])
+        if surv is not None:
+            _fold_log(dead, surv)
+        store.get("status", {}).pop(nid, None)
     for nid, dnd in d_nodes.items():
         mnd = m_nodes.get(nid)
-        if mnd is None:                              # a node the OTHER writer minted → adopt it wholesale
-            m_nodes[nid] = dnd
+        if mnd is None:
+            if nid in tomb:                          # deleted by a merge, not minted by the other writer
+                surv = m_nodes.get(tomb[nid])
+                if surv is not None:
+                    _fold_log(dnd, surv)
+                continue
+            m_nodes[nid] = dnd                       # a node the OTHER writer minted → adopt it wholesale
             continue
         seen = {(e.get("ev_t"), e.get("src"), e.get("kind")) for e in (mnd.get("log") or [])}
         add = [e for e in (dnd.get("log") or [])
@@ -1810,6 +1982,9 @@ def _rebase_onto_disk(fsid, store):
             mnd["mt"] = int(dnd["mt"])
     store["nodes"] = m_nodes
     pl = dict(disk.get("placements") or {}); pl.update(store.get("placements") or {})
+    for k, v in list(pl.items()):                    # a tombstoned target re-points to its survivor —
+        if v in tomb:                                # mirrors _merge_nodes' own rewiring; a dangling
+            pl[k] = tomb[v]                          # target would read as unplaced and re-mint the twin
     store["placements"] = pl                         # union: neither writer's dedup bookkeeping is lost
     store["seq"] = max(int(store.get("seq") or 0), int(disk.get("seq") or 0))   # never reuse a gid
     ct = list(disk.get("closedTurns") or [])
@@ -1817,6 +1992,8 @@ def _rebase_onto_disk(fsid, store):
         if t not in ct:
             ct.append(t)
     store["closedTurns"] = ct
+    if store.get("lastNode") in tomb:
+        store["lastNode"] = tomb[store["lastNode"]]
     if store.get("lastNode") not in (store.get("nodes") or {}):
         store["lastNode"] = disk.get("lastNode") or store.get("lastNode")
     rollup_status(store, session_closed=False)       # re-derive every flag + the status map from the merged logs
@@ -1898,13 +2075,14 @@ def _replay_overrides(fsid, store):
     user reply in the same second as a nudge stamp genuinely answers it."""
     fp = _overrides_dir() / (fsid + ".jsonl")
     if not fp.is_file():
-        return
+        return False
     try:
         lines = fp.read_text().splitlines()
     except OSError as e:
         _log_judge_error("romp", fsid, "history-unreadable",
                          note="override journal unreadable: %s — user actions may show undone until it reads" % e)
-        return
+        return False
+    applied = False                                    # any write → load_goals re-runs rollup (one truth)
     arch_nodes = None                                  # the archive is read once, only if a restore entry needs it
     for ln in lines:
         try:
@@ -1919,9 +2097,24 @@ def _replay_overrides(fsid, store):
                 if nid in store.get("nodes", {}) or nid in arch_nodes:
                     continue                           # alive, or re-cleared into the archive → nothing lost
                 store.setdefault("nodes", {})[nid] = GuardedNode(dict(nddata))
+                applied = True
                 st = (ev.get("status") or {}).get(nid)
                 if st is not None:
                     store.setdefault("status", {})[nid] = st
+                # the journaled status must survive rollup (one truth, 2026-08-13): rollup derives
+                # completion from the LOG ("verdicts only — completion needs an author"), and a
+                # restored card's compacted log may lack its done evidence entirely. The journal is
+                # the durable record of what the user restored — re-record what it attests: the done
+                # row (when none survived) and the settle (the unclear branch's existing move for
+                # exactly this shape), so any later rollup re-derives completed instead of quietly
+                # waking the card up as Working.
+                if st == "completed":
+                    nd_r = store["nodes"][nid]
+                    if not any(e.get("kind") == "done" for e in (nd_r.get("log") or [])):
+                        record_verdict(store, nd_r, "romp", "done", t,
+                                       why="restored by undo — the journal recorded it completed")
+                    if not nd_r.get("settledDone"):
+                        record_verdict(store, nd_r, "romp", "settle", t)
             continue
         nd = store.get("nodes", {}).get(ev.get("node"))
         if nd is None:
@@ -1938,6 +2131,7 @@ def _replay_overrides(fsid, store):
             if record_verdict(store, nd, "user", "done", t,
                               why=nd.get("doneWhy") or "Resolved by the user."):
                 nd["mt"] = t
+                applied = True
         elif op in ("followup", "move"):
             if later or _twin("reopen", msg=(op == "followup"), undo=False):
                 continue
@@ -1948,6 +2142,7 @@ def _replay_overrides(fsid, store):
             _unblock_subtree(store, ev["node"], t,
                              "answered by the user's reply to the card" if op == "followup"
                              else "moved to Working by the user")
+            applied = True
         elif op == "unclear":
             # The undo-clear's un-seal (_mark_nodes_cleared value=False), replayed so a pre-restore
             # snapshot/clobbered store un-clears exactly as the live one did (the user 2026-07-23: the
@@ -1962,6 +2157,7 @@ def _replay_overrides(fsid, store):
             was_done = nd.get("parentId") is None and (
                 store.get("status", {}).get(ev.get("node")) == "completed" or nd.get("nodeComplete"))
             if record_verdict(store, nd, "user", "reopen", t, why="undo clear", undo=True):
+                applied = True
                 if was_done and not nd.get("settledDone"):
                     record_verdict(store, nd, "romp", "settle", t)
         elif op == "block":
@@ -1975,6 +2171,8 @@ def _replay_overrides(fsid, store):
                 continue                               # answered since, or the original write survived
             if record_verdict(store, nd, src, "block", t, why=ev.get("why")):
                 nd["mt"] = max(int(nd.get("mt") or 0), t)
+                applied = True
+    return applied
 
 
 _NONCONTENT_KEYS = ("rev", "_baseRev")   # the revision counter + the transient CAS base: not store CONTENT
@@ -3123,56 +3321,76 @@ def _sync_declared_plan(store, session, seg_id, seg_t, prompt_uuid=None):
         plan = em.declared_plan(session)                    # no store dir → legacy transcript fold
     items = {it["key"]: it for it in plan}
     nodes = store["nodes"]
-    has_child, by_key = set(), {}
+    has_child, key_nodes = set(), {}                    # key -> [nids]: EVERY holder, not a last-wins pick
     for nid, nd in nodes.items():
         if nd.get("parentId") is not None:
             has_child.add(nd["parentId"])
         k = (nd.get("agentTask") or {}).get("key")
         if k is not None:
-            by_key[k] = nid
-    if not items and not by_key:
+            key_nodes.setdefault(k, []).append(nid)
+    if not items and not key_nodes:
         return False
 
     def _is_open(it):
         return bool(it) and it["status"] not in ("completed", "cancelled", "deleted")
 
     changed = False
-    # 1) reconcile the agentTask nodes we already track against the current declared plan
-    for key, nid in list(by_key.items()):
-        it, nd = items.get(key), nodes[nid]
-        at = nd.get("agentTask") or {}
-        if _is_open(it):
-            if at.get("status") != "open" or at.get("raw") != it["status"] or not nd.get("agentBornOpen"):
-                nd["agentTask"] = {"key": key, "status": "open", "raw": it["status"]}
-                nd["agentBornOpen"] = True                  # adopt: watched-open now → protected from the done-heal
-                if nd.get("agentDone"):                     # agent RE-OPENED it → an agent reopen EVENT (an
-                    record_verdict(store, nd, "agent", "reopen", seg_t,   # eventless un-done would be re-DONE'd
-                                   why="the agent re-opened its own to-do")   # by the next materialize)
-                    nd["agentDone"] = False
-                nd["mt"] = seg_t
+    # 1) reconcile EVERY agentTask node against the current declared plan — per NODE, not per key. A
+    # grouper merge once left two nodes claiming one key, and the old key→nid dict silently kept only
+    # the LAST: the shadowed OPEN mirror never heard its item complete, and is_complete's open_task
+    # authority veto held its umbrella at 'working' for 19 hours with no mover and no indication (g17,
+    # 2026-08-12). The dict was the lossy compression; reconciling each holder is strictly less
+    # mechanism (this loop already existed) and a duplicated key now heals toward done on the next
+    # pass — the done twin is never re-opened, and the collision itself surfaces loudly below.
+    for key, nids in list(key_nodes.items()):
+        it = items.get(key)
+        if len(nids) > 1 and any((nodes[n].get("agentTask") or {}).get("status") == "open" for n in nids):
+            # a wedge-capable shape the merge/rebase tombstones should have prevented — say so while
+            # self-healing (fail loudly, never freeze silently)
+            _log_judge_error("planner", store.get("rompUuid") or "", "task-key-collision",
+                             note="to-do key %r held by %d nodes (%s) — reconciling each; the done "
+                                  "twin is never re-opened" % (key, len(nids), ", ".join(sorted(nids))))
+        for nid in list(nids):
+            nd = nodes[nid]
+            at = nd.get("agentTask") or {}
+            if _is_open(it):
+                if len(nids) > 1 and at.get("status") == "done":
+                    continue                            # a DONE twin of a duplicated key: the agent
+                    #                                     reopened nothing — the duplicate did; heal
+                    #                                     toward done, never resurrect a completed card
+                if at.get("status") != "open" or at.get("raw") != it["status"] or not nd.get("agentBornOpen"):
+                    nd["agentTask"] = {"key": key, "status": "open", "raw": it["status"]}
+                    nd["agentBornOpen"] = True              # adopt: watched-open now → protected from the done-heal
+                    if nd.get("agentDone"):                 # agent RE-OPENED it → an agent reopen EVENT (an
+                        record_verdict(store, nd, "agent", "reopen", seg_t,   # eventless un-done would be re-DONE'd
+                                       why="the agent re-opened its own to-do")   # by the next materialize)
+                        nd["agentDone"] = False
+                    nd["mt"] = seg_t
+                    changed = True
+            elif nd.get("agentBornOpen"):                   # watched-open item that has now COMPLETED → authoritative-done (kept)
+                if at.get("status") != "done" and record_verdict(store, nd, "agent", "done", seg_t,
+                                                                 why="the agent crossed it off its own list"):
+                    nd["agentTask"] = {"key": key, "status": "done", "raw": (it or {}).get("status") or "completed"}
+                    nd["agentDone"] = True; nd["mt"] = seg_t
+                    if seg_id and seg_id not in (nd.get("trail") or []):
+                        # DONE-ANCHOR, plan-sync edition (the user 2026-07-14): the syncing segment holds the
+                        # work that crossed the item off — ride the trail so the distiller reads that work and
+                        # the summary link can land on it, mirroring the closer's recap append. Without it a
+                        # mirror completed only here kept its mint-time trail, so the distiller saw nothing but
+                        # the announcement segment and the summary anchored on a stub.
+                        nd.setdefault("trail", []).append(seg_id)
+                    changed = True
+            elif nid not in has_child:                      # born-DONE backlog leaf (pre-fix) → self-heal it away
+                nodes.pop(nid, None)
+                store.get("status", {}).pop(nid, None)
+                key_nodes[key].remove(nid)
+                if not key_nodes[key]:
+                    del key_nodes[key]
                 changed = True
-        elif nd.get("agentBornOpen"):                       # watched-open item that has now COMPLETED → authoritative-done (kept)
-            if at.get("status") != "done" and record_verdict(store, nd, "agent", "done", seg_t,
-                                                             why="the agent crossed it off its own list"):
-                nd["agentTask"] = {"key": key, "status": "done", "raw": (it or {}).get("status") or "completed"}
-                nd["agentDone"] = True; nd["mt"] = seg_t
-                if seg_id and seg_id not in (nd.get("trail") or []):
-                    # DONE-ANCHOR, plan-sync edition (the user 2026-07-14): the syncing segment holds the
-                    # work that crossed the item off — ride the trail so the distiller reads that work and
-                    # the summary link can land on it, mirroring the closer's recap append. Without it a
-                    # mirror completed only here kept its mint-time trail, so the distiller saw nothing but
-                    # the announcement segment and the summary anchored on a stub.
-                    nd.setdefault("trail", []).append(seg_id)
-                changed = True
-        elif nid not in has_child:                          # born-DONE backlog leaf (pre-fix) → self-heal it away
-            nodes.pop(nid, None)
-            store.get("status", {}).pop(nid, None)
-            del by_key[key]
-            changed = True
 
     # 2) mint the OPEN items we don't track yet (a done item is NEVER minted retroactively)
     for key, it in items.items():
-        if key in by_key or not _is_open(it):
+        if key in key_nodes or not _is_open(it):
             continue
         store["seq"] = store.get("seq", 0) + 1
         nid = "%s:g%d" % (store["rompUuid"], store["seq"])
@@ -3181,7 +3399,7 @@ def _sync_declared_plan(store, session, seg_id, seg_t, prompt_uuid=None):
                       "trail": [seg_id] if seg_id else [], "promptUuid": prompt_uuid, "t": seg_t, "mt": seg_t,
                       "why": "declared in the agent's own to-do list",
                       "agentTask": {"key": key, "status": "open", "raw": it["status"]}, "agentBornOpen": True, "log": []})
-        by_key[key] = nid
+        key_nodes[key] = [nid]
         changed = True
 
     # 3) BACKSTOP (the user 2026-07-21): an OPEN to-do link belongs on a LEAF the card can render, never
@@ -3192,7 +3410,8 @@ def _sync_declared_plan(store, session, seg_id, seg_t, prompt_uuid=None):
     # visible, and revert the container to a plain node. A node BORN a to-do renders its OWN row (its
     # text IS the step) — leaving those alone is exactly what keeps a legit to-do that grew sub-steps
     # from being split. Idempotent: the split leaf is a placed to-do child the grouper leaves put.
-    for key, nid in list(by_key.items()):
+    for key, nids in list(key_nodes.items()):
+      for nid in list(nids):
         nd = nodes.get(nid)
         if (not nd or (nd.get("agentTask") or {}).get("status") != "open"
                 or nd.get("why") == "declared in the agent's own to-do list"):
@@ -3211,7 +3430,7 @@ def _sync_declared_plan(store, session, seg_id, seg_t, prompt_uuid=None):
                       "agentTask": dict(nd["agentTask"]), "agentBornOpen": True, "log": []})
         for f in ("agentTask", "agentBornOpen", "agentDone"):
             nd.pop(f, None)
-        by_key[key] = leaf
+        key_nodes[key][key_nodes[key].index(nid)] = leaf
         changed = True
     return changed
 
@@ -4957,6 +5176,10 @@ def migrate_store(store):
     with _authority():                                # migration IS the cache layer for legacy stores
         for nd in nodes.values():
             changed = _migrate_node(nd) or changed
+    for dead in ("umbSig", "starvedSig"):              # retired 2026-08-13: the closer's one look-stamp
+        if dead in store:                              #   (closerLookT) replaced both signature gates
+            store.pop(dead, None)
+            changed = True
     return changed
 
 
@@ -6299,6 +6522,11 @@ def _merge_nodes(store, dupe_id, surv_id, t, why):
         surv["promptUuid"] = dupe["promptUuid"]
     surv["t"] = min(surv.get("t") or t, dupe.get("t") or t)
     surv["mt"] = t
+    # chained merges keep every tombstone: the dupe's own mergedFrom rides along, so an id merged
+    # A→B→C stays deleted even when B itself is gone (the rebase tombstone gate keys on these records)
+    for _rec in (dupe.get("mergedFrom") or []):
+        if _rec.get("id") and all(r.get("id") != _rec["id"] for r in (surv.get("mergedFrom") or [])):
+            surv.setdefault("mergedFrom", []).append(_rec)
     surv.setdefault("mergedFrom", []).append({"id": dupe_id, "text": dupe.get("text"), "why": why, "at": t})
     for k, v in list((store.get("placements") or {}).items()):
         if v == dupe_id:
@@ -6658,7 +6886,17 @@ CLOSER_SYS = (
     "in block in the same reply (see blocked); doning the record and leaving its goal unmentioned "
     "shows the whole card finished while the user still owes the answer. The delivery must be in the "
     "turn itself: a question the turn never answered is not done — never answer it yourself in the "
-    "why; that goal stays open, however sure you are of the answer.\n"
+    "why; that goal stays open, however sure you are of the answer. "
+    "A goal whose ONLY loose end is an explicitly OPTIONAL offer is done, not blocked: the turn "
+    "delivers everything the goal asked, states the work is complete, and offers a strictly "
+    "take-it-or-leave-it extra whose stated default is declining (\"say the word if you want X "
+    "flagged too — otherwise we're wrapped\", \"happy to also add Y if you'd like\", \"let me know "
+    "if you want Z; otherwise this is done\"). Nothing is owed by the user — the assistant itself "
+    "named declining as the resting state — so file done, and name the offer in the why (\"done; "
+    "offered X as an optional extra\") so the option survives on the record instead of holding the "
+    "card open. This is NOT the go-ahead ending below: a go-ahead asks the user to decide the "
+    "goal's own next step and the work waits on the answer; an optional offer's work is already "
+    "delivered either way, and only an extra beyond the ask rides on the reply.\n"
     "- blocked: it now needs the user, a decision, approval, or answer owed by the user (the human) "
     "before it can proceed. Waiting on a peer, CI, build, agents it dispatched, or other external thing "
     "is not blocked; that stays open and working. A turn that **ends** by handing the decision back to the "
@@ -6796,11 +7034,68 @@ def _turn_menu(turn, store):
     return out
 
 
-def _umb_sig(nodes, children, nid):
-    """The completion-set signature a subtree-done candidate is stamped with once the closer has looked:
-    the sorted ids of its (all-complete) children. The set changing — a new child filed, a child's state
-    flipped — is the EVENT that re-arms the ask; an unchanged set never re-badgers the closer."""
-    return ",".join(sorted(children.get(nid, [])))
+def _top_of(nodes, nid):
+    """The top-level ancestor of nid (cycle-safe)."""
+    top, seen = nid, set()
+    while nodes.get(top, {}).get("parentId") is not None and top not in seen:
+        seen.add(top)
+        top = nodes[top]["parentId"]
+    return top
+
+
+def _sealed_above(nodes, nid):
+    """A complete/cleared ancestor seals the subtree (the fold's job to display) — shared by every
+    closer-nomination channel (was three verbatim copies, collapsed 2026-08-13)."""
+    x, seen = nodes.get(nid, {}).get("parentId"), set()
+    while x and x not in seen:
+        seen.add(x)
+        nd = nodes.get(x)
+        if not nd:
+            return False
+        if nd.get("nodeComplete") or nd.get("cleared"):
+            return True
+        x = nd.get("parentId")
+    return False
+
+
+def _task_open_below(nodes, children, nid):
+    """An agentTask-OPEN self-or-descendant — the authoritative tier says work is owed (shared,
+    collapsed 2026-08-13)."""
+    if (nodes.get(nid, {}).get("agentTask") or {}).get("status") == "open":
+        return True
+    return any(_task_open_below(nodes, children, c) for c in children.get(nid, []))
+
+
+def _newest_filed(nodes, children, nid):
+    """The newest diary row FILED (`at`, the arrival domain) anywhere in nid's TOP subtree. This is
+    the ONE re-arm event the retired umbSig/starvedSig signatures were approximating: 'the child set
+    changed' could not see a verdict landing on an existing child (the g7 orphan, 2026-08-12), and
+    the starved channel's evidence-domain mt>=mint scan starved post-outage filings whose evidence
+    times were old news but whose FILINGS were brand new. A filing is new information by definition;
+    everything downstream keys on it."""
+    top = _top_of(nodes, nid)
+    newest, stack = 0, [top]
+    while stack:
+        x = stack.pop()
+        nd = nodes.get(x)
+        if not nd:
+            continue
+        for e in (nd.get("log") or []):
+            newest = max(newest, int(e.get("at") or 0))
+        stack.extend(children.get(x, []))
+    return newest
+
+
+def _filed_since(nodes, children, nid, stamp):
+    """A diary row filed in nid's top subtree after `stamp` — the closer's re-ask gate."""
+    return _newest_filed(nodes, children, nid) > stamp
+
+
+def _look_stamp(nd):
+    """The closer's last-look watermark for this node: closerLookT once stamped, else the node's own
+    mint — so the FIRST post-upgrade pass re-nominates every already-orphaned candidate exactly once
+    (its child verdicts were filed after its mint by construction)."""
+    return int(nd.get("closerLookT") or nd.get("t") or 0)
 
 
 def _subtree_done_candidates(store):
@@ -6814,30 +7109,13 @@ def _subtree_done_candidates(store):
 
     Skips: nodes already ruled (complete/blocked/cleared), childless nodes, sealed subtrees (a complete/
     cleared ancestor — the fold's job), agentTask-open subtrees (the authoritative tier: the agent says
-    work is owed), and nodes whose completion-set signature is already stamped (`store["umbSig"]` — the
-    closer looked and left it open; only the set CHANGING re-arms, see _umb_sig)."""
+    work is owed), and nodes with NOTHING FILED in their top subtree since the closer's last look
+    (closerLookT — one watermark, shared with every nomination channel; a landed verdict re-arms it,
+    which the retired child-id-set signature never could: the g7 orphan, 2026-08-12)."""
     nodes = store["nodes"]
     children = {}
     for nid, nd in nodes.items():
         children.setdefault(nd.get("parentId"), []).append(nid)
-    sigs = store.get("umbSig") or {}
-
-    def _sealed_above(nid):
-        x, seen = nodes.get(nid, {}).get("parentId"), set()
-        while x and x not in seen:
-            seen.add(x)
-            nd = nodes.get(x)
-            if not nd:
-                return False
-            if nd.get("nodeComplete") or nd.get("cleared"):
-                return True
-            x = nd.get("parentId")
-        return False
-
-    def _task_open(nid):
-        if (nodes.get(nid, {}).get("agentTask") or {}).get("status") == "open":
-            return True
-        return any(_task_open(c) for c in children.get(nid, []))
 
     out = []
     for nid, nd in nodes.items():
@@ -6849,76 +7127,34 @@ def _subtree_done_candidates(store):
         kids = children.get(nid, [])
         if not kids or not all(nodes[c].get("nodeComplete") or nodes[c].get("cleared") for c in kids):
             continue
-        if _sealed_above(nid) or _task_open(nid):
+        if _sealed_above(nodes, nid) or _task_open_below(nodes, children, nid):
             continue
-        if sigs.get(nid) == _umb_sig(nodes, children, nid):
-            continue                                   # the closer already looked at exactly this set
+        if not _filed_since(nodes, children, nid, _look_stamp(nd)):
+            continue                                   # the closer already looked at this world
         out.append(nd)
     out.sort(key=lambda nd: nd.get("t", 0))
     return out
 
 
-def _starved_sig(nodes, children, nid):
-    """The settled-elsewhere signature a no-work-filed candidate is stamped with once the closer has
-    looked: the sorted ids of the COMPLETED nodes in its top's subtree that resolved at/after the
-    candidate's own mint. The set GROWING — another piece of the same effort settling — is the EVENT
-    that re-arms the ask ("was the starved card covered by that work?" just became answerable again);
-    an unchanged set never re-badgers the closer. Empty while nothing has settled since the mint."""
-    top = nid
-    seen = set()
-    while nodes.get(top, {}).get("parentId") is not None and top not in seen:
-        seen.add(top)
-        top = nodes[top]["parentId"]
-    t0 = nodes.get(nid, {}).get("t", 0)
-    out, stack = [], [top]
-    while stack:
-        x = stack.pop()
-        nd = nodes.get(x)
-        if not nd:
-            continue
-        if x != nid and nd.get("nodeComplete") and nd.get("mt", nd.get("t", 0)) >= t0:
-            out.append(x)
-        stack.extend(children.get(x, []))
-    return ",".join(sorted(out))
-
-
 def _starved_candidates(store):
     """OPEN nodes that never received evidence after their mint — the trail holds at most the minting
-    segment and the diary is empty — nominated to the closer once OTHER work in their top's subtree has
-    settled. Without this they are UNREACHABLE by any verdict (the user 2026-07-17, quartz: two
-    born-done metric-trend cards, their approach superseded by the config-pin build, sat open forever): turn
-    menus only list placement-touched nodes, and subtree-done nomination needs all-children-done — a
-    childless open leaf, or a branch whose only child is open, qualifies for neither.
+    segment and the diary is empty — nominated to the closer once OTHER work in their top's subtree
+    filed something new. Without this they are UNREACHABLE by any verdict (the user 2026-07-17, quartz:
+    two born-done metric-trend cards, their approach superseded by the config-pin build, sat open
+    forever): turn menus only list placement-touched nodes, and subtree-done nomination needs
+    all-children-done — a childless open leaf, or a branch whose only child is open, qualifies for
+    neither.
 
-    The nomination EVENT is a sibling settling (_starved_sig non-empty): that is when "was this stale
-    card's outcome delivered elsewhere / its approach replaced?" becomes answerable from goal history.
-    A landed closer reply stamps the signature (store["starvedSig"]); only the settled set growing
-    re-arms the ask, so a card the closer consciously left open costs one look per settle-event, not
-    one per pass. Skips mirror _subtree_done_candidates: ruled nodes (done/blocked/cleared/settledDone),
-    umbrellas (pure containers), sealed subtrees, and agentTask-open subtrees (the authoritative tier:
-    the agent's own list says the work is still owed)."""
+    The nomination EVENT is a new FILING in the top subtree since the closer's last look (closerLookT,
+    the shared watermark): that is when "was this stale card's outcome delivered elsewhere / its
+    approach replaced?" becomes answerable anew from goal history. The retired settled-set signature
+    compared EVIDENCE times (mt >= mint), which starved post-outage filings — old evidence, brand-new
+    information (2026-08-12). Skips mirror _subtree_done_candidates: ruled nodes, umbrellas, sealed
+    subtrees, and agentTask-open subtrees."""
     nodes = store["nodes"]
     children = {}
     for nid, nd in nodes.items():
         children.setdefault(nd.get("parentId"), []).append(nid)
-    sigs = store.get("starvedSig") or {}
-
-    def _sealed_above(nid):
-        x, seen = nodes.get(nid, {}).get("parentId"), set()
-        while x and x not in seen:
-            seen.add(x)
-            nd = nodes.get(x)
-            if not nd:
-                return False
-            if nd.get("nodeComplete") or nd.get("cleared"):
-                return True
-            x = nd.get("parentId")
-        return False
-
-    def _task_open(nid):
-        if (nodes.get(nid, {}).get("agentTask") or {}).get("status") == "open":
-            return True
-        return any(_task_open(c) for c in children.get(nid, []))
 
     out = []
     for nid, nd in nodes.items():
@@ -6931,14 +7167,47 @@ def _starved_candidates(store):
         kids = children.get(nid, [])
         if kids and all(nodes[c].get("nodeComplete") or nodes[c].get("cleared") for c in kids):
             continue                                   # all-children-done → the subtree-done channel owns it
-            #                                            (umbSig gates its re-asks; never double-nominate)
-        if _sealed_above(nid) or _task_open(nid):
+            #                                            (same watermark; never double-nominate)
+        if _sealed_above(nodes, nid) or _task_open_below(nodes, children, nid):
             continue
-        sig = _starved_sig(nodes, children, nid)
-        if not sig or sigs.get(nid) == sig:
-            continue                                   # nothing settled since the mint, or already looked
+        if not _filed_since(nodes, children, nid, _look_stamp(nd)):
+            continue                                   # nothing filed since the last look (or the mint)
         out.append(nd)
     out.sort(key=lambda nd: nd.get("t", 0))
+    return out
+
+
+def _lift_riders(store):
+    """OPEN nodes whose newest state-bearing diary row is an UNBLOCKER LIFT the closer has not looked
+    at — routed onto the closer's done menu (2026-08-13). The unblocker's lift evidence often asserts
+    the work SHIPPED (the g7 orphan: its lift's own why said merged and deployed), but the unblocker
+    may only file unblock — done is the closer's authority. Riding the menu hands the evidence to that
+    existing authority; the unblocker gains no verdict power, and the look-stamp below retires the
+    ride the same way it retires every other nomination (an unstamped rider would re-nominate every
+    pass forever — the exact one-shot defect this cluster deletes)."""
+    nodes = store["nodes"]
+    children = {}
+    for nid, nd in nodes.items():
+        children.setdefault(nd.get("parentId"), []).append(nid)
+    out = []
+    for nid, nd in nodes.items():
+        if nd.get("nodeComplete") or nd.get("cleared") or nd.get("blocked") or nd.get("settledDone"):
+            continue
+        if nd.get("umbrella"):
+            continue
+        rows = [e for e in (nd.get("log") or []) if e.get("kind") in ("done", "block", "unblock", "reopen")]
+        if not rows:
+            continue
+        last = max(rows, key=lambda e: (int(e.get("ev_t") or 0), int(e.get("at") or 0)))
+        if last.get("kind") != "unblock" or last.get("src") != "unblocker":
+            continue
+        if int(last.get("at") or 0) <= _look_stamp(nd):
+            continue                                   # the closer already ruled on a menu holding this lift
+        if _sealed_above(nodes, nid) or _task_open_below(nodes, children, nid):
+            continue
+        nd_why = last.get("why") or ""
+        out.append((nd, nd_why))
+    out.sort(key=lambda pair: pair[0].get("t", 0))
     return out
 
 
@@ -6962,18 +7231,13 @@ def _status_report_candidates(store, turn):
     for nid, nd in nodes.items():
         children.setdefault(nd.get("parentId"), []).append(nid)
 
-    def _task_open(nid):
-        if (nodes.get(nid, {}).get("agentTask") or {}).get("status") == "open":
-            return True
-        return any(_task_open(c) for c in children.get(nid, []))
-
     out = []
     for nid, nd in nodes.items():
         if nd.get("parentId") is not None:
             continue                                   # tops only: the cards the board actually shows
         if nd.get("nodeComplete") or nd.get("cleared") or nd.get("blocked") or nd.get("settledDone"):
             continue
-        if nd.get("umbrella") or _task_open(nid):
+        if nd.get("umbrella") or _task_open_below(nodes, children, nid):
             continue
         out.append(nd)
     out.sort(key=lambda nd: nd.get("t", 0))
@@ -6994,7 +7258,7 @@ def _menu_history_text(store, seg_by_id, menu, char_cap):
     return "\n\n".join(parts)
 
 
-def apply_close(store, menu, verdicts, t=None, touched=None):
+def apply_close(store, menu, verdicts, t=None, touched=None, t_overrides=None):
     """Apply the closer's turn-end verdicts over the touched open tops: COMPLETE each in verdicts["done"]
     (recording doneWhy, clearing any soft block), BLOCK each in verdicts["block"] (recording blockWhy =
     the question owed to the user), and STAMP each in verdicts["awaiting"] (the ⏳ annotation: waiting on
@@ -7017,17 +7281,22 @@ def apply_close(store, menu, verdicts, t=None, touched=None):
     for i, nd in enumerate(menu, 1):
         if nd.get("nodeComplete"):
             continue
+        # a verdict's ev_t is the time of the EVIDENCE it rules on (2026-08-13): turn-menu nodes are
+        # ruled from this turn (t, as ever); a lift-rider is ruled from GOAL HISTORY — its newest
+        # state row — so t_overrides carries that anchor. Anchoring a history ruling to the turn made
+        # it pre-shadowed by the very lift that nominated it (the fold orders by evidence time).
+        ev = (t_overrides or {}).get(i, t)
         if i in done:
-            if not record_verdict(store, nd, "closer", "done", t, why=done[i] or None):
+            if not record_verdict(store, nd, "closer", "done", ev, why=done[i] or None):
                 continue                              # the user's follow-up/move postdates this turn's evidence
-            if t is not None:                         # (the event materialized the flags + doneWhy)
-                nd["mt"] = t
+            if ev is not None:                        # (the event materialized the flags + doneWhy)
+                nd["mt"] = ev
             newly.append(nd["id"])
         elif i in block:
-            if not record_verdict(store, nd, "closer", "block", t, why=block[i] or None):   # the user's follow-up postdates this turn's evidence —
+            if not record_verdict(store, nd, "closer", "block", ev, why=block[i] or None):   # the user's follow-up postdates this turn's evidence —
                 continue                               # their reply owns the verdict now, not this stale close
-            if t is not None:                         # (the event materialized the flags + blockWhy)
-                nd["mt"] = t
+            if ev is not None:                        # (the event materialized the flags + blockWhy)
+                nd["mt"] = ev
         elif i in awaiting:
             if nd.get("awaitingWhy") != (awaiting[i] or None):     # same why → keep the original stamp
                 record_verdict(store, nd, "closer", "awaiting", t, why=awaiting[i] or None)
@@ -7066,7 +7335,9 @@ def _close_turn(store, turn, samples=None, seg_by_id=None):
     starved = [nd for nd in _starved_candidates(store) if nd["id"] not in seen_ids]
     seen_ids |= {nd["id"] for nd in starved}
     status = [nd for nd in _status_report_candidates(store, turn) if nd["id"] not in seen_ids]
-    menu = menu + cands + starved + status
+    seen_ids |= {nd["id"] for nd in status}
+    lifted = [(nd, why) for nd, why in _lift_riders(store) if nd["id"] not in seen_ids]
+    menu = menu + cands + starved + status + [nd for nd, _ in lifted]
     if not menu:
         return []
     hist = _menu_history_text(store, seg_by_id, menu, CLOSE_HISTORY_CHARS) if seg_by_id is not None else ""
@@ -7103,6 +7374,15 @@ def _close_turn(store, turn, samples=None, seg_by_id=None):
                          ", ".join("#%d" % i for i in tflagged),
                          "are" if len(tflagged) > 1 else "is",
                          "each" if len(tflagged) > 1 else "it"))
+    lift_whys = {nd["id"]: why for nd, why in lifted}
+    lflagged = [(i, lift_whys[nd["id"]]) for i, nd in enumerate(menu, 1) if nd["id"] in lift_whys]
+    for i, why in lflagged:
+        # the unblocker's completion-asserting evidence, routed to the done authority (2026-08-13):
+        # the lift's own why rides the note so the closer judges from goal history, not this turn alone
+        menu_text += ("\n\nGoal #%d's wait was ruled over%s Judge it only from what its goal history "
+                      "plainly shows delivered — done only where the history shows its outcome landed; "
+                      "leaving it open is a fine answer if the history is not plain."
+                      % (i, (": %s." % why.rstrip(".")) if why else "."))
     raw = closer_llm(_unit_text(turn["atoms"]), menu_text, hist)
     out = _parse_close(raw, len(menu))
     if out is None:
@@ -7123,20 +7403,50 @@ def _close_turn(store, turn, samples=None, seg_by_id=None):
             #                                            changes the size signature and re-judges (event re-arm)
         return None                                    # under the cap → leave unswept, retry next pass
     store.get("closeFails", {}).pop(turn["id"], None)  # a clean reply clears the turn's strike count
-    if cands or starved:
-        # The reply LANDED → the closer has considered every candidate (a verdict or a considered
-        # omission). Stamp each one's signature so an unchanged set is never re-asked; a verdicted
-        # candidate's stamp is harmless (the ruled/sealed filters exclude it anyway).
-        kidmap = {}
-        for _nid, _nd in store["nodes"].items():
-            kidmap.setdefault(_nd.get("parentId"), []).append(_nid)
-        sigs = store.setdefault("umbSig", {})
-        for nd in cands:
-            sigs[nd["id"]] = _umb_sig(store["nodes"], kidmap, nd["id"])
-        ssigs = store.setdefault("starvedSig", {})
-        for nd in starved:                             # settled-elsewhere set as of THIS look (see _starved_sig)
-            ssigs[nd["id"]] = _starved_sig(store["nodes"], kidmap, nd["id"])
-    newly = apply_close(store, menu, out, t=turn.get("t"), touched=n_touched)
+    # STAND-DOWN (2026-08-13): a writer whose evidence predates the diary stands down — the standing
+    # corollary, applied at the closer's own write site. The backlog sweep anchors verdicts to a stale
+    # turn's ev_t; the fold (the authority) orders by evidence time, so newer diary rows shadow such a
+    # verdict SILENTLY while the turn seals forever (g44 lost two dones to interrupt/unblock rows this
+    # way, 2026-08-12). Simulate the exact row apply_close would append: a verdict that would not
+    # change the node's folded state is dropped and logged loudly (stale-close). Deliberately NO
+    # requeue: the newer evidence's own turn is audited by the same oldest-first sweep, and a requeue
+    # here can loop forever on a fold tie (both critics' finding).
+    # a lift-rider's ruling draws on GOAL HISTORY, so its verdict anchors to the lift's own ev_t —
+    # anchored to the (possibly older) audited turn it would be pre-shadowed by the very lift that
+    # nominated it, and the stand-down below would drop every lift-ridden ruling
+    t_overrides = {}
+    for i, nd in enumerate(menu, 1):
+        if nd["id"] in lift_whys:
+            evs = [int(e.get("ev_t") or 0) for e in (nd.get("log") or [])
+                   if e.get("kind") in ("done", "block", "unblock", "reopen")]
+            if evs:
+                t_overrides[i] = max(evs)
+    for kind in ("done", "block"):
+        for i in list(out.get(kind) or {}):
+            nd = menu[i - 1]
+            ev = t_overrides.get(i, turn.get("t"))
+            sim = dict(nd)
+            sim["log"] = list(nd.get("log") or []) + [{"ev_t": ev, "src": "closer",
+                                                       "kind": kind, "at": int(time.time())}]
+            if _fold_node_state(sim) == _fold_node_state(nd):
+                out[kind].pop(i, None)
+                _log_judge_error("closer", store.get("rompUuid"), "stale-close", goal=nd.get("id"),
+                                 note="a %s anchored to ev_t %s is shadowed by newer diary rows on "
+                                      "%s — the writer stands down; the newer evidence's own turn "
+                                      "carries the ruling" % (kind, ev, nd.get("id")))
+    newly = apply_close(store, menu, out, t=turn.get("t"), touched=n_touched, t_overrides=t_overrides)
+    # The reply LANDED → the closer considered every menu node (a verdict or a considered omission).
+    # ONE look-stamp replaces the retired umbSig/starvedSig signatures (2026-08-13): the newest row
+    # FILED in each node's top subtree as of this look, stamped BELOW apply_close so the reply's own
+    # filings are covered and a just-ruled candidate is not instantly re-nominated. Every partition is
+    # stamped — an unstamped lift-rider the closer HOLDS would re-nominate every pass forever, the
+    # exact one-shot defect this replaces.
+    kidmap = {}
+    for _nid, _nd in store["nodes"].items():
+        kidmap.setdefault(_nd.get("parentId"), []).append(_nid)
+    for nd in menu:
+        if nd["id"] in store["nodes"]:
+            nd["closerLookT"] = _newest_filed(store["nodes"], kidmap, nd["id"])
     segs = _segs(turn, store)                          # seam-aware: post-split, the recap lives in the tail
     if segs:                                           # anchor each resolved (done/blocked) top to the recap
         recap, resolved = segs[-1]["id"], set(out["done"]) | set(out["block"])
@@ -7967,20 +8277,18 @@ def stall_llm(goal_text, work_text, holding):
                       mark=mk).strip()   # caller splits SOURCE, then caps
 
 
-def stall_why_stands(why, fsid):
-    """True when a recorded stall reason is one the card should PRESENT. The judging reasons never are
-    (the user 2026-07-31, superseding the 2026-07-25 live-verify), nor is the fire list's turn-in-flight
-    hold (2026-08-01, same argument — see WHY_TURN_IN_FLIGHT): a goal the gate holds because romp's
-    own review is mid-flight is a goal romp is actively working, and calling that "stalled" drew the
-    user's eye to a state nobody needs to act on — the Analyzing… swirl already tells that story, with
-    the nudge hold in its tip (spin-caption.ts). The hold itself is untouched; this predicate only
-    decides what the stall surfaces say. Other reasons pass through: their truth lives in stores this
-    predicate can't reach, and their own passes reconcile the records that carry them. `fsid` is the
-    record's session, kept for the next reason that needs live verification against it (the retired
-    judging branch checked active_runs here). The unblock-unsettled hold (2026-08-11) is screened for
-    the same reason as the turn-in-flight one: the closer's next pass is romp's own review mid-flight,
-    not a state the user needs to act on."""
-    return why not in (WHY_JUDGING, _WHY_JUDGING_LEGACY, WHY_TURN_IN_FLIGHT, WHY_UNBLOCK_UNSETTLED)
+# The in-flight CLASS: holds that mean "romp is working this beat right now", presented as the
+# Analyzing… swirl on the card rather than the yellow stalled chip (build_feed routes per record;
+# stalled_facts below uses the same tuple to decide staller-note eligibility). This tuple replaces the
+# stall_why_stands screening predicate (2026-08-13): the screen HID these records from every surface,
+# so one frozen between retries showed nothing at all — six live records were dark up to 20 hours.
+# Now the kernel's deferral sweep retires each record on its reason's own event, and whatever stands
+# presents somewhere by definition.
+# The fork's unblock-unsettled hold (2026-08-11) is in-flight for the same reason the turn hold is:
+# the closer's next pass is romp's own review mid-flight, not a state the user acts on. Its sweep
+# case retires it on the closer's next filed word (kernel _deferral_sweep_tick, ABOVE the class
+# branch — the class branch's no-judge-running event would retire it early).
+WHY_IN_FLIGHT = (WHY_JUDGING, _WHY_JUDGING_LEGACY, WHY_TURN_IN_FLIGHT, WHY_UNBLOCK_UNSETTLED)
 
 
 def stalled_facts(fsid):
@@ -7997,10 +8305,13 @@ def stalled_facts(fsid):
         if not isinstance(rec, dict) or not str(gid).startswith(fsid + ":"):
             continue                                   # a legacy bare-int record predates the why → nothing to say
         try:
-            why, at, seen = rec.get("why"), int(rec.get("at") or 0), int(rec.get("seen") or 1)
+            why, at = rec.get("why"), int(rec.get("at") or 0)
         except (TypeError, ValueError):
             continue
-        if why and at and seen >= STALL_SEEN and stall_why_stands(str(why), fsid):
+        # no seen gate (2026-08-13): the kernel's sweep pops a record the moment its reason's event
+        # happens, so existence IS the standing hold. In-flight-class holds present as the Analyzing…
+        # swirl, not the chip — so no stall note is owed for them either.
+        if why and at and str(why) not in WHY_IN_FLIGHT:
             out[str(gid)] = {"why": str(why), "since": at}
     return out
 
@@ -8957,9 +9268,17 @@ def run_courier(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, v
         cstore = load_goals(fsid)
         closed[fsid] = _session_settled(fsid, str(path), session, cstore)
         placed_ids = cstore["placements"]
+        floor = episode_floor(fsid)
         for turn in session["turns"]:
             for seg in _segs(turn, cstore):
                 if seg["id"] in placed_ids:
+                    continue
+                if floor and seg["t"] < floor:
+                    # pre-episode: conversation the agent can no longer see. The planner retires these
+                    # before any model call; the courier needs its own guard because a FORK's copied
+                    # history is the first shape that leaves OLD peer segments visible here (a /clear's
+                    # null-rooted head drops pre-clear history from the parse for free, so this never
+                    # fired before). Defense in depth beside the fork's sealed-placements seed.
                     continue
                 pm = _seg_peer(seg)
                 if not pm or not pm[0]:                # peer-triggered with a known sender only

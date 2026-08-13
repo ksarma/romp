@@ -14,6 +14,7 @@ enough — rebuilt everything, so the trigger looked like it worked.
 These tests assert the check's inputs against esbuild.js's ACTUAL entry points, so a new entry point
 added there without a matching watch root fails here rather than silently never shipping."""
 import os
+import tempfile
 import re
 import unittest
 from importlib.machinery import SourceFileLoader
@@ -23,6 +24,8 @@ ROOT = os.path.dirname(HERE)
 BIN = os.path.join(ROOT, "bin")
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
+os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()   # hermetic BEFORE any romp code loads
+os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 km = SourceFileLoader("romp_kernel_bundle", os.path.join(BIN, "romp-kernel")).load_module()
 
 

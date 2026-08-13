@@ -28,6 +28,7 @@ HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
 _STATE_TMP = tempfile.mkdtemp()
 os.environ["XDG_STATE_HOME"] = _STATE_TMP
+os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 sb = SourceFileLoader("romp_sdk_backend_ile", os.path.join(BIN, "romp_sdk_backend.py")).load_module()
 km = SourceFileLoader("romp_kernel_ile", os.path.join(BIN, "romp-kernel")).load_module()
@@ -188,9 +189,10 @@ class TheNudgeIsNotHeldByTheLift(unittest.TestCase):
         held = []
         keep = km._nudge_fire_list(fresh, [(GID, 0, True)], arm_t=CUT_T, seen_t=RESUME_T, held=held)
         self.assertEqual(keep, [])
-        self.assertEqual([(f[0], why) for f, why in held], [(GID, jd.WHY_TURN_IN_FLIGHT)])
-        self.assertFalse(jd.stall_why_stands(jd.WHY_TURN_IN_FLIGHT, SID),
-                         "and the hold's why is screened off the stall surface — hence a silent card")
+        self.assertEqual([(f[0], why) for f, why, _ev in held], [(GID, jd.WHY_TURN_IN_FLIGHT)])
+        self.assertIn(jd.WHY_TURN_IN_FLIGHT, jd.WHY_IN_FLIGHT,
+                      "the hold's why is in-flight class: it presents as the Analyzing… swirl "
+                      "(and the sweep pops it on the turn's own end) — no silent card since 2026-08-13")
 
 
 class EndToEndThroughTheTick(unittest.TestCase):

@@ -17,11 +17,10 @@
 import { kernelUrl } from "./media";
 
 export type UsageWindow = {
-  readout?: string;     // overrides the % readout (a spend row shows dollars)
   key: string;
   label: string;        // the rail's expanded label
   short: string;        // the compressed tag a narrow strip swaps in ("5h" / "7d" / "F5")
-  pct: number | null;   // used % of the limit / budget (LAST-KNOWN when unknown — drawn faded); null = no honest denominator (a spend row with no budget)
+  pct: number | null;   // used % of the limit (LAST-KNOWN when unknown — drawn faded)
   elapsedPct: number | null;  // % of the window elapsed (pace comparison)
   unknown: boolean;     // the window reset since the last report — the reading no longer describes the present
   title: string;        // hover detail
@@ -92,48 +91,38 @@ export function fmtTok(n: number): string {
   return String(n);
 }
 
-// API-key SPEND windows mirror the subscription bars' grammar exactly — same rows, same labels,
-// same twin tracks — so flipping between the two auth modes reads instantly (the user 2026-08-04, who
-// asked for "5 hours / week / month, visually similar"). A row FILLS only when spend-budgets.json names
-// that window's budget: the fill is spend-over-budget, and without a cap there is no honest fraction —
-// the row then carries plain dollars in the readout slot and no used-track. Rolling windows (5h/7d)
-// have no reset boundary, so only month-to-date draws the elapsed track. Keyed on the spend windows'
-// PRESENCE, not the apiKey flag: with per-session auth a host's payload carries bars AND its key's
-// spend at once (the user 2026-08-08), and the strip should show both, not silently drop the dollars.
-export const SPEND_WINS: Array<[string, string, string]> = [
-  ["fiveHour", "5 hours", "5h"],
-  ["sevenDay", "7 days", "7d"],
-  ["month", "Month", "mo"],
-];
-export function spendWindows(usage: any, nowS: number): UsageWindow[] {
+// API-key spend is ONE compact CELL, the strip twin of the web rail's apiCellHTML (the user
+// 2026-08-11: the rail moved to this presentation and the strip must reflect it — spend rendered as
+// three bar-less window rows was the OLD grammar, and on a key-billed machine it read as broken).
+// Spend is NUMBERS, never bars (the user 2026-08-08: the spend bar graphs told you nothing): a
+// constant "API" label — no fragment of any key, not even a last-4 tail, reaches a surface — then the
+// 5-hour burn and the month-to-date, dollars AND tokens (the user 2026-08-09), each designator the
+// window's ONE display name to the LEFT of its value. The full per-window breakdown (7 days and turn
+// counts included) rides the cell's hover title. Keyed on the spend windows' PRESENCE, not the legacy
+// apiKey flag — the same hasSpend branch the rail runs; rail-spend.test.ts holds the two in step.
+export function fmtUsd(v: number): string { return "$" + String(Math.round(v)); }   // whole dollars everywhere — no cents (the user 2026-08-09)
+export type ApiCell = {
+  segs: Array<{ key: string; label: string; short: string; usd: number; tok: number }>;
+  title: string;
+};
+export function apiCell(usage: any): ApiCell | null {
   const sp = usage && usage.spend;
-  if (!sp) return [];
-  const out: UsageWindow[] = [];
-  for (const [key, label, short] of SPEND_WINS) {
+  if (!sp || !sp.fiveHour) return null;
+  const segs: ApiCell["segs"] = [];
+  for (const [key, label, short] of [["fiveHour", "5 hours", "5h"], ["month", "Month", "mo"]] as const) {
     const seg = sp[key];
     if (!seg || typeof seg.usd !== "number") continue;
-    const budget = typeof seg.budget === "number" && seg.budget > 0 ? seg.budget : null;
-    const pct = budget != null ? Math.max(0, Math.min(100, Math.round((seg.usd / budget) * 100))) : null;
-    let elapsedPct: number | null = null;
-    if (key === "month" && budget != null) {
-      const d = new Date(nowS * 1000);
-      const dim = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
-      elapsedPct = Math.max(0, Math.min(100, Math.round(((d.getDate() - 1 + d.getHours() / 24) / dim) * 100)));
-    }
-    const turns = seg.turns || 0;
-    out.push({
-      key, label, short, pct, elapsedPct, unknown: false,
-      // dollars AND tokens stay VISIBLE (the user 2026-08-05 — the hover-only split hid them again);
-      // WHOLE dollars, no cents, matching the rail everywhere (the user 2026-08-09)
-      readout: "$" + Math.round(seg.usd) + " · " + fmtTok(seg.tok || 0) + " tok",
-      title: label + " — $" + Math.round(seg.usd) + " · " + fmtTok(seg.tok || 0) + " tokens · "
-        + turns + " turn" + (turns === 1 ? "" : "s")
-        + (budget != null ? " · " + pct + "% of the $" + budget + " budget"
-           : " · no budget set — dollars only, no fill (set one in spend-budgets.json)")
-        + " · API-key billing",
-    });
+    segs.push({ key, label, short, usd: seg.usd, tok: seg.tok || 0 });
   }
-  return out;
+  if (!segs.length) return null;
+  const lines = ["API-key spend"];
+  for (const [key, label] of [["fiveHour", "5 hours"], ["sevenDay", "7 days"], ["month", "Month"]] as const) {
+    const seg = sp[key];
+    if (!seg || typeof seg.usd !== "number") continue;
+    const turns = seg.turns || 0;
+    lines.push(`${label} — ${fmtUsd(seg.usd)} · ${fmtTok(seg.tok || 0)} tok · ${turns} turn${turns === 1 ? "" : "s"}`);
+  }
+  return { segs, title: lines.join("\n") };
 }
 
 // Which panes get a quick-open label when hidden (the user 2026-07-13, who wanted chat,
@@ -245,9 +234,8 @@ export function initStrip(openSettings: () => void, post?: (m: Record<string, un
   function render(usage: any) {
     const nowS = Math.floor(Date.now() / 1000);
     usageWrap.textContent = "";
-    // ONE loop, one row builder: subscription windows and API spend windows are the same element, so
-    // the two auth modes cannot drift apart visually (the user 2026-08-04)
-    for (const w of usageWindows(usage, nowS).concat(spendWindows(usage, nowS))) {
+    // the subscription windows render as bar rows; key spend follows as ONE API cell (the rail's order)
+    for (const w of usageWindows(usage, nowS)) {
       const box = document.createElement("span");
       box.className = "ru-w" + (w.unknown ? " ru-unk" : "");
       box.title = w.title;
@@ -287,12 +275,46 @@ export function initStrip(openSettings: () => void, post?: (m: Record<string, un
         bars.appendChild(q);
         box.append(name, bars);
       } else {
-        if (w.pct != null) bars.appendChild(mkTrack(w.pct, usageColor(w.pct)));   // no honest denominator → no fill
+        if (w.pct != null) bars.appendChild(mkTrack(w.pct, usageColor(w.pct)));
         if (w.elapsedPct != null) bars.appendChild(mkTrack(w.elapsedPct, "#6b7a8c"));
         const pct = document.createElement("span");
         pct.className = "ru-pct";
-        pct.textContent = w.readout ?? `${w.pct}%`;
+        pct.textContent = `${w.pct}%`;
         box.append(name, bars, pct);
+      }
+      usageWrap.appendChild(box);
+    }
+    // The API cell — the rail's apiCellHTML twin (see apiCell above): "API", then designator → value
+    // pairs. The dollars are the cell's own class (.ru-apiv), NOT .ru-pct: they are the information on
+    // a key-billed machine, so the compress tiers fold the tokens (tier 2) and the labels (tier 3,
+    // like every row) but never the dollars themselves.
+    const cell = apiCell(usage);
+    if (cell) {
+      const box = document.createElement("span");
+      box.className = "ru-w ru-api";
+      box.title = cell.title;
+      const lbl = document.createElement("span");
+      lbl.className = "ru-name";
+      lbl.textContent = "API";
+      box.appendChild(lbl);
+      for (const s of cell.segs) {
+        const name = document.createElement("span");
+        name.className = "ru-name";
+        const nameFull = document.createElement("span");
+        nameFull.className = "ru-name-full";
+        nameFull.textContent = s.label;
+        const nameShort = document.createElement("span");
+        nameShort.className = "ru-name-short";
+        nameShort.textContent = s.short;
+        name.append(nameFull, nameShort);
+        const val = document.createElement("span");
+        val.className = "ru-apiv";
+        val.textContent = fmtUsd(s.usd);
+        const tok = document.createElement("span");
+        tok.className = "ru-apitok";
+        tok.textContent = " · " + fmtTok(s.tok) + " tok";
+        val.appendChild(tok);
+        box.append(name, val);
       }
       usageWrap.appendChild(box);
     }
@@ -397,12 +419,25 @@ function initNetPopover(button: HTMLButtonElement, post?: (m: Record<string, unk
     }).catch(() => { sel.innerHTML = `<option value="">(kernel unreachable)</option>`; });   // loud, never silently empty
   }
 
-  function act(path: string, host: string, b: HTMLButtonElement, busyText: string) {
+  function act(path: string, host: string, b: HTMLButtonElement, busyText: string, via?: string) {
     b.disabled = true;
     const prev = b.textContent;
     b.textContent = busyText;
-    fetch(kernelUrl(path), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ host }) })
-      .then(() => schedule(600))
+    fetch(kernelUrl(path), { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(via ? { host, via } : { host }) })
+      .then((rp) => rp.json().catch(() => null))
+      .then((d) => {
+        if (via && d && d.ok === false) {
+          // a forwarded refusal has no status row of its own to land on — name it HERE (fail loudly)
+          b.disabled = false;
+          b.textContent = prev;
+          b.classList.add("sn-actfail");
+          b.title = String(d.error || d.detail || "refused");
+          return;
+        }
+        schedule(600);
+        if (via) fetchSub(via);   // the sub-list's state lives on the via machine — re-read it
+      })
       .catch(() => { b.disabled = false; b.textContent = prev; });
   }
 
@@ -412,6 +447,47 @@ function initNetPopover(button: HTMLButtonElement, post?: (m: Record<string, unk
   // CHOSEN level, disabled with the accent applying cue, until a snapshot agrees (the confirming
   // event — no timer). A refused write deletes the entry, so the next render honestly reverts.
   const pendingTrust = new Map<string, string>();
+
+  // BETWEEN YOUR MACHINES (the user 2026-08-11): how attached machines hold EACH OTHER's mail — a
+  // pair link appears nowhere else in this popover; every other row manages only this machine's own
+  // gate. Read live from each machine's kernel via /tunnels/pairs (kicked once per refresh, one dial
+  // in flight — it fans out over the tunnels and must not ride the 3s poll itself), written back
+  // through the kernel's /tunnels/trust-remote proxy: your tunnel + that machine's own serve token,
+  // the same you-with-both-tokens boundary as the web popover's Match. Pending per direction (keyed
+  // holder|sender), confirmed only when a later pairs read shows the level on the holder's own
+  // table — never a timer. A pairs answer repaints from the poll's cached args (lastList), so it
+  // costs no extra /tunnels round trip and cannot loop.
+  const pendingPair = new Map<string, string>();
+  let pairs: any = null;          // last /tunnels/pairs answer; null = not read yet this opening
+  let pairsBusy = false;
+  let lastUp = 0;
+  let lastList: [any[], any[]] | null = null;
+
+  // ITS CONNECTIONS (the user 2026-08-11): every up host's row expands into THAT machine's own
+  // attached-host list — same row treatment, working controls — so what's connected to what is
+  // managed from one dashboard. Rows come from /tunnels/of (the machine's own /tunnels, read over
+  // your tunnel + its serve token), fetched on EXPAND and after a forwarded action, never in the
+  // 3s poll — the /tunnels/pairs rule. Actions post the normal routes with {via}: the kernel
+  // relays them to the machine that owns the tunnel (_via_forward), which judges the action
+  // itself; a refusal is named on the button. Keyed expand state and a via|host pending-trust
+  // latch survive re-renders (the progressive-disclosure and pending-confirm rules).
+  const openSub = new Set<string>();
+  const subInfo = new Map<string, any>();       // via-host -> last /tunnels/of answer
+  const subBusy = new Set<string>();
+  const pendingSub = new Map<string, string>(); // `${via}|${host}` -> chosen trust, confirmed by a later read
+
+  function fetchSub(host: string) {
+    if (subBusy.has(host)) return;
+    subBusy.add(host);
+    fetch(kernelUrl("/tunnels/of?host=" + encodeURIComponent(host)), { cache: "no-store" })
+      .then((r) => r.json())
+      .catch(() => ({ ok: false, error: "kernel unreachable" }))
+      .then((d) => {
+        subBusy.delete(host);
+        subInfo.set(host, d || { ok: false, error: "empty answer" });
+        if (openSub.has(host) && lastList) renderList(...lastList);
+      });
+  }
 
   // A native <select>'s open dropdown dies with its DOM node, and renderList rebuilds every row each
   // poll — at the connecting-phase 600ms cadence (schedule below) the trust picker's options dismissed
@@ -434,6 +510,12 @@ function initNetPopover(button: HTMLButtonElement, post?: (m: Record<string, unk
     if (trustEngaged) { deferredRender = () => renderList(ts, known); return; }   // mid-pick — land it after
     list.textContent = "";
     button.classList.toggle("on", ts.some((t) => t.status === "up"));
+    // Each option carries its own plain gloss: the bare words are romp's vocabulary, not English, and a
+    // dropdown whose meaning only appears on hover makes you uncover every option before you can choose.
+    // (Shared by the per-host selects and the pair rows below.)
+    const TRUSTW: Record<string, string> = {
+      trusted: "trusted (auto-accept)", directed: "directed (held for you)", isolated: "isolated (no mail)",
+    };
     if (!ts.length && !known.length) {
       const e = document.createElement("div");
       e.className = "sn-empty";
@@ -473,9 +555,15 @@ function initNetPopover(button: HTMLButtonElement, post?: (m: Record<string, unk
         }
         if (stale) ver = ver.replace(" · ", " · last known: ");
       }
+      // A connected host reporting NO build at all runs a plain file copy (no git checkout): it cannot
+      // name a release or commit, and drift can't be measured — it may be months behind and never say
+      // so (the user 2026-08-11, devbox). Say it where the build word sits, matching the web popover.
+      const unversioned = t.status === "up" && !t.outOfDate && !t.kernelSha && !t.kernelVer;
+      if (unversioned) ver = " · unversioned copy";
       nm.textContent = `${t.host} — ${LBL[t.status] || t.status}` + ver;
       nm.title = (TIP[t.status] || "")
         + (t.outOfDate ? `\n\nRunning ${t.kernelSha || "?"}${t.kernelDate ? " from " + t.kernelDate : ""}; this machine is at ${t.localSha || "?"}.` : "")
+        + (unversioned ? `\n\n${t.host} is running romp from a plain file copy — not a git checkout — so it cannot name its release or commit, and how far it is from this machine cannot be measured: it may be far behind and never say so. Reinstall it as a git clone to restore the build name and updates.` : "")
         + (stale && t.outOfDate ? `\nLast confirmed ${seen || "not since this kernel started"}; not re-checked while ${LBL[t.status] || t.status}.` : "")
         + (t.outOfDate && t.checkinPeer
           ? (t.askPull
@@ -489,11 +577,6 @@ function initNetPopover(button: HTMLButtonElement, post?: (m: Record<string, unk
       trust.className = "sn-trust";
       trust.title = `What happens to postal mail from ${t.host}. trusted: delivered straight to `
         + "your sessions. directed: held for your approval. isolated: none, dashboard only.";
-      // Each option carries its own plain gloss: the bare words are romp's vocabulary, not English, and a
-      // dropdown whose meaning only appears on hover makes you uncover every option before you can choose.
-      const TRUSTW: Record<string, string> = {
-        trusted: "trusted (auto-accept)", directed: "directed (held for you)", isolated: "isolated (no mail)",
-      };
       let pend = pendingTrust.get(t.host);
       if (pend && (t.trust || "directed") === pend) { pendingTrust.delete(t.host); pend = undefined; }
       for (const lvl of ["trusted", "directed", "isolated"]) {
@@ -571,6 +654,21 @@ function initNetPopover(button: HTMLButtonElement, post?: (m: Record<string, unk
         + `keeping its trust level, so you can re-attach in one click.`;
       d.addEventListener("click", () => act("/tunnels/detach", t.host, d, "…"));
       r.appendChild(d);
+      if (t.status === "up") {
+        // ITS CONNECTIONS — the keyed expand (progressive disclosure): compact row by default,
+        // that machine's own attached list one click deeper, fetched on the click, never the poll.
+        const xp = document.createElement("button");
+        xp.className = "sn-subtoggle";
+        xp.textContent = (openSub.has(t.host) ? "▾" : "▸") + " connections";
+        xp.title = `${t.host}'s own attached hosts — see and manage what IT is connected to, from here. `
+          + `Rows read live from its kernel over your tunnel + its own token; actions run there.`;
+        xp.addEventListener("click", () => {
+          if (openSub.has(t.host)) openSub.delete(t.host);
+          else { openSub.add(t.host); if (!subInfo.has(t.host)) fetchSub(t.host); }
+          if (lastList) renderList(...lastList);
+        });
+        r.appendChild(xp);
+      }
       list.appendChild(r);
       // Live automatic-update phase under the row — the work still announces itself, it just does it here
       // instead of over your screen. A FAILURE stays put and red (fail loudly) rather than vanishing into a
@@ -585,6 +683,7 @@ function initNetPopover(button: HTMLButtonElement, post?: (m: Record<string, unk
           : "romp is updating this host in the background.";
         list.appendChild(ap);
       }
+      if (t.status === "up" && openSub.has(t.host)) renderSub(t.host);
     }
     // PREVIOUSLY ATTACHED (the user 2026-07-22): hosts attached before, kept after detach so they are one
     // click away instead of buried in the ssh-config dropdown. Dimmed, each remembering the trust level
@@ -593,8 +692,9 @@ function initNetPopover(button: HTMLButtonElement, post?: (m: Record<string, unk
       const hd = document.createElement("div");
       hd.className = "sn-khead";
       hd.textContent = "Previously attached";
-      hd.title = "Hosts you have attached before. They keep the trust level you last chose, so re-attaching "
-        + "restores it. Forget removes a host from this list.";
+      hd.title = "Hosts romp remembers. Most were attached before and keep the trust level you last chose, "
+        + "so re-attaching restores it. A row marked “trust remembered” was never attached from this "
+        + "machine — it only records how to hold that host's mail. Forget removes a host from this list.";
       list.appendChild(hd);
       for (const k of known) {
         const r = document.createElement("div");
@@ -606,12 +706,23 @@ function initNetPopover(button: HTMLButtonElement, post?: (m: Record<string, unk
         dot.title = "Not attached right now.";
         const nm = document.createElement("span");
         nm.className = "sn-name";
-        nm.textContent = `${k.host} — not attached · ${k.trust || "directed"}`;
-        nm.title = "Trust level remembered from the last time this host was attached; re-attaching restores it.";
+        // A row that only remembers a mail-trust tier says so (the user 2026-08-12, who read
+        // "Previously attached" on a machine that never held that tunnel). k.attached is stamped by
+        // the attach/detach/check-in writers; a trust-only row never gets it.
+        const kwas = !!k.attached;
+        nm.textContent = kwas
+          ? `${k.host} — not attached · ${k.trust || "directed"}`
+          : `${k.host} — trust remembered · never attached here · ${k.trust || "directed"}`;
+        nm.title = kwas
+          ? "Trust level remembered from the last time this host was attached; re-attaching restores it."
+          : `No tunnel to ${k.host} has ever been attached from this machine — this row only records how `
+            + "its mail is held (trust is judged by origin, e.g. for a relayed peer). Attaching is still one click.";
         r.append(dot, nm);
         const ra = document.createElement("button");
-        ra.textContent = "Re-attach";
-        ra.title = `Open the ssh tunnel to ${k.host} again, restoring its remembered trust level.`;
+        ra.textContent = kwas ? "Re-attach" : "Attach";
+        ra.title = kwas
+          ? `Open the ssh tunnel to ${k.host} again, restoring its remembered trust level.`
+          : `Open an ssh tunnel to ${k.host} (first attach from this machine); its remembered trust level rides along.`;
         ra.addEventListener("click", () => act("/tunnels", k.host, ra, "Attaching…"));
         const fg = document.createElement("button");
         fg.textContent = "Forget";
@@ -621,6 +732,256 @@ function initNetPopover(button: HTMLButtonElement, post?: (m: Record<string, unk
         list.appendChild(r);
       }
     }
+    // BETWEEN YOUR MACHINES — one row per direction; mechanics on the state block above. Only offered
+    // when two machines are live: with fewer there is no pair to speak of.
+    if (ts.filter((t) => t.status === "up").length >= 2) {
+      const hd = document.createElement("div");
+      hd.className = "sn-khead";
+      hd.textContent = "Between your machines";
+      hd.title = "How your attached machines hold each other's postal mail, one line per direction, read live "
+        + "from each machine's own kernel. Changing a line writes to the holding machine through your tunnel "
+        + "and its own access token: you are acting on both ends; the machines never set each other's trust.";
+      list.appendChild(hd);
+      if (pairs && pairs.pairs) {
+        for (const pr of pairs.pairs) {
+          const dirs: [string, string, string | null][] = [[pr.a, pr.b, pr.ab], [pr.b, pr.a, pr.ba]];
+          for (const [hold, frm, tier] of dirs) {
+            const r = document.createElement("div");
+            r.className = "sn-row sn-known";
+            const nm = document.createElement("span");
+            nm.className = "sn-name";
+            // null = that machine's table was unreadable this pass (named error, retried on the next
+            // kick); "" = no explicit row there yet, which its bus treats as directed for a relayed origin.
+            if (tier === null) {
+              const he = (pairs.hosts && pairs.hosts[hold] && pairs.hosts[hold].error) || "unreadable";
+              nm.textContent = `${hold} holds ${frm}'s mail: unreadable — ${he}`;
+              nm.title = `Could not read ${hold}'s trust table over the tunnel: ${he}. It keeps gating mail `
+                + `by its own last-set levels; retried on the next refresh.`;
+              r.appendChild(nm);
+              list.appendChild(r);
+              continue;
+            }
+            nm.textContent = `${hold} holds ${frm}'s mail`;
+            r.appendChild(nm);
+            const pk = `${hold}|${frm}`;
+            let pend = pendingPair.get(pk);
+            if (pend && (tier || "") === pend) { pendingPair.delete(pk); pend = undefined; }
+            const sel = document.createElement("select");
+            sel.className = "sn-trust";
+            const imp = !tier && !pend ? " Never set explicitly — directed is its default." : "";
+            sel.title = `What ${hold} does with postal mail from ${frm}.${imp} trusted: delivered straight `
+              + `to its sessions. directed: held on ${hold} for your approval. isolated: none.`;
+            for (const lvl of ["trusted", "directed", "isolated"]) {
+              const o = document.createElement("option");
+              o.value = lvl; o.textContent = TRUSTW[lvl];
+              if ((pend || tier || "directed") === lvl) o.selected = true;
+              sel.appendChild(o);
+            }
+            if (pend) { sel.disabled = true; sel.classList.add("sn-applying"); }
+            sel.addEventListener("focus", () => { trustEngaged = true; });      // keyboard path
+            sel.addEventListener("mousedown", () => { trustEngaged = true; });  // pointer path
+            sel.addEventListener("blur", releaseTrust);
+            sel.addEventListener("change", () => {
+              pendingPair.set(pk, sel.value);   // ack on the click; re-renders show the chosen level
+              sel.disabled = true;
+              sel.classList.add("sn-applying");
+              releaseTrust();   // the choice is made — land any deferred snapshot (pendingPair keeps it painted)
+              fetch(kernelUrl("/tunnels/trust-remote"), { method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ onHost: hold, host: frm, trust: sel.value }) })
+                .then((rp) => rp.json())
+                .then((d) => { if (!(d && d.ok)) pendingPair.delete(pk); refreshPairs(); })
+                .catch(() => { pendingPair.delete(pk); refreshPairs(); });
+            });
+            r.appendChild(sel);
+            if (pend) {
+              const pn = document.createElement("span");
+              pn.className = "sn-pend";
+              pn.textContent = "applying…";
+              r.appendChild(pn);
+            }
+            list.appendChild(r);
+          }
+        }
+      } else if (pairs && pairs.error) {
+        const e = document.createElement("div");
+        e.className = "sn-empty";
+        e.textContent = `Couldn't read how your machines hold each other: ${pairs.error} — retrying.`;
+        list.appendChild(e);
+      } else {
+        const e = document.createElement("div");
+        e.className = "sn-empty";
+        e.textContent = "Reading how your machines hold each other…";
+        list.appendChild(e);
+      }
+    }
+  }
+
+  // The expanded "connections" block under an up host: THAT machine's attached rows, indented,
+  // with the controls its own popover would offer — status/version drift from the fields IT
+  // computed (drift there is measured between the via machine and its remote, so the numbers are
+  // its own), and every action riding the normal route + {via}. Loading and errors say so; a
+  // failed read gets a Retry, never a silent blank.
+  function renderSub(via: string) {
+    const d = subInfo.get(via);
+    if (!d) {
+      const e = document.createElement("div");
+      e.className = "sn-sub sn-empty";
+      e.textContent = `Reading ${via}'s connections…`;
+      list.appendChild(e);
+      return;
+    }
+    if (!d.ok) {
+      const e = document.createElement("div");
+      e.className = "sn-sub sn-empty";
+      e.textContent = `Couldn't read ${via}'s connections: ${d.error || "unknown error"} `;
+      const rt = document.createElement("button");
+      rt.textContent = "Retry";
+      rt.addEventListener("click", () => {
+        subInfo.delete(via);
+        fetchSub(via);
+        if (lastList) renderList(...lastList);
+      });
+      e.appendChild(rt);
+      list.appendChild(e);
+      return;
+    }
+    const rows = d.tunnels || [];
+    if (!rows.length) {
+      const e = document.createElement("div");
+      e.className = "sn-sub sn-empty";
+      e.textContent = `${via} has no hosts attached.`;
+      list.appendChild(e);
+      return;
+    }
+    for (const s of rows) subRow(via, s);
+  }
+
+  function subRow(via: string, s: any) {
+    const TRUSTW: Record<string, string> = {
+      trusted: "trusted (auto-accept)", directed: "directed (held for you)", isolated: "isolated (no mail)",
+    };
+    const r = document.createElement("div");
+    r.className = "sn-row sn-sub";
+    const dot = document.createElement("span");
+    dot.className = "sn-dot";
+    dot.style.background = s.status === "up" ? "var(--accent, #9cd2ff)"
+      : (s.status === "error" || s.status === "no-kernel") ? "#E5534B"
+      : (s.status === "down") ? "#8a8a8a" : "transparent";
+    if (dot.style.background === "transparent") dot.style.boxShadow = "inset 0 0 0 1.5px var(--accent, #9cd2ff)";
+    dot.title = TIP[s.status] || "";
+    const nm = document.createElement("span");
+    nm.className = "sn-name";
+    let ver = "";
+    if (s.outOfDate) {
+      const bb = s.behindBy, ab = s.aheadBy;
+      ver = " · different build";
+      if (typeof bb === "number" && typeof ab === "number") {
+        ver = bb > 0 && ab > 0 ? " · diverged"
+          : ab > 0 ? ` · ahead ${ab} commit${ab === 1 ? "" : "s"}`
+          : bb > 0 ? ` · behind ${bb} commit${bb === 1 ? "" : "s"}` : ver;
+      }
+    }
+    nm.textContent = `${s.host} — ${LBL[s.status] || s.status}${ver}`;
+    nm.title = `${via}'s tunnel to ${s.host}. ` + (TIP[s.status] || "")
+      + (s.outOfDate ? `\n\n${s.host} runs ${s.kernelSha || "?"}; ${via} is at ${s.localSha || "?"} — `
+        + `drift here is between THOSE two machines, not this one.` : "");
+    r.append(dot, nm);
+    // trust: what VIA does with this host's mail — written on via over your tunnel + its token,
+    // the same you-with-both-tokens boundary as the pair rows. Pending latches per via|host until
+    // a later /tunnels/of read agrees (the confirming event, never a timer).
+    const pk = `${via}|${s.host}`;
+    let pend = pendingSub.get(pk);
+    if (pend && (s.trust || "directed") === pend) { pendingSub.delete(pk); pend = undefined; }
+    const sel = document.createElement("select");
+    sel.className = "sn-trust";
+    sel.title = `What ${via} does with postal mail from ${s.host}. trusted: delivered straight to its `
+      + `sessions. directed: held on ${via} for approval. isolated: none.`;
+    for (const lvl of ["trusted", "directed", "isolated"]) {
+      const o = document.createElement("option");
+      o.value = lvl; o.textContent = TRUSTW[lvl];
+      if ((pend || s.trust || "directed") === lvl) o.selected = true;
+      sel.appendChild(o);
+    }
+    if (pend) { sel.disabled = true; sel.classList.add("sn-applying"); }
+    sel.addEventListener("focus", () => { trustEngaged = true; });
+    sel.addEventListener("mousedown", () => { trustEngaged = true; });
+    sel.addEventListener("blur", releaseTrust);
+    sel.addEventListener("change", () => {
+      pendingSub.set(pk, sel.value);
+      sel.disabled = true;
+      sel.classList.add("sn-applying");
+      releaseTrust();
+      fetch(kernelUrl("/tunnels/trust"), { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ via, host: s.host, trust: sel.value }) })
+        .then((rp) => rp.json())
+        .then((dd) => { if (!(dd && dd.ok)) pendingSub.delete(pk); fetchSub(via); })
+        .catch(() => { pendingSub.delete(pk); fetchSub(via); });
+    });
+    r.appendChild(sel);
+    if (pend) {
+      const pn = document.createElement("span");
+      pn.className = "sn-pend";
+      pn.textContent = "applying…";
+      r.appendChild(pn);
+    }
+    // The same provably-possible gating as the top rows, judged with the fields VIA computed
+    // about ITS remote (fastForward/fastPull/askPull are relative to via's own build).
+    const apx = !!(s.autoPush && (s.autoPush.phase === "pushing" || s.autoPush.phase === "waiting"
+      || s.autoPush.phase === "pulling" || s.autoPush.phase === "asking"));
+    if (s.status === "up" && s.fastForward && !apx && !s.checkinPeer) {
+      const u = document.createElement("button");
+      u.textContent = "Push";
+      u.title = `Push ${via}'s committed romp to ${s.host} and restart its kernel — the work runs on ${via}.`;
+      u.addEventListener("click", () => act("/tunnels/update", s.host, u, "Pushing…", via));
+      r.appendChild(u);
+    }
+    if (s.status === "up" && s.askPull && !apx) {
+      const a = document.createElement("button");
+      a.textContent = "Update";
+      a.title = `${s.host} checked in to ${via} over its own tunnel, so ${via} cannot push to it. This asks `
+        + `it to pull ${via}'s commits over the link it already holds.`;
+      a.addEventListener("click", () => act("/tunnels/askpull", s.host, a, "Asking…", via));
+      r.appendChild(a);
+    }
+    if (s.status === "up" && s.fastPull && !apx && !s.checkinPeer) {
+      const pl = document.createElement("button");
+      pl.textContent = "Pull";
+      pl.title = `Pull ${s.host}'s newer commits into ${via}'s romp (fast-forward only) — the work runs on ${via}.`;
+      pl.addEventListener("click", () => act("/tunnels/pull", s.host, pl, "Pulling…", via));
+      r.appendChild(pl);
+    }
+    if (s.status === "no-kernel") {
+      const st = document.createElement("button");
+      st.textContent = "Start";
+      st.title = `No kernel answers ${via}'s tunnel to ${s.host}. This has ${via} push its romp there and boot it.`;
+      st.addEventListener("click", () => act("/tunnels/start", s.host, st, "Starting…", via));
+      r.appendChild(st);
+    }
+    const dt = document.createElement("button");
+    dt.textContent = "Detach";
+    dt.title = `Close ${via}'s ssh tunnel to ${s.host}. It stays in ${via}'s previously-attached list.`;
+    dt.addEventListener("click", () => act("/tunnels/detach", s.host, dt, "…", via));
+    r.appendChild(dt);
+    list.appendChild(r);
+  }
+
+  // The pair table is read OUTSIDE the poll (each read dials every live machine's kernel over its
+  // tunnel): refresh() kicks it, at most one in flight, and the answer repaints from the cached poll
+  // args. Fewer than two live hosts means no pairs — clear and skip the dial.
+  function refreshPairs(ts?: any[]) {
+    if (ts) lastUp = ts.filter((t) => t.status === "up").length;
+    if (lastUp < 2) { pairs = null; return; }
+    if (pairsBusy) return;
+    pairsBusy = true;
+    fetch(kernelUrl("/tunnels/pairs"), { cache: "no-store" }).then((r) => r.json()).then((d) => {
+      pairsBusy = false;
+      pairs = d && d.ok ? d : { error: (d && d.error) || "unreadable" };
+      if (!pop.hidden && lastList) renderList(lastList[0], lastList[1]);
+    }).catch((err) => {
+      pairsBusy = false;
+      pairs = { error: String(err) };
+      if (!pop.hidden && lastList) renderList(lastList[0], lastList[1]);
+    });
   }
 
   let diagPending = false;   // report the first /tunnels outcome of each open, not every 3s poll
@@ -629,7 +990,9 @@ function initNetPopover(button: HTMLButtonElement, post?: (m: Record<string, unk
       const ts = (d && d.tunnels) || [];
       if (diagPending) { diagPending = false; post?.({ type: "clientDiag", surface: "strip", what: "netFetch", data: { ok: true, tunnels: ts.length } }); }
       if (!autoCb.disabled) autoCb.checked = !!(d && d.autoUpdate);   // mirror the kernel; never clobber a write in flight
-      renderList(ts, (d && d.known) || []);
+      lastList = [ts, (d && d.known) || []];
+      renderList(lastList[0], lastList[1]);
+      refreshPairs(ts);
       // An automatic push in flight counts as busy: the button marches while romp works in the background,
       // and the poll runs fast so the phase reads live.
       const pushing = ts.some((t: any) => t.autoPush && (t.autoPush.phase === "pushing" || t.autoPush.phase === "waiting" || t.autoPush.phase === "pulling"));
@@ -675,6 +1038,7 @@ function initNetPopover(button: HTMLButtonElement, post?: (m: Record<string, unk
       const strip = document.getElementById("romp-strip");
       if (strip) pop.style.bottom = `${strip.offsetHeight + 6}px`;
       diagPending = true;
+      pairs = null;   // fresh read per opening — the loader line, then live data (never a stale table)
       loadHosts();
       refresh();
     }
