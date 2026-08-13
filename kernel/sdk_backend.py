@@ -952,18 +952,51 @@ def interrupt_action(level: int, channel_up: bool) -> tuple[str, int]:
     return ("sigkill", 3)
 
 
+# list_regs' per-file parse cache (the 2026-08-10 CPU fix). The registry holds a reg file for EVERY
+# session ever created — a couple hundred, all but a handful dormant — and list_regs sits on the
+# kernel's hottest path: every liveness snapshot (Sessions.live) sweeps it, several times a second.
+# Re-opening + json-parsing a few hundred unchanged files per sweep was a measurable slice of the
+# pusher thread's sustained CPU burn. The file IS the truth, so the cache keys on exactly what
+# changes when the file does — (mtime_ns, size, inode); write_reg's os.replace mints a new inode, so
+# even a same-size same-instant rewrite misses. Entries are handed out as SHALLOW COPIES: the common
+# mutation (_update_reg's reg.update) lands on the copy, never the cache; read_reg stays uncached on
+# purpose — it feeds read-modify-writes and must always be the fresh file.
+_REG_CACHE = {}   # path -> ((mtime_ns, size, ino), parsed reg)
+
+
 def list_regs(state_dir: Path) -> list[dict]:
     d = Path(state_dir) / "sdk"
     out = []
-    if not d.is_dir():
+    try:
+        entries = list(os.scandir(d))
+    except OSError:
         return out
-    for f in d.glob("*.json"):
-        try:
-            r = json.loads(f.read_text())
-            r.setdefault("sid", f.stem)
-            out.append(r)
-        except (OSError, ValueError):
+    seen = set()
+    for de in entries:
+        if not de.name.endswith(".json"):
             continue
+        try:
+            st = de.stat()
+        except OSError:
+            continue
+        key = (st.st_mtime_ns, st.st_size, st.st_ino)
+        seen.add(de.path)
+        hit = _REG_CACHE.get(de.path)
+        if hit is not None and hit[0] == key:
+            out.append(dict(hit[1]))
+            continue
+        try:
+            r = json.loads(Path(de.path).read_text())
+        except (OSError, ValueError):
+            _REG_CACHE.pop(de.path, None)
+            continue
+        r.setdefault("sid", de.name[: -len(".json")])
+        _REG_CACHE[de.path] = (key, r)
+        out.append(dict(r))
+    if len(_REG_CACHE) > len(seen) + 64:          # deleted regs leave the cache once the drift is real
+        for p in list(_REG_CACHE):
+            if p not in seen:
+                _REG_CACHE.pop(p, None)
     return out
 
 
@@ -978,6 +1011,13 @@ def list_regs(state_dir: Path) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 FLAG_SETTINGS_DIR = "sdk-flag-settings"   # per-session --settings payloads, one file per sid
+
+# fast_mode_disabled_reason tokens humanized for the refusal toast (_adopt_fast_state's refused-ask
+# path). An unmapped token is shown raw — a loud unfamiliar word beats a silent vanish.
+_FAST_REFUSALS = {
+    "extra_usage_disabled": "the account has extra usage turned off, and fast mode bills through it "
+                            "(claude.ai → Settings → Usage)",
+}
 
 
 def flag_settings_path(state_dir, sid: str, *, ultracode: bool = False, fast: bool = False) -> str:
@@ -1157,12 +1197,16 @@ class SdkSession:
         #   "Reloading session…" notice until the reconnect completes (the user 2026-07-06). Cleared the instant the
         #   new client connects (reconnect loop) — event-based, mirroring _model_pending's dots.
         self.perm_mode = self.mode
-        self.fast = ""      # fast-mode state as the CLI's init message reports it ("on"/"off"/"cooldown");
-        #   "" until an init lands (unknown → the chat shows no fast badge rather than a guess). Flipped
-        #   optimistically by set_fast (the /fast command is delivered like any typed one) and re-asserted
-        #   by fast_mode_state on every init, so a refused toggle can't stick past the next connect.
-        self.fast_reason = ""   # the init's fast_mode_disabled_reason — non-empty means /fast would refuse
-        #   (org-gated / unsupported), so the chat hides the toggle instead of offering a dead control.
+        self.fast = reg.get("liveFast") or ""   # fast-mode state as the CLI last reported it ("on"/"off"/
+        #   "cooldown"); "" = unknown → the chat shows no fast badge rather than a guess. Seeded from the
+        #   reg (the liveModel pattern) so a kernel restart doesn't blank every session's badge until its
+        #   next turn (the user 2026-08-10, who found the fast toggle nowhere). Flipped optimistically by
+        #   set_fast (the /fast command is delivered like any typed one) and re-asserted by
+        #   _adopt_fast_state at every connect and every init, so a refused toggle or a stale seed can't
+        #   stick past the next connect.
+        self.fast_reason = reg.get("liveFastReason") or ""   # the CLI's fast_mode_disabled_reason —
+        #   non-empty means /fast would refuse (org-gated / unsupported), so the chat hides the toggle
+        #   instead of offering a dead control. Persisted and seeded beside liveFast.
         self.fast_opt = bool(reg.get("fast"))   # the user's PERSISTED fast-mode ask (the reg's `fast`).
         #   The CLI refuses /fast to a non-interactive client unless the connect carried the `fastMode`
         #   flag-settings opt-in, so this drives that key in _options at every connect. Per-session on
@@ -1173,10 +1217,10 @@ class SdkSession:
         #   flag the CLI refuses them, so set_fast reconnects instead.
         self._fast_expect = ""   # one-shot: the word a literal '/fast' send asked for. The toggle's own
         #   turn opens with an init whose fast_mode_state is the state at turn START — one word stale,
-        #   since the toggle applies after it — and taking it verbatim stomped the optimistic flip for
-        #   a whole turn (the user 2026-08-09: transcript said fast was on, chip said off until the
-        #   next message). The init re-sync lets that single stale word yield to this; the next init
-        #   wins unconditionally.
+        #   since the toggle applies after it — and taking it verbatim stomps the optimistic flip until
+        #   the NEXT turn's init (the badge reads off for a whole turn right after the CLI acknowledged
+        #   the toggle). The init re-sync lets that single stale word yield to this; the next init wins
+        #   unconditionally.
         self.api_key_auth = False   # THIS session's init said it authenticates with an API key — a
         #   PER-SESSION fact (the user 2026-08-08: one keyed session must not speak for the login's
         #   windows). Gates this session's get_usage polls + its RateLimitEvent records; set by
@@ -1517,6 +1561,82 @@ class SdkSession:
         if changed:
             self.backend._poke()
 
+    def _adopt_fast_state(self, d) -> bool:
+        """Adopt fast-mode truth from a CLI payload that carries it. The per-turn init message and the
+        connect-time initialize response (get_server_info) share the exact field names (verified live
+        2026-08-10 on 2.1.226): fast_mode_state "on"/"off"/"cooldown" plus fast_mode_disabled_reason.
+        An absent field (older CLI) leaves the last truth standing — never fabricate "off". Returns
+        whether anything changed; a change persists to the reg (liveFast/liveFastReason, the liveModel
+        pattern) so a kernel restart doesn't blank a dormant session's badge."""
+        fast = d.get("fast_mode_state")
+        if not (isinstance(fast, str) and fast):
+            return False
+        # …except the one init opened by a literal /fast send itself, whose word predates the
+        # toggle it carries. A disabled_reason is real refusal evidence, so it always wins.
+        if self._fast_expect and fast != self._fast_expect \
+                and not d.get("fast_mode_disabled_reason"):
+            fast = self._fast_expect
+        self._fast_expect = ""
+        reason = str(d.get("fast_mode_disabled_reason") or "")
+        # 'sdk_opt_in_required' is NOT a refusal to respect — it is the one refusal romp is
+        # BUILT to cure (set_fast reconnects with the fastMode flag-settings opt-in), and the
+        # CLI stamps it on EVERY connect made without the flag (verified live 2026-08-10 on
+        # 2.1.226: opus/fable/sonnet headless connects all report off + this reason). Keeping
+        # it in fast_reason hid the chat toggle on every SDK session — the control that
+        # GRANTS the opt-in was gated on already having it (the user 2026-08-10, who switched
+        # to Opus and looked for the toggle). Blank it: the badge shows "Slow" and a
+        # click cures the reason; every OTHER reason still hides the dead control.
+        reason = "" if reason == "sdk_opt_in_required" else reason
+        # A refusal that lands while the user's ask is ARMED (fast_opt — they picked On) is the CLI
+        # ANSWERING that ask, not standing state to hide behind: adopting it silently made the toggle
+        # the user had just clicked vanish without a word, with the ask left armed on disk forever
+        # (the user 2026-08-11, whose tap on a phone was refused with extra_usage_disabled). Fail
+        # loudly instead: tell the user WHY in a warn toast, clear the ask (reg + fast_opt) so the
+        # opt-in flag doesn't stay armed, and reconnect — the flagless connect reports
+        # sdk_opt_in_required, which blanks the reason above, so the badge comes BACK instead of
+        # disappearing under the dead-control rule.
+        refused_ask = bool(reason) and self.fast_opt and fast != "on"
+        if refused_ask:
+            self.fast_opt = False
+        changed = fast != self.fast or reason != self.fast_reason
+        self.fast, self.fast_reason = fast, reason
+        if changed or refused_ask:
+            try:
+                kw = dict(liveFast=fast, liveFastReason=reason)
+                if refused_ask:
+                    kw["fast"] = False
+                self.backend._update_reg(self.sid, **kw)
+            except Exception as e:
+                self.backend._log("fast-state persist (%s): registry write failed: %s" % (self.name, e))
+        if refused_ask:
+            why = _FAST_REFUSALS.get(reason, "the CLI reports %r" % reason)
+            self.backend._log("fast mode (%s): the CLI refused the toggle — %s" % (self.name, reason),
+                              problem=True)
+            try:
+                self.backend._notify("chat", {"type": "warn", "text":
+                    "fast mode isn't available for %s — %s; the pick is back off" % (self.name, why)})
+            except Exception as e:
+                self.backend._log("fast mode (%s): could not tell the chat about the refusal: %s"
+                                  % (self.name, e))
+            self.request_reconnect()
+        return changed or refused_ask
+
+    async def _do_adopt_server_info(self):
+        """Fast-mode state at CONNECT, before any turn. The init message _adopt_fast_state feeds on
+        only streams WITH a turn — so after a kernel restart every session's fast badge sat blank
+        until it next spoke, and a /model switch never made one appear at all (the user 2026-08-10,
+        who switched a session to Opus and found no toggle). The initialize response the SDK stored
+        at connect (get_server_info — the designed connect-time snapshot, this path's
+        get_context_usage) carries the same fast fields, so adopt them the moment we connect."""
+        if not self.client:
+            return
+        try:
+            info = await self.client.get_server_info()
+        except Exception:
+            return
+        if isinstance(info, dict) and self._adopt_fast_state(info):
+            self.backend._poke()
+
     def effective_auth(self) -> str:
         """'key' or 'login' — what _options launches this session with. An explicit pick wins; unset
         preserves the pre-selector world, where a manager environment that carried a key billed every
@@ -1712,6 +1832,12 @@ class SdkSession:
                 async with ClaudeSDKClient(options=opts) as client:
                     connected = True
                     self.client = client
+                    # The handshake IS the "this session is open" event (snapshot `connected`, the flip
+                    # the kernel's opening chip stands down on) — push THIS session now. Left to the
+                    # periodic cycle, a fresh session wore the opening dots seconds after its CLI was
+                    # ready to take a message (measured live 2026-08-10: connect done ~1.5s after
+                    # create, the ready chip landing at 5-12s with the cycle).
+                    self.backend._push_session(self.sid)
                     self._last_cost_total = 0.0   # a fresh CLI process starts its cumulative cost at zero
                     self._last_usage_totals = {}  # …and its cumulative token counters
                     # The CLI is demonstrably up, so any recorded launch failure is HISTORY — clear it
@@ -1756,6 +1882,10 @@ class SdkSession:
                     # and returns BOTH the live model id and the % pre-turn, so this one refresh fills both. Runs on
                     # every (re)connect; guarded + idempotent + pokes only on change.
                     asyncio.ensure_future(self._do_refresh_context())
+                    # …and the fast-mode fields the same way: they ride the initialize response the
+                    # SDK already holds (get_server_info), so the badge exists pre-turn too — without
+                    # this, nothing showed after a kernel restart until each session's next turn.
+                    asyncio.ensure_future(self._do_adopt_server_info())
                     feeder = asyncio.ensure_future(client.query(inputs()))
                     recv = asyncio.ensure_future(drain(client))
                     waker = asyncio.ensure_future(self._wake.wait())
@@ -1905,19 +2035,9 @@ class SdkSession:
             d = msg.data if isinstance(msg.data, dict) else {}
             self._learn_model(pretty_model(d.get("model")))
             self.perm_mode = d.get("permissionMode") or self.perm_mode
-            # Fast-mode truth rides the init payload (fast_mode_state: on/off/cooldown, plus a
-            # disabled_reason when the org/model can't use it) — the AUTHORITATIVE re-assert behind
-            # set_fast's optimistic flip. Absent field (older CLI) → stay unknown, never fabricate "off".
-            fast = d.get("fast_mode_state")
-            if isinstance(fast, str) and fast:
-                # …except the one init opened by a literal /fast send itself, whose word predates the
-                # toggle it carries. A disabled_reason is real refusal evidence, so it always wins.
-                if self._fast_expect and fast != self._fast_expect \
-                        and not d.get("fast_mode_disabled_reason"):
-                    fast = self._fast_expect
-                self._fast_expect = ""
-                self.fast = fast
-                self.fast_reason = str(d.get("fast_mode_disabled_reason") or "")
+            # Fast-mode truth rides the init payload — the AUTHORITATIVE re-assert behind set_fast's
+            # optimistic flip, shared with the connect-time initialize response (_adopt_fast_state).
+            self._adopt_fast_state(d)
             # HOW this CLI authenticates (verified live 2026-08-04: 'ANTHROPIC_API_KEY' on API-key auth;
             # the field is absent on a subscription login). An auth flip is the deciding event for the
             # rail's /usage bars — see _note_auth_source.
@@ -2535,6 +2655,7 @@ class SdkBackend:
     pushing to clients and a few launch parameters that mirror the tmux launch."""
 
     def __init__(self, state_dir, claude_bin: str, notify, poke=None, push=None,
+                 push_session=None,
                  mcp_config: str | None = None, append_prompt_path: str | None = None,
                  log=None, reconcile: bool = False):
         self.state_dir = Path(state_dir)
@@ -2542,6 +2663,9 @@ class SdkBackend:
         self._notify = notify              # notify(app, msg) -> push to clients (kernel._send_to_app)
         self._poke_cb = poke               # wake the kernel's producer/judges (optional)
         self._push_cb = push               # wake the kernel's PUSHER → immediate chat push (live tail)
+        self._push_session_cb = push_session   # targeted ONE-session push (kernel _push_session_now) for
+        #   per-session chip events (the connect handshake): a wake alone leaves the flip riding the next
+        #   full push cycle, which runs seconds on a busy fleet (the user 2026-08-10)
         self.mcp_config = mcp_config
         self.append_prompt_path = append_prompt_path
         self._log_cb = log
@@ -3711,6 +3835,8 @@ class SdkBackend:
         if not reg:
             return False
         reg["fast"] = (value == "on")
+        reg["liveFast"] = value   # mirror the optimistic flip where the badge reads it while dormant /
+        #                           across a restart; _adopt_fast_state re-asserts at the next connect
         write_reg(self.state_dir, sid, reg)
         s = self.sessions.get(sid)
         if not s or not s.thread.is_alive():
@@ -3882,6 +4008,10 @@ class SdkBackend:
                             "auth": self.default_auth(reg),
                             "authPending": bool(reg.get("authPending")),
                             "mode": reg.get("mode", ""),
+                            # last persisted fast state (liveFast, like liveCtx above) → the badge
+                            # survives idle/restart instead of vanishing until the next turn
+                            "fast": reg.get("liveFast", ""),
+                            "fastReason": reg.get("liveFastReason", ""),
                             "ctx": lc if isinstance(lc, (int, float)) else "", "summary": ""}
         return out
 
@@ -3946,6 +4076,22 @@ class SdkBackend:
                 self._push_cb()
             except Exception as e:
                 self._log("chat push wake failed: %s" % e)
+
+    def _push_session(self, sid: str) -> None:
+        """Targeted one-session push (kernel _push_session_now), for per-session events the chat chip
+        keys on — today the connect handshake, the exact flip the opening chip stands down on. THREADED:
+        the callback builds and serializes that session's payload, which must never run on the session's
+        asyncio loop thread (it would stall the stream it is reporting on). Falls back to the plain
+        pusher wake when the kernel didn't wire the callback (older kernel / tests)."""
+        if not self._push_session_cb:
+            self._wake_push()
+            return
+        def run():
+            try:
+                self._push_session_cb(sid)
+            except Exception as e:
+                self._log("session push (%s) failed: %s" % (sid, e))
+        threading.Thread(target=run, name="sdk-push-session", daemon=True).start()
 
     def live_atoms(self, sid: str) -> list:
         """The session's in-memory live-tail atoms (newest last), for build_session to merge ahead of disk."""

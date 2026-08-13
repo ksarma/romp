@@ -2649,10 +2649,12 @@ class ViewBuilder(unittest.TestCase):
             km._auto_nudge_tick(NOW, km._tmux_sessions())
             self.assertEqual(len(sent), 1, "the stalled goal is nudged")
             # the fork ask (both the flat and the hierarchical-enumeration form carry these sentences):
-            # per-item progress + the continue-or-name-the-blocker fork (the user 2026-07-02)
+            # the continue-or-name-the-blocker fork (the user 2026-07-02), leading with permission to
+            # continue instead of a per-item report (the user 2026-08-11)
             self.assertIn("Keep going on anything you can", sent[0][1],
                           "the FORK text, not the plain status check")
-            self.assertIn("Where does each one stand?", sent[0][1], "asks for per-item progress")
+            self.assertIn("you don't need my go-ahead", sent[0][1],
+                          "licenses continuing without checking in first")
             self.assertIn("tell me which one and exactly what you need from me", sent[0][1])
             self.assertIn("hook up the adapter", sent[0][1], "the open item is named in the quote")
             self.assertNotIn(km.AUTO_NUDGE_TEXT, sent[0][1])
@@ -2684,7 +2686,8 @@ class ViewBuilder(unittest.TestCase):
         self.assertIn("migrate stores and land the branch", body, "open to-do #2 is named")
         self.assertNotIn("a genuinely done step", body, "a done step is not")
         self.assertIn("still open on your own to-do list", body, "the fork body rides the enumeration")
-        self.assertIn("Where does each one stand?", body, "and asks for per-item progress")
+        self.assertIn("you don't need my go-ahead", body,
+                      "and licenses continuing without a per-item report first (the user 2026-08-11)")
 
     def test_auto_nudge_stamps_failed_when_its_response_leaves_the_goal_stalled(self):
         # plans/stalled-open-todos-nudge.md: after the ONE nudge, the agent's response turn ends (judged —
@@ -4084,17 +4087,19 @@ class ViewBuilder(unittest.TestCase):
         finally:
             km._seen_live.clear(); km._seen_live.update(saved_seen); km._has_tmux = saved_has
 
-    def test_dead_kept_tab_excluded_once_hidden(self):
-        # ×-closing a dead-kept tab dismisses it for good.
-        saved_seen, saved_has = set(km._seen_live), km._has_tmux
+    def test_dead_kept_tab_excluded_once_forgotten(self):
+        # ×-closing a dead read-only tab discards it from _kept_open — dead is timeline-only again
+        # (the closeTab route's one remaining duty; hidden-tabs is gone, the user 2026-08-11).
+        saved_seen, saved_has, saved_kept = set(km._seen_live), km._has_tmux, set(km._kept_open)
         km._has_tmux = lambda: True
         try:
             km._seen_live.clear(); km._seen_live.add(SID)
-            km._set_hidden_tab(SID, True)
+            km._kept_open.discard(SID)
             tabs = [s["sid"] for s in km._chat_tab_sessions(NOW, {})]
-            self.assertNotIn(SID, tabs, "a ×-hidden dead tab is not shown")
+            self.assertNotIn(SID, tabs, "a forgotten dead tab is not shown")
         finally:
             km._seen_live.clear(); km._seen_live.update(saved_seen); km._has_tmux = saved_has
+            km._kept_open.clear(); km._kept_open.update(saved_kept)
 
     def test_rel_ago_buckets(self):
         self.assertEqual(km._rel_ago(1000, 1000), "just now")
@@ -4303,13 +4308,15 @@ class ViewBuilder(unittest.TestCase):
 
     def test_gear_has_show_git_branch_toggle(self):
         # the user 2026-06-23: a "Show git branch" checkbox controls whether the chat bottom-bar shows the
-        # session's git branch beside the dir. ON by default (showBranch !== false). It mirrors render.ts'
+        # session's git branch beside the dir. OFF by default since 2026-08-10 (the user, trimming the
+        # statusline for narrow panes): an explicit stored true opts in. It mirrors render.ts'
         # loadSettings().showBranch read, persisted in romp:settings.
         self.assertIn("id=rs-branch", _gear_src())
         self.assertIn("Show git branch", _gear_src())
         self.assertIn("s.showBranch = gb.checked", _gear_src())        # change → persist
-        self.assertIn("gb.checked = s.showBranch !== false", _gear_src())  # open → reflect (default ON)
-        self.assertIn("showBranch: true", _gear_src())                # load() default ON, both branches
+        self.assertIn("gb.checked = s.showBranch === true", _gear_src())  # open → reflect (default OFF)
+        self.assertIn("showBranch: false", _gear_src())               # load() default OFF, both branches
+        self.assertNotIn("showBranch: true", _gear_src())             # the old default must not linger
 
     def test_chat_body_has_an_explicit_send_button(self):
         # The web-dashboard composer (kernel _chat_body, a SECOND copy of vscode-extension/src/page-skeleton.chatBody)
@@ -5009,13 +5016,12 @@ class ViewBuilder(unittest.TestCase):
         self.assertEqual(km.build_session(SID, NOW)["status"]["state"], "ready",
                          "ended turn -> ready even when tmux says working")
 
-    def test_close_session_hides_tab(self):
-        # the × hides the tab (reversible), does not kill the session
-        self.assertEqual(km._hidden_tabs(), set())
-        km._set_hidden_tab(SID, True)
-        self.assertIn(SID, km._hidden_tabs())
-        km._set_hidden_tab(SID, False)
-        self.assertNotIn(SID, km._hidden_tabs())
+    def test_no_hidden_tab_state_exists(self):
+        # hidden tabs are GONE (the user 2026-08-11): a running session is always visible — × means End
+        # session. The old _set_hidden_tab/_hidden_tabs pair must stay deleted, or a secret running
+        # session (no tab, no Fleet row, still judged and billed) comes back.
+        self.assertFalse(hasattr(km, "_hidden_tabs"))
+        self.assertFalse(hasattr(km, "_set_hidden_tab"))
 
     def test_open_dead_session_prompts_revive(self):
         # opening a DEAD session pops the chat's confirmRevive modal — no silent reopen — and now from
@@ -5043,14 +5049,13 @@ class ViewBuilder(unittest.TestCase):
         finally:
             km._reveal_chat_for = orig_rc; km._tmux_sessions = orig_tx; km._push_all = orig_pa
 
-    def test_revive_session_resumes_and_unhides_tab(self):
-        # confirming the modal's "Revive" must actually resume the session AND un-hide its tab. The
-        # kernel owns the resume now (`romp <name> --resume <sid> --detach`): the old
-        # `romp-postal-service revive` subcommand was REMOVED in 2b5e181 but _revive_session kept
-        # shelling it — the CLI exits 0 on unknown commands with output DEVNULL'd, so the picker's
-        # Revive silently did nothing (the user 2026-07-05). Full coverage: tests/test_kernel_revive.py.
+    def test_revive_session_resumes(self):
+        # confirming the modal's "Revive" must actually resume the session. The kernel owns the resume
+        # now (`romp <name> --resume <sid> --detach`): the old `romp-postal-service revive` subcommand
+        # was REMOVED in 2b5e181 but _revive_session kept shelling it — the CLI exits 0 on unknown
+        # commands with output DEVNULL'd, so the picker's Revive silently did nothing (the user
+        # 2026-07-05). Full coverage: tests/test_kernel_revive.py.
         import subprocess as _sp
-        km._set_hidden_tab("deadsid000", True)            # it was hidden when closed
         calls, saved = [], km.subprocess.run
         km.subprocess.run = (lambda *a, **k:
                              calls.append(list(a[0])) or _sp.CompletedProcess(a[0], 0, "", ""))
@@ -5064,7 +5069,6 @@ class ViewBuilder(unittest.TestCase):
                         "the kernel owns the resume (bin/romp), never the removed postal subcommand")
         # --name pins the recorded name; this fixture has none, so _name_of falls back to the sid
         self.assertEqual(argv[1:], ["resume", "deadsid000", "--name", "deadsid000", "--detach"])
-        self.assertNotIn("deadsid000", km._hidden_tabs(), "the revived tab is un-hidden")
 
     def test_split_reminders(self):
         p, r = km._split_reminders("do the thing <system-reminder>be careful</system-reminder> now")
@@ -5098,6 +5102,12 @@ class ViewBuilder(unittest.TestCase):
         self.assertTrue(os.path.isfile(fp))
         self.assertEqual(open(fp, "rb").read(), b"hello")
         self.assertIn("drops", fp)
+        # a save that fails returns None — and the WS handler NACKS it (dropSaveFailed) so the
+        # client's pending chip never pulses forever over a file that is not coming (fail loudly,
+        # the user 2026-08-11; source pin — the branch lives inline in the WS message loop)
+        self.assertIsNone(km._save_dropped_file("bad.png", "%%%not-base64%%%"), "undecodable bytes → None")
+        src = Path(BIN, "romp-kernel").read_text()
+        self.assertIn('_reply(client, {"type": "dropSaveFailed", "name": str(msg["name"])})', src)
 
     def test_permission_mode_cycle_presses(self):
         # shift+tab press count from current → target in the cycle (the user 2026-06-16): there's no
@@ -5799,22 +5809,13 @@ class ViewBuilder(unittest.TestCase):
         self.assertEqual(rows["fresh"]["model"], "Opus", "two live versions → a bare label stays bare")
         self.assertEqual(rows["s"]["model"], "Sonnet 5", "one live version → still borrows")
 
-    def test_timeline_lane_survives_hidden_tab(self):
-        # the user 2026-06-17 (reversing d52f69f): ×-hiding a tab is a tab-strip preference and must NOT
-        # erase the lane from the timeline — the timeline is a complete activity history. So a dead AND
-        # ×-hidden session still appears on the timeline (the render's active-filter alone gates it by
-        # window overlap); only the chat tab strip honors the hidden set.
-        km._set_hidden_tab(SID, True)
-        try:
-            self.assertIn(SID, km._hidden_tabs(), "SID is ×-hidden from the tab strip")
-            s = {x["id"]: x for x in km.build_timeline(NOW, tmux={})["sessions"]}
-            self.assertIn(SID, s, "a ×-hidden dead session is STILL a timeline lane")
-            self.assertFalse(s[SID]["live"], "and it's a dead (struck) lane")
-            # the tab strip still hides it (the hidden set is the tab-strip's, not the timeline's)
-            self.assertNotIn(SID, {x["sid"] for x in km._chat_tab_sessions(NOW, {})},
-                             "the tab strip still honors the hidden set")
-        finally:
-            km._set_hidden_tab(SID, False)
+    def test_timeline_keeps_dead_lanes(self):
+        # the timeline is a complete activity history (the user 2026-06-17): a dead session within the
+        # lane window is still a struck lane, with no tab needed. (The ×-hidden variant of this pin died
+        # with hidden tabs, the user 2026-08-11 — there is no tab state that could erase a lane anymore.)
+        s = {x["id"]: x for x in km.build_timeline(NOW, tmux={})["sessions"]}
+        self.assertIn(SID, s, "a dead session in-window is STILL a timeline lane")
+        self.assertFalse(s[SID]["live"], "and it's a dead (struck) lane")
 
     def test_dead_session_is_timeline_only_until_viewed(self):
         # the user 2026-06-17: a dead session is TIMELINE-ONLY — no auto chat tab. It gets a read-only
@@ -6303,8 +6304,12 @@ class ServeSecurity(unittest.TestCase):
         # render.ts posts {romp:'picker',on} and the shell lifts the chat iframe over the whole window
         # (body.picker-open), so the overlay fills the screen and the list gets the full height to scroll.
         html = km._landing()
-        # background:transparent — same as the settings lift: the opaque iframe element was the black-out
-        self.assertIn("body.picker-open #f-chat{display:block;position:fixed;inset:0;z-index:200;background:transparent}", html)
+        # background:transparent — same as the settings lift: the opaque iframe element was the black-out.
+        # Height rides --app-h (the shell's live VISIBLE height): the layout viewport ignores the phone
+        # keyboard, so an inset:0 lift sat half behind it, and the --app-h sizing is what delivers the
+        # keyboard to the iframe as its own resize — the event the picker's fold keys on (2026-08-10).
+        self.assertIn("body.picker-open #f-chat{display:block;position:fixed;left:0;right:0;top:0;"
+                      "height:var(--app-h,100dvh);z-index:200;background:transparent}", html)
         self.assertIn("body.picker-open #chat-pane{display:block!important}", html)         # un-hide it even if chat is toggled off
         self.assertIn("m.romp==='picker'", html)                                            # the shell listens for the picker post
         self.assertIn("document.body.classList.toggle('picker-open',!!m.on)", html)
@@ -6758,7 +6763,7 @@ class WsLoopResilience(unittest.TestCase):
 
         seq = list(frames)
         saved = km._ws_recv
-        km._ws_recv = lambda rfile, pong=None: seq.pop(0) if seq else (0x8, b"")   # script the frames; (0x8)=close
+        km._ws_recv = lambda rfile: seq.pop(0) if seq else (0x8, b"", True)   # script the frames; (0x8)=close
         try:
             with contextlib.redirect_stderr(io.StringIO()):             # swallow the logged traceback
                 km.Handler._ws(FakeSelf())                              # returns normally on close / socket error
@@ -6768,14 +6773,14 @@ class WsLoopResilience(unittest.TestCase):
 
     def test_a_throwing_handler_does_not_end_the_loop(self):
         TEXT = 0x1
-        frames = [(TEXT, b'{"type":"a"}'), (TEXT, b'{"type":"b"}'), (0x8, b"")]   # a raises, b must still run
+        frames = [(TEXT, b'{"type":"a"}', True), (TEXT, b'{"type":"b"}', True), (0x8, b"", True)]   # a raises, b must still run
         seen = self._run_loop(frames, lambda msg: (_ for _ in ()).throw(RuntimeError("boom"))
                               if msg.get("type") == "a" else None)
         self.assertEqual(seen["types"], ["a", "b"], "'b' still processed after 'a' raised — the socket survived")
 
     def test_a_socket_error_propagates_and_stops_the_loop(self):
         TEXT = 0x1
-        frames = [(TEXT, b'{"type":"a"}'), (TEXT, b'{"type":"b"}'), (0x8, b"")]
+        frames = [(TEXT, b'{"type":"a"}', True), (TEXT, b'{"type":"b"}', True), (0x8, b"", True)]
         seen = self._run_loop(frames, lambda msg: (_ for _ in ()).throw(BrokenPipeError("gone")))
         self.assertEqual(seen["types"], ["a"], "a real socket error ends the loop — 'b' never runs (genuine disconnect)")
 
@@ -6879,11 +6884,11 @@ class SessionOrderStable(unittest.TestCase):
     pulled into a separate mtime-sorted block, so a session jumped slots the moment it died."""
     def setUp(self):
         self._saved = (km._ordered_alive, km._alive_sessions, km._sessions, km._session_order,
-                       set(km._kept_open), km._hidden_tabs)
+                       set(km._kept_open))
 
     def tearDown(self):
         (km._ordered_alive, km._alive_sessions, km._sessions, km._session_order,
-         kept, km._hidden_tabs) = self._saved
+         kept) = self._saved
         km._kept_open.clear(); km._kept_open.update(kept)
 
     def _fleet(self):
@@ -6909,7 +6914,6 @@ class SessionOrderStable(unittest.TestCase):
     def test_dead_chat_tab_keeps_its_slot(self):
         self._fleet()
         km._kept_open.clear(); km._kept_open.add("B")    # B's tab kept open (read-only) after death
-        km._hidden_tabs = lambda: set()
         got = [s["sid"] for s in km._chat_tab_sessions(NOW, {})]
         self.assertEqual(got, ["A", "B", "C"], "kept-open dead tab keeps its slot, same stable key as the timeline")
 

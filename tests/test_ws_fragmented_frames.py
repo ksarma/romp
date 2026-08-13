@@ -1,14 +1,18 @@
-"""The kernel's WebSocket receiver reassembles fragmented client messages (RFC 6455 §5.4).
+"""The fork's hardening on the WebSocket receiver, beyond tests/test_ws_fragmentation.py.
 
-Browsers and proxies split large sends into continuation frames, and _ws_recv used to read exactly
-one frame and hand it to json.loads alone — so every large client→kernel message evaporated with no
-log and no reply. The visible casualty was the composer's 📎 on the web dashboard (the user
-2026-08-10): the picker opened, a photo's dropFile bytes shipped as dozens of frames, and nothing
-arrived — the state dir's drops/ had never even been created. Small messages ride a single frame,
-which is why every other client message worked and the hole stayed invisible for so long.
+Upstream's file covers reassembly itself (fragments, pings, strays, the cap). Pinned HERE is what
+the fork grafted into _ws_recv when the two independent fixes merged (2026-08-11):
 
-Also pinned here: the two silences that hid it — an undecodable frame now logs to stderr, and a
-failed attachment save now warns the client instead of replying nothing.
+- EOF mid-frame reads as a clean close — a truncated length-extension or payload must return, never
+  crash the reader thread with a struct.error mid-read.
+- the big-int XOR unmask — the per-byte Python loop took SECONDS on a multi-MB attachment frame,
+  blocking that client's reader thread the whole time; the multi-megabyte round trip below runs
+  against the reference per-byte XOR the frame() helper encodes with.
+- the reassembly cap actually clears the composer's shipped-attachment ceiling (render.ts
+  SHIP_MAX_BYTES base64-inflated), or the client-side cap would lie.
+- the two silences that hid the original bug (the user 2026-08-10) stay loud: an undecodable frame
+  logs to stderr, and a failed attachment save NACKs the client (dropSaveFailed) so its pending
+  chip retires instead of sitting forever.
 """
 import io
 import json
@@ -30,7 +34,8 @@ MASK = b"\x11\x22\x33\x44"
 
 
 def frame(payload, opcode, fin=True, mask=MASK):
-    """One client (masked) frame, wire-encoded."""
+    """One client (masked) frame, wire-encoded — unmasking done per byte, the reference the
+    kernel's big-int fast path must agree with."""
     b0 = (0x80 if fin else 0x00) | opcode
     ln = len(payload)
     if ln < 126:
@@ -51,77 +56,59 @@ def fragmented(payload, chunk, opcode=0x1):
     return out
 
 
-class WsRecvReassembly(unittest.TestCase):
-    def test_single_frame_message_unchanged(self):
-        op, payload = km._ws_recv(io.BytesIO(frame(b'{"type":"ready"}', 0x1)))
-        self.assertEqual((op, payload), (0x1, b'{"type":"ready"}'))
+def recv_message(wire):
+    pings = []
+    op, payload = km._ws_recv_message(io.BytesIO(wire), pings.append)
+    return op, payload
 
-    def test_fragmented_text_message_reassembles(self):
-        body = json.dumps({"type": "dropFile", "name": "photo.png", "b64": "A" * 500}).encode()
-        op, payload = km._ws_recv(io.BytesIO(fragmented(body, chunk=64)))
-        self.assertEqual(op, 0x1, "the message wears its FIRST frame's opcode, not 0x0")
-        self.assertEqual(payload, body)
-        self.assertEqual(json.loads(payload)["name"], "photo.png")
 
+class WsRecvHardening(unittest.TestCase):
     def test_multi_megabyte_payload_round_trips(self):
-        # a realistic attachment: ~3 MB of base64-ish bytes in browser-sized (~128 KB) fragments —
-        # also exercises the big-int unmask fast path against the reference per-byte XOR the
-        # frame() helper encodes with
+        # a realistic attachment: ~6 MB of base64-ish bytes in browser-sized (~128 KB) fragments —
+        # exercises the big-int unmask fast path against frame()'s reference per-byte XOR
         body = (b'{"type":"dropFile","b64":"' + os.urandom(3 * 1024 * 1024).hex().encode() + b'"}')
-        op, payload = km._ws_recv(io.BytesIO(fragmented(body, chunk=128 * 1024)))
+        op, payload = recv_message(fragmented(body, chunk=128 * 1024))
         self.assertEqual((op, payload), (0x1, body))
 
-    def test_ping_interleaved_mid_message_is_answered_and_reading_continues(self):
-        body = b'{"type":"ready"}'
-        parts = [body[:5], body[5:]]
-        wire = (frame(parts[0], 0x1, fin=False)
-                + frame(b"hb", 0x9)                      # control frame between fragments (§5.5)
-                + frame(parts[1], 0x0, fin=True))
-        ponged = []
-        op, payload = km._ws_recv(io.BytesIO(wire), pong=ponged.append)
-        self.assertEqual((op, payload), (0x1, body))
-        self.assertEqual(ponged, [b"hb"], "the mid-message ping must be answered in place")
+    def test_unmask_agrees_with_the_reference_at_awkward_lengths(self):
+        # lengths straddling the 4-byte mask stride, where a repeat-and-slice bug would show
+        for ln in (0, 1, 3, 4, 5, 125, 126, 127, 65535, 65536, 65537):
+            body = os.urandom(ln)
+            op, payload, fin = km._ws_recv(io.BytesIO(frame(body, 0x2)))
+            self.assertEqual((op, payload, fin), (0x2, body, True), "length %d" % ln)
 
-    def test_ping_between_messages_still_returns_to_the_caller(self):
-        op, payload = km._ws_recv(io.BytesIO(frame(b"hb", 0x9)), pong=lambda p: self.fail("not in place"))
-        self.assertEqual((op, payload), (0x9, b"hb"), "the caller's own ping handling is unchanged")
+    def test_eof_mid_frame_reads_as_dead_connection_not_a_crash(self):
+        whole = frame(b'{"type":"ready"}', 0x1)
+        for cut in (1, 3, 9, len(whole) - 1):          # header, extension, mask, payload
+            self.assertEqual(km._ws_recv(io.BytesIO(whole[:cut])), (None, None, True),
+                             "truncated at byte %d" % cut)
+        big = frame(b"x" * 70000, 0x1)                 # 8-byte length extension, cut inside it
+        self.assertEqual(km._ws_recv(io.BytesIO(big[:5])), (None, None, True))
 
-    def test_close_mid_message_surfaces_the_close(self):
-        wire = frame(b"partial", 0x1, fin=False) + frame(b"", 0x8)
-        op, _ = km._ws_recv(io.BytesIO(wire))
-        self.assertEqual(op, 0x8)
-
-    def test_eof_mid_frame_reads_as_dead_connection(self):
+    def test_eof_mid_message_reads_as_dead_connection(self):
         wire = fragmented(b'{"type":"ready"}', chunk=4)[:9]   # truncated mid-payload
-        self.assertEqual(km._ws_recv(io.BytesIO(wire)), (None, None))
-
-    def test_oversized_message_drops_the_link_not_the_process(self):
-        old = km.WS_RECV_MAX
-        km.WS_RECV_MAX = 100
-        try:
-            self.assertEqual(km._ws_recv(io.BytesIO(fragmented(b"x" * 500, chunk=64))), (None, None))
-        finally:
-            km.WS_RECV_MAX = old
+        self.assertEqual(recv_message(wire), (None, None))
 
     def test_the_cap_covers_the_composers_shipped_attachment_ceiling(self):
         # render.ts refuses attachments over SHIP_MAX_BYTES (50 MB); base64 inflates by 4/3, so the
         # receiver's ceiling must clear ~67 MB of payload plus JSON framing or the client-side cap lies
-        self.assertGreater(km.WS_RECV_MAX, 50 * 1024 * 1024 * 4 // 3 + 4096)
+        self.assertGreater(km._WS_MAX_MESSAGE, 50 * 1024 * 1024 * 4 // 3 + 4096)
         render = open(os.path.join(ROOT, "ui", "webview", "render.ts"), encoding="utf-8").read()
         self.assertIn("SHIP_MAX_BYTES = 50 * 1024 * 1024", render)
 
 
 class TheSilencesArePinnedLoud(unittest.TestCase):
-    def test_the_ws_loop_passes_pong_and_logs_undecodable_frames(self):
-        self.assertIn("_ws_recv(self.rfile, pong=lambda p: _ws_pong(self.wfile, lock, p))", KERNEL_SRC)
+    def test_the_ws_loop_reads_messages_and_logs_undecodable_frames(self):
+        self.assertIn("op, payload = _ws_recv_message(", KERNEL_SRC)
         self.assertIn("ws: undecodable client frame dropped", KERNEL_SRC)
 
-    def test_a_failed_attachment_save_warns_the_client(self):
-        self.assertIn("Could not save the attachment", KERNEL_SRC)
+    def test_a_failed_attachment_save_nacks_the_client(self):
+        # the pending chip the client keeps up from the pick is retired only by this reply
+        self.assertIn('"type": "dropSaveFailed"', KERNEL_SRC)
         self.assertIn("drop save failed", KERNEL_SRC)
 
     def test_save_dropped_file_still_returns_none_on_bad_bytes(self):
-        # the warn branch keys on None; base64 garbage must keep producing it (never raising)
+        # the nack branch keys on None; base64 garbage must keep producing it (never raising)
         self.assertIsNone(km._save_dropped_file("x.png", "!!!not-base64!!!"))
 
 
