@@ -15,11 +15,14 @@ section, never beside the notes.
 All fixtures SYNTHETIC: invented prose, hostname TESTHOST. No real session data.
 """
 import os
+import tempfile
 import re
 import unittest
 from importlib.machinery import SourceFileLoader
 
 BIN = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "bin")
+os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()   # hermetic BEFORE any romp code loads
+os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 jd = SourceFileLoader("romp_judge_injection", os.path.join(BIN, "romp-judge")).load_module()
 
 # A synthetic hostile payload of the shape an agent picks up from a fetched page or an issue body: it

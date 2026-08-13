@@ -21,6 +21,7 @@ USER's own unblock (an interrupt re-engage) never counts on either end.
 Synthetic fixtures throughout (invented goal text, placeholder ids).
 """
 import os
+import tempfile
 import unittest
 from importlib.machinery import SourceFileLoader
 
@@ -28,6 +29,8 @@ HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
+os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()   # hermetic BEFORE any romp code loads
+os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 jd = SourceFileLoader("romp_judge_ubh", os.path.join(BIN, "romp-judge")).load_module()
 km = SourceFileLoader("romp_kernel_ubh", os.path.join(BIN, "romp-kernel")).load_module()
 

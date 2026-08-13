@@ -103,7 +103,8 @@ class FireListSeenTurn(unittest.TestCase):
                                              arm_t=ARM_T, seen_t=ARM_T, held=held), [])
         self.assertEqual([f[0] for f, _why, _ev in held], [G1],   # held rows carry (goal, why, ev_t)
                          "the hold must reach the caller so it can be recorded, not silently dropped")
-        self.assertTrue(all(isinstance(_ev, int) and _ev for _f, _ev in held),
+        self.assertTrue(all(isinstance(_ev, int) and _ev for _f, _why, _ev in held
+                            if _why == jd.WHY_TURN_IN_FLIGHT),
                         "…with the offending evidence time riding along (the sweep's retire event)")
 
     def test_a_resolved_goal_is_never_held(self):
