@@ -46,9 +46,10 @@ test("the feed dot matches too: dotFor picks work/await per name, the dot retint
   assert.match(KERNEL, /if sess_awaiting_why and not who_working:\s*\n\s*awaiting\.append\(name\)/);
   assert.match(KERNEL, /\{"type": "working", "names": feed\["working"\],\s*\n\s*"awaiting": feed\.get\("awaiting"\) or \[\]\}/);
   assert.match(FEED, /awaitingSet = new Set\(Array\.isArray\(m\.awaiting\) \? m\.awaiting : \[\]\);/);
-  // dotFor still ranks work over await; the unreadable-state case follows (feed-status-pips.test.ts)
+  // dotFor still ranks work over await; the unreadable-state quarter follows (feed-status-pips.test.ts)
   assert.match(FEED, /workingSet\.has\(name\) \? "work" : awaitingSet\.has\(name\) \? "await"/);
-  // an existing dot RETINTS when the state flips (working → awaiting), instead of only add/remove
+  // an existing dot RETINTS when the state flips, instead of only add/remove (now via paint(), which
+  // carries the tooltip too — see feed-status-pips.test.ts)
   assert.match(FEED, /else if \(st && has\) paint\(prev!\);/);
   assert.match(FEED, /d\.classList\.toggle\(k, st === k\);/);
   // every name-dot site routes through dotFor: cards, group cards, both modal headers, grouped
