@@ -54,6 +54,7 @@ class _FakeRemoteFileHandler(BaseHTTPRequestHandler):
     ctype = "image/png"         # what this remote CLAIMS the bytes are (a hostile one lies)
     dl_ctype = "application/octet-stream"          # …and the download-side claims (a hostile one lies)
     dl_disp = 'attachment; filename="data.bin"'
+    dl_truncate = False         # short body then a clean close, as _file_download sends when the file shrank
 
     def _serve(self, head):
         _FakeRemoteFileHandler.requests.append(self.path)
@@ -64,7 +65,12 @@ class _FakeRemoteFileHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(BIN_BYTES)))
             self.end_headers()
             if not head:
-                self.wfile.write(BIN_BYTES)
+                if _FakeRemoteFileHandler.dl_truncate:
+                    # the remote kernel's own truncation path: a short body, then a clean close
+                    self.wfile.write(BIN_BYTES[: len(BIN_BYTES) // 2])
+                    self.close_connection = True
+                else:
+                    self.wfile.write(BIN_BYTES)
             return
         if "app.py" in self.path:
             self.send_response(200)
@@ -100,6 +106,36 @@ class _FakeRemoteFileHandler(BaseHTTPRequestHandler):
         pass
 
 
+class _RecorderSink:
+    def __init__(self, sink):
+        self.sink = sink
+
+    def write(self, b):
+        self.sink.append(bytes(b))
+
+
+class _RelayRecorder:
+    """Just enough Handler surface for a direct _relay_download call: records status, headers and
+    every wfile.write, and starts with close_connection False — so a test can see the one thing an
+    over-HTTP client cannot: whether the relay itself decided to close the connection."""
+
+    def __init__(self):
+        self.writes, self.headers, self.status = [], {}, None
+        self.close_connection = False
+        self.wfile = _RecorderSink(self.writes)
+
+    def send_response(self, code):
+        self.status = code
+
+    def send_header(self, k, v):
+        self.headers[k] = v
+
+    def end_headers(self):
+        pass
+
+    _send = km.Handler._send      # the error paths route through the real _send, captured by the fakes
+
+
 class RemoteFileRelay(unittest.TestCase):
     def setUp(self):
         self.srv = ThreadingHTTPServer(("127.0.0.1", 0), km.Handler)
@@ -111,6 +147,7 @@ class RemoteFileRelay(unittest.TestCase):
         _FakeRemoteFileHandler.ctype = "image/png"
         _FakeRemoteFileHandler.dl_ctype = "application/octet-stream"
         _FakeRemoteFileHandler.dl_disp = 'attachment; filename="data.bin"'
+        _FakeRemoteFileHandler.dl_truncate = False
         self._saved_remotes = dict(km._remotes)
 
     def tearDown(self):
@@ -272,6 +309,26 @@ class RemoteFileRelay(unittest.TestCase):
         self.assertEqual(body, b"")
         self.assertEqual(headers.get("Content-Disposition"), 'attachment; filename="data.bin"')
         self.assertEqual(headers.get("Content-Length"), str(len(BIN_BYTES)))
+
+    def test_a_remote_that_truncates_cleanly_still_closes_this_connection_short(self):
+        """The remote's own _file_download truncation path sends SHORT and then closes cleanly — on
+        this side http.client's read() answers that with b'' and NO exception, so only counting the
+        copied bytes against the Content-Length already forwarded can spot the broken promise.
+        Without the close, this keep-alive (HTTP/1.1) connection leaves the browser waiting on
+        bytes that will never come — a hung download instead of a visibly failed one. Pinned by a
+        direct _relay_download call: over HTTP a test client's own Connection: close (urllib sends
+        it always) would close the connection for the wrong reason and hide exactly this bug."""
+        _FakeRemoteFileHandler.dl_truncate = True
+        rec = _RelayRecorder()
+        km.Handler._relay_download(rec, "gpu1", self.fake.server_address[1], REMOTE_TOKEN,
+                                   {"path": ["/tmp/data.bin"], "download": ["1"]})
+        self.assertEqual(rec.status, 200)
+        self.assertEqual(rec.headers.get("Content-Length"), str(len(BIN_BYTES)),
+                         "the remote's promised length went out before the truncation")
+        self.assertEqual(b"".join(rec.writes), BIN_BYTES[: len(BIN_BYTES) // 2],
+                         "the bytes that did arrive still pass through")
+        self.assertTrue(rec.close_connection,
+                        "short of the forwarded Content-Length must CLOSE, or the browser hangs")
 
     def test_a_dead_tunnel_502s_the_download_too(self):
         probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

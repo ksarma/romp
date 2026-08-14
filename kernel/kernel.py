@@ -24904,13 +24904,22 @@ class Handler(BaseHTTPRequestHandler):
             # Phase 2 — the body. Headers are out, so a second status line is no longer possible: a
             # tunnel that dies mid-stream just closes this connection short of Content-Length, which
             # the browser reports as a failed download — visible, not a hang (fail loudly).
+            copied = 0
             try:
                 while True:
                     chunk = resp.read(_DOWNLOAD_CHUNK)
                     if not chunk:
                         break
                     self.wfile.write(chunk)
+                    copied += len(chunk)
             except (OSError, http.client.HTTPException):
+                self.close_connection = True
+            if clen is not None and copied < int(clen):
+                # A remote that truncates CLEANLY — its own _file_download sends short and closes
+                # when the file shrank mid-stream — ends the read with b'' and NO exception, so the
+                # except above never sees it. The Content-Length already forwarded is now a broken
+                # promise on a keep-alive connection: close, the same visibly-failed download as
+                # the exception path, instead of a browser waiting on bytes that never come.
                 self.close_connection = True
         finally:
             try:
