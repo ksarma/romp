@@ -63,7 +63,10 @@ test("feed card: 'N artifacts' rides the bottom of the summary section and opens
 test("feed modal: artifacts strip below the tree — previews on the web, open-the-file chips in VS Code", () => {
   assert.match(FEED, /applyModalArtifacts\(body, it\);/, "wired in the single-ask modal branch");
   assert.match(FEED, /const sig = arts\.join\("\\n"\);\n  if \(strip && \(strip as any\)\._sig === sig\) return;/, "sig-guarded so a kernel repush doesn't re-fetch every thumb");
-  assert.match(FEED, /chip\.onclick = \(ev: Event\) => \{ ev\.stopPropagation\(\); vscodeApi\?\.postMessage\(\{ type: "openFile", path: p, id: it\.sid \}\); \};/, "no-preview fallback still opens the file");
+  // the no-preview fallback still opens the file, per host: the viewer owns this pane on the web, and
+  // in VS Code the editor is the better answer (the webview can't reach the kernel origin to fetch it)
+  assert.match(FEED, /if \(canPreview\(\)\) openFileView\(p, it\.sid\);/);
+  assert.match(FEED, /else vscodeApi\?\.postMessage\(\{ type: "openFile", path: p, id: it\.sid \}\);/);
   assert.match(FEED_CSS, /\.fmodal-arts \{ margin-top: 12px;/);
 });
 

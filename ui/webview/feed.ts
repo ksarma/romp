@@ -17,7 +17,8 @@ import { badgeNotices, clearBoundaryNotices, sdkProblemNotices, syncNotices,
   type ClearNoticeRow, type SdkNoticeRow, type SyncNoticeRow } from "./badge-mirror";
 import { initStrip } from "./strip";
 import { installSettingsSync } from "./settings";
-import { previewThumb, previewKind } from "./preview";
+import { previewThumb, previewKind, canPreview } from "./preview";
+import { initFileView, openFileView } from "./file-view";
 import { VIEW_STATE_KEY, parseViewState, serializeViewState, pruneViewState, capViewState, type FeedViewState } from "./feed-view-state";
 
 // (The standalone-deliverable "FeedItem" subsystem was REMOVED 2026-07-07: the kernel had emitted
@@ -2267,7 +2268,13 @@ function applyModalArtifacts(host: HTMLElement, it: AskItem): void {
       const chip = el("button", "fmodal-art-chip");
       chip.textContent = name;
       chip.title = "open " + p;
-      chip.onclick = (ev: Event) => { ev.stopPropagation(); vscodeApi?.postMessage({ type: "openFile", path: p, id: it.sid }); };
+      // Web: show it right here (the viewer owns this pane). VS Code: the editor is the better answer,
+      // and the viewer's /file fetch can't reach the kernel origin from the webview anyway.
+      chip.onclick = (ev: Event) => {
+        ev.stopPropagation();
+        if (canPreview()) openFileView(p, it.sid);
+        else vscodeApi?.postMessage({ type: "openFile", path: p, id: it.sid });
+      };
       cell.appendChild(chip);
     }
     row.appendChild(cell);
@@ -4023,5 +4030,7 @@ setInterval(() => {
     if (it && t) t.textContent = relAge(now - it.t);
   }
 }, 15000);
+
+initFileView();   // the shell relays a chat file-link click here; the viewer takes over this pane
 
 vscodeApi?.postMessage({ type: "ready" });
