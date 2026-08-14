@@ -4048,7 +4048,7 @@ setInterval(() => {
   }
 }, 15000);
 
-initFileView();   // the shell relays a chat file-link click here; the viewer takes over this pane
+initFileView((m) => vscodeApi?.postMessage(m));   // the shell relays a chat file-link click here; the viewer takes over this pane (and saves ride the poster)
 initFileBrowse((m) => vscodeApi?.postMessage(m));   // …and a Browse files ask lands its sibling overlay
 
 vscodeApi?.postMessage({ type: "ready" });

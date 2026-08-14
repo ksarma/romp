@@ -11,7 +11,7 @@ zero protocol change at switchover. WS is hand-rolled on the stdlib socket (no d
 
 Run:  bin/romp-kernel   → opens http://127.0.0.1:29855
 """
-import json, os, queue, random, re, signal, socket, sys, time, threading, traceback, base64, bisect, errno, hashlib, hmac, struct, subprocess, shutil, shlex, http.client, uuid
+import json, os, queue, random, re, signal, socket, sys, time, threading, traceback, base64, bisect, errno, hashlib, hmac, struct, subprocess, shutil, shlex, http.client, uuid, tempfile, stat
 from pathlib import Path
 from datetime import datetime, timezone
 from importlib.machinery import SourceFileLoader
@@ -18699,6 +18699,59 @@ def _resolve_open_path(p, sid=None):
     return p
 
 
+def _httpdate(t):
+    """Epoch → the RFC 7231 form a Last-Modified header wears (the viewer's Date.parse reads it)."""
+    from email.utils import formatdate
+    return formatdate(t, usegmt=True)
+
+
+def _save_file(raw, sid, content, base_mtime):
+    """The viewer's raw-mode SAVE (plans/file-browser.md slice 2, the user 2026-08-14): write `content`
+    over an existing text file, atomically, refusing when the disk moved on. Returns (mtime, None) on
+    success, (None, error) on refusal — every refusal names the resolved path (fail loudly).
+
+    THE guard is optimistic concurrency: agents edit these same trees while a human has the viewer
+    open, and a silent last-writer-wins would eat one side's work. The client sends the mtime it
+    LOADED at (/file's Last-Modified); a newer mtime on disk refuses with reload-and-say-so — never a
+    merge, never an overwrite. Scope is exactly what raw mode can show: _is_text_path names within
+    _TEXT_MAX_BYTES, existing files only (no create in this slice). The write is temp-file +
+    os.replace in the SAME directory, mode preserved — a full disk or a kill mid-write leaves the
+    original intact, never a truncated file."""
+    p = _resolve_open_path(str(raw or ""), sid)
+    if not os.path.isabs(p):
+        return None, "cannot save %s: not an absolute path (no session cwd to resolve against)" % _tilde(p)
+    p = os.path.normpath(p)
+    if not _is_text_path(p):
+        return None, "cannot save %s: not a text file the viewer edits" % _tilde(p)
+    if not os.path.isfile(p):
+        return None, "cannot save %s: no such file (creating files is not a viewer edit)" % _tilde(p)
+    data = str(content or "").encode("utf-8")
+    if len(data) > _TEXT_MAX_BYTES:
+        return None, ("cannot save %s: %s exceeds the %s text cap"
+                      % (_tilde(p), _human_bytes(len(data)), _human_bytes(_TEXT_MAX_BYTES)))
+    try:
+        st = os.stat(p)
+        if int(st.st_mtime) != int(base_mtime or 0):
+            return None, ("%s changed on disk since you opened it — reload before editing "
+                          "(someone else, likely an agent, wrote it)" % _tilde(p))
+        d = os.path.dirname(p)
+        fd, tmp = tempfile.mkstemp(prefix=".romp-save-", dir=d)
+        try:
+            with os.fdopen(fd, "wb") as f:
+                f.write(data)
+            os.chmod(tmp, stat.S_IMODE(st.st_mode))   # the original's mode survives the replace
+            os.replace(tmp, p)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+        return int(os.stat(p).st_mtime), None
+    except OSError as ex:
+        return None, "cannot save %s: %s" % (_tilde(p), getattr(ex, "strerror", None) or str(ex))
+
+
 def _feed_artifacts(paths, sid):
     """The distiller's ARTIFACTS paths → the files a feed card may actually show. Resolved like a
     click-to-open (~ expanded, relative → the session's cwd) and existence-checked HERE, at feed build —
@@ -23210,10 +23263,15 @@ class Handler(BaseHTTPRequestHandler):
                               "too large to show: %s (%s, limit %s)"
                               % (_tilde(fp), _human_bytes(size), _human_bytes(cap)),
                               "text/plain")
+        # The file's mtime rides every success as Last-Modified: the viewer records it at load and
+        # sends it back as saveFile's baseMtime — the optimistic-concurrency floor that keeps a
+        # human's edit from silently overwriting an agent's concurrent write (slice 2 of the plan).
+        lastmod = _httpdate(os.path.getmtime(fp))
         if head:
             self.send_response(200)
             self.send_header("Content-Type", mime)
             self.send_header("Content-Length", str(size))   # the real length, no body (HEAD semantics)
+            self.send_header("Last-Modified", lastmod)
             self.send_header("X-Content-Type-Options", "nosniff")   # _send's guarantee, restated on the HEAD path
             self.send_header("Cache-Control", "no-cache")
             if getattr(self, "_cors_origin", None):         # the chat's fetch-HEAD probe rides CORS too
@@ -23227,8 +23285,8 @@ class Handler(BaseHTTPRequestHandler):
             body = _decode_text(raw)
             if body is None:                     # named like text, isn't — say so rather than serve garbage
                 return self._send(415, "not a text file: %s" % _tilde(fp), "text/plain")
-            return self._send(200, body, mime, cache="no-cache")
-        return self._send(200, raw, mime, cache="no-cache")
+            return self._send(200, body, mime, cache="no-cache", headers={"Last-Modified": lastmod})
+        return self._send(200, raw, mime, cache="no-cache", headers={"Last-Modified": lastmod})
 
     def _file_download(self, fp, head=False):
         """GET/HEAD /file?download=1 — the SAVE half of the route (the user 2026-08-09): any file that
@@ -24681,6 +24739,18 @@ class Handler(BaseHTTPRequestHandler):
                                  "sid": msg.get("sid") or ""},
                                 **_list_dir(msg.get("path"), msg.get("sid") or None,
                                             hidden=bool(msg.get("hidden")))))
+        elif msg and msg.get("type") == "saveFile":
+            # The viewer's raw-mode save (plans/file-browser.md slice 2). Routed by sid to the
+            # session-OWNING kernel like listDir, so a remote session's file saves on ITS machine.
+            # The reply is the ACK the client's Save button waits on; a refusal (the mtime conflict
+            # above all) rides back verbatim for the viewer to present — never a silent drop.
+            mt, err = _save_file(msg.get("path"), msg.get("sid") or None,
+                                 msg.get("content"), msg.get("baseMtime"))
+            if err:
+                _reply(client, {"type": "fileSaveFailed", "reqId": msg.get("reqId"), "error": err})
+            else:
+                _reply(client, {"type": "fileSaved", "reqId": msg.get("reqId"),
+                                "path": str(msg.get("path") or ""), "mtime": mt})
         elif msg and msg.get("type") == "browseDir":
             tgt = str(msg.get("target") or "picker")          # which dir field to fill: the new-session picker or the gear
             if not _native_dialogs():
@@ -24918,6 +24988,10 @@ class Handler(BaseHTTPRequestHandler):
             body = b"" if head else resp.read(_PREVIEW_MAX_BYTES + 1)
             status, ctype = resp.status, mime          # OUR mime, never resp.getheader("Content-Type")
             clen = resp.getheader("Content-Length")
+            # Last-Modified is MIRRORED, unlike Content-Type: it is data about the remote's file (the
+            # save-conflict floor rides on it), not an instruction to this browser — nothing executes
+            # off a date, and deriving it locally would be a lie about a remote disk.
+            lastmod = resp.getheader("Last-Modified")
         except (OSError, http.client.HTTPException):
             return self._send(502, b"" if head else ("tunnel to %s is not answering" % host), "text/plain")
         finally:
@@ -24933,6 +25007,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", ctype)
             if clen is not None:
                 self.send_header("Content-Length", clen)
+            if lastmod:
+                self.send_header("Last-Modified", lastmod)
             self.send_header("X-Content-Type-Options", "nosniff")   # _send's guarantee, restated on the HEAD path
             self.send_header("Cache-Control", "no-cache")
             if getattr(self, "_cors_origin", None):
@@ -24940,7 +25016,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header("Vary", "Origin")
             self.end_headers()
             return
-        return self._send(status, body, ctype, cache="no-cache")
+        return self._send(status, body, ctype, cache="no-cache",
+                          headers={"Last-Modified": lastmod} if lastmod else None)
 
     def _relay_download(self, host, port, rtok, q, head=False):
         """GET/HEAD /remote/<host>/file?download=1 — the download half of the relay. Forwards the one

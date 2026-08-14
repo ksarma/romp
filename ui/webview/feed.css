@@ -1336,3 +1336,11 @@ body.filebrowse-open { overflow: hidden; }
 #fb-ctx { z-index: 950; }
 /* the way above a "~"-rooted trail: the kernel-sent parent, worn as a dim leading crumb */
 .fb-crumb-up { opacity: 0.65; }
+/* the raw-mode editor (slice 2): a plain textarea wearing the code view's own metrics — an editor
+   component is a different project; a textarea that keeps your changes beats a half-editor */
+.fileview-editor { flex: 1 1 auto; min-height: 0; width: 100%; box-sizing: border-box;
+  margin: 0; padding: 10px 12px; border: none; outline: none; resize: none;
+  background: var(--bg, #1e1e1e); color: var(--fg);
+  font-family: var(--mono, ui-monospace, monospace); font-size: 12px; line-height: 1.5;
+  white-space: pre; tab-size: 4; }
+.fileview-editor:focus { box-shadow: inset 0 0 0 1px rgba(156, 210, 255, 0.35); }
