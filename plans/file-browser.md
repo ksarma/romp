@@ -141,8 +141,11 @@ existing viewer, and is upstream-relevant on its own (upstream ships the same ga
   clickable — "browse this file's folder." This is the discoverability path: anyone who has
   ever opened a file link learns the browser exists by hovering the path they're already
   looking at.
-- The statusline's 📁 keeps its current OS-open behavior (changing it is a separate
-  decision — see open questions).
+- **The statusline's 📁 opens the browser** at the session's cwd (the user's call,
+  2026-08-14) — the affordance that works from every device, where the old OS-open acted on
+  the KERNEL's machine (the same wrong-machine class the 📎 picker and file-link clicks were
+  cured of). OS-open moves to the row's context menu for the genuinely-local case, keeping
+  the existing `openFolder` delegate as its action.
 
 ### Browser ↔ viewer: the navigation stack
 
@@ -265,20 +268,19 @@ filesystem watching, and a shell-rail session-free entry point. Each is a cohere
 layer; none blocks the core loop of *navigate → glance → open*. The raw-mode edit is designed
 above and recommended as the slice immediately after.
 
-## Open questions for the user
+## Decisions (the user, 2026-08-14 — formerly the open questions)
 
-1. **The statusline 📁**: today it OS-opens the folder on the *kernel's* machine — the wrong
-   machine whenever the dashboard is read remotely (the same class as the old `openFile` bug).
-   Should it open the browser instead, with OS-open demoted to the row's context menu? V1
-   keeps it unchanged pending this call.
-2. **A session-free entry point** (browse from the shell rail, starting at the default dir):
-   wanted in v1, or is session-anchored + walk-anywhere enough?
-3. **Edit sequencing**: the raw-mode edit is designed above; the recommendation is
-   read-only browser first, edits as the immediate next slice. Fine, or should they ship
-   together?
+1. **The statusline 📁 opens the browser**; OS-open on the kernel's machine demotes to the
+   row's context menu (folded into the entry-points section above).
+2. **No session-free entry point in v1** — session-anchored + walk-anywhere is enough; a
+   shell-rail entry (and its which-host question) waits for the need to actually show up.
+3. **Edits ship as the second slice**, immediately after the read-only browser lands, as
+   their own reviewable PR.
+4. **The remote-text relay fix ships now**, standalone — it is a bug in today's viewer
+   regardless of the browser, and it goes ahead of this plan's build call.
 
 ## Upstream
 
 Pure feature, no fork-specific content: on landing, two candidate rows — the browser itself,
-and the relay text-view fix (a standalone bug upstream shares). The offer decisions belong to
-the offer flow, not this plan.
+and the relay text-view fix (a standalone bug upstream shares, shipping first — see decision
+4). The offer decisions belong to the offer flow, not this plan.
