@@ -1297,3 +1297,38 @@ body.fileview-open { overflow: hidden; }
 .fitem.ask:hover .fask-bellbtn { visibility: visible; }
 .fitem.ask .fask-bellbtn:hover { opacity: 1; background: rgba(255, 255, 255, 0.10); }
 .fask-bellbtn.on { visibility: visible; opacity: 0.85; color: var(--accent); }
+
+/* ── the file BROWSER (plans/file-browser.md) ── the viewer's sibling overlay, one z layer BENEATH it
+   so a file opened from a listing overlays the listing and closing the file returns to it. Same
+   pane-takeover reasoning as .fileview; body.filebrowse-open stops the cards scrolling behind it. */
+.filebrowse { position: fixed; inset: 0; z-index: 890; display: flex; flex-direction: column;
+  background: var(--bg, #1e1e1e); }
+body.filebrowse-open { overflow: hidden; }
+.fb-bar { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; min-width: 0;
+  padding: 7px 10px; border-bottom: 1px solid var(--box-border); }
+/* the breadcrumb is the up affordance: every ancestor is a click, and it survives a listing error so
+   there is never a dead end */
+.fb-crumbs { flex: 1 1 auto; min-width: 0; font-size: 0.86em; color: var(--dim);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; }
+.fb-crumbs > * { direction: ltr; unicode-bidi: isolate; }
+.fb-crumb { cursor: pointer; }
+.fb-crumb:hover { color: var(--accent); text-decoration: underline; }
+.fb-crumb:last-child { color: var(--fg); }
+.fb-crumb-sep { margin: 0 3px; opacity: 0.6; }
+.fb-list { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 4px 0; }
+/* compact one-line rows (progressive disclosure): marker + name, size right-aligned on files; mtime
+   and the full path live in the row's hover title */
+.fb-row { display: flex; align-items: baseline; gap: 8px; padding: 4px 14px; cursor: pointer;
+  font-size: 0.86em; }
+.fb-row:hover, .fb-row.active { background: rgba(255, 255, 255, 0.07); }
+.fb-row.active { outline: 1px solid rgba(156, 210, 255, 0.35); outline-offset: -1px; }
+.fb-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; font-family: var(--mono, ui-monospace, monospace); }
+.fb-dir .fb-name { color: var(--accent); }
+.fb-size { flex: 0 0 auto; margin-left: auto; color: var(--dim); font-size: 0.92em; }
+/* download-only rows are dimmed and say so up front (server-side `viewable`) — honest, not dead */
+.fb-dlonly .fb-name { color: var(--dim); }
+.fb-more { padding: 6px 14px; color: var(--dim); font-size: 0.82em; }
+/* the viewer's directory half is the click into the BROWSER — the discoverability path */
+.fileview-dir-link { cursor: pointer; }
+.fileview-dir-link:hover { color: var(--accent); text-decoration: underline; }

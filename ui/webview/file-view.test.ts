@@ -39,7 +39,9 @@ test("the shell relays chat → feed, and restores a pane it had to turn on", ()
   // a feed pane the user had toggled OFF is turned on for the viewer and put back on close — the viewer
   // must never silently rearrange the layout they chose
   assert.match(KERNEL, /window\.__rompFeedWasOff=true;/);
-  assert.match(KERNEL, /if\(m\.romp==='viewFileClosed'&&window\.__rompFeedWasOff\)\{window\.__rompFeedWasOff=false;/);
+  // both overlays restore through one gate (plans/file-browser.md): the browser suppresses the viewer's
+  // close message while it sits beneath, so whichever message arrives is the LAST overlay leaving
+  assert.match(KERNEL, /if\(\(m\.romp==='viewFileClosed'\|\|m\.romp==='browseClosed'\)&&window\.__rompFeedWasOff\)\{window\.__rompFeedWasOff=false;/);
   assert.match(KERNEL, /window\.__rompMobileTab&&window\.__rompMobileTab\('feed'\)/, "phone: one pane at a time");
   assert.match(KERNEL, /window\.__rompMobileTab=show;/, "…which means the mobile switcher has to be exposed");
 });
