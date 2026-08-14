@@ -70,6 +70,25 @@ scan_identifiers() {
                 echo "$hits" | sed "s/^$rev:/  /" >&2
                 blocked_ids=1
             fi
+            # SYMLINKS are invisible to git grep — it searches regular-file blobs only, so a link
+            # whose TARGET is a home path sails straight through the scan above. That is not
+            # hypothetical: a `node_modules -> /home/<user>/code/romp/...` link created to run the
+            # extension tests in a worktree was swept up by `git add -A` and pushed to a public
+            # branch, and the upstream maintainer found it, not this hook (2026-08-13). A symlink's
+            # target IS its content once committed, so scan those blobs directly.
+            if links=$(git ls-tree -r "$rev" 2>/dev/null | grep '^120000 '); then
+                while IFS= read -r link; do
+                    [ -n "$link" ] || continue
+                    lsha=${link#* * }; lsha=${lsha%%[[:space:]]*}
+                    lpath=${link#*$'\t'}
+                    ltarget=$(git cat-file -p "$lsha" 2>/dev/null)
+                    if printf '%s' "$ltarget" | grep -qi -F "${grep_args[@]}"; then
+                        echo "romp pre-push: commit ${rev:0:10} would publish a personal identifier" >&2
+                        echo "  in the SYMLINK TARGET of $lpath -> $ltarget" >&2
+                        blocked_ids=1
+                    fi
+                done <<< "$links"
+            fi
         done
     done <<< "$refs"
 
