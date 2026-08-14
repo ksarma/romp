@@ -52,7 +52,8 @@ test("the viewer is a singleton that fills the pane and always tells the shell w
   // Esc and ✕ are the same close path, so the shell's restore can't be skipped by one of them
   assert.match(VIEW, /close\.addEventListener\("click", closeFileView\);/);
   assert.match(VIEW, /if \(e\.key !== "Escape" \|\| !document\.getElementById\("romp-fileview"\)\) return;/);
-  assert.match(FEED, /initFileView\(\);/, "the feed boots the listener");
+  assert.match(FEED, /initFileView\(\(m\) => vscodeApi\?\.postMessage\(m\)\);/,
+    "the feed boots the listener with the WS poster (saves ride it — slice 2)");
   assert.match(FEED_CSS, /\.fileview \{ position: fixed; inset: 0;/);
 });
 
@@ -219,7 +220,8 @@ test("the Wrap toggle persists, hides with rendered prose, and its numbers still
   assert.match(FEED_CSS, /\.fileview-wrap \.fv-cl::before \{[\s\S]*?counter-increment: fvln/);
   assert.match(FEED_CSS, /\.fileview-wrap \.fv-cl::before \{[\s\S]*?user-select: none/);
   // wrap governs the pre view only — rendered prose always wraps — so the button leaves with it
-  assert.match(VIEW, /wrapBtn\.hidden = rendered;/);
+  // (and with edit mode, whose textarea has no wrap toggle to govern — slice 2)
+  assert.match(VIEW, /wrapBtn\.hidden = rendered \|\| editing;/);
   assert.match(VIEW, /wrapBtn\.classList\.toggle\("on", fmt\.wrap\);/, "pressed state flips synchronously");
 });
 
