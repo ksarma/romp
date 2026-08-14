@@ -1,11 +1,16 @@
 # A file browser for the dashboard
 
-**Status: PROPOSED, NOT COMMITTED** — the user asked for this plan (2026-08-14): a general
-file-browsing ability for the dashboard, to look around a repo and inspect files directly,
-with the UX thought through before anything is built; a follow-up ask the same day added
-"consider allowing edits in raw mode" (designed below, recommended as the second slice).
-Nothing here is scheduled. File:line references describe the repo at v0.11.0-merge time
-(`main` = `c032e815`).
+**Status: SHIPPED** — both slices landed 2026-08-14: the read-only browser as fork PR #67 and
+the raw-mode edits as PR #70, each hardened by an adversarial review pass before merging
+(eight confirmed defects fixed on slice 1, nine on slice 2 — several of the latter data-loss
+paths: the in-flight-typing ack loss, latin-1 re-encoding with an executed repro, the
+whole-second mtime guard). The reviews changed real design details versus this plan: the
+overlay stack became strictly one-directional (opening the browser closes an open viewer),
+the conflict anchor moved from Last-Modified seconds to a string-typed `X-Romp-Mtime-Ns`,
+Edit gates on a `X-Romp-Text-Utf8` verdict, and CRLF files round-trip via dominant-EOL
+restore. This doc records the design as commissioned (the user 2026-08-14, who asked for the
+UX to be thought through first) plus the four decisions that resolved its open questions;
+file:line references describe the repo at v0.11.0-merge time (`main` = `c032e815`).
 
 ## The gap
 
