@@ -180,7 +180,10 @@ class RailRendering(unittest.TestCase):
         # graphs are gone everywhere (2026-08-08, morning: they told you nothing)
         self.assertIn("'<div class=ru-name>API</div>'", self.js)
         self.assertNotIn("_tail", self.js)
-        self.assertIn("seg('fiveHour','5 hours')+seg('month','Month')", self.js)
+        # pay-per-token wears calendar-ish windows (the user 2026-08-13): 1 day + 1 month on the cell
+        # (1 week rides the hover); day||fiveHour keeps an older remote's spend visible (version skew)
+        self.assertIn("seg('day','1 day')+seg('month','1 month')", self.js)
+        self.assertIn("var d=sp.day||sp.fiveHour,m=sp.month;", self.js)
         self.assertIn("'<div class=ru-pct>'+fmtUsd(sum[k].usd)+' · '+fmtTok(sum[k].tok)+' tok</div>'", self.js)
         self.assertNotIn("spendColor", self.js)
         self.assertNotIn("spendWinsHTML", self.js)
@@ -193,7 +196,10 @@ class RailRendering(unittest.TestCase):
         # and the spend rows are numbers only — no track span
         self.assertIn("function winDet(u,det)", self.js)
         self.assertIn("winDet(r.usage,det);spendDet(r.usage,det);", self.js)
-        self.assertIn("<span>API spend</span>", self.js)
+        # spend is ONE fleet-level section now (the user 2026-08-13): one shared key, one number,
+        # "· N machines" when several — never a per-host repeat
+        self.assertIn("function fleetSpendHTML(sets)", self.js)
+        self.assertIn("API spend'+(hosts>1?' · '+hosts+' machines':'')", self.js)
         self.assertIn("' tok · '+(v.turns||0)+' turns</span>", self.js)
 
     def test_the_account_wide_notices_read_off_THIS_machine(self):

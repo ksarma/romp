@@ -63,3 +63,35 @@ test("the kernel split happens in the ONE shared derivation (_session_chip), not
   assert.match(KERNEL, /"working" if open_now else\n/);
   assert.match(KERNEL, /"awaitingBg" if awaiting_why else "ready"\)/);
 });
+
+test("the awaiting WHY lives in the background box, not the statusline (the user 2026-08-13, twice)", () => {
+  // the kernel ships the why + the live awaited task descriptions in the chat status payload…
+  assert.match(KERNEL, /"awaitingWhy": awaiting_why or None,/);
+  assert.match(KERNEL, /"awaitingTasks": \(_awaiting_task_descs\(sid, sess\["path"\]\) if awaiting_why else \[\]\),/);
+  // …the statusline branch stays chip + clock ONLY — the reason line PR #350 put beside the chip
+  // crowded the composer area, and the user moved it the same day
+  const branch = RENDER.split('state === "awaitingBg") {')[1].split("} else if")[0];
+  assert.doesNotMatch(branch, /sl-await-why/);
+  assert.doesNotMatch(STYLES, /sl-await-why/);
+  // …and the #bg-tasks box renders it when no tracked tasks claim the box: the same fold treatment
+  // (straw dot, verb-stripped header), expanding to the full why, the awaited items when there are
+  // several, and a plain-words note on what the state means. No Stop — nothing untracked is killable.
+  assert.match(RENDER, /\{ renderAwaitWhy\(host, s \|\| null\); return; \}/);
+  assert.match(RENDER, /"bg-fold-head bg-await"/);
+  assert.match(RENDER, /"Awaiting · " \+ why\.replace\(\/\^\(waiting on\|awaiting\)\\s\+\/i, ""\)/);
+  assert.match(RENDER, /if \(items\.length > 1\)/);
+  assert.match(RENDER, /bg-await-note/);
+  assert.doesNotMatch(RENDER.split("function renderAwaitWhy")[1].split("\n}")[0], /bg-stop/);
+  assert.match(STYLES, /\.bg-fold-head\.bg-await \{ --bgt: var\(--st-awaitbg-bg\); \}/);
+});
+
+test("the timeline lane's awaitingBg why reads the SAME working signal as its badge (same input, 2026-07-03 rule)", () => {
+  // the skeleton build's raw-snapshot open_now fed _session_awaiting while the chip read the event
+  // model — a lane badge could say Awaiting with a null why beside it (audited live 2026-08-13)
+  assert.match(KERNEL, /aw_open = _session_working\(comp_sess\["turns"\]\) if comp_sess is not None else open_now/);
+  assert.match(KERNEL, /_session_awaiting\(sid, s\["path"\], not aw_open, stamp=True\) if live else None/);
+  // the awaiting stretch's hover labels the wait with the state's one word
+  const TL = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "romp-timeline-view.js"), "utf8");
+  assert.match(TL, /– awaiting…/);
+  assert.doesNotMatch(TL, /– waiting…/);
+});

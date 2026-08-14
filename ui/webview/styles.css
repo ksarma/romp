@@ -456,6 +456,7 @@ body { display: flex; flex-direction: column; }
 .bg-stop:disabled { opacity: 0.55; cursor: default; }
 .bg-fold-head.bg-failed { --bgt: var(--st-blocked-bg); }
 .bg-fold-head.bg-completed { --bgt: var(--st-ready-bg); }
+.bg-fold-head.bg-await { --bgt: var(--st-awaitbg-bg); }   /* the Awaiting why header — straw, like its chip */
 .bg-fold-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); }
 /* level 2: a flat list of task LINES (no boxes) BELOW the header, fills the box and scrolls when many */
 .bg-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
@@ -478,6 +479,10 @@ body { display: flex; flex-direction: column; }
   font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; color: #cdd9e5;
   white-space: pre-wrap; word-break: break-word; max-height: 220px; overflow: auto; overscroll-behavior: contain; }
 .bg-cmd { color: #9cd2ff; }
+/* the Awaiting why's expanded body: the full sentence, the awaited items, a plain-words note */
+.bg-await-why { font-size: 12px; color: var(--fg); margin: 4px 0 0; }
+.bg-await-task { font-size: 12px; color: var(--dim); margin-top: 3px; }
+.bg-await-note { font-size: 11px; color: var(--dim); opacity: .8; margin-top: 6px; }
 
 #footer {
   position: relative;   /* anchors #composer-resize on the top-edge divider */
@@ -1171,16 +1176,15 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
 }
 .slash-cmd-args { margin-left: 7px; }
 /* A slash COMMAND turn is a user GESTURE, not a message (the user 2026-08-13): it changes something
-   rather than saying something — so it sheds the blue bubble and reads in the system-event family
-   (the ✦ dividers): a dim, left-aligned, full-width row with the ✦ mark, the mono chip, the args. */
-.turn-user.turn-cmd:not(.injected) { align-items: flex-start; }
+   rather than saying something — so it sheds the blue bubble for the ✦ + mono-chip dress, but stays on
+   the USER's side of the chat (the user 2026-08-13, round 2: it is still something they did, so it sits
+   where their messages sit — right-aligned, riding .turn-user's own flex-end). */
 .user-bubble.cmd-row { max-width: none; background: none; border: none; border-radius: 0;
   padding: 2px 0; color: var(--dim); }
 .user-bubble.cmd-row::before { content: "✦"; margin-right: 8px; color: var(--dim); }
 .user-bubble.cmd-row .slash-cmd-chip { background: var(--code-bg); color: var(--fg);
   border-color: var(--box-border); }
 .user-bubble.cmd-row .slash-cmd-args { color: var(--dim); }
-.turn-cmd .msg-acts { align-self: flex-start; }   /* the hover actions follow the row to the left */
 /* ---------- romp-injected message (a feed nudge / follow-up) ----------
    A GRAY bubble in the SAME right-aligned spot as the blue user bubble (so it sits where "an outgoing
    message" goes), but clearly NOT you — gray, with a small "↯ romp" tag above it (the user 2026-06-19).
@@ -1208,6 +1212,14 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
 .romp-bubble .nudge-full { display: none; }
 .romp-bubble.expanded .nudge-full { display: block; }
 .romp-bubble.expanded .nudge-gist { display: none; }
+/* The Continue button's reply wears the SAME fold in the USER family (the user 2026-08-13): your
+   gesture in your colour — blue, judge-filed as your reply — but not your prose, so the gist speaks
+   and the canned words sit one click deeper. White-on-blue, not the dim gray of romp bookkeeping. */
+.user-bubble.nudge-collapsible { cursor: pointer; }
+.user-bubble .nudge-gist, .user-bubble .nudge-caret { color: rgba(255, 255, 255, 0.92); }
+.user-bubble .nudge-full { display: none; }
+.user-bubble.expanded .nudge-full { display: block; }
+.user-bubble.expanded .nudge-gist { display: none; }
 /* QUEUED: the user's messages submitted while the session is still working — pending,
    not yet a turn. Right-aligned like his sent bubbles, but faint + dashed to read
    as "waiting", with a header count. (Mirrors the queue Claude Code shows.) */
@@ -2329,3 +2341,130 @@ body.picker-lifted > #picker.kb-tight { align-items: flex-start; padding: 12px 1
 .mcp-act:disabled { opacity: 0.55; cursor: default; }
 .mcp-err { flex: 1 1 100%; color: #E5534B; }
 .mcp-none { color: var(--dim); }
+
+/* ── comment threads (the user 2026-08-13) ─────────────────────────────────────────────────────────
+   A highlighted passage wears a <mark> in the romp accent (highlight chrome — var(--accent), never a
+   status color); its turn carries a small count badge so the thread stays reachable even when the
+   rendered text drifts and the exact-match mark can't land. The popover is a pane-local card on the
+   menu vocabulary (#252526, hairline border, 6px radius, the .ctx-menu shadow) — deliberately NOT a
+   dimmed modal: the conversation stays readable beside the thread. */
+/* A SOLID tint, not a dashed underline (the user 2026-08-13: "like a comment would be on Google
+   Docs") — the underline read as a link, not a highlight. Unread strengthens the same tint rather
+   than adding a second cue, so "there's something to read" stays legible at a glance. */
+mark.cmt-hl {
+  background: color-mix(in srgb, var(--accent) 32%, transparent);
+  color: inherit;
+  border-radius: 2px;
+  cursor: pointer;
+}
+mark.cmt-hl:hover { background: color-mix(in srgb, var(--accent) 46%, transparent); }
+mark.cmt-hl.resolved { background: rgba(255, 255, 255, 0.08); }
+mark.cmt-hl.unread { background: color-mix(in srgb, var(--accent) 44%, transparent); }
+mark.cmt-hl.busy { animation: cmt-busy-pulse 1.2s ease-in-out infinite; }
+@keyframes cmt-busy-pulse { 50% { background: color-mix(in srgb, var(--accent) 50%, transparent); } }
+
+.turn.has-cmt { position: relative; }
+.cmt-badge {
+  position: absolute; top: 2px; right: 4px; z-index: 5;
+  min-width: 16px; height: 16px; padding: 0 4px;
+  border: 1px solid var(--box-border); border-radius: 8px;
+  background: var(--vscode-menu-background, #252526);
+  color: var(--accent); font-size: 10px; line-height: 14px;
+  cursor: pointer; opacity: 0.75;
+}
+.cmt-badge:hover { opacity: 1; }
+.cmt-badge.unread { border-color: var(--accent); opacity: 1; }
+.cmt-badge.busy { animation: cmt-busy-pulse 1.2s ease-in-out infinite; }
+
+.cmt-pop {
+  position: fixed; z-index: 120; width: 360px; max-width: 94vw;
+  display: flex; flex-direction: column; gap: 6px; padding: 8px;
+  background: var(--vscode-menu-background, #252526);
+  color: var(--vscode-menu-foreground, var(--fg));
+  border: 1px solid var(--box-border); border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+  font-size: 12px;
+}
+.cmt-head { display: flex; align-items: center; cursor: grab; user-select: none; }
+.cmt-head.dragging { cursor: grabbing; }
+.cmt-head .cmt-x { cursor: pointer; }
+.cmt-title { font-weight: 600; }
+.cmt-x {
+  margin-left: auto; padding: 0 4px; border: 0; background: none;
+  color: inherit; opacity: 0.6; font-size: 14px; cursor: pointer;
+}
+.cmt-x:hover { opacity: 1; }
+.cmt-quote {
+  padding: 4px 8px; border-left: 2px solid var(--accent); border-radius: 2px;
+  background: rgba(255, 255, 255, 0.04);
+  font-size: 0.92em; opacity: 0.75;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+.cmt-msgs { max-height: 45vh; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+.cmt-msg { padding: 5px 8px; border-radius: 6px; line-height: 1.35; overflow-wrap: anywhere; }
+.cmt-msg.you { background: color-mix(in srgb, var(--accent) 14%, transparent); align-self: flex-end; max-width: 92%; white-space: pre-wrap; }
+.cmt-msg.agent { background: rgba(255, 255, 255, 0.05); align-self: flex-start; max-width: 96%; }
+.cmt-msg.agent > *:first-child { margin-top: 0; }
+.cmt-msg.agent > *:last-child { margin-bottom: 0; }
+.cmt-msg.pending { opacity: 0.55; }
+.cmt-dots { display: flex; gap: 4px; padding: 2px 6px; }
+.cmt-dots span {
+  width: 5px; height: 5px; border-radius: 50%; background: var(--accent);
+  animation: cmt-dot-pulse 1.2s ease-in-out infinite;
+}
+.cmt-dots span:nth-child(2) { animation-delay: 0.2s; }
+.cmt-dots span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes cmt-dot-pulse { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
+.cmt-note { font-size: 0.92em; opacity: 0.7; padding: 2px 6px; }
+.cmt-input {
+  width: 100%; box-sizing: border-box; resize: vertical; min-height: 34px;
+  padding: 5px 7px; border: 1px solid var(--box-border); border-radius: 4px;
+  background: rgba(255, 255, 255, 0.05); color: inherit;
+  font: inherit;
+}
+.cmt-input:focus { outline: none; border-color: var(--accent); }
+.cmt-actions { display: flex; gap: 6px; align-items: center; }
+.cmt-send {
+  padding: 3px 10px; border: 0; border-radius: 4px; cursor: pointer;
+  background: var(--accent); color: var(--accent-fg); font: inherit; font-weight: 600;
+}
+.cmt-send:disabled { opacity: 0.55; cursor: default; }
+.cmt-act {
+  padding: 3px 8px; border: 1px solid var(--box-border); border-radius: 4px; cursor: pointer;
+  background: none; color: inherit; font: inherit; opacity: 0.85;
+}
+.cmt-act:hover { opacity: 1; background: rgba(255, 255, 255, 0.06); }
+.cmt-act.cmt-del.armed { border-color: var(--st-blocked-bg, #c94f4f); color: var(--st-blocked-bg, #c94f4f); }
+.cmt-note.cmt-err { color: var(--st-blocked-bg, #c94f4f); opacity: 0.9; }
+
+/* ── branch lineage (the user 2026-08-13: branching must show) ────────────────────────────────────
+   The child's divider marks where its history splits from the parent's — an accent hairline with a
+   clickable label that jumps to the parent at the branch point. The parent wears a small chip on
+   the departed-from turn, jumping the other way. Accent = highlight chrome, per the accent rule. */
+.turn-branchmark { padding: 2px 0; }
+.branch-divider {
+  display: flex; align-items: center; gap: 8px;
+}
+.branch-divider::before, .branch-divider::after {
+  content: ""; flex: 1; height: 1px;
+  background: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.branch-label {
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: 10px; padding: 1px 10px; cursor: pointer;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: inherit; font: inherit; font-size: 0.82em; opacity: 0.85;
+}
+.branch-label:hover { opacity: 1; background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.branch-chips {
+  position: absolute; top: 2px; right: 24px; z-index: 5;
+  display: flex; gap: 4px;
+}
+.cmt-badge ~ .branch-chips, .turn:has(> .cmt-badge) .branch-chips { right: 28px; }
+.branch-chip {
+  height: 16px; padding: 0 6px; border: 1px solid var(--box-border); border-radius: 8px;
+  background: var(--vscode-menu-background, #252526);
+  color: var(--accent); font-size: 10px; line-height: 14px;
+  cursor: pointer; opacity: 0.75; white-space: nowrap;
+}
+.branch-chip:hover { opacity: 1; border-color: var(--accent); }

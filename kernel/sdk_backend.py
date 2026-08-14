@@ -229,6 +229,10 @@ def _block_to_dict(b):
 # UserMessages wrapped in these markers, and the LIVE atom must classify them exactly like the file
 # adapter classifies the matching transcript records.
 _COMMAND_NAME_RE = re.compile(r"^\s*<command-name>([^<]*)</command-name>")
+# …and the tag ANYWHERE inside a wrapper record (the event model's COMMAND_NAME_ANY_RE twin): a SKILL /
+# custom command writes <command-message> first, so the anchored form missed it and the live stream
+# swallowed the invocation as wrapper noise (2026-08-13 — the same shape the file adapter fixed 2026-07-22).
+_COMMAND_NAME_ANY_RE = re.compile(r"<command-name>([^<]*)</command-name>")
 _COMMAND_ARGS_RE = re.compile(r"<command-args>([\s\S]*?)</command-args>")
 _LOCAL_STDOUT_RE = re.compile(r"^\s*<local-command-stdout>([\s\S]*?)</local-command-stdout>")
 _CMD_WRAP_RE = re.compile(r"^\s*<(?:command-(?:name|message|args|contents)|local-command-(?:stdout|caveat))>")
@@ -298,7 +302,8 @@ def msg_to_atom(msg, sid, fsid, t, skill_tool_ids=()):
             return None
         text = " ".join(b.get("text", "") for b in content
                         if isinstance(b, dict) and b.get("type") == "text")
-        mcmd = _COMMAND_NAME_RE.match(text)
+        mcmd = _COMMAND_NAME_RE.match(text) or (_COMMAND_NAME_ANY_RE.search(text)
+                                                if _CMD_WRAP_RE.match(text) else None)
         if mcmd:                                     # the command INVOCATION → the command-flagged user atom
             name = mcmd.group(1).strip() or "/?"
             if not name.startswith("/"):
@@ -2637,6 +2642,14 @@ class SdkSession:
                 #   ready the moment it can take a message instead of wearing the opening dots until
                 #   its first turn writes a transcript (the user 2026-08-08, whose fresh session sat
                 #   on animated dots for minutes while fully up)
+                "spawning": not self.client,   # the spawn/handshake window is open RIGHT NOW (this
+                #   thread is up, the client isn't yet) — the ONLY window the kernel's opening chip
+                #   may cover. Its ABSENCE must mean "not opening": the chip once keyed on `connected`
+                #   being falsy, which a DORMANT created session also reports (a kernel restart kills
+                #   idle CLIs, boot reconcile leaves them lazy, and a never-messaged session has no
+                #   transcript either) — so the dots outlived the create by hours when one message
+                #   would wake it in seconds (the user 2026-08-13). Dormant rows carry no spawning
+                #   key at all, so they read ready.
                 "fast": self.fast,   # fast-mode state from init ("on"/"off"/"cooldown"; "" = unknown → no badge)
                 "fastReason": self.fast_reason,   # init's disabled_reason — non-empty hides the chat toggle
                 "retryCount": self.retry_count,   # api_retry backoff attempts in the current storm → the live 'attempt N' in the chat's retrying element
@@ -2717,6 +2730,7 @@ class SdkBackend:
         self._pending_ask: dict[str, bool] = {}   # sid -> has an ask awaiting answer
         self._live: dict[str, dict] = {}          # sid -> {key -> atom}: the in-memory LIVE TAIL (ahead of disk)
         self._rl_lock = threading.Lock()          # serializes usage.json read-merge-write (_record_rate_limit)
+        self._fork_children_memo = None           # (sdk/ dir mtime_ns, {parent sid: [child lineage]}) — fork_children()
         self.work_key = work_api_key()            # the manager env's API key, claimed out of os.environ
         #   ("" = none): per-session auth injects it via _options; its presence is the "key" half of
         #   the availability the kernel publishes to the picker/gear (the user 2026-08-08)
@@ -3146,7 +3160,42 @@ class SdkBackend:
             except Exception:
                 self._log("usage.json write failed: %s" % traceback.format_exc())   # never silent
                 return
+            self._record_usage_history(data)
         self._poke()
+
+    def _record_usage_history(self, data, now=None) -> None:
+        """Append the reading to usage-history.json — the hover graphs' time base (the user 2026-08-13:
+        the window bars kept only the CURRENT snapshot, so nothing could be graphed). Same bounded-hours
+        shape as spend.json so both series share one x-axis: per hour keep the MAX pct seen per window
+        (utilization only climbs within a window; a ROLL is a new resets_at, which takes the fresh
+        reading outright), pruned to 192 hours — 8 days covers the 7-day graph. Caller holds _rl_lock;
+        a write failure logs and never blocks the snapshot that fed it. `now` stamps the hour bucket,
+        injectable so a frozen-clock caller (tests) never straddles an hour boundary mid-assertion."""
+        p = self.state_dir / "usage-history.json"
+        try:
+            hist = json.loads(p.read_text())
+        except Exception:
+            hist = {}
+        hours = hist.get("hours") if isinstance(hist, dict) and isinstance(hist.get("hours"), dict) else {}
+        hour = time.strftime("%Y-%m-%dT%H", time.localtime(time.time() if now is None else now))
+        ent = hours.get(hour) if isinstance(hours.get(hour), dict) else {}
+        ent["acct"] = data.get("acct") or ""
+        for k in ("five_hour", "seven_day", "fable"):
+            s = data.get(k)
+            if not (isinstance(s, dict) and isinstance(s.get("pct"), (int, float))):
+                continue
+            prev = ent.get(k) if isinstance(ent.get(k), dict) else None
+            if not prev or s.get("resets_at") != prev.get("ra") or int(s["pct"]) >= int(prev.get("pct") or 0):
+                ent[k] = {"pct": int(s["pct"]), "ra": s.get("resets_at")}
+        hours[hour] = ent
+        for k in sorted(hours)[:-192]:
+            hours.pop(k, None)
+        try:
+            tmp = self.state_dir / "usage-history.json.tmp"
+            tmp.write_text(json.dumps({"hours": hours}))
+            os.replace(tmp, p)
+        except Exception:
+            self._log("usage-history.json write failed: %s" % traceback.format_exc())
 
     def _record_rate_limit(self, info) -> None:
         """Persist the account-wide rate-limit /usage the CLI streams as a RateLimitEvent — the SDK's DESIGNED
@@ -3239,6 +3288,7 @@ class SdkBackend:
             except Exception:
                 self._log("usage.json write failed: %s" % traceback.format_exc())   # never silent (the user 2026-07-02)
                 return
+            self._record_usage_history(data)
         self._poke()   # nudge the producer so the rail re-reads usage.json promptly, not on the next backstop
 
     # ---- logging / wakeups ----
@@ -3423,7 +3473,7 @@ class SdkBackend:
         return sid
 
     def fork(self, name: str, parent_sid: str, cut_uuid: str = "", bg: str = "", fg: str = "",
-             sid: str | None = None) -> str:
+             sid: str | None = None, thread_of: str = "") -> str:
         """Mint a NEW session that is a FORK of `parent_sid`'s conversation — up to `cut_uuid` when given
         (a transcript record uuid; empty = the whole conversation), the parent untouched either way (the
         user 2026-08-13). The new session gets its OWN sid, registry, name and identity colour — a fork
@@ -3432,7 +3482,18 @@ class SdkBackend:
         into resume + fork_session + session_id (+ resume-session-at) on first connect; the init's
         lastSid flip to this sid spends the flags. Model / effort / mode / auth inherit from the parent —
         it is that conversation, continued elsewhere. Resumable by construction: a fork whose CLI dies
-        before init still carries the flags and retries on the next connect."""
+        before init still carries the flags and retries on the next connect.
+
+        `thread_of` (the user 2026-08-13, who asked to comment on a highlighted passage and keep a side
+        conversation there): this fork is a COMMENT THREAD of parent session `thread_of` — a side
+        conversation the chat surfaces as an anchored highlight + popover, not as a session of its own.
+        The reg carries threadOf and the names/ entry is withheld, so it gets no tab, no lane, no feed
+        cards and no judge pass (names/ is the discoverability trigger; live_sessions skips threadOf
+        regs for the tab side) — its ENTIRE user surface is the parent chat's comment UI, which is why
+        this is not the hidden-running-session failure mode the 2026-08-11 rule removed: every thread is
+        visible and reachable right where it was made. Everything else is a normal session: the reg
+        keeps its CLI under the boot reconcile's orphan reap, a mid-turn kernel death resumes it, and
+        promote_thread() later turns it into a full board session."""
         parent = read_reg(self.state_dir, parent_sid) or {}
         cwd = parent.get("cwd") or os.path.expanduser("~")
         sid = sid or str(uuid.uuid4())      # the kernel pre-mints it so the judge seeds can precede us
@@ -3443,17 +3504,56 @@ class SdkBackend:
                "effort": parent.get("effort", DEFAULT_EFFORT),
                "lastSid": parent.get("lastSid") or parent_sid,
                "forkOf": parent_sid, "forkAt": cut_uuid or "", "alive": True}
+        # Durable LINEAGE (the user 2026-08-13: branching must SHOW in the UI): forkOf/forkAt above
+        # are one-shot launch flags, spent the moment the init lands, so the branch point is recorded
+        # separately and forever. A tip fork (no cut) stamps the parent's CURRENT leaf — that is
+        # where the two histories diverge. The chat renders this as the child's branch divider and
+        # the parent's branch chip (build_session `branch`/`branches`).
+        lineage_cut = cut_uuid or last_record_uuid(
+            transcript_path(cwd, parent.get("lastSid") or parent_sid))
+        reg["forkedFrom"] = {"sid": parent_sid, "name": parent.get("name", ""),
+                             "cut": lineage_cut, "t": int(time.time())}
+        if thread_of:
+            reg["threadOf"] = thread_of
         if parent.get("model") and parent["model"] != "default":
             reg["model"] = parent["model"]
         if parent.get("auth") in ("login", "key"):
             reg["auth"] = parent["auth"]
         write_reg(self.state_dir, sid, reg)
         # the names/ entry LAST — it is the discoverability trigger (discover() iterates names/), and
-        # everything above must exist before any judge pass can see the session
-        write_name(self.state_dir, sid, name, cwd, bg, fg)
+        # everything above must exist before any judge pass can see the session. A comment thread never
+        # writes it: promote_thread() does, after the kernel seeds the judge stores.
+        if not thread_of:
+            write_name(self.state_dir, sid, name, cwd, bg, fg)
         append_state(self.state_dir, sid, "waiting")
         self._poke()
         return sid
+
+    def thread_of(self, sid: str) -> str:
+        """The parent sid when `sid` is a comment thread, else ''."""
+        reg = read_reg(self.state_dir, sid) or {}
+        return str(reg.get("threadOf") or "")
+
+    def promote_thread(self, sid: str, name: str, bg: str = "", fg: str = "") -> bool:
+        """Break a comment thread out into a FULL board session (the user 2026-08-13: 'a button that
+        breaks it out into its own session'). The caller (kernel _comment_promote) must have seeded the
+        judge stores FIRST — the names/ write below is the discoverability trigger, same ordering
+        contract as fork(). Clears threadOf (the reg becomes an ordinary session's) and registers the
+        identity; the running CLI, transcript and queue carry over untouched."""
+        reg = read_reg(self.state_dir, sid)
+        if not reg or not reg.get("threadOf"):
+            return False
+        reg.pop("threadOf", None)
+        reg["name"] = name
+        write_reg(self.state_dir, sid, reg)
+        if not bg:
+            bg, fg = pick_identity_color(sid, self.state_dir)
+        write_name(self.state_dir, sid, name, reg.get("cwd", ""), bg, fg)
+        s = self.sessions.get(sid)
+        if s:
+            s.name = name
+        self._poke()
+        return True
 
     def resume(self, name: str, sid: str, cwd: str | None = None) -> bool:
         """Mark a dormant/dead SDK session alive again so _ensure/connect restarts it. PRESERVE the
@@ -3838,6 +3938,45 @@ class SdkBackend:
         self._poke()
         return True
 
+    def fork_children(self) -> dict:
+        """{parent sid: [{sid, name, cut, t}, …]} for every session carrying a durable forkedFrom —
+        the parent chat's branch chips. Comment threads are skipped (their anchor is the comment
+        highlight; a PROMOTED thread has threadOf cleared, so it joins here). Memoized on the sdk/
+        dir's mtime: every reg write publishes via os.replace into that dir, bumping it, so the
+        steady state costs one stat instead of a full registry sweep per session build."""
+        d = Path(self.state_dir) / "sdk"
+        try:
+            mt = d.stat().st_mtime_ns
+        except OSError:
+            return {}
+        memo = self._fork_children_memo
+        if memo and memo[0] == mt:
+            return memo[1]
+        out: dict = {}
+        for reg in list_regs(self.state_dir):
+            ff = reg.get("forkedFrom")
+            if not isinstance(ff, dict) or not ff.get("sid") or reg.get("threadOf"):
+                continue
+            out.setdefault(str(ff["sid"]), []).append(
+                {"sid": reg["sid"], "name": reg.get("name", ""),
+                 "cut": ff.get("cut") or "", "t": ff.get("t") or 0})
+        for kids in out.values():
+            kids.sort(key=lambda k: k["t"])
+        self._fork_children_memo = (mt, out)
+        return out
+
+    def session_state(self, sid: str) -> str:
+        """Live state ('working'/'waiting'/…) for ONE sid, comment threads included — live_sessions
+        deliberately filters threadOf regs, so the comments frame reads its thread's pulse here."""
+        with self._lock:
+            s = self.sessions.get(sid)
+        if s and s.thread.is_alive():
+            try:
+                return str(s.snapshot().get("state") or "")
+            except Exception:
+                return ""
+        return ""
+
     def rename(self, sid: str, new_name: str) -> bool:
         reg = read_reg(self.state_dir, sid)
         if not reg:
@@ -4069,6 +4208,8 @@ class SdkBackend:
         for reg in list_regs(self.state_dir):
             if not reg.get("alive"):
                 continue
+            if reg.get("threadOf"):
+                continue   # a comment thread: its surface is the parent chat's comment UI, never a tab
             sid = reg["sid"]
             s = self.sessions.get(sid)
             if s and s.thread.is_alive():
