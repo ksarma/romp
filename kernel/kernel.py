@@ -24817,7 +24817,15 @@ class Handler(BaseHTTPRequestHandler):
             return self._relay_download(host, port, rtok, q, head=head)
         # Our own verdict on the type, before the remote gets a say. An extension the local route
         # would 404 is 404'd here too, so the relay can never widen what a preview may render.
-        mime = _PREVIEW_MIME.get(os.path.splitext((q.get("path") or [""])[0])[1].lower())
+        rp = (q.get("path") or [""])[0]
+        mime = _PREVIEW_MIME.get(os.path.splitext(rp)[1].lower())
+        if not mime and _is_text_path(rp):
+            # The text half of /file (the user 2026-08-08) relays too — this gate predated it, so a
+            # remote session's .py/.md 404'd here while the LOCAL route served the same file (found
+            # 2026-08-14, planning the file browser). Same defense, wider list: the type is OURS —
+            # text/plain never executes, nosniff rides every reply — and the remote's own text cap
+            # and NUL sniff still rule at its end; its non-200 verdicts pass through below.
+            mime = "text/plain; charset=utf-8"
         if not mime:
             return self._send(404, b"" if head else "not found", "text/plain")
         if rtok:

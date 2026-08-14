@@ -40,6 +40,7 @@ km = SourceFileLoader("romp_kernel", os.path.join(BIN, "romp-kernel")).load_modu
 
 REMOTE_TOKEN = "remote-token-DO-NOT-USE"
 PNG_BYTES = b"\x89PNG\r\n\x1a\nfake-png-bytes"
+PY_BYTES = b"print('hello from the remote box')\n"
 # the download fixture: NUL-ridden, off every view allowlist, and BIGGER than one relay stream chunk,
 # so the pass-through provably crosses a chunk boundary intact
 BIN_BYTES = bytes(range(256)) * ((km._DOWNLOAD_CHUNK // 256) + 60)
@@ -64,6 +65,14 @@ class _FakeRemoteFileHandler(BaseHTTPRequestHandler):
             self.end_headers()
             if not head:
                 self.wfile.write(BIN_BYTES)
+            return
+        if "app.py" in self.path:
+            self.send_response(200)
+            self.send_header("Content-Type", _FakeRemoteFileHandler.ctype)
+            self.send_header("Content-Length", str(len(PY_BYTES)))
+            self.end_headers()
+            if not head:
+                self.wfile.write(PY_BYTES)
             return
         if "plot.png" not in self.path:
             body = b"not found: /tmp/gone" if "download=1" in self.path else b""
@@ -174,14 +183,21 @@ class RemoteFileRelay(unittest.TestCase):
         self.assertEqual(headers.get("Content-Type"), "image/png")
         self.assertNotIn("html", (headers.get("Content-Type") or "").lower())
 
-    def test_the_relay_declines_an_extension_the_local_route_would_decline(self):
-        # The relay must never widen what a preview may render: an extension outside
-        # _PREVIEW_MIME 404s HERE, and the remote is not even asked.
+    def test_text_relays_with_a_locally_derived_type_the_remote_cannot_override(self):
+        """The text half of /file relays too — this gate predated it, so a remote session's
+        .py/.md 404'd here while the LOCAL route served the same file (the viewer just failed
+        on every federated text file). The defense is unchanged and now covers text: the type
+        is OURS — a lying remote's text/html arrives as inert text/plain + nosniff. (.html is
+        on _TEXT_EXT, so it too relays as text/plain now — same inertness, matching the local
+        route; the never-asked decline for off-every-allowlist extensions is pinned by the
+        .bin test below.)"""
         self._register("gpu1", self.fake.server_address[1])
-        status, _, _ = self._get("/remote/gpu1/file?path=%2Ftmp%2Fevil.html")
-        self.assertEqual(status, 404)
-        self.assertEqual(_FakeRemoteFileHandler.requests, [],
-                         "an unpreviewable extension must not reach the remote at all")
+        _FakeRemoteFileHandler.ctype = "text/html"
+        status, body, headers = self._get("/remote/gpu1/file?path=%2Ftmp%2Fapp.py")
+        self.assertEqual(status, 200)
+        self.assertEqual(body, PY_BYTES)
+        self.assertEqual(headers.get("Content-Type"), "text/plain; charset=utf-8")
+        self.assertNotIn("html", (headers.get("Content-Type") or "").lower())
 
     def test_responses_forbid_content_type_sniffing(self):
         # A declared type is only worth as much as the browser's willingness to believe it.
