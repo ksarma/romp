@@ -32,7 +32,6 @@ font-size:15px;line-height:1;cursor:pointer}
    dispatched background work (--st-awaitbg-bg), HOLLOW steel ring = alive and quiet (--st-ready-bg),
    gray ring = state unknown/unreadable — a KNOWN state always renders as itself, never as nothing */
 .fl-workdot.await{background:#54B204}
-.fl-workdot.ready{background:transparent;box-shadow:inset 0 0 0 1.5px #2b7fb8}
 .fl-workdot.unknown{background:transparent;box-shadow:inset 0 0 0 1.5px #8a8a8a}
 .fl-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* the goal tree per session: drop the ledger box's scroll cap + fit-content so each session shows in full,

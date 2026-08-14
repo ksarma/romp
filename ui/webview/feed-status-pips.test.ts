@@ -1,85 +1,103 @@
-// A KNOWN session state must never render as NOTHING (the user 2026-08-09). The dashboard drew no pip
-// for sessions whose kernel-recorded state was `waiting`, while a same-state session that happened to be
-// awaiting background work drew a straw one — so a blank pip was indistinguishable from a rendering hole
-// (and from a genuinely unknown state). The kernel now emits a TOTAL per-session status partition
-// (working / awaiting / ready / stateUnknown) on the feed payload; the feed and the fleet render every
-// quarter explicitly (gold dot / straw dot / hollow steel ready ring / gray unknown ring, each with a
-// tooltip). A bare name is reserved for payloads that PREDATE the lists — an old kernel, including an
-// old REMOTE kernel in a federated merge, whose sessions land in no list and keep the legacy look
-// instead of reading falsely as "unknown". Source pins + executable federation checks (no jsdom).
+// Status pips: what renders, and — just as load-bearing — what does NOT.
+//
+// The rule the three surfaces (feed, sessions pane, chat tab strip) agree on: a pip marks something
+// HAPPENING (gold working, straw awaiting background work) or something WRONG (a gray ring when the
+// live state could not be read). A healthy idle session gets no pip at all, so a blank means "alive
+// and quiet" and nothing else. Before the gray ring existed, an unreadable state drew the same
+// nothing as an idle one, which is how a rendering hole hid in plain sight.
+//
+// Source pins, because these files have no jsdom harness; the federation merge is executed.
 import { test } from "node:test";
-import assert from "node:assert/strict";
-import * as fs from "node:fs";
-import * as path from "node:path";
-import { prefixInbound, mergeHostFeeds } from "./federation";
+import assert from "node:assert";
+import * as fs from "fs";
+import * as path from "path";
+import { mergeHostFeeds } from "./federation";
 
-const W = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
-const FEED = W("feed.ts");
-const FEEDCSS = W("feed.css");
-const FLEET = W("fleet.ts");
-const FLEETCSS = W("fleet-pane.css");
-const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "bin", "romp-kernel"), "utf8");
+const here = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
+const FEED = here("feed.ts");
+const FLEET = here("fleet.ts");
+const RENDER = here("render.ts");
+const FEED_CSS = here("feed.css");
+const FLEET_CSS = here("fleet-pane.css");
+const STYLES = here("styles.css");
+const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
 
-test("kernel: the feed payload carries the ready/stateUnknown halves of the partition", () => {
-  // the helper mirrors build_feed's own filters (hideFromFeed in no list) and splits the rest by
-  // whether the merged live map could actually be read for that session
-  assert.match(KERNEL, /def _feed_status_names\(alive, tmux, working, awaiting\):/);
-  assert.match(KERNEL, /\(ready if tmux\.get\(s\["sid"\]\) is not None else unknown\)\.append\(nm\)/);
-  assert.match(KERNEL, /"ready": ready, "stateUnknown": state_unknown,/);
+test("the kernel publishes the unreadable-state list, and no ready list", () => {
+  assert.ok(KERNEL.includes("def _state_unknown_names(alive, tmux, working, awaiting):"));
+  assert.ok(KERNEL.includes('"stateUnknown": _state_unknown_names(alive, tmux, working, awaiting)'));
+  const feedSrc = KERNEL.slice(KERNEL.indexOf("def build_feed"), KERNEL.indexOf("def _push_feed"));
+  assert.ok(!/"ready":\s*ready/.test(feedSrc), "a quiet session is not enumerated — blank already says it");
 });
 
-test("feed: dotFor is total over the partition — ready and unknown render explicitly, blank = legacy only", () => {
-  assert.match(FEED, /readySet = new Set\(Array\.isArray\(m\.ready\) \? m\.ready : \[\]\);/);
-  assert.match(FEED, /unknownSet = new Set\(Array\.isArray\(m\.stateUnknown\) \? m\.stateUnknown : \[\]\);/);
-  // the gap this fixes: a name absent from work/await used to fall straight to "" (render nothing);
-  // now it must pass through the ready and unknown quarters before the legacy-blank fallback
-  assert.match(FEED, /: readySet\.has\(name\) \? "ready" : unknownSet\.has\(name\) \? "unknown" : "";/);
-  // every pip explains itself on hover (the user 2026-07-22) — including the two new quarters
-  assert.match(FEED, /ready: "idle — nothing running; finished its last turn",/);
-  assert.match(FEED, /unknown: "state unknown — romp couldn't read this session's live state",/);
-  // one kind class at a time; a dot retints in place when the state flips
-  assert.match(FEED, /for \(const k of \["await", "ready", "unknown"\]\) d\.classList\.toggle\(k, st === k\);/);
+test("feed dotFor ranks work over await over unknown, and idle falls through to no pip", () => {
+  assert.match(FEED, /workingSet\.has\(name\) \? "work" : awaitingSet\.has\(name\) \? "await"/);
+  assert.match(FEED, /: unknownSet\.has\(name\) \? "unknown" : "";/);
+  assert.match(FEED, /unknownSet = new Set\(Array\.isArray\(m\.stateUnknown\)/);
+  // the fall-through IS the ready case: no set to consult, no class, no pip
+  assert.ok(!/readySet/.test(FEED), "there is no ready set — an idle session simply has no pip");
 });
 
-test("feed css: hollow ring = at rest / unknown, filled = active — status colors keep their meaning", () => {
-  // ready ring wears the chat chip's Ready steel (--st-ready-bg #2b7fb8); unknown the detached-host gray
-  assert.match(FEEDCSS, /\.fwork-dot\.ready \{ background: transparent; box-shadow: inset 0 0 0 1\.5px #2b7fb8; \}/);
-  assert.match(FEEDCSS, /\.fwork-dot\.unknown \{ background: transparent; box-shadow: inset 0 0 0 1\.5px #8a8a8a; \}/);
+test("the feed dot retints in place and carries its own tooltip", () => {
+  assert.match(FEED, /for \(const k of \["await", "unknown"\]\) d\.classList\.toggle\(k, st === k\);/);
+  assert.match(FEED, /const DOT_TIP: Record<Exclude<DotState, "">, string>/);
+  assert.ok(!/ready:/.test(FEED.slice(FEED.indexOf("const DOT_TIP"), FEED.indexOf("const DOT_TIP") + 400)),
+    "no ready tooltip — there is no ready pip to explain");
 });
 
-test("fleet: the session rows speak the same four-class pip language off their own status.state", () => {
+test("the sessions pane speaks the same three-way language", () => {
   assert.match(FLEET, /function statusDot\(s: FleetSession\): HTMLElement \| null \{/);
-  // working → gold, awaitingBg → straw, ready/idle → ring, MISSING status → explicit unknown ring
-  assert.match(FLEET, /st === "working" \? "" : st === "awaitingBg" \? "await"/);
-  assert.match(FLEET, /: st === "ready" \|\| st === "idle" \? "ready" : st \? null : "unknown";/);
-  // both name sites route through it (grouped header + flat-view session label)
-  assert.equal((FLEET.match(/statusDot\(s\)/g) || []).length, 2);
-  assert.match(FLEETCSS, /\.fl-workdot\.await\{background:#54B204\}/);
-  assert.match(FLEETCSS, /\.fl-workdot\.ready\{background:transparent;box-shadow:inset 0 0 0 1\.5px #2b7fb8\}/);
-  assert.match(FLEETCSS, /\.fl-workdot\.unknown\{background:transparent;box-shadow:inset 0 0 0 1\.5px #8a8a8a\}/);
+  assert.match(FLEET, /st === "working" \? "" : st === "awaitingBg" \? "await"\s*\n\s*: st \? null : "unknown"/);
+  // a known state with its own treatment (blocked/compacting/closed) returns null → no pip
+  assert.match(FLEET, /if \(kind === null\) return null;/);
+  const uses = FLEET.match(/statusDot\(s\)/g) || [];
+  assert.equal(uses.length, 2, "the flat label and the grouped header; the provisional row stays bare");
 });
 
-// ── federation: the new lists ride like working/awaiting, per-host honestly ─────────────────────────
-
-const U = "11111111-2222-3333-4444-555555555555";
-
-test("federation: prefixInbound prefixes ready/stateUnknown names like the other session-id arrays", () => {
-  const m = prefixInbound("TESTHOST", { type: "feed", working: ["web"], awaiting: [],
-                                        ready: ["api"], stateUnknown: ["tests"], asks: [] });
-  assert.deepEqual(m.ready, ["TESTHOST:api"]);
-  assert.deepEqual(m.stateUnknown, ["TESTHOST:tests"]);
+test("the tab strip draws the gray ring for a missing state and nothing for idle", () => {
+  // the fork's strip carries an extra OPENING state, so its mapping is a dot[] ladder rather than
+  // upstream's else-if chain; the unreadable branch and the missing ready branch are the same rule
+  assert.match(RENDER, /: !st \? \["unknown", "state unknown — romp couldn't read this session's live state"\]/);
+  assert.ok(!/\["ready",/.test(RENDER), "no ready pip on the strip — a blank says quiet");
+  assert.ok(!/tab-dot ready/.test(RENDER));
 });
 
-test("federation: mergeHostFeeds concatenates the lists; an OLD host contributes to none of them", () => {
-  const local = { type: "feed", items: [], asks: [], working: ["web"], awaiting: [],
-                  ready: ["api"], stateUnknown: ["docs"], order: [] };
-  // a remote kernel too old to send the new lists — its sessions must NOT read as "unknown"
-  const oldRemote = { type: "feed", items: [], asks: [{ sid: "TESTHOST:" + U, name: "TESTHOST:tests" }],
-                      working: [], awaiting: [], order: [] };
-  const m = mergeHostFeeds({ "": local, TESTHOST: oldRemote }, ["", "TESTHOST"]);
-  assert.deepEqual(m.ready, ["api"]);
-  assert.deepEqual(m.stateUnknown, ["docs"]);
-  // the old host's session lands in NO status list → the renderer keeps the legacy bare-name look
-  for (const k of ["working", "awaiting", "ready", "stateUnknown"] as const)
-    assert.ok(!m[k].includes("TESTHOST:tests"), k + " must not claim the old host's session");
+test("every surface styles the unknown ring, and none styles a ready one", () => {
+  assert.match(FEED_CSS, /\.fwork-dot\.unknown \{ background: transparent; box-shadow: inset 0 0 0 1\.5px #8a8a8a; \}/);
+  assert.match(FLEET_CSS, /\.fl-workdot\.unknown\{background:transparent;box-shadow:inset 0 0 0 1\.5px #8a8a8a\}/);
+  assert.match(STYLES, /\.tab-dot\.unknown \{ background: transparent; box-shadow: inset 0 0 0 1\.5px #8a8a8a; \}/);
+  for (const [name, css] of [["feed.css", FEED_CSS], ["fleet-pane.css", FLEET_CSS], ["styles.css", STYLES]] as const) {
+    assert.ok(!/\.(fwork-dot|fl-workdot|tab-dot)\.ready/.test(css), `${name} must not style a ready pip`);
+  }
+});
+
+test("styles.css points at the palette for the gray rather than leaving a bare hex", () => {
+  // feed.css / fleet-pane.css load standalone so their hexes stand alone; styles.css is the shared
+  // sheet and must say where the value comes from (the network strip's down-host gray)
+  const i = STYLES.indexOf(".tab-dot.unknown");
+  assert.ok(i > 0);
+  assert.match(STYLES.slice(Math.max(0, i - 400), i), /strip\.ts/,
+    "the shared sheet names its source for the gray");
+});
+
+test("the sessions pane comments say 'the sessions', never 'the fleet' as a noun", () => {
+  const added = FLEET.slice(FLEET.indexOf("// The status pip before a session name"), FLEET.indexOf("function statusDot"));
+  assert.ok(!/\bthe fleet\b/i.test(added), "say the sessions; FLEET_CSS-style identifiers are fine");
+});
+
+test("federation concatenates stateUnknown per host, and an old host stays blank", () => {
+  const perHost: any = {
+    "": { type: "feed", items: [], asks: [], working: [], awaiting: [], stateUnknown: ["api"] },
+    TESTHOST: { type: "feed", items: [], asks: [], working: [], awaiting: [], stateUnknown: ["TESTHOST:tests"] },
+  };
+  const merged: any = mergeHostFeeds(perHost, ["", "TESTHOST"]);
+  assert.deepEqual(merged.stateUnknown, ["api", "TESTHOST:tests"], "concatenated, local first");
+
+  // a host too old to send the list contributes NOTHING — its sessions stay blank ("quiet"),
+  // which is the honest degradation now that blank is a real state rather than a hole
+  const older: any = {
+    "": { type: "feed", items: [], asks: [], working: [], awaiting: [], stateUnknown: ["api"] },
+    TESTHOST: { type: "feed", items: [], asks: [], working: [], awaiting: [] },
+  };
+  const m2: any = mergeHostFeeds(older, ["", "TESTHOST"]);
+  assert.deepEqual(m2.stateUnknown, ["api"], "no entry invented for the old host");
 });

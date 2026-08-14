@@ -14451,25 +14451,29 @@ def _boundary_clear_notices(alive):
     return out
 
 
-def _feed_status_names(alive, tmux, working, awaiting):
-    """The two lists that COMPLETE the feed's per-session status partition: `ready` = alive and quiet
-    (live state read; not in `working`/`awaiting`), `stateUnknown` = listed while its live state could
-    NOT be read (no row in the merged live map — e.g. the headless file-derived fallback). With these,
-    every session build_feed lists lands in exactly ONE of the four lists, so the client can render each
-    state explicitly and a BLANK pip can only mean "payload predates these lists" (an old kernel), never
-    a state that means something. (the user 2026-08-09: sessions in a known `waiting` state drew no pip
-    at all — indistinguishable from a rendering hole. Fail loudly / render the known state, don't encode
-    it as nothing.) Mirrors build_feed's own filters: hideFromFeed sessions are in no list, matching
-    their absence from the cards."""
-    ready, unknown = [], []
+def _state_unknown_names(alive, tmux, working, awaiting):
+    """Sessions the feed LISTS but whose live state it could not read — no row in the merged live
+    map (e.g. the headless file-derived fallback). The client draws these a gray ring, so a blank
+    pip goes back to meaning exactly one thing: alive and quiet.
+
+    A pip marks something HAPPENING (working, awaiting background work) or something WRONG (this).
+    A healthy idle session is deliberately not enumerated — its blank already says it, and the old
+    `ready` list that rendered a hollow ring was dropped when the fork converged with upstream on
+    that rule (2026-08-14; the ring itself dated to 2026-08-09). Dropping it also fixes the
+    old-kernel case for free: a payload without this key contributes nothing, so its sessions stay
+    blank rather than reading falsely as unknown. Working and awaiting sessions are excluded by
+    construction — their state was read. Mirrors build_feed's own filters, so a hideFromFeed session
+    is in no list, matching its absence from the cards."""
+    out = []
     for s in alive:
         if _session_flag(s["sid"], "hideFromFeed"):
             continue
         nm = s["name"]
         if nm in working or nm in awaiting:
-            continue
-        (ready if tmux.get(s["sid"]) is not None else unknown).append(nm)
-    return ready, unknown
+            continue                                  # state read: it is working or awaiting
+        if tmux.get(s["sid"]) is None:
+            out.append(nm)
+    return out
 
 
 def build_feed(now, tmux=None):
@@ -15271,12 +15275,11 @@ def build_feed(now, tmux=None):
     _ncards = _notify_cards()
     for _a in asks:
         _a["notify"] = True if _notify_card_effective(_ncards, _a["itemId"], str(_a.get("sid") or "")) else None
-    # the ready/unknown halves of the status partition (see _feed_status_names): every listed session is
-    # in exactly one of the four lists, so the pip renderer never has to encode a KNOWN state as nothing
-    ready, state_unknown = _feed_status_names(alive, tmux, working, awaiting)
     return {"type": "feed", "asks": asks, "now": now,
             "working": working, "awaiting": awaiting,   # awaiting = idle-but-waiting-on-bg-work names → straw dot (the user 2026-07-13)
-            "ready": ready, "stateUnknown": state_unknown,   # alive-and-quiet names / listed-but-unreadable names (the user 2026-08-09)
+            # listed-but-unreadable names → an explicit gray ring, so a BLANK pip means "alive and
+            # quiet" and nothing else (see _state_unknown_names)
+            "stateUnknown": _state_unknown_names(alive, tmux, working, awaiting),
             # session name -> live judge-classified SERVICE descs (a dev server the session keeps around;
             # _bg_split) → the grouped-mode session header's neutral chip, never a waiting state (2026-07-24)
             "bgServices": bg_services,

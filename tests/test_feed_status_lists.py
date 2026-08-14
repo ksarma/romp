@@ -1,91 +1,77 @@
-"""The feed's per-session status partition is TOTAL — a KNOWN state never renders as nothing.
+#!/usr/bin/env python3
+"""build_feed's stateUnknown list — the sessions whose live state could not be READ.
 
-Sessions whose kernel-recorded state was `waiting` drew NO pip on the dashboard, while a same-state
-session that happened to be awaiting background work drew a straw one — so a blank pip was
-indistinguishable from a rendering hole (the user 2026-08-09). build_feed now emits `ready` (alive and
-quiet) and `stateUnknown` (listed while its live state could not be read) beside the existing
-`working`/`awaiting` name lists, so every listed session lands in exactly ONE of the four and the client
-can render each explicitly; a bare name is reserved for payloads that predate the lists (an old kernel).
+The feed's pips mark what is happening or what is wrong: a gold dot for working, straw for awaiting
+dispatched background work, and nothing at all for a healthy idle session. That last one is only
+trustworthy if every OTHER case renders, and one did not: a session the kernel listed but whose live
+state it could not read drew the same nothing as an idle one, so a rendering hole was
+indistinguishable from health. stateUnknown is that case made explicit (the client draws it a gray
+ring), which is what puts the meaning back into a blank.
+
+Synthetic sessions only — the demo notes-api world (web / api / tests), never real names.
 """
-import json
 import os
 import tempfile
 import unittest
 from importlib.machinery import SourceFileLoader
-from pathlib import Path
 
 HERE = os.path.dirname(os.path.realpath(__file__))
-BIN = os.path.join(os.path.dirname(HERE), "bin")
+ROOT = os.path.dirname(HERE)
+BIN = os.path.join(ROOT, "bin")
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()   # hermetic BEFORE any romp code loads
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
-km = SourceFileLoader("romp_kernel", os.path.join(BIN, "romp-kernel")).load_module()
-
-SID_WORKING = "11111111-2222-3333-4444-555555555551"
-SID_AWAITING = "11111111-2222-3333-4444-555555555552"
-SID_QUIET = "11111111-2222-3333-4444-555555555553"
-SID_NO_ROW = "11111111-2222-3333-4444-555555555554"
-SID_HIDDEN = "11111111-2222-3333-4444-555555555555"
+km = SourceFileLoader("romp_kernel_pips", os.path.join(BIN, "romp-kernel")).load_module()
 
 
-def _alive(*pairs):
-    return [{"sid": sid, "name": name} for sid, name in pairs]
+def sess(sid, name):
+    return {"sid": sid, "name": name}
 
 
-class FeedStatusPartition(unittest.TestCase):
-    """_feed_status_names completes the partition build_feed's card pass began."""
+ALIVE = [sess("11111111-2222-3333-4444-000000000001", "web"),
+         sess("11111111-2222-3333-4444-000000000002", "api"),
+         sess("11111111-2222-3333-4444-000000000003", "tests")]
 
+
+class StateUnknownIsTheUnREADABLEOnes(unittest.TestCase):
     def setUp(self):
-        # An isolated STATE dir so _session_flag never reads (or, worse, a stray future edit never
-        # writes) the live machine's session-flags.json. jd.STATE is read at CALL time, so swapping
-        # the attribute is enough; restored in tearDown.
-        self._tmp = tempfile.TemporaryDirectory()
-        self._old_state = km.jd.STATE
-        km.jd.STATE = Path(self._tmp.name)
+        self._flag = km._session_flag
+        km._session_flag = lambda sid, flag: False       # nothing hidden unless a test says so
+        self.addCleanup(lambda: setattr(km, "_session_flag", self._flag))
 
-    def tearDown(self):
-        km.jd.STATE = self._old_state
-        self._tmp.cleanup()
+    def test_a_session_with_no_live_row_is_unknown(self):
+        tmux = {ALIVE[0]["sid"]: {}, ALIVE[1]["sid"]: {}}     # 'tests' has no row at all
+        self.assertEqual(km._state_unknown_names(ALIVE, tmux, [], []), ["tests"])
 
-    def test_every_listed_session_lands_in_exactly_one_of_the_four_lists(self):
-        alive = _alive((SID_WORKING, "web"), (SID_AWAITING, "api"),
-                       (SID_QUIET, "tests"), (SID_NO_ROW, "docs"))
-        # the merged live map has a row for all but "docs" (its state could not be read)
-        tmux = {SID_WORKING: {"state": "working"}, SID_AWAITING: {"state": "waiting"},
-                SID_QUIET: {"state": "waiting"}}
-        ready, unknown = km._feed_status_names(alive, tmux, ["web"], ["api"])
-        self.assertEqual(ready, ["tests"], "alive + quiet -> ready, no longer encoded as nothing")
-        self.assertEqual(unknown, ["docs"], "listed but unreadable -> explicit stateUnknown, fail loudly")
-        # the partition is total and disjoint: 4 sessions, one list each
-        names = ["web"] + ["api"] + ready + unknown
-        self.assertEqual(sorted(names), ["api", "docs", "tests", "web"])
+    def test_a_readable_idle_session_is_NOT_unknown(self):
+        # the whole point: a session we CAN read and that is quiet gets no pip, so it must not
+        # appear here — otherwise every idle session would wear the gray ring
+        tmux = {s["sid"]: {} for s in ALIVE}
+        self.assertEqual(km._state_unknown_names(ALIVE, tmux, [], []), [])
 
-    def test_the_reported_shape_two_waiting_sessions_only_the_awaiting_one_had_a_pip(self):
-        # The verified evidence (2026-08-09): two sessions with the IDENTICAL latest state record
-        # (`waiting`); the one awaiting background work drew a straw pip, the plain-quiet one drew
-        # NOTHING. The quiet one now lands in `ready`, so the renderer shows its actual known state.
-        alive = _alive((SID_AWAITING, "api"), (SID_QUIET, "tests"))
-        tmux = {SID_AWAITING: {"state": "waiting"}, SID_QUIET: {"state": "waiting"}}
-        ready, unknown = km._feed_status_names(alive, tmux, [], ["api"])
-        self.assertEqual((ready, unknown), (["tests"], []))
+    def test_working_and_awaiting_are_never_unknown(self):
+        # their state was read by definition; they already have their own dots
+        tmux = {}                                             # no live rows at all
+        out = km._state_unknown_names(ALIVE, tmux, ["web"], ["api"])
+        self.assertEqual(out, ["tests"], "only the session with neither a dot nor a readable state")
 
-    def test_hidden_from_feed_sessions_are_in_no_list_matching_their_absent_cards(self):
-        (Path(self._tmp.name) / "session-flags.json").write_text(
-            json.dumps({SID_HIDDEN: {"hideFromFeed": True}}))
-        alive = _alive((SID_HIDDEN, "web"), (SID_QUIET, "tests"))
-        tmux = {SID_HIDDEN: {"state": "waiting"}, SID_QUIET: {"state": "waiting"}}
-        ready, unknown = km._feed_status_names(alive, tmux, [], [])
-        self.assertEqual((ready, unknown), (["tests"], []),
-                         "a muted session shows no cards, so it must carry no status entry either")
+    def test_hidden_sessions_are_in_no_list(self):
+        # mirrors build_feed's own filter: a hideFromFeed session has no card, so it has no pip
+        km._session_flag = lambda sid, flag: sid == ALIVE[2]["sid"] and flag == "hideFromFeed"
+        self.assertEqual(km._state_unknown_names(ALIVE, {}, [], []), ["web", "api"])
 
-
-class BuildFeedEmitsThePartition(unittest.TestCase):
-    def test_build_feed_payload_carries_ready_and_state_unknown(self):
+    def test_build_feed_ships_the_list(self):
         import inspect
         src = inspect.getsource(km.build_feed)
-        self.assertIn('_feed_status_names(alive, tmux, working, awaiting)', src)
-        self.assertIn('"ready": ready, "stateUnknown": state_unknown', src)
+        self.assertIn('"stateUnknown": _state_unknown_names(alive, tmux, working, awaiting)', src)
+
+    def test_no_ready_list_is_published(self):
+        # a healthy idle session is deliberately NOT enumerated: blank means quiet, so there is
+        # nothing for the client to draw and nothing for the payload to carry
+        import inspect
+        src = inspect.getsource(km.build_feed)
+        self.assertNotIn('"ready":', src)
 
 
 if __name__ == "__main__":
