@@ -1,9 +1,11 @@
 # romp — repo instructions
 
-> **Picking up the security work?** `HANDOFF.md` is that project's design history (PR #1 merged
-> 2026-08; its file:line refs predate the v0.6.0 merge): the checks that were never run, the
-> disclosure decisions that are the user's to make, and the re-verification the findings need
-> against v0.6.0 before any disclosure. Read it after this file when touching that work.
+> **Picking up the security work?** Start with `~/romp-handoffs/security-session.md` (outside the
+> repo — it names upstream-unfixed holes) for the live status: the audit was re-verified against
+> v0.8.0 (2026-08-13) and now ships upstream as PER-CHAIN PRs, not a private advisory (user's call,
+> 2026-08-14). Chains 1–2 are merged upstream (#337, #352); Chains 3–5 are pending. `HANDOFF.md` in
+> this repo is the project's DESIGN HISTORY only — its file:line refs predate the v0.6.0 merge and
+> are three releases stale; use it for *why*, `git show` the fork commits for *where*.
 
 ## Philosophy
 The bottleneck in AI coding is human attention. romp lets one person direct many

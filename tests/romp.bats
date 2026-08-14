@@ -149,9 +149,12 @@ STUB
     _stub_claude "2.1.220"
     run run_romp new -t myproject
     [ "$status" -eq 0 ]
-    ! grep -q -- '--settings' "$MOCK_LOG"
-    ! grep -q -- '@romp-inbound-accept' "$MOCK_LOG"
     [[ "$output" == *"claude update"* ]]     # the informative floor line, not a failure
+    # (checked BEFORE the greps below: `run` clobbers $output, so the output assertion must come first)
+    run grep -q -- '--settings' "$MOCK_LOG"
+    [ "$status" -ne 0 ]
+    run grep -q -- '@romp-inbound-accept' "$MOCK_LOG"
+    [ "$status" -ne 0 ]
 }
 
 @test "launch hands the exec line to respawn-pane, never typed via send-keys (dropped-char bug)" {

@@ -1,11 +1,15 @@
 # Handoff — security pass on the fork (2026-08-06)
 
-> **Status update (2026-08-11):** PR #1 has since MERGED, so this file is now the security work's
-> design history, not an open-branch handoff. Still current: the disclosure decisions that are the
-> user's to make (the bundle is parked, per `UPSTREAM.md`'s waiting rows), and the live checks
-> never run (phone / webview / macOS — the three runnable ones passed 2026-08-07). NO LONGER
-> current: the file:line references below — they predate the 2026-08-09 upstream v0.6.0 merge, and
-> the security findings themselves need re-verification against v0.6.0 before any disclosure.
+> **Status update (2026-08-14):** this file is the security work's DESIGN HISTORY, not an open
+> handoff — the live working state now lives in `~/romp-handoffs/security-session.md` (kept outside
+> the repo because it names upstream-unfixed holes). What changed since the 08-11 note: the findings
+> were re-verified against upstream **v0.8.0** (2026-08-13, all still vulnerable), and the user
+> decided (2026-08-14) to ship the fixes upstream as **per-chain PRs, not a private advisory** — the
+> fork is public, so the holes are already discoverable in its history, and upstream has no
+> private-reporting intake. Chains 1–2 are MERGED upstream (their #337, #352); Chains 3–5 are pending
+> in the dedicated security session. NO LONGER current: the file:line references below — they predate
+> the v0.6.0 merge and are now three releases (v0.6/0.7/0.8) stale; `git show` the fork commits for
+> *where*.
 
 For whoever picks this up next. Branch `claude/romp-fork-setup-p4myn7`, landed as **PR #1** on
 the fork's `main`. Nine commits, CI green on all seven checks.
