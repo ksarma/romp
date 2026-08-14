@@ -54,7 +54,7 @@ test("AWAITING uses the kernel's why verbatim (capitalized) when it reads 'waiti
 });
 
 test("a peer wait (waitingOn chip) and a bg-TASK wait (pill) both defer — no generic awaiting box", () => {
-  // the "Awaiting <peer>" chip / the "Waiting on task" pill already carry these; the box would double up
+  // the "Awaiting <peer>" chip / the "Awaiting task" pill already carry these; the box would double up
   assert.equal(spinFor({ awaiting: { why: "x" }, waitingOn: "peer" }, false, false).caption, null);
   assert.equal(spinFor({ awaiting: { why: "x", tasks: ["t1"] } }, false, false).caption, null);
 });
@@ -150,6 +150,15 @@ test("an ordinary working card with its turn open narrates: tool count + running
   const long = spinFor({ column: "working", working: { since: 1000, toolUses: 400 } },
                        false, false, 1000 + 95 * 60);
   assert.equal(long.caption, "Working — 400 tool uses · 1h 35m", "hours split out past sixty minutes");
+});
+
+test("zero tool uses says nothing — the timer alone narrates until the first call", () => {
+  // "0 tool uses" was noise (the user 2026-08-13): the count earns its place at one
+  const z = spinFor({ column: "working", working: { since: 1000, toolUses: 0 } },
+                    false, false, 1000 + 3 * 60);
+  assert.equal(z.caption, "Working — 3m");
+  const bare = spinFor({ column: "working", working: { since: null, toolUses: 0 } }, false, false);
+  assert.equal(bare.caption, "Working…", "no count, no clock → the plain swirl still says in-motion");
 });
 
 test("the narration is the FLOOR — every richer story still wins", () => {

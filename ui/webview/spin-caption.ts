@@ -58,7 +58,7 @@ function workingFor(secs: number): string {
 
 export function spinFor(it: SpinItem, distillPending: boolean, dCompleted: boolean, nowS?: number): Spin {
   const aw = it.awaiting;
-  // a bg-TASK wait no longer boxes its why here (the user 2026-07-13): the compact "Waiting on task" pill
+  // a bg-TASK wait no longer boxes its why here (the user 2026-07-13): the compact "Awaiting task" pill
   // on the toggles row carries it (with the task list one click away, like Sub-goals) — see applySections
   const awTasks = ((aw && aw.tasks) || []).filter(Boolean);
   if (aw && !it.waitingOn && !awTasks.length) {
@@ -81,7 +81,7 @@ export function spinFor(it: SpinItem, distillPending: boolean, dCompleted: boole
     // judge has nothing to classify yet; once the turn settles (kernel `judging`) the planner's pass is
     // due/in flight and only THEN does the chip say Analyzing…. An AWAITING placeholder (a bg-task wait with
     // no goal to floor, the user 2026-07-13) is provisional too but NOT working: !aw defers it to the boxed
-    // why (branch above) or, when tasks exist, to the "Waiting on task" pill — never a false "Working…".
+    // why (branch above) or, when tasks exist, to the "Awaiting task" pill — never a false "Working…".
     return {
       caption: it.judging ? "Analyzing…" : "Working…",
       tip: it.judging
@@ -146,9 +146,12 @@ export function spinFor(it: SpinItem, distillPending: boolean, dCompleted: boole
     // how a silent regression becomes visible at a glance. Every richer story above (awaiting,
     // provisional, re-check, re-judging, the settle gap, distilling) still wins; this is the floor.
     const n = it.working.toolUses || 0;
-    const dur = nowS && it.working.since ? ` · ${workingFor(nowS - it.working.since)}` : "";
+    const dur = nowS && it.working.since ? workingFor(nowS - it.working.since) : "";
+    // zero tool uses says nothing worth reading ("0 tool uses" was noise — the user 2026-08-13):
+    // the count appears once there is one, and until then the timer alone carries the narration
+    const parts = [n >= 1 ? `${n} tool ${n === 1 ? "use" : "uses"}` : "", dur].filter(Boolean);
     return {
-      caption: `Working — ${n} tool ${n === 1 ? "use" : "uses"}${dur}`,
+      caption: parts.length ? `Working — ${parts.join(" · ")}` : "Working…",
       tip: "The open turn's live progress: tool calls made so far, and how long this stretch has been "
          + "running. If the count freezes while the timer climbs, something is worth a look.",
       awaitingBg: false,

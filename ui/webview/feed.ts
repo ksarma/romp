@@ -98,7 +98,7 @@ interface AskItem {
   warnRows?: { t: number; judge: string; err: string; note?: string; debug?: { input?: string; reply?: string } }[] | null;   // DEBUG MODE only (romp debug on): every judge failure touching this card (kernel _card_warn_rows) → "Warnings (debug)" modal section; rows captured in debug carry the failing call's input + reply (the user 2026-07-09)
   origin?: { peer: string; peerSid: string; peerHost?: string; color: { bg: string; fg: string } | null } | null;  // courier handoff: planted by a peer's message → "↪ from <peer>"; peerHost = a FEDERATED sender's host, rendered as the quiet "host:" prefix (absent on older payloads / local senders)
   waitingOn?: { peerSid: string; name: string; color: { bg: string; fg: string } | null; inCycle: boolean; kind?: string } | null;  // unanswered msg out to a live peer → "Awaiting <peer>" chip, or "Handed off to <peer>" when kind is "delegate" (peer name in native colour, no emoji; kernel _wait_for_graph; the user 2026-06-22 / 2026-07-25)
-  awaiting?: { why?: string | null; tasks?: string[] | null } | null;   // AWAITING flavor: held in Working, ⏳ awaiting badge — waiting on dispatched/delegated work (agents/subagents/a build), NOT on you (kernel build_feed; the user 2026-06-22). The peer case rides waitingOn; this carries the generic "why". `tasks` = live bg-task descriptions (the user 2026-07-13): present → the compact "Waiting on task" pill (expands the list, like Sub-goals) replaces the boxed why.
+  awaiting?: { why?: string | null; tasks?: string[] | null } | null;   // AWAITING flavor: held in Working, ⏳ awaiting badge — waiting on dispatched/delegated work (agents/subagents/a build), NOT on you (kernel build_feed; the user 2026-06-22). The peer case rides waitingOn; this carries the generic "why". `tasks` = live bg-task descriptions (the user 2026-07-13): present → the compact "Awaiting task" pill (expands the list, like Sub-goals) replaces the boxed why.
   groupTitle?: string;                             // host: this ask shares a typed turn with siblings → the group's title
   groupN?: number;                                 // host: sibling count for that turn (>1 ⇒ fold into one group card)
   provisional?: boolean;                           // a LIVE-PROMPT placeholder (kernel _provisional_card): the session is working an in-progress turn the planner hasn't classified yet. No goal node (empty tree) — dim, non-interactive, no clear/nudge/modal; replaced by the real card once the planner places the segment.
@@ -573,7 +573,30 @@ function feedConfirm(message: string, confirmLabel: string, onConfirm: () => voi
 // one entry per judge-stamped anomaly, each telling in detail what happened and why it's unexpected,
 // so pipeline misbehavior is followable from the card instead of buried in judge-errors.jsonl.
 // Same lightweight overlay pattern as feedConfirm (its own state machine; Esc / backdrop / Close).
-function feedWarnModal(cardTitle: string, warns: { kind: string; t: number; msg: string; detail: string }[]): void {
+// A warn kind stamped by a GIVEN-UP summarizer line (summary/brief/stall) — these get the "distill
+// failed" chip label and the modal's Try again (the user 2026-08-13); other anomaly kinds stay "warning".
+const DISTILL_FAIL_RE = /^(summary|brief|stall)-failed$/;
+
+// Feedback for the modal's Try again (the user 2026-08-13, round 2: the first cut leaned on the card's
+// Distilling… swirl, which only shows where the done-side line is the visible one — on a Working card
+// the click looked like a silent no-op even as the retry SUCCEEDED). Success and refusal both toast,
+// and silence itself is caught: a kernel that predates the redistill op drops it with no result at all,
+// so a backstop timer names that case instead of leaving the click unanswered (the ack event is the
+// signal; the timer only speaks when it never comes).
+let redistillWatch: { itemId: string; timer: number } | null = null;
+function armRedistillWatch(itemId: string): void {
+  if (redistillWatch) window.clearTimeout(redistillWatch.timer);
+  redistillWatch = {
+    itemId,
+    timer: window.setTimeout(() => {
+      redistillWatch = null;
+      feedToast("no answer from the kernel about the summary retry — it may predate this feature (restart romp to update it)");
+    }, 6000),
+  };
+}
+
+function feedWarnModal(cardTitle: string, warns: { kind: string; t: number; msg: string; detail: string }[],
+                       ctx?: { itemId: string; sid: string }): void {
   const back = el("div", "fconfirm-back fwarn-back");
   const box = el("div", "fconfirm-box fwarn-box");
   const head = el("div", "fwarn-head"); head.textContent = "Unexpected behavior";
@@ -588,6 +611,21 @@ function feedWarnModal(cardTitle: string, warns: { kind: string; t: number; msg:
     box.append(entry);
   }
   const btns = el("div", "fconfirm-btns");
+  // "Try again" on a given-up summary line (the user 2026-08-13): the kernel journals the re-arm and the
+  // next triage pass re-runs the distiller — the card's own "Distilling…" swirl is the live cue after
+  // the modal closes; a kernel refusal comes back as a redistillResult toast (fail loudly).
+  if (ctx && warns.some((w) => DISTILL_FAIL_RE.test(w.kind))) {
+    const retry = el("button", "fconfirm-btn") as HTMLButtonElement;
+    retry.textContent = "Try again";
+    retry.onclick = (e) => {
+      e.stopPropagation();
+      retry.disabled = true; retry.textContent = "retrying…";   // acknowledged before any round-trip
+      armRedistillWatch(ctx.itemId);                            // silence gets named, never swallowed
+      vscodeApi?.postMessage({ type: "redistill", itemId: ctx.itemId, sid: ctx.sid });
+      window.setTimeout(close, 300);   // cosmetic beat so the pressed label registers; the op is already posted
+    };
+    btns.append(retry);
+  }
   const ok = el("button", "fconfirm-btn primary"); ok.textContent = "Close";
   btns.append(ok);
   box.append(btns);
@@ -806,7 +844,9 @@ function makeAskCard(it: AskItem): HTMLElement {
   warnChip.onclick = (ev) => {
     ev.stopPropagation();
     const ws = (card as any)._warnsData as AskItem["warns"];
-    if (ws && ws.length) feedWarnModal((card as any)._title?.textContent || "", ws);
+    const wit = (card as any)._it as AskItem | undefined;   // freshest payload → the ids Try again posts with
+    if (ws && ws.length) feedWarnModal((card as any)._title?.textContent || "", ws,
+                                       wit ? { itemId: wit.itemId, sid: wit.sid } : undefined);
   };
   const waitOnBadge = el("span", "fask-waiton"); waitOnBadge.style.display = "none";   // "Awaiting <peer>" / "Deadlock <peer>", peer name in native colour (the user 2026-06-22)
   const blkBadge = el("a", "fask-blocked"); blkBadge.style.display = "none";   // ⏸ live permission/picker block → click opens the session
@@ -936,7 +976,7 @@ function makeAskCard(it: AskItem): HTMLElement {
   // point is that something is wrong. Filled in applySections.
   const stallBtn = el("button", "fask-secbtn fask-stallbtn"); stallBtn.textContent = "Stalled"; stallBtn.style.display = "none";
   const stallBody = el("div", "fask-stall-body");
-  // "Waiting on task" — the FOURTH mutually-exclusive section (the user 2026-07-13): a compact pill (with
+  // "Awaiting task" — the FOURTH mutually-exclusive section (the user 2026-07-13): a compact pill (with
   // the mini spinning swirl inside) that replaces the old boxed awaiting caption when live bg TASKS exist;
   // click expands the task list in the checklist spot, same interaction as Sub-goals. Filled in applySections.
   const taskBtn = el("button", "fask-secbtn fask-taskbtn"); taskBtn.style.display = "none";
@@ -1207,7 +1247,7 @@ function applySections(a: any, it: AskItem, distillShown: boolean): void {
   }
   const hasSubs = subCount > 0;
   // live background tasks (the user 2026-07-13): when the card is AWAITING on tasks, the compact
-  // "Waiting on task" pill joins the section toggles and expands this list (the old boxed caption is gone)
+  // "Awaiting task" pill joins the section toggles and expands this list (the old boxed caption is gone)
   const taskList = ((it.awaiting && it.awaiting.tasks) || []).filter(Boolean);
   const hasTasks = taskList.length > 0;
   // resolve the selection (default = summary open), falling back to "none" if the chosen section is empty
@@ -1270,11 +1310,13 @@ function applySections(a: any, it: AskItem, distillShown: boolean): void {
   subBtn.setAttribute("aria-pressed", choice === "subgoals" ? "true" : "false");
   subBtn.title = choice === "subgoals" ? "hide the sub-goals" : "show the sub-goals";
   subBtn.onclick = pick("subgoals");
-  // "Waiting on task" pill (the user 2026-07-13) — visible only while live bg tasks exist; the mini swirl
+  // "Awaiting task" pill (the user 2026-07-13) — visible only while live bg tasks exist; the mini swirl
   // inside keeps the "in flight" cue; pressed when the task list is showing. No preachy tooltip.
+  // "Awaiting", not "Waiting on": the chat chip and timeline badge already label this exact state
+  // Awaiting, and two words for one state read as two states (the user 2026-08-13).
   const taskBtn = a._taskBtn as HTMLElement;
   taskBtn.style.display = hasTasks ? "" : "none";
-  (a._taskLbl as HTMLElement).textContent = taskList.length === 1 ? "Waiting on task" : "Waiting on " + taskList.length + " tasks";
+  (a._taskLbl as HTMLElement).textContent = taskList.length === 1 ? "Awaiting task" : "Awaiting " + taskList.length + " tasks";
   taskBtn.classList.toggle("on", choice === "tasks");
   taskBtn.setAttribute("aria-pressed", choice === "tasks" ? "true" : "false");
   taskBtn.title = choice === "tasks" ? "hide the tasks" : "show the tasks";
@@ -1466,10 +1508,14 @@ function updateAskCard(card: HTMLElement, it: AskItem) {
     : "romp followed up once; the response didn't resolve it and it won't be re-asked — it's waiting on you";
   // "warning" chip: a judge stamped an anomaly on this goal — show the latest msg on hover, detail on click.
   // Data rides the card element so the click handler (wired once in build) always reads the current push.
+  // When the warns are all GIVEN-UP summarizer lines, the chip SAYS so — "distill failed" (the user
+  // 2026-08-13, who read the generic label as a mystery) — and its modal carries the Try again.
   a._warnsData = it.warns || null;
   if (it.warns && it.warns.length) {
+    const allDistill = it.warns.every((w) => DISTILL_FAIL_RE.test(w.kind));
+    const lbl = allDistill ? "distill failed" : "warning";
     a._warnChip.style.display = "";
-    a._warnChip.textContent = it.warns.length > 1 ? `warning ×${it.warns.length}` : "warning";
+    a._warnChip.textContent = it.warns.length > 1 ? `${lbl} ×${it.warns.length}` : lbl;
     a._warnChip.title = it.warns[it.warns.length - 1].msg + " — click for what happened and why";
   } else {
     a._warnChip.style.display = "none";
@@ -3745,6 +3791,17 @@ window.addEventListener("message", (e: MessageEvent) => {
       renderModal();
       feedToast("couldn't mark that sub-goal done: " + (String(m.error || "") || "the kernel refused it"));
     }
+  } else if (m.type === "redistillResult" && typeof m.itemId === "string") {
+    // The kernel's verdict on the warn modal's Try again — BOTH answers toast (the user 2026-08-13,
+    // round 2: success used to lean on the Distilling… swirl, which a Working card withholds, so a
+    // WORKING retry read as a silent no-op). The success copy promises what is actually true in every
+    // column: the line regenerates on the next judge pass over this card.
+    if (redistillWatch && redistillWatch.itemId === m.itemId) {
+      window.clearTimeout(redistillWatch.timer);
+      redistillWatch = null;
+    }
+    if (m.ok) feedToast("summary retry armed — it regenerates on the next judge pass over this card");
+    else feedToast("couldn't retry the summary: " + (String(m.error || "") || "the kernel refused it"));
   } else if (m.type === "revealCards") {
     // chat rail CLICK → scroll to the card(s) covering that turn and pulse them (the user 2026-07-23).
     // Distinct from hoverCards, which only outlines whatever is already on screen: this one MOVES the

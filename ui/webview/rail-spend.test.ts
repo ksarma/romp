@@ -23,18 +23,22 @@ test("the kernel serves spend windows for BOTH payload shapes, keyed-only beside
   // the spend-only view arms on the legacy apiKey marker OR a login-less machine with recorded spend,
   // and keeps TOTAL sums (everything there bills the key; legacy files predate the split)
   assert.ok(KERNEL.includes('if o.get("apiKey") or (not _claude_account() and (jd.STATE / "spend.json").exists()):'));
-  assert.ok(KERNEL.includes('return {"apiKey": True, "spend": _spend_windows(),'));
+  assert.ok(KERNEL.includes('out = {"apiKey": True, "spend": _spend_windows(),'));
+  // …and the $/hour series rides beside the windows for the hover graph (the user 2026-08-13)
+  assert.ok(KERNEL.includes('out["spendSeries"] = ss'));
   // the bars payload attaches the KEYED split only — a login turn's computed cost there would be
   // dollars nobody is billed — and only when key turns actually exist (the user 2026-08-08)
   assert.ok(KERNEL.includes("def _spend_windows(keyed_only=False):"));
   assert.ok(KERNEL.includes("ksp = _spend_windows(keyed_only=True)"));
-  assert.match(KERNEL, /if any\(\(ksp\.get\(k\) or \{\}\)\.get\("turns"\) for k in \("fiveHour", "sevenDay", "month"\)\):/);
+  assert.match(KERNEL, /if any\(\(ksp\.get\(k\) or \{\}\)\.get\("turns"\) for k in \("day", "week", "month"\)\):/);
   // no fragment of the key rides ANY payload (the user 2026-08-08, evening): the tail plumbing is
   // gone from the kernel wholesale, and the keyed-spend gate is a plain existence check
   assert.ok(KERNEL.includes("if _auth_key_present():"));
   assert.ok(!KERNEL.includes("apiTail"), "no key material in any usage payload");
   assert.ok(!KERNEL.includes("authTail"), "no key material in the status payload either");
-  // rolling 5h/7d read the HOUR buckets; month-to-date reads the day ledger
+  // rolling day/week read the HOUR buckets (192h = 8 days fits both); month-to-date reads the day
+  // ledger. fiveHour/sevenDay stay emitted ONE release for version skew (the user 2026-08-13).
+  assert.match(KERNEL, /"day": _rolling\(24\), "week": _rolling\(7 \* 24\)/);
   assert.match(KERNEL, /"fiveHour": _rolling\(5\), "sevenDay": _rolling\(7 \* 24\)/);
   assert.ok(KERNEL.includes("k.startswith(month)"));
   // the accumulator: cumulative-per-process DELTAS, and each bucket splits out the key's own turns
@@ -54,12 +58,14 @@ test("VS Code strip: spend is ONE API cell keyed on the windows' PRESENCE — th
   // presence, not the apiKey flag: a mixed host's payload carries bars AND spend at once — and the
   // 5h window is the whole test, the same hasSpend branch the rail runs
   assert.ok(STRIP.includes("const sp = usage && usage.spend;"));
-  assert.ok(STRIP.includes("if (!sp || !sp.fiveHour) return null;"));
+  // day||fiveHour: an older kernel ships no 'day' yet (version skew) — its 5h burn stands in
+  assert.ok(STRIP.includes("if (!sp || !(sp.day || sp.fiveHour)) return null;"));
+  assert.ok(STRIP.includes("const daySeg = sp.day || sp.fiveHour;"));
   assert.doesNotMatch(STRIP, /usage\.apiKey && usage\.spend/);
   assert.doesNotMatch(STRIP, /spendWindows/, "spend never renders as window rows any more");
-  // the collapsed cell carries 5h + month (like the rail's seg('fiveHour')+seg('month')); one display
-  // name per window, dollars AND tokens beside each other
-  assert.match(STRIP, /\[\["fiveHour", "5 hours", "5h"\], \["month", "Month", "mo"\]\]/);
+  // the collapsed cell carries 1 day + 1 month (the user 2026-08-13: pay-per-token has no reset
+  // windows); one display name per window, dollars AND tokens beside each other
+  assert.match(STRIP, /\[\["day", "1 day", "1d", daySeg\],\s*\n\s*\["month", "1 month", "1mo", sp\.month\]\]/);
   assert.match(STRIP, /tok\.textContent = " · " \+ fmtTok\(s\.tok\) \+ " tok";/);
   // the old one-off chip is gone, and with it any minted style
   assert.doesNotMatch(STRIP, /spendChip/);
@@ -74,7 +80,8 @@ test("the web rail's API cell is numbers under a constant label — no spend bar
   assert.ok(usageJS.includes("function apiCellHTML(live)"));
   assert.ok(usageJS.includes("'<div class=ru-name>API</div>'"));
   assert.ok(!usageJS.includes("_tail"), "no tail plumbing survives in the rail JS");
-  assert.ok(usageJS.includes("seg('fiveHour','5 hours')+seg('month','Month')"));
+  assert.ok(usageJS.includes("seg('day','1 day')+seg('month','1 month')"));
+  assert.ok(usageJS.includes("var d=sp.day||sp.fiveHour,m=sp.month;"), "older remote kernels stay visible");
   assert.ok(usageJS.includes("var seg=function(k,lbl){return '<div class=ru-name>'+lbl+'</div>'"));
   assert.ok(usageJS.includes("'<div class=ru-pct>'+fmtUsd(sum[k].usd)+' \\u00b7 '+fmtTok(sum[k].tok)+' tok</div>'"));
   // the graph and the budget fills are gone: no spend track, no spend color ramp, no shared scale
@@ -82,7 +89,7 @@ test("the web rail's API cell is numbers under a constant label — no spend bar
   assert.ok(!usageJS.includes("spendWinsHTML"), "spend never renders as window rows with tracks");
   assert.ok(!usageJS.includes("var mx=1;"), "the token auto-scale graph is gone");
   // presence-keyed, like the strip
-  assert.ok(usageJS.includes("function hasSpend(u){return !!(u&&u.spend&&u.spend.fiveHour);}"));
+  assert.ok(usageJS.includes("function hasSpend(u){return !!(u&&u.spend&&(u.spend.day||u.spend.fiveHour));}"));
 });
 
 test("one display name per window, worn everywhere: bars, hover sections, API cell, notices", () => {
@@ -121,14 +128,27 @@ test("the rich tip is the ONE hover surface: no native titles, per-host sections
     const code = line.split("//")[0];
     assert.ok(!/\btitle\s*=/.test(code) && !code.includes(".title="), `native title in usage JS: ${line.trim()}`);
   }
-  // a host section can carry BOTH its login's windows and its key's spend (per-session auth) — the
-  // spendOnly gate that hid a bars host's dollars is gone
-  assert.ok(usageJS.includes("if(!keys.length&&!sp)return '';"));
+  // host sections carry WINDOWS only now — spend is ONE fleet-level section (the user 2026-08-13:
+  // one shared key reads as one number; each host records only its own turns, so the sum IS the number)
+  assert.ok(usageJS.includes("if(!keys.length)return '';"));
   assert.ok(!usageJS.includes("spendOnly"), "spend renders for ANY host that has it");
-  assert.ok(usageJS.includes("if(sp){var ks=['fiveHour','sevenDay','month'].filter(function(k){return sp[k];});"));
+  assert.ok(usageJS.includes("function fleetSpendHTML(sets)"));
+  assert.ok(usageJS.includes("return h+fleetSpendHTML(sets)+'<div class=ru-tip-age>click to refresh</div>';"));
+  // …with the summed $/hour area graph and its peak beside it — labelled PER-HOUR (the user
+  // 2026-08-13 read a bare 'peak $311' and had to ask whether that was one hour)
+  assert.ok(usageJS.includes("sparkHTML(wk,'#9cd2ff',true,null)"));
+  assert.ok(usageJS.includes("'<span class=ru-tip-v>peak '+fmtUsd(mx)+'/h</span>"));
+  // …and every machine in the sum BY NAME, largest first (the user 2026-08-13: the devbox — spend,
+  // no login — vanished from the hover when per-host spend rows collapsed into the fleet section)
+  assert.ok(usageJS.includes("per.push({host:e.host,usd:sp.week.usd})"));
+  assert.ok(usageJS.includes("by machine \\u00b7 1 week"));
+  assert.ok(usageJS.includes("per.sort(function(a,b){return b.usd-a.usd;})"));
+  // and each window section carries its own utilization spark, y pinned to the honest 0-100
+  assert.ok(usageJS.includes("sparkHTML(d._winSeries[k],v.col,false,100)"));
   // numbers only: dollars · tokens · turns per window, under a plain 'API spend' heading
   assert.ok(usageJS.includes("function spendDet(u,det)"));
-  assert.ok(usageJS.includes("<span>API spend</span>"));
+  assert.ok(usageJS.includes("API spend'+(hosts>1?' \\u00b7 '+hosts+' machines':'')"),
+    "one fleet-level section — one shared key, one number (the user 2026-08-13)");
   assert.ok(usageJS.includes("fmtUsd(v.usd)+' \\u00b7 '+fmtTok(v.tok)+' tok \\u00b7 '+(v.turns||0)+' turns</span>"));
   // the tip anchors ABOVE the rail, centered on the CURSOR — never pinned to the container edge
   assert.ok(usageJS.includes("var x=(ev&&typeof ev.clientX==='number')?ev.clientX:(r.left+r.width/2);"));
@@ -201,4 +221,16 @@ test("the price table records the fast-mode gap for whoever maintains it", () =>
   const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
   assert.match(KERNEL, /KNOWN GAP — fast mode is not priced here/);
   assert.match(KERNEL, /Deliberately NOT corrected with a hardcoded 2x/);
+});
+
+test("token counts carry 3 significant figures, and both fmtTok twins share the formula (the user 2026-08-13)", () => {
+  const usageJS = KERNEL.split('_LANDING_USAGE_JS = """')[1].split('"""')[0];
+  // one adaptive-decimals helper in each copy — 1.32B / 13.2B / 132B, trailing zeros kept
+  assert.ok(usageJS.includes("function fmtSig3(v){return v.toFixed(v>=100?0:v>=10?1:2);}"));
+  assert.ok(usageJS.includes("if(n>=1e9)return fmtSig3(n/1e9)+'B';"));
+  assert.match(STRIP, /return v\.toFixed\(v >= 100 \? 0 : v >= 10 \? 1 : 2\);/);
+  assert.match(STRIP, /if \(n >= 1e9\) return fmtSig3\(n \/ 1e9\) \+ "B";/);
+  // the old 1-decimal + strip-trailing-zero form is gone from both
+  assert.ok(!usageJS.includes("toFixed(1).replace"));
+  assert.ok(!STRIP.includes('toFixed(1).replace'));
 });

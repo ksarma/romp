@@ -84,10 +84,16 @@ export function usageWindows(usage: any, nowS: number): UsageWindow[] {
   return out;
 }
 
+// 3 significant figures at every magnitude (the user 2026-08-13: a bare "1B tok" hides a third of a
+// billion tokens) — 1.32B / 13.2B / 132B, trailing zeros kept so the precision reads as meant.
+// Twin of the kernel rail's fmtTok; the two must stay in step (rail-spend pins).
+function fmtSig3(v: number): string {
+  return v.toFixed(v >= 100 ? 0 : v >= 10 ? 1 : 2);
+}
 export function fmtTok(n: number): string {
-  if (n >= 1e9) return (n / 1e9).toFixed(1).replace(/\.0$/, "") + "B";
-  if (n >= 1e6) return (n / 1e6).toFixed(1).replace(/\.0$/, "") + "M";
-  if (n >= 1e3) return (n / 1e3).toFixed(1).replace(/\.0$/, "") + "k";
+  if (n >= 1e9) return fmtSig3(n / 1e9) + "B";
+  if (n >= 1e6) return fmtSig3(n / 1e6) + "M";
+  if (n >= 1e3) return fmtSig3(n / 1e3) + "k";
   return String(n);
 }
 
@@ -107,16 +113,20 @@ export type ApiCell = {
 };
 export function apiCell(usage: any): ApiCell | null {
   const sp = usage && usage.spend;
-  if (!sp || !sp.fiveHour) return null;
+  // pay-per-token has no reset windows (the user 2026-08-13): the key's story is 1 day / 1 week /
+  // 1 month. day||fiveHour: an older kernel ships no 'day' yet (version skew) — its 5h burn is the
+  // closest honest stand-in until it updates.
+  if (!sp || !(sp.day || sp.fiveHour)) return null;
   const segs: ApiCell["segs"] = [];
-  for (const [key, label, short] of [["fiveHour", "5 hours", "5h"], ["month", "Month", "mo"]] as const) {
-    const seg = sp[key];
+  const daySeg = sp.day || sp.fiveHour;
+  for (const [key, label, short, seg] of [["day", "1 day", "1d", daySeg],
+                                          ["month", "1 month", "1mo", sp.month]] as const) {
     if (!seg || typeof seg.usd !== "number") continue;
     segs.push({ key, label, short, usd: seg.usd, tok: seg.tok || 0 });
   }
   if (!segs.length) return null;
   const lines = ["API-key spend"];
-  for (const [key, label] of [["fiveHour", "5 hours"], ["sevenDay", "7 days"], ["month", "Month"]] as const) {
+  for (const [key, label] of [["day", "1 day"], ["week", "1 week"], ["month", "1 month"]] as const) {
     const seg = sp[key];
     if (!seg || typeof seg.usd !== "number") continue;
     const turns = seg.turns || 0;
@@ -235,9 +245,14 @@ export function initStrip(openSettings: () => void, post?: (m: Record<string, un
     const nowS = Math.floor(Date.now() / 1000);
     usageWrap.textContent = "";
     // the subscription windows render as bar rows; key spend follows as ONE API cell (the rail's order)
+    // An UNKNOWN window is not drawn AT ALL (the user 2026-08-13; supersedes the 2026-07-31 '?' slot):
+    // the bar shows only what we know. Its last-known reading survives on HOVER — the strip has no rich
+    // panel, so the unknown rows' text rides the whole strip's title, labelled as such.
+    const unknownLines: string[] = [];
     for (const w of usageWindows(usage, nowS)) {
+      if (w.unknown) { unknownLines.push(w.title); continue; }
       const box = document.createElement("span");
-      box.className = "ru-w" + (w.unknown ? " ru-unk" : "");
+      box.className = "ru-w";
       box.title = w.title;
       // Both the expanded label and the compressed tag render; the [data-tier]
       // ladder in strip.css shows exactly one (or neither at the narrowest tier),
@@ -263,25 +278,12 @@ export function initStrip(openSettings: () => void, post?: (m: Record<string, un
         track.appendChild(fill);
         return track;
       };
-      if (w.unknown) {
-        // NO BARS AT ALL for an unknown window (the user 2026-07-31, round 2): a faded last-known fill
-        // still draws a value, and we do not have one — the length itself is the lie. The bars' slot
-        // holds a single "?" instead, keeping the row's alignment; the last-known number stays in the
-        // hover, explicitly labelled. The % readout is dropped too — the "?" IS the readout, and it
-        // survives the narrow tiers, where .ru-pct is hidden but the bars slot is always drawn.
-        const q = document.createElement("span");
-        q.className = "ru-qmark";
-        q.textContent = "?";
-        bars.appendChild(q);
-        box.append(name, bars);
-      } else {
-        if (w.pct != null) bars.appendChild(mkTrack(w.pct, usageColor(w.pct)));
-        if (w.elapsedPct != null) bars.appendChild(mkTrack(w.elapsedPct, "#6b7a8c"));
-        const pct = document.createElement("span");
-        pct.className = "ru-pct";
-        pct.textContent = `${w.pct}%`;
-        box.append(name, bars, pct);
-      }
+      if (w.pct != null) bars.appendChild(mkTrack(w.pct, usageColor(w.pct)));
+      if (w.elapsedPct != null) bars.appendChild(mkTrack(w.elapsedPct, "#6b7a8c"));
+      const pct = document.createElement("span");
+      pct.className = "ru-pct";
+      pct.textContent = `${w.pct}%`;
+      box.append(name, bars, pct);
       usageWrap.appendChild(box);
     }
     // The API cell — the rail's apiCellHTML twin (see apiCell above): "API", then designator → value
@@ -318,6 +320,9 @@ export function initStrip(openSettings: () => void, post?: (m: Record<string, un
       }
       usageWrap.appendChild(box);
     }
+    // the hidden-from-the-bar unknowns keep a hover home: the wrap's own title says what we last knew
+    usageWrap.title = unknownLines.length
+      ? "Not shown (no current reading):\n" + unknownLines.join("\n") : "";
     fit();
   }
 
