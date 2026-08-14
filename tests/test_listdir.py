@@ -99,6 +99,13 @@ class ListDirErrors(_Tree):
         self.assertIn("nope", r["error"])
         self.assertIn("not a directory", r["error"])
 
+    def test_an_error_reply_still_carries_a_walkable_trail(self):
+        # base/parent ride error replies too, so a FIRST open that fails builds crumbs whose
+        # ancestors are clickable — an error over an empty crumb bar was a dead end (review).
+        r = km._list_dir(os.path.join(self.tmp, "nope"))
+        self.assertEqual(r["base"], km._tilde(os.path.join(self.tmp, "nope")))
+        self.assertEqual(r["parent"], km._tilde(self.tmp))
+
     def test_a_relative_path_without_a_session_errors_instead_of_guessing(self):
         # /file's own rule: a relative path resolves against the sid's cwd; with no sid there is no
         # base to guess from, and a silent fallback would list the wrong machine-state entirely.

@@ -1332,3 +1332,7 @@ body.filebrowse-open { overflow: hidden; }
 /* the viewer's directory half is the click into the BROWSER — the discoverability path */
 .fileview-dir-link { cursor: pointer; }
 .fileview-dir-link:hover { color: var(--accent); text-decoration: underline; }
+/* the row menu must sit above BOTH overlays (base .ctx-menu z is for card menus over the feed) */
+#fb-ctx { z-index: 950; }
+/* the way above a "~"-rooted trail: the kernel-sent parent, worn as a dim leading crumb */
+.fb-crumb-up { opacity: 0.65; }

@@ -4336,8 +4336,12 @@ def _list_dir(raw, sid=None, hidden=False, limit=DIR_LIST_MAX):
     if not os.path.isabs(p):
         return {"error": "cannot list %s: not an absolute path (no session cwd to resolve against)" % _tilde(p)}
     p = os.path.normpath(p)     # "." from a card menu resolves to "<cwd>/." — lexical only, never realpath
+    # Error replies carry base/parent too, so the client can build a WALKABLE crumb trail over the
+    # failure — a first open that errors with no trail was a dead end (review, 2026-08-14).
+    err_ctx = {"base": _tilde(p),
+               "parent": None if p == "/" else _tilde(os.path.dirname(p.rstrip("/")) or "/")}
     if not os.path.isdir(p):
-        return {"error": "cannot list %s: not a directory" % _tilde(p)}
+        return dict(err_ctx, error="cannot list %s: not a directory" % _tilde(p))
     dirs, files = [], []
     try:
         with os.scandir(p) as it:
@@ -4363,7 +4367,8 @@ def _list_dir(raw, sid=None, hidden=False, limit=DIR_LIST_MAX):
                         or _is_text_path(e.name)
                 (dirs if is_dir else files).append(row)
     except OSError as ex:
-        return {"error": "cannot list %s: %s" % (_tilde(p), getattr(ex, "strerror", None) or str(ex))}
+        return dict(err_ctx,
+                    error="cannot list %s: %s" % (_tilde(p), getattr(ex, "strerror", None) or str(ex)))
     dirs.sort(key=lambda r: (r["name"].lower(), r["name"]))
     files.sort(key=lambda r: (r["name"].lower(), r["name"]))
     rows = dirs + files

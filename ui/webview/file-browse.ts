@@ -3,18 +3,22 @@
 // existing viewer, an ancestor crumb to walk up. It exists because the viewer could only ever show a
 // path someone else surfaced; this is the "just look around the repo" half.
 //
-// It is the viewer's SIBLING overlay and sits BENEATH it (z-index): opening a file from a listing
-// overlays the viewer on top with the listing intact underneath, so closing the file returns to the
-// listing. The close contract is ownership-aware — the viewer suppresses its viewFileClosed while a
-// browser is open beneath (file-view.ts tellShellClosed), and the browser's own browseClosed does the
-// pane restore — so the shell puts the feed pane back exactly once, whoever closes last.
+// It is the viewer's SIBLING overlay and sits BENEATH it (z-index), and the stack is kept
+// ONE-DIRECTIONAL: opening a file from a listing overlays the viewer on top with the listing intact
+// underneath — while opening the BROWSER always closes a viewer that is up (openFileBrowse below),
+// because "browse" means the user wants the listing now, and a browser painted under an opaque
+// viewer is a dead click (found in review, 2026-08-14). One direction also makes the keydown story
+// honest: the browser's handler always registers before the viewer's, so Escape's topmost-only rule
+// holds by construction. The close contract is ownership-aware — the viewer suppresses its
+// viewFileClosed while a browser is open beneath (file-view.ts tellShellClosed), and the browser's
+// own browseClosed does the pane restore — so the shell puts the feed pane back exactly once.
 //
 // The listing rides a WebSocket op (listDir → dirListing), NOT a new HTTP route: the sid field routes
 // it to the session-OWNING kernel over the existing federation splice, so browsing a remote session's
 // disk needs zero relay code. Staleness is the dirComplete protocol — a client-minted reqId echoed
 // back, replies dropped on mismatch, one in-flight ask with newest-value coalescing (the pacing is the
 // round-trip itself — an event, not a timer). File BYTES stay on HTTP /file via the existing viewer.
-import { openFileView } from "./file-view";
+import { openFileView, closeFileView } from "./file-view";
 import { fileUrl } from "./preview";
 
 type DirEntry = {
@@ -30,9 +34,12 @@ type DirListing = {
 let post: (m: Record<string, unknown>) => void = () => { /* bound by initFileBrowse */ };
 let reqSeq = 0;
 let inflight = false;
-let queued: string | null = null;      // newest navigation typed while one ask was in flight
+let queued: string | null = null;      // newest navigation asked while one listDir was in flight
+let needResync = false;                // a listing was lost to a socket drop — re-ask on romp:wsup
 let curPath = "";                      // the listing being shown (or asked for)
+let curParent: string | null = null;   // the kernel's parent of the CURRENT base — the way above "~"
 let curSid: string | null = null;
+let onKeyRef: ((e: KeyboardEvent) => void) | null = null;   // the live keydown handler, so close can unbind it
 let showHidden = false;
 
 function el(tag: string, cls?: string): HTMLElement {
@@ -53,7 +60,15 @@ export function closeFileBrowse(): void {
   const box = document.getElementById("romp-filebrowse");
   if (!box) return;
   box.remove();
+  document.getElementById("fb-ctx")?.remove();     // a row menu must not outlive its listing
   document.body.classList.remove("filebrowse-open");
+  // Unbind + reset EXPLICITLY: a ✕-close sees no keydown, so a lazy self-removing handler would
+  // survive into the next open and double every keystroke; and a module-level inflight surviving a
+  // close would wedge the reopened browser behind a reply that may never come (both found in review).
+  if (onKeyRef) { document.removeEventListener("keydown", onKeyRef); onKeyRef = null; }
+  inflight = false;
+  queued = null;
+  needResync = false;
   tellShellClosed();
 }
 
@@ -79,11 +94,20 @@ function joinPath(base: string, name: string): string {
   return (base === "/" ? "" : base) + "/" + name;
 }
 
+function dirnameOf(p: string): string {
+  const cut = p.lastIndexOf("/");
+  return cut > 0 ? p.slice(0, cut) : "/";
+}
+
 /** Open the browser at `path` (as the sid's kernel resolves it — "." means that session's cwd). */
 export function openFileBrowse(path: string, sid?: string | null): void {
   const had = document.getElementById("romp-filebrowse");
   curSid = sid || null;
   showHidden = false;
+  // A re-invoke while open must resync the persistent Hidden control with the state it claims to
+  // show — resetting the variable alone left the button lit over a dotfile-hidden listing (review).
+  const hb = document.getElementById("fb-hidden");
+  if (hb) { hb.classList.remove("on"); hb.setAttribute("aria-pressed", "false"); }
   if (!had) {
     const box = el("div", "filebrowse");
     box.id = "romp-filebrowse";
@@ -96,6 +120,7 @@ export function openFileBrowse(path: string, sid?: string | null): void {
     const hid = el("button", "fileview-btn") as HTMLButtonElement;
     hid.type = "button"; hid.id = "fb-hidden"; hid.textContent = "Hidden";
     hid.title = "Show dotfiles too";
+    hid.setAttribute("aria-pressed", "false");
     hid.addEventListener("click", () => {           // static overlay chrome — direct listeners are
       showHidden = !showHidden;                     // click-safe here, same as the viewer's buttons
       hid.classList.toggle("on", showHidden);
@@ -128,7 +153,8 @@ export function openFileBrowse(path: string, sid?: string | null): void {
       ask(c.dataset.path || "/");
     });
     // Per-entry mechanics one level deeper (the one ctx-menu vocabulary): Copy path / Download /
-    // Open folder — the last via the chat's own openFolder path, which stays on the LOCAL kernel.
+    // Open folder — the last via the chat's own openFolder op, which always stays on the LOCAL
+    // kernel (it SSHes out for a host-prefixed sid; federation.ts routeOutbound's openFolder rule).
     list.addEventListener("contextmenu", (ev) => {
       const row = (ev.target as HTMLElement).closest("[data-path]") as HTMLElement | null;
       if (!row || !list.contains(row)) return;
@@ -136,18 +162,24 @@ export function openFileBrowse(path: string, sid?: string | null): void {
       showRowMenu(ev as MouseEvent, row.dataset.path || "", row.dataset.act === "dir");
     });
 
-    // Escape / arrows / Enter / Backspace. TOPMOST-only: the viewer registers its own Escape handler
-    // when it opens ON TOP of this, and this one stands down while the viewer exists — the browser
-    // opened first, so it registered first and runs first on each keydown.
+    // Escape / arrows / Enter / Backspace. TOPMOST-only, layer by layer: an open row menu first,
+    // then the viewer (which can only sit ABOVE us — opening the browser closes any viewer, so our
+    // handler always registered before the viewer's), then the browser itself.
     const onKey = (e: KeyboardEvent) => {
       const box2 = document.getElementById("romp-filebrowse");
-      if (!box2) { document.removeEventListener("keydown", onKey); return; }
+      if (!box2) return;                                      // closed: closeFileBrowse unbinds us
+      if (e.key === "Escape") {
+        const ctx = document.getElementById("fb-ctx");
+        if (ctx) { e.preventDefault(); ctx.remove(); return; }   // the menu is the topmost surface
+      }
       if (document.getElementById("romp-fileview")) return;   // the viewer is topmost — its key
       if (e.key === "Escape") { e.preventDefault(); closeFileBrowse(); return; }
       if (e.key === "Backspace" || e.key === "ArrowLeft") {
         const cs = box2.querySelectorAll<HTMLElement>("#fb-crumbs [data-path]");
-        const up = cs.length >= 2 ? cs[cs.length - 2] : null;   // the crumb before the current one
-        if (up) { e.preventDefault(); ask(up.dataset.path || "/"); }
+        // the crumb before the current one; at a "~"-rooted trail's top the kernel-sent parent is
+        // the way above home (the up-crumb below carries it too)
+        const up = cs.length >= 2 ? cs[cs.length - 2].dataset.path : curParent;
+        if (up) { e.preventDefault(); ask(up); }
         return;
       }
       if (e.key === "ArrowDown" || e.key === "ArrowUp") {
@@ -166,7 +198,12 @@ export function openFileBrowse(path: string, sid?: string | null): void {
       }
     };
     document.addEventListener("keydown", onKey);
+    onKeyRef = onKey;
   }
+  // "Browse" means the user wants the LISTING now: a viewer left up would cover the browser
+  // entirely (opaque, one z layer above — the review's dead-click finding). The browser box already
+  // exists, so the viewer's tellShellClosed suppression sees it and the pane stays up.
+  if (document.getElementById("romp-fileview")) closeFileView();
   ask(path);
 }
 
@@ -181,14 +218,21 @@ function showRowMenu(e: MouseEvent, path: string, isDir: boolean): void {
   document.getElementById("fb-ctx")?.remove();
   const menu = el("div", "ctx-menu");
   menu.id = "fb-ctx";
-  const add = (label: string, fn: () => void) => {
+  const add = (label: string, fn: () => void, sub?: string) => {
     const item = el("div", "ctx-item");
     item.textContent = label;
+    if (sub) { const s = el("span", "ctx-item-sub"); s.textContent = sub; item.appendChild(s); }
     item.addEventListener("click", (ev) => { ev.stopPropagation(); menu.remove(); fn(); });
     menu.appendChild(item);
   };
   add("Copy path", () => { navigator.clipboard?.writeText(path); });
   if (!isDir) add("Download", () => startDownload(path));
+  // the demoted OS-open (the user 2026-08-14): openFolder always runs via the LOCAL kernel, which
+  // SSHes out when the sid is host-prefixed — so it lands on the machine the session runs on
+  add("Open folder window", () => {
+    const cwd = isDir ? path : dirnameOf(path);
+    post(curSid ? { type: "openFolder", cwd, id: curSid } : { type: "openFolder", cwd });
+  }, "on the machine the session runs on");
   document.body.appendChild(menu);
   const r = menu.getBoundingClientRect();
   menu.style.left = Math.max(0, Math.min(e.clientX, window.innerWidth - r.width - 4)) + "px";
@@ -214,35 +258,31 @@ function ask(path: string): void {
   post({ type: "listDir", path, sid: curSid || undefined, reqId: ++reqSeq, hidden: showHidden });
 }
 
-function onListing(m: DirListing): void {
-  if (m.reqId !== reqSeq) return;                 // a stale reply — a newer navigation superseded it
-  inflight = false;
-  if (queued !== null) { const q = queued; queued = null; ask(q); return; }
-  const box = document.getElementById("romp-filebrowse");
-  const list = document.getElementById("fb-list");
+// The breadcrumb trail for `base` (~-collapsed): every ancestor is a click. A "~"-rooted trail also
+// gets a leading up-crumb carrying the kernel-sent parent — without it home was a ceiling: the trail
+// bottoms out at "~" while /tmp or another checkout sits one level above, reachable only if the
+// kernel's parent field is actually read (the review's unread-field finding).
+function buildCrumbs(base: string, parent: string | null): void {
   const crumbs = document.getElementById("fb-crumbs");
-  if (!box || !list || !crumbs) return;           // closed while the ask was in flight
-
-  if (m.error) {
-    // Loud, path-naming, and never a dead end: the crumbs above stay clickable as the way out.
-    const why = el("div", "fileview-err");
-    why.textContent = m.error;
-    list.replaceChildren(why);
-    return;
-  }
-
-  const base = m.base || "/";
-  curPath = base;                                  // the kernel's resolved, ~-collapsed truth
-  // Breadcrumbs: every ancestor is a click. "~" stays one segment; "/" roots an absolute path.
+  if (!crumbs) return;
   crumbs.replaceChildren();
+  const home = base === "~" || base.startsWith("~/");
+  if (home && parent) {
+    const up = el("span", "fb-crumb fb-crumb-up");
+    up.dataset.path = parent;
+    up.textContent = "⋯";
+    up.title = "up to " + parent;
+    crumbs.appendChild(up);
+    const sep0 = el("span", "fb-crumb-sep"); sep0.textContent = "/";
+    crumbs.appendChild(sep0);
+  }
   const segs = base.split("/").filter((s) => s !== "");
-  let acc = base.startsWith("~") ? "" : "/";
   const rootCrumb = el("span", "fb-crumb");
-  rootCrumb.dataset.path = base.startsWith("~") ? "~" : "/";
-  rootCrumb.textContent = base.startsWith("~") ? "~" : "/";
-  if (base.startsWith("~")) segs.shift();
+  rootCrumb.dataset.path = home ? "~" : "/";
+  rootCrumb.textContent = home ? "~" : "/";
+  if (home) segs.shift();
   crumbs.appendChild(rootCrumb);
-  if (base.startsWith("~")) acc = "~";
+  let acc = home ? "~" : "/";
   for (const s of segs) {
     const sep = el("span", "fb-crumb-sep"); sep.textContent = "/";
     crumbs.appendChild(sep);
@@ -253,7 +293,42 @@ function onListing(m: DirListing): void {
     crumbs.appendChild(c);
   }
   crumbs.title = base;
+}
 
+// Render a listing failure IN the overlay, loudly, with the crumbs as the way out. The kernel's
+// error replies carry base/parent when the path resolved, so even a FIRST open that fails builds a
+// walkable trail — an error over an empty crumb bar was a dead end (the review's first-open finding).
+function renderError(text: string, base?: string, parent?: string | null): void {
+  const list = document.getElementById("fb-list");
+  if (!list) return;
+  if (base) buildCrumbs(base, parent ?? null);
+  const why = el("div", "fileview-err");
+  why.textContent = text;
+  list.replaceChildren(why);
+}
+
+function onListing(m: DirListing): void {
+  // Cleared UNCONDITIONALLY, before the stale check — the completer's own precedent (render.ts
+  // dirInFlight): a reply is the un-block event whatever it carries, and gating the clear on the
+  // reqId match wedged the overlay forever on any lost or duplicate frame (the review's latch bug).
+  inflight = false;
+  if (queued !== null) { const q = queued; queued = null; ask(q); return; }
+  if (m.reqId !== reqSeq) return;                 // a stale reply — a newer navigation superseded it
+  if (!document.getElementById("romp-filebrowse")) return;   // closed while the ask was in flight
+
+  if (m.error) {
+    curParent = m.parent ?? curParent;
+    renderError(m.error, m.base, m.parent);
+    return;
+  }
+
+  const base = m.base || "/";
+  curPath = base;                                  // the kernel's resolved, ~-collapsed truth
+  curParent = m.parent ?? null;
+  buildCrumbs(base, curParent);
+
+  const list = document.getElementById("fb-list");
+  if (!list) return;
   const rows: HTMLElement[] = [];
   for (const en of m.entries || []) {
     const p = joinPath(base, en.name);
@@ -309,6 +384,26 @@ export function initFileBrowse(poster: (m: Record<string, unknown>) => void): vo
       openFileBrowse(m.path || ".", typeof m.sid === "string" ? m.sid : null);
     } else if (m.type === "dirListing") {
       onListing(m as DirListing);
+    } else if (m.type === "warn" && inflight && document.getElementById("romp-filebrowse")) {
+      // A federation drop (the remote host's tunnel is down) answers with a warn INSTEAD of a
+      // dirListing — the feed page renders no toasts, so without this branch the ask would hang on
+      // a reply that was never sent. Loud, in place, crumbs intact (fail loudly, never a spinner).
+      inflight = false;
+      queued = null;
+      renderError(String(m.text || "the session's host is not answering"));
     }
+  });
+  // A socket drop mid-ask loses the reply — the frame was sent, nothing will re-send it. The drop
+  // and the return are EVENTS the pane shim already dispatches; keying recovery on them (rather
+  // than a timer) is the house rule. On wsdown the latch resets; on wsup the current listing is
+  // re-asked, which also repaints over the stale loader.
+  window.addEventListener("romp:wsdown", () => {
+    if (!document.getElementById("romp-filebrowse")) return;
+    if (inflight || queued !== null) { inflight = false; queued = null; needResync = true; }
+  });
+  window.addEventListener("romp:wsup", () => {
+    if (!needResync || !document.getElementById("romp-filebrowse")) return;
+    needResync = false;
+    ask(curPath);
   });
 }

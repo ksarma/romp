@@ -117,3 +117,65 @@ test("the feed boots both overlays side by side", () => {
   assert.match(FEED, /initFileView\(\);/);
   assert.match(FEED, /initFileBrowse\(\(m\) => vscodeApi\?\.postMessage\(m\)\);/);
 });
+
+// ── review-driven hardening (2026-08-14): the adversarial pass found eight real defects; these pins
+// hold their fixes in place ──
+
+test("opening the browser CLOSES an open viewer — the stack is one-directional", () => {
+  // a browser painted under the opaque viewer was a dead click, and viewer-first registration made
+  // one Escape close both overlays; closing the viewer at browse-open kills both failure modes
+  assert.match(BROWSE, /import \{ openFileView, closeFileView \} from "\.\/file-view";/);
+  assert.match(BROWSE, /if \(document\.getElementById\("romp-fileview"\)\) closeFileView\(\);/);
+});
+
+test("closeFileBrowse unbinds the keydown handler and resets the protocol latch", () => {
+  // a ✕-close sees no keydown, so lazily self-removing handlers stacked across reopens (double-moving
+  // arrows); and a surviving inflight wedged the reopened browser behind a reply that never comes
+  assert.match(BROWSE, /if \(onKeyRef\) \{ document\.removeEventListener\("keydown", onKeyRef\); onKeyRef = null; \}/);
+  const close = BROWSE.split("export function closeFileBrowse")[1].split("function human")[0];
+  assert.ok(close.includes("inflight = false;"), "the latch resets with the overlay");
+  assert.ok(close.includes("queued = null;"));
+  assert.ok(close.includes('document.getElementById("fb-ctx")?.remove();'), "a row menu never outlives its listing");
+});
+
+test("a reply un-blocks the protocol UNCONDITIONALLY, before the stale check (the completer's rule)", () => {
+  assert.match(BROWSE, /inflight = false;\n  if \(queued !== null\) \{ const q = queued; queued = null; ask\(q\); return; \}\n  if \(m\.reqId !== reqSeq\) return;/);
+});
+
+test("a lost reply recovers on the socket's own events, and a federation drop fails loudly", () => {
+  // the drop and the return are events the pane shim already dispatches — recovery keys on them,
+  // never a timer; a remote host's tunnel being down answers with a warn instead of a dirListing
+  assert.match(BROWSE, /window\.addEventListener\("romp:wsdown", \(\) => \{/);
+  assert.match(BROWSE, /window\.addEventListener\("romp:wsup", \(\) => \{/);
+  assert.match(BROWSE, /needResync = true;/);
+  assert.match(BROWSE, /m\.type === "warn" && inflight && document\.getElementById\("romp-filebrowse"\)/);
+});
+
+test("Escape peels the TOPMOST layer: row menu, then viewer, then browser", () => {
+  const key = BROWSE.split("const onKey =")[1].split("document.addEventListener(\"keydown\", onKey)")[0];
+  const ctxAt = key.indexOf('getElementById("fb-ctx")');
+  const viewAt = key.indexOf('getElementById("romp-fileview")');
+  const closeAt = key.indexOf("closeFileBrowse()");
+  assert.ok(ctxAt >= 0 && viewAt > ctxAt && closeAt > viewAt, "menu before viewer before browser");
+  assert.match(FEED_CSS, /#fb-ctx \{ z-index: 950; \}/, "the menu draws over both overlays, not under them");
+});
+
+test("a re-invoke resyncs the Hidden control with the state it claims to show", () => {
+  assert.match(BROWSE, /const hb = document\.getElementById\("fb-hidden"\);/);
+  assert.match(BROWSE, /hb\.classList\.remove\("on"\); hb\.setAttribute\("aria-pressed", "false"\);/);
+});
+
+test("the kernel's parent field is read: home is not a ceiling, and errors keep a walkable trail", () => {
+  assert.match(BROWSE, /curParent = m\.parent \?\? null;/);
+  assert.match(BROWSE, /fb-crumb fb-crumb-up/, "the way above a ~-rooted trail is a visible crumb");
+  assert.match(BROWSE, /const up = cs\.length >= 2 \? cs\[cs\.length - 2\]\.dataset\.path : curParent;/);
+  assert.match(BROWSE, /renderError\(m\.error, m\.base, m\.parent\);/);
+  // …and the kernel ships base/parent on error replies so a FIRST open that fails still has crumbs
+  assert.match(KERNEL, /err_ctx = \{"base": _tilde\(p\),/);
+});
+
+test("the row menu carries the plan's full vocabulary: Copy path / Download / Open folder", () => {
+  assert.match(BROWSE, /add\("Copy path", \(\) => \{ navigator\.clipboard\?\.writeText\(path\); \}\);/);
+  assert.match(BROWSE, /if \(!isDir\) add\("Download", \(\) => startDownload\(path\)\);/);
+  assert.match(BROWSE, /add\("Open folder window", \(\) => \{/);
+});

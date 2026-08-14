@@ -2005,10 +2005,11 @@ function prettyModel(id: string): string {
 // written to the transcript, so it can't be shown; the closing note says so. Carries no dot/timestamp
 // (no ts/uuid) → renderEvent leaves it off the conversational rail. Its open/closed state is persisted
 // per session (keyed by renderingSid) so a send/turn re-render never snaps it shut.
-// Make `elem` open the folder `cwd` with the configured opener on click (the user 2026-06-27): used
-// EVERYWHERE a folder location is shown (statusline, the System-context Directory row, …). Click-safe — the
-// action rides a data-act caught by the document-level openFolder delegate, so it works under any re-rendering
-// surface without per-node handlers. `sid` (the owning session's, possibly host-prefixed, id — the user
+// Make `elem` act on the folder `cwd` on click (the user 2026-06-27; rerouted 2026-08-14): used
+// EVERYWHERE a folder location is shown (statusline, the System-context Directory row, …) — on the web it
+// BROWSES the folder in the dashboard, in VS Code it keeps the configured opener. Click-safe — the
+// action rides a data-act caught by a document-level delegate (browseFiles/openFolder), so it works under
+// any re-rendering surface without per-node handlers. `sid` (the owning session's, possibly host-prefixed, id — the user
 // 2026-07-03) rides along as data-id: for a REMOTE session this is how the kernel knows to SSH out instead
 // of treating a remote path as local (a silent no-op, since that path doesn't exist here). This pane stays
 // host-BLIND as designed (see federation.ts) — sid is just echoed back opaquely, never parsed here.
