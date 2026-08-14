@@ -102,8 +102,11 @@ function el(tag: string, cls?: string): HTMLElement {
   return e;
 }
 
-// The shell restores the pane's previous visibility on this, so it must fire on EVERY close path.
+// The shell restores the pane's previous visibility on this, so it must fire on EVERY close path —
+// EXCEPT with the file BROWSER open beneath (plans/file-browser.md): closing the file then returns to
+// the listing, the pane must stay up, and the browser's own browseClosed does the restore instead.
 function tellShellClosed(): void {
+  if (document.getElementById("romp-filebrowse")) return;
   try {
     if (window.parent !== window) window.parent.postMessage({ romp: "viewFileClosed" }, "*");
   } catch { /* no shell (standalone /feed) — nothing to restore */ }
@@ -133,6 +136,17 @@ export function openFileView(path: string, sid?: string | null): void {
   const cut = path.lastIndexOf("/");
   const dir = el("span", "fileview-dir");
   dir.textContent = cut >= 0 ? path.slice(0, cut + 1) : "";
+  if (cut >= 0) {
+    // The discoverability path into the file BROWSER (plans/file-browser.md): the directory half of
+    // the title is a click into its listing. Posted to our OWN window — initFileBrowse listens on the
+    // same channel the shell relays into, so no import cycle between the two overlays.
+    dir.classList.add("fileview-dir-link");
+    dir.title = "Browse this file's folder";
+    dir.addEventListener("click", () => {
+      try { window.postMessage({ romp: "browseFiles", path: path.slice(0, cut) || "/", sid }, "*"); }
+      catch { /* messaging our own window cannot really fail */ }
+    });
+  }
   const base = el("span", "fileview-base");
   base.textContent = path.slice(cut + 1);
   name.appendChild(dir); name.appendChild(base);

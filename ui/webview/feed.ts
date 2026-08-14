@@ -19,6 +19,7 @@ import { initStrip } from "./strip";
 import { installSettingsSync } from "./settings";
 import { previewThumb, previewKind, canPreview } from "./preview";
 import { initFileView, openFileView } from "./file-view";
+import { initFileBrowse, openFileBrowse } from "./file-browse";
 import { VIEW_STATE_KEY, parseViewState, serializeViewState, pruneViewState, capViewState, type FeedViewState } from "./feed-view-state";
 
 // (The standalone-deliverable "FeedItem" subsystem was REMOVED 2026-07-07: the kernel had emitted
@@ -768,6 +769,20 @@ function showCardMenu(e: MouseEvent, card: HTMLElement): void {
     setCardNotify(card, it, !on);
   });
   menu.appendChild(item);
+  // Browse the session's working tree (plans/file-browser.md). Only the sid rides: the feed payload
+  // doesn't carry cwd, and "." lets the OWNING kernel resolve it authoritatively (_resolve_open_path)
+  // rather than this pane scraping another pane's state. Gated like the artifact chips: the VS Code
+  // webview can't reach the kernel origin, and the editor has its own explorer.
+  if (canPreview()) {
+    const browse = el("div", "ctx-item");
+    browse.textContent = "Browse files";
+    browse.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      dismissCardMenu();
+      openFileBrowse(".", it.sid);
+    });
+    menu.appendChild(browse);
+  }
   document.body.appendChild(menu);
   cardMenuEl = menu;
   const r = menu.getBoundingClientRect();   // at the cursor, clamped inside the pane
@@ -4034,5 +4049,6 @@ setInterval(() => {
 }, 15000);
 
 initFileView();   // the shell relays a chat file-link click here; the viewer takes over this pane
+initFileBrowse((m) => vscodeApi?.postMessage(m));   // …and a Browse files ask lands its sibling overlay
 
 vscodeApi?.postMessage({ type: "ready" });

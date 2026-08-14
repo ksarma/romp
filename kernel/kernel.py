@@ -4316,6 +4316,67 @@ def _dir_completions(raw, limit=DIR_COMPLETE_MAX):
             "truncated": len(names) > limit}
 
 
+DIR_LIST_MAX = 500               # listing rows per reply — bounded like DIR_COMPLETE_MAX, sized for a browse
+
+
+def _list_dir(raw, sid=None, hidden=False, limit=DIR_LIST_MAX):
+    """One directory's entries for the dashboard's file browser (plans/file-browser.md): files AND
+    directories with sizes/mtimes, plus a server-side `viewable` verdict per file — the same
+    _PREVIEW_MIME + _is_text_path tables /file's view half applies — so the client can mark
+    download-only rows up front instead of letting every click fail into a 415.
+
+    Resolution is _resolve_open_path semantics (~ expanded, a relative path against the sid's session
+    cwd) — the SAME rules /file uses, so every listed path can be handed straight to the /file URL
+    builder. Deliberately a SIBLING of _dir_completions, not a widening: the completer's dirs-only /
+    50-row / dot-gated semantics are the picker's, pinned by its tests. Hidden entries only when
+    asked; symlinks are shown and marked, is_dir() following them for typing like the completer.
+    Errors are LOUD and name the resolved path (fail loudly — never a silent empty list). One bounded
+    JSON frame: capped with `truncated` + `total` so the client can say what was left out."""
+    p = _resolve_open_path(str(raw or ""), sid)
+    if not os.path.isabs(p):
+        return {"error": "cannot list %s: not an absolute path (no session cwd to resolve against)" % _tilde(p)}
+    p = os.path.normpath(p)     # "." from a card menu resolves to "<cwd>/." — lexical only, never realpath
+    # Error replies carry base/parent too, so the client can build a WALKABLE crumb trail over the
+    # failure — a first open that errors with no trail was a dead end (review, 2026-08-14).
+    err_ctx = {"base": _tilde(p),
+               "parent": None if p == "/" else _tilde(os.path.dirname(p.rstrip("/")) or "/")}
+    if not os.path.isdir(p):
+        return dict(err_ctx, error="cannot list %s: not a directory" % _tilde(p))
+    dirs, files = [], []
+    try:
+        with os.scandir(p) as it:
+            for e in it:
+                if e.name.startswith(".") and not hidden:
+                    continue
+                try:
+                    is_dir = e.is_dir()                 # follows symlinks: a symlinked repo browses as one
+                except OSError:
+                    is_dir = False
+                size = mtime = 0
+                is_link = False
+                try:
+                    is_link = e.is_symlink()
+                    st = e.stat()                       # follows too; a dangling link keeps the zeros
+                    size, mtime = int(st.st_size), int(st.st_mtime)
+                except OSError:
+                    pass
+                row = {"name": e.name, "isDir": is_dir, "isLink": is_link,
+                       "size": 0 if is_dir else size, "mtime": mtime}
+                if not is_dir:
+                    row["viewable"] = bool(_PREVIEW_MIME.get(os.path.splitext(e.name)[1].lower())) \
+                        or _is_text_path(e.name)
+                (dirs if is_dir else files).append(row)
+    except OSError as ex:
+        return dict(err_ctx,
+                    error="cannot list %s: %s" % (_tilde(p), getattr(ex, "strerror", None) or str(ex)))
+    dirs.sort(key=lambda r: (r["name"].lower(), r["name"]))
+    files.sort(key=lambda r: (r["name"].lower(), r["name"]))
+    rows = dirs + files
+    parent = os.path.dirname(p.rstrip("/")) or "/"
+    return {"base": _tilde(p), "parent": None if p == "/" else _tilde(parent),
+            "entries": rows[:limit], "total": len(rows), "truncated": len(rows) > limit}
+
+
 def _session_has_history(sid):
     """True if this session was ever PROMPTED — the evidence that it is a real conversation, not a
     just-opened shell an "Opening…" cue covers. Streams the transcript and stops at the first user
@@ -21122,7 +21183,16 @@ if(m.romp==='viewFile'){var vf=document.getElementById('f-feed');
     try{window.__rompPaneToggle&&window.__rompPaneToggle('feed',true);}catch(e){}}
   try{window.__rompMobileTab&&window.__rompMobileTab('feed');}catch(e){}   // phone: one pane at a time
   try{vf&&vf.contentWindow&&vf.contentWindow.postMessage({romp:'viewFile',path:m.path,sid:m.sid},'*');}catch(e){}}
-if(m.romp==='viewFileClosed'&&window.__rompFeedWasOff){window.__rompFeedWasOff=false;
+// "Browse files" from any pane surfaces the FILE BROWSER in the feed pane — the viewFile dance with a
+// different message, so the feed opens the browser, not the viewer (plans/file-browser.md).
+if(m.romp==='browseFiles'){var bf=document.getElementById('f-feed');
+  if(!document.body.classList.contains('po-feed')){window.__rompFeedWasOff=true;
+    try{window.__rompPaneToggle&&window.__rompPaneToggle('feed',true);}catch(e){}}
+  try{window.__rompMobileTab&&window.__rompMobileTab('feed');}catch(e){}
+  try{bf&&bf.contentWindow&&bf.contentWindow.postMessage({romp:'browseFiles',path:m.path,sid:m.sid},'*');}catch(e){}}
+// Both overlays restore through here; which message fires is the overlays' ownership contract — the
+// viewer suppresses its viewFileClosed while the browser sits beneath it, so the restore runs ONCE.
+if((m.romp==='viewFileClosed'||m.romp==='browseClosed')&&window.__rompFeedWasOff){window.__rompFeedWasOff=false;
   try{window.__rompPaneToggle&&window.__rompPaneToggle('feed',false);}catch(e){}}});
 // One id per dashboard (per browser tab/window), minted here so every pane in it reports the same one.
 // sessionStorage, deliberately: it survives a reload (the panes keep their identity) and a second window
@@ -24600,6 +24670,17 @@ class Handler(BaseHTTPRequestHandler):
             _reply(client, dict({"type": "dirCompletions", "reqId": msg.get("reqId"), "host": "",
                                  "value": _val, "status": _dir_status(_val)},
                                 **_dir_completions(_val)))
+        elif msg and msg.get("type") == "listDir":
+            # The dashboard's file browser (plans/file-browser.md). Answered by the kernel that OWNS
+            # the sid's session — federation routes by the sid field, so browsing a remote session
+            # lists THAT machine's disk over the existing splice, no relay clause needed. reqId echoes
+            # back so a slow reply landing after a newer navigation is dropped by the client, never
+            # rendered (the dirComplete protocol); `host` rides for the same stale-drop. Resolution is
+            # /file's own (_resolve_open_path), so every listed path feeds the /file URL builder as-is.
+            _reply(client, dict({"type": "dirListing", "reqId": msg.get("reqId"), "host": "",
+                                 "sid": msg.get("sid") or ""},
+                                **_list_dir(msg.get("path"), msg.get("sid") or None,
+                                            hidden=bool(msg.get("hidden")))))
         elif msg and msg.get("type") == "browseDir":
             tgt = str(msg.get("target") or "picker")          # which dir field to fill: the new-session picker or the gear
             if not _native_dialogs():
