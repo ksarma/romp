@@ -3547,7 +3547,7 @@ class SweepTurn(unittest.TestCase):
         seg_by_id = {seg0["id"]: seg0, seg1["id"]: seg1}
         captured = {}
 
-        def spy(tt, mt, gh=""):
+        def spy(tt, mt, gh="", lw=""):
             captured["gh"] = gh
             return '{"done": [{"goal": 1, "why": "done"}]}'
         jd.closer_llm = spy
@@ -3560,7 +3560,7 @@ class SweepTurn(unittest.TestCase):
         store["placements"][self.seg["id"]] = g1["id"]
         captured = {}
 
-        def spy(tt, mt, gh=""):
+        def spy(tt, mt, gh="", lw=""):
             captured["gh"] = gh
             return '{"done": [{"goal": 1, "why": "done"}]}'
         jd.closer_llm = spy
@@ -3593,7 +3593,7 @@ class StatusReportMenu(unittest.TestCase):
     def _spy(self, reply):
         captured = {}
 
-        def spy(tt, mt, gh=""):
+        def spy(tt, mt, gh="", lw=""):
             captured["mt"] = mt
             return reply
         jd.closer_llm = spy
