@@ -107,7 +107,7 @@ function el(tag: string, cls?: string): HTMLElement {
 // viewer through these module-level hooks (the viewer itself is a per-open closure).
 let post: (m: Record<string, unknown>) => void = () => { /* bound by initFileView */ };
 let saveSeq = 0;
-let editHooks: { reqId: number; saved: (mtime: number) => void; failed: (err: string) => void } | null = null;
+let editHooks: { reqId: number; saved: (mtimeNs: string) => void; failed: (err: string) => void } | null = null;
 // Set by the open viewer: returns false to VETO a close (an editor holding unsaved changes asks
 // first). The guard must live in closeFileView itself, because the browser overlay and the Escape
 // handler both close through it without knowing an edit is in progress.
@@ -178,10 +178,14 @@ export function openFileView(path: string, sid?: string | null): void {
   // here, same as Copy path below.
   const fmt = loadFmt();
   let text: string | null = null;             // set once the fetch lands; earlier clicks just save the pref
-  let mtime = 0;                              // the file's Last-Modified at load — saveFile's conflict floor
-  let isText = false;                         // the kernel's verdict (text/plain), not a client guess
+  let mtimeNs = "";                           // the file's mtime at load, NANOSECONDS AS A STRING —
+  //   saveFile's conflict floor (ns because whole seconds let a same-second agent write slip the
+  //   guard; a string because ~1.7e18 exceeds JS's safe-integer range and a number would round)
+  let isText = false;                         // the kernel's verdicts (text/plain AND faithful UTF-8)
   let editing = false;
   let dirty = false;
+  let eolCRLF = false;                        // the file's dominant line ending — textareas normalize
+  //   CRLF→LF on assignment, so an untouched CRLF file would otherwise save with every ending rewritten
   let ta: HTMLTextAreaElement | null = null;
   const isMd = langFor(path) === "markdown";  // .md/.markdown — the only kind with a Rendered form
   const segBtns: Array<["rendered" | "raw", HTMLButtonElement]> = [];
@@ -269,7 +273,7 @@ export function openFileView(path: string, sid?: string | null): void {
     wrapBtn.hidden = rendered || editing;
     wrapBtn.classList.toggle("on", fmt.wrap);
     wrapBtn.setAttribute("aria-pressed", String(fmt.wrap));
-    editBtn.hidden = editing || text === null || !isText || !mtime;
+    editBtn.hidden = editing || text === null || !isText || !mtimeNs;
     saveBtn.hidden = !editing;
     cancelBtn.hidden = !editing;
     if (text === null || editing) return;   // loading, or the textarea owns the body right now
@@ -283,13 +287,15 @@ export function openFileView(path: string, sid?: string | null): void {
   const confirmDiscard = (): boolean =>
     !editing || !dirty || window.confirm("Discard unsaved changes to " + path.slice(cut + 1) + "?");
   closeGuard = confirmDiscard;
+  const norm = (s: string): string => s.replace(/\r\n/g, "\n");   // the textarea's own view of any text
   const enterEdit = () => {
     if (text === null || editing) return;
     editing = true; dirty = false;
+    eolCRLF = /\r\n/.test(text);
     ta = el("textarea", "fileview-editor") as HTMLTextAreaElement;
-    ta.value = text;
+    ta.value = text;                            // the browser normalizes CRLF→LF on assignment…
     ta.spellcheck = false;
-    ta.addEventListener("input", () => { dirty = ta!.value !== text; });
+    ta.addEventListener("input", () => { dirty = ta!.value !== norm(text!); });   // …so compare normalized
     ta.addEventListener("keydown", (e) => {     // the editor's own save chord; Esc falls through to onKey
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") { e.preventDefault(); doSave(); }
     });
@@ -299,6 +305,7 @@ export function openFileView(path: string, sid?: string | null): void {
   };
   const exitEdit = () => {
     editing = false; dirty = false; ta = null;
+    editHooks = null;                           // a cancelled save's late ack must not touch a NEW session
     saveBtn.disabled = false; saveBtn.textContent = "Save";
     renderBody();
   };
@@ -306,12 +313,21 @@ export function openFileView(path: string, sid?: string | null): void {
     if (!editing || !ta || saveBtn.disabled) return;
     if (!dirty) { exitEdit(); return; }         // nothing changed — leaving is the honest ack
     saveBtn.disabled = true; saveBtn.textContent = "Saving…";   // acknowledge before the round-trip
-    const content = ta.value;
+    // restore the file's own line endings — an untouched CRLF file must round-trip byte-identical
+    const content = eolCRLF ? ta.value.replace(/\n/g, "\r\n") : ta.value;
     editHooks = {
       reqId: ++saveSeq,
-      saved: (mt) => {
-        mtime = mt;
+      saved: (mtNs) => {
+        mtimeNs = mtNs;
         text = content;
+        // Keystrokes typed DURING the round-trip survive the ack (the review's in-flight-typing
+        // finding): if the live buffer moved past the snapshot we saved, stay in edit mode with the
+        // new baseline — never re-render over what the user is still typing.
+        if (ta && ta.value !== norm(content)) {
+          dirty = true;
+          saveBtn.disabled = false; saveBtn.textContent = "Save";
+          return;
+        }
         exitEdit();                             // re-renders the highlighted view from the saved bytes
       },
       failed: (err) => {
@@ -337,7 +353,7 @@ export function openFileView(path: string, sid?: string | null): void {
         body.prepend(bar2);
       },
     };
-    post({ type: "saveFile", path, sid: sid || undefined, content, baseMtime: mtime, reqId: saveSeq });
+    post({ type: "saveFile", path, sid: sid || undefined, content, baseMtimeNs: mtimeNs, reqId: saveSeq });
   };
 
   const onKey = (e: KeyboardEvent) => {
@@ -360,12 +376,13 @@ export function openFileView(path: string, sid?: string | null): void {
     if (!r.ok) return r.text().then((t) => {
       throw Object.assign(new Error(t || ("HTTP " + r.status)), { status: r.status });
     });
-    // Edit arms off the KERNEL's verdicts, never a client guess: text/plain says raw mode is showing
-    // the actual bytes, and Last-Modified anchors the save's conflict floor (an old kernel that sends
-    // neither simply gets no Edit button).
-    isText = (r.headers.get("Content-Type") || "").startsWith("text/plain");
-    const lm = r.headers.get("Last-Modified");
-    mtime = lm ? Math.floor(Date.parse(lm) / 1000) || 0 : 0;
+    // Edit arms off the KERNEL's verdicts, never a client guess: text/plain AND a faithful UTF-8
+    // round-trip (the latin-1 fallback re-decodes non-UTF-8 files — saving that back would rewrite
+    // every non-ASCII byte, the review's executed repro), anchored by the ns mtime header (an old
+    // kernel that sends neither simply gets no Edit button).
+    isText = (r.headers.get("Content-Type") || "").startsWith("text/plain")
+      && r.headers.get("X-Romp-Text-Utf8") !== "0";
+    mtimeNs = r.headers.get("X-Romp-Mtime-Ns") || "";
     return r.text();
   }).then((t) => {
     if (!document.getElementById("romp-fileview")) return;    // closed while it was in flight
@@ -520,10 +537,26 @@ export function initFileView(poster: (m: Record<string, unknown>) => void): void
       openFileView(m.path, typeof m.sid === "string" ? m.sid : null);
     } else if (m.type === "fileSaved" && editHooks && m.reqId === editHooks.reqId) {
       const h = editHooks; editHooks = null;
-      h.saved(Number(m.mtime) || 0);
+      h.saved(String(m.mtimeNs || ""));
     } else if (m.type === "fileSaveFailed" && editHooks && m.reqId === editHooks.reqId) {
       const h = editHooks; editHooks = null;
       h.failed(String(m.error || "the save failed"));
+    } else if (m.type === "warn" && editHooks) {
+      // A federation drop (the session's host unreachable) answers a saveFile with a warn instead
+      // of a reply — the feed page renders no toasts, so without this the button spins forever
+      // (the same hole the browse overlay closed for listDir).
+      const h = editHooks; editHooks = null;
+      h.failed(String(m.text || "the session's host is not answering — the save was not sent"));
     }
+  });
+  // A socket drop mid-save loses the ack, and the frame itself may or may not have reached the
+  // kernel — the honest answer is to say exactly that and re-arm Save: a save that DID land will
+  // refuse the retry as "changed on disk", and Reload resolves it from there. Keying on the shim's
+  // own drop event (not a timer) is the house rule; the browse overlay set the precedent.
+  window.addEventListener("romp:wsdown", () => {
+    if (!editHooks) return;
+    const h = editHooks; editHooks = null;
+    h.failed("the connection dropped mid-save — it may or may not have landed; "
+      + "Save again once the connection returns (a save that DID land will refuse as changed-on-disk)");
   });
 }
