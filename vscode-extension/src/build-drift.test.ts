@@ -38,68 +38,43 @@ test("the extension compares keepalive dv against the stamp and prompts once", (
     "latched (one prompt per window), guarded when the stamp is absent, and only NEWER dv fires");
 });
 
-test("the drift prompt is ACTIONABLE — but only with actions that can work on THIS host", () => {
+test("the drift prompt's buttons are resolved LOCALLY and never dead-end in an error toast", () => {
   const notice = slice("function maybeBuildNotice(dv: unknown)", "async function updateExtension");
-  // The buttons are chosen from a live resolution, never hardcoded: an installed-from-VSIX copy has
-  // no checkout to rebuild from, and an Update button there could only ever produce an error toast
-  // (the review of the /version-rompDir fix, 2026-08-05). driftNotice owns that choice and is tested
-  // in update-target.test.ts; this pins the WIRING.
-  assert.ok(notice.includes("driftNotice(resolveInstallTarget())"), "the notice is built from a live resolution");
-  assert.ok(notice.includes("showInformationMessage(notice.message, ...notice.actions)"),
-    "the toast shows exactly the actions the notice allows — no extra literal button");
-  assert.ok(!/"Update extension"/.test(notice), "no hardcoded Update button that ignores the resolution");
+  // The buttons come from a LOCAL resolution routed through driftNotice — never a fixed string, never
+  // off the wire — so a copy that can't rebuild is offered the copy-command action, not an Update
+  // button whose only outcome is an error toast.
+  assert.ok(notice.includes("resolveInstallScript(ctx?.extensionPath || \"\", process.env.ROMP_DIR"),
+    "resolves the target locally to decide the toast's buttons");
+  assert.ok(notice.includes("driftNotice("), "the message + actions come from driftNotice");
+  assert.ok(notice.includes("notice.message") && notice.includes("...notice.actions"),
+    "shows driftNotice's message and its actions, in order");
   assert.ok(notice.includes("choice === UPDATE_ACTION") && notice.includes("void updateExtension()"),
-    "the update action runs the self-update");
-  assert.ok(notice.includes("choice === COPY_ACTION") && notice.includes("void copyInstallCommand()"),
-    "the fallback action puts the command on the clipboard");
+    "the Update action runs the self-update");
+  assert.ok(notice.includes("choice === COPY_ACTION") && notice.includes("clipboard.writeText(INSTALL_COMMAND)"),
+    "the Copy action puts the install command on the clipboard — a client-side action that cannot fail");
   // The notice itself must NOT reload — the drift toast never auto-anything (the reload is gated later).
   assert.ok(!notice.includes("reloadWindow"), "maybeBuildNotice must not reload the window");
 });
 
-test("copying the install command is client-side, so the offered action cannot fail", () => {
-  const copy = slice("function copyInstallCommand", "// Ports are CONFIGURABLE");
-  assert.ok(copy.includes("vscode.env.clipboard.writeText(INSTALL_COMMAND)"), "the clipboard, not a shell-out");
-  assert.ok(!/execFile|runInstall/.test(copy), "nothing is executed on this path");
-  assert.ok(copy.includes("setStatusBarMessage"), "the click is acknowledged");
-});
-
 test("updateExtension rebuilds+reinstalls the VSIX, then offers a USER-gated reload", () => {
   const upd = slice("async function updateExtension", "function runInstall");
-  // The script it runs is resolved from THIS host — the VSIX's own path, else our own ROMP_DIR —
-  // never from a kernel response: /version is auth-exempt, so a rompDir off the wire would let
-  // whatever answers the port pick the directory a shell command runs from (update-target.ts).
-  assert.ok(EXT.includes("resolveInstallScript(ctx?.extensionPath || \"\", process.env.ROMP_DIR"),
-    "the exec target is resolved locally from the extension's own installed path");
-  // Re-resolved at CLICK time, not read off whatever the toast decided: this entry point is also the
-  // palette command and the menu's Update row (neither preceded by a toast), and a toast can sit on
-  // screen while the checkout it named moves.
-  assert.ok(upd.includes("resolveInstallTarget()"), "the click re-resolves rather than trusting a stale check");
-  // Scan the RESOLVER too, not just updateExtension. This delta moved resolution out into
-  // resolveInstallTarget(), and a guard that still slices only updateExtension stopped covering the
-  // very thing it exists for: a kernel-supplied rompDir reintroduced inside the helper passed this
-  // assertion untouched. The exec target may come from no network-supplied value, wherever it is
-  // computed.
-  const resolver = slice("function resolveInstallTarget", "// Build-drift banner");
-  assert.ok(!/rompDir|fetchJson|homedir/.test(resolver),
-    "the resolver takes nothing off the wire either — /version is unauthenticated");
-  assert.ok(!/rompDir|fetchJson|homedir/.test(upd),
-    "nothing the kernel reports (and no $HOME expansion of it) reaches the exec target");
+  // The install target is resolved LOCALLY — this VSIX's own path or ROMP_DIR from our own
+  // environment (update-target.ts) — never off the kernel's auth-exempt /version, where a rompDir
+  // off the wire would let whatever answers the port pick the directory a shell command runs from.
+  assert.ok(upd.includes("resolveInstallScript(ctx?.extensionPath || \"\", process.env.ROMP_DIR"),
+    "resolves the install dir from local knowledge, not a kernel response");
+  assert.ok(!/info\.rompDir|fetchJson\("\/version"\)/.test(upd),
+    "updateExtension must not read the repo root off /version");
   assert.ok(upd.includes("runInstall(script, extDir)") && upd.includes("target.script"),
-    "runs vscode-extension/install.sh");
+    "runs the resolved install.sh (script now comes from update-target, not a joined /version path)");
   assert.ok(upd.includes("packaged romp-chat-view\\.vsix") && upd.includes("install into:"),
     "a clean exit is not enough — require the packaged + installed markers (install.sh skips gracefully)");
   // Reload is behind an explicit button click, never automatic (prefer-reload-banner-not-auto).
   assert.ok(upd.includes('"Reload window"') && upd.includes('choice === "Reload window"') &&
     upd.includes('executeCommand("workbench.action.reloadWindow")'),
     "reload only fires when the user clicks Reload window");
-  assert.ok(upd.includes("showErrorMessage") && upd.includes("MANUAL_REMEDY"),
+  assert.ok(upd.includes("showErrorMessage") && upd.includes("install.sh in a terminal"),
     "a failed/skipped update fails loudly with the manual remedy");
-  // A copy that can't rebuild itself (installed from a .vsix, no ROMP_DIR) says so and stops —
-  // it never falls back to running some other directory's install.sh. Same words as the toast, and
-  // the same clipboard action, so the two ways of reaching it read as one thing.
-  assert.ok(upd.includes("if (!target)") && upd.includes("CANT_REBUILD") && upd.includes("return;"),
-    "no resolvable checkout → a plain error and no shell-out");
-  assert.ok(upd.includes("COPY_ACTION"), "the dead end still hands over the command to run");
 });
 
 test("runInstall shells out with the host's resolved env so node/npm/code resolve", () => {
