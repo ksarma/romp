@@ -3647,7 +3647,6 @@ function renderTabs() {
       // pulse as the statusline's opening dots; never the solid working yellow, which claims work
       // that isn't happening.
       : st === "opening" ? ["opening", "opening — this session is still starting up"]
-      : st === "ready" || st === "idle" ? ["ready", "idle — nothing running; finished its last turn"]
       : !st ? ["unknown", "state unknown — romp couldn't read this session's live state"]
       : null;
     if (dot) {

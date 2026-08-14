@@ -144,22 +144,23 @@ function paintFoldButtons() {
 
 function el(tag: string, cls?: string): HTMLElement { const e = document.createElement(tag); if (cls) e.className = cls; return e; }
 
-// The status pip before a session name — the SAME four-class language the feed's .fwork-dot speaks
-// (the user 2026-08-09): gold = working, straw = awaitingBg, hollow steel ring = quiet (ready/idle),
-// gray ring = the status is MISSING outright (unreadable — rendered explicitly, never as a blank, so a
-// known state is never indistinguishable from a rendering hole). The fleet has the shared chip state on
-// its own payload (ledgers[].status — build_session's derivation), so it keys off that, not name lists.
-// Chip states with their own designed treatments elsewhere (blocked/retrying/compacting/closed/…) keep
-// their undotted look here — giving those pip colors is the status-taxonomy question, which is parked.
+// The status pip before a session name — the SAME language the feed's .fwork-dot speaks: gold =
+// working, straw = awaitingBg, gray ring = the status is MISSING outright (unreadable). A healthy
+// idle session gets NO pip, so a blank means "alive and quiet" and nothing else; that only holds
+// because the unreadable case now renders loudly instead of hiding behind the same nothing. (The
+// hollow ready ring this pane briefly drew went when the fork converged with upstream, 2026-08-14.)
+// This pane reads the shared chip state off its own payload (ledgers[].status — build_session's
+// derivation), so it keys off that, not the name lists the feed uses. Chip states with their own
+// designed treatments elsewhere (blocked/retrying/compacting/closed/…) keep their undotted look
+// here — giving those pip colors is the status-taxonomy question, which is parked.
 function statusDot(s: FleetSession): HTMLElement | null {
   const st = s.status?.state;
   const kind = st === "working" ? "" : st === "awaitingBg" ? "await"
-    : st === "ready" || st === "idle" ? "ready" : st ? null : "unknown";
+    : st ? null : "unknown";          // a known state (incl. idle/ready) gets no pip of its own
   if (kind === null) return null;
   const d = el("span", "fl-workdot" + (kind ? " " + kind : ""));
   d.title = kind === "" ? "working — a turn is running right now"
     : kind === "await" ? "awaiting — idle, but background work it dispatched is still running"
-    : kind === "ready" ? "idle — nothing running; finished its last turn"
     : "state unknown — romp couldn't read this session's live state";
   return d;
 }
