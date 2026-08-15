@@ -187,6 +187,13 @@ type ChatEvent = (
   // and the synthesized /effort chip prunes on the next message — so this rail-anchored note marks WHEN the
   // new effort took effect, and stays. Kernel-interleaved by time, like `retried`. SDK-only.
   | { kind: "effortApplied"; effort: string; ts?: string; uuid?: string }
+  // Durable command GESTURE (the user 2026-08-14): a /model-/effort-/auth-style pick used to survive only as
+  // the synthesized live chip, which stale_cmd prunes on the next human turn — the user's own gesture then
+  // vanished from their side of the history while the applied note stayed. The kernel writes a
+  // {"t","cmdGesture"} marker at the request moment and interleaves this once the live chip retires, so the
+  // right side keeps "what you did" and the left rail keeps "it took effect". cmd is the full "/effort high"
+  // text. SDK-only, like effortApplied.
+  | { kind: "cmdGesture"; cmd: string; ts?: string; uuid?: string }
   // The model's safeguards flagged the prompt and the CLI retried the turn on a fallback model (the
   // transcript's system/model_refusal_fallback record). The reply that follows came from a DIFFERENT
   // model — conversation state that must be apparent in the chat, never silent (the user 2026-08-03).
@@ -205,7 +212,10 @@ type ChipState = "working" | "ready" | "awaiting" | "awaitingBg" | "idle" | "clo
 interface Status { state: ChipState; sinceEpoch: number | null; awaitingWhy?: string | null; awaitingTasks?: string[]; effort?: string; model?: string; modelPending?: boolean; effortPending?: boolean; mode?: string; fast?: string; auth?: string; authPending?: boolean; authBoth?: boolean; authAcct?: string; ctx?: string; ctxColor?: number[]; modelColor?: number[]; effortColor?: number[]; faded?: boolean; backend?: string; apiTooLong?: boolean; apiSpendLimit?: boolean; apiModelLimit?: boolean; apiAuthErr?: boolean; retrySuppressed?: boolean; retryNextAt?: number | null; retryTries?: number | null; }   // awaitingWhy/awaitingTasks = what an awaitingBg session is waiting on (kernel _session_awaiting's phrasing + the live awaited task descriptions) — the #bg-tasks box renders it when no tracked tasks claim the box (renderAwaitWhy; the user 2026-08-13, who moved it out of the statusline the same day PR #350 put it there)   // retrySuppressed = the user interrupted this thread's API-error storm → romp's auto-retry stays OFF for it until a successful turn re-arms (the user 2026-07-06). backend = "tmux" | "sdk"; apiTooLong = the "blocked" is a "prompt is too long" error (on you → red tab) vs a transient API error (amber/retrying); apiSpendLimit = a monthly spend cap (on you → raise it; NEVER auto-retried — retrying can't fix it, the user 2026-07-14); apiModelLimit = this session's MODEL is out of allowance (on you → switch model or add credits; not auto-retried either, the user 2026-08-01); ctxColor = the GLOBAL colormap's RGB for the context%, computed server-side; modelColor/effortColor = the same map's RGB tint for the model name + effort (by capability/effort rank), server-computed; modelPending = a /model switch is resolving → the badge shows switching-dots until the new name lands (server-driven, event-based, the user 2026-07-03); fast = the CLI's fast-mode state ("on"/"off"/"cooldown", from the SDK init's fast_mode_state; absent = unknown/unavailable → no fast badge)
 interface Color { bg: string; fg: string; }
 // A run_in_background task surfaced in the #bg-tasks box (the kernel's _bg_tasks): a one-line summary +
-// status, expandable to the command + its output. status = running | completed | failed.
+// status, expandable to the command + its output. status = running | completed | failed. For a dispatched
+// agent/workflow, `summary` is the dispatch's description (or the workflow meta's summary) and `command`
+// carries the full ask — the Agent prompt / the Workflow script — so the row's detail level says what the
+// work IS, not a generic label over an empty block (the user 2026-08-15).
 interface BgTask { id: string; status: string; summary: string; command?: string; output?: string; }
 // The box payload: count (total to surface → the "N background tasks" header) + up to 16 tasks (the list).
 interface BgTasks { count: number; tasks: BgTask[]; }
@@ -1073,8 +1083,8 @@ function linkifyFileUris(root: HTMLElement, skipThumbs?: string[], spacePaths?: 
     tn.replaceWith(frag);
   }
   // A mentioned image/PDF renders FULL-SIZE under the message (the user 2026-07-20, who wanted not even a
-  // thumbnail but a rendered image, like the user messages; supersedes the 2026-07-08 thumbnail strip,
-  // which lives on in the feed's artifact strips). Absolute AND relative paths work — the kernel
+  // thumbnail but a rendered image, like the user messages; supersedes the 2026-07-08 thumbnail
+  // strip). Absolute AND relative paths work — the kernel
   // resolves a relative one against this session's cwd, same as click-to-open. Per surface:
   //   web       — previewFull: the kernel serves the bytes straight into an <img> at the user-image
   //               scale / a PDF's native inline viewer; a path the kernel can't serve removes itself.
@@ -1982,6 +1992,7 @@ function renderEventInner(ev: ChatEvent): HTMLElement {
   if (ev.kind === "retryGaveUp") return renderRetryGaveUp(ev);
   if (ev.kind === "apiErrorNote") return renderApiErrorNote(ev);
   if (ev.kind === "effortApplied") return renderEffortApplied(ev);
+  if (ev.kind === "cmdGesture") return renderCmdGesture(ev);
   if (ev.kind === "modelFallback") return renderModelFallback(ev);
   if (ev.kind === "compact") return renderCompact(ev);
   return renderTool(ev);
@@ -2569,6 +2580,20 @@ function renderEffortApplied(ev: Extract<ChatEvent, { kind: "effortApplied" }>):
   line.appendChild(txt);
   line.title = "reasoning effort is a connect-time setting; the session reconnected to apply it, and this marks when the new level took effect";
   turn.appendChild(line);
+  return turn;
+}
+
+// The durable COMMAND-GESTURE row (the user 2026-08-14): wears the SAME dress as a live command turn —
+// turn-user's flex-end puts it on the user's side, ✦ + the mono chip via the shared renderSlashCmd — so the
+// moment prune_live retires the synthesized chip and this interleaved event takes over is invisible. No
+// edit/delete/fork affordances on purpose: the uuid is synthetic ("cmdg:<t>"), not a rewindable transcript
+// atom, and a gesture is not a message to edit.
+function renderCmdGesture(ev: Extract<ChatEvent, { kind: "cmdGesture" }>): HTMLElement {
+  const turn = el("div", "turn turn-user turn-cmd");
+  turn.appendChild(dot("user"));
+  const bubble = el("div", "user-bubble md cmd-row");
+  if (!renderSlashCmd(bubble, ev.cmd)) bubble.textContent = ev.cmd;
+  turn.appendChild(bubble);
   return turn;
 }
 
@@ -5245,6 +5270,7 @@ function applyBranchChips(sid: string, v: View): void {
 function unwrapCommentMark(markEl: HTMLElement): void {
   const p = markEl.parentNode;
   if (!p) return;
+  if (p instanceof Element) p.classList.remove("cmt-hl-host");   // an inline-code span it tinted
   while (markEl.firstChild) p.insertBefore(markEl.firstChild, markEl);
   markEl.remove();
   p.normalize();
@@ -5291,7 +5317,23 @@ function ensureCommentMark(turn: HTMLElement, th: CommentThread): void {
       m.appendChild(mid);
     }
   }
-  for (const seg of Array.from(turn.querySelectorAll(sel))) styleCommentMark(seg as HTMLElement, th);
+  // One unbroken stroke. The wrap pass is hole-free by construction (sliceRanges covers every text
+  // node of the contiguous match range, interior whitespace included — verified against a DOM port,
+  // 2026-08-13), so the word-island look had two OTHER causes: per-segment corner rounding (the
+  // radius now sits only on the run's outer ends) and inline-code PADDING — a mark inside a <code>
+  // span cannot paint the element's own padded background, leaving an untinted sliver around every
+  // code word. When a segment covers a code span's whole text, tint the span itself (cmt-hl-host).
+  const segs = Array.from(turn.querySelectorAll(sel)) as HTMLElement[];
+  for (let i = 0; i < segs.length; i++) {
+    styleCommentMark(segs[i], th);
+    segs[i].classList.toggle("hl-first", i === 0);
+    segs[i].classList.toggle("hl-last", i === segs.length - 1);
+    const host = segs[i].parentElement;
+    if (host && host.tagName === "CODE" && host.parentElement?.tagName !== "PRE"
+        && host.childNodes.length === 1) {
+      host.classList.toggle("cmt-hl-host", th.status !== "resolved");   // resolved dims like the marks
+    }
+  }
 }
 
 function styleCommentMark(m: HTMLElement, th: CommentThread): void {
@@ -7685,6 +7727,9 @@ function elapsedMs(sinceMs: number | null): string {
 // /model or /effort slash command into the session's pane; the label then updates
 // when the TUI's statusline republishes the tmux vars (meta-pending bridges the gap).
 type MetaKind = "mode" | "model" | "effort" | "fast";
+// One dropdown entry. `sub` is the second line for a choice whose consequence is not obvious from its
+// label; `sdkOnly` drops the entry on a tmux session, whose backend cannot apply it.
+interface MetaChoice { label: string; value: string; sub?: string; sdkOnly?: boolean }
 // Model + effort choices come from the kernel's /models — the ONE list shared with the timeline lanes and the
 // judge-tier settings (the user 2026-07-02, who wanted one shared code path, not hardcoded in multiple places), so
 // the client holds no model literals (mirrors paletteColors above). Populated in place on load so META_CHOICES
@@ -7695,13 +7740,22 @@ fetch(kernelUrl("/models"), { cache: "no-store" }).then((r) => r.json()).then((d
   if (Array.isArray(d.models)) { MODEL_CHOICES.length = 0; MODEL_CHOICES.push(...d.models, { label: "Default", value: "default" }); }
   if (Array.isArray(d.efforts)) { EFFORT_CHOICES.length = 0; EFFORT_CHOICES.push(...d.efforts); }
 }).catch(() => { /* picker stays empty until it lands */ });
-// Permission mode: the shift+tab cycle (no slash command), so the picker offers the three cycle modes;
-// the host sets them by sending shift+tab the right number of times (the user 2026-06-16).
-const MODE_CHOICES: { label: string; value: string }[] = [
+// Permission mode. A tmux session has no slash command for it — the host cycles shift+tab the right
+// number of times (the user 2026-06-16) — so the four CYCLE modes are all that backend can reach.
+// An SDK session sets it outright over the control channel (set_permission_mode), which is what makes
+// Bypass offerable there and only there: on tmux the click would land on a mode the cycle cannot
+// express, and _cycle_mode would drop it. `sdkOnly` is the filter, applied in toggleMetaMenu.
+const MODE_CHOICES: MetaChoice[] = [
   { label: "Normal", value: "default" },
   { label: "Accept edits", value: "acceptEdits" },
   { label: "Auto", value: "auto" },
   { label: "Plan", value: "plan" },
+  // The one mode that removes the gate rather than moving it, so it says what that costs right in the
+  // menu (the user 2026-08-15). Two things are worth the sub-line: every tool runs unasked, and romp's
+  // own approve/deny cards go with them — they are rendered from the SDK's can_use_tool callback, which
+  // bypass never fires, so you lose the RECORD of what ran, not just the asking.
+  { label: "Bypass permissions", value: "bypassPermissions", sdkOnly: true,
+    sub: "every tool runs unasked, and romp stops showing approvals" },
 ];
 // Fast mode (the CLI's /fast — Opus-only research preview): a two-state toggle offered as the same
 // dropdown shape as the other badges. The badge exists only when the session REPORTS a fast state
@@ -7750,7 +7804,7 @@ function prettyMode(m: string | undefined): string {
     default: return "Normal";   // default / normal / unknown
   }
 }
-const META_CHOICES: Record<MetaKind, { label: string; value: string }[]> = {
+const META_CHOICES: Record<MetaKind, MetaChoice[]> = {
   mode: MODE_CHOICES, model: MODEL_CHOICES, effort: EFFORT_CHOICES, fast: FAST_CHOICES,
 };
 // the live value of a meta kind for the active session
@@ -7882,9 +7936,20 @@ function toggleMetaMenu(kind: MetaKind, btn: HTMLElement) {
   if (s.status.state === "awaiting") return;
   const menu = el("div", "meta-menu");
   menu.dataset.kind = kind;
-  for (const c of META_CHOICES[kind]) {
+  // An sdkOnly entry is dropped on tmux rather than shown-and-refused: the backend cannot apply it, and
+  // a menu that lists a mode you can't have is worse than one that doesn't.
+  for (const c of META_CHOICES[kind].filter((c) => !c.sdkOnly || s.status.backend === "sdk")) {
     const item = el("div", "meta-item" + (isCurrentMeta(kind, s.status, c.value) ? " current" : ""));
-    item.textContent = c.label;
+    if (c.sub) {
+      const head = el("div");
+      head.textContent = c.label;
+      const sub = el("div", "meta-item-sub");
+      sub.textContent = c.sub;
+      item.appendChild(head);
+      item.appendChild(sub);
+    } else {
+      item.textContent = c.label;
+    }
     item.addEventListener("click", (e) => {
       e.stopPropagation();
       if (activeId && vscodeApi) {

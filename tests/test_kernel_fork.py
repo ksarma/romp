@@ -229,7 +229,7 @@ class CourierEpisodeFloor(unittest.TestCase):
         jd._PARSE_CACHE.clear()
         jd._discover_cache.clear()
         jd._postal_from_memo["key"] = None
-        # the marker rides the fork's comment-wrapped wire form (see test_courier_origin_host)
+        # the marker rides the comment-wrapped wire form (see test_courier_origin_host)
         recs = [uline(self.T0, "what subnet is the new box on?\n<!-- romp-msg-id: %s -->" % self.MID, "u1"),
                 aline(self.T0 + 30, "It's on the flat /24.", "a1", "u1")]
         (self.proj_dir / (self.RECIP + ".jsonl")).write_text(

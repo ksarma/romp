@@ -82,17 +82,20 @@ class AuthorClassification(unittest.TestCase):
 
     def test_text_that_merely_mentions_the_marker_is_not_a_delivery(self):
         """The 2026-07-08 bug class, which POSTAL_RE had kept: a bare word-match authored ANY text
-        saying "romp-msg-id: <id>" to that peer. Every delivered body carries the marker, so an agent
-        quoting the mail it just received — or any tool output echoing one (a fetched page, a grep of
-        a transcript) — was read as a delivery FROM the peer. Only romp's comment form counts now."""
+        saying the marker words to that peer. Every delivered body carries the marker, so an agent
+        quoting the mail it just received — or any tool output echoing one (a fetched page, a grep
+        of a transcript) — was read as a delivery FROM the peer. Only the comment form counts now.
+
+        The lost card is the everyday half: when the mentioned id resolves to nobody the author is
+        still a DICT ({"peer": None}), so the segment reads peer-not-human and both the planner and
+        the courier drop it — a real prompt that happens to discuss the marker gets no card at all."""
         peer = "aaaa-bbbb"
         idx = {"1783.1_2.TESTHOST": peer}
         for text in ("I got a message with romp-msg-id: 1783.1_2.TESTHOST in it — should I reply?",
                      "the log line was `romp-msg-id: 1783.1_2.TESTHOST`",
-                     "romp-msg-id: 1783.1_2.TESTHOST"):
+                     "why does romp-msg-id: 9999.9_9.TESTHOST show up twice in the transcript?"):
             got = em.author_of(_blocks(text), "sdk", idx, sdk_human=True)
-            self.assertNotEqual(got.get("peer") if isinstance(got, dict) else None, peer,
-                                "a mention is not a delivery: %r" % text)
+            self.assertEqual(got, "human", "a mention is a human prompt, not a delivery: %r" % text)
 
     def test_a_quoted_marker_cannot_outrank_the_real_trailing_one(self):
         """A delivery appends its marker AFTER the body, so when the body itself carries one — a peer

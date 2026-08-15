@@ -219,9 +219,9 @@ EOF
 # kept showing judge records from the PREVIOUS install. They are romp's own droppings, never a
 # session anyone started, so the teardown owns them.
 #
-# The scratch itself moved from /tmp/romp-judge into "$STATE/judge-scratch" on 2026-08-05, so
-# --purge now takes the directory as part of the state root; the DERIVED project dir is still keyed
-# on the path, which is what the default below has to track.
+# The scratch itself moved from /tmp/romp-judge into "$STATE/judge-scratch", so --purge now takes the
+# directory as part of the state root; the DERIVED project dir is still keyed on the path, which is
+# what the default below has to track.
 
 @test "romp-uninstall: the judge scratch default follows the state root, not /tmp" {
     # A stale default would leave the derived project dir behind — the 2026-07-27 incomplete-teardown
@@ -329,107 +329,80 @@ EOF
     [ -d "/tmp" ]
 }
 
-# ── the guards compare strings, and one directory has many spellings ─────────────────────────
-# "$HOME/" and "$HOME" name the same directory but are different strings, so every raw string
-# equality guard above the rm is defeated by a trailing slash — and by a trailing "/.", the same
-# trick spelt with a dot. The slash ALSO switches off the symlink refusal: `[[ -L "$p/" ]]` is
-# false for a symlink to a directory, because the trailing slash makes the test resolve the link
-# instead of lstat'ing it. So the string must be normalised before ANY guard reads it.
+# ── one directory, many spellings ────────────────────────────────────────────
+# Every guard on the scratch path compares strings, and "$HOME" and "$HOME/" are different
+# strings for the same directory — as are "$HOME/.", "$DIR//home", "$DIR/./home" and a value
+# with a trailing newline. Each one walks past the equality checks and reaches the `rm -rf`.
+# These enumerate the spelling CLASS as inputs and assert the protected directory survives,
+# rather than the two or three spellings any one normalisation happens to handle.
 
-@test "romp-uninstall: a trailing slash or /. cannot smuggle \$HOME past the guards" {
-    # The hole needs a home path that passes the *romp* name check — real ones exist
-    # (a user named after the project, a home under /srv/romp). Everything in it is at stake.
-    export HOME="$TEST_DIR/romp-home"
-    mkdir -p "$HOME"
-    echo "irreplaceable" > "$HOME/precious.txt"
-    for bad in "$HOME/" "$HOME//" "$HOME/." "$HOME/./"; do
-        ROMP_JUDGE_SCRATCH="$bad" run "$CLONE/bin/romp-uninstall" --yes
-        [ "$status" -eq 0 ]                       # skipped loudly, never aborted
-        [[ "$output" == *"skipped"* ]]
-        [ -f "$HOME/precious.txt" ]
-    done
-}
-
-@test "romp-uninstall: a scratch aimed at the state dir itself is refused — records survive a plain uninstall" {
-    # "$STATE" contains "romp" for every default install, so it passes the name check — and a
-    # plain, no---purge uninstall then deletes the very records it promises to keep. The state
-    # dir is only ever removed by --purge, behind its own confirmation; the scratch guard must
-    # never become a second, unconfirmed path to it.
-    export ROMP_STATE_DIR="$TEST_DIR/state-romp"
-    mkdir -p "$ROMP_STATE_DIR"
-    echo '{"synthetic":"record"}' > "$ROMP_STATE_DIR/serve-token"
-    for bad in "$ROMP_STATE_DIR" "$ROMP_STATE_DIR/" "$ROMP_STATE_DIR/."; do
-        ROMP_JUDGE_SCRATCH="$bad" run "$CLONE/bin/romp-uninstall" --yes
-        [ "$status" -eq 0 ]
-        [[ "$output" == *"skipped"* ]]
-        [ -f "$ROMP_STATE_DIR/serve-token" ]
-    done
-}
-
-@test "romp-uninstall: a trailing slash does not defeat the symlink refusal" {
-    # Same setup as the symlink test above, plus one character. Before normalisation the slash
-    # made `[[ -L ]]` resolve the link, so the refusal never fired and the rm followed it.
-    export CLAUDE_CONFIG_DIR="$HOME/.claude"
-    mkdir -p "$TEST_DIR/someone-elses-project"
-    echo "not romp's" > "$TEST_DIR/someone-elses-project/keep.txt"
-    mine="$CLAUDE_CONFIG_DIR/projects/$(_proj_slug "$TEST_DIR/someone-elses-project")"
-    mkdir -p "$mine"
-    echo '{"synthetic":"my own session"}' > "$mine/11111111-2222-3333-4444-555555555555.jsonl"
-
-    ln -s "$TEST_DIR/someone-elses-project" "$ROMP_STATE_DIR/judge-scratch"
-    ROMP_JUDGE_SCRATCH="$ROMP_STATE_DIR/judge-scratch/" run "$CLONE/bin/romp-uninstall" --yes
-    [ "$status" -eq 0 ]
-    [[ "$output" == *"skipped"* ]]
-    [ -f "$TEST_DIR/someone-elses-project/keep.txt" ]
-    [ -f "$mine/11111111-2222-3333-4444-555555555555.jsonl" ]
-}
-
-# ── every spelling of $HOME/$STATE, not just the two the suffix-trimmer knew ──────────────────
-# A suffix-trimmer only strips what is at the END of the string. It is defeated by (a) a trailing
-# newline — $(...) strips the newline AFTER the trimmer has already given up, so the trailing slash
-# it left behind survives; and (b) an INTERNAL alternate spelling ($STATE//romp, $HOME/./x) it never
-# looks at. Both name the same directory the equality guards are meant to protect. These enumerate
-# the classes as INPUTS and assert the protected dir survives — the property, not the two spellings.
-
-@test "romp-uninstall: a mangled spelling of \$HOME never reaches rm -rf (newline, //, /./)" {
+@test "romp-uninstall: no spelling of \$HOME reaches rm -rf (trailing slash, /., //, newline)" {
+    # The hole needs a home path that passes the *romp* name check — real ones exist (a user
+    # named after the project, a home under /srv/romp). Everything in it is then at stake.
     export HOME="$TEST_DIR/romp-home"
     mkdir -p "$HOME/keep"
     echo "irreplaceable" > "$HOME/keep/precious.txt"
-    # A literal trailing newline, an internal double slash, an internal /./ — each names $HOME.
-    for bad in "$HOME/"$'\n' "$TEST_DIR//romp-home" "$TEST_DIR/./romp-home" "$TEST_DIR/romp-home/."$'\n'; do
+    for bad in "$HOME/" "$HOME//" "$HOME/." "$HOME/./" "$HOME/"$'\n' \
+               "$TEST_DIR//romp-home" "$TEST_DIR/./romp-home" "$TEST_DIR/romp-home/."$'\n'; do
         ROMP_JUDGE_SCRATCH="$bad" run "$CLONE/bin/romp-uninstall" --yes
-        [ "$status" -eq 0 ]                       # skipped loudly, never a partial rm
+        [ -f "$HOME/keep/precious.txt" ]          # the whole home directory, one character away
+        [ "$status" -eq 0 ]                       # skipped loudly, never aborted mid-run
         [[ "$output" == *"skipped"* ]]
-        [ -f "$HOME/keep/precious.txt" ]
     done
 }
 
-@test "romp-uninstall: a mangled spelling of the state dir never reaches rm -rf (newline, //, /./)" {
+@test "romp-uninstall: no spelling of the state dir reaches rm -rf — a plain --yes keeps every record" {
+    # The state dir contains "romp" on every default install, so it passes the name check, and
+    # this teardown is NOT gated on --purge. Without an explicit refusal a scratch aimed at the
+    # state root deletes the very records a no---purge uninstall promises to keep — and the
+    # state dir is only ever removed by --purge, behind its own separate confirmation.
     export ROMP_STATE_DIR="$TEST_DIR/state-romp"
     mkdir -p "$ROMP_STATE_DIR"
     echo '{"synthetic":"record"}' > "$ROMP_STATE_DIR/serve-token"
-    for bad in "$ROMP_STATE_DIR/"$'\n' "$TEST_DIR//state-romp" "$TEST_DIR/./state-romp" "$ROMP_STATE_DIR/."$'\n'; do
+    for bad in "$ROMP_STATE_DIR" "$ROMP_STATE_DIR/" "$ROMP_STATE_DIR/." "$ROMP_STATE_DIR/"$'\n' \
+               "$TEST_DIR//state-romp" "$TEST_DIR/./state-romp" "$TEST_DIR/state-romp/."$'\n'; do
         ROMP_JUDGE_SCRATCH="$bad" run "$CLONE/bin/romp-uninstall" --yes
+        [ -f "$ROMP_STATE_DIR/serve-token" ]      # a plain --yes keeps the records, always
         [ "$status" -eq 0 ]
         [[ "$output" == *"skipped"* ]]
-        [ -f "$ROMP_STATE_DIR/serve-token" ]      # a plain --yes must keep every record
     done
 }
 
-@test "romp-uninstall: the real scratch is still cleaned when spelt with // or a trailing slash" {
-    # The normalisation must not become a reason to SKIP a legitimate scratch: $STATE//judge-scratch
-    # and $STATE/judge-scratch/ both name romp's own dir and must still be torn down.
+@test "romp-uninstall: a symlinked scratch is refused, trailing slash or not" {
+    # A symlink at the scratch path points the teardown at a directory romp never created, so
+    # there is nothing romp-owned under it to clean. Refused on the final component only, so a
+    # symlinked ANCESTOR — a relocated state dir — still works. The trailing-slash spelling is
+    # the one that matters: `[[ -L "$p/" ]]` is FALSE for a symlink to a directory, because the
+    # slash makes the test resolve the link instead of lstat'ing it.
     export CLAUDE_CONFIG_DIR="$HOME/.claude"
-    for spell in "$ROMP_STATE_DIR//judge-scratch" "$ROMP_STATE_DIR/judge-scratch/"; do
-        rm -rf "$ROMP_STATE_DIR/judge-scratch"
-        scratch="$ROMP_STATE_DIR/judge-scratch"
+    mkdir -p "$TEST_DIR/someone-elses-project"
+    echo "not romp's" > "$TEST_DIR/someone-elses-project/keep.txt"
+    ln -s "$TEST_DIR/someone-elses-project" "$TEST_DIR/romp-judge"
+    for spell in "$TEST_DIR/romp-judge/" "$TEST_DIR/romp-judge"; do
+        ROMP_JUDGE_SCRATCH="$spell" run "$CLONE/bin/romp-uninstall" --yes
+        # `rm -rf "$link/"` cannot unlink the link, so it empties the directory behind it.
+        [ -f "$TEST_DIR/someone-elses-project/keep.txt" ]
+        [ "$status" -eq 0 ]
+        [[ "$output" == *"skipped"* ]]
+        [ -L "$TEST_DIR/romp-judge" ]
+    done
+}
+
+@test "romp-uninstall: romp's own scratch is still cleaned when spelt with // or a trailing slash" {
+    # Normalising must not become a reason to SKIP a legitimate scratch: "$DIR//romp-judge" and
+    # "$DIR/romp-judge/" both name romp's own directory and must still be torn down, transcripts
+    # and all.
+    export CLAUDE_CONFIG_DIR="$HOME/.claude"
+    scratch="$TEST_DIR/romp-judge"
+    for spell in "$TEST_DIR//romp-judge" "$scratch/" "$scratch/."; do
         mkdir -p "$scratch"
         proj="$CLAUDE_CONFIG_DIR/projects/$(_proj_slug "$scratch")"
         mkdir -p "$proj"
         echo '{"synthetic":"judge call"}' > "$proj/11111111-2222-3333-4444-555555555555.jsonl"
+
         ROMP_JUDGE_SCRATCH="$spell" run "$CLONE/bin/romp-uninstall" --yes --purge
         [ "$status" -eq 0 ]
-        [[ "$output" != *"skipped: '$spell'"* ]]  # NOT skipped — it is romp's own
+        [[ "$output" != *"skipped:"* ]]           # NOT skipped — it is romp's own
         [ ! -d "$scratch" ]
         [ ! -d "$proj" ]
     done

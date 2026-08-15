@@ -11,6 +11,7 @@ passed --production, any later source touch would swap the served dashboard back
 bundle on the next kernel restart, with nothing saying so. Source-level assertions, because the
 real build needs npm install and a network.
 """
+import glob
 import os
 import re
 import unittest
@@ -92,6 +93,29 @@ class BundleBuildMode(unittest.TestCase):
         self.assertIn('UI / "webview"', inputs,
                       "the staleness scan must watch ui/webview, where the webview sources live")
         self.assertIn('rglob("*.css")', inputs, "…including CSS, not just TypeScript")
+
+    def test_webview_js_modules_required_by_the_bundles_are_watched(self):
+        """esbuild follows require("./x.js") into plain-JS webview modules (gear.js), so they are
+        bundle sources exactly like the .ts files — but the staleness scan globbed only *.ts/*.css,
+        so a gear.js-only edit never marked dist stale and sat unshipped through every kernel
+        restart. Derive the requirement from the sources rather than pinning a filename list, so
+        the next required .js module is covered the day it is added, whatever it is named."""
+        webview = os.path.join(ROOT, "ui", "webview")
+        mods = set()
+        for ts in glob.glob(os.path.join(webview, "*.ts")):
+            mods.update(re.findall(r'require\("\./([\w-]+\.js)"\)', _read(ts)))
+        self.assertIn("gear.js", mods,
+                      "the derivation lost its known case — did the require() shape change?")
+        for mod in sorted(mods):
+            self.assertTrue(os.path.exists(os.path.join(webview, mod)),
+                            "%s is require()d by a webview source but does not exist" % mod)
+        src = _read(KERNEL)
+        # The scan's glob list lives in the _bundle_inputs helper _ensure_bundles reads (the
+        # sibling test above pins that call), so the *.js widening is asserted there.
+        m = re.search(r"def _bundle_inputs\(cv\):.*?(?=\ndef )", src, re.S)
+        body = m.group(0)
+        self.assertIn('rglob("*.js")', body,
+                      "the staleness scan must watch the plain-JS modules the bundles require()")
 
 
 if __name__ == "__main__":

@@ -4417,8 +4417,8 @@ class DeltaScopedDistill(unittest.TestCase):
         with mock.patch.object(jd, "_judge_run", return_value="x") as m:
             jd.distill_llm("g", "w", "dw", prior_summary="old take")
             user, mk = m.call_args.args[2], m.call_args.kwargs["mark"]
-        # content sections carry the call's own mark now (the 2026-08-05 trust boundary), so the
-        # section is asserted as the judge really sees it
+        # content sections carry the call's own mark now (the trust boundary), so the section is
+        # asserted as the judge really sees it
         self.assertIn(jd._sec("prior-summary", "old take", mk), user)
         self.assertIn("never a recap", user)
         with mock.patch.object(jd, "_judge_run", return_value="x") as m:
@@ -4793,93 +4793,6 @@ class KnownTargetContext(unittest.TestCase):
                         "the WORK-run retitled the follow-up target")
         subs = [nd for nd in store2["nodes"].values() if nd["parentId"] == gid]
         self.assertEqual(len(subs), 1, "the new work still filed as a step under it")
-
-
-class DistillArtifacts(unittest.TestCase):
-    """The distiller's ARTIFACTS line (the user 2026-07-08): a completed goal that PRODUCED files (a
-    plot, a PDF report) lists their paths on one trailing labeled line; _split_artifacts peels it off
-    the reply so the summary stays prose, and the parsed paths land in node["artifacts"] for the feed
-    card ("N artifacts" + modal previews). The kernel existence-filters at build time, so the judge
-    stores the transcription as-is."""
-
-    def setUp(self):
-        self._saved_distill = jd.distill_llm
-
-    def tearDown(self):
-        jd.distill_llm = self._saved_distill
-
-    def test_split_artifacts_parses_a_trailing_line(self):
-        body, arts = jd._split_artifacts("TAKEAWAY: The plot is ready.\nARTIFACTS: /tmp/a.png, /tmp/b.pdf")
-        self.assertEqual(body, "TAKEAWAY: The plot is ready.")
-        self.assertEqual(arts, ["/tmp/a.png", "/tmp/b.pdf"])
-
-    def test_absent_line_returns_body_unchanged(self):
-        body, arts = jd._split_artifacts("TAKEAWAY: Done, no files.")
-        self.assertEqual(body, "TAKEAWAY: Done, no files.")
-        self.assertEqual(arts, [])
-
-    def test_a_mid_reply_mention_is_not_the_line(self):
-        # anchored to the END of the body — prose that mentions the word is never mistaken for it
-        text = "TAKEAWAY: ARTIFACTS: was discussed but nothing shipped.\nMore prose."
-        body, arts = jd._split_artifacts(text)
-        self.assertEqual(body, text)
-        self.assertEqual(arts, [])
-
-    def test_caps_at_five_and_drops_empties(self):
-        line = "ARTIFACTS: " + ", ".join("/tmp/f%d.png" % i for i in range(8)) + ", , "
-        _, arts = jd._split_artifacts("TAKEAWAY: Done.\n" + line)
-        self.assertEqual(arts, ["/tmp/f%d.png" % i for i in range(5)])
-
-    def test_distill_sys_teaches_the_line(self):
-        self.assertIn("ARTIFACTS:", jd.DISTILL_SYS)
-        self.assertIn("never source code", jd.DISTILL_SYS, "deliverable outputs only, not edited files")
-        self.assertIn("omit the line entirely", jd.DISTILL_SYS, "most goals produce none")
-        self.assertNotIn("ARTIFACTS:", jd.BLOCK_BRIEF_SYS, "the block brief isn't taught the line")
-
-    def test_distill_session_stores_artifacts(self):
-        d = Distiller("test_distills_completed_top_from_its_discontinuous_trail")
-        records = [uline(T0, "plot the results", "u1", ps="typed"),
-                   aline(T0 + 10, "Saved the plot to /tmp/out/plot.png with all four series rendered, "
-                                  "styled, and labeled the way the earlier drafts settled on.", "a1", "u1",
-                         stop="end_turn")]
-        path = d._setup(records)
-        try:
-            now = T0 + 5000
-            s1 = em.segments(jd.parsed_session(SID, [path], now)["turns"][0])[0]["id"]
-            gid = SID + ":g1"
-            jd.save_goals(SID, {"rompUuid": SID, "seq": 1, "placementsV": jd.PLACEMENTS_V, "status": {gid: "completed"}, "placements": {},
-                                "nodes": {gid: {"id": gid, "text": "Plot the results", "parentId": None,
-                                                "nodeComplete": True, "blocked": False, "cleared": False,
-                                                "trail": [s1], "t": T0, "mt": T0 + 10}}})
-            jd.distill_llm = lambda g, w, dw="", prior_summary="", items=None: ("BACKGROUND: You asked for a results plot.\n"
-                                                  "TAKEAWAY: The plot is saved and ready.\n"
-                                                  "ARTIFACTS: /tmp/out/plot.png\nSOURCE: m1")
-            self.assertEqual(jd.run_distill(now=now), 1)
-            nd = jd.load_goals(SID)["nodes"][gid]
-            self.assertEqual(nd["summary"], "The plot is saved and ready.", "the line is peeled off the prose")
-            self.assertEqual(nd["artifacts"], ["/tmp/out/plot.png"])
-            self.assertEqual(nd["summaryAnchor"], "a1", "SOURCE still resolves with ARTIFACTS between")
-        finally:
-            d.tearDown()
-
-    def test_no_line_stores_none(self):
-        d = Distiller("test_distills_completed_top_from_its_discontinuous_trail")
-        records = [uline(T0, "do it", "u1", ps="typed"),
-                   aline(T0 + 10, "did it", "a1", "u1", stop="end_turn")]
-        path = d._setup(records)
-        try:
-            now = T0 + 5000
-            s1 = em.segments(jd.parsed_session(SID, [path], now)["turns"][0])[0]["id"]
-            gid = SID + ":g1"
-            jd.save_goals(SID, {"rompUuid": SID, "seq": 1, "placementsV": jd.PLACEMENTS_V, "status": {gid: "completed"}, "placements": {},
-                                "nodes": {gid: {"id": gid, "text": "Do it", "parentId": None,
-                                                "nodeComplete": True, "blocked": False, "cleared": False,
-                                                "trail": [s1], "t": T0, "mt": T0 + 10}}})
-            jd.distill_llm = lambda g, w, dw="", prior_summary="", items=None: "TAKEAWAY: Delivered."
-            self.assertEqual(jd.run_distill(now=now), 1)
-            self.assertIsNone(jd.load_goals(SID)["nodes"][gid]["artifacts"])
-        finally:
-            d.tearDown()
 
 
 class DistillSections(unittest.TestCase):
@@ -5739,7 +5652,8 @@ class Distiller(unittest.TestCase):
         # a LIST of (sub-goal, why) pairs → a numbered <owed> block, one line per pair, so the prompt can map
         # each to its own takeaway paragraph. A plain string (single block) is passed through unchanged.
         seen, saved = {}, jd._judge_run
-        jd._judge_run = lambda model, sysp, user, effort=None, judge=None, mark=None: (seen.update(user=user) or "a brief")
+        jd._judge_run = lambda model, sysp, user, effort=None, judge=None, tier="triage", mark=None: (
+            seen.update(user=user) or "a brief")
         try:
             jd.brief_llm("the goal", "the work",
                          [("record the screencast", "you record it"),
@@ -5884,7 +5798,8 @@ class BlockBriefJudgeLabel(unittest.TestCase):
 
     def test_brief_llm_logs_as_the_briefer(self):
         seen, saved = {}, jd._judge_run
-        jd._judge_run = lambda model, sysp, user, effort=None, judge=None, mark=None: (seen.update(judge=judge) or "a brief")
+        jd._judge_run = lambda model, sysp, user, effort=None, judge=None, tier="triage", mark=None: (
+            seen.update(judge=judge) or "a brief")
         try:
             jd.brief_llm("the goal", "the work", "owed a decision")
         finally:

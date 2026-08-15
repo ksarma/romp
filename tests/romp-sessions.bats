@@ -80,8 +80,7 @@ teardown() { rm -rf "$TEST_DIR"; }
     # The token goes in on stdin, never argv: /proc/<pid>/cmdline is world-readable, so a token in
     # argv hands full control of every session to any other account on the machine.
     grep -q "X-Romp-Token: TESTTOKEN123" "$CURL_STDIN"
-    run grep -q "TESTTOKEN123" "$CURL_LOG"         # `run` + status: `!` is exempt from set -e
-    [ "$status" -ne 0 ]
+    ! grep -q "TESTTOKEN123" "$CURL_LOG"
 }
 
 @test "romp sessions: a dead kernel fails LOUDLY, never an empty list read as no sessions" {

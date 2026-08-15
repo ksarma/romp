@@ -293,7 +293,8 @@ Reply with ONLY the <=8-word past-tense phrase describing what the ASSISTANT acc
   # the stated grounds that /tmp skips the project CLAUDE.md. That had the risk
   # backwards: /tmp is world-writable, so on a shared machine any other local
   # user can plant /tmp/.claude/settings.json and have its hook commands run as
-  # us — on every prompt and every stop, which is as often as this hook fires.
+  # us — once per prompt and once per stop, for anyone who has opted this hook
+  # in at all (the gates at the top keep that off by default).
   # Dropping the project CLAUDE.md is --safe-mode's job; the cwd's only job is
   # to be a directory nobody else can write into. mkdir is idempotent, so the
   # first summarize on a fresh install creates it.

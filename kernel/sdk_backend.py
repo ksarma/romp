@@ -586,6 +586,21 @@ def append_effort_applied(state_dir: Path, sid: str, effort: str, t: int | None 
         f.write(json.dumps(rec) + "\n")
 
 
+def append_cmd_gesture(state_dir: Path, sid: str, text: str, t: int | None = None) -> None:
+    """Record a command GESTURE — a /model-/effort-/auth-style pick — at the moment it was ASKED FOR. The
+    synthesized live chip that acknowledges the pick is in-memory only and prune_live's stale_cmd retires it
+    on the next human turn, so the user's own gesture vanished from their side of the history (the user
+    2026-08-14: the right side should keep what you did; the applied note keeps that it happened). The kernel
+    interleaves a durable `cmdGesture` chat event from this marker, deduped against the still-live chip by
+    (t, text). Its own key ("cmdGesture") so the state/awaiting/recovery readers, which filter by their own
+    keys, skip it. `text` is the full display form, e.g. "/effort high"."""
+    p = Path(state_dir) / "states" / (sid + ".jsonl")
+    p.parent.mkdir(parents=True, exist_ok=True)
+    rec = {"t": int(time.time()) if t is None else int(t), "cmdGesture": str(text)}
+    with open(p, "a") as f:
+        f.write(json.dumps(rec) + "\n")
+
+
 def append_machine_cut(state_dir: Path, sid: str, cause: str, t: float | None = None) -> None:
     """Record that ROMP cut this session's turn and is continuing it — written at the instant a resume
     notice is QUEUED (boot reconcile → "restart"; _heal_cut_session → "crash"), which is the event the
@@ -611,6 +626,25 @@ def append_machine_cut(state_dir: Path, sid: str, cause: str, t: float | None = 
     p = Path(state_dir) / "states" / (sid + ".jsonl")
     p.parent.mkdir(parents=True, exist_ok=True)
     rec = {"t": time.time() if t is None else float(t), "machineCut": str(cause)}
+    with open(p, "a") as f:
+        f.write(json.dumps(rec) + "\n")
+
+
+def append_resume_fork(state_dir: Path, sid: str, from_fsid: str, to_fsid: str, t: float | None = None) -> None:
+    """Record that a RESUME landed on a fresh-headed transcript fork: the CLI's init reported a NEW
+    fsid for a conversation we asked it to continue (--resume), with no /clear in flight and no
+    born-as-a-fork copy pending. On disk that fork is byte-indistinguishable from a /clear
+    (parentUuid-null head, no cross-file back-link), so without this row the parser dropped the entire
+    pre-cut conversation and the episode check settled its open cards — a machine-cut watch turn's
+    finding vanished to two mid-turn restarts (the user 2026-08-14). Written at the init flip, the one
+    event that knows the old->new binding (the registry can't serve: lastSid is overwritten per fork).
+    Consumers: em.resume_fork_links/_stitch_resume_forks (the parse) and jd.resume_lineage (the
+    kernel's episode-boundary stand-down). Its own "resumeFork" key, like machineCut, so the
+    state/awaiting readers skip it."""
+    p = Path(state_dir) / "states" / (sid + ".jsonl")
+    p.parent.mkdir(parents=True, exist_ok=True)
+    rec = {"t": time.time() if t is None else float(t),
+           "resumeFork": {"from": str(from_fsid), "to": str(to_fsid)}}
     with open(p, "a") as f:
         f.write(json.dumps(rec) + "\n")
 
@@ -2148,11 +2182,18 @@ class SdkSession:
             self.backend._note_auth_source(self, d.get("apiKeySource"))
             fsid = d.get("session_id")
             if fsid and fsid != self.resume_sid:
+                old = self.resume_sid
                 self.resume_sid = fsid
                 self.backend._update_reg(self.sid, lastSid=fsid)
                 # A lastSid flip IS a fork landing — for a /clear, the fresh conversation now exists, so the
                 # clearing bracket ends here (event-based; the ResultMessage below is only the backstop).
+                clearing = self._clearing
                 self._clearing = False
+                # A RESUME landing on a NEW fsid = a fresh-headed fork: record the old->new lineage
+                # (see append_resume_fork for the full story — the parser stitches the chain from it,
+                # the user 2026-08-14). A /clear's flip and a born-as-a-fork copy record nothing.
+                if old and not clearing and not self._fork_of:
+                    append_resume_fork(self.backend.state_dir, self.sid, old, fsid)
             if self._fork_of and fsid == self.sid:
                 # The BORN-AS-A-FORK session's copy landed (the CLI now owns a transcript pinned to this
                 # sid). Spend the fork flags: a later reconnect must resume the fork's OWN conversation
@@ -4046,8 +4087,7 @@ class SdkBackend:
         reg = read_reg(self.state_dir, sid)
         if not reg:
             return False
-        reg["name"] = new_name
-        write_reg(self.state_dir, sid, reg)
+        self._update_reg(sid, name=new_name)   # locked RMW — see set_effort's race note
         # keep the shared names/ identity file in sync (preserve colours)
         try:
             parts = (Path(self.state_dir) / "names" / sid).read_text().rstrip("\n").split("\t")
@@ -4064,10 +4104,8 @@ class SdkBackend:
         """Change the session's model. Persisted in the registry (so a reconnect keeps it) and applied
         LIVE on a connected session via the SDK control channel — NOT a /model slash injection, which the
         SDK input stream does not interpret. 'default' resets to the CLI default (set_model(None))."""
-        reg = read_reg(self.state_dir, sid)
-        if not reg:
+        if not read_reg(self.state_dir, sid):
             return False
-        reg["model"] = value
         write_sdk_default(self.state_dir, model=value)   # remember as the seed for the NEXT new session (the user 2026-06-27)
         s = self.sessions.get(sid)
         if s:
@@ -4080,8 +4118,7 @@ class SdkBackend:
             # refresh resolves an idle session, and _on_session_gone resolves a thread that exits mid-switch).
             already = _model_reflects_alias(s.model, value)
             s._model_pending = "" if already else value
-            reg["modelPending"] = bool(s._model_pending)
-            write_reg(self.state_dir, sid, reg)
+            self._update_reg(sid, model=value, modelPending=bool(s._model_pending))   # locked RMW — see set_effort
             s.set_model_live(None if value in ("", "default") else value)
             # Synthesize the INVOCATION atom the CLI never streams (it streams only the stdout
             # confirmation): the chat gets the same "/model sonnet" command chip the tmux path reads from
@@ -4095,14 +4132,15 @@ class SdkBackend:
                 "type": "user", "uuid": uid, "session_id": sid, "fsid": s.resume_sid, "parentUuid": None,
                 "t": t, "author": "human", "command": "/model", "_echo_text": disp,
                 "message": {"role": "user", "content": [{"type": "text", "text": disp}]}}
+            # The DURABLE twin of the live chip (the user 2026-08-14): same t and text, so build_session
+            # can dedup while the chip is live and take over seamlessly once stale_cmd retires it.
+            append_cmd_gesture(self.state_dir, sid, disp, t=t)
             self._wake_push()
         else:
             # DORMANT (no live thread): no turn is coming to report a real name, so resolve to the chosen
             # alias's best-effort label immediately — never leave the badge on a stale liveModel or trapped
             # on dots. The value applies for real on the next connect (chosen_model → _options).
-            reg["liveModel"] = _alias_label(value)
-            reg["modelPending"] = False
-            write_reg(self.state_dir, sid, reg)
+            self._update_reg(sid, model=value, liveModel=_alias_label(value), modelPending=False)
         return True
 
     def set_fast(self, sid: str, value: str) -> bool:
@@ -4125,13 +4163,11 @@ class SdkBackend:
           if idle, at the end of the current turn if busy (request_reconnect, the /effort machinery)."""
         if value not in ("on", "off"):
             return False
-        reg = read_reg(self.state_dir, sid)
-        if not reg:
+        if not read_reg(self.state_dir, sid):
             return False
-        reg["fast"] = (value == "on")
-        reg["liveFast"] = value   # mirror the optimistic flip where the badge reads it while dormant /
-        #                           across a restart; _adopt_fast_state re-asserts at the next connect
-        write_reg(self.state_dir, sid, reg)
+        # liveFast mirrors the optimistic flip where the badge reads it while dormant / across a
+        # restart; _adopt_fast_state re-asserts at the next connect. Locked RMW — see set_effort.
+        self._update_reg(sid, fast=(value == "on"), liveFast=value)
         s = self.sessions.get(sid)
         if not s or not s.thread.is_alive():
             return True                        # dormant: the persisted ask applies at the next connect
@@ -4150,15 +4186,24 @@ class SdkBackend:
         self._wake_push()
         return True
 
+    # bypassPermissions is the one mode that must not become the remembered default. Every other pick
+    # here is a preference worth inheriting; this one removes the approval gate, and spawn() seeds a new
+    # session from the remembered mode with NOTHING in the create UI that shows it — so one click on one
+    # tab would quietly hand every session you started afterwards an unprompted agent. It stays where you
+    # set it: this session, until you change it (the user 2026-08-15, on the picker adding the entry).
+    # The carve-out is HERE and not in spawn() on purpose: romp declines to remember bypass off a click,
+    # but a mode written into sdk-defaults.json by hand is still honoured, so the escape hatch is open to
+    # anyone who genuinely wants every new session unprompted — they just have to say so deliberately.
+    STICKY_MODE_EXCLUDES = {"bypassPermissions"}
+
     def set_mode(self, sid: str, mode: str) -> bool:
         """Change the permission mode. Persisted in the registry and applied LIVE via the SDK control
         channel (set_permission_mode) — not merely stored for the next reconnect."""
-        reg = read_reg(self.state_dir, sid)
-        if not reg:
+        if not read_reg(self.state_dir, sid):
             return False
-        reg["mode"] = mode
-        write_reg(self.state_dir, sid, reg)
-        write_sdk_default(self.state_dir, mode=mode)   # remember as the seed for the NEXT new session, like model/effort (the user 2026-06-27)
+        self._update_reg(sid, mode=mode)   # locked RMW — see set_effort's race note
+        if mode not in self.STICKY_MODE_EXCLUDES:
+            write_sdk_default(self.state_dir, mode=mode)   # remember as the seed for the NEXT new session, like model/effort (the user 2026-06-27)
         s = self.sessions.get(sid)
         if s:
             s.mode = mode
@@ -4192,14 +4237,23 @@ class SdkBackend:
         if the session is idle, at the end of the current turn if it's busy. The label updates at once."""
         if value not in EFFORT_LEVELS:
             return False
-        reg = read_reg(self.state_dir, sid)
-        if not reg:
+        if not read_reg(self.state_dir, sid):
             return False
-        reg["effort"] = value
-        reg["effortPending"] = True   # the reconnect that applies it hasn't completed yet → dots + "Reloading session…"
-        write_reg(self.state_dir, sid, reg)
-        if value != "ultracode":   # ultracode is per-session by design (the CLI: "this session only") — never a seed
-            write_sdk_default(self.state_dir, effort=value)   # remember as the seed for the NEXT new session (the user 2026-06-27)
+        # LOCKED read-modify-write (_update_reg), never the bare read→mutate→write this used to do: the
+        # loop threads run their own locked RMWs on the same reg (queue/echo mirrors, liveCtx), and an
+        # interleaving could silently drop the effort field — the pick LOOKED applied (in-memory label
+        # right), then reverted at the next respawn when __init__ re-read the reg (the user 2026-08-14,
+        # whose ultracode sessions seemed to downgrade at random). Whole setter family fixed alike.
+        # effortPending: the applying reconnect hasn't completed yet → dots + "Reloading session…"
+        self._update_reg(sid, effort=value, effortPending=True)
+        # Remember EVERY pick as the new-session seed, ultracode included (the user 2026-08-14, who
+        # picks ultracode and expects new sessions to follow; the old never-remember guard kept the
+        # seed at their one historical max pick, so every new session opened at max — reading as a
+        # downgrade). The CLI itself cannot persist ultracode as a default (its settings enum stops at
+        # xhigh; /effort says "this session only") — but romp's seed is romp's own store, and spawn
+        # hands each NEW session its own per-session launch shape (--effort xhigh + the ultracode
+        # settings key), so the CLI's session-scoping is preserved, one session at a time.
+        write_sdk_default(self.state_dir, effort=value)
         s = self.sessions.get(sid)
         if s:
             s.effort = value        # picker label reflects it now; the reconnect makes it real
@@ -4217,6 +4271,7 @@ class SdkBackend:
                 "type": "user", "uuid": uid, "session_id": sid, "fsid": s.resume_sid, "parentUuid": None,
                 "t": t, "author": "human", "command": "/effort", "_echo_text": disp,
                 "message": {"role": "user", "content": [{"type": "text", "text": disp}]}}
+            append_cmd_gesture(self.state_dir, sid, disp, t=t)   # durable twin — see set_model
             self._wake_push()
         return True
 
@@ -4230,12 +4285,10 @@ class SdkBackend:
             return False
         if value == "key" and not self.work_key:
             return False   # nothing to inject — the UI never offers this; refuse rather than half-apply
-        reg = read_reg(self.state_dir, sid)
-        if not reg:
+        if not read_reg(self.state_dir, sid):
             return False
-        reg["auth"] = value
-        reg["authPending"] = True   # the applying reconnect hasn't completed → badge dots
-        write_reg(self.state_dir, sid, reg)
+        # authPending: the applying reconnect hasn't completed → badge dots. Locked RMW — see set_effort.
+        self._update_reg(sid, auth=value, authPending=True)
         write_sdk_default(self.state_dir, auth=value)   # the seed for the NEXT new session, like model/effort
         s = self.sessions.get(sid)
         if s:
@@ -4252,6 +4305,7 @@ class SdkBackend:
                 "type": "user", "uuid": uid, "session_id": sid, "fsid": s.resume_sid, "parentUuid": None,
                 "t": t, "author": "human", "command": "/auth", "_echo_text": disp,
                 "message": {"role": "user", "content": [{"type": "text", "text": disp}]}}
+            append_cmd_gesture(self.state_dir, sid, disp, t=t)   # durable twin — see set_model
             self._wake_push()
         return True
 
