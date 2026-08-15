@@ -1,16 +1,24 @@
 #!/usr/bin/env python3
-"""The judge scratch cwd is private, and romp refuses to judge without one (2026-08-05 security pass).
+"""The judge scratch cwd is private, and romp refuses to judge without one.
 
 JUDGE_SCRATCH used to be the literal "/tmp/romp-judge", created with `os.makedirs(..., exist_ok=True)`.
 /tmp is world-writable and that name is guessable, so on any machine with a second local account someone
-could pre-create the directory with permissions of their choosing and `exist_ok=True` would accept it —
-while what romp writes there is transcript-derived session content (every one-shot `claude -p` judge call
-leaves its own transcript under the project dir of its cwd). That is precisely the content CLAUDE.md keeps
-inside the 0700 state root.
+could create the path first — as a directory with permissions of their choosing, or as a SYMLINK — and
+`exist_ok=True` would accept whatever they left there. Two things then follow, neither of them subtle:
 
-So: the scratch lives under the state root, is created 0700, and a directory that cannot be made private
-makes the judge call FAIL LOUDLY (an error row + a stderr line) rather than run from somewhere readable.
-All fixtures SYNTHETIC.
+  * `prune_judge_scratch` runs at every kernel boot, realpaths the scratch through `_proj_dir`, and
+    unlinks every `*.jsonl` older than a day in the project dir that name derives to. Point the symlink
+    at a directory you actually work in and romp's own housekeeping deletes YOUR Claude Code transcripts.
+  * It is the cwd of a `claude -p` subprocess, and a cwd someone else controls is a cwd they can plant a
+    `.claude/` in. `_judge_cmd`'s `--safe-mode` is what closes that today; the cwd should not be relying
+    on it alone.
+
+Nothing is written INTO the scratch — it is a bare cwd, and the transcripts land under ~/.claude/projects
+— so this is about who controls the directory, not about what is stored in it.
+
+So: the scratch lives under the 0700 state root, is created 0700, and a directory that cannot be made
+private makes the judge call FAIL LOUDLY (an error row + a stderr line) rather than run from somewhere
+anyone can write. All fixtures SYNTHETIC.
 """
 import json
 import os
@@ -77,7 +85,7 @@ class JudgeScratchPrivate(unittest.TestCase):
         self.assertEqual(self._mode(jd.JUDGE_SCRATCH), 0o700)
 
     def test_existing_loose_directory_is_tightened(self):
-        """Ours but group/world-readable — a pre-08-05 install, a stray umask. We own it, so repair it."""
+        """Ours but group/world-readable — a pre-move install, a stray umask. We own it, so repair it."""
         os.makedirs(jd.JUDGE_SCRATCH, exist_ok=True)
         os.chmod(jd.JUDGE_SCRATCH, 0o755)
         jd._ensure_judge_scratch()
@@ -93,7 +101,9 @@ class JudgeScratchPrivate(unittest.TestCase):
         self.assertIn("judge scratch", str(cm.exception))
 
     def test_symlink_in_place_of_the_scratch_is_refused(self):
-        """makedirs(exist_ok=True) is happy with a symlink to a directory; the check must not be."""
+        """makedirs(exist_ok=True) is happy with a symlink to a directory; the check must not be. This is
+        the shape that turns prune_judge_scratch — which realpaths the scratch — into a delete of whatever
+        the link points at."""
         elsewhere = os.path.join(self.td.name, "elsewhere")
         os.makedirs(elsewhere, 0o777)
         os.symlink(elsewhere, jd.JUDGE_SCRATCH)
@@ -102,8 +112,9 @@ class JudgeScratchPrivate(unittest.TestCase):
 
     # ── what happens when it can't be made private ───────────────────────────
     def test_unsafe_scratch_skips_the_judge_call_and_logs_it(self):
-        """Fail loudly: no private cwd → no judge call. Running it from /tmp or $HOME anyway would hand
-        the transcript to whoever owns that directory, and a silent downgrade hides the breakage."""
+        """Fail loudly: no private cwd → no judge call. Running it from /tmp or $HOME anyway would hand the
+        subprocess a working directory someone else can plant in, and a silent downgrade hides exactly the
+        breakage we need to see."""
         os.symlink(self.td.name, jd.JUDGE_SCRATCH)       # unsafe, by the check above
         jd._SCRATCH_FAIL_LOGGED.clear()
         with mock.patch.object(jd.subprocess, "run", side_effect=AssertionError("judge call must not run")):
@@ -113,11 +124,11 @@ class JudgeScratchPrivate(unittest.TestCase):
         rows = [json.loads(l) for l in Path(jd.ERRORS).read_text().splitlines() if l.strip()]
         self.assertTrue(any(r["err"] == "scratch" and r["judge"] == "captioner" for r in rows),
                         "the refusal is surfaced as an error row (`romp judges`), not swallowed")
-        # A scratch refusal is NOT the model's fault, so it must ride the same paused flag the rate
-        # gate and retry-pause set: a "" that means "skipped, try again" — NOT one that counts toward
-        # DISTILL_FAIL_CAP. Without the flag, three refusals in a row blank the card's summary to the
-        # "" sentinel (judge.py's distiller/briefer/staller each read _judge_ctx.paused to skip the
-        # count). The pre-fix test asserted only the return value and the row, so it ratified the bug.
+        # A scratch refusal is NOT the model's fault, so it must ride the same paused flag the rate gate
+        # and retry-pause set: a "" that means "skipped, try again" — NOT one that counts toward
+        # DISTILL_FAIL_CAP. Without the flag, three refusals in a row blank the card's summary to the ""
+        # sentinel (the distiller/briefer/staller each read _judge_ctx.paused to skip the count), which is
+        # irreversible content loss from a directory-permission hiccup.
         self.assertTrue(getattr(jd._judge_ctx, "paused", False),
                         "the give-up counters must treat a scratch-skip as a pause, not a failure")
 

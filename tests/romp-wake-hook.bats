@@ -12,9 +12,9 @@ setup() {
     # Mock curl: log args (the hook detaches it into a subshell, so the test polls
     # for the log below). Exported CURL_LOG so the detached mock can still find it.
     export CURL_STDIN="$TEST_DIR/curl.stdin"
-    # Mock curl: log args AND whatever arrived on stdin — the token travels on stdin now
-    # (curl --config -), so a test that only watched argv could not tell a working auth
-    # header from none at all.
+    # ...and whatever arrived on stdin — the token travels on stdin now (curl --config -), so a
+    # test that only watched argv could not tell a working auth header from none at all. Read
+    # stdin BEFORE anything else, or the config never lands.
     cat > "$MOCK/curl" <<'MOCK'
 #!/usr/bin/env bash
 echo "curl $*" >> "$CURL_LOG"

@@ -27,10 +27,9 @@ tok="${ROMP_SERVE_TOKEN:-}"
 [[ -n "$tok" ]] || tok="$(cat "${ROMP_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/romp}/serve-token" 2>/dev/null || true)"
 # The token goes in on STDIN as a curl config, never in argv: /proc/<pid>/cmdline is world-readable,
 # so `-H "X-Romp-Token: $tok"` publishes full control of every session to any other account on the
-# machine for as long as the curl lives (2026-08-05 security pass). This one is short-lived, which
-# makes reading it a race rather than a certainty — not a boundary. Quotes/backslashes escaped
-# because curl's config syntax is quoted (only reachable via ROMP_SERVE_TOKEN; the minted one is
-# base64url).
+# machine for as long as the curl lives. This one is short-lived, which makes reading it a race
+# rather than a certainty — not a boundary. Quotes/backslashes escaped because curl's config syntax
+# is quoted (only reachable via ROMP_SERVE_TOKEN; the minted one is base64url).
 esc="${tok//\\/\\\\}"; esc="${esc//\"/\\\"}"
 ( printf 'header = "X-Romp-Token: %s"\n' "$esc" \
     | curl -sf -m 0.5 --config - -X POST "http://127.0.0.1:${port}/tick" -o /dev/null >/dev/null 2>&1 & ) >/dev/null 2>&1

@@ -35,6 +35,10 @@
      (selected toggles, in-progress loading dots, the Fleet pill, focus) — NOT for STATUS colors, which keep
      their own meaning (--st-working-bg yellow = working, --st-blocked-bg red, etc.). --accent-fg reads on it. */
   --accent: #9cd2ff; --accent-fg: #0c1a2e;
+  /* Comment-highlight yellow (the user 2026-08-13): the marked passage reads like a highlighter
+     stroke, DISTINCT from both the accent blue (selection/chrome) and the working-status yellow
+     chip. Text-highlight use only — comment chrome (badge, buttons, chips) stays var(--accent). */
+  --cmt-hl: #ffd54a;
   /* fast mode ON — the CLI's own fastMode orange, a STATUS color (means "this session runs fast
      mode"), so the badge reads the same here as in the Claude Code TUI. Not the accent. */
   --fast: #ff6a00;
@@ -831,6 +835,9 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
   color: var(--fg); position: relative; white-space: nowrap;
 }
 .meta-item:hover { background: rgba(255, 255, 255, 0.09); }
+/* second line for a choice whose consequence its label doesn't carry (Bypass permissions). Same
+   0.82em / 0.6 opacity as .ctx-item-sub — one sub-line size across every romp menu. */
+.meta-item-sub { font-size: 0.82em; opacity: 0.6; }
 .meta-item.current::after {
   content: "✓"; position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
   background: var(--check-bg); color: #fff; border-radius: 50%;
@@ -1182,8 +1189,11 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
 .user-bubble.cmd-row { max-width: none; background: none; border: none; border-radius: 0;
   padding: 2px 0; color: var(--dim); }
 .user-bubble.cmd-row::before { content: "✦"; margin-right: 8px; color: var(--dim); }
-.user-bubble.cmd-row .slash-cmd-chip { background: var(--code-bg); color: var(--fg);
-  border-color: var(--box-border); }
+/* The chip's ink is the OUTGOING-BUBBLE blue on the chat's own ground (the user 2026-08-14: the --code-bg
+   terracotta tint read as a stray red here) — the same #2b6cef as .user-bubble, so the gesture still reads
+   as "yours" without the said-thing bubble. */
+.user-bubble.cmd-row .slash-cmd-chip { background: var(--bg); color: #2b6cef;
+  border-color: #2b6cef; }
 .user-bubble.cmd-row .slash-cmd-args { color: var(--dim); }
 /* ---------- romp-injected message (a feed nudge / follow-up) ----------
    A GRAY bubble in the SAME right-aligned spot as the blue user bubble (so it sits where "an outgoing
@@ -2223,33 +2233,28 @@ body.picker-lifted > #picker.kb-tight { align-items: flex-start; padding: 12px 1
   padding: 4px 14px; border-radius: 6px; background: var(--vscode-input-background, #3c3c3c);
   color: var(--vscode-foreground, #ccc); border: 1px solid var(--vscode-widget-border, #303031); }
 
-/* ── path previews in the chat (the user 2026-07-08): a mentioned image/PDF renders as a click-to-expand
-   thumbnail strip under the message (render.ts linkifyFileUris → preview.ts previewThumb). .path-thumb /
-   the lightbox are SHARED with the feed and defined in BOTH sheets — each page loads only its own css
-   (the .romp-acted precedent). ── */
+/* ── path previews in the chat (the user 2026-07-08): a mentioned image/PDF renders under the message
+   (render.ts linkifyFileUris → preview.ts previewFull). Chat-only since the feed's artifact strips
+   were removed (2026-08-14). ── */
 .path-thumbs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
-.path-thumb { display: inline-flex; align-items: center; gap: 6px; cursor: zoom-in; border-radius: 7px;
-  border: 1px solid rgba(255, 255, 255, 0.14); overflow: hidden; background: rgba(0, 0, 0, 0.25); }
-.path-thumb:hover { border-color: var(--accent); }
-.path-thumb-img { display: block; max-width: 220px; max-height: 140px; object-fit: contain; }
 
 /* the preview's LOADING cue (the user 2026-07-31): the mini romp swirl holds a mentioned image's spot
    until its load event lands (preview.ts withLoadCue) — a remote file rides the ssh tunnel, and the
    picture used to pop in with nothing saying it was on the way. First load of a URL only, so re-renders
-   never re-flash it. Both sheets carry it (each page loads only its own — the .romp-acted precedent). */
+   never re-flash it. */
 .path-load-spin { display: block; width: 20px; height: 20px; margin: 8px 10px;
   animation: path-load-spin 2.4s linear infinite; }   /* the calm mini-swirl spin, same as the awaiting glyphs */
 @keyframes path-load-spin { to { transform: rotate(-360deg); } }
 .path-img-loading { display: none; }   /* the <img> takes the spot the instant it has pixels */
 @media (prefers-reduced-motion: reduce) { .path-load-spin { animation: none; } }
-.path-thumb.pdf { padding: 5px 9px; cursor: pointer; }
+/* the PDF card's label + filename (preview.ts previewFull's pdf branch) */
 .path-thumb-tag { font-size: 0.74em; font-weight: 700; letter-spacing: 0.04em; color: var(--accent); flex: 0 0 auto; }
 .path-thumb-name { font-size: 0.74em; color: var(--fg); overflow: hidden; text-overflow: ellipsis;
   white-space: nowrap; max-width: 200px; }
 
 /* FULL-SIZE inline render (the user 2026-07-20): a mentioned image shows AS the image, at the same
    scale as a user-message picture (.user-img's 320px cap — one size per information type); a PDF gets
-   its native inline viewer. preview.ts previewFull; the feed's artifact strips keep the thumbnails. */
+   its native inline viewer (preview.ts previewFull). */
 .path-full { display: block; }
 .path-full-img { display: block; max-width: 100%; max-height: 320px; border-radius: 8px; cursor: zoom-in;
   border: 1px solid rgba(255, 255, 255, 0.14); object-fit: contain; background: rgba(0, 0, 0, 0.25); }
@@ -2348,20 +2353,29 @@ body.picker-lifted > #picker.kb-tight { align-items: flex-start; padding: 12px 1
    rendered text drifts and the exact-match mark can't land. The popover is a pane-local card on the
    menu vocabulary (#252526, hairline border, 6px radius, the .ctx-menu shadow) — deliberately NOT a
    dimmed modal: the conversation stays readable beside the thread. */
-/* A SOLID tint, not a dashed underline (the user 2026-08-13: "like a comment would be on Google
-   Docs") — the underline read as a link, not a highlight. Unread strengthens the same tint rather
-   than adding a second cue, so "there's something to read" stays legible at a glance. */
+/* A SOLID highlighter-YELLOW stroke (the user 2026-08-13: like a comment on a Google Doc, and
+   never the same color as plain text selection). One unbroken block: the wrap pass covers every
+   interior node by construction; the radius sits only on the run's outer ends (hl-first/hl-last)
+   so segment boundaries never draw seams; and a fully-covered inline-code span is tinted at the
+   ELEMENT (cmt-hl-host) — a mark inside it can't paint the code's padded background, which left an
+   untinted sliver around every code word. Tint ladder, each state distinct: base 30% < unread 45%
+   < hover 58% (hovering an unread mark still answers). */
 mark.cmt-hl {
-  background: color-mix(in srgb, var(--accent) 32%, transparent);
+  background: color-mix(in srgb, var(--cmt-hl) 30%, transparent);
   color: inherit;
-  border-radius: 2px;
+  border-radius: 0;
   cursor: pointer;
 }
-mark.cmt-hl:hover { background: color-mix(in srgb, var(--accent) 46%, transparent); }
+mark.cmt-hl.unread { background: color-mix(in srgb, var(--cmt-hl) 45%, transparent); }
+mark.cmt-hl:hover { background: color-mix(in srgb, var(--cmt-hl) 58%, transparent); }
 mark.cmt-hl.resolved { background: rgba(255, 255, 255, 0.08); }
-mark.cmt-hl.unread { background: color-mix(in srgb, var(--accent) 44%, transparent); }
 mark.cmt-hl.busy { animation: cmt-busy-pulse 1.2s ease-in-out infinite; }
-@keyframes cmt-busy-pulse { 50% { background: color-mix(in srgb, var(--accent) 50%, transparent); } }
+mark.cmt-hl.hl-first { border-top-left-radius: 2px; border-bottom-left-radius: 2px; }
+mark.cmt-hl.hl-last { border-top-right-radius: 2px; border-bottom-right-radius: 2px; }
+@keyframes cmt-busy-pulse { 50% { background: color-mix(in srgb, var(--cmt-hl) 50%, transparent); } }
+.md :not(pre) > code.cmt-hl-host { background: color-mix(in srgb, var(--cmt-hl) 30%, var(--code-bg)); }
+.md :not(pre) > code.cmt-hl-host > mark.cmt-hl { background: transparent; }
+.md :not(pre) > code.cmt-hl-host:hover { background: color-mix(in srgb, var(--cmt-hl) 58%, var(--code-bg)); }
 
 .turn.has-cmt { position: relative; }
 .cmt-badge {
@@ -2395,7 +2409,7 @@ mark.cmt-hl.busy { animation: cmt-busy-pulse 1.2s ease-in-out infinite; }
 }
 .cmt-x:hover { opacity: 1; }
 .cmt-quote {
-  padding: 4px 8px; border-left: 2px solid var(--accent); border-radius: 2px;
+  padding: 4px 8px; border-left: 2px solid var(--cmt-hl); border-radius: 2px;
   background: rgba(255, 255, 255, 0.04);
   font-size: 0.92em; opacity: 0.75;
   display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;

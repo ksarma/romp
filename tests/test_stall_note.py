@@ -121,7 +121,7 @@ class StallPrompt(unittest.TestCase):
     def test_the_call_passes_the_holding_reason_through(self):
         import inspect
         src = inspect.getsource(jd.stall_llm)
-        self.assertIn('_sec("holding", holding, mk)', src)   # a marked section since 2026-08-05
+        self.assertIn('_sec("holding", holding, mk)', src)   # a marked content section, not a plain tag
         self.assertIn('judge="staller"', src)
 
 

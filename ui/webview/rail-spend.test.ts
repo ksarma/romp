@@ -133,10 +133,10 @@ test("the rich tip is the ONE hover surface: no native titles, per-host sections
   assert.ok(usageJS.includes("if(!keys.length)return '';"));
   assert.ok(!usageJS.includes("spendOnly"), "spend renders for ANY host that has it");
   assert.ok(usageJS.includes("function fleetSpendHTML(sets)"));
-  assert.ok(usageJS.includes("return h+fleetSpendHTML(sets)+'<div class=ru-tip-age>click to refresh</div>';"));
+  assert.ok(usageJS.includes("return h+fleetSpendHTML(sets);"));
   // …with the summed $/hour area graph and its peak beside it — labelled PER-HOUR (the user
   // 2026-08-13 read a bare 'peak $311' and had to ask whether that was one hour)
-  assert.ok(usageJS.includes("sparkHTML(wk,'#9cd2ff',true,null)"));
+  assert.ok(usageJS.includes("moneyGraph(wk,'#9cd2ff',series.h0+st)"));
   assert.ok(usageJS.includes("'<span class=ru-tip-v>peak '+fmtUsd(mx)+'/h</span>"));
   // …and every machine in the sum BY NAME, largest first (the user 2026-08-13: the devbox — spend,
   // no login — vanished from the hover when per-host spend rows collapsed into the fleet section)
@@ -154,8 +154,7 @@ test("the rich tip is the ONE hover surface: no native titles, per-host sections
   assert.ok(usageJS.includes("var x=(ev&&typeof ev.clientX==='number')?ev.clientX:(r.left+r.width/2);"));
   assert.ok(usageJS.includes("x-tip.offsetWidth/2"));
   assert.ok(usageJS.includes("r.top-tip.offsetHeight-8"));
-  // the click hint the native title used to carry lives in the tip's footer now
-  assert.ok(usageJS.includes("'<div class=ru-tip-age>click to refresh</div>'"));
+  // (the footer click hint is gone — refresh is automatic; see the 2026-08-14 chart test below)
 });
 
 test("same-account hosts share the FRESHEST window reading — one truth per login", () => {
@@ -238,8 +237,8 @@ test("token counts carry 3 significant figures, and both fmtTok twins share the 
 test("the $/h graph spans the tip, peak in the value slot, every spark on a backing plate (the user 2026-08-14)", () => {
   // The graph sat 120px wide between its label and the peak with empty space either side; the peak
   // now rides the label row's right-aligned value slot and the graph gets its own full-width line.
-  assert.match(KERNEL, /peak '\+fmtUsd\(mx\)\+'\/h<\/span><\/div>'\s*\n\+sparkHTML\(wk,'#9cd2ff',true,null\);/,
-    "the graph follows the closed label+peak row, full-width");
+  assert.match(KERNEL, /peak '\+fmtUsd\(mx\)\+'\/h<\/span><\/div>'\s*\n\+moneyGraph\(wk,'#9cd2ff',series\.h0\+st\);/,
+    "the chart follows the closed label+peak row, full-width, x-aligned to h0");
   assert.ok(KERNEL.includes(".ru-tip-spark{display:block;width:100%;height:28px"),
     "sparks stretch to their container, not a fixed strip");
   // The faint plate frames the plot area: a sparse series (a remote host with a reading or two,
@@ -248,4 +247,40 @@ test("the $/h graph spans the tip, peak in the value slot, every spark on a back
     "the backing plate makes sparse dots legible as data");
   assert.ok(KERNEL.includes(".ru-tip-col{flex:0 1 auto;min-width:200px}"),
     "host columns widened for the full-width sparks");
+});
+
+test("the $/h chart is a real chart, and refresh is automatic with no stale hint (the user 2026-08-14)", () => {
+  const usageJS = KERNEL.split('_LANDING_USAGE_JS = """')[1].split('"""')[0];
+  // y-axis scaled to the ceiling of the nearest $50; rules thin to $100/$200/... past four
+  assert.ok(usageJS.includes("var top=50*Math.ceil(mx/50),step=50;"), "y ceiling = nearest $50");
+  assert.ok(usageJS.includes("while(top/step>4)step*=2;"), "at most four horizontal rules");
+  // x-axis: midnight ticks placed in LOCAL time off the series' epoch-hour base, weekday initials under
+  assert.ok(usageJS.includes("if(d.getHours()===0)"), "midnight ticks");
+  assert.ok(usageJS.includes("['S','M','T','W','T','F','S'][d.getDay()]"), "weekday initials");
+  // the stretch to full width fattened every stroke (aspect distortion): strokes pin their screen
+  // width, and a lone reading is a round-capped zero-length stroke, not a distortable <circle>
+  assert.ok(usageJS.includes('stroke-width="1.5" vector-effect="non-scaling-stroke"'));
+  assert.ok(usageJS.includes('stroke-linecap="round" vector-effect="non-scaling-stroke"'));
+  assert.ok(!usageJS.includes("<circle"), "no distortable circles remain");
+  // "click to refresh" misread on a hover: the hint is gone, the 60s auto-pull stands, and an
+  // already-open hover tip re-renders in place when fresh data lands
+  assert.ok(!usageJS.includes("click to refresh"), "no refresh hint on a hover surface");
+  assert.ok(usageJS.includes("setInterval(function(){pull(false);},60000);"), "the 60s auto-pull stands");
+  assert.ok(usageJS.includes("if(tip.style.display==='block'&&!tip.classList.contains('ru-modal'))"),
+    "an open tip follows data landings");
+});
+
+test("the mobile usage modal is height-capped with a scroll pane, and taps on it don't fall through", () => {
+  // The user 2026-08-14: the $/h chart + multi-host rows outgrew a phone screen, and the centered
+  // translate(-50%,-50%) pushed the TOP off-screen with nothing to scroll. The modal variant caps its
+  // height to the DYNAMIC viewport (dvh overrides vh where supported — mobile browser chrome collapses)
+  // and scrolls; pointer-events comes back on (the base #ru-tip is a hover tooltip, pointer-events:none),
+  // which is what makes scrolling possible AND stops a tap on the panel closing it through the backdrop.
+  const modal = KERNEL.split("#ru-tip.ru-modal{")[1].split("}")[0];
+  assert.ok(modal.includes("max-height:84vh"), "a vh cap for browsers without dvh");
+  assert.ok(modal.includes("max-height:84dvh"), "the dvh override tracks mobile chrome");
+  assert.ok(modal.indexOf("max-height:84vh") < modal.indexOf("max-height:84dvh"),
+    "the dvh declaration must come second to win where supported");
+  assert.ok(modal.includes("overflow-y:auto"), "the scroll pane");
+  assert.ok(modal.includes("pointer-events:auto"), "scrollable — and panel taps no longer dismiss");
 });

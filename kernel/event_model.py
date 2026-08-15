@@ -45,15 +45,15 @@ END_STOPS = ("end_turn", "stop_sequence")
 # postal signal — never the generic "Stop hook feedback:" prefix (any blocking Stop
 # hook produces that). The sender rompUuid is resolved from timeline/messages.jsonl
 # by joining this id (the on-disk marker carries the id but not the sender).
-# COMMENT FORM ONLY (2026-08-05), the same rule ROMP_INJECT_RE/ROMP_AUTO_RE were given on 07-08 and
-# for the same reason: a bare word-match fires on text that merely MENTIONS the marker. Both real
-# emitters write the literal comment (postal_service _drain_body and the mailbox read), and every
-# delivered body carries it — so an agent quoting the mail it just received, or any tool output that
-# echoes one (a fetched page, a grep of a transcript, a peer's forwarded text), used to be read as a
-# postal DELIVERY: the quoting message re-rendered as an incoming card from the peer, authored to
-# them rather than to whoever actually wrote it. The ids are Maildir names (ts.pid_rand.host), so
-# they are neither secret nor unguessable; the comment form is what makes the marker romp's own
-# channel instead of anything that can say the words.
+# COMMENT FORM ONLY — the same rule ROMP_INJECT_RE/ROMP_AUTO_RE were given on 2026-07-08, and the
+# rule docs/event-model.md already documents ("Postal is detected by the `<!-- romp-msg-id: <id> -->`
+# marker"). Both emitters have only ever written the literal comment (postal_service format_inbox /
+# format_push, where the file calls that marker a stable CONSUMER CONTRACT), but a bare word-match
+# also fired on text that merely MENTIONS the marker: an agent quoting the mail it just received, a
+# hook or tool output echoing one (a grep of a transcript, a fetched page), a human prompt about the
+# marker itself. The failure is not cosmetic — with no matching id in the log author_of still
+# returned {"peer": None}, and that is a dict, so the segment reads peer-rather-than-human and both
+# the planner and the courier drop it: the user's ask silently gets no card.
 POSTAL_RE = re.compile(r"<!--\s*romp-msg-id:\s*(\S+?)\s*-->")
 POSTAL_KIND_RE = re.compile(r"<!--\s*romp-msg-kind:\s*(delegate|coordinate|question)\s*-->")
 # Both markers, IN ORDER, so a sender / message id / declared kind always describe the SAME message.
@@ -61,21 +61,10 @@ POSTAL_KIND_RE = re.compile(r"<!--\s*romp-msg-kind:\s*(delegate|coordinate|quest
 # text (postal_service format_inbox/format_push), so a two-message delivery carries two of each —
 # and three separate scans of that text picked three different answers: the author from the last
 # marker, the id and the kind from the first. That filed one peer's identity against another peer's
-# message, planting the delegation-tracking node on the wrong board.
+# message, planting the delegation-tracking node on the wrong board. postal_pairs() below is the one
+# parser author_of and both judge scans now share.
 _POSTAL_ANY_RE = re.compile(r"<!--\s*romp-msg-(id|kind):\s*(\S+?)\s*-->")
 _POSTAL_KINDS = ("delegate", "coordinate", "question")
-
-
-def postal_pairs(text):
-    """[(mid, kind), ...] in delivery order; kind is "" when the sender declared none (CLI mail).
-    Position is the only thing that pairs them — the markers carry no cross-reference."""
-    pairs = []
-    for typ, val in _POSTAL_ANY_RE.findall(text or ""):
-        if typ == "id":
-            pairs.append([val, ""])
-        elif pairs and not pairs[-1][1] and val in _POSTAL_KINDS:
-            pairs[-1][1] = val                   # binds to the id it follows, never a later one
-    return [(a, b) for a, b in pairs]
 # romp's marker on a message IT injected straight into a pane (a feed NUDGE / auto-nudge / Retry — NOT a
 # peer message, and NOT a follow-up YOU typed). It means "render this as a romp-injected system message"
 # (the gray bubble), distinct from a human prompt or a peer's postal message. ONLY romp-injected authors
@@ -223,6 +212,16 @@ def _bg_expired(task, now, grace=120.0):
     return bool(dl) and now > dl + grace
 
 
+# The detail an agent/workflow row expands to (the Agent prompt / the Workflow script) is clipped:
+# the box's detail pre scrolls, but a workflow script can run to 512KB and the payload ships whole.
+_DETAIL_CAP = 4000
+
+
+def _clip_detail(text):
+    text = str(text or "").strip()
+    return text if len(text) <= _DETAIL_CAP else text[:_DETAIL_CAP] + "\n… (truncated)"
+
+
 def _scan_bg_tasks(path, want_all=False):
     """Walk the transcript pairing async LAUNCHES with their <task-notification> results, and surface a task
     ONLY while it's still RUNNING (in flight across turns). A finished task drops out the instant its result
@@ -231,15 +230,23 @@ def _scan_bg_tasks(path, want_all=False):
     mtime caches, and the judge's settled gate reads it as the DURABLE awaited-work source — the pairing
     lives in the transcript, so unlike any live snapshot it survives a kernel restart (2026-08-08).
 
-    Launches come in TWO durable shapes: a Bash tool_use with run_in_background:true, and an async
-    Agent dispatch — its ack is a user record whose TOP-LEVEL toolUseResult says isAsync/"async_launched"
-    (the tool_result block names the launching tool_use id). Results come in THREE: the notification inside
-    a tool_result block (the older wrapper), a standalone user record whose message.content IS the
-    notification string (the current dominant shape — missing this left finished tasks reading 'running'
-    forever), and a queue-operation enqueue holding the notification while the session is busy — the task
-    itself is already finished the moment any of the three exists.
-    Returns [{id,status,summary,command,outputFile}]."""
+    Launches come in THREE durable shapes: a Bash tool_use with run_in_background:true, a non-persistent
+    Monitor tool_use (see below), and an async
+    Agent/Workflow dispatch — its ack is a user record whose TOP-LEVEL toolUseResult says
+    isAsync/"async_launched" (the tool_result block names the launching tool_use id). The ack names the
+    work at best in one line (description / the workflow meta's summary), so the LAUNCHING tool_use is
+    remembered too: its description is the gist when the ack has none, and its full ask — the Agent
+    prompt / the Workflow script — rides `command`, the detail block the box already expands (the user
+    2026-08-15, whose background agent expanded to a generic label with nothing inside). The ack's
+    taskType rides `type`, so the scan rows carry the same agent-vs-shell fact the lifecycle set does.
+    Results come in THREE shapes: the notification inside a tool_result block (the older wrapper), a
+    standalone user record whose message.content IS the notification string (the current dominant shape —
+    missing this left finished tasks reading 'running' forever), and a queue-operation enqueue holding
+    the notification while the session is busy — the task itself is already finished the moment any of
+    the three exists.
+    Returns [{id,status,summary,command,outputFile}] (+ type on agent/workflow rows)."""
     tasks, order = {}, []
+    dispatch = {}   # tool_use id -> the launching Agent/Task/Workflow block's own words (see docstring)
 
     def _mark(note):
         # a notification keyed by its INNER <tool-use-id> (the string/queue shapes have no wrapper block)
@@ -266,9 +273,19 @@ def _scan_bg_tasks(path, want_all=False):
                         if not (isinstance(b, dict) and b.get("type") == "tool_use"):
                             continue
                         inp = b.get("input") or {}
-                        # The THIRD durable launch shape (2026-08-10): a Monitor tool_use. A non-persistent
-                        # monitor is dispatched background work exactly like a backgrounded Bash — a session
-                        # idle behind one read as plain 'ready', its goal stamps could lift only by the 6h
+                        if b.get("name") in ("Agent", "Task", "Workflow") and b.get("id"):
+                            # remember the dispatch's own words — consumed by its async ack below, or
+                            # right here when an explicit run_in_background rides the input (the dominant
+                            # real Agent shape, which registers via the launch branch below instead)
+                            dispatch[b["id"]] = {
+                                "desc": str(inp.get("description") or "").strip(),
+                                "detail": _clip_detail(inp.get("prompt") or inp.get("script")
+                                                       or ("script: " + str(inp["scriptPath"])
+                                                           if inp.get("scriptPath") else "")),
+                                "type": "local_workflow" if b.get("name") == "Workflow" else "local_agent"}
+                        # The THIRD durable launch shape: a Monitor tool_use. A non-persistent monitor is
+                        # dispatched background work exactly like a backgrounded Bash — a session idle
+                        # behind one read as plain 'ready', its goal stamps could lift only by the 6h
                         # backstop, and the nudge gates couldn't see the wait. A PERSISTENT monitor is
                         # skipped: a session-length subscription (a log tail) never returns, so counting it
                         # would hold "awaiting" forever — it is furniture, not awaited work.
@@ -283,6 +300,11 @@ def _scan_bg_tasks(path, want_all=False):
                                           "summary": (inp.get("description") or b.get("name") or "Background task"),
                                           "command": inp.get("command") or (inp.get("ws") or {}).get("url", ""),
                                           "outputFile": ""}
+                            d = dispatch.pop(tid, None)
+                            if d:   # an Agent/Task/Workflow with an explicit run_in_background lands
+                                    # HERE, not at its ack (tid already registered) — same enrichment
+                                tasks[tid]["command"] = tasks[tid]["command"] or d["detail"]
+                                tasks[tid]["type"] = d["type"]
                             if is_mon:
                                 tasks[tid]["monitor"] = True
                                 # its recorded lifetime ceiling → the deadline consumers expire on
@@ -300,11 +322,37 @@ def _scan_bg_tasks(path, want_all=False):
                         if isinstance(b, dict) and b.get("type") == "tool_result":
                             tid = b.get("tool_use_id")
                             if async_launch and tid and tid not in tasks:
-                                # an async Agent dispatch ack — the durable "this work is now running" record
+                                # an async Agent/Workflow dispatch ack — the durable "this work is now
+                                # running" record; the gist prefers the ack's own words, the launching
+                                # tool_use fills what the ack omits (see docstring). Acks carry the ask
+                                # too (prompt / scriptPath) — the fallback when the launch predates the
+                                # transcript tail or the block went unseen.
+                                d = dispatch.pop(tid, {})
+                                wf = tur.get("workflowName")
                                 tasks[tid] = {"id": tid, "status": "running", "t": parse_z(o.get("timestamp")),
-                                              "summary": (tur.get("description") or "Background agent"),
-                                              "command": "", "outputFile": tur.get("outputFile") or ""}
+                                              "summary": (tur.get("description") or tur.get("summary")
+                                                          or d.get("desc")
+                                                          or ("workflow " + str(wf) if wf else "Background agent")),
+                                              "command": d.get("detail")
+                                                         or _clip_detail(tur.get("prompt")
+                                                                         or ("script: " + str(tur["scriptPath"])
+                                                                             if tur.get("scriptPath") else "")),
+                                              "outputFile": tur.get("outputFile") or ""}
+                                if tur.get("taskType") or d.get("type"):
+                                    tasks[tid]["type"] = tur.get("taskType") or d["type"]
                                 order.append(tid)
+                                continue
+                            if async_launch and tid in tasks and not b.get("is_error") \
+                                    and tasks[tid]["status"] == "running":
+                                # the ack of a launch the assistant branch already registered (explicit
+                                # run_in_background): the ack still owns outputFile/taskType — fill what
+                                # the launch row lacks, never overwrite what it has
+                                tk = tasks[tid]
+                                tk["outputFile"] = tk["outputFile"] or tur.get("outputFile") or ""
+                                if tur.get("taskType"):
+                                    tk["type"] = tur["taskType"]
+                                if not tk["command"]:
+                                    tk["command"] = _clip_detail(tur.get("prompt") or "")
                                 continue
                             note = _parse_task_notification(_result_text(b.get("content")))
                             if tid in tasks and note:      # its result landed → mark it done; the keep-filter drops it
@@ -468,16 +516,32 @@ def _norm_message(message):
     return out
 
 
+def postal_pairs(text):
+    """[(mid, kind), ...] in delivery order; kind is "" when the sender declared none (CLI mail).
+    Position is the only thing that pairs them — the markers carry no cross-reference."""
+    pairs = []
+    for typ, val in _POSTAL_ANY_RE.findall(text or ""):
+        if typ == "id":
+            pairs.append([val, ""])
+        elif pairs and not pairs[-1][1] and val in _POSTAL_KINDS:
+            pairs[-1][1] = val                   # binds to the id it follows, never a later one
+    return [(a, b) for a, b in pairs]
+
+
 # ───────────────────────── authorship (the one real addition over the stream) ─────────────────────────
 # A user atom's author is the ONE field the stream lacks: it cannot tell a peer romp
 # message from a human prompt (both are `user` messages). Everything else the old
 # typed/queued/absorbed/decision/postal enum encoded is derived from position
 # (opener vs mid-turn) and content, not stored here.
 def author_of(blocks, prompt_source, postal_index, sdk_human=False):
-    """human | romp | sdk | system | {"peer": <rompUuid|None>} | None.
+    """human | romp | sdk | system | {"peer": <rompUuid|None>, "mid": <id>, "kind": <kind|"">} | None.
 
     Order matters: the postal marker wins over promptSource (a delivered message can
     arrive with any promptSource). A tool_result-only user atom has no author.
+
+    A peer author carries the marker it resolved, not just the sender: one delivery can hold
+    several messages, so every later reader (the judge's _seg_peer / _seg_peer_kind) must be
+    told WHICH one this author came from rather than re-scanning and picking a different one.
 
     sdk_human: this session is SDK-backed, so its HUMAN input arrives over the programmatic
     stream-json channel as promptSource "sdk" (the human typed it in the composer). romp's own
@@ -547,7 +611,8 @@ class FileAdapter:
     ancestors and drop out for free; `/clear` leaves no parent link so the walk
     stops there and pre-clear history drops out naturally."""
 
-    def __init__(self, candidate_files, leaf_path, leaf_override=None):
+    def __init__(self, candidate_files, leaf_path, leaf_override=None, resume_links=None):
+        self.resume_links = dict(resume_links or {})   # {to_fsid: from_fsid} — recorded resume forks (states/ rows)
         self.by_uuid = {}        # uuid -> record
         self.fsid_of = {}        # uuid -> transcript file stem (provenance / click-to-open)
         self.seq_of = {}         # uuid -> global read order (tie-break for equal timestamps)
@@ -594,6 +659,32 @@ class FileAdapter:
         if leaf_override and leaf_override in self.by_uuid:
             self.leaf_uuid = leaf_override
         self._repair_compaction_stitches()
+        self._stitch_resume_forks()
+
+    def _stitch_resume_forks(self):
+        """Some CLI resumes of a machine-cut turn FORK the transcript with a FRESH head (parentUuid
+        null, no cross-file back-link) instead of continuing the chain. On disk that fork is
+        byte-indistinguishable from a /clear, so kept_uuids dropped the ENTIRE pre-cut conversation
+        and the judges never saw the cut turn's work again — an hourly watch's finding lost its card
+        to two mid-turn restarts (the user 2026-08-14). The kernel records the fork the moment the
+        resumed CLI's init reports the new fsid (states/ resumeFork rows -> resume_links), so the
+        lineage is an exact recorded event, never a guess: re-point the fork head's parent at the
+        resumed file's last uuid-bearing record, restoring ONE chain the walk can cross (the
+        compaction-stitch precedent above). Only a genuinely fresh head is stitched — an intact
+        back-link is never overridden — and a /clear records no lineage, so its history keeps
+        dropping by design."""
+        if not self.resume_links:
+            return
+        first_of, last_of = {}, {}
+        for u in self.by_uuid:               # insertion order = file read order
+            fs = self.fsid_of.get(u)
+            if fs not in first_of:
+                first_of[fs] = u
+            last_of[fs] = u
+        for to, frm in self.resume_links.items():
+            head, tail = first_of.get(to), last_of.get(frm)
+            if head and tail and head != tail and self.parent_of.get(head) is None:
+                self.parent_of[head] = tail
 
     def _repair_compaction_stitches(self):
         """Claude Code sometimes writes a compact_boundary whose logicalParentUuid points
@@ -1342,6 +1433,20 @@ def _load_states(states):
     return list(states) if isinstance(states, list) else list(_read_jsonl(states))
 
 
+def resume_fork_links(srows):
+    """{to_fsid: from_fsid} from states/ resumeFork rows — the kernel's exact record that a resume of
+    a machine-cut turn FORKED the transcript (fresh head) instead of continuing the chain. See
+    FileAdapter._stitch_resume_forks for why the parse needs it; the kernel's episode-boundary check
+    reads the same rows (jd.resume_lineage) to keep the fork from being processed as a /clear. Last
+    row wins per fork head; malformed rows are skipped (a missing lineage simply keeps the old drop)."""
+    links = {}
+    for r in srows or []:
+        rf = r.get("resumeFork")
+        if isinstance(rf, dict) and rf.get("from") and rf.get("to"):
+            links[str(rf["to"])] = str(rf["from"])
+    return links
+
+
 def parse_session(leaf_path, rompuuid=None, name=None, color="#888888", dir=None,
                   candidate_files=None, states=None, postal_log=None, now=None, sdk_human=False,
                   leaf_override=None):
@@ -1369,10 +1474,28 @@ def parse_session(leaf_path, rompuuid=None, name=None, color="#888888", dir=None
     if candidate_files is None:
         candidate_files = [str(leaf_path)]
     postal_index = _load_postal_index(postal_log)
-    adapter = FileAdapter(candidate_files, leaf_path, leaf_override=leaf_override)
+    _srows = _load_states(states)
+    links = resume_fork_links(_srows)
+    if links:
+        # The lineage closure joins the candidate set: a fork chain across several restarts needs
+        # every resumed-from file present for the stitched walk to cross (the caller's anchor covers
+        # only one hop). Resolved HERE so both parses (the judge's and the kernel's) inherit it from
+        # the one states plumbing they already share. From-files are frozen after their fork (the CLI
+        # writes only the new file), so the callers' cache keys — candidate files + the states file,
+        # whose mtime moves when a lineage row lands — stay honest without knowing about these.
+        have = {Path(f).stem for f in candidate_files}
+        stem, hops = leaf_path.stem, 0
+        candidate_files = list(candidate_files)
+        while stem in links and hops < 16:
+            stem = links[stem]
+            hops += 1
+            fp = leaf_path.with_name(stem + ".jsonl")
+            if stem not in have and fp.exists():
+                candidate_files.append(str(fp))
+                have.add(stem)
+    adapter = FileAdapter(candidate_files, leaf_path, leaf_override=leaf_override, resume_links=links)
     adapter.sdk_human = sdk_human            # SDK-backed session → unmarked promptSource "sdk" is the human
     atoms = adapter.atoms(rompuuid, postal_index)
-    _srows = _load_states(states)
     landed = adapter.landed_text_uuids()         # replies the disk kept on ANY branch — never a loss
     orphans = synthesize_orphans(_srows, atoms, landed_text_uuids=landed)
     #                                            # salvaged replies FIRST: they are real atoms the turn
