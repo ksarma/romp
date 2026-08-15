@@ -770,8 +770,8 @@ function showCardMenu(e: MouseEvent, card: HTMLElement): void {
   menu.appendChild(item);
   // Browse the session's working tree (plans/file-browser.md). Only the sid rides: the feed payload
   // doesn't carry cwd, and "." lets the OWNING kernel resolve it authoritatively (_resolve_open_path)
-  // rather than this pane scraping another pane's state. Gated like the artifact chips: the VS Code
-  // webview can't reach the kernel origin, and the editor has its own explorer.
+  // rather than this pane scraping another pane's state. Gated on canPreview() (web only): the
+  // VS Code webview can't reach the kernel origin, and the editor has its own explorer.
   if (canPreview()) {
     const browse = el("div", "ctx-item");
     browse.textContent = "Browse files";

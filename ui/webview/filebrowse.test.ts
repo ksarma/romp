@@ -91,8 +91,8 @@ test("every entry point is gated to where the click can land, and posts the one 
   assert.match(RENDER, /window\.parent\.postMessage\(\{ romp: "browseFiles", path: path \|\| "\.", sid: sid \|\| activeId \|\| null \}, "\*"\);/);
   // tab right-click menu row, web-only
   assert.match(RENDER, /browse\.textContent = "Browse files";/);
-  // feed card menu row rides canPreview like the artifact chips, and sends only the sid — the kernel
-  // resolves "." against the session's cwd authoritatively
+  // feed card menu row rides canPreview (web only — the VS Code webview can't reach the kernel
+  // origin), and sends only the sid — the kernel resolves "." against the session's cwd authoritatively
   assert.match(FEED, /openFileBrowse\("\.", it\.sid\);/);
   assert.match(FEED, /if \(canPreview\(\)\) \{\n    const browse = el\("div", "ctx-item"\);/);
 });
