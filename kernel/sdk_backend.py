@@ -3152,7 +3152,10 @@ class SdkBackend:
                           "poll the subscription windows, so rate-limit telemetry is unavailable"
                           % len(connected), problem=not _expected_auth())
             return
-        self._usage_all_keyed = False   # a pollable session exists again — re-arm the one-shot above
+        if any(s.auth_live == "login" for s in live):
+            # Re-armed only by an init that CONFIRMED a login — a fresh spawn's default-False flag
+            # means "unknown", not "login", and re-arming on it re-rang once per session creation.
+            self._usage_all_keyed = False
         for s in live:
             if s.refresh_usage():
                 return
@@ -3235,7 +3238,8 @@ class SdkBackend:
         so every host's kernel log still self-documents who authenticates how.
 
         The mismatch check compares against ROMP_EXPECTED_AUTH when the box declares one
-        (_expected_auth), else against _launched_keyed as before — see the comment at the check."""
+        (_expected_auth) and the session carries no explicit per-session pick — a pick outranks
+        the declaration — else against _launched_keyed as before; see the comment at the check."""
         keyed = bool(source) and str(source).strip().lower() != "none"
         # The CLI landed on a DIFFERENT auth than EXPECTED — the expected side is the box-wide
         # ROMP_EXPECTED_AUTH declaration when one is set (an apiKeyHelper box injects no key at
@@ -3246,7 +3250,11 @@ class SdkBackend:
         # one failure this feature must never let pass silently (the user 2026-08-08). Flagged on
         # every init that disagrees, not just flips, and into the problems ring so the Log panel
         # shows it; a landing that MATCHES the declaration is the intended, quiet state.
-        exp = _expected_auth()
+        # An EXPLICIT per-session Billing pick outranks the declaration: the declaration describes
+        # the box's UNPICKED design, while set_auth's contract is that the next init confirms the
+        # PICK — judged (and worded) against what the pick launched, so a landing honoring the pick
+        # stays quiet whatever the box declares, and one contradicting it still rings.
+        exp = "" if sess.auth in ("login", "key") else _expected_auth()
         if keyed != ((exp == "key") if exp else sess._launched_keyed):
             if exp:
                 self._log("auth (%s): ROMP_EXPECTED_AUTH=%s but the CLI reports apiKeySource=%r — this "
@@ -4350,12 +4358,17 @@ class SdkBackend:
         if not read_reg(self.state_dir, sid):
             return False
         # authPending: the applying reconnect hasn't completed → badge dots. Locked RMW — see set_effort.
-        self._update_reg(sid, auth=value, authPending=True)
+        # apiKeyAuth=None: the persisted CLI report described the process this reconnect replaces,
+        # so a restart must restore "no init has landed yet", never the old side (both readers guard
+        # with isinstance(..., bool), so None reads as absent).
+        self._update_reg(sid, auth=value, authPending=True, apiKeyAuth=None)
         write_sdk_default(self.state_dir, auth=value)   # the seed for the NEXT new session, like model/effort
         s = self.sessions.get(sid)
         if s:
             s.auth = value
             s._auth_pending = value
+            s.auth_live = ""   # the last init's report predates this switch — the Billing row shows
+            #   the plain intent (no "CLI reports" parenthetical) until the next init re-confirms
             s.request_reconnect()
             # Acknowledge the pick in the chat exactly as set_effort does: the reconnect writes no
             # transcript record, so without a synthesized chip an idle session's auth change shows

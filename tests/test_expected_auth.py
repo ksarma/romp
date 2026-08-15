@@ -127,6 +127,58 @@ class DeclarationInvertsTheMismatch(_Declared):
                         "no declaration → the launch-intent comparison, verbatim: %r" % texts)
 
 
+class PickOutranksTheDeclaration(_Declared):
+    """An explicit per-session Billing pick (sess.auth) beats the box-wide declaration: the
+    declaration describes the box's UNPICKED design, and set_auth's contract is that the next
+    init confirms the PICK — judged, and worded, against what the pick launched."""
+
+    def test_a_declared_box_with_an_honored_opposite_pick_is_quiet(self):
+        # declared =key, but THIS session was explicitly picked to the login and landed there
+        os.environ["ROMP_EXPECTED_AUTH"] = "key"
+        s = self._sess(6, auth="login")
+        s._launched_keyed = False
+        self.be._note_auth_source(s, "none")
+        self.assertFalse([t for t in self._problem_texts() if "billing" in t],
+                         "a landing honoring the pick is intended, whatever the box declares")
+
+    def test_a_landing_contradicting_the_pick_rings_even_when_it_matches_the_declaration(self):
+        # declared =key AND the CLI landed keyed — but the user picked the login for THIS session:
+        # billing against the pick must never pass silently, and the ring speaks the launch-intent
+        # wording (the pick's side), never the declaration's
+        os.environ["ROMP_EXPECTED_AUTH"] = "key"
+        s = self._sess(7, auth="login")
+        s._launched_keyed = False
+        self.be._note_auth_source(s, "apiKeyHelper")
+        texts = self._problem_texts()
+        self.assertTrue(any("launched for the login but the CLI reports" in t
+                            and "billing the API key" in t for t in texts), texts)
+        self.assertFalse(any("ROMP_EXPECTED_AUTH" in t for t in texts),
+                         "the pick's wording, not the declaration's: %r" % texts)
+
+
+class SetAuthInvalidatesTheLiveReport(_Declared):
+    """auth_live is DISPLAY truth from a live CLI report, and set_auth reconnects to apply — the
+    process that made the report no longer exists once the switch lands. The report and its
+    persisted reg twin clear with the pick, so the Billing row falls back to the plain intent
+    until the next init re-confirms, and a kernel restart cannot resurrect the old side as a
+    false "CLI reports" disagreement."""
+
+    def test_the_pick_clears_the_report_live_persisted_and_dormant(self):
+        sid = self.be.spawn("n", "/tmp")
+        s = sb.SdkSession(self.be, sb.read_reg(self.be.state_dir, sid))
+        self.be.sessions[sid] = s
+        self.be._note_auth_source(s, "apiKeyHelper")     # an init landed: the CLI reported the key
+        self.assertEqual(s.auth_live, "key")
+        self.assertTrue(self.be.set_auth(sid, "login"))
+        self.assertEqual(s.auth_live, "", "the report described the replaced process")
+        self.assertEqual(s.snapshot()["authLive"], "", "…so no live-row disagreement")
+        s2 = sb.SdkSession(self.be, sb.read_reg(self.be.state_dir, sid))
+        self.assertEqual((s2.auth_live, s2.api_key_auth), ("", False),
+                         "a restart restores 'no init yet', never the old side")
+        self.assertEqual(self.be.live_sessions()[sid]["authLive"], "",
+                         "the dormant row claims nothing either")
+
+
 class ApiKeyAuthPersists(_Declared):
     """The flag is written to the reg on every flip and restored on construction — the post-restart
     window where a keyed session read False (and its rate-limit events contaminated the login's
@@ -241,11 +293,30 @@ class RefreshUsageAllKeyed(_Declared):
         polled = []
         sub.refresh_usage = lambda: polled.append(True) or True
         self.be.sessions[sub.sid] = sub
+        self.be._note_auth_source(sub, "none")           # its init CONFIRMED the login — only a
+        #   confirmed login re-arms (a pre-init spawn is "unknown": the companion test below)
         self.be.refresh_usage()                          # a candidate exists: polls, re-arms
         self.assertTrue(polled)
         sub.api_key_auth = True                          # …and the box goes all-keyed again
         self.be.refresh_usage()
         self.assertEqual(len(self._lines()), 2, "a NEW episode logs again")
+
+    def test_a_pre_init_spawn_does_not_rearm_or_re_ring(self):
+        # a fresh spawn is connected before its first turn, and its init — the only event that can
+        # set api_key_auth — arrives only WITH that turn: until then its default-False flag means
+        # "unknown", not "login", and it must not open a new episode on the motivating all-keyed box
+        keyed = self._live_keyed(1)
+        self.be.sessions = {keyed.sid: keyed}
+        self.be.refresh_usage()                          # episode 1: logged
+        fresh = self._sess(2)                            # connected, no init yet: auth unknown
+        fresh.client, fresh.loop, fresh.ended = object(), object(), False
+        fresh.refresh_usage = lambda: True
+        self.be.sessions[fresh.sid] = fresh
+        self.be.refresh_usage()                          # a compose-window tick
+        self.be._note_auth_source(fresh, "apiKeyHelper")  # its first init lands keyed
+        self.be.refresh_usage()
+        self.assertEqual(len(self._lines()), 1,
+                         "an unknown was never a login — same episode, no repeat line")
 
     def test_no_connected_sessions_is_not_the_all_keyed_case(self):
         self.be.sessions = {}

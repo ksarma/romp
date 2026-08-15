@@ -94,8 +94,10 @@ test("the chat tab hover says Billing whenever the backend reports it, naming th
   assert.match(RENDER, /s\.status\.auth === "key" \? "API key"\s*\n\s*: \(s\.status\.authAcct \? `Login \(\$\{s\.status\.authAcct\}\)` : "Login"\)\]\);/);
   // …and when the CLI's own init landed on the OTHER side (authLive — a key found via apiKeyHelper
   // on a login launch), the row carries the live truth beside the intent instead of wearing the lie,
-  // and the account name yields its parenthetical — it is not the account being billed (2026-08-15)
-  assert.match(RENDER, /s\.status\.authLive && s\.status\.authLive !== s\.status\.auth\s*\n\s*\? \(s\.status\.auth === "key" \? "API key" : "Login"\)\s*\n\s*\+ ` \(CLI reports \$\{s\.status\.authLive === "key" \? "API key" : "login"\}\)`/);
+  // and the account name yields its parenthetical — it is not the account being billed (2026-08-15).
+  // Anchored at the gate + label: a no-auth session (tmux — the exclusion above) must never grow a
+  // fabricated Billing row, so the `if (s.status.auth)` guard is part of the pinned behavior.
+  assert.match(RENDER, /if \(s\.status\.auth\) rows\.push\(\["Billing",\s*\n\s*s\.status\.authLive && s\.status\.authLive !== s\.status\.auth\s*\n\s*\? \(s\.status\.auth === "key" \? "API key" : "Login"\)\s*\n\s*\+ ` \(CLI reports \$\{s\.status\.authLive === "key" \? "API key" : "login"\}\)`/);
 });
 
 test("setAuth is an intent op — held through a kernel-restart window, never dropped", () => {
