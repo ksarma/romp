@@ -18715,10 +18715,13 @@ def _git_out(args, cwd, timeout=5):
         return None
 
 
-# origin remote → the https://github.com/<owner>/<repo> base, for the three spellings git writes
-# (ssh scp-like, ssh://, https://), .git suffix and all. Anything else is not a GitHub link.
+# origin remote → the https://github.com/<owner>/<repo> base, for the spellings git actually writes:
+# scp-like ssh, ssh:// (with an optional port, and GitHub's own documented SSH-over-HTTPS host
+# ssh.github.com — review finding: those clones' origins got no link), https (with an explicit :443),
+# .git suffix and all. Anchored, so github.example.com and github.com.evil.io lookalikes never match.
 _GITHUB_REMOTE = re.compile(
-    r"^(?:git@github\.com:|ssh://git@github\.com/|https://github\.com/)([\w.-]+)/([\w.-]+?)(?:\.git)?/?$")
+    r"^(?:git@github\.com:|ssh://git@(?:ssh\.)?github\.com(?::\d+)?/|https://github\.com(?::443)?/)"
+    r"([\w.-]+)/([\w.-]+?)(?:\.git)?/?$")
 
 
 def _file_github_url(raw, sid):
@@ -18735,14 +18738,19 @@ def _file_github_url(raw, sid):
     p = _resolve_open_path(str(raw or ""), sid)
     if not os.path.isabs(p):
         return ""
-    p = os.path.normpath(p)
+    # realpath, not normpath (review, two executed repros): a lexical '..' collapse built a URL for a
+    # DIFFERENT file than the bytes the viewer shows when the '..' followed a symlink — a wrong link,
+    # strictly worse than none — and a symlinked path PREFIX made relpath escape the PHYSICAL toplevel
+    # git reports, silently un-linking every tracked file behind a symlink (macOS /tmp, a linked ~/code).
+    p = os.path.realpath(p)
     d = os.path.dirname(p)
     top = _git_out(["rev-parse", "--show-toplevel"], d)
     if not top:
         return ""
     rel = os.path.relpath(p, top)
-    if rel.startswith(".."):
-        return ""
+    if rel == ".." or rel.startswith(".." + os.sep):
+        return ""                                   # escaped the repo — NOT a name-prefix test: a root
+    #                                                 file literally named ..cfg is inside and links fine
     if _git_out(["ls-files", "--error-unmatch", "--", rel], top) is None:
         return ""                                   # exists but untracked — no link to a thing not there
     remote = _git_out(["remote", "get-url", "origin"], top)
@@ -18757,7 +18765,9 @@ def _file_github_url(raw, sid):
         if not ref:
             return ""
     return "https://github.com/%s/%s/blob/%s/%s" % (
-        m.group(1), m.group(2), quote(ref, safe=""),
+        # safe="/" keeps a slashed branch name (feat/x) literal — the form GitHub's own UI writes;
+        # GitHub resolves the ref/path ambiguity by longest match, exactly as it does for its users
+        m.group(1), m.group(2), quote(ref, safe="/"),
         "/".join(quote(seg) for seg in rel.split(os.sep)))
 
 

@@ -1346,3 +1346,6 @@ body.filebrowse-open { overflow: hidden; }
 .fileview-editor:focus { box-shadow: inset 0 0 0 1px rgba(156, 210, 255, 0.35); }
 /* the GitHub link wears the button treatment but IS an anchor — the browser owns the new tab */
 a.fileview-btn { text-decoration: none; display: inline-flex; align-items: center; }
+/* an author `display` beats the UA's [hidden] rule — without this the anchor showed hrefless
+   before the kernel ever answered (review) */
+a.fileview-btn[hidden] { display: none; }

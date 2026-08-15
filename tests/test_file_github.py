@@ -63,6 +63,12 @@ class GitHubUrl(_Repo):
         self.assertEqual(km._file_github_url(self.spaced, None),
                          "https://github.com/TESTORG/notes-api/blob/main/src/deep%20dir/notes%20file.md")
 
+    def test_a_slashed_branch_name_stays_literal_like_githubs_own_urls(self):
+        _git("remote", "add", "origin", "git@github.com:TESTORG/notes-api.git", cwd=self.tmp)
+        _git("checkout", "-q", "-b", "feat/deep-work", cwd=self.tmp)
+        self.assertEqual(km._file_github_url(self.fp, None),
+                         "https://github.com/TESTORG/notes-api/blob/feat/deep-work/src/app.py")
+
     def test_a_detached_head_links_the_sha(self):
         _git("remote", "add", "origin", "git@github.com:TESTORG/notes-api.git", cwd=self.tmp)
         sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.tmp,
@@ -70,6 +76,48 @@ class GitHubUrl(_Repo):
         _git("checkout", "-q", sha, cwd=self.tmp)
         self.assertEqual(km._file_github_url(self.fp, None),
                          "https://github.com/TESTORG/notes-api/blob/%s/src/app.py" % sha)
+
+    def test_a_symlinked_path_prefix_still_links(self):
+        # review, executed repro: git reports the PHYSICAL toplevel, so a logical path through a
+        # symlink escaped relpath and silently un-linked every tracked file behind one
+        _git("remote", "add", "origin", "git@github.com:TESTORG/notes-api.git", cwd=self.tmp)
+        outer = tempfile.mkdtemp()
+        link = os.path.join(outer, "via-link")
+        os.symlink(self.tmp, link)
+        self.assertEqual(km._file_github_url(os.path.join(link, "src", "app.py"), None),
+                         "https://github.com/TESTORG/notes-api/blob/main/src/app.py")
+
+    def test_dotdot_through_a_symlink_never_links_the_wrong_file(self):
+        # review, executed repro: a LEXICAL '..' collapse linked a different file than the bytes the
+        # viewer shows; realpath resolves the symlink first, and the escape gets the honest no-link
+        _git("remote", "add", "origin", "git@github.com:TESTORG/notes-api.git", cwd=self.tmp)
+        os.symlink(tempfile.mkdtemp(), os.path.join(self.tmp, "ext"))
+        self.assertEqual(
+            km._file_github_url(os.path.join(self.tmp, "ext", "..", "src", "app.py"), None), "",
+            "the OS would read outside the repo — a wrong link is worse than none")
+
+    def test_port_bearing_and_ssh_over_https_origins_link(self):
+        # GitHub's own SSH-over-HTTPS doc writes ssh://git@ssh.github.com:443/OWNER/REPO.git
+        for url in ("ssh://git@ssh.github.com:443/TESTORG/notes-api.git",
+                    "ssh://git@github.com:22/TESTORG/notes-api.git",
+                    "https://github.com:443/TESTORG/notes-api.git"):
+            m = km._GITHUB_REMOTE.match(url)
+            self.assertIsNotNone(m, url)
+            self.assertEqual((m.group(1), m.group(2)), ("TESTORG", "notes-api"), url)
+        for url in ("git@github.example.com:TESTORG/notes-api.git",
+                    "https://github.com.evil.io/TESTORG/notes-api.git"):
+            self.assertIsNone(km._GITHUB_REMOTE.match(url), url)
+
+    def test_a_root_file_named_with_leading_dots_still_links(self):
+        # the escape guard tests the path relation, never a name prefix
+        _git("remote", "add", "origin", "git@github.com:TESTORG/notes-api.git", cwd=self.tmp)
+        dd = os.path.join(self.tmp, "..cfg")
+        with open(dd, "w") as f:
+            f.write("k=v\n")
+        _git("add", "--", "..cfg", cwd=self.tmp)
+        _git("commit", "-q", "-m", "cfg", cwd=self.tmp)
+        self.assertEqual(km._file_github_url(dd, None),
+                         "https://github.com/TESTORG/notes-api/blob/main/..cfg")
 
     def test_no_link_verdicts_untracked_nonrepo_and_nongithub(self):
         _git("remote", "add", "origin", "git@github.com:TESTORG/notes-api.git", cwd=self.tmp)

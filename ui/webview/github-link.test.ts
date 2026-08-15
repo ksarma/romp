@@ -37,7 +37,13 @@ test("the kernel's answer is a verdict from git itself, threaded off the recv lo
   assert.match(KERNEL, /def _file_github_url\(raw, sid\):/);
   assert.match(KERNEL, /elif msg and msg\.get\("type"\) == "fileGitLink":/);
   assert.match(KERNEL, /threading\.Thread\(target=_gl, daemon=True\)\.start\(\)/);
-  // the three spellings git writes for a GitHub origin, .git suffix and all
-  assert.match(KERNEL, /git@github\\\.com:\|ssh:\/\/git@github\\\.com\/\|https:\/\/github\\\.com\//);
+  // the spellings git actually writes for a GitHub origin — incl. ports and ssh.github.com
+  assert.match(KERNEL, /ssh:\/\/git@\(\?:ssh\\\.\)\?github\\\.com\(\?::\\d\+\)\?/);
   assert.match(KERNEL, /ls-files", "--error-unmatch"/, "tracked-only — the user's own words");
+  // realpath, not normpath: a lexical '..' collapse linked a DIFFERENT file than the viewer shows
+  assert.match(KERNEL, /p = os\.path\.realpath\(p\)\n    d = os\.path\.dirname\(p\)/);
+});
+
+test("the hidden anchor stays hidden — an author display must not beat [hidden]", () => {
+  assert.match(FEED_CSS, /a\.fileview-btn\[hidden\] \{ display: none; \}/);
 });
