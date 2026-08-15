@@ -2809,6 +2809,10 @@ function restoreToComposer(text: string) {
 // never touched — the toast alone covers it.
 const pendingCancelRestores = new Map<string, { before: string; after: string }>();
 
+// The refusal card's remedy line, ONE string: renderApiError's initial write and apiRetryTick's
+// per-second re-assert both read it, so the card and the tick can never drift into different words.
+const REFUSAL_REMEDY = "the model's safeguards refused this prompt — rewrite it or drop this thread";
+
 // The turn stopped on an API error — the session is BLOCKED until retried. A red-dot card at the bottom
 // (so it stands out, the user 2026-06-16) carrying the error text + a red "API error" badge and a Retry
 // button that pastes "retry" into the session to resume the stalled turn.
@@ -2874,7 +2878,7 @@ function renderApiError(ev: Extract<ChatEvent, { kind: "apiError" }>): HTMLEleme
   // Per-thread suppression (the user 2026-07-06): the user interrupted THIS thread's storm → its auto-retry is
   // held off until a successful turn re-arms it. Distinct from the global pause; "Retry now" + a message still work.
   const suppressed = activeId ? !!sessions.get(activeId)?.status.retrySuppressed : false;
-  if (refusal) countdown.textContent = "the model's safeguards refused this prompt — rewrite it or drop this thread";   // never "retrying soon…": a refusal is deterministic and the tick skips it
+  if (refusal) countdown.textContent = REFUSAL_REMEDY;   // never "retrying soon…": a refusal is deterministic, and the tick RE-ASSERTS this line every second
   else if (spendCap) countdown.textContent = "spend limit reached — raise it at claude.ai/settings/usage";   // never "retrying soon…": the tick skips spend-capped threads
   else if (paused) countdown.textContent = retryPausedText();   // a usage-limit pause counts down to the window reset
   else if (suppressed) countdown.textContent = "auto-retry stopped for this session — send a message to resume";
@@ -2968,7 +2972,13 @@ function apiRetryTick(): void {
   const cd = cds.length ? (cds[cds.length - 1] as HTMLElement) : null;
   if (cd) {
     const active = activeId ? sessions.get(activeId) : null;
-    if (globalRetryPaused) {
+    if (active?.status.apiRefusal) {
+      // A refusal is never auto-retried, so there is no countdown to show — hold the remedy line.
+      // FIRST in the ladder: the global pause is about auto-retry, which a refusal never gets. Writing
+      // (not skipping) each tick also heals the Stop/Resume-all handler's blanket countdown rewrite
+      // within a second, without that handler needing per-session context.
+      cd.textContent = REFUSAL_REMEDY;
+    } else if (globalRetryPaused) {
       cd.textContent = retryPausedText();
     } else if (active?.status.retrySuppressed) {
       cd.textContent = "auto-retry stopped for this session — send a message to resume";
