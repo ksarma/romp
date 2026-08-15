@@ -11,7 +11,9 @@ Two kinds of document live here, and **each file's status header says which it i
   user has deliberately parked to revisit — nothing in them is scheduled, and nothing
   should be built from them unbidden. Currently: `cards-attention-rethink.md` and
   `nudge-awaiting-lift-race.md` (which the user has since ruled are one project — a
-  wait-taxonomy — to be re-planned together when revived).
+  wait-taxonomy — to be re-planned together when revived), and `boot-visibility-card.md`
+  (parked 2026-08-15 as a long-term consideration; its notes on the boot reconcile's
+  existing recovery behavior are current as of filing).
 
 Living architecture references (the event model, the read side) live in `docs/`
 instead — see `docs/architecture.md`.
