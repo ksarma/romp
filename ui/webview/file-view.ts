@@ -108,6 +108,10 @@ function el(tag: string, cls?: string): HTMLElement {
 let post: (m: Record<string, unknown>) => void = () => { /* bound by initFileView */ };
 let saveSeq = 0;
 let editHooks: { reqId: number; saved: (mtimeNs: string) => void; failed: (err: string) => void } | null = null;
+// The GitHub-link ask (the user 2026-08-15): one lazy question per open, reqId-guarded like the
+// saves; an empty url is the no-link verdict and the button simply never appears.
+let gitSeq = 0;
+let gitHooks: { reqId: number; apply: (url: string) => void } | null = null;
 // Set by the open viewer: returns false to VETO a close (an editor holding unsaved changes asks
 // first). The guard must live in closeFileView itself, because the browser overlay and the Escape
 // handler both close through it without knowing an edit is in progress.
@@ -129,6 +133,7 @@ export function closeFileView(): void {
   if (closeGuard && !closeGuard()) return;   // unsaved edits, and the user chose to keep them
   closeGuard = null;
   editHooks = null;
+  gitHooks = null;
   box.remove();
   document.body.classList.remove("fileview-open");
   tellShellClosed();
@@ -141,6 +146,7 @@ export function openFileView(path: string, sid?: string | null): void {
   if (document.getElementById("romp-fileview") && closeGuard && !closeGuard()) return;
   closeGuard = null;
   editHooks = null;
+  gitHooks = null;
   document.getElementById("romp-fileview")?.remove();
   const box = el("div", "fileview");
   box.id = "romp-fileview";
@@ -227,6 +233,26 @@ export function openFileView(path: string, sid?: string | null): void {
   // cannot show: the kernel's ?download=1 serves anything on disk (the rationale lives with
   // _file_download in kernel.py). Same-origin and cookie-authed like the view fetch, and
   // federation-aware for free — fileUrl already routes a remote session's file through the relay.
+  // ── GitHub link (the user 2026-08-15) ── an anchor, not a button: the browser owns opening a new
+  // tab. Hidden until the OWNING kernel answers the lazy fileGitLink ask with a real URL — an
+  // untracked file, a non-repo path, or a non-GitHub origin all honestly have no link, and this
+  // simply never appears.
+  const gh = el("a", "fileview-btn fileview-gh") as HTMLAnchorElement;
+  gh.textContent = "GitHub ↗";
+  gh.target = "_blank"; gh.rel = "noopener";
+  gh.hidden = true;
+  acts.appendChild(gh);
+  gitHooks = {
+    reqId: ++gitSeq,
+    apply: (url) => {
+      if (!url) return;
+      gh.href = url;
+      gh.title = url;                            // the full URL one hover away
+      gh.hidden = false;
+    },
+  };
+  post({ type: "fileGitLink", path, sid: sid || undefined, reqId: gitSeq });
+
   const dlUrl = fileUrl(path, sid) + "&download=1";
   const dl = el("button", "fileview-btn") as HTMLButtonElement;
   dl.type = "button"; dl.textContent = "Download"; dl.title = "Save this file to your device";
@@ -541,6 +567,9 @@ export function initFileView(poster: (m: Record<string, unknown>) => void): void
     } else if (m.type === "fileSaveFailed" && editHooks && m.reqId === editHooks.reqId) {
       const h = editHooks; editHooks = null;
       h.failed(String(m.error || "the save failed"));
+    } else if (m.type === "fileGitLink" && gitHooks && m.reqId === gitHooks.reqId) {
+      const h = gitHooks; gitHooks = null;
+      h.apply(String(m.url || ""));
     } else if (m.type === "warn" && editHooks) {
       // A federation drop (the session's host unreachable) answers a saveFile with a warn instead
       // of a reply — the feed page renders no toasts, so without this the button spins forever
