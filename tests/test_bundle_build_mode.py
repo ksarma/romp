@@ -110,7 +110,9 @@ class BundleBuildMode(unittest.TestCase):
             self.assertTrue(os.path.exists(os.path.join(webview, mod)),
                             "%s is require()d by a webview source but does not exist" % mod)
         src = _read(KERNEL)
-        m = re.search(r"def _ensure_bundles\(\):.*?(?=\ndef )", src, re.S)
+        # The scan's glob list lives in the _bundle_inputs helper _ensure_bundles reads (the
+        # sibling test above pins that call), so the *.js widening is asserted there.
+        m = re.search(r"def _bundle_inputs\(cv\):.*?(?=\ndef )", src, re.S)
         body = m.group(0)
         self.assertIn('rglob("*.js")', body,
                       "the staleness scan must watch the plain-JS modules the bundles require()")

@@ -6103,7 +6103,7 @@ class TestPendingQueued(unittest.TestCase):
     def test_drops_postal_and_harness_injections(self):
         # romp delivers a peer message by ENQUEUEing it (carries romp-msg-id / 📬 / a #### banner); those
         # must not masquerade as the user's pending input — only the genuine typed message remains.
-        self._write(("enqueue", "#################### \U0001F4EC from peer\n<!-- romp-msg-id: 11111111-2222 -->"),
+        self._write(("enqueue", "#################### \U0001F4EC from peer\nromp-msg-id: 11111111-2222"),
                     ("enqueue", "my real queued ask"))
         self.assertEqual(km._pending_queued(self.p), ["my real queued ask"])
 
@@ -6116,7 +6116,7 @@ class TestPendingQueued(unittest.TestCase):
         self.assertTrue(km._genuine_queued("fix the bug"))
         self.assertFalse(km._genuine_queued(""))
         self.assertFalse(km._genuine_queued("   "))
-        self.assertFalse(km._genuine_queued("text with <!-- romp-msg-id: 11111111 inside -->"))
+        self.assertFalse(km._genuine_queued("text with romp-msg-id: 11111111 inside"))
         self.assertFalse(km._genuine_queued("\U0001F4EC delivered"))
         self.assertFalse(km._genuine_queued("####################\nbanner"))
 
