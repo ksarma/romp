@@ -2691,7 +2691,11 @@ def _dead_branch_ids(store, rewind_set, kept_set=frozenset()):
     return move - protected
 
 
-_RECON_MEMO = {}   # fsid -> (fileset key, rewound-uuid frozenset, kept frozenset) — the reconciliation's event gate
+_RECON_MEMO = {}   # fsid -> (fileset key, rewound frozenset, kept frozenset, goal-store key) — the
+#                    reconciliation's event gate, watching BOTH sides of the join: the transcripts
+#                    (the abandoned set can only change with them) AND the goal store (a mint that
+#                    slips past a fail-open guard onto an already-known-dead branch changes only the
+#                    store — the write IS the new information, or the orphan is never re-caught)
 
 
 def _per_file_rewound(fsid, files):
@@ -2747,7 +2751,13 @@ def reconcile_rewound_goals(fsid, path, now):
 
     Deliberately blind to a PENDING (unconsumed) cut: the two-phase hold owns that window (hide at
     gesture, archive at take, restore on failure) — reconciling it would archive cards for a rewind
-    that can still fail. Only branches dead ON DISK count, so no leaf_override here."""
+    that can still fail. Only branches dead ON DISK count, so no leaf_override here.
+
+    The gate watches both sides of the join (the memo's note): on a store-only event the memoized
+    sig is REUSED (the abandoned set cannot change without a transcript change), so the adapter-walk
+    economy holds — the store-side check (_dead_branch_ids) is pure dict work and runs whenever
+    either side moved, archiving only on a hit (one-way, identity-keyed, tombstone-idempotent: no
+    flap, no store re-publish on a miss)."""
     files = _judge_candidates(fsid, [str(path)])
     states = STATESDIR / (fsid + ".jsonl")
     epi = EPIDIR / (fsid + ".jsonl")
@@ -2757,15 +2767,27 @@ def reconcile_rewound_goals(fsid, path, now):
         key = _fileset_key(key_files)
     except OSError:
         key = None
+    gpath = GOALDIR / (fsid + ".json")
+
+    def _store_key():
+        try:
+            return _fileset_key([str(gpath)]) if gpath.exists() else None
+        except OSError:
+            return None
+
+    skey = _store_key()
     memo = _RECON_MEMO.get(fsid)
+    if key is not None and memo and memo[0] == key and memo[3] == skey:
+        return 0                       # neither the transcripts nor the goal store moved → not an event
     if key is not None and memo and memo[0] == key:
-        return 0                                       # nothing parse-relevant moved → not an event
-    mem = em.chain_membership(path, candidate_files=files,
-                              states=str(states) if states.exists() else None)
-    kept = frozenset(mem["kept"])
-    sig = frozenset(mem["rewind"] | (_per_file_rewound(fsid, files) - kept))
+        sig, kept = memo[1], memo[2]   # store-only event → reuse the memoized abandoned set, no walk
+    else:
+        mem = em.chain_membership(path, candidate_files=files,
+                                  states=str(states) if states.exists() else None)
+        kept = frozenset(mem["kept"])
+        sig = frozenset(mem["rewind"] | (_per_file_rewound(fsid, files) - kept))
     n = 0
-    if sig and (memo is None or memo[1] != sig):       # the abandoned set CHANGED → new information
+    if sig:
         store = load_goals(fsid)
         move = _dead_branch_ids(store, sig, kept_set=kept)
         if move:
@@ -2774,7 +2796,8 @@ def reconcile_rewound_goals(fsid, path, now):
                              note="%d goal node(s) anchored on a rewound-away branch archived by "
                                   "the reconciliation (recoverable in goals-archive)" % len(move))
             n = len(move)
-    _RECON_MEMO[fsid] = (key, sig, kept)
+            skey = _store_key()        # our own write moved the store — never self-trigger next pass
+    _RECON_MEMO[fsid] = (key, sig, kept, skey)
     return n
 
 

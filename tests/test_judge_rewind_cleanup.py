@@ -566,6 +566,25 @@ class ReconcileRewoundGoals(Base):
         self.assertIsNone(live["nodes"][child].get("parentId"), "…re-parented at the nearest survivor (a top)")
         self.assertIn(child, [nd["id"] for nd in jd.open_menu(live)], "…and still reachable by the planner")
 
+    def test_a_store_write_reopens_the_gate_for_an_already_known_dead_branch(self):
+        # the escape the review named: reconcile memoizes the sig, then a mint slips past the
+        # write-moment guard's fail-open onto that ALREADY-swept branch (a transient chain-check
+        # error mid-pass mints anyway, loudly, by design). The transcript never changes again — so
+        # a transcript-only gate could never re-catch it while the kernel stayed up: the g44 zombie
+        # back, behind one transient fault. The mint's own store write IS the new information; the
+        # gate watches both sides of the join.
+        self.write(self.base_recs() + self.fork_recs())
+        jd.save_goals(SID, self._store())
+        self.assertEqual(jd.reconcile_rewound_goals(SID, str(self.path), T0 + 200), 0,
+                         "premise: the abandoned set is memoized, nothing to move yet")
+        s = jd.load_goals(SID)
+        self._mint(s, "seg-escape", CUT, "Escaped orphan", "u2")   # the fail-open mint: store-only
+        jd.save_goals(SID, s)
+        self.assertEqual(jd.reconcile_rewound_goals(SID, str(self.path), T0 + 300), 1,
+                         "the next pass archives it — no restart, no second rewind needed")
+        self.assertNotIn("%s:g1" % SID, jd.load_goals(SID)["nodes"])
+        self.assertIn("%s:g1" % SID, jd.load_goal_archive(SID)["nodes"])
+
     def test_a_merge_transplanted_dead_anchor_on_a_kept_survivor_is_not_swept(self):
         # hazard (b): _merge_nodes grafts the dupe's promptUuid onto a survivor lacking one — mixed
         # provenance proves nothing about the NODE, so it stays
