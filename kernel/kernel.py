@@ -12677,16 +12677,24 @@ def _rewind_migration_bg():
     triage cadence over recently-touched sessions, so the residue that accumulated BEFORE it shipped
     (85 dead-branch nodes across 8 sessions at audit time, 28 in live stores, 5 resident in live and
     archive at once) would sit forever on dormant sessions. Run the same check once over every
-    discoverable session regardless of age, then write the marker — on success only, so a crash
-    mid-migration retries next boot (reconciliation is idempotent: archive-by-identity re-run is a
-    no-op). Cards archive (recoverable), never delete."""
-    marker = jd.STATE / "rewind-reconcile-migration.done"
+    discoverable session regardless of age, then write the marker — only on a ZERO-FAILURE pass:
+    "returned" is not "succeeded" (per-session errors are swallowed loudly inside the pass), and a
+    marker written over a failed dormant session skips its orphans forever. A crash or a dirty pass
+    retries next boot (reconciliation is idempotent: archive-by-identity re-run is a no-op). The
+    marker name is v2: the v1 predicate was blind to dead branches inside pre-/clear episode files
+    (10 of the 28 audited live orphans, all 5 dual-residents), so the widened pass must run once
+    even where a v1 marker exists. Cards archive (recoverable), never delete."""
+    marker = jd.STATE / "rewind-reconcile-migration-v2.done"
     if marker.exists():
         return
     try:
-        n = jd.run_rewound_reconcile(now=int(time.time()), sessions_cap=100000,
-                                     window=10 * 365 * 86400)
-        marker.write_text(json.dumps({"t": int(time.time()), "archived": n}))
+        n, fails = jd.run_rewound_reconcile(now=int(time.time()), sessions_cap=100000,
+                                            window=10 * 365 * 86400)
+        if fails:
+            sys.stderr.write("romp-kernel: rewind migration left %d session(s) unreconciled — "
+                             "no marker written, retrying next boot\n" % fails)
+        else:
+            marker.write_text(json.dumps({"t": int(time.time()), "archived": n}))
         if n:
             sys.stderr.write("romp-kernel: rewind migration archived %d dead-branch goal node(s)\n" % n)
     except Exception:

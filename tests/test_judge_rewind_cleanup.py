@@ -633,6 +633,45 @@ class ReconcileRewoundGoals(Base):
         self.assertEqual(jd.reconcile_rewound_goals(SID, str(self.path), T0 + 200), 0)
         self.assertIn(nid, jd.load_goals(SID)["nodes"])
 
+    def test_a_dead_branch_inside_a_pre_clear_episode_file_is_still_reconciled(self):
+        # The whole-graph walk can only ever call a pre-/clear file's interior branches "clear"
+        # (their chains reach the old episode's null root; the current spine never sees them), so
+        # 10 of the 28 audited live orphans — including ALL 5 live+archive dual-residents — were
+        # invisible to it. The per-file discriminator walks each dead file by itself: a branch
+        # that rejoins the file's OWN spine is a rewind wherever the graph later went. Benign
+        # pre-clear spine nodes stay (they are "clear" in the whole graph AND on their own file's
+        # spine), and so does the current branch's card.
+        anchor = self.td / (SID + ".jsonl")            # the dead episode: a rewind INSIDE it, then /clear
+        anchor.write_text("\n".join(json.dumps(r) for r in
+                                    self.base_recs() + self.fork_recs()) + "\n")
+        epfsid = "44444444-5555-6666-7777-888888888888"   # a second dead episode, enumerated only
+        epfile = self.td / (epfsid + ".jsonl")            # by the episode log (u6b/a6b rewound away
+        eprecs = [uline(T0 + 200, "old-episode ask", "u6"),  # inside it, u7 taking the branch)
+                  aline(T0 + 210, "Old-episode reply, settled.", "a6", "u6"),
+                  uline(T0 + 215, "follow-up on the old episode", "u6b", "a6"),
+                  aline(T0 + 218, "Follow-up reply.", "a6b", "u6b"),
+                  uline(T0 + 220, "follow-up, rewritten", "u7", "a6"),
+                  aline(T0 + 230, "Branch reply.", "a7", "u7")]
+        epfile.write_text("\n".join(json.dumps(r) for r in eprecs) + "\n")
+        jd.append_episode(SID, "u6", epfsid, T0 + 200)
+        leaf = self.td / ("99999999-aaaa-bbbb-cccc-dddddddddddd.jsonl")   # the CURRENT episode
+        leaf.write_text("\n".join(json.dumps(r) for r in [
+            uline(T0 + 300, "fresh start after clear", "u9"),
+            aline(T0 + 310, "New conversation reply.", "a9", "u9")]) + "\n")
+        s = self._store()
+        self._mint(s, "seg-a", CUT, "Orphan from the anchor's dead branch", "u2")
+        self._mint(s, "seg-b", T0 + 215, "Orphan from the old episode's dead branch", "u6b")
+        self._mint(s, "seg-c", T0, "Benign pre-clear card", "u1")
+        self._mint(s, "seg-d", T0 + 300, "Current branch's card", "u9")
+        jd.save_goals(SID, s)
+        self.assertEqual(jd.reconcile_rewound_goals(SID, str(leaf), T0 + 400), 2,
+                         "both interior dead branches are caught — nothing else")
+        live = jd.load_goals(SID)["nodes"]
+        self.assertNotIn("%s:g1" % SID, live, "the anchor's dead-branch orphan archived")
+        self.assertNotIn("%s:g2" % SID, live, "the episode-log-enumerated file's orphan archived")
+        self.assertIn("%s:g3" % SID, live, "a benign pre-clear spine card is untouched")
+        self.assertIn("%s:g4" % SID, live, "the current branch's card is untouched")
+
     def test_a_user_restored_card_survives_boot_and_later_rewind_re_reconciles(self):
         # The restore pops the tombstone, but the branch stays "rewind" in the graph forever and
         # _RECON_MEMO is process memory: every kernel restart (memo reset) and any later unrelated

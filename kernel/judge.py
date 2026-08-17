@@ -2691,27 +2691,68 @@ def _dead_branch_ids(store, rewind_set, kept_set=frozenset()):
     return move - protected
 
 
-_RECON_MEMO = {}   # fsid -> (fileset key, frozenset of rewound-away uuids) — the reconciliation's event gate
+_RECON_MEMO = {}   # fsid -> (fileset key, rewound-uuid frozenset, kept frozenset) — the reconciliation's event gate
+
+
+def _per_file_rewound(fsid, files):
+    """Uuids provably rewound away inside ONE transcript file's OWN walk — the incident scan's
+    per-file discriminator. A rewind that happened before a /clear lives entirely in a dead
+    episode's file: the CURRENT graph classifies that whole file "clear" (or unknown, when the file
+    sits outside the lineage closure), so the whole-graph walk can never call its interior dead
+    branch "rewind" — yet those goals were exactly the audited residue (10 of the 28 live orphans,
+    all 5 live+archive dual-residents). Within one file, a branch that rejoins the file's own
+    active spine is a rewind no matter where the graph later went. Scans the candidate files plus
+    every episode-log-recorded transcript (EPIDIR rows are the durable enumeration of dead episode
+    files); dead files are frozen, so the incremental reader keeps this cheap. A per-file failure
+    is a loud row, never a stalled scan."""
+    out, seen = set(), set()
+    leaf = Path(files[0])
+    cands = [Path(f) for f in files]
+    for row in episode_rows(fsid):
+        fs = str(row.get("fsid") or "")
+        if fs:
+            cands.append(leaf.with_name(fs + ".jsonl"))
+    for fp in cands:
+        if fp.name in seen:
+            continue
+        seen.add(fp.name)
+        if not fp.exists():
+            continue
+        try:
+            ad = em.FileAdapter([str(fp)], str(fp))
+            for u, v in ad.chain_verdicts().items():
+                if v == "rewind":
+                    out.add(u)
+        except Exception as e:
+            _log_judge_error("romp", fsid, "rewound-reconcile",
+                             note="per-file rewind scan failed on one transcript: %r" % e)
+    return out
 
 
 def reconcile_rewound_goals(fsid, path, now):
     """EVENT-KEYED dead-branch reconciliation, riding the triage cadence: when a parse-relevant file
     changes AND the transcript's abandoned-branch set actually CHANGED, archive live goals whose
-    anchor lies on a dead branch (predicate em.chain_membership — "rewind" only; "clear" is /clear
-    jurisdiction and "broken"/unknown prove nothing, exactly the incident scan's dead-episode-vs-
-    dead-branch discriminator). This is the only cover for the rewinds romp never sees: CLI-native
-    Esc-Esc in a tmux terminal, the SDK forkAt resume, a cut the gesture path could not resolve, and
-    a crash between arm and take — every one applies --resume-session-at with no sweep, and 28 live
-    orphans existed when this shipped (one still being actively judged a day after its conversation
-    stopped existing). Cards ARCHIVE (recoverable, and the override journal stays safe because
-    node-keyed ops skip absent ids and restore defers to the archive) — never delete.
+    anchor lies on a dead branch. The predicate is em.chain_membership's "rewind" UNIONED with the
+    per-file discriminator (_per_file_rewound, minus the current graph's kept set — a resume-stitched
+    survivor is never swept): "rewind" is the only sweepable verdict, "clear" is /clear jurisdiction
+    and "broken"/unknown prove nothing — and a dead branch INSIDE a pre-/clear episode file, which
+    the whole-graph walk can only ever call "clear", is caught by its own file's walk, exactly the
+    incident scan's dead-episode-vs-dead-branch discriminator. This is the only cover for the
+    rewinds romp never sees: CLI-native Esc-Esc in a tmux terminal, the SDK forkAt resume, a cut the
+    gesture path could not resolve, and a crash between arm and take — every one applies
+    --resume-session-at with no sweep, and 28 live orphans existed when this shipped (one still
+    being actively judged a day after its conversation stopped existing). Cards ARCHIVE
+    (recoverable, and the override journal stays safe because node-keyed ops skip absent ids and
+    restore defers to the archive) — never delete.
 
     Deliberately blind to a PENDING (unconsumed) cut: the two-phase hold owns that window (hide at
     gesture, archive at take, restore on failure) — reconciling it would archive cards for a rewind
     that can still fail. Only branches dead ON DISK count, so no leaf_override here."""
     files = _judge_candidates(fsid, [str(path)])
     states = STATESDIR / (fsid + ".jsonl")
-    key_files = list(files) + ([str(states)] if states.exists() else [])
+    epi = EPIDIR / (fsid + ".jsonl")
+    key_files = (list(files) + ([str(states)] if states.exists() else [])
+                 + ([str(epi)] if epi.exists() else []))
     try:
         key = _fileset_key(key_files)
     except OSError:
@@ -2721,18 +2762,19 @@ def reconcile_rewound_goals(fsid, path, now):
         return 0                                       # nothing parse-relevant moved → not an event
     mem = em.chain_membership(path, candidate_files=files,
                               states=str(states) if states.exists() else None)
-    sig = frozenset(mem["rewind"])
+    kept = frozenset(mem["kept"])
+    sig = frozenset(mem["rewind"] | (_per_file_rewound(fsid, files) - kept))
     n = 0
     if sig and (memo is None or memo[1] != sig):       # the abandoned set CHANGED → new information
         store = load_goals(fsid)
-        move = _dead_branch_ids(store, sig, kept_set=frozenset(mem["kept"]))
+        move = _dead_branch_ids(store, sig, kept_set=kept)
         if move:
             archive_goal_nodes(fsid, store, move, now)
             _log_judge_error("romp", fsid, "rewound-archived", goal=sorted(move),
                              note="%d goal node(s) anchored on a rewound-away branch archived by "
                                   "the reconciliation (recoverable in goals-archive)" % len(move))
             n = len(move)
-    _RECON_MEMO[fsid] = (key, sig)
+    _RECON_MEMO[fsid] = (key, sig, kept)
     return n
 
 
@@ -2741,20 +2783,23 @@ def run_rewound_reconcile(now=None, sessions_cap=PLAN_SESSIONS, window=None, ver
     pass's planner/closer/nudge see a store already clean of dead-branch orphans). `window` widens
     discovery for the one-time boot migration (the kernel passes years; the 85-node residue spans
     sessions long outside the 48h caption horizon). Per-session failures are loud rows, never a
-    stalled pass."""
+    stalled pass — and they are COUNTED: returns (archived, failures), because the migration's
+    done-marker written over a swallowed failure permanently skips that session (dormant sessions
+    are exactly the ones steady-state discovery never revisits)."""
     if now is None:
         now = int(time.time())
     sessions = discover(now, window=window) if window else discover(now)
-    n = 0
+    n, fails = 0, 0
     for fsid, path, anchor, name in sessions[:sessions_cap]:
         try:
             n += reconcile_rewound_goals(fsid, str(path), now)
         except Exception as e:
+            fails += 1
             _log_judge_error("romp", fsid, "rewound-reconcile",
                              note="dead-branch reconciliation failed: %r" % e)
     if verbose:
         sys.stderr.write("romp-judge: reconciliation archived %d dead-branch goal node(s)\n" % n)
-    return n
+    return n, fails
 
 
 def open_menu(store, cap=20):
