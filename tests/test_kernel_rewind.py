@@ -396,6 +396,33 @@ class TwoPhaseRewindTiming(unittest.TestCase):
         self.assertNotIn(self.doomed, live["nodes"], "the doomed card still archives")
         self.assertIn(self.doomed, jd.load_goal_archive(SID)["nodes"])
 
+    def test_a_user_restored_card_survives_the_hold_hide_and_the_take(self):
+        # A card restored out of an EARLIER rewind's sweep carries a durable rewindRestored stamp;
+        # a LATER rewind whose cut range merely time-overlaps it used to hide it at the gesture
+        # (kernel.py's hold view) and re-archive it at the take (drop_goals_after) — popping the
+        # stamp, so even the reconciler's shield was gone. Both surfaces route through
+        # jd.swept_ids, so one exemption gives hide==take parity: the restored card never hides,
+        # never re-archives, and keeps its stamp. Only the user's own gesture re-kills it.
+        jd = km.jd
+        s = jd.load_goals(SID)
+        jd.apply_plan(s, "s3", self.T0 + 90, [{"do": "mint", "why": "x", "text": "Restored earlier"}],
+                      jd.open_menu(s))
+        restored_nid = "%s:g3" % SID
+        s["rewindRestored"] = {restored_nid: self.T0 + 95}   # the earlier restore's durable stamp
+        jd.rollup_status(s, session_closed=False)
+        jd.save_goals(SID, s)
+        km._rewind_hold_set(SID, self.CUT, "leaf-at-arm")
+        feed = km._feed_goals(SID)
+        self.assertIn(restored_nid, feed["nodes"], "the restored card never hides at the gesture")
+        self.assertNotIn(self.doomed, feed["nodes"], "…while the unrestored in-range card does")
+        km._on_rewind_resolved(SID, "taken")
+        live = jd.load_goals(SID)
+        self.assertIn(restored_nid, live["nodes"], "the take spares it too — hide==take parity")
+        self.assertEqual(live["rewindRestored"][restored_nid], self.T0 + 95,
+                         "…with the durable stamp intact")
+        self.assertNotIn(restored_nid, jd.load_goal_archive(SID)["nodes"])
+        self.assertNotIn(self.doomed, live["nodes"], "the unrestored card still archives")
+
     def test_a_spent_flag_discriminates_through_recorded_resume_lineage(self):
         # crash-heal shape: a recorded fresh-head resume fork (states resumeFork row) means the
         # armed leaf is reachable only through the STITCHED walk — a lineage-blind walk read it as

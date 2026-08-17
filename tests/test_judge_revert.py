@@ -112,6 +112,34 @@ class DropGoalsAfter(RevertBase):
         jd.save_goals(SID, self._store())
         self.assertEqual(jd.drop_goals_after(SID, CUT), 0)
 
+    def test_a_user_restored_card_is_never_re_swept_by_a_later_overlapping_rewind(self):
+        # A card the user restored out of an EARLIER rewind's sweep (durable rewindRestored stamp)
+        # merely time-overlaps a LATER rewind's cut range: that rewind's evidence is about the
+        # current chain's tail, not the restored card's long-dead minting branch, so re-archiving
+        # it — and popping the stamp, erasing even the reconciler's shield — moved a card on zero
+        # new information, silently overriding an explicit user gesture. The t-keyed selection
+        # spares the stamp like the reconciler does; only the user's own gesture re-kills a
+        # restored card. Exercised with kept=None on purpose: the exemption must hold on the
+        # degraded no-kept-set path too.
+        s = self._store()
+        jd.apply_plan(s, "s1", T0, [{"do": "mint", "why": "x", "text": "Survivor"}], [])
+        jd.apply_plan(s, "s2", T0 + 100, [{"do": "mint", "why": "x", "text": "Restored earlier"}],
+                      jd.open_menu(s))
+        jd.apply_plan(s, "s3", T0 + 110, [{"do": "mint", "why": "x", "text": "Doomed"}],
+                      jd.open_menu(s))
+        jd.rollup_status(s, session_closed=False)
+        s["rewindRestored"] = {self._nid(2): NOW - 50}   # the earlier restore's durable stamp
+        jd.save_goals(SID, s)
+        self.assertEqual(jd.drop_goals_after(SID, CUT), 1,
+                         "only the unrestored in-range card is swept")
+        live = jd.load_goals(SID)
+        self.assertIn(self._nid(2), live["nodes"], "the restored card survives the overlapping take")
+        self.assertEqual(live.get("rewindRestored", {}).get(self._nid(2)), NOW - 50,
+                         "…with its durable stamp intact — the reconciler's shield is not popped")
+        self.assertNotIn(self._nid(3), live["nodes"], "the genuinely in-range card is still swept")
+        self.assertIn(self._nid(3), jd.load_goal_archive(SID)["nodes"])
+        self.assertNotIn(self._nid(2), jd.load_goal_archive(SID)["nodes"])
+
 
 class RebaseTombstones(RevertBase):
     """The sweep leaves a DURABLE deletion marker (store rewindSwept) that _rebase_onto_disk honors —

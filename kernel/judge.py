@@ -2544,12 +2544,24 @@ def swept_ids(store, cut_t, kept=None):
     prompt-run mints the replacement ask's card DURING the open rewind turn, with t > cut_t: a bare
     t-key hid that fresh live-branch card all turn and archived it at the take (2026-08-17). A node
     with no promptUuid keeps the t-keyed fate (the sweep's whole purpose for unprovable orphans),
-    and kept=None (the caller's lookup failed, loudly) degrades to the pure t-keyed selection."""
+    and kept=None (the caller's lookup failed, loudly) degrades to the pure t-keyed selection.
+
+    A node carrying a rewindRestored stamp is never selected either — the kept exemption's shape,
+    on USER authority instead of chain identity: the user already pulled that card back out of a
+    rewind sweep's archive, its minting branch's death strictly predates the restore gesture, and
+    a LATER rewind whose cut range merely time-overlaps it proves nothing about it — re-archiving
+    would move a card on zero new information, silently overriding an explicit user gesture (and
+    the take's archive would pop the durable stamp, erasing even the reconciler's shield). Only
+    the user's own gesture re-kills a restored card. Mirrors _dead_branch_ids' USER-RESTORED
+    exemption, and holds on the degraded kept=None path too."""
     cut_t = int(cut_t)
     nodes = store.get("nodes") or {}
     kept = kept or frozenset()
+    restored = store.get("rewindRestored") or {}
 
     def _spared(nid):
+        if nid in restored:                             # user-restored: only their gesture re-kills
+            return True
         pu = (nodes.get(nid) or {}).get("promptUuid")
         return bool(pu) and pu in kept
     children = {}
@@ -2632,7 +2644,11 @@ def archive_goal_nodes(fsid, store, move, tomb_t):
             # both stamps are whole seconds, so a bare equal stamp let any stale writer max-union
             # the popped restore stamp back from disk and neutralize the tombstone this sweep just
             # wrote (its own save-rebase included, under a mid-flight publish); the +1 encodes the
-            # restore-then-sweep order actually witnessed here under _GOAL_ARCH_LOCK.
+            # restore-then-sweep order actually witnessed here under _GOAL_ARCH_LOCK. Both sweep
+            # selections (swept_ids, _dead_branch_ids) spare restored-stamped nodes now, so a
+            # stamped id reaches this pop only in a move set the selections did not vet: a caller
+            # whose snapshot predates the restore (the blind-writer shape the post-save backstop
+            # below resolves) or an explicit user gesture — the one authority above a restore.
             prev_rt = (store.get("rewindRestored") or {}).pop(nid, None)
             swept[nid] = max(int(tomb_t), int(prev_rt) + 1) if prev_rt is not None else int(tomb_t)
         arch["rompUuid"] = store.get("rompUuid", fsid)
@@ -2686,8 +2702,9 @@ def _dead_branch_ids(store, rewind_set, kept_set=frozenset()):
       of a rewind sweep's archive) is never re-taken — not directly, not by the drag, not as an
       umbrella. Its branch's death strictly predates the restore gesture, so re-archiving it moves
       a card on ZERO new information (the boot memo reset and any later sig change both replayed
-      exactly that, per the review). A genuinely NEW sweep pops the stamp (archive_goal_nodes), so
-      this never shields a node from fresh evidence."""
+      exactly that, per the review). The t-keyed sweep (swept_ids) spares the stamp the same way,
+      so a restored card is re-killed only by the user's own gesture — a re-clear parks it back in
+      the archive through the compaction path, and the journal replay defers to that."""
     nodes = store.get("nodes") or {}
     restored = store.get("rewindRestored") or {}
     kids = {}
