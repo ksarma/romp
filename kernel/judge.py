@@ -1367,19 +1367,38 @@ def _rewound_away(fsid, path, uuid):
     the primary observed leak (the g44 shape), and this is the stand-down that closes it
     (CLAUDE.md: a writer whose evidence predates the diary stands down).
 
-    Only "rewind" answers True. None/unknown uuids (umbrellas, legacy nodes, synthetic orphan:<t>
-    salvage ids, cross-file uuids outside the lineage) answer False — abandonment can't be proven,
-    and a false stand-down silently drops a real ask. "clear" is /clear jurisdiction; "broken" is
-    kept by design. A check that itself fails logs loudly and answers False (the pre-fix behavior),
-    never silently blocks a mint."""
+    Only "rewind" answers non-False. None/unknown uuids (umbrellas, legacy nodes, synthetic
+    orphan:<t> salvage ids, cross-file uuids outside the lineage) answer False — abandonment can't
+    be proven, and a false stand-down silently drops a real ask. "clear" is /clear jurisdiction;
+    "broken" is kept by design. A check that itself fails logs loudly and answers False (the
+    pre-fix behavior), never silently blocks a mint.
+
+    The verdict is TWO-VALUED because the evidence comes in two strengths (2026-08-17):
+    "durable" — the branch-take is ON DISK; the rewind happened and can never un-happen, so a
+                caller may act irreversibly (retire the placement key).
+    "pending" — the uuid is abandoned only under the backend's ARMED, unconsumed cut (a bare
+                rollback's window). That rewind can still fail or dissolve, and a placements[key]
+                = None retirement is permanent (_placed_key reads bare membership; nothing ever
+                pops a None key) — so callers must DEFER (skip without writing) and let the next
+                pass re-decide from whichever world the cut resolves into. Retiring here silently
+                dropped a live ask forever when the rollback dissolved: the restore leg brings
+                back hidden CARDS, but an ask retired before its card existed had nothing to
+                restore."""
     if not uuid:
         return False
     try:
         states = STATESDIR / (fsid + ".jsonl")
+        cut = _pending_cut(fsid)
         mem = em.chain_membership(path, candidate_files=_judge_candidates(fsid, [str(path)]),
                                   states=str(states) if states.exists() else None,
-                                  leaf_override=_pending_cut(fsid) or None)
-        return uuid in mem["rewind"]
+                                  leaf_override=cut or None)
+        if uuid not in mem["rewind"]:
+            return False
+        if not cut:
+            return "durable"                           # proven from the on-disk graph alone
+        on_disk = em.chain_membership(path, candidate_files=_judge_candidates(fsid, [str(path)]),
+                                      states=str(states) if states.exists() else None)
+        return "durable" if uuid in on_disk["rewind"] else "pending"
     except Exception as e:
         _log_judge_error("romp", fsid, "chain-check",
                          note="write-moment chain check failed: %r — minting anyway (pre-fix behavior)" % e)
@@ -3330,8 +3349,21 @@ def apply_plan_guarded(fsid, path, store, seg_id, seg_t, ops, menu, place_key=No
     (callers skip their placed-count/regroup on False, and still save — the retirement must
     persist). If the branch is later stitched active again by a recorded resume fork (a hypothesis
     shape, no corpus instance), the retired key stays retired — acceptable, and the loud row below
-    is the trail."""
-    if prompt_uuid and _rewound_away(fsid, path, prompt_uuid):
+    is the trail.
+
+    A "pending" verdict — abandoned only under an ARMED, unconsumed cut — DEFERS instead (no
+    placements write, nothing applied): the rewind can still fail/dissolve, and a retirement here
+    was permanent while the dissolve restored only already-minted cards — the ask itself could
+    never mint again (_rewound_away's docstring has the full shape). The key stays absent, so the
+    next pass re-collects the unit and re-decides from the resolved world; during the armed window
+    fresh parses carry the leaf_override, so the deferred unit never reaches the nudge gate."""
+    away = _rewound_away(fsid, path, prompt_uuid) if prompt_uuid else False
+    if away == "pending":
+        _log_judge_error("planner", fsid, "rewind-stand-down-pending", seg=seg_id,
+                         note="the unit's prompt is abandoned only under a still-pending cut — "
+                              "deferred, not retired (the rewind can still fail)")
+        return False
+    if away:
         key = place_key if place_key is not None else seg_id
         store["placements"][key] = None
         _log_judge_error("planner", fsid, "rewind-stand-down", seg=seg_id,
@@ -6096,7 +6128,16 @@ def _plan_session(fsid, path, now):
             continue                                  # placed while THIS pass applied an earlier unit — the
         #                                               apply loop must uphold the same idempotence the
         #                                               collection loop checked at pass START (2026-07-06)
-        if trig and _rewound_away(fsid, path, trig):
+        away = _rewound_away(fsid, path, trig) if trig else False
+        if away == "pending":
+            # abandoned only under an ARMED, unconsumed cut: DEFER without writing — a retirement
+            # is permanent, and this rewind can still fail/dissolve (the apply_plan_guarded
+            # contract's pending leg). The next pass re-decides from the resolved world.
+            _log_judge_error("planner", fsid, "rewind-stand-down-pending", seg=seg_id,
+                             note="the unit's prompt is abandoned only under a still-pending cut — "
+                                  "deferred, not retired (the rewind can still fail)")
+            continue
+        if away:
             # WRITE-MOMENT stand-down, checked BEFORE any model call: this pass's frame pinned a
             # world in which the unit's prompt still looked active, but a rewind has since abandoned
             # its branch — planning it would mint an orphan (and the nudge/followup/pivot branches
@@ -9961,7 +10002,16 @@ def run_courier(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, v
             store.get("courierFails", {}).pop(seg_id, None)   # a clean reply clears the strike count
         store.get("courierDeferred", {}).pop(seg_id, None)    # landed (clean reply or parse give-up) → deferral over
         if edit["delegating"]:
-            if anchor_uuid and _rewound_away(fsid, path, anchor_uuid):
+            away = _rewound_away(fsid, path, anchor_uuid) if anchor_uuid else False
+            if away == "pending":
+                # abandoned only under an ARMED, unconsumed cut: DEFER (no placements write) — the
+                # rewind can still fail, and a None retirement is permanent (the apply_plan_guarded
+                # contract's pending leg). The next courier pass re-judges from the resolved world.
+                _log_judge_error("courier", fsid, "rewind-stand-down-pending", seg=seg_id,
+                                 note="the peer segment is abandoned only under a still-pending cut — "
+                                      "deferred, not retired (the rewind can still fail)")
+                continue
+            if away:
                 # WRITE-MOMENT stand-down (same contract as apply_plan_guarded): the peer segment's
                 # branch was rewound away while this pass held it — planting now mints an orphan the
                 # one-shot sweep already ran past. RETIRE (None reads as courier-final downstream, so

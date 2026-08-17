@@ -299,7 +299,9 @@ class WriteMomentStandDown(Base):
 
     def test_bare_rollback_window_stands_down_via_the_pending_cut(self):
         # during the armed window even a FRESH parse shows the dead tail as active — the guard
-        # must fold in backend.pending_cut (item 2's second half)
+        # must fold in backend.pending_cut (item 2's second half). But PENDING-cut evidence is
+        # not durable (the rewind can still fail/dissolve), so the stand-down DEFERS — the key
+        # stays absent, never a permanent None retirement made on a rewind that never happened.
         self.write(self.base_recs())
         jd.set_pending_cut_provider(lambda sid: "a1")
         s = self._store()
@@ -308,6 +310,28 @@ class WriteMomentStandDown(Base):
                                         prompt_uuid="u2")
         self.assertFalse(applied)
         self.assertEqual(s["nodes"], {})
+        self.assertNotIn("seg-dead", s["placements"], "deferred, NOT retired — pending evidence")
+        self.assertIn("rewind-stand-down-pending", jd.ERRORS.read_text(), "the deferral is loud")
+        # the rollback dissolves (transcript unchanged, cut gone) → the same unit now mints
+        jd.set_pending_cut_provider(None)
+        applied = jd.apply_plan_guarded(SID, str(self.path), s, "seg-dead", CUT,
+                                        [{"do": "mint", "why": "x", "text": "restored ask"}], [],
+                                        prompt_uuid="u2")
+        self.assertTrue(applied, "the dissolved rollback's ask still gets its card")
+        self.assertEqual(len(s["nodes"]), 1)
+
+    def test_a_consumed_rewind_on_disk_still_retires_durably(self):
+        # the counterpart: once the branch-take is ON DISK the evidence can never un-happen, so
+        # the guard retires exactly as before — even while a (new) cut is armed on the same session
+        self.write(self.base_recs() + self.fork_recs())
+        jd.set_pending_cut_provider(lambda sid: "a1")
+        s = self._store()
+        applied = jd.apply_plan_guarded(SID, str(self.path), s, "seg-dead", CUT,
+                                        [{"do": "mint", "why": "x", "text": "orphan ask"}], [],
+                                        prompt_uuid="u2")
+        self.assertFalse(applied)
+        self.assertIn("seg-dead", s["placements"], "durable on-disk evidence → retired")
+        self.assertIsNone(s["placements"]["seg-dead"])
 
     def test_a_none_prompt_uuid_mints_unguarded(self):
         # abandonment can't be proven for an anchorless unit — the hard mint floor outranks suspicion
@@ -327,6 +351,41 @@ class WriteMomentStandDown(Base):
                                         prompt_uuid="u3")
         self.assertTrue(applied)
         self.assertEqual(len(s["nodes"]), 1)
+
+    def test_a_pending_cut_defers_the_unit_and_a_dissolved_rollback_mints_it(self):
+        # Through _plan_session itself: a stand-down retirement made on PENDING-cut evidence was
+        # permanent, but the cut is not — the CLI can refuse, the old branch can grow. The restore
+        # leg brings back hidden CARDS, but an ask retired before its card existed had nothing to
+        # restore: silently dropped forever (the repo's one fatal error). Pending evidence must
+        # DEFER; the resolved world re-decides — dissolve → the ask mints, take → the tail stops
+        # yielding units at all.
+        self.write(self.base_recs())
+        saved = (jd.plan_llm, jd.opener_llm)
+        jd.plan_llm = jd.opener_llm = (
+            lambda *a, **k: '{"ops":[{"why":"x","do":"mint","text":"Synthetic card"}]}')
+        try:
+            self.assertTrue(jd.begin_pass_frame())
+            pinned = jd.parsed_session(SID, [str(self.path)], T0 + 100)   # framed BEFORE the gesture
+            dead_keys = [jd._unit_key(u[0], u[1]) for u in jd.plan_units(pinned, self._store())
+                         if u[6] == "u2"]
+            self.assertTrue(dead_keys, "premise: the pinned world yields the doomed unit")
+            jd.set_pending_cut_provider(lambda sid: "a1")   # the bare rollback arms MID-PASS
+            jd._plan_session(SID, str(self.path), T0 + 100)
+            jd.end_pass_frame(True)
+            s = jd.load_goals(SID)
+            for k in dead_keys:
+                self.assertNotIn(k, s["placements"], "pending evidence defers — no permanent retirement")
+            self.assertFalse(any(nd.get("promptUuid") == "u2" for nd in s["nodes"].values()),
+                             "…and nothing minted from the maybe-dead branch")
+            self.assertIn("rewind-stand-down-pending", jd.ERRORS.read_text(), "the deferral is loud")
+            # the rollback DISSOLVES: transcript unchanged, cut gone — the next pass mints the ask
+            jd.set_pending_cut_provider(None)
+            jd._plan_session(SID, str(self.path), T0 + 200)
+        finally:
+            jd.plan_llm, jd.opener_llm = saved
+        s = jd.load_goals(SID)
+        self.assertTrue(any(nd.get("promptUuid") == "u2" for nd in s["nodes"].values()),
+                        "the restored world's ask got its card after all")
 
     def test_retire_not_skip_keeps_the_nudge_gate_open(self):
         # Item 7: the kernel's _unplanned gate asks _placed_key of EVERY unit — a stood-down unit
