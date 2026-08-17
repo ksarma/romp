@@ -12594,9 +12594,18 @@ def _rewind_kept_uuids(sid):
 def _apply_rewind_hold(sid, store):
     """The feed's view of a held session's store: the nodes the pending rewind will archive are
     hidden NOW (the gesture is the new information; jd.swept_ids is the sweep's own selection —
-    including the kept-chain exemption — so what hides is exactly what the take archives). A
-    filtered SHALLOW COPY — the live store is never mutated, so a failed rewind restores by simply
-    dropping the hold."""
+    including the kept-chain exemption — so what hides is exactly what the take archives). The
+    live store is never mutated (a filtered shallow copy; re-parents are copy-on-write and the
+    column re-roll runs on a throwaway deep copy), so a failed rewind restores by simply dropping
+    the hold. The view mirrors the world the take will produce, not just its node set:
+    - lastNode re-points at the newest survivor (archive_goal_nodes' own move) — build_feed's
+      perm/api-error/judge-auth floors walk from the focus and silently no-op on a hidden id,
+      the exact frozen-board shape the jauth floor exists to prevent;
+    - spared children of hidden parents re-parent at the nearest surviving ancestor, or the
+      walks that start at the roots would lose them;
+    - the columns RE-ROLL: a pre-cut top whose only blocker is a hidden post-cut sub must not
+      sit in needs-you — presenting an ask the user just deleted — for the whole window
+      (unbounded on a bare delete). The take re-rolls for exactly this reason; the view must too."""
     hold = _rewind_hold_get(sid)
     if not hold:
         return store
@@ -12606,9 +12615,31 @@ def _apply_rewind_hold(sid, store):
         return store
     if not hide:
         return store
+    nodes0 = store.get("nodes") or {}
     out = dict(store)
-    out["nodes"] = {k: v for k, v in (store.get("nodes") or {}).items() if k not in hide}
+    out["nodes"] = {k: v for k, v in nodes0.items() if k not in hide}
     out["status"] = {k: v for k, v in (store.get("status") or {}).items() if k not in hide}
+    for nid, nd in list(out["nodes"].items()):         # spared survivors of hidden parents stay
+        p = nd.get("parentId")                         # reachable (copy-on-write — never mutate
+        if p in hide:                                  # the live store's node dicts)
+            while p is not None and p in hide:
+                p = (nodes0.get(p) or {}).get("parentId")
+            out["nodes"][nid] = dict(nd, parentId=p)
+    if out.get("lastNode") in hide:
+        nn = out["nodes"]
+        out["lastNode"] = (max(nn, key=lambda n: int(nn[n].get("t") or 0)) if nn else None)
+    try:
+        # rollup_status mutates node dicts and appends diary events, so it runs on a throwaway
+        # DEEP copy and only its derived maps are served. A re-roll failure serves the filtered
+        # columns unchanged — degraded, never no view.
+        tmp = json.loads(json.dumps({"rompUuid": store.get("rompUuid", sid),
+                                     "nodes": out["nodes"], "status": {},
+                                     "lastNode": out.get("lastNode")}))
+        jd.rollup_status(tmp, session_closed=False)
+        out["status"] = tmp["status"]
+        out["confirming"] = tmp.get("confirming") or []
+    except Exception:
+        pass
     return out
 
 
@@ -12704,16 +12735,21 @@ def _rewind_migration_bg():
 def _rewind_holds_boot():
     """Boot pass over persisted holds: a kernel restart mid-window must neither drop a hide (the
     file survives; reads keep filtering) nor leave one latched forever after its resolving event
-    fired while no kernel was up. A hold whose backend still reports the rewind pending stays
-    latched (its event will come); anything else resolves through the same spent discriminator."""
+    fired while no kernel was up. A hold stays latched only while the backend's LEAF-VERIFIED
+    probe (rewind_pending — rewind_disposition against the transcript's current leaf, the same
+    verification pending_cut and the connect path use) still reads the rewind as applicable; raw
+    flag presence is not that: an out-of-band CLI-native continuation grows the transcript past
+    the recorded leaf without ever consuming the reg flag, and the raw check kept the cards hidden
+    with NO future resolving event while the chat rendered the full un-cut tail. Anything not
+    verified-pending resolves through the same spent discriminator (restore on-chain/unprovable,
+    archive off-chain)."""
     be = _sdk()
     for sid in list(_rewind_holds_map()):
         try:
             reg_pending = False
             if be:
-                fn = getattr(be, "rewind_flags", None)
-                to, leaf, bare = fn(sid) if fn else ("", "", False)
-                reg_pending = bool(to)
+                fn = getattr(be, "rewind_pending", None)
+                reg_pending = bool(fn(sid)) if fn else False
             if not reg_pending:
                 _on_rewind_resolved(sid, "spent")
         except Exception:
@@ -14660,7 +14696,12 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
     # LEAF: its descendants are hidden even if open. Skip cleared nodes. `current` marks the focus node
     # being worked on (the graph's lastNode) so render can point a line at it; done nodes carry their
     # time for a recency-coloured "(Xm ago)" on the right.
-    gstore = jd.load_goals(sid)
+    gstore = _apply_rewind_hold(sid, jd.load_goals(sid))   # a pending rewind's cards hide on EVERY
+    #                                            surface — this ledger tree (and the tab-hover
+    #                                            recents derived from it) used to keep showing the
+    #                                            doomed asks for the whole armed window while the
+    #                                            feed hid them (the "one chokepoint" premise was
+    #                                            false; the window is unbounded on a bare delete)
     gnodes, gstatus, gcleared = gstore.get("nodes", {}), gstore.get("status", {}), _cleared_ids()
     gkids = {}
     for _gid, _gn in gnodes.items():

@@ -450,6 +450,98 @@ class TwoPhaseRewindTiming(unittest.TestCase):
         self.assertNotIn(self.doomed, km.jd.load_goals(SID)["nodes"], "the take archives")
         self.assertIn(self.doomed, km.jd.load_goal_archive(SID)["nodes"])
 
+    def test_the_hold_view_re_points_a_hidden_focus_so_needs_you_floors_still_land(self):
+        # build_feed's perm/api-error/judge-auth floors walk from lastNode and require it to land
+        # in nodes — a focus hidden by the hold made every floor silently no-op for the whole
+        # window (the frozen-board shape the jauth floor exists to prevent). The view re-points at
+        # the newest survivor, the same move the take itself makes.
+        self.assertEqual(km.jd.load_goals(SID).get("lastNode"), self.doomed,
+                         "premise: the latest placement's top is the doomed card")
+        km._rewind_hold_set(SID, self.CUT, "leaf-at-arm")
+        view = km._feed_goals(SID)
+        self.assertEqual(view.get("lastNode"), self.survivor, "the view's focus re-points")
+        self.assertIn(view["lastNode"], view["nodes"], "…so a floor walk lands on a visible card")
+        self.assertEqual(km.jd.load_goals(SID).get("lastNode"), self.doomed,
+                         "the LIVE store's focus is untouched while the rewind is pending")
+
+    def test_the_hold_view_re_rolls_a_parents_column_when_its_blocker_hides(self):
+        # a pre-cut top whose ONLY blocker is a post-cut sub must not sit in needs-you — presenting
+        # an ask the user just deleted — for the whole pending window (unbounded on a bare delete).
+        # The take re-rolls for exactly this reason (archive_goal_nodes); the view must serve the
+        # same columns. Conversely a top blocked by a PRE-cut sub keeps its column.
+        jd = km.jd
+        s = jd.load_goals(SID)
+        jd.apply_plan(s, "s3", self.T0 + 5, [{"do": "mint", "why": "x", "text": "Second survivor"}],
+                      jd.open_menu(s))                                    # g3, pre-cut top
+        jd.apply_plan(s, "s4", self.T0 + 8, [{"do": "sub", "why": "x", "under": 2,
+                                              "text": "early sub"}], jd.open_menu(s))   # g4 under g3
+        jd.apply_plan(s, "s5", self.T0 + 120, [{"do": "sub", "why": "x", "under": 1,
+                                                "text": "late sub"}], jd.open_menu(s))  # g5 under g1
+        menu = jd.open_menu(s)                          # tree order: g1, g5(sub), g3, g4(sub), g2
+        jd.apply_plan(s, "s6", self.T0 + 130, [{"do": "block", "why": "owed", "goal": 2},
+                                               {"do": "block", "why": "owed", "goal": 4}], menu)
+        jd.rollup_status(s, session_closed=False)
+        jd.save_goals(SID, s)
+        second = "%s:g3" % SID
+        self.assertEqual(jd.load_goals(SID)["status"][self.survivor], "blocked", "premise")
+        self.assertEqual(jd.load_goals(SID)["status"][second], "blocked", "premise")
+        km._rewind_hold_set(SID, self.CUT, "leaf-at-arm")
+        view = km._feed_goals(SID)
+        self.assertNotIn("%s:g5" % SID, view["nodes"], "the post-cut blocker hides")
+        self.assertEqual(view["status"].get(self.survivor), "working",
+                         "…and its parent's column re-rolls to what the take will produce")
+        self.assertEqual(view["status"].get(second), "blocked",
+                         "a top blocked by a PRE-cut sub keeps its column")
+        self.assertEqual(jd.load_goals(SID)["status"][self.survivor], "blocked",
+                         "the LIVE store is untouched while the rewind is pending")
+
+    def test_build_session_serves_the_hold_filtered_store(self):
+        # the feed was NOT the only goal-store surface: the session pane's ledger tree (and the
+        # tab-hover recents derived from it) read jd.load_goals raw and kept showing the doomed
+        # asks for the whole armed window — unbounded on a bare delete
+        src = inspect.getsource(km.build_session)
+        self.assertIn("gstore = _apply_rewind_hold(sid, jd.load_goals(sid))", src)
+
+    def test_the_boot_pass_resolves_a_hold_the_transcript_moved_past_out_of_band(self):
+        # bare rollback armed, kernel dies, the user continues the session CLI-natively: the OLD
+        # branch grows past the recorded leaf and nothing ever consumes the reg flag. Raw flag
+        # presence kept the hold latched forever — cards hidden with NO future resolving event
+        # while the leaf-verified pending_cut let the chat render the full tail. The boot pass
+        # keys on the backend's leaf-verified probe and resolves through the spent discriminator.
+        self._transcript([_rec("user", "u1", None, "first ask"),
+                          _rec("assistant", "a1", "u1", "first reply"),
+                          _rec("user", "u2", "a1", "second ask"),
+                          _rec("assistant", "a2", "u2", "second reply"),
+                          _rec("user", "u3", "a2", "continues in a terminal"),
+                          _rec("assistant", "a3", "u3", "out-of-band reply")])
+        km._rewind_hold_set(SID, self.CUT, "a2")
+        class ArmedButSpent:                            # the reg still carries the flag…
+            def rewind_flags(self, sid):
+                return ("a1", "a2", True)
+            def rewind_pending(self, sid):              # …but the transcript moved past the leaf
+                return False
+        saved_sdk = km._sdk
+        km._sdk = lambda: ArmedButSpent()
+        try:
+            km._rewind_holds_boot()
+        finally:
+            km._sdk = saved_sdk
+        self.assertIn(self.doomed, km.jd.load_goals(SID)["nodes"],
+                      "the old branch grew past the arm — restored, never latched forever")
+        self.assertIsNone(km._rewind_hold_get(SID), "the hold resolved at boot")
+        # while a GENUINELY pending rewind (leaf unchanged — disposition "apply") stays latched
+        km._rewind_hold_set(SID, self.CUT, "a2")
+        class StillPending:
+            def rewind_pending(self, sid):
+                return True
+        km._sdk = lambda: StillPending()
+        try:
+            km._rewind_holds_boot()
+        finally:
+            km._sdk = saved_sdk
+        self.assertIsNotNone(km._rewind_hold_get(SID), "a verified-pending hold stays latched")
+        km._rewind_hold_clear(SID)
+
     def test_an_unresolvable_cut_time_is_loud_never_a_silent_no_sweep(self):
         # item 5: cut_t=None used to skip the sweep with NO log — contra the fail-loudly rule
         km._arm_rewind_hold(object(), SID, None)
