@@ -483,6 +483,30 @@ class ReconcileRewoundGoals(Base):
         self.assertEqual(jd.reconcile_rewound_goals(SID, str(self.path), T0 + 300), 1,
                          "a NEW abandoned branch (u4's) is the event that re-arms the check")
 
+    def test_a_kept_anchored_child_under_a_dead_top_survives_the_drag_and_reparents(self):
+        # The reconciliation fires days after the rewind, when a zombie top has accumulated REAL
+        # live-branch descendants (the grouper files new work under existing tops — ~90 live goals,
+        # 8 open, sat under one dead top on live data). The drag must stop at a child whose own
+        # anchor is provably kept, and the survivor must stay reachable (re-parented, in open_menu).
+        self.write(self.base_recs() + self.fork_recs())
+        s = self._store()
+        self._mint(s, "seg-dead", CUT, "Zombie top from the deleted turn", "u2")
+        top = "%s:g1" % SID
+        jd.apply_plan(s, "seg-live", T0 + 60,
+                      [{"do": "sub", "why": "x", "under": 1, "text": "Live work filed under it"}],
+                      jd.open_menu(s), prompt_uuid="u3")
+        child = "%s:g2" % SID
+        self.assertEqual(s["nodes"][child]["parentId"], top, "premise: the live child sits under the zombie")
+        jd.rollup_status(s, session_closed=False)
+        jd.save_goals(SID, s)
+        self.assertEqual(jd.reconcile_rewound_goals(SID, str(self.path), T0 + 200), 1,
+                         "only the dead top moves — the kept-anchored child is spared")
+        live = jd.load_goals(SID)
+        self.assertNotIn(top, live["nodes"], "the zombie top archived")
+        self.assertIn(child, live["nodes"], "the live-branch child stays")
+        self.assertIsNone(live["nodes"][child].get("parentId"), "…re-parented at the nearest survivor (a top)")
+        self.assertIn(child, [nd["id"] for nd in jd.open_menu(live)], "…and still reachable by the planner")
+
     def test_a_merge_transplanted_dead_anchor_on_a_kept_survivor_is_not_swept(self):
         # hazard (b): _merge_nodes grafts the dupe's promptUuid onto a survivor lacking one — mixed
         # provenance proves nothing about the NODE, so it stays

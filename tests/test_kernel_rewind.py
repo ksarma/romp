@@ -303,7 +303,7 @@ class RevertOnDelete(unittest.TestCase):
     def test_drop_goals_after_is_best_effort(self):
         # a cleanup failure must never undo the cut the user already got
         src = inspect.getsource(km._drop_goals_after)
-        self.assertIn("jd.drop_goals_after(sid, cut_t)", src)
+        self.assertIn("jd.drop_goals_after(sid, cut_t, kept=kept)", src)   # kept-chain exemption threads through
         self.assertIn("except Exception", src)                       # swallow-and-log, never raise past the delete
 
 
@@ -366,6 +366,63 @@ class TwoPhaseRewindTiming(unittest.TestCase):
         self.assertIn(self.doomed, km._feed_goals(SID)["nodes"], "the card is back on the feed")
         self.assertIsNone(km._rewind_hold_get(SID))
         self.assertIn("rewind-restore", km.jd.ERRORS.read_text(), "the restore is loud")
+
+    def test_a_kept_chain_card_born_after_the_cut_survives_the_hide_and_the_take(self):
+        # The replacement ask's card is minted DURING the open rewind turn (the judge's prompt-run,
+        # by design) with t > cut_t — a bare t-keyed sweep hid it all turn and archived it at the
+        # take. The sweep threads the kept-chain exemption: identity, not time, decides its fate.
+        self._transcript([_rec("user", "u1", None, "first ask"),
+                          _rec("assistant", "a1", "u1", "first reply"),
+                          _rec("user", "u2", "a1", "second ask"),
+                          _rec("assistant", "a2", "u2", "second reply"),
+                          _rec("user", "u3", "a1", "second ask, rewritten"),
+                          _rec("assistant", "a3", "u3", "new-branch reply")])
+        jd = km.jd
+        s = jd.load_goals(SID)
+        jd.apply_plan(s, "s3", self.CUT + 30, [{"do": "mint", "why": "x", "text": "Fresh ask"}],
+                      jd.open_menu(s), prompt_uuid="u3")   # kept-chain anchor, born INSIDE the window
+        jd.rollup_status(s, session_closed=False)
+        jd.save_goals(SID, s)
+        fresh = "%s:g3" % SID
+        km._rewind_hold_set(SID, self.CUT, "a2")
+        feed = km._feed_goals(SID)
+        self.assertIn(fresh, feed["nodes"], "the live-branch card stays visible during the hold")
+        self.assertNotIn(self.doomed, feed["nodes"], "…while the doomed card still hides")
+        km._on_rewind_resolved(SID, "taken")
+        live = jd.load_goals(SID)
+        self.assertIn(fresh, live["nodes"], "the take spares the kept-chain card")
+        self.assertNotIn(fresh, jd.load_goal_archive(SID)["nodes"])
+        self.assertNotIn(fresh, live.get("rewindSwept", {}), "no bogus permanent tombstone")
+        self.assertNotIn(self.doomed, live["nodes"], "the doomed card still archives")
+        self.assertIn(self.doomed, jd.load_goal_archive(SID)["nodes"])
+
+    def test_a_spent_flag_discriminates_through_recorded_resume_lineage(self):
+        # crash-heal shape: a recorded fresh-head resume fork (states resumeFork row) means the
+        # armed leaf is reachable only through the STITCHED walk — a lineage-blind walk read it as
+        # off-chain and archived live cards on a guess. The exported predicate must restore here.
+        frm = SID
+        fork = "22222222-3333-4444-5555-666666666666"
+        anchor = self.td / (frm + ".jsonl")
+        with open(anchor, "w") as f:
+            for r in [_rec("user", "u1", None, "first ask"),
+                      _rec("assistant", "a1", "u1", "first reply"),
+                      _rec("user", "u2", "a1", "second ask"),
+                      _rec("assistant", "a2", "u2", "second reply")]:
+                f.write(json.dumps(r) + "\n")
+        fp = self.td / (fork + ".jsonl")
+        with open(fp, "w") as f:
+            for r in [_rec("user", "u3", None, "continues after the machine cut"),
+                      _rec("assistant", "a3", "u3", "stitched reply")]:
+                f.write(json.dumps(r) + "\n")
+        km.jd.STATESDIR.mkdir(parents=True, exist_ok=True)
+        (km.jd.STATESDIR / (SID + ".jsonl")).write_text(
+            json.dumps({"resumeFork": {"from": frm, "to": fork}, "t": self.T0 + 40}) + "\n")
+        km._sessions = lambda now: [{"sid": SID, "path": str(fp)}]
+        km._rewind_hold_set(SID, self.CUT, "a2")       # armed pre-fork; the rollback then dissolved
+        km._on_rewind_resolved(SID, "spent")
+        self.assertIn(self.doomed, km.jd.load_goals(SID)["nodes"],
+                      "the stitched walk keeps a2 → restored, never archived on a guess")
+        self.assertNotIn(self.doomed, km.jd.load_goal_archive(SID)["nodes"])
 
     def test_a_spent_flag_with_the_old_branch_still_active_restores(self):
         # the rollback dissolved: a record landed on the OLD branch, so the recorded leaf is still

@@ -2465,27 +2465,41 @@ def save_goal_archive(fsid, store):
     tmp.rename(GOALARCHDIR / (fsid + ".json"))        # atomic publish
 
 
-def swept_ids(store, cut_t):
+def swept_ids(store, cut_t, kept=None):
     """The node ids a rewind at cut_t sweeps: every node BORN at/after cut_t plus its whole subtree
     (node[\"t\"] is frozen at birth and a child is always born after its parent). ONE definition,
     shared by drop_goals_after and the kernel's gesture-time card hide, so what the user sees
-    disappear at the delete gesture is exactly what the branch-take archives."""
+    disappear at the delete gesture is exactly what the branch-take archives.
+
+    `kept` (optional): chain_membership's kept-chain uuid set. A node whose promptUuid is provably
+    on the KEPT chain is never selected — not as a seed, and the subtree drag neither adds nor
+    descends through it (its subtree survives unless independently in range) — because the judge's
+    prompt-run mints the replacement ask's card DURING the open rewind turn, with t > cut_t: a bare
+    t-key hid that fresh live-branch card all turn and archived it at the take (2026-08-17). A node
+    with no promptUuid keeps the t-keyed fate (the sweep's whole purpose for unprovable orphans),
+    and kept=None (the caller's lookup failed, loudly) degrades to the pure t-keyed selection."""
     cut_t = int(cut_t)
     nodes = store.get("nodes") or {}
+    kept = kept or frozenset()
+
+    def _spared(nid):
+        pu = (nodes.get(nid) or {}).get("promptUuid")
+        return bool(pu) and pu in kept
     children = {}
     for nid, nd in nodes.items():
         children.setdefault(nd.get("parentId"), []).append(nid)
-    move, stack = set(), [nid for nid, nd in nodes.items() if int(nd.get("t") or 0) >= cut_t]
+    move, stack = set(), [nid for nid, nd in nodes.items()
+                          if int(nd.get("t") or 0) >= cut_t and not _spared(nid)]
     while stack:                                        # a born-in-range node drags its whole subtree
         x = stack.pop()
         if x in move:
             continue
         move.add(x)
-        stack.extend(children.get(x, []))
+        stack.extend(c for c in children.get(x, []) if not _spared(c))
     return move
 
 
-def drop_goals_after(fsid, cut_t):
+def drop_goals_after(fsid, cut_t, kept=None):
     """Roll a session's GOAL STORE back to just before cut_t: archive every goal node BORN at/after cut_t
     (node["t"] >= cut_t), whole subtrees, to goals-archive/. A chat delete/edit abandons every turn at/after
     cut_t, so a card MINTED from one of those now-gone turns is an orphan and goes with them (the user
@@ -2496,7 +2510,9 @@ def drop_goals_after(fsid, cut_t):
     those would mean surgically truncating the append-only diary AND the durable override journal that
     re-applies user actions on every load — far more machinery than the case is worth (the user chose this
     simpler shape over a full verdict revert). node["t"] is frozen at birth and a child is always born after
-    its parent, so a born-in-range top drags its whole subtree.
+    its parent, so a born-in-range top drags its whole subtree. `kept` threads through to swept_ids
+    (the kept-chain exemption — the replacement ask's own fresh card is minted DURING the rewind
+    turn and must survive the take).
 
     Returns the number of nodes archived. No-op-safe (absent/empty store, or nothing in range → 0)."""
     cut_t = int(cut_t)
@@ -2504,7 +2520,7 @@ def drop_goals_after(fsid, cut_t):
     nodes = store.get("nodes") or {}
     if not nodes:
         return 0
-    move = swept_ids(store, cut_t)
+    move = swept_ids(store, cut_t, kept=kept)
     if not move:
         return 0
     archive_goal_nodes(fsid, store, move, cut_t)
@@ -2518,11 +2534,14 @@ def archive_goal_nodes(fsid, store, move, tomb_t):
     in live stores, nodes resident in live AND archive at once). Tombstones are never pruned: entries
     are rare and an undo-clear restore pops its own. Re-points lastNode at the newest survivor (a
     dangling focus would prematurely settle the pre-cut focus card), re-rolls status (removing a
-    blocked SUB changes its surviving parent's rollup), saves both files. The shared primitive of
-    drop_goals_after (t-keyed, at the branch-take) and reconcile_rewound_goals (identity-keyed, when
-    the abandoned-branch set changes)."""
+    blocked SUB changes its surviving parent's rollup), re-parents any spared child of an archived
+    node at its nearest unmoved ancestor (both selections spare provably live-branch children now,
+    and a dangling parentId loses the node from every walk that starts at the roots), saves both
+    files. The shared primitive of drop_goals_after (t-keyed, at the branch-take) and
+    reconcile_rewound_goals (identity-keyed, when the abandoned-branch set changes)."""
     nodes = store.get("nodes") or {}
     status = store.get("status") or {}
+    parent0 = {nid: nd.get("parentId") for nid, nd in nodes.items()}   # pre-pop parents, for the re-parent
     arch = load_goal_archive(fsid)
     a_nodes = arch.setdefault("nodes", {}); a_status = arch.setdefault("status", {})
     swept = store.setdefault("rewindSwept", {})
@@ -2534,18 +2553,29 @@ def archive_goal_nodes(fsid, store, move, tomb_t):
         swept[nid] = int(tomb_t)
     arch["rompUuid"] = store.get("rompUuid", fsid)
     save_goal_archive(fsid, arch)
+    for nid, nd in nodes.items():                      # spared survivors of archived parents stay reachable
+        p = nd.get("parentId")
+        if p in move:
+            while p is not None and p in move:
+                p = parent0.get(p)
+            nd["parentId"] = p                         # nearest unmoved ancestor; None → it becomes a top
     if store.get("lastNode") not in nodes:
         store["lastNode"] = (max(nodes, key=lambda n: int(nodes[n].get("t") or 0)) if nodes else None)
     rollup_status(store, session_closed=False)
     save_goals(fsid, store)
 
 
-def _dead_branch_ids(store, rewind_set):
+def _dead_branch_ids(store, rewind_set, kept_set=frozenset()):
     """The node ids the reconciliation archives, given the predicate's `rewind` uuid set:
     - DIRECT: promptUuid provably rewound away — except a node carrying mergedFrom, whose promptUuid
       may be a merge TRANSPLANT from a dead twin onto a kept-origin survivor (_merge_nodes grafts the
       dupe's uuid onto a survivor lacking one): mixed provenance proves nothing, keep.
-    - SUBTREE DRAG downward, as drop_goals_after has always done.
+    - SUBTREE DRAG downward, as drop_goals_after has always done — but NEVER through a child whose
+      OWN promptUuid is in `kept_set` (the active chain): the reconciliation fires days after the
+      rewind, when a zombie top has accumulated real live-branch descendants (the grouper files new
+      work under existing tops — ~90 live goals, 8 open, sat under one dead top on live data). A
+      spared child's subtree survives with it unless independently picked; archive_goal_nodes
+      re-parents survivors at their nearest unmoved ancestor so they stay reachable.
     - UMBRELLA DRAG upward: a container with NO promptUuid of its own whose every child is going is
       an empty shell over dead work (the inverted subtree-drag direction a pu-keyed pick misses).
     - AUTHORITATIVE-OPEN EXEMPTION: a node whose agentTask is open — and its ancestors, so nothing
@@ -2562,8 +2592,11 @@ def _dead_branch_ids(store, rewind_set):
         if pu and pu in rewind_set and not nd.get("mergedFrom"):
             move.add(nid)
     stack = list(move)
-    while stack:                                       # subtree drag
+    while stack:                                       # subtree drag, stopping at kept-anchored children
         for c in kids.get(stack.pop(), []):
+            cpu = (nodes.get(c) or {}).get("promptUuid")
+            if cpu and cpu in kept_set:
+                continue                               # provably live-branch work → survives the drag
             if c not in move:
                 move.add(c)
                 stack.append(c)
@@ -2621,7 +2654,7 @@ def reconcile_rewound_goals(fsid, path, now):
     n = 0
     if sig and (memo is None or memo[1] != sig):       # the abandoned set CHANGED → new information
         store = load_goals(fsid)
-        move = _dead_branch_ids(store, sig)
+        move = _dead_branch_ids(store, sig, kept_set=frozenset(mem["kept"]))
         if move:
             archive_goal_nodes(fsid, store, move, now)
             _log_judge_error("romp", fsid, "rewound-archived", goal=sorted(move),

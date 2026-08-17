@@ -12411,7 +12411,10 @@ def _rewind_send(sid, user_uuid, text, now=None):
     # Same as delete: the edited message + its tail are abandoned; read its time before be.rewind arms the
     # cut. The gesture HIDES the cards those turns spawned (a latched hold); the ARCHIVE waits for the
     # branch-take event and a refused rewind restores them — see _on_rewind_resolved. The edited text lands
-    # as a NEW turn (a later timestamp), minted AFTER the take, so its fresh card is never caught by the cut.
+    # as a NEW turn with a LATER timestamp, and the judge's prompt-run mints its card DURING that open turn
+    # (by design, before the take settles) — so the sweep is NOT bare t-keyed: both the hide and the take
+    # thread the kept-chain exemption (_rewind_kept_uuids → jd.swept_ids), which spares any node whose
+    # promptUuid is provably on the live chain. Identity, not time, is what saves the fresh card.
     cut_t = _atom_epoch(sess["path"], sid, str(user_uuid), now)
     ok, berr = be.rewind(sid, target, str(text))
     if ok:
@@ -12484,11 +12487,12 @@ def _arm_rewind_hold(be, sid, cut_t):
     _mark_views_dirty()
 
 
-def _drop_goals_after(sid, cut_t):
-    """Archive goal cards born in a rewind/delete's abandoned range (jd.drop_goals_after). Best-effort: a
-    failure here must never undo the cut the user already got, so log and move on (fail loud, not silent)."""
+def _drop_goals_after(sid, cut_t, kept=None):
+    """Archive goal cards born in a rewind/delete's abandoned range (jd.drop_goals_after). `kept` is the
+    kept-chain exemption (see _rewind_kept_uuids). Best-effort: a failure here must never undo the cut
+    the user already got, so log and move on (fail loud, not silent)."""
     try:
-        jd.drop_goals_after(sid, cut_t)
+        jd.drop_goals_after(sid, cut_t, kept=kept)
     except Exception as e:
         jd._log_judge_error("romp", sid, "revert-failed",
                             note="goal cleanup after a rewind/delete failed: %r" % e)
@@ -12551,16 +12555,53 @@ def _rewind_hold_clear(sid):
             _rewind_holds_save()
 
 
+def _rewind_kept_uuids(sid):
+    """The session's KEPT-chain uuid set (em.chain_membership over the same inputs the display parse
+    uses, including the backend's pending cut) — the identity exemption threaded through the rewind
+    sweep (jd.swept_ids / jd.drop_goals_after) so the replacement ask's own fresh card, minted by the
+    judge's prompt-run DURING the open rewind turn, is never hidden or archived as if it were part of
+    the abandoned tail. Returns None on ANY failure, LOUDLY: the sweep then degrades to the pure
+    t-keyed selection (the pre-fix behavior) — visible in the log, never a silent widening."""
+    try:
+        sess = next((s for s in _sessions(time.time()) if s["sid"] == sid), None)
+        if not sess:
+            jd._log_judge_error("romp", sid, "rewind-kept",
+                                note="no transcript to read the kept chain from — the rewind sweep "
+                                     "degrades to the pure t-keyed selection (pre-fix behavior)")
+            return None
+        cands = [sess["path"]]
+        anchor = os.path.join(os.path.dirname(sess["path"]), sid + ".jsonl")
+        if os.path.basename(sess["path"]) != sid + ".jsonl" and os.path.exists(anchor):
+            cands.append(anchor)
+        states = jd.STATESDIR / (sid + ".jsonl")
+        cut = ""
+        be = _sdk()
+        if be:
+            fn = getattr(be, "pending_cut", None)
+            if fn:
+                cut = fn(sid) or ""
+        mem = em.chain_membership(sess["path"], candidate_files=cands,
+                                  states=str(states) if states.exists() else None,
+                                  leaf_override=cut or None)
+        return mem["kept"]
+    except Exception as e:
+        jd._log_judge_error("romp", sid, "rewind-kept",
+                            note="kept-chain lookup failed: %r — the rewind sweep degrades to the "
+                                 "pure t-keyed selection (pre-fix behavior) this time" % e)
+        return None
+
+
 def _apply_rewind_hold(sid, store):
     """The feed's view of a held session's store: the nodes the pending rewind will archive are
-    hidden NOW (the gesture is the new information; jd.swept_ids is the sweep's own selection, so
-    what hides is exactly what the take archives). A filtered SHALLOW COPY — the live store is
-    never mutated, so a failed rewind restores by simply dropping the hold."""
+    hidden NOW (the gesture is the new information; jd.swept_ids is the sweep's own selection —
+    including the kept-chain exemption — so what hides is exactly what the take archives). A
+    filtered SHALLOW COPY — the live store is never mutated, so a failed rewind restores by simply
+    dropping the hold."""
     hold = _rewind_hold_get(sid)
     if not hold:
         return store
     try:
-        hide = jd.swept_ids(store, hold["cutT"])
+        hide = jd.swept_ids(store, hold["cutT"], kept=_rewind_kept_uuids(sid))
     except Exception:
         return store
     if not hide:
@@ -12573,9 +12614,14 @@ def _apply_rewind_hold(sid, store):
 
 def _hold_leaf_still_active(sid, leaf):
     """The spent-flag discriminator: is the leaf recorded at gesture time still on the active
-    chain? A consumed rewind abandons it (the new branch's ancestry bypasses it), so OFF-chain
-    means the branch took — archive; ON-chain means the conversation moved past the arm on the
-    OLD branch (the rewind dissolved without applying) — restore. Exact graph fact, not a window."""
+    chain? A consumed rewind abandons it (the new branch's ancestry bypasses it), so provably
+    REWOUND means the branch took — archive; provably KEPT means the conversation moved past the
+    arm on the OLD branch (the rewind dissolved without applying) — restore. Discriminated via
+    em.chain_membership — the one exported predicate — so recorded resume-fork lineage (states/
+    resumeFork rows) and multi-hop file lineages read exactly as the display parse does: a
+    lineage-blind hand-rolled walk here read an unreachable-but-live leaf as \"taken\" and archived
+    live cards on a guess (2026-08-17). Anything unprovable (clear/broken/unknown) is None —
+    the caller restores, because a card move needs proof."""
     sess = next((s for s in _sessions(time.time()) if s["sid"] == sid), None)
     if not sess or not leaf:
         return None                                    # no transcript to consult → unprovable
@@ -12584,8 +12630,14 @@ def _hold_leaf_still_active(sid, leaf):
         anchor = os.path.join(os.path.dirname(sess["path"]), sid + ".jsonl")
         if os.path.basename(sess["path"]) != sid + ".jsonl" and os.path.exists(anchor):
             cands.append(anchor)
-        ad = em.FileAdapter(cands, sess["path"])
-        return leaf in ad.active_path()
+        states = jd.STATESDIR / (sid + ".jsonl")
+        mem = em.chain_membership(sess["path"], candidate_files=cands,
+                                  states=str(states) if states.exists() else None)
+        if leaf in mem["rewind"]:
+            return False                               # provably rewound away → the branch took
+        if leaf in mem["kept"]:
+            return True                                # provably live → the rollback dissolved
+        return None                                    # clear/broken/unknown → unprovable
     except Exception:
         return None
 
@@ -12611,7 +12663,7 @@ def _on_rewind_resolved(sid, outcome):
                                 note="spent rewind flag with no transcript to discriminate — "
                                      "restoring the held cards (never archive on a guess)")
     if outcome == "taken":
-        _drop_goals_after(sid, hold["cutT"])
+        _drop_goals_after(sid, hold["cutT"], kept=_rewind_kept_uuids(sid))
     else:
         jd._log_judge_error("romp", sid, "rewind-restore",
                             note="the rewind did not happen — the cards it hid are back on the feed")
