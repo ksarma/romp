@@ -1088,12 +1088,40 @@ _FAST_REFUSALS = {
 }
 
 
-def flag_settings_path(state_dir, sid: str, *, ultracode: bool = False, fast: bool = False) -> str:
+ENV_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")   # the shell-identifier alphabet
+
+
+def env_request_error(env) -> str:
+    """Why `env` is NOT a valid per-session env payload — "" when it is (an empty dict is a valid,
+    vacuous one). A payload is a dict of NAME → string-value pairs, names in the shell-identifier
+    alphabet: it lands in the per-sid flag-settings file the CLI reads at launch, where a name
+    outside that alphabet would be written silently and exported never. One validator for every
+    door (the /new handler mirrors it client-side of the backend seam; spawn and set_env enforce it
+    here), loud and specific by rule — the first offender is NAMED and the whole payload refused,
+    never skipped (fail-loudly, the user 2026-07-03)."""
+    if not isinstance(env, dict):
+        return "env must be an object of NAME: value pairs"
+    for k, v in env.items():
+        if not isinstance(k, str) or not ENV_NAME_RE.match(k):
+            return "env: bad name %r — names match [A-Za-z_][A-Za-z0-9_]*" % (k,)
+        if not isinstance(v, str):
+            return "env: the value for %r must be a string" % (k,)
+        if "\x00" in v:
+            # NUL only — newlines and other control bytes are legitimate env content. An execve
+            # envp entry is a NUL-terminated C string, so this value is unfulfillable BY DEFINITION:
+            # accepted, it bakes into the reg a var the CLI can only truncate or throw on, either
+            # way diverging from what /new echoed as applied.
+            return "env: the value for %r contains a NUL byte — no process environment can carry one" % (k,)
+    return ""
+
+
+def flag_settings_path(state_dir, sid: str, *, ultracode: bool = False, fast: bool = False,
+                       env: dict | None = None, log=None) -> str:
     """The settings file handed to the CLI (options.settings — the flag-settings layer, the CLI's
     documented per-session hook for keys the SDK has no typed field for). Returns "" when a session
     needs none, which is the common case.
 
-    Two keys ride here, both per-session:
+    Three keys ride here, all per-session:
     - `ultracode`: the SDK's typed EffortLevel has no such value — ultracode IS xhigh plus standing
       dynamic-workflow orchestration, so the typed field carries "xhigh" and this key switches the
       orchestration on.
@@ -1102,15 +1130,29 @@ def flag_settings_path(state_dir, sid: str, *, ultracode: bool = False, fast: bo
       host's designed opt-in, not a loophole (verified against claude 2.1.224 on 2026-08-07: with the
       key, a headless run reports fast_mode_state "on"; without it, "off" with the disabled reason
       "sdk_opt_in_required").
+    - `env` (the user 2026-08-17): per-session env vars, so two SDK sessions in the SAME directory can
+      run with different environments — before this, env came only from directory-scoped
+      .claude/settings*.json, which hits every session in the repo and outlives the session. Settings
+      files accept an `env` block, and this one is per-sid, handed to exactly one CLI. Callers
+      validate (env_request_error) before the dict gets here. PRECEDENCE, verified vs not: what this
+      repo has verified about the flag-settings layer is that the CLI honors keys riding
+      options.settings (the fastMode opt-in above, confirmed live against claude 2.1.224) — how this
+      layer's `env` block RANKS against a directory .claude/settings*.json `env` naming the same var
+      is NOT verified here; nothing in this repo's recorded behavior pins it, so don't rely on
+      per-session values overriding a directory-set var of the same name until someone verifies it
+      live. Distinct names — the toggle case this slice exists for — need no ranking at all.
 
     One file PER SESSION (not the single shared file the ultracode key used to get): the content now
     varies by session, so a shared file would hand one session's fast mode to every other one. Rewritten
-    on every use — a couple of boolean keys, atomic enough."""
+    on every use — that is what makes reconnects RE-ASSERT the reg's env by construction (pinned in
+    tests/test_session_env.py), and why a change to any of these keys applies by reconnecting."""
     keys = {}
     if ultracode:
         keys["ultracode"] = True
     if fast:
         keys["fastMode"] = True
+    if env:
+        keys["env"] = dict(env)
     if not keys:
         return ""
     d = os.path.join(str(state_dir), FLAG_SETTINGS_DIR)
@@ -1119,8 +1161,15 @@ def flag_settings_path(state_dir, sid: str, *, ultracode: bool = False, fast: bo
         os.makedirs(d, exist_ok=True)
         with open(p, "w") as f:
             f.write(json.dumps(keys) + "\n")
-    except OSError:
-        return ""     # no settings file → the session still launches, just without these keys
+    except OSError as e:
+        # no settings file → the session still launches, just without these keys — and the Log says
+        # so (fail-loudly, the user 2026-07-03): for env especially, a silent drop here leaves the
+        # reg, the /new echo, and every future surface claiming an env the session never saw, with
+        # no readback channel to catch it (fastMode has _adopt_fast_state; env has nothing).
+        if log:
+            log("flag settings (%s): %s unwritable (%s) — launching WITHOUT %s"
+                % (sid, p, e, ", ".join(sorted(keys))), problem=True)
+        return ""
     return p
 
 
@@ -1345,6 +1394,11 @@ class SdkSession:
         #   chosen alias but left liveModel stale, and model_label PREFERS liveModel → the badge kept the OLD name).
         #   Cleared the instant _learn_model / _do_refresh_context reports a model matching the alias (event-based).
         self.effort = reg.get("effort") or DEFAULT_EFFORT   # connect-time --effort; tracked since the init msg doesn't echo it
+        self.env_vars = dict(reg.get("env") or {})   # per-session env vars (the reg's `env`, the user 2026-08-17):
+        #   _options folds them into the per-sid flag-settings file at EVERY connect, so two sessions in the
+        #   same directory can run with different environments. Connect-time like effort (the CLI reads
+        #   settings at launch); spawn seeds it, set_env replaces it. Named env_VARS because `env` at this
+        #   layer already means the CLI child's process environment (_options' options.env).
         self._effort_pending = ""                    # target LEVEL while an /effort switch RECONNECTS to apply (--effort is
         #   a connect-time flag, no runtime control): the effort badge shows the switching-dots + the chat shows a
         #   "Reloading session…" notice until the reconnect completes (the user 2026-07-06). Cleared the instant the
@@ -3603,10 +3657,13 @@ class SdkBackend:
             self._rewind_resolved(sess.sid, "spent")
         if self.mcp_config:
             kw["mcp_servers"] = self.mcp_config
-        # The flag-settings layer carries the two keys the SDK has no typed field for — ultracode
-        # (effort) and fastMode. Both are connect-time, which is why changing either reconnects.
+        # The flag-settings layer carries the keys the SDK has no typed field for — ultracode
+        # (effort), fastMode and the per-session env vars. All are connect-time, which is why
+        # changing any of them reconnects; the file is rewritten from the session here on EVERY
+        # connect, so a reconnect re-asserts them by construction.
         fs = flag_settings_path(self.state_dir, sess.sid,
-                                ultracode=(sess.effort or "") == "ultracode", fast=sess.fast_opt)
+                                ultracode=(sess.effort or "") == "ultracode", fast=sess.fast_opt,
+                                env=sess.env_vars, log=self._log)
         if fs:
             kw["settings"] = fs
         # Per-session auth (the user 2026-08-08): the work key was claimed OUT of this process's env at
@@ -3628,7 +3685,15 @@ class SdkBackend:
 
     # ---- lifecycle (kernel-thread API) ----
     def spawn(self, name: str, cwd: str, bg: str = "", fg: str = "", sid: str | None = None,
-              auth: str = "") -> str:
+              auth: str = "", env: dict | None = None) -> str:
+        if env:
+            # per-session env vars (the user 2026-08-17), validated at the door: a bad payload is
+            # refused OUTRIGHT rather than written into a reg every future connect would launch
+            # with. The /new handler validates before calling; this raise is the backend's own
+            # fail-loudly backstop for any other caller.
+            err = env_request_error(env)
+            if err:
+                raise ValueError(err)
         sid = sid or str(uuid.uuid4())
         cwd = os.path.realpath(cwd) if os.path.exists(cwd) else cwd
         if not bg:                                   # give the session a stable identity colour like tmux sessions get
@@ -3652,6 +3717,11 @@ class SdkBackend:
         a = auth if auth in ("login", "key") else (d.get("auth") if d.get("auth") in ("login", "key") else "")
         if a:
             reg["auth"] = a
+        # Per-session env is a per-spawn ask, never a remembered default (a var one session needed is
+        # the last thing the NEXT session should silently inherit) — recorded only when asked for, so
+        # the common env-less session carries no key and _options writes no settings file for it.
+        if env:
+            reg["env"] = dict(env)
         write_reg(self.state_dir, sid, reg)
         append_state(self.state_dir, sid, "waiting")
         self._poke()
@@ -3665,8 +3735,8 @@ class SdkBackend:
         with the parent's title would be discovered as a fork LANE of the parent and hidden. Mechanism:
         the reg is born with lastSid = the parent's newest fsid plus forkOf/forkAt, which _options turns
         into resume + fork_session + session_id (+ resume-session-at) on first connect; the init's
-        lastSid flip to this sid spends the flags. Model / effort / mode / auth inherit from the parent —
-        it is that conversation, continued elsewhere. Resumable by construction: a fork whose CLI dies
+        lastSid flip to this sid spends the flags. Model / effort / mode / auth / env inherit from the
+        parent — it is that conversation, continued elsewhere. Resumable by construction: a fork whose CLI dies
         before init still carries the flags and retries on the next connect.
 
         `thread_of` (the user 2026-08-13, who asked to comment on a highlighted passage and keep a side
@@ -3704,6 +3774,9 @@ class SdkBackend:
             reg["model"] = parent["model"]
         if parent.get("auth") in ("login", "key"):
             reg["auth"] = parent["auth"]
+        if parent.get("env"):
+            reg["env"] = dict(parent["env"])   # per-session env inherits like model/auth — it is
+            #   that conversation, continued elsewhere (a copy: the two regs diverge independently)
         write_reg(self.state_dir, sid, reg)
         # the names/ entry LAST — it is the discoverability trigger (discover() iterates names/), and
         # everything above must exist before any judge pass can see the session. A comment thread never
@@ -4399,6 +4472,40 @@ class SdkBackend:
                 "t": t, "author": "human", "command": "/effort", "_echo_text": disp,
                 "message": {"role": "user", "content": [{"type": "text", "text": disp}]}}
             append_cmd_gesture(self.state_dir, sid, disp, t=t)   # durable twin — see set_model
+            self._wake_push()
+        return True
+
+    def set_env(self, sid: str, env: dict) -> bool:
+        """REPLACE this session's per-session env vars (the reg's `env`) — the dict flag_settings_path
+        folds into the per-sid settings payload at every connect. Replace, not merge: the payload IS
+        the session's per-session env, so a re-assert naming fewer vars drops the missing ones (the
+        one coherent reading of `romp new --env` re-run on a standing session, which declares the
+        full env it wants). Env is connect-time exactly like --effort (the CLI reads settings at
+        launch, no runtime control), so a CHANGE persists and RECONNECTS to apply — idle → now, busy
+        → at turn end — set_effort's shape, via the same locked _update_reg (an unserialized RMW
+        could drop the field, the 2026-08-14 downgrade bug). An UNCHANGED re-assert (the fresh-spawn
+        echo from /new's prefs pass, a nightly re-brief repeating the same --env) is already the
+        world the reg describes — reg and live connection can only diverge while an applying
+        reconnect is in flight, and then one is already queued — so it persists nothing and skips
+        the reconnect rather than churning the CLI process on no new information. Never a remembered
+        default (write_sdk_default): a var one session needed is not a seed for the next. No pending
+        badge or chat chip yet — that surface ships with the env UI slice; the Log records the
+        change (spawn-time slice, the user 2026-08-17)."""
+        if env_request_error(env):
+            return False
+        reg = read_reg(self.state_dir, sid)
+        if not reg:
+            return False
+        env = dict(env)
+        if (reg.get("env") or {}) == env:
+            return True
+        self._update_reg(sid, env=env)
+        s = self.sessions.get(sid)
+        if s:
+            s.env_vars = dict(env)
+            s.request_reconnect()
+            self._log("env (%s): per-session env set (%s) — reconnecting to apply"
+                      % (s.name, ", ".join(sorted(env)) or "cleared"))
             self._wake_push()
         return True
 

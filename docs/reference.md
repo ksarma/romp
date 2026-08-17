@@ -34,6 +34,10 @@ These are for scripting and for agents rather than daily use:
 | `romp sessions [--json]` | The fleet with each session's state, identity colours, directory and backend |
 | `romp mail …` | The postal service from the shell (below) |
 | `romp send <session> <text>` | Hand a session a message, on either backend |
+| `romp new --model <id> <name>` | Model for the SDK session, as a full id such as `claude-fable-5`; re-asserted if `<name>` already runs |
+| `romp new --effort <level> <name>` | Reasoning effort for the SDK session (`high`, `ultracode`, ...); re-asserted if `<name>` already runs |
+| `romp new --env NAME=VALUE <name>` | A per-session env var for the SDK session, repeatable; a re-run against a running `<name>` replaces the whole set — vars not re-named are dropped |
+| `romp new --no-env <name>` | Clear a running SDK session's per-session env (declares the empty set) |
 | `romp interrupt <session>` | Interrupt whatever turn a session is taking |
 | `romp end <session>` | End a session |
 | `romp checkin <host>` / `romp checkout <host>` | Publish this machine to an attached hub, or withdraw it |
@@ -41,6 +45,16 @@ These are for scripting and for agents rather than daily use:
 | `romp debug [on\|off\|status]` | Judge debug mode, where rejection rows carry the full input and reply |
 | `romp resume <id> [--name <n>] [--detach]` | Resume one exact conversation by UUID |
 | `romp refresh --now` | Refresh without waiting for sessions to finish their turns |
+
+`--env` gives one session its own environment, so two sessions in the same
+directory can run with different toggles (a `FEATURE_FLAG=1`, a `CLAUDE_CODE_*`
+switch) without editing the directory's `.claude/settings*.json`, which reaches
+every session there and outlives them all. Re-running `romp new --env` against
+a running session declares its full per-session env: any var you don't name
+again is dropped, and `romp new --no-env <name>` declares the empty set — it
+clears them all. Keep real secrets out of it: each value is copied into
+per-session files and the session registry under `~/.local/state/romp/`. Keys
+and credentials stay in `service.env` or the `apiKeyHelper`.
 
 Two things to know before building on `romp sessions --json`. **`waiting` means
 at rest**, the ordinary state of a session that has finished its turn, so
