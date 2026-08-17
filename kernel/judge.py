@@ -2137,11 +2137,18 @@ def _rebase_onto_disk(fsid, store):
     # A user restore does NOT merely pop the marker (a pop is not durable: a writer whose snapshot
     # predates the restore re-unions its stale marker right back and re-kills the node the user just
     # brought back — proven by the review). Both restore sites pop AND stamp store-level
-    # rewindRestored[nid] = restore time; both maps union max-per-nid here, and a marker whose
-    # restore stamp is at/after its sweep stamp is NEUTRALIZED (restore wins ties: the user gesture
-    # outranks a same-second sweep). Both maps persist — ordered durable events, so any ordering of
-    # stale writers converges. A RE-sweep pops the restore stamp (archive_goal_nodes), so a genuinely
-    # newer rewind still deletes.
+    # rewindRestored[nid]; both maps union max-per-nid here, and a marker whose restore stamp is
+    # at/after its sweep stamp is NEUTRALIZED (restore wins ties: the user gesture outranks a
+    # same-second sweep). Both maps persist — ordered durable events — and because a pop can always
+    # be re-unioned back by a stale writer, every superseding event STAMPS PAST the marker it pops
+    # so the max-union converges on the right winner regardless of writer order: a re-sweep that
+    # popped a restore stamps its tombstone strictly after it (archive_goal_nodes, +1 — a bare
+    # equal second would hand its own tombstone to this tie rule), and a restore that popped a
+    # marker stamps at-or-above it (max(rt, marker) — winning the tie is the designed outcome).
+    # The one tie left is a sweep that never OBSERVED the restore it collided with (a pre-cycle
+    # snapshot: nothing to pop, no bump); the restore wins it here, and archive_goal_nodes'
+    # post-save backstop un-archives whatever this rebase hands back, so the node is never
+    # live and archived at once.
     swept = dict(disk.get("rewindSwept") or {})
     for k, v in (store.get("rewindSwept") or {}).items():
         swept[k] = max(int(v or 0), int(swept.get(k) or 0))
@@ -2318,14 +2325,20 @@ def _replay_overrides(fsid, store):
                 if nid in store.get("nodes", {}) or nid in arch_nodes:
                     continue                           # alive, or re-cleared into the archive → nothing lost
                 store.setdefault("nodes", {})[nid] = GuardedNode(dict(nddata))
-                if (store.get("rewindSwept") or {}).pop(nid, None) is not None:
+                sv = (store.get("rewindSwept") or {}).pop(nid, None)
+                if sv is not None:
                     # a user restore outranks the rewind tombstone — pop AND stamp: the pop keeps the
                     # next save-rebase from re-deleting what the journal just re-inserted, and the
-                    # stamp (the journal row's own t, so every replay derives the same value) makes
-                    # the restore durable against a stale writer re-unioning its old marker, and
-                    # stands the node down from the identity-keyed reconciliation for good (its
-                    # branch's death can never be new information again).
-                    store.setdefault("rewindRestored", {})[nid] = t
+                    # stamp makes the restore durable against a stale writer re-unioning its old
+                    # marker, and stands the node down from the identity-keyed reconciliation for
+                    # good (its branch's death can never be new information again). Stamped at or
+                    # ABOVE the popped marker (a superseding re-sweep stamps strictly past the
+                    # restore it popped, so the marker can lead wall clock by a second): the rebase
+                    # gives ties to the restore, so max(t, marker) is exactly "this restore wins
+                    # against the marker it popped" — and it is derived from the row's t plus the
+                    # store's own popped value, so every replay of the same row over the same store
+                    # state derives the same stamp.
+                    store.setdefault("rewindRestored", {})[nid] = max(t, int(sv))
                 applied = True
                 st = (ev.get("status") or {}).get(nid)
                 if st is not None:
@@ -2588,8 +2601,9 @@ def archive_goal_nodes(fsid, store, move, tomb_t):
     rewindSwept tombstone per id so no concurrent save-rebase republishes them (the mergedFrom lesson,
     2026-08-13, applied to rewinds 2026-08-17: presence-in-a-snapshot is not truth — proven five times
     in live stores, nodes resident in live AND archive at once). `tomb_t` is the SWEEP EVENT's time
-    (the rebase orders it against rewindRestored stamps — a user restore neutralizes an older marker,
-    a newer sweep outranks an older restore, so this pops any restore stamp its ids carry). Tombstones
+    (the rebase orders it against rewindRestored stamps — a user restore neutralizes an older-or-tied
+    marker; a sweep superseding a restore pops the stamp and tombstones STRICTLY after it, so no
+    stale re-union of the popped stamp can neutralize the fresh tombstone). Tombstones
     are never pruned: entries are rare and an undo-clear restore pops its own. Re-points lastNode at
     the newest survivor (a dangling focus would prematurely settle the pre-cut focus card), re-rolls
     status (removing a
@@ -2613,8 +2627,14 @@ def archive_goal_nodes(fsid, store, move, tomb_t):
                 a_nodes[nid] = nodes.pop(nid)          # a whole-node dict delete is UNGUARDED (not a PROTECTED key)
             if nid in status:
                 a_status[nid] = status.pop(nid)
-            swept[nid] = int(tomb_t)
-            (store.get("rewindRestored") or {}).pop(nid, None)   # a NEW sweep outranks an old restore
+            # A sweep that OBSERVED a restore stamp supersedes it — pop the stamp and order the
+            # tombstone STRICTLY after it. The rebase gives same-second ties to the restore, and
+            # both stamps are whole seconds, so a bare equal stamp let any stale writer max-union
+            # the popped restore stamp back from disk and neutralize the tombstone this sweep just
+            # wrote (its own save-rebase included, under a mid-flight publish); the +1 encodes the
+            # restore-then-sweep order actually witnessed here under _GOAL_ARCH_LOCK.
+            prev_rt = (store.get("rewindRestored") or {}).pop(nid, None)
+            swept[nid] = max(int(tomb_t), int(prev_rt) + 1) if prev_rt is not None else int(tomb_t)
         arch["rompUuid"] = store.get("rompUuid", fsid)
         save_goal_archive(fsid, arch)
         for nid, nd in nodes.items():                  # spared survivors of archived parents stay reachable
@@ -2627,6 +2647,22 @@ def archive_goal_nodes(fsid, store, move, tomb_t):
             store["lastNode"] = (max(nodes, key=lambda n: int(nodes[n].get("t") or 0)) if nodes else None)
         rollup_status(store, session_closed=False)
         save_goals(fsid, store)
+        # SINGLE-RESIDENCY BACKSTOP: the save's rebase can hand a moved id BACK — a restore this
+        # sweep never observed (its snapshot was loaded before the sweep/restore cycle, so it holds
+        # the node live with no stamp to pop and bump past) can out-stamp the tombstone written
+        # above, and the adopt-wholesale branch then re-adopts the node from disk while its fresh
+        # archive copy sits here — the exact live+archive dual residency the audit named. An id
+        # that came back is provably the restore-won set (re-adoption requires the tombstone this
+        # sweep just stamped to be out of force), so finish what the restore itself would have done
+        # had the copy existed then: un-archive it. Still inside _GOAL_ARCH_LOCK, so the corrective
+        # RMW is race-free against every other archiver.
+        back = [nid for nid in move if nid in (store.get("nodes") or {})]
+        if back:
+            arch = load_goal_archive(fsid)
+            for nid in back:
+                arch.get("nodes", {}).pop(nid, None)
+                arch.get("status", {}).pop(nid, None)
+            save_goal_archive(fsid, arch)
 
 
 def _dead_branch_ids(store, rewind_set, kept_set=frozenset()):

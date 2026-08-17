@@ -15583,14 +15583,20 @@ def _restore_goal_archive(item_ids):
                 nodes[nid] = a_nodes.pop(nid)
                 if nid in a_status:
                     status[nid] = a_status.pop(nid)
-                if (store.get("rewindSwept") or {}).pop(nid, None) is not None:
-                    # the user's restore outranks a rewind tombstone — pop AND stamp (the same rt the
-                    # journal row carries, so the replay derives the identical stamp): the pop keeps
+                sv = (store.get("rewindSwept") or {}).pop(nid, None)
+                if sv is not None:
+                    # the user's restore outranks a rewind tombstone — pop AND stamp: the pop keeps
                     # jd._rebase_onto_disk from re-deleting the node on the next rebase, the durable
                     # stamp survives a stale writer re-unioning its old marker AND stands the node
                     # down from the identity-keyed reconciliation (boot memo resets, later sig
                     # changes) for good — the branch's death can never be new information again.
-                    store.setdefault("rewindRestored", {})[nid] = rt
+                    # Stamped max(rt, marker), never bare rt: a superseding re-sweep stamps its
+                    # tombstone STRICTLY past the restore it popped (jd.archive_goal_nodes), so the
+                    # marker this restore pops can lead wall clock by a second — and the rebase
+                    # gives ties to the restore, so at-or-above the popped value is exactly "this
+                    # restore wins against the marker it popped". The journal row still carries the
+                    # gesture's own rt; its replay derives the same stamp from the same popped value.
+                    store.setdefault("rewindRestored", {})[nid] = max(rt, int(sv))
             # (Sticky completion restore lives in _mark_nodes_cleared now — 2026-07-07: the settle event must
             # land AFTER the undo reopen it records, or the fold consumes it and the card returns to Working.)
             jd.save_goals(sid, store)

@@ -5,6 +5,7 @@ live store — whole subtrees. Deliberately narrow: verdicts an abandoned turn a
 are left alone (the user chose this simpler shape over surgically reverting the append-only diary + the
 durable override journal). All fixtures are SYNTHETIC (placeholder UUIDs, invented text).
 """
+import json
 import os
 import tempfile
 import threading
@@ -243,6 +244,148 @@ class RebaseTombstones(RevertBase):
         self.assertIn(doomed, after["nodes"], "the stale marker lost to the restore stamp")
         # and the node is in exactly one place — never resident in live AND archive at once
         self.assertNotIn(doomed, jd.load_goal_archive(SID)["nodes"])
+
+
+class SameSecondTieOrdering(RevertBase):
+    """Sweep and restore stamps are whole seconds and the rebase gives ties to the restore — so a
+    restore and a superseding event in ONE wall-clock second used to collapse into the wrong
+    winner (or into both at once). The converged ordering: every superseding event stamps PAST the
+    marker it pops (a re-sweep tombstones strictly after the restore it observed; a restore stamps
+    at-or-above the marker it popped, winning its designed tie), and archive_goal_nodes un-archives
+    whatever its own save-rebase hands back — so after ANY interleaving of sweeps, restores and
+    stale writers, a node id is live or archived, never both. All raw-file asserts on purpose:
+    load_goals' journal replay heals some of these shapes in memory and must not be what keeps a
+    test green (the lesson of the hollow stale-writer test this suite used to carry)."""
+
+    S = NOW              # the shared wall-clock second every collision in this class lands in
+    RT = NOW + 10        # the restore gesture's second, when it is NOT the colliding event
+
+    def _seed(self):
+        s = self._store()
+        jd.apply_plan(s, "s1", T0, [{"do": "mint", "why": "x", "text": "Survivor"}], [])
+        jd.apply_plan(s, "s2", T0 + 100, [{"do": "mint", "why": "x", "text": "Doomed"}], jd.open_menu(s))
+        jd.rollup_status(s, session_closed=False)
+        jd.save_goals(SID, s)
+        return self._nid(2)
+
+    def _sweep_then_restore(self, doomed, tomb_t, rt):
+        """Sweep the doomed card at tomb_t, then user-restore it at rt (the undo-clear's exact
+        moves: pop the archive copy, journal the payload, let the replay re-insert), and publish
+        the restored world."""
+        jd.archive_goal_nodes(SID, jd.load_goals(SID), {doomed}, tomb_t)
+        arch = jd.load_goal_archive(SID)
+        payload = dict(arch["nodes"].pop(doomed))
+        jd.save_goal_archive(SID, arch)
+        jd.append_restore(SID, {doomed: payload}, {}, rt)
+        live = jd.load_goals(SID)
+        self.assertIn(doomed, live["nodes"], "premise: the restore landed")
+        jd.save_goals(SID, live)
+
+    def _raw(self):
+        return json.loads((jd.GOALDIR / (SID + ".json")).read_text())
+
+    def test_a_same_second_re_sweep_outlasts_a_stale_post_restore_snapshots_rebase(self):
+        # sweep@S-10 → restore@RT → a genuinely NEW sweep re-takes the card in the RESTORE'S OWN
+        # second (an undo-restore on the WS thread and a branch-take on the settle thread are
+        # concurrent — one second apart is routine). The re-sweep observed the stamp, so its
+        # tombstone orders strictly after it; a judge pass whose snapshot still carries the popped
+        # restore stamp then publishes, re-unioning it — pre-fix the S==S tie read as restore-wins
+        # and resurrected the node into the live store while its payload sat in the archive.
+        doomed = self._seed()
+        self._sweep_then_restore(doomed, self.S - 10, self.RT)
+        stale = jd.load_goals(SID)                    # the pass's snapshot: node live, restored=RT
+        jd.archive_goal_nodes(SID, jd.load_goals(SID), {doomed}, self.RT)   # the re-take, same second
+        raw = self._raw()
+        self.assertGreater(raw["rewindSwept"][doomed], self.RT,
+                           "the tombstone stamps strictly after the restore it popped")
+        self.assertNotIn(doomed, raw["nodes"], "the re-sweep's own save held its tombstone")
+        stale["nodes"][self._nid(1)]["mt"] = T0 + 7   # the stale writer did unrelated work…
+        jd.save_goals(SID, stale)                     # …and publishes the popped stamp back
+        raw = self._raw()
+        self.assertNotIn(doomed, raw["nodes"], "the re-union of the popped restore stamp lost")
+        self.assertIn(doomed, jd.load_goal_archive(SID)["nodes"], "…and the node is archive-only")
+
+    def test_a_same_second_re_sweep_survives_its_own_save_rebase_over_a_midflight_publish(self):
+        # the same tie, hit by the sweep ITSELF: any concurrent publish between the re-sweep's load
+        # and its save bumps the rev, so its save_goals rebases — and pre-fix its rebase re-adopted
+        # the very node it had just archived (its own fresh tombstone neutralized by the equal
+        # restore stamp coming back off the mid-flight writer's snapshot).
+        doomed = self._seed()
+        self._sweep_then_restore(doomed, self.S - 10, self.RT)
+        mid = jd.load_goals(SID)                      # the mid-flight writer: node live, restored=RT
+        orig = jd.save_goal_archive
+        fired = []
+        def hijack(fsid, arch):                       # runs INSIDE archive_goal_nodes, between its
+            orig(fsid, arch)                          # archive save and its goals save
+            if not fired:
+                fired.append(1)
+                mid["nodes"][self._nid(1)]["mt"] = T0 + 9
+                jd.save_goals(SID, mid)               # …and publishes (disk rev moves)
+        jd.save_goal_archive = hijack
+        try:
+            jd.archive_goal_nodes(SID, jd.load_goals(SID), {doomed}, self.RT)
+        finally:
+            jd.save_goal_archive = orig
+        raw = self._raw()
+        self.assertNotIn(doomed, raw["nodes"], "the sweep's rebase did not re-adopt its own pop")
+        self.assertGreater(raw["rewindSwept"][doomed], self.RT)
+        self.assertIn(doomed, jd.load_goal_archive(SID)["nodes"], "archive-only — never dual-resident")
+
+    def test_a_restore_in_the_same_second_as_the_sweep_it_pops_still_wins(self):
+        # the DESIGNED tie is untouched: sweep@S, user restore in the same second — the restore
+        # stamps at the popped marker's value and the rebase gives it the tie, so a stale writer
+        # re-unioning the old marker still loses.
+        doomed = self._seed()
+        jd.archive_goal_nodes(SID, jd.load_goals(SID), {doomed}, self.S)
+        stale = jd.load_goals(SID)                    # pre-restore snapshot: marker present, node gone
+        arch = jd.load_goal_archive(SID)
+        payload = dict(arch["nodes"].pop(doomed))
+        jd.save_goal_archive(SID, arch)
+        jd.append_restore(SID, {doomed: payload}, {}, self.S)   # the same-second undo
+        live = jd.load_goals(SID)
+        self.assertIn(doomed, live["nodes"], "premise: the journal replay re-inserted it")
+        self.assertEqual(live["rewindRestored"][doomed], self.S,
+                         "stamped at the popped marker — the tie the restore is designed to win")
+        jd.save_goals(SID, live)
+        stale["nodes"][self._nid(1)]["mt"] = T0 + 7
+        jd.save_goals(SID, stale)
+        raw = self._raw()
+        self.assertIn(doomed, raw["nodes"], "the restore won its tie in the raw published file")
+        self.assertNotIn(doomed, jd.load_goal_archive(SID)["nodes"], "…live-only, never dual-resident")
+
+    def test_a_sweep_blind_to_the_restore_never_leaves_a_dual_resident(self):
+        # the ONE tie strict stamping cannot break: the sweeping writer's snapshot predates the
+        # whole sweep/restore cycle (the node is live in it with NO stamp to pop and bump past), so
+        # its tombstone lands bare-equal against the restore stamp on disk. The restore wins the
+        # tie — by design — and the rebase re-adopts the node; pre-fix the sweep's fresh archive
+        # copy stayed behind: live AND archived at once, permanently (the reconciler exempts
+        # restored ids and nothing ever removed the copy). The post-save backstop un-archives
+        # exactly what the rebase handed back.
+        doomed = self._seed()
+        snap = jd.load_goals(SID)                     # the blind writer's snapshot, loaded first
+        self._sweep_then_restore(doomed, self.S - 10, self.RT)
+        jd.archive_goal_nodes(SID, snap, {doomed}, self.RT)   # blind re-take, tied with the restore
+        raw = self._raw()
+        self.assertIn(doomed, raw["nodes"], "the restore won the tie — the node is live")
+        self.assertNotIn(doomed, jd.load_goal_archive(SID)["nodes"],
+                         "…and the blind sweep's archive copy is gone: never resident in both")
+        again = jd.load_goals(SID)                    # the state is stable, not a one-publish fluke
+        again["nodes"][self._nid(1)]["mt"] = T0 + 9
+        jd.save_goals(SID, again)
+        raw = self._raw()
+        self.assertIn(doomed, raw["nodes"])
+        self.assertNotIn(doomed, jd.load_goal_archive(SID)["nodes"])
+
+    def test_a_blind_sweep_strictly_after_the_restore_still_deletes(self):
+        # control for the backstop: fresh evidence one second later beats the restore — the node
+        # archives cleanly and the backstop touches nothing (back is empty).
+        doomed = self._seed()
+        snap = jd.load_goals(SID)
+        self._sweep_then_restore(doomed, self.S - 10, self.RT)
+        jd.archive_goal_nodes(SID, snap, {doomed}, self.RT + 1)
+        raw = self._raw()
+        self.assertNotIn(doomed, raw["nodes"], "a strictly newer sweep still deletes")
+        self.assertIn(doomed, jd.load_goal_archive(SID)["nodes"], "archive-only")
 
 
 if __name__ == "__main__":
