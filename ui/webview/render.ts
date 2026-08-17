@@ -8773,6 +8773,10 @@ function setActive(id: string, anchor?: string, anchorT?: number, anchorKind?: s
   noteMru(id);
   if (activeId === id && anchor == null && anchorT == null) return; // already active, nothing to do
   closeMetaMenu(); // an open model/effort menu targets the tab we're leaving
+  // the hover tip belongs to the tab the pointer was on — switching sessions closes it (the user
+  // 2026-08-17: it stuck open over the new tab's UI, since renderTabs below destroys the hovered
+  // node and a destroyed node never fires the mouseleave that is the tip's only other closer)
+  hideTabTip();
   // a comment popover belongs to its parent session's view — leaving that session closes it (the
   // user 2026-08-13: it lingered over the next tab's chat); the highlight reopens it any time
   if (openCommentKey && openCommentKey.sid !== id) closeCommentPop();
