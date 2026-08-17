@@ -49,14 +49,51 @@ test("rehoverTabTip hit-tests the tracked pointer: a session tab there → re-sh
   const fn = RENDER.slice(start, RENDER.indexOf("\n}", start) + 2);
   assert.match(fn, /document\.elementFromPoint\(p\.x, p\.y\)/, "hit-test where the pointer already is");
   assert.match(fn, /closest\("#tabs \.tab"\)/, "resolve to a tab of THIS strip");
+  // pin the session-derivation line the executed replicas below hand-copy — it is the sole decider for the
+  // '+'/placeholder/show cases, and without this pin a drift there (say, a tabMeta fallback) leaves the
+  // replicas green while shipped behavior inverts
+  assert.match(fn, /const s = tab\?\.dataset\.id \? sessions\.get\(tab\.dataset\.id\) : null;/,
+    "the derivation the '+'/placeholder replicas model: an id-less tab or a not-yet-landed session yields no tip");
   assert.match(fn, /if \(tab && s\) showTabTip\(tab, s\);\n\s*else hideTabTip\(\);/, "re-show fresh for the tab under the pointer, or close");
   assert.doesNotMatch(fn, /setTimeout|setInterval/, "event-based: keyed on the rebuild, never a timer or grace period");
 });
 
-test("the strip tracks the pointer for the re-hover, cleared on leave (the timeline's _ptr)", () => {
+test("the strip tracks the pointer for the re-hover; leaving the strip clears it AND closes the tip", () => {
   assert.match(RENDER, /let tabsPtr: \{ x: number; y: number \} \| null = null;/);
   assert.match(RENDER, /tabs\.addEventListener\("pointermove", \(e\) => \{ tabsPtr = \{ x: e\.clientX, y: e\.clientY \}; \}\);/);
-  assert.match(RENDER, /tabs\.addEventListener\("pointerleave", \(\) => \{ tabsPtr = null; \}\);/);
+  // hideTabTip here, not just tabsPtr = null: a tip re-shown by rehoverTabTip has an owner the browser never
+  // hover-entered (an unmoved pointer gives the fresh node no mouseenter), so that owner's mouseleave can
+  // NEVER fire — the stable strip root, which WAS entered, is the boundary event guaranteed to fire on exit
+  assert.match(RENDER, /tabs\.addEventListener\("pointerleave", \(\) => \{ tabsPtr = null; hideTabTip\(\); \}\);/,
+    "the strip's pointerleave closes the tip, not just clears the pointer");
+});
+
+test("the strip sweeps on mousemove: a sample outside the owner's box closes the tip (the timeline's _onTipSweep)", () => {
+  // the intra-strip cousin of the pointerleave closer above: a never-entered owner also fires no mouseleave
+  // when the cursor slides into an inter-tab gap or onto the "+" — and pointerleave never fires there
+  // because the cursor is still inside #tabs
+  const start = RENDER.indexOf('tabs.addEventListener("mousemove"');
+  assert.ok(start > 0, "the sweep listener exists, on the stable #tabs root");
+  const fn = RENDER.slice(start, RENDER.indexOf("});", start) + 3);
+  assert.match(fn, /const o = tabTipOwner;/, "keyed on the open tip's owner — no owner, no work");
+  assert.match(fn, /o\.getBoundingClientRect\(\)/);
+  assert.match(fn, /if \(e\.clientX < r\.left \|\| e\.clientX > r\.right \|\| e\.clientY < r\.top \|\| e\.clientY > r\.bottom\) hideTabTip\(\);/,
+    "outside the owner's box → close");
+  assert.doesNotMatch(fn, /setTimeout|setInterval/, "event-based, keyed on the pointer's own moves — never a timer");
+});
+
+// ── piece 3: a click-gesture renderTabs caller OUTSIDE setActive must close the tip itself ──
+
+test("closing a tab via its ✕ closes the tip BEFORE the rebuild — the click must not pop the neighbor's tip", () => {
+  // the dead-tab ✕ runs closeTabLocally → dismissSession → renderTabs synchronously inside the click, with
+  // the owner still set: the rebuild's rehoverTabTip would re-show for the tab that slid under the unmoved
+  // cursor — another session's info sheet answering a destructive click. The closer lives in closeTabLocally
+  // (both ✕ gestures and the host-relay close funnel through it), deliberately NOT in dismissSession, which
+  // is also the kernel's `closed`-event path — a push-driven rebuild where the rehover is the design intent.
+  assert.match(RENDER, /function closeTabLocally\(id: string\): void \{\n\s*hideTabTip\(\);/,
+    "closeTabLocally opens with hideTabTip(), before the provisional check");
+  assert.doesNotMatch(RENDER, /function dismissSession\(id: string\): void \{\n\s*hideTabTip\(\);/,
+    "not in dismissSession — the kernel's closed-event path keeps the rehover");
 });
 
 // ── executed replica of rehoverTabTip's decision (verbatim control flow) ──

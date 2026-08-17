@@ -9155,6 +9155,12 @@ function statusOnly(msg: any) {
 // until the kernel caught up. (dismissSession is ALSO how a session dying on its own arrives — that one
 // must not be recorded as a close of ours, which is why the record is written HERE, not in there.)
 function closeTabLocally(id: string): void {
+  hideTabTip();   // the ✕ is a click-gesture renderTabs caller OUTSIDE setActive, so piece 1's closer never
+  // runs — clicking a dead tab's ✕ with its tip up would rebuild the strip owner-still-set, and rehoverTabTip
+  // would pop the NEIGHBOR's tip under the unmoved cursor as the answer to a destructive click. Null the
+  // owner first so the staleness check stands down; the tip reopens on the next real mouse move. This lives
+  // HERE (both ✕ gestures and the host-relay close funnel through) and deliberately NOT in dismissSession,
+  // which is also the kernel's `closed`-event path — a push-driven rebuild where the rehover IS the intent.
   // A provisional tab has no session to close — closing it means "never mind", so it cancels the spawn
   // the kernel may still be running, the way the old cue's ✕ did. A FAILED one has no spawn left either
   // (and the kernel never knew the id): its ✕ is a plain local discard — tab, draft, and all.
@@ -10394,7 +10400,26 @@ setupSettings();
   // position to restore — or close — a tip whose owner the rebuild destroyed. Cleared on leave so a stale
   // position can't resurrect a tip for a strip the cursor already left. #tabs is stable, installed ONCE.
   tabs.addEventListener("pointermove", (e) => { tabsPtr = { x: e.clientX, y: e.clientY }; });
-  tabs.addEventListener("pointerleave", () => { tabsPtr = null; });
+  // Leaving the strip ALSO closes the tip, here on the stable root: a tip re-shown by rehoverTabTip has an
+  // owner the browser never hover-entered (the replaceChildren fact — an unmoved pointer gives the fresh
+  // node no mouseenter), and an element never entered fires no mouseleave — so without this, flicking the
+  // cursor out of the strip before any move sampled inside the new tab left the tip open with no live
+  // closer until the next push's rebuild. #tabs itself WAS genuinely entered, so its pointerleave reliably
+  // fires on exit; in the normal case the tab's own mouseleave already hid the tip and this is a no-op
+  // (hideTabTip is idempotent, and the tip is pointer-events:none so it can't be hovered onto).
+  tabs.addEventListener("pointerleave", () => { tabsPtr = null; hideTabTip(); });
+  // SAFETY NET inside the strip (the timeline's _onTipSweep, romp-timeline-view.js): the same never-entered
+  // owner also fires no mouseleave when the cursor slides into an inter-tab gap or onto the "+" WITHOUT
+  // leaving #tabs — pointerleave above never fires there. Any move over the strip that samples outside the
+  // owner's box closes the tip; moving onto another session tab fires that tab's own mouseenter (re-show)
+  // before its mousemove reaches us, so the normal hover flow is untouched. Event-based — keyed on the
+  // pointer's own moves, never a timer.
+  tabs.addEventListener("mousemove", (e) => {
+    const o = tabTipOwner;
+    if (!o) return;
+    const r = o.getBoundingClientRect();
+    if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) hideTabTip();
+  });
 })();
 // right-click a selection in the transcript → Reply (quote it) / Copy
 document.getElementById("content")?.addEventListener("contextmenu", showSelectionMenu);
