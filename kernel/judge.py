@@ -2465,6 +2465,26 @@ def save_goal_archive(fsid, store):
     tmp.rename(GOALARCHDIR / (fsid + ".json"))        # atomic publish
 
 
+def swept_ids(store, cut_t):
+    """The node ids a rewind at cut_t sweeps: every node BORN at/after cut_t plus its whole subtree
+    (node[\"t\"] is frozen at birth and a child is always born after its parent). ONE definition,
+    shared by drop_goals_after and the kernel's gesture-time card hide, so what the user sees
+    disappear at the delete gesture is exactly what the branch-take archives."""
+    cut_t = int(cut_t)
+    nodes = store.get("nodes") or {}
+    children = {}
+    for nid, nd in nodes.items():
+        children.setdefault(nd.get("parentId"), []).append(nid)
+    move, stack = set(), [nid for nid, nd in nodes.items() if int(nd.get("t") or 0) >= cut_t]
+    while stack:                                        # a born-in-range node drags its whole subtree
+        x = stack.pop()
+        if x in move:
+            continue
+        move.add(x)
+        stack.extend(children.get(x, []))
+    return move
+
+
 def drop_goals_after(fsid, cut_t):
     """Roll a session's GOAL STORE back to just before cut_t: archive every goal node BORN at/after cut_t
     (node["t"] >= cut_t), whole subtrees, to goals-archive/. A chat delete/edit abandons every turn at/after
@@ -2484,16 +2504,7 @@ def drop_goals_after(fsid, cut_t):
     nodes = store.get("nodes") or {}
     if not nodes:
         return 0
-    children = {}
-    for nid, nd in nodes.items():
-        children.setdefault(nd.get("parentId"), []).append(nid)
-    move, stack = set(), [nid for nid, nd in nodes.items() if int(nd.get("t") or 0) >= cut_t]
-    while stack:                                        # a born-in-range node drags its whole subtree
-        x = stack.pop()
-        if x in move:
-            continue
-        move.add(x)
-        stack.extend(children.get(x, []))
+    move = swept_ids(store, cut_t)
     if not move:
         return 0
     status = store.get("status") or {}

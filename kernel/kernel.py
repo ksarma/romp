@@ -5392,6 +5392,9 @@ def _sdk_locked():
             # The judge parses the SAME cut world the display parse does (jd._PENDING_CUT_FN): during
             # an armed bare rollback the planner must not see — and mint from — the deleted tail.
             jd.set_pending_cut_provider(_sdk_backend.pending_cut)
+            # The backend's flag-consumption events resolve held rewinds (two-phase goal cleanup:
+            # archive at the branch-take, restore on failure — _on_rewind_resolved).
+            _sdk_backend.rewind_resolved_cb = _on_rewind_resolved
         except Exception:
             sys.stderr.write("sdk-backend unavailable: %s\n" % traceback.format_exc())
             _sdk_problem("the SDK backend could not be built: %s" % traceback.format_exc())
@@ -12206,8 +12209,9 @@ def _feed_goals(sid):
                     #                                    card for the whole pass (the user 2026-07-23)
                 except Exception:
                     sys.stderr.write("feed-goals: user-override replay: %s\n" % traceback.format_exc())
-            return store
-    return jd.load_goals(sid)                          # no pass in flight → live read, outside the lock
+            return _apply_rewind_hold(sid, store)      # a pending rewind's cards are hidden NOW (latched
+            #                                            at the gesture; archive lands at the branch-take)
+    return _apply_rewind_hold(sid, jd.load_goals(sid))   # no pass in flight → live read, outside the lock
 
 # Delta-send (the user 2026-06-25, who wanted to stop re-sending what didn't change): the chat pusher used to send the
 # FULL events array (~8MB for a 34MB transcript) on every change, even when one event was appended. Keep the
@@ -12401,13 +12405,13 @@ def _rewind_send(sid, user_uuid, text, now=None):
     if err:
         return err
     # Same as delete: the edited message + its tail are abandoned; read its time before be.rewind arms the
-    # cut, then archive the cards those now-gone turns spawned. The edited text lands as a NEW turn (a later
-    # timestamp), minted AFTER this runs, so its fresh card is never caught by the cut.
+    # cut. The gesture HIDES the cards those turns spawned (a latched hold); the ARCHIVE waits for the
+    # branch-take event and a refused rewind restores them — see _on_rewind_resolved. The edited text lands
+    # as a NEW turn (a later timestamp), minted AFTER the take, so its fresh card is never caught by the cut.
     cut_t = _atom_epoch(sess["path"], sid, str(user_uuid), now)
     ok, berr = be.rewind(sid, target, str(text))
-    if ok and cut_t is not None:
-        _drop_goals_after(sid, cut_t)
-        _mark_views_dirty()
+    if ok:
+        _arm_rewind_hold(be, sid, cut_t)
     return None if ok else (berr or "the rewind could not be applied")
 
 
@@ -12444,12 +12448,36 @@ def _rewind_rollback(sid, user_uuid, now=None):
         return err
     # The DELETED message is user_uuid (target is its surviving ancestor); everything at/after it is
     # abandoned. Read its time NOW, before be.rollback arms the pending_cut that would hide it from _parse.
+    # The gesture HIDES the affected cards; the archive waits for the branch-take (_on_rewind_resolved).
     cut_t = _atom_epoch(sess["path"], sid, str(user_uuid), now)
     ok, berr = be.rollback(sid, target)
-    if ok and cut_t is not None:
-        _drop_goals_after(sid, cut_t)                    # archive cards minted from the now-abandoned turn(s)
-        _mark_views_dirty()
+    if ok:
+        _arm_rewind_hold(be, sid, cut_t)
     return None if ok else (berr or "the rollback could not be applied")
+
+
+def _arm_rewind_hold(be, sid, cut_t):
+    """The gesture half of the two-phase rewind cleanup: latch the card hold (hide now, archive at
+    the take). cut_t=None — the edited/deleted record's time could not be resolved from the parse —
+    is LOUD, never a silent no-cleanup (the repo rule): the rewind itself already succeeded, the
+    dead-branch reconciliation will still catch any orphans, but the user must be able to see why
+    nothing hid."""
+    if cut_t is None:
+        jd._log_judge_error("romp", sid, "revert-skipped",
+                            note="rewind cut time unresolved (the record is not among the parsed "
+                                 "atoms) — no cards hidden or archived for this rewind; the "
+                                 "dead-branch reconciliation will catch any orphans")
+        return
+    leaf = ""
+    try:
+        fn = getattr(be, "rewind_flags", None)
+        if fn:
+            leaf = (fn(sid) or ("", "", False))[1]     # the transcript leaf recorded at arm time —
+            #                                            the spent discriminator's graph anchor
+    except Exception as e:
+        sys.stderr.write("rewind-hold: could not read the armed leaf: %s\n" % e)
+    _rewind_hold_set(sid, cut_t, leaf)
+    _mark_views_dirty()
 
 
 def _drop_goals_after(sid, cut_t):
@@ -12460,6 +12488,151 @@ def _drop_goals_after(sid, cut_t):
     except Exception as e:
         jd._log_judge_error("romp", sid, "revert-failed",
                             note="goal cleanup after a rewind/delete failed: %r" % e)
+
+
+# ── two-phase rewind timing (2026-08-17): HIDE at the gesture, ARCHIVE at the branch-take ──
+# The old shape archived at ARM time, which is wrong in both directions: the arm is not the rewind
+# (apply is async and conditional — a CLI refusal or a spent flag leaves the conversation intact,
+# yet its goals were already archived), and archiving once at arm misses every mint that lands in
+# the window after it. The user's gesture IS new information — their cards should vanish at once —
+# so the gesture latches a HOLD (cards hide from the feed, nothing moves in the store) and the
+# store-side archive waits for the event that makes "abandoned" true: the branch-take (the backend's
+# flag-consumption sites). A failed/refused rewind RESTORES the hidden cards loudly. The hold is
+# latched until exactly one of those events — never re-derived per build — and file-backed so a
+# kernel restart mid-window neither drops the hide nor forgets to resolve it (the boot pass below).
+_rewind_holds = [None]                             # lazily loaded {sid: {"cutT": int, "leaf": str, "at": int}}
+_rewind_holds_lock = threading.Lock()
+
+
+def _rewind_holds_file():
+    return jd.STATE / "rewind-holds.json"
+
+
+def _rewind_holds_map():
+    with _rewind_holds_lock:
+        if _rewind_holds[0] is None:
+            try:
+                _rewind_holds[0] = {str(k): v for k, v in
+                                    json.loads(_rewind_holds_file().read_text()).items()
+                                    if isinstance(v, dict)}
+            except Exception:
+                _rewind_holds[0] = {}
+        return _rewind_holds[0]
+
+
+def _rewind_holds_save():
+    try:
+        tmp = _rewind_holds_file().with_suffix(".json.tmp.%d" % os.getpid())
+        tmp.write_text(json.dumps(_rewind_holds[0] or {}))
+        tmp.rename(_rewind_holds_file())
+    except Exception as e:
+        sys.stderr.write("rewind-hold: persist failed: %s\n" % e)
+
+
+def _rewind_hold_set(sid, cut_t, leaf):
+    m = _rewind_holds_map()
+    with _rewind_holds_lock:
+        m[str(sid)] = {"cutT": int(cut_t), "leaf": str(leaf or ""), "at": int(time.time())}
+        _rewind_holds_save()
+
+
+def _rewind_hold_get(sid):
+    return _rewind_holds_map().get(str(sid))
+
+
+def _rewind_hold_clear(sid):
+    m = _rewind_holds_map()
+    with _rewind_holds_lock:
+        if m.pop(str(sid), None) is not None:
+            _rewind_holds_save()
+
+
+def _apply_rewind_hold(sid, store):
+    """The feed's view of a held session's store: the nodes the pending rewind will archive are
+    hidden NOW (the gesture is the new information; jd.swept_ids is the sweep's own selection, so
+    what hides is exactly what the take archives). A filtered SHALLOW COPY — the live store is
+    never mutated, so a failed rewind restores by simply dropping the hold."""
+    hold = _rewind_hold_get(sid)
+    if not hold:
+        return store
+    try:
+        hide = jd.swept_ids(store, hold["cutT"])
+    except Exception:
+        return store
+    if not hide:
+        return store
+    out = dict(store)
+    out["nodes"] = {k: v for k, v in (store.get("nodes") or {}).items() if k not in hide}
+    out["status"] = {k: v for k, v in (store.get("status") or {}).items() if k not in hide}
+    return out
+
+
+def _hold_leaf_still_active(sid, leaf):
+    """The spent-flag discriminator: is the leaf recorded at gesture time still on the active
+    chain? A consumed rewind abandons it (the new branch's ancestry bypasses it), so OFF-chain
+    means the branch took — archive; ON-chain means the conversation moved past the arm on the
+    OLD branch (the rewind dissolved without applying) — restore. Exact graph fact, not a window."""
+    sess = next((s for s in _sessions(time.time()) if s["sid"] == sid), None)
+    if not sess or not leaf:
+        return None                                    # no transcript to consult → unprovable
+    try:
+        cands = [sess["path"]]
+        anchor = os.path.join(os.path.dirname(sess["path"]), sid + ".jsonl")
+        if os.path.basename(sess["path"]) != sid + ".jsonl" and os.path.exists(anchor):
+            cands.append(anchor)
+        ad = em.FileAdapter(cands, sess["path"])
+        return leaf in ad.active_path()
+    except Exception:
+        return None
+
+
+def _on_rewind_resolved(sid, outcome):
+    """The backend's flag-consumption events, resolving a held rewind (wired in _sdk_locked):
+    "taken"  — the branch took (the rewind/rollback turn's ResultMessage settled) → ARCHIVE the
+               held cards at the recorded cut (drop_goals_after now runs at the event that makes
+               "abandoned" true, and catches any mint that landed during the window).
+    "failed" — the CLI refused the rewind; the conversation is unchanged → RESTORE loudly.
+    "spent"  — the flag was dropped at connect because the leaf moved: either the take already
+               landed (a crash-heal resume mid-rewind-turn) or the conversation moved on the OLD
+               branch without applying — the recorded leaf's chain membership discriminates.
+               Unprovable (no transcript) restores: a card move needs proof, not a guess."""
+    hold = _rewind_hold_get(sid)
+    if not hold:
+        return
+    if outcome == "spent":
+        on_chain = _hold_leaf_still_active(sid, hold.get("leaf"))
+        outcome = "taken" if on_chain is False else "failed"
+        if on_chain is None:
+            jd._log_judge_error("romp", sid, "rewind-restore",
+                                note="spent rewind flag with no transcript to discriminate — "
+                                     "restoring the held cards (never archive on a guess)")
+    if outcome == "taken":
+        _drop_goals_after(sid, hold["cutT"])
+    else:
+        jd._log_judge_error("romp", sid, "rewind-restore",
+                            note="the rewind did not happen — the cards it hid are back on the feed")
+    _rewind_hold_clear(sid)
+    _mark_views_dirty()
+    _pusher_wake.set()
+
+
+def _rewind_holds_boot():
+    """Boot pass over persisted holds: a kernel restart mid-window must neither drop a hide (the
+    file survives; reads keep filtering) nor leave one latched forever after its resolving event
+    fired while no kernel was up. A hold whose backend still reports the rewind pending stays
+    latched (its event will come); anything else resolves through the same spent discriminator."""
+    be = _sdk()
+    for sid in list(_rewind_holds_map()):
+        try:
+            reg_pending = False
+            if be:
+                fn = getattr(be, "rewind_flags", None)
+                to, leaf, bare = fn(sid) if fn else ("", "", False)
+                reg_pending = bool(to)
+            if not reg_pending:
+                _on_rewind_resolved(sid, "spent")
+        except Exception:
+            sys.stderr.write("rewind-hold boot: %s\n" % traceback.format_exc())
 
 
 def _parse_cached(path):
@@ -25876,6 +26049,9 @@ def main():
     threading.Thread(target=_sdk, daemon=True).start()        # construct the SDK backend NOW so its boot
     #                                                           reconcile (cut turns, queues, orphans) runs at
     #                                                           boot, not on the first lazy touch
+    threading.Thread(target=_rewind_holds_boot, daemon=True).start()   # resolve holds whose take/fail
+    #                                                           event fired while no kernel was up (it
+    #                                                           builds the backend itself if it wins the race)
     threading.Thread(target=_producer, daemon=True).start()
     threading.Thread(target=_pusher, daemon=True).start()
     threading.Thread(target=_heartbeat, daemon=True).start()  # WS keepalive on its own thread (see _heartbeat)

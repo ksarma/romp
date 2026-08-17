@@ -14,6 +14,7 @@ import os
 import tempfile
 import unittest
 from importlib.machinery import SourceFileLoader
+from pathlib import Path
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
@@ -279,21 +280,23 @@ class RevertOnDelete(unittest.TestCase):
         self.assertEqual(km._atom_epoch(p, SID, "u2", now), want, "resolves the atom's epoch time")
         self.assertIsNone(km._atom_epoch(p, SID, "no-such-uuid", now), "a uuid not in the transcript → None")
 
-    def test_delete_drops_born_in_range_goals_after_a_successful_cut(self):
+    def test_delete_hides_born_in_range_goals_at_the_gesture(self):
         # the deleted message's time is read BEFORE be.rollback arms the pending_cut (which would hide it
-        # from _parse), then the cards those now-abandoned turns spawned are archived on success.
+        # from _parse); the gesture then latches the card HOLD — the archive waits for the branch-take
+        # (two-phase timing: archiving at ARM both missed late mints and archived goals for rewinds that
+        # never happened).
         src = inspect.getsource(km._rewind_rollback)
         self.assertIn("cut_t = _atom_epoch(", src)                   # resolved before be.rollback
         self.assertIn("ok, berr = be.rollback(sid, target)", src)
-        self.assertIn("_drop_goals_after(sid, cut_t)", src)          # archive born-in-range cards on success
+        self.assertIn("_arm_rewind_hold(be, sid, cut_t)", src)       # hide on success; archive at the take
         self.assertLess(src.index("cut_t = _atom_epoch("), src.index("be.rollback(sid, target)"),
                         "the deleted message's time is read BEFORE the cut is armed")
 
-    def test_edit_drops_born_in_range_goals_too(self):
-        # an edit abandons the old tail the same way a delete does → same cleanup
+    def test_edit_hides_born_in_range_goals_too(self):
+        # an edit abandons the old tail the same way a delete does → same two-phase cleanup
         src = inspect.getsource(km._rewind_send)
         self.assertIn("cut_t = _atom_epoch(", src)
-        self.assertIn("_drop_goals_after(sid, cut_t)", src)
+        self.assertIn("_arm_rewind_hold(be, sid, cut_t)", src)
         self.assertLess(src.index("cut_t = _atom_epoch("), src.index("be.rewind(sid, target"),
                         "the edited message's time is read BEFORE the cut is armed")
 
@@ -302,6 +305,118 @@ class RevertOnDelete(unittest.TestCase):
         src = inspect.getsource(km._drop_goals_after)
         self.assertIn("jd.drop_goals_after(sid, cut_t)", src)
         self.assertIn("except Exception", src)                       # swallow-and-log, never raise past the delete
+
+
+class TwoPhaseRewindTiming(unittest.TestCase):
+    """Items 4 + 5 of the rewind-cleanup plan: the gesture HIDES the affected cards (latched hold),
+    the ARCHIVE lands only at the branch-take, a failed/refused/dissolved rewind RESTORES loudly,
+    and an unresolvable cut time is an error row — never a silent no-cleanup. Pre-fix the archive
+    fired at ARM time: a CLI refusal or a spent flag left the conversation intact with its goals
+    already archived (the inverse bug), and every mint landing after the arm escaped forever."""
+
+    T0 = 1781100000
+    CUT = T0 + 50
+
+    def setUp(self):
+        self.td = Path(tempfile.mkdtemp())
+        self._saved_state = km.jd.STATE
+        (self.td / "state").mkdir()
+        km.jd._rebind_state(self.td / "state")
+        km._rewind_holds[0] = None                     # drop the cached map from any earlier test
+        self._saved_sessions = km._sessions
+        jd = km.jd
+        s = {"rompUuid": SID, "seq": 0, "nodes": {}, "placements": {}, "status": {},
+             "placementsV": jd.PLACEMENTS_V}
+        jd.apply_plan(s, "s1", self.T0, [{"do": "mint", "why": "x", "text": "Pre-cut survivor"}], [])
+        jd.apply_plan(s, "s2", self.T0 + 100, [{"do": "mint", "why": "x", "text": "Doomed ask"}],
+                      jd.open_menu(s))
+        jd.rollup_status(s, session_closed=False)
+        jd.save_goals(SID, s)
+        self.survivor, self.doomed = "%s:g1" % SID, "%s:g2" % SID
+
+    def tearDown(self):
+        km._sessions = self._saved_sessions
+        km._rewind_holds[0] = None
+        km.jd._rebind_state(self._saved_state)
+
+    def _transcript(self, recs):
+        p = self.td / (SID + ".jsonl")
+        with open(p, "w") as f:
+            for r in recs:
+                f.write(json.dumps(r) + "\n")
+        km._sessions = lambda now: [{"sid": SID, "path": str(p)}]
+        return str(p)
+
+    def test_the_gesture_hides_and_the_take_archives(self):
+        km._rewind_hold_set(SID, self.CUT, "leaf-at-arm")
+        feed = km._feed_goals(SID)
+        self.assertNotIn(self.doomed, feed["nodes"], "the gesture hid the doomed card at once")
+        self.assertIn(self.survivor, feed["nodes"], "…and only the doomed card")
+        self.assertIn(self.doomed, km.jd.load_goals(SID)["nodes"],
+                      "the STORE is untouched while the rewind is pending (hide, not archive)")
+        km._on_rewind_resolved(SID, "taken")           # the branch-take event
+        self.assertNotIn(self.doomed, km.jd.load_goals(SID)["nodes"], "the take archives")
+        self.assertIn(self.doomed, km.jd.load_goal_archive(SID)["nodes"])
+        self.assertIsNone(km._rewind_hold_get(SID), "the hold is spent — latched until this event only")
+
+    def test_a_refused_rewind_restores_the_hidden_cards_loudly(self):
+        km._rewind_hold_set(SID, self.CUT, "leaf-at-arm")
+        km._on_rewind_resolved(SID, "failed")          # the CLI refused; conversation unchanged
+        self.assertIn(self.doomed, km.jd.load_goals(SID)["nodes"], "nothing was archived")
+        self.assertIn(self.doomed, km._feed_goals(SID)["nodes"], "the card is back on the feed")
+        self.assertIsNone(km._rewind_hold_get(SID))
+        self.assertIn("rewind-restore", km.jd.ERRORS.read_text(), "the restore is loud")
+
+    def test_a_spent_flag_with_the_old_branch_still_active_restores(self):
+        # the rollback dissolved: a record landed on the OLD branch, so the recorded leaf is still
+        # on the active chain — archiving here would archive cards for turns that still exist
+        self._transcript([_rec("user", "u1", None, "first ask"),
+                          _rec("assistant", "a1", "u1", "first reply"),
+                          _rec("user", "u2", "a1", "second ask"),
+                          _rec("assistant", "a2", "u2", "second reply")])
+        km._rewind_hold_set(SID, self.CUT, "a2")       # the leaf recorded at arm — still the leaf
+        km._on_rewind_resolved(SID, "spent")
+        self.assertIn(self.doomed, km.jd.load_goals(SID)["nodes"], "restored, not archived")
+        self.assertIsNone(km._rewind_hold_get(SID))
+
+    def test_a_spent_flag_whose_branch_took_archives(self):
+        # crash-heal shape: the take landed (u3 branches from a1) before the flag could be tidied —
+        # the recorded leaf a2 is off the active chain, so the rewind DID happen
+        self._transcript([_rec("user", "u1", None, "first ask"),
+                          _rec("assistant", "a1", "u1", "first reply"),
+                          _rec("user", "u2", "a1", "second ask"),
+                          _rec("assistant", "a2", "u2", "second reply"),
+                          _rec("user", "u3", "a1", "second ask, rewritten"),
+                          _rec("assistant", "a3", "u3", "new-branch reply")])
+        km._rewind_hold_set(SID, self.CUT, "a2")
+        km._on_rewind_resolved(SID, "spent")
+        self.assertNotIn(self.doomed, km.jd.load_goals(SID)["nodes"], "the take archives")
+        self.assertIn(self.doomed, km.jd.load_goal_archive(SID)["nodes"])
+
+    def test_an_unresolvable_cut_time_is_loud_never_a_silent_no_sweep(self):
+        # item 5: cut_t=None used to skip the sweep with NO log — contra the fail-loudly rule
+        km._arm_rewind_hold(object(), SID, None)
+        self.assertIn("revert-skipped", km.jd.ERRORS.read_text(), "an error row names the skip")
+        self.assertIsNone(km._rewind_hold_get(SID), "no hold is latched on an unknowable cut")
+
+    def test_the_boot_pass_resolves_a_hold_whose_event_fired_while_down(self):
+        # kernel restart mid-window: the take landed, no kernel was up to hear the event — boot
+        # resolves through the same discriminator instead of leaving the hold latched forever
+        self._transcript([_rec("user", "u1", None, "first ask"),
+                          _rec("assistant", "a1", "u1", "first reply"),
+                          _rec("user", "u2", "a1", "second ask"),
+                          _rec("assistant", "a2", "u2", "second reply"),
+                          _rec("user", "u3", "a1", "second ask, rewritten"),
+                          _rec("assistant", "a3", "u3", "new-branch reply")])
+        km._rewind_hold_set(SID, self.CUT, "a2")
+        saved_sdk = km._sdk
+        km._sdk = lambda: None                         # no backend → nothing reports the rewind pending
+        try:
+            km._rewind_holds_boot()
+        finally:
+            km._sdk = saved_sdk
+        self.assertNotIn(self.doomed, km.jd.load_goals(SID)["nodes"])
+        self.assertIsNone(km._rewind_hold_get(SID))
 
 
 if __name__ == "__main__":
