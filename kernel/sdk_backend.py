@@ -1106,11 +1106,17 @@ def env_request_error(env) -> str:
             return "env: bad name %r — names match [A-Za-z_][A-Za-z0-9_]*" % (k,)
         if not isinstance(v, str):
             return "env: the value for %r must be a string" % (k,)
+        if "\x00" in v:
+            # NUL only — newlines and other control bytes are legitimate env content. An execve
+            # envp entry is a NUL-terminated C string, so this value is unfulfillable BY DEFINITION:
+            # accepted, it bakes into the reg a var the CLI can only truncate or throw on, either
+            # way diverging from what /new echoed as applied.
+            return "env: the value for %r contains a NUL byte — no process environment can carry one" % (k,)
     return ""
 
 
 def flag_settings_path(state_dir, sid: str, *, ultracode: bool = False, fast: bool = False,
-                       env: dict | None = None) -> str:
+                       env: dict | None = None, log=None) -> str:
     """The settings file handed to the CLI (options.settings — the flag-settings layer, the CLI's
     documented per-session hook for keys the SDK has no typed field for). Returns "" when a session
     needs none, which is the common case.
@@ -1155,8 +1161,15 @@ def flag_settings_path(state_dir, sid: str, *, ultracode: bool = False, fast: bo
         os.makedirs(d, exist_ok=True)
         with open(p, "w") as f:
             f.write(json.dumps(keys) + "\n")
-    except OSError:
-        return ""     # no settings file → the session still launches, just without these keys
+    except OSError as e:
+        # no settings file → the session still launches, just without these keys — and the Log says
+        # so (fail-loudly, the user 2026-07-03): for env especially, a silent drop here leaves the
+        # reg, the /new echo, and every future surface claiming an env the session never saw, with
+        # no readback channel to catch it (fastMode has _adopt_fast_state; env has nothing).
+        if log:
+            log("flag settings (%s): %s unwritable (%s) — launching WITHOUT %s"
+                % (sid, p, e, ", ".join(sorted(keys))), problem=True)
+        return ""
     return p
 
 
@@ -3650,7 +3663,7 @@ class SdkBackend:
         # connect, so a reconnect re-asserts them by construction.
         fs = flag_settings_path(self.state_dir, sess.sid,
                                 ultracode=(sess.effort or "") == "ultracode", fast=sess.fast_opt,
-                                env=sess.env_vars)
+                                env=sess.env_vars, log=self._log)
         if fs:
             kw["settings"] = fs
         # Per-session auth (the user 2026-08-08): the work key was claimed OUT of this process's env at

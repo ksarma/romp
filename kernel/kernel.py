@@ -4625,8 +4625,11 @@ def _env_error(env):
     alphabet — the payload lands in the per-sid flag-settings file the CLI reads at launch, where a
     name outside it would be written silently and exported never. The first offender is NAMED and the
     whole request refused (fail-loudly, the user 2026-07-03): a skipped var is a session quietly
-    running without the env it was asked to have. The backend validates AGAIN at spawn/set_env, so
-    drift between the two copies surfaces as its loud ValueError, never a silent divergence."""
+    running without the env it was asked to have. The backend validates AGAIN: spawn backs this
+    door with its loud ValueError, but set_env re-checks and refuses with a silent False its
+    callers discard — so on the existing:true path drift between the two copies would be a 200
+    with an env echo and nothing applied. This copy MUST stay in lockstep with
+    sdk_backend.env_request_error, pinned by test_session_env's ValidatorLockstep."""
     if not isinstance(env, dict):
         return "env must be an object of NAME: value pairs"
     for k, v in env.items():
@@ -4634,6 +4637,12 @@ def _env_error(env):
             return "env: bad name %r — names match [A-Za-z_][A-Za-z0-9_]*" % (k,)
         if not isinstance(v, str):
             return "env: the value for %r must be a string" % (k,)
+        if "\x00" in v:
+            # NUL only — newlines and other control bytes are legitimate env content. An execve
+            # envp entry is a NUL-terminated C string, so this value is unfulfillable BY DEFINITION:
+            # accepted, it bakes into the reg a var the CLI can only truncate or throw on, either
+            # way diverging from what /new echoed as applied.
+            return "env: the value for %r contains a NUL byte — no process environment can carry one" % (k,)
     return ""
 
 
@@ -4654,8 +4663,10 @@ def _apply_new_session_prefs(sid, body):
     m = str((body or {}).get("model") or "").strip()
     e = str((body or {}).get("effort") or "").strip()
     ev = (body or {}).get("env")
-    ev = ev if isinstance(ev, dict) and ev else None
-    if not (m or e or ev):
+    ev = ev if isinstance(ev, dict) else None
+    # an EXPLICIT {} is asked (the clear-all declaration — set_env replaces, so {} clears);
+    # only an absent/non-dict env is "not asked".
+    if not (m or e) and ev is None:
         return out
     try:
         be = Sessions.backend_for(str(sid))
@@ -4669,7 +4680,7 @@ def _apply_new_session_prefs(sid, body):
     if e:
         _set_effort_or_park(be, str(sid), e)
         out["effort"] = e
-    if ev and hasattr(be, "set_env"):
+    if ev is not None and hasattr(be, "set_env"):
         _set_env_or_park(be, str(sid), dict(ev))
         out["env"] = dict(ev)
     _push_soon()
@@ -24950,8 +24961,13 @@ class Handler(BaseHTTPRequestHandler):
                         "session names use letters, digits, . _ - only"}), "application/json")
                 # env is validated HERE, before anything is created: a bad payload refuses the WHOLE
                 # request (fail-loudly) — never a session spawned quietly missing the env it asked for.
-                # Absent / empty / null all mean "not asked" (the model/effort empty-skip contract).
-                env_req = (b or {}).get("env") or None
+                # Absent and null mean "not asked" (the model/effort empty-skip contract). An EXPLICIT
+                # {} is the clear-all declaration: set_env is replace-not-merge (a re-run declares the
+                # full env the session should have), and {} is that contract's limiting case — the only
+                # way to remove a spawn-time var from a running session. Every OTHER value goes through
+                # the validator, so falsy junk (false, 0, "", []) 400s instead of being silently
+                # swallowed as "not asked" while the caller reads ok:true as the env applying.
+                env_req = (b or {}).get("env")
                 if env_req is not None:
                     eerr = _env_error(env_req)
                     if eerr:
@@ -24965,7 +24981,7 @@ class Handler(BaseHTTPRequestHandler):
                                       "application/json")
                 live = _live_names(_tmux_sessions())
                 if nm in live:
-                    if env_req:
+                    if env_req is not None:
                         # env rides the per-sid flag-settings file, which only the SDK backend hands
                         # its CLI — a live tmux session can't take it, and dropping it silently would
                         # leave this machine believing an env the session never saw.
@@ -24990,7 +25006,7 @@ class Handler(BaseHTTPRequestHandler):
                     extra = _apply_new_session_prefs(sid, b)
                     return self._send(200, json.dumps({"ok": True, "id": sid, "dir": cwd, **extra}),
                                       "application/json")
-                if env_req:
+                if env_req is not None:
                     return self._send(200, json.dumps({"ok": False, "error":
                         "per-session env needs the SDK backend — a tmux session's CLI reads the "
                         "tmux server's environment"}), "application/json")

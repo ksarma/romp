@@ -94,6 +94,17 @@ class EnvRequestError(unittest.TestCase):
             self.assertIn("FEATURE_FLAG", err,
                           "the offending NAME must be in the error (fail loudly): %r" % (bad,))
 
+    def test_a_nul_byte_in_a_value_is_named(self):
+        # an execve envp entry is a NUL-terminated C string, so a NUL value is unfulfillable by
+        # definition — accepted, it bakes an env the CLI can only truncate or throw on into the reg
+        err = sb.env_request_error({"FEATURE_FLAG": "1\x00x"})
+        self.assertIn("FEATURE_FLAG", err, "the offending NAME must be in the error")
+        self.assertIn("NUL", err, "the error names the actual problem")
+
+    def test_other_control_bytes_stay_legitimate(self):
+        self.assertEqual(sb.env_request_error({"FEATURE_FLAG": "line1\nline2\ttabbed"}), "",
+                         "NUL only — newlines and tabs are legitimate env content")
+
 
 class FlagSettingsEnv(unittest.TestCase):
     """flag_settings_path folds env in beside ultracode/fastMode; the ""-when-empty contract stands."""
@@ -121,6 +132,31 @@ class FlagSettingsEnv(unittest.TestCase):
         self.assertEqual(sb.flag_settings_path(self.d, PARENT, env=None), "")
         self.assertEqual(sb.flag_settings_path(self.d, PARENT, env={}), "",
                          "an empty env adds no key — the no-keys contract is the common case")
+
+    def test_an_unwritable_dir_degrades_loudly(self):
+        # a plain FILE where the flag-settings dir goes forces the OSError (os.makedirs raises)
+        Path(self.d, sb.FLAG_SETTINGS_DIR).write_text("not a directory")
+        logged = []
+        p = sb.flag_settings_path(self.d, PARENT, env=ENV,
+                                  log=lambda msg, problem=False: logged.append((msg, problem)))
+        self.assertEqual(p, "", "degrade to launch — a session without its env still beats none")
+        self.assertEqual(len(logged), 1)
+        msg, problem = logged[0]
+        self.assertTrue(problem, "the drop is a problem row, not a quiet info line")
+        self.assertIn("env", msg, "the log names the dropped keys")
+        self.assertIn(PARENT, msg, "the log names whose launch went without them")
+
+    def test_the_oserror_path_stays_quiet_without_a_logger(self):
+        Path(self.d, sb.FLAG_SETTINGS_DIR).write_text("not a directory")
+        self.assertEqual(sb.flag_settings_path(self.d, PARENT, env=ENV), "",
+                         "log=None (direct callers) must neither raise nor change the '' contract")
+
+    def test_no_keys_asked_means_no_log_even_on_a_bad_dir(self):
+        Path(self.d, sb.FLAG_SETTINGS_DIR).write_text("not a directory")
+        logged = []
+        self.assertEqual(
+            sb.flag_settings_path(self.d, PARENT, log=lambda *a, **k: logged.append(a)), "")
+        self.assertEqual(logged, [], "nothing requested, nothing dropped — nothing to report")
 
 
 class SpawnEnv(_Backend):
@@ -187,6 +223,19 @@ class OptionsThreadsEnv(_Backend):
                          "the file is rewritten from the session on EVERY use — a reconnect "
                          "re-asserts the env by construction, never trusts what's on disk")
 
+    def test_a_failed_flag_write_degrades_loudly_through_options(self):
+        # the connect-time seam: /new already echoed the env as applied, so a write failure here
+        # must reach the Log as a problem — the session launching without its env is otherwise
+        # invisible to every surface (no readback channel)
+        sid = self.be.spawn("web", "/tmp", env=ENV)
+        Path(self.be.state_dir, sb.FLAG_SETTINGS_DIR).write_text("not a directory")
+        logged = []
+        self.be._log = lambda msg, problem=False: logged.append((msg, problem))
+        kw = self._options_kw(self._sess(sid))
+        self.assertNotIn("settings", kw, "degrade to launch, never abort the connect")
+        self.assertTrue(any(problem and "env" in msg for msg, problem in logged),
+                        "the drop must land in the Log as a problem naming env: %r" % (logged,))
+
 
 class SetEnv(_Backend):
     """set_env: set_effort's persist+reconnect shape, minus the UI slice's badge/chip machinery."""
@@ -227,6 +276,27 @@ class SetEnv(_Backend):
         self.assertEqual(self._reg(sid)["env"], ENV, "a refused payload must not half-apply")
         self.assertFalse(self.be.set_env(CHILD, ENV), "no reg, no session — refuse, don't mint")
 
+    def test_refuses_a_nul_value(self):
+        sid = self.be.spawn("web", "/tmp", env=ENV)
+        self.assertFalse(self.be.set_env(sid, {"FEATURE_FLAG": "1\x00x"}),
+                         "a NUL value is unfulfillable — refuse, never persist it into the reg")
+        self.assertEqual(self._reg(sid)["env"], ENV, "the poisoned payload must not half-apply")
+
+    def test_an_explicit_empty_dict_clears_and_reconnects(self):
+        # the replace-not-merge contract's limiting case: {} DECLARES "no per-session env" —
+        # the only way to remove a spawn-time debugging var from a running session
+        sid = self.be.spawn("web", "/tmp", env=ENV)
+        s = self._live(sid)
+        self.assertTrue(self.be.set_env(sid, {}))
+        self.assertEqual(self._reg(sid)["env"], {}, "the empty declaration replaces the whole set")
+        self.assertEqual(s.env_vars, {})
+        self.assertTrue(self.reconnects, "clearing is a CHANGE — it applies by reconnecting")
+        self.assertEqual(sb.flag_settings_path(self.be.state_dir, sid, env=s.env_vars), "",
+                         "cleared env adds no key — the next connect launches without a flag file")
+        self.reconnects.clear()
+        self.assertTrue(self.be.set_env(sid, {}), "re-clearing is the unchanged re-assert")
+        self.assertFalse(self.reconnects, "already clear = nothing to apply, no CLI churn")
+
     def test_a_dormant_session_persists_without_a_live_object(self):
         sid = self.be.spawn("web", "/tmp")
         self.assertTrue(self.be.set_env(sid, ENV))
@@ -255,6 +325,44 @@ class ForkInheritsEnv(_Backend):
             self.assertNotIn("env", self._reg(CHILD))
         finally:
             os.environ.pop("CLAUDE_CONFIG_DIR", None)
+
+
+class ValidatorLockstep(unittest.TestCase):
+    """_env_error (the /new door's kernel-side mirror) and env_request_error are hand-kept copies.
+    Spawn backs the door with a loud ValueError, but set_env refuses with a silent False its callers
+    discard — so drift between the copies on the existing:true path would be a 200 with an env echo
+    and NOTHING applied. This pin is the backstop the door docstring cites: identical verdicts
+    (messages included) across the whole good/bad payload table, so loosening one copy fails here
+    instead of going silent."""
+
+    PAYLOADS = (
+        # valid: plain, underscore/empty-value, the vacuous empty declaration
+        {"FEATURE_FLAG": "1"}, {"_UNDER": "x", "A9": ""}, {},
+        # non-dicts, truthy and falsy alike (the door 400s all of them)
+        "FEATURE_FLAG=1", ["FEATURE_FLAG"], 7, None, False, 0, "", [],
+        # bad names
+        {"9BAD": "1"}, {"": "1"}, {"BAD-NAME": "1"}, {"BAD NAME": "1"}, {"über": "1"},
+        # bad values, the NUL hole included
+        {"FEATURE_FLAG": 1}, {"FEATURE_FLAG": None}, {"FEATURE_FLAG": True},
+        {"FEATURE_FLAG": {"nested": "no"}}, {"FEATURE_FLAG": "1\x00x"},
+    )
+
+    @staticmethod
+    def _kernel():
+        import sys
+        if "romp_kernel" in sys.modules:
+            return sys.modules["romp_kernel"]
+        # the kernel imports its deps by these exact module names (the test_new_route_prefs pattern)
+        for name, fn in (("romp_event_model", "romp-event-model"), ("romp_judge", "romp-judge")):
+            if name not in sys.modules:
+                SourceFileLoader(name, os.path.join(BIN, fn)).load_module()
+        return SourceFileLoader("romp_kernel", os.path.join(BIN, "romp-kernel")).load_module()
+
+    def test_the_two_validator_copies_agree_verdict_for_verdict(self):
+        km = self._kernel()
+        for payload in self.PAYLOADS:
+            self.assertEqual(km._env_error(payload), sb.env_request_error(payload),
+                             "the copies must stay in lockstep — payload %r" % (payload,))
 
 
 class DrivePlumbing(unittest.TestCase):

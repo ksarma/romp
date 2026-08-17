@@ -1105,7 +1105,43 @@ PY
     ROMP_KERNEL_PORT="$(cat "$TEST_DIR/port")" run run_romp new --model claude-fable-5 opt
     kill "$srv" 2>/dev/null || true
     [ "$status" -eq 0 ]
-    [[ "$output" == *"did not acknowledge --model/--effort"* ]]
+    # per-asked-key: only --model was asked, so only --model is named as dropped
+    [[ "$output" == *"did not acknowledge --model (older kernel?)"* ]]
+}
+
+@test "new --model + --env: a kernel that acks model but drops env warns about --env specifically" {
+    command -v python3 >/dev/null 2>&1 || skip "python3 not available"
+    touch "$MOCK_LOG"
+    mkdir -p "$XDG_STATE_HOME/romp"
+    printf 'tok-test' > "$XDG_STATE_HOME/romp/serve-token"
+    # fake OLDER kernel mid-window: echoes model (a key it knows) but silently ignores env — the
+    # guaranteed self-hosting shape between merging env support and `romp refresh`. The old
+    # all-or-nothing check read this partial ack as full success and the env drop went unsaid.
+    python3 - "$TEST_DIR/port" <<'PY' &
+import sys, json
+from http.server import BaseHTTPRequestHandler, HTTPServer
+portfile = sys.argv[1]
+class H(BaseHTTPRequestHandler):
+    def do_POST(self):
+        body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
+        out = json.dumps({"ok": True, "id": "11111111-2222-3333-4444-555555555555",
+                          "model": body.get("model")}).encode()
+        self.send_response(200); self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(out))); self.end_headers()
+        self.wfile.write(out)
+    def log_message(self, *a): pass
+srv = HTTPServer(("127.0.0.1", 0), H)
+with open(portfile, "w") as f:
+    f.write(str(srv.server_address[1]))
+srv.handle_request()
+PY
+    local srv=$!
+    until [ -s "$TEST_DIR/port" ]; do sleep 0.05; done
+    ROMP_KERNEL_PORT="$(cat "$TEST_DIR/port")" run run_romp new --model claude-fable-5 --env FEATURE_FLAG=1 envy
+    kill "$srv" 2>/dev/null || true
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"applied model claude-fable-5"* ]]
+    [[ "$output" == *"did not acknowledge --env (older kernel?)"* ]]
 }
 
 @test "new --model with -t refuses loudly (SDK-only flags), and starts nothing" {
@@ -1138,7 +1174,7 @@ class H(BaseHTTPRequestHandler):
         with open(log, "w") as f:
             json.dump({"path": self.path, "body": body}, f)
         out = {"ok": True, "id": "11111111-2222-3333-4444-555555555555"}
-        if body.get("env"):
+        if "env" in body:              # echo whenever ASKED — {} (the clear declaration) included
             out["env"] = body["env"]
         out = json.dumps(out).encode()
         self.send_response(200); self.send_header("Content-Type", "application/json")
@@ -1204,9 +1240,24 @@ PY
     [ "$(grep -c 'tmux new-session' "$MOCK_LOG")" -eq 0 ]
 }
 
+@test "new --no-env sends the explicit empty declaration and reports the clear as applied" {
+    command -v python3 >/dev/null 2>&1 || skip "python3 not available"
+    touch "$MOCK_LOG"
+    _env_fake_kernel
+    ROMP_KERNEL_PORT="$(cat "$TEST_DIR/port")" run run_romp new --no-env envy
+    kill "$_env_srv" 2>/dev/null || true
+    [ "$status" -eq 0 ]
+    grep -q '"env": {}' "$TEST_DIR/req.log"
+    [[ "$output" == *"applied env cleared"* ]]
+    [[ "$output" != *"WARNING"* ]]
+}
+
 @test "new --env with -t refuses loudly (SDK-only flags), and starts nothing" {
     touch "$MOCK_LOG"
     run run_romp new -t --env FEATURE_FLAG=1 x
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"need the default (SDK) session"* ]]
+    run run_romp new -t --no-env x
     [ "$status" -eq 2 ]
     [[ "$output" == *"need the default (SDK) session"* ]]
     [ "$(grep -c 'tmux new-session' "$MOCK_LOG")" -eq 0 ]

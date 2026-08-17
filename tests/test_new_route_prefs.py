@@ -185,6 +185,34 @@ class NewRouteEnv(unittest.TestCase):
         self.assertEqual(code, 400)
         self.assertIn("FEATURE_FLAG", body["error"], "the offender is named — fail loudly")
 
+    def test_falsy_junk_env_refuses_not_swallowed(self):
+        # `or None` used to collapse ALL falsy values to "not asked": a script serializing env as
+        # false/0/"" got an acked spawn silently missing its env — 0 skipped while 1 400'd
+        for junk in (False, 0, "", []):
+            code, body = self._post({"name": "opt", "dir": self.dir, "env": junk})
+            self.assertEqual(code, 400, "falsy junk %r must 400, not spawn env-less" % (junk,))
+            self.assertFalse(body["ok"])
+            self.assertIn("env", body["error"], "the refusal names the offending key")
+        self.assertEqual(self.created, [], "nothing may be created on a refused request")
+        self.assertEqual(self.calls, [])
+
+    def test_null_env_still_means_not_asked(self):
+        code, body = self._post({"name": "opt", "dir": self.dir, "env": None})
+        self.assertEqual(code, 200)
+        self.assertTrue(body["ok"])
+        self.assertEqual(self.created, [("opt", "", None)], "null = absent, the don't-touch contract")
+        self.assertNotIn("env", body)
+        self.assertEqual(self.calls, [])
+
+    def test_a_nul_byte_in_a_value_refuses(self):
+        code, body = self._post({"name": "opt", "dir": self.dir, "env": {"X": "a\x00b"}})
+        self.assertEqual(code, 400, "a NUL value is unfulfillable by any process environment")
+        self.assertFalse(body["ok"])
+        self.assertIn("X", body["error"], "the offender is named — fail loudly")
+        self.assertIn("NUL", body["error"])
+        self.assertEqual(self.created, [])
+        self.assertEqual(self.calls, [])
+
     def test_env_is_born_into_the_spawn_and_echoed(self):
         code, body = self._post({"name": "opt", "dir": self.dir, "env": {"FEATURE_FLAG": "1"}})
         self.assertEqual(code, 200)
@@ -212,6 +240,26 @@ class NewRouteEnv(unittest.TestCase):
         self.assertEqual(self.calls, [("env", SID, {"FEATURE_FLAG": "1"})],
                          "re-asserted if <name> already runs — the model/effort contract")
         self.assertEqual(body.get("env"), {"FEATURE_FLAG": "1"})
+
+    def test_an_explicit_empty_env_clears_a_running_session(self):
+        # the clear-all door: {} is the replace-not-merge contract's limiting case (a re-run
+        # declares the FULL env, and the empty declaration is "none") — before this, a spawn-time
+        # debugging var could never be removed from a running session, only overwritten
+        km._live_names = lambda *_: {"opt": SID}
+        code, body = self._post({"name": "opt", "dir": self.dir, "env": {}})
+        self.assertEqual(code, 200)
+        self.assertTrue(body["ok"] and body["existing"])
+        self.assertEqual(self.calls, [("env", SID, {})],
+                         "an explicit {} must reach set_env, which clears by replacing")
+        self.assertEqual(body.get("env"), {}, "the clear ask is echoed like any other env ask")
+
+    def test_an_explicit_empty_env_on_a_fresh_spawn_is_vacuous_but_echoed(self):
+        code, body = self._post({"name": "opt", "dir": self.dir, "env": {}})
+        self.assertEqual(code, 200)
+        self.assertTrue(body["ok"])
+        self.assertEqual(self.created, [("opt", "", {})],
+                         "spawn's own `if env:` makes the empty declaration naturally vacuous")
+        self.assertEqual(body.get("env"), {})
 
     def test_an_existing_tmux_session_refuses_loudly(self):
         km._live_names = lambda *_: {"opt": SID}
