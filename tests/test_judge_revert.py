@@ -8,6 +8,7 @@ durable override journal). All fixtures are SYNTHETIC (placeholder UUIDs, invent
 import os
 import tempfile
 import threading
+import time
 import unittest
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
@@ -201,19 +202,47 @@ class RebaseTombstones(RevertBase):
 
     def test_an_undo_clear_journal_restore_pops_the_tombstone(self):
         # a user restore outranks the marker: the journal re-inserts the node AND clears its
-        # tombstone, so the next rebase does not silently re-delete what the user brought back
+        # tombstone — and STAMPS rewindRestored, so the next rebase (which re-unions the stale
+        # disk marker) orders the two events and lets the restore win instead of re-deleting
+        # what the user brought back. The row's t postdates the sweep, as any real restore does
+        # (both are wall-clock event times; the ordering is exactly what the stamps encode).
         doomed = self._seed()
         jd.drop_goals_after(SID, CUT)
         arch = jd.load_goal_archive(SID)
         payload = dict(arch["nodes"].pop(doomed))     # the undo pulled it OUT of the archive…
         jd.save_goal_archive(SID, arch)
-        jd.append_restore(SID, {doomed: payload}, {}, T0 + 300)   # …and journaled the payload
+        rt = int(time.time()) + 10                    # …after the sweep, as restores always are
+        jd.append_restore(SID, {doomed: payload}, {}, rt)   # …and journaled the payload
         live = jd.load_goals(SID)                     # replay re-inserts (in neither store nor archive)
         self.assertIn(doomed, live["nodes"])
         self.assertNotIn(doomed, live.get("rewindSwept", {}), "the restore popped the tombstone")
+        self.assertEqual(live.get("rewindRestored", {}).get(doomed), rt,
+                         "…and left the durable restore stamp in its place")
         jd.save_goals(SID, live)                      # a follow-on rebase cycle must not re-delete it
         again = jd.load_goals(SID)
         self.assertIn(doomed, again["nodes"])
+
+    def test_a_stale_writer_cannot_resurrect_a_popped_tombstone_after_a_restore(self):
+        # a pass holds a pre-restore snapshot (marker present, node swept) across a 30-80s model
+        # call; the user restores; the pass publishes. Its stale marker re-unions — the restore
+        # stamp must neutralize it, or the just-restored node is re-killed and ends in NEITHER
+        # file (the review reproduced exactly that: marker back, node gone, archive empty).
+        doomed = self._seed()
+        jd.drop_goals_after(SID, CUT)
+        stale = jd.load_goals(SID)                    # the pass's snapshot: marker present, node gone
+        arch = jd.load_goal_archive(SID)              # the user restores via the journal (the
+        payload = dict(arch["nodes"].pop(doomed))     # kernel undo-clear's exact moves)
+        jd.save_goal_archive(SID, arch)
+        jd.append_restore(SID, {doomed: payload}, {}, int(time.time()) + 10)
+        live = jd.load_goals(SID)
+        self.assertIn(doomed, live["nodes"], "premise: the restore landed")
+        jd.save_goals(SID, live)                      # restored state published
+        stale["nodes"][self._nid(1)]["mt"] = T0 + 5   # the stale pass did unrelated work…
+        jd.save_goals(SID, stale)                     # …and publishes across the restore
+        after = jd.load_goals(SID)
+        self.assertIn(doomed, after["nodes"], "the stale marker lost to the restore stamp")
+        # and the node is in exactly one place — never resident in live AND archive at once
+        self.assertNotIn(doomed, jd.load_goal_archive(SID)["nodes"])
 
 
 if __name__ == "__main__":

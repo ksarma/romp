@@ -15527,15 +15527,21 @@ def _restore_goal_archive(item_ids):
             # exist only in the live store's save — a stale triage-pass save racing it would drop them from
             # BOTH files, permanently. The journal carries the node payloads; jd.load_goals re-inserts any
             # that end up in neither file (and defers to the archive if the user re-clears later).
+            rt = int(time.time())
             jd.append_restore(sid, {nid: a_nodes[nid] for nid in move},
-                              {nid: a_status[nid] for nid in move if nid in a_status}, int(time.time()))
+                              {nid: a_status[nid] for nid in move if nid in a_status}, rt)
             for nid in move:
                 nodes[nid] = a_nodes.pop(nid)
                 if nid in a_status:
                     status[nid] = a_status.pop(nid)
-                (store.get("rewindSwept") or {}).pop(nid, None)   # the user's restore outranks a rewind
-                #                                       tombstone (jd._rebase_onto_disk would otherwise
-                #                                       re-delete the restored node on the next rebase)
+                if (store.get("rewindSwept") or {}).pop(nid, None) is not None:
+                    # the user's restore outranks a rewind tombstone — pop AND stamp (the same rt the
+                    # journal row carries, so the replay derives the identical stamp): the pop keeps
+                    # jd._rebase_onto_disk from re-deleting the node on the next rebase, the durable
+                    # stamp survives a stale writer re-unioning its old marker AND stands the node
+                    # down from the identity-keyed reconciliation (boot memo resets, later sig
+                    # changes) for good — the branch's death can never be new information again.
+                    store.setdefault("rewindRestored", {})[nid] = rt
             # (Sticky completion restore lives in _mark_nodes_cleared now — 2026-07-07: the settle event must
             # land AFTER the undo reopen it records, or the fold consumes it and the card returns to Working.)
             jd.save_goals(sid, store)

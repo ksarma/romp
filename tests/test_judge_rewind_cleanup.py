@@ -633,6 +633,37 @@ class ReconcileRewoundGoals(Base):
         self.assertEqual(jd.reconcile_rewound_goals(SID, str(self.path), T0 + 200), 0)
         self.assertIn(nid, jd.load_goals(SID)["nodes"])
 
+    def test_a_user_restored_card_survives_boot_and_later_rewind_re_reconciles(self):
+        # The restore pops the tombstone, but the branch stays "rewind" in the graph forever and
+        # _RECON_MEMO is process memory: every kernel restart (memo reset) and any later unrelated
+        # rewind (sig change) re-ran the full sweep and re-archived the card the user deliberately
+        # brought back — a card move on ZERO new information. The restore's durable stamp stands
+        # the node down from the identity-keyed sweep for good.
+        self.write(self.base_recs() + self.fork_recs())
+        s = self._store()
+        self._mint(s, "seg-dead", CUT, "Zombie the user wants kept", "u2")
+        jd.save_goals(SID, s)
+        nid = "%s:g1" % SID
+        self.assertEqual(jd.reconcile_rewound_goals(SID, str(self.path), T0 + 200), 1)
+        arch = jd.load_goal_archive(SID)               # the user restores it (the undo-clear moves:
+        payload = dict(arch["nodes"].pop(nid))         # out of the archive, journaled, replayed)
+        jd.save_goal_archive(SID, arch)
+        jd.append_restore(SID, {nid: payload}, {}, T0 + 300)
+        live = jd.load_goals(SID)
+        self.assertIn(nid, live["nodes"], "premise: the restore landed")
+        jd.save_goals(SID, live)
+        jd._RECON_MEMO.clear()                         # a kernel restart resets the event gate
+        self.assertEqual(jd.reconcile_rewound_goals(SID, str(self.path), T0 + 400), 0,
+                         "the boot re-check moves nothing — the restore is durable")
+        self.assertIn(nid, jd.load_goals(SID)["nodes"])
+        self.append([uline(T0 + 90, "more work on the new branch", "u4", "a3"),
+                     aline(T0 + 95, "More new-branch work, settled.", "a4", "u4"),
+                     uline(T0 + 120, "rewriting that", "u5", "a3"),
+                     aline(T0 + 125, "Reply after the second rewind.", "a5", "u5")])
+        self.assertEqual(jd.reconcile_rewound_goals(SID, str(self.path), T0 + 500), 0,
+                         "an unrelated later rewind's sig change does not re-take it either")
+        self.assertIn(nid, jd.load_goals(SID)["nodes"])
+
     def test_a_pending_unconsumed_cut_is_not_reconciled(self):
         # the two-phase hold owns the armed window (hide now, archive at take, RESTORE on failure) —
         # reconciling it would archive cards for a rewind that can still fail

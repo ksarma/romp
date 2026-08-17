@@ -2132,15 +2132,30 @@ def _rebase_onto_disk(fsid, store):
     # record; unseen diary rows on a stale twin drop with it — the pre-sweep archive copy is the
     # kept truth). Both orderings need this: a pre-sweep loader saving post-sweep reads the marker
     # from DISK; the sweep's own save rebasing over a mid-flight publish reads its OWN. The union
-    # is folded back so the marker itself survives the rebase. An undo-clear restore pops its ids
-    # (kernel _restore_goal_archive + the journal replay), so a user-restored node is not re-deleted.
+    # is folded back so the marker itself survives the rebase.
+    #
+    # A user restore does NOT merely pop the marker (a pop is not durable: a writer whose snapshot
+    # predates the restore re-unions its stale marker right back and re-kills the node the user just
+    # brought back — proven by the review). Both restore sites pop AND stamp store-level
+    # rewindRestored[nid] = restore time; both maps union max-per-nid here, and a marker whose
+    # restore stamp is at/after its sweep stamp is NEUTRALIZED (restore wins ties: the user gesture
+    # outranks a same-second sweep). Both maps persist — ordered durable events, so any ordering of
+    # stale writers converges. A RE-sweep pops the restore stamp (archive_goal_nodes), so a genuinely
+    # newer rewind still deletes.
     swept = dict(disk.get("rewindSwept") or {})
-    swept.update(store.get("rewindSwept") or {})
+    for k, v in (store.get("rewindSwept") or {}).items():
+        swept[k] = max(int(v or 0), int(swept.get(k) or 0))
+    restored = dict(disk.get("rewindRestored") or {})
+    for k, v in (store.get("rewindRestored") or {}).items():
+        restored[k] = max(int(v or 0), int(restored.get(k) or 0))
+    eff = {k for k, v in swept.items() if int(restored.get(k) or -1) < int(v)}   # the markers in force
     if swept:
         store["rewindSwept"] = swept
-        for nid in [n for n in list(m_nodes) if n in swept]:
-            m_nodes.pop(nid)
-            store.get("status", {}).pop(nid, None)
+    if restored:
+        store["rewindRestored"] = restored
+    for nid in [n for n in list(m_nodes) if n in eff]:
+        m_nodes.pop(nid)
+        store.get("status", {}).pop(nid, None)
 
     def _fold_log(dead, surv):
         seen = {(e.get("ev_t"), e.get("src"), e.get("kind")) for e in (surv.get("log") or [])}
@@ -2158,7 +2173,7 @@ def _rebase_onto_disk(fsid, store):
             _fold_log(dead, surv)
         store.get("status", {}).pop(nid, None)
     for nid, dnd in d_nodes.items():
-        if nid in swept:                             # rewind-swept on either side → never re-adopted
+        if nid in eff:                               # rewind-swept (and not since restored) → never re-adopted
             continue
         mnd = m_nodes.get(nid)
         if mnd is None:
@@ -2303,9 +2318,14 @@ def _replay_overrides(fsid, store):
                 if nid in store.get("nodes", {}) or nid in arch_nodes:
                     continue                           # alive, or re-cleared into the archive → nothing lost
                 store.setdefault("nodes", {})[nid] = GuardedNode(dict(nddata))
-                (store.get("rewindSwept") or {}).pop(nid, None)   # a user restore outranks the rewind
-                #                                       tombstone — without this the next save-rebase
-                #                                       would re-delete what the journal just re-inserted
+                if (store.get("rewindSwept") or {}).pop(nid, None) is not None:
+                    # a user restore outranks the rewind tombstone — pop AND stamp: the pop keeps the
+                    # next save-rebase from re-deleting what the journal just re-inserted, and the
+                    # stamp (the journal row's own t, so every replay derives the same value) makes
+                    # the restore durable against a stale writer re-unioning its old marker, and
+                    # stands the node down from the identity-keyed reconciliation for good (its
+                    # branch's death can never be new information again).
+                    store.setdefault("rewindRestored", {})[nid] = t
                 applied = True
                 st = (ev.get("status") or {}).get(nid)
                 if st is not None:
@@ -2557,7 +2577,9 @@ def drop_goals_after(fsid, cut_t, kept=None):
     move = swept_ids(store, cut_t, kept=kept)
     if not move:
         return 0
-    archive_goal_nodes(fsid, store, move, cut_t)
+    archive_goal_nodes(fsid, store, move, int(time.time()))   # stamp = the SWEEP event's time, never
+    #                                       cut_t: the tombstone-vs-restore ordering compares event
+    #                                       stamps, and the cut record's time predates everything
     return len(move)
 
 
@@ -2565,9 +2587,12 @@ def archive_goal_nodes(fsid, store, move, tomb_t):
     """Move `move` (node ids) + their status rows out of the LIVE store into goals-archive/, leaving a
     rewindSwept tombstone per id so no concurrent save-rebase republishes them (the mergedFrom lesson,
     2026-08-13, applied to rewinds 2026-08-17: presence-in-a-snapshot is not truth — proven five times
-    in live stores, nodes resident in live AND archive at once). Tombstones are never pruned: entries
-    are rare and an undo-clear restore pops its own. Re-points lastNode at the newest survivor (a
-    dangling focus would prematurely settle the pre-cut focus card), re-rolls status (removing a
+    in live stores, nodes resident in live AND archive at once). `tomb_t` is the SWEEP EVENT's time
+    (the rebase orders it against rewindRestored stamps — a user restore neutralizes an older marker,
+    a newer sweep outranks an older restore, so this pops any restore stamp its ids carry). Tombstones
+    are never pruned: entries are rare and an undo-clear restore pops its own. Re-points lastNode at
+    the newest survivor (a dangling focus would prematurely settle the pre-cut focus card), re-rolls
+    status (removing a
     blocked SUB changes its surviving parent's rollup), re-parents any spared child of an archived
     node at its nearest unmoved ancestor (both selections spare provably live-branch children now,
     and a dangling parentId loses the node from every walk that starts at the roots), saves both
@@ -2589,6 +2614,7 @@ def archive_goal_nodes(fsid, store, move, tomb_t):
             if nid in status:
                 a_status[nid] = status.pop(nid)
             swept[nid] = int(tomb_t)
+            (store.get("rewindRestored") or {}).pop(nid, None)   # a NEW sweep outranks an old restore
         arch["rompUuid"] = store.get("rompUuid", fsid)
         save_goal_archive(fsid, arch)
         for nid, nd in nodes.items():                  # spared survivors of archived parents stay reachable
@@ -2619,22 +2645,29 @@ def _dead_branch_ids(store, rewind_set, kept_set=frozenset()):
     - AUTHORITATIVE-OPEN EXEMPTION: a node whose agentTask is open — and its ancestors, so nothing
       dangles — stays: the live task store pins that card working (Path E is left as-is by decision;
       the agent may genuinely still hold the to-do, and archiving it would just re-mint a fresh
-      mirror next pass while losing the diary)."""
+      mirror next pass while losing the diary).
+    - USER-RESTORED EXEMPTION: a node carrying a rewindRestored stamp (the user pulled it back out
+      of a rewind sweep's archive) is never re-taken — not directly, not by the drag, not as an
+      umbrella. Its branch's death strictly predates the restore gesture, so re-archiving it moves
+      a card on ZERO new information (the boot memo reset and any later sig change both replayed
+      exactly that, per the review). A genuinely NEW sweep pops the stamp (archive_goal_nodes), so
+      this never shields a node from fresh evidence."""
     nodes = store.get("nodes") or {}
+    restored = store.get("rewindRestored") or {}
     kids = {}
     for nid, nd in nodes.items():
         kids.setdefault(nd.get("parentId"), []).append(nid)
     move = set()
     for nid, nd in nodes.items():
         pu = nd.get("promptUuid")
-        if pu and pu in rewind_set and not nd.get("mergedFrom"):
+        if pu and pu in rewind_set and not nd.get("mergedFrom") and nid not in restored:
             move.add(nid)
     stack = list(move)
-    while stack:                                       # subtree drag, stopping at kept-anchored children
+    while stack:                                       # subtree drag, stopping at kept/restored children
         for c in kids.get(stack.pop(), []):
             cpu = (nodes.get(c) or {}).get("promptUuid")
-            if cpu and cpu in kept_set:
-                continue                               # provably live-branch work → survives the drag
+            if (cpu and cpu in kept_set) or c in restored:
+                continue                               # provably live / user-restored → survives the drag
             if c not in move:
                 move.add(c)
                 stack.append(c)
@@ -2642,7 +2675,7 @@ def _dead_branch_ids(store, rewind_set, kept_set=frozenset()):
     while changed:                                     # umbrella drag, to a fixpoint (nested shells)
         changed = False
         for nid, nd in nodes.items():
-            if nid in move or nd.get("promptUuid") or nd.get("mergedFrom"):
+            if nid in move or nd.get("promptUuid") or nd.get("mergedFrom") or nid in restored:
                 continue
             ch = kids.get(nid) or []
             if ch and all(c in move for c in ch):
