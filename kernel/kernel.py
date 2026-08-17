@@ -12550,9 +12550,31 @@ def _rewind_hold_get(sid):
 
 def _rewind_hold_clear(sid):
     m = _rewind_holds_map()
+    _rewind_kept_memo.pop(str(sid), None)              # the memo and the once-per-hold error latch
+    _rewind_kept_err.pop(str(sid), None)               # live exactly as long as the hold does
     with _rewind_holds_lock:
         if m.pop(str(sid), None) is not None:
             _rewind_holds_save()
+
+
+_rewind_kept_memo = {}   # sid -> (input key, kept set) — see _rewind_kept_uuids
+_rewind_kept_err = {}    # sid -> the armed hold's `at` already complained about: the loud degrade
+#                          is once per HOLD, not once per build (a >48h bare hold used to append
+#                          one judge-errors row per ~5s feed rebuild, unbounded, with no dedup)
+_REWIND_ERR_MISS = object()
+
+
+def _rewind_kept_complain(sid, note):
+    """One 'rewind-kept' row per armed hold: the view rebuilds every few seconds for the whole
+    armed window (unbounded on a bare delete), and a lookup that fails once fails every build —
+    the degrade must stay LOUD without judge-errors.jsonl growing by ~17k rows/day. Keyed on the
+    hold's arm time so a NEW hold complains anew; no hold (the one-shot take path) always logs."""
+    hold = _rewind_hold_get(sid)
+    at = (hold or {}).get("at")
+    if hold is not None and _rewind_kept_err.get(str(sid), _REWIND_ERR_MISS) == at:
+        return
+    _rewind_kept_err[str(sid)] = at
+    jd._log_judge_error("romp", sid, "rewind-kept", note=note)
 
 
 def _rewind_kept_uuids(sid):
@@ -12561,13 +12583,40 @@ def _rewind_kept_uuids(sid):
     sweep (jd.swept_ids / jd.drop_goals_after) so the replacement ask's own fresh card, minted by the
     judge's prompt-run DURING the open rewind turn, is never hidden or archived as if it were part of
     the abandoned tail. Returns None on ANY failure, LOUDLY: the sweep then degrades to the pure
-    t-keyed selection (the pre-fix behavior) — visible in the log, never a silent widening."""
+    t-keyed selection (the pre-fix behavior) — visible in the log (once per armed hold, see
+    _rewind_kept_complain), never a silent widening.
+
+    The session resolves through the 48h set first, then discover's cached wide walk — the exact
+    fallback _alive_sessions uses: liveness owns visibility, age owns nothing (2026-08-13). A hold
+    outlives the caption window on any bare delete left sitting (its defining property is that NO
+    record lands, freezing the transcript's mtime at arm time), and the 48h miss used to fail this
+    lookup on every build of a still-live session: a deterministic, silent widening to the bare
+    t-keyed hide, plus one error row per rebuild.
+
+    Memoized per sid on the exact inputs that can change the answer — each candidate file's
+    (mtime, size), the states file's stat (a resumeFork row lands there), and the pending cut —
+    because the hold view re-asks on EVERY feed/chat build for the whole armed window, re-walking
+    a provably unchanged transcript (~0.1s warm at tens of MB, partly inside _goals_snap_lock on
+    the mid-pass path). The branch-take busts it by construction: the take's own record moves the
+    transcript stat and consumes the cut, so the archive never sweeps against a stale kept set.
+    A FAILURE is never memoized — the loud degrade retries next build. The memo dies with the
+    hold (_rewind_hold_clear).
+
+    EDIT-REWIND CAVEAT (accepted residual): pending_cut is bare-only, so for the first seconds of
+    an EDIT rewind — until the fork record lands on disk — the kept set here is the full OLD
+    chain: promptUuid-carrying doomed cards are spared by the hold for that window (consistent
+    with the chat, which renders the same doomed tail from the same bare-only cut), and only
+    promptUuid-less mints take the t-keyed hide. The fork record landing self-heals both, and the
+    take-time archive always runs post-fork."""
     try:
         sess = next((s for s in _sessions(time.time()) if s["sid"] == sid), None)
         if not sess:
-            jd._log_judge_error("romp", sid, "rewind-kept",
-                                note="no transcript to read the kept chain from — the rewind sweep "
-                                     "degrades to the pure t-keyed selection (pre-fix behavior)")
+            ent = next((f for f in jd.discover(time.time(), window=jd.DEATH_BACKFILL_WINDOW)
+                        if f[0] == sid), None)         # the same cached wide walk _alive_sessions pays for
+            sess = {"sid": ent[0], "path": str(ent[1])} if ent else None
+        if not sess:
+            _rewind_kept_complain(sid, "no transcript to read the kept chain from — the rewind sweep "
+                                       "degrades to the pure t-keyed selection (pre-fix behavior)")
             return None
         cands = [sess["path"]]
         anchor = os.path.join(os.path.dirname(sess["path"]), sid + ".jsonl")
@@ -12580,14 +12629,32 @@ def _rewind_kept_uuids(sid):
             fn = getattr(be, "pending_cut", None)
             if fn:
                 cut = fn(sid) or ""
+        key = None
+        try:
+            fstats = []
+            for f in cands:
+                st = os.stat(f)
+                fstats.append((f, st.st_mtime, st.st_size))
+            try:
+                sst = os.stat(states)
+                skey = (sst.st_mtime, sst.st_size)
+            except OSError:
+                skey = None
+            key = (tuple(fstats), skey, cut)
+        except OSError:
+            key = None                                 # unstat-able inputs → compute, never cache
+        memo = _rewind_kept_memo.get(str(sid))
+        if key is not None and memo and memo[0] == key:
+            return memo[1]
         mem = em.chain_membership(sess["path"], candidate_files=cands,
                                   states=str(states) if states.exists() else None,
                                   leaf_override=cut or None)
+        if key is not None:
+            _rewind_kept_memo[str(sid)] = (key, mem["kept"])
         return mem["kept"]
     except Exception as e:
-        jd._log_judge_error("romp", sid, "rewind-kept",
-                            note="kept-chain lookup failed: %r — the rewind sweep degrades to the "
-                                 "pure t-keyed selection (pre-fix behavior) this time" % e)
+        _rewind_kept_complain(sid, "kept-chain lookup failed: %r — the rewind sweep degrades to the "
+                                   "pure t-keyed selection (pre-fix behavior) this time" % e)
         return None
 
 
@@ -12652,8 +12719,15 @@ def _hold_leaf_still_active(sid, leaf):
     resumeFork rows) and multi-hop file lineages read exactly as the display parse does: a
     lineage-blind hand-rolled walk here read an unreachable-but-live leaf as \"taken\" and archived
     live cards on a guess (2026-08-17). Anything unprovable (clear/broken/unknown) is None —
-    the caller restores, because a card move needs proof."""
+    the caller restores, because a card move needs proof. Resolves the session through the 48h
+    set, then discover's cached wide walk (as _rewind_kept_uuids does): a hold outliving the
+    caption window — a bare delete's freezing of the mtime guarantees exactly that — must not
+    turn 'the transcript exists but is old' into 'unprovable'."""
     sess = next((s for s in _sessions(time.time()) if s["sid"] == sid), None)
+    if not sess:
+        ent = next((f for f in jd.discover(time.time(), window=jd.DEATH_BACKFILL_WINDOW)
+                    if f[0] == sid), None)
+        sess = {"sid": ent[0], "path": str(ent[1])} if ent else None
     if not sess or not leaf:
         return None                                    # no transcript to consult → unprovable
     try:

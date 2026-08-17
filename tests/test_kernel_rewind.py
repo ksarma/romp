@@ -630,5 +630,143 @@ class TwoPhaseRewindTiming(unittest.TestCase):
         self.assertIsNone(km._rewind_hold_get(SID))
 
 
+class RewindKeptLookupEconomy(unittest.TestCase):
+    """_rewind_kept_uuids runs on EVERY feed/chat build of a held session, for the whole armed
+    window — unbounded on a bare delete. Three properties pinned here: the kept walk memoizes on
+    the exact inputs that can change its answer (candidate-file stats, states stat, pending cut)
+    and re-walks the moment any of them moves; a still-LIVE session older than the 48h caption
+    window resolves through discover's cached wide walk instead of failing every build (a bare
+    delete freezes the transcript mtime at arm time, so a long-armed hold guarantees the 48h
+    miss); and a lookup that does fail is loud once per armed hold, never once per build (the
+    pre-fix shape appended one undeduplicated judge-errors row per ~5s rebuild, ~17k rows/day,
+    while the view silently widened to the bare-t hide)."""
+
+    T0 = 1781100000
+    CUT = T0 + 50
+
+    def setUp(self):
+        self.td = Path(tempfile.mkdtemp())
+        self._saved_state = km.jd.STATE
+        (self.td / "state").mkdir()
+        km.jd._rebind_state(self.td / "state")
+        km._rewind_holds[0] = None
+        self._saved_sessions = km._sessions
+        self._saved_discover = km.jd.discover
+        self._saved_cm = km.em.chain_membership
+        self._saved_sdk = km._sdk
+        km._rewind_kept_memo.clear()
+        km._rewind_kept_err.clear()
+        jd = km.jd
+        s = {"rompUuid": SID, "seq": 0, "nodes": {}, "placements": {}, "status": {},
+             "placementsV": jd.PLACEMENTS_V}
+        jd.apply_plan(s, "s1", self.T0, [{"do": "mint", "why": "x", "text": "Pre-cut survivor"}], [])
+        jd.apply_plan(s, "s2", self.T0 + 100, [{"do": "mint", "why": "x", "text": "Doomed ask"}],
+                      jd.open_menu(s))
+        jd.apply_plan(s, "s3", self.CUT + 30, [{"do": "mint", "why": "x", "text": "Fresh ask"}],
+                      jd.open_menu(s), prompt_uuid="u3")   # kept-chain anchor, born in range
+        jd.rollup_status(s, session_closed=False)
+        jd.save_goals(SID, s)
+        self.survivor, self.doomed, self.fresh = ("%s:g1" % SID, "%s:g2" % SID, "%s:g3" % SID)
+
+    def tearDown(self):
+        km._sdk = self._saved_sdk
+        km.em.chain_membership = self._saved_cm
+        km.jd.discover = self._saved_discover
+        km._sessions = self._saved_sessions
+        km._rewind_holds[0] = None
+        km._rewind_kept_memo.clear()
+        km._rewind_kept_err.clear()
+        km.jd._rebind_state(self._saved_state)
+
+    def _transcript(self, register=True):
+        """u2/a2 rewound away (u3 branches from a1): kept = u1,a1,u3,a3."""
+        p = self.td / (SID + ".jsonl")
+        with open(p, "w") as f:
+            for r in [_rec("user", "u1", None, "first ask"),
+                      _rec("assistant", "a1", "u1", "first reply"),
+                      _rec("user", "u2", "a1", "second ask"),
+                      _rec("assistant", "a2", "u2", "second reply"),
+                      _rec("user", "u3", "a1", "second ask, rewritten"),
+                      _rec("assistant", "a3", "u3", "new-branch reply")]:
+                f.write(json.dumps(r) + "\n")
+        if register:
+            km._sessions = lambda now: [{"sid": SID, "path": str(p)}]
+        return str(p)
+
+    def _count_walks(self):
+        calls, real = [], self._saved_cm
+        def counting(*a, **k):
+            calls.append(1)
+            return real(*a, **k)
+        km.em.chain_membership = counting
+        return calls
+
+    def test_the_kept_walk_memoizes_on_the_fileset_and_busts_on_change(self):
+        p = self._transcript()
+        km._rewind_hold_set(SID, self.CUT, "a2")
+        calls = self._count_walks()
+        feed = km._feed_goals(SID)
+        self.assertIn(self.fresh, feed["nodes"], "premise: the kept exemption is live")
+        self.assertNotIn(self.doomed, feed["nodes"])
+        km._feed_goals(SID)
+        self.assertEqual(len(calls), 1, "an unchanged transcript is walked once, not once per build")
+        with open(p, "a") as f:                        # a record lands → the stat moves
+            f.write(json.dumps(_rec("user", "u4", "a3", "more work")) + "\n")
+        km._feed_goals(SID)
+        self.assertEqual(len(calls), 2, "a transcript change is a new world — re-walk")
+        km._feed_goals(SID)
+        self.assertEqual(len(calls), 2, "…and the new answer memoizes in turn")
+        km._rewind_hold_clear(SID)
+        self.assertNotIn(str(SID), km._rewind_kept_memo, "the memo dies with the hold")
+
+    def test_a_changed_pending_cut_busts_the_memo(self):
+        self._transcript()
+        km._rewind_hold_set(SID, self.CUT, "a2")
+        cut = [""]
+        class Cutter:
+            def pending_cut(self, sid):
+                return cut[0]
+        km._sdk = lambda: Cutter()
+        calls = self._count_walks()
+        km._feed_goals(SID)
+        km._feed_goals(SID)
+        self.assertEqual(len(calls), 1)
+        cut[0] = "a1"                                  # the cut changes the parse with NO file change
+        km._feed_goals(SID)
+        self.assertEqual(len(calls), 2, "arming/clearing the cut must bust the memo (the _parse lesson)")
+
+    def test_a_failing_lookup_is_loud_once_per_hold_and_never_cached(self):
+        km._sessions = lambda now: []                  # no transcript anywhere:
+        km.jd.discover = lambda now, window=None, forks=True: []   # 48h set AND wide walk miss
+        km._rewind_hold_set(SID, self.CUT, "a2")
+        feed = km._feed_goals(SID)
+        self.assertNotIn(self.doomed, feed["nodes"], "the hide degrades to t-keyed, never to nothing")
+        km._feed_goals(SID)
+        km._feed_goals(SID)
+        self.assertEqual(km.jd.ERRORS.read_text().count("rewind-kept"), 1,
+                         "three builds, one row — loud once per armed hold, not per build")
+        self.assertNotIn(str(SID), km._rewind_kept_memo, "a failure is never memoized")
+        km._rewind_hold_clear(SID)
+        km._rewind_hold_set(SID, self.CUT, "a2")       # a NEW hold is a fresh complaint
+        km._feed_goals(SID)
+        self.assertEqual(km.jd.ERRORS.read_text().count("rewind-kept"), 2)
+
+    def test_a_live_session_older_than_the_caption_window_keeps_its_kept_exemption(self):
+        # the 48h set misses the sid while it is still live on every surface (DEATH_BACKFILL wide
+        # walk keeps it visible there) — pre-fix the kept lookup failed on EVERY build of such a
+        # session: a deterministic silent widening to the bare-t hide (the fresh kept-chain card
+        # vanished) plus unbounded log growth. Liveness owns visibility; age owns nothing.
+        p = self._transcript(register=False)
+        km._sessions = lambda now: []                  # idle past the caption window
+        km.jd.discover = (lambda now, window=None, forks=True:
+                          [(SID, Path(p), SID, "web")] if window else [])
+        km._rewind_hold_set(SID, self.CUT, "a2")
+        feed = km._feed_goals(SID)
+        self.assertIn(self.fresh, feed["nodes"], "the kept-chain card stays visible past 48h")
+        self.assertNotIn(self.doomed, feed["nodes"], "…while the doomed card still hides")
+        errs = km.jd.ERRORS.read_text() if km.jd.ERRORS.exists() else ""
+        self.assertNotIn("rewind-kept", errs, "no degrade row — the lookup simply succeeds")
+
+
 if __name__ == "__main__":
     unittest.main()

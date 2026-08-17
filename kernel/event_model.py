@@ -1512,7 +1512,12 @@ def chain_membership(leaf_path, candidate_files=None, states=None, leaf_override
     adapter = FileAdapter(candidate_files, leaf_path, leaf_override=leaf_override, resume_links=links)
     active = adapter.active_path()
     verdicts = adapter.chain_verdicts(active)
-    out = {"kept": adapter.kept_uuids(active), "rewind": set(), "clear": set(), "broken": set()}
+    # kept, derived from the verdicts already in hand — BY DEFINITION the same set kept_uuids
+    # computes (active ∪ broken; see its docstring: "derived from chain_verdicts — one
+    # implementation"), without paying the graph walk a second time inside it. The hold view
+    # re-asks this on every build of a held session, so the walk count matters there.
+    out = {"kept": set(active) | {u for u, v in verdicts.items() if v == "broken"},
+           "rewind": set(), "clear": set(), "broken": set()}
     for u, v in verdicts.items():
         if v != "active":
             out[v].add(u)
