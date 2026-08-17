@@ -15281,6 +15281,9 @@ def _restore_goal_archive(item_ids):
             nodes[nid] = a_nodes.pop(nid)
             if nid in a_status:
                 status[nid] = a_status.pop(nid)
+            (store.get("rewindSwept") or {}).pop(nid, None)   # the user's restore outranks a rewind
+            #                                       tombstone (jd._rebase_onto_disk would otherwise
+            #                                       re-delete the restored node on the next rebase)
         # (Sticky completion restore lives in _mark_nodes_cleared now — 2026-07-07: the settle event must
         # land AFTER the undo reopen it records, or the fold consumes it and the card returns to Working.)
         jd.save_goals(sid, store)

@@ -110,5 +110,69 @@ class DropGoalsAfter(RevertBase):
         self.assertEqual(jd.drop_goals_after(SID, CUT), 0)
 
 
+class RebaseTombstones(RevertBase):
+    """The sweep leaves a DURABLE deletion marker (store rewindSwept) that _rebase_onto_disk honors —
+    the mergedFrom lesson applied to rewinds. Without it any one-shot sweep, however keyed, loses to
+    the next concurrent save: presence-in-a-snapshot is not truth, and the adopt-wholesale branch
+    republished swept nodes (proven five times in live stores — nodes resident in live AND archive
+    at once, live twins gathering diary rows on a conversation that no longer exists)."""
+
+    def _seed(self):
+        s = self._store()
+        jd.apply_plan(s, "s1", T0, [{"do": "mint", "why": "x", "text": "Survivor"}], [])
+        jd.apply_plan(s, "s2", T0 + 100, [{"do": "mint", "why": "x", "text": "Doomed"}], jd.open_menu(s))
+        jd.rollup_status(s, session_closed=False)
+        jd.save_goals(SID, s)
+        return self._nid(2)
+
+    def test_a_pre_sweep_loader_saving_post_sweep_does_not_republish(self):
+        # ordering (i): writer A loads, the sweep archives + saves, A saves — A's rebase must read
+        # the tombstone from DISK and drop its stale copy instead of adopting it back
+        doomed = self._seed()
+        a = jd.load_goals(SID)                        # writer A's pre-sweep snapshot (holds `doomed`)
+        self.assertEqual(jd.drop_goals_after(SID, CUT), 1)
+        a["nodes"][self._nid(1)]["mt"] = T0 + 5       # A did unrelated work, then publishes
+        jd.save_goals(SID, a)
+        live = jd.load_goals(SID)
+        self.assertNotIn(doomed, live["nodes"], "the swept node stays swept through A's rebase")
+        self.assertIn(doomed, jd.load_goal_archive(SID)["nodes"], "…and lives on in the archive only")
+        self.assertIn(doomed, live.get("rewindSwept", {}), "the tombstone itself survived the rebase")
+
+    def test_the_sweeps_own_save_rebasing_over_a_midflight_publish_does_not_readopt(self):
+        # ordering (ii): a concurrent pass publishes between the sweep's load and its save — the
+        # sweep's rebase must not adopt back from disk the very node it just popped
+        doomed = self._seed()
+        orig = jd.save_goal_archive
+        def hijack(fsid, arch):                       # runs INSIDE drop_goals_after, between its load
+            orig(fsid, arch)                          # and its save — the mid-flight window
+            w = jd.load_goals(SID)                    # the concurrent writer still sees `doomed` live
+            w["nodes"][doomed]["mt"] = T0 + 200
+            jd.save_goals(SID, w)                     # …and publishes it (disk rev moves)
+        jd.save_goal_archive = hijack
+        try:
+            self.assertEqual(jd.drop_goals_after(SID, CUT), 1)
+        finally:
+            jd.save_goal_archive = orig
+        live = jd.load_goals(SID)
+        self.assertNotIn(doomed, live["nodes"], "the sweep's rebase did not re-adopt its own pop")
+        self.assertIn(doomed, jd.load_goal_archive(SID)["nodes"])
+
+    def test_an_undo_clear_journal_restore_pops_the_tombstone(self):
+        # a user restore outranks the marker: the journal re-inserts the node AND clears its
+        # tombstone, so the next rebase does not silently re-delete what the user brought back
+        doomed = self._seed()
+        jd.drop_goals_after(SID, CUT)
+        arch = jd.load_goal_archive(SID)
+        payload = dict(arch["nodes"].pop(doomed))     # the undo pulled it OUT of the archive…
+        jd.save_goal_archive(SID, arch)
+        jd.append_restore(SID, {doomed: payload}, {}, T0 + 300)   # …and journaled the payload
+        live = jd.load_goals(SID)                     # replay re-inserts (in neither store nor archive)
+        self.assertIn(doomed, live["nodes"])
+        self.assertNotIn(doomed, live.get("rewindSwept", {}), "the restore popped the tombstone")
+        jd.save_goals(SID, live)                      # a follow-on rebase cycle must not re-delete it
+        again = jd.load_goals(SID)
+        self.assertIn(doomed, again["nodes"])
+
+
 if __name__ == "__main__":
     unittest.main()

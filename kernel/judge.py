@@ -2107,6 +2107,21 @@ def _rebase_onto_disk(fsid, store):
             for rec in (snd.get("mergedFrom") or []):
                 if rec.get("id"):
                     tomb[rec["id"]] = sid_
+    # REWIND TOMBSTONES (2026-08-17): same presence-is-not-truth rule for rewind-swept nodes, which
+    # have no surviving twin to hang a mergedFrom on — the sweep records store-level rewindSwept
+    # markers instead. An id named there on EITHER side is deleted (its archive copy is the durable
+    # record; unseen diary rows on a stale twin drop with it — the pre-sweep archive copy is the
+    # kept truth). Both orderings need this: a pre-sweep loader saving post-sweep reads the marker
+    # from DISK; the sweep's own save rebasing over a mid-flight publish reads its OWN. The union
+    # is folded back so the marker itself survives the rebase. An undo-clear restore pops its ids
+    # (kernel _restore_goal_archive + the journal replay), so a user-restored node is not re-deleted.
+    swept = dict(disk.get("rewindSwept") or {})
+    swept.update(store.get("rewindSwept") or {})
+    if swept:
+        store["rewindSwept"] = swept
+        for nid in [n for n in list(m_nodes) if n in swept]:
+            m_nodes.pop(nid)
+            store.get("status", {}).pop(nid, None)
 
     def _fold_log(dead, surv):
         seen = {(e.get("ev_t"), e.get("src"), e.get("kind")) for e in (surv.get("log") or [])}
@@ -2124,6 +2139,8 @@ def _rebase_onto_disk(fsid, store):
             _fold_log(dead, surv)
         store.get("status", {}).pop(nid, None)
     for nid, dnd in d_nodes.items():
+        if nid in swept:                             # rewind-swept on either side → never re-adopted
+            continue
         mnd = m_nodes.get(nid)
         if mnd is None:
             if nid in tomb:                          # deleted by a merge, not minted by the other writer
@@ -2161,6 +2178,11 @@ def _rebase_onto_disk(fsid, store):
         store["lastNode"] = tomb[store["lastNode"]]
     if store.get("lastNode") not in (store.get("nodes") or {}):
         store["lastNode"] = disk.get("lastNode") or store.get("lastNode")
+    if store.get("lastNode") not in (store.get("nodes") or {}):
+        # both writers' focus was rewind-swept → re-point at the newest survivor, exactly as the
+        # sweep itself does (a dangling focus would prematurely settle the pre-cut focus card)
+        nn = store.get("nodes") or {}
+        store["lastNode"] = (max(nn, key=lambda n: int(nn[n].get("t") or 0)) if nn else None)
     rollup_status(store, session_closed=False)       # re-derive every flag + the status map from the merged logs
 
 
@@ -2262,6 +2284,9 @@ def _replay_overrides(fsid, store):
                 if nid in store.get("nodes", {}) or nid in arch_nodes:
                     continue                           # alive, or re-cleared into the archive → nothing lost
                 store.setdefault("nodes", {})[nid] = GuardedNode(dict(nddata))
+                (store.get("rewindSwept") or {}).pop(nid, None)   # a user restore outranks the rewind
+                #                                       tombstone — without this the next save-rebase
+                #                                       would re-delete what the journal just re-inserted
                 applied = True
                 st = (ev.get("status") or {}).get(nid)
                 if st is not None:
@@ -2474,11 +2499,20 @@ def drop_goals_after(fsid, cut_t):
     status = store.get("status") or {}
     arch = load_goal_archive(fsid)
     a_nodes = arch.setdefault("nodes", {}); a_status = arch.setdefault("status", {})
+    swept = store.setdefault("rewindSwept", {})        # DURABLE deletion tombstones (the mergedFrom lesson,
+    #                                                    2026-08-13, applied to rewinds 2026-08-17): presence-
+    #                                                    in-a-snapshot is not truth, and without a marker the
+    #                                                    save-rebase re-adopted swept nodes wholesale from any
+    #                                                    concurrent writer — proven five times in live stores
+    #                                                    (nodes resident in live AND archive at once). Never
+    #                                                    pruned: entries are rare (a few per rewind) and an
+    #                                                    undo-clear restore pops its own.
     for nid in move:
         if nid in nodes:
             a_nodes[nid] = nodes.pop(nid)              # a whole-node dict delete is UNGUARDED (not a PROTECTED key)
         if nid in status:
             a_status[nid] = status.pop(nid)
+        swept[nid] = int(cut_t)
     arch["rompUuid"] = store.get("rompUuid", fsid)
     save_goal_archive(fsid, arch)
     # a dangling lastNode is tolerated (focus→None), but that would prematurely settle the pre-cut focus card;
