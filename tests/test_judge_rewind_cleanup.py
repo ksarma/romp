@@ -1,0 +1,424 @@
+#!/usr/bin/env python3
+"""Rewound-turn goals: the chain-membership predicate + the two mint seams (2026-08-17).
+
+A conversation rewind abandons a transcript branch, but the goal cleanup was a one-shot t>=cut_t
+sweep at gesture time while the judges kept parsing — and minting from — the abandoned tail:
+during a bare rollback's armed window the judge parse had no leaf_override (unbounded re-mint),
+and a producer pass framed before the rewind published its mints after the sweep (the late-mint
+shape, proven live). The fix, pinned here:
+  - em.chain_membership: THE exported membership predicate, built from the display parse's exact
+    inputs (resume links + lineage closure + pending cut). "rewind" is the only sweepable verdict;
+    "clear" is /clear jurisdiction, "broken" chains are kept, unknown uuids prove nothing.
+  - jd.parsed_session honors the backend's pending cut (leaf_override), so an armed bare rollback
+    stops yielding abandoned units at the source.
+  - jd.apply_plan_guarded: the write-moment stand-down at every planner mint site — fresh,
+    frame-independent inputs; RETIRES (placements[key]=None), never skips, so auto-nudge's
+    placement gate can't wedge.
+  - Task-store mirrors of abandoned-turn to-dos are LEFT AS-IS by decision (the task store is
+    authoritative and a rewind does not roll it back) — pinned, not fixed.
+SYNTHETIC fixtures only (placeholder uuids, TESTHOST-style invented text)."""
+import json
+import os
+import tempfile
+import unittest
+from datetime import datetime, timezone
+from importlib.machinery import SourceFileLoader
+from pathlib import Path
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+BIN = os.path.join(os.path.dirname(HERE), "bin")
+# Hermetic state BEFORE the loads — they resolve their state root at import time, and only
+# pytest runs conftest's floor (a bare unittest or script run otherwise writes REAL state).
+os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
+os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
+jd = SourceFileLoader("romp_judge_rwclean", os.path.join(BIN, "romp-judge")).load_module()
+em = jd.em
+
+SID = "11111111-2222-3333-4444-555555555555"
+T0 = 1781100000
+CUT = T0 + 20            # u2's time: the edited/deleted record — everything at/after is abandoned
+
+
+def iso(t):
+    return datetime.fromtimestamp(t, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+
+def uline(t, text, uuid, parent=None):
+    return {"type": "user", "timestamp": iso(t), "uuid": uuid, "parentUuid": parent,
+            "promptSource": "typed", "message": {"role": "user", "content": text}}
+
+
+def aline(t, text, uuid, parent=None, stop="end_turn"):
+    return {"type": "assistant", "timestamp": iso(t), "uuid": uuid, "parentUuid": parent,
+            "message": {"role": "assistant", "content": [{"type": "text", "text": text}],
+                        "stop_reason": stop}}
+
+
+def attline(t, uuid, parent, prompt="queued synthetic note"):
+    return {"type": "attachment", "timestamp": iso(t), "uuid": uuid, "parentUuid": parent,
+            "attachment": {"type": "queued_command", "prompt": prompt}}
+
+
+class Base(unittest.TestCase):
+    def setUp(self):
+        self.td = Path(tempfile.mkdtemp())
+        self._saved_state = jd.STATE
+        (self.td / "state").mkdir()      # judge-errors.jsonl appends into it without mkdir -p
+        jd._rebind_state(self.td / "state")
+        jd.set_pending_cut_provider(None)
+        jd.end_pass_frame(True)          # belt: never inherit a frame a crashed test left open
+        self.path = self.td / (SID + ".jsonl")
+
+    def tearDown(self):
+        jd.set_pending_cut_provider(None)
+        jd.end_pass_frame(True)
+        jd._PARSE_CACHE.clear()
+        jd._rebind_state(self._saved_state)
+
+    def write(self, recs):
+        self.path.write_text("\n".join(json.dumps(r) for r in recs) + "\n")
+
+    def append(self, recs):
+        with open(self.path, "a") as f:
+            for r in recs:
+                f.write(json.dumps(r) + "\n")
+
+    def base_recs(self):
+        """u1 -> a1 -> u2 -> a2: the tail (u2, a2) is what a rewind at u2 abandons."""
+        return [uline(T0, "first synthetic ask", "u1"),
+                aline(T0 + 10, "First synthetic reply, fully settled here.", "a1", "u1"),
+                uline(CUT, "second synthetic ask", "u2", "a1"),
+                aline(T0 + 30, "Second synthetic reply, also settled.", "a2", "u2")]
+
+    def fork_recs(self):
+        """The consumed rewind: u3 branches from a1, abandoning u2/a2."""
+        return [uline(T0 + 60, "second ask, rewritten", "u3", "a1"),
+                aline(T0 + 70, "Reply on the new branch, settled.", "a3", "u3")]
+
+
+class ChainMembershipPredicate(Base):
+    """em.chain_membership — the ONE exported membership fact (identity-key hazards, per verdict)."""
+
+    def test_a_rewound_fork_classifies_rewind(self):
+        self.write(self.base_recs() + self.fork_recs())
+        mem = em.chain_membership(self.path)
+        self.assertEqual(mem["rewind"], {"u2", "a2"}, "the abandoned tail is the rewind set")
+        self.assertTrue({"u1", "a1", "u3", "a3"} <= mem["kept"])
+
+    def test_an_attachment_uuid_on_the_dead_branch_is_rewind(self):
+        # hazard (a): an absorbed prompt's atom t is its ENQUEUE time (can predate cut_t), so the
+        # t-keyed sweep misses it — but its uuid is a real spine node and the predicate catches it
+        self.write(self.base_recs() + [attline(T0 + 5, "att1", "a2")] + self.fork_recs())
+        mem = em.chain_membership(self.path)
+        self.assertIn("att1", mem["rewind"], "a dead-branch attachment record is provably abandoned")
+
+    def test_a_clear_branch_is_clear_jurisdiction_never_rewind(self):
+        # hazard (d): /clear leaves a fresh null-parent head; the old chain reaches its own clean
+        # null root — the episode machinery's turf, and sweeping it as a rewind would archive a
+        # whole healthy prior conversation's cards
+        self.write(self.base_recs() + [uline(T0 + 60, "fresh start after clear", "u3", None),
+                                       aline(T0 + 70, "New conversation reply.", "a3", "u3")])
+        mem = em.chain_membership(self.path)
+        self.assertEqual(mem["rewind"], set())
+        self.assertEqual(mem["clear"], {"u1", "a1", "u2", "a2"})
+
+    def test_a_broken_chain_is_kept(self):
+        # hazard (e): a parentUuid pointing at a uuid in NO transcript is unprovable — kept.
+        # (Interleaved mid-file: the file's LAST record is the leaf, and the broken line must not
+        # usurp that or the whole real chain would read pre-clear.)
+        recs = self.base_recs()
+        self.write(recs[:2] + [uline(T0 + 15, "stray line", "u9",
+                                     "99999999-aaaa-bbbb-cccc-dddddddddddd")] + recs[2:])
+        mem = em.chain_membership(self.path)
+        self.assertIn("u9", mem["broken"])
+        self.assertIn("u9", mem["kept"])
+        self.assertNotIn("u9", mem["rewind"])
+
+    def test_resume_fork_stitched_history_is_kept(self):
+        # hazard (f): a recorded resume fork's fresh head is stitched to the from-file's last
+        # record, so pre-fork history stays active — never "clear", never "rewind"
+        frm = "22222222-3333-4444-5555-666666666666"
+        fp_from = self.td / (frm + ".jsonl")
+        fp_from.write_text("\n".join(json.dumps(r) for r in [
+            uline(T0, "ask in the first file", "u1"),
+            aline(T0 + 10, "Reply in the first file.", "a1", "u1")]) + "\n")
+        self.write([uline(T0 + 60, "continues after the machine cut", "u3", None),
+                    aline(T0 + 70, "Reply on the stitched chain.", "a3", "u3")])
+        rows = [{"resumeFork": {"from": frm, "to": SID}, "t": T0 + 55}]
+        mem = em.chain_membership(self.path, candidate_files=[str(self.path), str(fp_from)],
+                                  states=rows)
+        self.assertTrue({"u1", "a1", "u3", "a3"} <= mem["kept"], "stitched history stays kept")
+        self.assertEqual(mem["rewind"], set())
+        self.assertEqual(mem["clear"], set())
+
+    def test_an_unknown_uuid_is_in_no_set(self):
+        self.write(self.base_recs())
+        mem = em.chain_membership(self.path)
+        for k in ("kept", "rewind", "clear", "broken"):
+            self.assertNotIn("orphan:12345", mem[k], "a synthetic salvage id proves nothing")
+
+    def test_a_pending_cut_moves_the_tail_into_rewind(self):
+        # the armed bare-rollback window: nothing on disk yet, but the cut is the ground truth
+        self.write(self.base_recs())
+        full = em.chain_membership(self.path)
+        self.assertEqual(full["rewind"], set())
+        cut = em.chain_membership(self.path, leaf_override="a1")
+        self.assertEqual(cut["rewind"], {"u2", "a2"})
+
+
+class PredicateParityGolden(Base):
+    """Item 10: the exported helper vs the display parse's own adapter — byte-identical kept sets
+    on every branching shape. Guards the four-divergent-helpers problem: any future second
+    implementation of 'is this uuid on the chain' must fail here."""
+
+    def _parse_side_kept(self, leaf, cands=None, states=None, leaf_override=None):
+        """kept as parse_session computes it, via the SAME public pieces it now shares."""
+        links = em.resume_fork_links(em._load_states(states))
+        cands = em._lineage_closure(leaf, cands or [str(leaf)], links)
+        ad = em.FileAdapter(cands, leaf, leaf_override=leaf_override, resume_links=links)
+        return ad.kept_uuids(ad.active_path())
+
+    def assert_parity(self, leaf, cands=None, states=None, leaf_override=None):
+        mem = em.chain_membership(leaf, candidate_files=cands, states=states,
+                                  leaf_override=leaf_override)
+        self.assertEqual(mem["kept"], self._parse_side_kept(leaf, cands, states, leaf_override))
+
+    def test_parity_on_a_plain_rewind_fork(self):
+        self.write(self.base_recs() + self.fork_recs())
+        self.assert_parity(self.path)
+
+    def test_parity_under_a_pending_cut(self):
+        self.write(self.base_recs())
+        self.assert_parity(self.path, leaf_override="a1")
+
+    def test_parity_across_a_recorded_resume_fork_with_lineage(self):
+        frm = "22222222-3333-4444-5555-666666666666"
+        fp_from = self.td / (frm + ".jsonl")
+        fp_from.write_text("\n".join(json.dumps(r) for r in self.base_recs()) + "\n")
+        self.write([uline(T0 + 60, "continues after the machine cut", "u5", None),
+                    aline(T0 + 70, "Stitched reply.", "a5", "u5")])
+        rows = [{"resumeFork": {"from": frm, "to": SID}, "t": T0 + 55}]
+        # the lineage closure must pull the from-file in even when the caller passes only the leaf
+        self.assert_parity(self.path, cands=[str(self.path)], states=rows)
+        mem = em.chain_membership(self.path, candidate_files=[str(self.path)], states=rows)
+        self.assertIn("u1", mem["kept"], "the closure joined the resumed-from file")
+
+    def test_parity_across_a_compaction_stitch(self):
+        recs = self.base_recs() + [
+            {"type": "system", "subtype": "compact_boundary", "timestamp": iso(T0 + 40),
+             "uuid": "cb1", "parentUuid": None, "logicalParentUuid": "gone-never-written",
+             "compactMetadata": {"preservedSegment": {"tailUuid": "a2"}}},
+            uline(T0 + 50, "post-compaction ask", "u3", "cb1"),
+            aline(T0 + 60, "Post-compaction reply.", "a3", "u3")]
+        self.write(recs)
+        self.assert_parity(self.path)
+        mem = em.chain_membership(self.path)
+        self.assertIn("u1", mem["kept"], "the repaired stitch keeps pre-compaction history")
+
+
+class JudgeParseHonorsPendingCut(Base):
+    """Item 2 (first half): during an armed bare rollback the judge's parse is the CUT world, so
+    plan_units never yields the abandoned turns at all — the orphan source closes where it opens.
+    Fails on the pre-fix judge (parsed_session had no leaf_override; nothing lands on disk during
+    the window, so every pass re-collected the deleted turn as live)."""
+
+    def test_the_armed_window_hides_the_abandoned_tail_from_the_judges(self):
+        self.write(self.base_recs())
+        jd.set_pending_cut_provider(lambda sid: "a1" if sid == SID else "")
+        sess = jd.parsed_session(SID, [str(self.path)], T0 + 100)
+        texts = json.dumps([a.get("message") for t in sess["turns"] for a in t["atoms"]])
+        self.assertNotIn("second synthetic ask", texts, "the judge sees the cut world")
+        store = {"rompUuid": SID, "seq": 0, "nodes": {}, "placements": {}, "status": {},
+                 "placementsV": jd.PLACEMENTS_V}
+        trigs = [u[6] for u in jd.plan_units(sess, store)]
+        self.assertNotIn("u2", trigs, "no unit is ever collected from the abandoned tail")
+
+    def test_the_cut_rides_the_parse_cache_key(self):
+        # arming changes the parse with NO file change — a stale cache hit here would serve the
+        # un-cut world for the whole window (the kernel _parse learned this on 2026-07-16)
+        self.write(self.base_recs())
+        full = jd.parsed_session(SID, [str(self.path)], T0 + 100)
+        jd.set_pending_cut_provider(lambda sid: "a1")
+        cut = jd.parsed_session(SID, [str(self.path)], T0 + 100)
+        self.assertIsNot(cut, full)
+        texts = json.dumps([a.get("message") for t in cut["turns"] for a in t["atoms"]])
+        self.assertNotIn("second synthetic ask", texts)
+        jd.set_pending_cut_provider(None)
+        back = jd.parsed_session(SID, [str(self.path)], T0 + 100)
+        texts = json.dumps([a.get("message") for t in back["turns"] for a in t["atoms"]])
+        self.assertIn("second synthetic ask", texts, "clearing the cut busts the cache too")
+
+    def test_a_broken_provider_is_loud_and_degrades_to_the_uncut_world(self):
+        self.write(self.base_recs())
+        def boom(sid):
+            raise RuntimeError("synthetic provider failure")
+        jd.set_pending_cut_provider(boom)
+        sess = jd.parsed_session(SID, [str(self.path)], T0 + 100)
+        texts = json.dumps([a.get("message") for t in sess["turns"] for a in t["atoms"]])
+        self.assertIn("second synthetic ask", texts, "degrades to pre-fix behavior, never blank")
+        errs = jd.ERRORS.read_text()
+        self.assertIn("pending-cut", errs, "…but never silently")
+
+
+class WriteMomentStandDown(Base):
+    """Items 1 + 2 (pinned-frame variant) + 7: apply_plan_guarded at the mint moment."""
+
+    def _store(self):
+        return {"rompUuid": SID, "seq": 0, "nodes": {}, "placements": {}, "status": {},
+                "placementsV": jd.PLACEMENTS_V}
+
+    def test_late_mint_after_the_sweep_stands_down(self):
+        # Item 1, the g44 shape: the sweep ran at cut_t, THEN a pass framed pre-rewind applies a
+        # unit whose prompt is on the (now consumed) abandoned branch. Pre-fix: the node mints,
+        # survives forever, and the auto-nudge quotes it into the new conversation.
+        self.write(self.base_recs() + self.fork_recs())
+        s = self._store()
+        jd.save_goals(SID, s)
+        jd.drop_goals_after(SID, CUT)                  # the one-shot sweep already ran (empty here)
+        applied = jd.apply_plan_guarded(SID, str(self.path), s, "seg-dead", CUT,
+                                        [{"do": "mint", "why": "x", "text": "orphan ask"}], [],
+                                        prompt_uuid="u2")
+        self.assertFalse(applied, "the guard stood down")
+        self.assertEqual(s["nodes"], {}, "no orphan node exists")
+        self.assertIn("seg-dead", s["placements"])
+        self.assertIsNone(s["placements"]["seg-dead"], "RETIRED, not skipped")
+
+    def test_pinned_frame_is_no_defense_the_guard_reads_fresh_inputs(self):
+        # the pass frame pins the pre-rewind parse for the WHOLE pass; the guard must not consult it
+        self.write(self.base_recs())
+        self.assertTrue(jd.begin_pass_frame())
+        jd.parsed_session(SID, [str(self.path)], T0 + 100)   # frame pins the un-cut world
+        self.append(self.fork_recs())                        # the rewind lands mid-pass
+        s = self._store()
+        applied = jd.apply_plan_guarded(SID, str(self.path), s, "seg-dead", CUT,
+                                        [{"do": "mint", "why": "x", "text": "orphan ask"}], [],
+                                        prompt_uuid="u2")
+        jd.end_pass_frame(True)
+        self.assertFalse(applied, "fresh adapter walk sees the branch-take the frame hides")
+        self.assertEqual(s["nodes"], {})
+
+    def test_bare_rollback_window_stands_down_via_the_pending_cut(self):
+        # during the armed window even a FRESH parse shows the dead tail as active — the guard
+        # must fold in backend.pending_cut (item 2's second half)
+        self.write(self.base_recs())
+        jd.set_pending_cut_provider(lambda sid: "a1")
+        s = self._store()
+        applied = jd.apply_plan_guarded(SID, str(self.path), s, "seg-dead", CUT,
+                                        [{"do": "mint", "why": "x", "text": "orphan ask"}], [],
+                                        prompt_uuid="u2")
+        self.assertFalse(applied)
+        self.assertEqual(s["nodes"], {})
+
+    def test_a_none_prompt_uuid_mints_unguarded(self):
+        # abandonment can't be proven for an anchorless unit — the hard mint floor outranks suspicion
+        self.write(self.base_recs() + self.fork_recs())
+        s = self._store()
+        applied = jd.apply_plan_guarded(SID, str(self.path), s, "seg-x", T0 + 60,
+                                        [{"do": "mint", "why": "x", "text": "anchorless ask"}], [],
+                                        prompt_uuid=None)
+        self.assertTrue(applied)
+        self.assertEqual(len(s["nodes"]), 1)
+
+    def test_a_kept_prompt_mints_normally(self):
+        self.write(self.base_recs() + self.fork_recs())
+        s = self._store()
+        applied = jd.apply_plan_guarded(SID, str(self.path), s, "seg-new", T0 + 60,
+                                        [{"do": "mint", "why": "x", "text": "new-branch ask"}], [],
+                                        prompt_uuid="u3")
+        self.assertTrue(applied)
+        self.assertEqual(len(s["nodes"]), 1)
+
+    def test_retire_not_skip_keeps_the_nudge_gate_open(self):
+        # Item 7: the kernel's _unplanned gate asks _placed_key of EVERY unit — a stood-down unit
+        # left ABSENT reads pending forever and silences nudges for the whole session (the
+        # documented 2026-07-27 wedge). The retired key must read placed.
+        self.write(self.base_recs())
+        self.assertTrue(jd.begin_pass_frame())
+        pinned = jd.parsed_session(SID, [str(self.path)], T0 + 100)   # yields the doomed unit
+        self.append(self.fork_recs())
+        s = self._store()
+        units = list(jd.plan_units(pinned, s))
+        dead = [u for u in units if u[6] == "u2"]
+        self.assertTrue(dead, "premise: the pinned world still yields the abandoned unit")
+        for u in dead:
+            key = jd._unit_key(u[0], u[1])
+            self.assertFalse(jd.apply_plan_guarded(SID, str(self.path), s, u[0], u[2],
+                                                   [{"do": "mint", "why": "x", "text": "t"}], [],
+                                                   place_key=key, prompt_uuid=u[6]))
+        jd.end_pass_frame(True)
+        live = {sg["id"] for t in pinned["turns"] for sg in jd._segs(t, s)}
+        unplanned = [u for u in dead
+                     if not jd._placed_key(s["placements"], jd._unit_key(u[0], u[1]), live)]
+        self.assertEqual(unplanned, [], "every stood-down unit reads placed — the gate is open")
+
+
+class PlanSessionIntegration(Base):
+    """The guards through _plan_session itself: a pass framed pre-rewind retires the dead units
+    before any model call, and skips the plan-sync whose anchor died mid-pass; the next pass
+    (fresh world) syncs normally. Also pins Path E (item 9): the task-store mirror re-mints with
+    ON-CHAIN identity after a sweep — the task store is authoritative and a rewind does not roll
+    it back (left as-is by decision)."""
+
+    def setUp(self):
+        super().setUp()
+        self._saved_cfg = os.environ.get("CLAUDE_CONFIG_DIR")
+        self.cfg = self.td / "claude-cfg"
+        (self.cfg / "tasks" / SID).mkdir(parents=True)
+        (self.cfg / "tasks" / SID / "1.json").write_text(json.dumps(
+            {"id": "1", "subject": "synthetic open step", "status": "in_progress"}))
+        os.environ["CLAUDE_CONFIG_DIR"] = str(self.cfg)
+
+    def tearDown(self):
+        if self._saved_cfg is None:
+            os.environ.pop("CLAUDE_CONFIG_DIR", None)
+        else:
+            os.environ["CLAUDE_CONFIG_DIR"] = self._saved_cfg
+        super().tearDown()
+
+    def test_a_pass_framed_pre_rewind_retires_dead_units_and_defers_the_sync(self):
+        self.write(self.base_recs())
+        self.assertTrue(jd.begin_pass_frame())
+        pinned = jd.parsed_session(SID, [str(self.path)], T0 + 100)   # frame pins the pre-rewind world
+        dead_keys = [jd._unit_key(u[0], u[1]) for u in jd.plan_units(pinned, {
+            "rompUuid": SID, "seq": 0, "nodes": {}, "placements": {}, "status": {},
+            "placementsV": jd.PLACEMENTS_V}) if u[6] == "u2"]
+        self.assertTrue(dead_keys, "premise: the pinned world yields the doomed unit")
+        self.append(self.fork_recs())                                 # the rewind lands mid-pass
+        jd._plan_session(SID, str(self.path), T0 + 100)
+        jd.end_pass_frame(True)
+        s = jd.load_goals(SID)
+        for k in dead_keys:
+            self.assertIn(k, s["placements"], "the dead unit was RETIRED (key present)")
+            self.assertIsNone(s["placements"][k], "…as processed-no-goal")
+        self.assertFalse(any(nd.get("promptUuid") == "u2" for nd in s["nodes"].values()),
+                         "nothing minted from the abandoned branch")
+        self.assertFalse(any(nd.get("agentTask") for nd in s["nodes"].values()),
+                         "the plan-sync whose anchor died mid-pass deferred to the next pass")
+        errs = jd.ERRORS.read_text()
+        self.assertIn("rewind-stand-down", errs, "the stand-down is loud")
+        # next pass, fresh world: the mirror mints with ON-CHAIN identity (Path E pinned as-is)
+        jd._plan_session(SID, str(self.path), T0 + 200)
+        s = jd.load_goals(SID)
+        mirrors = [nd for nd in s["nodes"].values() if nd.get("agentTask")]
+        self.assertEqual(len(mirrors), 1, "the open to-do re-mints — the task store is authoritative")
+        self.assertEqual(mirrors[0].get("promptUuid"), "u3", "…anchored on the NEW branch")
+
+    def test_path_e_pinned_a_swept_mirror_of_a_still_open_todo_remints(self):
+        # Item 9 (assert-current): sweep the mirror, task store still holds the item open → the
+        # next sync re-mints it. This is the decided behavior, not a bug being fixed.
+        self.write(self.base_recs() + self.fork_recs())
+        store = jd.load_goals(SID)
+        session = jd.parsed_session(SID, [str(self.path)], T0 + 100)
+        self.assertTrue(jd._sync_declared_plan(store, session, "seg-sync", CUT, prompt_uuid="u2"))
+        jd.save_goals(SID, store)
+        self.assertEqual(jd.drop_goals_after(SID, CUT), 1, "the sweep archives the mirror")
+        store = jd.load_goals(SID)
+        self.assertTrue(jd._sync_declared_plan(store, session, "seg-sync2", T0 + 60,
+                                               prompt_uuid="u3"))
+        mirrors = [nd for nd in store["nodes"].values() if nd.get("agentTask")]
+        self.assertEqual(len(mirrors), 1, "the mirror re-minted — the task store is authoritative")
+        self.assertEqual(mirrors[0].get("promptUuid"), "u3", "…with post-rewind on-chain identity")
+
+
+if __name__ == "__main__":
+    unittest.main()

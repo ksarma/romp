@@ -1312,6 +1312,79 @@ def _fileset_key(files):
 
 _PARSE_CACHE = {}          # fsid -> (fileset_key, parsed_session)
 
+# ── the pending-cut wire (the rewind goal-cleanup fix, 2026-08-17) ──
+# A PENDING bare rollback (chat delete) writes NOTHING to the transcript, so for its whole armed
+# window — unbounded; the user's next message may never come — the file leaf IS the abandoned tail.
+# The kernel's display parse has honored the cut since 2026-07-16 (leaf_override=pending_cut), but
+# the judge parse never did: every judge pass walked the deleted tail as the ACTIVE chain and the
+# planner's hard mint floors ("a user message never silently vanishes") GUARANTEED orphan goals from
+# it, which the one-shot t>=cut_t sweep — already run at gesture time — never re-caught, and the
+# auto-nudge then quoted back into a conversation with no memory of the ask (the g44 shape, proven
+# live 2026-08-16). The cut lives on the backend (sdk pending_cut); the kernel wires it in here so
+# parsed_session can pass the same leaf_override the display parse uses. No provider (standalone
+# romp-judge runs, tests that don't care) → "" — the pre-fix behavior.
+_PENDING_CUT_FN = None
+
+
+def set_pending_cut_provider(fn):
+    """Kernel wiring: fn(fsid) -> the armed bare rollback's cut uuid, or ''. See the note above."""
+    global _PENDING_CUT_FN
+    _PENDING_CUT_FN = fn
+
+
+def _pending_cut(fsid):
+    if _PENDING_CUT_FN is None:
+        return ""
+    try:
+        return str(_PENDING_CUT_FN(fsid) or "")
+    except Exception as e:
+        # fail LOUDLY, then degrade to the pre-fix behavior (parse the un-cut world) — a broken
+        # provider must not silently hide the conversation, but it must be visible in the log
+        _log_judge_error("romp", fsid, "pending-cut",
+                         note="pending-cut provider failed: %r — judging the un-cut world this pass" % e)
+        return ""
+
+
+def _judge_candidates(fsid, files):
+    """The judge parse's candidate transcript set: the leaf plus the session's anchor <fsid>.jsonl
+    when the leaf is a fork (SDK /clear: discover hands the lastSid file under the stable romp sid).
+    Shared by parsed_session and the write-moment chain checks so both walk the same graph."""
+    leaf = Path(files[0])
+    anchor = leaf.with_name(fsid + ".jsonl")
+    if anchor.name != leaf.name and anchor.exists():
+        return list(files) + [str(anchor)]
+    return list(files)
+
+
+def _rewound_away(fsid, path, uuid):
+    """WRITE-MOMENT chain check: does `uuid` PROVABLY sit on a rewound-away branch RIGHT NOW?
+
+    Deliberately frame-independent: inside a producer pass parsed_session returns the frame-pinned
+    parse — precisely the stale world in which a mid-pass rewind's dead branch still reads active —
+    so this builds a FRESH FileAdapter (cheap: the jsonl reads are append-incremental) over the same
+    inputs the display parse uses, including the backend's pending cut. The one-shot t>=cut_t sweep
+    runs at gesture time and never again; a mint applied after it from a pass framed before it was
+    the primary observed leak (the g44 shape), and this is the stand-down that closes it
+    (CLAUDE.md: a writer whose evidence predates the diary stands down).
+
+    Only "rewind" answers True. None/unknown uuids (umbrellas, legacy nodes, synthetic orphan:<t>
+    salvage ids, cross-file uuids outside the lineage) answer False — abandonment can't be proven,
+    and a false stand-down silently drops a real ask. "clear" is /clear jurisdiction; "broken" is
+    kept by design. A check that itself fails logs loudly and answers False (the pre-fix behavior),
+    never silently blocks a mint."""
+    if not uuid:
+        return False
+    try:
+        states = STATESDIR / (fsid + ".jsonl")
+        mem = em.chain_membership(path, candidate_files=_judge_candidates(fsid, [str(path)]),
+                                  states=str(states) if states.exists() else None,
+                                  leaf_override=_pending_cut(fsid) or None)
+        return uuid in mem["rewind"]
+    except Exception as e:
+        _log_judge_error("romp", fsid, "chain-check",
+                         note="write-moment chain check failed: %r — minting anyway (pre-fix behavior)" % e)
+        return False
+
 
 def _sdk_owned(fsid):
     """True if FSID is an SDK-backed session — mirrors the SDK backend's owns() (a registry file under
@@ -1405,13 +1478,19 @@ def parsed_session(fsid, files, now):
     # the session's anchor transcript among the candidates, so a fork whose chain back-links across files
     # (a resume-style fork) keeps its history — the FileAdapter walk crosses files by design, and a /clear
     # fork (parentUuid null at the head) still drops pre-clear history naturally.
-    leaf = Path(files[0])
-    anchor = leaf.with_name(fsid + ".jsonl")
-    if anchor.name != leaf.name and anchor.exists():
-        files = list(files) + [str(anchor)]
+    files = _judge_candidates(fsid, files)
+    # A PENDING bare rollback truncates the judge's world exactly as it truncates the display parse
+    # (leaf_override — the wire note at _PENDING_CUT_FN): during the armed window plan_units never
+    # yields the abandoned turns at all, so the orphan-goal source is closed where it opens instead of
+    # being caught mint-by-mint. The cut rides the CACHE KEY (the kernel _parse's own lesson): arming
+    # and clearing both change the parse with NO file change. No PLACEMENTS_V bump: the override only
+    # SHRINKS the atom set, transiently, while a cut is armed — segment identity for everything kept is
+    # unchanged, and no previously-invisible atom ever becomes a fresh plannable segment (the two drift
+    # shapes the version exists for).
+    cut = _pending_cut(fsid)
     key_files = list(files) + ([str(states)] if states.exists() else [])
     try:
-        key = _fileset_key(key_files)
+        key = (_fileset_key(key_files), cut)
     except OSError:
         key = None
     hit = _PARSE_CACHE.get(fsid)
@@ -1419,7 +1498,8 @@ def parsed_session(fsid, files, now):
         return hit[1]
     session = em.parse_session(files[0], rompuuid=fsid, candidate_files=list(files),
                                states=str(states), postal_log=str(MESSAGES), now=now,
-                               sdk_human=_sdk_owned(fsid))   # SDK session → composer input is promptSource "sdk" = the human (mirrors the kernel)
+                               sdk_human=_sdk_owned(fsid),   # SDK session → composer input is promptSource "sdk" = the human (mirrors the kernel)
+                               leaf_override=cut or None)
     if key is not None:
         if len(_PARSE_CACHE) > 256:        # bounded by fleet size; a wholesale clear on overflow is fine
             _PARSE_CACHE.clear()
@@ -3041,6 +3121,31 @@ def apply_plan(store, seg_id, seg_t, ops, menu, place_key=None, prompt_uuid=None
     placements[place_key] = focus if focus is not None else touched   # key presence marks the phase processed
     if focus is not None:
         store["lastNode"] = focus                     # the active focus = top-goal of the latest placement
+
+
+def apply_plan_guarded(fsid, path, store, seg_id, seg_t, ops, menu, place_key=None,
+                       prompt_uuid=None, quote=None, clear_wrap=False):
+    """apply_plan behind the write-moment rewind stand-down (_rewound_away). Every planner mint site
+    routes through here: a unit whose prompt PROVABLY sits on a rewound-away branch at the write
+    moment is RETIRED — placements[key]=None, the seeder/pre-episode idiom — and nothing is applied.
+    Retire, never skip: a bare skip leaves the key ABSENT, and auto-nudge's `_unplanned` gate asks
+    _placed_key of every unit plan_units yields, so an un-retired unit silences nudges for the whole
+    session forever (the documented 2026-07-27 failure). A None prompt_uuid mints unguarded —
+    abandonment can't be proven, and the hard floor ("a user message never silently vanishes")
+    outranks an unprovable suspicion. Returns True when the plan applied, False when it stood down
+    (callers skip their placed-count/regroup on False, and still save — the retirement must
+    persist). If the branch is later stitched active again by a recorded resume fork (a hypothesis
+    shape, no corpus instance), the retired key stays retired — acceptable, and the loud row below
+    is the trail."""
+    if prompt_uuid and _rewound_away(fsid, path, prompt_uuid):
+        key = place_key if place_key is not None else seg_id
+        store["placements"][key] = None
+        _log_judge_error("planner", fsid, "rewind-stand-down", seg=seg_id,
+                         note="the unit's prompt sits on a rewound-away branch — retired, nothing minted")
+        return False
+    apply_plan(store, seg_id, seg_t, ops, menu, place_key=place_key,
+               prompt_uuid=prompt_uuid, quote=quote, clear_wrap=clear_wrap)
+    return True
 
 
 SEAM_CAP = 32                             # live seam points kept per store (oldest drop; a seam only
@@ -5797,6 +5902,18 @@ def _plan_session(fsid, path, now):
             continue                                  # placed while THIS pass applied an earlier unit — the
         #                                               apply loop must uphold the same idempotence the
         #                                               collection loop checked at pass START (2026-07-06)
+        if trig and _rewound_away(fsid, path, trig):
+            # WRITE-MOMENT stand-down, checked BEFORE any model call: this pass's frame pinned a
+            # world in which the unit's prompt still looked active, but a rewind has since abandoned
+            # its branch — planning it would mint an orphan (and the nudge/followup/pivot branches
+            # would file verdicts from evidence the user just deleted). RETIRE (the apply_plan_guarded
+            # contract), never skip. The apply sites below re-check through apply_plan_guarded for a
+            # rewind landing DURING this unit's own model call.
+            store["placements"][_unit_key(seg_id, phase)] = None
+            _log_judge_error("planner", fsid, "rewind-stand-down", seg=seg_id,
+                             note="the unit's prompt sits on a rewound-away branch — retired before planning")
+            save_goals(fsid, store)
+            continue
         menu = open_menu(store)
         if phase == "prompt":                         # PROMPT-run: place the ask NOW (mint-or-amend), before the work
             sib = _queued_sibling(store, seg_by_id, seg_id)   # a rapid-fire fragment may EXTEND the node the
@@ -5815,9 +5932,10 @@ def _plan_session(fsid, path, now):
                 #                                       prompted goal never stays unplaced
             ops = _card_route_subs(store, ops, menu, placer=False)   # card-level only: placing the ask is
             #                                           latency-sensitive; the work-run refines depth later
-            apply_plan(store, seg_id, seg_t, ops, menu, place_key=seg_id + "#p", prompt_uuid=trig, quote=vq)
-            placed += 1
-            _group_store(store, fsid, now)
+            if apply_plan_guarded(fsid, path, store, seg_id, seg_t, ops, menu,
+                                  place_key=seg_id + "#p", prompt_uuid=trig, quote=vq):
+                placed += 1
+                _group_store(store, fsid, now)
             save_goals(fsid, store)
             continue
         if phase == "live":                           # LIVE re-plan: the user cleared this OPEN segment's card
@@ -5837,9 +5955,10 @@ def _plan_session(fsid, path, now):
                 ops = _coerce_place(menu, text, title=_prompt_gist(fsid, seg_id) or None)   # invariant: a
                 #                                       WORKING session always shows a card
             ops = _card_route_subs(store, ops, menu, placer=False)   # card-level only, like the prompt-run
-            apply_plan(store, seg_id, seg_t, ops, menu, place_key=seg_id + "#live", prompt_uuid=trig, quote=vq)
-            placed += 1
-            _group_store(store, fsid, now)
+            if apply_plan_guarded(fsid, path, store, seg_id, seg_t, ops, menu,
+                                  place_key=seg_id + "#live", prompt_uuid=trig, quote=vq):
+                placed += 1
+                _group_store(store, fsid, now)
             save_goals(fsid, store)
             continue
         if phase == "delegation":                     # POSTAL delegation → file the recipient's work UNDER the courier's goal G
@@ -5872,9 +5991,10 @@ def _plan_session(fsid, path, now):
             ops = _restrict_retitle(ops, 1)              # goal_num=1 above → retitle is only valid on #1
             if not ops:
                 ops = [{"do": "sub", "under": 1, "text": _seg_label(text), "why": "work handed off from a peer"}]
-            apply_plan(store, seg_id, seg_t, ops, sub, place_key=seg_id + "#d", prompt_uuid=trig, quote=vq)
-            placed += 1
-            _group_store(store, fsid, now)
+            if apply_plan_guarded(fsid, path, store, seg_id, seg_t, ops, sub,
+                                  place_key=seg_id + "#d", prompt_uuid=trig, quote=vq):
+                placed += 1
+                _group_store(store, fsid, now)
             save_goals(fsid, store)
             continue
         if phase == "nudge":                          # romp NUDGE → RESOLVE the goal (done/block over a plain step)
@@ -5953,9 +6073,10 @@ def _plan_session(fsid, path, now):
                 ops = _strip_unevidenced_dones(ops, _tseg, fsid, seg_id)   # a nudge spliced mid-turn reads the
                 #                                           interrupted turn's work as its reply — resolve
                 #                                           nothing; the goal stays open and re-nudgeable
-                apply_plan(store, seg_id, seg_t, ops, sub, place_key=_pkey, prompt_uuid=trig, quote=vq)
-                placed += 1
-                _group_store(store, fsid, now)
+                if apply_plan_guarded(fsid, path, store, seg_id, seg_t, ops, sub,
+                                      place_key=_pkey, prompt_uuid=trig, quote=vq):
+                    placed += 1
+                    _group_store(store, fsid, now)
                 save_goals(fsid, store)
             continue
         if followup and followup in store["nodes"]:   # tagged follow-up: file under the target — a STRONG
@@ -6006,24 +6127,25 @@ def _plan_session(fsid, path, now):
                                        why="the reply started its own thread — this goal is unchanged")
                     ops = _restrict_retitle([o for o in ops if o["do"] != "skip"], gi)
                     ops = _card_route_subs(store, ops, menu)
-                    apply_plan(store, seg_id, seg_t, ops, menu, prompt_uuid=trig, quote=vq)
-                    if any(o.get("do") == "done" for o in ops):   # same post-closure re-look as the main work-run
-                        _invalidate_closure(store, session, seg_t)
-                    pv = store["placements"].get(seg_id)
-                    if isinstance(pv, str) and pv in store["nodes"]:   # provenance: the minted top remembers
-                        ytop = _top_ancestor(store["nodes"], pv)
-                        store["nodes"][ytop]["pivotFrom"] = followup
-                        _tie_pivot(store, ytop, followup, seg_t)   # ...and stays GROUPED with the cited card
-                    # a PIVOT rules the reply answered NOTHING on this card — mechanically restore the
-                    # blocks THIS gesture's send just lifted ("this goal is unchanged" must include its
-                    # pending asks, the user 2026-07-20). Older gestures' leftovers stay for a reply
-                    # that actually engages the card to rule on.
-                    floor_now = store["nodes"].get(followup, {}).get("followupAt") or 0
-                    _reassert_blocks(store, seg_id, seg_t,
-                                     [(nid, ask) for (nid, ask, lt) in lifted
-                                      if lt and floor_now and lt >= floor_now])
-                    placed += 1
-                    _group_store(store, fsid, now)
+                    if apply_plan_guarded(fsid, path, store, seg_id, seg_t, ops, menu,
+                                          prompt_uuid=trig, quote=vq):
+                        if any(o.get("do") == "done" for o in ops):   # same post-closure re-look as the main work-run
+                            _invalidate_closure(store, session, seg_t)
+                        pv = store["placements"].get(seg_id)
+                        if isinstance(pv, str) and pv in store["nodes"]:   # provenance: the minted top remembers
+                            ytop = _top_ancestor(store["nodes"], pv)
+                            store["nodes"][ytop]["pivotFrom"] = followup
+                            _tie_pivot(store, ytop, followup, seg_t)   # ...and stays GROUPED with the cited card
+                        # a PIVOT rules the reply answered NOTHING on this card — mechanically restore the
+                        # blocks THIS gesture's send just lifted ("this goal is unchanged" must include its
+                        # pending asks, the user 2026-07-20). Older gestures' leftovers stay for a reply
+                        # that actually engages the card to rule on.
+                        floor_now = store["nodes"].get(followup, {}).get("followupAt") or 0
+                        _reassert_blocks(store, seg_id, seg_t,
+                                         [(nid, ask) for (nid, ask, lt) in lifted
+                                          if lt and floor_now and lt >= floor_now])
+                        placed += 1
+                        _group_store(store, fsid, now)
                     save_goals(fsid, store)
                     continue
                 # CONTINUATION (the strong default): reopen the target, force the work UNDER it,
@@ -6057,16 +6179,17 @@ def _plan_session(fsid, path, now):
                     if retitle:
                         forced.append(dict(retitle, goal=gi2))   # the model may ALSO retitle the target itself
                         #                                          (re-pointed at the rebuilt menu's index)
-                    apply_plan(store, seg_id, seg_t, forced, menu, prompt_uuid=trig, quote=vq)
-                    # the model's per-lifted-ask rulings (the leak, the user 2026-07-20): a block op
-                    # aimed at a lifted item's OLD menu number re-asserts that ask — the reply did not
-                    # answer it — with the reply segment as its fresh evidence. Applied by node id, so
-                    # the post-reopen menu rebuild can't misroute it.
-                    _reassert_blocks(store, seg_id, seg_t,
-                                     [(lifted_by_num[o["goal"]][0], (o.get("why") or lifted_by_num[o["goal"]][1]))
-                                      for o in ops if o.get("do") == "block" and o.get("goal") in lifted_by_num])
-                    placed += 1
-                    _group_store(store, fsid, now)
+                    if apply_plan_guarded(fsid, path, store, seg_id, seg_t, forced, menu,
+                                          prompt_uuid=trig, quote=vq):
+                        # the model's per-lifted-ask rulings (the leak, the user 2026-07-20): a block op
+                        # aimed at a lifted item's OLD menu number re-asserts that ask — the reply did not
+                        # answer it — with the reply segment as its fresh evidence. Applied by node id, so
+                        # the post-reopen menu rebuild can't misroute it.
+                        _reassert_blocks(store, seg_id, seg_t,
+                                         [(lifted_by_num[o["goal"]][0], (o.get("why") or lifted_by_num[o["goal"]][1]))
+                                          for o in ops if o.get("do") == "block" and o.get("goal") in lifted_by_num])
+                        placed += 1
+                        _group_store(store, fsid, now)
                     save_goals(fsid, store)
                     continue                           # forced placement done; skip the free-placement path
         # The WORK-run may correct its OWN earlier PROMPT-run guess (the user 2026-07-01): if this exact
@@ -6122,20 +6245,30 @@ def _plan_session(fsid, path, now):
             ops = _coerce_place(menu, text, title=_prompt_gist(fsid, seg_id) or None)
         ops = _restrict_retitle(ops, pgi)              # only the segment's own prompt-run node is retitle-eligible
         ops = _card_route_subs(store, ops, menu)       # card-first: route subs to the card, then the placer
-        apply_plan(store, seg_id, seg_t, ops, menu, prompt_uuid=trig, quote=vq,
-                   clear_wrap=_seg_clearwrap(seg_by_id.get(seg_id) or {}))   # a wrap-up's decision card is terminal (2026-07-24)
-        if any(o.get("do") == "done" for o in ops):    # a post-closure done → the closer re-looks before any nudge
-            _invalidate_closure(store, session, seg_t)
-        placed += 1
-        _group_store(store, fsid, now)                # regroup the forest after this placement (event-gated, no-op if tops unchanged)
+        if apply_plan_guarded(fsid, path, store, seg_id, seg_t, ops, menu, prompt_uuid=trig, quote=vq,
+                              clear_wrap=_seg_clearwrap(seg_by_id.get(seg_id) or {})):   # a wrap-up's decision card is terminal (2026-07-24)
+            if any(o.get("do") == "done" for o in ops):    # a post-closure done → the closer re-looks before any nudge
+                _invalidate_closure(store, session, seg_t)
+            placed += 1
+            _group_store(store, fsid, now)            # regroup the forest after this placement (event-gated, no-op if tops unchanged)
         save_goals(fsid, store)                       # crash-safe: persist plan + group together
     # AUTHORITATIVE plan-sync (the user 2026-07-01): mirror the agent's live to-do list into the graph as
     # agentTask nodes BEFORE the roll-up, so an open to-do item holds its goal 'working' and a crossed-off
     # one reads authoritative-done. Deterministic (no LLM); regroup if it minted/changed anything so a
     # freshly-minted to-do top gets placed/merged this pass instead of lingering as a bare top.
     latest_seg = max(seg_by_id.values(), key=lambda s: s.get("t") or 0, default=None)
-    if _sync_declared_plan(store, session, (latest_seg or {}).get("id"), (latest_seg or {}).get("t") or now,
-                           prompt_uuid=(latest_seg or {}).get("trigger")):
+    _ls_trig = (latest_seg or {}).get("trigger")
+    if _ls_trig and _rewound_away(fsid, path, _ls_trig):
+        # This pass's frame pinned a pre-rewind world: the "latest" segment was just rewound away, so
+        # a mirror minted now would carry a provably-dead anchor and a dead trail. Skip the sync THIS
+        # pass — it is deterministic and runs every pass, so the next pass re-mints from the fresh
+        # parse with an on-chain anchor. (Task-store mirrors of abandoned-turn to-dos are otherwise
+        # LEFT AS-IS by decision: the task store is the authoritative source and a rewind does not
+        # roll it back — the agent may genuinely still hold those to-dos.)
+        _log_judge_error("planner", fsid, "rewind-stand-down",
+                         note="plan-sync skipped this pass: the latest segment was rewound away mid-pass")
+    elif _sync_declared_plan(store, session, (latest_seg or {}).get("id"), (latest_seg or {}).get("t") or now,
+                             prompt_uuid=_ls_trig):
         _group_store(store, fsid, now)
         save_goals(fsid, store)
     rollup_status(store, _session_settled(fsid, path, session, store))
@@ -9554,10 +9687,10 @@ def run_courier(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, v
                 if not pm or not pm[0]:                # peer-triggered with a known sender only
                     continue
                 pending.append((seg["t"], fsid, seg["id"], _unit_text(seg["atoms"]), pm[1], pm[0],
-                                _seg_peer_kind(seg), _seg_anchor(seg)))
+                                _seg_peer_kind(seg), _seg_anchor(seg), str(path)))
     pending.sort(key=lambda x: x[0])                  # global cross-session oldest-first
     placed = 0
-    for seg_t, fsid, seg_id, text, mid, sender, declared, anchor_uuid in pending:
+    for seg_t, fsid, seg_id, text, mid, sender, declared, anchor_uuid, path in pending:
         store = load_goals(fsid)
         if _placed_key(store["placements"], seg_id):  # drift-safe: never re-plant a t-shifted duplicate
             continue
@@ -9629,6 +9762,17 @@ def run_courier(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, v
             store.get("courierFails", {}).pop(seg_id, None)   # a clean reply clears the strike count
         store.get("courierDeferred", {}).pop(seg_id, None)    # landed (clean reply or parse give-up) → deferral over
         if edit["delegating"]:
+            if anchor_uuid and _rewound_away(fsid, path, anchor_uuid):
+                # WRITE-MOMENT stand-down (same contract as apply_plan_guarded): the peer segment's
+                # branch was rewound away while this pass held it — planting now mints an orphan the
+                # one-shot sweep already ran past. RETIRE (None reads as courier-final downstream, so
+                # the #d delegation phase retires with it); the loud row is the trail.
+                store["placements"][seg_id] = None
+                _log_judge_error("courier", fsid, "rewind-stand-down", seg=seg_id,
+                                 note="the peer segment sits on a rewound-away branch — retired, nothing planted")
+                rollup_status(store, closed.get(fsid, False))
+                save_goals(fsid, store)
+                continue
             link_id = menu[edit["n"] - 1]["id"] if edit["n"] else None   # sender's related open goal (or None)
             # Mint the sender's precise '↪ delegated to <recipient>' tracking node (the user 2026-06-22) and
             # point B's goal at IT — so run_propagate checks off only the handed-off piece, never the sender's

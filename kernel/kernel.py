@@ -5389,6 +5389,9 @@ def _sdk_locked():
                 append_prompt_path=(str(_SDK_PROMPT) if _SDK_PROMPT.exists() else None),
                 log=lambda m: sys.stderr.write("sdk-backend: %s\n" % m),
                 reconcile=True)   # boot reconcile: reap orphaned CLIs, resume cut turns, deliver persisted queues
+            # The judge parses the SAME cut world the display parse does (jd._PENDING_CUT_FN): during
+            # an armed bare rollback the planner must not see — and mint from — the deleted tail.
+            jd.set_pending_cut_provider(_sdk_backend.pending_cut)
         except Exception:
             sys.stderr.write("sdk-backend unavailable: %s\n" % traceback.format_exc())
             _sdk_problem("the SDK backend could not be built: %s" % traceback.format_exc())
