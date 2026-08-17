@@ -3492,7 +3492,16 @@ function reorderTo(dragId: string, targetId: string, after: boolean) {
 // current-top-goal recency-coloured "(Xm ago)". One shared element, repositioned under the hovered tab and
 // clamped on-screen.
 let tabTipEl: HTMLElement | null = null;
-function hideTabTip(): void { if (tabTipEl) tabTipEl.style.display = "none"; }
+// The tab node the OPEN tip describes (null = no tip up). renderTabs consults it after every rebuild:
+// replaceChildren destroys the hovered tab, a destroyed node fires no mouseleave — the tip's only per-tab
+// closer — and a pointer that never moved gives the replacement no mouseenter (the documented
+// replaceChildren fact, timeline-rehover.test.ts), so an open tip would be orphaned with no live closer
+// (the user 2026-08-17). See rehoverTabTip.
+let tabTipOwner: HTMLElement | null = null;
+// Last pointer position over the strip (the timeline's _ptr): lets rehoverTabTip hit-test what a rebuild
+// put under a cursor that never moved. Cleared when the pointer leaves the strip.
+let tabsPtr: { x: number; y: number } | null = null;
+function hideTabTip(): void { if (tabTipEl) tabTipEl.style.display = "none"; tabTipOwner = null; }
 function showTabTip(tab: HTMLElement, s: Session): void {
   if (!tabTipEl) { tabTipEl = el("div", "tab-tip"); document.body.appendChild(tabTipEl); }
   const tip = tabTipEl;
@@ -3581,13 +3590,29 @@ function showTabTip(tab: HTMLElement, s: Session): void {
     }
     r.appendChild(k); r.appendChild(list); tip.appendChild(r);
   }
-  if (!tip.childElementCount) { tip.style.display = "none"; return; }
+  if (!tip.childElementCount) { hideTabTip(); return; }
+  tabTipOwner = tab;   // the open tip now describes THIS tab — renderTabs checks it for staleness after each rebuild
   tip.style.display = "block";
   tip.style.left = "0px"; tip.style.top = "-9999px";          // measure off-screen, then clamp on-screen
   const r = tab.getBoundingClientRect();
   const tw = tip.getBoundingClientRect().width;
   tip.style.left = Math.round(Math.min(Math.max(4, r.left), window.innerWidth - tw - 6)) + "px";
   tip.style.top = Math.round(r.bottom + 4) + "px";
+}
+
+// Re-arm or retire the tip after a strip rebuild orphans its owner (the timeline's _rehover,
+// romp-timeline-view.js — the same documented fact, the same fix). Hit-test the pointer position we already
+// track: a session tab under it → re-show FOR THAT TAB, whose fresh content also un-stales a tip held open
+// across pushes; anything else (the "+", a placeholder, empty strip, cursor gone) → close. Event-based,
+// keyed on the rebuild that destroyed the owner plus a real pointer position — never a timer or a grace
+// period.
+function rehoverTabTip(): void {
+  const p = tabsPtr;
+  const hit = p ? document.elementFromPoint(p.x, p.y) : null;
+  const tab = hit ? (hit.closest("#tabs .tab") as HTMLElement | null) : null;
+  const s = tab?.dataset.id ? sessions.get(tab.dataset.id) : null;   // "+" / placeholder tabs carry no session
+  if (tab && s) showTabTip(tab, s);
+  else hideTabTip();
 }
 
 // While a tab name is being edited in place, defer re-renders (a tick's status
@@ -3603,6 +3628,9 @@ let renderPendingAfterRename = false;
 // gone. So we HOLD the rebuild while the strip is pressed and flush it AFTER release — exactly the
 // timeline's _pointerHeld guard (romp-timeline-view.js). The flush is deferred a tick so the click, which
 // dispatches right after pointerup, fires against the still-present node first.
+// CONSTRAINT on the release path (see releaseTabs): every press must reach one of pointerup / pointercancel /
+// blur — a press ending outside the window may reach none of them (suspected gap, unverified), and an
+// unreleased hold defers the strip's rebuilds until the next press.
 let tabPointerHeld = false;
 let renderPendingWhilePressed = false;
 // A loading PLACEHOLDER tab (the user 2026-06-26): name + identity color from the kernel's tabOrder push,
@@ -3857,6 +3885,10 @@ function renderTabs() {
   bar.appendChild(add);
   // Restore tab-mode focus if a tab held it before this rebuild (see the top of renderTabs).
   if (refocusTab) focusActiveTab();
+  // The rebuild destroyed every old tab node. If the hover tip was up, its owner is now detached and its
+  // mouseleave can never fire — restore the tip for the tab under the (unmoved) pointer, or close it. This
+  // covers EVERY rebuild source (kernel pushes land every 0.5–3s, not just clicks) — see rehoverTabTip.
+  if (tabTipOwner && !tabTipOwner.isConnected) rehoverTabTip();
   syncNoSessionsPlaceholder(visibleIds.length);
   // (The Fleet toggle that briefly lived here as a tab-bar pill was removed 2026-06-24: Fleet/Chat are now
   // the rotated toggles in the chat pane's vertical strip — see _LANDING_FLEET_JS — so the pill was redundant.)
@@ -10353,6 +10385,11 @@ setupSettings();
   window.addEventListener("pointerup", releaseTabs);
   window.addEventListener("pointercancel", releaseTabs);
   window.addEventListener("blur", releaseTabs);
+  // Track the pointer over the strip (the timeline's _ptr): after a rebuild, rehoverTabTip hit-tests this
+  // position to restore — or close — a tip whose owner the rebuild destroyed. Cleared on leave so a stale
+  // position can't resurrect a tip for a strip the cursor already left. #tabs is stable, installed ONCE.
+  tabs.addEventListener("pointermove", (e) => { tabsPtr = { x: e.clientX, y: e.clientY }; });
+  tabs.addEventListener("pointerleave", () => { tabsPtr = null; });
 })();
 // right-click a selection in the transcript → Reply (quote it) / Copy
 document.getElementById("content")?.addEventListener("contextmenu", showSelectionMenu);
