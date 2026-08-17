@@ -1112,7 +1112,7 @@ PY
     touch "$MOCK_LOG"
     run run_romp new -t --model claude-fable-5 x
     [ "$status" -eq 2 ]
-    [[ "$output" == *"--model/--effort need the default (SDK) session"* ]]
+    [[ "$output" == *"--model/--effort/--env need the default (SDK) session"* ]]
     [ "$(grep -c 'tmux new-session' "$MOCK_LOG")" -eq 0 ]
 }
 
@@ -1121,4 +1121,99 @@ PY
     [ "$status" -eq 0 ]
     [[ "$output" == *"--model <id>"* ]]
     [[ "$output" == *"--effort <level>"* ]]
+}
+
+# Helper — a one-shot fake kernel for the --env tests: records the /new body and echoes the env
+# back, the applied-ack contract of the real handler (the same shape the --model/--effort fake uses).
+_env_fake_kernel() {
+    mkdir -p "$XDG_STATE_HOME/romp"
+    printf 'tok-test' > "$XDG_STATE_HOME/romp/serve-token"
+    python3 - "$TEST_DIR/port" "$TEST_DIR/req.log" <<'PY' &
+import sys, json
+from http.server import BaseHTTPRequestHandler, HTTPServer
+portfile, log = sys.argv[1], sys.argv[2]
+class H(BaseHTTPRequestHandler):
+    def do_POST(self):
+        body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
+        with open(log, "w") as f:
+            json.dump({"path": self.path, "body": body}, f)
+        out = {"ok": True, "id": "11111111-2222-3333-4444-555555555555"}
+        if body.get("env"):
+            out["env"] = body["env"]
+        out = json.dumps(out).encode()
+        self.send_response(200); self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(out))); self.end_headers()
+        self.wfile.write(out)
+    def log_message(self, *a): pass
+srv = HTTPServer(("127.0.0.1", 0), H)
+with open(portfile, "w") as f:
+    f.write(str(srv.server_address[1]))
+srv.handle_request()
+PY
+    _env_srv=$!
+    until [ -s "$TEST_DIR/port" ]; do sleep 0.05; done
+}
+
+@test "new --env: repeatable flags accumulate into ONE env object on /new, echoed as applied" {
+    command -v python3 >/dev/null 2>&1 || skip "python3 not available"
+    touch "$MOCK_LOG"
+    _env_fake_kernel
+    ROMP_KERNEL_PORT="$(cat "$TEST_DIR/port")" run run_romp new --env FEATURE_FLAG=1 --env UI_THEME=dark envy
+    kill "$_env_srv" 2>/dev/null || true
+    [ "$status" -eq 0 ]
+    grep -q '"FEATURE_FLAG": "1"' "$TEST_DIR/req.log"
+    grep -q '"UI_THEME": "dark"' "$TEST_DIR/req.log"
+    [[ "$output" == *"applied env FEATURE_FLAG=1,UI_THEME=dark"* ]]
+    [ "$(grep -c 'tmux new-session' "$MOCK_LOG")" -eq 0 ]
+}
+
+@test "new --env: the value splits on the FIRST '=' and an empty value is meaningful" {
+    command -v python3 >/dev/null 2>&1 || skip "python3 not available"
+    touch "$MOCK_LOG"
+    _env_fake_kernel
+    ROMP_KERNEL_PORT="$(cat "$TEST_DIR/port")" run run_romp new --env TOGGLE=a=b --env EMPTY= envy
+    kill "$_env_srv" 2>/dev/null || true
+    [ "$status" -eq 0 ]
+    grep -q '"TOGGLE": "a=b"' "$TEST_DIR/req.log"
+    grep -q '"EMPTY": ""' "$TEST_DIR/req.log"
+}
+
+@test "new without --env sends NO env key (absent means don't touch, never an empty object)" {
+    command -v python3 >/dev/null 2>&1 || skip "python3 not available"
+    touch "$MOCK_LOG"
+    _env_fake_kernel
+    ROMP_KERNEL_PORT="$(cat "$TEST_DIR/port")" run run_romp new envy
+    kill "$_env_srv" 2>/dev/null || true
+    [ "$status" -eq 0 ]
+    run grep '"env"' "$TEST_DIR/req.log"
+    [ "$status" -ne 0 ]
+}
+
+@test "new --env: a malformed or empty NAME is a usage error, never a silent skip" {
+    touch "$MOCK_LOG"
+    run run_romp new --env 9BAD=1 x
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"[A-Za-z_][A-Za-z0-9_]*"* ]]
+    run run_romp new --env =x x
+    [ "$status" -eq 2 ]
+    run run_romp new --env NOEQUALS x
+    [ "$status" -eq 2 ]
+    run run_romp new --env
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"usage: romp new"* ]]
+    [ "$(grep -c 'tmux new-session' "$MOCK_LOG")" -eq 0 ]
+}
+
+@test "new --env with -t refuses loudly (SDK-only flags), and starts nothing" {
+    touch "$MOCK_LOG"
+    run run_romp new -t --env FEATURE_FLAG=1 x
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"need the default (SDK) session"* ]]
+    [ "$(grep -c 'tmux new-session' "$MOCK_LOG")" -eq 0 ]
+}
+
+@test "new: help names --env (the same presence guard as --model/--effort)" {
+    run run_romp -h
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"--env NAME=VALUE"* ]]
 }
