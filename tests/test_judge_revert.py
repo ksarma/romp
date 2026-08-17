@@ -268,6 +268,15 @@ class RebaseTombstones(RevertBase):
         jd.save_goals(SID, live)                      # restored state published
         stale["nodes"][self._nid(1)]["mt"] = T0 + 5   # the stale pass did unrelated work…
         jd.save_goals(SID, stale)                     # …and publishes across the restore
+        # the raw published file is the assertion that actually pins the rebase's restore-wins
+        # ordering: load_goals' journal replay re-inserts the node in memory on every load, so a
+        # file-level re-kill was healed before the load-based asserts below ever ran — this test
+        # passed on the pre-fix kernel and under an eff-ignores-restores mutant (the review
+        # proved both), while feed/raw-snapshot readers lost the node until the next healed load
+        raw = json.loads((jd.GOALDIR / (SID + ".json")).read_text())
+        self.assertIn(doomed, raw["nodes"],
+                      "…in the RAW published file itself — load_goals' journal replay heals "
+                      "in memory and must not be what keeps this test green")
         after = jd.load_goals(SID)
         self.assertIn(doomed, after["nodes"], "the stale marker lost to the restore stamp")
         # and the node is in exactly one place — never resident in live AND archive at once
