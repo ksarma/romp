@@ -722,6 +722,80 @@ class ReconcileRewoundGoals(Base):
                          "an unrelated later rewind's sig change does not re-take it either")
         self.assertIn(nid, jd.load_goals(SID)["nodes"])
 
+    def _broken_episode_world(self, corrupt_head=False, unreadable=False):
+        """The pre-/clear episode fixture with the EPIDIR-enumerated dead episode file BROKEN: a
+        valid-JSON-but-non-dict head line (FileAdapter raises on it naturally), or chmod 000 (the
+        incremental reader swallows the OSError into zero records with no row of its own). One
+        orphan minted from the anchor's dead branch (provable without the broken file) and one
+        from the broken file's own dead branch. Returns (leaf, epfile, eprecs)."""
+        anchor = self.td / (SID + ".jsonl")
+        anchor.write_text("\n".join(json.dumps(r) for r in
+                                    self.base_recs() + self.fork_recs()) + "\n")
+        epfsid = "44444444-5555-6666-7777-888888888888"
+        epfile = self.td / (epfsid + ".jsonl")
+        eprecs = [uline(T0 + 200, "old-episode ask", "u6"),
+                  aline(T0 + 210, "Old-episode reply, settled.", "a6", "u6"),
+                  uline(T0 + 215, "follow-up on the old episode", "u6b", "a6"),
+                  aline(T0 + 218, "Follow-up reply.", "a6b", "u6b"),
+                  uline(T0 + 220, "follow-up, rewritten", "u7", "a6"),
+                  aline(T0 + 230, "Branch reply.", "a7", "u7")]
+        body = "\n".join(json.dumps(r) for r in eprecs) + "\n"
+        epfile.write_text(("[]\n" if corrupt_head else "") + body)
+        if unreadable:
+            os.chmod(epfile, 0)
+            self.addCleanup(os.chmod, epfile, 0o600)
+        jd.append_episode(SID, "u6", epfsid, T0 + 200)
+        leaf = self.td / ("99999999-aaaa-bbbb-cccc-dddddddddddd.jsonl")
+        leaf.write_text("\n".join(json.dumps(r) for r in [
+            uline(T0 + 300, "fresh start after clear", "u9"),
+            aline(T0 + 310, "New conversation reply.", "a9", "u9")]) + "\n")
+        s = self._store()
+        self._mint(s, "seg-a", CUT, "Orphan from the anchor's dead branch", "u2")
+        self._mint(s, "seg-b", T0 + 215, "Orphan from the old episode's dead branch", "u6b")
+        jd.save_goals(SID, s)
+        return leaf, epfile, eprecs
+
+    def test_a_failed_per_file_scan_blocks_the_marker_never_the_proven_archives(self):
+        # The one-time -v2 migration writes its done-marker only on a ZERO-FAILURE pass — but a
+        # per-file scan failure was logged-and-swallowed inside _per_file_rewound, so the pass
+        # returned a PARTIAL abandoned set with fails=0: the marker landed over the miss and
+        # steady-state discovery (48h-windowed) never revisits a dormant session, permanently
+        # skipping exactly the pre-/clear orphan class the widening targets. A per-file failure
+        # now raises AFTER the proven archives land (partial archiving is idempotent and safe)
+        # and BEFORE the memo (a partial sig must never become the event gate's baseline), so
+        # run_rewound_reconcile counts the session failed and the marker waits.
+        leaf, epfile, eprecs = self._broken_episode_world(corrupt_head=True)
+        with self.assertRaises(RuntimeError):
+            jd.reconcile_rewound_goals(SID, str(leaf), T0 + 400)
+        live = jd.load_goals(SID)["nodes"]
+        self.assertNotIn("%s:g1" % SID, live, "the PROVEN orphan still archived — partial is safe")
+        self.assertIn("%s:g1" % SID, jd.load_goal_archive(SID)["nodes"])
+        self.assertIn("%s:g2" % SID, live, "the broken file's orphan untouched — never guessed at")
+        self.assertNotIn(SID, jd._RECON_MEMO, "a partial sig never becomes the gate's baseline")
+        self.assertIn("rewound-reconcile-file", jd.ERRORS.read_text(),
+                      "…and the row has its own category, distinguishable from a session failure")
+        # the block heals where the failure does: with the file fixed, the retry pass (the next
+        # boot's migration re-run) takes the rest and only then memoizes
+        epfile.write_text("\n".join(json.dumps(r) for r in eprecs) + "\n")
+        self.assertEqual(jd.reconcile_rewound_goals(SID, str(leaf), T0 + 500), 1)
+        self.assertNotIn("%s:g2" % SID, jd.load_goals(SID)["nodes"])
+        self.assertIn(SID, jd._RECON_MEMO, "a clean pass memoizes")
+
+    def test_a_silently_unreadable_episode_file_still_counts_as_a_failure(self):
+        # The sneakier trigger: the incremental reader swallows an OSError into an EMPTY record
+        # list with no log row, so the per-file except never fired yet the sig was still partial —
+        # even quieter than the claim said. A non-empty transcript that yields zero records now
+        # counts as the read failure it is.
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            self.skipTest("chmod 000 does not block reads for root")
+        leaf, epfile, eprecs = self._broken_episode_world(unreadable=True)
+        with self.assertRaises(RuntimeError):
+            jd.reconcile_rewound_goals(SID, str(leaf), T0 + 400)
+        self.assertIn("%s:g2" % SID, jd.load_goals(SID)["nodes"],
+                      "the unreadable file's orphan is untouched, not silently skipped for good")
+        self.assertNotIn(SID, jd._RECON_MEMO)
+        self.assertIn("yielded no records", jd.ERRORS.read_text(), "the zero-record read is loud")
+
     def test_a_pending_unconsumed_cut_is_not_reconciled(self):
         # the two-phase hold owns the armed window (hide now, archive at take, RESTORE on failure) —
         # reconciling it would archive cards for a rewind that can still fail

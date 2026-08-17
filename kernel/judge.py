@@ -2760,9 +2760,14 @@ def _per_file_rewound(fsid, files):
     all 5 live+archive dual-residents). Within one file, a branch that rejoins the file's own
     active spine is a rewind no matter where the graph later went. Scans the candidate files plus
     every episode-log-recorded transcript (EPIDIR rows are the durable enumeration of dead episode
-    files); dead files are frozen, so the incremental reader keeps this cheap. A per-file failure
-    is a loud row, never a stalled scan."""
-    out, seen = set(), set()
+    files); dead files are frozen, so the incremental reader keeps this cheap.
+
+    Returns (rewound uuid set, failure count). A per-file failure is a loud row — its own
+    "rewound-reconcile-file" category, distinguishable from a counted whole-session failure —
+    never a stalled scan, and it is COUNTED: the returned set is PARTIAL on any failure, and the
+    caller must not let a partial set become a memoized baseline or a zero-failure migration pass
+    (dead files never change, so a swallowed miss here would never re-open)."""
+    out, seen, fails = set(), set(), 0
     leaf = Path(files[0])
     cands = [Path(f) for f in files]
     for row in episode_rows(fsid):
@@ -2777,13 +2782,19 @@ def _per_file_rewound(fsid, files):
             continue
         try:
             ad = em.FileAdapter([str(fp)], str(fp))
+            if not ad.by_uuid and fp.stat().st_size > 0:
+                # the incremental reader swallows OSError into an empty record list with no row of
+                # its own (a permissions break, say) — a non-empty transcript that yields ZERO
+                # records is a failed read, not an empty file, and must count like one
+                raise OSError("transcript read yielded no records")
             for u, v in ad.chain_verdicts().items():
                 if v == "rewind":
                     out.add(u)
         except Exception as e:
-            _log_judge_error("romp", fsid, "rewound-reconcile",
+            fails += 1
+            _log_judge_error("romp", fsid, "rewound-reconcile-file",
                              note="per-file rewind scan failed on one transcript: %r" % e)
-    return out
+    return out, fails
 
 
 def reconcile_rewound_goals(fsid, path, now):
@@ -2832,13 +2843,15 @@ def reconcile_rewound_goals(fsid, path, now):
     memo = _RECON_MEMO.get(fsid)
     if key is not None and memo and memo[0] == key and memo[3] == skey:
         return 0                       # neither the transcripts nor the goal store moved → not an event
+    pf_fails = 0
     if key is not None and memo and memo[0] == key:
         sig, kept = memo[1], memo[2]   # store-only event → reuse the memoized abandoned set, no walk
     else:
         mem = em.chain_membership(path, candidate_files=files,
                                   states=str(states) if states.exists() else None)
         kept = frozenset(mem["kept"])
-        sig = frozenset(mem["rewind"] | (_per_file_rewound(fsid, files) - kept))
+        pf, pf_fails = _per_file_rewound(fsid, files)
+        sig = frozenset(mem["rewind"] | (pf - kept))
     n = 0
     if sig:
         store = load_goals(fsid)
@@ -2850,6 +2863,15 @@ def reconcile_rewound_goals(fsid, path, now):
                                   "the reconciliation (recoverable in goals-archive)" % len(move))
             n = len(move)
             skey = _store_key()        # our own write moved the store — never self-trigger next pass
+    if pf_fails:
+        # AFTER the archive block on purpose (archiving a partial set is idempotent and safe —
+        # every proven hit lands), BEFORE the memo on purpose: a partial sig must never become the
+        # event gate's baseline (the EPIDIR-enumerated dead files it missed are excluded from the
+        # fileset key and never change, so the memo would seal the miss for the process lifetime).
+        # The raise makes run_rewound_reconcile count this session FAILED, which blocks the
+        # migration's zero-failure marker (kernel _rewind_migration_bg) and retries next boot —
+        # the marker's own contract: "returned" is not "succeeded".
+        raise RuntimeError("%d per-file rewind scan(s) failed — abandoned set is partial" % pf_fails)
     _RECON_MEMO[fsid] = (key, sig, kept, skey)
     return n
 
