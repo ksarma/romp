@@ -68,7 +68,10 @@ test("the kernel's save is atomic, mode-preserving, symlink-transparent, and UTF
 
 test("the feed boots the viewer with the poster, and the editor wears the code view's metrics", () => {
   assert.match(FEED, /initFileView\(\(m\) => vscodeApi\?\.postMessage\(m\)\);/);
-  assert.match(FEED_CSS, /\.fileview-editor \{ flex: 1 1 auto; min-height: 0; width: 100%;/);
+  // height: 100%, NOT flex — .fileview-body is a plain overflow block, so a flex basis on its
+  // child is inert and the textarea sat at the UA's default few rows (the user 2026-08-17)
+  assert.match(FEED_CSS, /\.fileview-editor \{ display: block; height: 100%; width: 100%;/);
+  assert.doesNotMatch(FEED_CSS, /\.fileview-editor \{ flex:/, "the inert flex basis must not return");
 });
 
 // ── review-driven hardening (2026-08-14): nine confirmed defects on the first cut; these pins hold
