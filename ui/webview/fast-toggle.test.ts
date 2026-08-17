@@ -70,6 +70,6 @@ test("a refusal answering the user's ask is loud — warn toast, ask cleared, ba
 test("setFast is a drive op that parks like /model and /effort", () => {
   assert.match(KERNEL, /"setModel", "setEffort", "setMode", "setFast",/);    // in the drive-op allowlist
   assert.match(KERNEL, /def _set_fast_or_park\(be, sid, value\)/);
-  assert.match(KERNEL, /op\[0\] in \("model", "effort", "fast"\)/);          // repeat pick replaces in place
+  assert.match(KERNEL, /op\[0\] in \("model", "effort", "fast", "env"\)/);   // repeat pick replaces in place (env joined 2026-08-17)
   assert.match(KERNEL, /elif op\[0\] == "fast":/);                           // parked delivery branch
 });
