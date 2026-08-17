@@ -15450,16 +15450,17 @@ def _compact_goal_store(fsid):
                 stack.extend(children.get(x, []))
     if not move:
         return 0
-    arch = jd.load_goal_archive(fsid)
-    a_nodes = arch.setdefault("nodes", {})
-    a_status = arch.setdefault("status", {})
-    for nid in move:
-        a_nodes[nid] = nodes.pop(nid)
-        if nid in status:
-            a_status[nid] = status.pop(nid)
-    arch["rompUuid"] = store.get("rompUuid", fsid)
-    jd.save_goal_archive(fsid, arch)
-    jd.save_goals(fsid, store)                          # placements/seq/lastNode stay → judge dedup intact
+    with jd._GOAL_ARCH_LOCK:                            # the archive is a blind RMW — see the lock's note
+        arch = jd.load_goal_archive(fsid)
+        a_nodes = arch.setdefault("nodes", {})
+        a_status = arch.setdefault("status", {})
+        for nid in move:
+            a_nodes[nid] = nodes.pop(nid)
+            if nid in status:
+                a_status[nid] = status.pop(nid)
+        arch["rompUuid"] = store.get("rompUuid", fsid)
+        jd.save_goal_archive(fsid, arch)
+        jd.save_goals(fsid, store)                      # placements/seq/lastNode stay → judge dedup intact
     return len(move)
 
 
@@ -15499,46 +15500,47 @@ def _restore_goal_archive(item_ids):
     for iid in item_ids:
         by_sid.setdefault(iid.rsplit(":", 1)[0], []).append(iid)
     for sid, ids in by_sid.items():
-        arch = jd.load_goal_archive(sid)
-        a_nodes = arch.get("nodes", {})
-        if not a_nodes:
-            continue
-        a_status = arch.get("status", {})
-        a_children = {}
-        for nid, nd in a_nodes.items():
-            a_children.setdefault(nd.get("parentId"), []).append(nid)
-        move = []
-        for iid in ids:
-            if iid in a_nodes:
-                stack = [iid]
-                while stack:
-                    x = stack.pop()
-                    if x in a_nodes:
-                        move.append(x)
-                        stack.extend(a_children.get(x, []))
-        if not move:
-            continue
-        store = jd.load_goals(sid)
-        nodes = store.setdefault("nodes", {})
-        status = store.setdefault("status", {})
-        # Journal the payload FIRST (the user 2026-07-10): once the archive save below lands, these nodes
-        # exist only in the live store's save — a stale triage-pass save racing it would drop them from
-        # BOTH files, permanently. The journal carries the node payloads; jd.load_goals re-inserts any
-        # that end up in neither file (and defers to the archive if the user re-clears later).
-        jd.append_restore(sid, {nid: a_nodes[nid] for nid in move},
-                          {nid: a_status[nid] for nid in move if nid in a_status}, int(time.time()))
-        for nid in move:
-            nodes[nid] = a_nodes.pop(nid)
-            if nid in a_status:
-                status[nid] = a_status.pop(nid)
-            (store.get("rewindSwept") or {}).pop(nid, None)   # the user's restore outranks a rewind
-            #                                       tombstone (jd._rebase_onto_disk would otherwise
-            #                                       re-delete the restored node on the next rebase)
-        # (Sticky completion restore lives in _mark_nodes_cleared now — 2026-07-07: the settle event must
-        # land AFTER the undo reopen it records, or the fold consumes it and the card returns to Working.)
-        jd.save_goals(sid, store)
-        jd.save_goal_archive(sid, arch)
-        _compact_seen.pop(sid, None)                   # force a re-stat next sweep (we just changed the live file)
+        with jd._GOAL_ARCH_LOCK:                       # the archive is a blind RMW — see the lock's note
+            arch = jd.load_goal_archive(sid)
+            a_nodes = arch.get("nodes", {})
+            if not a_nodes:
+                continue
+            a_status = arch.get("status", {})
+            a_children = {}
+            for nid, nd in a_nodes.items():
+                a_children.setdefault(nd.get("parentId"), []).append(nid)
+            move = []
+            for iid in ids:
+                if iid in a_nodes:
+                    stack = [iid]
+                    while stack:
+                        x = stack.pop()
+                        if x in a_nodes:
+                            move.append(x)
+                            stack.extend(a_children.get(x, []))
+            if not move:
+                continue
+            store = jd.load_goals(sid)
+            nodes = store.setdefault("nodes", {})
+            status = store.setdefault("status", {})
+            # Journal the payload FIRST (the user 2026-07-10): once the archive save below lands, these nodes
+            # exist only in the live store's save — a stale triage-pass save racing it would drop them from
+            # BOTH files, permanently. The journal carries the node payloads; jd.load_goals re-inserts any
+            # that end up in neither file (and defers to the archive if the user re-clears later).
+            jd.append_restore(sid, {nid: a_nodes[nid] for nid in move},
+                              {nid: a_status[nid] for nid in move if nid in a_status}, int(time.time()))
+            for nid in move:
+                nodes[nid] = a_nodes.pop(nid)
+                if nid in a_status:
+                    status[nid] = a_status.pop(nid)
+                (store.get("rewindSwept") or {}).pop(nid, None)   # the user's restore outranks a rewind
+                #                                       tombstone (jd._rebase_onto_disk would otherwise
+                #                                       re-delete the restored node on the next rebase)
+            # (Sticky completion restore lives in _mark_nodes_cleared now — 2026-07-07: the settle event must
+            # land AFTER the undo reopen it records, or the fold consumes it and the card returns to Working.)
+            jd.save_goals(sid, store)
+            jd.save_goal_archive(sid, arch)
+            _compact_seen.pop(sid, None)               # force a re-stat next sweep (we just changed the live file)
 
 
 def _resolve_node(sid, node_id):

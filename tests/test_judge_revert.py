@@ -7,6 +7,7 @@ durable override journal). All fixtures are SYNTHETIC (placeholder UUIDs, invent
 """
 import os
 import tempfile
+import threading
 import unittest
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
@@ -156,6 +157,47 @@ class RebaseTombstones(RevertBase):
         live = jd.load_goals(SID)
         self.assertNotIn(doomed, live["nodes"], "the sweep's rebase did not re-adopt its own pop")
         self.assertIn(doomed, jd.load_goal_archive(SID)["nodes"])
+
+    def test_a_concurrent_archiver_cannot_drop_the_other_writers_payloads(self):
+        """goals-archive is a blind RMW (save_goal_archive has none of save_goals' rev discipline),
+        and the rewind work made concurrent same-fsid archivers routine with systematically
+        DIFFERENT move sets (t-keyed sweep vs identity-keyed reconcile). Un-serialized, the writer
+        holding a stale archive base dropped the other writer's nodes from the archive while the
+        rewindSwept union kept them out of the live store — in NEITHER file, silent permanent loss.
+        The whole RMW now holds jd._GOAL_ARCH_LOCK, so the second writer reloads a base that
+        already carries the first writer's nodes. Orchestration: writer B starts first and its
+        archive save stalls mid-window; writer A (the full t-keyed sweep) runs against it."""
+        s = self._store()
+        jd.apply_plan(s, "s1", T0 + 100, [{"do": "mint", "why": "x", "text": "Doomed one"}], [])
+        jd.apply_plan(s, "s2", T0 + 110, [{"do": "mint", "why": "x", "text": "Doomed two"}], jd.open_menu(s))
+        jd.rollup_status(s, session_closed=False)
+        jd.save_goals(SID, s)
+        n1, n2 = self._nid(1), self._nid(2)
+        orig = jd.save_goal_archive
+        main = threading.current_thread()
+        b_at_save, a_done = threading.Event(), threading.Event()
+        def stalling_save(fsid, arch):
+            if threading.current_thread() is not main:
+                b_at_save.set()          # B is mid-RMW: its base predates A's sweep
+                a_done.wait(0.5)         # un-serialized, A's whole sweep lands inside this window
+            orig(fsid, arch)
+        b = threading.Thread(target=lambda: jd.archive_goal_nodes(
+            SID, jd.load_goals(SID), {n2}, T0 + 200))
+        jd.save_goal_archive = stalling_save
+        try:
+            b.start()
+            b_at_save.wait(5)
+            jd.drop_goals_after(SID, T0 + 90)          # writer A: the t-keyed sweep takes BOTH nodes
+            a_done.set()
+            b.join(10)
+        finally:
+            jd.save_goal_archive = orig
+        self.assertFalse(b.is_alive(), "writer B finished")
+        arch = jd.load_goal_archive(SID)["nodes"]
+        live = jd.load_goals(SID)["nodes"]
+        for nid in (n1, n2):
+            self.assertIn(nid, arch, "every swept payload survives in the archive: %s" % nid)
+            self.assertNotIn(nid, live)
 
     def test_an_undo_clear_journal_restore_pops_the_tombstone(self):
         # a user restore outranks the marker: the journal re-inserts the node AND clears its

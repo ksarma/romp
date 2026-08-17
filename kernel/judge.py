@@ -2484,6 +2484,21 @@ def save_goal_archive(fsid, store):
     tmp.rename(GOALARCHDIR / (fsid + ".json"))        # atomic publish
 
 
+# The goals-archive has NONE of save_goals' rev/rebase discipline — save_goal_archive is a blind
+# overwrite — so every load→mutate→save of it must hold this lock (2026-08-17). The rewind work made
+# concurrent same-fsid archivers ROUTINE (the triage-tier reconciler, the backend settle thread's
+# drop_goals_after, the two boot daemons, the WS-thread undo-restore and the compaction sweep), with
+# systematically DIFFERENT move sets — and a lost archive write is no longer a mere live-store
+# resurrection: the rewindSwept tombstone union keeps the dropped node out of the live store too, so
+# the clobber became silent PERMANENT loss (node in NEITHER file), reproduced by the review. All
+# archive mutators live in this one kernel process, so an in-process lock is sufficient; the second
+# writer reloads a base that already holds the first writer's nodes, making its re-archive an
+# idempotent overwrite. Deliberately NOT a save_goals-style union-rebase: undo-clear restores REMOVE
+# nodes from the archive, and a union would resurrect them (the exact node-in-both-files state the
+# audit proved five times).
+_GOAL_ARCH_LOCK = threading.Lock()
+
+
 def swept_ids(store, cut_t, kept=None):
     """The node ids a rewind at cut_t sweeps: every node BORN at/after cut_t plus its whole subtree
     (node[\"t\"] is frozen at birth and a child is always born after its parent). ONE definition,
@@ -2557,31 +2572,35 @@ def archive_goal_nodes(fsid, store, move, tomb_t):
     node at its nearest unmoved ancestor (both selections spare provably live-branch children now,
     and a dangling parentId loses the node from every walk that starts at the roots), saves both
     files. The shared primitive of drop_goals_after (t-keyed, at the branch-take) and
-    reconcile_rewound_goals (identity-keyed, when the abandoned-branch set changes)."""
-    nodes = store.get("nodes") or {}
-    status = store.get("status") or {}
-    parent0 = {nid: nd.get("parentId") for nid, nd in nodes.items()}   # pre-pop parents, for the re-parent
-    arch = load_goal_archive(fsid)
-    a_nodes = arch.setdefault("nodes", {}); a_status = arch.setdefault("status", {})
-    swept = store.setdefault("rewindSwept", {})
-    for nid in move:
-        if nid in nodes:
-            a_nodes[nid] = nodes.pop(nid)              # a whole-node dict delete is UNGUARDED (not a PROTECTED key)
-        if nid in status:
-            a_status[nid] = status.pop(nid)
-        swept[nid] = int(tomb_t)
-    arch["rompUuid"] = store.get("rompUuid", fsid)
-    save_goal_archive(fsid, arch)
-    for nid, nd in nodes.items():                      # spared survivors of archived parents stay reachable
-        p = nd.get("parentId")
-        if p in move:
-            while p is not None and p in move:
-                p = parent0.get(p)
-            nd["parentId"] = p                         # nearest unmoved ancestor; None → it becomes a top
-    if store.get("lastNode") not in nodes:
-        store["lastNode"] = (max(nodes, key=lambda n: int(nodes[n].get("t") or 0)) if nodes else None)
-    rollup_status(store, session_closed=False)
-    save_goals(fsid, store)
+    reconcile_rewound_goals (identity-keyed, when the abandoned-branch set changes). The whole
+    read-modify-write — archive load through both saves — holds _GOAL_ARCH_LOCK so a concurrent
+    sweep pair serializes entirely (see the lock's note: a lost archive write under the tombstones
+    is permanent loss, not resurrection)."""
+    with _GOAL_ARCH_LOCK:
+        nodes = store.get("nodes") or {}
+        status = store.get("status") or {}
+        parent0 = {nid: nd.get("parentId") for nid, nd in nodes.items()}   # pre-pop parents, for the re-parent
+        arch = load_goal_archive(fsid)
+        a_nodes = arch.setdefault("nodes", {}); a_status = arch.setdefault("status", {})
+        swept = store.setdefault("rewindSwept", {})
+        for nid in move:
+            if nid in nodes:
+                a_nodes[nid] = nodes.pop(nid)          # a whole-node dict delete is UNGUARDED (not a PROTECTED key)
+            if nid in status:
+                a_status[nid] = status.pop(nid)
+            swept[nid] = int(tomb_t)
+        arch["rompUuid"] = store.get("rompUuid", fsid)
+        save_goal_archive(fsid, arch)
+        for nid, nd in nodes.items():                  # spared survivors of archived parents stay reachable
+            p = nd.get("parentId")
+            if p in move:
+                while p is not None and p in move:
+                    p = parent0.get(p)
+                nd["parentId"] = p                     # nearest unmoved ancestor; None → it becomes a top
+        if store.get("lastNode") not in nodes:
+            store["lastNode"] = (max(nodes, key=lambda n: int(nodes[n].get("t") or 0)) if nodes else None)
+        rollup_status(store, session_closed=False)
+        save_goals(fsid, store)
 
 
 def _dead_branch_ids(store, rewind_set, kept_set=frozenset()):
