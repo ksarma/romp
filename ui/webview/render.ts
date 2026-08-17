@@ -8035,7 +8035,11 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeMetaM
 // fills (green → amber → red), with the % written inside. Replaces the plain "40%".
 // CLICK → /compact the session, same as the timeline's battery click.
 function ctxBar(): HTMLElement {
-  const bar = el("span", "ctx-bar"); bar.id = "ctx-bar";
+  // No id here: this builder serves BOTH the statusline and the tab tip, and an id minted per widget put a
+  // duplicate #ctx-bar in the document whenever a tip was open — the 1s ticker getElementById-resolves the
+  // id, and only document order kept it refreshing the statusline's copy rather than the tip's (found
+  // 2026-08-17). The id belongs to the statusline SLOT, so its call site mints it.
+  const bar = el("span", "ctx-bar");
   bar.appendChild(el("span", "ctx-fill"));
   bar.appendChild(el("span", "ctx-text"));
   bar.appendChild(el("span", "ctx-scan"));   // compacting: teal rectangle whose right edge compresses leftward (as on the timeline)
@@ -8240,6 +8244,7 @@ function updateStatusline() {
   syncMetaControls(meta, s.status);
   right.appendChild(meta);
   const bar = ctxBar();
+  bar.id = "ctx-bar";   // the statusline slot's id — the 1s ticker refreshes THIS copy in place (the tab tip's carries none)
   setCtxBar(bar, s.status.ctx, s.status.state === "compacting", s.status.ctxColor);
   right.appendChild(bar);
   sl.appendChild(right);
