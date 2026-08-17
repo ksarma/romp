@@ -399,6 +399,24 @@ class TwoPhaseRewindTiming(unittest.TestCase):
         self.assertIn("revert-skipped", km.jd.ERRORS.read_text(), "an error row names the skip")
         self.assertIsNone(km._rewind_hold_get(SID), "no hold is latched on an unknowable cut")
 
+    def test_the_one_time_migration_runs_once_and_marks_itself_done(self):
+        # the boot migration cleans the pre-fix residue (dead-branch orphans on dormant sessions the
+        # cadence-riding reconciliation never revisits) exactly once, marker-gated in state
+        calls = []
+        saved = km.jd.run_rewound_reconcile
+        km.jd.run_rewound_reconcile = lambda **kw: calls.append(kw) or 3
+        try:
+            km._rewind_migration_bg()
+            km._rewind_migration_bg()
+        finally:
+            km.jd.run_rewound_reconcile = saved
+        self.assertEqual(len(calls), 1, "the second boot found the marker and did nothing")
+        self.assertGreater(calls[0].get("window") or 0, 86400 * 365,
+                           "migration discovery reaches far past the 48h caption horizon")
+        marker = km.jd.STATE / "rewind-reconcile-migration.done"
+        self.assertTrue(marker.exists())
+        self.assertEqual(json.loads(marker.read_text()).get("archived"), 3)
+
     def test_the_boot_pass_resolves_a_hold_whose_event_fired_while_down(self):
         # kernel restart mid-window: the take landed, no kernel was up to hear the event — boot
         # resolves through the same discriminator instead of leaving the hold latched forever

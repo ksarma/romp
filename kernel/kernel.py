@@ -5391,7 +5391,11 @@ def _sdk_locked():
                 reconcile=True)   # boot reconcile: reap orphaned CLIs, resume cut turns, deliver persisted queues
             # The judge parses the SAME cut world the display parse does (jd._PENDING_CUT_FN): during
             # an armed bare rollback the planner must not see — and mint from — the deleted tail.
-            jd.set_pending_cut_provider(_sdk_backend.pending_cut)
+            # getattr-guarded like every other backend probe (a test fake without the affordance
+            # must still construct — the singleton contract outranks the wire).
+            _cut_fn = getattr(_sdk_backend, "pending_cut", None)
+            if _cut_fn:
+                jd.set_pending_cut_provider(_cut_fn)
             # The backend's flag-consumption events resolve held rewinds (two-phase goal cleanup:
             # archive at the branch-take, restore on failure — _on_rewind_resolved).
             _sdk_backend.rewind_resolved_cb = _on_rewind_resolved
@@ -12614,6 +12618,27 @@ def _on_rewind_resolved(sid, outcome):
     _rewind_hold_clear(sid)
     _mark_views_dirty()
     _pusher_wake.set()
+
+
+def _rewind_migration_bg():
+    """ONE-TIME boot migration (marker-gated): the ongoing dead-branch reconciliation only rides the
+    triage cadence over recently-touched sessions, so the residue that accumulated BEFORE it shipped
+    (85 dead-branch nodes across 8 sessions at audit time, 28 in live stores, 5 resident in live and
+    archive at once) would sit forever on dormant sessions. Run the same check once over every
+    discoverable session regardless of age, then write the marker — on success only, so a crash
+    mid-migration retries next boot (reconciliation is idempotent: archive-by-identity re-run is a
+    no-op). Cards archive (recoverable), never delete."""
+    marker = jd.STATE / "rewind-reconcile-migration.done"
+    if marker.exists():
+        return
+    try:
+        n = jd.run_rewound_reconcile(now=int(time.time()), sessions_cap=100000,
+                                     window=10 * 365 * 86400)
+        marker.write_text(json.dumps({"t": int(time.time()), "archived": n}))
+        if n:
+            sys.stderr.write("romp-kernel: rewind migration archived %d dead-branch goal node(s)\n" % n)
+    except Exception:
+        sys.stderr.write("rewind migration: %s\n" % traceback.format_exc())
 
 
 def _rewind_holds_boot():
@@ -26052,6 +26077,8 @@ def main():
     threading.Thread(target=_rewind_holds_boot, daemon=True).start()   # resolve holds whose take/fail
     #                                                           event fired while no kernel was up (it
     #                                                           builds the backend itself if it wins the race)
+    threading.Thread(target=_rewind_migration_bg, daemon=True).start()   # one-time dead-branch cleanup
+    #                                                           of pre-fix residue, marker-gated
     threading.Thread(target=_producer, daemon=True).start()
     threading.Thread(target=_pusher, daemon=True).start()
     threading.Thread(target=_heartbeat, daemon=True).start()  # WS keepalive on its own thread (see _heartbeat)

@@ -2507,34 +2507,150 @@ def drop_goals_after(fsid, cut_t):
     move = swept_ids(store, cut_t)
     if not move:
         return 0
+    archive_goal_nodes(fsid, store, move, cut_t)
+    return len(move)
+
+
+def archive_goal_nodes(fsid, store, move, tomb_t):
+    """Move `move` (node ids) + their status rows out of the LIVE store into goals-archive/, leaving a
+    rewindSwept tombstone per id so no concurrent save-rebase republishes them (the mergedFrom lesson,
+    2026-08-13, applied to rewinds 2026-08-17: presence-in-a-snapshot is not truth — proven five times
+    in live stores, nodes resident in live AND archive at once). Tombstones are never pruned: entries
+    are rare and an undo-clear restore pops its own. Re-points lastNode at the newest survivor (a
+    dangling focus would prematurely settle the pre-cut focus card), re-rolls status (removing a
+    blocked SUB changes its surviving parent's rollup), saves both files. The shared primitive of
+    drop_goals_after (t-keyed, at the branch-take) and reconcile_rewound_goals (identity-keyed, when
+    the abandoned-branch set changes)."""
+    nodes = store.get("nodes") or {}
     status = store.get("status") or {}
     arch = load_goal_archive(fsid)
     a_nodes = arch.setdefault("nodes", {}); a_status = arch.setdefault("status", {})
-    swept = store.setdefault("rewindSwept", {})        # DURABLE deletion tombstones (the mergedFrom lesson,
-    #                                                    2026-08-13, applied to rewinds 2026-08-17): presence-
-    #                                                    in-a-snapshot is not truth, and without a marker the
-    #                                                    save-rebase re-adopted swept nodes wholesale from any
-    #                                                    concurrent writer — proven five times in live stores
-    #                                                    (nodes resident in live AND archive at once). Never
-    #                                                    pruned: entries are rare (a few per rewind) and an
-    #                                                    undo-clear restore pops its own.
+    swept = store.setdefault("rewindSwept", {})
     for nid in move:
         if nid in nodes:
             a_nodes[nid] = nodes.pop(nid)              # a whole-node dict delete is UNGUARDED (not a PROTECTED key)
         if nid in status:
             a_status[nid] = status.pop(nid)
-        swept[nid] = int(cut_t)
+        swept[nid] = int(tomb_t)
     arch["rompUuid"] = store.get("rompUuid", fsid)
     save_goal_archive(fsid, arch)
-    # a dangling lastNode is tolerated (focus→None), but that would prematurely settle the pre-cut focus card;
-    # re-point it at the newest SURVIVING node so rollup_status keeps a sane focus.
     if store.get("lastNode") not in nodes:
         store["lastNode"] = (max(nodes, key=lambda n: int(nodes[n].get("t") or 0)) if nodes else None)
-    # removing a born-in-range SUB can change its surviving parent's rolled-up status (a blocked child now
-    # gone), so re-roll the status map from the (unchanged) surviving logs.
     rollup_status(store, session_closed=False)
     save_goals(fsid, store)
-    return len(move)
+
+
+def _dead_branch_ids(store, rewind_set):
+    """The node ids the reconciliation archives, given the predicate's `rewind` uuid set:
+    - DIRECT: promptUuid provably rewound away — except a node carrying mergedFrom, whose promptUuid
+      may be a merge TRANSPLANT from a dead twin onto a kept-origin survivor (_merge_nodes grafts the
+      dupe's uuid onto a survivor lacking one): mixed provenance proves nothing, keep.
+    - SUBTREE DRAG downward, as drop_goals_after has always done.
+    - UMBRELLA DRAG upward: a container with NO promptUuid of its own whose every child is going is
+      an empty shell over dead work (the inverted subtree-drag direction a pu-keyed pick misses).
+    - AUTHORITATIVE-OPEN EXEMPTION: a node whose agentTask is open — and its ancestors, so nothing
+      dangles — stays: the live task store pins that card working (Path E is left as-is by decision;
+      the agent may genuinely still hold the to-do, and archiving it would just re-mint a fresh
+      mirror next pass while losing the diary)."""
+    nodes = store.get("nodes") or {}
+    kids = {}
+    for nid, nd in nodes.items():
+        kids.setdefault(nd.get("parentId"), []).append(nid)
+    move = set()
+    for nid, nd in nodes.items():
+        pu = nd.get("promptUuid")
+        if pu and pu in rewind_set and not nd.get("mergedFrom"):
+            move.add(nid)
+    stack = list(move)
+    while stack:                                       # subtree drag
+        for c in kids.get(stack.pop(), []):
+            if c not in move:
+                move.add(c)
+                stack.append(c)
+    changed = True
+    while changed:                                     # umbrella drag, to a fixpoint (nested shells)
+        changed = False
+        for nid, nd in nodes.items():
+            if nid in move or nd.get("promptUuid") or nd.get("mergedFrom"):
+                continue
+            ch = kids.get(nid) or []
+            if ch and all(c in move for c in ch):
+                move.add(nid)
+                changed = True
+    protected = set()
+    for nid, nd in nodes.items():
+        if (nd.get("agentTask") or {}).get("status") == "open":
+            x = nid
+            while x is not None and x not in protected:
+                protected.add(x)
+                x = (nodes.get(x) or {}).get("parentId")
+    return move - protected
+
+
+_RECON_MEMO = {}   # fsid -> (fileset key, frozenset of rewound-away uuids) — the reconciliation's event gate
+
+
+def reconcile_rewound_goals(fsid, path, now):
+    """EVENT-KEYED dead-branch reconciliation, riding the triage cadence: when a parse-relevant file
+    changes AND the transcript's abandoned-branch set actually CHANGED, archive live goals whose
+    anchor lies on a dead branch (predicate em.chain_membership — "rewind" only; "clear" is /clear
+    jurisdiction and "broken"/unknown prove nothing, exactly the incident scan's dead-episode-vs-
+    dead-branch discriminator). This is the only cover for the rewinds romp never sees: CLI-native
+    Esc-Esc in a tmux terminal, the SDK forkAt resume, a cut the gesture path could not resolve, and
+    a crash between arm and take — every one applies --resume-session-at with no sweep, and 28 live
+    orphans existed when this shipped (one still being actively judged a day after its conversation
+    stopped existing). Cards ARCHIVE (recoverable, and the override journal stays safe because
+    node-keyed ops skip absent ids and restore defers to the archive) — never delete.
+
+    Deliberately blind to a PENDING (unconsumed) cut: the two-phase hold owns that window (hide at
+    gesture, archive at take, restore on failure) — reconciling it would archive cards for a rewind
+    that can still fail. Only branches dead ON DISK count, so no leaf_override here."""
+    files = _judge_candidates(fsid, [str(path)])
+    states = STATESDIR / (fsid + ".jsonl")
+    key_files = list(files) + ([str(states)] if states.exists() else [])
+    try:
+        key = _fileset_key(key_files)
+    except OSError:
+        key = None
+    memo = _RECON_MEMO.get(fsid)
+    if key is not None and memo and memo[0] == key:
+        return 0                                       # nothing parse-relevant moved → not an event
+    mem = em.chain_membership(path, candidate_files=files,
+                              states=str(states) if states.exists() else None)
+    sig = frozenset(mem["rewind"])
+    n = 0
+    if sig and (memo is None or memo[1] != sig):       # the abandoned set CHANGED → new information
+        store = load_goals(fsid)
+        move = _dead_branch_ids(store, sig)
+        if move:
+            archive_goal_nodes(fsid, store, move, now)
+            _log_judge_error("romp", fsid, "rewound-archived", goal=sorted(move),
+                             note="%d goal node(s) anchored on a rewound-away branch archived by "
+                                  "the reconciliation (recoverable in goals-archive)" % len(move))
+            n = len(move)
+    _RECON_MEMO[fsid] = (key, sig)
+    return n
+
+
+def run_rewound_reconcile(now=None, sessions_cap=PLAN_SESSIONS, window=None, verbose=False):
+    """One reconciliation pass over the discovered sessions (run_triage runs it first, so the same
+    pass's planner/closer/nudge see a store already clean of dead-branch orphans). `window` widens
+    discovery for the one-time boot migration (the kernel passes years; the 85-node residue spans
+    sessions long outside the 48h caption horizon). Per-session failures are loud rows, never a
+    stalled pass."""
+    if now is None:
+        now = int(time.time())
+    sessions = discover(now, window=window) if window else discover(now)
+    n = 0
+    for fsid, path, anchor, name in sessions[:sessions_cap]:
+        try:
+            n += reconcile_rewound_goals(fsid, str(path), now)
+        except Exception as e:
+            _log_judge_error("romp", fsid, "rewound-reconcile",
+                             note="dead-branch reconciliation failed: %r" % e)
+    if verbose:
+        sys.stderr.write("romp-judge: reconciliation archived %d dead-branch goal node(s)\n" % n)
+    return n
 
 
 def open_menu(store, cap=20):
@@ -9308,6 +9424,11 @@ def run_triage(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, ve
         now = int(time.time())
     own = begin_pass_frame()
     try:
+        # dead-branch reconciliation FIRST: when a rewind romp never saw (native Esc-Esc, forkAt, a
+        # missed sweep) changed the abandoned-branch set, its orphans leave the store before this
+        # same pass's planner reads the menu and the nudge tick walks the tops. Event-keyed inside
+        # (fileset + abandoned-set change), so an idle pass costs stats, not adapter walks.
+        run_rewound_reconcile(now=now, sessions_cap=sessions_cap, verbose=verbose)
         placed = run_plan(now=now, sessions_cap=sessions_cap, concurrency=concurrency, verbose=verbose)
         if CLOSER_ON:
             run_close(now=now, sessions_cap=sessions_cap, concurrency=concurrency, verbose=verbose)

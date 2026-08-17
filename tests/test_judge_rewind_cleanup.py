@@ -420,5 +420,147 @@ class PlanSessionIntegration(Base):
         self.assertEqual(mirrors[0].get("promptUuid"), "u3", "…with post-rewind on-chain identity")
 
 
+class ReconcileRewoundGoals(Base):
+    """The state-keyed reconciliation (rides the triage cadence, event-gated on the abandoned-branch
+    set changing): the ONLY cover for rewinds romp never sees — CLI-native Esc-Esc, the SDK forkAt
+    resume, an unresolvable cut, a crash between arm and take. 28 live orphans existed when this
+    shipped; one had been actively judged for a day after its conversation stopped existing."""
+
+    def setUp(self):
+        super().setUp()
+        jd._RECON_MEMO.clear()
+
+    def _store(self):
+        return {"rompUuid": SID, "seq": 0, "nodes": {}, "placements": {}, "status": {},
+                "placementsV": jd.PLACEMENTS_V}
+
+    def _mint(self, s, seg, t, text, pu, parent_ops=None):
+        jd.apply_plan(s, seg, t, parent_ops or [{"do": "mint", "why": "x", "text": text}],
+                      jd.open_menu(s), prompt_uuid=pu)
+
+    def test_the_g44_zombie_is_archived_so_no_nudge_precondition_survives(self):
+        # Item 8, the end-to-end shape: a working top minted from a rewound-away turn + an idle
+        # session on the new branch. Pre-fix every auto-nudge gate passed and _followup_body quoted
+        # the orphan ("Still open on this:") into a conversation with no memory of the ask — twice,
+        # live. The fire's precondition is a live still-'working' top; the reconciliation removes it.
+        self.write(self.base_recs() + self.fork_recs())
+        s = self._store()
+        self._mint(s, "seg-dead", CUT, "Zombie ask from the deleted turn", "u2")
+        self._mint(s, "seg-live", T0 + 60, "Real ask on the new branch", "u3")
+        jd.rollup_status(s, session_closed=False)
+        jd.save_goals(SID, s)
+        zombie, kept = "%s:g1" % SID, "%s:g2" % SID
+        self.assertEqual(jd.load_goals(SID)["status"].get(zombie, "working"), "working",
+                         "premise: the zombie is a nudgeable working top today")
+        n = jd.reconcile_rewound_goals(SID, str(self.path), T0 + 200)
+        self.assertEqual(n, 1)
+        live = jd.load_goals(SID)
+        self.assertNotIn(zombie, live["nodes"], "the zombie left the live store — nothing to nudge")
+        self.assertIn(kept, live["nodes"], "the new branch's card is untouched")
+        self.assertIn(zombie, jd.load_goal_archive(SID)["nodes"], "archived, recoverable — not deleted")
+        self.assertIn(zombie, live.get("rewindSwept", {}), "tombstoned against rebase resurrection")
+        self.assertIn("rewound-archived", jd.ERRORS.read_text(), "the move is loud")
+
+    def test_reconciliation_is_event_keyed_not_a_timer(self):
+        self.write(self.base_recs() + self.fork_recs())
+        s = self._store()
+        self._mint(s, "seg-dead", CUT, "Zombie", "u2")
+        jd.save_goals(SID, s)
+        self.assertEqual(jd.reconcile_rewound_goals(SID, str(self.path), T0 + 200), 1)
+        rev = jd.load_goals(SID).get("rev")
+        self.assertEqual(jd.reconcile_rewound_goals(SID, str(self.path), T0 + 201), 0,
+                         "unchanged fileset → not an event, no adapter walk archives anything")
+        self.append([uline(T0 + 90, "more work on the new branch", "u4", "a3"),
+                     aline(T0 + 95, "More new-branch work, settled.", "a4", "u4")])
+        self.assertEqual(jd.reconcile_rewound_goals(SID, str(self.path), T0 + 202), 0,
+                         "fileset moved but the abandoned set did not → no new information")
+        self.assertEqual(jd.load_goals(SID).get("rev"), rev, "…and the store was never re-published")
+        self.append([uline(T0 + 120, "rewriting that", "u5", "a3"),
+                     aline(T0 + 125, "Reply after the second rewind.", "a5", "u5")])
+        s = jd.load_goals(SID)
+        self._mint(s, "seg-dead2", T0 + 95, "Second zombie", "u4")
+        jd.save_goals(SID, s)
+        self.assertEqual(jd.reconcile_rewound_goals(SID, str(self.path), T0 + 300), 1,
+                         "a NEW abandoned branch (u4's) is the event that re-arms the check")
+
+    def test_a_merge_transplanted_dead_anchor_on_a_kept_survivor_is_not_swept(self):
+        # hazard (b): _merge_nodes grafts the dupe's promptUuid onto a survivor lacking one — mixed
+        # provenance proves nothing about the NODE, so it stays
+        self.write(self.base_recs() + self.fork_recs())
+        s = self._store()
+        self._mint(s, "seg-x", T0, "Kept-origin survivor", "u2")
+        nid = "%s:g1" % SID
+        s["nodes"][nid]["mergedFrom"] = [{"id": "%s:g9" % SID, "text": "dead twin", "at": CUT}]
+        jd.save_goals(SID, s)
+        self.assertEqual(jd.reconcile_rewound_goals(SID, str(self.path), T0 + 200), 0)
+        self.assertIn(nid, jd.load_goals(SID)["nodes"])
+
+    def test_an_umbrella_parent_over_orphan_children_is_swept_with_them(self):
+        # hazard (c): the umbrella has no promptUuid — the inverted subtree-drag direction
+        self.write(self.base_recs() + self.fork_recs())
+        s = self._store()
+        self._mint(s, "seg-a", CUT, "Orphan child one", "u2")
+        self._mint(s, "seg-b", CUT + 5, "Orphan child two", "u2")
+        s["nodes"]["%s:umb" % SID] = jd.GuardedNode({
+            "id": "%s:umb" % SID, "text": "Umbrella over dead work", "parentId": None,
+            "nodeComplete": False, "blocked": False, "cleared": False, "trail": [],
+            "t": CUT + 10, "mt": CUT + 10, "umbrella": True, "log": []})
+        for gid in ("%s:g1" % SID, "%s:g2" % SID):
+            s["nodes"][gid]["parentId"] = "%s:umb" % SID
+        jd.save_goals(SID, s)
+        self.assertEqual(jd.reconcile_rewound_goals(SID, str(self.path), T0 + 200), 3)
+        live = jd.load_goals(SID)["nodes"]
+        self.assertNotIn("%s:umb" % SID, live, "the empty shell went with its children")
+
+    def test_an_enqueue_time_anchor_below_cut_t_is_still_swept(self):
+        # hazard (a): an absorbed prompt's atom t is its ENQUEUE time — a dead-branch node can carry
+        # t < cut_t and escape any t-keyed sweep forever; the identity key catches it
+        self.write(self.base_recs() + [attline(T0 + 5, "att1", "a2")] + self.fork_recs())
+        s = self._store()
+        self._mint(s, "seg-abs", T0 + 5, "Born from an absorbed prompt", "att1")
+        jd.save_goals(SID, s)
+        self.assertLess(s["nodes"]["%s:g1" % SID]["t"], CUT, "premise: t-keyed sweeps miss this node")
+        self.assertEqual(jd.reconcile_rewound_goals(SID, str(self.path), T0 + 200), 1)
+        self.assertNotIn("%s:g1" % SID, jd.load_goals(SID)["nodes"])
+
+    def test_clear_branch_and_broken_chain_nodes_are_untouched(self):
+        # hazards (d) + (e): pre-/clear history is the episode machinery's jurisdiction; a broken
+        # chain is unprovable — neither is ever swept as a rewind
+        recs = self.base_recs()
+        self.write(recs[:2] + [uline(T0 + 15, "dangling line", "u9",
+                                     "99999999-aaaa-bbbb-cccc-dddddddddddd")] + recs[2:] +
+                   [uline(T0 + 60, "fresh start after clear", "u3", None),
+                    aline(T0 + 70, "New conversation reply.", "a3", "u3")])
+        s = self._store()
+        self._mint(s, "seg-pre", T0, "Pre-clear card", "u2")     # u2 is now pre-/clear, not rewound
+        self._mint(s, "seg-brk", T0 + 15, "Broken-chain card", "u9")
+        jd.save_goals(SID, s)
+        self.assertEqual(jd.reconcile_rewound_goals(SID, str(self.path), T0 + 200), 0)
+        self.assertEqual(len(jd.load_goals(SID)["nodes"]), 2, "both cards stay")
+
+    def test_an_open_agent_task_pins_its_card_against_the_sweep(self):
+        # Path E stays as-is: the live task store is authoritative — the agent may genuinely still
+        # hold the to-do, and archiving would just re-mint a fresh mirror while losing the diary
+        self.write(self.base_recs() + self.fork_recs())
+        s = self._store()
+        self._mint(s, "seg-dead", CUT, "Mirror of a still-open to-do", "u2")
+        nid = "%s:g1" % SID
+        s["nodes"][nid]["agentTask"] = {"key": "1", "status": "open", "raw": "in_progress"}
+        jd.save_goals(SID, s)
+        self.assertEqual(jd.reconcile_rewound_goals(SID, str(self.path), T0 + 200), 0)
+        self.assertIn(nid, jd.load_goals(SID)["nodes"])
+
+    def test_a_pending_unconsumed_cut_is_not_reconciled(self):
+        # the two-phase hold owns the armed window (hide now, archive at take, RESTORE on failure) —
+        # reconciling it would archive cards for a rewind that can still fail
+        self.write(self.base_recs())                   # no fork on disk: the rollback is only armed
+        jd.set_pending_cut_provider(lambda sid: "a1")
+        s = self._store()
+        self._mint(s, "seg-dead", CUT, "Card the pending delete would drop", "u2")
+        jd.save_goals(SID, s)
+        self.assertEqual(jd.reconcile_rewound_goals(SID, str(self.path), T0 + 200), 0)
+        self.assertIn("%s:g1" % SID, jd.load_goals(SID)["nodes"])
+
+
 if __name__ == "__main__":
     unittest.main()
