@@ -28,6 +28,20 @@ Round two (2026-08-18, the adversarial review): the guard's own corners inherite
  - The carry is maintained EVERY pusher cycle, clients or not, so "previous push" is at most one
    cycle stale — never the hours-old world from before the last browser closed.
 
+Round three (2026-08-18, the re-verification):
+ - Readers SNAPSHOT the carry: _tab_carry_forget pops from prev on WS/HTTP handler threads while
+   the pusher iterates it, and a size-changing pop mid-comprehension was a RuntimeError that killed
+   the clientless pusher thread permanently (the :21193 call was the only bare site). The call is
+   also belted like every sibling pusher job.
+ - The boot-corner None sentinel keys to the DESTRUCTIVE frame (tabOrder), not the whole chat leg:
+   the SDK half is in-process truth and its session frames keep flowing through the wedge — standing
+   the leg down re-minted the stuck-spinner for healthy SDK sessions.
+ - An answering probe is authoritative in BOTH directions: its answer IS the carried world, so
+   newcomers spawned mid-episode are seeded in, and total turnover can't stale-empty the carry into
+   the no-probe adopt branch (which disarmed the guard and logged a false 'recovered').
+ - A corroborated kill leaves a TOMBSTONE that survives a stale healthy read re-adding the sid to
+   prev; only proven revival (an answering probe listing it, or _revive_session) clears it.
+
 SYNTHETIC fixtures only: placeholder UUIDs, invented names, hermetic temp STATE.
 """
 import contextlib
@@ -56,13 +70,15 @@ SID = "11111111-2222-3333-4444-555555555555"
 ROW = {"state": "waiting", "since": 0, "model": "", "effort": "", "context": None,
        "compactPct": None, "color": None, "mode": "", "backend": "tmux"}
 SDK_SID = "99999999-8888-7777-6666-555555555555"
-SDK_ROW = {"state": "working", "backend": "sdk"}
+SDK_ROW = {"state": "working", "since": 0, "model": "", "effort": "", "context": None,
+           "compactPct": None, "color": None, "mode": "", "backend": "sdk"}
 
 
 def reset_carry():
     km._tab_tmux_carry["prev"] = {}
     km._tab_tmux_carry["collapsed"] = False
     km._tab_tmux_carry["seeded"] = False
+    km._tab_tmux_carry["dead"] = set()
 
 
 class CollapseCarryUnit(unittest.TestCase):
@@ -228,6 +244,168 @@ class CollapseCarryUnit(unittest.TestCase):
             km._record_death(SID, int(km.time.time()), "kill")
         self.assertNotIn(SID, km._tab_tmux_carry["prev"])
 
+    # ── an answering probe is authoritative in BOTH directions (2026-08-18 round three) ──
+
+    def test_an_answering_probe_widens_the_carry_with_newcomers(self):
+        # prev={A}, probe answers {A,B}: B was created DURING the episode (spawns are independent
+        # execs that can succeed while list-sessions times out). The probe is the corroboration
+        # authority in both directions — B must be listed now, and be in prev so it survives a
+        # later probe failure in the same episode. The old carry only PRUNED when non-empty, so a
+        # newcomer's tab stayed invisible for the whole wedge.
+        B = "22222222-3333-4444-5555-666666666666"
+        self._guard({SID: ROW})                       # the previous push's world
+        self._probe({SID, B})
+        out, _err = self._guard({})
+        self.assertIn(SID, out)
+        self.assertIn(B, out, "a probe-listed newcomer is seeded, never dropped")
+        self.assertIn(B, km._tab_tmux_carry["prev"], "…and lands in prev, not just this cycle's map")
+        self.assertEqual((out[SID] or {}).get("state"), "waiting", "survivors keep carried metadata")
+        self._probe(None)                             # the probe fails later in the same episode…
+        out2, _e = self._guard({})
+        self.assertIn(B, out2, "…and the widened carry holds the newcomer up")
+
+    def test_total_turnover_keeps_the_guard_armed_and_the_log_honest(self):
+        # prev={A}, probe answers {B} (A killed outside romp, B spawned, all mid-episode): the old
+        # prune-only carry went stale-empty, the NEXT collapsed cycle took the no-probe
+        # adopt-and-stand-down branch and falsely logged 'recovered' — the guard disarmed for the
+        # rest of the wedge, every later spawn invisible until list_lines itself healed. The
+        # probe's world must be adopted wholesale instead.
+        B = "22222222-3333-4444-5555-666666666666"
+        C = "33333333-4444-5555-6666-777777777777"
+        self._guard({SID: ROW})
+        self._probe({B})
+        out, _err = self._guard({})
+        self.assertNotIn(SID, out, "the probe dropped A — it really died")
+        self.assertIn(B, out, "…and its full answer is the carried world")
+        n = len(self.probes)
+        out2, err2 = self._guard({})                  # the wedge continues
+        self.assertGreater(len(self.probes), n, "still collapsed → still probing — never the "
+                                                "no-probe adopt that disarmed the guard")
+        self.assertNotIn("recovered", err2, "no false recovery log while the read is still failing")
+        self.assertIn(B, out2)
+        self._probe({B, C})                           # a later spawn during the same episode
+        out3, _e = self._guard({})
+        self.assertIn(C, out3, "later newcomers keep landing")
+
+    # ── cross-thread safety: a kill landing mid-cycle must never blow up the reader (round three) ──
+
+    def test_a_forget_landing_mid_comprehension_does_not_raise(self):
+        # _tab_carry_forget pops from prev on WS/HTTP handler threads while the pusher's guard
+        # iterates the carry. Deterministic interleave: the probe's answer runs _tab_carry_forget
+        # from inside the very iteration that consumes it — each membership/iteration step is a
+        # moment another thread's pop can land. Pre-fix (the reader iterated the live dict) this
+        # raised RuntimeError('dictionary changed size during iteration'); on the clientless pusher
+        # path nothing caught it and the pusher thread died permanently. Readers snapshot now.
+        B = "22222222-3333-4444-5555-666666666666"
+        C = "33333333-4444-5555-6666-777777777777"
+        self._guard({SID: ROW, B: ROW, C: ROW})       # the previous push's world (three sids)
+
+        class ForgetsMidIteration(set):               # a kill gate fires during the reader's pass
+            def __contains__(inner, s):
+                km._tab_carry_forget(C)
+                return set.__contains__(inner, s)
+
+            def __iter__(inner):
+                km._tab_carry_forget(C)
+                return set.__iter__(inner)
+
+        km._TMUX.alive_sids = lambda t=3: ForgetsMidIteration({SID, B})
+        out, _err = self._guard({})                   # must not raise
+        self.assertIn(SID, out)
+        self.assertIn(B, out)
+        self.assertNotIn(C, out, "the concurrently-killed sid stays dead")
+
+    def test_the_clientless_pusher_survives_a_guard_exception(self):
+        # The clientless maintain call is the ONLY bare _tab_list_tmux site — an escape there rode
+        # _pusher_cycle's try/finally into _pusher's while-True and killed the daemon thread: no
+        # pushes, no death sweep, no auto-nudge, no awaiting-lift until a kernel restart, while
+        # HTTP/WS kept serving. Belted like every sibling job, and loud.
+        jobs = ["_lift_spent_awaiting", "_death_sweep_tick", "_deferral_sweep_tick",
+                "_auto_nudge_tick", "_interrupt_block_tick", "_auto_pause_on_limit",
+                "_auto_pause_on_spend_limit", "_auto_resume_retry", "_auto_resume_session_retry",
+                "_auto_retry_tick", "_clear_done_working_notes"]
+        saved = {nm: getattr(km, nm) for nm in jobs}
+        saved_guard = km._tab_list_tmux
+
+        def boom(tmux):
+            raise RuntimeError("dictionary changed size during iteration")
+
+        try:
+            for nm in jobs:
+                setattr(km, nm, lambda *a, **k: None)
+            km._tab_list_tmux = boom
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                km._pusher_cycle_jobs(int(km.time.time()), {}, any_client=False)   # must not raise
+            self.assertIn("tab-carry maintain", err.getvalue(), "caught loudly, never silently")
+        finally:
+            km._tab_list_tmux = saved_guard
+            for nm, fn in saved.items():
+                setattr(km, nm, fn)
+
+    # ── the kill tombstone: a stale healthy read can't resurrect a corroborated kill (round three) ──
+
+    def test_a_stale_healthy_read_cannot_resurrect_a_corroborated_kill(self):
+        # Interleave: the pusher snapshots liveness BEFORE the kill lands, the kill gate
+        # corroborates and forgets, THEN the in-flight cycle's healthy read assigns prev from the
+        # stale snapshot that still lists the sid. The pop alone was lost — prev re-added the sid —
+        # and the next collapse re-carried the just-killed session: the dismiss/resurrect flap the
+        # forget exists to prevent. The tombstone survives the overwrite.
+        B = "22222222-3333-4444-5555-666666666666"
+        self._guard({SID: ROW, B: ROW})               # a healthy cycle
+        km._tab_carry_forget(SID)                     # the kill gate proves death…
+        self._guard({SID: ROW, B: ROW})               # …but a STALE healthy read still lists it
+        self.assertIn(SID, km._tab_tmux_carry["prev"], "the stale read really did re-add it")
+        self._probe(None)
+        out, _err = self._guard({})                   # collapse, probe fails → the carry
+        self.assertNotIn(SID, out, "the tombstone keeps the corroborated kill out of the carry")
+        self.assertIn(B, out, "…without costing the genuinely-carried survivor")
+
+    def test_an_answering_probe_clears_the_tombstone(self):
+        # Revival proof #1: the probe lists the sid alive NOW — the corroboration authority
+        # outranks whatever a kill gate proved earlier, so the sid may be carried again.
+        B = "22222222-3333-4444-5555-666666666666"
+        self._guard({SID: ROW, B: ROW})
+        km._tab_carry_forget(SID)
+        self._probe({SID, B})
+        out, _err = self._guard({})
+        self.assertIn(SID, out, "probe-listed → alive again, the tombstone is outranked")
+        self.assertNotIn(SID, km._tab_tmux_carry["dead"])
+        self._probe(None)
+        out2, _e = self._guard({})
+        self.assertIn(SID, out2, "…and later carries may list it again")
+
+    def test_a_revive_clears_the_tombstone(self):
+        # Revival proof #2: _revive_session respawns the sid — the tombstone must clear or the
+        # revived session's tab vanishes again on the next collapse.
+        km._tab_carry_forget(SID)
+        self.assertIn(SID, km._tab_tmux_carry["dead"])
+        saved = {nm: getattr(km, nm) for nm in
+                 ("_sdk", "_commands_for_cwd", "_push_all", "_reveal_chat", "_name_of", "_cwd_of")}
+
+        class FakeSdk:                                # a resume that succeeds, no real backend
+            def owns(self, sid):
+                return True
+
+            def resume(self, name, sid):
+                return True
+
+            def connect(self, sid):
+                return True
+
+        try:
+            km._sdk = lambda: FakeSdk()
+            km._commands_for_cwd = lambda cwd: None
+            km._push_all = lambda *a, **k: None
+            km._reveal_chat = lambda *a, **k: None
+            km._name_of = lambda sid: "web"
+            km._cwd_of = lambda sid: None
+            km._revive_session(SID)
+        finally:
+            for nm, fn in saved.items():
+                setattr(km, nm, fn)
+        self.assertNotIn(SID, km._tab_tmux_carry["dead"], "a proven revival clears the tombstone")
+
     # ── the carry is maintained on clientless cycles too (2026-08-18 round two) ──
 
     def test_a_clientless_cycle_still_maintains_the_carry(self):
@@ -283,6 +461,11 @@ class CollapseCarryThroughPush(unittest.TestCase):
                "message": {"role": "user", "content": "hello there"}}
         (pdir / (SID + ".jsonl")).write_text(json.dumps(rec) + "\n")
         (names / SID).write_text("web\t%s\t#abcdef\n" % str(cdir))
+        rec2 = {"type": "user", "timestamp": "2026-06-11T00:00:01.000Z", "uuid": "u2",
+                "parentUuid": None, "promptSource": "typed",
+                "message": {"role": "user", "content": "hello api"}}
+        (pdir / (SDK_SID + ".jsonl")).write_text(json.dumps(rec2) + "\n")
+        (names / SDK_SID).write_text("api\t%s\t#123456\n" % str(cdir))
         km._TMUX.available = lambda: True   # hermetic: never read whether THIS box has tmux
 
     def tearDown(self):
@@ -293,14 +476,18 @@ class CollapseCarryThroughPush(unittest.TestCase):
         reset_carry()
         self.td.cleanup()
 
-    def _push_orders(self, tmux):
+    def _push_frames(self, tmux):
         frames = []
         client = {"app": "chat", "alive": True, "wid": "", "qbytes": 0,
                   "send": lambda s: frames.append(json.loads(s)), "sent": {}, "echat": {}}
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
             km._push([client], tmux=tmux)
-        return [f["order"] for f in frames if f.get("type") == "tabOrder"], err.getvalue()
+        return frames, err.getvalue()
+
+    def _push_orders(self, tmux):
+        frames, err = self._push_frames(tmux)
+        return [f["order"] for f in frames if f.get("type") == "tabOrder"], err
 
     def test_one_collapsed_cycle_does_not_omit_the_board_and_recovery_resumes(self):
         orders, _e = self._push_orders({SID: ROW})              # a healthy cycle: the tab exists
@@ -329,6 +516,54 @@ class CollapseCarryThroughPush(unittest.TestCase):
         orders, _e = self._push_orders({})
         self.assertTrue(orders and SID in orders[-1],
                         "…and its answer seeds the carry: the next push lists the session again")
+
+    # ── the sentinel keys to the destructive frame, never the whole leg (2026-08-18 round three) ──
+
+    def test_a_boot_collapse_starves_only_the_tmux_half_never_sdk_sessions(self):
+        # Restart-during-wedge with all real work in SDK sessions (the recommended backend): the
+        # sentinel is ABOUT the tmux half — the SDK half is in-process truth and never inherits a
+        # tmux collapse. Standing the whole chat leg down re-minted the stuck-spinner for healthy
+        # SDK sessions: a fresh dashboard sat on its loading state for as long as the probe stayed
+        # mute. Only the DESTRUCTIVE frame (tabOrder, whose omission tears down) stays keyed to
+        # the sentinel; the SDK session's frames flow.
+        km._TMUX.alive_sids = lambda t=3: None                  # fresh carry + collapsed read + mute probe
+        frames, err = self._push_frames({SDK_SID: SDK_ROW})
+        self.assertEqual([f for f in frames if f.get("type") == "tabOrder"], [],
+                         "no tabOrder frame — an omitting one is the mass teardown")
+        self.assertIn(SDK_SID, [f.get("id") for f in frames if f.get("type") == "session"],
+                      "the SDK session's frame flows through the wedge")
+        self.assertIn("nothing to carry", err)
+        km._TMUX.alive_sids = lambda t=3: {SID}                 # the probe answers mid-episode…
+        frames2, _e = self._push_frames({SDK_SID: SDK_ROW})
+        orders = [f["order"] for f in frames2 if f.get("type") == "tabOrder"]
+        self.assertTrue(orders and SID in orders[-1] and SDK_SID in orders[-1],
+                        "…and the next push re-lists BOTH halves")
+
+    def test_push_session_now_reaches_an_sdk_target_through_the_sentinel(self):
+        # The `romp new` seam: a just-created SDK session's guaranteed targeted push used to be
+        # swallowed whole by the boot-corner sentinel — the one tab the creator was staring at
+        # never painted. A non-tmux target is in-process truth: it proceeds with the SDK-half map
+        # and sends the session frame ONLY (no tabOrder — the destructive frame stays keyed to
+        # the sentinel; the client's upsert paints the tab).
+        km._TMUX.alive_sids = lambda t=3: None                  # the boot-corner sentinel is active
+        saved_snap = km._tmux_sessions
+        frames = []
+        client = {"app": "chat", "alive": True, "wid": "", "qbytes": 0,
+                  "send": lambda s: frames.append(json.loads(s)), "sent": {}, "echat": {}}
+        try:
+            km._tmux_sessions = lambda: {SDK_SID: SDK_ROW}
+            with km._clients_lock:
+                km._clients.append(client)
+            with contextlib.redirect_stderr(io.StringIO()):
+                km._push_session_now(SDK_SID)
+        finally:
+            km._tmux_sessions = saved_snap
+            with km._clients_lock:
+                km._clients[:] = [c for c in km._clients if c is not client]
+        self.assertEqual([f for f in frames if f.get("type") == "tabOrder"], [],
+                         "never a tabOrder from a sentinel cycle's partial list")
+        self.assertIn(SDK_SID, [f.get("id") for f in frames if f.get("type") == "session"],
+                      "the targeted push reaches the SDK session anyway")
 
 
 if __name__ == "__main__":
