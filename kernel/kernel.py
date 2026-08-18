@@ -3345,14 +3345,16 @@ def _launch_error(sid):
 
 
 def _backend_queued(sid):
-    """True if the session's backend holds queued-but-unstarted user turns (the SDK keeps them in _pending;
+    """True if the session's backend holds queued-but-unstarted USER turns (the SDK keeps them in _pending;
     tmux folds them from the transcript's queue-op records). Composer sends now go straight to that queue
     while a turn runs (_send_or_park), so 'the user has messages waiting' — the nudge-suppression guard —
-    must consult it, not just the kernel FIFO. Guarded: a backend hiccup reads as 'nothing queued' rather
-    than crashing the nudge check."""
+    must consult it, not just the kernel FIFO. Genuine entries only: the idle-queue drive parks harness
+    wrappers in the same SDK _pending, and a wrapper is not the user having said something (the tmux fold
+    already filters via _pending_queued). Guarded: a backend hiccup reads as 'nothing queued' rather than
+    crashing the nudge check."""
     try:
         be = Sessions.backend_for(str(sid))
-        return bool(be and be.pending_queued(str(sid)))
+        return bool(be) and any(_genuine_queued(t) for t in be.pending_queued(str(sid)))
     except Exception:
         return False
 
@@ -5813,17 +5815,27 @@ def _auto_retry_tick(now, tmux):
 
 def _idle_queue_drive_tick(now, tmux):
     """KERNEL-side driver for self-scheduled wake signals stuck in an idle SDK session's CLI queue
-    (the user 2026-08-18 — the full story on _undelivered_wake_tail). The CLI only enqueues; romp
-    drives the turn that delivers, the way boot reconcile already does for its own persisted queues —
-    this is the same recovery for a queue that lives in the CLI instead of the reg. Kernel-side
-    gates, each the exact owner's signal, never a timer:
+    (the user 2026-08-18 — the full story on _undelivered_wake_tail). In the CLI's STUCK regime it
+    only enqueues; romp drives the turn that delivers, the way boot reconcile already does for its
+    own persisted queues — the same recovery for a queue that lives in the CLI instead of the reg.
+    In the CLI's DELIVERING regime (most sessions — see the measurement on the comment block above
+    _undelivered_wake_tail) the CLI starts that turn itself within milliseconds, and romp must stay
+    out of its way. Kernel-side gates:
+      * the AGE FLOOR: a candidate drives only once its newest wake enqueue is _WAKE_DRIVE_FLOOR_S
+        old — stand-down WITHOUT latching, the next parse re-checks. This is a documented exception
+        to the no-time-windows rule (the armStale shape): the event it approximates — the CLI
+        deciding NOT to deliver — emits no record, so only its delivery window passing proves the
+        stuck regime, and a drive-time re-parse alone cannot close the race (the CLI can deliver
+        between the re-check and romp's enqueue landing). The delivering regime's own user record
+        clears the tail long before the floor expires; the stuck regime ages past it and drives.
       * the GLOBAL retry pause stands everything down (the user paused romp's self-driving);
       * a retry-SUPPRESSED session stands down (the user interrupted that thread's storm — a clean
         user turn re-arms it, _auto_resume_session_retry);
       * an API-error-BLOCKED session stands down (the auto-retry tick owns that recovery; driving
         into the error would just burn the wake on a turn that cannot run);
-      * a tail with no wake signal in it does not drive — a bare queued user message is the CLI's own
-        to deliver at its next turn, and romp re-sending it would double-deliver.
+      * a tail with no wake signal in it does not drive — a bare queued user message (and a
+        background-agent completion notice, which the CLI delivers itself in EVERY regime) is the
+        CLI's own to deliver, and romp re-sending it would double-deliver.
     The backend owns the rest (open turn, compaction, ended/cut sessions, the per-watermark latch,
     the dormant-spawn stagger) — see SdkBackend.drive_idle_queue. tmux sessions are skipped by
     ownership: their CLI is interactive and delivers its own queue."""
@@ -5842,6 +5854,9 @@ def _idle_queue_drive_tick(now, tmux):
             entries, mark = _undelivered_wake_tail(path)
             if mark is None or not any(e["wrapper"] for e in entries):
                 continue
+            if now - _wake_ts_epoch(mark[1]) < _WAKE_DRIVE_FLOOR_S:
+                continue                   # younger than the CLI's own delivery window — stand down
+            #                                WITHOUT latching; the next parse re-checks (see docstring)
             if _session_retry_suppressed(sid):
                 continue
             if _api_error(path):
@@ -10615,36 +10630,72 @@ def _pending_queued(path):
     return out
 
 
-# ── Idle-queue drive: self-scheduled wake signals stuck in an idle SDK CLI (the user 2026-08-18) ──
+# ── Idle-queue drive: wake signals stuck in an idle SDK CLI's queue (the user 2026-08-18) ──
 # Under the SDK backend a session's own scheduled work — a recurring Monitor, a cron firing, a
-# background task's completion notice — can only ENQUEUE into the CLI's queue: the transcript grows
-# queue-operation enqueue records and nothing ever starts the turn that would consume them. Hit twice
-# in one day: an overnight 15-minute Monitor stacked 33 on-time <task-notification> enqueues (no
-# dequeue) while the session ran ZERO turns until the next human message eight hours later, and a
-# recurring cron behaved the same with the CLI process alive. Verified against that live transcript:
-# the CLI does start turns from idle for background-AGENT completion notifications (their enqueue is
-# dequeued within milliseconds and lands as a user record — the path this tick generalizes), but
-# Monitor/cron/bash task-notifications are NEVER dequeued and never reach the model by any route (123
-# enqueues, 0 dequeues, 66 removes = discards, zero in-turn appearances), so the driven turn must
-# carry the queued texts itself. Event-based, no new polling: these records are the same
-# queue-operations _pending_queued folds for the chat's queued chip (display untouched — its
-# _genuine_queued exclusion of system wrappers is about what shows as the USER'S queued input, not
-# about delivery); the parse below rides the normal push cadence, and the parse IS the event.
+# background task's completion notice — lands as a queue-operation enqueue in the CLI's queue. What
+# happens next has TWO regimes (measured across this machine's live SDK transcripts, 2026-08-18: of
+# 1311 monitor/cron/bash-class task-notification enqueues, 602 were delivered by the CLI itself
+# straight from idle at median 46ms, p90 126ms, across 25 sessions — the delivery writes NO dequeue
+# record; the non-meta user record carrying the text IS the evidence — and the rest were discarded
+# by content-addressed removes or stranded):
+#   * the DELIVERING regime — most sessions, most of the time: the CLI auto-starts the turn itself
+#     within milliseconds, and romp must stay out of its way or the model hears the same
+#     notification twice and acts on it twice;
+#   * the STUCK regime — the pathology this drive exists for: the CLI never starts that turn and the
+#     backlog only grows. Hit twice in one day: an overnight 15-minute Monitor stacked 33 on-time
+#     <task-notification> enqueues with ZERO turns for eight hours, and a recurring cron behaved the
+#     same with the CLI process alive (that transcript: 123 enqueues, 0 delivered, 66 removes =
+#     discards). There, the driven turn must carry the queued texts itself.
+# The CLI writes no record of DECIDING not to deliver, so the regimes are indistinguishable at
+# enqueue time — only the delivery window passing proves the stuck one. Hence _WAKE_DRIVE_FLOOR_S in
+# _idle_queue_drive_tick (a documented exception to the no-time-windows rule; rationale on the tick's
+# docstring). Background-AGENT completion notices (a-prefixed 17-hex task ids) are the CLI's own to
+# deliver in EVERY regime — verified even in the stuck session — so they are never wake signals
+# (carve-out below). Event-based otherwise, no new polling: these records are the same
+# queue-operations _pending_queued folds for the chat's queued chip (whose _genuine_queued filter the
+# SDK queued-bubble build now applies too, so a driven wrapper never shows as the USER'S queued
+# input); the parse below rides the normal push cadence, and the parse IS the event.
+_WAKE_DRIVE_FLOOR_S = 60.0    # ~400x the delivering regime's p90 (0.126s); a rounding error against
+#                               the 8-hour stuck-regime pathology it exists to end
+_AGENT_TASK_ID_RE = re.compile(r"<task-id>([^<]*)</task-id>")
+_AGENT_ID_SHAPE_RE = re.compile(r"a[0-9a-f]{16}")   # background-agent ids; monitor/cron/bash ids are
+#                                                     9-char base36, so the classes cannot collide
 _wake_tail_cache = {}         # path -> ((mtime, size), (entries, mark))
 
 
+def _wake_ts_epoch(ts):
+    """A queue-operation timestamp as epoch seconds, for the drive's age floor. Unparseable reads as
+    ANCIENT (0.0): failing toward driving matches the bug being fixed — a silent strand — while the
+    floor's only job is to not race a CLI that stamps its records correctly."""
+    try:
+        return datetime.fromisoformat(str(ts).replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return 0.0
+
+
 def _undelivered_wake_tail(path):
-    """The transcript's trailing unconsumed queue-operation enqueues — enqueues with NO later dequeue,
-    remove, user or assistant record ("enqueues newer than the last dequeue/turn"): a later dequeue or
-    remove means the CLI consumed or discarded the queue's head (its call), and a later turn record
-    means the session was awake after the signal, so only a trailing run is a backlog nothing will
-    ever deliver. Returns ([{pos, ts, text, wrapper}], (pos, ts) of the newest one) or ([], None).
-    `wrapper` marks harness system wrappers (<task-notification>/<system-reminder>) — the
-    self-scheduled wake signals the CLI provably never delivers on its own; non-wrapper entries ride
-    along for the drive's log count only (deliverable classes the CLI hands over itself once a turn
-    opens). isMeta user records do NOT clear the tail: the CLI writes those outside turns (caveat/hook
-    bookkeeping), and counting them as awakeness would eat wake signals. Cached by (mtime, size) like
-    _pending_queued, since the drive tick asks every push cycle."""
+    """The transcript's still-pending queue-operation enqueues, resolved PER ENTRY on the evidence the
+    CLI actually writes (measured live 2026-08-18 — the comment block above):
+      * a `remove` carrying content discards exactly the entry with that text (the CLI's removes are
+        content-addressed single-item discards, routinely of a NON-oldest entry while others stay
+        pending); a content-less remove discards the oldest, matching _pending_queued's FIFO fold;
+      * a `dequeue` alone clears NOTHING — the CLI's idle deliveries write no dequeue at all, and an
+        agent notification's instant dequeue must not wipe an older undriven signal; the delivery
+        evidence is the user record it produces;
+      * a later non-isMeta USER record clears exactly the entries whose text it CONTAINS — the CLI's
+        idle auto-delivery, its bare-message delivery at a turn start, and romp's own driven turn
+        (whose user record carries the wrapper texts verbatim) all resolve this way;
+      * assistant records and isMeta user records clear NOTHING: a turn merely running is not
+        evidence any particular queued signal was delivered — in the stuck regime, mid-turn arrivals
+        are never folded into the open turn, and the old whole-tail clear silently dropped them.
+    Returns ([{pos, ts, text, wrapper}], (pos, ts) of the newest one) or ([], None). `wrapper` marks
+    the wake-signal class — harness system wrappers (<task-notification>/<system-reminder>) EXCEPT
+    background-agent completion notices (a-prefixed 17-hex <task-id>), which the CLI delivers itself
+    in every regime and which therefore behave like bare user/postal enqueues: they ride along for
+    the drive's log count only, never qualify candidacy, and are never re-sent. A missing or
+    otherwise-shaped id keeps wrapper=True — under-delivering is the original bug; the carve-out is
+    only for the one class the CLI provably owns. Cached by (mtime, size) like _pending_queued,
+    since the drive tick asks every push cycle."""
     try:
         st = os.stat(path)
         key = (st.st_mtime, st.st_size)
@@ -10667,21 +10718,43 @@ def _undelivered_wake_tail(path):
                     op = o.get("operation")
                     if op == "enqueue":
                         text = o.get("content") if isinstance(o.get("content"), str) else ""
+                        w = bool(em.SYSTEM_WRAPPER_RE.match(text))
+                        if w:
+                            m = _AGENT_TASK_ID_RE.search(text)
+                            if m and _AGENT_ID_SHAPE_RE.fullmatch(m.group(1)):
+                                w = False                    # an agent completion notice — the CLI's own
+                        #                                      to deliver, in every regime (see docstring)
                         tail.append({"pos": pos, "ts": str(o.get("timestamp") or ""), "text": text,
-                                     "wrapper": bool(em.SYSTEM_WRAPPER_RE.match(text))})
-                    elif op in ("dequeue", "remove"):
-                        tail = []                            # the CLI touched its queue → not a dead backlog
+                                     "wrapper": w})
+                    elif op == "remove":
+                        c = o.get("content") if isinstance(o.get("content"), str) else None
+                        if c is not None:
+                            i = next((i for i, e in enumerate(tail) if e["text"] == c), None)
+                            if i is not None:                # content-addressed single-item discard —
+                                del tail[i]                  # the CLI's call on THAT entry only
+                        elif tail:
+                            del tail[0]                      # content-less: the oldest, as _pending_queued folds
+                    #      a `dequeue` clears nothing — its delivery evidence is the user record it produces
                     continue
                 if not tail:
                     continue                                 # nothing pending → nothing to resolve (fast path)
-                if '"user"' not in line and '"assistant"' not in line:
-                    continue                                 # cheap prefilter for turn records
+                if '"user"' not in line:
+                    continue                                 # cheap prefilter for delivery-evidence records
                 try:
                     o = json.loads(line)
                 except Exception:
                     continue
-                if o.get("type") == "assistant" or (o.get("type") == "user" and not o.get("isMeta")):
-                    tail = []                                # a turn ran after the signal → it had its shot
+                if o.get("type") == "user" and not o.get("isMeta"):
+                    mc = (o.get("message") or {}).get("content")
+                    if isinstance(mc, str):
+                        utext = mc
+                    elif isinstance(mc, list):
+                        utext = "\n".join(str(b.get("text") or "") for b in mc
+                                          if isinstance(b, dict) and b.get("type") == "text")
+                    else:
+                        utext = ""
+                    if utext:                                # delivered = the record CARRIES the text
+                        tail = [e for e in tail if not (e["text"] and e["text"] in utext)]
     except OSError:
         return [], None
     out = (tail, (tail[-1]["pos"], tail[-1]["ts"]) if tail else None)
@@ -14846,6 +14919,14 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
         cancelable = hasattr(_cbe, "unqueue") and _queue_recallable(_cbe, sid)
         qmsgs = []
         for i, t in enumerate(queued):
+            if not _genuine_queued(t):
+                # A harness wrapper in the SDK queue — the idle-queue drive enqueues <task-notification>
+                # texts through the same _pending the user's messages ride — must not render as the
+                # user's queued input (the 2026-06-30 regression, till now guarded only on the tmux
+                # transcript fold at _pending_queued). Skipped, not filtered upstream: `queued` doubles
+                # as shown_texts for echo suppression, and a surviving bubble's idx must keep naming its
+                # backend _pending position for cancelQueued.
+                continue
             goal, body, fu, ctx = _split_followup(t)
             m = {"md": body, "idx": i, "cancelable": cancelable}   # idx ↔ the backend's _pending position (cancelQueued)
             if fu:

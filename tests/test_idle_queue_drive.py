@@ -2,30 +2,38 @@
 """Idle-queue drive — self-scheduled work must wake an idle SDK session (the user 2026-08-18).
 
 The bug, hit twice in one day: under the SDK backend, a session's own scheduled work — a recurring
-Monitor, a cron firing, a background task's completion notice — can only ENQUEUE into the CLI's queue
-(the transcript's queue-operation records). Nothing drives an idle session's queue into a turn: an
-overnight 15-minute Monitor stacked 33 on-time <task-notification> enqueues with no dequeue while the
-session ran zero turns, until the next human message hours later. Verified against a live transcript:
-the CLI starts turns from idle for background-AGENT completion notifications (their enqueue is dequeued
-within milliseconds and lands as a user record), but Monitor/cron/bash notifications only ever enqueue
-— they are never dequeued and never reach the model at all, so a driven turn must carry the queued
-texts itself.
+Monitor, a cron firing, a background task's completion notice — lands as a queue-operation enqueue,
+and in the CLI's STUCK regime nothing ever drives that queue into a turn: an overnight 15-minute
+Monitor stacked 33 on-time <task-notification> enqueues with no delivery while the session ran zero
+turns, until the next human message hours later. The stuck regime is NOT the population's behavior
+(the 2026-08-18 review measurement over this machine's live transcripts): in MOST sessions the CLI
+delivers this class itself, straight from idle, at median 46ms (p90 126ms) — writing no dequeue
+record; the non-meta user record carrying the text is the delivery — so the drive must stay out of
+the delivering regime's way or the model hears the same notification twice. Background-AGENT
+completion notices (a-prefixed 17-hex task ids) are delivered by the CLI in EVERY regime, the stuck
+one included, so they are never wake signals at all.
 
 The fix under test, in three parts:
-  * kernel._undelivered_wake_tail: the transcript's trailing unconsumed enqueues — enqueues with NO
-    later dequeue/remove/user/assistant record ("enqueues newer than the last dequeue/turn"). The
-    parse rides the normal push cadence; the parse IS the event.
+  * kernel._undelivered_wake_tail: the transcript's still-pending enqueues, resolved PER ENTRY on
+    the CLI's own evidence — a content-addressed remove discards its one entry, a dequeue alone
+    clears nothing, a non-isMeta user record clears exactly the entries whose text it CONTAINS, and
+    turn records alone clear nothing (a mid-turn arrival in the stuck regime is never folded into
+    the open turn, so the turn must not eat it). The parse rides the normal push cadence.
   * kernel._idle_queue_drive_tick: the pusher-cycle job that finds idle SDK sessions with a wake
-    signal in that tail and hands them to the backend. Kernel-side gates: the global retry pause,
-    per-session retry suppression, an API-error block (the auto-retry tick owns those).
-  * SdkBackend.drive_idle_queue: gates (open turn, compaction, ended/cut sessions), a per-watermark
-    latch (one drive per newest-enqueue, persisted so a kernel restart can't re-fire), and delivery —
-    reconnect-if-dormant via _ensure with boot-reconcile's stagger, then enqueue() of the CLI's OWN
-    queued texts verbatim (no synthetic prompt), the exact channel boot-reconcile's restored queues
-    ride.
+    signal in that tail and hands them to the backend. Kernel-side gates: the age floor (a candidate
+    drives only once its newest wake enqueue is _WAKE_DRIVE_FLOOR_S old — the documented time-window
+    exception; the CLI's decision not to deliver emits no record, so only its window passing proves
+    the stuck regime), the global retry pause, per-session retry suppression, an API-error block.
+  * SdkBackend.drive_idle_queue: gates (open turn, compaction, ended/cut sessions) re-checked at
+    delivery time, a per-watermark latch (one drive per newest-enqueue, held in memory at acceptance
+    and persisted to the reg only after the enqueue lands, so a kernel death in between re-drives
+    instead of silently discarding), and delivery — reconnect-if-dormant via _ensure drawing on the
+    SAME spawn-stagger budget as boot reconcile, then enqueue() of the CLI's OWN queued texts
+    verbatim (no synthetic prompt), the exact channel boot-reconcile's restored queues ride.
 
 Synthetic transcripts only: placeholder uuids, invented notification text, TESTHOST.
 """
+import inspect
 import json
 import os
 import tempfile
@@ -120,17 +128,90 @@ class WakeTail(unittest.TestCase):
         self.assertIsNotNone(mark, "the newest enqueue is the watermark")
         self.assertEqual(mark[0], entries[-1]["pos"], "watermark = the newest enqueue's position")
 
-    def test_consumed_enqueues_are_not_a_tail(self):
-        entries, mark = self._tail(_turn() + [_qop("enqueue", _wrap()), _qop("dequeue")])
-        self.assertEqual((entries, mark), ([], None), "a dequeue means the CLI consumed the queue")
+    def test_a_content_matched_remove_clears_only_its_entry(self):
+        # the CLI's removes are content-addressed single-item discards, routinely of a NON-oldest
+        # entry while others stay pending (46/76 in the live evidence transcript) — the old
+        # whole-tail clear let one supersede-remove erase every other still-pending wake signal
+        entries, mark = self._tail(_turn() + [_qop("enqueue", _wrap(0)),
+                                              _qop("enqueue", _wrap(1), ts=TS % (15, 0)),
+                                              _qop("remove", _wrap(1))])
+        self.assertEqual([e["text"] for e in entries], [_wrap(0)],
+                         "the remove discards ITS entry; the older signal is still owed a turn")
+        self.assertIsNotNone(mark, "the survivor still marks the session a candidate")
         entries, mark = self._tail(_turn() + [_qop("enqueue", _wrap()), _qop("remove", _wrap())])
         self.assertEqual((entries, mark), ([], None), "a remove means the CLI discarded it — its call")
 
-    def test_a_turn_after_the_enqueue_clears_it(self):
-        entries, mark = self._tail(_turn() + [_qop("enqueue", _wrap())] + [_urec(ts=TS % (15, 0))])
-        self.assertEqual((entries, mark), ([], None), "a later user record: the session was awake after it")
-        entries, mark = self._tail(_turn() + [_qop("enqueue", _wrap())] + [_arec(ts=TS % (15, 0))])
-        self.assertEqual((entries, mark), ([], None), "a later assistant record: same")
+    def test_a_contentless_remove_resolves_the_oldest(self):
+        entries, _ = self._tail(_turn() + [_qop("enqueue", _wrap(0)),
+                                           _qop("enqueue", _wrap(1), ts=TS % (15, 0)), _qop("remove")])
+        self.assertEqual([e["text"] for e in entries], [_wrap(1)],
+                         "no content → FIFO, exactly as _pending_queued folds the same records")
+
+    def test_a_remove_matching_nothing_drops_nothing(self):
+        entries, _ = self._tail(_turn() + [_qop("enqueue", _wrap(0)), _qop("remove", _wrap(7))])
+        self.assertEqual([e["text"] for e in entries], [_wrap(0)],
+                         "the removed item predates this tail — nothing here resolved")
+
+    def test_a_dequeue_alone_clears_nothing(self):
+        # the CLI's idle deliveries write NO dequeue record at all; where a dequeue does appear
+        # (agent notices), the delivery evidence is the user record it produces, pinned below
+        entries, _ = self._tail(_turn() + [_qop("enqueue", _wrap()), _qop("dequeue")])
+        self.assertEqual([e["text"] for e in entries], [_wrap()],
+                         "a dequeue is not delivery evidence — the user record it produces is")
+
+    def test_a_user_record_containing_the_text_clears_it(self):
+        # the delivering regime's shape: enqueue → non-meta user record carrying the text (median
+        # 46ms, no dequeue record) — and romp's own driven turn resolves the same way, since its
+        # user record carries the joined wrapper texts verbatim
+        entries, mark = self._tail(_turn() + [_qop("enqueue", _wrap())]
+                                   + [_urec(text=_wrap(), ts=TS % (15, 0))])
+        self.assertEqual((entries, mark), ([], None), "the CLI delivered it — romp stays out of the way")
+        joined = _wrap(0) + "\n\n" + _wrap(1)
+        entries, mark = self._tail(_turn() + [_qop("enqueue", _wrap(0)), _qop("enqueue", _wrap(1))]
+                                   + [_urec(text=joined, ts=TS % (15, 0))])
+        self.assertEqual((entries, mark), ([], None), "a driven turn's joined texts clear every entry it carried")
+        blocks = dict(_urec(ts=TS % (15, 0)))
+        blocks["message"] = {"role": "user", "content": [{"type": "text", "text": _wrap()}]}
+        entries, mark = self._tail(_turn() + [_qop("enqueue", _wrap())] + [blocks])
+        self.assertEqual((entries, mark), ([], None), "block-list user content is delivery evidence too")
+
+    def test_a_midturn_arrival_survives_the_turns_own_records(self):
+        # stuck regime, measured live: a wrapper landing during an open turn is NEVER folded into it
+        # (zero in-turn appearances) — so the turn's records must not eat the signal; it drives once
+        # the turn settles. The old rule ("a turn ran after the signal → it had its shot") silently
+        # dropped ~18% of the exact payload class of the overnight incident.
+        entries, mark = self._tail(_turn() + [_qop("enqueue", _wrap())]
+                                   + _turn(ts_u=TS % (15, 0), ts_a=TS % (15, 30)))
+        self.assertEqual([e["text"] for e in entries], [_wrap()],
+                         "a turn that does not CARRY the text is not its delivery")
+        self.assertIsNotNone(mark)
+        entries, _ = self._tail(_turn() + [_qop("enqueue", _wrap())] + [_arec(ts=TS % (15, 0))])
+        self.assertEqual(len(entries), 1, "assistant records clear nothing")
+
+    def test_an_agent_dequeue_does_not_wipe_an_older_watchdog_entry(self):
+        # the live 19:14:17 → 19:15:00 shape: watchdog enqueued, then an agent notice's instant
+        # enqueue → dequeue → user record; only the agent entry resolves, the watchdog stays owed
+        agent = _wrap(5, tid="a0123456789abcdef")
+        entries, mark = self._tail(_turn() + [_qop("enqueue", _wrap(0)),
+                                              _qop("enqueue", agent, ts=TS % (15, 0)), _qop("dequeue"),
+                                              _urec(text=agent, ts=TS % (15, 1))])
+        self.assertEqual([e["text"] for e in entries], [_wrap(0)],
+                         "the agent's own delivery resolves the agent entry and nothing else")
+        self.assertIsNotNone(mark)
+
+    def test_agent_completion_notices_are_not_wake_signals(self):
+        # the CLI delivers a-prefixed 17-hex agent notices itself in EVERY regime (verified live,
+        # stuck session included) — re-sending one would double-deliver a subagent completion
+        entries, _ = self._tail(_turn() + [_qop("enqueue", _wrap(0, tid="a0123456789abcdef"))])
+        self.assertEqual(len(entries), 1)
+        self.assertFalse(entries[0]["wrapper"], "an agent notice rides along like a bare queued message")
+        entries, _ = self._tail(_turn() + [_qop("enqueue", _wrap(0))])
+        self.assertTrue(entries[0]["wrapper"],
+                        "monitor/cron/bash ids (9-char base36) keep the wake-signal class")
+        entries, _ = self._tail(_turn() + [_qop("enqueue", "<task-notification>\nno id at all\n"
+                                                           "</task-notification>")])
+        self.assertTrue(entries[0]["wrapper"],
+                        "a missing id fails toward delivering — under-delivering is the original bug")
 
     def test_meta_records_do_not_eat_wake_signals(self):
         entries, _ = self._tail(_turn() + [_qop("enqueue", _wrap())] + [_urec(meta=True, ts=TS % (15, 0))])
@@ -175,10 +256,10 @@ class DriveTick(unittest.TestCase):
         km._set_retry_paused(False)
         km._clear_session_retry_suppress(SID)
 
-    def _tick(self):
+    def _tick(self, now=None):
         with mock.patch.object(km, "_sdk", lambda: self.fb), \
              mock.patch.object(km, "_alive_sessions", lambda now, tmux: self.alive):
-            km._idle_queue_drive_tick(int(time.time()), {SID: {}})
+            km._idle_queue_drive_tick(int(time.time()) if now is None else now, {SID: {}})
 
     def test_wake_signals_reach_the_backend(self):
         self._tick()
@@ -208,14 +289,45 @@ class DriveTick(unittest.TestCase):
         self._tick()
         self.assertEqual(self.fb.calls, [], "a bare queued message is the CLI's own to deliver")
 
+    def test_an_agent_only_tail_is_not_a_candidate(self):
+        _write_tx(self.tx, _turn() + [_qop("enqueue", _wrap(0, tid="a0123456789abcdef"))])
+        self._tick()
+        self.assertEqual(self.fb.calls, [], "an agent notice is the CLI's own to deliver, in every regime")
+
+    def test_a_young_wake_enqueue_stands_down_without_latching(self):
+        """The delivering regime starts the turn itself within milliseconds (p90 0.126s measured), so
+        a parse landing in the enqueue→delivery gap must not race it. The floor is the documented
+        exception to the no-time-windows rule: the CLI's decision NOT to deliver writes no record, so
+        only the window passing proves the stuck regime. Stand-down is latch-free — the same tail
+        past the floor drives on a later parse."""
+        ts = TS % (14, 9)
+        epoch = int(km._wake_ts_epoch(ts))
+        _write_tx(self.tx, _turn() + [_qop("enqueue", _wrap(), ts=ts)])
+        self._tick(now=epoch + 10)
+        self.assertEqual(self.fb.calls, [], "younger than the floor → not a candidate yet")
+        self._tick(now=epoch + int(km._WAKE_DRIVE_FLOOR_S) + 60)
+        self.assertEqual(len(self.fb.calls), 1, "no latch: the aged tail drives on the next parse")
+
+    def test_the_floor_keys_on_the_newest_enqueue(self):
+        # an old backlog with one fresh arrival waits for the fresh one to age — the whole batch
+        # drives as one turn once nothing in it can still be racing the CLI
+        old, young = TS % (14, 9), TS % (30, 0)
+        _write_tx(self.tx, _turn() + [_qop("enqueue", _wrap(0), ts=old),
+                                      _qop("enqueue", _wrap(1), ts=young)])
+        self._tick(now=int(km._wake_ts_epoch(young)) + 10)
+        self.assertEqual(self.fb.calls, [], "the newest enqueue is what must age past the floor")
+
     def test_sessions_of_other_backends_are_skipped(self):
         self.fb.owned = set()
         self._tick()
         self.assertEqual(self.fb.calls, [], "tmux CLIs are interactive — they deliver their own queue")
 
     def test_the_pusher_cycle_runs_the_tick(self):
-        # (now, tmux) — the cycle's ONE liveness snapshot, not a per-job fresh read (2026-08-10 CPU fix)
-        self.assertIn("_idle_queue_drive_tick(now, tmux)", SRC,
+        # (now, tmux) — the cycle's ONE liveness snapshot, not a per-job fresh read (2026-08-10 CPU fix).
+        # Scoped to the CYCLE's body: the whole-file pin also matched the tick's own def line, so
+        # deleting the wiring kept every test green (2026-08-18 review, mutation-verified).
+        src = inspect.getsource(km._pusher_cycle_jobs)
+        self.assertIn("_idle_queue_drive_tick(now, tmux)", src,
                       "the pusher cycle drives queued wake signals server-side — unattended, no client needed")
 
 
@@ -360,7 +472,7 @@ class DriveDelivery(unittest.TestCase):
 
     def test_dormant_spawns_are_staggered_like_boot_resume(self):
         sb.write_reg(self.state, SID2, {"sid": SID2, "name": "api", "alive": True})
-        self.be._drive_sem = threading.Semaphore(1)
+        self.be._spawn_sem = threading.Semaphore(1)
         old_slot = sb.BOOT_RESUME_SLOT_S
         sb.BOOT_RESUME_SLOT_S = 0.05
         try:
@@ -399,6 +511,198 @@ class DriveDelivery(unittest.TestCase):
         q = (sb.read_reg(self.state, SID) or {}).get("queue") or []
         self.assertEqual(q, [_wrap(0) + "\n\n" + _wrap(1)],
                          "the driven text persists like any queued message until the CLI takes it")
+
+    def test_a_bare_queued_message_rides_along_but_is_never_resent(self):
+        """The CLI delivers its own queued plain messages at its next turn; the drive re-sending one
+        would double-deliver it. Only wake-signal texts go into the driven turn; the bare entry is
+        counted, not sent."""
+        s = self._live()
+        entries = [_ent(10, _wrap(0)), _ent(11, "a queued plain message", wrapper=False),
+                   _ent(12, _wrap(1), ts=TS % (15, 0))]
+        self.be.drive_idle_queue([self._cand(entries=entries)], wait=True)
+        self.assertEqual(s.sent, [_wrap(0) + "\n\n" + _wrap(1)],
+                         "a bare queued message is the CLI's own to deliver — never re-sent")
+        self.assertTrue(any("+1 other queued item" in str(m) for m in self.logs),
+                        "the ride-along is counted in the drive's log line")
+
+    def test_an_agent_notice_rides_along_but_is_never_resent(self):
+        # the parser demotes agent completion notices to wrapper=False (the CLI delivers that class
+        # itself in every regime); delivery must honor it the same way it honors a bare message
+        s = self._live()
+        entries = [_ent(10, _wrap(0)),
+                   _ent(11, _wrap(5, tid="a0123456789abcdef"), wrapper=False),
+                   _ent(12, _wrap(1), ts=TS % (15, 0))]
+        self.be.drive_idle_queue([self._cand(entries=entries)], wait=True)
+        self.assertEqual(s.sent, [_wrap(0) + "\n\n" + _wrap(1)],
+                         "re-sending an agent notice would double-deliver a subagent completion")
+        self.assertTrue(any("+1 other queued item" in str(m) for m in self.logs))
+
+    def test_a_kernel_death_between_latch_and_delivery_is_not_a_discard(self):
+        """The reg's driveMark is written AFTER the enqueue lands: a kernel death between acceptance
+        and delivery (a real window — dormant candidates ahead in the batch each hold delivery back
+        for a CLI spawn, and romp is self-hosting, so deploys restart the kernel) must re-drive on
+        the next boot, never silently discard the backlog forever."""
+        s = self._live()
+        with mock.patch.object(self.be, "_drive_deliver", lambda todo: None):   # death before delivery
+            self.be.drive_idle_queue([self._cand()], wait=True)
+        self.assertEqual(s.sent, [], "delivery never ran")
+        self.assertIsNone((sb.read_reg(self.state, SID) or {}).get("driveMark"),
+                          "acceptance alone persists nothing — the reg latch is delivery's to write")
+        be2 = sb.SdkBackend(self.state, "/bin/true", lambda *a, **k: None, log=self.logs.append)
+        s2 = FakeLive()
+        self.fakes.append(s2)
+        be2.sessions[SID] = s2
+        be2.drive_idle_queue([self._cand()], wait=True)
+        self.assertEqual(len(s2.sent), 1, "the next kernel re-produces the candidate and drives it")
+
+    def test_a_turn_opening_between_acceptance_and_delivery_stands_down(self):
+        """Gates are re-checked at the SEND moment: with a dormant candidate ahead in the batch, a
+        turn can open on a live candidate while the dormant one spawns — its delivery must stand
+        down (without latching), not inject stale pings mid-turn."""
+        sb.write_reg(self.state, SID2, {"sid": SID2, "name": "api", "alive": True})
+        s = self._live()
+
+        def fake_ensure(sid, on_boot_settled=None):
+            if on_boot_settled:
+                on_boot_settled()
+            s.inflight = 1                       # the live candidate's turn opens during this spawn
+            d = FakeLive()
+            self.fakes.append(d)
+            return d
+
+        with mock.patch.object(self.be, "_ensure", fake_ensure):
+            self.be.drive_idle_queue([self._cand(sid=SID2, entries=[_ent(10, _wrap(9))]),
+                                      self._cand()], wait=True)
+        self.assertEqual(s.sent, [], "never mid-turn — the acceptance-time check alone was a TOCTOU hole")
+        s.inflight = 0
+        self.be.drive_idle_queue([self._cand()], wait=True)
+        self.assertEqual(len(s.sent), 1, "the stand-down did not latch — the backlog still delivers")
+
+    def test_a_died_and_respawned_session_gets_the_backlog_not_its_ghost(self):
+        """Delivery re-resolves the session object: enqueueing into a dead snapshot would mirror the
+        dead queue over reg['queue'] and the texts would evaporate with the object, latched against
+        any re-drive."""
+        stale = self._live()
+        captured = []
+        with mock.patch.object(self.be, "_drive_deliver", captured.append):
+            self.be.drive_idle_queue([self._cand()], wait=True)
+        stale.close()                             # the CLI dies in the latch→delivery window...
+        stale.thread.join(timeout=2)
+        fresh = FakeLive()                        # ...and something respawns the session
+        self.fakes.append(fresh)
+        self.be.sessions[SID] = fresh
+        self.be._drive_deliver(captured[0])
+        self.assertEqual(fresh.sent, [_wrap(0) + "\n\n" + _wrap(1)],
+                         "the LIVE object receives the backlog")
+        self.assertEqual(stale.sent, [], "the ghost gets nothing — its queue mirror is a clobber")
+
+    def test_a_raising_ensure_returns_its_stagger_slot(self):
+        """Boot reconcile frees its slot when _ensure raises; the drive must too — _spawn_sem lives
+        for the process, so each leaked slot permanently shrinks every future spawn's budget into
+        180s-backstop purgatory."""
+        self.be._spawn_sem = threading.Semaphore(1)
+        old_slot = sb.BOOT_RESUME_SLOT_S
+        sb.BOOT_RESUME_SLOT_S = 0.05
+        try:
+            with mock.patch.object(self.be, "_ensure",
+                                   mock.Mock(side_effect=OSError("reg write failed"))):
+                self.be.drive_idle_queue([self._cand()], wait=True)
+            got = self.be._spawn_sem.acquire(timeout=1)
+        finally:
+            sb.BOOT_RESUME_SLOT_S = old_slot
+        self.assertTrue(got, "the slot came back — the parked release never got attached")
+        self.be._spawn_sem.release()
+        self.assertTrue(any("idle-queue drive" in p for p in self._problems()),
+                        "the failed spawn is problem-ring loud")
+
+    def test_boot_reconcile_and_the_drive_share_one_spawn_budget(self):
+        """Boot reconcile used to mint its own same-sized semaphore, so post-restart boot resumes and
+        drive spawns could burst to 2x BOOT_RESUME_CONCURRENCY. Pre-holding the backend's only slot
+        (a drive spawn in flight) must make boot reconcile's stagger wait on it — one shared budget."""
+        self.be._spawn_sem = threading.Semaphore(1)
+        self.assertTrue(self.be._spawn_sem.acquire(timeout=1))    # a drive spawn holds the slot
+        old_slot = sb.BOOT_RESUME_SLOT_S
+        sb.BOOT_RESUME_SLOT_S = 0.05
+        try:
+            reg = {"sid": SID, "name": "web", "alive": True, "queue": ["a queued plain message"]}
+            sb.write_reg(self.state, SID, reg)
+            with mock.patch.object(self.be, "_ensure", lambda sid, on_boot_settled=None: None):
+                self.be._boot_reconcile([reg])
+        finally:
+            sb.BOOT_RESUME_SLOT_S = old_slot
+            self.be._spawn_sem.release()
+        self.assertTrue(any("resume slot backstop expired" in str(m) for m in self.logs),
+                        "boot reconcile drew on the drive-held budget — the same semaphore instance")
+
+
+class QueuedBubbleDisplay(unittest.TestCase):
+    """A driven wrapper parked in the SDK pending queue must never render as the user's queued
+    message (the 2026-06-30 regression: a raw <task-notification> shown as '1 queued message'). The
+    _genuine_queued filter used to exist only on the tmux transcript fold; the drive now routes
+    wrappers through the SDK's _pending/reg queue, which build_session reads raw — so the bubble
+    build filters too, keeping idx aligned with the backend position for cancelQueued."""
+
+    class _Be:
+        """An SDK-shaped backend double: owns the sid, serves a fixed queue, exposes unqueue."""
+
+        def __init__(self, queued):
+            self._q = list(queued)
+
+        def owns(self, sid):
+            return True
+
+        def pending_queued(self, sid):
+            return list(self._q)
+
+        def unqueue(self, sid, idx, expect=None):
+            return None
+
+        def live_atoms(self, sid):
+            return []
+
+        def busy(self, sid):
+            return None
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.tx = os.path.join(self.dir, SID + ".jsonl")
+        _write_tx(self.tx, _turn())
+        self.now = int(time.time())
+        self.sess = [{"sid": SID, "name": "web", "path": self.tx, "mtime": self.now}]
+
+    def _events(self, queued):
+        be = self._Be(queued)
+        with mock.patch.object(km, "_sessions", lambda now: list(self.sess)), \
+             mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda sid: be)), \
+             mock.patch.object(km, "_captions", lambda sid: {}), \
+             mock.patch.object(km, "_limit_hold", lambda sid: None):
+            m = km.build_session(SID, self.now, tmux={})
+        self.assertIsNotNone(m, "the session must build")
+        return m["events"]
+
+    def test_a_driven_wrapper_never_renders_as_the_users_queued_message(self):
+        evs = self._events([_wrap(0), "please rerun the failing test"])
+        q = next((e for e in evs if e.get("kind") == "queued"), None)
+        self.assertIsNotNone(q, "the user's own queued message still shows")
+        self.assertEqual([t["md"] for t in q["texts"]], ["please rerun the failing test"],
+                         "the wrapper is delivery plumbing, not the user's pending input")
+        self.assertEqual(q["texts"][0]["idx"], 1,
+                         "a surviving bubble's idx still names its backend _pending position")
+
+    def test_an_all_wrapper_queue_emits_no_queued_event(self):
+        evs = self._events([_wrap(0)])
+        self.assertIsNone(next((e for e in evs if e.get("kind") == "queued"), None),
+                          "nothing of the user's is pending — no empty queued group either")
+
+    def test_the_nudge_guard_reads_only_genuine_queued(self):
+        # _backend_queued means "the user has messages waiting" — a parked wrapper must not
+        # suppress nudges as if the user had spoken
+        with mock.patch.object(km.Sessions, "backend_for",
+                               staticmethod(lambda sid: self._Be([_wrap(0)]))):
+            self.assertFalse(km._backend_queued(SID), "a parked wrapper is not the user speaking")
+        with mock.patch.object(km.Sessions, "backend_for",
+                               staticmethod(lambda sid: self._Be([_wrap(0), "hold on"]))):
+            self.assertTrue(km._backend_queued(SID))
 
 
 class OvernightShape(unittest.TestCase):
