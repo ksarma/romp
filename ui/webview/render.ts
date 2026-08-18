@@ -3448,6 +3448,19 @@ function applyTabOrder(o: any, tabs?: any) {
                                  (id) => kernelListed.has(id));
   order.length = 0;
   for (const id of next) order.push(id);
+  // RE-ASK on the kernel's own evidence (2026-08-18): an id THIS push lists, that an EARLIER push already
+  // listed, and that has no session entry, is a session this client LOST while the kernel kept it — the
+  // teardown-then-relist seam (one flaky liveness read made a push omit it → the loop above ran the full
+  // teardown → the re-list drew the dead swirl forever, because the kernel's per-client delta bookkeeping
+  // still believed we were caught up and only ever sent deltas we dropped). The re-list is the
+  // authoritative event; ask for the full session on the existing needFull channel (the kernel forgets
+  // what we hold and re-pushes immediately). First-ever listings are exempt via the kernelListed gate —
+  // that is the designed tabs-first boot, whose session frames are already on their way in this very push
+  // cycle — so this must run BEFORE the add-only record below. Self-limiting via awaitingFull; the
+  // closingTabs/provisional/detached-host suppressions live inside requestFullSession.
+  for (const id of kernelOrder) {
+    if (kernelListed.has(id) && !sessions.has(id)) requestFullSession(id);
+  }
   for (const id of kernelOrder) kernelListed.add(id);
   renderTabs();
 }
@@ -3639,6 +3652,11 @@ let renderPendingWhilePressed = false;
 // renderTabs swaps in the full tab. It wears the MINI romp swirl (spinning glyph) as its "generating" cue
 // (the user 2026-07-03) instead of a whole-tab opacity pulse — the same romp-loader motif as the panes, so a
 // tab still building reads as "romp is working on this," consistent everywhere.
+// Its BACKSTOP (ui/CLAUDE.md's loading rule: a wait state must never trap the user) is event-based, not a
+// timer: every kernel push that mentions the id while its session is missing — a tabOrder re-list, a
+// chatTail/status frame with no base — triggers a needFull re-ask (applyTabOrder / requestFullSession,
+// 2026-08-18), so the swirl self-heals within a push cycle unless its kernel is genuinely unreachable —
+// and an unreachable host's tabs wear the down-host dim, not this placeholder.
 function makePlaceholderTab(id: string): HTMLElement {
   const meta = tabMeta.get(id);
   const tab = el("div", "tab tab-placeholder");
@@ -8990,19 +9008,52 @@ function notifyShell(kind: string, text: string, sid?: string): void {
   try { window.parent?.postMessage({ romp: "notify", kind, text, sid: sid || "" }, "*"); } catch { /* no shell */ }
 }
 
-// Sessions we've asked the kernel to re-send in full after a delta gap. ONE ask per desync: the pusher runs
-// every 0.5-3s and would otherwise re-ask on every rejected delta until the reply lands. Cleared in upsert(),
-// so the next gap can ask again.
+// Sessions we've asked the kernel to re-send in full after a desync — a delta gap, or the kernel talking
+// about a session this client doesn't hold at all (a tabOrder re-list, a chatTail/status frame with no
+// base). ONE ask per desync: the pusher runs every 0.5-3s and would otherwise re-ask on every rejected
+// delta until the reply lands. Cleared in upsert(), so the next gap can ask again.
 const awaitingFull = new Set<string>();
 function requestFullSession(id: string): void {
   if (!id || awaitingFull.has(id)) return;
+  // The kernel never knew a client-minted id; and a tab the user just closed must not be resurrected by
+  // its own goodbye traffic — the kernel keeps listing + talking about it for a push or two after the ✕
+  // (the same reason renderTabs skips closingTabs ids on both passes).
+  if (isProvisionalId(id) || closingTabs.has(id)) return;
+  // A remote session's re-ask can only be answered by its OWNING kernel (needFull pops that kernel's
+  // per-client echat/dedup latch — routeOutbound sends it there by the id's host prefix). A DETACHED host
+  // (closeRemote is tearing its tabs down with synthesized `closed` frames, and its ids may briefly ride
+  // stale tabMeta) or a DOWN host can't answer, so asking would only queue dropWarn noise — suppress, the
+  // same way closingTabs suppresses. The reattach opens a fresh remote socket whose connect push re-sends
+  // every session in full anyway, which is the heal this ask would have requested.
+  const h = hostOf(id);
+  if (h) {
+    const fed = (window as any).__rompFed;
+    if (!fed || typeof fed.hosts !== "function" || fed.hosts().indexOf(h) < 0 || hostIsDown(id)) return;
+  }
   awaitingFull.add(id);
   vscodeApi?.postMessage({ type: "needFull", id });
 }
+// A needFull whose REPLY is lost with the socket must not latch its slot forever: only upsert clears
+// awaitingFull, so an ask in flight across a drop would suppress every later re-ask for that sid — the
+// permanent swirl, re-minted by the repair channel itself. The socket edge is the deciding event: the
+// kernel treats a reconnect as a fresh client and re-sends full sessions, so clearing here never costs an
+// extra ask — it only re-arms the desync repair. (The shim fires these on the LOCAL socket; a remote
+// host's drop needs nothing, its reconnect is a brand-new client whose connect push heals by itself.)
+window.addEventListener("romp:wsdown", () => awaitingFull.clear());
+window.addEventListener("romp:wsup", () => awaitingFull.clear());
 
 function chatTail(msg: any) {
   const s = sessions.get(msg.id);
-  if (!s) return;                                  // no base yet → ignore; a full session must arrive first
+  if (!s) {
+    // No base: the kernel is TALKING about a session this client doesn't hold — the same authoritative
+    // signal as the delta gap below, one step earlier. This used to be a silent return, and it was the
+    // drop that made a torn-down tab's swirl permanent: the kernel's per-client echat advances on SEND,
+    // so after a teardown-then-relist it keeps sending deltas we keep dropping here, and the gap branch
+    // (the one repair call site) sat unreachable below this line. Ask for the full session; the
+    // closingTabs/provisional/host gates and the awaitingFull dedup live inside requestFullSession.
+    requestFullSession(msg.id);
+    return;
+  }
   // msg.from is a GLOBAL transcript index; the resident events are the tail [headFrom, …) → map to local.
   const from = (msg.from | 0) - (s.headFrom || 0);
   // The kernel's coordinate space ends at ITS OWN events — our injected optimistic tail is not in it.
@@ -9141,7 +9192,7 @@ function requestOlder(sid: string, v: View, content: HTMLElement): void {
 
 function statusOnly(msg: any) {
   const s = sessions.get(msg.id);
-  if (!s) return;
+  if (!s) { requestFullSession(msg.id); return; }   // a status push for a session we don't hold — the same desync signal as chatTail's missing base (see there)
   s.status = msg.status || s.status;
   renderTabs();                          // status-only push → repaint the chip; order is untouched
   if (msg.id === activeId) updateStatusline();
@@ -9236,7 +9287,9 @@ window.addEventListener("message", (e: MessageEvent) => {
     if (activeId && !isProvisionalId(activeId) && sessions.get(activeId)) showForkPrompt(activeId, "");
     return;
   }
-  if (m.type === "pipeState") { pipeBanner(!!m.up, Number(m.queued) || 0); return; }
+  // the pipe's down edge also clears awaitingFull (the VS Code twin of the shim's romp:wsdown — an ask
+  // lost with the pipe must not suppress the re-ask after the reconnect's resync; see requestFullSession)
+  if (m.type === "pipeState") { if (!m.up) awaitingFull.clear(); pipeBanner(!!m.up, Number(m.queued) || 0); return; }
   if (m.type === "session") upsert(m);
   else if (m.type === "globalRetryPaused") {
     globalRetryPaused = !!m.value;

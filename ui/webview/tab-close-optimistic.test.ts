@@ -19,17 +19,22 @@ const CLOSE_ACK_MS = 15_000;
 
 // A stand-in for the client's tab state around a close: the kernel's last pushed list, the ids we know a
 // session for, and the just-closed set. Mirrors render.ts — closeTabLocally records + drops, ackClosingTabs
-// settles against each kernel push, and the strip skips anything still in `closing`.
+// settles against each kernel push, and the strip skips anything still in `closing`. The re-ask half
+// (2026-08-18) mirrors applyTabOrder + requestFullSession: a REPEAT listing with no session and no close
+// suppression asks the kernel for the full session, once per desync (awaitingFull).
 function model(now = 0) {
   const kernelList: string[] = [];
   const known = new Set<string>();
   const closing = new Map<string, number>();
   const warned: string[] = [];
+  const listedEver = new Set<string>();     // applyTabOrder's kernelListed: ids ANY push has carried
+  const awaitingFull = new Set<string>();
+  const asked: string[] = [];
   let clock = now;
   return {
-    warned,
+    warned, asked,
     tick(ms: number) { clock += ms; },
-    session(id: string) { known.add(id); if (!kernelList.includes(id)) kernelList.push(id); },
+    session(id: string) { known.add(id); awaitingFull.delete(id); if (!kernelList.includes(id)) kernelList.push(id); },
     // the ✕: post closeTab, record it, drop the session locally (dismissSession)
     close(id: string) { closing.set(id, clock); known.delete(id); },
     // a kernel tabOrder push — `list` is what the kernel currently believes is open
@@ -42,6 +47,17 @@ function model(now = 0) {
       }
       kernelList.length = 0;
       for (const id of list) kernelList.push(id);
+      // the re-ask (applyTabOrder → requestFullSession): a repeat-listed id with no session behind it and
+      // no close suppression is a session this client lost while the kernel kept it — ask for the full one
+      for (const id of list) {
+        if (listedEver.has(id) && !known.has(id) && !closing.has(id) && !awaitingFull.has(id)) { awaitingFull.add(id); asked.push(id); }
+      }
+      for (const id of list) listedEver.add(id);
+    },
+    // the kernel's needFull reply — a full session frame, caused by the ask (never spontaneous here)
+    needFullReply(id: string) {
+      if (!asked.includes(id)) throw new Error("no needFull was asked for " + id);
+      this.session(id);
     },
     // what the strip actually draws: the kernel's ids minus the ones we just closed. An id with no session
     // behind it is the PLACEHOLDER case — the swirl — so it's called out separately.
@@ -60,13 +76,14 @@ test("the closed tab does NOT come back as a swirling placeholder on the next pu
   m.push(["web", "api", "tests"]);
   assert.deepEqual(m.placeholders(), [], "no romp-swirl placeholder for a tab we just closed");
   assert.deepEqual(m.tabs(), ["web", "tests"], "still gone while the shutdown runs behind us");
+  assert.deepEqual(m.asked, [], "…and no re-ask either: a closed tab's goodbye pushes must not resurrect it");
   // the kernel finally drops it → the close is acked and nothing is suppressed any more
   m.push(["web", "tests"]);
   assert.deepEqual(m.tabs(), ["web", "tests"]);
   assert.deepEqual(m.warned, [], "an ordinary close says nothing at all");
 });
 
-test("a close that never takes surfaces an error and lets the tab back", () => {
+test("a close that never takes surfaces an error and lets the tab back ALIVE — not as the dead swirl", () => {
   const m = model();
   m.session("web"); m.session("api");
   m.close("api");
@@ -74,10 +91,20 @@ test("a close that never takes surfaces an error and lets the tab back", () => {
   m.push(["web", "api"]);
   assert.deepEqual(m.warned, [], "still within the ack window — a slow kernel isn't a failure");
   assert.deepEqual(m.tabs(), ["web"]);
+  assert.deepEqual(m.asked, [], "no re-ask while the close suppression stands");
   m.tick(2);
   m.push(["web", "api"]);
   assert.deepEqual(m.warned, ["api"], "past the backstop the close plainly didn't take — say so");
   assert.deepEqual(m.tabs(), ["web", "api"], "…and the tab returns rather than hiding a live session");
+  // THE GAP this test used to leave (2026-08-18): it stopped at tabs(). But close() dropped the session,
+  // so what actually returned was the dead swirling placeholder — and with the kernel's delta bookkeeping
+  // still believing this client held the session, no frame was ever coming: the "returning" tab was
+  // permanently inert. The backstop's honesty must extend to what the tab IS when it comes back.
+  assert.deepEqual(m.placeholders(), ["api"], "what returns is the placeholder — honest only as a TRANSIENT");
+  assert.deepEqual(m.asked, ["api"], "the expired suppression + repeat listing re-ask in the SAME push");
+  m.needFullReply("api");
+  assert.deepEqual(m.placeholders(), [], "…and the reply makes it a live tab again, not a swirl forever");
+  assert.deepEqual(m.tabs(), ["web", "api"]);
 });
 
 test("the ack is the kernel DROPPING the id, not the elapsed time", () => {

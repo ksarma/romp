@@ -105,6 +105,20 @@ test("routeOutbound: a remote id routes to its host with the prefix stripped", (
   assert.equal(routes[0].msg.text, "hello");
 });
 
+test("routeOutbound: needFull rides the scalar-id route to the OWNING host — the desync repair reaches the right kernel", () => {
+  // The tab re-ask (requestFullSession, render.ts) posts needFull for whatever id the kernel listed —
+  // under federation that id is host-prefixed, and the ask is useless anywhere but the owning kernel
+  // (only ITS per-client echat/dedup slots hold the latch the ask exists to pop). The generic SCALAR_ID
+  // pass is what routes it, through the same /remote/<host>/ws splice as every other frame; this pin
+  // keeps needFull from ever being special-cased out of that pass.
+  const routes = routeOutbound({ type: "needFull", id: "gpu1:" + U });
+  assert.equal(routes.length, 1);
+  assert.equal(routes[0].host, "gpu1", "the prefixed id picks the owning kernel");
+  assert.deepEqual(routes[0].msg, { type: "needFull", id: U }, "…which receives its own bare id");
+  const local = routeOutbound({ type: "needFull", id: U });
+  assert.equal(local[0].host, "", "a bare id stays local");
+});
+
 test("routeOutbound: a card op routes by its SID — an itemId alone can only go local", () => {
   // Why every card-addressed op has to carry `sid` (the user 2026-07-29): an itemId is "‹sid›:‹goalId›", so
   // it can never join SCALAR_ID — hostOf() splits on the FIRST colon and would read the session uuid as a
