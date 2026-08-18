@@ -199,6 +199,19 @@ can show its login's windows and its key's spend together. Only turns whose
 session billed the key count toward the API numbers — a login turn's computed
 cost is dollars nobody pays.
 
+### Self-scheduled work wakes an idle session
+
+A session's own scheduled work (a recurring Monitor, a cron firing, a
+background task's completion notice) arrives as a queued notification even
+while the session is idle, and the Claude Code CLI only queues it: under the
+SDK backend, nothing would ever start the turn that reads the queue. Romp
+drives that turn. When notifications sit undelivered and no turn is running,
+one driven turn delivers the queued texts verbatim, with no words of Romp's
+own, and logs one kernel-log line per wake. Sessions that are mid-turn,
+compacting, blocked on an API error, retry-paused, or that you interrupted or
+ended are left alone. Before this, the notifications waited silently until
+your next message.
+
 ### Install-time switches
 
 For `./install.sh`:
