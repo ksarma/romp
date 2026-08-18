@@ -4600,7 +4600,17 @@ def _end_pending_sid(sid):
             sys.stderr.write("kill: %s via cancelCreate (Opening-cue teardown)\n" % sid)
         except Exception:
             sys.stderr.write("cancelCreate kill '%s': %s\n" % (sid, traceback.format_exc()))
-    _send_to_app("chat", {"type": "closed", "id": sid})
+    # CORROBORATE before broadcasting `closed` (2026-08-18): a kill that threw (caught above) or fired
+    # without landing (tmux's fire-and-forget) leaves the session live-and-listed, and the old
+    # unconditional `closed` dismissed it on every chat client anyway — re-listed next push with no
+    # session behind it, the dead-swirl seam. Nothing closed → say so (this path has no asking client,
+    # so the warn is the chat broadcast), and let the tab stand.
+    if str(sid) in _tmux_sessions():
+        _send_to_app("chat", {"type": "warn",
+                              "text": "Couldn't cancel “%s” — the session is still running."
+                                      % (_name_of(sid) or sid)})
+    else:
+        _send_to_app("chat", {"type": "closed", "id": sid})
     _push_soon()
 
 
@@ -6296,9 +6306,22 @@ def _drive(msg, client):
             client["send"](json.dumps({"type": "warn", "text": err}))
     elif t == "endSession":
         sys.stderr.write("kill: %s via endSession WS op\n" % sid)   # kill attribution (the user 2026-07-16)
-        be.kill(sid); _record_death(sid, int(time.time()), "kill")   # the one SDK event with no designed reviver
-        _comment_kill_all(sid, be)   # its comment threads must not outlive it as unreachable running CLIs
-        _send_to_app("chat", {"type": "closed", "id": sid}); _push_soon()
+        be.kill(sid)
+        # CORROBORATE before broadcasting `closed` (2026-08-18): tmux's kill primitive is fire-and-forget
+        # (a kill-session timeout is swallowed and kill() returns True regardless), so a failed kill used
+        # to broadcast a death that hadn't happened — every chat client dismissed the session while the
+        # kernel kept listing it, and the next push re-drew it as the dead unclickable swirl. Ask the
+        # liveness owner: still listed → the honest signal is a warn to the asker, never a dismissal;
+        # the death record and the comment-thread teardown belong to a death that actually occurred.
+        if str(sid) in _tmux_sessions():
+            client["send"](json.dumps({"type": "warn",
+                                       "text": "Couldn't end “%s” — it's still running. Try again."
+                                               % (_name_of(sid) or sid)}))
+        else:
+            _record_death(sid, int(time.time()), "kill")   # the one SDK event with no designed reviver
+            _comment_kill_all(sid, be)   # its comment threads must not outlive it as unreachable running CLIs
+            _send_to_app("chat", {"type": "closed", "id": sid})
+        _push_soon()
     elif t == "renameSession" and msg.get("name"):
         new = str(msg["name"]).strip()
         if not NAME_RE.match(new):
@@ -24993,6 +25016,15 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     sys.stderr.write("kill: %s via /kill route\n" % sid)   # kill attribution (the user 2026-07-16)
                     be.kill(sid)
+                    # corroborate like the WS endSession twin (2026-08-18): a kill the liveness owner
+                    # doesn't confirm gets an honest ok:false, no death record, no `closed` broadcast —
+                    # a closed for a still-listed sid dismisses it on every client and re-draws as the
+                    # dead swirl on the next push
+                    if str(sid) in _tmux_sessions():
+                        _push_all()
+                        return self._send(200, json.dumps({"ok": False,
+                                                           "error": "the session is still running — the kill didn't take"}),
+                                          "application/json")
                     _record_death(sid, int(time.time()), "kill")
                     _comment_kill_all(sid, be)   # its comment threads must not outlive it (the WS endSession twin)
                     _send_to_app("chat", {"type": "closed", "id": sid})
@@ -25743,8 +25775,20 @@ class Handler(BaseHTTPRequestHandler):
             # (timeline-only again). For a live sid this is a stale client's hide ask — ignored; ending
             # a live session is endSession's job. The `closed` frame still prunes the client promptly
             # (and covers the endSession companion post, so an ended session never lingers as a tab).
-            _kept_open.discard(msg["id"])
-            _send_to_app("chat", {"type": "closed", "id": msg["id"]})
+            # …but ONLY when the session is genuinely not live (2026-08-18): the refusal used to
+            # broadcast `closed` anyway, and every chat client obeys that with a full dismissSession, no
+            # suppression anywhere (closingTabs only guards the closer) — while the kernel kept LISTING
+            # the sid, so the next push re-drew it as the dead unclickable swirl on every other window.
+            # The ✕'s End-session confirm posts endSession+closeTab together, so this companion post
+            # raced every slow or failed kill. Broadcast `closed` only when nothing is left to close; a
+            # refused hide says nothing here — endSession owns the kill-fail warn, and the closer's own
+            # ack backstop reports a close that never takes.
+            sid = str(msg["id"])
+            _kept_open.discard(sid)
+            if sid not in _tmux_sessions():
+                _send_to_app("chat", {"type": "closed", "id": sid})
+            else:
+                sys.stderr.write("closeTab: refused for live session %s — nothing closed, no closed broadcast\n" % sid)
             _push_all()
         elif msg and msg.get("type") == "openSession" and msg.get("id"):
             # live → focus its (always-shown) tab; dead → the chat's confirmRevive modal. `live` lands on
