@@ -2943,8 +2943,13 @@ class SdkBackend:
         #                                           (bounds _heal_cut_session to one resume per cut; a completed
         #                                           turn resets it, so a crash LOOP can't respawn forever)
         self._drive_marks: dict[str, tuple] = {}  # sid -> (path, pos, ts) of the last idle-queue drive's newest
-        #                                           enqueue — the in-memory face of the reg's driveMark (the
-        #                                           per-watermark latch; see drive_idle_queue)
+        #                                           DRIVEN wrapper — the in-memory face of the reg's driveMark
+        #                                           (the per-watermark latch; see drive_idle_queue)
+        self._drive_inflight: set[str] = set()    # sids a drive worker currently carries: acceptance stands
+        #                                           down on these WITHOUT latching, so two workers can never
+        #                                           overlap on one sid — an overlap let a stand-down's mark
+        #                                           restore clobber the newer worker's watermark and the model
+        #                                           heard the same notifications twice (2026-08-18 review)
         self._spawn_sem = threading.Semaphore(BOOT_RESUME_CONCURRENCY)   # the ONE machine-wide spawn-stagger
         #                                           budget: boot reconcile's resume sweep AND the idle-queue
         #                                           drive's dormant spawns draw slots from this same semaphore
@@ -3138,16 +3143,24 @@ class SdkBackend:
             tail 'working') belongs to the boot/crash resume machinery;
           * a recorded launchError stands down (the usage-limit queue hold owns that session until a
             connect proves the CLI up again);
-          * ONE DRIVE PER WATERMARK: the newest enqueue's (path, pos, ts) is latched IN MEMORY the
-            moment a drive is accepted — that alone stops the next tick's re-parse re-firing while
-            the worker is in flight — and persisted to the reg (driveMark) only AFTER the enqueue
-            lands, in _drive_deliver: a kernel death between acceptance and delivery leaves the reg
-            unlatched, so the next boot's tick re-produces the candidate and drives it, instead of a
-            persisted-at-acceptance mark silently discarding the never-delivered backlog forever.
-            Only a NEWER enqueue re-arms, and a re-armed drive delivers only the entries past the
-            previous mark. A drive that fails AFTER the enqueue stays latched on purpose — the
-            failure is problem-ring loud, and a recurring signal's next enqueue re-arms — never a
-            silent retry storm.
+          * ONE DRIVE PER WATERMARK: the newest driven wrapper's (path, pos, ts) — the tick marks
+            the aged subset it hands over, so a still-young entry stays past the mark and drives
+            once aged — is latched IN MEMORY the moment a drive is accepted — that alone stops the
+            next tick's re-parse re-firing while the worker is in flight — and persisted to the reg
+            (driveMark) only AFTER the enqueue lands, in _drive_deliver: a kernel death between
+            acceptance and delivery leaves the reg unlatched, so the next boot's tick re-produces
+            the candidate and drives it, instead of a persisted-at-acceptance mark silently
+            discarding the never-delivered backlog forever. Only a NEWER enqueue re-arms, and a
+            re-armed drive delivers only the entries past the previous mark. A drive that fails
+            AFTER the enqueue stays latched on purpose — the failure is problem-ring loud, and a
+            recurring signal's next enqueue re-arms — never a silent retry storm.
+          * ONE WORKER PER SID (_drive_inflight): while a worker carries a sid, acceptance stands
+            down WITHOUT latching even for a strictly newer enqueue — the next parse re-checks,
+            like every other gate. Overlapping workers double-delivered: the first one's send-moment
+            stand-down restored its pre-acceptance mark over the second's newer latch, the restored
+            mark re-drove the whole backlog, and the second worker then delivered its slice again.
+            Acceptance runs only on the pusher tick thread, so check-then-add cannot race another
+            acceptor; a worker's discard racing the check at worst defers one tick.
         Delivery runs on a worker thread (`wait=True` runs it inline, the test seam); see
         _drive_deliver for the send-moment re-resolve/re-check and the spawn stagger, which draws on
         the SAME _spawn_sem budget as boot reconcile — one machine-wide BOOT_RESUME_CONCURRENCY cap,
@@ -3156,6 +3169,10 @@ class SdkBackend:
         for c in cands:
             sid = str(c.get("sid") or "")
             try:
+                if sid in self._drive_inflight:
+                    continue               # a worker already carries this sid — stand down WITHOUT
+                #                            latching (even for a newer enqueue); the next parse
+                #                            re-checks, and overlap is double delivery (docstring)
                 path = str(c.get("path") or "")
                 pos, ts = c["mark"]
                 prev = self._drive_marks.get(sid)
@@ -3193,6 +3210,7 @@ class SdkBackend:
                 # made a kernel death in the latch→delivery window (seconds to minutes behind the
                 # spawn stagger) discard the backlog forever, silently (2026-08-18 review).
                 self._drive_marks[sid] = (path, pos, ts)
+                self._drive_inflight.add(sid)     # released in _drive_deliver's finally, whatever path
                 todo.append((sid, texts, others, (path, pos, ts), prev))
             except Exception:
                 self._log("idle-queue drive (%s): %s" % (sid[:8] or "?", traceback.format_exc()))
@@ -3228,7 +3246,9 @@ class SdkBackend:
                         # while earlier candidates spawned must not have stale pings injected into
                         # it. Stand down WITHOUT latching — restore the pre-acceptance mark (the reg
                         # was never written); the next parse re-checks once the operation settles,
-                        # and the surviving tail re-drives then.
+                        # and the surviving tail re-drives then. Unconditional restore is safe ONLY
+                        # because _drive_inflight bars a second worker for this sid: with overlap,
+                        # this write clobbered a newer drive's watermark and double-delivered.
                         self._drive_marks[sid] = prev
                         self._log("idle-queue drive (%s): a turn opened between acceptance and "
                                   "delivery — standing down; the next parse re-checks" % sid[:8])
@@ -3270,6 +3290,10 @@ class SdkBackend:
                 self._poke()
             except Exception:
                 self._log("idle-queue drive (%s): delivery failed: %s" % (sid[:8], traceback.format_exc()))
+            finally:
+                self._drive_inflight.discard(sid)   # every exit — delivery, stand-down, refused
+                #                                     reconnect, raise — frees the sid for the next
+                #                                     parse's acceptance
 
     def drain(self, timeout: float = 2.0, kill=os.kill) -> dict:
         """Graceful-shutdown drain (the kernel's SIGTERM handler): stop every running session cleanly

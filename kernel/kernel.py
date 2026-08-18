@@ -5821,13 +5821,18 @@ def _idle_queue_drive_tick(now, tmux):
     In the CLI's DELIVERING regime (most sessions — see the measurement on the comment block above
     _undelivered_wake_tail) the CLI starts that turn itself within milliseconds, and romp must stay
     out of its way. Kernel-side gates:
-      * the AGE FLOOR: a candidate drives only once its newest wake enqueue is _WAKE_DRIVE_FLOOR_S
-        old — stand-down WITHOUT latching, the next parse re-checks. This is a documented exception
-        to the no-time-windows rule (the armStale shape): the event it approximates — the CLI
-        deciding NOT to deliver — emits no record, so only its delivery window passing proves the
-        stuck regime, and a drive-time re-parse alone cannot close the race (the CLI can deliver
-        between the re-check and romp's enqueue landing). The delivering regime's own user record
-        clears the tail long before the floor expires; the stuck regime ages past it and drives.
+      * the AGE FLOOR, PER ENTRY: an entry qualifies once IT is _WAKE_DRIVE_FLOOR_S old, and only
+        the aged subset drives — a younger entry may still be racing the CLI's own delivery, so it
+        waits out its own floor and drives on a later parse. (Keyed on the NEWEST entry, the floor
+        never expired under any sub-floor wake cadence — a 30s monitor reset the clock on every
+        enqueue, and two simulated hours stranded 240 pending entries with zero drives, silently:
+        the exact pathology this drive exists to end.) No aged wake signal → stand down WITHOUT
+        latching, the next parse re-checks. The floor is a documented exception to the
+        no-time-windows rule (the armStale shape): the event it approximates — the CLI deciding
+        NOT to deliver — emits no record, so only its delivery window passing proves the stuck
+        regime, and a drive-time re-parse alone cannot close the race (the CLI can deliver between
+        the re-check and romp's enqueue landing). The delivering regime's own user record clears an
+        entry long before its floor expires; the stuck regime's entries age past it and drive.
       * the GLOBAL retry pause stands everything down (the user paused romp's self-driving);
       * a retry-SUPPRESSED session stands down (the user interrupted that thread's storm — a clean
         user turn re-arms it, _auto_resume_session_retry);
@@ -5854,14 +5859,20 @@ def _idle_queue_drive_tick(now, tmux):
             entries, mark = _undelivered_wake_tail(path)
             if mark is None or not any(e["wrapper"] for e in entries):
                 continue
-            if now - _wake_ts_epoch(mark[1]) < _WAKE_DRIVE_FLOOR_S:
-                continue                   # younger than the CLI's own delivery window — stand down
+            aged = [e for e in entries if now - _wake_ts_epoch(e["ts"]) >= _WAKE_DRIVE_FLOOR_S]
+            wa = [e for e in aged if e["wrapper"]]
+            if not wa:
+                continue                   # no wake signal past its own delivery window — stand down
             #                                WITHOUT latching; the next parse re-checks (see docstring)
             if _session_retry_suppressed(sid):
                 continue
             if _api_error(path):
                 continue
-            cands.append({"sid": sid, "path": str(path), "entries": entries, "mark": mark})
+            cands.append({"sid": sid, "path": str(path), "entries": aged,
+                          "mark": (wa[-1]["pos"], wa[-1]["ts"])})
+            #              ^ the newest DRIVEN wrapper, never the newest pending entry: latching past
+            #                the still-young entries would make the backend's prev-filter skip them
+            #                forever once they age — they must exceed the mark on a later parse
         except Exception:
             sys.stderr.write("idle-queue-drive (%s): %s\n" % (sid or "?", traceback.format_exc()))
     if cands:
@@ -10648,9 +10659,11 @@ def _pending_queued(path):
 #     discards). There, the driven turn must carry the queued texts itself.
 # The CLI writes no record of DECIDING not to deliver, so the regimes are indistinguishable at
 # enqueue time — only the delivery window passing proves the stuck one. Hence _WAKE_DRIVE_FLOOR_S in
-# _idle_queue_drive_tick (a documented exception to the no-time-windows rule; rationale on the tick's
-# docstring). Background-AGENT completion notices (a-prefixed 17-hex task ids) are the CLI's own to
-# deliver in EVERY regime — verified even in the stuck session — so they are never wake signals
+# _idle_queue_drive_tick, applied PER ENTRY — each enqueue waits out its own floor, so a fast-cadence
+# stream cannot keep resetting the clock (a documented exception to the no-time-windows rule;
+# rationale on the tick's docstring). Background-AGENT completion notices (a-prefixed 17-hex task
+# ids) are the CLI's own to deliver in EVERY regime — verified even in the stuck session — so they
+# are never wake signals
 # (carve-out below). Event-based otherwise, no new polling: these records are the same
 # queue-operations _pending_queued folds for the chat's queued chip (whose _genuine_queued filter the
 # SDK queued-bubble build now applies too, so a driven wrapper never shows as the USER'S queued
@@ -10684,7 +10697,13 @@ def _undelivered_wake_tail(path):
         evidence is the user record it produces;
       * a later non-isMeta USER record clears exactly the entries whose text it CONTAINS — the CLI's
         idle auto-delivery, its bare-message delivery at a turn start, and romp's own driven turn
-        (whose user record carries the wrapper texts verbatim) all resolve this way;
+        (whose user record carries the wrapper texts verbatim) all resolve this way. ONE entry per
+        carried occurrence, oldest first: a varianceless recurring monitor enqueues byte-identical
+        firings (live census: 6 of 1373 enqueues are exact repeats), and a record carrying that
+        text once delivered exactly one of them — an identical firing enqueued mid-flight is a
+        distinct signal still owed a turn, not already-heard news. The driven turn joins k
+        delivered copies "\\n\\n"-separated, k non-overlapping occurrences, so it still clears
+        exactly what it carried and no re-drive loop opens;
       * assistant records and isMeta user records clear NOTHING: a turn merely running is not
         evidence any particular queued signal was delivered — in the stuck regime, mid-turn arrivals
         are never folded into the open turn, and the old whole-tail clear silently dropped them.
@@ -10754,7 +10773,18 @@ def _undelivered_wake_tail(path):
                     else:
                         utext = ""
                     if utext:                                # delivered = the record CARRIES the text
-                        tail = [e for e in tail if not (e["text"] and e["text"] in utext)]
+                        budget = {}
+                        kept = []
+                        for e in tail:
+                            t = e["text"]
+                            if t and t in utext:
+                                if t not in budget:
+                                    budget[t] = utext.count(t)
+                                if budget[t] > 0:
+                                    budget[t] -= 1
+                                    continue                 # cleared: one entry per carried copy
+                            kept.append(e)
+                        tail = kept
     except OSError:
         return [], None
     out = (tail, (tail[-1]["pos"], tail[-1]["ts"]) if tail else None)

@@ -209,10 +209,12 @@ into a stuck state where the CLI only queues, nothing ever starts the turn
 that reads the queue, and the backlog waits silently until your next message.
 Romp watches for that: once a queued notification has sat undelivered for a
 minute (well past the CLI's own delivery window) with no turn running, one
-driven turn delivers the queued texts verbatim, with no words of Romp's own,
-and logs one kernel-log line per wake. A notification that arrives mid-turn
-is delivered once the turn settles, and one whose delivery a kernel restart
-interrupted is re-driven on the next boot rather than dropped. Notifications
+driven turn delivers every text that has waited out that minute, verbatim and
+with no words of Romp's own, and logs one kernel-log line per wake; a newer
+arrival waits out its own minute rather than delaying the rest. A
+notification that arrives mid-turn is delivered once the turn settles, and
+one whose delivery a kernel restart interrupted is re-driven on the next
+boot rather than dropped. Notifications
 the CLI delivers itself in either state (a background agent finishing) are
 left to it, and sessions that are mid-turn, compacting, blocked on an API
 error, retry-paused, or that you interrupted or ended are left alone. On the

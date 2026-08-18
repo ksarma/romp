@@ -16,18 +16,23 @@ one included, so they are never wake signals at all.
 The fix under test, in three parts:
   * kernel._undelivered_wake_tail: the transcript's still-pending enqueues, resolved PER ENTRY on
     the CLI's own evidence — a content-addressed remove discards its one entry, a dequeue alone
-    clears nothing, a non-isMeta user record clears exactly the entries whose text it CONTAINS, and
-    turn records alone clear nothing (a mid-turn arrival in the stuck regime is never folded into
-    the open turn, so the turn must not eat it). The parse rides the normal push cadence.
+    clears nothing, a non-isMeta user record clears entries whose text it CONTAINS (one entry per
+    carried occurrence, oldest first — a varianceless recurring monitor's identical firings are
+    distinct signals), and turn records alone clear nothing (a mid-turn arrival in the stuck regime
+    is never folded into the open turn, so the turn must not eat it). The parse rides the normal
+    push cadence.
   * kernel._idle_queue_drive_tick: the pusher-cycle job that finds idle SDK sessions with a wake
-    signal in that tail and hands them to the backend. Kernel-side gates: the age floor (a candidate
-    drives only once its newest wake enqueue is _WAKE_DRIVE_FLOOR_S old — the documented time-window
-    exception; the CLI's decision not to deliver emits no record, so only its window passing proves
-    the stuck regime), the global retry pause, per-session retry suppression, an API-error block.
+    signal in that tail and hands them to the backend. Kernel-side gates: the age floor, PER ENTRY
+    (an entry drives only once IT is _WAKE_DRIVE_FLOOR_S old, and only the aged subset drives — the
+    documented time-window exception; the CLI's decision not to deliver emits no record, so only
+    its window passing proves the stuck regime; keyed on the NEWEST entry, a sub-floor wake cadence
+    reset the clock forever and re-opened the silent strand), the global retry pause, per-session
+    retry suppression, an API-error block.
   * SdkBackend.drive_idle_queue: gates (open turn, compaction, ended/cut sessions) re-checked at
-    delivery time, a per-watermark latch (one drive per newest-enqueue, held in memory at acceptance
-    and persisted to the reg only after the enqueue lands, so a kernel death in between re-drives
-    instead of silently discarding), and delivery — reconnect-if-dormant via _ensure drawing on the
+    delivery time, a per-watermark latch (one drive per newest-driven-wrapper, held in memory at
+    acceptance and persisted to the reg only after the enqueue lands, so a kernel death in between
+    re-drives instead of silently discarding), a per-sid in-flight exclusion (overlapping workers
+    for one sid double-delivered), and delivery — reconnect-if-dormant via _ensure drawing on the
     SAME spawn-stagger budget as boot reconcile, then enqueue() of the CLI's OWN queued texts
     verbatim (no synthetic prompt), the exact channel boot-reconcile's restored queues ride.
 
@@ -40,6 +45,7 @@ import tempfile
 import threading
 import time
 import unittest
+from datetime import datetime, timezone
 from unittest import mock
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
@@ -59,6 +65,11 @@ SRC = open(os.path.join(BIN, "romp-kernel")).read()
 SID = "11111111-2222-3333-4444-555555555555"
 SID2 = "11111111-2222-3333-4444-666666666666"
 TS = "2026-08-18T06:%02d:%02d.000Z"
+
+
+def _iso(epoch):
+    """An ISO-Z timestamp for an epoch second — the cadence tests span hours, past TS's minute field."""
+    return datetime.fromtimestamp(epoch, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
 
 def _wrap(n=0, tid="b1111111a"):
@@ -174,6 +185,28 @@ class WakeTail(unittest.TestCase):
         blocks["message"] = {"role": "user", "content": [{"type": "text", "text": _wrap()}]}
         entries, mark = self._tail(_turn() + [_qop("enqueue", _wrap())] + [blocks])
         self.assertEqual((entries, mark), ([], None), "block-list user content is delivery evidence too")
+
+    def test_one_delivery_record_clears_one_identical_entry(self):
+        # varianceless recurring monitors enqueue byte-identical firings (live census: 6 of 1373
+        # enqueues are exact repeats); a record carrying the text ONCE delivered exactly one of
+        # them — an identical firing enqueued mid-flight is a distinct signal still owed a turn,
+        # and the whole-tail containment clear silently dropped it
+        entries, mark = self._tail(_turn() + [_qop("enqueue", _wrap()),
+                                              _qop("enqueue", _wrap(), ts=TS % (15, 0)),
+                                              _urec(text=_wrap(), ts=TS % (15, 1))])
+        self.assertEqual(len(entries), 1, "one carried copy clears ONE entry, not every look-alike")
+        self.assertEqual(entries[0]["ts"], TS % (15, 0),
+                         "oldest first — the delivered copy was the one that had been waiting")
+        self.assertIsNotNone(mark, "the surviving firing still marks the session a candidate")
+
+    def test_a_record_carrying_the_text_twice_clears_both_identical_entries(self):
+        # the driven turn joins k delivered copies "\n\n"-separated — k non-overlapping
+        # occurrences — so its own user record clears exactly what it carried: no re-drive loop
+        entries, mark = self._tail(_turn() + [_qop("enqueue", _wrap()),
+                                              _qop("enqueue", _wrap(), ts=TS % (15, 0)),
+                                              _urec(text=_wrap() + "\n\n" + _wrap(), ts=TS % (15, 1))])
+        self.assertEqual((entries, mark), ([], None),
+                         "two carried copies are two deliveries — the driven turn settles its own batch")
 
     def test_a_midturn_arrival_survives_the_turns_own_records(self):
         # stuck regime, measured live: a wrapper landing during an open turn is NEVER folded into it
@@ -308,14 +341,56 @@ class DriveTick(unittest.TestCase):
         self._tick(now=epoch + int(km._WAKE_DRIVE_FLOOR_S) + 60)
         self.assertEqual(len(self.fb.calls), 1, "no latch: the aged tail drives on the next parse")
 
-    def test_the_floor_keys_on_the_newest_enqueue(self):
-        # an old backlog with one fresh arrival waits for the fresh one to age — the whole batch
-        # drives as one turn once nothing in it can still be racing the CLI
+    def test_the_floor_is_per_entry_the_aged_drive_the_fresh_wait(self):
+        # an old backlog with one fresh arrival: the AGED entries drive now — each waited out its
+        # own floor — while the fresh one, which may still be racing the CLI's own delivery, waits
+        # for its own floor and drives on a later parse. (Keyed on the newest enqueue, the whole
+        # batch waited — and a sub-floor cadence made it wait forever; see the cadence test below.)
         old, young = TS % (14, 9), TS % (30, 0)
         _write_tx(self.tx, _turn() + [_qop("enqueue", _wrap(0), ts=old),
                                       _qop("enqueue", _wrap(1), ts=young)])
         self._tick(now=int(km._wake_ts_epoch(young)) + 10)
-        self.assertEqual(self.fb.calls, [], "the newest enqueue is what must age past the floor")
+        self.assertEqual(len(self.fb.calls), 1, "the aged entry is not held hostage by a fresh arrival")
+        (cand,) = self.fb.calls[0]
+        self.assertEqual([e["text"] for e in cand["entries"]], [_wrap(0)],
+                         "only the aged subset drives — the fresh one may still be racing the CLI")
+        self.assertEqual(cand["mark"], (cand["entries"][-1]["pos"], cand["entries"][-1]["ts"]),
+                         "the watermark is the newest DRIVEN wrapper, never the newest pending entry")
+        self._tick(now=int(km._wake_ts_epoch(young)) + int(km._WAKE_DRIVE_FLOOR_S) + 10)
+        self.assertEqual(len(self.fb.calls), 2, "the fresh entry drives once IT ages past the floor")
+        (cand,) = self.fb.calls[1]
+        self.assertIn(_wrap(1), [e["text"] for e in cand["entries"]],
+                      "the once-young entry is in the aged subset now")
+        self.assertEqual(cand["mark"], (cand["entries"][-1]["pos"], cand["entries"][-1]["ts"]))
+
+    def test_a_sustained_sub_floor_cadence_still_drives(self):
+        """The starvation regression: a 30s-cadence monitor in a stuck session, ticked between
+        enqueues for two simulated hours. Keyed on the NEWEST enqueue, the floor's clock reset on
+        every arrival before the previous one aged past it — 240 pending entries, ZERO drives, and
+        nothing logged: the exact silent strand this feature exists to end, back again for any
+        wake stream firing faster than the floor. Per entry, the first firing qualifies once IT
+        ages past the floor, whatever keeps arriving after it. Synthetic throughout."""
+        base = int(km._wake_ts_epoch(TS % (14, 0)))
+        cadence = 30
+        recs = list(_turn())
+        drives = []
+        for step in range(240):                     # two simulated hours of a 30s monitor
+            enq_t = base + step * cadence
+            recs.append(_qop("enqueue", _wrap(step), ts=_iso(enq_t)))
+            _write_tx(self.tx, recs)
+            now = enq_t + cadence - 1               # just before the next firing: newest is never
+            before = len(self.fb.calls)             # older than 29s, so the old floor never expired
+            self._tick(now=now)
+            if len(self.fb.calls) > before:
+                drives.append((now, self.fb.calls[-1]))
+        self.assertTrue(drives, "a sub-floor cadence starved candidacy forever — 240 pending, 0 drives")
+        self.assertLessEqual(drives[0][0] - base, km._WAKE_DRIVE_FLOOR_S + 2 * cadence,
+                             "the first firing drives as soon as it has waited out its own floor")
+        for now, cands in drives:
+            for cand in cands:
+                for e in cand["entries"]:
+                    self.assertGreaterEqual(now - km._wake_ts_epoch(e["ts"]), km._WAKE_DRIVE_FLOOR_S,
+                                            "only the aged subset ever drives")
 
     def test_sessions_of_other_backends_are_skipped(self):
         self.fb.owned = set()
@@ -577,6 +652,35 @@ class DriveDelivery(unittest.TestCase):
         s.inflight = 0
         self.be.drive_idle_queue([self._cand()], wait=True)
         self.assertEqual(len(s.sent), 1, "the stand-down did not latch — the backlog still delivers")
+
+    def test_overlapping_workers_for_one_sid_cannot_double_deliver(self):
+        """One worker per sid: W1 accepts a backlog and stalls (a dormant candidate ahead in its
+        batch can hold it for minutes); a newer enqueue lands and ages, and the next tick would
+        dispatch W2 for the same sid; a turn opens; W1 stands down, restoring its pre-acceptance
+        mark OVER W2's newer latch — the restored mark re-drives the whole backlog, and W2 then
+        delivers its slice a second time. The in-flight exclusion refuses the second acceptance
+        while a worker carries the sid; the deferred backlog still delivers, once, on a later
+        tick, and every wake text is heard exactly once."""
+        s = self._live()
+        captured = []
+        with mock.patch.object(self.be, "_drive_deliver", captured.append):
+            self.be.drive_idle_queue([self._cand()], wait=True)           # W1 accepted, in flight
+        self.assertEqual(len(captured), 1)
+        entries = [_ent(10, _wrap(0)), _ent(11, _wrap(1)), _ent(12, _wrap(2), ts=TS % (15, 0))]
+        with mock.patch.object(self.be, "_drive_deliver", captured.append):
+            self.be.drive_idle_queue([self._cand(entries=entries)], wait=True)   # a newer enqueue…
+        self.assertEqual(len(captured), 1, "…does not dispatch a second worker while one is in flight")
+        s.inflight = 1                             # a turn opens while W1 is stalled…
+        self.be._drive_deliver(captured[0])        # …so W1 stands down at the send moment
+        self.assertEqual(s.sent, [], "W1 stood down — never mid-turn")
+        s.inflight = 0                             # the turn settles
+        self.be.drive_idle_queue([self._cand(entries=entries)], wait=True)
+        for batch in captured[1:]:                 # any second worker would deliver its slice NOW
+            self.be._drive_deliver(batch)
+        self.assertEqual(len(s.sent), 1, "the deferred backlog delivers once, on the next tick")
+        for i in range(3):
+            self.assertEqual(sum(t.count(_wrap(i)) for t in s.sent), 1,
+                             "each wake text is heard exactly once across all driven turns")
 
     def test_a_died_and_respawned_session_gets_the_backlog_not_its_ghost(self):
         """Delivery re-resolves the session object: enqueueing into a dead snapshot would mirror the
