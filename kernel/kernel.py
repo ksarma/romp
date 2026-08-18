@@ -4188,6 +4188,59 @@ def _chat_tab_sessions(now, tmux):
     return result
 
 
+# ── the tab list's collapse guard (2026-08-18) ──────────────────────────────────────────────────
+# One flaky tmux read must not read as MASS DEATH for the chat tab list. list_lines collapses any
+# exec error/timeout to [] — deliberately, and it stays that way (other consumers have their own
+# doctrine); the death writers already refuse to inherit that collapse (alive_sids returns None on a
+# real probe failure and they stand down). The tab list had no doctrine at all: a collapsed read
+# flowed through the pusher's snapshot into _chat_tab_sessions, ONE push omitted every tmux session,
+# and the client — for which the continuous tabOrder push is the authority on what exists — tore
+# them all down. The next push re-listed ids whose sessions the client no longer held: the dead
+# unclickable swirl strip until a browser reload (seen on a remote host's tabs, 2026-08-18; likelier the more
+# sessions run and the busier the kernel gets, hence "increasingly"). Mirror the death writers' refusal HERE, for the
+# tab list only. Thread-safety is best-effort by design (the pusher and a WS handler's _push_all may
+# race): the worst race carries a one-cycle-stale set, which is this mechanism's whole job anyway.
+_tab_tmux_carry = {"prev": {}, "collapsed": False}
+
+
+def _tab_list_tmux(tmux):
+    """The liveness map the CHAT TAB LIST may trust for THIS push: `tmux` itself on a healthy read;
+    on an ambiguous empty one, corroborated via alive_sids — an authoritative zero (no server / no
+    romp sessions: the reboot/mass-kill shape) is adopted, a REAL probe failure carries the previous
+    push's tmux entries merged back in, loudly, one log per episode, until a read answers again.
+    Never changes what any other consumer sees: the raw snapshot still drives the death sweep and
+    every tick job, which corroborate for themselves."""
+    cur = {sid: v for sid, v in (tmux or {}).items() if (v or {}).get("backend") == "tmux"}
+    if cur or not _tab_tmux_carry["prev"]:
+        # a non-empty read, or nothing to carry (boot / already-empty world): adopt and stand down
+        if _tab_tmux_carry["collapsed"]:
+            _tab_tmux_carry["collapsed"] = False
+            sys.stderr.write("tab-list: tmux liveness read recovered — resuming live reads\n")
+        _tab_tmux_carry["prev"] = cur
+        return tmux
+    alive = _TMUX.alive_sids()
+    if alive is not None and not alive:
+        # authoritative zero: list-sessions answered (or named the missing server) — the board is
+        # genuinely empty. Adopt it; carrying here would keep dead tabs alive on every client.
+        if _tab_tmux_carry["collapsed"]:
+            _tab_tmux_carry["collapsed"] = False
+            sys.stderr.write("tab-list: tmux liveness read recovered — resuming live reads\n")
+        _tab_tmux_carry["prev"] = {}
+        return tmux
+    # A real probe failure (None), or a probe that SEES sessions the snapshot missed: the empty
+    # snapshot was a collapse, not a death. Carry the previous push's entries (status a cycle stale,
+    # which beats tearing every tab down) and say so once per episode.
+    if not _tab_tmux_carry["collapsed"]:
+        _tab_tmux_carry["collapsed"] = True
+        sys.stderr.write("tab-list: tmux liveness read collapsed (exec error/timeout) — carrying the "
+                         "previous push's %d tmux session(s) for the tab list instead of tearing every "
+                         "tab down; live reads resume when the probe answers\n"
+                         % len(_tab_tmux_carry["prev"]))
+    out = dict(tmux or {})
+    out.update(_tab_tmux_carry["prev"])
+    return out
+
+
 TL_LANE_WINDOW = 12 * 3600       # default: DEAD lanes only from the last 12h (the user 2026-06-26, who
                                  # rarely looks at a 48h window, usually much smaller). The view auto-zooms to ~12h
                                  # anyway; older dead sessions just aren't loaded. LIVE sessions show at any age.
@@ -20056,7 +20109,12 @@ def _push(targets, connect=False, tmux=None):
     want_tl = any(c["app"] == "timeline" for c in targets)
     chat_clients = [c for c in targets if c["app"] == "chat"]
     try:
-        chat_list = _chat_tab_sessions(now, tmux)   # living + recently-died-while-shown, minus ×-hidden
+        # The CHAT surface reads liveness through the collapse guard (_tab_list_tmux): one flaky tmux
+        # read must not push a tab list that omits every tmux session — the client treats the omission
+        # as authoritative teardown. The guarded map feeds the whole chat block (list, meta, builds) so
+        # a carried cycle is internally consistent; feed/timeline below keep the raw snapshot.
+        chat_tmux = _tab_list_tmux(tmux) if (want_chat or want_fleet) else tmux
+        chat_list = _chat_tab_sessions(now, chat_tmux)   # living + recently-died-while-shown, minus ×-hidden
         tab_order = [s["sid"] for s in chat_list]
         # order audit: a PERMUTED push (survivors swapped slots vs the previous push) is the reorder bug
         # leaving the kernel — log it with the stack. Set churn (a tab appearing/dying) is routine → skipped.
@@ -20099,7 +20157,7 @@ def _push(targets, connect=False, tmux=None):
                     _perf("chatbuild", sid=str(s["sid"])[:8], cached=1, ms=0, active=int(is_active))
                 else:
                     _t0 = time.monotonic()
-                    m = build_session(s["sid"], now, tmux)
+                    m = build_session(s["sid"], now, chat_tmux)
                     # The full serialization is LAZY (the 2026-08-10 CPU fix, round two): steady state
                     # sends only chatTail suffixes, so an eager json.dumps of the WHOLE payload — multi-MB
                     # for a busy active tab, re-dumped every cycle just to be discarded — was the largest
@@ -20117,7 +20175,7 @@ def _push(targets, connect=False, tmux=None):
                     continue
                 _note_chat_divergence(s["sid"], m.get("name") or "",
                                       ((m.get("status") or {}).get("state") or ""),
-                                      ((tmux.get(s["sid"]) or {}).get("state") or ""), now)
+                                      ((chat_tmux.get(s["sid"]) or {}).get("state") or ""), now)
                 chat_sessions.append(m)
                 # delta-send: diff this build's events against the previous one ONCE, then each client gets
                 # only the changed suffix (chatTail) if it's caught up, else the full session. Keeps the whole
@@ -20280,7 +20338,7 @@ def _push_session_now(sid):
         return
     try:
         now = int(time.time())
-        tmux = _tmux_sessions()
+        tmux = _tab_list_tmux(_tmux_sessions())     # same collapse guard as the pusher's chat block
         chat_list = _chat_tab_sessions(now, tmux)
         if not any(s["sid"] == sid for s in chat_list):
             return                                   # hidden / raced a teardown — the periodic pusher owns the rest
