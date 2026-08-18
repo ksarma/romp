@@ -43,6 +43,44 @@ test("a below-the-head delta is still ignored quietly (not a desync)", () => {
     "the below-the-loaded-head case keeps its quiet return");
 });
 
+test("the kernel talking about a session this client doesn't hold triggers the SAME re-ask (2026-08-18)", () => {
+  // chatTail's !s used to be a silent drop — the exact hole that made a torn-down tab's swirl permanent:
+  // echat advances on SEND, so the kernel kept sending deltas the client kept dropping, and the one
+  // repair channel's only call site sat BELOW this return, unreachable. The missing base is the same
+  // authoritative signal as the delta gap ("the kernel is talking about a session I don't have").
+  assert.match(RENDER,
+    /function chatTail\(msg: any\) \{\s*\n\s*const s = sessions\.get\(msg\.id\);\s*\n\s*if \(!s\) \{[\s\S]{0,800}?requestFullSession\(msg\.id\);\s*\n\s*return;\s*\n\s*\}/,
+    "chatTail with no base asks for the full session instead of dropping the evidence");
+  assert.match(RENDER,
+    /function statusOnly\(msg: any\) \{\s*\n\s*const s = sessions\.get\(msg\.id\);\s*\n\s*if \(!s\) \{ requestFullSession\(msg\.id\); return; \}/,
+    "statusOnly too — the same desync signal, third key (the tabOrder re-list is pinned in tab-ghost-heal)");
+});
+
+test("the re-ask stands down for closing tabs, provisional ids, and unreachable remote hosts", () => {
+  // A tab the user just closed must not be resurrected by its own goodbye traffic (the kernel keeps
+  // listing + talking about it for a push or two after the ✕); the kernel never knew a client-minted
+  // provisional id; and a DETACHED host's teardown (closeRemote's synthesized closed fan-out) or a down
+  // host must not turn into an ask-forever loop — the reattach's fresh connect re-sends everything anyway.
+  assert.match(RENDER, /if \(isProvisionalId\(id\) \|\| closingTabs\.has\(id\)\) return;/,
+    "provisional + mid-close suppression, inside requestFullSession so every ask key inherits it");
+  assert.match(RENDER, /fed\.hosts\(\)\.indexOf\(h\) < 0 \|\| hostIsDown\(id\)\) return;/,
+    "detached (not attached) and down hosts are suppressed the same way closingTabs is");
+});
+
+test("awaitingFull cannot wedge across a reconnect — the socket edge clears it", () => {
+  // A needFull whose REPLY is lost with the socket would otherwise latch its slot forever: only upsert
+  // clears it, so every later re-ask for that sid would be suppressed and the swirl would be back to
+  // permanent. The socket edge is the deciding event (the kernel treats a reconnect as a fresh client
+  // and re-sends full sessions, so clearing here never costs an extra ask — it only re-arms the repair).
+  assert.match(RENDER, /window\.addEventListener\("romp:wsdown", \(\) => awaitingFull\.clear\(\)\);/);
+  assert.match(RENDER, /window\.addEventListener\("romp:wsup", \(\) => awaitingFull\.clear\(\)\);/);
+  assert.match(RENDER, /if \(m\.type === "pipeState"\) \{ if \(!m\.up\) awaitingFull\.clear\(\);/,
+    "the VS Code pipe's down edge too — its shim never fires the romp:ws* events");
+  // …and the shim genuinely fires those events on the local socket's close/reopen, so the clear has a source
+  assert.ok(KERNEL.includes('new Event("romp:wsdown")'), "the shim dispatches romp:wsdown on close");
+  assert.ok(KERNEL.includes('new Event("romp:wsup")'), "…and romp:wsup on reconnect");
+});
+
 test("the kernel handles needFull by forgetting what that client holds", () => {
   assert.ok(KERNEL.includes('msg.get("type") == "needFull"'), "the kernel must handle the frame");
   const i = KERNEL.indexOf('msg.get("type") == "needFull"');

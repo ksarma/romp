@@ -4188,6 +4188,158 @@ def _chat_tab_sessions(now, tmux):
     return result
 
 
+# ── the tab list's collapse guard (2026-08-18) ──────────────────────────────────────────────────
+# One flaky tmux read must not read as MASS DEATH for the chat tab list. list_lines collapses any
+# exec error/timeout to [] — deliberately, and it stays that way (other consumers have their own
+# doctrine); the death writers already refuse to inherit that collapse (alive_sids returns None on a
+# real probe failure and they stand down). The tab list had no doctrine at all: a collapsed read
+# flowed through the pusher's snapshot into _chat_tab_sessions, ONE push omitted every tmux session,
+# and the client — for which the continuous tabOrder push is the authority on what exists — tore
+# them all down. The next push re-listed ids whose sessions the client no longer held: the dead
+# unclickable swirl strip until a browser reload (seen on a remote host's tabs, 2026-08-18; likelier the more
+# sessions run and the busier the kernel gets, hence "increasingly"). Mirror the death writers' refusal HERE, for the
+# tab list only. Thread-safety is best-effort by design (the pusher and a WS handler's _push_all may
+# race): the worst race carries a one-cycle-stale set, which is this mechanism's whole job anyway —
+# and the pusher maintains the carry EVERY cycle, clients or not (_pusher_cycle_jobs / _push), so
+# "previous push" never silently means an hours-old world from before the last browser closed.
+# `seeded` marks that SOME trustworthy world (possibly empty) has been adopted since this process
+# started: an un-seeded empty read is the boot/restart corner — carry state is process memory, so a
+# collapse episode spanning a kernel restart used to be adopted as truth, and the restarted kernel's
+# first push mass-dismissed every window's tabs — and gets the same corroboration as everything else.
+# `dead` is the kill TOMBSTONE set: sids whose death a caller PROVED (_tab_carry_forget). Popping
+# prev alone can be undone by a STALE healthy read — a cycle whose liveness snapshot was taken
+# before the kill landed assigns prev = cur AFTER the forget, re-adding the killed sid — and the
+# next collapse would then re-carry it: the dismiss/resurrect flap the forget exists to prevent.
+# The tombstone survives that overwrite: the carry read filters through it, and it clears only on
+# events that PROVE revival (an answering probe that lists the sid, or _revive_session respawning
+# it) — never on a healthy read, which can be exactly the stale one. Bounded: it grows only by
+# corroborated kills per process life and shrinks on revival.
+_tab_tmux_carry = {"prev": {}, "collapsed": False, "seeded": False, "dead": set()}
+
+
+def _tab_list_tmux(tmux):
+    """The liveness map the CHAT TAB LIST may trust for THIS push: `tmux` itself on a healthy read;
+    on an ambiguous empty one, corroborated via alive_sids — an authoritative zero (no server / no
+    romp sessions: the reboot/mass-kill shape) is adopted, a REAL probe failure carries the previous
+    push's tmux entries merged back in, loudly, one log per episode, until a read answers again.
+    An ANSWERING probe is the corroboration authority even mid-episode, in BOTH directions: its
+    answer IS the carried world — carried sids it no longer lists really died and are dropped
+    (pruned from prev, so a later probe failure in the same episode can't resurrect them), and
+    sids it lists that the carry lacks (created during the episode, or a carry-less boot) are
+    seeded in as stub rows.
+    Returns None when there is nothing trustworthy to say at all — a boot-time collapse with no
+    previous push and no probe answer: callers SKIP the chat push for the cycle (clients keep what
+    they hold, a fresh page keeps its loading state) rather than assert an empty board (the
+    fail-loudly rule; an empty push here was the one-push mass teardown this guard refuses).
+    Never changes what any other consumer sees: the raw snapshot still drives the death sweep and
+    every tick job, which corroborate for themselves."""
+    cur = {sid: v for sid, v in (tmux or {}).items() if (v or {}).get("backend") == "tmux"}
+    if cur or (not _tab_tmux_carry["prev"] and _tab_tmux_carry["seeded"]):
+        # a non-empty read, or an already-empty world staying empty (a previously corroborated
+        # zero): adopt and stand down — no probe, so healthy cycles stay zero-extra-fork
+        if _tab_tmux_carry["collapsed"]:
+            _tab_tmux_carry["collapsed"] = False
+            sys.stderr.write("tab-list: tmux liveness read recovered — resuming live reads\n")
+        _tab_tmux_carry["prev"] = cur
+        _tab_tmux_carry["seeded"] = True
+        return tmux
+    if not _TMUX.available():
+        # no tmux on this box: empty IS the truth (the death-boot rule — no server is zero-alive).
+        # Checked before the probe: alive_sids returns None when tmux is ABSENT too, and that must
+        # never read as a collapse or a headless box would stand down forever.
+        _tab_tmux_carry["collapsed"] = False
+        _tab_tmux_carry["prev"] = {}
+        _tab_tmux_carry["seeded"] = True
+        return tmux
+    # An empty tmux half that the previous push contradicts (prev non-empty), or that nothing has
+    # corroborated yet this process life (the boot/restart corner — carry state is process memory,
+    # so a restart lands here even mid-episode): ask the corroboration authority.
+    alive = _TMUX.alive_sids()
+    if alive is not None and not alive:
+        # authoritative zero: list-sessions answered (or named the missing server) — the board is
+        # genuinely empty. Adopt it; carrying here would keep dead tabs alive on every client.
+        if _tab_tmux_carry["collapsed"]:
+            _tab_tmux_carry["collapsed"] = False
+            sys.stderr.write("tab-list: tmux liveness read recovered — resuming live reads\n")
+        _tab_tmux_carry["prev"] = {}
+        _tab_tmux_carry["seeded"] = True
+        return tmux
+    # A real probe failure (None), or a probe that SEES sessions the snapshot missed: the empty
+    # snapshot was a collapse, not a death. Carry the previous push's entries (status a cycle stale,
+    # which beats tearing every tab down) and say so once per episode.
+    # SNAPSHOT, never the live dict: _tab_carry_forget pops from prev on WS/HTTP handler threads
+    # while THIS thread iterates, and a size-changing pop landing mid-comprehension is a
+    # RuntimeError — on the clientless pusher path nothing above the call caught it, so it killed
+    # the pusher thread permanently. dict()/set() of str-keyed containers are C-level copies,
+    # atomic under the GIL; a forget landing after the copy at worst races the prev rebind below,
+    # and a lost prune is healed by the next answering probe — the one-cycle-stale doctrine this
+    # module already accepts. The tombstone filter keeps corroborated kills out of the carry even
+    # when a stale healthy read re-added them to prev (see _tab_carry_forget).
+    dead = set(_tab_tmux_carry["dead"])
+    carried = {s: v for s, v in dict(_tab_tmux_carry["prev"]).items() if s not in dead}
+    if alive is not None:
+        # The probe ANSWERED: it is the corroboration authority, in BOTH directions — its answer
+        # IS the carried world. A carried sid it no longer lists really died mid-episode: dropped,
+        # and pruned from prev so a later probe failure in the same episode can't resurrect it
+        # (the death writers ride this same probe, so the timeline may already show that death;
+        # carrying it would draw a live tab over a dead lane). A sid it lists that the carry LACKS
+        # (a session created during the episode — spawns are independent execs that can succeed
+        # while list-sessions times out — or a carry-less restart landing mid-episode) is seeded
+        # as a minimal stub row: _alive_sessions membership is sid-keyed and the wide-discover
+        # backfill resolves name/path, the same tolerance a carried-stale cycle already relies
+        # on; metadata refills on the first healthy read. It used to only PRUNE a non-empty carry:
+        # after total turnover mid-episode the carry went stale-empty, the NEXT cycle took the
+        # adopt-and-stand-down fast path above with NO probe and falsely logged 'recovered', and
+        # every newcomer stayed invisible for the rest of the wedge. An answering probe also
+        # outranks the kill tombstone: a sid it lists is alive NOW, whatever a kill gate proved
+        # earlier (a revival must clear the tombstone or the next collapse re-hides the session).
+        for s in alive:
+            _tab_tmux_carry["dead"].discard(s)
+        carried = {s: (carried.get(s) or {"backend": "tmux"}) for s in alive}
+        _tab_tmux_carry["prev"] = carried
+        _tab_tmux_carry["seeded"] = True
+    elif not carried:
+        # Probe failed AND nothing to carry: a restart landed mid-episode and NOTHING trustworthy
+        # exists this cycle. Stand down — the callers skip the chat push (clients keep what they
+        # hold) rather than broadcast the one-push mass teardown this guard exists to refuse.
+        if not _tab_tmux_carry["collapsed"]:
+            _tab_tmux_carry["collapsed"] = True
+            sys.stderr.write("tab-list: tmux liveness read collapsed with nothing to carry (kernel "
+                             "restart during the episode?) — skipping the chat tab push until a read "
+                             "answers\n")
+        return None
+    if not _tab_tmux_carry["collapsed"]:
+        _tab_tmux_carry["collapsed"] = True
+        sys.stderr.write("tab-list: tmux liveness read collapsed (exec error/timeout) — carrying the "
+                         "previous push's %d tmux session(s) for the tab list instead of tearing every "
+                         "tab down; live reads resume when the probe answers\n"
+                         % len(carried))
+    out = dict(tmux or {})
+    out.update(carried)
+    return out
+
+
+def _tab_carry_forget(sid):
+    """A corroborated death OUTRANKS the collapse carry: the caller just PROVED this sid dead, so drop
+    it from the carried previous-push set. Without this, a collapse in the first pusher cycle after an
+    honest End re-injects the killed sid, every non-closer window's re-ask resurrects its tab wearing
+    the last live status, and past CLOSE_ACK_MS the closer is falsely told the close didn't take —
+    a dismiss/resurrect flap on no new information. Called by _record_death (endSession, the /end
+    route, the death sweep's gone/boot stamps) and by the corroborated closed broadcasts that record
+    no death (cancelCreate, closeTab). dict.pop is safe cross-thread because READERS SNAPSHOT:
+    _tab_list_tmux copies prev (and the dead set) before iterating, so a pop landing mid-cycle can
+    never blow up an in-flight comprehension — it used to be able to: a size-changing pop during
+    the pusher's iteration was a RuntimeError that killed the clientless pusher thread permanently.
+    The worst race is NOT a benign already-pruned map: a STALE healthy read — liveness snapshot
+    taken before the kill landed, assigned to prev after this pop — re-adds the killed sid, and the
+    next collapse would re-carry it (the resurrect flap this helper exists to prevent). The `dead`
+    tombstone closes that hole: the carry read filters through it, and only a PROVEN revival (an
+    answering probe listing the sid, or _revive_session respawning it) clears it — never a healthy
+    read, which can be exactly the stale one."""
+    _tab_tmux_carry["dead"].add(str(sid))     # survives a stale healthy read overwriting prev
+    _tab_tmux_carry["prev"].pop(str(sid), None)
+
+
 TL_LANE_WINDOW = 12 * 3600       # default: DEAD lanes only from the last 12h (the user 2026-06-26, who
                                  # rarely looks at a 48h window, usually much smaller). The view auto-zooms to ~12h
                                  # anyway; older dead sessions just aren't loaded. LIVE sessions show at any age.
@@ -4547,7 +4699,24 @@ def _end_pending_sid(sid):
             sys.stderr.write("kill: %s via cancelCreate (Opening-cue teardown)\n" % sid)
         except Exception:
             sys.stderr.write("cancelCreate kill '%s': %s\n" % (sid, traceback.format_exc()))
-    _send_to_app("chat", {"type": "closed", "id": sid})
+    # CORROBORATE before broadcasting `closed` (2026-08-18): a kill that threw (caught above) or fired
+    # without landing (tmux's fire-and-forget) leaves the session live-and-listed, and the old
+    # unconditional `closed` dismissed it on every chat client anyway — re-listed next push with no
+    # session behind it, the dead-swirl seam. Ask _confirmed_ended, never bare _tmux_sessions()
+    # membership (its error→[] collapse would certify a false death during the very stall that made
+    # the kill fail). Nothing provably closed → say so (this path has no asking client, so the warn
+    # is the chat broadcast), and let the tab stand.
+    ended = _confirmed_ended(sid)
+    if ended is not True:
+        _send_to_app("chat", {"type": "warn",
+                              "text": ("Couldn't cancel “%s” — the session is still running."
+                                       if ended is False else
+                                       "Couldn't cancel “%s” — couldn't confirm it ended; it may still be running.")
+                                      % (_name_of(sid) or sid)})
+    else:
+        _tab_carry_forget(sid)   # a corroborated death outranks the tab list's collapse carry (no
+        #                          death record on this path, so _record_death's prune never runs)
+        _send_to_app("chat", {"type": "closed", "id": sid})
     _push_soon()
 
 
@@ -6243,9 +6412,32 @@ def _drive(msg, client):
             client["send"](json.dumps({"type": "warn", "text": err}))
     elif t == "endSession":
         sys.stderr.write("kill: %s via endSession WS op\n" % sid)   # kill attribution (the user 2026-07-16)
-        be.kill(sid); _record_death(sid, int(time.time()), "kill")   # the one SDK event with no designed reviver
-        _comment_kill_all(sid, be)   # its comment threads must not outlive it as unreachable running CLIs
-        _send_to_app("chat", {"type": "closed", "id": sid}); _push_soon()
+        be.kill(sid)
+        # CORROBORATE before broadcasting `closed` (2026-08-18): tmux's kill primitive is fire-and-forget
+        # (a kill-session timeout is swallowed and kill() returns True regardless), so a failed kill used
+        # to broadcast a death that hadn't happened — every chat client dismissed the session while the
+        # kernel kept listing it, and the next push re-drew it as the dead unclickable swirl. Ask the
+        # liveness owner THROUGH _confirmed_ended — never bare _tmux_sessions() membership, whose
+        # error→[] collapse certified a false death exactly when a wedged server also swallowed the
+        # kill: unconfirmed → the honest signal is a warn to the asker, never a dismissal; the death
+        # record and the comment-thread teardown belong to a death that actually, provably occurred.
+        ended = _confirmed_ended(sid)
+        if ended is not True:
+            # TYPED and sid-bearing (2026-08-18): the bare warn told the closer to "Try again" while
+            # its own closingTabs suppression hid the very tab to retry on for up to 15s, after which
+            # the ack backstop fired a SECOND toast for the same failure. endFailed is the failure
+            # EVENT that backstop's comment said didn't exist: the client toasts once, releases the
+            # suppression and re-asks, so the tab is back the moment the user reads the words.
+            nm = _name_of(sid) or sid
+            client["send"](json.dumps({"type": "endFailed", "id": sid,
+                                       "text": ("Couldn't end “%s” — it's still running. Try again." % nm)
+                                               if ended is False else
+                                               ("Couldn't confirm “%s” ended — tmux isn't answering. Try again." % nm)}))
+        else:
+            _record_death(sid, int(time.time()), "kill")   # the one SDK event with no designed reviver
+            _comment_kill_all(sid, be)   # its comment threads must not outlive it as unreachable running CLIs
+            _send_to_app("chat", {"type": "closed", "id": sid})
+        _push_soon()
     elif t == "renameSession" and msg.get("name"):
         new = str(msg["name"]).strip()
         if not NAME_RE.match(new):
@@ -6475,6 +6667,8 @@ def _revive_session(sid):
         _send_to_app("chat", {"type": "reviveFailed", "id": sid, "name": name,
                               "text": detail or "unknown error"})
         return
+    _tab_tmux_carry["dead"].discard(str(sid))   # a PROVEN revival clears the kill tombstone — the
+    #                                             collapse carry may list this sid again (see _tab_carry_forget)
     _kept_open.discard(sid)       # it's live again → no longer a read-only kept tab
     _push_all()                   # surface it promptly (the 4s pusher would catch it anyway)
     _reveal_chat({"type": "focus", "id": sid})
@@ -10126,6 +10320,39 @@ def _death_boot_pass(now=None):
         sys.stderr.write("death-boot: recorded %d session death(s) from before this kernel\n" % n)
 
 
+def _confirmed_ended(sid):
+    """Did this session actually END — may a kill/close path record the death, tear down its comment
+    threads, and broadcast `closed`? The four post-kill honesty gates (endSession, the /end route,
+    closeTab, cancelCreate) all ask HERE, mirroring _death_sweep_tick's doctrine: a death is certified
+    only by the liveness owner's AFFIRMATIVE answer, never by silence. Bare `sid in _tmux_sessions()`
+    membership inherits list_lines' error/timeout→[] collapse — and the failures CORRELATE: the same
+    wedged tmux server that swallows the fire-and-forget kill (kill() returns True regardless) also
+    times out the corroborating read, so the old membership test certified a false death, wrote a
+    durable gone marker, killed live comment threads and broadcast the exact `closed` lie the gates
+    exist to prevent, precisely when it mattered. Tri-state:
+      True  — ended, corroborated: absent from the merged map AND the owner answered (the SDK reg
+              partition / the headless zero / an answering alive_sids probe without it).
+      False — still running: the merged map lists it, or the probe answered WITH it.
+      None  — CANNOT CONFIRM (a real probe failure): the writer stands down — warn/ok:false, no
+              death record, no comment-thread teardown, no `closed`; a retry after the probe
+              recovers succeeds. Loud, per the fail-loudly rule.
+    Both falsy verdicts take the refusal branch (`is not True`); the copy may tell them apart."""
+    sid = str(sid)
+    if sid in _tmux_sessions():
+        return False                             # still listed → nothing ended
+    if (jd.SDKDIR / (sid + ".json")).exists():
+        return True                              # SDK-owned: absence from the in-process merge IS the
+    #                                              owner's answer (the death sweep's partition, above)
+    if not _TMUX.available():
+        return True                              # headless: no server IS zero-alive (the boot pass's rule)
+    scan = _TMUX.alive_sids()
+    if scan is None:
+        sys.stderr.write("kill-corroborate: liveness probe failed for %s — treating as still running "
+                         "(no death record, no closed broadcast)\n" % sid)
+        return None
+    return False if sid in scan else True
+
+
 def _last_states_row(sid):
     """The newest row of states/<sid>.jsonl, any shape (state rows, awaiting overlays, the re-anchor's
     supersededBy row) — the death writers' idempotence/veto read. Event-rate only (a kill gesture, a
@@ -10172,7 +10399,11 @@ def _record_death(sid, now, by):
     _session_closed, _turn_open, the closer sweep, rollup settle) finalizes with zero new judge code.
     The marker's t matches the idle row's (now-1), so the writer's own row never reads as 'newer'
     to _death_stamp_due — a repeat stamp with no intervening revival is a no-op by the time key."""
-    if not sid or not _death_stamp_due(sid):
+    if not sid:
+        return False
+    _tab_carry_forget(sid)   # every caller corroborated this death — it outranks the tab list's
+    #                          collapse carry, and BEFORE the stamp-due veto so a re-stamp still prunes
+    if not _death_stamp_due(sid):
         return False
     try:
         gd = jd.STATE / "gone"
@@ -20056,12 +20287,42 @@ def _push(targets, connect=False, tmux=None):
     want_tl = any(c["app"] == "timeline" for c in targets)
     chat_clients = [c for c in targets if c["app"] == "chat"]
     try:
-        chat_list = _chat_tab_sessions(now, tmux)   # living + recently-died-while-shown, minus ×-hidden
-        tab_order = [s["sid"] for s in chat_list]
-        # order audit: a PERMUTED push (survivors swapped slots vs the previous push) is the reorder bug
-        # leaving the kernel — log it with the stack. Set churn (a tab appearing/dying) is routine → skipped.
-        _order_audit("push", _last_tab_order, tab_order, only_permuted=True)
-        _last_tab_order[:] = tab_order
+        # The CHAT surface reads liveness through the collapse guard (_tab_list_tmux): one flaky tmux
+        # read must not push a tab list that omits every tmux session — the client treats the omission
+        # as authoritative teardown. The guard runs on EVERY push (feed/timeline-only ones too) so the
+        # carried "previous push" stays at most one cycle stale — it used to refresh only when
+        # want_chat/want_fleet held, so with every browser closed it froze at the last chat push's
+        # world and a reconnect during a collapse re-listed an hours-old set as live tabs. The guarded map feeds
+        # the whole chat block (list, meta, builds) so a carried cycle is internally consistent;
+        # feed/timeline below keep the raw snapshot.
+        guarded = _tab_list_tmux(tmux)
+        chat_tmux = guarded if (want_chat or want_fleet) else tmux
+        if guarded is None:
+            # Nothing trustworthy to say about the TMUX half this cycle (a boot-time collapse with
+            # no carry). The sentinel keys to the only DESTRUCTIVE frame — tabOrder, whose omission
+            # the client treats as authoritative teardown — never the whole chat leg: the SDK half
+            # is in-process truth (Sessions.live) and never inherits a tmux collapse, so its
+            # session/chatTail/comments frames keep flowing. Standing the whole leg down starved
+            # every healthy SDK session for the length of the wedge — a fresh dashboard sat on its
+            # loading state, a `romp new` session's guaranteed push was swallowed: the stuck-spinner
+            # symptom this feature exists to fix, re-minted. tab_order=None marks the cycle: no
+            # tabOrder/tab_meta frame, no order-audit/_last_tab_order move, want_fleet stands down
+            # and the ledgers attach is skipped (a partial SDK-only ledgers list would drop every
+            # tmux row from the pane that reads feed["ledgers"] — the same omission in feed form).
+            # Clients keep the tmux tabs they hold; a fresh page paints the SDK half via upsert.
+            chat_tmux = {sid: v for sid, v in (tmux or {}).items()
+                         if (v or {}).get("backend") != "tmux"}
+            # the sid filter stops tmux sessions building as falsely-dead "recently died" rows
+            chat_list = [s for s in _chat_tab_sessions(now, chat_tmux) if s["sid"] in chat_tmux]
+            tab_order = None
+            want_fleet = False
+        else:
+            chat_list = _chat_tab_sessions(now, chat_tmux)   # living + recently-died-while-shown, minus ×-hidden
+            tab_order = [s["sid"] for s in chat_list]
+            # order audit: a PERMUTED push (survivors swapped slots vs the previous push) is the reorder bug
+            # leaving the kernel — log it with the stack. Set churn (a tab appearing/dying) is routine → skipped.
+            _order_audit("push", _last_tab_order, tab_order, only_permuted=True)
+            _last_tab_order[:] = tab_order
         # ACTIVE-TAB-FIRST STREAMING (the user 2026-06-24): a fresh connect used to wait for EVERY tab's
         # build_session (a full transcript reshape each) before the client saw ANY chat — the "slow to load"
         # lag. Now we push the tab strip immediately, then build + FLUSH the tab each client is LOOKING AT
@@ -20075,12 +20336,17 @@ def _push(targets, connect=False, tmux=None):
             # TABS-FIRST (the user 2026-06-26): ship name+color per tab so the client can paint the WHOLE strip
             # as placeholders up front (no tab popping in one-by-one as each build_session lands). The full
             # session fills the placeholder in when it arrives below.
-            tab_meta = [{"id": s["sid"], "name": s.get("name", ""), "color": _name_color(s["sid"])} for s in chat_list]
+            if tab_order is not None:
+                tab_meta = [{"id": s["sid"], "name": s.get("name", ""), "color": _name_color(s["sid"])} for s in chat_list]
+            else:
+                tab_meta = None                          # a sentinel cycle ships no tab strip at all
             for c in chat_clients:                       # tab strip first → the shell paints before any build
                 _send_client(c, ("globalRetryPaused",), {"type": "globalRetryPaused", "value": _retry_paused_on(),
                                                          "resumeAt": _retry_resume_at(),   # limit reset epoch → the card counts down to the real retry
                                                          "reason": _retry_pause_reason()})   # "spend" → the card says 'raise your cap', no countdown
-                _send_client(c, ("taborder",), {"type": "tabOrder", "order": tab_order, "tabs": tab_meta})
+                if tab_order is not None:                # a sentinel cycle sends NO tabOrder frame at all — an
+                    #                                      omitting one is the mass teardown the guard refuses
+                    _send_client(c, ("taborder",), {"type": "tabOrder", "order": tab_order, "tabs": tab_meta})
             active = {c.get("active") for c in chat_clients if c.get("active")}
             # Stable: active tabs first — and TRANSCRIPT-LESS sessions with them. A just-created session
             # has no transcript, so its build is near-free, and its creator is guaranteed to be staring
@@ -20099,7 +20365,7 @@ def _push(targets, connect=False, tmux=None):
                     _perf("chatbuild", sid=str(s["sid"])[:8], cached=1, ms=0, active=int(is_active))
                 else:
                     _t0 = time.monotonic()
-                    m = build_session(s["sid"], now, tmux)
+                    m = build_session(s["sid"], now, chat_tmux)
                     # The full serialization is LAZY (the 2026-08-10 CPU fix, round two): steady state
                     # sends only chatTail suffixes, so an eager json.dumps of the WHOLE payload — multi-MB
                     # for a busy active tab, re-dumped every cycle just to be discarded — was the largest
@@ -20117,7 +20383,7 @@ def _push(targets, connect=False, tmux=None):
                     continue
                 _note_chat_divergence(s["sid"], m.get("name") or "",
                                       ((m.get("status") or {}).get("state") or ""),
-                                      ((tmux.get(s["sid"]) or {}).get("state") or ""), now)
+                                      ((chat_tmux.get(s["sid"]) or {}).get("state") or ""), now)
                 chat_sessions.append(m)
                 # delta-send: diff this build's events against the previous one ONCE, then each client gets
                 # only the changed suffix (chatTail) if it's caught up, else the full session. Keeps the whole
@@ -20146,12 +20412,15 @@ def _push(targets, connect=False, tmux=None):
                     if len(_built_chat) > 256:           # bounded by fleet size; a wholesale clear is fine
                         _built_chat.clear()
                     _built_chat[s["sid"]] = (sig, m, ms)
-            shown_sids = {s["sid"] for s in chat_list}
-            for sid in list(_built_chat):                # drop cache for tabs no longer shown (closed/×-hidden)
-                if sid not in shown_sids:
-                    _built_chat.pop(sid, None)
-                    _prev_chat_events.pop(sid, None)
-                    _prev_chat_ledger.pop(sid, None)
+            if tab_order is not None:                    # "no longer shown" is only a trustworthy claim when the
+                #                                          tab list itself is: a sentinel cycle's SDK-only list
+                #                                          must not evict the tmux tabs' build caches/delta baselines
+                shown_sids = {s["sid"] for s in chat_list}
+                for sid in list(_built_chat):            # drop cache for tabs no longer shown (closed/×-hidden)
+                    if sid not in shown_sids:
+                        _built_chat.pop(sid, None)
+                        _prev_chat_events.pop(sid, None)
+                        _prev_chat_ledger.pop(sid, None)
             # COMMENT THREADS: one {type:"comments"} frame per session that has ever had one (its
             # comments/ store exists — an ~free stat for everyone else). Each frame rides its OWN
             # per-sid dedup slot, never the chat delta baseline (the 2026-07-28 stranded-delta rule):
@@ -20175,7 +20444,11 @@ def _push(targets, connect=False, tmux=None):
             # for a fleet with no sessions — so the fleet can tell "the build ran, here's the data (maybe none)"
             # from "no data yet, still loading" and keep its loader up until real data lands (the user
             # 2026-06-29). Without this, an empty/ledger-less push looked identical to a not-yet-built one.
-            if chat_sessions or want_fleet:
+            # …but never from a sentinel cycle's SDK-only builds (tab_order is None): a partial
+            # ledgers list would drop every tmux row from the pane that reads feed["ledgers"] —
+            # the omission teardown in feed form. That pane keeps its previous data (or its
+            # loader) until the tab list is trustworthy again.
+            if (chat_sessions or want_fleet) and tab_order is not None:
                 feed["ledgers"] = [{"sid": m["id"], "name": m["name"], "color": m.get("color"),
                                     "status": m.get("status"),
                                     # attach the archived-completed TOP tasks so the Fleet's "Show completed"
@@ -20280,18 +20553,33 @@ def _push_session_now(sid):
         return
     try:
         now = int(time.time())
-        tmux = _tmux_sessions()
+        raw = _tmux_sessions()
+        tmux = _tab_list_tmux(raw)                  # same collapse guard as the pusher's chat block
+        trusted_order = tmux is not None
+        if tmux is None:
+            # Nothing trustworthy about the TAB LIST this cycle (boot-time collapse, no carry) —
+            # but the sentinel is about the TMUX half. A non-tmux target is in-process truth and
+            # proceeds with the SDK-half map, session frame ONLY (no tabOrder — the destructive
+            # frame stays keyed to the sentinel; a fresh page paints the tab via the client's
+            # upsert). This is the `romp new` seam: standing down here swallowed the guaranteed
+            # push of the one tab the creator is staring at, for the length of the wedge. A
+            # tmux-backed target really has nothing trustworthy: the periodic pusher owns the heal.
+            if ((raw.get(sid) or {}).get("backend")) == "tmux":
+                return
+            tmux = {s: v for s, v in (raw or {}).items() if (v or {}).get("backend") != "tmux"}
         chat_list = _chat_tab_sessions(now, tmux)
         if not any(s["sid"] == sid for s in chat_list):
             return                                   # hidden / raced a teardown — the periodic pusher owns the rest
-        tab_order = [s["sid"] for s in chat_list]
-        tab_meta = [{"id": s["sid"], "name": s.get("name", ""), "color": _name_color(s["sid"])} for s in chat_list]
+        if trusted_order:
+            tab_order = [s["sid"] for s in chat_list]
+            tab_meta = [{"id": s["sid"], "name": s.get("name", ""), "color": _name_color(s["sid"])} for s in chat_list]
         m = build_session(sid, now, tmux)
         if not m:
             return
         ms = None                                    # lazy: the first full send materializes it, the rest reuse
         for c in targets:
-            _send_client(c, ("taborder",), {"type": "tabOrder", "order": tab_order, "tabs": tab_meta})
+            if trusted_order:                        # never a tabOrder from a sentinel cycle's partial list
+                _send_client(c, ("taborder",), {"type": "tabOrder", "order": tab_order, "tabs": tab_meta})
             ms = _send_chat(c, m, ms, 0, True)       # change_from 0 → always the full-session form
     except Exception:
         sys.stderr.write("push-session-now (%s): %s\n" % (sid, traceback.format_exc()))
@@ -20970,6 +21258,19 @@ def _pusher_cycle():
 def _pusher_cycle_jobs(now, tmux, any_client):
     if any_client:
         _push_all(tmux=tmux)
+    else:
+        try:                              # belt like every sibling job below: this is the ONLY bare
+            #                               _tab_list_tmux call site (_push and _push_session_now catch for
+            #                               themselves), and an exception escaping here rode _pusher_cycle's
+            #                               try/finally into _pusher's while-True and killed the daemon
+            #                               thread PERMANENTLY — no pushes, no death sweep, no auto-nudge,
+            #                               no awaiting-lift until a kernel restart
+            _tab_list_tmux(tmux)          # result unused: with nobody to push to this only MAINTAINS the
+            #                               tab list's collapse carry, so "previous push" stays at most one
+            #                               cycle stale and a reconnect during a collapse can never re-list
+            #                               an hours-old world as live tabs (2026-08-18)
+        except Exception:
+            sys.stderr.write("tab-carry maintain: %s\n" % traceback.format_exc())
     # (the WS keepalive lives on its own _heartbeat thread — NOT here — so a slow push can't starve it)
     try:                                  # EXACT retraction first: dispatches returned → the stamp is spent,
         _lift_spent_awaiting(now, tmux)   # so the nudge tick below never wakes a wait that already ended
@@ -24926,8 +25227,17 @@ class Handler(BaseHTTPRequestHandler):
                 sid = _sid_of(who)
                 r = _host_for_sid(sid)
                 if r is not None:                               # remote session → forward over its -L tunnel
-                    _remote_forward(r, u.path, {"id": sid})
-                    return self._send(200, json.dumps({"ok": True}), "application/json")
+                    # …and RELAY the remote's answer, like the /send twin (2026-08-18): the remote
+                    # kernel's /end now refuses honestly (ok:false, "the kill didn't take"), and
+                    # discarding that here answered ok:true for a kill that never landed — a headless
+                    # caller (`romp end web` against an attached host) walked away from a runaway
+                    # session believing it dead. A dead far kernel is its own honest failure too.
+                    res = _remote_forward(r, u.path, {"id": sid})
+                    if res is None:
+                        return self._send(200, json.dumps({"ok": False, "error":
+                            "the remote kernel for this session (%s) isn't answering"
+                            % r.get("host", "?")}), "application/json")
+                    return self._send(200, json.dumps(res), "application/json")
                 be = Sessions.backend_for(sid)
                 if u.path == "/interrupt":
                     be.interrupt(sid)                           # Esc/stop AND settle idle (in the backend)
@@ -24935,6 +25245,19 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     sys.stderr.write("kill: %s via /kill route\n" % sid)   # kill attribution (the user 2026-07-16)
                     be.kill(sid)
+                    # corroborate like the WS endSession twin (2026-08-18): a kill the liveness owner
+                    # doesn't AFFIRMATIVELY confirm (_confirmed_ended — never bare _tmux_sessions()
+                    # membership, whose error→[] collapse would certify a false death) gets an honest
+                    # ok:false, no death record, no `closed` broadcast — a closed for a still-live sid
+                    # dismisses it on every client and re-draws as the dead swirl on the next push
+                    ended = _confirmed_ended(sid)
+                    if ended is not True:
+                        _push_all()
+                        return self._send(200, json.dumps({"ok": False,
+                                                           "error": "the session is still running — the kill didn't take"
+                                                                    if ended is False else
+                                                                    "couldn't confirm the end — tmux isn't answering; try again"}),
+                                          "application/json")
                     _record_death(sid, int(time.time()), "kill")
                     _comment_kill_all(sid, be)   # its comment threads must not outlive it (the WS endSession twin)
                     _send_to_app("chat", {"type": "closed", "id": sid})
@@ -25685,8 +26008,24 @@ class Handler(BaseHTTPRequestHandler):
             # (timeline-only again). For a live sid this is a stale client's hide ask — ignored; ending
             # a live session is endSession's job. The `closed` frame still prunes the client promptly
             # (and covers the endSession companion post, so an ended session never lingers as a tab).
-            _kept_open.discard(msg["id"])
-            _send_to_app("chat", {"type": "closed", "id": msg["id"]})
+            # …but ONLY when the session is genuinely not live (2026-08-18): the refusal used to
+            # broadcast `closed` anyway, and every chat client obeys that with a full dismissSession, no
+            # suppression anywhere (closingTabs only guards the closer) — while the kernel kept LISTING
+            # the sid, so the next push re-drew it as the dead unclickable swirl on every other window.
+            # The ✕'s End-session confirm posts endSession+closeTab together, so this companion post
+            # raced every slow or failed kill. Broadcast `closed` only when nothing is left to close —
+            # per _confirmed_ended's affirmative answer, never bare _tmux_sessions() membership, whose
+            # error→[] collapse read every live sid as gone during a tmux stall and re-minted the very
+            # lie this gate removes. A refused hide says nothing here — endSession owns the kill-fail
+            # warn, and the closer's own ack backstop reports a close that never takes.
+            sid = str(msg["id"])
+            _kept_open.discard(sid)
+            if _confirmed_ended(sid) is True:
+                _tab_carry_forget(sid)   # a corroborated death outranks the tab list's collapse carry
+                _send_to_app("chat", {"type": "closed", "id": sid})
+            else:
+                sys.stderr.write("closeTab: refused for %s — not confirmed ended, nothing closed, "
+                                 "no closed broadcast\n" % sid)
             _push_all()
         elif msg and msg.get("type") == "openSession" and msg.get("id"):
             # live → focus its (always-shown) tab; dead → the chat's confirmRevive modal. `live` lands on

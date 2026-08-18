@@ -747,8 +747,15 @@ export class FederationManager {
     this.conns.delete(host);
     this.hostSeq = this.hostSeq.filter((h) => h !== host);
     // drop that host's tabs from the panes (else they linger stale), then re-emit the merged order.
+    // Tagged hostDetach (2026-08-18): a detach is the exact event after which this host's past
+    // listings stop being live evidence, so render.ts's closed handler ALSO prunes these ids from
+    // its kernelListed set — otherwise the reattach's tabs-first connect push read as a re-listing
+    // and every window re-asked (needFull) for every one of the host's sessions while those very
+    // frames were already in flight: M windows × N sessions of duplicate full-session sends. Safe
+    // for the add-only rationale: this socket is closed and the per-host state deleted below, so no
+    // frame carrying these ids can arrive until a reattach, whose fresh tabOrder re-adds them.
     for (const sid of this.perHostSids[host] || []) {
-      window.dispatchEvent(new MessageEvent("message", { data: { type: "closed", id: sid } }));
+      window.dispatchEvent(new MessageEvent("message", { data: { type: "closed", id: sid, hostDetach: true } }));
     }
     delete this.perHostOrder[host];
     delete this.perHostTabs[host];

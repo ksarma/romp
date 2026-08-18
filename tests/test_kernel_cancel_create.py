@@ -34,18 +34,24 @@ NAME = "TESTHOST-newsess"
 
 
 class FakeBackend:
-    def __init__(self):
+    """kill() lands for REAL: the sid leaves the test's live map, the way a real kill leaves the
+    liveness owner's answer — which is the corroboration the closed broadcast now rides on
+    (2026-08-18). The refusal tests below break kill deliberately."""
+
+    def __init__(self, tc):
+        self.tc = tc
         self.killed = []
 
     def kill(self, sid):
         self.killed.append(sid)
+        self.tc._live.pop(sid, None)
 
 
 class CancelCreateTest(unittest.TestCase):
     def setUp(self):
-        self.be = FakeBackend()
+        self._live = {}       # sid -> meta; drives the monkeypatched name lookup + liveness reads
+        self.be = FakeBackend(self)
         self.sent = []        # (app, msg) handed to the chat view
-        self._live = {}       # sid -> meta; drives the monkeypatched name lookup
         self._saved = {}
 
         def patch(nm, fn):
@@ -60,12 +66,18 @@ class CancelCreateTest(unittest.TestCase):
         self._saved_bf = km.Sessions.backend_for
         km.Sessions.backend_for = staticmethod(lambda sid: self.be)
         km._cancel_pending.clear()
+        # _confirmed_ended's second leg: the probe mirrors the live map by default (a landed kill
+        # reads as the authoritative zero; a survivor stays listed). The stall tests override it.
+        km._TMUX.available = lambda: True
+        km._TMUX.alive_sids = lambda t=3: set(self._live)
 
     def tearDown(self):
         for nm, v in self._saved.items():
             setattr(km, nm, v)
         km.Sessions.backend_for = self._saved_bf
         km._cancel_pending.clear()
+        for nm in ("available", "alive_sids"):
+            km._TMUX.__dict__.pop(nm, None)
 
     def _cancel(self, name):
         # Drive the real WS handler: _dispatch_ws starts with `if _drive(...)` which returns False for
@@ -101,6 +113,62 @@ class CancelCreateTest(unittest.TestCase):
         self.assertEqual(self.be.killed, [], "a remote spawn is not torn down by the local kernel")
         self.assertNotIn(NAME, km._cancel_pending)
         self.assertNotIn("TESTHOST:" + NAME, km._cancel_pending)
+
+    # ── the closed broadcast is corroborated (2026-08-18) ──
+
+    def test_a_kill_that_throws_does_not_broadcast_closed(self):
+        # The throw was already caught and logged — and then `closed` went out anyway, dismissing a
+        # session the kernel KEEPS LISTING on every chat client: the next push re-listed it with no
+        # session behind it — the permanent dead-swirl seam. A failed kill's honest signal is a warn.
+        self._live = {SID: {}}
+
+        def boom(sid):
+            self.be.killed.append(sid)
+            raise RuntimeError("backend refused the kill")
+
+        self.be.kill = boom
+        self._cancel(NAME)
+        self.assertFalse(any(m.get("type") == "closed" for _a, m in self.sent),
+                         "nothing closed → no closed broadcast")
+        self.assertTrue(any(m.get("type") == "warn" for _a, m in self.sent),
+                        "…a warn instead, so the cancel's failure is loud, not a silent lie")
+
+    def test_a_kill_that_silently_fails_warns_instead_of_dismissing(self):
+        # tmux's kill primitive is fire-and-forget: a timeout is swallowed and kill() returns as if
+        # it worked. Corroborate with the liveness owner instead of trusting the call.
+        self._live = {SID: {}}
+        self.be.kill = lambda sid: self.be.killed.append(sid)   # runs, but the session survives
+        self._cancel(NAME)
+        self.assertFalse(any(m.get("type") == "closed" for _a, m in self.sent))
+        self.assertTrue(any(m.get("type") == "warn" for _a, m in self.sent))
+
+    def test_a_collapsed_read_with_a_failed_probe_stands_down(self):
+        # The corroboration must not inherit list_lines' error→[] collapse (2026-08-18): a wedged
+        # tmux server swallows the kill AND empties the merged read in one gesture, so the old
+        # membership gate read the survivor as dead-confirmed and broadcast the closed lie anyway.
+        # A failed probe is not a death: warn, no closed. (Red before _confirmed_ended, green after.)
+        import contextlib
+        import io
+        self._live = {}                                          # the merged read COLLAPSED to empty
+        km._TMUX.alive_sids = lambda t=3: None                   # …and the probe failed with it
+        self.be.kill = lambda sid: self.be.killed.append(sid)    # fires, never lands
+        with contextlib.redirect_stderr(io.StringIO()):
+            km._end_pending_sid(SID)
+        self.assertFalse(any(m.get("type") == "closed" for _a, m in self.sent),
+                         "silence is not a death — no dismissal on every client from a stalled read")
+        self.assertTrue(any(m.get("type") == "warn" for _a, m in self.sent))
+
+    def test_a_collapsed_read_with_an_authoritative_zero_still_prunes(self):
+        # the probe ANSWERING zero is a real death even while the richer list read is collapsed —
+        # the prune must not stall behind the stand-down rule
+        import contextlib
+        import io
+        self._live = {}
+        km._TMUX.alive_sids = lambda t=3: set()
+        with contextlib.redirect_stderr(io.StringIO()):
+            km._end_pending_sid(SID)
+        self.assertTrue(any(m.get("type") == "closed" and m.get("id") == SID for _a, m in self.sent))
+        self.assertFalse(any(m.get("type") == "warn" for _a, m in self.sent))
 
     # ── the history guard (the user 2026-07-16) ──
 
