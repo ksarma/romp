@@ -66,12 +66,18 @@ class CancelCreateTest(unittest.TestCase):
         self._saved_bf = km.Sessions.backend_for
         km.Sessions.backend_for = staticmethod(lambda sid: self.be)
         km._cancel_pending.clear()
+        # _confirmed_ended's second leg: the probe mirrors the live map by default (a landed kill
+        # reads as the authoritative zero; a survivor stays listed). The stall tests override it.
+        km._TMUX.available = lambda: True
+        km._TMUX.alive_sids = lambda t=3: set(self._live)
 
     def tearDown(self):
         for nm, v in self._saved.items():
             setattr(km, nm, v)
         km.Sessions.backend_for = self._saved_bf
         km._cancel_pending.clear()
+        for nm in ("available", "alive_sids"):
+            km._TMUX.__dict__.pop(nm, None)
 
     def _cancel(self, name):
         # Drive the real WS handler: _dispatch_ws starts with `if _drive(...)` which returns False for
@@ -135,6 +141,34 @@ class CancelCreateTest(unittest.TestCase):
         self._cancel(NAME)
         self.assertFalse(any(m.get("type") == "closed" for _a, m in self.sent))
         self.assertTrue(any(m.get("type") == "warn" for _a, m in self.sent))
+
+    def test_a_collapsed_read_with_a_failed_probe_stands_down(self):
+        # The corroboration must not inherit list_lines' error→[] collapse (2026-08-18): a wedged
+        # tmux server swallows the kill AND empties the merged read in one gesture, so the old
+        # membership gate read the survivor as dead-confirmed and broadcast the closed lie anyway.
+        # A failed probe is not a death: warn, no closed. (Red before _confirmed_ended, green after.)
+        import contextlib
+        import io
+        self._live = {}                                          # the merged read COLLAPSED to empty
+        km._TMUX.alive_sids = lambda t=3: None                   # …and the probe failed with it
+        self.be.kill = lambda sid: self.be.killed.append(sid)    # fires, never lands
+        with contextlib.redirect_stderr(io.StringIO()):
+            km._end_pending_sid(SID)
+        self.assertFalse(any(m.get("type") == "closed" for _a, m in self.sent),
+                         "silence is not a death — no dismissal on every client from a stalled read")
+        self.assertTrue(any(m.get("type") == "warn" for _a, m in self.sent))
+
+    def test_a_collapsed_read_with_an_authoritative_zero_still_prunes(self):
+        # the probe ANSWERING zero is a real death even while the richer list read is collapsed —
+        # the prune must not stall behind the stand-down rule
+        import contextlib
+        import io
+        self._live = {}
+        km._TMUX.alive_sids = lambda t=3: set()
+        with contextlib.redirect_stderr(io.StringIO()):
+            km._end_pending_sid(SID)
+        self.assertTrue(any(m.get("type") == "closed" and m.get("id") == SID for _a, m in self.sent))
+        self.assertFalse(any(m.get("type") == "warn" for _a, m in self.sent))
 
     # ── the history guard (the user 2026-07-16) ──
 

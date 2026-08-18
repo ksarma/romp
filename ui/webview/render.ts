@@ -425,9 +425,12 @@ const tabMeta = new Map<string, { name: string; color: Color | null }>();
 // swirl, looking like a shutdown you had to wait out (the user 2026-07-24, who wanted the tab to just go and
 // the shutdown to run behind it). Cleared on the kernel's ack — its push dropping the id — not on a timer.
 const closingTabs = new Map<string, number>();
-// …with a backstop for the ack that never comes. A refused/failed end leaves no failure EVENT to key on:
-// the sole evidence a close didn't take is the kernel still listing the tab long after. Past this we say
-// so and let the tab back, rather than hiding a session that's really still open.
+// …with a backstop for the ack that never comes. A kill failure the kernel can DETECT sends the typed
+// endFailed frame (see the message handler): one toast, suppression released, tab back immediately — so
+// the backstop never double-reports those. It remains for failures with no event to key on (a socket
+// lost mid-close, a kernel that never saw the close), where the sole evidence is the kernel still
+// listing the tab long after. Past this we say so and let the tab back, rather than hiding a session
+// that's really still open.
 const CLOSE_ACK_MS = 15_000;
 // The romp identity palette for the tab right-click color picker (the user 2026-06-29). Fetched once from the
 // kernel's /palette so the client holds no color literals; empty until it lands (the menu just omits the row).
@@ -9565,7 +9568,30 @@ window.addEventListener("message", (e: MessageEvent) => {
       }
     }
   }
-  else if (m.type === "closed") dismissSession(m.id);   // a session died on its own (or the kernel confirms our close)
+  // The ✕ End's kill didn't take (or couldn't be confirmed) — the kernel's typed reply. The warn said
+  // "Try again", but closingTabs was hiding the very tab to retry on for up to CLOSE_ACK_MS, and then
+  // the backstop fired a SECOND toast for the same failure. This frame is the failure EVENT: toast
+  // once, release the suppression NOW (the tab returns as a placeholder — the id still rides tabMeta
+  // since the kernel kept listing it), and re-ask so it fills back in alive. The deleted entry keeps
+  // ackClosingTabs silent for this failure; the backstop stays for closes whose failure has no event
+  // (a socket lost mid-close). Delete BEFORE the re-ask — requestFullSession suppresses closing ids.
+  else if (m.type === "endFailed" && typeof m.id === "string") {
+    if (typeof m.text === "string" && m.text) warnToast(m.text);
+    closingTabs.delete(m.id);
+    requestFullSession(m.id);
+    renderTabs();
+  }
+  else if (m.type === "closed") {
+    // A session died on its own (or the kernel confirms our close). A HOST DETACH rides the same
+    // frame, TAGGED (federation's closeRemote synthesizes one per sid): after a detach, that host's
+    // past listings are no longer live evidence — prune its ids from kernelListed so the reattach's
+    // tabs-first connect push reads as the designed silent boot, not a re-listing that needFull-bursts
+    // every one of the host's sessions on every window while those frames are already in flight.
+    // Kernel-omission teardowns never carry the tag (add-only stays load-bearing for them), and the
+    // prune lives HERE, not in dismissSession, whose hands-off contract is pinned by tests.
+    if (m.hostDetach) kernelListed.delete(m.id);
+    dismissSession(m.id);
+  }
   // any payload that rebuilt transcript DOM must get its highlights re-applied (marks live IN that DOM)
   if (m && m.id && (m.type === "session" || m.type === "chatTail" || m.type === "chatHead" || m.type === "chatEpisode"))
     applyCommentMarks(String(m.id));

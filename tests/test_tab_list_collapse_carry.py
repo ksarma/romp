@@ -15,6 +15,19 @@ the previous push had sessions is corroborated with alive_sids — an authoritat
 no romp sessions) is adopted, a real probe failure carries the PREVIOUS push's tmux entries, loudly
 (one log per episode), until a read answers again.
 
+Round two (2026-08-18, the adversarial review): the guard's own corners inherited the collapse.
+ - The BOOT corner: carry state is process memory, so a restart mid-episode adopted a collapsed
+   empty read uncorroborated and the first push mass-dismissed every window. Now the empty-prev
+   case probes too: an answering zero (or a genuinely tmux-less box) is adopted; an answering
+   NON-zero seeds the carry with stub rows; a failed probe with nothing to carry returns the None
+   sentinel and the pushers SKIP the chat leg for the cycle rather than assert an empty board.
+ - An ANSWERING probe is authoritative mid-episode: carried sids it no longer lists are dropped
+   and pruned from prev (they really died), instead of riding as live-looking tabs all episode.
+ - A corroborated kill prunes prev at the kill site (_tab_carry_forget, via _record_death and the
+   corroborated closed broadcasts), so a post-kill collapse can't resurrect the ended tab.
+ - The carry is maintained EVERY pusher cycle, clients or not, so "previous push" is at most one
+   cycle stale — never the hours-old world from before the last browser closed.
+
 SYNTHETIC fixtures only: placeholder UUIDs, invented names, hermetic temp STATE.
 """
 import contextlib
@@ -49,18 +62,20 @@ SDK_ROW = {"state": "working", "backend": "sdk"}
 def reset_carry():
     km._tab_tmux_carry["prev"] = {}
     km._tab_tmux_carry["collapsed"] = False
+    km._tab_tmux_carry["seeded"] = False
 
 
 class CollapseCarryUnit(unittest.TestCase):
-    """_tab_list_tmux in isolation: adopt / corroborate / carry / recover."""
+    """_tab_list_tmux in isolation: adopt / corroborate / carry / seed / prune / recover."""
 
     def setUp(self):
         reset_carry()
-        self._alive = km._TMUX.alive_sids
         self.probes = []
+        km._TMUX.available = lambda: True   # hermetic: never read whether THIS box has tmux
 
     def tearDown(self):
-        km._TMUX.alive_sids = self._alive
+        for nm in ("available", "alive_sids"):
+            km._TMUX.__dict__.pop(nm, None)   # instance attrs shadow the class methods; drop them
         reset_carry()
 
     def _probe(self, answer):
@@ -130,12 +145,113 @@ class CollapseCarryUnit(unittest.TestCase):
         self.assertIn(SDK_SID, out)
         self.assertIn(SID, out)
 
-    def test_first_boot_with_no_previous_world_trusts_the_empty_read(self):
+    # ── the boot/restart corner (2026-08-18 round two): the empty-prev case corroborates too ──
+
+    def test_boot_collapse_stands_down_with_a_sentinel_not_an_empty_board(self):
+        # A fresh process (nothing seeded yet) whose first read collapses while the probe fails has
+        # NOTHING trustworthy to say: None means "skip the chat push this cycle" — never an empty
+        # adoption, which mass-dismissed every surviving window's tabs after a restart mid-episode
+        # (pages outlive kernel restarts by design, and dismissSession destroys their drafts).
         self._probe(None)
         out, err = self._guard({})
-        self.assertEqual({k for k, v in out.items() if (v or {}).get("backend") == "tmux"}, set())
-        self.assertEqual(self.probes, [], "nothing to carry → nothing to corroborate")
+        self.assertIsNone(out, "no trustworthy tab list → the sentinel, not an empty board")
+        self.assertEqual(len(self.probes), 1, "the boot corner is corroborated now")
+        self.assertIn("nothing to carry", err, "loud, so the skipped cycles are explicable")
+        out2, err2 = self._guard({})
+        self.assertIsNone(out2)
+        self.assertEqual(err2, "", "…but logged once per episode")
+
+    def test_boot_authoritative_zero_is_adopted_and_stops_probing(self):
+        self._probe(set())                            # list-sessions answered: genuinely nothing alive
+        out, err = self._guard({})
+        self.assertEqual(out, {}, "an answering zero at boot is the truth — adopt it")
+        self.assertNotIn("tab-list", err)
+        n = len(self.probes)
+        out2, _e = self._guard({})                    # the empty world persists…
+        self.assertEqual(out2, {})
+        self.assertEqual(len(self.probes), n, "…and the corroborated-empty world stops probing (seeded)")
+
+    def test_headless_boot_adopts_the_empty_world_with_no_probe(self):
+        # no tmux on the box: alive_sids would return None here too, and that must never read as a
+        # collapse — empty IS the truth on a headless (SDK-only) box, silently, forever
+        km._TMUX.available = lambda: False
+        self._probe(None)
+        out, err = self._guard({})
+        self.assertEqual(out, {})
+        self.assertEqual(self.probes, [], "no tmux → no probe, no episode")
         self.assertEqual(err, "")
+
+    def test_a_restart_mid_episode_seeds_the_carry_from_an_answering_probe(self):
+        # fresh carry (the restart), list read still collapsed, probe ANSWERS: the answer seeds
+        # minimal stub rows, so the strip survives the episode's remainder instead of blanking
+        self._probe({SID})
+        out, _err = self._guard({})
+        self.assertIn(SID, out, "the probe's answer is the world — listed, not torn down")
+        self.assertEqual((out[SID] or {}).get("backend"), "tmux")
+        self._probe(None)                             # the probe fails later in the same episode…
+        out2, _e = self._guard({})
+        self.assertIn(SID, out2, "…and the seeded carry holds the tab up")
+
+    # ── an answering probe is authoritative mid-episode (2026-08-18 round two) ──
+
+    def test_an_answering_probe_prunes_carried_sids_it_no_longer_lists(self):
+        # prev={A,B}, probe answers {A}: B really died mid-episode. It must drop from the carried
+        # map NOW — and from prev, so a later probe failure in the same episode can't resurrect it
+        # (the death writers ride this same probe: a carried B would be a live tab over a dead lane).
+        B = "22222222-3333-4444-5555-666666666666"
+        self._guard({SID: ROW, B: ROW})               # the previous push's world
+        self._probe({SID})
+        out, _err = self._guard({})
+        self.assertIn(SID, out)
+        self.assertNotIn(B, out, "the probe is the corroboration authority — a sid it dropped is dead")
+        self._probe(None)
+        out2, _e = self._guard({})
+        self.assertIn(SID, out2)
+        self.assertNotIn(B, out2, "pruned from prev: a later probe failure cannot resurrect it")
+
+    # ── a corroborated kill outranks the carry (2026-08-18 round two) ──
+
+    def test_a_corroborated_kill_prunes_the_carry_at_the_kill_site(self):
+        # the kill sites just PROVED death (_confirmed_ended) — _tab_carry_forget drops the sid so a
+        # collapse in the very next cycle can't re-list the ended session and resurrect its tab
+        self._guard({SID: ROW})
+        km._tab_carry_forget(SID)
+        self._probe(None)
+        out, _err = self._guard({})
+        self.assertNotIn(SID, out)
+
+    def test_record_death_prunes_the_carry(self):
+        # every _record_death caller corroborated the death (endSession, /end, the sweep's
+        # gone/boot stamps) — the prune rides there so no kill site can forget it
+        self._guard({SID: ROW})
+        with contextlib.redirect_stderr(io.StringIO()):
+            km._record_death(SID, int(km.time.time()), "kill")
+        self.assertNotIn(SID, km._tab_tmux_carry["prev"])
+
+    # ── the carry is maintained on clientless cycles too (2026-08-18 round two) ──
+
+    def test_a_clientless_cycle_still_maintains_the_carry(self):
+        # With no client holding want_chat/want_fleet, prev used to freeze at the last chat push's
+        # world — hours stale once every browser closed — and a reconnect during a collapse
+        # re-listed long-dead sessions as live tabs. The pusher runs the guard every cycle now.
+        jobs = ["_lift_spent_awaiting", "_death_sweep_tick", "_deferral_sweep_tick",
+                "_auto_nudge_tick", "_interrupt_block_tick", "_auto_pause_on_limit",
+                "_auto_pause_on_spend_limit", "_auto_resume_retry", "_auto_resume_session_retry",
+                "_auto_retry_tick", "_clear_done_working_notes"]
+        saved = {nm: getattr(km, nm) for nm in jobs}
+        try:
+            for nm in jobs:
+                setattr(km, nm, lambda *a, **k: None)
+            self._guard({SID: ROW})                   # the last push before every browser closed
+            self._probe(set())                        # the session ends while nobody is connected…
+            km._pusher_cycle_jobs(int(km.time.time()), {}, any_client=False)
+            self._probe(None)                         # …then a client reconnects during a collapse
+            out, _err = self._guard({})
+            self.assertNotIn(SID, out,
+                             "the clientless cycle refreshed prev — the dead sid must not come back")
+        finally:
+            for nm, fn in saved.items():
+                setattr(km, nm, fn)
 
 
 class CollapseCarryThroughPush(unittest.TestCase):
@@ -167,12 +283,13 @@ class CollapseCarryThroughPush(unittest.TestCase):
                "message": {"role": "user", "content": "hello there"}}
         (pdir / (SID + ".jsonl")).write_text(json.dumps(rec) + "\n")
         (names / SID).write_text("web\t%s\t#abcdef\n" % str(cdir))
-        self._alive = km._TMUX.alive_sids
+        km._TMUX.available = lambda: True   # hermetic: never read whether THIS box has tmux
 
     def tearDown(self):
         (jd.NAMES, jd.PROJECTS, jd.CAPDIR, jd.ARCHDIR, jd.GOALDIR, jd.STATE,
          km.NAMES, km._sdk, km._cached_feed, km._fleet_view_sig) = self.saved
-        km._TMUX.alive_sids = self._alive
+        for nm in ("available", "alive_sids"):
+            km._TMUX.__dict__.pop(nm, None)
         reset_carry()
         self.td.cleanup()
 
@@ -198,6 +315,20 @@ class CollapseCarryThroughPush(unittest.TestCase):
         orders, _e = self._push_orders({})
         self.assertTrue(orders and SID not in orders[-1],
                         "a corroborated empty board flows through — dead sessions really do drop")
+
+    def test_a_boot_collapse_cycle_emits_no_tab_order_frame(self):
+        # restart-during-stall (2026-08-18 round two): fresh carry + collapsed read + failed probe.
+        # The push must emit NO tabOrder frame at all — an EMPTY one is the mass teardown (every
+        # surviving window's kernelListed ids get dismissed, drafts destroyed); no frame means
+        # clients keep what they hold and a fresh page keeps its loading state until a read answers.
+        km._TMUX.alive_sids = lambda t=3: None
+        orders, err = self._push_orders({})
+        self.assertEqual(orders, [], "an untrustworthy cycle pushes no tab list at all")
+        self.assertIn("nothing to carry", err)
+        km._TMUX.alive_sids = lambda t=3: {SID}                 # the probe recovers mid-episode…
+        orders, _e = self._push_orders({})
+        self.assertTrue(orders and SID in orders[-1],
+                        "…and its answer seeds the carry: the next push lists the session again")
 
 
 if __name__ == "__main__":

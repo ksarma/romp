@@ -47,6 +47,10 @@ function model() {
     session(id: string, state = "working") { upsert(id, state); },
     draft(id: string, text: string) { drafts.set(id, text); },
     closedEvent(id: string) { dismiss(id); },     // the kernel's one-shot frame, when it DOES arrive
+    // federation's detach teardown (closeRemote's TAGGED closed frame, 2026-08-18): same dismiss,
+    // plus the kernelListed prune — after a detach the host's past listings are no longer live
+    // evidence, so its reattach must read as the silent tabs-first boot, not a re-listing.
+    hostDetachEvent(id: string) { kernelListed.delete(id); dismiss(id); },
     // the kernel's answer to a needFull ask — and ONLY to an ask: the field case has no spontaneous
     // session frames (the kernel's echat believes this client is caught up), so the reply must be
     // CAUSED by the re-ask or the heal never happens.
@@ -164,6 +168,30 @@ test("the tabs-first boot never re-asks — a first-ever listing's frames are al
   assert.deepEqual(m.placeholders(), []);
 });
 
+test("a host detach + reattach boots silently — no needFull burst for sessions whose frames are already in flight", () => {
+  // The reattach's connect push sends tabOrder FIRST (tabs-first, by design), and the fed layer
+  // re-emits the merged order before any of that push's session frames splice through — so with
+  // kernelListed still holding the host's ids from before the detach, applyTabOrder re-asked for
+  // every one of them on every window: N duplicate multi-MB full sends per window, queued ahead of
+  // fresh deltas on the tunnel. The detach's tagged closed frames prune the ids, so the re-listing
+  // is a first listing again (the exempt boot pass) and the burst never fires.
+  const m = model();
+  m.session("gpu1:web"); m.session("gpu1:api");
+  m.push(["gpu1:web", "gpu1:api"]);                       // the host's sids, kernel-owned
+  m.hostDetachEvent("gpu1:web"); m.hostDetachEvent("gpu1:api");   // detach: closeRemote's tagged frames
+  assert.deepEqual(m.tabs(), [], "the detach teardown still clears the strip");
+  m.push(["gpu1:web", "gpu1:api"]);                       // reattach: the remote's tabs-first connect push
+  assert.deepEqual(m.asked, [], "no re-ask: the connect push IS the heal those asks would request");
+  assert.deepEqual(m.placeholders(), ["gpu1:web", "gpu1:api"], "the designed transient boot strip");
+  m.session("gpu1:web"); m.session("gpu1:api");           // the same push's full frames land right after
+  assert.deepEqual(m.placeholders(), []);
+  // …and the reattach listing re-armed the add-only record: a LATER real teardown-then-relist on
+  // the same host still heals through the re-ask, exactly like a local session.
+  m.push(["gpu1:web"]);
+  m.push(["gpu1:web", "gpu1:api"]);
+  assert.deepEqual(m.asked, ["gpu1:api"], "a genuine desync after the reattach still asks");
+});
+
 test("a create placeholder the kernel has never listed still survives unrelated pushes", () => {
   const m = model();
   m.session("web");
@@ -199,6 +227,19 @@ test("applyTabOrder re-asks for a re-listed id whose session this client lost �
   assert.match(RENDER,
     /for \(const id of kernelOrder\) \{\s*\n\s*if \(kernelListed\.has\(id\) && !sessions\.has\(id\)\) requestFullSession\(id\);\s*\n\s*\}\s*\n\s*for \(const id of kernelOrder\) kernelListed\.add\(id\);/,
     "the re-ask sits between the order rebuild and the add-only kernelListed record");
+});
+
+test("the detach prune is wired: closeRemote tags its frames, the closed HANDLER prunes, dismissSession stays clean", () => {
+  const FED = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "federation.ts"), "utf8");
+  assert.match(FED, /\{ type: "closed", id: sid, hostDetach: true \}/,
+    "the detach teardown is tagged at its one source — no kernel frame ever carries the tag");
+  assert.match(RENDER, /if \(m\.hostDetach\) kernelListed\.delete\(m\.id\);\s*\n\s*dismissSession\(m\.id\);/,
+    "the prune lives in the closed handler, BEFORE the dismiss");
+  // the add-only property stays load-bearing for kernel-omission teardowns: dismissSession itself
+  // still never touches kernelListed (also pinned structurally above)
+  const body = RENDER.match(/function dismissSession\(id: string\): void \{[\s\S]*?\n\}/);
+  assert.ok(body);
+  assert.doesNotMatch(body![0], /kernelListed/);
 });
 
 test("reconcileTabOrder's keep is gated on the kernel never having listed the id", () => {
