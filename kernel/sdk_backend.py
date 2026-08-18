@@ -2942,6 +2942,12 @@ class SdkBackend:
         self._heal_attempts: dict[str, int] = {}  # sid -> crash-resume attempts since its last COMPLETED turn
         #                                           (bounds _heal_cut_session to one resume per cut; a completed
         #                                           turn resets it, so a crash LOOP can't respawn forever)
+        self._drive_marks: dict[str, tuple] = {}  # sid -> (path, pos, ts) of the last idle-queue drive's newest
+        #                                           enqueue — the in-memory face of the reg's driveMark (the
+        #                                           per-watermark latch; see drive_idle_queue)
+        self._drive_sem = threading.Semaphore(BOOT_RESUME_CONCURRENCY)   # the idle-queue drive's dormant-spawn
+        #                                           stagger: same knob and same release event as the boot
+        #                                           resume's (a spawn holds a slot until its CLI proves up)
         # Kernel-restart heal: nothing is running yet, so any alive session still reading awaiting:true is stale
         # — its background tasks (and the Stop hook that clears the overlay) died with the previous kernel. Left
         # uncleared it reads working/awaiting forever, climbing a ghost work-timer (reorder_bug 2026-06-24).
@@ -3103,6 +3109,111 @@ class SdkBackend:
                               % (sid, traceback.format_exc()))
         except Exception:
             self._log("boot reconcile failed: %s" % traceback.format_exc())
+
+    def drive_idle_queue(self, cands, wait: bool = False) -> None:
+        """Deliver self-scheduled wake signals stuck in idle sessions' CLI queues (the user 2026-08-18;
+        the evidence lives on kernel._undelivered_wake_tail). Each candidate is {sid, path, entries,
+        mark} from the kernel's tick: the transcript's trailing unconsumed enqueues and the newest
+        one's (pos, ts) watermark. The same recovery boot reconcile performs for romp's persisted
+        queues, for the queue that lives in the CLI: reconnect if dormant, then deliver — via
+        enqueue(), the exact channel restored queues ride, carrying the CLI's OWN queued texts
+        verbatim (joined in queue order), never a synthetic prompt. Gates, each an exact event:
+          * an OPEN turn / compaction / clearing / a pending rewind stands down WITHOUT latching —
+            the next parse re-checks once the operation settles (mid-turn arrivals are the open
+            turn's to fold);
+          * an ENDED session (reg alive=False) never revives for housekeeping, and a CUT turn (state
+            tail 'working') belongs to the boot/crash resume machinery;
+          * a recorded launchError stands down (the usage-limit queue hold owns that session until a
+            connect proves the CLI up again);
+          * ONE DRIVE PER WATERMARK: the newest enqueue's (path, pos, ts) is latched in memory AND
+            the reg (driveMark) the moment a drive is accepted, so neither the next tick's re-parse
+            nor a kernel restart re-fires an already-driven backlog; only a NEWER enqueue re-arms,
+            and a re-armed drive delivers only the entries past the previous mark. A drive that then
+            FAILS stays latched on purpose — the failure is problem-ring loud below, and a recurring
+            signal's next enqueue re-arms — never a silent retry storm.
+        Delivery runs on a worker thread (`wait=True` runs it inline, the test seam): a dormant
+        candidate spawns a CLI, and each spawn holds a stagger slot until its CLI proves up or its
+        thread dies (_fire_boot_settled) — boot reconcile's semaphore pattern, same concurrency knob,
+        with the same loud slot-timeout BACKSTOP that never becomes the pacing itself."""
+        todo = []
+        for c in cands:
+            sid = str(c.get("sid") or "")
+            try:
+                path = str(c.get("path") or "")
+                pos, ts = c["mark"]
+                prev = self._drive_marks.get(sid)
+                if prev is None:
+                    pm = (read_reg(self.state_dir, sid) or {}).get("driveMark")
+                    prev = ((str(pm.get("path") or ""), pm.get("pos", -1), str(pm.get("ts") or ""))
+                            if isinstance(pm, dict) else ("", -1, ""))
+                    self._drive_marks[sid] = prev
+                fresh = prev[0] != path or pos > prev[1] or ts > prev[2]
+                if not fresh:
+                    continue                       # this backlog was already driven; a newer enqueue re-arms
+                with self._lock:
+                    s = self.sessions.get(sid)
+                s = s if (s and s.thread.is_alive()) else None
+                if s is not None:
+                    if s.ended or s.inflight > 0 or s._compacting or s._clearing \
+                            or (s._rewind_to and not s._rewind_armed):
+                        continue                   # mid-operation → stand down, no latch: re-check next parse
+                else:
+                    reg = read_reg(self.state_dir, sid)
+                    if not reg or not reg.get("alive"):
+                        continue                   # the user ended this session — never revive it for housekeeping
+                    if reg.get("launchError"):
+                        continue                   # can't even start (usage limit etc.) — that hold owns it
+                    if last_state_value(self.state_dir, sid) == "working":
+                        continue                   # a CUT turn — the boot/crash resume machinery's recovery
+                texts = [e["text"] for e in c["entries"]
+                         if e.get("wrapper") and e.get("text")
+                         and (prev[0] != path or e["pos"] > prev[1] or e["ts"] > prev[2])]
+                if not texts:
+                    continue                       # every wake signal here was already driven
+                others = sum(1 for e in c["entries"] if e.get("text") and not e.get("wrapper"))
+                self._drive_marks[sid] = (path, pos, ts)     # LATCH at acceptance: one drive per watermark
+                try:
+                    self._update_reg(sid, driveMark={"path": path, "pos": pos, "ts": ts})
+                except Exception:
+                    self._log("idle-queue drive (%s): drive mark not persisted (the drive proceeds; a "
+                              "kernel restart may re-drive this backlog once): %s"
+                              % (sid[:8], traceback.format_exc()))
+                todo.append((sid, s, texts, others))
+            except Exception:
+                self._log("idle-queue drive (%s): %s" % (sid[:8] or "?", traceback.format_exc()))
+        if not todo:
+            return
+        if wait:
+            self._drive_deliver(todo)
+        else:
+            threading.Thread(target=self._drive_deliver, args=(todo,),
+                             name="sdk-idle-queue-drive", daemon=True).start()
+
+    def _drive_deliver(self, todo) -> None:
+        """The idle-queue drive's delivery half (worker thread): reconnect dormant candidates under the
+        stagger semaphore, then enqueue each backlog as one turn. Loud both ways: every drive logs one
+        kernel-log line naming the session and the queued count (normal operation, not a problem);
+        every failure — a refused reconnect, a failed send — lands in the problem ring, never silent."""
+        for sid, s, texts, others in todo:
+            try:
+                if s is None:
+                    slot = self._drive_sem.acquire(timeout=BOOT_RESUME_SLOT_S)
+                    if not slot:
+                        self._log("idle-queue drive: stagger slot backstop expired (a CLI is wedged "
+                                  "pre-init?) — driving %s anyway" % sid[:8], problem=True)
+                    s = self._ensure(sid, on_boot_settled=(self._drive_sem.release if slot else None))
+                    if s is None:
+                        self._log("idle-queue drive (%s): the session could not be started (reconnect "
+                                  "refused) — %d queued notification(s) stay undelivered"
+                                  % (sid[:8], len(texts)), problem=True)
+                        continue
+                s.enqueue("\n\n".join(texts))
+                self._log("idle-queue drive (%s): waking the session for %d queued notification(s)%s"
+                          % (s.name, len(texts),
+                             " (+%d other queued item(s))" % others if others else ""))
+                self._poke()
+            except Exception:
+                self._log("idle-queue drive (%s): delivery failed: %s" % (sid[:8], traceback.format_exc()))
 
     def drain(self, timeout: float = 2.0, kill=os.kill) -> dict:
         """Graceful-shutdown drain (the kernel's SIGTERM handler): stop every running session cleanly

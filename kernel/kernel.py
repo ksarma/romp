@@ -5811,6 +5811,48 @@ def _auto_retry_tick(now, tmux):
             sys.stderr.write("auto-retry (session %s): %s\n" % (sid or "?", traceback.format_exc()))
 
 
+def _idle_queue_drive_tick(now, tmux):
+    """KERNEL-side driver for self-scheduled wake signals stuck in an idle SDK session's CLI queue
+    (the user 2026-08-18 — the full story on _undelivered_wake_tail). The CLI only enqueues; romp
+    drives the turn that delivers, the way boot reconcile already does for its own persisted queues —
+    this is the same recovery for a queue that lives in the CLI instead of the reg. Kernel-side
+    gates, each the exact owner's signal, never a timer:
+      * the GLOBAL retry pause stands everything down (the user paused romp's self-driving);
+      * a retry-SUPPRESSED session stands down (the user interrupted that thread's storm — a clean
+        user turn re-arms it, _auto_resume_session_retry);
+      * an API-error-BLOCKED session stands down (the auto-retry tick owns that recovery; driving
+        into the error would just burn the wake on a turn that cannot run);
+      * a tail with no wake signal in it does not drive — a bare queued user message is the CLI's own
+        to deliver at its next turn, and romp re-sending it would double-deliver.
+    The backend owns the rest (open turn, compaction, ended/cut sessions, the per-watermark latch,
+    the dormant-spawn stagger) — see SdkBackend.drive_idle_queue. tmux sessions are skipped by
+    ownership: their CLI is interactive and delivers its own queue."""
+    be = _sdk()
+    if be is None or not hasattr(be, "drive_idle_queue"):
+        return
+    if _retry_paused_on():
+        return
+    cands = []
+    for s in _alive_sessions(now, tmux):
+        sid = str(s.get("sid") or "")
+        path = s.get("path")
+        try:
+            if not sid or not path or not be.owns(sid):
+                continue
+            entries, mark = _undelivered_wake_tail(path)
+            if mark is None or not any(e["wrapper"] for e in entries):
+                continue
+            if _session_retry_suppressed(sid):
+                continue
+            if _api_error(path):
+                continue
+            cands.append({"sid": sid, "path": str(path), "entries": entries, "mark": mark})
+        except Exception:
+            sys.stderr.write("idle-queue-drive (%s): %s\n" % (sid or "?", traceback.format_exc()))
+    if cands:
+        be.drive_idle_queue(cands)
+
+
 def _predict_working(flavor, ids=None, sid=None):
     """Instant cross-view cue (the user 2026-07-20): a context-carrying reply just fired — a follow-up (feed
     composer or chat citation chip), a Move to Working, or a picker/permission answer — so tell every FEED
@@ -10570,6 +10612,82 @@ def _pending_queued(path):
         if len(_queued_parse_cache) > 256:                   # bounded by fleet size; never unbounded
             _queued_parse_cache.clear()
         _queued_parse_cache[path] = (key, out)
+    return out
+
+
+# ── Idle-queue drive: self-scheduled wake signals stuck in an idle SDK CLI (the user 2026-08-18) ──
+# Under the SDK backend a session's own scheduled work — a recurring Monitor, a cron firing, a
+# background task's completion notice — can only ENQUEUE into the CLI's queue: the transcript grows
+# queue-operation enqueue records and nothing ever starts the turn that would consume them. Hit twice
+# in one day: an overnight 15-minute Monitor stacked 33 on-time <task-notification> enqueues (no
+# dequeue) while the session ran ZERO turns until the next human message eight hours later, and a
+# recurring cron behaved the same with the CLI process alive. Verified against that live transcript:
+# the CLI does start turns from idle for background-AGENT completion notifications (their enqueue is
+# dequeued within milliseconds and lands as a user record — the path this tick generalizes), but
+# Monitor/cron/bash task-notifications are NEVER dequeued and never reach the model by any route (123
+# enqueues, 0 dequeues, 66 removes = discards, zero in-turn appearances), so the driven turn must
+# carry the queued texts itself. Event-based, no new polling: these records are the same
+# queue-operations _pending_queued folds for the chat's queued chip (display untouched — its
+# _genuine_queued exclusion of system wrappers is about what shows as the USER'S queued input, not
+# about delivery); the parse below rides the normal push cadence, and the parse IS the event.
+_wake_tail_cache = {}         # path -> ((mtime, size), (entries, mark))
+
+
+def _undelivered_wake_tail(path):
+    """The transcript's trailing unconsumed queue-operation enqueues — enqueues with NO later dequeue,
+    remove, user or assistant record ("enqueues newer than the last dequeue/turn"): a later dequeue or
+    remove means the CLI consumed or discarded the queue's head (its call), and a later turn record
+    means the session was awake after the signal, so only a trailing run is a backlog nothing will
+    ever deliver. Returns ([{pos, ts, text, wrapper}], (pos, ts) of the newest one) or ([], None).
+    `wrapper` marks harness system wrappers (<task-notification>/<system-reminder>) — the
+    self-scheduled wake signals the CLI provably never delivers on its own; non-wrapper entries ride
+    along for the drive's log count only (deliverable classes the CLI hands over itself once a turn
+    opens). isMeta user records do NOT clear the tail: the CLI writes those outside turns (caveat/hook
+    bookkeeping), and counting them as awakeness would eat wake signals. Cached by (mtime, size) like
+    _pending_queued, since the drive tick asks every push cycle."""
+    try:
+        st = os.stat(path)
+        key = (st.st_mtime, st.st_size)
+    except OSError:
+        return [], None
+    hit = _wake_tail_cache.get(path)
+    if hit is not None and hit[0] == key:
+        return hit[1]
+    tail = []
+    try:
+        with open(path, errors="replace") as f:
+            for pos, line in enumerate(f):
+                if '"queue-operation"' in line:              # cheap prefilter; the parse verifies
+                    try:
+                        o = json.loads(line)
+                    except Exception:
+                        continue
+                    if o.get("type") != "queue-operation":
+                        continue
+                    op = o.get("operation")
+                    if op == "enqueue":
+                        text = o.get("content") if isinstance(o.get("content"), str) else ""
+                        tail.append({"pos": pos, "ts": str(o.get("timestamp") or ""), "text": text,
+                                     "wrapper": bool(em.SYSTEM_WRAPPER_RE.match(text))})
+                    elif op in ("dequeue", "remove"):
+                        tail = []                            # the CLI touched its queue → not a dead backlog
+                    continue
+                if not tail:
+                    continue                                 # nothing pending → nothing to resolve (fast path)
+                if '"user"' not in line and '"assistant"' not in line:
+                    continue                                 # cheap prefilter for turn records
+                try:
+                    o = json.loads(line)
+                except Exception:
+                    continue
+                if o.get("type") == "assistant" or (o.get("type") == "user" and not o.get("isMeta")):
+                    tail = []                                # a turn ran after the signal → it had its shot
+    except OSError:
+        return [], None
+    out = (tail, (tail[-1]["pos"], tail[-1]["ts"]) if tail else None)
+    if len(_wake_tail_cache) > 256:                          # bounded by the session count; never unbounded
+        _wake_tail_cache.clear()
+    _wake_tail_cache[path] = (key, out)
     return out
 
 
@@ -21011,6 +21129,10 @@ def _pusher_cycle_jobs(now, tmux, any_client):
         _auto_retry_tick(now, tmux)       # the dashboard tick is just the countdown + a redundant asker)
     except Exception:
         sys.stderr.write("auto-retry-tick: %s\n" % traceback.format_exc())
+    try:                                  # self-scheduled wake signals queued in an idle SDK CLI get their
+        _idle_queue_drive_tick(now, tmux)  # turn driven (crons/monitors/task notices — see the tick)
+    except Exception:
+        sys.stderr.write("idle-queue-drive: %s\n" % traceback.format_exc())
     try:                                  # expire stale set_working notes once a session goes idle + done (cheap when no notes)
         _clear_done_working_notes(now, tmux)
     except Exception:
