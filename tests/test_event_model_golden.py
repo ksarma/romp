@@ -103,7 +103,8 @@ def compact_summary_line(t, uuid, parent, text="summary of the conversation so f
             "message": {"role": "user", "content": text}}
 
 
-def manual_compact_lines(t_issue, t_done, tag, parent, summary_text="summary of the conversation so far"):
+def manual_compact_lines(t_issue, t_done, tag, parent, summary_text="summary of the conversation so far",
+                         summary_pid=True):
     """The on-disk tail of a LIVE manual /compact, exactly as the CLI writes it (shape verified
     against the live corpus 2026-08-19; all content here synthetic): the boundary + summary are
     appended FIRST, at COMPLETION time, as a DETACHED side branch — the boundary carries
@@ -112,11 +113,17 @@ def manual_compact_lines(t_issue, t_done, tag, parent, summary_text="summary of 
     wrapper, stamped with the earlier ISSUE time), then the stdout at completion time. The
     conversation chains through the wrappers — NOTHING on the active path visits the side
     branch, which is why the walk dropped the boundary and the chat lost its card.
+    The summary record carries the invoking /compact's promptId (13/13 manual compacts in the
+    live corpus) — the designed link the adoption repair keys on; summary_pid=False models a
+    write without it, which the repair must still adopt via the file-order fallback.
     Returns (records, stdout_uuid); chain the next prompt off the stdout, as the CLI does."""
     cb, cs, rt, cw, so = ("cb" + tag, "cs" + tag, "rt" + tag, "cw" + tag, "so" + tag)
+    summary = compact_summary_line(t_done, cs, parent=cb, text=summary_text)
+    if summary_pid:
+        summary["promptId"] = "p" + tag
     recs = [
         compact_line(t_done, cb, logical_parent=parent, trigger="manual"),
-        compact_summary_line(t_done, cs, parent=cb, text=summary_text),
+        summary,
         {"type": "user", "timestamp": iso(t_issue), "uuid": rt, "parentUuid": parent,
          "isMeta": True, "promptId": "p" + tag,
          "message": {"role": "user", "content": "/compact"}},
@@ -740,14 +747,19 @@ class DetachedManualCompaction(unittest.TestCase):
         self.assertEqual(comp[0]["compact_metadata"]["trigger"], "manual")
         self.assertEqual(comp[0].get("summary"), "summary of the conversation so far",
                          "the side-branch summary rides the adopted atom, same as an attached one")
-        self.assertEqual(comp[0]["parentUuid"], "a1",
-                         "the atom's parent is the stitch — the pre-compact leaf")
+        self.assertEqual(comp[0]["parentUuid"], "so1",
+                         "the adopted atom chains from its episode's stdout — the /compact exchange "
+                         "stays intact on the path, with the pre-compact leaf reachable through it")
 
-    def test_adopted_card_sits_where_the_compact_was_issued(self):
+    def test_adopted_card_sits_where_the_compact_completed(self):
         out = run_scenario("manual_compact_detached")
         uuids = [a.get("uuid") for a in self._flat(out)]
         self.assertLess(uuids.index("cw1"), uuids.index("cb1"),
                         "the card follows the /compact invocation")
+        self.assertLess(uuids.index("so1"), uuids.index("cb1"),
+                        "…AFTER the whole command exchange: splicing before the stdout pulled that "
+                        "atom into the boundary's fresh turn as assistant work, minting a phantom "
+                        "WORK unit per manual compact (2026-08-19 review)")
         self.assertLess(uuids.index("cb1"), uuids.index("u2"),
                         "…and precedes the next prompt — the moment the compaction happened")
 
@@ -813,12 +825,12 @@ class DetachedManualCompaction(unittest.TestCase):
         self.assertLess(uuids.index("cb1"), uuids.index("u2"))
         self.assertLess(uuids.index("u2"), uuids.index("cb2"))
         self.assertLess(uuids.index("cb2"), uuids.index("u3"))
-        # A deliberate PIN, not a goal of adoption: adopted boundaries get ATTACHED downstream
-        # semantics byte for byte, including the post-compaction restore-burst dedup — so the
-        # second /compact's stdout (identical text, inside the second burst) is deduped exactly
-        # as it would be after an attached boundary, while the first renders.
+        # BOTH stdouts render, identical text and all: an adopted boundary never arms the
+        # restore-burst dedup (a live manual compact replays no tail), so nothing after it is
+        # "restored context". The first cut pinned so2 as eaten — that pin was the bug's own
+        # signature, not a goal (2026-08-19 review).
         self.assertIn("so1", uuids)
-        self.assertNotIn("so2", uuids)
+        self.assertIn("so2", uuids)
 
     def test_boundary_whose_anchor_was_rewound_away_stays_hidden(self):
         # a detached boundary whose OWN anchor is off the active path — its pre-compact context
@@ -836,6 +848,97 @@ class DetachedManualCompaction(unittest.TestCase):
                          "a compaction whose context was rewound away stays hidden")
         uuids = [a.get("uuid") for a in self._flat(out)]
         self.assertNotIn("ux", uuids, "…and the rewound branch stays dropped")
+
+    def test_repeated_typed_prompt_after_manual_compact_renders(self):
+        # The fatal shape (2026-08-19 review): the user's GENUINE next prompt after a live
+        # manual compact repeats an earlier message's text ("continue", "retry", a nudge).
+        # Arming the restore-burst dedup on the adopted boundary read it as replayed context
+        # and silently dropped a real ask — the one loss class this file exists to prevent.
+        side, so = manual_compact_lines(T0 + 390, T0 + 400, "1", parent="a1")
+        recs = ([uline(T0, "run the full test suite", "u1", ps="typed"),
+                 aline(T0 + 30, "all green", "a1", "u1", stop="end_turn")]
+                + side
+                + [uline(T0 + 500, "run the full test suite", "u2", so, ps="typed"),
+                   aline(T0 + 530, "running now", "a2", "u2", stop="end_turn")])
+        out = run_recs(recs)
+        uuids = [a.get("uuid") for a in self._flat(out)]
+        self.assertIn("u2", uuids, "the repeated-text prompt is the user's real ask, not a replay")
+        self.assertEqual([c["uuid"] for c in self._cards(out)], ["cb1"])
+
+    def test_rewound_manual_compact_is_not_resurrected(self):
+        # The user rewinds PAST the /compact: the next prompt re-parents at the pre-compact
+        # leaf, so the episode (wrappers + stdout) is off-path but the ANCHOR is still on it.
+        # Gating on the bare anchor resurrected the undone compaction's card (2026-08-19
+        # review); the episode gate keeps it hidden with the history it belonged to.
+        side, _so = manual_compact_lines(T0 + 90, T0 + 100, "1", parent="a1")
+        recs = ([uline(T0, "kick off the refactor", "u1", ps="typed"),
+                 aline(T0 + 30, "refactor staged", "a1", "u1", stop="end_turn")]
+                + side
+                + [uline(T0 + 200, "different direction instead", "u2", "a1", ps="typed"),
+                   aline(T0 + 230, "sure", "a2", "u2", stop="end_turn")])
+        out = run_recs(recs)
+        uuids = [a.get("uuid") for a in self._flat(out)]
+        self.assertNotIn("cw1", uuids, "the rewound /compact exchange stays dropped")
+        self.assertNotIn("so1", uuids)
+        self.assertEqual(self._cards(out), [], "an undone compaction gets no card")
+
+    def test_same_anchor_double_compact_only_the_live_one_renders(self):
+        # Compact, rewind to the anchor, compact again: two detached boundaries share ONE
+        # anchor. Splicing both at the anchor threaded them through each other — boundary #1's
+        # parent became boundary #2's summary, and the rewound one rendered (2026-08-19
+        # review). Each boundary belongs to its OWN episode; only the live episode is on-path.
+        side1, _so1 = manual_compact_lines(T0 + 90, T0 + 100, "1", parent="a1",
+                                           summary_text="first summary")
+        side2, so2 = manual_compact_lines(T0 + 290, T0 + 300, "2", parent="a1",
+                                          summary_text="second summary")
+        recs = ([uline(T0, "start it", "u1", ps="typed"),
+                 aline(T0 + 30, "started", "a1", "u1", stop="end_turn")]
+                + side1 + side2
+                + [uline(T0 + 400, "go on", "u2", so2, ps="typed"),
+                   aline(T0 + 430, "going", "a2", "u2", stop="end_turn")])
+        out = run_recs(recs)
+        comp = self._cards(out)
+        self.assertEqual([c["uuid"] for c in comp], ["cb2"],
+                         "only the live compaction renders; the rewound one stays hidden")
+        self.assertEqual(comp[0]["parentUuid"], "so2",
+                         "…chained from its OWN episode's stdout, never through the other pair")
+        self.assertEqual(comp[0].get("summary"), "second summary")
+
+    def test_summary_without_promptid_adopts_via_the_file_order_fallback(self):
+        # An older write whose summary lacks the promptId link: the episode is still
+        # identified — the nearest /compact invoked from the boundary's anchor and appended
+        # after it (the CLI writes boundary+summary first, then the episode records).
+        side, so = manual_compact_lines(T0 + 390, T0 + 400, "1", parent="a1",
+                                        summary_pid=False)
+        recs = ([uline(T0, "start the long build", "u1", ps="typed"),
+                 aline(T0 + 30, "Working on it.", "a1", "u1", stop="end_turn")]
+                + side
+                + [uline(T0 + 500, "carry on with the build", "u2", so, ps="typed"),
+                   aline(T0 + 530, "Continuing.", "a2", "u2", stop="end_turn")])
+        out = run_recs(recs)
+        comp = self._cards(out)
+        self.assertEqual([c["uuid"] for c in comp], ["cb1"])
+        self.assertEqual(comp[0].get("summary"), "summary of the conversation so far")
+
+    def test_self_anchored_boundary_is_skipped(self):
+        # a corrupt boundary whose logicalParentUuid is its own uuid: no card, no crash —
+        # and no 1-cycle handed to any walk (the parent link is dropped at load)
+        recs = [uline(T0, "only ask", "u1", ps="typed"),
+                aline(T0 + 30, "only answer", "a1", "u1", stop="end_turn"),
+                compact_line(T0 + 50, "cbS", logical_parent="cbS", trigger="manual")]
+        out = run_recs(recs)
+        self.assertEqual(self._cards(out), [])
+
+    def test_stdout_stays_in_the_command_turn_and_the_boundary_turn_holds_no_work(self):
+        # Defect 2's event-model contract (2026-08-19 review): the /compact stdout is the
+        # command exchange's output — it must never migrate into the boundary's fresh turn,
+        # where it reads as assistant work and mints a judge-visible unit.
+        out = run_scenario("manual_compact_detached")
+        cmd_turn = next(t for t in out["turns"] if any(a.get("uuid") == "cw1" for a in t["atoms"]))
+        self.assertIn("so1", [a.get("uuid") for a in cmd_turn["atoms"]])
+        bturn = next(t for t in out["turns"] if any(a.get("uuid") == "cb1" for a in t["atoms"]))
+        self.assertEqual([a.get("uuid") for a in bturn["atoms"]], ["cb1"],
+                         "the boundary's turn holds the boundary alone")
 
 
 class Lineage(unittest.TestCase):

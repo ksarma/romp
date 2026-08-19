@@ -77,32 +77,6 @@
      "t": 1781096790,
      "type": "user",
      "uuid": "cw1"
-    }
-   ],
-   "end": 1781096790,
-   "ended": true,
-   "id": "11111111-2222-3333-4444-555555555555:1781096790:9b15c581",
-   "t": 1781096790,
-   "trigger": {
-    "uuid": "cw1"
-   }
-  },
-  {
-   "atoms": [
-    {
-     "compact_metadata": {
-      "post_tokens": 6514,
-      "pre_tokens": 263239,
-      "trigger": "manual"
-     },
-     "fsid": "11111111-2222-3333-4444-555555555555",
-     "parentUuid": "a1",
-     "session_id": "11111111-2222-3333-4444-555555555555",
-     "subtype": "compact_boundary",
-     "summary": "summary of the conversation so far",
-     "t": 1781096800,
-     "type": "system",
-     "uuid": "cb1"
     },
     {
      "command": true,
@@ -122,6 +96,32 @@
      "t": 1781096800,
      "type": "assistant",
      "uuid": "so1"
+    }
+   ],
+   "end": 1781096800,
+   "ended": true,
+   "id": "11111111-2222-3333-4444-555555555555:1781096790:9b15c581",
+   "t": 1781096790,
+   "trigger": {
+    "uuid": "cw1"
+   }
+  },
+  {
+   "atoms": [
+    {
+     "compact_metadata": {
+      "post_tokens": 6514,
+      "pre_tokens": 263239,
+      "trigger": "manual"
+     },
+     "fsid": "11111111-2222-3333-4444-555555555555",
+     "parentUuid": "so1",
+     "session_id": "11111111-2222-3333-4444-555555555555",
+     "subtype": "compact_boundary",
+     "summary": "summary of the conversation so far",
+     "t": 1781096800,
+     "type": "system",
+     "uuid": "cb1"
     }
    ],
    "end": 1781096800,

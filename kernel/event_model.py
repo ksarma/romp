@@ -674,7 +674,10 @@ class FileAdapter:
                     # parentUuid normally; compact_boundary carries parentUuid:null +
                     # logicalParentUuid:<pre-compaction leaf> — follow that so the active
                     # path survives compaction instead of orphaning every pre-compaction turn.
-                    self.parent_of[u] = r.get("parentUuid") or r.get("logicalParentUuid")
+                    # A SELF-referential link (corrupt record) becomes a root: kept as-is it
+                    # 1-cycles every walk that starts or passes there.
+                    p = r.get("parentUuid") or r.get("logicalParentUuid")
+                    self.parent_of[u] = None if p == u else p
                     if is_leaf:
                         self.leaf_uuid = u
                 if t == "attachment":
@@ -692,6 +695,11 @@ class FileAdapter:
         # stale override (wrong file, raced clear) falls back to the true file leaf, never an empty parse.
         if leaf_override and leaf_override in self.by_uuid:
             self.leaf_uuid = leaf_override
+        self._adopted = {}       # boundary uuid -> its episode's splice record (the /compact stdout),
+        #                          filled by _adopt_detached_compactions. Downstream consumers key on
+        #                          membership: an ADOPTED boundary is a LIVE manual compact, so the
+        #                          replay dedup must not arm on it (nothing after it is a replayed
+        #                          tail) and its atom must sort AFTER the episode's stdout.
         self._repair_compaction_stitches()
         self._stitch_resume_forks()
         self._adopt_detached_compactions()
@@ -746,31 +754,71 @@ class FileAdapter:
         """A LIVE manual /compact writes its compact_boundary + summary as a DETACHED side
         branch: the boundary carries parentUuid:null + logicalParentUuid:<pre-compact leaf>,
         the summary record is its only child, and NOTHING chains through them — the visible
-        conversation parents through the /compact command-wrapper records onto the same leaf
-        (10/13 manual boundaries in the live corpus; the other 3 are resume rebuilds that
-        re-splice the pair back into the chain, arriving attached). The backward walk never
-        visits the side branch, so the compaction atom — the chat's "Context compacted" card —
-        was silently never emitted for a live manual compact, while auto-compactions (which
-        chain THROUGH their boundary) kept theirs (the user 2026-08-19).
+        conversation parents through the /compact invocation records (caveat/wrapper/stdout)
+        instead. The backward walk never visits the side branch, so the compaction atom — the
+        chat's "Context compacted" card — was silently never emitted for a live manual
+        compact, while auto-compactions (whose continuation chains THROUGH boundary+summary)
+        kept theirs (the user 2026-08-19).
 
-        Adopt the orphaned pair: splice boundary(+summary) into the chain right behind its
-        anchor, so every downstream consumer — kept_uuids, the summary capture, the replay
-        dedup, the fresh-turn open — sees it exactly as it sees an attached boundary. Keyed on
-        the SHAPE (boundary off the active path, its anchor on it), never on trigger=manual:
-        an attached manual (the resume re-splice) no-ops here, and a hypothetical detached
-        auto would be adopted — the detachment is the defect, not the trigger. A boundary
-        whose anchor is itself off-path (its pre-compact context was rewound or cleared away)
-        stays dropped: that compaction is not part of the visible history. Runs after the
-        stitch repair (a repaired dangling stitch is a valid anchor) and the resume stitching
-        (the active path must already cross files). parent_of only — records are never
-        mutated, so the shared _read_jsonl_incremental cache lists stay pristine.
+        Adopt the orphaned pair by splicing it in AFTER its own invocation episode's stdout
+        record: …anchor ← caveat ← wrapper ← stdout ← boundary ← summary ← former child. Two
+        deliberate choices there, both corrections of the first cut (2026-08-19 review):
 
-        Placement note: this GROWS the atom set of an existing transcript (the v3 lesson at
-        jd.PLACEMENTS_V), deliberately without a bump — the only new atoms are system
-        compact_boundary atoms, whose triggerless turns yield non-human units (never a
-        replayed human ask, the v3 incident), and no existing segment's trigger text or t
-        shifts, so every recorded placement key still matches."""
+        * The boundary's own EPISODE — not its bare anchor — is both the gate and the splice
+          point. The designed link is the summary record's promptId, which the CLI stamps
+          with the invoking /compact's promptId (13/13 manual boundaries in the live corpus;
+          file-order adjacency is the fallback for summaries without one, and is genuinely a
+          fallback: one corpus episode is appended BEFORE its boundary). Gating on the bare
+          anchor resurrected compactions the user had REWOUND AWAY (next prompt re-parents at
+          the pre-compact leaf: wrappers off-path, anchor still on it), and two compactions
+          sharing one anchor threaded through each other. Episode off the active path → its
+          /compact was undone → the boundary stays hidden with it; no episode → nothing
+          witnesses the invocation on the visible history → stays hidden.
+        * Splicing BEFORE the stdout pulled that stdout atom out of its /compact command
+          segment into the boundary's fresh triggerless turn, minting a brand-new
+          judge-visible WORK unit ("Compacted (ctrl+o…)") for every manual compact in every
+          existing session. After the stdout, the command segment keeps its output and the
+          boundary's turn holds nothing — no assistant work, no unit.
+
+        Keyed on the SHAPE (boundary off the active path, its episode on it), never on
+        trigger=manual: an attached boundary of either kind (auto, or the resume re-splice a
+        manual pair arrives back in) no-ops here. When the stdout IS the leaf (the user
+        compacted and has not typed since), the pair becomes the chain's new tail — the card
+        must not wait for the next prompt. Runs after the stitch repair and the resume
+        stitching (the active path must already cross files). parent_of/leaf_uuid only —
+        records are never mutated, so the shared _read_jsonl_incremental cache lists stay
+        pristine. Adopted boundaries are recorded in self._adopted for the two downstream
+        consumers that must NOT treat them as attached: the replay dedup (a live manual
+        compact replays no tail — arming it ate the user's next genuine prompt whenever its
+        text repeated an earlier one) and the emit-order override (the boundary record is
+        appended BEFORE the stdout, so raw (t, seq) order would put the card inside the
+        command exchange it belongs after).
+
+        Placement note (re-derived 2026-08-19 against the golden scenario AND every
+        boundary-bearing live-corpus transcript, plan_units pre vs post — the first cut
+        asserted no-bump from intention and was wrong, so only measurements are recorded
+        here; tests/test_placements_canary.py pins the class): the added boundary atom's
+        turn holds no user ask and no assistant work of its own, so on the golden scenario
+        and 11 of 12 corpus transcripts the unit sets are byte-identical pre/post — no
+        recorded placement key shifts, no unit appears or disappears. The residue: when
+        assistant work FOLLOWS the manual compact with no new opener (a queued prompt
+        spliced through it — 1 of 12), that continuation moves from the /compact command
+        segment (where the old parse misfiled it as a human-triggered "/compact worked"
+        unit) into the boundary's own turn — the same non-human continuation unit an
+        attached auto-compact has always produced. One re-attributed unit per such
+        transcript. DECIDED no-bump (2026-08-19, from traced evidence): the orphaned row
+        is inert — every placements consumer queries only units the CURRENT parse yields,
+        and _migrate_placements never removes old rows, so orphans are the normal
+        post-bump state of every store since v2; the fuzzy _placed_key path reads them
+        only in the dedup direction (prevents replay, never causes one). The one NEW unit
+        costs a single planner call. A bump would be strictly worse: it seals every
+        store's currently-ready unplaced units — measured ~29 across the live corpus,
+        including genuinely pending work — the silent drop of a real ask this repo calls
+        its one fatal error."""
         active = self.active_path()
+        if not any(r.get("type") == "system" and r.get("subtype") == "compact_boundary"
+                   and u not in active for u, r in self.by_uuid.items()):
+            return                        # nothing detached — skip the episode scan entirely
         # the active CHILD of each on-path uuid — the chain has at most one per node
         child_of, u = {}, self.leaf_uuid
         while u is not None:
@@ -779,26 +827,71 @@ class FileAdapter:
                 break
             child_of[p] = u
             u = p
+        # /compact invocation EPISODES, keyed by promptId: head = first record in file order
+        # (the caveat/raw twin, parented on the pre-compact leaf), splice = the stdout record
+        # (else the last record seen — a mid-write episode; its boundary stays hidden until
+        # the stdout lands, since the gate below needs the splice point on the active path).
+        episodes = {}
+        for eu, er in self.by_uuid.items():          # insertion order = file read order
+            pid = er.get("promptId")
+            if not pid or er.get("type") != "user" or er.get("isCompactSummary"):
+                continue
+            blocks = _content(er.get("message"))
+            btext = (_text_of(blocks) if blocks else "") or ""
+            g = episodes.setdefault(pid, {"head_parent": self.parent_of.get(eu),
+                                          "head_seq": self.seq_of.get(eu, 0),
+                                          "splice": eu, "stdout": None, "compact": False})
+            m = COMMAND_NAME_ANY_RE.search(btext)
+            if m:
+                name = m.group(1).strip()
+                if (name if name.startswith("/") else "/" + name) == "/compact":
+                    g["compact"] = True              # the episode invokes /compact, not some other command
+            if LOCAL_STDOUT_RE.match(btext):
+                g["stdout"] = eu
+            g["splice"] = g["stdout"] or eu
         boundaries = sorted((self.seq_of.get(u, 0), u) for u, r in self.by_uuid.items()
                             if r.get("type") == "system" and r.get("subtype") == "compact_boundary")
         for _, b in boundaries:
             if b in active:
                 continue                  # attached (auto / resume re-splice) — never double-emit
-            anchor = self.parent_of.get(b)
-            if anchor not in active:
-                continue                  # pre-compact context rewound/cleared away — stays hidden
-            c = child_of.get(anchor)
-            if c is None:
-                continue                  # the anchor IS the leaf (pending rollback) — nothing to splice into
             summary = next((s for s, sr in self.by_uuid.items()
                             if sr.get("isCompactSummary") is True and self.parent_of.get(s) == b),
                            None)
-            self.parent_of[c] = summary if summary is not None else b   # anchor <- b (<- summary) <- c
+            pid = (self.by_uuid.get(summary) or {}).get("promptId") if summary else None
+            ep = episodes.get(pid)
+            if ep is not None and not ep["compact"]:
+                ep = None                 # the summary's promptId names some OTHER exchange — not a witness
+            if ep is None:
+                # fallback for summaries without a promptId (older writes, synthetic shapes):
+                # b's own episode is the nearest /compact invoked from b's anchor and appended
+                # after b — the CLI writes boundary+summary first, then the episode records
+                anchor = self.parent_of.get(b)
+                cands = [g for g in episodes.values()
+                         if g["compact"] and g["head_parent"] == anchor
+                         and g["head_seq"] > self.seq_of.get(b, 0)]
+                ep = min(cands, key=lambda g: g["head_seq"]) if cands else None
+            if ep is None:
+                continue                  # no on-record /compact invocation owns this boundary — stays hidden
+            sp = ep["splice"]
+            if sp not in active or sp == b or sp in self._adopted.values():
+                continue                  # the episode was rewound/cleared away (or already claimed) — hidden
+            c = child_of.get(sp)
+            tail = summary if summary is not None else b
+            self.parent_of[b] = sp        # …stdout <- b (<- summary) <- former child
+            if c is not None:
+                self.parent_of[c] = tail
+            else:
+                self.leaf_uuid = tail     # the stdout was the leaf: the adopted pair is the new tail
             active.add(b)
-            child_of[anchor], child_of[b] = b, (summary if summary is not None else c)
+            child_of[sp] = b
             if summary is not None:
                 active.add(summary)
-                child_of[summary] = c
+                child_of[b] = summary
+                if c is not None:
+                    child_of[summary] = c
+            elif c is not None:
+                child_of[b] = c
+            self._adopted[b] = sp
 
     def active_path(self):
         """The set of uuids on the leaf->root chain (directed walk, O(chain length))."""
@@ -965,7 +1058,14 @@ class FileAdapter:
                 continue
             if r.get("type") == "system" and r.get("subtype") == "compact_boundary":
                 _compacted = True
-                _restoring = True          # the restore burst starts here and ends at the next assistant
+                if u not in self._adopted:
+                    # the restore burst starts here and ends at the next assistant. An ADOPTED
+                    # boundary (a LIVE manual compact) never arms it: its transcript replays NO
+                    # tail — the records after it are the user's genuine next actions, and the
+                    # armed window silently ate the next typed prompt whenever its text repeated
+                    # any earlier message ("continue", a nudge) — a dropped real ask (2026-08-19).
+                    # Attached boundaries (auto, and the resume re-splice, which DOES replay) keep it.
+                    _restoring = True
                 last_boundary = u
             elif r.get("type") == "assistant":
                 _restoring = False         # work resumed → anything later is new, not restored context
@@ -1150,10 +1250,25 @@ class FileAdapter:
                     atom["rompAuto"] = True
                 out.append(atom)
             elif t == "system" and r.get("subtype") == "compact_boundary":
+                if (r.get("parentUuid") or r.get("logicalParentUuid")) == u:
+                    continue   # self-anchored (corrupt): a boundary claiming to compact itself
+                               # anchors nothing — no card, and no cycle for the turn builder
+                sp = self._adopted.get(u)
+                if sp is not None:
+                    # an ADOPTED boundary's record is appended BEFORE its episode's stdout, so raw
+                    # (t, seq) order would drop the card into the middle of the /compact exchange —
+                    # and the stdout atom would then fold into the boundary's fresh turn as
+                    # "assistant work", minting a phantom WORK unit (2026-08-19). Sort it right
+                    # after the stdout instead: the moment the compaction visibly completed.
+                    spt = parse_z((self.by_uuid.get(sp) or {}).get("timestamp"))
+                    if spt is not None and (ts is None or spt > ts):
+                        ts = spt
+                    seq = self.seq_of.get(sp, seq) + 0.5
                 cm = r.get("compactMetadata") or r.get("compact_metadata") or {}
                 out.append({"type": "system", "subtype": "compact_boundary", "uuid": u,
                             "session_id": rompuuid, "t": ts, "fsid": fsid,
-                            "parentUuid": self.parent_of.get(u),   # the repaired stitch (see _repair_compaction_stitches)
+                            "parentUuid": self.parent_of.get(u),   # the repaired stitch (see _repair_compaction_stitches);
+                            #                                        for an ADOPTED boundary, its episode's stdout record
                             "compact_metadata": {"trigger": cm.get("trigger"),
                                                  "pre_tokens": cm.get("preTokens") or cm.get("pre_tokens"),
                                                  "post_tokens": cm.get("postTokens") or cm.get("post_tokens")},
