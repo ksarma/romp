@@ -758,8 +758,9 @@ fi
 #   * `waiting` is AT REST, not attention-needed. It is the ordinary state of a session sitting
 #     there having finished its turn, and it is what most of the fleet reads most of the time.
 #     Substring-matching /wait/ into an alert paints a "needs you" badge on every idle session,
-#     which is worse than the blank it replaced. The states that DO want the user are `awaiting`
-#     (a permission prompt) and `blocked`.
+#     which is worse than the blank it replaced. The states that DO want the user are `permission`
+#     and `picker` (a live prompt) and `blocked`. (These are the RAW backend states; the dashboard's
+#     chip vocabulary — needsInput, awaitingBg — never rides this command.)
 #   * `id` is the durable key, NOT `lastSid`. Every per-session store romp keeps (states/,
 #     captions/, goals/, episodes/) is filed under `id`. `lastSid` is the live Claude Code
 #     transcript's fsid, which FORKS on /clear — it is what the old tmux @romp-session-id
@@ -905,13 +906,54 @@ if [[ "${1:-}" =~ ^(--)?(send|interrupt|end)$ ]]; then
     _who="${1:-}"
     if [[ -z "$_who" ]]; then echo "usage: romp $_verb <session> $([[ "$_verb" == send ]] && echo '<text>')" >&2; exit 2; fi
     shift
+    # `romp end self [--now]` — a session closing ITSELF after finishing its work (the user
+    # 2026-08-15: telling a session "close yourself when done" never worked; an agent could only
+    # kill its own process, which read as a crash). `self` resolves through ROMP_SID (spawn-frozen
+    # by the SDK backend, inherited by every Bash the agent runs). Default is when=idle: the kernel
+    # kills at the turn's SETTLE, so the goodbye lands and the judges file the outcome before the
+    # clean × death. --now skips the deferral (for any target).
+    _when="";
+    if [[ "$_verb" == "end" ]]; then
+        [[ "$_who" == "self" ]] && _when="idle"
+        for _a in "$@"; do
+            [[ "$_a" == "--now" ]] && _when=""
+            [[ "$_a" == "--when-idle" ]] && _when="idle"
+        done
+    fi
     _kport="${ROMP_KERNEL_PORT:-29855}"
     if [[ "$_verb" == "send" ]]; then
+        # `--tag <label>` — a RENDER HINT for auto-generated text (a kickoff template, a scripted
+        # brief): the chat shows a tagged message as machine-sent under that label instead of posing
+        # it as the user's typed words (the user 2026-08-15). Sugar for appending the marker comment
+        # `<!-- romp-tag: <label> -->` yourself; the label is one word, letters/digits/dashes.
+        _tag=""
+        if [[ "${1:-}" == "--tag" ]]; then
+            _tag="${2:-}"
+            shift 2 || { echo "usage: romp send <session> [--tag <label>] <text>" >&2; exit 2; }
+        fi
         _text="$*"
-        if [[ -z "$_text" ]]; then echo "usage: romp send <session> <text>" >&2; exit 2; fi
+        if [[ -z "$_text" ]]; then echo "usage: romp send <session> [--tag <label>] <text>" >&2; exit 2; fi
+        if [[ -n "$_tag" ]]; then
+            [[ "$_tag" =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,23}$ ]] \
+                || { echo "romp send: --tag must be one word (letters/digits/dashes, <=24 chars)" >&2; exit 2; }
+            _text="$_text"$'\n\n'"<!-- romp-tag: $_tag -->"
+        fi
         _payload="$(python3 -c 'import json,sys; print(json.dumps({"name": sys.argv[1], "text": sys.argv[2]}))' "$_who" "$_text")"
+    elif [[ "$_verb" == "end" && "$_who" == "self" ]]; then
+        if [[ -z "${ROMP_SID:-}" ]]; then
+            echo "romp end self: ROMP_SID is not set — 'self' only works from inside a romp SDK session" >&2
+            exit 2
+        fi
+        _payload="$(python3 -c 'import json,sys; d={"id": sys.argv[1]};
+import os
+w=sys.argv[2]
+if w: d["when"]=w
+print(json.dumps(d))' "$ROMP_SID" "$_when")"
     else
-        _payload="$(python3 -c 'import json,sys; print(json.dumps({"name": sys.argv[1]}))' "$_who")"
+        _payload="$(python3 -c 'import json,sys; d={"name": sys.argv[1]};
+w=sys.argv[2] if len(sys.argv)>2 else ""
+if w: d["when"]=w
+print(json.dumps(d))' "$_who" "$_when")"
     fi
     _resp="$(_romp_token_cfg | curl -sf -m 10 --config - -X POST "http://127.0.0.1:$_kport/$_verb" \
                   -H 'Content-Type: application/json' -d "$_payload")" \
@@ -1084,6 +1126,7 @@ env_args=()
 no_env=false
 use_tmux=false
 msg_arg=""
+tag_arg=""
 
 case "${1:-}" in
     new)
@@ -1094,7 +1137,7 @@ case "${1:-}" in
                 --detach)  detach=true; shift ;;
                 -d)        shift
                            if [[ $# -eq 0 || "$1" == -* ]]; then
-                               echo "usage: romp new [-t] [-d <dir>] [-m <text>] [--model <id>] [--effort <level>] [--env NAME=VALUE] [--no-env] <name>" >&2; exit 2
+                               echo "usage: romp new [-t] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] [--env NAME=VALUE] [--no-env] <name>" >&2; exit 2
                            fi
                            dir_arg="$1"; shift ;;
                 -m|--message) shift
@@ -1103,23 +1146,33 @@ case "${1:-}" in
                            # last two-step on the idea-to-working path). Empty text is a usage
                            # error, not a silent no-op.
                            if [[ $# -eq 0 || -z "$1" ]]; then
-                               echo "usage: romp new [-t] [-d <dir>] [-m <text>] [--model <id>] [--effort <level>] [--env NAME=VALUE] [--no-env] <name>" >&2; exit 2
+                               echo "usage: romp new [-t] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] [--env NAME=VALUE] [--no-env] <name>" >&2; exit 2
                            fi
                            msg_arg="$1"; shift ;;
+                --tag)     shift
+                           # scheduled/scripted kickoff (the user 2026-08-18, for the nightly
+                           # optimizer's briefing): the -m text is machine-sent under this label
+                           # (the same third identity `romp send --tag` writes) instead of posing
+                           # as the user's typed words. Rides POST /send's "tag" field — the
+                           # kernel validates and appends the render-hint marker itself.
+                           if [[ $# -eq 0 || -z "$1" || "$1" == -* ]]; then
+                               echo "usage: romp new [-t] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] [--env NAME=VALUE] [--no-env] <name>" >&2; exit 2
+                           fi
+                           tag_arg="$1"; shift ;;
                 --model)   shift
                            # per-spawn model, riding POST /new (the user 2026-08-14: the nightly
                            # optimizer must always run fable, and a headless script has no WS).
                            # FULL id as the picker sends it (claude-fable-5) — the alias table
                            # stops at opus/sonnet/haiku and quietly resolved "fable" to Opus 5.
                            if [[ $# -eq 0 || -z "$1" || "$1" == -* ]]; then
-                               echo "usage: romp new [-t] [-d <dir>] [-m <text>] [--model <id>] [--effort <level>] [--env NAME=VALUE] [--no-env] <name>" >&2; exit 2
+                               echo "usage: romp new [-t] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] [--env NAME=VALUE] [--no-env] <name>" >&2; exit 2
                            fi
                            model_arg="$1"; shift ;;
                 --effort)  shift
                            # per-spawn effort (e.g. high, ultracode) — ultracode is per-session
                            # by design, never a machine default, so /new is its sanctioned door.
                            if [[ $# -eq 0 || -z "$1" || "$1" == -* ]]; then
-                               echo "usage: romp new [-t] [-d <dir>] [-m <text>] [--model <id>] [--effort <level>] [--env NAME=VALUE] [--no-env] <name>" >&2; exit 2
+                               echo "usage: romp new [-t] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] [--env NAME=VALUE] [--no-env] <name>" >&2; exit 2
                            fi
                            effort_arg="$1"; shift ;;
                 --env)     shift
@@ -1134,7 +1187,7 @@ case "${1:-}" in
                            # in service.env / the apiKeyHelper, since this payload is copied into
                            # per-sid files and the session registry.
                            if [[ $# -eq 0 || -z "$1" || "$1" == -* ]]; then
-                               echo "usage: romp new [-t] [-d <dir>] [-m <text>] [--model <id>] [--effort <level>] [--env NAME=VALUE] [--no-env] <name>" >&2; exit 2
+                               echo "usage: romp new [-t] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] [--env NAME=VALUE] [--no-env] <name>" >&2; exit 2
                            fi
                            if [[ "$1" != *=* || ! "${1%%=*}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
                                echo "romp new: --env expects NAME=VALUE with NAME matching [A-Za-z_][A-Za-z0-9_]* (got: $1)" >&2; exit 2
@@ -1150,13 +1203,20 @@ case "${1:-}" in
                            no_env=true ;;
                 -*)        echo "romp new: unknown option: $1" >&2; exit 2 ;;
                 *)         if [[ -n "$session_arg" ]]; then
-                               echo "usage: romp new [-t] [-d <dir>] [-m <text>] [--model <id>] [--effort <level>] [--env NAME=VALUE] [--no-env] <name>" >&2; exit 2
+                               echo "usage: romp new [-t] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] [--env NAME=VALUE] [--no-env] <name>" >&2; exit 2
                            fi
                            session_arg="$1"; shift ;;
             esac
         done
         if [[ -z "$session_arg" ]]; then
-            echo "usage: romp new [-t] [-d <dir>] [-m <text>] [--model <id>] [--effort <level>] [--env NAME=VALUE] [--no-env] <name>" >&2; exit 2
+            echo "usage: romp new [-t] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] [--env NAME=VALUE] [--no-env] <name>" >&2; exit 2
+        fi
+        if [[ -n "$tag_arg" && -z "$msg_arg" ]]; then
+            # a tag labels the -m text; without -m there is nothing to label
+            echo "romp new: --tag needs -m <text> (the tag labels the delivered message)" >&2; exit 2
+        fi
+        if [[ -n "$tag_arg" ]] && ! [[ "$tag_arg" =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,23}$ ]]; then
+            echo "romp new: --tag must be one word (letters/digits/dashes, <=24 chars)" >&2; exit 2
         fi
         if [[ -n "$msg_arg" ]] && $use_tmux; then
             # the tmux variant attaches a terminal you type into yourself; delivering a first
@@ -1252,7 +1312,13 @@ if [[ -n "$session_arg" ]] && ! $use_tmux && ! $resume; then
     # means "don't touch", so a plain `romp new` never carries an env key at all.
     _noenv=""; if $no_env; then _noenv=1; fi
     _payload="$(python3 -c 'import json,sys; d={"name": sys.argv[1], "dir": sys.argv[2], "backend": "sdk"}; sys.argv[3] and d.update(model=sys.argv[3]); sys.argv[4] and d.update(effort=sys.argv[4]); env=dict(kv.split("=",1) for kv in sys.argv[6:]); (env or sys.argv[5]) and d.update(env=env); print(json.dumps(d))' "$session_arg" "$_dir" "$model_arg" "$effort_arg" "$_noenv" ${env_args[@]+"${env_args[@]}"})"
-    _resp="$(_romp_token_cfg | curl -sf -m 15 --config - -X POST "http://127.0.0.1:$_kport/new" \
+    # No -f here: the kernel answers a bad /new payload with a 400 whose JSON body NAMES the
+    # problem (reserved env names, bad session names — every validation refusal), and -f discards
+    # exactly that body (exit 22), masking it as the connection-failure message below. Without -f
+    # curl still exits nonzero on a real connection failure, so the || branch keeps meaning
+    # "not reachable", and a 4xx body falls through to the same ok-check + refusal print the
+    # kernel's 200 ok:false replies take.
+    _resp="$(_romp_token_cfg | curl -s -m 15 --config - -X POST "http://127.0.0.1:$_kport/new" \
                   -H 'Content-Type: application/json' -d "$_payload")" \
         || { echo "romp new: kernel not reachable on :$_kport (is romp running?). \`romp new -t $session_arg\` starts a terminal session without it." >&2; exit 1; }
     if [[ "$_resp" == *'"ok": true'* || "$_resp" == *'"ok":true'* ]]; then
@@ -1285,7 +1351,10 @@ if [[ -n "$session_arg" ]] && ! $use_tmux && ! $resume; then
         # session EXISTS by now (the /new above acked), so a failed send names the exact
         # retry command instead of pretending the spawn failed.
         if [[ -n "$msg_arg" ]]; then
-            _mpayload="$(python3 -c 'import json,sys; print(json.dumps({"name": sys.argv[1], "text": sys.argv[2]}))' "$session_arg" "$msg_arg")"
+            _mpayload="$(python3 -c 'import json,sys
+d = {"name": sys.argv[1], "text": sys.argv[2]}
+if len(sys.argv) > 3 and sys.argv[3]: d["tag"] = sys.argv[3]
+print(json.dumps(d))' "$session_arg" "$msg_arg" "$tag_arg")"
             _mresp="$(_romp_token_cfg | curl -sf -m 10 --config - -X POST "http://127.0.0.1:$_kport/send" \
                           -H 'Content-Type: application/json' -d "$_mpayload")" \
                 || { echo "romp new: session is up but the message did NOT land (kernel send failed). Retry: romp send $session_arg '<text>'" >&2; exit 1; }
@@ -1453,6 +1522,14 @@ else
     sid="$(_romp_uuid)"
     claude_cmd="claude --name \"$display\" --session-id $sid"
 fi
+
+# The session's romp identity rides its ENVIRONMENT on both backends (the user 2026-08-16):
+# ROMP_SID (the stable id — what `romp end self` resolves through) and ROMP_SESSION_NAME (the
+# human name at spawn — env-first author attribution for external tools, which talk to romp only
+# through the API and this var, never tmux). Mirrors the SDK backend's spawn env (sdk_backend
+# _options); both values are already sanitized above (sid: hex+hyphens, name: [A-Za-z0-9_-]),
+# so the interpolation into the respawn-pane exec line is injection-safe.
+claude_cmd="ROMP_SID=$sid ROMP_SESSION_NAME=\"$display\" $claude_cmd"
 
 # Load the Romp Postal Service MCP server (tool-native messaging) into romp
 # sessions only (scoped via --mcp-config), when installed.

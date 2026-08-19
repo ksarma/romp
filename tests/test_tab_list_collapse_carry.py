@@ -381,7 +381,7 @@ class CollapseCarryUnit(unittest.TestCase):
         km._tab_carry_forget(SID)
         self.assertIn(SID, km._tab_tmux_carry["dead"])
         saved = {nm: getattr(km, nm) for nm in
-                 ("_sdk", "_commands_for_cwd", "_push_all", "_reveal_chat", "_name_of", "_cwd_of")}
+                 ("_sdk", "_commands_for_cwd", "_push_all", "_reveal_chat_for", "_name_of", "_cwd_of")}
 
         class FakeSdk:                                # a resume that succeeds, no real backend
             def owns(self, sid):
@@ -397,7 +397,7 @@ class CollapseCarryUnit(unittest.TestCase):
             km._sdk = lambda: FakeSdk()
             km._commands_for_cwd = lambda cwd: None
             km._push_all = lambda *a, **k: None
-            km._reveal_chat = lambda *a, **k: None
+            km._reveal_chat_for = lambda *a, **k: None
             km._name_of = lambda sid: "web"
             km._cwd_of = lambda sid: None
             km._revive_session(SID)

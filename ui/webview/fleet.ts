@@ -145,7 +145,7 @@ function paintFoldButtons() {
 function el(tag: string, cls?: string): HTMLElement { const e = document.createElement(tag); if (cls) e.className = cls; return e; }
 
 // The status pip before a session name — the SAME language the feed's .fwork-dot speaks: gold =
-// working, straw = awaitingBg, gray ring = the status is MISSING outright (unreadable). A healthy
+// working, await-green = awaitingBg, gray ring = the status is MISSING outright (unreadable). A healthy
 // idle session gets NO pip, so a blank means "alive and quiet" and nothing else; that only holds
 // because the unreadable case now renders loudly instead of hiding behind the same nothing. (The
 // hollow ready ring this pane briefly drew went when the fork converged with upstream, 2026-08-14.)

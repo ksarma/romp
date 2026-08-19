@@ -304,11 +304,11 @@ class ChatSessionPicker(unittest.TestCase):
         # label), and the dot MIRRORS the tab's own status dot — gold when working, GREEN when awaitingBg
         # (idle-waiting-on-bg-work, the .tab-dot.await), none otherwise.
         js, css = km._CHAT_MOBILE_JS, km._CHAT_MOBILE_CSS
-        self.assertIn("fillName(lbl,s);if(s.bg)lbl.style.color=s.bg;", js)   # identity color on the NAME
-        self.assertIn("if(s.working){var wd=document.createElement('span');wd.className='workdot';", js)  # gold dot when working
+        self.assertIn("fillName(lbl,s);lbl.style.color=s.bg||'';", js)   # identity color on the NAME (in-place form also CLEARS a dropped color)
+        self.assertIn("if(!wd){wd=document.createElement('span');wd.className='workdot';", js)   # in-place form: one dot node, created once, classes toggled (2026-08-19)  # gold dot when working
         # awaitingBg is read off the desktop tab's own green dot (no tab-working class on an awaiting tab)
         self.assertIn("awaitbg:!!t.querySelector('.tab-dot.await')", js)
-        self.assertIn("else if(s.awaitbg){var wd=document.createElement('span');wd.className='workdot await';", js)  # green dot when awaiting
+        self.assertIn("wd.classList.toggle('await',!s.working&&!!s.awaitbg);", js)  # green dot when awaiting (in-place toggle form, 2026-08-19)
         self.assertNotIn(".mrow .dot{", css)              # the old identity/grey dot is gone
         self.assertNotIn("dot.style.background=s.bg", js)  # ...and nothing paints identity onto a dot
         # the dots are the SAME status colors desktop uses (styles.css --st-working-bg gold, --st-awaitbg-bg green)
@@ -368,25 +368,25 @@ class ChatSessionPicker(unittest.TestCase):
         self.assertIn("x.className='mclose'", js)
         self.assertIn("x.title='End session'", js)
         # it triggers the real tab's close x, and stops propagation so it doesn't also switch sessions
-        self.assertIn("var c=rt&&rt.querySelector('.tab-close');if(c)c.click();", js)
+        self.assertIn("var rtc=realTab(id);var c=rtc&&rtc.querySelector('.tab-close');if(c)c.click();", js)   # delegated form (2026-08-19 click-safe rewrite)
         self.assertIn("e.stopPropagation();hide();", js)
         self.assertIn(".mrow .mclose{", css)
 
 
 class RevealRouting(unittest.TestCase):
-    def test_reveal_chat_focuses_chat_and_nudges_shell(self):
+    def test_a_reveal_focuses_the_askers_chat_and_nudges_its_shell(self):
+        # the chat focus + the shell's switch-to-Chat travel as a pair, both addressed to the asker's wid
         sent = []
-        orig = km._send_to_app
-        km._send_to_app = lambda app, msg: sent.append((app, msg))
+        orig = km._send_to_view
+        km._send_to_view = lambda app, msg, wid: sent.append((app, wid, msg))
         try:
-            km._reveal_chat({"type": "focus", "id": "s1"})
+            km._reveal_chat_for({"app": "feed", "wid": "win-A"}, {"type": "focus", "id": "s1"})
         finally:
-            km._send_to_app = orig
-        apps = [a for a, _ in sent]
-        self.assertIn("chat", apps)                   # still focuses the chat clients (unchanged behavior)
-        self.assertIn("shell", apps)                  # AND tells the mobile shell to show the Chat tab
-        chat_msg = next(m for a, m in sent if a == "chat")
-        shell_msg = next(m for a, m in sent if a == "shell")
+            km._send_to_view = orig
+        self.assertEqual([(a, w) for a, w, _ in sent], [("chat", "win-A"), ("shell", "win-A")],
+                         "chat focus AND mobile-shell nudge, the asker's window only")
+        chat_msg = next(m for a, _, m in sent if a == "chat")
+        shell_msg = next(m for a, _, m in sent if a == "shell")
         self.assertEqual(chat_msg["id"], "s1")        # the original focus payload is preserved verbatim
         self.assertEqual(shell_msg, {"type": "reveal", "pane": "chat"})
 

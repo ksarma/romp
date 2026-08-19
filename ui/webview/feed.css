@@ -14,6 +14,8 @@
   --accent: #9cd2ff;  /* the romp accent (CLAUDE.md Design) — feed.css has its OWN :root, so selected-state
                        chrome here needs it defined locally or var(--accent) silently falls back */
   --accent-fg: #0c1a2e;  /* dark text ON the accent (CLAUDE.md) — for the reverse-highlight on a selected toggle */
+  --cmt-hl: #ffd54a;  /* comment-highlight yellow — mirrors styles.css, same trap as --err: the viewer's
+                       review-comment marks (mark.fv-hl) render HERE too when the file browser hosts it */
   --st-working-bg: #e0b020; --st-working-fg: #332600;  /* the WORKING yellow — mirrors styles.css, same trap
                        as --err: .fask-stallbtn and .fask-interrupting referenced these while they lived only
                        in styles.css, so the "filled yellow so the stall is noticed" chip rendered as a quiet
@@ -81,7 +83,9 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
   /* #feed-foot now DOCKS below as an in-flow flex item (the user 2026-06-29), so the list no longer needs to
      reserve space for a float — it just flexes to fill above the bar. */
   padding: 12px;
-  container-type: inline-size;   /* so the columns can stack responsively (see @container below) */
+  container-type: inline-size;   /* so the columns can stack responsively (see @container below);
+                                    the Stack toggle forces the same block via style(--romp-stack: on),
+                                    so the CSS stays the single owner of what stacking means */
 }
 /* inbox zero → the romp tri-color WORDMARK, centered (the user 2026-06-22; was the plain swirl
    square). This is the one unobtrusive home for the wordmark: it shows ONLY when there is nothing
@@ -142,15 +146,39 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
 
 /* responsive: stack the three columns when the panel is too narrow for them to
    sit side by side — prevents thin columns that break words mid-word ("Shippe/d") */
-@container (max-width: 540px) {
+/* the stacked layout's header furniture (the user 2026-08-16) exists ONLY there — hidden by default,
+   revealed inside the container query below. The fold caret wears the .feed-sess-fold treatment (dim,
+   thumb-padded); the category CHIP is itself the drag surface (no separate handle — the grab cursor
+   it wears in the stacked layout is the affordance). */
+.fcol-fold { display: none; }
+
+@container (max-width: 540px) or style(--romp-stack: on) {
   .feed-cols { flex-direction: column; }
-  /* stacked, the columns read TOP-DOWN as Completed → Blocked (needs you) → Working (the user 2026-07-30,
-     moving Completed up from the middle; supersedes the 2026-07-08 Blocked-first order): what finished
-     first, then what needs you, then what's still running. DOM order stays Working/Blocked/Completed
-     (unchanged for the side-by-side layout); `order` only re-sequences the stacked case. */
-  .feed-col.col-completed  { order: 1; }
-  .feed-col.col-needsInput { order: 2; }
-  .feed-col.col-asks       { order: 3; }
+  /* Folding exists ONLY here, so the fold BITING lives here too (the user 2026-08-18): this rule used
+     to sit outside the query, so a section collapsed while stacked stayed hidden after the feed
+     widened to side-by-side — an empty column with no caret to reopen it (the caret is stacked-only).
+     Scoped, the side-by-side layout always shows every card; the persisted fold re-applies the moment
+     the feed narrows back to one column. */
+  .feed-col.col-collapsed .feed-col-list { display: none; }   /* folded: the header (chip + count) stands in */
+  /* stacked, the columns read TOP-DOWN as Completed → Blocked (needs you) → Working by default (the
+     user 2026-07-30, moving Completed up from the middle; supersedes the 2026-07-08 Blocked-first
+     order): what finished first, then what needs you, then what's still running. DOM order stays
+     Working/Blocked/Completed (unchanged for the side-by-side layout); `order` only re-sequences the
+     stacked case — and a dragged section (feed.ts applyColStack) overrides via --stack-order, so the
+     user's arrangement wins and survives reloads with the rest of the view state. */
+  .feed-col.col-completed  { order: var(--stack-order, 1); }
+  .feed-col.col-needsInput { order: var(--stack-order, 2); }
+  .feed-col.col-asks       { order: var(--stack-order, 3); }
+  /* the SAME caret the session headers wear (.feed-sess-fold): same glyphs, same side (right of
+     the label), same rendered size — the header's 0.72em is compensated explicitly so the glyph
+     paints at the feed's base size instead of shrinking with the label (the user 2026-08-16) */
+  .fcol-fold { display: inline-block; flex: none; padding: 0 5px; margin-left: -2px; color: var(--dim);
+    background: transparent; border: 0; font: inherit; font-size: 1.389em; font-weight: 400;
+    line-height: 1; cursor: pointer; transition: color 0.12s ease; }
+  .fcol-fold:hover, .fcol-fold:focus-visible { color: var(--fg); }
+  .feed-col-head .fcol-chip { cursor: grab; touch-action: none; user-select: none; }
+  .feed-col.col-dragging { position: relative; z-index: 5; opacity: 0.9; }   /* lifted over its siblings while it follows the pointer */
+  .feed-col.col-dragging .fcol-chip { cursor: grabbing; }
 }
 
 /* ---------- ask card (the inbox unit): three rows (the user 2026-06-14) ---------- */
@@ -280,6 +308,7 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
 .fask-origin { flex: 0 0 auto; font-size: 0.8em; cursor: pointer; white-space: nowrap; }
 .fask-origin-pre { color: var(--dim); }
 .fask-origin-peer { font-weight: 600; }
+.fask-origin-absorbed { opacity: 0.55; }   /* provenance of a finished handoff — history, not an active link */
 /* the DISTILLER's one line on a card (restored 2026-06-29): completed → takeaway, blocked → decision brief.
    No why-rationale line; hidden until the distiller produces. pre-wrap keeps a copy-pasteable artifact intact. */
 .fask-distill { font-size: 0.86em; line-height: 1.4; margin: 1px 0 2px; color: var(--fg); opacity: 0.82; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -1026,12 +1055,15 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
   white-space: pre-wrap; overflow-wrap: anywhere; max-height: 300px; overflow-y: auto; }
 
 /* ── file viewer (file-view.ts) ────────────────────────────────────────────────────────────────────
-   A file path clicked in the CHAT shows the file HERE, filling the feed pane (the user 2026-08-08).
-   Absolute over this document rather than a floating modal: the cards behind it are what you are least
-   likely to be mid-read on when you follow a path out of a transcript, and a whole pane is what long
-   source needs. `body.fileview-open` stops the cards underneath scrolling behind it. */
-.fileview { position: fixed; inset: 0; z-index: 900; display: flex; flex-direction: column;
-  background: var(--bg, #1e1e1e); }
+   The viewer is a MODAL over whatever document opened it (the user 2026-08-15) — here the feed, whose
+   file BROWSER (file-browse.ts) opens files through the same module. One treatment, two sheets: the
+   ~95% card and dimmed backdrop mirror styles.css exactly (the panels treatment: the listing behind
+   stays visible, never hidden). `body.fileview-open` stops the cards underneath scrolling behind it. */
+#romp-fileview { position: fixed; inset: 0; z-index: 1200; background: rgba(0, 0, 0, 0.55);
+  display: flex; align-items: center; justify-content: center; }
+.fileview { width: 95%; height: 95%; display: flex; flex-direction: column; overflow: hidden;
+  background: var(--bg, #1e1e1e); border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 8px;
+  box-shadow: 0 12px 44px rgba(0, 0, 0, 0.6); }
 body.fileview-open { overflow: hidden; }
 .fileview-bar { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; min-width: 0;
   padding: 7px 10px; border-bottom: 1px solid var(--box-border); }
@@ -1282,7 +1314,9 @@ body.filebrowse-open { overflow: hidden; }
 /* the viewer's directory half is the click into the BROWSER — the discoverability path */
 .fileview-dir-link { cursor: pointer; }
 .fileview-dir-link:hover { color: var(--accent); text-decoration: underline; }
-/* the row menu must sit above BOTH overlays (base .ctx-menu z is for card menus over the feed) */
+/* the row menu must sit above the browser overlay at 890 (base .ctx-menu z is for card menus
+   over the feed; the viewer's #romp-fileview backdrop sits higher at 1200, but opening the
+   browser closes the viewer and a row click dismisses this menu, so they never stack) */
 #fb-ctx { z-index: 950; }
 /* the way above a "~"-rooted trail: the kernel-sent parent, worn as a dim leading crumb */
 .fb-crumb-up { opacity: 0.65; }
@@ -1303,3 +1337,47 @@ a.fileview-btn { text-decoration: none; display: inline-flex; align-items: cente
 /* an author `display` beats the UA's [hidden] rule — without this the anchor showed hrefless
    before the kernel ever answered (review) */
 a.fileview-btn[hidden] { display: none; }
+
+/* ── review comments in the file viewer — mirrored from styles.css (one treatment, two sheets — the
+   hljs-palette precedent): the file BROWSER opens files through the same file-view.ts module in THIS
+   document, so the comment layer must render here too. Keep identical to styles.css. */
+.fileview-cmtcount { font-size: 0.82em; opacity: 0.6; flex: 0 0 auto; }
+.fileview-submit { border-color: var(--accent); color: var(--accent); }
+mark.fv-hl { background: color-mix(in srgb, var(--cmt-hl) 30%, transparent); color: inherit; cursor: pointer; }
+mark.fv-hl:hover { background: color-mix(in srgb, var(--cmt-hl) 58%, transparent); }
+.fv-num { margin-left: 2px; padding: 0 3px; border-radius: 6px; cursor: pointer;
+  background: var(--vscode-menu-background, #252526); color: var(--accent);
+  font-size: 9px; line-height: 13px; }
+.fv-note { display: inline-flex; align-items: baseline; gap: 6px; margin: 0 4px; padding: 2px 6px;
+  border-radius: 4px; background: rgba(255, 255, 255, 0.06); font-size: 0.86em; }
+.fv-note-x { border: 0; background: none; color: inherit; opacity: 0.6; cursor: pointer; font-size: 11px; }
+.fv-note-x:hover { opacity: 1; }
+.fv-new { display: flex; flex-direction: column; gap: 6px; padding: 10px;
+  border-top: 1px solid var(--box-border); }
+.fv-at { font-size: 0.86em; opacity: 0.7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fv-ta { min-height: 62px; padding: 6px 8px; resize: vertical; font: inherit; font-size: 0.92em;
+  background: var(--vscode-input-background, #3c3c3c); color: inherit;
+  border: 1px solid var(--box-border); border-radius: 4px; }
+.fv-newrow { display: flex; gap: 6px; justify-content: flex-end; }
+/* The viewer's backdrop is z 1200 and this page's base .ctx-menu is 100 — without this lift the
+   comment menu renders BEHIND the viewer and the right-click looks dead (styles.css, 2026-08-18). */
+.ctx-menu.fv-menu { z-index: 1300; }
+
+/* usage-limit banner (2026-08-18): analysis paused on a usage limit says so above the columns —
+   loud but compact, one line + (Fable only) the switch-to-Opus action. Neutral card chrome, never
+   the accent (this is status, not highlight); red would overstate it — the pause is expected and
+   self-resolving at the window reset. */
+.judge-limit-banner { display: flex; align-items: center; gap: 10px; margin: 6px 8px 2px;
+  padding: 7px 12px; background: #252526; border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px; font-size: 0.9em; }
+.judge-limit-banner .jl-text { opacity: 0.85; }
+.judge-limit-banner .jl-switch { flex: none; padding: 3px 10px; border-radius: 4px; border: 1px solid
+  rgba(255, 255, 255, 0.18); background: #333; color: inherit; cursor: pointer; font-size: 0.95em; }
+.judge-limit-banner .jl-switch:hover { background: #3c3c3c; }
+.judge-limit-banner .jl-switch:disabled { opacity: 0.6; cursor: default; }
+
+/* the Stack toggle while the narrow container query FORCES stacking (2026-08-19): faded and inert —
+   unclicking it would change nothing at this width, and the tooltip names the way out (more width).
+   pointer-events stays on so the tooltip still shows on hover; the click handler no-ops instead. */
+#feed-stacked.forced { opacity: 0.4; cursor: default; }
+#feed-stacked.forced:hover { color: inherit; background: inherit; }

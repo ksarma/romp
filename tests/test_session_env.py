@@ -105,6 +105,17 @@ class EnvRequestError(unittest.TestCase):
         self.assertEqual(sb.env_request_error({"FEATURE_FLAG": "line1\nline2\ttabbed"}), "",
                          "NUL only — newlines and tabs are legitimate env content")
 
+    def test_the_identity_names_are_refused(self):
+        # options.env owns ROMP_SID / ROMP_SESSION_NAME (the identity overlay below): a user var of
+        # either name would silently shadow or be shadowed by the identity, breaking `romp end self`
+        # with nothing pointing at the cause — refused at the door instead, like every bad payload
+        for name in ("ROMP_SID", "ROMP_SESSION_NAME"):
+            err = sb.env_request_error({name: "x"})
+            self.assertIn(name, err, "the reserved NAME must be in the error")
+            self.assertIn("romp sets", err, "the error teaches WHO owns the name, not just 'no'")
+        self.assertTrue(sb.env_request_error({"FEATURE_FLAG": "1", "ROMP_SID": "x"}),
+                        "a reserved name refuses the WHOLE payload, never a silent skip")
+
 
 class FlagSettingsEnv(unittest.TestCase):
     """flag_settings_path folds env in beside ultracode/fastMode; the ""-when-empty contract stands."""
@@ -174,14 +185,21 @@ class SpawnEnv(_Backend):
         with self.assertRaises(ValueError):
             self.be.spawn("web", "/tmp", env={"FEATURE_FLAG": 1})
 
+    def test_spawn_refuses_the_identity_names(self):
+        # a reg born with ROMP_SID in its user env would shadow-race the identity at every connect
+        with self.assertRaises(ValueError):
+            self.be.spawn("web", "/tmp", env={"ROMP_SID": PARENT})
+        with self.assertRaises(ValueError):
+            self.be.spawn("web", "/tmp", env={"ROMP_SESSION_NAME": "impostor"})
 
-class OptionsThreadsEnv(_Backend):
-    """_options → flag_settings_path(env=…): the file the CLI launches with carries the reg's env."""
+
+class _OptionsBackend(_Backend):
+    """_Backend plus the _options seam: ClaudeAgentOptions is a parameter (a dict stands in) and
+    the in-function import only needs HookMatcher — stub the module when the real dependency is
+    absent (CI without the venv)."""
 
     def setUp(self):
         super().setUp()
-        # ClaudeAgentOptions is a parameter (a dict stands in) and the in-function import only needs
-        # HookMatcher — stub the module when the real dependency is absent (CI without the venv).
         import sys
         import types
         self._fake_sdk = "claude_agent_sdk" not in sys.modules and not sb.sdk_importable()
@@ -198,6 +216,10 @@ class OptionsThreadsEnv(_Backend):
 
     def _options_kw(self, sess):
         return self.be._options(sess, dict)
+
+
+class OptionsThreadsEnv(_OptionsBackend):
+    """_options → flag_settings_path(env=…): the file the CLI launches with carries the reg's env."""
 
     def test_the_settings_file_carries_the_regs_env(self):
         sid = self.be.spawn("web", "/tmp", env=ENV)
@@ -282,6 +304,12 @@ class SetEnv(_Backend):
                          "a NUL value is unfulfillable — refuse, never persist it into the reg")
         self.assertEqual(self._reg(sid)["env"], ENV, "the poisoned payload must not half-apply")
 
+    def test_refuses_the_identity_names(self):
+        sid = self.be.spawn("web", "/tmp", env=ENV)
+        self.assertFalse(self.be.set_env(sid, {"ROMP_SESSION_NAME": "impostor"}),
+                         "the identity env is romp's own — never a per-session override")
+        self.assertEqual(self._reg(sid)["env"], ENV, "the refused payload must not half-apply")
+
     def test_an_explicit_empty_dict_clears_and_reconnects(self):
         # the replace-not-merge contract's limiting case: {} DECLARES "no per-session env" —
         # the only way to remove a spawn-time debugging var from a running session
@@ -327,6 +355,68 @@ class ForkInheritsEnv(_Backend):
             os.environ.pop("CLAUDE_CONFIG_DIR", None)
 
 
+class LegacyReservedEnv(_OptionsBackend):
+    """Regs written before ENV_RESERVED_NAMES existed can carry ROMP_SID / ROMP_SESSION_NAME in
+    their stored env. Spawn and set_env refuse them at the door now — but a standing reg is
+    replayed verbatim at every connect, and fork() copies the parent's. Three obligations at the
+    apply seam: the session still LAUNCHES (a reconnect refusal would brick a long-running session
+    over a var accepted under older rules), the reserved name never reaches the applied env (it
+    would shadow-race the options.env identity — `romp end self` resolving to a forged sid), and
+    the skip is LOUD, naming the session and the ignored var (never silently)."""
+
+    def _poisoned(self, env):
+        """A reg whose stored env predates the reserved-name rule — written behind the validator,
+        the way those regs actually exist on disk."""
+        sid = self.be.spawn("web", "/tmp")
+        reg = self._reg(sid)
+        reg["env"] = dict(env)
+        sb.write_reg(self.be.state_dir, sid, reg)
+        return sid
+
+    def test_a_pre_rule_reg_launches_with_the_reserved_name_skipped(self):
+        sid = self._poisoned({"FEATURE_FLAG": "1", "ROMP_SID": PARENT})
+        logged = []
+        self.be._log = lambda msg, problem=False: logged.append((msg, problem))
+        kw = self._options_kw(self._sess(sid))
+        applied = json.loads(Path(kw["settings"]).read_text())["env"]
+        self.assertEqual(applied, {"FEATURE_FLAG": "1"},
+                         "the rest of the stored env still applies — skip the var, not the session")
+        self.assertEqual(kw["env"]["ROMP_SID"], sid,
+                         "the identity overlay stands untouched — the forged sid never shadows it")
+        self.assertTrue(any(problem and "ROMP_SID" in msg and "web" in msg
+                            for msg, problem in logged),
+                        "the skip must be loud, naming the session and the ignored var: %r"
+                        % (logged,))
+
+    def test_a_reg_carrying_only_reserved_names_still_launches(self):
+        sid = self._poisoned({"ROMP_SESSION_NAME": "impostor"})
+        logged = []
+        self.be._log = lambda msg, problem=False: logged.append((msg, problem))
+        kw = self._options_kw(self._sess(sid))
+        self.assertNotIn("settings", kw,
+                         "nothing left after the skip = the no-keys contract, not an empty env")
+        self.assertEqual(kw["env"]["ROMP_SESSION_NAME"], "web")
+        self.assertTrue(any(problem and "ROMP_SESSION_NAME" in msg for msg, problem in logged))
+
+    def test_a_fork_drops_the_reserved_names_from_the_inherited_env(self):
+        os.environ["CLAUDE_CONFIG_DIR"] = tempfile.mkdtemp()   # transcript_path resolves through this
+        try:
+            self.be.spawn("parent", self.d, sid=PARENT)
+            reg = self._reg(PARENT)
+            reg["env"] = {"FEATURE_FLAG": "1", "ROMP_SID": PARENT}
+            sb.write_reg(self.be.state_dir, PARENT, reg)
+            logged = []
+            self.be._log = lambda msg, problem=False: logged.append((msg, problem))
+            self.be.fork("child", PARENT, "a1", sid=CHILD)
+            self.assertEqual(self._reg(CHILD).get("env"), {"FEATURE_FLAG": "1"},
+                             "the copy is where a legacy reg's poison stops propagating")
+            self.assertTrue(any(problem and "ROMP_SID" in msg and "child" in msg
+                                for msg, problem in logged),
+                            "the drop must be loud, naming the session and the var: %r" % (logged,))
+        finally:
+            os.environ.pop("CLAUDE_CONFIG_DIR", None)
+
+
 class ValidatorLockstep(unittest.TestCase):
     """_env_error (the /new door's kernel-side mirror) and env_request_error are hand-kept copies.
     Spawn backs the door with a loud ValueError, but set_env refuses with a silent False its callers
@@ -342,6 +432,8 @@ class ValidatorLockstep(unittest.TestCase):
         "FEATURE_FLAG=1", ["FEATURE_FLAG"], 7, None, False, 0, "", [],
         # bad names
         {"9BAD": "1"}, {"": "1"}, {"BAD-NAME": "1"}, {"BAD NAME": "1"}, {"über": "1"},
+        # the reserved identity names (options.env owns them), alone and riding a valid payload
+        {"ROMP_SID": "x"}, {"ROMP_SESSION_NAME": "web"}, {"FEATURE_FLAG": "1", "ROMP_SID": "x"},
         # bad values, the NUL hole included
         {"FEATURE_FLAG": 1}, {"FEATURE_FLAG": None}, {"FEATURE_FLAG": True},
         {"FEATURE_FLAG": {"nested": "no"}}, {"FEATURE_FLAG": "1\x00x"},
@@ -380,7 +472,47 @@ class DrivePlumbing(unittest.TestCase):
 
     def test_the_create_path_passes_env_through(self):
         src = open(os.path.join(BIN, "romp-kernel")).read()
-        self.assertIn('def _create_sdk_session(nm, cwd, auth="", env=None):', src)
+        self.assertIn('def _create_sdk_session(nm, cwd, auth="", prefs=None, client=None, env=None):', src)
+        self.assertIn("sid = _sdk().spawn(nm, cwd, bg, fg, auth=auth, env=env)", src,
+                      "env rides the SPAWN — the reg is born with it, ahead of the prefs pass")
+
+
+# ── The session-identity environment surface (upstream; the user 2026-08-15 sid, 2026-08-16 name).
+# Every SDK session's CLI process — and every Bash it runs — carries its romp identity in env:
+# ROMP_SID (the stable uuid; what `romp end self` resolves through) and ROMP_SESSION_NAME (the
+# human name at spawn). The name is a GENERIC capability for child processes that need to know
+# which session they belong to (attribution, logging), deliberately coupled to no consumer.
+# Env is spawn-frozen, so a post-spawn rename is not reflected — the sid is the address, the
+# name a label. Source pins over _options' env line (the SDK merges options.env OVER the
+# inherited environment, so both ride the same additive overlay as the bin PATH). Distinct layer
+# from the per-session user env above: identity rides options.env (the transport), user env the
+# per-sid flag-settings file — neither writes the other's layer.
+SDK = Path(os.path.join(os.path.dirname(HERE), "kernel", "sdk_backend.py")).read_text()
+
+
+class SessionIdentityEnv(unittest.TestCase):
+    def test_sid_and_name_ride_the_spawn_env(self):
+        self.assertIn('"ROMP_SID": str(sess.sid),', SDK,
+                      "the stable identity — addressing (romp end self)")
+        self.assertIn('"ROMP_SESSION_NAME": str(sess.name)', SDK,
+                      "the human name at spawn — attribution/logging for child processes")
+
+    def test_the_name_is_documented_as_spawn_frozen(self):
+        # the caveat is the contract: a rename after spawn is NOT reflected in a live session's
+        # env, so nothing may treat the name as an address — the comment must keep saying so
+        self.assertIn("a rename after spawn is NOT reflected", SDK)
+
+    def test_the_terminal_launcher_exports_the_same_identity(self):
+        # both backends: the tmux launch line carries ROMP_SID + ROMP_SESSION_NAME into the CLI's
+        # environment (the user 2026-08-16 — external tools attribute env-first, never via tmux)
+        launcher = Path(os.path.join(os.path.dirname(HERE), "bin", "romp")).read_text()
+        self.assertIn('claude_cmd="ROMP_SID=$sid ROMP_SESSION_NAME=\\"$display\\" $claude_cmd"', launcher)
+
+    def test_one_env_overlay_only(self):
+        # both vars ride _options' single env= overlay (additive over os.environ via
+        # _bin_on_path_env) — a second env assembly would fork the truth
+        self.assertEqual(SDK.count('"ROMP_SESSION_NAME":'), 1)
+        self.assertEqual(SDK.count('env={**_bin_on_path_env(os.environ)'), 1)
 
 
 if __name__ == "__main__":
