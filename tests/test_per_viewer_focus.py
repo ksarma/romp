@@ -160,7 +160,7 @@ class CreateOpenReviveAreAimedToo(unittest.TestCase):
 
     def test_a_create_with_no_asking_dashboard_moves_nobody(self):
         class _BE:
-            def spawn(self, nm, cwd, bg, fg, auth=""):
+            def spawn(self, nm, cwd, bg, fg, auth="", env=None):
                 return "sid-new"
 
             def connect(self, sid):
@@ -185,8 +185,13 @@ class CreateOpenReviveAreAimedToo(unittest.TestCase):
         self.assertIn('_create_sdk_session(nm, cwd, auth=(a if a in ("login", "key") else ""), client=client)',
                       src, "the picker's createSession follows on the asking window")
         flat = re.sub(r"\s+", "", src)   # the POST /new call wraps; pin it whitespace-blind
-        self.assertIn('sid,extra=_create_sdk_session(nm,cwd,auth=(aifain("login","key")else""),prefs=b)', flat,
+        # the fork threads env=env_req through the same call (its args carry inline comments, so the
+        # pin walks the span rather than matching one literal); the PROPERTY is unchanged: no client
+        self.assertIn('sid,extra=_create_sdk_session(nm,cwd,auth=(aifain("login","key")else""),prefs=b,', flat,
                       "POST /new (the CLI) has no dashboard in hand, and so names none")
+        start = flat.index('sid,extra=_create_sdk_session(')
+        call = flat[start:flat.index('env=env_req)', start) + len('env=env_req)')]
+        self.assertNotIn('client', call, "POST /new (the CLI) has no dashboard in hand, and so names none")
         self.assertIn('threading.Thread(target=_revive_session, args=(msg["id"], client), daemon=True)', src,
                       "the revive thread carries its asker across to the focus that clears the loader")
         self.assertIn('_fork_session(sid, str(msg.get("uuid") or ""), str(msg["name"]), client=client)',

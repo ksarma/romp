@@ -4295,11 +4295,9 @@ function renderTabs() {
   bar.appendChild(add);
   // Restore tab-mode focus if a tab held it before this rebuild (see the top of renderTabs).
   if (refocusTab) focusActiveTab();
-  // The rebuild destroyed every old tab node. If the hover tip was up, its owner is now detached and its
-  // mouseleave can never fire — restore the tip for the tab under the (unmoved) pointer, or close it. This
-  // covers EVERY rebuild source (kernel pushes land every 0.5–3s, not just clicks), including a rebuild
-  // that REMOVED the hovered tab outright (view-hidden, closed): no tab under the pointer → the tip
-  // closes instead of stranding — see rehoverTabTip.
+  // The rebuild destroyed every old tab node: a still-up tip's owner is detached and its mouseleave
+  // can never fire. Re-show for the tab under the (unmoved) pointer or close — covers every rebuild
+  // source, including one that REMOVED the hovered tab (view-hidden, closed): no tab there → close.
   if (tabTipOwner && !tabTipOwner.isConnected) rehoverTabTip();
   syncNoSessionsPlaceholder(visibleIds.length, ids.length);
   // Hiding the LAST visible session must also blank its transcript: a strip with no tabs cannot sit
