@@ -105,6 +105,17 @@ class EnvRequestError(unittest.TestCase):
         self.assertEqual(sb.env_request_error({"FEATURE_FLAG": "line1\nline2\ttabbed"}), "",
                          "NUL only — newlines and tabs are legitimate env content")
 
+    def test_the_identity_names_are_refused(self):
+        # options.env owns ROMP_SID / ROMP_SESSION_NAME (the identity overlay below): a user var of
+        # either name would silently shadow or be shadowed by the identity, breaking `romp end self`
+        # with nothing pointing at the cause — refused at the door instead, like every bad payload
+        for name in ("ROMP_SID", "ROMP_SESSION_NAME"):
+            err = sb.env_request_error({name: "x"})
+            self.assertIn(name, err, "the reserved NAME must be in the error")
+            self.assertIn("romp sets", err, "the error teaches WHO owns the name, not just 'no'")
+        self.assertTrue(sb.env_request_error({"FEATURE_FLAG": "1", "ROMP_SID": "x"}),
+                        "a reserved name refuses the WHOLE payload, never a silent skip")
+
 
 class FlagSettingsEnv(unittest.TestCase):
     """flag_settings_path folds env in beside ultracode/fastMode; the ""-when-empty contract stands."""
@@ -173,6 +184,13 @@ class SpawnEnv(_Backend):
             self.be.spawn("web", "/tmp", env={"9BAD": "1"})
         with self.assertRaises(ValueError):
             self.be.spawn("web", "/tmp", env={"FEATURE_FLAG": 1})
+
+    def test_spawn_refuses_the_identity_names(self):
+        # a reg born with ROMP_SID in its user env would shadow-race the identity at every connect
+        with self.assertRaises(ValueError):
+            self.be.spawn("web", "/tmp", env={"ROMP_SID": PARENT})
+        with self.assertRaises(ValueError):
+            self.be.spawn("web", "/tmp", env={"ROMP_SESSION_NAME": "impostor"})
 
 
 class OptionsThreadsEnv(_Backend):
@@ -282,6 +300,12 @@ class SetEnv(_Backend):
                          "a NUL value is unfulfillable — refuse, never persist it into the reg")
         self.assertEqual(self._reg(sid)["env"], ENV, "the poisoned payload must not half-apply")
 
+    def test_refuses_the_identity_names(self):
+        sid = self.be.spawn("web", "/tmp", env=ENV)
+        self.assertFalse(self.be.set_env(sid, {"ROMP_SESSION_NAME": "impostor"}),
+                         "the identity env is romp's own — never a per-session override")
+        self.assertEqual(self._reg(sid)["env"], ENV, "the refused payload must not half-apply")
+
     def test_an_explicit_empty_dict_clears_and_reconnects(self):
         # the replace-not-merge contract's limiting case: {} DECLARES "no per-session env" —
         # the only way to remove a spawn-time debugging var from a running session
@@ -342,6 +366,8 @@ class ValidatorLockstep(unittest.TestCase):
         "FEATURE_FLAG=1", ["FEATURE_FLAG"], 7, None, False, 0, "", [],
         # bad names
         {"9BAD": "1"}, {"": "1"}, {"BAD-NAME": "1"}, {"BAD NAME": "1"}, {"über": "1"},
+        # the reserved identity names (options.env owns them), alone and riding a valid payload
+        {"ROMP_SID": "x"}, {"ROMP_SESSION_NAME": "web"}, {"FEATURE_FLAG": "1", "ROMP_SID": "x"},
         # bad values, the NUL hole included
         {"FEATURE_FLAG": 1}, {"FEATURE_FLAG": None}, {"FEATURE_FLAG": True},
         {"FEATURE_FLAG": {"nested": "no"}}, {"FEATURE_FLAG": "1\x00x"},

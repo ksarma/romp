@@ -1104,20 +1104,30 @@ _FAST_REFUSALS = {
 
 ENV_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")   # the shell-identifier alphabet
 
+# The identity env _options owns (its options.env overlay): ROMP_SID is how `romp end self`
+# resolves itself to the kernel. A user var of either name rides the OTHER layer (the per-sid
+# flag-settings file), whose rank against options.env is unverified — so it would silently shadow
+# or be shadowed, and the break surfaces nowhere. Reserved at the door instead.
+ENV_RESERVED_NAMES = ("ROMP_SID", "ROMP_SESSION_NAME")
+
 
 def env_request_error(env) -> str:
     """Why `env` is NOT a valid per-session env payload — "" when it is (an empty dict is a valid,
     vacuous one). A payload is a dict of NAME → string-value pairs, names in the shell-identifier
-    alphabet: it lands in the per-sid flag-settings file the CLI reads at launch, where a name
-    outside that alphabet would be written silently and exported never. One validator for every
-    door (the /new handler mirrors it client-side of the backend seam; spawn and set_env enforce it
-    here), loud and specific by rule — the first offender is NAMED and the whole payload refused,
-    never skipped (fail-loudly, the user 2026-07-03)."""
+    alphabet and outside the reserved identity names (ENV_RESERVED_NAMES): it lands in the per-sid
+    flag-settings file the CLI reads at launch, where a name outside that alphabet would be written
+    silently and exported never. One validator for every door (the /new handler mirrors it
+    client-side of the backend seam; spawn and set_env enforce it here), loud and specific by rule —
+    the first offender is NAMED and the whole payload refused, never skipped (fail-loudly, the user
+    2026-07-03)."""
     if not isinstance(env, dict):
         return "env must be an object of NAME: value pairs"
     for k, v in env.items():
         if not isinstance(k, str) or not ENV_NAME_RE.match(k):
             return "env: bad name %r — names match [A-Za-z_][A-Za-z0-9_]*" % (k,)
+        if k in ENV_RESERVED_NAMES:
+            return ("env: %s is reserved — romp sets the session's identity env "
+                    "(ROMP_SID, ROMP_SESSION_NAME) itself" % k)
         if not isinstance(v, str):
             return "env: the value for %r must be a string" % (k,)
         if "\x00" in v:

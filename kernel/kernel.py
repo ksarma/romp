@@ -5015,6 +5015,11 @@ def _pick_identity_color(now=None):
 
 _ENV_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")   # the shell-identifier alphabet
 
+# sdk_backend.ENV_RESERVED_NAMES' kernel-side mirror: the identity env the SDK spawn owns
+# (options.env — `romp end self` resolves through ROMP_SID), which a same-named user var would
+# silently shadow or be shadowed by. Same lockstep contract as the validator below.
+_ENV_RESERVED_NAMES = ("ROMP_SID", "ROMP_SESSION_NAME")
+
 
 def _env_error(env):
     """Why POST /new's "env" is not a valid per-session env payload — "" when it is. The kernel-side
@@ -5033,6 +5038,9 @@ def _env_error(env):
     for k, v in env.items():
         if not isinstance(k, str) or not _ENV_NAME_RE.match(k):
             return "env: bad name %r — names match [A-Za-z_][A-Za-z0-9_]*" % (k,)
+        if k in _ENV_RESERVED_NAMES:
+            return ("env: %s is reserved — romp sets the session's identity env "
+                    "(ROMP_SID, ROMP_SESSION_NAME) itself" % k)
         if not isinstance(v, str):
             return "env: the value for %r must be a string" % (k,)
         if "\x00" in v:
@@ -10914,14 +10922,26 @@ def _end_on_idle_save(reqs):
 def _end_on_idle_sweep(now, tmux):
     """Kill each end-on-idle sid once its turn settles — the same clean path as the dashboard × /
     the immediate /end route (intentional death, no reviver, tab closed). A sid already dead by any
-    other path just retires its request."""
+    other path just retires its request. Every durable outcome here is CORROBORATED with the
+    liveness owner first (_confirmed_ended, the post-kill honesty gate the other kill paths ask):
+    the raw snapshot inherits list_lines' error→[] collapse and tmux's kill is fire-and-forget, so
+    one wedged server would otherwise spend the request against a LIVE session — a false gone
+    marker, comment threads torn down, every client dismissing the tab. Unconfirmed → nothing is
+    written and the request stays armed; the sweep rides every pusher cycle, so a standing wedge
+    retries loudly each tick (the death-sweep's per-tick reporting idiom), never silently."""
     reqs = _end_on_idle_load()
     if not reqs:
         return
     changed = False
     for sid in sorted(reqs):
-        if tmux.get(sid) is None:                    # already dead → the request is spent
-            reqs.discard(sid); changed = True
+        if tmux.get(sid) is None:                    # absent from the RAW snapshot — corroborate before
+            ended = _confirmed_ended(sid)            # spending: one flaky read here would discard the
+            if ended is True:                        # user's gesture with no kill ever attempted
+                reqs.discard(sid); changed = True    # genuinely dead by some other path → spent
+            elif ended is False:
+                sys.stderr.write("end-on-idle: %s missing from the snapshot but the owner says "
+                                 "alive — request kept for the next cycle\n" % sid)
+            # None: _confirmed_ended already reported the failed probe; the request stands
             continue
         try:
             ps = _parse(_path_of(sid) or "", sid, now)
@@ -10932,6 +10952,12 @@ def _end_on_idle_sweep(now, tmux):
         sys.stderr.write("kill: %s via end-on-idle (self-close)\n" % sid)
         be = Sessions.backend_for(sid)
         be.kill(sid)
+        ended = _confirmed_ended(sid)
+        if ended is not True:                        # unconfirmed kill: record nothing, broadcast nothing,
+            sys.stderr.write("end-on-idle: %s kill unconfirmed (%s) — no death record, request "
+                             "kept for the next cycle\n"
+                             % (sid, "still running" if ended is False else "probe failed"))
+            continue                                 # the armed request IS the retry
         _record_death(sid, int(now), "kill")
         _comment_kill_all(sid, be)
         _send_to_app("chat", {"type": "closed", "id": sid})

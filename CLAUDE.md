@@ -167,7 +167,7 @@ broad `git add` will sweep up your work). Conventions:
 
 ## Testing
 Every bug fix or feature change must land with a test that covers it (user rule,
-2026-06-12). Test homes: `tests/test_romp_events_golden.py` and the other
+2026-06-12). Test homes: `tests/test_event_model_golden.py` and the other
 `tests/test_*.py` for the Python pipeline (`kernel/`, `cli/`, `postal/`), `tests/*.bats` for shell
 surfaces. Reproduce the bug in a failing test first when practical; fixtures
 live in `tests/fixtures/`.

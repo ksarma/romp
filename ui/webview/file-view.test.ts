@@ -72,6 +72,15 @@ test("the viewer is a singleton MODAL over its pane: ~95% card, dimmed backdrop,
     "the feed boots the listener with the WS poster (saves ride it — slice 2)");
 });
 
+test("the FEED-hosted viewer registers no comment sink, so the review layer gates itself off", () => {
+  // the review layer's Submit drafts into the CHAT composer via a sink render.ts registers; the feed
+  // boots initFileView without one, so every comment affordance must gate on the sink or Submit is a
+  // dead button in that document (2026-08-19) — the hidden-affordance idiom the GitHub anchor uses
+  assert.doesNotMatch(FEED, /setCommentSink/, "no composer in the feed to draft into");
+  assert.match(RENDER, /setCommentSink\(\(text\) => \{/, "the chat bundle keeps the full behavior");
+  assert.match(VIEW, /if \(!commentSink\) return;/, "the gate exists in the viewer itself");
+});
+
 test("it waits with the romp loader and fails with the kernel's own words, never a blank pane", () => {
   assert.match(VIEW, /romp-swirl-glyph\.svg/, "loading-state rule: the swirl goes up first");
   assert.match(VIEW, /fileview-dot/);

@@ -218,7 +218,10 @@ export function openFileView(path: string, sid?: string | null): void {
   submitBtn.type = "button";
   submitBtn.title = "Hand every comment on this file to the session as one message";
   const syncReview = () => {
-    const n = (comments.get(key) || []).length;
+    // No sink registered (the feed's browser-hosted viewer) → Submit has nowhere to deliver, so the
+    // review controls never surface here; comments authored where a sink exists stay in the store
+    // and count only there — the GitHub-anchor treatment: no real target, no affordance.
+    const n = commentSink ? (comments.get(key) || []).length : 0;
     cmtCount.textContent = n === 1 ? "1 comment" : n + " comments";
     submitBtn.textContent = "Submit " + n + (n === 1 ? " comment" : " comments");
     cmtCount.hidden = !n;
@@ -362,8 +365,9 @@ export function openFileView(path: string, sid?: string | null): void {
   // Raw one (and the other way round). A span that can no longer be found keeps its comment — only the
   // highlight is missing, and the Submit still carries it.
   function markComments(): void {
-    const list = comments.get(key) || [];
     syncReview();
+    if (!commentSink) return;                   // no sink → the marks (and their remove ✕) stay off too
+    const list = comments.get(key) || [];
     list.forEach((c, i) => {
       const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
       const nodes: Text[] = [];
@@ -419,6 +423,7 @@ export function openFileView(path: string, sid?: string | null): void {
   // Right-click a selection → Comment. Bound on the viewer body, so it never competes with the chat's
   // own selection menu behind the backdrop.
   body.addEventListener("contextmenu", (ev) => {
+    if (!commentSink) return;                   // no sink → no Comment to offer; the native menu keeps Copy
     const sel = window.getSelection();
     const picked = sel ? sel.toString() : "";
     if (!picked.trim() || !sel?.anchorNode || !body.contains(sel.anchorNode)) return;
@@ -504,6 +509,15 @@ export function openFileView(path: string, sid?: string | null): void {
           : msg);
         comments.delete(key);
         saveComments();
+        // Delivered — but the courtesy close must not run while an edit is in progress: closeFileView's
+        // guard would pop the discard confirm over a SUBMIT, and Cancel would strand the button at
+        // "Submitting…". renderBody is off-limits mid-edit, so reset the two review controls in place
+        // and leave the editor (and its buffer) exactly as it was.
+        if (editing) {
+          submitBtn.disabled = false;
+          syncReview();
+          return;
+        }
         closeFileView();
       });
   });

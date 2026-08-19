@@ -38,7 +38,7 @@ class EndOnIdle(unittest.TestCase):
         self.td = tempfile.TemporaryDirectory()
         self.saved = {k: getattr(km, k) for k in
                       ("_parse", "_path_of", "_session_working", "_record_death",
-                       "_comment_kill_all", "_send_to_app", "_push_soon")}
+                       "_comment_kill_all", "_send_to_app", "_push_soon", "_confirmed_ended")}
         self.saved_state = km.jd.STATE
         km.jd.STATE = Path(self.td.name)
         self.be = _FakeBackend()
@@ -53,6 +53,9 @@ class EndOnIdle(unittest.TestCase):
         self.sent = []
         km._send_to_app = lambda app, m: self.sent.append((app, m))
         km._push_soon = lambda *a, **k: None
+        # the liveness owner's affirmative answer (the #85 honesty gate) — corroborated by default,
+        # so each test states only the wedge it is about
+        km._confirmed_ended = lambda sid: True
 
     def tearDown(self):
         for k, v in self.saved.items():
@@ -83,10 +86,50 @@ class EndOnIdle(unittest.TestCase):
 
     def test_a_sid_already_dead_retires_its_request_without_a_kill(self):
         km._end_on_idle_save({SID})
-        km._end_on_idle_sweep(1000, {})              # not in the live map → dead by some other path
+        km._end_on_idle_sweep(1000, {})              # absent AND the owner corroborates → dead by some other path
         self.assertEqual(self.be.killed, [])
         self.assertEqual(self.deaths, [], "no second death record over whatever really happened")
         self.assertEqual(km._end_on_idle_load(), set())
+
+    def test_a_wedged_kill_records_no_death_and_keeps_the_request(self):
+        # tmux's kill is fire-and-forget (kill_by_name returns True regardless), and the same wedged
+        # server that swallows it also fails the corroborating probe — an uncorroborated death here
+        # would stamp a LIVE session dead, kill its comment threads and dismiss its tab on every client
+        km._confirmed_ended = lambda sid: None
+        km._end_on_idle_save({SID})
+        km._end_on_idle_sweep(1000, {SID: {"state": ""}})
+        self.assertEqual(self.be.killed, [SID], "the kill is still attempted")
+        self.assertEqual(self.deaths, [], "no death record without the owner's affirmative answer")
+        self.assertEqual(self.sent, [], "no closed broadcast for a death nobody confirmed")
+        self.assertEqual(km._end_on_idle_load(), {SID}, "the request stays armed — the next sweep retries")
+
+    def test_a_kill_the_owner_says_did_not_take_keeps_the_request(self):
+        km._confirmed_ended = lambda sid: False      # still listed after the kill — it didn't land
+        km._end_on_idle_save({SID})
+        km._end_on_idle_sweep(1000, {SID: {"state": ""}})
+        self.assertEqual(self.be.killed, [SID])
+        self.assertEqual(self.deaths, [], "the owner says alive — recording a death would be a lie")
+        self.assertEqual(self.sent, [])
+        self.assertEqual(km._end_on_idle_load(), {SID})
+
+    def test_a_flaky_listing_never_spends_the_request_while_the_owner_says_alive(self):
+        # the RAW snapshot collapses any exec error/timeout to [] (the #85 collapse), so absence
+        # there alone is one flaky read — spent on it, the user's deferred-end gesture would be
+        # discarded silently, no kill ever attempted
+        km._confirmed_ended = lambda sid: False
+        km._end_on_idle_save({SID})
+        km._end_on_idle_sweep(1000, {})
+        self.assertEqual(self.be.killed, [], "not in the snapshot → nothing to kill this cycle")
+        self.assertEqual(self.deaths, [])
+        self.assertEqual(km._end_on_idle_load(), {SID}, "the request stands for the next cycle")
+
+    def test_a_failed_probe_on_an_absent_sid_keeps_the_request(self):
+        km._confirmed_ended = lambda sid: None       # cannot confirm either way — stand down
+        km._end_on_idle_save({SID})
+        km._end_on_idle_sweep(1000, {})
+        self.assertEqual(self.be.killed, [])
+        self.assertEqual(self.deaths, [])
+        self.assertEqual(km._end_on_idle_load(), {SID})
 
     def test_the_route_and_spawn_env_wiring_is_pinned(self):
         src = Path(BIN, "romp-kernel").read_text()
