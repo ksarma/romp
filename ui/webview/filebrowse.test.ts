@@ -15,24 +15,26 @@ const FEED_CSS = web("feed.css");
 const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
 
 test("the browser is the viewer's sibling overlay, one z layer BENEATH it", () => {
-  // beneath by design: a file opened from a listing overlays the listing, and closing it returns there
+  // beneath by design: a file opened from a listing overlays the listing, and closing it returns
+  // there (the viewer is a MODAL since 2026-08-15 — its backdrop, not a pane fill, draws above)
   assert.match(FEED_CSS, /\.filebrowse \{ position: fixed; inset: 0; z-index: 890;/);
-  assert.match(FEED_CSS, /\.fileview \{ position: fixed; inset: 0; z-index: 900;/);
+  assert.match(FEED_CSS, /#romp-fileview \{ position: fixed; inset: 0; z-index: 1200;/);
   assert.match(BROWSE, /box\.id = "romp-filebrowse";/);
   assert.match(BROWSE, /document\.body\.classList\.add\("filebrowse-open"\);/);
 });
 
 test("the close contract is ownership-aware: the restore fires exactly once", () => {
-  // the viewer stands down while the browser sits beneath — the browser's close does the restore
-  assert.match(VIEW, /if \(document\.getElementById\("romp-filebrowse"\)\) return;/);
+  // the viewer is a modal over whatever document opened it (2026-08-15): it never touches the feed
+  // pane, so it participates in NO restore protocol at all — no close message, nothing to suppress
+  assert.doesNotMatch(VIEW, /viewFileClosed/, "nothing to restore → nothing to announce");
+  // the browser is the ONE overlay that juggles the pane, so its close alone does the restore
   assert.match(BROWSE, /window\.parent\.postMessage\(\{ romp: "browseClosed" \}, "\*"\);/);
-  // and the shell treats either close as "the last overlay left"
-  assert.match(KERNEL, /if\(\(m\.romp==='viewFileClosed'\|\|m\.romp==='browseClosed'\)&&window\.__rompFeedWasOff\)/);
+  assert.match(KERNEL, /if\(m\.romp==='browseClosed'&&window\.__rompFeedWasOff\)/);
 });
 
-test("the shell relays browseFiles exactly like viewFile: pane forward, remembered, phone tab", () => {
+test("the shell relays browseFiles: pane forward, remembered, phone tab", () => {
   assert.match(KERNEL, /if\(m\.romp==='browseFiles'\)\{var bf=document\.getElementById\('f-feed'\);/);
-  const relay = KERNEL.split("if(m.romp==='browseFiles')")[1].split("if((m.romp==='viewFileClosed'")[0];
+  const relay = KERNEL.split("if(m.romp==='browseFiles')")[1].split("if(m.romp==='browseClosed'")[0];
   assert.ok(relay.includes("window.__rompFeedWasOff=true;"), "a pane turned on for the browser is remembered");
   assert.ok(relay.includes("window.__rompMobileTab&&window.__rompMobileTab('feed')"), "phone: one pane at a time");
   assert.ok(relay.includes("postMessage({romp:'browseFiles',path:m.path,sid:m.sid}"), "forwarded into the feed iframe");

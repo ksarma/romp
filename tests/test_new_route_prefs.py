@@ -91,7 +91,10 @@ class NewRoutePrefs(unittest.TestCase):
     def test_fresh_sdk_create_applies_both_and_echoes_them(self):
         km._live_names = lambda *_: {}
         km._sdk_ready = lambda: True
-        km._create_sdk_session = lambda nm, cwd, auth="", env=None: SID2
+        # the create path owns the prefs now — applied between spawn and connect, so the FIRST
+        # connect carries them (the 2026-08-16 -m drop); the stub mirrors that seam
+        km._create_sdk_session = (lambda nm, cwd, auth="", prefs=None, client=None, env=None:
+                                  (SID2, km._apply_new_session_prefs(SID2, prefs or {})))
         r = self._post({"name": "opt", "dir": self.dir,
                         "model": "claude-fable-5", "effort": "ultracode"})
         self.assertTrue(r["ok"])
@@ -147,8 +150,9 @@ class NewRouteEnv(unittest.TestCase):
         km._set_env_or_park = lambda be, sid, v: self.calls.append(("env", sid, v))
         km.Sessions.backend_for = staticmethod(lambda sid: self._SdkBe())
         km._sdk_ready = lambda: True
-        km._create_sdk_session = (lambda nm, cwd, auth="", env=None:
-                                  (self.created.append((nm, auth, env)), SID2)[1])
+        km._create_sdk_session = (lambda nm, cwd, auth="", prefs=None, client=None, env=None:
+                                  (self.created.append((nm, auth, env)),
+                                   (SID2, km._apply_new_session_prefs(SID2, prefs or {})))[1])
         km._push_soon = lambda: None
         km._spawn_session = lambda nm, cwd=None: self.spawns.append(nm)
 

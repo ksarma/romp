@@ -1,23 +1,29 @@
-// The file viewer that lives in the FEED pane (the user 2026-08-08).
+// The file viewer — a big modal over the CHAT pane (the user 2026-08-15: the first cut filled the
+// FEED pane, and reading a file cost the cards; the click came out of the chat, so the file presents
+// over the chat, ~95% of the pane behind a dimmed backdrop, ✕ top right — and the feed is never touched).
 //
 // Clicking a file path in the chat used to post `openFile`, which the kernel served by running an
-// opener on ITS machine. Read the dashboard from another device — a laptop across the internet, a
-// phone — and that is the wrong screen entirely; on a kernel with no desktop it did nothing at all,
-// silently, which is how the user found it. The only place a file can actually be shown is the browser
-// you are looking at, so the bytes come over the same `/file` route the image thumbnails already use
-// (federation-aware via fileUrl, so a remote session's file is relayed from the host that owns it).
+// opener on ITS machine (the user 2026-08-08). Read the dashboard from another device — a laptop
+// across the internet, a phone — and that is the wrong screen entirely; on a kernel with no desktop it
+// did nothing at all, silently, which is how the user found it. The only place a file can actually be
+// shown is the browser you are looking at, so the bytes come over the same `/file` route the image
+// previews already use (federation-aware via fileUrl, so a remote session's file is relayed from the
+// host that owns it).
 //
-// It takes over the FEED pane rather than floating a modal: the cards are the thing you are least
-// likely to be reading while you follow a path out of a transcript, and a full pane gives long source
-// somewhere to scroll. The shell brings that pane forward if it was toggled off and puts it back on
-// close, so the viewer never silently rearranges the layout you chose.
+// Living in the CHAT page also removes a whole relay: the click and the viewer are the same document
+// now, so there is no shell forwarding, no feed-pane bring-forward/put-back, and the standalone /chat
+// page views files exactly like the framed one. The module stays pane-agnostic on purpose: the file
+// BROWSER (file-browse.ts, feed bundle) opens files through this same viewer in the FEED document, so
+// whichever bundle imports it gets the identical modal.
 import hljs from "highlight.js/lib/core";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { fileUrl } from "./preview";
+import { findAnchorRange, sliceRanges } from "./comments";
+import { anchorFor, buildReviewMessage, docKey, type DocComment } from "./docreview";
 
-// hljs is registered per-bundle; the feed had none until this viewer needed it. Same language set the
-// chat registers, so a file reads identically in either place.
+// hljs is registered per-bundle. Same language set (and grammar registrations) the chat's fence
+// highlighting uses, dup-guarded, so importing this module alongside render.ts costs nothing.
 import bash from "highlight.js/lib/languages/bash";
 import python from "highlight.js/lib/languages/python";
 import javascript from "highlight.js/lib/languages/javascript";
@@ -53,10 +59,11 @@ function langFor(path: string): string | null {
   return LANG[ext] || null;
 }
 
-// marked is a per-bundle singleton and nothing else in the FEED bundle configures it, so the viewer makes
-// the same choices the chat's render.ts made: GFM without hard breaks, and strikethrough only on DOUBLE
-// tildes — marked's stock GFM `del` tokenizer fires on a single ~, so prose between two "approximately"
-// tildes renders struck through; GitHub itself only strikes ~~double~~.
+// marked is a per-bundle singleton. render.ts makes the SAME calls with the SAME choices — GFM without
+// hard breaks, strikethrough only on DOUBLE tildes (marked's stock GFM `del` tokenizer fires on a
+// single ~, so prose between two "approximately" tildes renders struck through; GitHub itself only
+// strikes ~~double~~) — so configuring here too is an idempotent no-op in the chat bundle, and keeps
+// this module correct anywhere it's bundled without render.ts.
 marked.setOptions({ gfm: true, breaks: false });
 marked.use({
   tokenizer: {
@@ -103,7 +110,7 @@ function el(tag: string, cls?: string): HTMLElement {
 }
 
 // ── raw-mode editing (plans/file-browser.md slice 2, the user 2026-08-14) ──────────────────────────
-// The save op rides the WS poster the feed boot hands initFileView; replies route back to the OPEN
+// The save op rides the WS poster the pane's boot hands initFileView; replies route back to the OPEN
 // viewer through these module-level hooks (the viewer itself is a per-open closure).
 let post: (m: Record<string, unknown>) => void = () => { /* bound by initFileView */ };
 let saveSeq = 0;
@@ -117,29 +124,50 @@ let gitHooks: { reqId: number; apply: (url: string) => void } | null = null;
 // handler both close through it without knowing an edit is in progress.
 let closeGuard: (() => boolean) | null = null;
 
-// The shell restores the pane's previous visibility on this, so it must fire on EVERY close path —
-// EXCEPT with the file BROWSER open beneath (plans/file-browser.md): closing the file then returns to
-// the listing, the pane must stay up, and the browser's own browseClosed does the restore instead.
-function tellShellClosed(): void {
-  if (document.getElementById("romp-filebrowse")) return;
+// ── review comments (the user 2026-08-14, who found coordinating a doc review painful) ─────────────
+// Reading a doc an agent wrote used to mean hand-copying every line you wanted changed back into the
+// chat. Now you comment on passages IN the viewer and one Submit hands the whole set over as a single
+// message drafted into that session's composer, each comment carrying its quote and source line — so
+// the agent applies the lot in one pass and nothing is copy-pasted.
+//
+// The layer is deliberately thin: the viewer already renders the file, so this adds selection →
+// comment, the marks, and the Submit. docreview.ts holds the pure half (anchoring + message shape).
+const CMT_KEY = "romp:fileviewComments";
+const comments = new Map<string, DocComment[]>();      // docKey(sid, path) → un-submitted comments
+
+function loadComments(): void {
   try {
-    if (window.parent !== window) window.parent.postMessage({ romp: "viewFileClosed" }, "*");
-  } catch { /* no shell (standalone /feed) — nothing to restore */ }
+    const raw = JSON.parse(localStorage.getItem(CMT_KEY) || "{}");
+    for (const [k, v] of Object.entries(raw)) {
+      const list = (Array.isArray(v) ? v : []).filter((c: any) =>
+        c && typeof c.id === "string" && typeof c.quote === "string" && typeof c.body === "string");
+      if (list.length) comments.set(k, list as DocComment[]);
+    }
+  } catch { /* unreadable store — start empty rather than throw on open */ }
+}
+loadComments();
+
+function saveComments(): void {
+  try { localStorage.setItem(CMT_KEY, JSON.stringify(Object.fromEntries(comments))); } catch { /* quota */ }
 }
 
+// render.ts owns the composer, and it imports THIS module — so the finished message is handed back
+// through a sink it registers at startup rather than importing render.ts here (which would be a cycle).
+let commentSink: ((text: string) => void) | null = null;
+export function setCommentSink(fn: (text: string) => void): void { commentSink = fn; }
+
 export function closeFileView(): void {
-  const box = document.getElementById("romp-fileview");
-  if (!box) return;
+  const wrap = document.getElementById("romp-fileview");
+  if (!wrap) return;
   if (closeGuard && !closeGuard()) return;   // unsaved edits, and the user chose to keep them
   closeGuard = null;
   editHooks = null;
   gitHooks = null;
-  box.remove();
+  wrap.remove();
   document.body.classList.remove("fileview-open");
-  tellShellClosed();
 }
 
-/** Show `path` in the feed pane. Re-opening replaces whatever is up — never stacks. */
+/** Show `path` in a modal over this pane. Re-opening replaces whatever is up — never stacks. */
 export function openFileView(path: string, sid?: string | null): void {
   // The replace path bypasses closeFileView, so it needs the same dirty ask: opening file B over an
   // edited-but-unsaved file A must not silently eat A's buffer.
@@ -148,8 +176,13 @@ export function openFileView(path: string, sid?: string | null): void {
   editHooks = null;
   gitHooks = null;
   document.getElementById("romp-fileview")?.remove();
+  // backdrop (the whole overlay carries the id every open/closed check targets) + the ~95% card.
+  // The backdrop treatment matches the lightbox: dimmed, click outside the card closes, content
+  // clicks don't (the user 2026-08-15: it must be obvious the chat is still right behind it).
+  const wrap = el("div");
+  wrap.id = "romp-fileview";
+  wrap.onclick = (ev) => { if (ev.target === wrap) closeFileView(); };
   const box = el("div", "fileview");
-  box.id = "romp-fileview";
   document.body.classList.add("fileview-open");
 
   const bar = el("div", "fileview-bar");
@@ -176,6 +209,21 @@ export function openFileView(path: string, sid?: string | null): void {
   base.textContent = path.slice(cut + 1);
   name.appendChild(dir); name.appendChild(base);
   const acts = el("div", "fileview-acts");
+
+  // Review controls. Both stay hidden until this file actually has a comment, so a plain read of a
+  // file is exactly as uncluttered as it was before this feature existed.
+  const key = docKey(sid || "", path);
+  const cmtCount = el("div", "fileview-cmtcount");
+  const submitBtn = el("button", "fileview-btn fileview-submit") as HTMLButtonElement;
+  submitBtn.type = "button";
+  submitBtn.title = "Hand every comment on this file to the session as one message";
+  const syncReview = () => {
+    const n = (comments.get(key) || []).length;
+    cmtCount.textContent = n === 1 ? "1 comment" : n + " comments";
+    submitBtn.textContent = "Submit " + n + (n === 1 ? " comment" : " comments");
+    cmtCount.hidden = !n;
+    submitBtn.hidden = !n;
+  };
 
   // ── format toggles (the user 2026-08-09) ── A markdown file opens RENDERED, its Raw form one click
   // away; everything else keeps the code view, whose long lines the Wrap toggle can soft-wrap. Both
@@ -229,10 +277,6 @@ export function openFileView(path: string, sid?: string | null): void {
   cancelBtn.addEventListener("click", () => { if (confirmDiscard()) exitEdit(); });
   acts.appendChild(editBtn); acts.appendChild(saveBtn); acts.appendChild(cancelBtn);
 
-  // ── download (the user 2026-08-09) ── Any linked file can be SAVED, including everything the pane
-  // cannot show: the kernel's ?download=1 serves anything on disk (the rationale lives with
-  // _file_download in kernel.py). Same-origin and cookie-authed like the view fetch, and
-  // federation-aware for free — fileUrl already routes a remote session's file through the relay.
   // ── GitHub link (the user 2026-08-15) ── an anchor, not a button: the browser owns opening a new
   // tab. Hidden until the OWNING kernel answers the lazy fileGitLink ask with a real URL — an
   // untracked file, a non-repo path, or a non-GitHub origin all honestly have no link, and this
@@ -253,6 +297,10 @@ export function openFileView(path: string, sid?: string | null): void {
   };
   post({ type: "fileGitLink", path, sid: sid || undefined, reqId: gitSeq });
 
+  // ── download (the user 2026-08-09) ── Any linked file can be SAVED, including everything the pane
+  // cannot show: the kernel's ?download=1 serves anything on disk (the rationale lives with
+  // _file_download in kernel.py). Same-origin and cookie-authed like the view fetch, and
+  // federation-aware for free — fileUrl already routes a remote session's file through the relay.
   const dlUrl = fileUrl(path, sid) + "&download=1";
   const dl = el("button", "fileview-btn") as HTMLButtonElement;
   dl.type = "button"; dl.textContent = "Download"; dl.title = "Save this file to your device";
@@ -270,6 +318,7 @@ export function openFileView(path: string, sid?: string | null): void {
   close.type = "button"; close.textContent = "✕"; close.title = "Close (Esc)";
   close.setAttribute("aria-label", "Close the file viewer");
   close.addEventListener("click", closeFileView);
+  acts.appendChild(cmtCount); acts.appendChild(submitBtn);
   acts.appendChild(copy); acts.appendChild(close);
   bar.appendChild(name); bar.appendChild(acts);
 
@@ -282,7 +331,8 @@ export function openFileView(path: string, sid?: string | null): void {
   body.appendChild(load);
 
   box.appendChild(bar); box.appendChild(body);
-  document.body.appendChild(box);
+  wrap.appendChild(box);
+  document.body.appendChild(wrap);
 
   // Chooses the body for the current prefs and syncs the buttons. The pressed state flips SYNCHRONOUSLY
   // in the click handler — the immediate acknowledgement ui/CLAUDE.md requires — and so does the content
@@ -304,8 +354,159 @@ export function openFileView(path: string, sid?: string | null): void {
     cancelBtn.hidden = !editing;
     if (text === null || editing) return;   // loading, or the textarea owns the body right now
     body.replaceChildren(rendered ? mdBlock(text) : codeBlock(text, path, fmt.wrap));
+    markComments();
   };
-  renderBody();   // buttons take their initial state now; the loader stays up until the fetch lands
+
+  // Paint every commented span. Reuses the chat comment threads' re-anchoring: findAnchorRange is
+  // whitespace-tolerant, which is what lets a span selected in the RENDERED view still be found in the
+  // Raw one (and the other way round). A span that can no longer be found keeps its comment — only the
+  // highlight is missing, and the Submit still carries it.
+  function markComments(): void {
+    const list = comments.get(key) || [];
+    syncReview();
+    list.forEach((c, i) => {
+      const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
+      const nodes: Text[] = [];
+      let n: Node | null;
+      while ((n = walker.nextNode())) if (!n.parentElement?.closest("mark.fv-hl")) nodes.push(n as Text);
+      const r = findAnchorRange(nodes.map((t) => t.data).join(""), c.quote);
+      if (!r) return;
+      const slices = sliceRanges(nodes.map((t) => t.data.length), r.start, r.end);
+      slices.forEach((sl, k) => {
+        const t = nodes[sl.idx];
+        const mid = sl.s > 0 ? t.splitText(sl.s) : t;
+        if (sl.e - sl.s < mid.data.length) mid.splitText(sl.e - sl.s);
+        const m = document.createElement("mark");
+        m.className = "fv-hl";
+        m.title = c.body;
+        mid.parentNode?.insertBefore(m, mid);
+        m.appendChild(mid);
+        if (k === slices.length - 1) {          // the number rides the run's tail; click to read/remove
+          const badge = document.createElement("sup");
+          badge.className = "fv-num";
+          badge.textContent = String(i + 1);
+          badge.title = c.body;
+          badge.addEventListener("click", (ev) => { ev.stopPropagation(); showNote(c, badge); });
+          m.appendChild(badge);
+        }
+      });
+    });
+  }
+
+  // The comment's text, one click under its marker — the compact form is the number (the progressive
+  // disclosure rule). Clicking the same marker again closes it.
+  function showNote(c: DocComment, at: HTMLElement): void {
+    const open = body.querySelector(".fv-note") as HTMLElement | null;
+    const same = open?.dataset.dcid === c.id;
+    open?.remove();
+    if (same) return;
+    const note = el("span", "fv-note");
+    note.dataset.dcid = c.id;
+    const txt = el("span"); txt.textContent = c.body;
+    const del = el("button", "fv-note-x") as HTMLButtonElement;
+    del.type = "button"; del.textContent = "✕"; del.title = "Remove this comment";
+    del.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      const left = (comments.get(key) || []).filter((x) => x.id !== c.id);
+      if (left.length) comments.set(key, left); else comments.delete(key);
+      saveComments();
+      renderBody();                              // repaint so the numbering closes up
+    });
+    note.appendChild(txt); note.appendChild(del);
+    at.parentNode?.insertBefore(note, at.nextSibling);
+  }
+
+  // Right-click a selection → Comment. Bound on the viewer body, so it never competes with the chat's
+  // own selection menu behind the backdrop.
+  body.addEventListener("contextmenu", (ev) => {
+    const sel = window.getSelection();
+    const picked = sel ? sel.toString() : "";
+    if (!picked.trim() || !sel?.anchorNode || !body.contains(sel.anchorNode)) return;
+    ev.preventDefault();
+    document.querySelector(".fv-menu")?.remove();
+    const menu = el("div", "ctx-menu fv-menu");
+    const item = (label: string, fn: () => void) => {
+      const it = el("div", "ctx-item");
+      it.textContent = label;
+      it.addEventListener("click", (e2) => { e2.stopPropagation(); menu.remove(); fn(); });
+      menu.appendChild(it);
+    };
+    item("Comment", () => askComment(picked));
+    item("Copy", () => { navigator.clipboard?.writeText(picked).catch(() => { /* best effort */ }); });
+    document.body.appendChild(menu);
+    const r = menu.getBoundingClientRect();
+    menu.style.left = Math.max(0, Math.min(ev.clientX, window.innerWidth - r.width - 4)) + "px";
+    menu.style.top = Math.max(0, Math.min(ev.clientY, window.innerHeight - r.height - 4)) + "px";
+    const away = (e3: MouseEvent) => {
+      if (menu.contains(e3.target as Node)) return;
+      menu.remove();
+      document.removeEventListener("mousedown", away, true);
+    };
+    document.addEventListener("mousedown", away, true);
+  });
+
+  // The box that takes a new comment. Shows the anchor it will carry, so you can see where the agent
+  // will be sent before typing.
+  function askComment(picked: string): void {
+    box.querySelector(".fv-new")?.remove();
+    const a = anchorFor(text || "", picked);
+    if (!a.quote) return;
+    const nb = el("div", "fv-new");
+    const at = el("div", "fv-at");
+    at.textContent = (a.line ? "line " + a.line + " — " : "") + "“" + a.quote.slice(0, 120) + "”";
+    const ta = el("textarea", "fv-ta") as HTMLTextAreaElement;
+    ta.placeholder = "What should change here?";
+    const row = el("div", "fv-newrow");
+    const add = el("button", "fileview-btn fileview-submit") as HTMLButtonElement;
+    add.type = "button"; add.textContent = "Add comment";
+    const cancel = el("button", "fileview-btn") as HTMLButtonElement;
+    cancel.type = "button"; cancel.textContent = "Cancel";
+    const done = () => {
+      if (!ta.value.trim()) return;
+      const list = (comments.get(key) || []).concat([{
+        id: "fc" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+        quote: a.quote, line: a.line, body: ta.value.trim(), ts: Date.now(),
+      }]);
+      comments.set(key, list);
+      saveComments();
+      nb.remove();
+      renderBody();
+    };
+    add.addEventListener("click", done);
+    cancel.addEventListener("click", () => nb.remove());
+    ta.addEventListener("keydown", (e4) => {
+      if (e4.key === "Enter" && (e4.metaKey || e4.ctrlKey)) { e4.preventDefault(); done(); }
+      if (e4.key === "Escape") { e4.preventDefault(); e4.stopPropagation(); nb.remove(); }
+    });
+    row.appendChild(add); row.appendChild(cancel);
+    nb.appendChild(at); nb.appendChild(ta); nb.appendChild(row);
+    box.appendChild(nb);
+    ta.focus();
+  }
+
+  // Submit: every comment on this file becomes ONE message drafted into the composer. Before building
+  // it, re-read the file — if the agent rewrote it while you were reading, the line anchors may now
+  // point somewhere else, and you are told so rather than sending quietly-wrong numbers.
+  submitBtn.addEventListener("click", () => {
+    const list = comments.get(key) || [];
+    if (!list.length || !commentSink) return;
+    submitBtn.disabled = true;
+    submitBtn.textContent = "Submitting…";                 // acknowledge the click before the round trip
+    fetch(fileUrl(path, sid), { cache: "no-store" })
+      .then((r) => (r.ok ? r.text() : Promise.reject(new Error("re-read failed"))))
+      .then((fresh) => fresh !== text)
+      .catch(() => false)                                       // can't re-read → claim no staleness we didn't see
+      .then((stale) => {
+        const msg = buildReviewMessage(path, list);
+        if (!msg) return;
+        commentSink!(stale
+          ? msg + "\n(Heads up: the file changed while I was reading it, so the line numbers may have moved.)\n"
+          : msg);
+        comments.delete(key);
+        saveComments();
+        closeFileView();
+      });
+  });
 
   // ── edit mode (slice 2) ── a plain textarea holding the raw bytes: an embedded editor component is
   // a different project, and a textarea that keeps your changes beats a half-editor. The kernel's
@@ -381,6 +582,7 @@ export function openFileView(path: string, sid?: string | null): void {
     };
     post({ type: "saveFile", path, sid: sid || undefined, content, baseMtimeNs: mtimeNs, reqId: saveSeq });
   };
+  renderBody();   // buttons take their initial state now; the loader stays up until the fetch lands
 
   const onKey = (e: KeyboardEvent) => {
     if (e.key !== "Escape" || !document.getElementById("romp-fileview")) return;
@@ -528,12 +730,14 @@ function mdBlock(text: string): HTMLElement {
   const box = el("div", "fileview-md");
   try {
     const dirty = marked.parse(text) as string;
-    box.innerHTML = DOMPurify.sanitize(dirty, { USE_PROFILES: { html: true }, ADD_DATA_URI_TAGS: ["img"] });
+    // html + svg, in lockstep with the chat's md(): KaTeX draws stretchy glyphs (\sqrt radicals,
+    // wide accents) as inline <svg> even in html output, and the html-only profile ate them.
+    box.innerHTML = DOMPurify.sanitize(dirty, { USE_PROFILES: { html: true, svg: true }, ADD_DATA_URI_TAGS: ["img"] });
   } catch {
     box.textContent = text;                            // a marked bug must never cost the content
   }
-  // Links open a NEW tab: the viewer lives inside the feed pane's iframe, and letting a README link
-  // navigate that iframe away would silently eat the feed until a reload.
+  // Links open a NEW tab: the viewer lives inside the chat pane's document, and letting a README link
+  // navigate it away would silently eat the chat until a reload.
   box.querySelectorAll("a[href]").forEach((a) => {
     (a as HTMLAnchorElement).target = "_blank";
     (a as HTMLAnchorElement).rel = "noopener";
@@ -552,8 +756,11 @@ function mdBlock(text: string): HTMLElement {
   return box;
 }
 
-/** Listen for the shell's relay of a chat file-link click, and for saveFile's replies. Called once,
- *  from the feed's boot, with the pane's WS poster (the same one the browser overlay gets). */
+/** Bind the pane's WS poster and route saveFile/fileGitLink replies back to the open viewer. Called
+ *  once, from the pane's boot (feed.ts today, beside the browser overlay's initFileBrowse; a bundle
+ *  that opens the viewer directly wires it the same way). The viewFile branch honors a shell's relay
+ *  of a chat file-link click — nothing sends it since the viewer moved into the chat document, but a
+ *  not-yet-reloaded shell page still might, and honoring it costs nothing. */
 export function initFileView(poster: (m: Record<string, unknown>) => void): void {
   post = poster;
   window.addEventListener("message", (e: MessageEvent) => {

@@ -1,9 +1,13 @@
-// The file viewer in the FEED pane (the user 2026-08-08). Clicking a file path in the chat used to post
-// `openFile`, which the kernel served by running an opener on ITS OWN machine — the wrong screen when the
+// The file viewer — a modal over the CHAT pane (the user 2026-08-15; the first cut filled the FEED
+// pane, and reading a file cost the cards). Clicking a file path in the chat used to post `openFile`,
+// which the kernel served by running an opener on ITS OWN machine — the wrong screen when the
 // dashboard is read from another device, and nothing at all on a kernel with no desktop, because the
-// opener was macOS-only. The bytes have to reach the browser, so the click now routes to a viewer fed by
-// the same /file route the image thumbnails use. Source pins (no jsdom for these modules) + executed
-// replicas of the pure helpers.
+// opener was macOS-only (the user 2026-08-08). The bytes have to reach the browser, so the click routes
+// to a viewer fed by the same /file route the image previews use — now in the SAME document as the
+// click, so the chat needs no shell relay. The FEED still hosts the viewer too: the file BROWSER
+// (file-browse.ts, a fork feature) opens files through the same module in its own document, which is
+// why the feed sheet mirrors the viewer CSS instead of dropping it. Source pins (no jsdom for these
+// modules) + executed replicas of the pure helpers.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -14,14 +18,16 @@ const VIEW = web("file-view.ts");
 const RENDER = web("render.ts");
 const FEED = web("feed.ts");
 const FEED_CSS = web("feed.css");
+const CHAT_CSS = web("styles.css");
 
-test("openPath routes by HOST: the feed viewer on the web, the editor in VS Code", () => {
+test("openPath routes by HOST: the in-pane viewer modal on the web, the editor in VS Code", () => {
   assert.match(RENDER, /function openPath\(path: string, sid\?: string \| null\): void/);
-  // web dashboard inside the shell → relay up; the chat and the feed are different documents
-  assert.match(RENDER, /const web = location\.protocol === "http:" \|\| location\.protocol === "https:";/);
-  assert.match(RENDER, /if \(web && window\.parent !== window\) \{/);
-  assert.match(RENDER, /window\.parent\.postMessage\(\{ romp: "viewFile", path, sid: sid \|\| activeId \|\| null \}, "\*"\);/);
-  // everything else (VS Code, or /chat opened standalone with no shell) keeps the kernel-side opener
+  // web → the viewer opens in THIS document, framed or standalone alike — no shell relay, no fallback
+  assert.match(RENDER, /openFileView\(path, sid \|\| activeId \|\| null\);/);
+  // (the import also carries setCommentSink since 2026-08-14 — the review layer's way back to the composer)
+  assert.match(RENDER, /import \{ openFileView, setCommentSink \} from "\.\/file-view";/);
+  assert.doesNotMatch(RENDER, /romp: "viewFile"/, "the chat→shell→feed relay is gone");
+  // VS Code keeps the host editor
   assert.match(RENDER, /vscodeApi\.postMessage\(sid \? \{ type: "openFile", path, id: sid \} : \{ type: "openFile", path \}\);/);
 });
 
@@ -33,28 +39,37 @@ test("every file-link surface in the chat goes through openPath — no direct op
                "both remaining mentions are the two arms of openPath's fallback");
 });
 
-test("the shell relays chat → feed, and restores a pane it had to turn on", () => {
+test("the VIEWER's shell relay is gone; the BROWSER's stays — the feed pane is only juggled for it", () => {
   const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
-  assert.match(KERNEL, /if\(m\.romp==='viewFile'\)\{var vf=document\.getElementById\('f-feed'\);/);
-  // a feed pane the user had toggled OFF is turned on for the viewer and put back on close — the viewer
-  // must never silently rearrange the layout they chose
+  // the viewer lives in the clicking document now, so the shell no longer forwards viewFile clicks
+  // (the user 2026-08-15: a file view must never touch the feed) — and the viewer, being a modal over
+  // whatever pane opened it, has nothing to restore and nothing to announce
+  assert.doesNotMatch(KERNEL, /m\.romp==='viewFile'/);
+  assert.doesNotMatch(VIEW, /viewFileClosed/, "nothing to restore → nothing to announce");
+  // the file BROWSER (plans/file-browser.md, fork-only) still lives in the FEED pane, so its ask still
+  // relays through the shell from any pane, still turns a toggled-off feed on, and still restores it
+  // on browseClosed — that machinery is the browser's, not the viewer's
+  assert.match(KERNEL, /if\(m\.romp==='browseFiles'\)\{var bf=document\.getElementById\('f-feed'\);/);
   assert.match(KERNEL, /window\.__rompFeedWasOff=true;/);
-  // both overlays restore through one gate (plans/file-browser.md): the browser suppresses the viewer's
-  // close message while it sits beneath, so whichever message arrives is the LAST overlay leaving
-  assert.match(KERNEL, /if\(\(m\.romp==='viewFileClosed'\|\|m\.romp==='browseClosed'\)&&window\.__rompFeedWasOff\)\{window\.__rompFeedWasOff=false;/);
+  assert.match(KERNEL, /m\.romp==='browseClosed'/);
   assert.match(KERNEL, /window\.__rompMobileTab&&window\.__rompMobileTab\('feed'\)/, "phone: one pane at a time");
-  assert.match(KERNEL, /window\.__rompMobileTab=show;/, "…which means the mobile switcher has to be exposed");
 });
 
-test("the viewer is a singleton that fills the pane and always tells the shell when it closes", () => {
+test("the viewer is a singleton MODAL over its pane: ~95% card, dimmed backdrop, ✕/Esc/backdrop close", () => {
   assert.match(VIEW, /document\.getElementById\("romp-fileview"\)\?\.remove\(\);/, "re-opening replaces, never stacks");
-  assert.match(VIEW, /window\.parent\.postMessage\(\{ romp: "viewFileClosed" \}, "\*"\);/);
-  // Esc and ✕ are the same close path, so the shell's restore can't be skipped by one of them
+  // the backdrop closes on ITS OWN clicks only — content clicks don't (the lightbox contract)
+  assert.match(VIEW, /wrap\.onclick = \(ev\) => \{ if \(ev\.target === wrap\) closeFileView\(\); \};/);
   assert.match(VIEW, /close\.addEventListener\("click", closeFileView\);/);
   assert.match(VIEW, /if \(e\.key !== "Escape" \|\| !document\.getElementById\("romp-fileview"\)\) return;/);
+  // the panels treatment on the CHAT sheet: dimmed rgba(0,0,0,0.55) backdrop, the content behind visible
+  assert.match(CHAT_CSS, /#romp-fileview \{ position: fixed; inset: 0; z-index: 1200; background: rgba\(0, 0, 0, 0\.55\);/);
+  assert.match(CHAT_CSS, /\.fileview \{ width: 95%; height: 95%;/);
+  // …and mirrored on the FEED sheet, which still hosts the viewer when the file BROWSER opens a file
+  // (one treatment, two sheets — the hljs-palette precedent below)
+  assert.match(FEED_CSS, /#romp-fileview \{ position: fixed; inset: 0;/);
+  assert.match(FEED_CSS, /\.fileview \{ width: 95%; height: 95%;/);
   assert.match(FEED, /initFileView\(\(m\) => vscodeApi\?\.postMessage\(m\)\);/,
     "the feed boots the listener with the WS poster (saves ride it — slice 2)");
-  assert.match(FEED_CSS, /\.fileview \{ position: fixed; inset: 0;/);
 });
 
 test("it waits with the romp loader and fails with the kernel's own words, never a blank pane", () => {
@@ -95,11 +110,11 @@ test("langFor maps known extensions and returns null rather than guessing", () =
 
 // ── formatting (the user 2026-08-09): the hljs palette, Raw ⇄ Rendered for markdown, and word wrap ──
 
-// A. The viewer wraps every token in .hljs-* spans, but the feed page loads ONLY feed.css — with no
-// palette there the highlighting rendered colorless. Both sheets must carry the SAME palette (one
-// treatment, two sheets — the .romp-acted precedent), so this pins every rule in both and catches drift.
+// A. The viewer wraps every token in .hljs-* spans, and it renders in BOTH documents — the chat (file
+// links) and the feed (the file browser) — so both sheets must carry the SAME palette (one treatment,
+// two sheets — the .romp-acted precedent). This pins every rule in both and catches drift.
 test("the hljs token palette lives in feed.css too, identical to the chat's", () => {
-  const STYLES = web("styles.css");
+  const STYLES = CHAT_CSS;
   const rules = [
     /\.hljs \{ color: #d8c6a8; background: transparent; \}/,
     /\.hljs-keyword, \.hljs-built_in, \.hljs-literal, \.hljs-type \{ color: #c98a6a; \}/,
@@ -158,19 +173,23 @@ test("Raw ⇄ Rendered exists for markdown ONLY, and nothing reaches innerHTML u
   assert.match(VIEW, /if \(isMd\) \{\s*\n\s*for \(const mode of \["rendered", "raw"\] as const\)/);
   assert.match(VIEW, /const rendered = isMd && fmt\.md === "rendered";/, "non-md never renders as prose");
   assert.match(VIEW, /import DOMPurify from "dompurify";/);
-  assert.match(VIEW, /box\.innerHTML = DOMPurify\.sanitize\(dirty, \{ USE_PROFILES: \{ html: true \}, ADD_DATA_URI_TAGS: \["img"\] \}\);/);
-  // a README's links open a NEW tab rather than navigating the feed pane's iframe away
+  // html + svg, in lockstep with the chat's md(): KaTeX draws stretchy glyphs as inline <svg>
+  assert.match(VIEW, /box\.innerHTML = DOMPurify\.sanitize\(dirty, \{ USE_PROFILES: \{ html: true, svg: true \}, ADD_DATA_URI_TAGS: \["img"\] \}\);/);
+  // a README's links open a NEW tab rather than navigating the hosting pane's document away
   assert.match(VIEW, /target = "_blank"/);
   assert.match(VIEW, /rel = "noopener"/);
   // fenced blocks highlight only a NAMED, registered language — same no-guessing rule as langFor
   assert.match(VIEW, /if \(!lang \|\| !hljs\.getLanguage\(lang\)\) return;/);
-  // the prose typography exists on this sheet (the chat's .md block is the reference aesthetic)
+  // the prose typography exists on BOTH sheets (the chat's .md block is the reference aesthetic)
   assert.match(FEED_CSS, /\.fileview-md \{/);
   assert.match(FEED_CSS, /\.fileview-md pre code \{/);
+  assert.match(CHAT_CSS, /\.fileview-md \{/);
+  assert.match(CHAT_CSS, /\.fileview-md pre code \{/);
   // toggles acknowledge in the same synchronous tick: click → save → renderBody, which flips .on
   assert.match(VIEW, /b\.addEventListener\("click", \(\) => \{ fmt\.md = mode; saveFmt\(fmt\); renderBody\(\); \}\);/);
   assert.match(VIEW, /b\.classList\.toggle\("on", on\);/);
   assert.match(FEED_CSS, /\.fileview-btn\.on \{ color: var\(--accent\); border-color: var\(--accent\);/);
+  assert.match(CHAT_CSS, /\.fileview-btn\.on \{ color: var\(--accent\); border-color: var\(--accent\);/);
 });
 
 // C, executed: wrap mode's numbering. A flat gutter misaligns the moment one logical line wraps onto
@@ -216,9 +235,11 @@ test("the Wrap toggle persists, hides with rendered prose, and its numbers still
   assert.match(VIEW, /if \(wrapLines\) \{[\s\S]*?return wrap;\s*\}\s*const gutter = el\("div", "fileview-gutter"\);/);
   // plain files wrap too: no grammar → the text is HTML-escaped before the line walk
   assert.match(VIEW, /code\.innerHTML = wrapNumberedHtml\(hl !== null \? hl : escapeHtml\(text\)\);/);
-  assert.match(FEED_CSS, /\.fileview-pre\.fileview-wrap \{ white-space: pre-wrap/);
-  assert.match(FEED_CSS, /\.fileview-wrap \.fv-cl::before \{[\s\S]*?counter-increment: fvln/);
-  assert.match(FEED_CSS, /\.fileview-wrap \.fv-cl::before \{[\s\S]*?user-select: none/);
+  for (const SHEET of [FEED_CSS, CHAT_CSS]) {
+    assert.match(SHEET, /\.fileview-pre\.fileview-wrap \{ white-space: pre-wrap/);
+    assert.match(SHEET, /\.fileview-wrap \.fv-cl::before \{[\s\S]*?counter-increment: fvln/);
+    assert.match(SHEET, /\.fileview-wrap \.fv-cl::before \{[\s\S]*?user-select: none/);
+  }
   // wrap governs the pre view only — rendered prose always wraps — so the button leaves with it
   // (and with edit mode, whose textarea has no wrap toggle to govern — slice 2)
   assert.match(VIEW, /wrapBtn\.hidden = rendered \|\| editing;/);
@@ -272,6 +293,7 @@ test("a refusal renders the kernel's words PLUS the way out — gated on offersD
   assert.match(VIEW, /why\.appendChild\(offer\);/);
   assert.match(VIEW, /offer\.addEventListener\("click", \(\) => startDownload\(dlUrl, offer\)\);/);
   assert.match(FEED_CSS, /\.fileview-err-dl \{ display: block; margin-top: 10px; \}/);
+  assert.match(CHAT_CSS, /\.fileview-err-dl \{ display: block; margin-top: 10px; \}/);
 });
 
 // executed: the gutter is a SIBLING of the code, so selecting the code copies it without line numbers
@@ -287,4 +309,5 @@ test("the line gutter numbers every line and drops a trailing newline's phantom 
   assert.match(VIEW, /gutter\.textContent = lines\.map\(\(_, i\) => String\(i \+ 1\)\)\.join\("\\n"\);/);
   assert.match(VIEW, /wrap\.appendChild\(gutter\); wrap\.appendChild\(pre\);/, "sibling, not inside the pre");
   assert.match(FEED_CSS, /\.fileview-gutter \{[\s\S]*?user-select: none;/);
+  assert.match(CHAT_CSS, /\.fileview-gutter \{[\s\S]*?user-select: none;/);
 });

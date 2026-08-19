@@ -83,6 +83,12 @@ ROMP_INJECT_RE = re.compile(r"<!--\s*romp-injected\s*-->")
 # romp-injected; an atom carrying it gets atom["rompAuto"]=True for the timeline/chat to mark.
 # Comment form only, same reason as ROMP_INJECT_RE (content mentioning the marker must not match).
 ROMP_AUTO_RE = re.compile(r"<!--\s*romp-auto\s*-->")
+# A sender-declared RENDER HINT on an injected message (the user 2026-08-15): auto-generated text — a
+# kickoff template, a scripted brief — carries `<!-- romp-tag: <label> -->` (romp send --tag, or the
+# marker appended by hand) so the chat shows it as machine-sent under that label instead of posing it
+# as the user's typed words. The label is the SENDER's own word; romp attaches no meaning to it — a
+# render hint, not a message type. Comment form only, same reason as ROMP_INJECT_RE.
+MSG_TAG_RE = re.compile(r"<!--\s*romp-tag:\s*([A-Za-z0-9][A-Za-z0-9-]{0,23})\s*-->")
 # Harness-injected SYSTEM wrappers that are NOT the user: a background-task completion (`<task-notification>`,
 # fired when a backgrounded Agent/Task finishes) and `<system-reminder>` blocks. In an SDK session these arrive
 # over the stream as promptSource "sdk", so sdk_human would author them 'human' → _is_opener opens a turn →
@@ -244,11 +250,13 @@ def _scan_bg_tasks(path, want_all=False):
     missing this left finished tasks reading 'running' forever), and a queue-operation enqueue holding
     the notification while the session is busy — the task itself is already finished the moment any of
     the three exists.
-    Returns [{id,status,summary,command,outputFile}] (+ type on agent/workflow rows)."""
+    Returns [{id,status,summary,command,outputFile}] (+ type on agent/workflow rows; + endT — the
+    transcript time its result LANDED — on rows a notification has terminal-marked, so the awaiting-stamp
+    lift can tell a return that ENDED a stamped wait from one the stamping judge had already seen)."""
     tasks, order = {}, []
     dispatch = {}   # tool_use id -> the launching Agent/Task/Workflow block's own words (see docstring)
 
-    def _mark(note):
+    def _mark(note, end_t=None):
         # a notification keyed by its INNER <tool-use-id> (the string/queue shapes have no wrapper block)
         tid = (note or {}).get("tool_use_id")
         if tid and tid in tasks:
@@ -256,6 +264,8 @@ def _scan_bg_tasks(path, want_all=False):
                 return                     # a monitor EVENT (no <status> tag) — the watch is still live
             tasks[tid].update(status=note["status"], outputFile=note["output_file"],
                               summary=note["summary"] or tasks[tid]["summary"])
+            if end_t:                      # WHEN the result landed — the awaiting-stamp lift keys the
+                tasks[tid]["endT"] = end_t  # "returned after the stamp was written" test on it (2026-08-16)
 
     try:
         with open(path, errors="replace") as f:
@@ -360,16 +370,22 @@ def _scan_bg_tasks(path, want_all=False):
                                     continue               # a wrapped monitor EVENT — not a terminal (see _mark)
                                 tasks[tid].update(status=note["status"], outputFile=note["output_file"],
                                                   summary=note["summary"] or tasks[tid]["summary"])
+                                et = parse_z(o.get("timestamp"))
+                                if et:                     # the return's moment (see _mark)
+                                    tasks[tid]["endT"] = et
                             elif tid in tasks and note is None and b.get("is_error") \
                                     and tasks[tid]["status"] == "running":
                                 # the LAUNCH's own ack errored (refused permission, bad input) → nothing ever
                                 # started, and no notification will ever come. Without this, the phantom
                                 # reads "running" forever and holds awaiting/nudge gates open on nothing.
                                 tasks[tid]["status"] = "failed"
+                                et = parse_z(o.get("timestamp"))
+                                if et:
+                                    tasks[tid]["endT"] = et
                 elif t == "user" and isinstance(c, str):
-                    _mark(_parse_task_notification(c))
+                    _mark(_parse_task_notification(c), parse_z(o.get("timestamp")))
                 elif t == "queue-operation" and o.get("operation") == "enqueue":
-                    _mark(_parse_task_notification(o.get("content") or ""))
+                    _mark(_parse_task_notification(o.get("content") or ""), parse_z(o.get("timestamp")))
     except OSError:
         return []
     if want_all:
@@ -413,8 +429,15 @@ def _read_jsonl(path):
 # (FileAdapter builds fresh atom dicts; nothing writes into a record), matching the kernel's existing
 # whole-parse cache contract. The cached list itself is never extended in place — a grown file stores a
 # NEW list — so a concurrent reader holding the old list is never surprised mid-iteration.
-_JSONL_CACHE = {}                 # path -> (mtime, size, offset, tail_bytes, records)
-_JSONL_CACHE_MAX = 64             # bounded by fleet size; wholesale clear is fine (one cold re-read each)
+_JSONL_CACHE = {}                 # path -> (mtime, size, offset, tail_bytes, records); dict order = LRU, hits reinsert
+_JSONL_CACHE_MAX = 256            # bounds MEMORY only — past the cap, evict the least-recently-USED entry, one per
+                                  # insert, never clear(). The old clear-at-cap was sized to the session count, but
+                                  # the working set is FILES, not sessions (every subagent writes its own transcript):
+                                  # once more distinct files than slots passed through one push cycle, the clear
+                                  # nuked the HOT entries too and every push re-parsed every active transcript from
+                                  # byte zero — the exact stall this cache exists to prevent, back as a permanent
+                                  # background burn (recurred 2026-08-15, kernel pinned at ~30-60% CPU; the survival
+                                  # guarantee is pinned by tests/test_kernel_jsonl_cache.py).
 _JSONL_TAIL_GUARD = 64            # bytes of pre-offset content re-verified before an incremental read
 
 
@@ -447,6 +470,8 @@ def _read_jsonl_incremental(path):
         return []
     hit = _JSONL_CACHE.get(path)
     if hit is not None and hit[0] == st.st_mtime and hit[1] == st.st_size:
+        _JSONL_CACHE.pop(path)            # reinsert at the LRU tail: a served entry is a USED entry
+        _JSONL_CACHE[path] = hit
         return hit[4]
     try:
         with open(path, "rb") as fh:
@@ -467,8 +492,9 @@ def _read_jsonl_incremental(path):
     except OSError:
         _JSONL_CACHE.pop(path, None)
         return []
-    if len(_JSONL_CACHE) > _JSONL_CACHE_MAX:
-        _JSONL_CACHE.clear()
+    _JSONL_CACHE.pop(path, None)
+    while len(_JSONL_CACHE) >= _JSONL_CACHE_MAX:
+        _JSONL_CACHE.pop(next(iter(_JSONL_CACHE)))   # oldest-used first; hot entries survive any cold flood
     _JSONL_CACHE[path] = (st.st_mtime, st.st_size, offset, tail, records)
     return records
 

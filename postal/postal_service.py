@@ -444,9 +444,16 @@ def format_inbox(msgs, me_id=""):
         mid = ("\n<!-- romp-msg-id: %s -->" % m["id"]) if m.get("id") else ""   # exact id for the timeline join
         if m.get("kind"):
             mid += "\n<!-- romp-msg-kind: %s -->" % m["kind"]   # sender-declared kind, read by the courier
-        out.append("\n— from %s%s%s:\n%s%s" % (m.get("from", "?"), d, pk, m.get("body", ""), mid))
+        out.append("\n— from %s%s%s:\n%s%s" % (_from_disp(m), d, pk, m.get("body", ""), mid))
     out.append("\n" + REPLY_HINT)
     return "\n".join(out)
+
+def _from_disp(m):
+    """The sender name a banner shows. Never the literal "unknown"/"?" a broken sender minted
+    (pre-2026-08-18 mail, or a peer bus older than the /send refusal): a canned body over
+    "from unknown" reads as a greeting from a ghost. Say what is true instead."""
+    nm = str(m.get("from") or "").strip()
+    return nm if nm and nm.lower() != "unknown" and nm != "?" else "an unidentified session"
 
 def format_agents(agents, me, me_id=""):
     if not agents:
@@ -1011,7 +1018,7 @@ def format_push(msgs):
     out = []
     for m in msgs:
         pk = " · ⏸ parked (you were offline)" if m.get("park") else ""
-        head = "## \U0001F4EC from %s · %s%s" % (m.get("from", "?"), _hhmm(m.get("date", "")), pk)
+        head = "## \U0001F4EC from %s · %s%s" % (_from_disp(m), _hhmm(m.get("date", "")), pk)
         out += [bar, head, bar, m.get("body", "")]
         if m.get("id"):
             out.append("<!-- romp-msg-id: %s -->" % m["id"])   # exact id for the timeline join
@@ -1192,6 +1199,17 @@ class Handler(BaseHTTPRequestHandler):
             to = data.get("to", "")
             frm, frm_id = data.get("from", "unknown"), data.get("from_id", "")
             body = data.get("body", "")
+            if not frm_id:
+                # An unidentifiable sender's mail arrives literally "from unknown" — a canned-sounding
+                # greeting the recipient can neither place nor answer (the user 2026-08-18, who met one
+                # on their laptop; the 2026-07-27 clear-fork minted the same ghost). Refuse LOUDLY at
+                # the one door every sender uses: the breakage is the SENDER's identity resolution, and
+                # a visible error there beats ghost mail here (fail loudly, 2026-07-03). Cross-host
+                # relays are unaffected — they arrive on the peer routes with identity in their headers.
+                return self._send({"error": "sender identity required: this send carried no from_id, so "
+                                   "it would arrive as mail 'from unknown' that the recipient cannot "
+                                   "place or answer. The sender should know its own session id — fix "
+                                   "that resolution and resend."}, 400)
             kind = str(data.get("kind", "")).strip().lower()
             if kind not in ("delegate", "coordinate", "question"):
                 kind = ""                              # legacy/CLI mail may be undeclared; never invent one
@@ -1225,6 +1243,9 @@ class Handler(BaseHTTPRequestHandler):
                 if PEERS.get(phost, {}).get("up"):
                     return self._send({"ok": True, "id": mid,
                                        "note": "relaying to '%s' on %s" % (hit.get("name") or to, phost)})
+                _kernel_post("/redial", {"host": phost})   # parking IS demand: ask the kernel to
+                #                                             re-dial the host's tunnel now instead of
+                #                                             waiting out its backoff (the user 2026-08-16)
                 return self._send({"ok": True, "id": mid, "parked": phost,
                                    "note": "parked for %s (unreachable) — delivers on reconnect, "
                                            "or bounces back to you" % phost})
@@ -2552,8 +2573,14 @@ def _mcp_call(name, args):
         if kind not in ("delegate", "coordinate", "question"):
             return ("Need 'kind': one of delegate (the recipient owns the work now), "
                     "coordinate (aligning/heads-up), or question (you need an answer).", True)
+        if not mid:
+            # the bus would refuse this anyway (anonymous mail arrives "from unknown"); say it
+            # HERE with the actionable half — the sender's own identity is what's broken
+            return ("Cannot send: this session's own identity did not resolve (no session id), so "
+                    "the mail would arrive anonymously and the recipient could not place or answer "
+                    "it. This is a session-identity bug worth surfacing to the user.", True)
         try:
-            resp = _http("POST", "/send", {"to": to, "from": me or "unknown", "from_id": mid or "", "body": body,
+            resp = _http("POST", "/send", {"to": to, "from": me or "unknown", "from_id": mid, "body": body,
                                            "kind": kind})
             # "Delivered" has to MEAN delivered. A cross-host send is only relaying (or parked for
             # an unreachable host, or held for the human on the far side), and the bus says so in
@@ -2564,7 +2591,7 @@ def _mcp_call(name, args):
             if note:
                 return "Message to '%s': %s" % (to, note), False
             # Echo what the DECLARATION did, not just that bytes moved (the user 2026-07-26): a question
-            # or delegate records the SENDER as waiting on the recipient — a real hold that a mis-declared
+            # records the SENDER as waiting on the recipient — a real hold that a mis-declared
             # kind creates by accident (a "question" whose prose said no reply was needed parked its
             # sender for a day). Reading the cost back lets the sender self-correct on the spot, while
             # recall_message still works.
@@ -2573,8 +2600,10 @@ def _mcp_call(name, args):
                         "reply until they answer. If you don't actually need a reply, recall this "
                         "message and resend it as coordinate." % to, False)
             if kind == "delegate":
-                return ("Delivered to '%s' as a handoff — you are now recorded as waiting on them to "
-                        "report back; their next message to you clears it." % to, False)
+                return ("Delivered to '%s' as a handoff — they own it now; you are NOT recorded as "
+                        "waiting (the user 2026-08-15: ownership transferred is not a dependency). "
+                        "If you genuinely need their report before you can proceed, send a question "
+                        "instead." % to, False)
             return "Delivered to '%s'." % to, False
         except BusError as e:
             return str(e), True
@@ -2682,8 +2711,14 @@ def cli_send(argv):
     if not ensure():
         sys.stderr.write("[romp mail] %s\n" % _unreachable_hint()); return 1
     me, mid = my_name(), my_id()
+    if not mid:
+        # the bus refuses anonymous sends; say it here with the actionable half
+        sys.stderr.write("[romp mail] cannot send: this session's own identity did not resolve "
+                         "(no session id), so the mail would arrive anonymously. Surface this to "
+                         "the user as a session-identity bug.\n")
+        return 1
     try:
-        resp = _http("POST", "/send", {"to": to, "from": me or "unknown", "from_id": mid or "", "body": body,
+        resp = _http("POST", "/send", {"to": to, "from": me or "unknown", "from_id": mid, "body": body,
                                        "kind": kind})
     except BusError as e:
         sys.stderr.write("[romp mail] %s\n" % e); return 1

@@ -40,7 +40,7 @@ var SHORTCUT_ROWS =
 
 // Auto Nudge's hover description lives in a var because fillAutoNudge() appends to it when the attached
 // machines disagree — the row then has to say WHICH ones, and this is the one level down from the label.
-var AUTONUDGE_SUB = "When a session goes idle but its goal still shows working (not blocked, not awaiting "
+var AUTONUDGE_SUB = "When a session goes idle but its goal still shows working (not blocked, not awaiting agents or a job "
   + "you), automatically nudge it once for a status update. Applies to every connected machine's kernel.";
 
 // The modal markup — ported verbatim from the kernel's _gear_html; the model/
@@ -97,6 +97,11 @@ var GEAR_HTML =
   "border:1px solid #3a3a3a;border-radius:5px;padding:3px 4px;cursor:pointer'>" +
   '<option value=over50>When above 50%</option><option value=always>Always</option><option value=never>Never</option>' +
   '</select></span></div>' +
+  '<div class=rs-sec>Feed</div>' +
+  '<label class=rs-row><input type=checkbox id=rs-feedcollapsed>' +
+  '<span><b>Collapse cards by default</b>' +
+  '<span class=rs-sub>Every card arrives collapsed to its one-line gist; expanding one is a per-card override. Moved here from the feed footer — a set-and-forget default, not a per-glance action.</span>' +
+  '</span></label>' +
   '<div class=rs-sec>Timeline</div>' +
   '<label class=rs-row><input type=checkbox id=rs-activeonly checked>' +
   '<span><b>Show active sessions only</b>' +
@@ -162,6 +167,7 @@ function initGear(post) {
     dd = document.getElementById('rs-defaultdir'), gb = document.getElementById('rs-branch'),
     tc = document.getElementById('rs-tabctx'),
     cg = document.getElementById('rs-collapsegaps'), ao = document.getElementById('rs-activeonly'),
+    fc = document.getElementById('rs-feedcollapsed'),
     jm = document.getElementById('rs-judgemodel'),
     im = document.getElementById('rs-indexmodel'), je = document.getElementById('rs-judgeeffort'),
     jf = document.getElementById('rs-judgefast'),
@@ -192,6 +198,7 @@ function initGear(post) {
   jtr.addEventListener('change', function () { var s = load(); s.showTriageJudges = jtr.checked; save(s); });
   if (cg) cg.addEventListener('change', function () { var s = load(); s.collapseGaps = cg.checked; save(s); });
   if (ao) ao.addEventListener('change', function () { var s = load(); s.activeOnly = ao.checked; save(s); });
+  if (fc) fc.addEventListener('change', function () { var s = load(); s.collapsed = fc.checked; save(s); });
   // Auto Nudge / judge tiers are SERVER-SIDE (the kernel runs them): post the
   // change; the controls re-initialize from /version on every open (fill()).
   // Each attached kernel keeps its own copy, so the post goes to all of them
@@ -405,7 +412,7 @@ function initGear(post) {
     // settings-open, which is what un-hides #feed-pane when the feed is toggled off — measuring first
     // burned the whole 5-frame retry against a display:none pane, latched rs-pane-gone, and the
     // full-viewport fallback box blacked out every pane behind the modal.
-    p.hidden = false; feedFull(true); setModalCls(true); var s = load(); cc.checked = !!s.compact; jix.checked = (s.showIndexJudges !== undefined ? !!s.showIndexJudges : !!s.debug); jtr.checked = (s.showTriageJudges !== undefined ? !!s.showTriageJudges : !!s.debug); if (gb) gb.checked = s.showBranch === true; if (tc) tc.value = tabCtxMode(s.tabCtx); if (cg) cg.checked = s.collapseGaps !== false; if (ao) ao.checked = s.activeOnly !== false; cmBuild(); cmPaint(s.colormap || 'aurora'); if (bk) bk.value = s.backend || 'sdk'; if (dd) dd.value = s.defaultDir || ''; plFill(); fill(); }
+    p.hidden = false; feedFull(true); setModalCls(true); var s = load(); cc.checked = !!s.compact; jix.checked = (s.showIndexJudges !== undefined ? !!s.showIndexJudges : !!s.debug); jtr.checked = (s.showTriageJudges !== undefined ? !!s.showTriageJudges : !!s.debug); if (gb) gb.checked = s.showBranch === true; if (tc) tc.value = tabCtxMode(s.tabCtx); if (cg) cg.checked = s.collapseGaps !== false; if (ao) ao.checked = s.activeOnly !== false; if (fc) fc.checked = s.collapsed === true; cmBuild(); cmPaint(s.colormap || 'aurora'); if (bk) bk.value = s.backend || 'sdk'; if (dd) dd.value = s.defaultDir || ''; plFill(); fill(); }
   if (g) g.onclick = function (e) { e.stopPropagation(); openSettings(); };   // hidden anchor; hosts open via the message below
   window.addEventListener('message', function (e) { if (e.data && e.data.romp === 'openSettings') openSettings(); });
   // The shortcuts row: the web shell (same-origin parent) gets the customize link — it opens the
