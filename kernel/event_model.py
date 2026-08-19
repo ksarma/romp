@@ -694,6 +694,7 @@ class FileAdapter:
             self.leaf_uuid = leaf_override
         self._repair_compaction_stitches()
         self._stitch_resume_forks()
+        self._adopt_detached_compactions()
 
     def _stitch_resume_forks(self):
         """Some CLI resumes of a machine-cut turn FORK the transcript with a FRESH head (parentUuid
@@ -740,6 +741,64 @@ class FileAdapter:
                 if cand and cand in self.by_uuid:
                     self.parent_of[u] = cand
                     break
+
+    def _adopt_detached_compactions(self):
+        """A LIVE manual /compact writes its compact_boundary + summary as a DETACHED side
+        branch: the boundary carries parentUuid:null + logicalParentUuid:<pre-compact leaf>,
+        the summary record is its only child, and NOTHING chains through them — the visible
+        conversation parents through the /compact command-wrapper records onto the same leaf
+        (10/13 manual boundaries in the live corpus; the other 3 are resume rebuilds that
+        re-splice the pair back into the chain, arriving attached). The backward walk never
+        visits the side branch, so the compaction atom — the chat's "Context compacted" card —
+        was silently never emitted for a live manual compact, while auto-compactions (which
+        chain THROUGH their boundary) kept theirs (the user 2026-08-19).
+
+        Adopt the orphaned pair: splice boundary(+summary) into the chain right behind its
+        anchor, so every downstream consumer — kept_uuids, the summary capture, the replay
+        dedup, the fresh-turn open — sees it exactly as it sees an attached boundary. Keyed on
+        the SHAPE (boundary off the active path, its anchor on it), never on trigger=manual:
+        an attached manual (the resume re-splice) no-ops here, and a hypothetical detached
+        auto would be adopted — the detachment is the defect, not the trigger. A boundary
+        whose anchor is itself off-path (its pre-compact context was rewound or cleared away)
+        stays dropped: that compaction is not part of the visible history. Runs after the
+        stitch repair (a repaired dangling stitch is a valid anchor) and the resume stitching
+        (the active path must already cross files). parent_of only — records are never
+        mutated, so the shared _read_jsonl_incremental cache lists stay pristine.
+
+        Placement note: this GROWS the atom set of an existing transcript (the v3 lesson at
+        jd.PLACEMENTS_V), deliberately without a bump — the only new atoms are system
+        compact_boundary atoms, whose triggerless turns yield non-human units (never a
+        replayed human ask, the v3 incident), and no existing segment's trigger text or t
+        shifts, so every recorded placement key still matches."""
+        active = self.active_path()
+        # the active CHILD of each on-path uuid — the chain has at most one per node
+        child_of, u = {}, self.leaf_uuid
+        while u is not None:
+            p = self.parent_of.get(u)
+            if p is None or p in child_of:
+                break
+            child_of[p] = u
+            u = p
+        boundaries = sorted((self.seq_of.get(u, 0), u) for u, r in self.by_uuid.items()
+                            if r.get("type") == "system" and r.get("subtype") == "compact_boundary")
+        for _, b in boundaries:
+            if b in active:
+                continue                  # attached (auto / resume re-splice) — never double-emit
+            anchor = self.parent_of.get(b)
+            if anchor not in active:
+                continue                  # pre-compact context rewound/cleared away — stays hidden
+            c = child_of.get(anchor)
+            if c is None:
+                continue                  # the anchor IS the leaf (pending rollback) — nothing to splice into
+            summary = next((s for s, sr in self.by_uuid.items()
+                            if sr.get("isCompactSummary") is True and self.parent_of.get(s) == b),
+                           None)
+            self.parent_of[c] = summary if summary is not None else b   # anchor <- b (<- summary) <- c
+            active.add(b)
+            child_of[anchor], child_of[b] = b, (summary if summary is not None else c)
+            if summary is not None:
+                active.add(summary)
+                child_of[summary] = c
 
     def active_path(self):
         """The set of uuids on the leaf->root chain (directed walk, O(chain length))."""
