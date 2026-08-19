@@ -193,13 +193,13 @@ class SpawnEnv(_Backend):
             self.be.spawn("web", "/tmp", env={"ROMP_SESSION_NAME": "impostor"})
 
 
-class OptionsThreadsEnv(_Backend):
-    """_options → flag_settings_path(env=…): the file the CLI launches with carries the reg's env."""
+class _OptionsBackend(_Backend):
+    """_Backend plus the _options seam: ClaudeAgentOptions is a parameter (a dict stands in) and
+    the in-function import only needs HookMatcher — stub the module when the real dependency is
+    absent (CI without the venv)."""
 
     def setUp(self):
         super().setUp()
-        # ClaudeAgentOptions is a parameter (a dict stands in) and the in-function import only needs
-        # HookMatcher — stub the module when the real dependency is absent (CI without the venv).
         import sys
         import types
         self._fake_sdk = "claude_agent_sdk" not in sys.modules and not sb.sdk_importable()
@@ -216,6 +216,10 @@ class OptionsThreadsEnv(_Backend):
 
     def _options_kw(self, sess):
         return self.be._options(sess, dict)
+
+
+class OptionsThreadsEnv(_OptionsBackend):
+    """_options → flag_settings_path(env=…): the file the CLI launches with carries the reg's env."""
 
     def test_the_settings_file_carries_the_regs_env(self):
         sid = self.be.spawn("web", "/tmp", env=ENV)
@@ -347,6 +351,68 @@ class ForkInheritsEnv(_Backend):
             self.be.spawn("parent", self.d, sid=PARENT)
             self.be.fork("child", PARENT, "a1", sid=CHILD)
             self.assertNotIn("env", self._reg(CHILD))
+        finally:
+            os.environ.pop("CLAUDE_CONFIG_DIR", None)
+
+
+class LegacyReservedEnv(_OptionsBackend):
+    """Regs written before ENV_RESERVED_NAMES existed can carry ROMP_SID / ROMP_SESSION_NAME in
+    their stored env. Spawn and set_env refuse them at the door now — but a standing reg is
+    replayed verbatim at every connect, and fork() copies the parent's. Three obligations at the
+    apply seam: the session still LAUNCHES (a reconnect refusal would brick a long-running session
+    over a var accepted under older rules), the reserved name never reaches the applied env (it
+    would shadow-race the options.env identity — `romp end self` resolving to a forged sid), and
+    the skip is LOUD, naming the session and the ignored var (never silently)."""
+
+    def _poisoned(self, env):
+        """A reg whose stored env predates the reserved-name rule — written behind the validator,
+        the way those regs actually exist on disk."""
+        sid = self.be.spawn("web", "/tmp")
+        reg = self._reg(sid)
+        reg["env"] = dict(env)
+        sb.write_reg(self.be.state_dir, sid, reg)
+        return sid
+
+    def test_a_pre_rule_reg_launches_with_the_reserved_name_skipped(self):
+        sid = self._poisoned({"FEATURE_FLAG": "1", "ROMP_SID": PARENT})
+        logged = []
+        self.be._log = lambda msg, problem=False: logged.append((msg, problem))
+        kw = self._options_kw(self._sess(sid))
+        applied = json.loads(Path(kw["settings"]).read_text())["env"]
+        self.assertEqual(applied, {"FEATURE_FLAG": "1"},
+                         "the rest of the stored env still applies — skip the var, not the session")
+        self.assertEqual(kw["env"]["ROMP_SID"], sid,
+                         "the identity overlay stands untouched — the forged sid never shadows it")
+        self.assertTrue(any(problem and "ROMP_SID" in msg and "web" in msg
+                            for msg, problem in logged),
+                        "the skip must be loud, naming the session and the ignored var: %r"
+                        % (logged,))
+
+    def test_a_reg_carrying_only_reserved_names_still_launches(self):
+        sid = self._poisoned({"ROMP_SESSION_NAME": "impostor"})
+        logged = []
+        self.be._log = lambda msg, problem=False: logged.append((msg, problem))
+        kw = self._options_kw(self._sess(sid))
+        self.assertNotIn("settings", kw,
+                         "nothing left after the skip = the no-keys contract, not an empty env")
+        self.assertEqual(kw["env"]["ROMP_SESSION_NAME"], "web")
+        self.assertTrue(any(problem and "ROMP_SESSION_NAME" in msg for msg, problem in logged))
+
+    def test_a_fork_drops_the_reserved_names_from_the_inherited_env(self):
+        os.environ["CLAUDE_CONFIG_DIR"] = tempfile.mkdtemp()   # transcript_path resolves through this
+        try:
+            self.be.spawn("parent", self.d, sid=PARENT)
+            reg = self._reg(PARENT)
+            reg["env"] = {"FEATURE_FLAG": "1", "ROMP_SID": PARENT}
+            sb.write_reg(self.be.state_dir, PARENT, reg)
+            logged = []
+            self.be._log = lambda msg, problem=False: logged.append((msg, problem))
+            self.be.fork("child", PARENT, "a1", sid=CHILD)
+            self.assertEqual(self._reg(CHILD).get("env"), {"FEATURE_FLAG": "1"},
+                             "the copy is where a legacy reg's poison stops propagating")
+            self.assertTrue(any(problem and "ROMP_SID" in msg and "child" in msg
+                                for msg, problem in logged),
+                            "the drop must be loud, naming the session and the var: %r" % (logged,))
         finally:
             os.environ.pop("CLAUDE_CONFIG_DIR", None)
 

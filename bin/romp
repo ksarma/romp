@@ -1312,7 +1312,13 @@ if [[ -n "$session_arg" ]] && ! $use_tmux && ! $resume; then
     # means "don't touch", so a plain `romp new` never carries an env key at all.
     _noenv=""; if $no_env; then _noenv=1; fi
     _payload="$(python3 -c 'import json,sys; d={"name": sys.argv[1], "dir": sys.argv[2], "backend": "sdk"}; sys.argv[3] and d.update(model=sys.argv[3]); sys.argv[4] and d.update(effort=sys.argv[4]); env=dict(kv.split("=",1) for kv in sys.argv[6:]); (env or sys.argv[5]) and d.update(env=env); print(json.dumps(d))' "$session_arg" "$_dir" "$model_arg" "$effort_arg" "$_noenv" ${env_args[@]+"${env_args[@]}"})"
-    _resp="$(_romp_token_cfg | curl -sf -m 15 --config - -X POST "http://127.0.0.1:$_kport/new" \
+    # No -f here: the kernel answers a bad /new payload with a 400 whose JSON body NAMES the
+    # problem (reserved env names, bad session names — every validation refusal), and -f discards
+    # exactly that body (exit 22), masking it as the connection-failure message below. Without -f
+    # curl still exits nonzero on a real connection failure, so the || branch keeps meaning
+    # "not reachable", and a 4xx body falls through to the same ok-check + refusal print the
+    # kernel's 200 ok:false replies take.
+    _resp="$(_romp_token_cfg | curl -s -m 15 --config - -X POST "http://127.0.0.1:$_kport/new" \
                   -H 'Content-Type: application/json' -d "$_payload")" \
         || { echo "romp new: kernel not reachable on :$_kport (is romp running?). \`romp new -t $session_arg\` starts a terminal session without it." >&2; exit 1; }
     if [[ "$_resp" == *'"ok": true'* || "$_resp" == *'"ok":true'* ]]; then

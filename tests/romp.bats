@@ -113,6 +113,11 @@ STUB
 # Helper — a fake `curl` for the kernel-API paths (`romp new` SDK spawn + `-m` send).
 # Logs every call to MOCK_LOG and answers {"ok": true}; MOCK_CURL_FAIL_SEND=1 makes
 # the /send leg fail the way curl -f does, so per-leg error reporting is testable.
+# MOCK_CURL_FAIL_NEW=1 makes the /new leg a connection failure (exit 7, no body);
+# MOCK_CURL_NEW_400=1 makes the kernel answer /new with a 400 whose JSON body names
+# the problem — honoring the FLAGS romp passes, the way real curl splits on a 4xx:
+# a short-flag cluster carrying -f discards the body and exits 22; plain -s prints
+# the body and exits 0. So the test proves the flags, not just the message.
 _stub_curl() {
     cat > "$MOCK_DIR/curl" << 'MOCK'
 #!/usr/bin/env bash
@@ -120,6 +125,14 @@ echo "curl $*" >> "$MOCK_LOG"
 url=""
 for a in "$@"; do [[ "$a" == http* ]] && url="$a"; done
 if [[ -n "${MOCK_CURL_FAIL_SEND:-}" && "$url" == */send ]]; then exit 22; fi
+if [[ -n "${MOCK_CURL_FAIL_NEW:-}" && "$url" == */new ]]; then exit 7; fi
+if [[ -n "${MOCK_CURL_NEW_400:-}" && "$url" == */new ]]; then
+  for a in "$@"; do
+    if [[ "$a" == "-f" || "$a" == -[!-]*f* ]]; then exit 22; fi
+  done
+  echo '{"ok": false, "error": "env: ROMP_SID is reserved — romp sets the session identity env itself"}'
+  exit 0
+fi
 echo '{"ok": true}'
 MOCK
     chmod +x "$MOCK_DIR/curl"
@@ -192,6 +205,29 @@ MOCK
     [ "$status" -eq 1 ]
     [[ "$output" == *"did NOT land"* ]]
     [[ "$output" == *"romp send ideabox"* ]]
+}
+
+@test "new: a kernel 400 surfaces the kernel's own refusal, never 'not reachable'" {
+    # every /new validation error (reserved env names, bad names, bad values) is a 400 whose
+    # body names the problem — masked as a connection failure, the user retypes forever
+    _stub_curl
+    touch "$MOCK_LOG"
+    export ROMP_SERVE_TOKEN=testtok
+    export MOCK_CURL_NEW_400=1
+    run run_romp new --env ROMP_SID=x web
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"ROMP_SID is reserved"* ]]
+    [[ "$output" != *"not reachable"* ]]
+}
+
+@test "new: a real connection failure still says 'not reachable'" {
+    _stub_curl
+    touch "$MOCK_LOG"
+    export ROMP_SERVE_TOKEN=testtok
+    export MOCK_CURL_FAIL_NEW=1
+    run run_romp new web
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"not reachable"* ]]
 }
 
 @test "help lists new -m" {

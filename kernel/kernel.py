@@ -10830,7 +10830,7 @@ def _death_boot_pass(now=None):
         sys.stderr.write("death-boot: recorded %d session death(s) from before this kernel\n" % n)
 
 
-def _confirmed_ended(sid):
+def _confirmed_ended(sid, fresh=False, scan=None):
     """Did this session actually END — may a kill/close path record the death, tear down its comment
     threads, and broadcast `closed`? The four post-kill honesty gates (endSession, the /end route,
     closeTab, cancelCreate) all ask HERE, mirroring _death_sweep_tick's doctrine: a death is certified
@@ -10846,16 +10846,27 @@ def _confirmed_ended(sid):
       None  — CANNOT CONFIRM (a real probe failure): the writer stands down — warn/ok:false, no
               death record, no comment-thread teardown, no `closed`; a retry after the probe
               recovers succeeds. Loud, per the fail-loudly rule.
-    Both falsy verdicts take the refusal branch (`is not True`); the copy may tell them apart."""
+    Both falsy verdicts take the refusal branch (`is not True`); the copy may tell them apart.
+    `fresh` takes the still-listed check from a live merge instead of the pusher cycle's pinned
+    snapshot (_live_scope): a probe corroborating an action taken MID-cycle (the end-on-idle
+    sweep's post-kill call) must never consult pre-action evidence — that snapshot predates the
+    kill by construction, so it answers "still running" unconditionally. Callers keyed on the
+    sid's ABSENCE need no bypass: an absent sid falls through the membership read to the fresh
+    owner probes below either way.
+    `scan` is a zero-arg supplier of the owner scan (alive_sids' contract: a set, or None on a
+    real probe failure) for a batch pass sharing ONE scan across its probes
+    (_death_sweep_tick's per-pass idiom) instead of forking a subprocess per sid; the default
+    takes its own. Called only when the owner scan is actually needed, so a supplier may
+    memoize lazily."""
     sid = str(sid)
-    if sid in _tmux_sessions():
+    if sid in (Sessions.live() if fresh else _tmux_sessions()):
         return False                             # still listed → nothing ended
     if (jd.SDKDIR / (sid + ".json")).exists():
         return True                              # SDK-owned: absence from the in-process merge IS the
     #                                              owner's answer (the death sweep's partition, above)
     if not _TMUX.available():
         return True                              # headless: no server IS zero-alive (the boot pass's rule)
-    scan = _TMUX.alive_sids()
+    scan = scan() if scan is not None else _TMUX.alive_sids()
     if scan is None:
         sys.stderr.write("kill-corroborate: liveness probe failed for %s — treating as still running "
                          "(no death record, no closed broadcast)\n" % sid)
@@ -10933,10 +10944,23 @@ def _end_on_idle_sweep(now, tmux):
     if not reqs:
         return
     changed = False
+    scan_memo = []                                   # [owner scan] once taken — see _pass_scan
+
+    def _pass_scan():
+        # ONE owner scan for this pass's absent-branch probes (_death_sweep_tick's batch idiom):
+        # under the exact wedge this sweep guards against — the raw snapshot's error→[] collapse
+        # listing EVERY armed sid as absent — a per-sid probe forks a subprocess per request per
+        # 0.5s cycle. Cycle-old evidence is all the ABSENT branch ever claims, so one scan taken
+        # this pass serves all of its probes; the POST-KILL probe below must NOT share it (its
+        # evidence has to postdate the kill) and takes its own.
+        if not scan_memo:
+            scan_memo.append(_TMUX.alive_sids())
+        return scan_memo[0]
+
     for sid in sorted(reqs):
         if tmux.get(sid) is None:                    # absent from the RAW snapshot — corroborate before
-            ended = _confirmed_ended(sid)            # spending: one flaky read here would discard the
-            if ended is True:                        # user's gesture with no kill ever attempted
+            ended = _confirmed_ended(sid, scan=_pass_scan)   # spending: one flaky read here would
+            if ended is True:                        # discard the user's gesture, no kill ever attempted
                 reqs.discard(sid); changed = True    # genuinely dead by some other path → spent
             elif ended is False:
                 sys.stderr.write("end-on-idle: %s missing from the snapshot but the owner says "
@@ -10952,7 +10976,15 @@ def _end_on_idle_sweep(now, tmux):
         sys.stderr.write("kill: %s via end-on-idle (self-close)\n" % sid)
         be = Sessions.backend_for(sid)
         be.kill(sid)
-        ended = _confirmed_ended(sid)
+        # fresh, own-scan corroboration — never the cycle snapshot, never _pass_scan's memo: this
+        # probe's evidence must POSTDATE the kill, and both of those predate it — the snapshot by
+        # construction (this branch's precondition is the sid being IN it, so a snapshot read
+        # answers "still running" unconditionally and the clean death below is unreachable). The
+        # ENTRY check above may read the snapshot: absence there is its precondition, so it falls
+        # through to fresh owner probes regardless. Kills are user-gesture rare — one owner scan
+        # per killed sid is fine. A confirmed kill spends the request THIS cycle; only one the
+        # owner genuinely denies stays armed to retry.
+        ended = _confirmed_ended(sid, fresh=True)
         if ended is not True:                        # unconfirmed kill: record nothing, broadcast nothing,
             sys.stderr.write("end-on-idle: %s kill unconfirmed (%s) — no death record, request "
                              "kept for the next cycle\n"

@@ -3920,9 +3920,23 @@ class SdkBackend:
         # (effort), fastMode and the per-session env vars. All are connect-time, which is why
         # changing any of them reconnects; the file is rewritten from the session here on EVERY
         # connect, so a reconnect re-asserts them by construction.
+        # The reserved identity names are skipped at THIS seam, not only refused at the doors:
+        # a reg written before ENV_RESERVED_NAMES existed can still carry them, and every connect
+        # replays the stored env verbatim — applied, either name shadow-races the options.env
+        # identity above (`romp end self` resolving to a forged sid); refused, a reconnect bricks
+        # a long-running session over a var accepted under older rules. Skip the var, keep the
+        # rest, launch the session — and say so (fail-loudly: the line lands on stderr via the
+        # kernel's log wire and in the problem ring the dashboard's error center reads).
+        env_vars = sess.env_vars
+        legacy = [k for k in ENV_RESERVED_NAMES if k in env_vars]
+        if legacy:
+            env_vars = {k: v for k, v in env_vars.items() if k not in ENV_RESERVED_NAMES}
+            self._log("env (%s): ignoring reserved %s from the stored session env — romp sets the "
+                      "identity env itself (a reg from before the names were reserved)"
+                      % (sess.name, ", ".join(legacy)), problem=True)
         fs = flag_settings_path(self.state_dir, sess.sid,
                                 ultracode=(sess.effort or "") == "ultracode", fast=sess.fast_opt,
-                                env=sess.env_vars, log=self._log)
+                                env=env_vars, log=self._log)
         if fs:
             kw["settings"] = fs
         # Per-session auth (the user 2026-08-08): the work key was claimed OUT of this process's env at
@@ -4045,8 +4059,18 @@ class SdkBackend:
         if parent.get("auth") in ("login", "key"):
             reg["auth"] = parent["auth"]
         if parent.get("env"):
-            reg["env"] = dict(parent["env"])   # per-session env inherits like model/auth — it is
-            #   that conversation, continued elsewhere (a copy: the two regs diverge independently)
+            # the reserved identity names never cross the copy: a parent reg from before
+            # ENV_RESERVED_NAMES existed carries them (the _options apply seam skips them there),
+            # and the copy is where that legacy poison stops propagating into fresh regs
+            env = {k: v for k, v in parent["env"].items() if k not in ENV_RESERVED_NAMES}
+            dropped = [k for k in parent["env"] if k in ENV_RESERVED_NAMES]
+            if dropped:
+                self._log("env (%s): dropping reserved %s from the inherited env — romp sets the "
+                          "identity env itself (the parent reg predates the reserved names)"
+                          % (name, ", ".join(dropped)), problem=True)
+            if env:
+                reg["env"] = env   # per-session env inherits like model/auth — it is that
+                #   conversation, continued elsewhere (a copy: the two regs diverge independently)
         write_reg(self.state_dir, sid, reg)
         # the names/ entry LAST — it is the discoverability trigger (discover() iterates names/), and
         # everything above must exist before any judge pass can see the session. A comment thread never

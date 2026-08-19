@@ -22,6 +22,8 @@ os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XD
 km = SourceFileLoader("romp_kernel_endidle", os.path.join(BIN, "romp-kernel")).load_module()
 
 SID = "11111111-2222-3333-4444-555555555555"
+SID2 = "22222222-3333-4444-5555-666666666666"
+SID3 = "33333333-4444-5555-6666-777777777777"
 
 
 class _FakeBackend:
@@ -54,8 +56,9 @@ class EndOnIdle(unittest.TestCase):
         km._send_to_app = lambda app, m: self.sent.append((app, m))
         km._push_soon = lambda *a, **k: None
         # the liveness owner's affirmative answer (the #85 honesty gate) — corroborated by default,
-        # so each test states only the wedge it is about
-        km._confirmed_ended = lambda sid: True
+        # so each test states only the wedge it is about (**kw: the sweep passes fresh=/scan=;
+        # EndOnIdleRealCorroboration below pins what those mean against the real probe)
+        km._confirmed_ended = lambda sid, **kw: True
 
     def tearDown(self):
         for k, v in self.saved.items():
@@ -95,7 +98,7 @@ class EndOnIdle(unittest.TestCase):
         # tmux's kill is fire-and-forget (kill_by_name returns True regardless), and the same wedged
         # server that swallows it also fails the corroborating probe — an uncorroborated death here
         # would stamp a LIVE session dead, kill its comment threads and dismiss its tab on every client
-        km._confirmed_ended = lambda sid: None
+        km._confirmed_ended = lambda sid, **kw: None
         km._end_on_idle_save({SID})
         km._end_on_idle_sweep(1000, {SID: {"state": ""}})
         self.assertEqual(self.be.killed, [SID], "the kill is still attempted")
@@ -104,7 +107,7 @@ class EndOnIdle(unittest.TestCase):
         self.assertEqual(km._end_on_idle_load(), {SID}, "the request stays armed — the next sweep retries")
 
     def test_a_kill_the_owner_says_did_not_take_keeps_the_request(self):
-        km._confirmed_ended = lambda sid: False      # still listed after the kill — it didn't land
+        km._confirmed_ended = lambda sid, **kw: False   # still listed after the kill — it didn't land
         km._end_on_idle_save({SID})
         km._end_on_idle_sweep(1000, {SID: {"state": ""}})
         self.assertEqual(self.be.killed, [SID])
@@ -116,7 +119,7 @@ class EndOnIdle(unittest.TestCase):
         # the RAW snapshot collapses any exec error/timeout to [] (the #85 collapse), so absence
         # there alone is one flaky read — spent on it, the user's deferred-end gesture would be
         # discarded silently, no kill ever attempted
-        km._confirmed_ended = lambda sid: False
+        km._confirmed_ended = lambda sid, **kw: False
         km._end_on_idle_save({SID})
         km._end_on_idle_sweep(1000, {})
         self.assertEqual(self.be.killed, [], "not in the snapshot → nothing to kill this cycle")
@@ -124,13 +127,105 @@ class EndOnIdle(unittest.TestCase):
         self.assertEqual(km._end_on_idle_load(), {SID}, "the request stands for the next cycle")
 
     def test_a_failed_probe_on_an_absent_sid_keeps_the_request(self):
-        km._confirmed_ended = lambda sid: None       # cannot confirm either way — stand down
+        km._confirmed_ended = lambda sid, **kw: None    # cannot confirm either way — stand down
         km._end_on_idle_save({SID})
         km._end_on_idle_sweep(1000, {})
         self.assertEqual(self.be.killed, [])
         self.assertEqual(self.deaths, [])
         self.assertEqual(km._end_on_idle_load(), {SID})
 
+
+class EndOnIdleRealCorroboration(unittest.TestCase):
+    """The sweep against the REAL _confirmed_ended, under the pusher cycle's pinned liveness
+    snapshot (_live_scope, taken at cycle START — see _pusher_cycle). The kill branch's
+    precondition is the sid being IN that snapshot, so a post-kill corroboration that reads it
+    answers "still running" unconditionally and the clean death (record, closed broadcast, spent
+    request) is unreachable — the probe must outrun the snapshot to the owner's fresh answer.
+    Owner probes are stubbed to answer "dead"; the lambda-stub tests above pin the gating
+    arithmetic, these pin what evidence the probes are allowed to read."""
+
+    def setUp(self):
+        self.td = tempfile.TemporaryDirectory()
+        self.saved = {k: getattr(km, k) for k in
+                      ("_parse", "_path_of", "_session_working", "_record_death",
+                       "_comment_kill_all", "_send_to_app", "_push_soon")}
+        self.saved_state = km.jd.STATE
+        km.jd.STATE = Path(self.td.name)
+        self.be = _FakeBackend()
+        self.saved_backend_for = km.Sessions.backend_for
+        km.Sessions.backend_for = staticmethod(lambda sid: self.be)
+        km._parse = lambda path, sid, now: {"turns": []}
+        km._path_of = lambda sid, now=None: "/p"
+        km._session_working = lambda turns: False
+        self.deaths = []
+        km._record_death = lambda sid, now, by: self.deaths.append((sid, by))
+        km._comment_kill_all = lambda sid, be: None
+        self.sent = []
+        km._send_to_app = lambda app, m: self.sent.append((app, m))
+        km._push_soon = lambda *a, **k: None
+        # the cycle's pinned snapshot, exactly as _pusher_cycle serves it to every read on this
+        # thread — taken at cycle start, i.e. BEFORE any kill this sweep performs
+        km._live_scope.snapshot = {SID: {"state": ""}}
+        # the owner's fresh answers, both layers dead: the live merge lacks the sid and the
+        # identity scan answers WITHOUT it (never None — that is the probe-failure verdict)
+        self.saved_live = km.Sessions.live
+        km.Sessions.live = staticmethod(lambda: {})
+        self.scans = []                                   # one entry per alive_sids fork
+        km._TMUX.available = lambda: True                 # instance attrs shadow the class methods —
+        km._TMUX.alive_sids = lambda t=3: (self.scans.append(1), set())[1]   # removed in teardown
+
+    def tearDown(self):
+        km._live_scope.snapshot = None                    # _pusher_cycle's finally does the same
+        km.Sessions.live = self.saved_live
+        del km._TMUX.available, km._TMUX.alive_sids
+        for k, v in self.saved.items():
+            setattr(km, k, v)
+        km.Sessions.backend_for = self.saved_backend_for
+        km.jd.STATE = self.saved_state
+        self.td.cleanup()
+
+    def test_the_post_kill_probe_outruns_the_cycle_snapshot(self):
+        km._end_on_idle_save({SID})
+        km._end_on_idle_sweep(1000, {SID: {"state": ""}})
+        self.assertEqual(self.be.killed, [SID])
+        self.assertEqual(self.deaths, [(SID, "kill")],
+                         "the pinned snapshot predates the kill — corroborating from it certifies "
+                         "'still running' forever and the clean death never lands")
+        self.assertIn(("chat", {"type": "closed", "id": SID}), self.sent,
+                      "the tab closes like the × path — same cycle, not next kernel boot")
+        self.assertEqual(km._end_on_idle_load(), set(), "confirmed same-cycle → the wish is spent")
+
+    def test_one_owner_scan_serves_the_whole_absent_pass(self):
+        # the wedge shape: the snapshot collapsed empty, every armed sid reads absent — the
+        # corroborating probes must share ONE owner scan (the death sweep's batch idiom), never
+        # fork a subprocess per sid per 0.5s cycle
+        km._live_scope.snapshot = {}
+        km._end_on_idle_save({SID, SID2, SID3})
+        km._end_on_idle_sweep(1000, {})
+        self.assertEqual(self.be.killed, [], "absent sids are corroborated, never killed")
+        self.assertEqual(km._end_on_idle_load(), set(), "the owner confirms all three deaths")
+        self.assertEqual(len(self.scans), 1, "one shared scan per pass, not one per sid")
+
+    def test_the_post_kill_probe_never_reuses_the_pass_scan(self):
+        # freshness split: the absent branch's claim is cycle-old, so the shared scan serves it —
+        # but the post-kill probe's evidence must POSTDATE the kill, so it takes its own. A world
+        # the kill mutates makes reuse visible: the pass scan (taken first, for the absent sid)
+        # still lists the victim; only a post-kill scan sees it gone.
+        world = {SID2}
+        km.Sessions.live = staticmethod(lambda: {s: {"state": ""} for s in world})
+        km._TMUX.alive_sids = lambda t=3: (self.scans.append(1), set(world))[1]
+        self.be.kill = lambda sid: (self.be.killed.append(sid), world.discard(sid), True)[2]
+        km._live_scope.snapshot = {SID2: {"state": ""}}
+        km._end_on_idle_save({SID, SID2})                # SID sorts first: absent → the pass scan
+        km._end_on_idle_sweep(1000, {SID2: {"state": ""}})
+        self.assertEqual(self.be.killed, [SID2])
+        self.assertEqual(self.deaths, [(SID2, "kill")],
+                         "a probe reusing the pre-kill pass scan would still list the victim")
+        self.assertEqual(len(self.scans), 2, "the shared pass scan plus the post-kill's own")
+        self.assertEqual(km._end_on_idle_load(), set())
+
+
+class EndOnIdleWiring(unittest.TestCase):
     def test_the_route_and_spawn_env_wiring_is_pinned(self):
         src = Path(BIN, "romp-kernel").read_text()
         self.assertIn('b.get("when") == "idle"', src, "/end honors the deferral")
