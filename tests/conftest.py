@@ -24,6 +24,16 @@ os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel exports this to its sess
 # above; the per-module guards in test_kernel_update.py were import-order-dependent and recurred.
 os.environ["ROMP_MANAGER_PORT"] = "1"
 
+
+@pytest.fixture(autouse=True)
+def _dead_manager_port():
+    """The import-time poison above covers collection-time code, but any module-level env write in a
+    test file executes DURING collection and would hold for the whole run phase (test_restart_audit's
+    former pop erased the floor exactly that way — found by the 2026-08-19 re-verify round). Re-assert
+    per test: no module-level write can outlive collection against this."""
+    os.environ["ROMP_MANAGER_PORT"] = "1"
+    yield
+
 # No test may reach the REAL `claude` CLI (2026-08-12): _judge_claude_bin honors ROMP_CLAUDE_BIN
 # first, so this floors every judge call a test forgot to stub at /bin/false — empty stdout, the
 # dead-CLI row, byte-for-byte what a claude-less CI runner produces. Found when an unstubbed

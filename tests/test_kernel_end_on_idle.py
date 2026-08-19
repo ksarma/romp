@@ -4,6 +4,7 @@ and kept the session visible as dormant. Now `romp end self` records the sid (en
 STATE file so the wish survives kernel restarts) and the pusher's sweep gives it the dashboard ×'s
 clean death the moment its turn settles — the goodbye delivered first, never mid-own-turn.
 SYNTHETIC fixtures only."""
+import inspect
 import json
 import os
 import tempfile
@@ -223,6 +224,17 @@ class EndOnIdleRealCorroboration(unittest.TestCase):
                          "a probe reusing the pre-kill pass scan would still list the victim")
         self.assertEqual(len(self.scans), 2, "the shared pass scan plus the post-kill's own")
         self.assertEqual(km._end_on_idle_load(), set())
+
+    def test_sessions_live_stays_snapshot_free(self):
+        # fresh=True's whole contract rests on Sessions.live() never consulting the pusher cycle's
+        # pinned snapshot. The tests above stub Sessions.live (they pin the SWEEP's arithmetic), so
+        # nothing else would notice a refactor routing it through _live_scope/_tmux_sessions — say,
+        # extending the pinned-read CPU win one level down — which would quietly re-open the
+        # pre-kill-evidence defect this class exists to keep closed.
+        src = inspect.getsource(self.saved_live)
+        self.assertNotIn("_live_scope", src, "Sessions.live must read the world, not the cycle pin")
+        self.assertNotIn("_tmux_sessions(", src,
+                         "_tmux_sessions serves the pinned snapshot when a cycle holds one")
 
 
 class EndOnIdleWiring(unittest.TestCase):
