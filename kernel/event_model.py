@@ -767,13 +767,16 @@ class FileAdapter:
         * The boundary's own EPISODE — not its bare anchor — is both the gate and the splice
           point. The designed link is the summary record's promptId, which the CLI stamps
           with the invoking /compact's promptId (13/13 manual boundaries in the live corpus;
-          file-order adjacency is the fallback for summaries without one, and is genuinely a
-          fallback: one corpus episode is appended BEFORE its boundary). Gating on the bare
-          anchor resurrected compactions the user had REWOUND AWAY (next prompt re-parents at
-          the pre-compact leaf: wrappers off-path, anchor still on it), and two compactions
-          sharing one anchor threaded through each other. Episode off the active path → its
-          /compact was undone → the boundary stays hidden with it; no episode → nothing
-          witnesses the invocation on the visible history → stays hidden.
+          file-order adjacency is the fallback for summaries carrying NO promptId at all, and
+          is genuinely a fallback: one corpus episode is appended BEFORE its boundary). Gating
+          on the bare anchor resurrected compactions the user had REWOUND AWAY (next prompt
+          re-parents at the pre-compact leaf: wrappers off-path, anchor still on it), and two
+          compactions sharing one anchor threaded through each other. Episode off the active
+          path → its /compact was undone → the boundary stays hidden with it; no episode →
+          nothing witnesses the invocation on the visible history → stays hidden — and a
+          promptId that names NOTHING on record stays hidden the same way, never handed to
+          adjacency: that is the crash-truncated write this module models mid-write, and
+          adjacency in its place stole a later same-anchor /compact's episode.
         * Splicing BEFORE the stdout pulled that stdout atom out of its /compact command
           segment into the boundary's fresh triggerless turn, minting a brand-new
           judge-visible WORK unit ("Compacted (ctrl+o…)") for every manual compact in every
@@ -828,9 +831,15 @@ class FileAdapter:
             child_of[p] = u
             u = p
         # /compact invocation EPISODES, keyed by promptId: head = first record in file order
-        # (the caveat/raw twin, parented on the pre-compact leaf), splice = the stdout record
-        # (else the last record seen — a mid-write episode; its boundary stays hidden until
-        # the stdout lands, since the gate below needs the splice point on the active path).
+        # (the caveat/raw twin, parented on the pre-compact leaf); splice = the FIRST stdout
+        # record — a restore burst can replay the episode verbatim with the promptId preserved,
+        # and a later copy must never re-seat the card off the original splice (the copy
+        # seq-nearest the boundary+summary pair; the replayed copy's atoms fall to the dedup) —
+        # else the last record seen: a MID-WRITE episode, one parse wide, never hidden, each
+        # phase self-correcting at the next record. Boundary- or summary-as-leaf the pair is ON
+        # the active path (attached by shape, emits natively; the dedup arms there on an empty
+        # window — the file ends at the pair); caveat- or wrapper-as-leaf it adopts AT the
+        # episode's last landed record — adopted, so unarmed — and re-seats once the stdout lands.
         episodes = {}
         for eu, er in self.by_uuid.items():          # insertion order = file read order
             pid = er.get("promptId")
@@ -846,8 +855,8 @@ class FileAdapter:
                 name = m.group(1).strip()
                 if (name if name.startswith("/") else "/" + name) == "/compact":
                     g["compact"] = True              # the episode invokes /compact, not some other command
-            if LOCAL_STDOUT_RE.match(btext):
-                g["stdout"] = eu
+            if LOCAL_STDOUT_RE.match(btext) and g["stdout"] is None:
+                g["stdout"] = eu                     # first stdout wins — see the splice rule above
             g["splice"] = g["stdout"] or eu
         boundaries = sorted((self.seq_of.get(u, 0), u) for u, r in self.by_uuid.items()
                             if r.get("type") == "system" and r.get("subtype") == "compact_boundary")
@@ -858,13 +867,21 @@ class FileAdapter:
                             if sr.get("isCompactSummary") is True and self.parent_of.get(s) == b),
                            None)
             pid = (self.by_uuid.get(summary) or {}).get("promptId") if summary else None
-            ep = episodes.get(pid)
-            if ep is not None and not ep["compact"]:
-                ep = None                 # the summary's promptId names some OTHER exchange — not a witness
-            if ep is None:
-                # fallback for summaries without a promptId (older writes, synthetic shapes):
-                # b's own episode is the nearest /compact invoked from b's anchor and appended
-                # after b — the CLI writes boundary+summary first, then the episode records
+            if pid:
+                # the designed link, and the ONLY one honored when present: a promptId that
+                # names no on-record /compact episode (a crash-truncated compaction —
+                # boundary+summary landed, the episode records never did) keeps its boundary
+                # HIDDEN. Degrading to adjacency stole a later same-anchor /compact's episode:
+                # the stale summary rendered at the live splice, and the already-claimed guard
+                # below then hid the real compact's card (2026-08-19 second review).
+                ep = episodes.get(pid)
+                if ep is not None and not ep["compact"]:
+                    ep = None             # the summary's promptId names some OTHER exchange — not a witness
+            else:
+                # fallback ONLY for summaries carrying no promptId at all (older writes,
+                # synthetic shapes): b's own episode is the nearest /compact invoked from b's
+                # anchor and appended after b — the CLI writes boundary+summary first, then
+                # the episode records
                 anchor = self.parent_of.get(b)
                 cands = [g for g in episodes.values()
                          if g["compact"] and g["head_parent"] == anchor

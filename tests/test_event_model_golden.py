@@ -940,6 +940,123 @@ class DetachedManualCompaction(unittest.TestCase):
         self.assertEqual([a.get("uuid") for a in bturn["atoms"]], ["cb1"],
                          "the boundary's turn holds the boundary alone")
 
+    def test_crash_truncated_compact_never_steals_a_same_anchor_retrys_episode(self):
+        # The mid-write window's worst case: boundary+summary landed, the CLI died before the
+        # episode records, then the user compacted AGAIN from the same anchor. The stale
+        # summary's promptId names nothing on record — the designed link failed, so the stale
+        # boundary stays hidden. Degrading to the file-order fallback handed it the RETRY's
+        # episode: the stale summary rendered at the live splice, and the already-claimed
+        # guard then hid the real compact's card (2026-08-19 second review).
+        stale = compact_summary_line(T0 + 100, "cs1", parent="cb1",
+                                     text="stale interrupted summary")
+        stale["promptId"] = "p1"
+        side2, so2 = manual_compact_lines(T0 + 290, T0 + 300, "2", parent="a1",
+                                          summary_text="second live summary")
+        recs = ([uline(T0, "kick off the sweep", "u1", ps="typed"),
+                 aline(T0 + 30, "sweep done", "a1", "u1", stop="end_turn"),
+                 compact_line(T0 + 100, "cb1", logical_parent="a1", trigger="manual"),
+                 stale]
+                + side2
+                + [uline(T0 + 400, "keep going", "u2", so2, ps="typed"),
+                   aline(T0 + 430, "going", "a2", "u2", stop="end_turn")])
+        out = run_recs(recs)
+        comp = self._cards(out)
+        self.assertEqual([c["uuid"] for c in comp], ["cb2"],
+                         "only the retry renders — a promptId that names no on-record episode "
+                         "keeps its boundary hidden, never falls to adjacency")
+        self.assertEqual(comp[0]["parentUuid"], "so2")
+        self.assertEqual(comp[0].get("summary"), "second live summary")
+
+    def test_replayed_episode_copy_never_reseats_the_card(self):
+        # A later auto compaction's restore burst can replay the manual /compact episode
+        # records VERBATIM — new uuids, promptId preserved (the documented replay shape).
+        # The card's splice is the ORIGINAL episode, the copy seq-nearest its own
+        # boundary+summary pair: last-copy-wins re-seated the card after the auto card, on
+        # a parent atom the replay dedup drops (2026-08-19 second review).
+        side1, so1 = manual_compact_lines(T0 + 90, T0 + 100, "1", parent="a1",
+                                          summary_text="manual compact summary")
+        auto_summary = compact_summary_line(T0 + 500, "csA", parent="cbA",
+                                            text="auto compact summary")
+        auto_summary["promptId"] = "pA"
+        replay = [
+            {"type": "user", "timestamp": iso(T0 + 501), "uuid": "rt1r", "parentUuid": "csA",
+             "isMeta": True, "promptId": "p1",
+             "message": {"role": "user", "content": "/compact"}},
+            {"type": "user", "timestamp": iso(T0 + 501), "uuid": "cw1r", "parentUuid": "rt1r",
+             "promptId": "p1",
+             "message": {"role": "user", "content": "<command-name>/compact</command-name>\n"
+                                                    "<command-message>compact</command-message>\n"
+                                                    "<command-args></command-args>"}},
+            {"type": "user", "timestamp": iso(T0 + 501), "uuid": "so1r", "parentUuid": "cw1r",
+             "promptId": "p1",
+             "message": {"role": "user", "content": "<local-command-stdout>Compacted "
+                                                    "(ctrl+o to see full summary)"
+                                                    "</local-command-stdout>"}},
+            uline(T0 + 501, "step two of the migration", "u2r", "so1r", ps="typed"),
+        ]
+        recs = ([uline(T0, "start the migration", "u1", ps="typed"),
+                 aline(T0 + 30, "migration started", "a1", "u1", stop="end_turn")]
+                + side1
+                + [uline(T0 + 200, "step two of the migration", "u2", so1, ps="typed"),
+                   aline(T0 + 230, "step two done", "a2", "u2", stop="end_turn"),
+                   compact_line(T0 + 500, "cbA", logical_parent="a2", trigger="auto"),
+                   auto_summary]
+                + replay
+                + [aline(T0 + 540, "resuming after the auto compact", "a3", "u2r",
+                         stop="end_turn"),
+                   uline(T0 + 600, "now step three", "u3", "a3", ps="typed"),
+                   aline(T0 + 630, "step three done", "a4", "u3", stop="end_turn")])
+        out = run_recs(recs)
+        comp = self._cards(out)
+        self.assertEqual([c["uuid"] for c in comp], ["cb1", "cbA"])
+        self.assertEqual(comp[0]["parentUuid"], "so1",
+                         "the card seats at the ORIGINAL episode's stdout, never a replayed copy")
+        self.assertEqual(comp[0].get("summary"), "manual compact summary")
+        uuids = [a.get("uuid") for a in self._flat(out)]
+        self.assertLess(uuids.index("cb1"), uuids.index("cbA"),
+                        "…so it stays where the manual compact happened, before the auto card")
+        self.assertLess(uuids.index("so1"), uuids.index("cb1"))
+        self.assertLess(uuids.index("cb1"), uuids.index("u2"))
+
+    def test_mid_write_wrapper_leaf_build_adopts_at_the_wrapper(self):
+        # The mid-write phase the episode-scan comment describes: the wrapper is the file
+        # leaf, the stdout not yet written. The pair is NOT hidden — it adopts at the
+        # episode's last landed record for this one build (parent = the wrapper) and
+        # re-seats at the stdout next parse (the full-shape tests above ARE that parse).
+        side, _so = manual_compact_lines(T0 + 390, T0 + 400, "1", parent="a1")
+        cut = side[:-1]           # boundary, summary, caveat twin, wrapper — no stdout yet
+        recs = ([uline(T0, "start the long build", "u1", ps="typed"),
+                 aline(T0 + 30, "build started", "a1", "u1", stop="end_turn")]
+                + cut)
+        out = run_recs(recs)
+        comp = self._cards(out)
+        self.assertEqual([c["uuid"] for c in comp], ["cb1"])
+        self.assertEqual(comp[0]["parentUuid"], "cw1",
+                         "mid-write, the card seats at the episode's last landed record")
+        # ADOPTED is also the dedup's off-switch (the emit loop keys on _adopted membership).
+        # Nothing can follow the wrapper in this phase, so no atoms-level probe exists —
+        # pin the switch itself on the adapter.
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / (SID + ".jsonl")
+            p.write_text("\n".join(json.dumps(r) for r in recs) + "\n")
+            adapter = em.FileAdapter([str(p)], p)
+            self.assertIn("cb1", adapter._adopted,
+                          "mid-write adoption keeps the restore dedup unarmed")
+
+    def test_mid_write_summary_leaf_build_is_attached_by_shape(self):
+        # One write earlier — boundary+summary are the whole tail. The pair IS the active
+        # path: attached by shape, native emit, no adoption needed (and the dedup's armed
+        # window is empty — the file ends there).
+        side, _so = manual_compact_lines(T0 + 390, T0 + 400, "1", parent="a1")
+        recs = ([uline(T0, "start the long build", "u1", ps="typed"),
+                 aline(T0 + 30, "build started", "a1", "u1", stop="end_turn")]
+                + side[:2])       # boundary + summary only
+        out = run_recs(recs)
+        comp = self._cards(out)
+        self.assertEqual([c["uuid"] for c in comp], ["cb1"])
+        self.assertEqual(comp[0]["parentUuid"], "a1",
+                         "the leaf-anchored pair emits natively off its pre-compact anchor")
+
 
 class Lineage(unittest.TestCase):
     def test_resume_keeps_pre_fork_history(self):
