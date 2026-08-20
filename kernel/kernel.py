@@ -23762,13 +23762,18 @@ if(m.romp==='picker')document.body.classList.toggle('picker-open',!!m.on);
 // whatever document clicked — but the cards-pane preference below opts a chat click back into the
 // same juggling.) THE HANDOFF: when a RELAY-opened viewer already brought the pane forward (its
 // flags below), the browser takes the pane over — openFileBrowse closes that viewer and its close
-// stays silent (file-view.ts) — so the restore obligation moves onto the browser's own flag here
-// and is discharged at browseClosed. Hiding the pane at this moment would hide the very browser the
-// click asked for, and a viewer flag left armed under an open browser would let a later viewer's
-// close do the same.
+// stays silent (file-view.ts) — so the COMMITTED restore obligation moves onto the browser's own
+// flag here and is discharged at browseClosed. Hiding the pane at this moment would hide the very
+// browser the click asked for, and a viewer flag left armed under an open browser would let a later
+// viewer's close do the same. The PENDING stash is RETIRED here, never converted: nothing else ever
+// retires a pend whose ack was lost (a mid-reload feed, a veto), so converting it let a much-later
+// browse open/close turn that stale bit into a pane-hide out from under active use. An ack that DID
+// land before this arm sits on the committed flag (which transfers); one still in flight arrives to
+// a cleared pend and arms nothing — that open costs a pane left forward, arm-on-ack's one named
+// price, never a surprise hide.
 if(m.romp==='browseFiles'){var bf=document.getElementById('f-feed');
-  if(window.__rompFeedWasOffView||window.__rompFeedWasOffViewPend){window.__rompFeedWasOff=true;
-    window.__rompFeedWasOffView=false;window.__rompFeedWasOffViewPend=false;}
+  if(window.__rompFeedWasOffView){window.__rompFeedWasOff=true;window.__rompFeedWasOffView=false;}
+  window.__rompFeedWasOffViewPend=false;
   if(!document.body.classList.contains('po-feed')){window.__rompFeedWasOff=true;
     try{window.__rompPaneToggle&&window.__rompPaneToggle('feed',true);}catch(e){}}
   try{window.__rompMobileTab&&window.__rompMobileTab('feed');}catch(e){}   // phone: one pane at a time

@@ -38,14 +38,18 @@ test("the close contract is ownership-aware: each restore fires exactly once, fo
   // relay-opened, its announce would tell the shell to hide the pane at the exact moment the browser
   // opens inside it. So openFileBrowse builds its box BEFORE the close, the viewer's suppress keys
   // on that element (the pre-fold ownership idiom), and the restore obligation moves WITH the pane:
-  // browseFiles-through-the-shell transfers an armed (or still-pending) viewer flag onto the
-  // browser's own, and browseClosed consumes EITHER flag — because this document's own route into
-  // the browser (the viewer's dir-link → initFileBrowse) never sends browseFiles through the shell.
+  // browseFiles-through-the-shell transfers the COMMITTED viewer flag onto the browser's own — a
+  // still-PENDING stash is retired there, never converted (no ack may ever come for it, and
+  // converting the stale bit hid the pane at a much-later browse close) — and browseClosed consumes
+  // EITHER flag, because this document's own route into the browser (the viewer's dir-link →
+  // initFileBrowse) never sends browseFiles through the shell.
   assert.match(VIEW, /if \(document\.getElementById\("romp-filebrowse"\)\) return;/);
   const openFn = BROWSE.split("export function openFileBrowse")[1].split("function onAct")[0];
   assert.ok(openFn.indexOf("document.body.appendChild(box)") < openFn.indexOf("closeFileView()"),
     "the box exists before the close, so the viewer's suppress can see its new owner");
-  assert.match(KERNEL, /if\(window\.__rompFeedWasOffView\|\|window\.__rompFeedWasOffViewPend\)\{window\.__rompFeedWasOff=true;/);
+  assert.match(KERNEL, /if\(window\.__rompFeedWasOffView\)\{window\.__rompFeedWasOff=true;window\.__rompFeedWasOffView=false;\}/);
+  assert.match(KERNEL, /window\.__rompFeedWasOffViewPend=false;\n  if\(!document\.body\.classList\.contains\('po-feed'\)\)/,
+    "the pend retires at the transfer, unconditionally");
   assert.match(KERNEL, /if\(m\.romp==='browseClosed'&&\(window\.__rompFeedWasOff\|\|window\.__rompFeedWasOffView\)\)\{/);
 });
 

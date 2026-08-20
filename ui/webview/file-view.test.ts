@@ -132,11 +132,15 @@ test("browser handoff: a relay viewer closed FOR the browser stays silent — th
     "the suppress sits before the announce, inside the viaRelay branch");
   assert.ok(closeFn.indexOf("viaRelay = false;") < closeFn.indexOf('"romp-filebrowse"'),
     "the tag clears even on a silent close — the survivor of a handoff is the BROWSER's, not the relay's");
-  // shell side, both handoff routes: browseFiles-through-the-shell TRANSFERS an armed (or still
-  // pending) viewer flag onto the browser's; the feed-document route (the viewer's own dir-link)
-  // never sends browseFiles through the shell at all, so browseClosed consumes EITHER flag — the
-  // overlay chain's end discharges whatever bring-forward the chain still owes, exactly once
-  assert.match(KERNEL, /if\(window\.__rompFeedWasOffView\|\|window\.__rompFeedWasOffViewPend\)\{window\.__rompFeedWasOff=true;/);
+  // shell side, both handoff routes: browseFiles-through-the-shell TRANSFERS the COMMITTED viewer
+  // flag onto the browser's and RETIRES a still-pending stash (never converts it — no ack may ever
+  // come for a lost/vetoed viewFile, and converting the stale bit hid the pane at a much-later
+  // browse close); the feed-document route (the viewer's own dir-link) never sends browseFiles
+  // through the shell at all, so browseClosed consumes EITHER flag — the overlay chain's end
+  // discharges whatever bring-forward the chain still owes, exactly once
+  assert.match(KERNEL, /if\(window\.__rompFeedWasOffView\)\{window\.__rompFeedWasOff=true;window\.__rompFeedWasOffView=false;\}/);
+  assert.match(KERNEL, /window\.__rompFeedWasOffViewPend=false;\n  if\(!document\.body\.classList\.contains\('po-feed'\)\)/,
+    "the pend retires at the transfer, unconditionally — before the browser's own arming");
   assert.match(KERNEL, /if\(m\.romp==='browseClosed'&&\(window\.__rompFeedWasOff\|\|window\.__rompFeedWasOffView\)\)\{/);
 });
 
@@ -154,40 +158,45 @@ test("mobile: closing a relay-opened viewer returns the phone to the Chat tab", 
     "the return is not gated on the desktop was-off flag");
 });
 
-// executed: the shell's flag algebra, end to end — a replica of the five arms' flag lines (each
-// pinned to the source in the tests above), driven through the exact scenarios the review broke
+// executed: the shell's flag algebra, end to end — the five arms EXTRACTED from kernel.py's landing
+// shell at test time and run against a shimmed window/document, so the model under test IS the
+// shipped source. (The first cut hand-copied the arms, which let kernel.py drift while the replica
+// stayed green — review 2026-08-20; the anchor asserts below fail loudly if the arms move instead.)
 test("shell flag algebra: both handoff routes restore once, a lost viewFile arms nothing", () => {
+  const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
+  const start = KERNEL.indexOf("if(m.romp==='browseFiles')");
+  const stop = KERNEL.indexOf("// One id per dashboard", start);
+  assert.ok(start >= 0 && stop > start, "arm anchors not found — the landing shell moved; re-anchor this extraction");
+  let arms = KERNEL.slice(start, stop).trimEnd();
+  assert.ok(arms.endsWith("}});"), "the slice no longer ends at the message listener's close — re-anchor");
+  arms = arms.slice(0, -3);   // drop the listener's own `});` — the arms are plain statements without it
+  for (const a of ["browseFiles", "browseClosed", "viewFile", "viewFileOpened", "viewFileClosed"])
+    assert.ok(arms.includes("if(m.romp==='" + a + "'"), "extraction lost the " + a + " arm");
+  const armsFn = new Function("window", "document", "m", arms) as (w: unknown, d: unknown, m: unknown) => void;
   type S = { paneOn: boolean; pend: boolean; wasOffView: boolean; wasOff: boolean; mobile: string };
-  const shell = (s: S, m: string): S => {
+  const shell = (s: S, msg: string): S => {
     const n = { ...s };
-    if (m === "viewFile") {                    // stash + bring forward; commit waits for the ack
-      n.pend = !n.paneOn;
-      if (n.pend) n.paneOn = true;
-      n.mobile = "feed";
-    }
-    if (m === "viewFileOpened") { if (n.pend) n.wasOffView = true; n.pend = false; }
-    if (m === "viewFileClosed") {
-      n.mobile = "chat";
-      if (n.wasOffView) { n.wasOffView = false; n.paneOn = false; }
-    }
-    if (m === "browseFiles") {                 // the handoff transfer, then the browser's own arming
-      if (n.wasOffView || n.pend) { n.wasOff = true; n.wasOffView = false; n.pend = false; }
-      if (!n.paneOn) { n.wasOff = true; n.paneOn = true; }
-      n.mobile = "feed";
-    }
-    if (m === "browseClosed" && (n.wasOff || n.wasOffView)) {
-      n.wasOff = false; n.wasOffView = false; n.paneOn = false;
-    }
-    return n;
+    const win = {
+      __rompFeedWasOff: s.wasOff, __rompFeedWasOffView: s.wasOffView, __rompFeedWasOffViewPend: s.pend,
+      __rompPaneToggle: (pane: string, on: boolean) => { if (pane === "feed") n.paneOn = on; },
+      __rompMobileTab: (tab: string) => { n.mobile = tab; },
+    };
+    const doc = {   // the pane bit lives on body.po-feed; no feed iframe, so the forwards no-op
+      body: { classList: { contains: (c: string) => c === "po-feed" && n.paneOn } },
+      getElementById: () => null,
+    };
+    armsFn(win, doc, { romp: msg });
+    return { ...n, wasOff: !!win.__rompFeedWasOff, wasOffView: !!win.__rompFeedWasOffView,
+             pend: !!win.__rompFeedWasOffViewPend };
   };
   const run = (msgs: string[]) => msgs.reduce(shell,
     { paneOn: false, pend: false, wasOffView: false, wasOff: false, mobile: "chat" });
   // the plain relay round-trip: arm on ack, restore on close, phone back on Chat
   assert.deepEqual(run(["viewFile", "viewFileOpened", "viewFileClosed"]),
     { paneOn: false, pend: false, wasOffView: false, wasOff: false, mobile: "chat" });
-  // handoff THROUGH the shell (the chat's Browse button): the obligation transfers to the browser's
-  // flag the moment browseFiles arrives — no stale viewer flag can linger under an open browser —
-  // and browseClosed restores the pane to its original (off) state
+  // handoff THROUGH the shell (the chat's Browse button): the committed obligation transfers to the
+  // browser's flag the moment browseFiles arrives — no stale viewer flag can linger under an open
+  // browser — and browseClosed restores the pane to its original (off) state
   assert.deepEqual(run(["viewFile", "viewFileOpened", "browseFiles", "browseClosed"]),
     { paneOn: false, pend: false, wasOffView: false, wasOff: false, mobile: "feed" });
   // handoff INSIDE the feed document (the viewer's dir-link): no browseFiles ever reaches the shell,
@@ -198,9 +207,20 @@ test("shell flag algebra: both handoff routes restore once, a lost viewFile arms
   const lost = run(["viewFile"]);
   assert.equal(lost.paneOn, true);
   assert.equal(lost.wasOffView, false, "no ack, no armed flag");
-  // …and a LATER open/close cycle over the now-on pane hides nothing — the stale-flag surprise this
-  // fix removes (the pre-fix shell armed at send time, and this exact sequence hid the pane)
+  // …a LATER open/close cycle over the now-on pane hides nothing — the stale-flag surprise the
+  // arm-on-ack fix removed (the pre-fix shell armed at send time, and this exact sequence hid the pane)
   assert.equal(run(["viewFile", "viewFile", "viewFileOpened", "viewFileClosed"]).paneOn, true);
+  // …and a LATER browse open/close cycle hides nothing either: the transfer converts only the
+  // COMMITTED flag and RETIRES the stale pend (review 2026-08-20 — converting the pend let a
+  // viewFile lost long before turn the next browse close into a pane-hide under active use)
+  assert.deepEqual(run(["viewFile", "browseFiles", "browseClosed"]),
+    { paneOn: true, pend: false, wasOffView: false, wasOff: false, mobile: "feed" });
+  assert.equal(run(["viewFile", "browseFiles"]).pend, false,
+    "the transfer retires the stash — nothing is left cocked for any later cycle");
+  // an ack landing AFTER the browser took over arms nothing: the genuinely in-flight open loses only
+  // its restore (the pane parks forward, arm-on-ack's one named price), never gains a surprise hide
+  assert.deepEqual(run(["viewFile", "browseFiles", "viewFileOpened", "browseClosed"]),
+    { paneOn: true, pend: false, wasOffView: false, wasOff: false, mobile: "feed" });
   // a VETOED open is a delivered message with no ack — same algebra as the lost one
   assert.equal(run(["viewFile"]).wasOffView, false);
 });
