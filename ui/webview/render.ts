@@ -751,10 +751,14 @@ function openPath(path: string, sid?: string | null): void {
   if (!vscodeApi) return;
   if (location.protocol === "http:" || location.protocol === "https:") {
     if (fileLinkRoute(settings.fileLinkPane, window.parent !== window) === "shell") {
-      try {
-        window.parent.postMessage({ romp: "viewFile", path, sid: sid || activeId || null }, "*");
-        return;
-      } catch { /* the shell was unreachable after all — the in-document viewer still answers */ }
+      // Fire-and-forget by nature: postMessage to a live parent never throws, so there is no
+      // catchable failure here and no honest in-document fallback to offer. The one real loss mode
+      // is a stale shell page from before this relay existed — it has no viewFile arm and WILL
+      // swallow the click until it reloads (a known limitation). The shell arms its pane-restore
+      // only on the feed's viewFileOpened ack, so a swallowed or lost message can never leave a
+      // stale armed flag behind either.
+      window.parent.postMessage({ romp: "viewFile", path, sid: sid || activeId || null }, "*");
+      return;
     }
     openFileView(path, sid || activeId || null);
     return;

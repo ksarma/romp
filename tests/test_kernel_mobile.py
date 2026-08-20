@@ -77,6 +77,22 @@ class LandingShell(unittest.TestCase):
         self.assertIn("rf.onclick=function(){rf.style.pointerEvents='none';rf.style.opacity='0.5';window.__rompRestart();}", km._LANDING_SETTINGS_JS)
         self.assertIn("restart:function(){try{window.__rompRestart", km._LANDING_MOBILE_JS)   # the bar routes to it
 
+    def test_view_relay_moves_the_phone_to_feed_and_its_close_returns_to_chat(self):
+        # The fileLinkPane relay (2026-08-20) opens a chat file-link's viewer in the Feed pane, so on
+        # a phone the open half switches to the Feed tab — and the close half must come BACK, or the
+        # user is stranded on Feed after every file read (review, same day). viewFileClosed returns
+        # to Chat because the relay only ever fires from a chat click; it is not gated on the desktop
+        # was-off flag, because the tab switch happened regardless of the pane's desktop state. The
+        # browser handoff posts no viewFileClosed at all (file-view.ts suppresses it), so heading
+        # from the viewer into the file browser correctly STAYS on the Feed tab.
+        js = km._LANDING_SETTINGS_JS
+        opened = js.split("if(m.romp==='viewFile')")[1].split("if(m.romp==='viewFileOpened')")[0]
+        self.assertIn("window.__rompMobileTab&&window.__rompMobileTab('feed')", opened)
+        closed = js.split("if(m.romp==='viewFileClosed')")[1]
+        self.assertIn("window.__rompMobileTab&&window.__rompMobileTab('chat')", closed)
+        self.assertLess(closed.index("__rompMobileTab"), closed.index("__rompFeedWasOffView"),
+                        "the return precedes (and is not conditioned on) the pane-restore check")
+
     def test_mobile_bar_reservation_collapses_while_the_keyboard_is_open(self):
         # the user 2026-07-22: focusing the composer opened the keyboard and left a dead black band between
         # the box and the keyboard — the fixed bar's reserved height (--mtabs-h) showing through while the

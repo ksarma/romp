@@ -26,14 +26,27 @@ test("the browser is the viewer's sibling overlay, one z layer BENEATH it", () =
 test("the close contract is ownership-aware: each restore fires exactly once, for its own bring-forward", () => {
   // the browser juggles the pane, so its close does its restore — keyed on the browser's OWN flag
   assert.match(BROWSE, /window\.parent\.postMessage\(\{ romp: "browseClosed" \}, "\*"\);/);
-  assert.match(KERNEL, /if\(m\.romp==='browseClosed'&&window\.__rompFeedWasOff\)/);
   // the viewer re-entered the protocol on 2026-08-20 (the chat's cards-pane preference relays
   // viewFile into the feed), but ONLY for relay-opened views: an in-document open — this browser's
   // row click, a chat-hosted viewer — still announces nothing, so the browser's restore can never
-  // be fired (or suppressed) by a viewer it happens to be underneath. Separate flags shell-side
-  // (__rompFeedWasOff vs __rompFeedWasOffView) keep the two restores from consuming each other.
+  // be fired by a viewer it happens to be underneath. The flags stay separate shell-side
+  // (__rompFeedWasOff vs __rompFeedWasOffView) with ONE deliberate, one-way coupling: the handoff.
   assert.match(VIEW, /if \(viaRelay\) \{/);
-  assert.match(KERNEL, /if\(m\.romp==='viewFileClosed'&&window\.__rompFeedWasOffView\)/);
+  assert.match(KERNEL, /if\(m\.romp==='viewFileClosed'\)\{/);
+  assert.match(KERNEL, /if\(window\.__rompFeedWasOffView\)\{window\.__rompFeedWasOffView=false;/);
+  // THE HANDOFF (review 2026-08-20): "Browse" closes a viewer that is up — and when that viewer was
+  // relay-opened, its announce would tell the shell to hide the pane at the exact moment the browser
+  // opens inside it. So openFileBrowse builds its box BEFORE the close, the viewer's suppress keys
+  // on that element (the pre-fold ownership idiom), and the restore obligation moves WITH the pane:
+  // browseFiles-through-the-shell transfers an armed (or still-pending) viewer flag onto the
+  // browser's own, and browseClosed consumes EITHER flag — because this document's own route into
+  // the browser (the viewer's dir-link → initFileBrowse) never sends browseFiles through the shell.
+  assert.match(VIEW, /if \(document\.getElementById\("romp-filebrowse"\)\) return;/);
+  const openFn = BROWSE.split("export function openFileBrowse")[1].split("function onAct")[0];
+  assert.ok(openFn.indexOf("document.body.appendChild(box)") < openFn.indexOf("closeFileView()"),
+    "the box exists before the close, so the viewer's suppress can see its new owner");
+  assert.match(KERNEL, /if\(window\.__rompFeedWasOffView\|\|window\.__rompFeedWasOffViewPend\)\{window\.__rompFeedWasOff=true;/);
+  assert.match(KERNEL, /if\(m\.romp==='browseClosed'&&\(window\.__rompFeedWasOff\|\|window\.__rompFeedWasOffView\)\)\{/);
 });
 
 test("the shell relays browseFiles: pane forward, remembered, phone tab", () => {

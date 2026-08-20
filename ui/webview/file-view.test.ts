@@ -66,32 +66,143 @@ test("the shell relays viewFile again — the click site gates it; the pane jugg
   // browseFiles contract, into the feed iframe where initFileView's viewFile branch opens the viewer
   assert.match(KERNEL, /if\(m\.romp==='viewFile'\)\{var vf=document\.getElementById\('f-feed'\);/);
   assert.match(KERNEL, /postMessage\(\{romp:'viewFile',path:m\.path,sid:m\.sid\},'\*'\)/);
-  // a toggled-off feed comes forward for the view — remembered on a flag SEPARATE from the
-  // browser's, so the viewer and the browser (which close independently) each restore only the
-  // bring-forward that is theirs
-  const vrelay = KERNEL.split("if(m.romp==='viewFile')")[1].split("if(m.romp==='viewFileClosed'")[0];
-  assert.ok(vrelay.includes("window.__rompFeedWasOffView=true;"), "a pane turned on for the view is remembered");
+  // ARM ON ACK (review 2026-08-20): postMessage up the relay is fire-and-forget, so the shell only
+  // STASHES the was-off bit at relay time and COMMITS the restore flag when the feed acks the real
+  // open — a viewFile lost to a mid-reload feed iframe leaves no armed flag behind for a later
+  // open/close cycle to consume (which hid a pane the user was using: a surprise on no new
+  // information). The flag stays SEPARATE from the browser's, so the two overlays' independent
+  // closes each restore only their own bring-forward (the one deliberate coupling is the browser
+  // handoff — the transfer test below).
+  const vrelay = KERNEL.split("if(m.romp==='viewFile')")[1].split("if(m.romp==='viewFileOpened')")[0];
+  assert.ok(vrelay.includes("window.__rompFeedWasOffViewPend=!document.body.classList.contains('po-feed');"),
+    "stashed at relay time, on the pending var — not the flag");
+  assert.ok(!vrelay.includes("window.__rompFeedWasOffView=true"), "no commit before the feed answers");
   assert.ok(vrelay.includes("window.__rompMobileTab&&window.__rompMobileTab('feed')"), "phone: one pane at a time");
-  assert.match(KERNEL, /if\(m\.romp==='viewFileClosed'&&window\.__rompFeedWasOffView\)\{window\.__rompFeedWasOffView=false;/);
+  const ack = KERNEL.split("if(m.romp==='viewFileOpened')")[1].split("if(m.romp==='viewFileClosed')")[0];
+  assert.ok(ack.includes("if(window.__rompFeedWasOffViewPend)window.__rompFeedWasOffView=true;"),
+    "the ack alone commits the restore obligation");
+  assert.ok(ack.includes("window.__rompFeedWasOffViewPend=false;"), "…and the stash never outlives it");
+  assert.match(KERNEL, /if\(m\.romp==='viewFileClosed'\)\{/);
+  assert.match(KERNEL, /if\(window\.__rompFeedWasOffView\)\{window\.__rompFeedWasOffView=false;/);
   // the feed-side viewer knows it was relay-opened and announces ONLY that close to the shell —
   // an in-document open (the file browser's, or a chat-hosted viewer) still announces nothing
   assert.match(VIEW, /viaRelay = true;/);
   assert.match(VIEW, /if \(viaRelay\) \{/);
   assert.match(VIEW, /window\.parent\.postMessage\(\{ romp: "viewFileClosed" \}, "\*"\);/);
-  // the file BROWSER's relay (plans/file-browser.md, fork-only) is untouched: same shell door, its
-  // own was-off flag, its own browseClosed restore
+  // the file BROWSER's relay (plans/file-browser.md, fork-only) keeps its own door: its own was-off
+  // flag, its own browseClosed restore
   assert.match(KERNEL, /if\(m\.romp==='browseFiles'\)\{var bf=document\.getElementById\('f-feed'\);/);
   assert.match(KERNEL, /window\.__rompFeedWasOff=true;/);
   assert.match(KERNEL, /m\.romp==='browseClosed'/);
   assert.match(KERNEL, /window\.__rompMobileTab&&window\.__rompMobileTab\('feed'\)/, "phone: one pane at a time");
 });
 
-test("a relayed viewFile OPENS the viewer in the feed document, session id intact", () => {
+test("a relayed viewFile OPENS the viewer in the feed document, session id intact — and acks only a REAL open", () => {
   // the receiving end of the relay: the feed boots initFileView (pinned below with the WS poster),
   // whose viewFile branch opens the viewer — so raw edits and the GitHub link ride the feed's own
   // poster exactly like a browser-opened file, and the review layer stays dark there (no sink)
   assert.match(VIEW, /if \(m\.romp === "viewFile" && typeof m\.path === "string" && m\.path\) \{/);
-  assert.match(VIEW, /openFileView\(m\.path, typeof m\.sid === "string" \? m\.sid : null\);/);
+  // VETO PURITY (review 2026-08-20): openFileView can DECLINE — the dirty-edit guard keeps the
+  // previous viewer — and that survivor keeps its own provenance: a vetoed relay must not re-tag an
+  // in-document viewer as relay-opened (a false viewFileClosed on its close) nor ack an open that
+  // never happened (a false armed flag shell-side). So openFileView reports, and the branch gates
+  // BOTH viaRelay and the viewFileOpened ack on a real open.
+  assert.match(VIEW, /export function openFileView\(path: string, sid\?: string \| null\): boolean \{/);
+  const openFn = VIEW.split("export function openFileView")[1].split("function offersDownload")[0];
+  assert.match(openFn, /&& closeGuard && !closeGuard\(\)\) return false;/, "the veto is a reported verdict");
+  assert.match(openFn, /\n  return true;\n\}/, "a completed open says so");
+  assert.match(VIEW, /if \(openFileView\(m\.path, typeof m\.sid === "string" \? m\.sid : null\)\) \{/);
+  const relayBranch = VIEW.split('if (m.romp === "viewFile"')[1].split("} else if")[0];
+  assert.ok(relayBranch.includes("viaRelay = true;"), "tagged only inside the real-open branch");
+  assert.ok(relayBranch.includes('window.parent.postMessage({ romp: "viewFileOpened" }, "*");'),
+    "the arm-on-ack ack, sent only inside the real-open branch");
+});
+
+test("browser handoff: a relay viewer closed FOR the browser stays silent — the browser owns the pane", () => {
+  const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
+  // "Browse" (the viewer's dir-link, the chat's Browse button) closes a viewer that is up to surface
+  // the listing — and when that viewer was RELAY-opened, its announce would hand the shell a
+  // viewFileClosed at the exact moment the browser opens inside the pane, hiding the browser the
+  // click asked for. The ownership-aware suppress (the pre-2026-08-15 idiom, keyed on the browser's
+  // element, which openFileBrowse builds BEFORE closing us) keeps that close silent; the shell moves
+  // the restore obligation onto the browser's own flag, so browseClosed still puts the pane back.
+  const closeFn = VIEW.split("export function closeFileView")[1].split("/** Show `path`")[0];
+  assert.match(closeFn, /if \(document\.getElementById\("romp-filebrowse"\)\) return;/);
+  assert.ok(closeFn.indexOf('"romp-filebrowse"') < closeFn.indexOf('"viewFileClosed"'),
+    "the suppress sits before the announce, inside the viaRelay branch");
+  assert.ok(closeFn.indexOf("viaRelay = false;") < closeFn.indexOf('"romp-filebrowse"'),
+    "the tag clears even on a silent close — the survivor of a handoff is the BROWSER's, not the relay's");
+  // shell side, both handoff routes: browseFiles-through-the-shell TRANSFERS an armed (or still
+  // pending) viewer flag onto the browser's; the feed-document route (the viewer's own dir-link)
+  // never sends browseFiles through the shell at all, so browseClosed consumes EITHER flag — the
+  // overlay chain's end discharges whatever bring-forward the chain still owes, exactly once
+  assert.match(KERNEL, /if\(window\.__rompFeedWasOffView\|\|window\.__rompFeedWasOffViewPend\)\{window\.__rompFeedWasOff=true;/);
+  assert.match(KERNEL, /if\(m\.romp==='browseClosed'&&\(window\.__rompFeedWasOff\|\|window\.__rompFeedWasOffView\)\)\{/);
+});
+
+test("mobile: closing a relay-opened viewer returns the phone to the Chat tab", () => {
+  const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
+  // the open half switches a phone to the Feed tab (one pane at a time); without the return trip the
+  // close stranded the user there (review 2026-08-20). The relay only ever fires from a chat click,
+  // so viewFileClosed goes back to Chat — unconditionally, not gated on the was-off flag, because
+  // the tab switch happened whatever the pane's desktop state was. The silent browser handoff posts
+  // no viewFileClosed at all, so heading into the browser correctly STAYS on the Feed tab.
+  const closed = KERNEL.split("if(m.romp==='viewFileClosed')")[1].split("// One id per dashboard")[0];
+  assert.ok(closed.includes("window.__rompMobileTab&&window.__rompMobileTab('chat')"),
+    "the symmetric return to the tab the click always comes from");
+  assert.ok(closed.indexOf("__rompMobileTab") < closed.indexOf("__rompFeedWasOffView"),
+    "the return is not gated on the desktop was-off flag");
+});
+
+// executed: the shell's flag algebra, end to end — a replica of the five arms' flag lines (each
+// pinned to the source in the tests above), driven through the exact scenarios the review broke
+test("shell flag algebra: both handoff routes restore once, a lost viewFile arms nothing", () => {
+  type S = { paneOn: boolean; pend: boolean; wasOffView: boolean; wasOff: boolean; mobile: string };
+  const shell = (s: S, m: string): S => {
+    const n = { ...s };
+    if (m === "viewFile") {                    // stash + bring forward; commit waits for the ack
+      n.pend = !n.paneOn;
+      if (n.pend) n.paneOn = true;
+      n.mobile = "feed";
+    }
+    if (m === "viewFileOpened") { if (n.pend) n.wasOffView = true; n.pend = false; }
+    if (m === "viewFileClosed") {
+      n.mobile = "chat";
+      if (n.wasOffView) { n.wasOffView = false; n.paneOn = false; }
+    }
+    if (m === "browseFiles") {                 // the handoff transfer, then the browser's own arming
+      if (n.wasOffView || n.pend) { n.wasOff = true; n.wasOffView = false; n.pend = false; }
+      if (!n.paneOn) { n.wasOff = true; n.paneOn = true; }
+      n.mobile = "feed";
+    }
+    if (m === "browseClosed" && (n.wasOff || n.wasOffView)) {
+      n.wasOff = false; n.wasOffView = false; n.paneOn = false;
+    }
+    return n;
+  };
+  const run = (msgs: string[]) => msgs.reduce(shell,
+    { paneOn: false, pend: false, wasOffView: false, wasOff: false, mobile: "chat" });
+  // the plain relay round-trip: arm on ack, restore on close, phone back on Chat
+  assert.deepEqual(run(["viewFile", "viewFileOpened", "viewFileClosed"]),
+    { paneOn: false, pend: false, wasOffView: false, wasOff: false, mobile: "chat" });
+  // handoff THROUGH the shell (the chat's Browse button): the obligation transfers to the browser's
+  // flag the moment browseFiles arrives — no stale viewer flag can linger under an open browser —
+  // and browseClosed restores the pane to its original (off) state
+  assert.deepEqual(run(["viewFile", "viewFileOpened", "browseFiles", "browseClosed"]),
+    { paneOn: false, pend: false, wasOffView: false, wasOff: false, mobile: "feed" });
+  // handoff INSIDE the feed document (the viewer's dir-link): no browseFiles ever reaches the shell,
+  // so the browseClosed union is what discharges the viewer's bring-forward — once, nothing lingers
+  assert.deepEqual(run(["viewFile", "viewFileOpened", "browseClosed"]),
+    { paneOn: false, pend: false, wasOffView: false, wasOff: false, mobile: "feed" });
+  // a LOST viewFile (mid-reload iframe): no ack → nothing armed; the pane parks forward (acceptable)
+  const lost = run(["viewFile"]);
+  assert.equal(lost.paneOn, true);
+  assert.equal(lost.wasOffView, false, "no ack, no armed flag");
+  // …and a LATER open/close cycle over the now-on pane hides nothing — the stale-flag surprise this
+  // fix removes (the pre-fix shell armed at send time, and this exact sequence hid the pane)
+  assert.equal(run(["viewFile", "viewFile", "viewFileOpened", "viewFileClosed"]).paneOn, true);
+  // a VETOED open is a delivered message with no ack — same algebra as the lost one
+  assert.equal(run(["viewFile"]).wasOffView, false);
 });
 
 test("the viewer is a singleton MODAL over its pane: ~95% card, dimmed backdrop, ✕/Esc/backdrop close", () => {

@@ -70,7 +70,10 @@ class SettingsSectionsTest(unittest.TestCase):
         # so the transcript stays readable while the file is up. A Chat-section row, because the
         # click it governs happens in the chat; render.ts openPath reads the stored value.
         h = _gear_src()
-        self.assertTrue(h.index(">Chat<") < h.index("id=rs-filelink") < h.index(">Timeline<"))
+        # bounded by the NEXT section header — Feed, not Timeline (review 2026-08-20): the Feed
+        # header sits between Chat and Timeline, so a Timeline upper bound passed with the row
+        # filed in the wrong section
+        self.assertTrue(h.index(">Chat<") < h.index("id=rs-filelink") < h.index(">Feed<"))
         self.assertIn("<option value=chat>The pane you clicked</option>", h)
         self.assertIn("<option value=feed>The Feed pane</option>", h)
         # a webview-local pref (the rs-backend route): persisted in romp:settings, no kernel op

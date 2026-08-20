@@ -9,9 +9,11 @@
 // because "browse" means the user wants the listing now, and a browser painted under an opaque
 // viewer is a dead click (found in review, 2026-08-14). One direction also makes the keydown story
 // honest: the browser's handler always registers before the viewer's, so Escape's topmost-only rule
-// holds by construction. The close contract is ownership-aware — the viewer is a modal over this
-// document (2026-08-15) and never touches the pane, so the browser's own browseClosed is the ONLY
-// pane restore — the shell puts the feed pane back exactly once.
+// holds by construction. The close contract is ownership-aware — an in-document viewer never touches
+// the pane, and a RELAY-opened one (the chat's fileLinkPane preference, 2026-08-20) that this
+// browser closes at open hands its pane over silently — so the browser's own browseClosed is the
+// one restore for everything the overlay chain brought forward, and the shell puts the feed pane
+// back exactly once.
 //
 // The listing rides a WebSocket op (listDir → dirListing), NOT a new HTTP route: the sid field routes
 // it to the session-OWNING kernel over the existing federation splice, so browsing a remote session's
@@ -48,9 +50,9 @@ function el(tag: string, cls?: string): HTMLElement {
   return e;
 }
 
-// The browser is the ONLY overlay that juggles the feed pane (the viewer is a modal over whatever
-// document opened it since 2026-08-15, and never touches the panes), so browseClosed alone restores
-// a pane the shell turned on for us. Fires on EVERY close path.
+// The browser's close ends the overlay chain, so browseClosed restores a pane the shell turned on
+// for us — or one a RELAY-opened viewer turned on and handed to us when openFileBrowse closed it
+// (the shell's browseClosed arm consumes either flag). Fires on EVERY close path.
 function tellShellClosed(): void {
   try {
     if (window.parent !== window) window.parent.postMessage({ romp: "browseClosed" }, "*");
@@ -202,9 +204,12 @@ export function openFileBrowse(path: string, sid?: string | null): void {
     onKeyRef = onKey;
   }
   // "Browse" means the user wants the LISTING now: a viewer left up would sit over the browser (its
-  // modal backdrop draws above — the review's dead-click finding). Closing it costs nothing beyond
-  // the modal itself: the viewer never touches the pane, so there is no restore to worry about and
-  // the pane stays up for the listing.
+  // modal backdrop draws above — the review's dead-click finding). The box above is deliberately
+  // built BEFORE this close: closeFileView's handoff suppress keys on #romp-filebrowse existing, so
+  // a RELAY-opened viewer (which would otherwise announce viewFileClosed and have the shell hide
+  // the pane with this browser inside it) closes silently, and the pane it brought forward now
+  // belongs to the browser — the shell carries the restore on the browser's own flag and
+  // browseClosed discharges it. The pane stays up for the listing either way.
   if (document.getElementById("romp-fileview")) closeFileView();
   ask(path);
 }
