@@ -23758,8 +23758,9 @@ if(m.romp==='picker')document.body.classList.toggle('picker-open',!!m.on);
 // "Browse files" from any pane surfaces the FILE BROWSER in the FEED pane, which is a different
 // document — so the shell relays it (plans/file-browser.md). If the feed pane is toggled off we turn
 // it on for the duration and remember to put it back, so the browser never costs the user their
-// layout. (File VIEWS need none of this since 2026-08-15: the viewer is a modal over whatever
-// document clicked, so it never touches the panes and has nothing to restore.)
+// layout. (File VIEWS default to needing none of this since 2026-08-15 — the viewer is a modal over
+// whatever document clicked — but the cards-pane preference below opts a chat click back into the
+// same juggling.)
 if(m.romp==='browseFiles'){var bf=document.getElementById('f-feed');
   if(!document.body.classList.contains('po-feed')){window.__rompFeedWasOff=true;
     try{window.__rompPaneToggle&&window.__rompPaneToggle('feed',true);}catch(e){}}
@@ -23767,6 +23768,22 @@ if(m.romp==='browseFiles'){var bf=document.getElementById('f-feed');
   try{bf&&bf.contentWindow&&bf.contentWindow.postMessage({romp:'browseFiles',path:m.path,sid:m.sid},'*');}catch(e){}}
 // the browser owns the restore: browseClosed alone puts a brought-forward feed back the way it was
 if(m.romp==='browseClosed'&&window.__rompFeedWasOff){window.__rompFeedWasOff=false;
+  try{window.__rompPaneToggle&&window.__rompPaneToggle('feed',false);}catch(e){}}
+// A chat file-link click with the cards-pane preference set (fileLinkPane — gear.js; the user
+// 2026-08-20) posts viewFile up instead of opening in-document; the shell forwards it to the FEED
+// pane, whose initFileView (file-view.ts) opens the viewer there. The GATE lives at the click site
+// (render.ts openPath): this relay forwards whatever arrives, exactly like browseFiles above. Same
+// pane juggling, but a SEPARATE was-off flag — the viewer and the browser close independently, so
+// each restore must answer only its own bring-forward (one shared flag would let one overlay's
+// close hide the pane out from under the other).
+if(m.romp==='viewFile'){var vf=document.getElementById('f-feed');
+  if(!document.body.classList.contains('po-feed')){window.__rompFeedWasOffView=true;
+    try{window.__rompPaneToggle&&window.__rompPaneToggle('feed',true);}catch(e){}}
+  try{window.__rompMobileTab&&window.__rompMobileTab('feed');}catch(e){}   // phone: one pane at a time
+  try{vf&&vf.contentWindow&&vf.contentWindow.postMessage({romp:'viewFile',path:m.path,sid:m.sid},'*');}catch(e){}}
+// the viewer's close announces only a RELAY-opened view (file-view.ts viaRelay), and this restore
+// consumes only what the viewFile arm turned on
+if(m.romp==='viewFileClosed'&&window.__rompFeedWasOffView){window.__rompFeedWasOffView=false;
   try{window.__rompPaneToggle&&window.__rompPaneToggle('feed',false);}catch(e){}}});
 // One id per dashboard (per browser tab/window), minted here so every pane in it reports the same one.
 // sessionStorage, deliberately: it survives a reload (the panes keep their identity) and a second window

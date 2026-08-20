@@ -64,6 +64,20 @@ class SettingsSectionsTest(unittest.TestCase):
         self.assertIn("<b>Show triage judges</b>", h)
         self.assertIn("does NOT turn the judges on or off", h)
 
+    def test_file_links_pane_pref_sits_under_chat_and_round_trips(self):
+        # "File links open in" (the user 2026-08-20): where a chat file-link click opens on the
+        # web — over the chat you clicked (the default, upstream's design) or in the Feed pane,
+        # so the transcript stays readable while the file is up. A Chat-section row, because the
+        # click it governs happens in the chat; render.ts openPath reads the stored value.
+        h = _gear_src()
+        self.assertTrue(h.index(">Chat<") < h.index("id=rs-filelink") < h.index(">Timeline<"))
+        self.assertIn("<option value=chat>The pane you clicked</option>", h)
+        self.assertIn("<option value=feed>The Feed pane</option>", h)
+        # a webview-local pref (the rs-backend route): persisted in romp:settings, no kernel op
+        self.assertIn("s.fileLinkPane = fl.value", h)
+        self.assertIn("fl.value = s.fileLinkPane === 'feed' ? 'feed' : 'chat'", h)
+        self.assertIn("fileLinkPane: 'chat'", h)   # the stored default is today's behavior
+
     def test_the_sdk_backend_is_labelled_plain_sdk(self):
         # "SDK", not "SDK (headless)" (the user 2026-07-12): it drives the same full chat UI
         h = _gear_src()

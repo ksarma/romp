@@ -734,12 +734,28 @@ document.addEventListener("click", (e) => {
 //     first cut filled the feed pane, and reading a file cost the cards). The bytes come to the
 //     browser over /file, which is the fix for the original break (the user 2026-08-08): the kernel
 //     used to run an opener on ITS machine, the wrong screen entirely from another device.
+//   • Web dashboard, cards-pane preference set (fileLinkPane: "feed" — gear.js; the user 2026-08-20,
+//     who reads the transcript while a file is up) → hand the open to the SHELL instead, which
+//     brings the feed pane forward and forwards viewFile into it; the feed's initFileView opens the
+//     viewer there, so the chat stays readable and interactive under no modal.
 //
-// Same document as the click, so there is no shell relay and no fallback ladder: standalone /chat
-// and the framed pane behave identically.
+// The route decision is fileLinkRoute, pure so the branch is testable: the preference relays ONLY
+// when a shell exists to relay to (framed — openBrowse's exact gate). Standalone /chat has no shell
+// and no feed pane, so the preference quietly means "here", the in-document modal. The gate lives at
+// THIS end deliberately: the shell forwards whatever arrives (browseFiles' contract), so a message
+// never sent is a click that opens in place — no setting check shell-side can swallow a click.
+function fileLinkRoute(pane: unknown, framed: boolean): "shell" | "here" {
+  return pane === "feed" && framed ? "shell" : "here";
+}
 function openPath(path: string, sid?: string | null): void {
   if (!vscodeApi) return;
   if (location.protocol === "http:" || location.protocol === "https:") {
+    if (fileLinkRoute(settings.fileLinkPane, window.parent !== window) === "shell") {
+      try {
+        window.parent.postMessage({ romp: "viewFile", path, sid: sid || activeId || null }, "*");
+        return;
+      } catch { /* the shell was unreachable after all — the in-document viewer still answers */ }
+    }
     openFileView(path, sid || activeId || null);
     return;
   }

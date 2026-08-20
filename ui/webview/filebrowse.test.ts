@@ -23,13 +23,17 @@ test("the browser is the viewer's sibling overlay, one z layer BENEATH it", () =
   assert.match(BROWSE, /document\.body\.classList\.add\("filebrowse-open"\);/);
 });
 
-test("the close contract is ownership-aware: the restore fires exactly once", () => {
-  // the viewer is a modal over whatever document opened it (2026-08-15): it never touches the feed
-  // pane, so it participates in NO restore protocol at all — no close message, nothing to suppress
-  assert.doesNotMatch(VIEW, /viewFileClosed/, "nothing to restore → nothing to announce");
-  // the browser is the ONE overlay that juggles the pane, so its close alone does the restore
+test("the close contract is ownership-aware: each restore fires exactly once, for its own bring-forward", () => {
+  // the browser juggles the pane, so its close does its restore — keyed on the browser's OWN flag
   assert.match(BROWSE, /window\.parent\.postMessage\(\{ romp: "browseClosed" \}, "\*"\);/);
   assert.match(KERNEL, /if\(m\.romp==='browseClosed'&&window\.__rompFeedWasOff\)/);
+  // the viewer re-entered the protocol on 2026-08-20 (the chat's cards-pane preference relays
+  // viewFile into the feed), but ONLY for relay-opened views: an in-document open — this browser's
+  // row click, a chat-hosted viewer — still announces nothing, so the browser's restore can never
+  // be fired (or suppressed) by a viewer it happens to be underneath. Separate flags shell-side
+  // (__rompFeedWasOff vs __rompFeedWasOffView) keep the two restores from consuming each other.
+  assert.match(VIEW, /if \(viaRelay\) \{/);
+  assert.match(KERNEL, /if\(m\.romp==='viewFileClosed'&&window\.__rompFeedWasOffView\)/);
 });
 
 test("the shell relays browseFiles: pane forward, remembered, phone tab", () => {

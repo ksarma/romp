@@ -123,6 +123,15 @@ let gitHooks: { reqId: number; apply: (url: string) => void } | null = null;
 // first). The guard must live in closeFileView itself, because the browser overlay and the Escape
 // handler both close through it without knowing an edit is in progress.
 let closeGuard: (() => boolean) | null = null;
+// Set when the open viewer arrived via the SHELL's viewFile relay (the chat's cards-pane preference,
+// render.ts openPath → kernel.py's landing shell): that relay may have brought a toggled-off feed
+// pane forward, and only the viewer knows when it closes — so a relay-opened close announces itself
+// (viewFileClosed) and the shell restores the pane, the browser's browseClosed contract. In-document
+// opens never announce: the browser overlay owns its own restore, and a chat-hosted viewer moved no
+// pane. openFileView leaves the flag alone on purpose — a same-viewer replace (the conflict Reload)
+// must not eat the restore, and the relay-opened modal covers the browser's rows, so no in-document
+// open can slip in underneath before the close consumes it.
+let viaRelay = false;
 
 // ── review comments (the user 2026-08-14, who found coordinating a doc review painful) ─────────────
 // Reading a doc an agent wrote used to mean hand-copying every line you wanted changed back into the
@@ -165,6 +174,13 @@ export function closeFileView(): void {
   gitHooks = null;
   wrap.remove();
   document.body.classList.remove("fileview-open");
+  if (viaRelay) {
+    viaRelay = false;
+    // the shell may have brought the feed pane forward for this view — tell it the view is over;
+    // it restores only what IT turned on (__rompFeedWasOffView, kernel.py's landing shell)
+    try { if (window.parent !== window) window.parent.postMessage({ romp: "viewFileClosed" }, "*"); }
+    catch { /* no shell — then nothing was brought forward */ }
+  }
 }
 
 /** Show `path` in a modal over this pane. Re-opening replaces whatever is up — never stacks. */
@@ -772,9 +788,10 @@ function mdBlock(text: string): HTMLElement {
 
 /** Bind the pane's WS poster and route saveFile/fileGitLink replies back to the open viewer. Called
  *  once, from the pane's boot (feed.ts today, beside the browser overlay's initFileBrowse; a bundle
- *  that opens the viewer directly wires it the same way). The viewFile branch honors a shell's relay
- *  of a chat file-link click — nothing sends it since the viewer moved into the chat document, but a
- *  not-yet-reloaded shell page still might, and honoring it costs nothing. */
+ *  that opens the viewer directly wires it the same way). The viewFile branch is the receiving end
+ *  of the shell's relay of a chat file-link click — sent again since 2026-08-20, when the click site
+ *  carries the cards-pane preference (fileLinkPane, render.ts openPath); the sid rides along so a
+ *  remote session's file still resolves against the host that owns it. */
 export function initFileView(poster: (m: Record<string, unknown>) => void): void {
   post = poster;
   window.addEventListener("message", (e: MessageEvent) => {
@@ -782,6 +799,7 @@ export function initFileView(poster: (m: Record<string, unknown>) => void): void
     if (!m) return;
     if (m.romp === "viewFile" && typeof m.path === "string" && m.path) {
       openFileView(m.path, typeof m.sid === "string" ? m.sid : null);
+      viaRelay = true;   // this open rode the shell's relay — the close must tell the shell (closeFileView)
     } else if (m.type === "fileSaved" && editHooks && m.reqId === editHooks.reqId) {
       const h = editHooks; editHooks = null;
       h.saved(String(m.mtimeNs || ""));
