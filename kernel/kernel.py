@@ -23827,16 +23827,62 @@ if(m.romp==='picker')document.body.classList.toggle('picker-open',!!m.on);
 // "Browse files" from any pane surfaces the FILE BROWSER in the FEED pane, which is a different
 // document — so the shell relays it (plans/file-browser.md). If the feed pane is toggled off we turn
 // it on for the duration and remember to put it back, so the browser never costs the user their
-// layout. (File VIEWS need none of this since 2026-08-15: the viewer is a modal over whatever
-// document clicked, so it never touches the panes and has nothing to restore.)
+// layout. (File VIEWS default to needing none of this since 2026-08-15 — the viewer is a modal over
+// whatever document clicked — but the cards-pane preference below opts a chat click back into the
+// same juggling.) THE HANDOFF: when a RELAY-opened viewer already brought the pane forward (its
+// flags below), the browser takes the pane over — openFileBrowse closes that viewer and its close
+// stays silent (file-view.ts) — so the COMMITTED restore obligation moves onto the browser's own
+// flag here and is discharged at browseClosed. Hiding the pane at this moment would hide the very
+// browser the click asked for, and a viewer flag left armed under an open browser would let a later
+// viewer's close do the same. The PENDING stash is RETIRED here, never converted: nothing else ever
+// retires a pend whose ack was lost (a mid-reload feed, a veto), so converting it let a much-later
+// browse open/close turn that stale bit into a pane-hide out from under active use. An ack that DID
+// land before this arm sits on the committed flag (which transfers); one still in flight arrives to
+// a cleared pend and arms nothing — that open costs a pane left forward, arm-on-ack's one named
+// price, never a surprise hide.
 if(m.romp==='browseFiles'){var bf=document.getElementById('f-feed');
+  if(window.__rompFeedWasOffView){window.__rompFeedWasOff=true;window.__rompFeedWasOffView=false;}
+  window.__rompFeedWasOffViewPend=false;
   if(!document.body.classList.contains('po-feed')){window.__rompFeedWasOff=true;
     try{window.__rompPaneToggle&&window.__rompPaneToggle('feed',true);}catch(e){}}
   try{window.__rompMobileTab&&window.__rompMobileTab('feed');}catch(e){}   // phone: one pane at a time
   try{bf&&bf.contentWindow&&bf.contentWindow.postMessage({romp:'browseFiles',path:m.path,sid:m.sid},'*');}catch(e){}}
-// the browser owns the restore: browseClosed alone puts a brought-forward feed back the way it was
-if(m.romp==='browseClosed'&&window.__rompFeedWasOff){window.__rompFeedWasOff=false;
-  try{window.__rompPaneToggle&&window.__rompPaneToggle('feed',false);}catch(e){}}});
+// the browser's close ends the overlay chain: browseClosed puts a brought-forward feed back the way
+// it was, consuming the VIEWER's flag too — the feed-document handoff (the viewer's own dir-link →
+// initFileBrowse) opens the browser without any browseFiles reaching this shell, so the transfer
+// above never ran and the handed-off obligation still sits on the viewer flag. Either way: one
+// restore, both flags cleared, nothing lingers.
+if(m.romp==='browseClosed'&&(window.__rompFeedWasOff||window.__rompFeedWasOffView)){
+  window.__rompFeedWasOff=false;window.__rompFeedWasOffView=false;
+  try{window.__rompPaneToggle&&window.__rompPaneToggle('feed',false);}catch(e){}}
+// A chat file-link click with the cards-pane preference set (fileLinkPane — gear.js; the user
+// 2026-08-20) posts viewFile up instead of opening in-document; the shell forwards it to the FEED
+// pane, whose initFileView (file-view.ts) opens the viewer there. The GATE lives at the click site
+// (render.ts openPath): this relay forwards whatever arrives, exactly like browseFiles above. Same
+// pane juggling, but a SEPARATE was-off flag, so the viewer and the browser (which close
+// independently) each restore only their own bring-forward — the one deliberate coupling is the
+// one-way handoff above. ARM ON ACK: postMessage into an iframe is fire-and-forget, so the was-off
+// bit is only STASHED here (…Pend) and committed when the feed answers viewFileOpened — the ack a
+// real open sends and a lost message or a dirty-edit veto never does. An armed-at-send flag left a
+// viewFile lost to a mid-reload iframe cocked, and a later open/close cycle consumed it and hid a
+// pane the user was using. A lost message now costs only a pane left forward, never a surprise hide.
+if(m.romp==='viewFile'){var vf=document.getElementById('f-feed');
+  window.__rompFeedWasOffViewPend=!document.body.classList.contains('po-feed');
+  if(window.__rompFeedWasOffViewPend){try{window.__rompPaneToggle&&window.__rompPaneToggle('feed',true);}catch(e){}}
+  try{window.__rompMobileTab&&window.__rompMobileTab('feed');}catch(e){}   // phone: one pane at a time
+  try{vf&&vf.contentWindow&&vf.contentWindow.postMessage({romp:'viewFile',path:m.path,sid:m.sid},'*');}catch(e){}}
+// the feed's ack: the viewer really opened, so the restore obligation arms for real
+if(m.romp==='viewFileOpened'){if(window.__rompFeedWasOffViewPend)window.__rompFeedWasOffView=true;
+  window.__rompFeedWasOffViewPend=false;}
+// the viewer's close announces only a RELAY-opened view the browser did NOT take over (file-view.ts
+// viaRelay + its handoff suppress), and the restore consumes only what the viewFile arm turned on.
+// The phone returns to the Chat tab unconditionally — the relay only ever fires from a chat click,
+// and the tab switch happened whatever the desktop pane state was — while the silent handoff keeps
+// the Feed tab, where the browser the user is heading into lives.
+if(m.romp==='viewFileClosed'){
+  try{window.__rompMobileTab&&window.__rompMobileTab('chat');}catch(e){}
+  if(window.__rompFeedWasOffView){window.__rompFeedWasOffView=false;
+    try{window.__rompPaneToggle&&window.__rompPaneToggle('feed',false);}catch(e){}}}});
 // One id per dashboard (per browser tab/window), minted here so every pane in it reports the same one.
 // sessionStorage, deliberately: it survives a reload (the panes keep their identity) and a second window
 // gets its own, which is what makes "the dashboard that asked" a thing the kernel can address.

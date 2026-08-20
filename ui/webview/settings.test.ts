@@ -33,6 +33,18 @@ test("Compact transcript defaults ON (the user 2026-07-14): fresh installs read 
   assert.equal(DEFAULT_SETTINGS.compact, true);
 });
 
+// Where a chat file-link click opens on the web (the user 2026-08-20): "chat" is the default —
+// upstream's design, the viewer over the pane you clicked — and "feed" is the opt-in that relays
+// the open into the Feed pane so the transcript stays readable while the file is up.
+test("fileLinkPane defaults to chat; a foreign stored value reads as the default, never breaks the click", () => {
+  assert.equal(DEFAULT_SETTINGS.fileLinkPane, "chat");
+  store["romp:settings"] = JSON.stringify({ fileLinkPane: "feed" });
+  assert.equal(loadSettings().fileLinkPane, "feed", "the opt-in round-trips");
+  store["romp:settings"] = JSON.stringify({ fileLinkPane: "purple" });
+  assert.equal(loadSettings().fileLinkPane, "chat", "a corrupt entry may cost the preference, never the click");
+  delete store["romp:settings"];
+});
+
 // The settings change signal must cover every way a change can happen: another
 // same-origin tab (storage event), THIS document (the gear now lives in the same
 // page — same-document writes never fire storage), and another VS Code webview

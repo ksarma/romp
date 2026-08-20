@@ -41,8 +41,9 @@ test("the save acknowledges before the round-trip, and Ctrl/Cmd+S is the same sa
 test("no exit path can silently eat an edited buffer", () => {
   // the guard lives in closeFileView itself — the browser overlay and Escape close through it
   assert.match(VIEW, /if \(closeGuard && !closeGuard\(\)\) return;/);
-  // …and the REPLACE path (opening file B over a dirty editor) asks the same question
-  assert.match(VIEW, /if \(document\.getElementById\("romp-fileview"\) && closeGuard && !closeGuard\(\)\) return;/);
+  // …and the REPLACE path (opening file B over a dirty editor) asks the same question — and since
+  // 2026-08-20 REPORTS the veto (false), so a relayed open can't mis-tag the surviving viewer
+  assert.match(VIEW, /if \(document\.getElementById\("romp-fileview"\) && closeGuard && !closeGuard\(\)\) return false;/);
   assert.match(VIEW, /const confirmDiscard = \(\): boolean =>\n    !editing \|\| !dirty \|\| window\.confirm/);
   // Escape peels edit mode first, never the whole viewer
   assert.match(VIEW, /if \(editing\) \{\s*\/\/ Escape peels edit mode first, never the whole viewer\n      if \(confirmDiscard\(\)\) exitEdit\(\);\n      return;\n    \}/);
