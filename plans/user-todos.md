@@ -1,0 +1,321 @@
+# User todos — what a session needs from you, held until you or it says otherwise
+
+**Status: DESIGNED, READY TO BUILD** — settled in a structured design interview (the user
+2026-08-20/21) over three research passes; the decisions recorded here are the plan of record,
+and the build slices at the bottom are sequenced to ship independently. No code has landed.
+File:line references describe `main` = `90576ad6`. Companion records: the glossary entries in
+`CONTEXT.md` and the authority-tier decision in `docs/adr/0001-user-todos-authority-tier.md`.
+
+## The problem
+
+A session hits a point mid-turn where one strand of its work needs the user — and says so, once,
+in passing: it can't do X without a decision, an input, or an action only they can provide, so it
+notes that and continues with Y and Z. The session keeps looking busy — the transcript scrolls,
+the card sits in Working with a gold pip — and X vanishes. The user learns about it days later,
+re-reading a transcript, or never (the user 2026-08-20, describing the recurring shape). The lost
+items come in two kinds, and both matter:
+
+- **Partial blocks** — one branch is stuck on the user while the rest proceeds. In the demo
+  world: the `api` session of `notes-api` needs a decision on the auth scheme before it can wire
+  login, so it builds the unauthenticated routes meanwhile.
+- **Non-blocking wants** — nothing is stuck *yet*, but the agent needs something eventually: a
+  test credential, an opinion on a naming choice, a review of a draft it can keep polishing.
+
+Today the second kind has no representation at all, and the first kind has one that erases
+itself.
+
+## Why today's machinery can't see it
+
+Three stacked holes, traced end to end at `90576ad6`:
+
+1. **Mid-turn, the ask is invisible by construction.** Judges rule on ended segments only
+   (`run_triage`, `kernel/judge.py:10249`), and a segment splits only at genuine new *inputs*
+   (`kernel/event_model.py:1550-1614`) — so an autonomous work turn is one segment, and the
+   "I can't do X" sentence sits buried mid-segment behind the Y/Z work that follows it. While
+   the turn runs, the card shows Working with open-turn narration.
+2. **At turn end, the block usually never files.** The planner's block op requires the segment
+   to *leave* a decision owed (`judge.py:2044-2065`); a segment that ends on continuing Y/Z
+   work reads as progress and files as `sub` ops. There is no verdict shape for "partially
+   blocked" — a node is blocked or it isn't.
+3. **When a block does file, the system erases it.** Every planner placement runs
+   `_unblock_branch` — an unblock on the placed node and its whole ancestor chain, why = new
+   work filed on this branch (`judge.py:3750-3761`) — so a block on the card Y/Z files under
+   dies on the next judged segment. A block on a *sibling* sub survives that, but the unblocker
+   re-examines every open block whenever a newer turn ends (`_unblock_session`,
+   `judge.py:9024-9117`) and its prompt licenses lifting when the work visibly moved past the
+   question even though nobody typed an answer (`UNBLOCK_SYS`, `judge.py:8882`). The repo
+   documents this erasure class about itself: the `WHY_UNBLOCK_UNSETTLED` design note
+   (`judge.py:353-362`) records a blocked-on-the-user goal repeatedly flipped back to working
+   by "new work filed" / "answered in passing" rulings while the user's decision was still
+   outstanding — and `_mark_nudge_failed`'s moot guard (`kernel/kernel.py:2682-2733`) exists
+   because of the same weekend. After a lift there is no residue: the decision brief is a
+   blocked-card surface and clears with the block (`judge.py:4204`). The nudge ladder can
+   resurrect the question much later, but only once the session goes *idle* with a
+   still-working card (`_auto_nudge_tick`, `kernel.py:3145`) — while the session stays busy on
+   Y and Z, nothing fires.
+
+None of this is a bug to patch in the judges. They infer from transcript text, and inference
+over "I'll note X and continue" will keep failing in both directions — filing blocks that
+aren't real, and lifting ones that are. What's missing is a channel where the agent *states*
+the need explicitly, and where nothing that reasons by inference is allowed to clear it.
+
+## The design
+
+A **user todo**: a first-class object a session registers when it needs something from the
+user — a decision, input, or action only they can provide — while it keeps working on
+whatever else it can. It stays visible until one of exactly three events clears it, none of
+them a judgment.
+
+### Name and scope
+
+"User todo" is the user-facing and glossary term (the user's pick over "ask", 2026-08-20).
+Internal identifiers use `userTodo`/`user_todos` and never `ask` — the feed payload's existing
+`asks` field is the card list itself (`kernel.py:18299`), and a second meaning of the word in
+the same payloads would be a collision. Scope is gatekept by the tool description, not by any
+classifier: partial blocks and non-blocking wants both qualify; status updates and FYIs never
+do — those the user already sees.
+
+### The channel: two postal tools
+
+Registration rides the postal MCP server (`postal/postal_service.py`) — the one tool surface
+every romp session already holds, SDK and tmux alike, wired at the session level with nothing
+romp-side restricting subagent inheritance. Two new tools:
+
+- **`add_user_todo`** — required `text` (one short line: what's needed and why), optional
+  `detail` (longer context for when the short line can't carry it). Returns a stable id
+  (`ut-` + 8 hex, minted kernel-side).
+- **`withdraw_user_todo`** — takes the id; stamps the todo withdrawn. Withdrawing an unknown
+  or already-cleared id returns a loud, plain answer, never a silent success.
+
+The descriptions follow the veil (sessions don't know romp exists): they speak of "the person
+you work for" and name no romp machinery. Working drafts, to be jld-polished at build:
+
+> **add_user_todo** — Flag something you need from the person you work for — a decision, an
+> input, or an action only they can provide — while you keep working on what you can. Give one
+> short line saying what you need and why; add detail only if the line can't carry it. Returns
+> an id: withdraw it (withdraw_user_todo) the moment the need is met or moot. Not for status
+> updates or FYIs — only things you are waiting on them for.
+>
+> **withdraw_user_todo** — Take back a need you flagged (by id) once it's met, answered some
+> other way, or no longer applies — so the person you work for doesn't act on a stale request.
+
+Construction is `set_working`'s exact shape: one `MCP_TOOLS` schema entry + one `_mcp_call`
+branch each (`postal_service.py:2536` onward), backed by kernel routes (`POST /usertodo`,
+`POST /usertodo/withdraw`) the way `_publish_working` posts to the kernel's `/working`
+(`postal_service.py:596-599` → `kernel.py:26740`).
+
+**The subagent caveat, documented rather than fixed:** postal identifies its caller from the
+CLI-process environment (`CLAUDE_CODE_SESSION_ID`, `postal_service.py:135-154`), so a subagent
+calling the tool registers the todo *as its parent session*. That is the right behavior — the
+need belongs to the session the user talks to — it just means "who filed this" is always the
+session, never an individual subagent, and the docs say so.
+
+### The store
+
+A sid-keyed JSON blob under STATE, following the `notify-cards.json` / `session-flags.json`
+idiom (mtime-cached read, `_atomic_write(..., sort_keys=True)` publish):
+
+```
+~/.local/state/romp/user-todos.json
+{ "<sid>": [ { "id": "ut-9f2c1a34",
+               "text": "Need the auth-scheme decision to wire login — building the open routes meanwhile",
+               "detail": "…optional longer context…",
+               "createdT": 1755741000,
+               "resolved": { "kind": "answered", "t": 1755749200 } } ] }
+```
+
+Open = no `resolved` key. Resolution *stamps* rather than deletes — `kind` is one of
+`answered` / `dismissed` / `withdrawn`, so the record carries its own history (created,
+cleared, by which event). Kernel-side, so it survives session death and kernel restarts alike;
+entries leave the file only when the session's registry entry itself is deleted, riding the
+same sweep that prunes the other per-sid state (`_prune_notify_cards`, `kernel.py:1838`, is the
+pattern). Live data only under STATE, never in the repo, as ever.
+
+### Lifecycle: an authority tier
+
+Exactly three events clear a user todo:
+
+1. **The user answers** — the reply affordance on the todo (the split card, below). The reply
+   is injected into the session as a message from the person the agent works for —
+   injected-voice rules apply, no romp nouns — anchored to the need it answers so a terse
+   reply lands unambiguously: the working shape is the todo's own short text as a prefix
+   (`Re: <text> — <reply>`), final copy jld-drafted at build and pinned by
+   `tests/test_injected_voice.py`. Answering stamps the todo at the send, kernel-side, at the
+   user's gesture — not judged.
+2. **The user dismisses** — clears it without a message; nothing is injected. For moot and
+   stale items.
+3. **The agent withdraws** — via the tool, when it got what it needed some other way or the
+   need evaporated.
+
+**Judges and the unblocker get no vote.** Nothing in `judge.py` may write this store — a
+grep-provable invariant, and the whole point: every eraser in the three holes above acts by
+inference, and this object exists to survive inference. The
+precedent is the agentTask tier: `open_task` nodes mirrored from the live task store trump a
+judge/rollup done because we trust the agent's declaration over inference
+(`judge.py:3985-4001`). User todos are the same move for the other direction of obligation.
+
+The deliberate, stated cost: an agent that forgets to withdraw leaves a moot todo sitting
+visibly until the user dismisses it. Accepted — a stale visible todo costs one glance and one
+click; a silently vanished ask costs whatever X was. `docs/adr/0001` records this trade-off.
+
+### Withdrawal support: how the agent remembers
+
+One mechanism is rejected outright, not deferred: **idle check-in turns**. A scheduled "do you
+still need all of these?" turn was weighed and refused (the user 2026-08-20) — at idle the
+common truth is that everything registered is still waiting, so check-ins would burn a turn
+per session per idle to say nothing. Three passive mechanisms carry the load instead:
+
+1. **The tool description instructs withdrawal at registration time** — the agent learns the
+   contract in the same breath it files the need.
+2. **Open todos ride into the contexts the agent naturally receives.** On SessionStart after a
+   restart or revival, and after compaction (the SessionStart hook family covers both sources;
+   `hooks/romp-postal-context.sh` is the template — a passive context block, no forced turn),
+   the session sees its open todos phrased as its *own* outstanding notes to the person it
+   works for, with ids and an invitation to withdraw any that are met or moot. Working draft,
+   veil-compliant, pinned by the voice test:
+
+   > Notes you still have open with the person you work for — things you said you needed from
+   > them:
+   > - Need the auth-scheme decision to wire login (ut-9f2c1a34, opened 2026-08-20)
+   >
+   > If one is met or moot now, withdraw it (withdraw_user_todo); otherwise leave it standing.
+
+3. **The user's dismiss covers the rest.**
+
+### Escalation: the idle endgame
+
+While the session still works, an open todo changes no card's column — the session is not
+waiting on the user, it told them so. The one earned move: **when the session goes idle with
+open user todos and nothing else dispatched — no open turn, no background work awaited — the
+todo IS the session's frontier**, and its card escalates to Blocked (needs-input).
+
+Mechanically this is a read-side floor in the `perm_top` family (`kernel.py:18051-18069`), NOT
+a judge verdict: a verdict would land in the diary the unblocker examines and could be lifted
+like any other block. A session with no open card gets a needs-input placeholder,
+the same way a goal-less permission prompt does (`kernel.py:18244-18246`). Both directions are
+event-keyed, per the card-move rule: the floor arms on the turn-end/await-drain that empties
+the frontier while a todo stands, and stands down when a todo clears or the session starts
+new work (a message arrived, the user acted) — each a real event, never a per-build
+re-derivation from a flapping proxy.
+
+**The auto-nudge also stands down for a session whose idle is already explained by open
+todos** (a new gate in `_auto_nudge_tick`'s family, alongside `kernel.py:3091`'s) — the same
+reasoning as the no-check-ins call: the todo already says what a nudge would fish for, and the
+escalated card, not a manufactured turn, is the surface.
+
+### Surfaces
+
+**(a) The split card by the composer.** The existing transcript-bottom to-do checklist card
+(`kind:"todo"`, `kernel.py:15835-15839`; renderer `render.ts:2628`) becomes a shared card with
+two sections — **the agent's plan** (the existing checklist, exactly as today) and **waiting
+on you** (open user todos, newest last), each auto-hiding when empty, so today's behavior is
+unchanged when no todos exist. Each todo row carries its short text (detail behind the
+existing disclosure idiom), a **Reply** affordance (answer path above) and a **Dismiss**.
+Two different things share this card on purpose: the agent's plan for itself, and the agent's
+asks of you — the glossary keeps the terms apart.
+
+**(b) The tab glyph.** A session tab with open todos carries a small, non-numeric glyph.
+Precedent: the per-tab ctx gauge and compacting mini-bar (`render.ts:4126-4136`, `4253-4260`)
+— tabs deliberately carry no counts today and this stays that way; the glyph says "something
+here waits on you", the card says what. Exact character/placement is a build-time UI call.
+
+**(c) A quiet feed-card marker.** Each of the owning session's feed cards carries a quiet
+marker (todos are session-scoped, not card-scoped). **No feed strip in v1** — the feed's
+banner slot stays single-purpose.
+
+**(d) The app badge.** `_needs_you_count` (`kernel.py:22038-22041`) widens to one number for
+"things only the user can move": **open user todos (of non-ended sessions) plus hard-stopped
+needs-input sessions** — the permission-prompt class stays in (the user confirmed,
+2026-08-20). Dedup rule: the escalation floor is a *presentation* of todos the count already
+includes, so an idle session escalated by its todos adds nothing extra; a session hard-stopped
+for a non-todo reason (permission prompt, on-you API error) counts once as itself. Rides the
+existing push (`_badge_push`, `kernel.py:22050` → the shell WS `{type:'badge'}`,
+`kernel.py:24611-24614`, service-worker copy `22292-22296`).
+
+### Dead and dormant sessions
+
+Two different "not running" states, two different answers:
+
+- **Dormant** (registry alive, no live thread — e.g. after a kernel restart): the session is
+  still addressable, its todos show everywhere, and answering one just works — the send path
+  auto-revives a dormant session with its history intact (`_ensure` → resume,
+  `sdk_backend.py:4140-4164`).
+- **Ended** (registry `alive: false`): the todos persist in the store but **hide** from every
+  surface and every aggregate — the split card, the glyph, the marker, the badge. They are
+  hidden, not cleared: revive the session (the dashboard's Revive, `kernel.py:7104`) and they
+  return with it. A dead session's asks should neither nag from beyond the grave nor be
+  silently lost.
+
+## Data seams
+
+Three seams, all existing patterns:
+
+- **Chat page**: `build_session` grows a `userTodos` field (return dict at
+  `kernel.py:16319-16351`) — open todos only, sorted by `createdT`, no per-build values.
+  The client merges it through the upsert's prev-fallback pattern (`render.ts:9880-9964`;
+  `bg-tasks.test.ts` pins the idiom). **The stability caveat, by name**: `_send_client` dedups
+  by comparing the serialized payload (`kernel.py:16343-16351`, the `firstSeen` lesson), so
+  this field must serialize identically across builds when nothing changed — or every
+  connected client re-receives its full transcript about once a second. The tab glyph derives
+  client-side from the same field.
+- **Feed page**: `build_feed`'s return (`kernel.py:18299`) grows a top-level sid-keyed
+  open-count map for the card marker, and the escalation floor + placeholder live in the same
+  column mapping the perm floor uses.
+- **Shell**: no new seam — the widened count rides the existing badge WS.
+
+## Build slices
+
+Each slice ships independently, tests included, per the standing rule.
+
+**Slice 1 — the object and its loop.** Store helpers (mtime-cached read, atomic publish,
+sweep on session delete) + kernel routes + the two postal tools + the `build_session` field +
+the split card with Reply and Dismiss + the answer injection. Shippable alone: register, see,
+answer, dismiss, withdraw all work end to end before any ambient surface exists.
+*Tests*: `tests/test_user_todos.py` (store round-trip and stamps, sid-keying, id stability,
+sweep, loud unknown-id withdraw, route auth); postal tool-dispatch tests (register returns the
+id; caller resolves to the session); `test_injected_voice.py` extended to the answer prefix
+and both tool descriptions; UI source pins for the split card (sections auto-hide, delegate
+root, payload-stability pin in the `bg-tasks.test.ts` style). Synthetic data only (the
+`notes-api` world).
+
+**Slice 2 — ambient visibility and the endgame.** The feed seam + card marker, the tab glyph,
+the widened badge, the idle escalation floor + placeholder, and the auto-nudge stand-down.
+*Tests*: floor semantics (idle + open todo → needs_input; working session → no column change;
+clear → stands down; ended session → excluded; placeholder when no card), badge arithmetic
+(including the no-double-count rule), nudge stand-down, UI pins for glyph and marker.
+
+**Slice 3 — memory across context loss.** The SessionStart hook (sources: resume and compact)
+that emits open todos as a passive context block, in the agent's-own-notes voice.
+*Tests*: hook output shape (no todos → no block at all), the voice test on the rendered text,
+dormant/ended gating.
+
+## Judges: no vote now, a suggestion later
+
+Explicitly deferred, not in v1: **judge-suggested mootness**. A judge that notices a todo
+looks answered or overtaken could *suggest* clearing it — rendered as a one-click confirm for
+the user on the todo itself, never an auto-clear. Deferred because v1's worth is measured by
+how much the user trusts the invariant that a visible todo is still real until they or the
+agent clear it; a suggestion channel is only safe to add once that trust exists, and it
+changes no store semantics when it comes.
+
+## Deliberately not in v1
+
+A feed strip or column for todos (the marker + escalation carry it); idle check-in turns
+(rejected outright, not deferred); numeric counts on tabs; editing a todo's text (withdraw and
+re-add); priorities, deadlines, or ordering beyond creation time; per-todo Web Push (the badge
+and the existing needs-input push cover the phone); a cross-session todo digest pane; the
+judge mootness suggestion (deferred above).
+
+## Open questions
+
+The interview settled the design; what remains are build-time calls, not blockers:
+
+1. The tab glyph's exact character and placement (next to the ctx gauge; non-numeric is
+   decided).
+2. The split card's final heading copy ("the agent's plan" / "waiting on you" are the working
+   titles; jld pass at build, like all user-facing copy).
+
+## Upstream
+
+Pure feature, no fork-specific content: on landing, a candidate `UPSTREAM.md` row per slice.
+The offer decision stays with the offer flow, not this plan.
