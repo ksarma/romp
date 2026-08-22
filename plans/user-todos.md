@@ -1,10 +1,11 @@
 # User todos — what a session needs from you, held until you or it says otherwise
 
-**Status: DESIGNED, READY TO BUILD** — settled in a structured design interview (the user
-2026-08-20/21) over three research passes; the decisions recorded here are the plan of record,
-and the build slices at the bottom are sequenced to ship independently. No code has landed.
-File:line references describe `main` = `90576ad6`. Companion records: the glossary entries in
-`CONTEXT.md` and the authority-tier decision in `docs/adr/0001-user-todos-authority-tier.md`.
+**Status: BUILT — all three slices (2026-08-22)** — settled in a structured design interview
+(the user 2026-08-20/21) over three research passes; the decisions recorded here are the plan
+of record, and each build slice at the bottom now carries its as-built notes. File:line
+references describe `main` = `90576ad6`, the design-time tree; the slices' own tests are the
+current map. Companion records: the glossary entries in `CONTEXT.md` and the authority-tier
+decision in `docs/adr/0001-user-todos-authority-tier.md`.
 
 ## The problem
 
@@ -169,7 +170,7 @@ per session per idle to say nothing. Three passive mechanisms carry the load ins
    contract in the same breath it files the need.
 2. **Open todos ride into the contexts the agent naturally receives.** On SessionStart after a
    restart or revival, and after compaction (the SessionStart hook family covers both sources;
-   `hooks/romp-postal-context.sh` is the template — a passive context block, no forced turn),
+   built as `hooks/romp-usertodo-context.sh` — a passive context block, no forced turn),
    the session sees its open todos phrased as its *own* outstanding notes to the person it
    works for, with ids and an invitation to withdraw any that are met or moot. Working draft,
    veil-compliant, pinned by the voice test:
@@ -306,6 +307,26 @@ clear → stands down; ended session → excluded; placeholder when no card), ba
 that emits open todos as a passive context block, in the agent's-own-notes voice.
 *Tests*: hook output shape (no todos → no block at all), the voice test on the rendered text,
 dormant/ended gating.
+*As built (2026-08-22):* `hooks/romp-usertodo-context.sh`, registered at SessionStart by
+install.sh — deliberately NOT tmux-gated the way `romp-postal-context.sh` is, because SDK
+sessions need the block too. No fsid→sid join either: both backends already put the stable sid
+in the CLI env as `ROMP_SID` (bin/romp's launch line, sdk_backend `_options`), and the hook
+payload's `session_id` is the current transcript fsid, the wrong key after a fork. The KERNEL
+renders the words (`_user_todo_context_block` → read-only `POST /usertodo/context`), so
+`test_injected_voice.py` scans exactly what a session receives; the wording is the working
+draft above, newest first, capped at 12 (`_USER_TODO_CONTEXT_CAP`, the `_open_leaf_bullets`
+cap idiom) with an "…and N more from earlier" tail, todo text marker-neutralized. The compact
+seam is VERIFIED, not assumed: the shipped CLI (2.1.224, SDK-bundled) fires SessionStart with
+source ∈ startup/resume/clear/compact/fork and delivers every source's additionalContext
+(only session_title is source-filtered), and SDK sessions load user-settings hooks (the SDK's
+`setting_sources=None` default = CLI defaults). startup stays silent (a fresh sid has an empty
+ledger) and so do clear/fork (the user's own reset or rewind of the conversation — the plan's
+chosen sources are resume and compact, and widening to clear is a separate call). One
+refinement of this slice's "dormant/ended gating" test line: the read leg has NO liveness
+re-check, deliberately — an ended session fires no SessionStart, and re-checking the death
+marker at the route would race the revival's own states row (written from the same
+SessionStart) and eat the exact block the revival came for. `ContextBlock` pins that with the
+reasoning; ended sessions still hide from every USER surface exactly as designed above.
 
 ## Judges: no vote now, a suggestion later
 

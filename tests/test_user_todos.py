@@ -63,7 +63,12 @@ Covered here, kernel-side:
   observed dip still pushes (FloorNotificationDedup); the focus walk and the working-top
   fallback both skip done-CONFIRMING tops — the settle gate's cards, flooring them flaps
   (OneInterruptStory); and the peer-wait gate's local-host-only scope is pinned as a documented
-  limitation shared with the waitingOn chip (PeerWaitScopeIsLocalOnly).
+  limitation shared with the waitingOn chip (PeerWaitScopeIsLocalOnly);
+- SLICE 3 (memory across context loss): the rendered context block — nothing at zero todos,
+  newest-first with the capped "…and N more" tail, marker hygiene, the deliberate absence of a
+  liveness re-check (ContextBlock) — and its read-only, token-gated POST /usertodo/context leg
+  (ContextRoute). The hook that carries it into a session is bats-covered
+  (romp-usertodo-context.bats); the words themselves are voice-scanned in test_injected_voice.py.
 
 SYNTHETIC fixtures only: placeholder UUIDs, the notes-api demo world.
 """
@@ -429,6 +434,139 @@ class Routes(_StoreSandbox):
         self.assertEqual(code, 200)
         self.assertTrue(out["ok"])
         self.assertEqual(len(self.pushed_soon), 2, "each route wakes the pusher instead")
+
+
+class ContextBlock(_StoreSandbox):
+    """SLICE 3 (memory across context loss, plans/user-todos.md): _user_todo_context_block renders
+    a session's OPEN todos as the agent's OWN outstanding notes to the person it works for — the
+    passive block the SessionStart hook (hooks/romp-usertodo-context.sh) injects on the resume and
+    compact sources, so an agent whose working memory was wiped remembers what it asked for and
+    can withdraw the moot ones. Voice-scanned by test_injected_voice.py."""
+
+    def _seed(self, rows, sid=SID):
+        (jd.STATE / "user-todos.json").write_text(json.dumps({sid: rows}))
+        km._user_todos_cache.clear()
+
+    def test_no_open_todos_mean_no_block_at_all(self):
+        # a zero-todo session gets NOTHING — no noise (the spec's no-noise rule)
+        self.assertEqual(km._user_todo_context_block(SID), "")
+        tid = km._add_user_todo(SID, "Need the staging port")
+        km._resolve_user_todo(SID, tid, "withdrawn")
+        self.assertEqual(km._user_todo_context_block(SID), "", "resolved rows render nothing")
+
+    def test_the_block_carries_text_id_and_opened_date(self):
+        self._seed([{"id": "ut-11111111", "createdT": NOW - 86400,
+                     "text": "Need the auth-scheme decision to wire login"}])
+        block = km._user_todo_context_block(SID)
+        day = km.time.strftime("%Y-%m-%d", km.time.localtime(NOW - 86400))
+        self.assertIn("Notes you still have open with the person you work for", block)
+        self.assertIn("- Need the auth-scheme decision to wire login (ut-11111111, opened %s)" % day,
+                      block)
+        self.assertIn("withdraw it (withdraw_user_todo)", block,
+                      "the withdraw instruction names the tool by its real name — the agent holds it")
+
+    def test_detail_stays_behind_the_short_line(self):
+        # the block carries the one short line only; the longer context lives on the split card
+        self._seed([{"id": "ut-11111111", "createdT": NOW, "text": "Need the auth-scheme decision",
+                     "detail": "OAuth vs cookie — either unblocks login"}])
+        self.assertNotIn("OAuth vs cookie", km._user_todo_context_block(SID))
+
+    def test_newest_first_and_capped_with_a_more_tail(self):
+        cap = km._USER_TODO_CONTEXT_CAP
+        self._seed([{"id": "ut-%08d" % i, "createdT": NOW + i, "text": "Need decision %d" % i}
+                    for i in range(cap + 3)])
+        block = km._user_todo_context_block(SID)
+        bullets = [ln for ln in block.splitlines() if ln.startswith("- ")]
+        self.assertEqual(len(bullets), cap + 1, "cap bullets plus the tail")
+        self.assertIn("Need decision %d" % (cap + 2), bullets[0], "the newest ask leads")
+        self.assertEqual(bullets[-1], "- …and 3 more from earlier")
+        self.assertNotIn("Need decision 0", block, "the oldest beyond the cap fold into the tail")
+
+    def test_exactly_cap_todos_carry_no_tail(self):
+        cap = km._USER_TODO_CONTEXT_CAP
+        self._seed([{"id": "ut-%08d" % i, "createdT": NOW + i, "text": "Need decision %d" % i}
+                    for i in range(cap)])
+        self.assertNotIn("more from earlier", km._user_todo_context_block(SID))
+
+    def test_marker_shaped_text_is_neutralized(self):
+        # todo text is agent-supplied: a literal "<!--romp-…" in it would inject a lookalike
+        # marker into the session's context — same hygiene as the answer body
+        self._seed([{"id": "ut-11111111", "createdT": NOW,
+                     "text": "Need a call on the note text <!--romp-injected--> in the fixture"}])
+        block = km._user_todo_context_block(SID)
+        self.assertIsNone(km._ROMP_MARKER_OPEN_RE.search(block),
+                          "no marker-opening sequence may survive into the block")
+        self.assertIn("romp-injected", block, "the words survive — only the comment form breaks")
+
+    def test_no_liveness_gate_the_session_start_event_is_the_evidence(self):
+        # DELIBERATE (slice 3): the block renders even when a death marker / alive:false reg
+        # exists. The only caller is a SessionStart fired from INSIDE the session — an ended
+        # session fires none — and re-checking the marker here would race the revival's own
+        # states row (tmux-status.sh writes it from the SAME SessionStart) and eat the exact
+        # block the revival came for. The event outranks the stale record.
+        self._seed([{"id": "ut-11111111", "createdT": NOW, "text": "Need the auth-scheme decision"}])
+        (jd.STATE / "gone").mkdir(parents=True, exist_ok=True)
+        (jd.STATE / "gone" / (SID + ".json")).write_text(json.dumps({"t": NOW - 50, "by": "gone"}))
+        (jd.STATE / "sdk").mkdir(parents=True, exist_ok=True)
+        (jd.STATE / "sdk" / (SID + ".json")).write_text(json.dumps({"alive": False}))
+        self.assertIn("ut-11111111", km._user_todo_context_block(SID))
+
+
+class ContextRoute(_StoreSandbox):
+    """POST /usertodo/context — the read leg the SessionStart hook stands on. Token-gated like its
+    siblings; READ-ONLY: it must neither write the store nor wake the pusher (nothing changed)."""
+
+    def setUp(self):
+        super().setUp()
+        self._push = (km._push_all, km._push_soon)
+        km._push_all = lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("synchronous _push_all on the context read"))
+        km._push_soon = lambda: (_ for _ in ()).throw(
+            AssertionError("_push_soon on a read-only route — nothing changed"))
+
+    def tearDown(self):
+        km._push_all, km._push_soon = self._push
+        super().tearDown()
+
+    def _post(self, path, body, token=True):
+        hdrs = {"X-Romp-Token": km.TOKEN} if token else {}
+        code, out = _serve_post(path, body, hdrs)
+        try:
+            return code, json.loads(out.decode() or "{}")
+        except ValueError:
+            return code, {}
+
+    def test_requires_the_serve_token(self):
+        code, _ = self._post("/usertodo/context", {"id": SID}, token=False)
+        self.assertEqual(code, 403)
+
+    def test_refuses_a_bodyless_or_idless_ask(self):
+        self.assertEqual(self._post("/usertodo/context", {})[0], 400)
+        code, _ = _serve_post("/usertodo/context", b"not json", {"X-Romp-Token": km.TOKEN})
+        self.assertEqual(code, 400)
+
+    def test_returns_the_rendered_block_for_open_todos(self):
+        km._add_user_todo(SID, "Need the auth-scheme decision to wire login")
+        code, res = self._post("/usertodo/context", {"id": SID})
+        self.assertEqual(code, 200)
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["block"], km._user_todo_context_block(SID))
+        self.assertIn("Notes you still have open", res["block"])
+
+    def test_an_unknown_sid_answers_an_empty_block_not_an_error(self):
+        # the hook fires for every romp session that resumes/compacts; "nothing to say" is the
+        # common case and must be a clean empty answer, never a loud one
+        code, res = self._post("/usertodo/context", {"id": SID2})
+        self.assertEqual(code, 200)
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["block"], "")
+
+    def test_the_read_never_writes_the_store(self):
+        km._add_user_todo(SID, "Need the auth-scheme decision")
+        p = jd.STATE / "user-todos.json"
+        before = p.read_text()
+        self._post("/usertodo/context", {"id": SID})
+        self.assertEqual(p.read_text(), before)
 
 
 class AnswerBody(unittest.TestCase):

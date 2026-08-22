@@ -91,9 +91,15 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
         jd.GOALDIR, jd.STATE = Path(self.td.name), Path(self.td.name)
         (jd.GOALDIR / (SID + ".json")).write_text(json.dumps(
             {"rompUuid": SID, "seq": 4, "nodes": _nodes(), "placements": {}, "status": {}}))
+        # open user todos for the context block below — the same synthetic notes-api world
+        km._user_todos_cache.clear()
+        km._add_user_todo(SID, "Need the auth-scheme decision to wire login — building the open "
+                               "routes meanwhile")
+        km._add_user_todo(SID, "Need a staging API key before the load test can run")
 
     def tearDown(self):
         jd.GOALDIR, jd.STATE = self.saved_goaldir, self.saved_state
+        km._user_todos_cache.clear()
         self.td.cleanup()
 
     def _bodies(self):
@@ -135,6 +141,12 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
             "user-todo answer": km._user_todo_answer_body(
                 "Need the auth-scheme decision to wire login — building the open routes meanwhile",
                 "Go with the session cookie for now."),
+            # the SessionStart context block (plans/user-todos.md slice 3): a resumed/compacted
+            # session's open todos as its OWN outstanding notes to the person it works for. Not an
+            # injected MESSAGE (it rides additionalContext, costing no turn) but the same veil
+            # applies — it must read as the agent's own notes, never a tracking system's; naming
+            # withdraw_user_todo is correct (the agent holds that tool)
+            "user-todo context block": km._user_todo_context_block(SID),
         }
         # every repeat-nudge variant wears the same voice as the first fire (the user 2026-08-11): the
         # rotation exists so a re-ask doesn't read canned, so a variant that broke the voice rule would
@@ -184,10 +196,13 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
             # words as its body, so there is no romp-authored ask in it to check; the DEBT reminder
             # asks for a reply to a PEER, not a progress report to the user; a comment thread's
             # opener is the user's own comment on a quoted passage — a conversation, never a nudge;
-            # a user-todo answer is the user's own reply to a need the agent flagged — same class
+            # a user-todo answer is the user's own reply to a need the agent flagged — same class;
+            # the user-todo context block is the agent's OWN notes handed back after context loss —
+            # a memory aid with a withdraw invitation, not a status ask
             if name in ("clear wrap-up", "clear wrap-up (batch)", "typed follow-up on a summary",
                         "debt reminder (question)", "debt reminder (handoff)",
-                        "debt reminder (several)", "comment thread opener", "user-todo answer"):
+                        "debt reminder (several)", "comment thread opener", "user-todo answer",
+                        "user-todo context block"):
                 continue
             text = prose(body).lower()
             with self.subTest(message=name):

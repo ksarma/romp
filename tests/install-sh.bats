@@ -42,6 +42,8 @@ PY
     [ "$(count_cmd Stop romp-summarize.sh)" = "1" ]
     [ "$(count_cmd Stop romp-postal-drain.sh)" = "1" ]
     [ "$(count_cmd SessionStart romp-postal-ensure.sh)" = "1" ]
+    [ "$(count_cmd SessionStart romp-usertodo-context.sh)" = "1" ]
+    [ -L "$HOME/.claude/hooks/romp-usertodo-context.sh" ]
     [ "$(count_cmd PostToolUse tmux-status.sh)" = "1" ]
     [ -L "$HOME/.claude/romp-postal.mcp.json" ]
 }

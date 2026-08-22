@@ -2136,6 +2136,45 @@ def _user_todo_answer_body(todo_text, reply):
                             _neutralize_romp_markers(reply).strip())
 
 
+# How many open todos the context block lists before folding the rest into an "…and N more"
+# tail — the _open_leaf_bullets order of magnitude (cap=12): plenty for any real session,
+# small enough that a pathological ledger cannot flood a freshly-compacted context.
+_USER_TODO_CONTEXT_CAP = 12
+
+
+def _user_todo_context_block(sid):
+    """SLICE 3 (plans/user-todos.md — memory across context loss): the session's OPEN todos
+    rendered as its OWN outstanding notes to the person it works for. The SessionStart hook
+    (hooks/romp-usertodo-context.sh) fetches this over POST /usertodo/context on the resume and
+    compact sources and hands it to the session as PASSIVE additionalContext — no forced turn
+    (idle check-in turns were rejected outright) — so an agent whose working memory was wiped
+    remembers what it asked for and withdraws the moot ones instead of leaving them for the
+    user's dismiss. "" when nothing is open: a zero-todo session gets NOTHING, no noise.
+
+    NEWEST first, capped (_USER_TODO_CONTEXT_CAP) with an "…and N more" tail — the freshest ask
+    leads and a runaway ledger cannot flood the context. VOICE (test_injected_voice.py renders
+    this): the agent's own notes, no tracking-system nouns; naming withdraw_user_todo is correct,
+    the agent holds that tool. Todo text is agent-supplied → marker-neutralized, the answer
+    body's hygiene. The rendered date is fine HERE (one-shot context, never dedup-compared) where
+    it would break the chat payload's serialized-dedup rule."""
+    rows = _open_user_todos(str(sid))
+    if not rows:
+        return ""
+    rows.reverse()                                   # _open_user_todos sorts oldest first
+    lines = ["Notes you still have open with the person you work for — things you said you "
+             "needed from them:"]
+    for t in rows[:_USER_TODO_CONTEXT_CAP]:
+        text = _neutralize_romp_markers(str(t.get("text") or "").strip()) or "(untitled)"
+        ct = int(t.get("createdT") or 0)
+        when = (", opened " + time.strftime("%Y-%m-%d", time.localtime(ct))) if ct else ""
+        lines.append("- %s (%s%s)" % (text, t["id"], when))
+    if len(rows) > _USER_TODO_CONTEXT_CAP:
+        lines.append("- …and %d more from earlier" % (len(rows) - _USER_TODO_CONTEXT_CAP))
+    lines += ["", "If one is met or moot now, withdraw it (withdraw_user_todo); otherwise "
+                  "leave it standing."]
+    return "\n".join(lines)
+
+
 def _stamp_user_todo_answered(sid, tid, text):
     """The delivery-keyed stamp (docs/adr/0001's fatal class): fires ONLY at the moment an answer
     actually reaches a backend send — the immediate path's truthy be.send, or a parked op draining
@@ -27686,6 +27725,29 @@ class Handler(BaseHTTPRequestHandler):
                 #                                                     behind a synchronous build of every
                 #                                                     session's payload
                 return self._send(200, json.dumps({"ok": True}), "application/json")
+            if u.path == "/usertodo/context":
+                # The re-surfacing read (plans/user-todos.md slice 3): the SessionStart hook
+                # (hooks/romp-usertodo-context.sh) fetches the session's open todos as a rendered
+                # context block on the resume and compact sources — how an agent whose working
+                # memory was wiped remembers what it asked for and withdraws the moot ones.
+                # {"id": <sid>} → {"ok": true, "block": <text or "">}. READ-ONLY: no store write,
+                # no pusher wake (nothing changed). An unknown sid answers an empty block, not an
+                # error — the hook fires for every romp session that resumes or compacts, and
+                # "nothing to say" is the common case. NO liveness/ended gate, deliberately: the
+                # only caller is a SessionStart fired from inside the session itself — an ended
+                # session fires none — and re-checking the death marker here would race the
+                # revival's own states row (written from the SAME SessionStart) and eat the exact
+                # block the revival came for. No remote forward either: the hook asks the kernel
+                # on the session's own host, which owns that session's store.
+                try:
+                    body = json.loads(raw_body or b"{}")
+                except Exception:
+                    body = None
+                sid = str((body or {}).get("id") or "")
+                if not sid:
+                    return self._send(400, json.dumps({"ok": False, "error": "id required"}), "application/json")
+                return self._send(200, json.dumps({"ok": True, "block": _user_todo_context_block(sid)}),
+                                  "application/json")
             if u.path == "/deliver":
                 # Live-deliver a postal banner to a session — the deliver-time WAKE. The bus drains its maildir
                 # and hands the banner here; the kernel injects it into the pane (tmux, draft-preserving) or
