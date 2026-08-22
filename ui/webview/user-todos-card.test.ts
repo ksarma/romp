@@ -24,6 +24,14 @@ test("the session field merges through the upsert's prev-fallback (the bg-tasks 
   assert.match(RENDER, /userTodos: \("userTodos" in msg\) \? msg\.userTodos : \(prev \? prev\.userTodos : undefined\)/);
 });
 
+test("the chatTail delta carries the field on both sides of the wire", () => {
+  // the chat's steady state is chatTail frames: without this a caught-up client's top-level
+  // field (the tab glyph's read, next slice) went stale until the next FULL session frame
+  assert.match(KERNEL, /"userTodos": m\.get\("userTodos"\) or \[\]/);   // kernel _send_chat's tail frame
+  const tail = RENDER.slice(RENDER.indexOf("function chatTail"));
+  assert.match(tail, /if \("userTodos" in msg\) s\.userTodos = msg\.userTodos;/);
+});
+
 test("the kernel ships only fixed store values on the field — never a per-build value", () => {
   // _send_client dedups by the serialized payload (the firstSeen lesson): a value that ticks
   // with the clock would re-send the full chat to every client about once a second
@@ -57,9 +65,33 @@ test("reply and dismiss are delegated to the stable root, never per-render liste
 });
 
 test("dismiss arms then confirms in place, posts the op, and removes the row optimistically", () => {
-  assert.match(RENDER, /if \(!elx\.classList\.contains\("armed"\)\) \{ elx\.classList\.add\("armed"\); elx\.textContent = "Really dismiss\?"; return; \}/);
+  assert.match(RENDER, /elx\.classList\.add\("armed"\); elx\.textContent = "Really dismiss\?";/);
   assert.match(RENDER, /vscodeApi\?\.postMessage\(\{ type: "userTodoDismiss", id: sid, todoId: tid \}\)/);
   assert.match(RENDER, /elx\.closest\("\.ut-item"\)\?\.remove\(\)/);
+});
+
+test("the two-step dismiss completes on coarse pointers (no hover to leave)", () => {
+  // on touch the pointer "leaves" the instant the finger lifts, so an unconditional pointerleave
+  // disarm killed the arm between the arming tap and the confirming one — the two-step could
+  // never complete. Fine pointers keep the hover disarm; coarse pointers hold the arm until a
+  // tap anywhere ELSE cancels it (one-shot document pointerdown, the folder-menu dismisser idiom).
+  const card = RENDER.slice(RENDER.indexOf("function renderTodo"));
+  assert.match(card, /if \(!isCoarsePointer\(\)\)\s*\n\s*dis\.addEventListener\("pointerleave"/,
+    "the hover disarm is gated to fine pointers");
+  const handler = RENDER.slice(RENDER.indexOf("utdismiss: (elx) => {"));
+  assert.match(handler, /if \(isCoarsePointer\(\)\) \{/);
+  assert.match(handler, /document\.addEventListener\("pointerdown", disarm, true\);/);
+  assert.match(handler, /document\.removeEventListener\("pointerdown", disarm, true\);/,
+    "one-shot: the dismisser removes itself on the next tap");
+  assert.match(handler, /if \(ev\.target !== elx\)/,
+    "a tap ON the button leaves the arm for the click handler to confirm");
+});
+
+test("a kernel warn re-syncs the active view so a refused optimistic removal returns", () => {
+  // Reply/Dismiss remove their row before any verdict; on a refusal the kernel's state did not
+  // change, so the next push can dedup to nothing — the warn itself must repaint from events
+  const warn = RENDER.slice(RENDER.indexOf('m.type === "warn"'));
+  assert.match(warn, /const wv = views\.get\(activeId\);\s*\n\s*if \(wv\) \{ wv\.stale = true; appendActive\(\); \}/);
 });
 
 test("reply opens a modal (outside the rebuilt transcript) and posts one answer+stamp op", () => {

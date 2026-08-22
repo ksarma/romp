@@ -2695,8 +2695,13 @@ function renderTodo(ev: Extract<ChatEvent, { kind: "todo" }>): HTMLElement {
       dis.dataset.act = "utdismiss"; dis.dataset.tid = t.id; dis.dataset.sid = renderingSid || "";
       dis.textContent = "Dismiss";
       dis.title = "clear this without a reply (for moot or stale asks)";
-      // arm-state disarm on pointer-out (the cmtdelete idiom) — cosmetic, so a local listener is fine
-      dis.addEventListener("pointerleave", () => { dis.classList.remove("armed"); dis.textContent = "Dismiss"; });
+      // arm-state disarm on pointer-out (the cmtdelete idiom) — cosmetic, so a local listener is
+      // fine. FINE POINTERS ONLY: on a coarse pointer the pointer "leaves" the instant the finger
+      // lifts, so this disarmed the button between the arming tap and the confirming one — the
+      // two-step could never complete on touch. There the arm holds until a tap anywhere ELSE
+      // cancels it (the one-shot dismisser wired at arm time in the utdismiss handler).
+      if (!isCoarsePointer())
+        dis.addEventListener("pointerleave", () => { dis.classList.remove("armed"); dis.textContent = "Dismiss"; });
       line.append(reply, dis);
       row.appendChild(line);
       if (t.detail) {
@@ -10176,6 +10181,10 @@ function chatTail(msg: any) {
   const shrank = s.events.length < wasLen;
   if (typeof msg.total === "number") s.headTotal = msg.total;
   if (msg.status) s.status = msg.status;
+  // the top-level userTodos seam rides every delta (kernel _send_chat), like status: the chat's
+  // steady state is chatTail frames, so a caught-up client that only merged the field from full
+  // session frames kept it stale — the tab glyph (next slice) reads this field, not the event
+  if ("userTodos" in msg) s.userTodos = msg.userTodos;
   if ("ledger" in msg) ledgers.set(msg.id, msg.ledger ?? null);
   renderTabs();
   if (msg.id === activeId) {
@@ -10446,6 +10455,13 @@ window.addEventListener("message", (e: MessageEvent) => {
     // an unreadable parent, the SDK setup hint). It gets a dialog naming the reason and takes the
     // provisional tab down with it; a toast would slide past the one moment it needed to be read.
     if (provisionalId) failProvisional(m.text); else warnToast(m.text);
+    // A warn is also the kernel REFUSING a gesture this client may have already painted — the
+    // user-todo Reply/Dismiss remove their row optimistically before any verdict. Re-sync the
+    // active view from its events so a refused row returns NOW: the kernel's state didn't change
+    // on a refusal, so the next push can dedup to nothing and the optimistic lie would otherwise
+    // stand until an unrelated repaint. Cheap — one tail-window rebuild, at warn (gesture) rate.
+    const wv = views.get(activeId);
+    if (wv) { wv.stale = true; appendActive(); }
   }
   // `err` is the LOUD channel, deliberately distinct from `warn` (the user 2026-07-29): a warn toast fades
   // after 12s, which is right for "that name has a bad character" and wrong for "the message you just typed
@@ -11696,7 +11712,23 @@ setupSettings();
     utdismiss: (elx) => {
       const tid = elx.dataset.tid, sid = elx.dataset.sid || activeId;
       if (!tid || !sid) return;
-      if (!elx.classList.contains("armed")) { elx.classList.add("armed"); elx.textContent = "Really dismiss?"; return; }
+      if (!elx.classList.contains("armed")) {
+        elx.classList.add("armed"); elx.textContent = "Really dismiss?";
+        // COARSE POINTERS have no hover, so the pointerleave disarm never wires there (renderTodo)
+        // and the arm would otherwise latch forever: hold it until the next tap anywhere ELSE
+        // cancels it (the folder-menu one-shot dismisser idiom). pointerdown, not click — it fires
+        // first on the NEXT tap, and the arming tap's own pointerdown is already in the past, so
+        // registering here can't self-cancel. A tap ON the button leaves the arm for the click
+        // handler above to confirm.
+        if (isCoarsePointer()) {
+          const disarm = (ev: Event) => {
+            document.removeEventListener("pointerdown", disarm, true);
+            if (ev.target !== elx) { elx.classList.remove("armed"); elx.textContent = "Dismiss"; }
+          };
+          document.addEventListener("pointerdown", disarm, true);
+        }
+        return;
+      }
       vscodeApi?.postMessage({ type: "userTodoDismiss", id: sid, todoId: tid });
       elx.closest(".ut-item")?.remove();
     },
