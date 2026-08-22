@@ -130,6 +130,11 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
             # the user's own words; the quoting frame around them is romp-authored and scanned here
             "comment thread opener": km._comment_first_message(
                 "Cap the retry delay at two minutes.", "Why two minutes and not five?"),
+            # the reply to a USER TODO (plans/user-todos.md): the todo's own short line anchors the
+            # user's answer (`Re: <text> — <reply>`) — the frame is romp-authored and scanned here
+            "user-todo answer": km._user_todo_answer_body(
+                "Need the auth-scheme decision to wire login — building the open routes meanwhile",
+                "Go with the session cookie for now."),
         }
         # every repeat-nudge variant wears the same voice as the first fire (the user 2026-08-11): the
         # rotation exists so a re-ask doesn't read canned, so a variant that broke the voice rule would
@@ -178,16 +183,36 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
             # the wrap-up is a stop order, not a status ask; a TYPED follow-up carries the user's OWN
             # words as its body, so there is no romp-authored ask in it to check; the DEBT reminder
             # asks for a reply to a PEER, not a progress report to the user; a comment thread's
-            # opener is the user's own comment on a quoted passage — a conversation, never a nudge
+            # opener is the user's own comment on a quoted passage — a conversation, never a nudge;
+            # a user-todo answer is the user's own reply to a need the agent flagged — same class
             if name in ("clear wrap-up", "clear wrap-up (batch)", "typed follow-up on a summary",
                         "debt reminder (question)", "debt reminder (handoff)",
-                        "debt reminder (several)", "comment thread opener"):
+                        "debt reminder (several)", "comment thread opener", "user-todo answer"):
                 continue
             text = prose(body).lower()
             with self.subTest(message=name):
                 self.assertTrue("stand" in text or "what's next" in text or "keep going" in text,
                                 "%r no longer asks for progress" % name)
                 self.assertIn("from me", text, "%r no longer asks what it needs from the user" % name)
+
+
+class UserTodoToolDescriptionsKeepTheVeil(unittest.TestCase):
+    """The two user-todo postal tools (plans/user-todos.md) describe an obligation to the PERSON
+    THE AGENT WORKS FOR, so their descriptions ride the same veil as injected bodies: no romp
+    machinery named. (The OTHER postal tools name romp on purpose — the bus is visible tooling
+    with the product's name on it; these two must not teach the model a tracking system.)"""
+
+    def test_the_descriptions_carry_no_romp_vocabulary(self):
+        pm = SourceFileLoader("romp_postal_voice", os.path.join(BIN, "romp-postal-service")).load_module()
+        tools = {t["name"]: t for t in pm.MCP_TOOLS}
+        for name in ("add_user_todo", "withdraw_user_todo"):
+            self.assertIn(name, tools, "the tool exists to be scanned")
+            desc = tools[name]["description"]
+            self.assertIn("person you work for", desc, "%s speaks as the person the agent works for" % name)
+            for word, why in ROMP_WORDS:
+                with self.subTest(tool=name, word=word):
+                    self.assertNotIn(word, desc.lower(),
+                                     "%s's description speaks romp at the session (%r: %s)" % (name, word, why))
 
 
 class TheRuleIsWrittenDown(unittest.TestCase):
