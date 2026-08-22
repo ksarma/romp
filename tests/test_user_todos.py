@@ -77,6 +77,7 @@ import inspect
 import io
 import json
 import os
+import re
 import tempfile
 import threading
 import unittest
@@ -1460,12 +1461,29 @@ class ResolvedRowsAreBounded(_StoreSandbox):
 
 class NoJudgeWritesTheStore(unittest.TestCase):
     """The authority tier, grep-provable (docs/adr/0001): nothing in judge.py names the store or
-    its writers — every eraser in the three holes acts by inference, and this object exists to
-    survive inference."""
+    its helpers — every eraser in the three holes acts by inference, and this object exists to
+    survive inference. The token list is DERIVED from the kernel source (every module-level def
+    whose name says user_todo — writers and readers alike), so a helper added tomorrow is
+    covered the day it is written; the literal floor below keeps the derivation honest against
+    a pattern drift that would quietly match nothing."""
+
+    # every store writer that exists today — the derivation must still see each of these,
+    # or the regex broke and the pin is scanning an empty list
+    _KNOWN_WRITERS = ("_add_user_todo", "_resolve_user_todo", "_reopen_user_todo",
+                      "_stamp_user_todo_answered", "_user_todo_answer_lost",
+                      "_user_todo_loss_boot_pass", "_write_user_todos")
 
     def test_judge_py_never_touches_user_todos(self):
-        src = (Path(HERE).parent / "kernel" / "judge.py").read_text()
-        for token in ("user-todos.json", "_user_todos", "_add_user_todo", "_resolve_user_todo"):
+        kdir = Path(HERE).parent / "kernel"
+        src = (kdir / "judge.py").read_text()
+        tokens = set(re.findall(r"^def (\w*user_todo\w*)\(",
+                                (kdir / "kernel.py").read_text(), re.M))
+        for w in self._KNOWN_WRITERS:
+            self.assertIn(w, tokens, "the derivation no longer sees %s — fix the pattern, "
+                                     "never the floor" % w)
+        # the store file itself, plus the bare prefix that covers the reader/cache/lock names
+        tokens |= {"user-todos.json", "_user_todos"}
+        for token in sorted(tokens):
             self.assertNotIn(token, src)
 
 

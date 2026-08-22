@@ -229,6 +229,47 @@ class UserTodoToolDescriptionsKeepTheVeil(unittest.TestCase):
                     self.assertNotIn(word, desc.lower(),
                                      "%s's description speaks romp at the session (%r: %s)" % (name, word, why))
 
+    def test_the_result_texts_carry_no_romp_vocabulary(self):
+        # The RESULT texts land in the agent's context exactly as the descriptions do — the
+        # tool's answer is read verbatim by the same model the veil protects — so the sweep
+        # covers them too: every user-todo branch of _mcp_call is rendered (success, each
+        # refusal, an unreachable kernel) and scanned. The shared "Not inside a romp session."
+        # identity refusal is out of scope on purpose: it is every postal tool's answer, and
+        # the bus names romp deliberately (visible tooling); identity is stubbed so no branch
+        # here can reach it.
+        pm = SourceFileLoader("romp_postal_voice_results",
+                              os.path.join(BIN, "romp-postal-service")).load_module()
+        saved = (pm._kernel_post, pm.my_name, pm.my_id, pm._heartbeat)
+        canned = {}
+        pm._kernel_post = lambda path, body, timeout=4.0: canned.get("res")
+        pm.my_name = lambda: "api"
+        pm.my_id = lambda: SID
+        pm._heartbeat = lambda *a, **k: None
+        try:
+            results = {}
+            canned["res"] = {"ok": True, "todoId": "ut-9f2c1a34"}
+            results["add: noted"] = pm._mcp_call("add_user_todo", {"text": "Need the port"})[0]
+            results["add: no text"] = pm._mcp_call("add_user_todo", {"text": "  "})[0]
+            canned["res"] = None                    # unreachable kernel / non-2xx
+            results["add: couldn't save"] = pm._mcp_call("add_user_todo", {"text": "Need the port"})[0]
+            results["withdraw: unreachable"] = pm._mcp_call("withdraw_user_todo", {"id": "ut-9f2c1a34"})[0]
+            results["withdraw: no id"] = pm._mcp_call("withdraw_user_todo", {})[0]
+            canned["res"] = {"ok": True}
+            results["withdraw: withdrawn"] = pm._mcp_call("withdraw_user_todo", {"id": "ut-9f2c1a34"})[0]
+            canned["res"] = {"ok": False}
+            results["withdraw: no open note"] = pm._mcp_call("withdraw_user_todo", {"id": "ut-deadbeef"})[0]
+        finally:
+            pm._kernel_post, pm.my_name, pm.my_id, pm._heartbeat = saved
+        # the sweep rendered the real branches, not seven copies of one fallback
+        self.assertIn("Noted", results["add: noted"])
+        self.assertIn("Withdrawn", results["withdraw: withdrawn"])
+        self.assertIn("Nothing changed", results["withdraw: no open note"])
+        for name, text in results.items():
+            for word, why in ROMP_WORDS:
+                with self.subTest(result=name, word=word):
+                    self.assertNotIn(word, text.lower(),
+                                     "%s's result speaks romp at the session (%r: %s)" % (name, word, why))
+
 
 class TheRuleIsWrittenDown(unittest.TestCase):
     def test_claude_md_carries_the_rule_and_its_exceptions(self):

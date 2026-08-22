@@ -127,10 +127,14 @@ idiom (mtime-cached read, `_atomic_write(..., sort_keys=True)` publish):
 
 Open = no `resolved` key. Resolution *stamps* rather than deletes — `kind` is one of
 `answered` / `dismissed` / `withdrawn`, so the record carries its own history (created,
-cleared, by which event). Kernel-side, so it survives session death and kernel restarts alike;
-entries leave the file only when the session's registry entry itself is deleted, riding the
-same sweep that prunes the other per-sid state (`_prune_notify_cards`, `kernel.py:1838`, is the
-pattern). Live data only under STATE, never in the repo, as ever.
+cleared, by which event). Kernel-side, so it survives session death and kernel restarts alike.
+Rows leave the file by exactly two paths, both touching RESOLVED rows only (as built): the
+per-sid resolved-history cap at stamp time (`_USER_TODO_RESOLVED_KEEP`, the newest 64 stay —
+enforced at the one choke point where every resolved row is born), and the prune that drops a
+dead session's resolved rows once its death is corroborated (`_prune_user_todos` — a durable
+death record, never a display-set miss). An OPEN row never leaves the file at all, whatever
+the session's state: only the three clearing events below can resolve it, and only a resolved
+row is ever capped or pruned. Live data only under STATE, never in the repo, as ever.
 
 ### Lifecycle: an authority tier
 
@@ -139,10 +143,16 @@ Exactly three events clear a user todo:
 1. **The user answers** — the reply affordance on the todo (the split card, below). The reply
    is injected into the session as a message from the person the agent works for —
    injected-voice rules apply, no romp nouns — anchored to the need it answers so a terse
-   reply lands unambiguously: the working shape is the todo's own short text as a prefix
-   (`Re: <text> — <reply>`), final copy jld-drafted at build and pinned by
-   `tests/test_injected_voice.py`. Answering stamps the todo at the send, kernel-side, at the
-   user's gesture — not judged.
+   reply lands unambiguously: the todo's own short text as a prefix (`Re: <text> — <reply>`),
+   pinned by `tests/test_injected_voice.py`. The stamp is **delivery-keyed, not gesture-keyed**
+   (as built — the interview's "stamps at the send" undercounted the ways a send comes undone):
+   an answer a live backend accepts stamps on the truthy send; an answer parked for a dormant
+   session stamps when the parked op drains; and an answer whose delivery comes undone
+   **reopens** the todo. That reopen class (`_reopen_user_todo`, the one un-stamp) covers
+   exactly two events: the recall of a still-queued answer (the user pulled it back), and the
+   corroborated loss of its holder (`_user_todo_answer_lost`; `_user_todo_loss_boot_pass`
+   re-offers marks whose reopen a kernel death cut short), which reopens unless the transcript
+   proves the text landed. Every leg keys on a delivery event — never a judgment.
 2. **The user dismisses** — clears it without a message; nothing is injected. For moot and
    stale items.
 3. **The agent withdraws** — via the tool, when it got what it needed some other way or the
@@ -199,10 +209,16 @@ the frontier while a todo stands, and stands down when a todo clears or the sess
 new work (a message arrived, the user acted) — each a real event, never a per-build
 re-derivation from a flapping proxy.
 
-**The auto-nudge also stands down for a session whose idle is already explained by open
-todos** (a new gate in `_auto_nudge_tick`'s family, alongside `kernel.py:3091`'s) — the same
-reasoning as the no-check-ins call: the todo already says what a nudge would fish for, and the
-escalated card, not a manufactured turn, is the surface.
+**The status nudge stands down for a session whose idle is already explained by open todos**
+— the same reasoning as the no-check-ins call: the todo already says what a nudge would fish
+for, and the escalated card, not a manufactured turn, is the surface. Scoped to the
+status-nudge branch ALONE (as built — the first cut stood down at session level and silenced
+two unrelated ladders): the awaiting WAKE flows past an open todo, because it is the 6h
+lost-wakeup backstop for dispatched background work, not a status ask; and the DEBT machinery
+flows past too, because it is the one mechanism that unparks a peer silently waiting on this
+session's answer — a todo names what this session needs from the user, and says nothing about
+what a peer needs from it. The stand-down lifts the moment the last todo clears: answer,
+dismiss, or withdraw, each a real event the gate's store read sees live.
 
 **The peer-wait stand-down is local-host only — a known limitation, documented not fixed
 (round 2, 2026-08-22).** The floor reads its peer-wait input from `_wait_for_graph`, which
@@ -240,7 +256,12 @@ banner slot stays single-purpose.
 needs-input sessions** — the permission-prompt class stays in (the user confirmed,
 2026-08-20). Dedup rule: the escalation floor is a *presentation* of todos the count already
 includes, so an idle session escalated by its todos adds nothing extra; a session hard-stopped
-for a non-todo reason (permission prompt, on-you API error) counts once as itself. Rides the
+for a non-todo reason (permission prompt, on-you API error) counts once as itself. Per-item
+decision cards count per CARD, not per session (as built, review 2026-08-22): a parked handoff
+(deliver-or-dismiss per send) and a quarantined peer mail (approve/deny/edit per message) are
+each an independent user decision, not a state of their session — `_NEEDS_YOU_PER_ITEM`
+enumerates them from build_feed's own needs-input constructors, and the per-session dedup was
+absorbing real decisions (a permission stop plus two held mails read badge 1). Rides the
 existing push (`_badge_push`, `kernel.py:22050` → the shell WS `{type:'badge'}`,
 `kernel.py:24611-24614`, service-worker copy `22292-22296`).
 
@@ -296,12 +317,42 @@ id; caller resolves to the session); `test_injected_voice.py` extended to the an
 and both tool descriptions; UI source pins for the split card (sections auto-hide, delegate
 root, payload-stability pin in the `bg-tasks.test.ts` style). Synthetic data only (the
 `notes-api` world).
+*As built (2026-08-22):* four deviations from the letter above, none from its spirit. The
+answer stamp became DELIVERY-keyed with a reopen class — the lifecycle section carries the
+full arc; the todo id travels with the queue entry itself, so recall and loss act on the
+entry they hold with no kernel-side table to restart away or evict. The open rows ride ON the
+split card's `todo` event, not only build_session's top-level `userTodos` field: the chat
+wire's steady state is chatTail deltas, which re-send changed EVENTS only, so a field that
+changed with no event change would never reach a caught-up client. Reply is a small MODAL on
+the confirm chrome (the need quoted, a box, Enter to send), not an inline input — the card
+rebuilds on every push, which would clobber a half-typed box — and ONE kernel op
+(`userTodoAnswer`) both injects and stamps, so the two can't diverge. And the ended gate is
+build_session's exact corroborated read per backend — the SDK registry's `alive: false`, or a
+reg-less tmux sid's durable death record (un-ended by any newer states row), never a raw
+listing miss — with the answer op refusing a dead session loudly instead of firing into the
+void.
 
 **Slice 2 — ambient visibility and the endgame.** The feed seam + card marker, the tab glyph,
 the widened badge, the idle escalation floor + placeholder, and the auto-nudge stand-down.
 *Tests*: floor semantics (idle + open todo → needs_input; working session → no column change;
 clear → stands down; ended session → excluded; placeholder when no card), badge arithmetic
 (including the no-double-count rule), nudge stand-down, UI pins for glyph and marker.
+*As built (2026-08-22):* the stand-down is SCOPED to the status-nudge branch — the awaiting
+wake and the debt machinery flow past (the escalation section carries the reasoning). The
+floor's predicate gained a PEER-WAIT gate: `_wait_for_graph`'s edge (the same one the
+waitingOn chip reads) stands the floor down while a live peer owes this session a reply,
+because waiting on a peer is not needs-you — local-host scope only, the documented limitation
+above. The floor's OS push gained a LATCH (`_NOTIFY_UT_FIRED`): the card's designed Working
+dips re-enter the column without new information, so the push dedups on the floored todo SET,
+not the column transition — a new id is news, an identical set re-entering is not; a LOST
+answer's reopen un-latches its id (the re-floor is the one signal the answer never arrived)
+while the user's own ✕ recall stays silent, and a restart's baseline seeds the latch from the
+already-floored world. Two focus refinements: a done-CONFIRMING top is never floored (its
+imminent completion is the settle's to deliver, and flooring it flapped the card with no new
+information), and when the focus chain dead-ends in a completed top the floor falls back to
+the first plain-working top in store order — without that, the escalation was invisible
+exactly when a card existed to carry it. The badge grew the per-item decision classes,
+recorded in (d).
 
 **Slice 3 — memory across context loss.** The SessionStart hook (sources: resume and compact)
 that emits open todos as a passive context block, in the agent's-own-notes voice.
@@ -347,12 +398,14 @@ judge mootness suggestion (deferred above).
 
 ## Open questions
 
-The interview settled the design; what remains are build-time calls, not blockers:
+The interview settled the design; the two build-time calls it left open were made in the build
+(2026-08-22), pinned in the UI suites (`tab-usertodo.test.ts`, `user-todos-card.test.ts`):
 
-1. The tab glyph's exact character and placement (next to the ctx gauge; non-numeric is
-   decided).
-2. The split card's final heading copy ("the agent's plan" / "waiting on you" are the working
-   titles; jld pass at build, like all user-facing copy).
+1. The tab glyph is **⚑**, right after the session name and before the ctx gauge — non-numeric
+   as decided, and its own element, never a `.tab-dot` (pips encode turn state, and the mobile
+   scrape keys on the pip classes).
+2. The split card's headings are **"To-do · n/m"** (the agent's plan, with its done count) and
+   **"Waiting on you · N"** (the open todos).
 
 ## Upstream
 
