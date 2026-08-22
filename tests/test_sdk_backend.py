@@ -408,7 +408,7 @@ class LiveTail(unittest.TestCase):
 
     def test_send_adds_optimistic_echo(self):
         be = sb.SdkBackend(tempfile.mkdtemp(), "/bin/true", lambda *a, **k: None)
-        be._ensure = lambda sid: type("S", (), {"enqueue": lambda self, t: None})()   # no real session thread
+        be._ensure = lambda sid: type("S", (), {"enqueue": lambda self, t, todo="": None})()   # no real session thread
         self.assertTrue(be.send("s", "type this"))
         echoes = [a for a in be.live_atoms("s") if a.get("_echo_text") == "type this"]
         self.assertEqual(len(echoes), 1)
@@ -764,7 +764,7 @@ class LiveTail(unittest.TestCase):
         # instead of the GRAY "from romp" auto-nudge it is, because the echo hardcoded author="human". The echo
         # must author from the same markers the event model uses on the real atom.
         be = sb.SdkBackend(tempfile.mkdtemp(), "/bin/true", lambda *a, **k: None)
-        be._ensure = lambda sid: type("S", (), {"enqueue": lambda self, t: None})()
+        be._ensure = lambda sid: type("S", (), {"enqueue": lambda self, t, todo="": None})()
         body = "Status on the goal above?\n<!-- romp-injected --><!-- romp-auto --><!-- romp-goal-id: s:g1 -->"
         be.send("s", body)
         e = next(a for a in be.live_atoms("s") if a.get("_echo_text") == body)

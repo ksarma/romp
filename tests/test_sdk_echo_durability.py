@@ -252,5 +252,113 @@ class DroppedSendsAnnounceThemselves(unittest.TestCase):
         self.assertIn(k, be._live[SID])
 
 
+class TodoAnswersAnnounceTheirLoss(unittest.TestCase):
+    """Round-2 finding 2, backend half: the echo of a user-todo ANSWER carries the todo id
+    (send(user_todo=...)), the id rides the reg mirror across restarts, and the drop-marking hands
+    (sid, tid, text) to the constructor's todo_lost callback — the seam that returns a
+    restart-lost answer to the asks the user still owes. Constructor-wired on purpose: the boot
+    reseed fires drop marks from __init__, before any post-construction assignment could arm it."""
+
+    ANSWER = "Re: need the staging port — 8443."
+    TID = "ut-9f2c1a34"
+
+    def _backend(self, state=None, lost=None):
+        return sb.SdkBackend(state or tempfile.mkdtemp(), "/bin/true", lambda *a, **k: None,
+                             todo_lost=lost)
+
+    def _todo_echo(self, dropped=False):
+        k, e = _echo(self.ANSWER)
+        e["_todo"] = self.TID
+        if dropped:
+            e["dropped"] = True
+        return k, e
+
+    def test_send_with_user_todo_stamps_entry_echo_and_mirror(self):
+        state = tempfile.mkdtemp()
+        be = self._backend(state=state)
+        sb.write_reg(be.state_dir, SID, {"sid": SID, "alive": True})
+        s = sb.SdkSession(be, sb.read_reg(be.state_dir, SID))
+        be._ensure = lambda sid: s
+        self.assertTrue(be.send(SID, self.ANSWER, user_todo=self.TID))
+        self.assertEqual([getattr(t, "todo", "") for t in s.pending()], [self.TID],
+                         "the queue entry carries the id")
+        atoms = be.live_atoms(SID)
+        self.assertEqual(atoms[0].get("_todo"), self.TID, "the echo carries it too")
+        self.assertEqual((sb.read_reg(state, SID).get("echoes") or [{}])[0].get("todo"), self.TID,
+                         "…and the id survives the restart mirror")
+
+    def test_a_plain_send_mirrors_without_a_todo_key(self):
+        # byte-compat: every non-answer echo keeps the exact pre-todo mirror shape
+        state = tempfile.mkdtemp()
+        be = self._backend(state=state)
+        sb.write_reg(be.state_dir, SID, {"sid": SID, "alive": True})
+        k, e = _echo("an ordinary message")
+        be._live[SID] = dict([(k, e)])
+        be._persist_echoes(SID)
+        self.assertNotIn("todo", (sb.read_reg(state, SID).get("echoes") or [{}])[0])
+
+    def test_the_drop_marking_hands_the_id_to_the_callback(self):
+        calls = []
+        be = self._backend(lost=lambda sid, tid, text: calls.append((sid, tid, text)))
+        sb.write_reg(be.state_dir, SID, {"sid": SID, "alive": True})
+        k, e = self._todo_echo()
+        be._live[SID] = dict([(k, e)])
+        be._mark_dropped_echoes(SID, [])
+        self.assertEqual(calls, [(SID, self.TID, self.ANSWER)])
+        self.assertTrue(be._live[SID][k].get("dropped"), "the visible marking still happens")
+
+    def test_an_echo_still_queued_fires_nothing(self):
+        calls = []
+        be = self._backend(lost=lambda *a: calls.append(a))
+        sb.write_reg(be.state_dir, SID, {"sid": SID, "alive": True})
+        k, e = self._todo_echo()
+        be._live[SID] = dict([(k, e)])
+        be._mark_dropped_echoes(SID, [self.ANSWER])
+        self.assertEqual(calls, [], "still in the surviving queue → in flight, not lost")
+
+    def test_an_already_dropped_echo_never_refires(self):
+        calls = []
+        be = self._backend(lost=lambda *a: calls.append(a))
+        sb.write_reg(be.state_dir, SID, {"sid": SID, "alive": True})
+        k, e = self._todo_echo(dropped=True)
+        be._live[SID] = dict([(k, e)])
+        be._mark_dropped_echoes(SID, [])
+        self.assertEqual(calls, [], "the loss was already announced — marking is one-shot")
+
+    def test_a_plain_dropped_echo_fires_nothing(self):
+        calls = []
+        be = self._backend(lost=lambda *a: calls.append(a))
+        sb.write_reg(be.state_dir, SID, {"sid": SID, "alive": True})
+        k, e = _echo("an ordinary lost send")
+        be._live[SID] = dict([(k, e)])
+        be._mark_dropped_echoes(SID, [])
+        self.assertEqual(calls, [], "no id on the echo → nothing to reopen")
+
+    def test_the_id_reseeds_across_a_restart_and_the_boot_mark_fires(self):
+        state = tempfile.mkdtemp()
+        be = self._backend(state=state)
+        sb.write_reg(be.state_dir, SID, {"sid": SID, "alive": True})
+        k, e = self._todo_echo()
+        be._live[SID] = dict([(k, e)])
+        be._persist_echoes(SID)
+        calls = []
+        be2 = self._backend(state=state, lost=lambda sid, tid, text: calls.append((sid, tid)))
+        self.assertEqual(calls, [(SID, self.TID)],
+                         "the boot reseed hands the lost answer's id to the kernel")
+        self.assertEqual(be2.live_atoms(SID)[0].get("_todo"), self.TID)
+
+    def test_a_callback_error_never_breaks_the_marking(self):
+        def boom(*a):
+            raise RuntimeError("kernel side failed")
+
+        be = self._backend(lost=boom)
+        sb.write_reg(be.state_dir, SID, {"sid": SID, "alive": True})
+        k, e = self._todo_echo()
+        be._live[SID] = dict([(k, e)])
+        be._mark_dropped_echoes(SID, [])
+        self.assertTrue(be._live[SID][k].get("dropped"),
+                        "the loss stays visible even when the reopen seam raises")
+
+
 if __name__ == "__main__":
     unittest.main()

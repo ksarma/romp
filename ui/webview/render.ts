@@ -10460,7 +10460,7 @@ window.addEventListener("message", (e: MessageEvent) => {
     // active view from its events so a refused row returns NOW: the kernel's state didn't change
     // on a refusal, so the next push can dedup to nothing and the optimistic lie would otherwise
     // stand until an unrelated repaint. Cheap — one tail-window rebuild, at warn (gesture) rate.
-    const wv = views.get(activeId);
+    const wv = activeId ? views.get(activeId) : null;
     if (wv) { wv.stale = true; appendActive(); }
   }
   // `err` is the LOUD channel, deliberately distinct from `warn` (the user 2026-07-29): a warn toast fades
@@ -11718,17 +11718,27 @@ setupSettings();
         // and the arm would otherwise latch forever: hold it until the next tap anywhere ELSE
         // cancels it (the folder-menu one-shot dismisser idiom). pointerdown, not click — it fires
         // first on the NEXT tap, and the arming tap's own pointerdown is already in the past, so
-        // registering here can't self-cancel. A tap ON the button leaves the arm for the click
-        // handler above to confirm.
+        // registering here can't self-cancel. A press ON the button KEEPS the listener registered
+        // (round 2, 2026-08-22): it is either the confirming tap (the click handler above settles
+        // it) or a scroll that merely started on the button — the old any-pointerdown removal
+        // spent the one-shot on that scroll, leaving the arm latched with the tap-elsewhere
+        // cancel gone. Only a pointerdown genuinely elsewhere disarms and removes.
         if (isCoarsePointer()) {
           const disarm = (ev: Event) => {
+            if (ev.target === elx) return;
             document.removeEventListener("pointerdown", disarm, true);
-            if (ev.target !== elx) { elx.classList.remove("armed"); elx.textContent = "Dismiss"; }
+            (elx as any)._utDisarm = undefined;
+            elx.classList.remove("armed"); elx.textContent = "Dismiss";
           };
+          (elx as any)._utDisarm = disarm;
           document.addEventListener("pointerdown", disarm, true);
         }
         return;
       }
+      // the confirming tap's pointerdown was ON the button, so it no longer spends the one-shot —
+      // retire it here, or it lingers on document and fires once more against the removed row
+      const stale = (elx as any)._utDisarm;
+      if (stale) { document.removeEventListener("pointerdown", stale, true); (elx as any)._utDisarm = undefined; }
       vscodeApi?.postMessage({ type: "userTodoDismiss", id: sid, todoId: tid });
       elx.closest(".ut-item")?.remove();
     },

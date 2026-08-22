@@ -1907,6 +1907,16 @@ def _add_user_todo(sid, text, detail=""):
     return tid
 
 
+# Per-sid bound on RESOLVED rows (round 2, 2026-08-22): on a self-hosted box sessions live for
+# weeks and never hit the prune's death gate, so stamped history accumulated without bound while
+# _user_todo_fp re-serialized every row on every chat build. A SIZE bound in the store's own
+# idiom (the LIVE_TAIL_CAP order of magnitude — these are small per-session ledgers, not
+# archives), never a time heuristic: 64 resolved rows is weeks of glance-back history for one
+# session, and small enough that the per-build fp fold stays trivial. OPEN rows are NEVER capped
+# — the ADR's authority tier: an open ask leaves the store by answer/dismiss/withdraw alone.
+_USER_TODO_RESOLVED_KEEP = 64
+
+
 def _resolve_user_todo(sid, tid, kind):
     """Stamp one clearing event (answered / dismissed / withdrawn) onto a STILL-OPEN todo. False
     when the id is unknown or already cleared — every caller must be LOUD about that, never a
@@ -1914,7 +1924,14 @@ def _resolve_user_todo(sid, tid, kind):
     record's history is the point of stamping over deleting. The whole read-modify-write holds
     the store lock, or first-stamp-wins is only single-threaded prose: a concurrent answer and
     withdraw both read "open", both report success, and the surviving stamp is whichever write
-    landed last."""
+    landed last.
+
+    Each stamp also enforces the resolved-history bound (_USER_TODO_RESOLVED_KEEP): the newest K
+    resolved rows stay, the oldest leave, open rows are untouched. Enforced HERE because every
+    resolved row is born here — one choke point, no sweep. Stated corollary: a row the cap
+    evicts can no longer be reopened by a recall of its still-queued answer — that would take K
+    NEWER resolutions in the SAME session while the recalled answer sat unfed, and the recall's
+    reopen then no-ops loudly (_cancel_backend_queued logs it) instead of corrupting anything."""
     with _user_todos_lock:
         cur = dict(_user_todos())                    # copy: never mutate the cached dict in place
         lst = [dict(t) for t in cur.get(sid) or [] if isinstance(t, dict)]
@@ -1922,17 +1939,26 @@ def _resolve_user_todo(sid, tid, kind):
         if hit is None:
             return False
         hit["resolved"] = {"kind": str(kind), "t": int(time.time())}
+        resolved = [(i, t) for i, t in enumerate(lst) if t.get("resolved")]
+        if len(resolved) > _USER_TODO_RESOLVED_KEEP:
+            # newest by stamp time (list position breaks same-second ties: later in the list =
+            # registered later) — drop the oldest beyond the keep
+            resolved.sort(key=lambda p: (int((p[1].get("resolved") or {}).get("t") or 0), p[0]))
+            drop = {p[0] for p in resolved[:len(resolved) - _USER_TODO_RESOLVED_KEEP]}
+            lst = [t for i, t in enumerate(lst) if i not in drop]
         cur[sid] = lst
         _write_user_todos(cur)
     return True
 
 
 def _reopen_user_todo(sid, tid):
-    """Lift an 'answered' stamp — the ONE un-stamp, and only for the recall of the answer's own
-    send (the queued bubble's ✕ before the message ever reached the agent): the user changed their
-    mind about the ANSWER, so the ask still stands and the row must return. Never lifts a dismiss
-    or a withdraw (those clearing events had no delivery to fail), and never fires from inference —
-    the caller is the same user gesture that recalled the send, so the authority tier holds."""
+    """Lift an 'answered' stamp — the ONE un-stamp, and only when the answer's own DELIVERY came
+    undone: the recall of its send (the queued bubble's ✕ before the message ever reached the
+    agent — the user changed their mind about the ANSWER, so the ask still stands), or the
+    corroborated loss of its holder (_user_todo_answer_lost: the entry's echo drop-marked with the
+    text provably not in the transcript). Never lifts a dismiss or a withdraw (those clearing
+    events had no delivery to fail), and never fires from inference — both callers key on the
+    exact delivery-failure event of the send the stamp recorded, so the authority tier holds."""
     with _user_todos_lock:
         cur = dict(_user_todos())                    # copy: never mutate the cached dict in place
         lst = [dict(t) for t in cur.get(sid) or [] if isinstance(t, dict)]
@@ -2025,14 +2051,25 @@ def _user_todo_fp(sid):
     return json.dumps(rows, sort_keys=True) if rows else None
 
 
+# The marker-opening CLASS every downstream reader tolerates: "<!--" then ANY whitespace before
+# "romp-" (the event model's ROMP_INJECT_RE / POSTAL_RE / MSG_TAG_RE and the judge's
+# NUDGE_MARKER_RE are all "<!--\s*romp-"). The neutralizer must break this same class, not one
+# literal spelling — round 2 (2026-08-22) caught the first cut closing only the one-space form
+# while a no-space "<!--romp-injected-->" sailed through and the user's own answer rendered as
+# romp's system card. tests import those regexes verbatim and prove no variant survives.
+_ROMP_MARKER_OPEN_RE = re.compile(r"<!--(?=\s*romp-)")
+
+
 def _neutralize_romp_markers(text):
     """Break the marker-OPENING sequence in user/agent-supplied text before it rides an injected
-    body: a todo or reply containing a literal "<!-- romp-…" would otherwise inject a lookalike
-    marker, and downstream readers key on that exact comment form (the event model's ROMP_INJECT_RE
-    author attribution, the SDK echo's romp-injected check) — a reply quoting a marker would render
-    as romp's own gray card instead of the user's words. Minimal, visible escape of the exact
-    prefix: the text stays readable, the comment form can no longer match."""
-    return str(text).replace("<!-- romp-", "<!- - romp-")
+    body: a todo or reply containing a literal "<!--romp-…" (any whitespace — exactly the
+    tolerance the matchers themselves have, see _ROMP_MARKER_OPEN_RE) would otherwise inject a
+    lookalike marker, and downstream readers key on that comment form (the event model's
+    ROMP_INJECT_RE author attribution, the SDK echo's romp-injected check) — a reply quoting a
+    marker would render as romp's own gray card instead of the user's words. Minimal, visible
+    escape of the opener alone ("<!--" → "<!- -", whitespace and words untouched): the text stays
+    readable, the comment form can no longer match."""
+    return _ROMP_MARKER_OPEN_RE.sub("<!- -", str(text))
 
 
 def _user_todo_answer_body(todo_text, reply):
@@ -2046,32 +2083,71 @@ def _user_todo_answer_body(todo_text, reply):
                             _neutralize_romp_markers(reply).strip())
 
 
-# An answered todo whose reply is still RECALLABLE (handed to a forwards_sends backend's queue but
-# not yet forwarded into the CLI): (sid, bubble body md) -> todo id, recorded when the delivery
-# stamp fires, consumed by the queued bubble's ✕ (_cancel_backend_queued) to re-open the todo the
-# recalled answer was clearing. In-memory on purpose — the backend queue it mirrors is in-memory
-# too (a kernel restart drops both together). FIFO-capped, not timed: an entry outlives its use
-# once the message actually forwards (no kernel event marks that), and the guard against a stale
-# hit is _reopen_user_todo's answered-only check plus the byte-identical body match.
-_user_todo_recalls = {}
-_USER_TODO_RECALLS_CAP = 64
-
-
-def _record_user_todo_recall(sid, text, tid):
-    md = _split_followup(text)[1]                    # the same body key the ✕ handshake verifies
-    _user_todo_recalls[(str(sid), md)] = tid
-    while len(_user_todo_recalls) > _USER_TODO_RECALLS_CAP:
-        _user_todo_recalls.pop(next(iter(_user_todo_recalls)))
-
-
 def _stamp_user_todo_answered(sid, tid, text):
     """The delivery-keyed stamp (docs/adr/0001's fatal class): fires ONLY at the moment an answer
     actually reaches a backend send — the immediate path's truthy be.send, or a parked op draining
     (_deliver_send_batch) — never at the userTodoAnswer call, whose send may still be recalled
     (a parked bubble's ✕, an SDK unqueue) or dropped (a dead session's queue). False (already
-    cleared while parked — a dismiss won the race) is fine: the first stamp is the history."""
+    cleared while parked — a dismiss won the race) is fine: the first stamp is the history.
+
+    THE STAMP MOMENT, re-derived (round 2, 2026-08-22): for the SDK a truthy send is an ENQUEUE,
+    not a landing — the entry may still be recalled, or die with its holder. The stamp stays here
+    anyway, because the fed→landed transition has no kernel-owned observer: the only place a
+    landing is seen is prune_live, which runs inside the chat build — client-gated, so a session
+    nobody is watching would never get its stamp at all (an authority-tier write cannot depend on
+    a dashboard being open). Instead, every un-delivery is an EVENT with a reopen keyed on it,
+    and the todo id travels WITH the message (SdkBackend.send's user_todo rides the queue entry,
+    its reg mirror, and the echo) so each of them can act:
+      * recall (the queued bubble's ✕) → _cancel_backend_queued reads the id off the entry it
+        removes and reopens — restart-proof, because the entry itself is persisted;
+      * loss (a drop-marked echo at boot/spawn/reconnect, a rewind-dropped queue head) → the
+        backend hands the id to _user_todo_answer_lost, which reopens unless the transcript
+        proves the text landed (the surviving windows are stated there)."""
     _resolve_user_todo(sid, tid, "answered")
-    _record_user_todo_recall(sid, text, tid)
+
+
+def _user_todo_answer_lost(sid, tid, text, wait=False):
+    """The backend's todo_lost seam (SdkBackend._mark_dropped_echoes; a rewind-dropped head): a
+    queued user-todo ANSWER lost its holder, so its 'answered' stamp may be recording a delivery
+    that never happened — the silent-loss class docs/adr/0001 names fatal. Reopen the ask so it
+    visibly returns to "waiting on you", UNLESS the transcript proves the text LANDED: a
+    landed-but-unpruned echo at kernel death is the COMMON case (prune_live runs only while a
+    client watches), and reopening those would flap a genuinely answered ask open on every
+    restart — the transcript, not the drop mark, is the authoritative word on delivery, and a
+    landed answer is in the conversation the next resume continues, i.e. delivered.
+
+    THREADED by default; `wait` is the test seam. The loss events fire on threads where the
+    landed check must not run: the session's asyncio loop (a reconnect reconcile would stall the
+    stream it is reporting on) and the kernel's boot path INSIDE _sdk_lock (the echo reseed fires
+    from the backend constructor, and _parse re-enters _sdk() — the thread hop waits the lock out
+    instead of deadlocking). Any check failure reopens anyway — fail toward the VISIBLE ask: a
+    wrongly-open ask costs a glance and a dismiss; a wrongly-'answered' one is the silent loss.
+    Residual windows, stated precisely: an echo-mirror reg write that failed loses the id with
+    the echo (logged at that write — the loss surfaces as a plain dropped echo, without the
+    reopen); and a byte-identical text already in the transcript reads as landed (same body =
+    the same todo answered in the same words — the stamp is true anyway)."""
+    if not wait:
+        threading.Thread(target=_user_todo_answer_lost, args=(sid, tid, text, True),
+                         name="user-todo-lost", daemon=True).start()
+        return
+    sid = str(sid)
+    try:
+        now = int(time.time())
+        sess = next((s for s in _sessions(now) if s["sid"] == sid), None)
+        if sess is not None:
+            parsed = _parse(sess["path"], sid, now)
+            if any(text == t for turn in parsed["turns"] for a in turn["atoms"]
+                   for t in _atom_user_texts(a)):
+                sys.stderr.write("user-todos: %s's answer for %s landed before its holder died — "
+                                 "delivered, the stamp stands\n" % (sid[:8], tid))
+                return
+    except Exception as e:
+        sys.stderr.write("user-todos: landed-check for %s (%s) failed — reopening anyway: %s\n"
+                         % (tid, sid[:8], e))
+    if _reopen_user_todo(sid, tid):
+        sys.stderr.write("user-todos: %s's answer for %s died with its holder — the ask is "
+                         "reopened and waiting on the user again\n" % (sid[:8], tid))
+        _mark_views_dirty()
 
 
 # ── Auto Nudge (the user 2026-06-19) ──────────────────────────────────────────────────────────────
@@ -6228,7 +6304,11 @@ def _sdk_locked():
                 mcp_config=(str(_SDK_MCP) if _SDK_MCP.exists() else None),
                 append_prompt_path=(str(_SDK_PROMPT) if _SDK_PROMPT.exists() else None),
                 log=lambda m: sys.stderr.write("sdk-backend: %s\n" % m),
-                reconcile=True)   # boot reconcile: reap orphaned CLIs, resume cut turns, deliver persisted queues
+                reconcile=True,   # boot reconcile: reap orphaned CLIs, resume cut turns, deliver persisted queues
+                # a drop-marked user-todo ANSWER reopens its ask (docs/adr/0001's silent-loss
+                # class). CONSTRUCTOR-wired on purpose: the boot echo reseed fires drop marks
+                # from __init__, before any post-construction assignment could arm the seam.
+                todo_lost=_user_todo_answer_lost)
             # The judge parses the SAME cut world the display parse does (jd._PENDING_CUT_FN): during
             # an armed bare rollback the planner must not see — and mint from — the deleted tail.
             # getattr-guarded like every other backend probe (a test fake without the affordance
@@ -14844,12 +14924,18 @@ def _cancel_backend_queued(be, sid, idx, md):
         return _cancel_miss_text(md)
     # a recalled USER-TODO ANSWER re-opens its todo (the delivery-keyed stamp, docs/adr/0001): the
     # user pulled the answer back before it reached the agent, so the ask still stands and the row
-    # returns. Keyed on the same body the ✕ handshake verifies; _reopen_user_todo lifts ONLY an
-    # 'answered' stamp, so a stale map entry (its message long since delivered) can at worst re-open
-    # the very todo a byte-identical recalled resend was answering — never a dismiss or withdraw.
-    tid = _user_todo_recalls.pop((str(sid), _split_followup(pending[idx])[1]), None)
-    if tid:
-        _reopen_user_todo(sid, tid)
+    # returns. The id rides ON the entry the unqueue just popped (SdkBackend.send's user_todo) —
+    # never a kernel-side table, whose lifetime was this process while the queue it tracked is
+    # PERSISTED: after a restart the reseeded entry was still recallable but the table was empty,
+    # so the recall reopened nothing and the ask stayed a false permanent 'answered' (round 2,
+    # 2026-08-22). A plain entry (every non-answer send) carries no id, so a byte-identical later
+    # send can never reopen the todo a DELIVERED answer already cleared; and _reopen_user_todo
+    # lifts ONLY an 'answered' stamp, never a dismiss or withdraw.
+    tid = getattr(got, "todo", "")
+    if tid and not _reopen_user_todo(sid, tid):
+        sys.stderr.write("user-todos: recalled %s's answer for %s, but the row is not 'answered' "
+                         "(cleared meanwhile, or capped out of the history) — nothing reopened\n"
+                         % (str(sid)[:8], tid))
     return None
 
 
@@ -14875,6 +14961,20 @@ def _forwards_sends(be):
         return bool(fn()) if fn else False
     except Exception:
         return False
+
+
+def _backend_send(be, sid, text, user_todo=None):
+    """be.send, carrying a user-todo ANSWER's id onto the backend queue entry when the backend can
+    hold one (SdkBackend.queue_carries_todos): the id travels WITH the message — the entry, its
+    persisted reg mirror, and the send's echo — so the recall (_cancel_backend_queued) and loss
+    (_user_todo_answer_lost) machinery read it off the object they act on, with no kernel-side
+    table to restart away or evict (round 2, 2026-08-22). getattr-guarded like _forwards_sends: a
+    backend or test fake without the capability takes the plain two-argument send — tmux delivers
+    by typing into the pane, so there is no queue entry to carry an id on and the truthy send IS
+    the delivery."""
+    if user_todo and getattr(be, "queue_carries_todos", False):
+        return be.send(sid, text, user_todo=user_todo)
+    return be.send(sid, text)
 
 
 # A leading slash-COMMAND token ("/autocompact auto", "/compact"), not a path ("/tmp/x is broken",
@@ -14926,7 +15026,7 @@ def _send_or_park(be, sid, text, echo=None, user_todo=None):
     if _working_now(sid) and (cmd or not _forwards_sends(be)):
         _park_op(sid, op)
         return "parked"
-    got = be.send(sid, text)
+    got = _backend_send(be, sid, text, user_todo)    # an answer's id rides the queue entry itself
     if echo:
         _optimistic_echo(sid, text, author=echo)
     return got
@@ -14999,12 +15099,13 @@ def _deliver_send_batch(be, sid, run):
     where its 'answered' stamp fires — the park draining into a real backend send is the delivery
     event the stamp keys on (docs/adr/0001's fatal class: stamping at park time left a recalled or
     dropped answer permanently 'answered' with nothing ever delivered). A falsy send stamps nothing:
-    the ask still stands."""
+    the ask still stands. The drain hands the id to the backend too (_backend_send), so the drained
+    entry is recallable/loss-tracked exactly like an immediate send's."""
     if not run:
         return
     if _forwards_sends(be):
         for op in run:
-            got = be.send(sid, op[1])
+            got = _backend_send(be, sid, op[1], op[3] if len(op) > 3 else None)
             if op[2]:
                 _optimistic_echo(sid, op[1], author=op[2])
             if got and len(op) > 3 and op[3]:

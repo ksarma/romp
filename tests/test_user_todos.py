@@ -24,7 +24,13 @@ Covered here, kernel-side:
   cleared, and the answer op refuses loudly instead of sending into the void;
 - the per-sid chat-build-sig fold (a todo write busts the owning session's cache only);
 - the two drive ops (userTodoAnswer / userTodoDismiss), the injected answer body's shape, and
-  its marker hygiene (a "<!-- romp-…" lookalike in either half is neutralized).
+  its marker hygiene (a "<!-- romp-…" lookalike in either half is neutralized);
+- the round-2 wave (2026-08-22): the recall reads the todo id off the QUEUE ENTRY itself (no
+  kernel-side table to restart away or evict — RecallRidesTheEntry), a restart-lost answer's
+  drop-marked echo reopens its ask through _user_todo_answer_lost unless the transcript proves
+  it landed (LostAnswerReopens), the neutralizer breaks the whole "<!--\\s*romp-" class the
+  downstream matchers accept (MarkerNeutralizerVariants, verbatim regex imports), and resolved
+  rows are size-capped per sid while open rows never are (ResolvedRowsAreBounded).
 
 SYNTHETIC fixtures only: placeholder UUIDs, the notes-api demo world.
 """
@@ -607,11 +613,9 @@ class DriveOps(_StoreSandbox):
             return self.send_result
 
         km._send_or_park = fake_send_or_park
-        km._user_todo_recalls.clear()
 
     def tearDown(self):
         km._name_of, km._sdk, km._send_or_park = self._saved
-        km._user_todo_recalls.clear()
         super().tearDown()
 
     def test_both_ops_are_id_ops(self):
@@ -712,9 +716,24 @@ class DriveOps(_StoreSandbox):
         self.assertEqual(km._open_user_todos(SID)[0]["id"], tid, "nothing was stamped")
 
 
+class _TodoStr(str):
+    """The queue-entry contract the kernel reads back: a plain str for every consumer, with the
+    todo id it answers riding as a `todo` attribute (getattr(entry, "todo", "") — duck-typed, so
+    this local double pins the CONTRACT, not the SDK's own class)."""
+
+    def __new__(cls, text, todo):
+        o = str.__new__(cls, text)
+        o.todo = todo
+        return o
+
+
 class _FakeBackend:
     """A forwards_sends backend double for the park/drain/recall pipeline: send() records and
-    reports what the test scripts; pending_queued/unqueue model the SDK's recallable queue."""
+    reports what the test scripts; pending_queued/unqueue model the SDK's recallable queue —
+    including the todo id riding ON the queue entry (queue_carries_todos): the entry itself, not
+    any kernel-side table, is what a recall reads the id back off."""
+
+    queue_carries_todos = True
 
     def __init__(self, send_ok=True):
         self.sent = []
@@ -724,9 +743,11 @@ class _FakeBackend:
     def forwards_sends(self):
         return True
 
-    def send(self, sid, text):
+    def send(self, sid, text, user_todo=None):
         if not self.send_ok:
             return False
+        if user_todo:
+            text = _TodoStr(text, user_todo)
         self.sent.append((sid, text))
         self.queue.append(text)
         return True
@@ -752,7 +773,6 @@ class DeliveryKeyedStamp(_StoreSandbox):
         km._name_of = lambda sid: "web" if sid == SID else None
         km._sdk = lambda: None
         km._pending_ops.clear()                       # a hermetic FIFO: the drain walks EVERY sid
-        km._user_todo_recalls.clear()
         self.sent = []
         self.client = {"send": lambda s: self.sent.append(json.loads(s))}
 
@@ -760,7 +780,6 @@ class DeliveryKeyedStamp(_StoreSandbox):
         km._name_of, km._sdk, km._compacting_now = self._saved[:3]
         km._pending_ops.clear()
         km._pending_ops.update(self._saved[3])
-        km._user_todo_recalls.clear()
         super().tearDown()
 
     def _park_an_answer(self):
@@ -816,19 +835,19 @@ class DeliveryKeyedStamp(_StoreSandbox):
 
     def test_an_unqueued_answer_reopens_the_todo(self):
         # the immediate SDK path: send() enqueues backend-side (truthy → stamped), but the queued
-        # bubble's ✕ can still recall it before it forwards — the recall must re-open the todo
+        # bubble's ✕ can still recall it before it forwards — the recall must re-open the todo,
+        # reading the id off the entry it removed (never a kernel-side table)
         tid = km._add_user_todo(SID, "Need the auth-scheme decision to wire login")
         body = km._user_todo_answer_body("Need the auth-scheme decision to wire login",
                                          "Go with the session cookie.")
         be = _FakeBackend()
-        be.send(SID, body)                            # the delivered-now path…
-        km._stamp_user_todo_answered(SID, tid, body)  # …stamps and records the recall key
+        self.assertTrue(km._backend_send(be, SID, body, user_todo=tid))   # the delivered-now path…
+        km._stamp_user_todo_answered(SID, tid, body)                      # …stamps at the truthy send
         self.assertEqual(km._user_todos()[SID][0]["resolved"]["kind"], "answered")
         err = km._cancel_backend_queued(be, SID, 0, km._split_followup(body)[1])
         self.assertIsNone(err, "the unqueue succeeds")
         self.assertNotIn("resolved", km._user_todos()[SID][0],
                          "recalled before it forwarded → the ask stands again")
-        self.assertEqual(km._user_todo_recalls, {}, "the recall key is spent")
 
     def test_reopen_never_lifts_a_dismiss_or_withdraw(self):
         tid = km._add_user_todo(SID, "Need the staging port")
@@ -836,6 +855,276 @@ class DeliveryKeyedStamp(_StoreSandbox):
         self.assertFalse(km._reopen_user_todo(SID, tid),
                          "only an 'answered' stamp — a failed delivery — may be lifted")
         self.assertEqual(km._user_todos()[SID][0]["resolved"]["kind"], "dismissed")
+
+
+class RecallRidesTheEntry(_StoreSandbox):
+    """Round-2 findings 1+3, one root: the old recall bookkeeping was an IN-MEMORY map while the
+    SDK queue it tracked is PERSISTED (reg mirror, reseeded at boot) — so a post-restart recall
+    reopened nothing, and the map's global FIFO cap could evict a live entry. The id now travels
+    WITH the queued message (the entry itself carries it; the recall reads it back off the entry
+    it removes), so there is nothing kernel-side to lose, restart away, or evict."""
+
+    def _answered_via_backend(self, be=None):
+        be = be or _FakeBackend()
+        tid = km._add_user_todo(SID, "Need the auth-scheme decision to wire login")
+        body = km._user_todo_answer_body("Need the auth-scheme decision to wire login",
+                                         "Go with the session cookie.")
+        self.assertTrue(km._backend_send(be, SID, body, user_todo=tid))
+        km._stamp_user_todo_answered(SID, tid, body)
+        self.assertEqual(km._user_todos()[SID][0]["resolved"]["kind"], "answered")
+        return be, tid, body
+
+    def test_a_post_restart_recall_still_reopens(self):
+        # the round-2 test_A shape: the queue survives a kernel restart (reg mirror), the old map
+        # did not — so the recall must work with NO in-kernel memory of the send. The fresh
+        # kernel's _cancel_backend_queued sees only the entry, and the entry knows its todo.
+        be, tid, body = self._answered_via_backend()
+        # "kernel restart": there is deliberately no kernel-side record left to clear — the
+        # structural pin below proves the side table is gone, so this cancel IS the fresh kernel
+        err = km._cancel_backend_queued(be, SID, 0, km._split_followup(body)[1])
+        self.assertIsNone(err, "the post-restart unqueue succeeds (the queue was persisted)")
+        self.assertNotIn("resolved", km._user_todos()[SID][0],
+                         "the recall reopens the ask — never a false permanent 'answered'")
+
+    def test_the_recall_side_table_is_gone(self):
+        # finding 3's entire class (a FIFO cap evicting a live entry) dies with the table
+        for name in ("_user_todo_recalls", "_USER_TODO_RECALLS_CAP", "_record_user_todo_recall"):
+            self.assertFalse(hasattr(km, name),
+                             "%s must not come back — the id rides the queue entry" % name)
+
+    def test_many_later_answers_cannot_evict_the_recall(self):
+        # the round-2 test_D shape: 64+ later stamps used to evict the live map entry; the id
+        # rides the entry now, so no volume of unrelated answers can disarm a recall
+        be, tid, body = self._answered_via_backend()
+        for i in range(65):
+            t2 = km._add_user_todo("00000000-0000-4000-8000-%012d" % i, "todo %d" % i)
+            km._stamp_user_todo_answered("00000000-0000-4000-8000-%012d" % i, t2, "body %d" % i)
+        err = km._cancel_backend_queued(be, SID, 0, km._split_followup(body)[1])
+        self.assertIsNone(err)
+        self.assertNotIn("resolved", km._user_todos()[SID][0],
+                         "the recall survives any number of later answers")
+
+    def test_a_lookalike_recall_reopens_nothing(self):
+        # the round-2 test_C residual, closed by the same root: the answer was DELIVERED (its
+        # entry consumed); a later byte-identical NORMAL send carries no todo id, so recalling
+        # that one reopens nothing
+        be, tid, body = self._answered_via_backend()
+        be.queue.pop(0)                               # the input generator forwards it: delivered
+        be.send(SID, body)                            # a plain send, byte-identical, no user_todo
+        err = km._cancel_backend_queued(be, SID, 0, km._split_followup(body)[1])
+        self.assertIsNone(err)
+        self.assertEqual(km._user_todos()[SID][0]["resolved"]["kind"], "answered",
+                         "the delivered answer stands — nothing rode the lookalike entry")
+
+    def test_a_recalled_entry_never_lifts_a_dismiss(self):
+        # the round-2 test_B shape, end to end: parked answer (no stamp), user dismisses, the
+        # drain delivers anyway (the entry carries the id), then the user recalls the queued
+        # message — the reopen's answered-only guard keeps the dismiss
+        be = _FakeBackend()
+        tid = km._add_user_todo(SID, "Need the staging port")
+        body = km._user_todo_answer_body("Need the staging port", "8443.")
+        self.assertTrue(km._resolve_user_todo(SID, tid, "dismissed"))
+        km._deliver_send_batch(be, SID, [("send", body, None, tid)])
+        self.assertEqual(km._user_todos()[SID][0]["resolved"]["kind"], "dismissed",
+                         "the drain's stamp attempt must not overwrite the dismiss")
+        err = km._cancel_backend_queued(be, SID, 0, km._split_followup(body)[1])
+        self.assertIsNone(err)
+        self.assertEqual(km._user_todos()[SID][0]["resolved"]["kind"], "dismissed",
+                         "reopen must never lift a dismiss — answered-only")
+
+    def test_the_drain_hands_the_id_to_the_backend_entry(self):
+        # the park path feeds the same root: a drained answer's queue entry carries the id
+        # exactly like an immediate send's, so its recall reopens the same way
+        be = _FakeBackend()
+        tid = km._add_user_todo(SID, "Need the auth-scheme decision")
+        body = km._user_todo_answer_body("Need the auth-scheme decision", "Cookie.")
+        km._deliver_send_batch(be, SID, [("send", body, None, tid)])
+        self.assertEqual(getattr(be.queue[0], "todo", ""), tid,
+                         "the drained entry carries the todo id end to end")
+
+    def test_a_backend_without_the_capability_takes_the_plain_send(self):
+        # tmux and older fakes: no queue_carries_todos → _backend_send hands over the bare text
+        # (tmux delivers immediately; there is no queue entry to carry an id on)
+        class _Plain:
+            def __init__(self):
+                self.sent = []
+
+            def send(self, sid, text):
+                self.sent.append((sid, text))
+                return True
+
+        be = _Plain()
+        self.assertTrue(km._backend_send(be, SID, "hello", user_todo="ut-12345678"))
+        self.assertEqual(be.sent, [(SID, "hello")])
+
+
+class LostAnswerReopens(_StoreSandbox):
+    """Round-2 finding 2: a kernel death in the fed-but-unlanded window strands a stamped answer —
+    the dropped-echo machinery detects the loss but could not tie it back to the ask. The echo now
+    carries the todo id, the backend hands it to _user_todo_answer_lost, and the ask visibly
+    returns to \"Waiting on you\" — UNLESS the transcript proves the text actually landed (then the
+    agent has the answer and the stamp is true; a landed-but-unpruned echo at kernel death is
+    common, so reopening blindly would flap answered asks open on every restart)."""
+
+    def setUp(self):
+        super().setUp()
+        self._saved = (km._sessions, km._parse)
+        self.turns = []
+        km._sessions = lambda now, window=None, forks=True: [{"sid": SID, "path": "/dev/null"}]
+        km._parse = lambda path, sid, now: {"turns": self.turns}
+
+    def tearDown(self):
+        km._sessions, km._parse = self._saved
+        super().tearDown()
+
+    def _stamped(self):
+        tid = km._add_user_todo(SID, "Need the auth-scheme decision")
+        body = km._user_todo_answer_body("Need the auth-scheme decision", "Cookie.")
+        km._stamp_user_todo_answered(SID, tid, body)
+        return tid, body
+
+    def _land(self, text):
+        self.turns = [{"atoms": [{"type": "user", "author": "human", "uuid": "u1",
+                                  "message": {"role": "user",
+                                              "content": [{"type": "text", "text": text}]}}]}]
+
+    def test_a_lost_answer_reopens_the_ask(self):
+        tid, body = self._stamped()
+        km._user_todo_answer_lost(SID, tid, body, wait=True)
+        self.assertNotIn("resolved", km._user_todos()[SID][0],
+                         "the answer died with its holder — the ask visibly returns")
+
+    def test_a_landed_answer_keeps_its_stamp(self):
+        tid, body = self._stamped()
+        self._land(body)
+        km._user_todo_answer_lost(SID, tid, body, wait=True)
+        self.assertEqual(km._user_todos()[SID][0]["resolved"]["kind"], "answered",
+                         "the transcript has the answer — delivered, not lost")
+
+    def test_a_landed_text_block_inside_a_bundle_counts(self):
+        # romp bundles injected messages into one user record; per-block matching (the
+        # _atom_user_texts contract) must recognize the landed answer inside it
+        tid, body = self._stamped()
+        self.turns = [{"atoms": [{"type": "user", "author": "human", "uuid": "u1",
+                                  "message": {"role": "user", "content": [
+                                      {"type": "text", "text": "a restart notice"},
+                                      {"type": "text", "text": body}]}}]}]
+        km._user_todo_answer_lost(SID, tid, body, wait=True)
+        self.assertEqual(km._user_todos()[SID][0]["resolved"]["kind"], "answered")
+
+    def test_the_loss_path_never_lifts_a_dismiss(self):
+        tid = km._add_user_todo(SID, "Need the staging port")
+        km._resolve_user_todo(SID, tid, "dismissed")
+        km._user_todo_answer_lost(SID, tid, "Re: Need the staging port — 8443.", wait=True)
+        self.assertEqual(km._user_todos()[SID][0]["resolved"]["kind"], "dismissed")
+
+    def test_an_unparsable_transcript_fails_toward_the_visible_ask(self):
+        # fail loudly, never degrade silently: a broken landed-check reopens (a wrongly-open ask
+        # is visible and dismissable; a wrongly-'answered' one is the silent loss the ADR names)
+        tid, body = self._stamped()
+
+        def boom(path, sid, now):
+            raise RuntimeError("corrupt transcript")
+
+        km._parse = boom
+        km._user_todo_answer_lost(SID, tid, body, wait=True)
+        self.assertNotIn("resolved", km._user_todos()[SID][0])
+
+    def test_the_backend_wire_is_connected(self):
+        # the callback must ride CONSTRUCTION (the boot reseed fires drop marks from __init__,
+        # before any post-construction attribute assignment could arm it)
+        src = inspect.getsource(km._sdk_locked)
+        self.assertIn("todo_lost=_user_todo_answer_lost", src)
+
+
+class MarkerNeutralizerVariants(unittest.TestCase):
+    """Round-2 finding 4: every downstream matcher tolerates arbitrary whitespace after the
+    comment opener (\"<!--\\s*romp-\"), so the neutralizer must break that same CLASS, not the one
+    literal one-space spelling — a no-space \"<!--romp-injected-->\" in todo text sailed through
+    and the user's own answer rendered as romp's system card. Verified against the VERBATIM
+    downstream regexes, imported, never copied."""
+
+    WS = ("", " ", "   ", "\n", "\t ", " \n ")
+
+    def _cases(self):
+        for ws in self.WS:
+            yield "<!--%sromp-injected -->" % ws, em.ROMP_INJECT_RE, "romp-injected"
+            yield "<!--%sromp-injected -->" % ws, km.jd.NUDGE_MARKER_RE, "romp-injected"
+            yield "<!--%sromp-msg-id: m-3f2c -->" % ws, em.POSTAL_RE, "romp-msg-id"
+            yield "<!--%sromp-tag: build-1 -->" % ws, em.MSG_TAG_RE, "romp-tag"
+
+    def test_every_whitespace_variant_breaks_for_every_downstream_matcher(self):
+        for raw, rex, words in self._cases():
+            self.assertTrue(rex.search(raw),
+                            "sanity: %r must be marker-shaped for /%s/" % (raw, rex.pattern))
+            out = km._neutralize_romp_markers("note %s kept" % raw)
+            self.assertFalse(rex.search(out),
+                             "neutralized %r still matches /%s/" % (out, rex.pattern))
+            self.assertIn(words, out, "the words survive — only the comment form breaks")
+
+    def test_the_answer_body_gets_the_same_tolerance_on_both_halves(self):
+        for raw, rex, _ in self._cases():
+            body = km._user_todo_answer_body("Need a call on %s in the fixture" % raw,
+                                             "Keep it, but drop the %s part." % raw)
+            self.assertFalse(rex.search(body),
+                             "an answer body carrying %r still matches /%s/" % (raw, rex.pattern))
+
+    def test_the_escape_is_the_same_visible_one(self):
+        self.assertEqual(km._neutralize_romp_markers("<!-- romp-injected -->"),
+                         "<!- - romp-injected -->")
+        self.assertEqual(km._neutralize_romp_markers("<!--romp-injected-->"),
+                         "<!- -romp-injected-->")
+
+    def test_a_non_romp_comment_is_untouched(self):
+        self.assertEqual(km._neutralize_romp_markers("code sample: <!-- not ours -->"),
+                         "code sample: <!-- not ours -->")
+
+
+class ResolvedRowsAreBounded(_StoreSandbox):
+    """Round-2 finding 5: a never-dying session's resolved rows accumulated without bound (the
+    prune clears them only at session death — right for history, wrong as an invariant on a
+    self-hosted box whose sessions live for weeks), and _user_todo_fp re-serializes every row on
+    every chat build. A per-sid SIZE cap on RESOLVED rows only: the newest _USER_TODO_RESOLVED_KEEP
+    stay, the oldest leave. OPEN rows are NEVER capped — the ADR's authority tier: an open ask
+    leaves the store by answer/dismiss/withdraw alone, never by volume."""
+
+    def test_resolved_rows_keep_only_the_newest_K(self):
+        K = km._USER_TODO_RESOLVED_KEEP
+        first = km._add_user_todo(SID, "the oldest resolved row")
+        km._resolve_user_todo(SID, first, "dismissed")
+        for i in range(K):
+            t = km._add_user_todo(SID, "later todo %d" % i)
+            km._resolve_user_todo(SID, t, "answered")
+        resolved = [t for t in km._user_todos()[SID] if t.get("resolved")]
+        self.assertEqual(len(resolved), K, "a size bound, not a time heuristic")
+        self.assertNotIn(first, [t["id"] for t in resolved], "the OLDEST row is the one that left")
+
+    def test_every_stamp_kind_is_capped_the_same_way(self):
+        K = km._USER_TODO_RESOLVED_KEEP
+        for i in range(K + 7):
+            t = km._add_user_todo(SID, "todo %d" % i)
+            km._resolve_user_todo(SID, t, ("answered", "dismissed", "withdrawn")[i % 3])
+        self.assertEqual(len([t for t in km._user_todos()[SID] if t.get("resolved")]), K)
+
+    def test_open_rows_are_never_capped(self):
+        K = km._USER_TODO_RESOLVED_KEEP
+        opens = [km._add_user_todo(SID, "open %d" % i) for i in range(K + 5)]
+        for i in range(K + 5):
+            t = km._add_user_todo(SID, "resolved %d" % i)
+            km._resolve_user_todo(SID, t, "answered")
+        got = km._user_todos()[SID]
+        self.assertEqual([t["id"] for t in got if not t.get("resolved")], opens,
+                         "every open ask survives — the cap reads resolved rows only")
+        self.assertEqual(len([t for t in got if t.get("resolved")]), K)
+
+    def test_the_fp_is_bounded_by_the_cap(self):
+        K = km._USER_TODO_RESOLVED_KEEP
+        for i in range(K * 2):
+            t = km._add_user_todo(SID, "todo %d" % i)
+            km._resolve_user_todo(SID, t, "answered")
+        self.assertEqual(len(km._user_todos()[SID]), K,
+                         "the per-sid fold hashes at most K resolved rows, forever")
+        self.assertTrue(km._user_todo_fp(SID))
 
 
 class NoJudgeWritesTheStore(unittest.TestCase):

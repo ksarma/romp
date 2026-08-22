@@ -82,16 +82,36 @@ test("the two-step dismiss completes on coarse pointers (no hover to leave)", ()
   assert.match(handler, /if \(isCoarsePointer\(\)\) \{/);
   assert.match(handler, /document\.addEventListener\("pointerdown", disarm, true\);/);
   assert.match(handler, /document\.removeEventListener\("pointerdown", disarm, true\);/,
-    "one-shot: the dismisser removes itself on the next tap");
-  assert.match(handler, /if \(ev\.target !== elx\)/,
-    "a tap ON the button leaves the arm for the click handler to confirm");
+    "the dismisser removes itself on the next tap genuinely elsewhere");
+  assert.match(handler, /if \(ev\.target === elx\) return;/,
+    "a press ON the button leaves the arm AND the listener for the click handler to settle");
+});
+
+test("a scroll that starts ON the armed button neither disarms nor spends the one-shot (round 2, 2026-08-22)", () => {
+  // a pointerdown on the armed button that becomes a SCROLL fires no click: the old handler
+  // removed the listener on ANY pointerdown, so that scroll left the arm latched with the
+  // tap-elsewhere cancel gone — "Really dismiss?" forever, one accidental brush from clearing
+  // an open ask. The guard must RETURN (keeping the listener registered) before the removal;
+  // only a pointerdown genuinely elsewhere disarms and removes.
+  const handler = RENDER.slice(RENDER.indexOf("utdismiss: (elx) => {"));
+  assert.match(handler,
+    /if \(ev\.target === elx\) return;\s*\n\s*document\.removeEventListener\("pointerdown", disarm, true\);/,
+    "the on-button early return precedes the one-shot removal");
+  // the confirming tap no longer spends the listener, so the confirm branch retires it itself
+  // (otherwise it lingers on document and fires once more against a removed row)
+  assert.match(handler, /\(elx as any\)\._utDisarm = disarm;/);
+  const confirm = handler.slice(0, handler.indexOf("userTodoDismiss"));
+  assert.match(confirm, /const stale = \(elx as any\)\._utDisarm;/,
+    "the confirm branch looks up the armed one-shot");
+  assert.match(confirm, /if \(stale\) \{ document\.removeEventListener\("pointerdown", stale, true\); \(elx as any\)\._utDisarm = undefined; \}/,
+    "…and removes it before posting the dismiss");
 });
 
 test("a kernel warn re-syncs the active view so a refused optimistic removal returns", () => {
   // Reply/Dismiss remove their row before any verdict; on a refusal the kernel's state did not
   // change, so the next push can dedup to nothing — the warn itself must repaint from events
   const warn = RENDER.slice(RENDER.indexOf('m.type === "warn"'));
-  assert.match(warn, /const wv = views\.get\(activeId\);\s*\n\s*if \(wv\) \{ wv\.stale = true; appendActive\(\); \}/);
+  assert.match(warn, /const wv = activeId \? views\.get\(activeId\) : null;\s*\n\s*if \(wv\) \{ wv\.stale = true; appendActive\(\); \}/);
 });
 
 test("reply opens a modal (outside the rebuilt transcript) and posts one answer+stamp op", () => {
