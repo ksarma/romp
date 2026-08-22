@@ -232,6 +232,13 @@ for a non-todo reason (permission prompt, on-you API error) counts once as itsel
 existing push (`_badge_push`, `kernel.py:22050` → the shell WS `{type:'badge'}`,
 `kernel.py:24611-24614`, service-worker copy `22292-22296`).
 
+**Muted sessions — a deliberate asymmetry (review call, 2026-08-22).** A `hideFromFeed` mute
+quiets the feed and every aggregate built from it — the card marker (c), the idle-escalation
+floor, and the badge (d) — because mute means "stop interrupting me about this session". The
+tab glyph (b) stays: it reads the chat payload's `userTodos`, which mute does not touch, so the
+tab remains truthful about what its session holds. Do not "fix" the glyph to match the feed
+surfaces; the split is the point (quiet the interrupts, never lie on the session's own tab).
+
 ### Dead and dormant sessions
 
 Two different "not running" states, two different answers:
