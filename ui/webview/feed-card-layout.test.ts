@@ -52,7 +52,10 @@ test("the ⏸ blocked (permission/picker) badge is a rounded-rect pill outlined 
 test("the ⏸ picker/approval chip jumps to the LIVE prompt in the chat (openSession + live, the user 2026-07-08)", () => {
   // the prompt is the session's live bottom, so the chip posts `live: true` → the chat lands right on it
   assert.match(FEED, /vscodeApi\?\.postMessage\(\{ type: "openSession", id: it\.sid, live: true \}\);/);
-  assert.match(FEED, /a\._blocked\.title = it\.blocked\.what \+ " — click to jump to the prompt in the chat";/);
+  // the badge title stays what+suffix; the userTodos escalation (plans/user-todos.md) gets its own
+  // reply-flavored suffix while permission/picker keep the jump-to-prompt one
+  assert.match(FEED, /a\._blocked\.title = it\.blocked\.what \+ \(it\.blocked\.state === "userTodos"/);
+  assert.match(FEED, /: " — click to jump to the prompt in the chat"\);/);
 });
 
 test("courier handoff: the '↪ from <sender>' origin marker is wired and styled", () => {
@@ -89,8 +92,8 @@ test("session-STATE badges (⏸ approval / ⚠ API error) ride the name row; the
   // the bug: ⏸ approval + buttons + Clear in the SAME footer row shoved them off a narrow card.
   // Fix: the state badges move up beside the session name; the action row holds only the buttons.
   // The ⏳ "awaiting" chip was REMOVED (the user 2026-07-04) — the body "Awaiting background agents" box says it.
-  assert.match(FEED, /idwrap\.append\(retryBadge, apiBadge, jauthBadge, blkBadge\)/,
-    "state badges sit beside the name (no awaiting chip; retrying joined 2026-07-09, judge-auth 2026-08-12)");
+  assert.match(FEED, /idwrap\.append\(retryBadge, apiBadge, jauthBadge, blkBadge, utMark\)/,
+    "state badges sit beside the name (no awaiting chip; retrying joined 2026-07-09, judge-auth 2026-08-12, the user-todo marker 2026-08-22)");
   assert.doesNotMatch(FEED, /waitBadge/, "the redundant awaiting chip element is gone entirely");
   assert.match(FEED, /actions\.append\(apiRetry, revive,/, "action row = Retry/Revive (+ resume-gate) only (Clear moved to the name row 2026-07-07)");
   assert.match(FEED, /a\._blocked = blkBadge;/);

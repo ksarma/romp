@@ -183,6 +183,12 @@ body.tabbar-resizing { cursor: ns-resize; user-select: none; }
    opening dots (the loading-state rule; the working dot above stays solid on purpose — that rule is about
    real work, this one is about a load in progress). */
 .tab-dot.opening { background: var(--accent); animation: opening-line-pulse 1.2s ease-in-out infinite; }
+/* USER-TODO glyph (plans/user-todos.md): the session flagged something it needs from you — a small
+   quiet flag right of the name, NON-NUMERIC (tabs carry no counts; the split card says what). Shape
+   carries the meaning, not a status colour: working/awaiting/blocked hues all mean something else,
+   so the flag stays a soft foreground white. Deliberately NOT a .tab-dot — pips encode turn state,
+   and the kernel's mobile scrape keys on the pip classes. */
+.tab-usertodo { flex: 0 0 auto; color: rgba(255, 255, 255, 0.75); font-size: 10px; line-height: 1; }
 /* Vertical context gauge right of the name (the user 2026-08-08): the statusline battery rotated
    upright — fills bottom-up with the context-used %, in the SAME global-colormap colour (fill set
    inline by tabCtxGauge, render.ts), no % text. A faint track so an empty gauge still reads as

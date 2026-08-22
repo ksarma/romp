@@ -2055,6 +2055,50 @@ def _user_todo_fp(sid):
     return json.dumps(rows, sort_keys=True) if rows else None
 
 
+def _user_todo_idle(sid, ps, who_working, sess_awaiting_why, perm_state, aerr):
+    """The idle-escalation floor's ARMING read (plans/user-todos.md): True only when this session
+    has SETTLED idle with nothing else in motion — the exact idle the auto-nudge tick requires —
+    so its open user todos ARE its frontier and the focus card may floor to needs-input. Read-side
+    and re-derived each build (never a verdict: the ADR bars anything diary-shaped from touching
+    this tier), but every input is an EVENT, not a per-build proxy:
+
+    - who_working (the event model's open turn) and sess_awaiting_why (dispatched agents/overlay)
+      say the frontier isn't empty; perm/compacting states and an API error are live stories that
+      outrank this one (one interrupt at a time — the perm floor's own rule);
+    - queued intent (parked drive ops, the backend queue, an armed rewind) means a message already
+      arrived — the exact de-escalation event — so the floor never claims idle over it, and a user
+      interrupt means the user acted (the same suppression the nudge honors);
+    - THE NO-FLAP GUARD (the cards-move-on-new-information rule): the event model reads "no open
+      turn" during transient mid-turn lulls, so keying on it alone would strobe the card at every
+      turn boundary — the exact working↔needs-you flap WHY_UNBLOCK_UNSETTLED documents. The
+      authoritative state log showing a PROGRESSING state at/after the parsed turn's end means the
+      stop is not real (the auto-nudge's genuine-stop discriminator: two real-event timestamps,
+      no time window); a progressing record from BEFORE the turn end is a stale lost-write and
+      must not wedge the floor off (the bugsdk2 lesson).
+
+    ps None / no turns reads UNKNOWN, never idle — the cache-warm idiom: the floor snaps in after
+    _warm_fleet_bg like every other parse-derived read, instead of guessing on a cold cache."""
+    if ps is None or who_working or sess_awaiting_why or aerr:
+        return False
+    if perm_state in _NEEDS_INPUT_STATES or perm_state == "compacting" or _compacting_now(sid):
+        return False
+    if _pending_ops.get(str(sid)) or _backend_queued(sid) or _backend_rewind_pending(sid):
+        return False
+    turns = ps.get("turns") or []
+    if not turns:
+        return False
+    try:
+        if _interrupt_suppresses_nudge(turns, sid):
+            return False
+    except Exception:
+        return False                                 # an unreadable gate reads unknown, never idle
+    lt = turns[-1]
+    ls_val, ls_t = _last_state(sid)
+    if ls_val in _PROGRESSING_STATES and ls_t >= lt.get("end", lt.get("t", 0)):
+        return False
+    return True
+
+
 # The marker-opening CLASS every downstream reader tolerates: "<!--" then ANY whitespace before
 # "romp-" (the event model's ROMP_INJECT_RE / POSTAL_RE / MSG_TAG_RE and the judge's
 # NUDGE_MARKER_RE are all "<!--\s*romp-"). The neutralizer must break this same class, not one
@@ -4346,6 +4390,16 @@ def _auto_nudge_session(s, now, tmux, nudged, waitfor, alive_ids=None):
     if st in _NEEDS_INPUT_STATES or st == "compacting" or _compacting_now(sid):
         return False
     if _api_error(s["path"]):                        # stopped on an API error → not orphaned
+        return False
+    if _open_user_todos(sid):
+        # OPEN USER TODOS explain this idle (plans/user-todos.md, the escalation section): the todo
+        # IS the session's declared frontier — it told the user what it needs and kept going — so a
+        # status nudge would fish for exactly what the todo already states, and the surface is the
+        # escalated card (build_feed's read-side floor), never a manufactured turn. A SESSION-level
+        # stand-down like the progressing-state gate below (the wake and the debt reminder stand
+        # down with it — the same no-check-ins reasoning that rejected idle check-in turns), and it
+        # lifts the moment the last todo clears: answer, dismiss, or withdraw, each a real event
+        # this store read sees live.
         return False
     try:
         # Parse WITH states (idle atoms), exactly as the closer does — so this turn's id MATCHES what the
@@ -17714,6 +17768,37 @@ def _blocked_placeholder(s, name, color, fsid, live, now, perm_state, since):
             "provisional": True, "tree": []}
 
 
+# The escalated card's one-line story (plans/user-todos.md): why the column moved — the session ran
+# out of work it can do alone, and what remains is what it asked the user for. Parallel to the perm
+# floor's "stopped awaiting your approval"; shared by the floored focus card and the placeholder.
+_USER_TODO_BLOCK_WHAT = ("this session has run out of work it can do alone — "
+                         "what's left waits on what it asked you for")
+
+
+def _user_todo_placeholder(s, name, color, fsid, live, now, todos):
+    """A NEEDS-INPUT placeholder for a session IDLE on open USER TODOS with NO goal to floor — all
+    its goals completed/cleared, or none minted yet (plans/user-todos.md, slice 2). The goal-less
+    permission prompt's exact shape (_blocked_placeholder): without it the escalation would be
+    invisible precisely when the todos are the ONLY thing left of the session's frontier. The
+    oldest open ask titles the card (the list arrives createdT-sorted); the newest ask's time is
+    the card's current-state time, per the card-time rule. PROVISIONAL on purpose: the badge
+    counts the TODOS (the payload's userTodos map), and this card is a presentation of them — a
+    countable card here would double-count (the spec's dedup rule), and the bell's provisional
+    skip keeps placeholder churn silent, exactly like the permission twin."""
+    newest = max([int(t.get("createdT") or 0) for t in todos] or [now]) or now
+    text = str(todos[0].get("text") or "Waiting on you")
+    if len(todos) > 1:
+        text += "  (+%d more)" % (len(todos) - 1)
+    return {"itemId": "usertodo:" + fsid, "sid": fsid, "name": name, "color": color, "text": text,
+            "t": newest, "live": live, "trgb": list(cm.age_rgb(now - newest, _colormap())),
+            "turnId": None, "origin": None, "followupPending": None,
+            "summary": None, "blockSummary": None, "background": None,
+            "blocked": {"state": "userTodos", "count": len(todos),
+                        "what": _USER_TODO_BLOCK_WHAT},
+            "column": "needs_input",
+            "provisional": True, "tree": []}
+
+
 # LEGACY question-intent tell for postal rows that predate the schema `kind` field (QUESTION/ASK/Q lead
 # word). Rows that CARRY a kind use it directly — the sender's declared intent is the designed source; the
 # body regex is only the fallback for old log rows (the user 2026-06-22 / the 2026-07-22 unification).
@@ -18003,6 +18088,8 @@ def build_feed(now, tmux=None):
     dbg_rows = _judge_error_rows(now) if jd._debug_mode() else None
     asks, working, awaiting = [], [], []
     bg_services = {}          # session name -> live SERVICE descs (judge-classified, _bg_split) → the neutral chip
+    _ut_map = {}              # sid -> OPEN user-todo count (plans/user-todos.md): the feed-card marker's data,
+    #                           riding the payload the way working[]/bgServices do; built behind the ended gate
     alive = _alive_sessions(now, tmux)               # hard filter: living sessions only
     wmap = _wait_for_graph(now, {s["sid"] for s in alive})   # per-session 'waiting on a live peer' (the user 2026-06-22)
     _stalls = _stalled_goals()                       # goals romp's nudge gate is holding → the card's Stalled section
@@ -18323,6 +18410,31 @@ def build_feed(now, tmux=None):
                 f = nodes[f]["parentId"]
             if f in nodes and status.get(f) not in ("completed", "cleared"):
                 jauth_top = f
+        # USER TODOS (plans/user-todos.md, slice 2): the open needs this session registered with the
+        # person it works for. The map feeds the quiet per-card marker and the widened badge; ENDED
+        # sessions hide theirs from every surface and aggregate — build_session's exact corroborated
+        # gate — and a muted session never reaches here (the hideFromFeed continue above). Store
+        # values only: the map must serialize identically across builds when nothing changed.
+        _ut_open = _open_user_todos(fsid)
+        if _ut_open and _user_todo_session_ended(fsid):
+            _ut_open = []
+        if _ut_open:
+            _ut_map[fsid] = len(_ut_open)
+        # THE IDLE-ESCALATION FLOOR (the spec's one earned card move): when the session has settled
+        # idle with open todos and nothing else dispatched, the todo IS its frontier — the focus card
+        # floors to needs-input, perm_top's own family. A READ-SIDE floor, never a judge verdict (the
+        # ADR bars the diary), so it re-derives away the build after an answer/withdraw/dismiss or a
+        # new turn opening; _user_todo_idle carries the no-flap guard. Yields to every LIVE interrupt
+        # (api / perm / judge-auth): one interrupt at a time, the present event first.
+        todo_top = None
+        _todo_idle = bool(_ut_open) and _user_todo_idle(fsid, ps, who_working, sess_awaiting_why,
+                                                        perm_state, aerr)
+        if _todo_idle and api_top is None and perm_top is None and jauth_top is None:
+            f = store.get("lastNode")
+            while f and nodes.get(f, {}).get("parentId") is not None:
+                f = nodes[f]["parentId"]
+            if f in nodes and status.get(f) not in ("completed", "cleared"):
+                todo_top = f
         plain_user_t = _last_plain_user_turn_t(ps["turns"]) if ps else 0   # re-check: a plain reply after a soft block de-urgents it
         had_working = False                          # does this session show ANY working card? → drives the provisional placeholder
         had_awaiting = False                         # …and does any of them read AWAITING? → the session's await-green dot (below)
@@ -18588,12 +18700,19 @@ def build_feed(now, tmux=None):
                             else any(e.get("src") == "user" for e in _nlog))
             nudge_failed = (bool(nrec.get("failed")) and not _story_moved
                             and (col == "working" or (col == "blocked" and _lastblk == "nudge")))
+            # THE USER-TODO FLOOR fires on the focus card while it is PLAIN WORKING only (plans/
+            # user-todos.md): an awaiting flip, a soft block, and recheck/rejudging's de-urgent
+            # smoothing are each their own designed latches — the floor exists to catch the card
+            # that would otherwise sit mute in Working while the session's whole frontier waits on
+            # the user, never to displace another move.
+            _todo_block = bool(nid == todo_top and col == "working")
             # A live picker/permission floor (perm_top) is a GENUINE block, so the kernel reports its column as
             # needs_input — NOT "working" with the client re-routing it by it.blocked (which was crafty + split
             # the truth: build_feed said working while the card showed under Blocked, and the distiller line,
             # keyed on it.column, then stayed hidden). Now it.column is authoritative: the card IS blocked, the
             # client files by it.column, and the distiller line shows (the user 2026-06-29).
             column = ("needs_input" if (api_block or nid == jauth_top or nid == perm_top or _stall_block
+                                        or _todo_block
                                         or (col == "blocked" and not recheck and not rejudging))
                       else "completed" if col == "completed" else "working")
             had_working = had_working or column == "working"
@@ -18736,6 +18855,10 @@ def build_feed(now, tmux=None):
                             else {"state": perm_state,
                                   "what": ("this session is stopped awaiting your input" if perm_state == "picker"
                                            else "this session is stopped awaiting your approval")} if nid == perm_top
+                            # the idle-escalation floor's story (plans/user-todos.md): the count rides so
+                            # the badge can treat this card as a PRESENTATION of todos it already counted
+                            else {"state": "userTodos", "count": len(_ut_open),
+                                  "what": _USER_TODO_BLOCK_WHAT} if _todo_block
                             else None),
                 "retrying": (sess_retrying if column == "working" else None),   # api-retry storm in the OPEN turn → "retrying since HH:MM" chip on the working card; chip only, no column move (the user 2026-07-09)
                 "nudgeFailed": nudge_failed,         # the one auto-nudge didn't resolve the stall → "nudge failed" chip; never re-nudged (plans/stalled-open-todos-nudge.md)
@@ -18788,6 +18911,11 @@ def build_feed(now, tmux=None):
                 # by the real card once the planner places the answered work.
                 asks.append(_blocked_placeholder(s, name, color, fsid, live, now, perm_state,
                                                  tm.get("since") if tm else None))
+            elif _todo_idle and _ut_open and todo_top is None:
+                # IDLE on open USER TODOS with no goal to floor (everything completed/cleared, or no
+                # goals yet): the goal-less permission prompt's shape (plans/user-todos.md). Provisional
+                # like that placeholder — a presentation of the todos, which the badge already counts.
+                asks.append(_user_todo_placeholder(s, name, color, fsid, live, now, _ut_open))
             elif sess_awaiting_why:
                 # AWAITING a dispatched background task with NO goal to floor (the user 2026-07-13): the
                 # session's work is all placed/done, but a background task it dispatched is still running
@@ -18837,6 +18965,10 @@ def build_feed(now, tmux=None):
     for _a in asks:
         _a["notify"] = True if _notify_card_effective(_ncards, _a["itemId"], str(_a.get("sid") or "")) else None
     return {"type": "feed", "asks": asks, "now": now,
+            # sid -> open user-todo count (plans/user-todos.md): the quiet per-card marker's data +
+            # the badge's todo half. Sorted so the serialized payload is byte-stable across builds
+            # when nothing changed (_send_client dedups on the bytes — the firstSeen lesson).
+            "userTodos": {k: _ut_map[k] for k in sorted(_ut_map)},
             # usage-limit-down latch (judge-limit.json): analysis is paused because the account
             # cannot bill judge calls — the dashboard must SAY so, never fail quietly into retries
             # (the user 2026-08-18); self-expires at the window reset, cleared by the next success
@@ -22477,7 +22609,11 @@ def _fleet_view_sig(now, tmux):
     sig["__syncn__"] = _sync_notice_count()  # …and so is a finished automatic sync
     for p, k in ((jd.STATE / "colormap", "__cmap__"), (jd.STATE / "session-flags.json", "__flags__"),
                  (jd.STATE / "session-order.json", "__order__"),
-                 (jd.STATE / "notify-cards.json", "__ncards__")):   # per-card bell arming → the card's menu state
+                 (jd.STATE / "notify-cards.json", "__ncards__"),    # per-card bell arming → the card's menu state
+                 # user todos (plans/user-todos.md): the feed's marker map, the widened badge and the
+                 # escalation floor all read this store, so a register/answer/dismiss/withdraw must
+                 # bust the FEED cache the way it already busts the owning session's chat cache
+                 (jd.STATE / "user-todos.json", "__utodos__")):
         try:
             sig[k] = os.stat(p).st_mtime
         except OSError:
@@ -22583,10 +22719,24 @@ def _feed_notifications(feed):
 
 
 def _needs_you_count(feed):
-    """How many real (non-provisional) cards sit in needs_input — the number the app icon wears.
-    Counted from the same feed build the notifications diff, so badge and bell can never disagree."""
-    return sum(1 for a in (feed.get("asks") or [])
-               if not a.get("provisional") and a.get("column") == "needs_input")
+    """The number the app icon wears: THINGS ONLY THE USER CAN MOVE (plans/user-todos.md, (d)) —
+    open user todos of non-ended sessions (the payload's sid-keyed map, built behind the ended
+    gate) PLUS hard-stopped needs-input sessions, counted per SESSION from the same feed build the
+    notifications diff, so badge and bell can never disagree. The spec's dedup rule, both halves:
+    the idle-escalation floor is a PRESENTATION of todos the count already includes (its cards
+    carry blocked.state "userTodos" and add nothing), while a session hard-stopped for a non-todo
+    reason — a permission prompt, an on-you API error, a judge-filed block — counts once AS
+    ITSELF beside whatever todos it holds. A sid-less needs-input card (nothing to dedup against)
+    still counts alone; provisional placeholders stay out, as ever (churn is not news)."""
+    n = sum(int(v or 0) for v in (feed.get("userTodos") or {}).values())
+    hard = set()
+    for a in (feed.get("asks") or []):
+        if a.get("provisional") or a.get("column") != "needs_input":
+            continue
+        if (a.get("blocked") or {}).get("state") == "userTodos":
+            continue                                 # the floor's presentation — the todos are already in n
+        hard.add(str(a.get("sid") or "") or ("item:" + str(a.get("itemId"))))
+    return n + len(hard)
 
 
 # The count the shell clients last heard (None = nothing sent since boot). The badge moves on feed
@@ -23284,6 +23434,8 @@ _CHAT_MOBILE_CSS = (
     # the working cue is the SAME gold status dot desktop uses (the tab's .tab-dot), not a text bullet
     "#mcur .wd{flex:0 0 auto;width:7px;height:7px;border-radius:50%;background:var(--st-working-bg,#e0b020)}"
     "#mcur .wd.await{background:var(--st-awaitbg-bg,#54B204)}"   # green when idle-waiting-on-bg-work
+    # user-todo flag (plans/user-todos.md): the desktop tab glyph, mirrored — quiet, non-numeric
+    "#mcur .utf{flex:0 0 auto;color:#ffffffbf;font-size:.85em;line-height:1}"
     "#mcur .cv{flex:0 0 auto;opacity:.6;font-size:11px}"
     "#madd{flex:0 0 auto;width:36px;display:flex;align-items:center;justify-content:center;cursor:pointer;"
     "background:#2a2a2a;color:#bbbbbb;border:1px solid #3a3a3a;border-radius:6px;font-size:16px;line-height:1}"
@@ -23299,6 +23451,8 @@ _CHAT_MOBILE_CSS = (
     ".mrow .workdot{flex:0 0 auto;width:7px;height:7px;border-radius:50%;background:var(--st-working-bg,#e0b020)}"
     ".mrow .workdot.await{background:var(--st-awaitbg-bg,#54B204)}"   # green: idle-waiting-on-bg-work
     ".mrow .nm{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#dddddd}"
+    # the per-row user-todo flag sits between the name and the ✕ — same quiet treatment as #mcur .utf
+    ".mrow .utflag{flex:0 0 auto;margin-left:6px;color:#ffffffbf;font-size:.85em;line-height:1}"
     # per-row end-session x (the mobile picker's only way to end a session — desktop has the tab x)
     ".mrow .mclose{flex:0 0 auto;margin-left:8px;padding:0 6px;color:#8a8a8a;font-size:20px;line-height:1}"
     ".mrow .mclose:active{color:#e5484d}"
@@ -23328,7 +23482,7 @@ _CHAT_MOBILE_JS = """
 if(!tabbar||!tabs)return;
 var hdr=document.createElement('div');hdr.id='mhdr';
 var cur=document.createElement('button');cur.id='mcur';cur.type='button';
-cur.innerHTML='<span class="wd" style="display:none"></span><span class="nm"></span><span class="cv">▾</span>';
+cur.innerHTML='<span class="wd" style="display:none"></span><span class="nm"></span><span class="utf" style="display:none" title="waiting on you — this session flagged something it needs from you">\\u2691</span><span class="cv">▾</span>';
 var add=document.createElement('button');add.id='madd';add.type='button';add.textContent='+';add.title='Open / new session';
 var list=document.createElement('div');list.id='mlist';
 hdr.appendChild(cur);hdr.appendChild(add);
@@ -23340,6 +23494,7 @@ var lab=t.querySelector('.tab-label');
 return {id:t.getAttribute('data-id'),name:(lab?lab.textContent:t.getAttribute('data-id')),lab:lab,
 bg:t.style.getPropertyValue('--chip-bg').trim(),fg:t.style.getPropertyValue('--chip-fg').trim(),
 working:t.classList.contains('tab-working'),awaitbg:!!t.querySelector('.tab-dot.await'),active:t.classList.contains('active'),
+ut:!!t.querySelector('.tab-usertodo'),
 ph:t.classList.contains('tab-placeholder')};});}
 // A name is filled from the desktop label's own CHILD NODES, cloned — not from its flattened text. A
 // federated session's name carries a <span class="host-prefix"> that renders the "host:" as quiet
@@ -23363,6 +23518,12 @@ var wd=row.querySelector('.workdot');
 if(s.working||s.awaitbg){if(!wd){wd=document.createElement('span');wd.className='workdot';row.insertBefore(wd,row.firstChild);}
 wd.classList.toggle('await',!s.working&&!!s.awaitbg);}
 else if(wd)wd.remove();
+// the user-todo flag mirrors the desktop tab glyph (plans/user-todos.md): between the name and the ✕
+var uf=row.querySelector('.utflag');
+if(s.ut){if(!uf){uf=document.createElement('span');uf.className='utflag';uf.textContent='\\u2691';
+uf.title='waiting on you — this session flagged something it needs from you';
+row.insertBefore(uf,row.querySelector('.mclose'));}}
+else if(uf)uf.remove();
 var lbl=row.querySelector('.nm');fillName(lbl,s);lbl.style.color=s.bg||'';}
 function rowMake(s){var row=document.createElement('div');row.className='mrow';row.setAttribute('data-id',s.id);
 var lbl=document.createElement('span');lbl.className='nm';row.appendChild(lbl);
@@ -23381,6 +23542,7 @@ if(!act&&ts.length)act=ts[0];
 var nm=cur.querySelector('.nm');
 var wd=cur.querySelector('.wd');wd.style.display=(act&&(act.working||act.awaitbg))?'':'none';   // gold working / green awaiting dot, matching desktop
 wd.classList.toggle('await',!!(act&&act.awaitbg&&!act.working));
+var cuf=cur.querySelector('.utf');if(cuf)cuf.style.display=(act&&act.ut)?'':'none';   // the active session's user-todo flag, matching desktop
 if(act){fillName(nm,act);
 if(act.bg){cur.classList.add('colored');cur.style.setProperty('--cbg',act.bg);cur.style.setProperty('--cfg',act.fg||'#ffffff');}
 else{cur.classList.remove('colored');cur.style.removeProperty('--cbg');cur.style.removeProperty('--cfg');}}

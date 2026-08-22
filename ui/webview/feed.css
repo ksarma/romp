@@ -434,6 +434,14 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
   padding: 1px 6px; border-radius: 999px; line-height: 1.4;
   color: #4ec9b0; border: 1px solid rgba(78, 201, 176, 0.6); }
 .fask-waiton-cycle { color: #ff6a6a; border-color: rgba(255, 106, 106, 0.7); }
+/* "⚑ waiting on you" — the quiet USER-TODO marker (plans/user-todos.md): the owning session flagged
+   something it needs from you; every one of its cards wears this, dim on purpose (a pointer to the
+   split card by its composer, never an alarm — the escalated card's red blocked badge is the loud
+   form). Same pill chrome as its row-mates; brightens on hover to say it's clickable. */
+.fask-usertodo { flex: 0 0 auto; font-size: 0.64em; font-weight: 700; letter-spacing: 0.04em;
+  padding: 1px 6px; border-radius: 999px; line-height: 1.4; cursor: pointer; text-decoration: none;
+  color: var(--dim); border: 1px solid rgba(255, 255, 255, 0.22); }
+.fask-usertodo:hover { color: var(--fg); border-color: rgba(255, 255, 255, 0.45); }
 
 /* ---- ask DAG tree (expanded body) — nodes only; click a node for its history ---- */
 /* width:fit-content hugs the widest row so the right-aligned "(Xm ago)" node times sit just past the

@@ -4334,6 +4334,19 @@ function renderTabs() {
       tab.addEventListener("mouseleave", () => { label.style.color = fadedColor(full); label.classList.add("name-faded"); });
     }
     tab.appendChild(label);
+    // USER-TODO glyph (plans/user-todos.md, slice 2): this session has flagged something it needs
+    // from you — a small NON-NUMERIC mark right of the name (tabs deliberately carry no counts);
+    // the split card by the composer says what. Purely payload-driven off the session's userTodos
+    // field (delta-stable since slice 1, and build_session already blanks it for ended sessions),
+    // so the glyph appears/disappears with the store and needs no client-side gate. Its OWN
+    // element, never a .tab-dot: pips encode turn state, and the kernel's mobile scrape keys on
+    // the pip classes (test_tab_strip_pips pins that vocabulary).
+    if (s.userTodos && s.userTodos.length) {
+      const ut = el("span", "tab-usertodo");
+      ut.textContent = "⚑";
+      ut.title = "waiting on you — this session flagged something it needs from you (see the note by its message box)";
+      tab.appendChild(ut);
+    }
     // Slim vertical context gauge right of the name (the user 2026-08-08): the statusline battery's
     // fill % + colormap colour, rotated upright and with no % text — so "this session is filling up"
     // reads at a glance across the whole strip. Skipped while compacting (the compacting bar owns that
