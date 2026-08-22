@@ -1931,7 +1931,11 @@ def _resolve_user_todo(sid, tid, kind):
     resolved row is born here — one choke point, no sweep. Stated corollary: a row the cap
     evicts can no longer be reopened by a recall of its still-queued answer — that would take K
     NEWER resolutions in the SAME session while the recalled answer sat unfed, and the recall's
-    reopen then no-ops loudly (_cancel_backend_queued logs it) instead of corrupting anything."""
+    reopen then no-ops loudly (_cancel_backend_queued logs it) instead of corrupting anything.
+    The LOSS path hits the same wall the same way (round 3, 2026-08-22): an evicted row's answer
+    that then dies with its holder reopens nothing, and _user_todo_answer_lost logs that no-op
+    just as loudly — for an evicted row that line is the only record left that the user still
+    owes the session an answer, because no card can show an ask the cap removed."""
     with _user_todos_lock:
         cur = dict(_user_todos())                    # copy: never mutate the cached dict in place
         lst = [dict(t) for t in cur.get(sid) or [] if isinstance(t, dict)]
@@ -2122,6 +2126,9 @@ def _user_todo_answer_lost(sid, tid, text, wait=False):
     from the backend constructor, and _parse re-enters _sdk() — the thread hop waits the lock out
     instead of deadlocking). Any check failure reopens anyway — fail toward the VISIBLE ask: a
     wrongly-open ask costs a glance and a dismiss; a wrongly-'answered' one is the silent loss.
+    Fail-toward-visible is never fail-SILENT, though: a check that cannot run at all (no
+    transcript found even by the wide walk) says so before the reopen, because "reopened on the
+    drop mark alone" and "reopened with the transcript checked" are different strengths of claim.
     Residual windows, stated precisely: an echo-mirror reg write that failed loses the id with
     the echo (logged at that write — the loss surfaces as a plain dropped echo, without the
     reopen); and a byte-identical text already in the transcript reads as landed (same body =
@@ -2133,7 +2140,17 @@ def _user_todo_answer_lost(sid, tid, text, wait=False):
     sid = str(sid)
     try:
         now = int(time.time())
+        # Resolve the transcript through the 48h set first, then discover's cached WIDE walk —
+        # the exact _alive_sessions fallback (liveness owns visibility, age owns nothing,
+        # 2026-08-13): the landed check must run whenever the transcript EXISTS at all. Keyed on
+        # the default window alone it silently skipped any sid idle >48h at boot, reopened a
+        # genuinely-landed answer — a card move with no new information — and stderr claimed
+        # "died with its holder" about a delivery the transcript proves (round 3, 2026-08-22).
         sess = next((s for s in _sessions(now) if s["sid"] == sid), None)
+        if sess is None:
+            ent = next((f for f in jd.discover(now, window=jd.DEATH_BACKFILL_WINDOW)
+                        if f[0] == sid), None)   # the same cached wide walk _alive_sessions pays for
+            sess = {"sid": ent[0], "path": str(ent[1])} if ent else None
         if sess is not None:
             parsed = _parse(sess["path"], sid, now)
             if any(text == t for turn in parsed["turns"] for a in turn["atoms"]
@@ -2141,6 +2158,10 @@ def _user_todo_answer_lost(sid, tid, text, wait=False):
                 sys.stderr.write("user-todos: %s's answer for %s landed before its holder died — "
                                  "delivered, the stamp stands\n" % (sid[:8], tid))
                 return
+        else:
+            sys.stderr.write("user-todos: no transcript found for %s anywhere (the wide walk "
+                             "included) — the landed check for %s cannot run; reopening on the "
+                             "drop mark alone\n" % (sid[:8], tid))
     except Exception as e:
         sys.stderr.write("user-todos: landed-check for %s (%s) failed — reopening anyway: %s\n"
                          % (tid, sid[:8], e))
@@ -2148,6 +2169,70 @@ def _user_todo_answer_lost(sid, tid, text, wait=False):
         sys.stderr.write("user-todos: %s's answer for %s died with its holder — the ask is "
                          "reopened and waiting on the user again\n" % (sid[:8], tid))
         _mark_views_dirty()
+    else:
+        # LOUD like the recall path's no-op (_cancel_backend_queued): a reopen that finds no
+        # 'answered' row means the answer never landed AND no row remains to show the ask —
+        # cleared meanwhile, already reopened by an earlier loss event, or evicted by the
+        # resolved-history cap (_USER_TODO_RESOLVED_KEEP's corollary). For an evicted row this
+        # line is the ONLY record anywhere that the user still owes this session an answer.
+        sys.stderr.write("user-todos: %s's answer for %s was lost, but no 'answered' row exists "
+                         "to reopen (cleared meanwhile, already reopened, or evicted by the "
+                         "resolved-history cap) — nothing reopened; if the row was evicted, the "
+                         "ask is gone from the store while its answer never landed\n"
+                         % (sid[:8], tid))
+
+
+def _user_todo_loss_boot_pass(wait=False):
+    """The loss seam's BOOT durability backstop (round 3, 2026-08-22). _mark_dropped_echoes
+    persists an echo's drop mark IMMEDIATELY and fires _todo_lost exactly once — for the
+    not-yet-marked echo — while the reopen itself runs on a fire-and-forget daemon thread that
+    at boot waits out _sdk_lock through the whole staggered reconcile. A kernel death in that
+    window (a crash-looping boot, a restart mid-reconcile) left the mark persisted with the
+    reopen undone, and the next boot's one-shot marking skipped the already-marked echo: the ask
+    stayed falsely 'answered' forever — docs/adr/0001's fatal class, reachable by a two-restart
+    sequence. So every boot re-derives the pending set from the PERSISTED world alone: an echo
+    that is drop-marked AND carries a todo id AND whose store row still reads 'answered' is a
+    loss whose reopen never landed — re-offer it to the same landed-check-then-reopen seam
+    (_user_todo_answer_lost). Idempotent by the seam's own checks (a landed answer keeps its
+    stamp via the transcript check; a reopened or since-cleared row fails the answered filter
+    here), and it covers ALL historical marks, including ones persisted before this pass existed.
+    The live path stays as-is — it handles the common case promptly; this pass is the backstop.
+
+    ORDERING IS THE CORRECTNESS: main() runs this before _boot_warm()/the eager _sdk() thread
+    can construct the backend, so the regs are read exactly as the dead kernel left them — an
+    echo newly drop-marked by THIS boot's reseed is the live path's to hand over (once), and the
+    already-marked ones are this pass's; neither double-fires. Dead sessions' regs are swept
+    too, deliberately: an ended session's asks are hidden by the ended gate, not cleared, and a
+    revival must not inherit a false 'answered'. Returns the number of re-offered losses."""
+    offered = 0
+    seen = set()                                     # one offer per (sid, tid), however many echoes
+    store = _user_todos()
+    try:
+        regs = sorted((jd.STATE / "sdk").glob("*.json"))   # same files _thread_reg reads
+    except OSError:
+        return 0
+    for p in regs:
+        try:
+            reg = json.loads(p.read_text())
+        except (OSError, ValueError):
+            continue
+        if not isinstance(reg, dict):
+            continue
+        sid = str(reg.get("sid") or p.stem)
+        rows = store.get(sid) or []
+        for e in reg.get("echoes") or []:
+            if not isinstance(e, dict):
+                continue
+            tid = str(e.get("todo") or "")
+            if not (tid and e.get("dropped")) or (sid, tid) in seen:
+                continue
+            row = next((t for t in rows if isinstance(t, dict) and t.get("id") == tid), None)
+            if not row or (row.get("resolved") or {}).get("kind") != "answered":
+                continue
+            seen.add((sid, tid))
+            _user_todo_answer_lost(sid, tid, str(e.get("text") or ""), wait=wait)
+            offered += 1
+    return offered
 
 
 # ── Auto Nudge (the user 2026-06-19) ──────────────────────────────────────────────────────────────
@@ -28668,6 +28753,13 @@ def main():
             sys.stderr.write("romp-kernel: re-armed %d given-up summary line(s) at startup\n" % _n)   # promised this since 07-03; now wired)
     except Exception:
         sys.stderr.write("startup rearm: %s\n" % traceback.format_exc())
+    try:                                                      # drop-marked user-todo ANSWERS whose reopen died with
+        _n = _user_todo_loss_boot_pass()                      # a previous kernel: re-offer them to the loss seam.
+        if _n:                                                # MUST precede _boot_warm/_sdk — the regs are read as
+            sys.stderr.write("romp-kernel: re-offered %d drop-marked user-todo answer(s) to the "
+                             "loss-reopen seam\n" % _n)       # the dead kernel left them (see the pass's docstring)
+    except Exception:
+        sys.stderr.write("user-todo loss boot pass: %s\n" % traceback.format_exc())
     _write_palette_mirror()                                   # keep bin/romp's palette-colors mirror current across code updates
     _boot_warm()                                              # pre-parse the live fleet during the reconnect gap (fast first paint)
     threading.Thread(target=_sdk, daemon=True).start()        # construct the SDK backend NOW so its boot

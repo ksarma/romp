@@ -30,10 +30,17 @@ Covered here, kernel-side:
   drop-marked echo reopens its ask through _user_todo_answer_lost unless the transcript proves
   it landed (LostAnswerReopens), the neutralizer breaks the whole "<!--\\s*romp-" class the
   downstream matchers accept (MarkerNeutralizerVariants, verbatim regex imports), and resolved
-  rows are size-capped per sid while open rows never are (ResolvedRowsAreBounded).
+  rows are size-capped per sid while open rows never are (ResolvedRowsAreBounded);
+- the round-3 wave (2026-08-22): a mark-then-die kernel death no longer strands the ask —
+  every boot re-derives pending losses from the persisted regs and re-offers them to the same
+  seam (LossBootPass); the landed check resolves its transcript through discover's cached WIDE
+  walk, so a >48h-idle session no longer skips it silently, and a genuinely transcript-less
+  check logs the skip before reopening (in LostAnswerReopens); and a loss-path reopen that
+  finds no 'answered' row is loud, matching the recall path (in LostAnswerReopens).
 
 SYNTHETIC fixtures only: placeholder UUIDs, the notes-api demo world.
 """
+import contextlib
 import inspect
 import io
 import json
@@ -1035,6 +1042,151 @@ class LostAnswerReopens(_StoreSandbox):
         # before any post-construction attribute assignment could arm it)
         src = inspect.getsource(km._sdk_locked)
         self.assertIn("todo_lost=_user_todo_answer_lost", src)
+
+    def test_a_sid_outside_the_48h_window_still_gets_the_landed_check(self):
+        # round 3: the check resolved its session via _sessions(now) — discover's DEFAULT 48h
+        # window — so a >48h-idle transcript skipped it silently and a genuinely-landed answer's
+        # ask reopened (a card move with no new information). The check now falls back to
+        # discover's cached wide walk (the _alive_sessions / DEATH_BACKFILL_WINDOW idiom): it
+        # runs whenever the transcript exists at all.
+        tid, body = self._stamped()
+        self._land(body)
+        km._sessions = self._saved[0]        # the REAL _sessions: the window miss must come from
+        saved = km.jd.discover               # discover itself, not from the class stub
+        try:
+            km.jd.discover = (lambda now, window=None, forks=True:
+                              [] if window is None else [(SID, "/dev/null", SID, "web")])
+            km._user_todo_answer_lost(SID, tid, body, wait=True)
+        finally:
+            km.jd.discover = saved
+        self.assertEqual(km._user_todos()[SID][0]["resolved"]["kind"], "answered",
+                         "the transcript exists (wide walk) and holds the answer — delivered, "
+                         "the stamp stands")
+
+    def test_no_transcript_anywhere_reopens_and_logs_the_skipped_check(self):
+        # fail toward the VISIBLE ask, but never silently: when the landed check cannot run at
+        # all (no transcript even in the wide walk), the skip itself is logged before reopening
+        tid, body = self._stamped()
+        km._sessions = self._saved[0]
+        saved = km.jd.discover
+        try:
+            km.jd.discover = lambda now, window=None, forks=True: []
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                km._user_todo_answer_lost(SID, tid, body, wait=True)
+        finally:
+            km.jd.discover = saved
+        self.assertNotIn("resolved", km._user_todos()[SID][0],
+                         "no transcript to check → reopen anyway (fail toward visible)")
+        self.assertIn("cannot run", err.getvalue(), "…but the skipped check is SAID, not silent")
+        self.assertIn(tid, err.getvalue())
+
+    def test_a_reopen_that_finds_no_answered_row_is_loud(self):
+        # round 3: the recall path already logged a no-op reopen; the loss path swallowed it. A
+        # capped-out/cleared row means the answer never landed AND no row remains to show the
+        # ask — this log line is the only record left.
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            km._user_todo_answer_lost(SID, "ut-00000000", "Re: Need the staging port — 8443.",
+                                      wait=True)
+        self.assertIn("nothing reopened", err.getvalue())
+        self.assertIn("ut-00000000", err.getvalue())
+
+
+class LossBootPass(_StoreSandbox):
+    """Round-3 finding 1 (2026-08-22): _mark_dropped_echoes persists an echo's drop mark
+    IMMEDIATELY and fires the loss seam exactly once — for the not-yet-marked echo — while the
+    reopen itself runs on a fire-and-forget daemon thread that at boot waits out _sdk_lock
+    through the whole staggered reconcile. A kernel death in that window left the mark persisted
+    with the reopen undone, and the next boot's one-shot marking skipped the already-marked
+    echo: the ask stayed falsely 'answered' forever. _user_todo_loss_boot_pass is the durability
+    backstop: every boot re-derives the pending set from the PERSISTED world alone (an echo
+    drop-marked AND carrying a todo id AND whose store row still reads 'answered') and re-offers
+    each to the same landed-check-then-reopen seam — idempotent by the seam's own checks, and
+    covering every historical mark, including ones from before the pass existed."""
+
+    def setUp(self):
+        super().setUp()
+        self._saved = (km._sessions, km._parse)
+        self.turns = []
+        km._sessions = lambda now, window=None, forks=True: [{"sid": SID, "path": "/dev/null"}]
+        km._parse = lambda path, sid, now: {"turns": self.turns}
+
+    def tearDown(self):
+        km._sessions, km._parse = self._saved
+        super().tearDown()
+
+    def _reg(self, echoes, sid=SID):
+        d = jd.STATE / "sdk"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / (sid + ".json")).write_text(json.dumps({"sid": sid, "alive": True, "echoes": echoes}))
+
+    def _stamped(self):
+        tid = km._add_user_todo(SID, "Need the staging port")
+        body = km._user_todo_answer_body("Need the staging port", "8443.")
+        km._stamp_user_todo_answered(SID, tid, body)
+        return tid, body
+
+    def test_a_marked_then_died_loss_reopens_on_the_next_boot(self):
+        # the two-boot shape: boot 1 marked the echo (persisted) and died before its reopen
+        # thread ran; boot 2's pass must re-offer the loss or the ask is 'answered' forever
+        tid, body = self._stamped()
+        self._reg([{"t": 1, "text": body, "author": "human", "dropped": True, "todo": tid}])
+        self.assertEqual(km._user_todo_loss_boot_pass(wait=True), 1)
+        self.assertNotIn("resolved", km._user_todos()[SID][0],
+                         "the mark survived the death; the boot pass re-offered it and the ask "
+                         "visibly returned")
+
+    def test_a_landed_answer_keeps_its_stamp_through_the_pass(self):
+        # idempotence half 1: the seam's transcript check still guards the stamp, so the pass
+        # can re-offer the same landed echo on every boot without flapping the ask open
+        tid, body = self._stamped()
+        self.turns = [{"atoms": [{"type": "user", "author": "human", "uuid": "u1",
+                                  "message": {"role": "user",
+                                              "content": [{"type": "text", "text": body}]}}]}]
+        self._reg([{"t": 1, "text": body, "author": "human", "dropped": True, "todo": tid}])
+        self.assertEqual(km._user_todo_loss_boot_pass(wait=True), 1)
+        self.assertEqual(km._user_todos()[SID][0]["resolved"]["kind"], "answered",
+                         "landed = delivered; the stamp stands however many boots re-check it")
+
+    def test_rows_not_reading_answered_are_not_offered(self):
+        # idempotence half 2: an already-reopened row (open) and a dismissed row fail the
+        # answered filter — the pass goes quiet once the reopen has landed
+        tid, body = self._stamped()
+        km._reopen_user_todo(SID, tid)                       # boot N-1's reopen already landed
+        tid2 = km._add_user_todo(SID, "Need the auth-scheme decision")
+        km._resolve_user_todo(SID, tid2, "dismissed")        # a dismiss has no delivery to fail
+        self._reg([{"t": 1, "text": body, "author": "human", "dropped": True, "todo": tid},
+                   {"t": 2, "text": "Re: auth — cookie.", "author": "human", "dropped": True,
+                    "todo": tid2}])
+        self.assertEqual(km._user_todo_loss_boot_pass(wait=True), 0)
+        self.assertNotIn("resolved", km._user_todos()[SID][0])
+        self.assertEqual(km._user_todos()[SID][1]["resolved"]["kind"], "dismissed")
+
+    def test_unmarked_or_idless_echoes_are_not_offered(self):
+        # an echo still in flight (not drop-marked) belongs to the live path; a plain echo
+        # (no id) has nothing to reopen
+        tid, body = self._stamped()
+        self._reg([{"t": 1, "text": body, "author": "human", "dropped": False, "todo": tid},
+                   {"t": 2, "text": "an ordinary lost send", "author": "human", "dropped": True}])
+        self.assertEqual(km._user_todo_loss_boot_pass(wait=True), 0)
+        self.assertEqual(km._user_todos()[SID][0]["resolved"]["kind"], "answered")
+
+    def test_a_missing_or_junk_reg_dir_is_a_quiet_zero(self):
+        self.assertEqual(km._user_todo_loss_boot_pass(wait=True), 0, "no sdk/ dir at all")
+        (jd.STATE / "sdk").mkdir(parents=True)
+        (jd.STATE / "sdk" / "junk.json").write_text("not json{")
+        self.assertEqual(km._user_todo_loss_boot_pass(wait=True), 0, "unreadable regs are skipped")
+
+    def test_the_pass_is_wired_into_main_before_any_backend_construction(self):
+        # the ordering IS the correctness: the pass must read the regs as the dead kernel left
+        # them, before this boot's reseed re-persists new drop marks — that split (pre-existing
+        # marks → the pass; new marks → the live path) is what keeps the two from double-firing
+        src = inspect.getsource(km.main)
+        i = src.index("_user_todo_loss_boot_pass")
+        self.assertLess(i, src.index("_boot_warm()"),
+                        "_boot_warm's _alive_sessions constructs the backend — the pass runs first")
+        self.assertLess(i, src.index("target=_sdk"))
 
 
 class MarkerNeutralizerVariants(unittest.TestCase):
