@@ -54,7 +54,16 @@ Covered here, kernel-side:
   provisional Working placeholder (OneInterruptStory); the badge counts per-ITEM decision
   classes (quarantine, parked handoffs) per card (in BadgeArithmetic); the focus-chain miss
   falls back to a still-working top (in OneInterruptStory); and the muted-session asymmetry —
-  tab glyph shows, feed aggregates quiet — is pinned as designed (in BuildSessionSeam).
+  tab glyph shows, feed aggregates quiet — is pinned as designed (in BuildSessionSeam);
+- the round-2 verification wave (2026-08-22), all in the classes above: the notification
+  baseline SEEDS the floor-push latch from the already-floored world, so a restart's first
+  dip+re-entry is not news; a LOST answer's reopen clears its id from the latch (the re-floor
+  is the one signal the answer never arrived) while the user's own ✕ recall stays silent; the
+  floored todo-set diff runs independent of the column transition, so an id joining with no
+  observed dip still pushes (FloorNotificationDedup); the focus walk and the working-top
+  fallback both skip done-CONFIRMING tops — the settle gate's cards, flooring them flaps
+  (OneInterruptStory); and the peer-wait gate's local-host-only scope is pinned as a documented
+  limitation shared with the waitingOn chip (PeerWaitScopeIsLocalOnly).
 
 SYNTHETIC fixtures only: placeholder UUIDs, the notes-api demo world.
 """
@@ -1557,6 +1566,70 @@ class EscalationFloorWiring(_StoreSandbox):
         self.assertNotIn("save_goals", src)
 
 
+class PeerWaitScopeIsLocalOnly(_StoreSandbox):
+    """The peer-wait stand-down is LOCAL-HOST only — a DOCUMENTED limitation, pinned (round-2
+    verification, 2026-08-22): _wait_for_graph keeps an edge only when the awaited peer is in
+    THIS kernel's alive set, so an unanswered ask to a FEDERATED peer (a relay-addressed row)
+    makes no edge and the idle floor still fires needs-you over an idle a remote peer actually
+    explains. The scope is shared with the waitingOn chip and the nudge tick's skip — all three
+    read the same graph, deliberately: cross-host wait tracking belongs in _wait_for_graph,
+    where widening it lifts every surface at once; a floor-only special case would fork the
+    wait derivation (plans/user-todos.md, escalation). If these tests start failing because the
+    graph learned federated edges, flip the floor's expectation CONSCIOUSLY alongside the
+    chip's."""
+
+    def setUp(self):
+        super().setUp()
+        self.mfile = Path(self.td.name) / "timeline" / "messages.jsonl"
+        self._saved_messages = jd.MESSAGES
+        jd.MESSAGES = self.mfile
+        self._saved_cache = list(km._POSTAL_WAIT_CACHE)
+        km._POSTAL_WAIT_CACHE[:] = [None, None]
+
+    def tearDown(self):
+        jd.MESSAGES = self._saved_messages
+        km._POSTAL_WAIT_CACHE[:] = self._saved_cache
+        super().tearDown()
+
+    def _write_rows(self, rows):
+        self.mfile.parent.mkdir(parents=True, exist_ok=True)
+        self.mfile.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+        km._POSTAL_WAIT_CACHE[:] = [None, None]
+
+    def test_a_local_alive_peer_makes_the_edge(self):
+        # the control (keeps the negatives below non-vacuous): the same unanswered question to
+        # a LOCAL alive peer builds the edge the floor stands down on
+        self._write_rows([{"from_id": SID, "to_id": SID2, "t": NOW - 300,
+                           "kind": "question", "body": "Which port does staging use?"}])
+        wmap = km._wait_for_graph(NOW, {SID, SID2})
+        self.assertIn(SID, wmap)
+        self.assertEqual(wmap[SID]["peerSid"], SID2)
+
+    def test_a_relay_addressed_ask_makes_no_edge_so_the_floor_still_fires(self):
+        # the federated shape: the row is addressed to the relay and the remote never spoke, so
+        # the alias cannot resolve and the pair keys on the named recipient — never in the local
+        # alive set, so the graph drops the edge and the floor's peer_wait input (wmap.get(sid))
+        # is None: a session idle on a cross-host reply still floors as needs-you. KNOWN
+        # limitation, kept consciously — see the class docstring.
+        self._write_rows([{"from_id": SID, "to_id": "peer:TESTHOST", "toName": "TESTHOST:api",
+                           "t": NOW - 300, "kind": "question",
+                           "body": "Which port does staging use?"}])
+        wmap = km._wait_for_graph(NOW, {SID})
+        self.assertNotIn(SID, wmap, "no edge to a federated peer — wmap is local-host scope")
+
+    def test_even_a_resolved_remote_sid_makes_no_edge(self):
+        # the stronger claim: the alias CAN resolve the remote's real sid (it sent a row once),
+        # and the edge is still dropped — the gate is the local alive set, not addressability
+        self._write_rows([
+            {"from_id": SID2, "from": "api", "from_host": "TESTHOST", "to_id": SID,
+             "t": NOW - 900, "kind": "coordinate", "body": "Staging is rebuilt nightly."},
+            {"from_id": SID, "to_id": "peer:TESTHOST", "toName": "TESTHOST:api",
+             "t": NOW - 300, "kind": "question", "body": "Which port does staging use?"},
+        ])
+        wmap = km._wait_for_graph(NOW, {SID})
+        self.assertNotIn(SID, wmap, "a resolvable but non-local peer still makes no edge")
+
+
 class OneInterruptStory(_StoreSandbox):
     """Review 2026-08-22, the guard-conflict roots: a session shows ONE interrupt presentation
     at a time. (a) The goal-less userTodos placeholder fired BESIDE a jauth-floored focus card
@@ -1650,6 +1723,37 @@ class OneInterruptStory(_StoreSandbox):
         self.assertEqual(len(ni), 1, "one interrupt story — jauth floors the focus, todos wait")
         self.assertNotEqual((ni[0].get("blocked") or {}).get("state"), "userTodos")
 
+    def test_a_done_confirming_focus_is_never_floored(self):
+        # round-2 verification: a top in the rollup's `confirming` export (done verdict filed,
+        # settle pending) still reads col 'working' — flooring it fights the settle gate and
+        # flaps working→needs-you→completed with no new information. The focus walk skips it;
+        # the fallback floors the genuinely working top instead.
+        self._env({"nodes": {"g1": {"parentId": None, "t": NOW - 900, "text": "ship the fixtures"},
+                             "g2": {"parentId": None, "t": NOW - 500, "text": "wire the login flow"}},
+                   "status": {"g1": "working", "g2": "working"}, "lastNode": "g1",
+                   "confirming": ["g1"], "placements": {}})
+        feed = km.build_feed(NOW, {})
+        ni = self._needs_input(feed)
+        self.assertEqual([a["itemId"] for a in ni], ["g2"],
+                         "the confirming focus belongs to the settle gate, not the floor")
+        g1 = next(a for a in feed["asks"] if a["itemId"] == "g1")
+        self.assertTrue(g1.get("doneConfirming"), "the skipped focus keeps its steady cue")
+
+    def test_the_fallback_skips_a_confirming_top_too(self):
+        # …and the working-top fallback honors the same set: with the one candidate confirming,
+        # nothing floors this build — its completion is moments away (the settle), and a floor
+        # now would be un-floored by the very next verdict
+        self._env({"nodes": {"g1": {"parentId": None, "t": NOW - 900, "text": "ship the fixtures"},
+                             "g2": {"parentId": None, "t": NOW - 500, "text": "wire the login flow"}},
+                   "status": {"g1": "completed", "g2": "working"}, "lastNode": "g1",
+                   "confirming": ["g2"], "placements": {}})
+        feed = km.build_feed(NOW, {})
+        self.assertEqual(self._needs_input(feed), [],
+                         "no floor while the only candidate is done-confirming")
+        g2 = next(a for a in feed["asks"] if a["itemId"] == "g2")
+        self.assertEqual(g2["column"], "working")
+        self.assertTrue(g2.get("doneConfirming"))
+
 
 class FloorNotificationDedup(_StoreSandbox):
     """Review 2026-08-22: the floor stands down for every turn the session takes and re-arms at
@@ -1714,6 +1818,100 @@ class FloorNotificationDedup(_StoreSandbox):
         km._feed_notifications(self._card(floored=False))
         self.assertEqual(len(km._feed_notifications(self._card(True, state="permission"))), 1,
                          "non-todo cards keep the column-diff contract exactly as before")
+
+    def test_a_restart_baseline_seeds_the_latch_from_the_floored_world(self):
+        # round-2 verification (repro test_A): the latch is in-memory and the baseline build
+        # returned BEFORE seeding it, so the first dip+re-entry after every kernel restart
+        # re-pushed the SAME already-notified todo — one spurious interrupt per floored session
+        # per deploy on a self-hosting box. The floored set IS the already-notified state (the
+        # card either fired before the restart or was status the baseline declined to push), so
+        # the baseline seeds the latch from exactly the cards already floored — event-derived,
+        # no persistence file.
+        km._add_user_todo(SID, "Need the auth-scheme decision to wire login")
+        km._feed_notifications(self._card(floored=False))
+        self.assertEqual(len(km._feed_notifications(self._card(floored=True))), 1)
+        # KERNEL RESTART: both in-memory latches re-baseline together
+        km._NOTIFY_PREV[0] = None
+        km._NOTIFY_UT_FIRED[0].clear()
+        self.assertEqual(km._feed_notifications(self._card(floored=True)), [],
+                         "the boot baseline stays silent — existing state is status, not news")
+        self.assertEqual(km._feed_notifications(self._card(floored=False)), [])
+        self.assertEqual(km._feed_notifications(self._card(floored=True)), [],
+                         "the routine dip+re-entry after a restart is NOT news — the baseline "
+                         "seeded the latch from the already-floored card")
+
+    def test_the_baseline_seed_suppresses_only_what_was_already_floored(self):
+        # the seed must not oversuppress: a todo the baseline never saw is still news
+        km._add_user_todo(SID, "Need the auth-scheme decision to wire login")
+        self.assertEqual(km._feed_notifications(self._card(floored=True)), [],
+                         "floored at boot — the baseline is silent and seeds the latch")
+        km._add_user_todo(SID, "Need a staging credential for the tests")
+        self.assertEqual(km._feed_notifications(self._card(floored=False)), [])
+        self.assertEqual(len(km._feed_notifications(self._card(floored=True))), 1,
+                         "the id that joined AFTER the baseline is news")
+
+    def test_a_new_id_joining_while_floored_pushes_with_no_observed_dip(self):
+        # round-2 verification (repro test_C): a second todo registers in a turn too quick for
+        # any build to observe the dip — the card is floored in BOTH adjacent builds, so hanging
+        # the latch off the column diff short-circuited it and the join never pushed. The
+        # todo-set diff is the news test, independent of the column transition.
+        km._add_user_todo(SID, "Need the auth-scheme decision to wire login")
+        km._feed_notifications(self._card(floored=False))
+        self.assertEqual(len(km._feed_notifications(self._card(floored=True))), 1)
+        km._add_user_todo(SID, "Need a staging credential for the tests")
+        self.assertEqual(len(km._feed_notifications(self._card(floored=True))), 1,
+                         "a joining id is news even when no build observed a dip")
+        self.assertEqual(km._feed_notifications(self._card(floored=True)), [],
+                         "…and exactly once: the steadily floored card stays quiet after it")
+
+    def test_a_lost_answer_reopen_re_arms_the_push(self):
+        # round-2 verification (repro test_B): the loss seam reopens the SAME id, so the set
+        # dedup ate the re-floor's push forever — but that push is the ONE signal telling the
+        # user their answer never arrived (the loss seam's never-quiet doctrine). The loss
+        # EVENT clears the id from the latch, so the next floor treats it as news.
+        tid = km._add_user_todo(SID, "Need the auth-scheme decision to wire login")
+        km._feed_notifications(self._card(floored=False))
+        self.assertEqual(len(km._feed_notifications(self._card(floored=True))), 1)
+        # the user answers → stamp lands, the card unfloors
+        self.assertTrue(km._resolve_user_todo(SID, tid, "answered"))
+        self.assertEqual(km._feed_notifications(self._card(floored=False)), [])
+        # the answer's holder dies; the loss seam reopens the same id (no transcript → reopen)
+        with mock.patch.object(km, "_sessions",
+                               lambda now, window=None, forks=True: [{"sid": SID,
+                                                                      "path": "/dev/null"}]), \
+             mock.patch.object(km, "_parse", lambda path, sid, now: {"turns": []}), \
+             contextlib.redirect_stderr(io.StringIO()):
+            km._user_todo_answer_lost(SID, tid, "Re: Need the auth-scheme decision — cookie.",
+                                      wait=True)
+        self.assertNotIn("resolved", km._user_todos()[SID][0], "the loss reopened the ask")
+        self.assertEqual(len(km._feed_notifications(self._card(floored=True))), 1,
+                         "the re-floor after a LOST answer pushes — never quiet")
+
+    def test_the_users_own_recall_stays_silent(self):
+        # the ✕ recall (_cancel_backend_queued) reopens the same id too — but the user pulled
+        # the answer back THEMSELVES; an interrupt telling them what they just did is noise.
+        # The unlatch keys on the LOSS event alone, so the recall's re-floor stays deduplicated.
+        be = _FakeBackend()
+        tid = km._add_user_todo(SID, "Need the auth-scheme decision to wire login")
+        km._feed_notifications(self._card(floored=False))
+        self.assertEqual(len(km._feed_notifications(self._card(floored=True))), 1)
+        body = km._user_todo_answer_body("Need the auth-scheme decision to wire login",
+                                         "Go with the session cookie.")
+        self.assertTrue(km._backend_send(be, SID, body, user_todo=tid))
+        km._stamp_user_todo_answered(SID, tid, body)
+        self.assertEqual(km._feed_notifications(self._card(floored=False)), [])
+        self.assertIsNone(km._cancel_backend_queued(be, SID, 0, km._split_followup(body)[1]))
+        self.assertNotIn("resolved", km._user_todos()[SID][0], "the recall reopened the ask")
+        self.assertEqual(km._feed_notifications(self._card(floored=True)), [],
+                         "the user's own ✕ needs no interrupt saying what they just did")
+
+    def test_the_latch_writers_share_one_lock(self):
+        # the loss seam's unlatch runs THREADED beside the build's read-modify-write; every
+        # writer holds _NOTIFY_UT_LOCK, or a stale fire could overwrite a concurrent unlatch
+        # (a lost update that re-arms or re-silences the wrong sid)
+        for fn in (km._feed_notifications, km._notify_ut_unlatch):
+            self.assertIn("with _NOTIFY_UT_LOCK", inspect.getsource(fn),
+                          "%s must hold the latch lock around its read-modify-write" % fn.__name__)
 
 
 class BadgeArithmetic(unittest.TestCase):

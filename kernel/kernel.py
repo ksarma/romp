@@ -2215,6 +2215,12 @@ def _user_todo_answer_lost(sid, tid, text, wait=False):
         sys.stderr.write("user-todos: landed-check for %s (%s) failed — reopening anyway: %s\n"
                          % (tid, sid[:8], e))
     if _reopen_user_todo(sid, tid):
+        # the reopened ask is NEWS again (round 2, 2026-08-22): the same id going back under the
+        # floor would be eaten by the push latch's set dedup, and this re-floor is the one signal
+        # telling the user their answer never arrived — the loss EVENT clears the id so the next
+        # floor pushes. The recall path (_cancel_backend_queued) deliberately does NOT do this:
+        # the user pulled that answer back themselves (see _notify_ut_unlatch).
+        _notify_ut_unlatch(sid, tid)
         sys.stderr.write("user-todos: %s's answer for %s died with its holder — the ask is "
                          "reopened and waiting on the user again\n" % (sid[:8], tid))
         _mark_views_dirty()
@@ -18444,6 +18450,13 @@ def build_feed(now, tmux=None):
         # ADR bars the diary), so it re-derives away the build after an answer/withdraw/dismiss or a
         # new turn opening; _user_todo_idle carries the no-flap guard and the peer-wait stand-down
         # (wmap's edge: a live peer owing this session a reply explains the idle — review 2026-08-22).
+        # CONSTRAINT — the peer-wait edge is LOCAL-HOST scope (round 2, 2026-08-22, documented not
+        # fixed): _wait_for_graph keeps an edge only to peers in THIS kernel's alive set, so an
+        # unanswered ask to a FEDERATED peer makes no edge and the floor still fires over an idle
+        # that remote peer explains. The waitingOn chip and the nudge tick's skip share the exact
+        # same scope, deliberately — cross-host wait tracking belongs in _wait_for_graph, where
+        # widening it lifts all three surfaces at once; a floor-only special case would fork the
+        # wait derivation (plans/user-todos.md, escalation; PeerWaitScopeIsLocalOnly is the pin).
         # Yields to every LIVE interrupt (api / perm / judge-auth): one interrupt at a time, the
         # present event first.
         todo_top = None
@@ -18453,7 +18466,16 @@ def build_feed(now, tmux=None):
             f = store.get("lastNode")
             while f and nodes.get(f, {}).get("parentId") is not None:
                 f = nodes[f]["parentId"]
-            if f in nodes and status.get(f) not in ("completed", "cleared"):
+            # …and never a done-CONFIRMING top (round 2, 2026-08-22): a top in the rollup's
+            # `confirming` export has its done verdict filed with only the settle pending — its
+            # col still reads 'working' (the steady doneConfirming cue), and the settle gate is
+            # already protecting that read. Flooring it here flapped the card
+            # working→needs-you→completed with no new information; the imminent completion is the
+            # settle's to deliver, so both the walk and the fallback skip the set (the same
+            # `confirming` the doneConfirming cue and the nudge's pop guard read — one completion
+            # truth, the rollup exports).
+            if (f in nodes and status.get(f) not in ("completed", "cleared")
+                    and f not in confirming):
                 todo_top = f
             if todo_top is None or _pure_delegation_top(nodes, todo_top):
                 # FOCUS-CHAIN MISS (review 2026-08-22): lastNode can point into a COMPLETED top —
@@ -18462,12 +18484,14 @@ def build_feed(now, tmux=None):
                 # top's card) suppresses the placeholder below: the escalation was invisible exactly
                 # when a card existed to carry it. On an IDLE session the todo is the frontier
                 # whichever top holds focus, so fall back to the first top that will actually make a
-                # plain-working card (the goal loop's own skips: cleared, pure delegation). Store
-                # order — deterministic, so the payload stays byte-stable across builds. Every yield
-                # above (api / perm / jauth win) still applies: this runs only inside their guard.
+                # plain-working card (the goal loop's own skips: cleared, pure delegation, and the
+                # confirming set above). Store order — deterministic, so the payload stays
+                # byte-stable across builds. Every yield above (api / perm / jauth win) still
+                # applies: this runs only inside their guard.
                 todo_top = next((g for g in children.get(None, [])
                                  if status.get(g, "working") == "working"
                                  and g not in cleared and not nodes[g].get("cleared")
+                                 and g not in confirming
                                  and not _pure_delegation_top(nodes, g)), None)
         plain_user_t = _last_plain_user_turn_t(ps["turns"]) if ps else 0   # re-check: a plain reply after a soft block de-urgents it
         had_working = False                          # does this session show ANY working card? → drives the provisional placeholder
@@ -22721,8 +22745,42 @@ _NOTIFY_PREV = [None]   # itemId -> column at the last build; None = baseline pe
 # news: an OS push per exchange and per monitor wake-cycle for the SAME deferred todo. The
 # interrupt fires only on NEW information — first arm, or a todo id not yet in the fired set; an
 # identical set re-entering is not news. This latch survives the card's Working dips, which is
-# exactly what the per-build prev map cannot do; a kernel restart re-baselines both together.
+# exactly what the per-build prev map cannot do. A kernel restart re-baselines both together —
+# and the baseline SEEDS this one from the already-floored cards (round 2, 2026-08-22): the
+# floored world IS the already-notified state, so an in-memory reset must not turn the first
+# post-restart dip+re-entry into a spurious re-push of a todo the user already deferred.
 _NOTIFY_UT_FIRED = [{}]
+_NOTIFY_UT_LOCK = threading.Lock()   # the latch gained a THREADED writer (_notify_ut_unlatch, on
+#                                      the loss seam's daemon thread) beside the build-serial
+#                                      read-modify-writes below; every RMW holds this, or a stale
+#                                      fire-path write could silently overwrite a concurrent
+#                                      unlatch and eat the very push the loss seam re-armed
+
+
+def _notify_ut_open_ids(sid):
+    """The floored todo set for the latch, read from the authoritative store — the same read the
+    floor derived the card from, so a count-preserving change (one answered, one added) still
+    reads as the new id it is. Best-effort empty: a store hiccup must never break the push path."""
+    try:
+        return frozenset(t["id"] for t in _open_user_todos(str(sid)))
+    except Exception:
+        return frozenset()
+
+
+def _notify_ut_unlatch(sid, tid):
+    """Clear ONE todo id from the floor-push latch — the LOSS seam's re-arm (round 2, 2026-08-22).
+    _reopen_user_todo restores the very id the latch already holds, so the set dedup in
+    _feed_notifications would suppress the re-floor's push forever — but a corroborated answer
+    LOSS (_user_todo_answer_lost) is exactly the event the seam's never-quiet doctrine exists
+    for: the user believes they answered, and the re-floor's push is the one signal their answer
+    never arrived. Keyed at the loss EVENT, never on reopen itself: the user's own ✕ recall
+    (_cancel_backend_queued) also reopens this way, and rightly stays silent — they pulled the
+    answer back themselves and need no interrupt saying what they just did. Runs on the loss
+    seam's thread, hence the lock."""
+    with _NOTIFY_UT_LOCK:
+        fired = _NOTIFY_UT_FIRED[0].get(str(sid))
+        if fired and tid in fired:
+            _NOTIFY_UT_FIRED[0][str(sid)] = fired - {tid}
 
 
 def _system_notify(title, body):
@@ -22743,7 +22801,10 @@ def _system_notify(title, body):
 def _feed_notifications(feed):
     """Diff this feed build against the last; return [(title, body, sid)] for every ARMED card that
     newly entered needs_input or completed (including a card appearing already there — work can
-    surface blocked). Also advances the prev map and prunes armed ids whose card left the feed.
+    surface blocked). Also advances the prev map, prunes armed ids whose card left the feed, and
+    on the baseline build seeds the todo-floor latch from the already-floored cards (see
+    _NOTIFY_UT_FIRED). Todo-FLOORED cards are judged by their floored-set diff on every build,
+    not the column transition — the set is the news test for them (round 2, 2026-08-22).
     sid rides along so a push notification's tap can land ON the session that fired (the user
     2026-08-08, whose first real push opened the app on a different session)."""
     prev = _NOTIFY_PREV[0]
@@ -22755,29 +22816,51 @@ def _feed_notifications(feed):
     _NOTIFY_PREV[0] = {i: a.get("column") for i, a in cur.items()}
     _prune_notify_cards(set(cur))
     if prev is None:
-        return []                                    # baseline: existing state is status, not news
+        # baseline: existing state is status, not news — but the BASELINE SEEDS the todo-floor
+        # latch before returning (round 2, 2026-08-22): the latch is in-memory, so a kernel
+        # restart used to re-baseline it EMPTY, and the first routine dip+re-entry after every
+        # restart re-pushed a todo the user had already seen and deferred — one spurious
+        # interrupt per floored session per deploy on a self-hosting box. A card already floored
+        # at the baseline either fired before the restart or was status this very build declined
+        # to push; either way its floored set IS the already-notified state, so it seeds the
+        # latch (event-derived from the build in hand — no persistence file).
+        for iid, a in cur.items():
+            if (a.get("column") == "needs_input"
+                    and (a.get("blocked") or {}).get("state") == "userTodos"):
+                _usid = str(a.get("sid") or "")
+                with _NOTIFY_UT_LOCK:
+                    _NOTIFY_UT_FIRED[0][_usid] = _notify_ut_open_ids(_usid)
+        return []
     cards = _notify_cards()
     out = []
     for iid, a in cur.items():
         col = a.get("column")
-        if col not in ("needs_input", "completed") or prev.get(iid) == col:
+        if col not in ("needs_input", "completed"):
             continue
+        _ut_floor = col == "needs_input" and (a.get("blocked") or {}).get("state") == "userTodos"
+        if prev.get(iid) == col and not _ut_floor:
+            continue                                 # no column transition — not news
         if not _notify_card_effective(cards, iid, str(a.get("sid") or "")):
             continue
-        if col == "needs_input" and (a.get("blocked") or {}).get("state") == "userTodos":
+        if _ut_floor:
             # the todo-floor dedup (_NOTIFY_UT_FIRED above): the CARD move stands exactly as
             # built — only the push is deduplicated, keyed on the floored todo set. The set is
             # read from the authoritative store (the same read the floor derived from), so a
             # count-preserving change (one answered, one added) still reads as the new id it is.
+            # Evaluated on EVERY build the card is floored, independent of the column diff
+            # (round 2, 2026-08-22): a todo can register in a turn too quick for any build to
+            # observe the dip, leaving the card floored in both adjacent builds — the joining id
+            # is news with or without a column transition, and the column short-circuit was
+            # eating exactly that push. The latch advances only when a push FIRES: a suppressed
+            # build must not narrow it, or an id answered while floored and then RECALLED (the
+            # user's own ✕ — rightly silent, see _notify_ut_unlatch) would read as news.
             _usid = str(a.get("sid") or "")
-            try:
-                _uids = frozenset(t["id"] for t in _open_user_todos(_usid))
-            except Exception:
-                _uids = frozenset()
-            _prev_ids = _NOTIFY_UT_FIRED[0].get(_usid)
-            if _prev_ids is not None and not (_uids - _prev_ids):
-                continue                             # re-entry with no new todo — not news
-            _NOTIFY_UT_FIRED[0][_usid] = _uids
+            _uids = _notify_ut_open_ids(_usid)
+            with _NOTIFY_UT_LOCK:
+                _prev_ids = _NOTIFY_UT_FIRED[0].get(_usid)
+                if _prev_ids is not None and not (_uids - _prev_ids):
+                    continue                         # floored with no new todo — not news
+                _NOTIFY_UT_FIRED[0][_usid] = _uids
         what = "Needs you" if col == "needs_input" else "Completed"
         txt = str(a.get("text") or "").strip()
         out.append(("romp: %s" % (a.get("name") or "session"),

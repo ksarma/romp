@@ -203,6 +203,17 @@ todos** (a new gate in `_auto_nudge_tick`'s family, alongside `kernel.py:3091`'s
 reasoning as the no-check-ins call: the todo already says what a nudge would fish for, and the
 escalated card, not a manufactured turn, is the surface.
 
+**The peer-wait stand-down is local-host only — a known limitation, documented not fixed
+(round 2, 2026-08-22).** The floor reads its peer-wait input from `_wait_for_graph`, which
+keeps an edge only when the awaited peer is in THIS kernel's alive set: an unanswered ask to a
+FEDERATED peer (a relay-addressed `peer:<host>` row) makes no edge, so a session idle on a
+cross-host reply still floors as needs-you. The waitingOn chip and the auto-nudge tick's skip
+inherit the exact same scope — all three read the same graph, deliberately. Building cross-host
+wait edges is `_wait_for_graph`'s job when it happens: widening it there lifts every surface at
+once, while a floor-only special case would fork the wait derivation. Pinned by
+`test_user_todos.py::PeerWaitScopeIsLocalOnly`, so any future widening flips the floor's
+expectation consciously alongside the chip's.
+
 ### Surfaces
 
 **(a) The split card by the composer.** The existing transcript-bottom to-do checklist card
