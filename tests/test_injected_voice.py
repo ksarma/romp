@@ -91,9 +91,15 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
         jd.GOALDIR, jd.STATE = Path(self.td.name), Path(self.td.name)
         (jd.GOALDIR / (SID + ".json")).write_text(json.dumps(
             {"rompUuid": SID, "seq": 4, "nodes": _nodes(), "placements": {}, "status": {}}))
+        # open user todos for the context block below — the same synthetic notes-api world
+        km._user_todos_cache.clear()
+        km._add_user_todo(SID, "Need the auth-scheme decision to wire login — building the open "
+                               "routes meanwhile")
+        km._add_user_todo(SID, "Need a staging API key before the load test can run")
 
     def tearDown(self):
         jd.GOALDIR, jd.STATE = self.saved_goaldir, self.saved_state
+        km._user_todos_cache.clear()
         self.td.cleanup()
 
     def _bodies(self):
@@ -130,6 +136,17 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
             # the user's own words; the quoting frame around them is romp-authored and scanned here
             "comment thread opener": km._comment_first_message(
                 "Cap the retry delay at two minutes.", "Why two minutes and not five?"),
+            # the reply to a USER TODO (plans/user-todos.md): the todo's own short line anchors the
+            # user's answer (`Re: <text> — <reply>`) — the frame is romp-authored and scanned here
+            "user-todo answer": km._user_todo_answer_body(
+                "Need the auth-scheme decision to wire login — building the open routes meanwhile",
+                "Go with the session cookie for now."),
+            # the SessionStart context block (plans/user-todos.md slice 3): a resumed/compacted
+            # session's open todos as its OWN outstanding notes to the person it works for. Not an
+            # injected MESSAGE (it rides additionalContext, costing no turn) but the same veil
+            # applies — it must read as the agent's own notes, never a tracking system's; naming
+            # withdraw_user_todo is correct (the agent holds that tool)
+            "user-todo context block": km._user_todo_context_block(SID),
         }
         # every repeat-nudge variant wears the same voice as the first fire (the user 2026-08-11): the
         # rotation exists so a re-ask doesn't read canned, so a variant that broke the voice rule would
@@ -178,16 +195,80 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
             # the wrap-up is a stop order, not a status ask; a TYPED follow-up carries the user's OWN
             # words as its body, so there is no romp-authored ask in it to check; the DEBT reminder
             # asks for a reply to a PEER, not a progress report to the user; a comment thread's
-            # opener is the user's own comment on a quoted passage — a conversation, never a nudge
+            # opener is the user's own comment on a quoted passage — a conversation, never a nudge;
+            # a user-todo answer is the user's own reply to a need the agent flagged — same class;
+            # the user-todo context block is the agent's OWN notes handed back after context loss —
+            # a memory aid with a withdraw invitation, not a status ask
             if name in ("clear wrap-up", "clear wrap-up (batch)", "typed follow-up on a summary",
                         "debt reminder (question)", "debt reminder (handoff)",
-                        "debt reminder (several)", "comment thread opener"):
+                        "debt reminder (several)", "comment thread opener", "user-todo answer",
+                        "user-todo context block"):
                 continue
             text = prose(body).lower()
             with self.subTest(message=name):
                 self.assertTrue("stand" in text or "what's next" in text or "keep going" in text,
                                 "%r no longer asks for progress" % name)
                 self.assertIn("from me", text, "%r no longer asks what it needs from the user" % name)
+
+
+class UserTodoToolDescriptionsKeepTheVeil(unittest.TestCase):
+    """The two user-todo postal tools (plans/user-todos.md) describe an obligation to the PERSON
+    THE AGENT WORKS FOR, so their descriptions ride the same veil as injected bodies: no romp
+    machinery named. (The OTHER postal tools name romp on purpose — the bus is visible tooling
+    with the product's name on it; these two must not teach the model a tracking system.)"""
+
+    def test_the_descriptions_carry_no_romp_vocabulary(self):
+        pm = SourceFileLoader("romp_postal_voice", os.path.join(BIN, "romp-postal-service")).load_module()
+        tools = {t["name"]: t for t in pm.MCP_TOOLS}
+        for name in ("add_user_todo", "withdraw_user_todo"):
+            self.assertIn(name, tools, "the tool exists to be scanned")
+            desc = tools[name]["description"]
+            self.assertIn("person you work for", desc, "%s speaks as the person the agent works for" % name)
+            for word, why in ROMP_WORDS:
+                with self.subTest(tool=name, word=word):
+                    self.assertNotIn(word, desc.lower(),
+                                     "%s's description speaks romp at the session (%r: %s)" % (name, word, why))
+
+    def test_the_result_texts_carry_no_romp_vocabulary(self):
+        # The RESULT texts land in the agent's context exactly as the descriptions do — the
+        # tool's answer is read verbatim by the same model the veil protects — so the sweep
+        # covers them too: every user-todo branch of _mcp_call is rendered (success, each
+        # refusal, an unreachable kernel) and scanned. The shared "Not inside a romp session."
+        # identity refusal is out of scope on purpose: it is every postal tool's answer, and
+        # the bus names romp deliberately (visible tooling); identity is stubbed so no branch
+        # here can reach it.
+        pm = SourceFileLoader("romp_postal_voice_results",
+                              os.path.join(BIN, "romp-postal-service")).load_module()
+        saved = (pm._kernel_post, pm.my_name, pm.my_id, pm._heartbeat)
+        canned = {}
+        pm._kernel_post = lambda path, body, timeout=4.0: canned.get("res")
+        pm.my_name = lambda: "api"
+        pm.my_id = lambda: SID
+        pm._heartbeat = lambda *a, **k: None
+        try:
+            results = {}
+            canned["res"] = {"ok": True, "todoId": "ut-9f2c1a34"}
+            results["add: noted"] = pm._mcp_call("add_user_todo", {"text": "Need the port"})[0]
+            results["add: no text"] = pm._mcp_call("add_user_todo", {"text": "  "})[0]
+            canned["res"] = None                    # unreachable kernel / non-2xx
+            results["add: couldn't save"] = pm._mcp_call("add_user_todo", {"text": "Need the port"})[0]
+            results["withdraw: unreachable"] = pm._mcp_call("withdraw_user_todo", {"id": "ut-9f2c1a34"})[0]
+            results["withdraw: no id"] = pm._mcp_call("withdraw_user_todo", {})[0]
+            canned["res"] = {"ok": True}
+            results["withdraw: withdrawn"] = pm._mcp_call("withdraw_user_todo", {"id": "ut-9f2c1a34"})[0]
+            canned["res"] = {"ok": False}
+            results["withdraw: no open note"] = pm._mcp_call("withdraw_user_todo", {"id": "ut-deadbeef"})[0]
+        finally:
+            pm._kernel_post, pm.my_name, pm.my_id, pm._heartbeat = saved
+        # the sweep rendered the real branches, not seven copies of one fallback
+        self.assertIn("Noted", results["add: noted"])
+        self.assertIn("Withdrawn", results["withdraw: withdrawn"])
+        self.assertIn("Nothing changed", results["withdraw: no open note"])
+        for name, text in results.items():
+            for word, why in ROMP_WORDS:
+                with self.subTest(result=name, word=word):
+                    self.assertNotIn(word, text.lower(),
+                                     "%s's result speaks romp at the session (%r: %s)" % (name, word, why))
 
 
 class TheRuleIsWrittenDown(unittest.TestCase):

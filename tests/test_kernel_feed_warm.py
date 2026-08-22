@@ -33,7 +33,7 @@ class FeedCacheOnly(unittest.TestCase):
         # API-error floor — gated on awaiting too since 2026-07-05 (yields to live background agents)
         self.assertIn("if (ps and not who_working and not sess_awaiting_why) else None", src)
         self.assertIn("if ps else None", src)                              # awaiting badge
-        self.assertIn("if not had_working and perm_top is None and ps:", src)   # provisional card (still gated on the cached parse)
+        self.assertIn("if not had_working and perm_top is None and todo_top is None and ps:", src)   # provisional card (still gated on the cached parse; todo_top joined 2026-08-22 — a floored card is had-working-equivalent)
 
 
 class WarmerDoesNotCompeteWithChat(unittest.TestCase):

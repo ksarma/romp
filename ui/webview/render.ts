@@ -133,8 +133,11 @@ type ChatEvent = (
   // romp's postal service, so it gets its OWN neutral collapsed card, NOT the per-peer-colored postal card
   // and NOT a blue "you typed this" bubble. blocks = one per sending agent {id, summary?, body}.
   | { kind: "teammate"; blocks: { id: string; summary?: string; body: string }[]; ts?: string; uuid?: string }
-  // Claude Code's Task to-do list, folded into one live checklist.
-  | { kind: "todo"; tasks: TodoTask[]; error?: string; ts?: string; uuid?: string }
+  // Claude Code's Task to-do list, folded into one live checklist — PLUS the session's open user
+  // todos (plans/user-todos.md): the rows ride ON the event, not only the session's top-level
+  // field, because the chatTail delta re-sends changed EVENTS only — a caught-up client would
+  // never hear of a row change otherwise.
+  | { kind: "todo"; tasks: TodoTask[]; userTodos?: UserTodo[]; error?: string; ts?: string; uuid?: string }
   // A CLIENT-side optimistic echo of a just-sent message is one of these (uuid OPT_PREFIX), injected at the
   // tail so it shows the instant you hit Enter and STAYS put across pushes — bridging the server-side
   // echo→landed gap where the kernel's own provisional briefly vanished (the user 2026-07-15). It rides the
@@ -219,6 +222,10 @@ type ChatEvent = (
 ) & { tlId?: string };   // tlId: the timeline atom this event's hover lights — a prompt → the DOT, work → the BAR
 
 interface TodoTask { id: string; subject: string; activeForm?: string; status: string }
+// A USER TODO (plans/user-todos.md): a need the agent flagged for the person it works for — a
+// decision, input, or action only they can provide — open until answered, dismissed, or withdrawn.
+// Fixed store values only (createdT is stamped once): this rides the dedup-compared chat payload.
+interface UserTodo { id: string; text: string; detail?: string; createdT?: number }
 
 type ChipState = "working" | "ready" | "needsInput" | "awaiting" | "awaitingBg" | "idle" | "closed" | "compacting" | "clearing" | "blocked" | "retrying" | "interrupting" | "opening";   // needsInput = a live permission/picker prompt (on YOU) — renamed from the legacy "awaiting" (2026-08-15), which stays accepted for OLDER REMOTE KERNELS across federation; awaitingBg = idle main thread waiting on background work it dispatched (the user 2026-07-13)
 interface Status { state: ChipState; sinceEpoch: number | null; awaitingWhy?: string | null; awaitingKind?: string | null; awaitingTasks?: string[]; effort?: string; model?: string; modelPending?: boolean; effortPending?: boolean; mode?: string; fast?: string; auth?: string; authLive?: string; authPending?: boolean; authBoth?: boolean; authAcct?: string; ctx?: string; ctxColor?: number[]; modelColor?: number[]; effortColor?: number[]; faded?: boolean; backend?: string; apiTooLong?: boolean; apiSpendLimit?: boolean; apiModelLimit?: boolean; apiAuthErr?: boolean; apiRefusal?: boolean; retrySuppressed?: boolean; retryNextAt?: number | null; retryTries?: number | null; }   // awaitingWhy/awaitingTasks = what an awaitingBg session is waiting on (kernel _session_awaiting's phrasing + the live awaited task descriptions) — the #bg-tasks box renders it when no tracked tasks claim the box (renderAwaitWhy; the user 2026-08-13, who moved it out of the statusline the same day PR #350 put it there)   // retrySuppressed = the user interrupted this thread's API-error storm → romp's auto-retry stays OFF for it until a successful turn re-arms (the user 2026-07-06). backend = "tmux" | "sdk"; apiTooLong = the "blocked" is a "prompt is too long" error (on you → red tab) vs a transient API error (amber/retrying); apiSpendLimit = a monthly spend cap (on you → raise it; NEVER auto-retried — retrying can't fix it, the user 2026-07-14); apiModelLimit = this session's MODEL is out of allowance (on you → switch model or add credits; not auto-retried either, the user 2026-08-01); apiRefusal = the model's safeguards refused the prompt itself (on you → rewrite it or drop the thread; never auto-retried — a refusal is deterministic on the same input, so a retry just manufactures the same refusal, the user 2026-08-15); ctxColor = the GLOBAL colormap's RGB for the context%, computed server-side; modelColor/effortColor = the same map's RGB tint for the model name + effort (by capability/effort rank), server-computed; modelPending = a /model switch is resolving → the badge shows switching-dots until the new name lands (server-driven, event-based, the user 2026-07-03); fast = the CLI's fast-mode state ("on"/"off"/"cooldown", from the SDK init's fast_mode_state; absent = unknown/unavailable → no fast badge)
@@ -235,7 +242,7 @@ interface BgTasks { count: number; tasks: BgTask[]; }
 // kernel ships only the last WIRE_TAIL events (headFrom > 0) to keep startup light; older history streams in
 // on scroll-back (loadOlder → chatHead prepends, lowering headFrom). headFrom 0 = the whole transcript is
 // resident. chatTail's `from` is GLOBAL and mapped through headFrom.
-interface Session { id: string; name: string; color: Color | null; events: ChatEvent[]; status: Status; firstSeen?: number; cwd?: string; gitBranch?: string; workTree?: { dir: string; branch: string } | null; headFrom?: number; headTotal?: number; bgTasks?: BgTasks; hideFromFeed?: boolean; postalServiceOff?: boolean; notify?: boolean; branch?: { fromSid: string; fromName: string; cut: string; t: number } | null; branches?: { sid: string; name: string; cut: string; t: number }[] | null; }
+interface Session { id: string; name: string; color: Color | null; events: ChatEvent[]; status: Status; firstSeen?: number; cwd?: string; gitBranch?: string; workTree?: { dir: string; branch: string } | null; headFrom?: number; headTotal?: number; bgTasks?: BgTasks; userTodos?: UserTodo[]; hideFromFeed?: boolean; postalServiceOff?: boolean; notify?: boolean; branch?: { fromSid: string; fromName: string; cut: string; t: number } | null; branches?: { sid: string; name: string; cut: string; t: number }[] | null; }
 
 const vscodeApi =
   typeof (window as any).acquireVsCodeApi === "function" ? (window as any).acquireVsCodeApi() : undefined;
@@ -2623,35 +2630,87 @@ function parseAskRaw(ev: Extract<ChatEvent, { kind: "tool" }>): AskAnswerBlock[]
   });
 }
 
-// Claude Code's Task to-do list — a compact live checklist mirroring the terminal:
-// ○ pending / ◐ in_progress / ✓ completed (done is struck through).
+// The SPLIT to-do card (plans/user-todos.md): two different things share it on purpose — the
+// agent's plan for itself (Claude Code's Task checklist, exactly as before: ○ pending /
+// ◐ in_progress / ✓ completed, done struck through) and "Waiting on you" (the needs the agent
+// flagged for the person it works for, with Reply/Dismiss). Each section auto-hides when empty,
+// so today's behavior is unchanged when no user todos exist.
+const utDetailOpen = new Set<string>();   // keyed fold: which todo details are expanded — survives re-renders
 function renderTodo(ev: Extract<ChatEvent, { kind: "todo" }>): HTMLElement {
   const turn = el("div", "turn turn-todo");
   turn.appendChild(dot("ring"));
   const card = el("div", "todo-card");
+  const uts = ev.userTodos || [];
   // FAIL LOUDLY (the user 2026-07-03): the kernel couldn't read Claude's authoritative task store, so it
-  // surfaces THIS instead of quietly showing a lossy transcript-folded list that could be wrong.
+  // surfaces THIS instead of quietly showing a lossy transcript-folded list that could be wrong. No early
+  // return: the waiting-on-you section below renders from a DIFFERENT store (user todos) and must
+  // survive an unreadable task store.
   if (ev.error) {
     card.classList.add("todo-card-error");
     const head = el("div", "todo-head"); head.textContent = "To-do · unavailable";
     card.appendChild(head);
     const msg = el("div", "todo-error-msg"); msg.textContent = ev.error;
     card.appendChild(msg);
-    turn.appendChild(card);
-    return turn;
+  } else if (ev.tasks.length) {
+    const done = ev.tasks.filter((t) => t.status === "completed").length;
+    const head = el("div", "todo-head"); head.textContent = `To-do · ${done}/${ev.tasks.length}`;
+    card.appendChild(head);
+    for (const t of ev.tasks) {
+      const row = el("div", "todo-item todo-" + t.status);
+      const mark = el("span", "todo-mark");
+      mark.textContent = t.status === "completed" ? "✓" : t.status === "in_progress" ? "◐" : "○";
+      row.appendChild(mark);
+      const txt = el("span", "todo-text");
+      txt.textContent = t.status === "in_progress" && t.activeForm ? t.activeForm : t.subject;
+      row.appendChild(txt);
+      card.appendChild(row);
+    }
   }
-  const done = ev.tasks.filter((t) => t.status === "completed").length;
-  const head = el("div", "todo-head"); head.textContent = `To-do · ${done}/${ev.tasks.length}`;
-  card.appendChild(head);
-  for (const t of ev.tasks) {
-    const row = el("div", "todo-item todo-" + t.status);
-    const mark = el("span", "todo-mark");
-    mark.textContent = t.status === "completed" ? "✓" : t.status === "in_progress" ? "◐" : "○";
-    row.appendChild(mark);
-    const txt = el("span", "todo-text");
-    txt.textContent = t.status === "in_progress" && t.activeForm ? t.activeForm : t.subject;
-    row.appendChild(txt);
-    card.appendChild(row);
+  // "Waiting on you" — open user todos, oldest first. Reply injects the user's answer into the
+  // session (anchored to the need it answers) and stamps the todo answered; Dismiss clears it
+  // without a message. All three affordances are DELEGATED (data-act, handled on document.body):
+  // this card rebuilds on every push, and a per-render listener eats a mid-press click
+  // (the click-safety rule, ui/CLAUDE.md).
+  if (uts.length) {
+    const head = el("div", "todo-head ut-head");
+    head.textContent = `Waiting on you · ${uts.length}`;
+    card.appendChild(head);
+    for (const t of uts) {
+      const row = el("div", "ut-item");
+      const line = el("div", "ut-line");
+      const txt = el("span", "ut-text");
+      txt.textContent = t.text;
+      if (t.detail) {   // progressive disclosure: the one-line version by default, detail one click away
+        txt.classList.add("ut-has-detail");
+        txt.dataset.act = "uttoggle"; txt.dataset.tid = t.id;
+        txt.title = "click for detail";
+      }
+      line.appendChild(txt);
+      const reply = el("button", "ut-btn ut-reply");
+      reply.dataset.act = "utreply"; reply.dataset.tid = t.id; reply.dataset.sid = renderingSid || "";
+      (reply as any)._uttext = t.text;   // rides the node like qx's _qmd: the modal quotes the need it answers
+      reply.textContent = "Reply";
+      reply.title = "answer this — your reply goes straight to the session";
+      const dis = el("button", "ut-btn ut-dismiss");
+      dis.dataset.act = "utdismiss"; dis.dataset.tid = t.id; dis.dataset.sid = renderingSid || "";
+      dis.textContent = "Dismiss";
+      dis.title = "clear this without a reply (for moot or stale asks)";
+      // arm-state disarm on pointer-out (the cmtdelete idiom) — cosmetic, so a local listener is
+      // fine. FINE POINTERS ONLY: on a coarse pointer the pointer "leaves" the instant the finger
+      // lifts, so this disarmed the button between the arming tap and the confirming one — the
+      // two-step could never complete on touch. There the arm holds until a tap anywhere ELSE
+      // cancels it (the one-shot dismisser wired at arm time in the utdismiss handler).
+      if (!isCoarsePointer())
+        dis.addEventListener("pointerleave", () => { dis.classList.remove("armed"); dis.textContent = "Dismiss"; });
+      line.append(reply, dis);
+      row.appendChild(line);
+      if (t.detail) {
+        const d = el("div", "ut-detail" + (utDetailOpen.has(t.id) ? " open" : ""));
+        d.textContent = t.detail;
+        row.appendChild(d);
+      }
+      card.appendChild(row);
+    }
   }
   turn.appendChild(card);
   return turn;
@@ -4275,6 +4334,19 @@ function renderTabs() {
       tab.addEventListener("mouseleave", () => { label.style.color = fadedColor(full); label.classList.add("name-faded"); });
     }
     tab.appendChild(label);
+    // USER-TODO glyph (plans/user-todos.md, slice 2): this session has flagged something it needs
+    // from you — a small NON-NUMERIC mark right of the name (tabs deliberately carry no counts);
+    // the split card by the composer says what. Purely payload-driven off the session's userTodos
+    // field (delta-stable since slice 1, and build_session already blanks it for ended sessions),
+    // so the glyph appears/disappears with the store and needs no client-side gate. Its OWN
+    // element, never a .tab-dot: pips encode turn state, and the kernel's mobile scrape keys on
+    // the pip classes (test_tab_strip_pips pins that vocabulary).
+    if (s.userTodos && s.userTodos.length) {
+      const ut = el("span", "tab-usertodo");
+      ut.textContent = "⚑";
+      ut.title = "waiting on you — this session flagged something it needs from you (see the note by its message box)";
+      tab.appendChild(ut);
+    }
     // Slim vertical context gauge right of the name (the user 2026-08-08): the statusline battery's
     // fill % + colormap colour, rotated upright and with no % text — so "this session is filling up"
     // reads at a glance across the whole strip. Skipped while compacting (the compacting bar owns that
@@ -5721,6 +5793,48 @@ function showForkPrompt(sid: string, uuid: string): void {
   document.body.appendChild(overlay);
   document.addEventListener("keydown", onKey, true);
   input.focus(); input.setSelectionRange(0, input.value.length);
+}
+
+// REPLY TO A USER TODO (plans/user-todos.md): a small dialog on the confirm chrome — the need
+// quoted, a box for the answer, Enter to send. ONE kernel op (userTodoAnswer) both injects the
+// reply into the session as a message from the person it works for AND stamps the todo answered
+// at the send — never sendMessage plus a separate stamp, so the two can't diverge. A modal, not
+// an inline input on the card: the card rebuilds on every push, which would clobber a half-typed
+// inline box; the overlay lives outside #content and survives.
+function showUserTodoReply(sid: string, todoId: string, todoText: string): void {
+  document.getElementById("ut-reply-prompt")?.remove();
+  const overlay = el("div", "picker-overlay confirm-overlay"); overlay.id = "ut-reply-prompt";
+  const box = el("div", "picker-box confirm-box");
+  const h = el("div", "confirm-title"); h.textContent = "Reply";
+  const d = el("div", "confirm-detail ut-reply-quote"); d.textContent = todoText;
+  const input = document.createElement("textarea");
+  input.className = "ut-reply-input"; input.rows = 3;
+  input.placeholder = "Your answer — it goes straight to the session…";
+  const actions = el("div", "confirm-actions");
+  const cancel = el("button", "picker-action confirm-btn"); cancel.textContent = "Cancel";
+  const send = el("button", "picker-action confirm-btn"); send.textContent = "Send";
+  const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { e.stopPropagation(); close(); } };
+  const close = () => { overlay.remove(); document.removeEventListener("keydown", onKey, true); };
+  const go = () => {
+    const text = input.value.trim();
+    if (!text) { input.classList.add("bad"); input.focus(); return; }
+    vscodeApi?.postMessage({ type: "userTodoAnswer", id: sid, todoId, text });
+    close();
+    // optimistic: the row goes NOW (answering clears it); the next push confirms — and a stale
+    // click gets the kernel's loud warn instead of a silent nothing
+    document.querySelector(`.ut-item [data-tid="${todoId}"]`)?.closest(".ut-item")?.remove();
+  };
+  cancel.addEventListener("click", close);
+  send.addEventListener("click", go);
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); go(); } });
+  input.addEventListener("input", () => input.classList.remove("bad"));
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+  box.append(h, d, input, actions);
+  actions.append(cancel, send);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+  document.addEventListener("keydown", onKey, true);
+  input.focus();
 }
 
 // ── COMMENT THREADS (the user 2026-08-13) ───────────────────────────────────────────────────────────
@@ -9898,6 +10012,10 @@ function upsert(msg: any) {
     headFrom: msg.headFrom ?? 0,
     headTotal: msg.headTotal ?? ((msg.events || (prev ? prev.events : [])).length),
     bgTasks: ("bgTasks" in msg) ? msg.bgTasks : (prev ? prev.bgTasks : undefined),
+    // open user todos (plans/user-todos.md): an empty array is a real value (all cleared) that
+    // must not fall back to prev — the "in msg" form, like bgTasks. The split card itself renders
+    // from the todo EVENT; this field is the seam a later slice's tab glyph derives from.
+    userTodos: ("userTodos" in msg) ? msg.userTodos : (prev ? prev.userTodos : undefined),
     hideFromFeed: ("hideFromFeed" in msg) ? !!msg.hideFromFeed : (prev ? prev.hideFromFeed : undefined),
     postalServiceOff: ("postalServiceOff" in msg) ? !!msg.postalServiceOff : (prev ? prev.postalServiceOff : undefined),
     notify: ("notify" in msg) ? !!msg.notify : (prev ? prev.notify : undefined),
@@ -10076,6 +10194,10 @@ function chatTail(msg: any) {
   const shrank = s.events.length < wasLen;
   if (typeof msg.total === "number") s.headTotal = msg.total;
   if (msg.status) s.status = msg.status;
+  // the top-level userTodos seam rides every delta (kernel _send_chat), like status: the chat's
+  // steady state is chatTail frames, so a caught-up client that only merged the field from full
+  // session frames kept it stale — the tab glyph (next slice) reads this field, not the event
+  if ("userTodos" in msg) s.userTodos = msg.userTodos;
   if ("ledger" in msg) ledgers.set(msg.id, msg.ledger ?? null);
   renderTabs();
   if (msg.id === activeId) {
@@ -10346,6 +10468,13 @@ window.addEventListener("message", (e: MessageEvent) => {
     // an unreadable parent, the SDK setup hint). It gets a dialog naming the reason and takes the
     // provisional tab down with it; a toast would slide past the one moment it needed to be read.
     if (provisionalId) failProvisional(m.text); else warnToast(m.text);
+    // A warn is also the kernel REFUSING a gesture this client may have already painted — the
+    // user-todo Reply/Dismiss remove their row optimistically before any verdict. Re-sync the
+    // active view from its events so a refused row returns NOW: the kernel's state didn't change
+    // on a refusal, so the next push can dedup to nothing and the optimistic lie would otherwise
+    // stand until an unrelated repaint. Cheap — one tail-window rebuild, at warn (gesture) rate.
+    const wv = activeId ? views.get(activeId) : null;
+    if (wv) { wv.stale = true; appendActive(); }
   }
   // `err` is the LOUD channel, deliberately distinct from `warn` (the user 2026-07-29): a warn toast fades
   // after 12s, which is right for "that name has a bad character" and wrong for "the message you just typed
@@ -11574,6 +11703,57 @@ setupSettings();
     nudgetoggle: (el) => {
       rememberFold(el, "expanded", el.dataset.nkey || undefined);
       (el as HTMLElement).title = el.classList.contains("expanded") ? "click to collapse" : "click to expand";
+    },
+    // USER TODOS on the split to-do card (plans/user-todos.md). All three delegated like qx: the
+    // transcript tail rebuilds on every push and a per-render listener eats a mid-press click.
+    // The detail fold keys through utDetailOpen so it survives the rebuild.
+    uttoggle: (elx) => {
+      const tid = elx.dataset.tid; if (!tid) return;
+      const open = !utDetailOpen.has(tid);
+      if (open) utDetailOpen.add(tid); else utDetailOpen.delete(tid);
+      const det = elx.closest(".ut-item")?.querySelector(".ut-detail");
+      det?.classList.toggle("open", open);
+    },
+    utreply: (elx) => {
+      const tid = elx.dataset.tid, sid = elx.dataset.sid || activeId;
+      if (!tid || !sid) return;
+      showUserTodoReply(sid, tid, ((elx as any)._uttext as string) || "");
+    },
+    // Dismiss arms then confirms in place (the cmtdelete idiom): clearing an ask the agent still
+    // waits on deserves a second click, but is light enough to skip a modal. Optimistic removal —
+    // the kernel's dismiss is idempotent-loud, so a stale click warns instead of silently missing.
+    utdismiss: (elx) => {
+      const tid = elx.dataset.tid, sid = elx.dataset.sid || activeId;
+      if (!tid || !sid) return;
+      if (!elx.classList.contains("armed")) {
+        elx.classList.add("armed"); elx.textContent = "Really dismiss?";
+        // COARSE POINTERS have no hover, so the pointerleave disarm never wires there (renderTodo)
+        // and the arm would otherwise latch forever: hold it until the next tap anywhere ELSE
+        // cancels it (the folder-menu one-shot dismisser idiom). pointerdown, not click — it fires
+        // first on the NEXT tap, and the arming tap's own pointerdown is already in the past, so
+        // registering here can't self-cancel. A press ON the button KEEPS the listener registered
+        // (round 2, 2026-08-22): it is either the confirming tap (the click handler above settles
+        // it) or a scroll that merely started on the button — the old any-pointerdown removal
+        // spent the one-shot on that scroll, leaving the arm latched with the tap-elsewhere
+        // cancel gone. Only a pointerdown genuinely elsewhere disarms and removes.
+        if (isCoarsePointer()) {
+          const disarm = (ev: Event) => {
+            if (ev.target === elx) return;
+            document.removeEventListener("pointerdown", disarm, true);
+            (elx as any)._utDisarm = undefined;
+            elx.classList.remove("armed"); elx.textContent = "Dismiss";
+          };
+          (elx as any)._utDisarm = disarm;
+          document.addEventListener("pointerdown", disarm, true);
+        }
+        return;
+      }
+      // the confirming tap's pointerdown was ON the button, so it no longer spends the one-shot —
+      // retire it here, or it lingers on document and fires once more against the removed row
+      const stale = (elx as any)._utDisarm;
+      if (stale) { document.removeEventListener("pointerdown", stale, true); (elx as any)._utDisarm = undefined; }
+      vscodeApi?.postMessage({ type: "userTodoDismiss", id: sid, todoId: tid });
+      elx.closest(".ut-item")?.remove();
     },
   });
 })();
