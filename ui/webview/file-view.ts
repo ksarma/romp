@@ -19,6 +19,7 @@ import hljs from "highlight.js/lib/core";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { fileUrl } from "./preview";
+import { hostOf } from "./host-prefix";
 import { kernelUrl } from "./media";
 import { findAnchorRange, sliceRanges } from "./comments";
 import { anchorFor, buildReviewMessage, docKey, type DocComment } from "./docreview";
@@ -120,6 +121,17 @@ let editHooks: { reqId: number; saved: (mtimeNs: string) => void; failed: (err: 
 // first). The guard must live in closeFileView itself, because the browser overlay and the Escape
 // handler both close through it without knowing an edit is in progress.
 let closeGuard: (() => boolean) | null = null;
+// ONE live Escape handler at a time. Every open registers its own document-level onKey closure, and
+// the previous one must be UNREGISTERED when its viewer goes: the replace path used to leave it
+// behind, where — with a NEW viewer up, so its `!getElementById` guard no longer no-ops — its stale
+// closure (editing still true from before the replace) ran exitEdit against the new viewer's world
+// and nulled the module-level editHooks an in-flight save was waiting on, wedging Save at "Saving…"
+// (the conflict-Reload → re-edit → Escape-mid-save journey). Dropped by BOTH exits after their
+// dirty guards — closeFileView and the replace path — mirroring the editHooks/gitHooks drops.
+let onKeyLive: ((e: KeyboardEvent) => void) | null = null;
+function dropOnKey(): void {
+  if (onKeyLive) { document.removeEventListener("keydown", onKeyLive); onKeyLive = null; }
+}
 // Set when the open viewer arrived via the SHELL's viewFile relay (the chat's cards-pane preference,
 // render.ts openPath → kernel.py's landing shell): that relay may have brought a toggled-off feed
 // pane forward, and only the viewer knows when it closes — so a relay-opened close announces itself
@@ -216,6 +228,7 @@ export function closeFileView(): void {
   closeGuard = null;
   editHooks = null;
   gitHooks = null;                                     // a reply landing after the close decorates nothing
+  dropOnKey();                                         // the closing viewer's handler leaves with it
   wrap.remove();
   document.body.classList.remove("fileview-open");
   if (viaRelay) {
@@ -248,6 +261,7 @@ export function openFileView(path: string, sid?: string | null): boolean {
   closeGuard = null;
   editHooks = null;
   gitHooks = null;                                     // the replace path skips closeFileView — same drop
+  dropOnKey();                                         // …and the same for the old viewer's Escape handler
   document.getElementById("romp-fileview")?.remove();
   // backdrop (the whole overlay carries the id every open/closed check targets) + the ~95% card.
   // The backdrop treatment matches the lightbox: dimmed, click outside the card closes, content
@@ -717,6 +731,28 @@ export function openFileView(path: string, sid?: string | null): boolean {
       },
       failed: (err) => {
         saveBtn.disabled = false; saveBtn.textContent = "Save";
+        // A GATE refusal from the kernel that OWNS this file: the consent flag is enforced by that
+        // kernel but the Edit click's /version read sees only the LOCAL one — a mesh kernel attached
+        // AFTER the one yes never heard the broadcast, so it refuses every save with copy pointing at
+        // a popup the local flag keeps from ever re-showing. Re-offer the SAME consent here, where
+        // the disagreeing machine is known by name; a yes re-broadcasts setFileEditing (KERNEL_SETTING
+        // reaches every attached kernel, the late one included) and retries the save — the broadcast
+        // and the save ride the same ordered socket per host, so the flag lands first. A no falls
+        // through to the plain error bar, buffer intact.
+        if (/file editing is off/.test(err)) {
+          const host = sid ? hostOf(sid) : "";
+          if (window.confirm(
+            "Editing is off on " + (host ? "“" + host + "”" : "this machine")
+            + (host ? " — it may have connected after you allowed editing here" : "") + ".\n\n"
+            + "Allow editing files from the dashboard?\n\n"
+            + "Saves write straight to disk on the file's machine — and this applies on every machine "
+            + "connected here.\n\n"
+            + "You can turn this off later in the settings gear.")) {
+            post({ type: "setFileEditing", enabled: true });
+            doSave();
+            return;
+          }
+        }
         // Loud, in place, and the BUFFER SURVIVES: the error bar sits above the textarea. A conflict
         // (the disk moved — an agent wrote it) offers Reload, which re-opens fresh — behind the same
         // discard confirm, so the user's edits are never thrown away silently (never a merge UI).
@@ -749,10 +785,11 @@ export function openFileView(path: string, sid?: string | null): boolean {
       if (confirmDiscard()) exitEdit();
       return;
     }
-    closeFileView();
-    document.removeEventListener("keydown", onKey);
+    closeFileView();                            // a real close unregisters this handler (dropOnKey);
+    //                                             a vetoed one keeps it — the viewer is still up
   };
   document.addEventListener("keydown", onKey);
+  onKeyLive = onKey;
 
   fetch(fileUrl(path, sid), { cache: "no-store" }).then((r) => {
     // Every failure says WHY, in the pane, rather than leaving a blank one: the kernel distinguishes

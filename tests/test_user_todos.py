@@ -1401,6 +1401,18 @@ class MarkerNeutralizerVariants(unittest.TestCase):
             self.assertFalse(rex.search(body),
                              "an answer body carrying %r still matches /%s/" % (raw, rex.pattern))
 
+    def test_the_edit_trace_path_gets_the_same_neutralization(self):
+        # the edit trace embeds the request-supplied file PATH in an injected body — a marker-shaped
+        # filename must not become a live marker downstream readers key on (same rule as the answer
+        # body's two halves). The body's own designed tail IS a real marker, so only the prose half
+        # before it is asserted marker-free.
+        for raw, rex, _ in self._cases():
+            body = km._edit_trace_body("/TESTDIR/notes-api/drafts/%s.md" % raw)
+            head, sep, _tail = body.rpartition("<!-- romp-injected -->")
+            self.assertTrue(sep, "the designed marker tail must still ride the body")
+            self.assertFalse(rex.search(head),
+                             "the path half carrying %r still matches /%s/" % (raw, rex.pattern))
+
     def test_the_escape_is_the_same_visible_one(self):
         self.assertEqual(km._neutralize_romp_markers("<!-- romp-injected -->"),
                          "<!- - romp-injected -->")

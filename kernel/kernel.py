@@ -3930,13 +3930,61 @@ def _lift_spent_awaiting(now, tmux):
 _PREV_ALIVE = None                       # last tick's alive sids — a sid LEAVING is the death event
 
 
+def _dead_wait_corroborated(sid, scan=None):
+    """May the dead-wait writers (_dead_wait_sweep, _wake_goal's dormant branch) treat this sid as
+    actually DEAD? Their trigger — absence from a raw liveness listing — inherits every collapse
+    that listing has (list_lines' error/timeout→[] empties the tmux half for a cycle; a swallowed
+    SDK live_sessions merge exception empties the other), and the block they file is irreversible
+    bookkeeping the user acts on, with nothing lifting it when the listing returns. So absence
+    alone NEVER files: corroborate with the liveness OWNER first — the same doctrine as
+    _confirmed_ended / _end_on_idle_sweep (a death is certified only by an affirmative answer,
+    never by silence). Tri-state, mirroring _confirmed_ended:
+      True  — corroborated dead: the SDK reg's alive bit is False (the death sweep's partition —
+              alive:True is live/revivable/crash-looped and must never convert; the resume
+              contract owns it), a standing death record postdates the session's last recorded
+              state, or the owner scan answers without the sid.
+      False — the owner says ALIVE: the raw listing blinked, not the session.
+      None  — cannot confirm: a real probe failure, an unreadable reg, or a reg-less sid on a
+              tmux-less box (whose file-derived _alive_sessions fallback lists sessions no owner
+              here can answer for). The caller stands down for the cycle — the stamp stays, and
+              the sweep keeps the death transition armed so the next tick re-asks.
+    `scan` is a zero-arg owner-scan supplier for a batch pass sharing ONE scan across its probes
+    (_end_on_idle_sweep's idiom); the default takes its own."""
+    sid = str(sid)
+    reg = jd.SDKDIR / (sid + ".json")
+    if reg.exists():
+        try:
+            return not bool(json.loads(reg.read_text()).get("alive"))
+        except Exception:
+            return None                          # unreadable reg — stand down, retried next tick
+    try:                                         # a corroborated death some writer already stamped,
+        m = json.loads((jd.STATE / "gone" / (sid + ".json")).read_text())   # still standing —
+        if isinstance(m, dict) and int(m.get("t") or 0) >= int((_last_states_row(sid) or {}).get("t") or 0):
+            return True                          # answers without a probe, even under a wedged server
+    except (OSError, ValueError):
+        pass
+    if not _TMUX.available():
+        return None                              # no tmux here: a reg-less sid is file-derived, and
+        #                                          "no server" answers nothing about a session tmux
+        #                                          never ran
+    scan = scan() if scan is not None else _TMUX.alive_sids()
+    if scan is None:
+        sys.stderr.write("dead-wait: liveness probe failed for %s — standing down this cycle\n" % sid)
+        return None
+    return sid not in scan
+
+
 def _dead_wait_sweep(alive_ids, nudged, now):
     """Find DORMANT sessions whose Working cards still hold a judged awaiting stamp and convert each to
     a procedural block (_dead_wait_block). Event-triggered, never a per-tick poll of every store: the
     trigger is the DEATH TRANSITION (a sid leaving the alive set between ticks), plus one catch-up
     sweep of all dormant stores on the first tick after boot — the same boot-re-audit pattern the
     awaiting stamps already use — for sessions that died under a previous kernel (the two measured
-    cards had been dead 79 hours across many restarts)."""
+    cards had been dead 79 hours across many restarts). The transition is a RAW-listing diff, so
+    every candidate's death is corroborated with the liveness owner (_dead_wait_corroborated)
+    before its store is even walked; a stood-down candidate (owner says alive, or unconfirmable)
+    is kept in _PREV_ALIVE so the transition stays armed and the next tick re-asks — an
+    unconfirmed absence must never spend the one event that triggers this sweep."""
     global _PREV_ALIVE
     prev, _PREV_ALIVE = _PREV_ALIVE, set(alive_ids)
     if prev is None:
@@ -3946,8 +3994,18 @@ def _dead_wait_sweep(alive_ids, nudged, now):
             return
     else:
         cands = prev - set(alive_ids)
+    scan_memo = []                               # one owner scan per pass (_end_on_idle_sweep's idiom):
+
+    def _pass_scan():                            # under the exact collapse this guard exists for, EVERY
+        if not scan_memo:                        # alive sid is a candidate, and a per-sid probe would
+            scan_memo.append(_TMUX.alive_sids())  # fork a subprocess per session per tick
+        return scan_memo[0]
+
     for sid in cands:
         try:
+            if _dead_wait_corroborated(sid, scan=_pass_scan) is not True:
+                _PREV_ALIVE.add(sid)             # not corroborated dead: nothing files, and the death
+                continue                         # transition stays armed for the next tick's re-ask
             store = jd.load_goals(sid)
             nodes = store.get("nodes", {})
             kids = {}
@@ -4036,7 +4094,12 @@ def _wake_goal(sid, gid, stamp, nudged, turns, store, now, lt, tmux):
         # death notice tells the CHAT what happened; nothing ever moved the CARD. Nothing that could
         # answer the wait is running, so convert ONCE per stamp episode to a procedural block naming
         # the dead wait — the same terminal an unanswered wake reaches — and let a revival's reply
-        # lift it like any block.
+        # lift it like any block. But the map's absence is a RAW read (on a tmux-less box this branch
+        # takes every file-derived session _alive_sessions falls back to, alive included), so the
+        # death is corroborated with the liveness owner first; unconfirmable stands down — the stamp
+        # stays and the next walk re-asks.
+        if _dead_wait_corroborated(sid) is not True:
+            return False
         return _dead_wait_block(sid, gid, at, why, nudged, now)
     rec = nudged.get(gid) or {}
     if not rec.get("wake"):
@@ -6617,16 +6680,6 @@ def _sdk_locked():
                 # class). CONSTRUCTOR-wired on purpose: the boot echo reseed fires drop marks
                 # from __init__, before any post-construction assignment could arm the seam.
                 todo_lost=_user_todo_answer_lost)
-            # The judge parses the SAME cut world the display parse does (jd._PENDING_CUT_FN): during
-            # an armed bare rollback the planner must not see — and mint from — the deleted tail.
-            # getattr-guarded like every other backend probe (a test fake without the affordance
-            # must still construct — the singleton contract outranks the wire).
-            _cut_fn = getattr(_sdk_backend, "pending_cut", None)
-            if _cut_fn:
-                jd.set_pending_cut_provider(_cut_fn)
-            # The backend's flag-consumption events resolve held rewinds (two-phase goal cleanup:
-            # archive at the branch-take, restore on failure — _on_rewind_resolved).
-            _sdk_backend.rewind_resolved_cb = _on_rewind_resolved
             # a limit-shaped judge error envelope pokes ONE exact usage poll (get_usage rides turn
             # ends, so an idle fleet's usage.json goes stale — measured ~15h — and the rate gate is
             # only as good as that file); the backend picks any live login session to ask
@@ -21964,12 +22017,14 @@ def _edit_trace_body(path):
     """The trace's text, alone so tests/test_injected_voice.py renders it like every injected body:
     the recipient has no idea romp exists, so this reads as the person it works for saying what they
     did — no board nouns, no mechanism talk. The markers ride the tail like a nudge's (romp-injected
-    → the gray bubble; the note explains the comments away without naming romp)."""
+    → the gray bubble; the note explains the comments away without naming romp). The path is
+    request-supplied text, so it is marker-neutralized like the answer body's halves — a
+    marker-shaped filename must not become a live marker downstream readers key on."""
     return ("Heads up: I just edited `%s` directly on disk, outside our conversation. If you have it "
             "open or are mid-change there, re-read it before writing.\n"
             "<!-- romp-injected -->"
             "<!-- romp-note: the HTML comments below are part of an external tracking system that is not "
-            "relevant to your work — ignore them -->" % _tilde(str(path or "")))
+            "relevant to your work — ignore them -->" % _neutralize_romp_markers(_tilde(str(path or ""))))
 
 
 def _edit_trace(path, sid):
