@@ -350,9 +350,12 @@ body.tabbar-resizing { cursor: ns-resize; user-select: none; }
 #content::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.36); }
 /* The rail time-markers (.time-marker) hang ~45px LEFT of each turn. The column fills the pane
    (var(--chat-col)), so we ALWAYS reserve that left gutter as real padding — otherwise the HH:MM
-   timestamps overflow left and get clipped by overflow-x:hidden. Tightened 54→44px (the user 2026-07-05)
+   timestamps overflow left and get clipped by overflow-x:hidden. Tightened 54→44px (the user 2026-07-05),
+   then widened 44→56px (the user 2026-08-22): the day-context label now lives in this gutter, and at
+   44px its widest forms ran into the rail dots as turns scrolled past — the whole rail assembly (line,
+   dots, stamps, prose) shifts right so the label owns its column and never clamps.
    so the times sit nearer the left margin and the prose column gains width. */
-.thread { max-width: var(--chat-col); margin: 0 auto; padding: 0 24px 0 44px; position: relative; }   /* .rail-band anchors here */
+.thread { max-width: var(--chat-col); margin: 0 auto; padding: 0 24px 0 56px; position: relative; }   /* .rail-band anchors here */
 /* the transcript "No session open" placeholder (#empty-state). Scoped to its OWN class — a bare
    `.empty` selector here used to bleed `padding: 40px` onto every leaf-row tree spacer (the ledger's
    `ledger-tri empty` + the feed's `ftree-tri empty`, both zero-content spans), blowing them up to
@@ -494,6 +497,10 @@ body.tabbar-resizing { cursor: ns-resize; user-select: none; }
 .bg-task { --bgt: var(--st-working-bg); }
 .bg-task.bg-failed { --bgt: var(--st-blocked-bg); }
 .bg-task.bg-completed { --bgt: var(--st-ready-bg); }
+/* AWAITED (the user 2026-08-19): the session's await-green chip is waiting on THIS task — the box
+   border + the row's thin outline take the chip's green; the dot keeps meaning the task's own status */
+#bg-tasks.bg-awaited { border-color: var(--st-awaitbg-bg); }
+.bg-task.bg-awaited { box-shadow: inset 0 0 0 1px var(--st-awaitbg-bg); border-radius: 5px; }
 .bg-head { display: flex; align-items: center; gap: 8px; padding: 5px 9px; cursor: pointer; user-select: none; border-radius: 5px; }
 .bg-head:hover { background: rgba(255, 255, 255, 0.04); }
 /* SOLID status dot — no pulse (the user 2026-07-07: the pulsating yellow was distracting; a running dot is
@@ -534,7 +541,7 @@ body.tabbar-resizing { cursor: ns-resize; user-select: none; }
 #composer-resize:hover::after, #composer-resize.dragging::after { background: var(--accent); width: 52px; }
 body.composer-resizing { cursor: ns-resize; user-select: none; }
 .statusline {
-  max-width: var(--chat-col); margin: 0 auto; padding: 7px 24px 0 44px;   /* left matches .thread's 44px gutter so the controls align with the transcript column */
+  max-width: var(--chat-col); margin: 0 auto; padding: 7px 24px 0 56px;   /* left matches .thread's 56px gutter so the controls align with the transcript column */
   display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px;   /* a narrow pane wraps the controls onto extra rows — every control stays visible (the user 2026-08-10, whose branch/model/mode badges vanished as the pane shrank) */
 }
 /* Signal-style compose ROW (the user 2026-07-30): paperclip · pill input · round send — the layout every
@@ -601,6 +608,9 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
 #composer-files, #composer-staged, #composer-chips { flex: 1 1 100%; min-width: 0; max-width: 100%; }
 #composer-staged { flex-direction: column; gap: 3px; padding: 5px 8px 0; }
 .staged-head { display: flex; align-items: center; gap: 8px; font-size: 0.78em; color: var(--dim); letter-spacing: 0.02em; }
+/* the held-send head rides the FILES strip (a wrapping row): full-width so it owns the top line,
+   wearing the staged strip's exact dress — a held send IS a staged message (the user 2026-08-22) */
+.held-head { flex: 1 1 100%; }
 .staged-head .staged-go { margin-left: auto; background: none; border: 1px solid var(--accent); color: var(--accent);
   border-radius: 5px; font: inherit; padding: 1px 8px; cursor: pointer; }
 .staged-head .staged-go:hover { background: var(--accent); color: var(--accent-fg); }
@@ -1141,7 +1151,7 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
 .turn-tool .time-marker, .turn-thinking .time-marker { top: 10px; }
 /* DAY DIVIDER (the user 2026-08-01) — the date on a hairline rule across the prose column,
    above the first turn of a new day. The date used to stack inside the rail marker, but the
-   gutter is 47px wide and "Yesterday" measures 52.6px bold, so its "Y" fell off the left edge
+   gutter is 59px wide and "Yesterday" measures 52.6px bold, so its "Y" fell off the left edge
    of the pane; anything sized to FIT that gutter re-clips the moment --vscode-chat-font-size
    grows. Out here the label has the whole column, so no date string can ever be cut off.
    Left-aligned with the prose (turns pad 24px); the rule fills the rest of the line. */
@@ -1241,9 +1251,12 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
   transition: opacity 0.12s ease, color 0.12s ease, border-color 0.12s ease;
 }
 .turn-user:hover .msg-del, .msg-del:focus-visible,
-.turn-user:hover .msg-restorefiles, .msg-restorefiles:focus-visible,
-.turn-user:hover .msg-fork, .msg-fork:focus-visible { opacity: 0.9; }
+.turn-user:hover .msg-restorefiles, .msg-restorefiles:focus-visible { opacity: 0.9; }
 .msg-del:hover, .msg-restorefiles:hover { color: var(--fg); border-color: #ff6a6a; }
+/* fork lives BELOW the response it branches from (the user 2026-08-19) — .fork-spot rides the run's
+   LAST assistant turn (applyForkSpots), revealed by hovering that turn, left with the response column */
+.fork-spot { display: flex; margin-top: 3px; }
+.turn-assistant:hover .msg-fork, .msg-fork:focus-visible { opacity: 0.9; }
 .msg-fork:hover { color: var(--fg); border-color: var(--accent); }   /* non-destructive: accent, never the rewind red */
 /* armed = one click from rolling back: destructive red, holds until blur/pointerleave/re-render */
 .msg-del.armed, .msg-restorefiles.armed { color: #ff6a6a; border-color: #ff6a6a; opacity: 0.95; }
@@ -1286,12 +1299,17 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
 .user-bubble.cmd-row .nudge-gist, .user-bubble.cmd-row .nudge-caret { color: var(--dim); }
 .user-bubble.cmd-row .nudge-gist { margin-left: 8px; }
 .user-bubble.cmd-row .nudge-full { color: var(--dim); margin-top: 4px; max-width: 640px; }
-/* The Continue button's turn wears the FOLLOW-UP grammar (render.ts canned === "continue", the user
-   2026-08-17, superseding the 2026-08-15 ✦ + boxed-chip dress — one gesture grammar, fewer elements):
-   caret, "→ Continue" in the accent (the same dress "↩ Follow-up" wears), the sent text's own first
-   line dimmed beside it, the full words unfolding in place under the row. The caret glyph lives in CSS
-   so the same .expanded class the fold delegate flips also turns it. */
-.user-bubble.cont-row { max-width: none; background: none; border: none; border-radius: 0; padding: 2px 0; }
+/* The Continue button keeps the FOLLOW-UP grammar inside (caret, "→ Continue" in the accent, the
+   sent text's own first line dimmed beside it, the full words unfolding in place) but wears a LIGHT
+   BLUE box around it (the user 2026-08-18, superseding the 2026-08-17 bare row): in the transcript's
+   color grammar blue means "from you" and gray means "from romp", so a pale blue box says "your
+   gesture, standardized words" — user-side, but never posing as typed prose. Same right-aligned
+   spot and width cap as the bubbles it sits among; the ↩ Follow-up header itself is unchanged. */
+.user-bubble.cont-row {
+  max-width: 72%;
+  background: rgba(43, 108, 239, 0.16); border: 1px solid rgba(43, 108, 239, 0.42);
+  border-radius: 14px; padding: 7px 14px;
+}
 .user-bubble.cont-row .followup-tag { max-width: none; }
 .user-bubble.cont-row .cont-tri::before { content: "▸"; }
 .user-bubble.cont-row.expanded .cont-tri::before { content: "▾"; }
@@ -2441,7 +2459,8 @@ body.picker-lifted > #picker.kb-tight { align-items: flex-start; padding: 12px 1
 /* download: an anchor dressed exactly like the close button beside it (one control vocabulary —
    same chip, same hover cue), sitting between the filename and the ✕ */
 .romp-lightbox-dl { font: inherit; font-size: 0.86em; cursor: pointer; flex: 0 0 auto;
-  padding: 2px 9px; border-radius: 6px; background: rgba(255, 255, 255, 0.1); color: var(--fg);
+  display: inline-flex; align-items: center;   /* centers the inline tray SVG in the chip */
+  padding: 3px 9px; border-radius: 6px; background: rgba(255, 255, 255, 0.1); color: var(--fg);
   border: 1px solid rgba(255, 255, 255, 0.18); text-decoration: none; line-height: normal; }
 .romp-lightbox-dl:hover { border-color: var(--accent); }
 
@@ -2754,27 +2773,29 @@ body.fileview-open { overflow: hidden; }
   padding: 3px 9px; border-radius: 6px; background: rgba(255, 255, 255, 0.08); color: var(--fg);
   border: 1px solid var(--box-border); }
 .fileview-btn:hover { border-color: var(--accent); }
+/* the GitHub link wears the button treatment but IS an anchor — the browser owns the new tab */
+a.fileview-btn { text-decoration: none; display: inline-flex; align-items: center; }
+/* an author `display` beats the UA's [hidden] rule — without this the anchor shows hrefless
+   before the kernel ever answers */
+a.fileview-btn[hidden] { display: none; }
 .fileview-body { flex: 1 1 auto; min-height: 0; overflow: auto; }
-/* ── fork additions the shared file-view module renders in THIS page too (upstream moved the viewer
-   over the chat, 2026-08-15, while the fork's module keeps its raw-mode editor, GitHub link and
-   browser dir-link) — these mirror the same rules in feed.css so the viewer behaves identically
-   wherever it mounts. */
-/* the raw-mode editor (plans/file-browser.md slice 2): height: 100% (not flex) — .fileview-body
-   above is a plain overflow block, not a flex container, so a flex basis on its child is inert and
-   the textarea sat at the UA's default rows (the user 2026-08-17, whose edit window was a few lines
-   tall). The percentage resolves because the body's own height is fixed by the pane's flex layout. */
+/* the raw-mode editor: height: 100% (not flex) — .fileview-body above is a plain overflow block,
+   not a flex container, so a flex basis on its child is inert and the textarea sat at the UA's
+   default rows (the user 2026-08-17, whose edit window was a few lines tall). The percentage
+   resolves because the body's own height is fixed by the pane's flex layout. Mirrored in feed.css
+   so the viewer behaves identically wherever it mounts. */
+/* the CodeMirror host (the user 2026-08-22): the chunk styles the editor itself; the host just
+   fills the body the way the fallback textarea does */
+.fileview-cm { height: 100%; width: 100%; box-sizing: border-box; overflow: hidden; }
+.fileview-cm .cm-editor { height: 100%; }
 .fileview-editor { display: block; height: 100%; width: 100%; box-sizing: border-box;
   margin: 0; padding: 10px 12px; border: none; outline: none; resize: none;
   background: var(--bg, #1e1e1e); color: var(--fg);
   font-family: var(--mono, ui-monospace, monospace); font-size: 12px; line-height: 1.5;
   white-space: pre; tab-size: 4; }
 .fileview-editor:focus { box-shadow: inset 0 0 0 1px rgba(156, 210, 255, 0.35); }
-/* the GitHub link wears the button treatment but IS an anchor — the browser owns the new tab */
-a.fileview-btn { text-decoration: none; display: inline-flex; align-items: center; }
-/* an author `display` beats the UA's [hidden] rule — without this the anchor showed hrefless
-   before the kernel ever answered (review) */
-a.fileview-btn[hidden] { display: none; }
-/* the directory half of the title is the click into the file BROWSER (feed pane) */
+/* the directory half of the title is the click into the file BROWSER (feed pane) — mirrored in
+   feed.css so the viewer behaves identically wherever it mounts */
 .fileview-dir-link { cursor: pointer; }
 .fileview-dir-link:hover { color: var(--accent); text-decoration: underline; }
 /* gutter + code as two columns of ONE scroller: the numbers stay put horizontally against long lines,

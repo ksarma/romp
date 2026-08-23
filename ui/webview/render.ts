@@ -228,7 +228,7 @@ interface TodoTask { id: string; subject: string; activeForm?: string; status: s
 interface UserTodo { id: string; text: string; detail?: string; createdT?: number }
 
 type ChipState = "working" | "ready" | "needsInput" | "awaiting" | "awaitingBg" | "idle" | "closed" | "compacting" | "clearing" | "blocked" | "retrying" | "interrupting" | "opening";   // needsInput = a live permission/picker prompt (on YOU) — renamed from the legacy "awaiting" (2026-08-15), which stays accepted for OLDER REMOTE KERNELS across federation; awaitingBg = idle main thread waiting on background work it dispatched (the user 2026-07-13)
-interface Status { state: ChipState; sinceEpoch: number | null; awaitingWhy?: string | null; awaitingKind?: string | null; awaitingTasks?: string[]; effort?: string; model?: string; modelPending?: boolean; effortPending?: boolean; mode?: string; fast?: string; auth?: string; authLive?: string; authPending?: boolean; authBoth?: boolean; authAcct?: string; ctx?: string; ctxColor?: number[]; modelColor?: number[]; effortColor?: number[]; faded?: boolean; backend?: string; apiTooLong?: boolean; apiSpendLimit?: boolean; apiModelLimit?: boolean; apiAuthErr?: boolean; apiRefusal?: boolean; retrySuppressed?: boolean; retryNextAt?: number | null; retryTries?: number | null; }   // awaitingWhy/awaitingTasks = what an awaitingBg session is waiting on (kernel _session_awaiting's phrasing + the live awaited task descriptions) — the #bg-tasks box renders it when no tracked tasks claim the box (renderAwaitWhy; the user 2026-08-13, who moved it out of the statusline the same day PR #350 put it there)   // retrySuppressed = the user interrupted this thread's API-error storm → romp's auto-retry stays OFF for it until a successful turn re-arms (the user 2026-07-06). backend = "tmux" | "sdk"; apiTooLong = the "blocked" is a "prompt is too long" error (on you → red tab) vs a transient API error (amber/retrying); apiSpendLimit = a monthly spend cap (on you → raise it; NEVER auto-retried — retrying can't fix it, the user 2026-07-14); apiModelLimit = this session's MODEL is out of allowance (on you → switch model or add credits; not auto-retried either, the user 2026-08-01); apiRefusal = the model's safeguards refused the prompt itself (on you → rewrite it or drop the thread; never auto-retried — a refusal is deterministic on the same input, so a retry just manufactures the same refusal, the user 2026-08-15); ctxColor = the GLOBAL colormap's RGB for the context%, computed server-side; modelColor/effortColor = the same map's RGB tint for the model name + effort (by capability/effort rank), server-computed; modelPending = a /model switch is resolving → the badge shows switching-dots until the new name lands (server-driven, event-based, the user 2026-07-03); fast = the CLI's fast-mode state ("on"/"off"/"cooldown", from the SDK init's fast_mode_state; absent = unknown/unavailable → no fast badge)
+interface Status { state: ChipState; sinceEpoch: number | null; awaitingWhy?: string | null; awaitingKind?: string | null; awaitingTasks?: string[]; awaitingTaskIds?: string[]; effort?: string; model?: string; modelPending?: boolean; effortPending?: boolean; mode?: string; fast?: string; auth?: string; authLive?: string; authPending?: boolean; authBoth?: boolean; authAcct?: string; ctx?: string; ctxColor?: number[]; modelColor?: number[]; effortColor?: number[]; faded?: boolean; backend?: string; apiTooLong?: boolean; apiSpendLimit?: boolean; apiModelLimit?: boolean; apiAuthErr?: boolean; apiRefusal?: boolean; retrySuppressed?: boolean; retryNextAt?: number | null; retryTries?: number | null; }   // awaitingWhy/awaitingTasks = what an awaitingBg session is waiting on (kernel _session_awaiting's phrasing + the live awaited task descriptions) — the #bg-tasks box renders it when no tracked tasks claim the box (renderAwaitWhy; the user 2026-08-13, who moved it out of the statusline the same day PR #350 put it there)   // retrySuppressed = the user interrupted this thread's API-error storm → romp's auto-retry stays OFF for it until a successful turn re-arms (the user 2026-07-06). backend = "tmux" | "sdk"; apiTooLong = the "blocked" is a "prompt is too long" error (on you → red tab) vs a transient API error (amber/retrying); apiSpendLimit = a monthly spend cap (on you → raise it; NEVER auto-retried — retrying can't fix it, the user 2026-07-14); apiModelLimit = this session's MODEL is out of allowance (on you → switch model or add credits; not auto-retried either, the user 2026-08-01); apiRefusal = the model's safeguards refused the prompt itself (on you → rewrite it or drop the thread; never auto-retried — a refusal is deterministic on the same input, so a retry just manufactures the same refusal, the user 2026-08-15); ctxColor = the GLOBAL colormap's RGB for the context%, computed server-side; modelColor/effortColor = the same map's RGB tint for the model name + effort (by capability/effort rank), server-computed; modelPending = a /model switch is resolving → the badge shows switching-dots until the new name lands (server-driven, event-based, the user 2026-07-03); fast = the CLI's fast-mode state ("on"/"off"/"cooldown", from the SDK init's fast_mode_state; absent = unknown/unavailable → no fast badge)
 interface Color { bg: string; fg: string; }
 // A run_in_background task surfaced in the #bg-tasks box (the kernel's _bg_tasks): a one-line summary +
 // status, expandable to the command + its output. status = running | completed | failed. For a dispatched
@@ -775,11 +775,11 @@ function openPath(path: string, sid?: string | null): void {
   vscodeApi.postMessage(sid ? { type: "openFile", path, id: sid } : { type: "openFile", path });
 }
 
-// Surface the FILE BROWSER (plans/file-browser.md) at `path` for the session: the shell brings the
-// feed pane forward and the browser overlay opens there (unlike openPath's in-pane viewer modal, the
-// browser overlay still lives in the feed shell). Web-only, and only when a shell exists to relay to;
-// VS Code's affordances are gated off at their call sites (the editor has its own explorer, and the
-// webview can't reach the kernel origin anyway).
+// Surface the FILE BROWSER at `path` for the session: the shell brings the feed pane forward and the
+// browser overlay opens there (unlike openPath's in-pane viewer modal, the browser overlay lives in
+// the feed document). Web-only, and only when a shell exists to relay to; VS Code's affordances are
+// gated off at their call sites (the editor has its own explorer, and the webview can't reach the
+// kernel origin anyway).
 function openBrowse(path: string, sid?: string | null): void {
   const web = location.protocol === "http:" || location.protocol === "https:";
   if (!web || window.parent === window) return;
@@ -1970,8 +1970,10 @@ function paintRailSticky(): void {
     // pane's left edge: "2 days ago" at 0.68em is wider than the 47px gutter, and a box pinned to
     // the gutter clipped its leading digit at the pane edge (the user 2026-08-18, with a
     // screenshot). When it doesn't fit, the label slides right just enough to stay whole.
-    day.style.left = Math.max(2, gRect!.right - dayW) + "px";
-    day.style.top = Math.max(cTop + 1, slotTop - dayH - 1) + "px";
+    // +1 right / -3 up from the geometric position (the user 2026-08-22): a hair of breathing room
+    // between the label, the pane edge, and the stamp below it
+    day.style.left = Math.max(3, gRect!.right - dayW + 1) + "px";
+    day.style.top = Math.max(cTop + 1, slotTop - dayH - 4) + "px";
     day.style.display = "";
   };
   // The tracked turn's OWN stamp leads the top slot while it is at or below the slot line — it scrolls up
@@ -2298,20 +2300,13 @@ function renderEventInner(ev: ChatEvent): HTMLElement {
         });
         rf.addEventListener("blur", rfDisarm);
         rf.addEventListener("pointerleave", rfDisarm);
-        // FORK affordance (the user 2026-08-13): branch a NEW parallel session from just before this
-        // message — old and new then run as separate threads (the rewind family above edits THIS
-        // session; fork leaves it untouched). Non-destructive, so no two-click arm: the name modal is
-        // the confirmation.
-        const fk = el("button", "msg-fork") as HTMLButtonElement;
-        fk.type = "button";
-        fk.textContent = "fork";
-        fk.title = "Fork the session from just before this message — a new parallel session carries the conversation up to here; this one is untouched";
-        fk.addEventListener("click", (e) => { e.stopPropagation(); showForkPrompt(editSid, uuid); });
+        // (The FORK affordance no longer rides this row: forking conceptually cuts BELOW the previous
+        // response, so its button lives there now — applyForkSpots — while the rewind family above
+        // stays here, acting on THIS message. The user 2026-08-19.)
         const acts = el("div", "msg-acts");   // one row under the bubble (the turn is a column flex)
         acts.appendChild(edit);
         acts.appendChild(del);
         acts.appendChild(rf);
-        acts.appendChild(fk);
         turn.appendChild(acts);
       }
     }
@@ -2440,9 +2435,9 @@ function prettyModel(id: string): string {
 // host-BLIND as designed (see federation.ts) — sid is just echoed back opaquely, never parsed here.
 function asFolderLink(elem: HTMLElement, cwd: string, sid?: string): void {
   if (!cwd) return;
-  // On the web a click BROWSES the folder in the dashboard (the user 2026-08-14, deciding the plan's
-  // open question) — the affordance that works from every device, where OS-open acted on the KERNEL's
-  // machine (the wrong-machine class the 📎 picker and file links were cured of). OS-open survives on
+  // On the web a click BROWSES the folder in the dashboard (the user 2026-08-14) — the affordance
+  // that works from every device, where OS-open acted on the KERNEL's machine (the wrong-machine
+  // class the 📎 picker and file links were cured of). OS-open survives on
   // the row's right-click menu for the genuinely-local case (the contextmenu delegate below). In
   // VS Code the browser overlay doesn't exist, so the click keeps opening the folder host-side.
   const web = location.protocol === "http:" || location.protocol === "https:";
@@ -4565,9 +4560,9 @@ function showTabMenu(e: MouseEvent, id: string) {
     offMail ? "Rejoin mail" : "Mute mail",
     offMail ? "reconnect it to the postal service" : "hide from peers — no messages in or out",
     () => setSessionFlag(id, "postalServiceOff", !offMail));
-  // Browse the session's working tree in the feed pane (plans/file-browser.md). Web-only: openBrowse
-  // no-ops outside the shell, and VS Code's editor has its own explorer, so the row only renders
-  // where the click can land.
+  // Browse the session's working tree in the feed pane. Web-only: openBrowse no-ops outside the
+  // shell, and VS Code's editor has its own explorer, so the row only renders where the click can
+  // land.
   if ((location.protocol === "http:" || location.protocol === "https:") && window.parent !== window) {
     const browse = el("div", "ctx-item");
     browse.textContent = "Browse files";
@@ -5764,7 +5759,7 @@ function showForkPrompt(sid: string, uuid: string): void {
   const h = el("div", "confirm-title"); h.textContent = "Fork session";
   const d = el("div", "confirm-detail");
   d.textContent = uuid
-    ? "A new session continues from just before this message; this one is untouched."
+    ? "A new session continues the conversation to just below this response; this one is untouched."
     : "A new session continues this whole conversation; this one is untouched.";
   const input = document.createElement("input");
   input.type = "text"; input.className = "fork-name"; input.value = base + "-fork";
@@ -5892,6 +5887,7 @@ function applyCommentMarks(sid: string): void {
   const v = views.get(sid);
   if (!v) return;
   applyBranchChips(sid, v);   // same driver, same hooks: branch chips re-anchor with the marks
+  applyForkSpots(sid, v);     // and the below-response fork spots (same reason: this DOM rebuilds constantly)
   if (sid === activeId) updateCommentRail();   // and the scroll-rail ticks follow the active view
   const threads = commentThreads.get(sid) || [];
   const have = new Set(threads.map((t) => t.tid));
@@ -5932,6 +5928,49 @@ function applyBranchChips(sid: string, v: View): void {
     chip.textContent = "↳ " + (k.name || "fork");
     chip.title = "A session branched from this message: " + (k.name || k.sid) + ". Click to open it there.";
     box.appendChild(chip);
+  }
+}
+
+/** The FORK affordance lives BELOW the response it branches from (the user 2026-08-19: forking
+ *  conceptually cuts under the response — the old button rode the NEXT prompt's msg-acts row, where
+ *  it read as acting on that message). A hover-revealed "fork" under the LAST assistant bubble of
+ *  each response run. The CUT is unchanged: the first genuine editable prompt after the run — exactly
+ *  the uuid the old bubble button passed, so _rewind_target resolves it the same way — and the tip
+ *  run, with no prompt after it, forks the whole conversation (uuid "", the palette's fork-from-tip).
+ *  Idempotent and applied on the marks' hooks, like the branch chips (this DOM rebuilds constantly);
+ *  a windowed-out anchor turn simply has no spot until it returns. */
+function applyForkSpots(sid: string, v: View): void {
+  const s = sessions.get(sid);
+  const evs = (s?.events || []) as ChatEvent[];
+  const editable = (s as any)?._editable as Set<string> | undefined;
+  const spots = new Map<string, string>();   // last-assistant-of-run uuid -> cut uuid ("" = whole conversation)
+  let run: string | null = null;             // the newest assistant uuid whose run has no cut yet
+  for (const ev of evs) {
+    if (ev.kind === "assistant" && ev.uuid) run = ev.uuid;
+    else if (ev.kind === "user" && ev.uuid && run && !spots.has(run)
+             && senderKind(ev) === "user" && editable?.has(ev.uuid)) {
+      spots.set(run, ev.uuid);   // the FIRST prompt after the run = the cut just below its response
+    }
+  }
+  if (run && !spots.has(run)) spots.set(run, "");   // the tip run: nothing follows -> whole conversation
+  for (const old of Array.from(v.el.querySelectorAll(".fork-spot")) as HTMLElement[]) {
+    const anchor = (old.parentElement as HTMLElement | null)?.dataset.uuid || "";
+    if (spots.get(anchor) !== old.dataset.cut) old.remove();   // gone, or its cut moved
+  }
+  for (const [anchor, cut] of spots) {
+    const turn = v.el.querySelector(`.turn-assistant[data-uuid="${cssEscape(anchor)}"]`) as HTMLElement | null;
+    if (!turn || turn.querySelector(":scope > .fork-spot")) continue;
+    const row = el("div", "fork-spot");
+    row.dataset.cut = cut;
+    const fk = el("button", "msg-fork") as HTMLButtonElement;
+    fk.type = "button";
+    fk.textContent = "fork";
+    fk.dataset.act = "forkspot";   // delegated (click-safe): the transcript rebuilds on every push
+    fk.title = cut
+      ? "Fork the session from just below this response — a new parallel session carries the conversation to here; this one is untouched"
+      : "Fork the session — a new parallel session continues this whole conversation; this one is untouched";
+    row.appendChild(fk);
+    turn.appendChild(row);
   }
 }
 
@@ -8157,8 +8196,14 @@ function renderBgTasks() {
   const box = s && s.bgTasks;
   const tasks = (box && box.tasks) || [];
   const count = box ? box.count : 0;
+  host.classList.remove("bg-awaited");   // re-derived below from THIS payload (renderAwaitWhy adds its own)
   if (!count || !tasks.length) { renderAwaitWhy(host, s || null); return; }
   host.style.display = "";
+  // the AWAITED rows (the user 2026-08-19): when the await-green chip waits on specific tasks, those
+  // rows — and the box holding them — wear a thin outline in the chip's green (awaitingTaskIds, the
+  // kernel's exact launch-id match); the status DOT keeps its meaning (yellow = the task is running)
+  const awaited = new Set<string>((s!.status.state === "awaitingBg" && s!.status.awaitingTaskIds) || []);
+  host.classList.toggle("bg-awaited", tasks.some((t) => awaited.has(t.id)));
   const sid = activeId as string;
   const open = bgFoldOpen.has(sid);
   // worst status among the shown tasks → the header dot color (so a failure shows even while collapsed)
@@ -8176,7 +8221,7 @@ function renderBgTasks() {
   const list = el("div", "bg-list");
   for (const t of tasks) {
     const tOpen = bgExpanded.has(t.id);
-    const row = el("div", "bg-task bg-" + (t.status || "running") + (tOpen ? " open" : ""));
+    const row = el("div", "bg-task bg-" + (t.status || "running") + (awaited.has(t.id) ? " bg-awaited" : "") + (tOpen ? " open" : ""));
     const rh = el("div", "bg-head");
     rh.dataset.act = "bg-toggle"; rh.dataset.id = t.id;   // the row header toggles; clicks in the detail body don't collapse it
     rh.appendChild(el("span", "bg-dot"));
@@ -8216,6 +8261,7 @@ function renderAwaitWhy(host: HTMLElement, s: Session | null) {
   const why = (s && s.status.state === "awaitingBg" && (s.status.awaitingWhy || "").trim()) || "";
   if (!why || !activeId) { host.style.display = "none"; return; }
   host.style.display = "";
+  host.classList.add("bg-awaited");   // this whole box IS the awaited thing — the chip's green border
   const sid = activeId;
   const open = bgFoldOpen.has(sid);
   const head = el("div", "bg-fold-head bg-await" + (open ? " open" : ""));
@@ -9292,6 +9338,10 @@ function retirePendingShip(key: string): string | null {
 // "wait" pick in sendComposer's gate; fired by the LAST droppedPath ack (event-based), cancelled by
 // a dropSaveFailed nack or by any successful send for the sid.
 const sendOnShip = new Set<string>();
+// The ship-gate confirm currently open, by owning sid (the user 2026-08-19): while the "still
+// uploading" dialog is up, the upload FINISHING answers the question itself — the dialog closes and
+// the send fires, no click needed. The deciding event is the same last-ship ack a held send waits on.
+let shipGateSid: string | null = null;
 // Assigned by setupComposer (sendComposer lives in its closure); the WS ack handler fires a held
 // send through it when the last pending ship lands.
 let fireHeldSend: () => void = () => {};
@@ -9547,6 +9597,24 @@ function renderComposerFiles(id: string | null): void {
   const pending = (id ? pendingShips.get(id) : undefined) || [];
   if (!paths.length && !pending.length) { strip.style.display = "none"; return; }
   strip.style.display = "flex";
+  // A held send IS a staged message and must LOOK like one (the user 2026-08-22): the same head line
+  // the staged strip wears — what will happen, live count, and the way out. Before this, the only
+  // cue after "Wait for the upload" was the dimmed send button, which read as nothing happening.
+  // Re-rendered here because this renderer already runs on the wait click, every ack, and every tab
+  // switch — the exact events the line must track.
+  if (id && sendOnShip.has(id)) {
+    const head = el("div", "staged-head held-head");
+    const lbl = el("span");
+    lbl.textContent = "staged — sends when the upload finishes"
+      + (pending.length > 1 ? " (" + pending.length + " still uploading)" : "");
+    lbl.title = "You chose to wait. The message sends itself the moment the last attachment lands.";
+    const cancel = el("button", "staged-go");
+    cancel.textContent = "Cancel";
+    cancel.title = "keep the message and attachments — just stop the automatic send";
+    cancel.addEventListener("click", () => { sendOnShip.delete(id); renderComposerFiles(id); });
+    head.append(lbl, cancel);
+    strip.appendChild(head);
+  }
   paths.forEach((p, i) => {
     const box = el("span", "composer-file");
     box.title = p + " — click opens it · ✕ removes";
@@ -10637,9 +10705,13 @@ window.addEventListener("message", (e: MessageEvent) => {
     }
     const owner = retirePendingShip(m.path) || activeId;               // the chip this ack answers names the OWNING composer (no-op for pickFile, which never ships)
     addComposerFile(owner, m.path);
-    if (owner && sendOnShip.has(owner) && !(pendingShips.get(owner) || []).length) {
+    // an OPEN ship-gate dialog counts as a held send (the user 2026-08-19): the upload finishing is
+    // the answer to the question it asks, so it closes itself and the send fires — no click needed
+    const gateOpen = shipGateSid === owner;
+    if (owner && (sendOnShip.has(owner) || gateOpen) && !(pendingShips.get(owner) || []).length) {
       // the LAST ship landed — the event the held send was waiting for (the user 2026-08-16)
       sendOnShip.delete(owner);
+      if (gateOpen) { shipGateSid = null; closeConfirm(null); }
       if (owner === activeId) fireHeldSend();
       else warnToast("attachments finished uploading on another tab — the held message was not sent; review it there.");
     }
@@ -10648,8 +10720,10 @@ window.addEventListener("message", (e: MessageEvent) => {
     // never leave dots pulsing over a file that is not coming (fail loudly, don't degrade silently)
     const owner = retirePendingShip(m.name) || activeId;
     const held = !!owner && sendOnShip.delete(owner);    // a held send must not fire without the file it waited for
+    const gateWasOpen = shipGateSid === owner;
+    if (gateWasOpen) { shipGateSid = null; closeConfirm(null); }   // the question is moot — but a failed save never auto-sends
     warnToast(m.name + " couldn't be saved on the kernel, so it was not attached — try again."
-              + (held ? " Your message was NOT sent." : ""));
+              + (held || gateWasOpen ? " Your message was NOT sent." : ""));
     if (owner && owner === activeId) renderComposerFiles(owner);   // the held-send button state clears with the hold
   }
   // an EDITOR highlight (VS Code host, onDidChangeTextEditorSelection — the user 2026-07-13) seeds the
@@ -10833,12 +10907,14 @@ function setupComposer() {
       const sid = activeId;
       const what = shipping === 1 ? "An attachment is" : shipping + " attachments are";
       const them = shipping === 1 ? "it" : "them";
+      shipGateSid = sid;                       // the last-ship ack resolves the open dialog itself
       showConfirm(what + " still uploading",
-                  "Send now and your message goes without " + them + ". Wait, and it sends itself "
-                  + "the moment the upload finishes.",
+                  "Send now and your message goes without " + them + ". Or just wait — it sends "
+                  + "itself the moment the upload finishes.",
                   [{ label: "Wait for the upload", value: "wait" },
                    { label: "Send without " + them, value: "now", danger: true }],
                   (v) => {
+                    shipGateSid = null;
                     if (v === "now") sendComposer({ pastShipGate: true });
                     else if (v === "wait") { sendOnShip.add(sid); renderComposerFiles(sid); }
                   });
@@ -11573,7 +11649,7 @@ setupSettings();
       const id = el.dataset.id;
       vscodeApi.postMessage(id ? { type: "openFolder", cwd, id } : { type: "openFolder", cwd });
     },
-    // the web twin of openFolder: surface the file browser at this folder (plans/file-browser.md)
+    // the web twin of openFolder: surface the file browser at this folder
     browseFiles: (el) => {
       const cwd = el.dataset.cwd; if (!cwd) return;
       openBrowse(cwd, el.dataset.id);
@@ -11678,6 +11754,11 @@ setupSettings();
       if (!sid) return;
       if (!sessions.get(sid)) { warnToast("That session isn't on this dashboard right now."); return; }
       setActive(sid, elx.dataset.cut || undefined);
+    },
+    // a below-response fork spot: the row carries its own cut ("" = whole conversation)
+    forkspot: (elx) => {
+      const cut = (elx.closest(".fork-spot") as HTMLElement | null)?.dataset.cut || "";
+      if (activeId && !isProvisionalId(activeId) && sessions.get(activeId)) showForkPrompt(activeId, cut);
     },
     // "copy to composer" on a never-delivered bubble: the echo is the only surviving copy of the text —
     // hand it back for review-and-resend (the same restore the queued ✕ uses). Delegated like qx: the
@@ -11842,22 +11923,34 @@ document.getElementById("content")?.addEventListener("contextmenu", showSelectio
 // The file viewer's review comments come back here as ONE assembled message (the user 2026-08-14).
 // It is DRAFTED into the composer, never sent: you read what the session will get, add a line if you
 // want, and send it yourself. Appended, so it never clobbers a half-typed draft.
-setCommentSink((text) => {
-  const sid = activeId;
-  if (!sid) return;
-  const ta = document.getElementById("composer-input") as HTMLTextAreaElement | null;
-  if (!ta) return;
-  const sep = !ta.value ? "" : ta.value.endsWith("\n\n") ? "" : ta.value.endsWith("\n") ? "\n" : "\n\n";
-  ta.value = ta.value + sep + text;
-  ta.selectionStart = ta.selectionEnd = ta.value.length;
-  growComposer(ta);
-  ta.focus();
-  drafts.set(sid, ta.value);
+setCommentSink((sid, text) => {
+  // Routed by the REVIEWED session's sid, never activeId-at-submit (2026-08-19: switching tabs
+  // while the viewer was open drafted session A's review into session B's composer). Active tab →
+  // the live textarea; any other sid → straight into that session's persisted draft, where the
+  // composer restores it on the next visit (or on revival — drafts outlive the tab).
+  if (!sid) return false;
+  if (sid === activeId) {
+    const ta = document.getElementById("composer-input") as HTMLTextAreaElement | null;
+    if (ta) {
+      const sep = !ta.value ? "" : ta.value.endsWith("\n\n") ? "" : ta.value.endsWith("\n") ? "\n" : "\n\n";
+      ta.value = ta.value + sep + text;
+      ta.selectionStart = ta.selectionEnd = ta.value.length;
+      growComposer(ta);
+      ta.focus();
+      drafts.set(sid, ta.value);
+      persistDrafts();
+      return true;
+    }
+  }
+  const prev = drafts.get(sid) || "";
+  const sep = !prev ? "" : prev.endsWith("\n\n") ? "" : prev.endsWith("\n") ? "\n" : "\n\n";
+  drafts.set(sid, prev + sep + text);
   persistDrafts();
+  return true;
 });
-// The chat document hosts the viewer itself now (openPath), so it boots the viewer's listener with
-// the same WS poster the feed hands it: Edit/Save round-trips and the GitHub-link ask ride post(),
-// and the kernel's replies come back as window MessageEvents via the pane shim — either document,
-// one mechanism (file-view.ts initFileView).
+// The chat document hosts the viewer itself (openPath), so it boots the viewer's listener with the
+// same WS poster the feed hands it: Edit/Save round-trips and the GitHub-link ask ride post(), and
+// the kernel's replies come back as window MessageEvents via the pane shim — either document, one
+// mechanism (file-view.ts initFileView).
 initFileView((m) => vscodeApi?.postMessage(m));
 if (vscodeApi) vscodeApi.postMessage({ type: "ready" });

@@ -525,6 +525,7 @@ def _version_info():
             "boot": _BOOT_ID,   # lets a page retire update offers from a previous kernel life (2026-08-15)
             "uptime_s": int(time.time() - _STARTED), "dist_ver": _dist_ver(), "bundles": bundles,
             "autoNudge": _auto_nudge_on(),   # server-side toggle state → the gear checkbox reflects the kernel
+            "fileEditing": _file_editing_on(),   # dashboard raw-mode editing opt-in → gates the viewer's Edit
             "updateMode": _update_mode(),    # ask|auto|off (the boot release check) → the gear dropdown
             "updateAvail": _UPDATE_AVAIL[0],   # newer release the boot check found ("" = none/unknown)
             "judgeModel": jd._triage_model(), "indexModel": jd._index_model(),      # current per-tier judge models → the gear dropdowns
@@ -536,6 +537,7 @@ def _version_info():
             # /tunnels row so its gear can mark controls where machines disagree (the user 2026-08-14).
             # The top-level fields above stay: this tab's own gear and older kernels read those.
             "settings": {"autoNudge": _auto_nudge_on(), "updateMode": _update_mode(),
+                         "fileEditing": _file_editing_on(),
                          "judgeModel": jd._triage_model(), "judgeEffort": jd._triage_effort(),
                          "indexModel": jd._index_model(), "indexEffort": jd._index_effort(),
                          "distillModel": jd._state_str("distill-model", "triage"),
@@ -2439,6 +2441,25 @@ def _set_auto_nudge(enabled):
     _write_auto_nudge(d)
 
 
+def _file_editing_on():
+    """Dashboard raw-mode file editing is OFF until the user says yes once (the user 2026-08-22: the
+    viewer's Edit asks with a popup the first time). The flag is a SERVER-side boundary, not
+    cosmetics: _save_file refuses while it is off, so the write-any-text-file capability the save op
+    represents exists only after the explicit opt-in — hiding the button alone would leave every
+    token-holder the write path. Kernel-side setting like Auto Nudge: it broadcasts to every attached
+    kernel (federation.ts KERNEL_SETTING) so the mesh answers with one voice, and /version +
+    the tunnel settings dict report it so disagreement is surfaced, never hidden. Default OFF —
+    absent file, unreadable file, or malformed JSON all refuse: the opt-in must be provable."""
+    try:
+        return bool(json.loads((jd.STATE / "file-editing.json").read_text()).get("enabled"))
+    except Exception:
+        return False
+
+
+def _set_file_editing(enabled):
+    _atomic_write(jd.STATE / "file-editing.json", json.dumps({"enabled": bool(enabled)}))
+
+
 # ── automatic updates of THIS machine (the user 2026-08-09) ───────────────────────────────────────
 # At kernel boot, one async check asks the clone's `origin` for its newest RELEASE tag
 # (`git ls-remote --tags` — network read only, nothing local moves) and compares it against the
@@ -3654,6 +3675,7 @@ def _auto_nudge_tick(now, tmux):
                              % (s.get("sid") or "?", traceback.format_exc()))
     try:
         _debt_backstop_tick(now)                       # reminder outcomes for debtors the walk can't reach
+        _dead_wait_sweep(alive_ids, nudged, now)       # dormant owners' stamped cards → procedural block
     except Exception:
         sys.stderr.write("debt-backstop: %s\n" % traceback.format_exc())
     try:
@@ -3905,6 +3927,89 @@ def _lift_spent_awaiting(now, tmux):
             sys.stderr.write("awaiting-lift (session %s): %s\n" % (sid or "?", traceback.format_exc()))
 
 
+_PREV_ALIVE = None                       # last tick's alive sids — a sid LEAVING is the death event
+
+
+def _dead_wait_sweep(alive_ids, nudged, now):
+    """Find DORMANT sessions whose Working cards still hold a judged awaiting stamp and convert each to
+    a procedural block (_dead_wait_block). Event-triggered, never a per-tick poll of every store: the
+    trigger is the DEATH TRANSITION (a sid leaving the alive set between ticks), plus one catch-up
+    sweep of all dormant stores on the first tick after boot — the same boot-re-audit pattern the
+    awaiting stamps already use — for sessions that died under a previous kernel (the two measured
+    cards had been dead 79 hours across many restarts)."""
+    global _PREV_ALIVE
+    prev, _PREV_ALIVE = _PREV_ALIVE, set(alive_ids)
+    if prev is None:
+        try:
+            cands = {f.stem for f in (jd.STATE / "goals").glob("*.json")} - set(alive_ids)
+        except OSError:
+            return
+    else:
+        cands = prev - set(alive_ids)
+    for sid in cands:
+        try:
+            store = jd.load_goals(sid)
+            nodes = store.get("nodes", {})
+            kids = {}
+            for nid, nd in nodes.items():
+                if nd.get("parentId"):
+                    kids.setdefault(nd["parentId"], []).append(nid)
+            answered = _peer_answered_at(sid)
+            for gid, st in (store.get("status") or {}).items():
+                if st != "working":
+                    continue
+                stamp = _goal_awaiting_stamp_full(nodes, gid, kids, answered_at=answered)
+                if stamp:
+                    _dead_wait_block(sid, gid, stamp[0], stamp[1], nudged, now)
+        except Exception:
+            sys.stderr.write("dead-wait sweep (%s): %s\n" % (sid, traceback.format_exc()))
+
+
+def _dead_wait_block(sid, gid, at, why, nudged, now):
+    """Convert a DORMANT session's stamped-awaiting Working card to a procedural block, once per stamp
+    episode (the user 2026-08-22, who expected every Working card nudged until it lands in Completed or
+    Blocked). Once-only rides the shared nudge ledger ({deadWait, anchor}; a genuinely NEW stamp episode
+    — newer anchor — re-arms, exactly the wake's own rule). Two stand-downs before writing, both keyed
+    on recorded events, never the clock:
+      - the session's last recorded STATE must be a genuine stop: an open-turn state (working/retrying/
+        compacting) means a restart CUT, and the resume machinery owns that card — blocking it would
+        race the resume nudge it is about to get;
+      - the stamp must still stand on a FRESH store read with the card still Working (the judges run
+        concurrently; record_verdict's own gate then refuses anything a newer user floor outranks).
+    The block's evidence time is the newest of the stamp anchor and the last state transition — the
+    settle the session actually recorded — never wall-clock (the diary is an evidence-time ledger).
+    Returns True when the block landed (the tick pushes once at the end)."""
+    rec = nudged.get(gid) or {}
+    if rec.get("deadWait") and (rec.get("anchor") or 0) >= at:
+        return False                                  # this stamp episode already converted
+    last, last_t = _last_state(sid)
+    if last in _PROGRESSING_STATES:
+        return False                                  # a cut mid-turn, not a settled death — resume owns it
+    try:
+        store = jd.load_goals(sid)
+        nd = store.get("nodes", {}).get(gid)
+        if (not nd or store.get("status", {}).get(gid, "working") != "working"
+                or not _goal_awaiting_stamp(store.get("nodes", {}), gid,
+                                            answered_at=_peer_answered_at(sid))):
+            return False                              # lifted or resolved since the walk read its snapshot
+        blkwhy = jd.dead_wait_block_why(nd.get("awaitingWhy") or why or "")
+        _ev = int(max(at or 0, last_t or 0) or now)
+        if jd.record_verdict(store, nd, "nudge", "block", _ev, why=blkwhy):
+            nd["mt"] = _ev                            # the event materialized blocked + blockWhy
+            jd.append_block(sid, gid, "nudge", blkwhy, _ev)   # journal before the save it protects (a judge
+            #                                           pass holding this store across its model call erases
+            #                                           the row on save; replay re-records it)
+            jd.rollup_status(store, False)
+            jd.save_goals(sid, store)
+            _mark_views_dirty()
+            nudged[gid] = {"deadWait": True, "anchor": at, "at": int(now)}
+            _put_nudged(gid, nudged[gid])
+            return True
+    except Exception:
+        sys.stderr.write("dead-wait block: %s\n" % traceback.format_exc())
+    return False
+
+
 def _wake_goal(sid, gid, stamp, nudged, turns, store, now, lt, tmux):
     """The AWAITING branch of _auto_nudge_session's goal walk — one stamped top goal. The stamp is a
     judged wait, so the plain status nudge stays off; but a wait is not an exemption from the ladder
@@ -3925,8 +4030,14 @@ def _wake_goal(sid, gid, stamp, nudged, turns, store, now, lt, tmux):
                 genuinely NEW stamp episode (anchor newer than the one that failed)."""
     at, why = stamp[0], stamp[1]
     if tmux.get(sid) is None:
-        return False                                 # dormant CLI → its work died with it; the death notice
-        #                                              owns that story, not a wake (same rule as the lifts)
+        # DORMANT owner (the user 2026-08-22): the CLI died while this judged wait still stood — and a
+        # stamped Working card on a dead session was exempt from the WHOLE ladder (this wake, the plain
+        # nudge, the staller), so it sat "paused" forever (two live cards measured at 79 hours). The
+        # death notice tells the CHAT what happened; nothing ever moved the CARD. Nothing that could
+        # answer the wait is running, so convert ONCE per stamp episode to a procedural block naming
+        # the dead wait — the same terminal an unanswered wake reaches — and let a revival's reply
+        # lift it like any block.
+        return _dead_wait_block(sid, gid, at, why, nudged, now)
     rec = nudged.get(gid) or {}
     if not rec.get("wake"):
         rec = {}                                     # a REGULAR nudge record (predates the stamp): the wake
@@ -5340,10 +5451,10 @@ DIR_LIST_MAX = 500               # listing rows per reply — bounded like DIR_C
 
 
 def _list_dir(raw, sid=None, hidden=False, limit=DIR_LIST_MAX):
-    """One directory's entries for the dashboard's file browser (plans/file-browser.md): files AND
-    directories with sizes/mtimes, plus a server-side `viewable` verdict per file — the same
-    _PREVIEW_MIME + _is_text_path tables /file's view half applies — so the client can mark
-    download-only rows up front instead of letting every click fail into a 415.
+    """One directory's entries for the dashboard's file browser: files AND directories with
+    sizes/mtimes, plus a server-side `viewable` verdict per file — the same _PREVIEW_MIME +
+    _is_text_path tables /file's view half applies — so the client can mark download-only rows up
+    front instead of letting every click fail into a 415.
 
     Resolution is _resolve_open_path semantics (~ expanded, a relative path against the sid's session
     cwd) — the SAME rules /file uses, so every listed path can be handed straight to the /file URL
@@ -6520,6 +6631,16 @@ def _sdk_locked():
             # ends, so an idle fleet's usage.json goes stale — measured ~15h — and the rate gate is
             # only as good as that file); the backend picks any live login session to ask
             jd._USAGE_REFRESH_FN = getattr(_sdk_backend, "refresh_usage", None)   # best-effort hook (judge guards None)
+            # The judge parses the SAME cut world the display parse does (jd._PENDING_CUT_FN): during
+            # an armed bare rollback the planner must not see — and mint from — the deleted tail.
+            # getattr-guarded like every other backend probe (a test fake without the affordance
+            # must still construct — the singleton contract outranks the wire).
+            _cut_fn = getattr(_sdk_backend, "pending_cut", None)
+            if _cut_fn:
+                jd.set_pending_cut_provider(_cut_fn)
+            # The backend's flag-consumption events resolve held rewinds (two-phase goal cleanup:
+            # archive at the branch-take, restore on failure — _on_rewind_resolved).
+            _sdk_backend.rewind_resolved_cb = _on_rewind_resolved
         except Exception:
             sys.stderr.write("sdk-backend unavailable: %s\n" % traceback.format_exc())
             _sdk_problem("the SDK backend could not be built: %s" % traceback.format_exc())
@@ -12451,6 +12572,15 @@ def _awaiting_task_descs(sid, path):
     return [t["desc"] or "background task" for t in awaited]
 
 
+def _awaiting_task_ids(sid, path):
+    """The AWAITED live background-task launch IDS — the same _bg_split set as _awaiting_task_descs,
+    as tool_use ids, so the chat's #bg-tasks box can outline exactly the rows the await-green chip is
+    waiting on (the user 2026-08-19). The box rows carry the same launching id (_bg_tasks "id" / the
+    lifecycle set's toolUseId), so the match is exact — never a description-string guess."""
+    awaited, _ = _bg_split(sid, path, _bg_live_norm(sid, path))
+    return [t["tid"] for t in awaited if t.get("tid")]
+
+
 def _bg_service_descs(sid, path):
     """The live background-task descriptions the judge classified as SERVICES (_bg_split) — persistent
     processes the session keeps around, surfaced as the feed's neutral per-session chip (bgServices in
@@ -16834,6 +16964,9 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
                   "awaitingWhy": awaiting_why or None,
                   "awaitingKind": awaiting_kind,   # WHAT the wait is on (jd.AWAIT_KINDS; None = kindless)
                   "awaitingTasks": (_awaiting_task_descs(sid, sess["path"]) if awaiting_why else []),
+                  # …and the same tasks' launch ids, so the #bg-tasks box outlines exactly the awaited
+                  # rows in the chip's await-green (the user 2026-08-19)
+                  "awaitingTaskIds": (_awaiting_task_ids(sid, sess["path"]) if awaiting_why else []),
                   "apiTooLong": bool(aerr and aerr.get("tooLong")),
                   # a spend cap is on-you like tooLong (red tab, "raise your cap") AND never auto-retried:
                   # the client's apiRetryTick skips it, and the global pause it engages stops the loop too
@@ -18345,7 +18478,7 @@ def build_feed(now, tmux=None):
             _bcmemo[nid] = res
             return res
 
-        def flatten(nid, out, ancestor_done=False):  # AskTreeNode flat list, root first; nest via children ids
+        def flatten(nid, out, ancestor_done=False, boundary=None):  # AskTreeNode flat list, root first; nest via children ids
             nd = nodes[nid]
             kids = sorted(children.get(nid, []), key=_fsubmax, reverse=True)   # most-recent-first (matches the ledger)
             explicit = bool(nd.get("nodeComplete"))
@@ -18375,6 +18508,14 @@ def build_feed(now, tmux=None):
                         # user-cleared sub (nodeOverride op:clear) → renders struck-through + faded with a
                         # "cleared" chip; `status` above stays honest (box = done, the user 2026-07-26)
                         "cleared": bool(nd.get("cleared")),
+                        # this DONE sub's outcome was already REVIEWED: its done predates the top's
+                        # review boundary (jd.review_boundary — the same boundary the distiller scopes
+                        # the takeaway with, so the fold and the summary can never disagree). The card
+                        # collapses these behind one "N reviewed earlier" row instead of re-presenting
+                        # them on every re-completion (the user 2026-08-19). `out` is empty only for
+                        # the ROOT row, which is the card head, never a checklist row.
+                        "reviewedEarlier": bool(boundary and out and done
+                                                and jd._done_since(nd) <= boundary) or None,
                         # a rolled-UP question (the block lives in a descendant, not here) — the client's
                         # mark tooltip says "blocked inside", and the actual ask keeps its own ⏸ below
                         "qderived": st == "question" and not nd.get("blocked"),
@@ -18405,7 +18546,7 @@ def build_feed(now, tmux=None):
                         "log": _node_log_rows(nd, seg_uuid) if st != "done" else None,
                         "children": kids})
             for c in kids:
-                flatten(c, out, ancestor_done=done)
+                flatten(c, out, ancestor_done=done, boundary=boundary)
             return out
         # HARD blocked floor: a session stopped RIGHT NOW on a live permission prompt (tmux state)
         # floors its ACTIVE-FOCUS card under BLOCKED — the strongest signal, beats the goal's planner
@@ -18920,7 +19061,13 @@ def build_feed(now, tmux=None):
                 "distillState": distill_state,   # "completed" | "blocked" | null — the GENUINE state the distiller line keys on, so the brief/takeaway doesn't flicker off when recheck/rejudging drops `column` to working (the user 2026-07-21)
                 "blockSummary": nodes[nid].get("blockSummary"),    # the block-distiller's decision brief for a blocked goal (modal); null until produced — the user 2026-06-18
                 "briefParts": nodes[nid].get("briefParts") or None,   # MULTI-item brief: [{id, since}] one per paragraph IN ORDER (judge briefParts) → per-paragraph "Nm ago" stamps; null for single-item briefs, whose stamp is the card header's age (the user 2026-07-24)
-                "summaryParts": nodes[nid].get("summaryParts") or None,   # the DONE twin: [{id, since}] per takeaway paragraph when the distiller split by <completed-items>; done-event times (the user 2026-07-24)
+                "summaryParts": nodes[nid].get("summaryParts") or None,
+                # the user FOLLOWED UP after the takeaway they read (followupAt postdates what the
+                # summary covers) → the summary section says so instead of presenting the old takeaway
+                # as current; self-clears when the re-distill stamps a newer distilledMt (16 live cards
+                # measured reading stale, the user 2026-08-19)
+                "summaryStale": bool((nodes[nid].get("followupAt") or 0) > (nodes[nid].get("distilledMt") or 0)
+                                     and (nodes[nid].get("summary") or "").strip()) or None,   # the DONE twin: [{id, since}] per takeaway paragraph when the distiller split by <completed-items>; done-event times (the user 2026-07-24)
                 "background": nodes[nid].get("background"),    # the distiller's BACKGROUND section: re-orientation for a reader who forgot the thread — collapsed by default on the card (the user 2026-07-02)
                 "summaryAnchorUuid": _sa_u,    # click the summary line → the completion turn's wrap-up (completed pin), else the cited/latest prose (the user 2026-07-14)
                 "warns": nodes[nid].get("warns") or None,   # judge-stamped anomalies (judge _node_warn) → yellow "warning" chip; click shows each warn's what/why detail (the user 2026-07-02)
@@ -18985,7 +19132,7 @@ def build_feed(now, tmux=None):
                 "warnRows": (_card_warn_rows(dbg_rows, fsid, set(_subtree(nid)),
                                              store.get("placements") or {}) or None)
                             if dbg_rows is not None else None,   # debug mode only: the card's judge failures, modal "Warnings" section
-                "tree": flatten(nid, [])})
+                "tree": flatten(nid, [], boundary=jd.review_boundary(nodes[nid]))})
         # A session actively working a brand-new ask shows NO card until the planner classifies the held
         # segment at turn-end — surface a live-prompt placeholder so it isn't invisible. Only when nothing
         # already covers it (no working card); replaced by the real card once the planner places it.
@@ -21096,19 +21243,28 @@ def _reveal_chat_for(client, focus_msg):
     revealSelfPane) — which covers every kernel, local included, and makes the shell line a harmless
     duplicate rather than the only mover."""
     wid = (client or {}).get("wid") or ""
-    # The reveal rule (the user 2026-08-18): every gesture that focuses a session's chat — create,
-    # open, revive, a deep link, a feed chip — REVEALS it in the session views first, or the focus
-    # would land on a tab the strip doesn't show (a session created under an active group view was
-    # born invisible, with the focus yanked away by the strip's re-point). Drop its hidden bit; when
-    # the active group excludes it, fall back to All — the same one rule the chat picker applies.
+    # The reveal rule (the user 2026-08-18; reshaped 2026-08-19 with the DEFAULT-GROUP model): every
+    # gesture that focuses a session's chat — create, open, revive, a deep link, a feed chip — must
+    # land on a visible tab. Focusing now SWITCHES the active view to one that shows the session and
+    # never mutates membership: peeking at a pool worker must not permanently drag it back into the
+    # default group. Preference order: the default group (active "all" — "everything not removed"),
+    # else the first named group holding it; a session in NO view at all (removed from default,
+    # member of nothing) is re-added to the default group — the one case where visibility requires
+    # a membership edit.
     sid = focus_msg.get("id") if isinstance(focus_msg, dict) else None
     if sid:
         v = _timeline_views()
         if not _view_visible(v, sid):
             v = json.loads(json.dumps(v))
-            v["hidden"] = [x for x in v["hidden"] if x != sid]
-            if v["active"] != "all" and not any(g["id"] == v["active"] and sid in g["members"] for g in v["groups"]):
+            if sid not in v["hidden"]:
                 v["active"] = "all"
+            else:
+                holder = next((g["id"] for g in v["groups"] if sid in g["members"]), None)
+                if holder:
+                    v["active"] = holder
+                else:
+                    v["hidden"] = [x for x in v["hidden"] if x != sid]
+                    v["active"] = "all"
             _set_timeline_views(v)
             _mark_views_dirty()
     _send_to_view("chat", focus_msg, wid)
@@ -21707,74 +21863,8 @@ def _httpdate(t):
     return formatdate(t, usegmt=True)
 
 
-def _git_out(args, cwd, timeout=5):
-    """One read-only git query → stripped stdout, or None on any failure (no repo, no git, timeout).
-    List argv, never a shell; quiet — an absent repo is a normal answer here, not an error."""
-    try:
-        r = subprocess.run(["git", "-C", cwd] + args, capture_output=True, text=True, timeout=timeout)
-        return r.stdout.strip() if r.returncode == 0 else None
-    except (OSError, subprocess.SubprocessError):
-        return None
-
-
-# origin remote → the https://github.com/<owner>/<repo> base, for the spellings git actually writes:
-# scp-like ssh, ssh:// (with an optional port, and GitHub's own documented SSH-over-HTTPS host
-# ssh.github.com — review finding: those clones' origins got no link), https (with an explicit :443),
-# .git suffix and all. Anchored, so github.example.com and github.com.evil.io lookalikes never match.
-_GITHUB_REMOTE = re.compile(
-    r"^(?:git@github\.com:|ssh://git@(?:ssh\.)?github\.com(?::\d+)?/|https://github\.com(?::443)?/)"
-    r"([\w.-]+)/([\w.-]+?)(?:\.git)?/?$")
-
-
-def _file_github_url(raw, sid):
-    """The GitHub web URL for a viewed file, or "" when there is none to give (the user 2026-08-15:
-    the viewer links to the file on GitHub when it is tracked there). Answered by the kernel that
-    OWNS the file — git on ITS disk is the authoritative source — and lazily, per viewer open, never
-    on the /file byte path (thumbnails must not pay three subprocesses each).
-
-    "" is a VERDICT, not an error: an untracked file, a non-repo path, or a non-GitHub origin all
-    honestly have no link, and the viewer simply never shows the button. The ref is the current
-    branch (what a human expects to read on GitHub), or the commit sha when HEAD is detached; a
-    branch that was never pushed 404s on GitHub's end, which is the truthful outcome for a file
-    that is not there yet."""
-    p = _resolve_open_path(str(raw or ""), sid)
-    if not os.path.isabs(p):
-        return ""
-    # realpath, not normpath (review, two executed repros): a lexical '..' collapse built a URL for a
-    # DIFFERENT file than the bytes the viewer shows when the '..' followed a symlink — a wrong link,
-    # strictly worse than none — and a symlinked path PREFIX made relpath escape the PHYSICAL toplevel
-    # git reports, silently un-linking every tracked file behind a symlink (macOS /tmp, a linked ~/code).
-    p = os.path.realpath(p)
-    d = os.path.dirname(p)
-    top = _git_out(["rev-parse", "--show-toplevel"], d)
-    if not top:
-        return ""
-    rel = os.path.relpath(p, top)
-    if rel == ".." or rel.startswith(".." + os.sep):
-        return ""                                   # escaped the repo — NOT a name-prefix test: a root
-    #                                                 file literally named ..cfg is inside and links fine
-    if _git_out(["ls-files", "--error-unmatch", "--", rel], top) is None:
-        return ""                                   # exists but untracked — no link to a thing not there
-    remote = _git_out(["remote", "get-url", "origin"], top)
-    m = _GITHUB_REMOTE.match(remote or "")
-    if not m:
-        return ""
-    ref = _git_out(["rev-parse", "--abbrev-ref", "HEAD"], top)
-    if not ref:
-        return ""
-    if ref == "HEAD":                               # detached — the sha is the only honest ref
-        ref = _git_out(["rev-parse", "HEAD"], top) or ""
-        if not ref:
-            return ""
-    return "https://github.com/%s/%s/blob/%s/%s" % (
-        # safe="/" keeps a slashed branch name (feat/x) literal — the form GitHub's own UI writes;
-        # GitHub resolves the ref/path ambiguity by longest match, exactly as it does for its users
-        m.group(1), m.group(2), quote(ref, safe="/"),
-        "/".join(quote(seg) for seg in rel.split(os.sep)))
-
-
 def _save_file(raw, sid, content, base_mtime_ns):
-    """The viewer's raw-mode SAVE (plans/file-browser.md slice 2, the user 2026-08-14): write `content`
+    """The viewer's raw-mode SAVE (the file browser's slice 2, the user 2026-08-14): write `content`
     over an existing text file, atomically, refusing when the disk moved on. Returns (mtime_ns, None)
     on success, (None, error) on refusal — every refusal names the resolved path (fail loudly).
 
@@ -21795,6 +21885,12 @@ def _save_file(raw, sid, content, base_mtime_ns):
     if not os.path.isabs(p):
         return None, "cannot save %s: not an absolute path (no session cwd to resolve against)" % _tilde(p)
     p = os.path.normpath(p)
+    if not _file_editing_on():
+        # THE boundary, server-side (the user 2026-08-22): editing is opt-in per an explicit yes, and a
+        # kernel that never got one refuses the write here — the UI's gating is convenience, this is
+        # the wall. Refusing FIRST (before content checks) keeps the answer honest for any caller.
+        return None, ("cannot save %s: dashboard file editing is off on this machine — the viewer's "
+                      "Edit button asks to turn it on" % _tilde(p))
     if not isinstance(content, str):
         # a malformed frame must refuse, not truncate: str(None or "") wrote ZERO bytes with a
         # success ack before this check (review)
@@ -21844,6 +21940,117 @@ def _save_file(raw, sid, content, base_mtime_ns):
         return os.stat(wp).st_mtime_ns, None
     except OSError as ex:
         return None, "cannot save %s: %s" % (_tilde(p), getattr(ex, "strerror", None) or str(ex))
+
+
+def _edit_trace_sid(path, sid):
+    """Which LIVE session owns the tree a dashboard edit just landed in? Longest recorded-cwd prefix
+    match over live sessions, preferring the viewer's own sid on a tie (an edit made while viewing
+    session A's file most likely concerns A). None when no live session's tree contains the file —
+    an edit outside every worktree concerns nobody's thread."""
+    try:
+        wp = os.path.realpath(_resolve_open_path(str(path or ""), sid))
+    except Exception:
+        return None
+    best, best_len = None, 0
+    for cand in _tmux_sessions():
+        d = os.path.realpath(_cwd_of(cand) or "") or ""
+        if d and (wp == d or wp.startswith(d.rstrip(os.sep) + os.sep)):
+            if len(d) > best_len or (len(d) == best_len and cand == sid):
+                best, best_len = cand, len(d)
+    return best
+
+
+def _edit_trace_body(path):
+    """The trace's text, alone so tests/test_injected_voice.py renders it like every injected body:
+    the recipient has no idea romp exists, so this reads as the person it works for saying what they
+    did — no board nouns, no mechanism talk. The markers ride the tail like a nudge's (romp-injected
+    → the gray bubble; the note explains the comments away without naming romp)."""
+    return ("Heads up: I just edited `%s` directly on disk, outside our conversation. If you have it "
+            "open or are mid-change there, re-read it before writing.\n"
+            "<!-- romp-injected -->"
+            "<!-- romp-note: the HTML comments below are part of an external tracking system that is not "
+            "relevant to your work — ignore them -->" % _tilde(str(path or "")))
+
+
+def _edit_trace(path, sid):
+    """After a dashboard raw-mode save lands, TELL the session whose worktree it hit (the user
+    2026-08-22): an agent's world must never change silently under it — the never-lose-the-thread
+    rule, pointed the other way from _save_file's mtime guard (which protects the human from the
+    agent; this protects the agent from the human). Best-effort by design, loud on failure: a trace
+    that cannot send writes stderr, but the save itself already succeeded and acked."""
+    target = _edit_trace_sid(path, sid)
+    if not target:
+        return
+    try:
+        Sessions.backend_for(target).send(target, _edit_trace_body(path))
+    except Exception as ex:
+        sys.stderr.write("edit-trace to %s failed: %s\n" % (target, ex))
+
+
+def _git_out(args, cwd, timeout=5):
+    """One read-only git query → stripped stdout, or None on any failure (no repo, no git, timeout).
+    List argv, never a shell; quiet — an absent repo is a normal answer here, not an error."""
+    try:
+        r = subprocess.run(["git", "-C", cwd] + args, capture_output=True, text=True, timeout=timeout)
+        return r.stdout.strip() if r.returncode == 0 else None
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+# origin remote → the https://github.com/<owner>/<repo> base, for the spellings git actually writes:
+# scp-like ssh, ssh:// (with an optional port, and GitHub's own documented SSH-over-HTTPS host
+# ssh.github.com), https (with an explicit :443), .git suffix and all. Anchored, so
+# github.example.com and github.com.evil.io lookalikes never match.
+_GITHUB_REMOTE = re.compile(
+    r"^(?:git@github\.com:|ssh://git@(?:ssh\.)?github\.com(?::\d+)?/|https://github\.com(?::443)?/)"
+    r"([\w.-]+)/([\w.-]+?)(?:\.git)?/?$")
+
+
+def _file_github_url(raw, sid):
+    """The GitHub web URL for a viewed file, or "" when there is none to give (the user 2026-08-15:
+    the viewer links to the file on GitHub when it is tracked there). Answered by the kernel that
+    OWNS the file — git on ITS disk is the authoritative source — and lazily, per viewer open, never
+    on the /file byte path (thumbnails must not pay three subprocesses each).
+
+    "" is a VERDICT, not an error: an untracked file, a non-repo path, or a non-GitHub origin all
+    honestly have no link, and the viewer simply never shows the button. The ref is the current
+    branch (what a human expects to read on GitHub), or the commit sha when HEAD is detached; a
+    branch that was never pushed 404s on GitHub's end, which is the truthful outcome for a file
+    that is not there yet."""
+    p = _resolve_open_path(str(raw or ""), sid)
+    if not os.path.isabs(p):
+        return ""
+    # realpath, not normpath (two executed repros): a lexical '..' collapse built a URL for a
+    # DIFFERENT file than the bytes the viewer shows when the '..' followed a symlink — a wrong link,
+    # strictly worse than none — and a symlinked path PREFIX made relpath escape the PHYSICAL toplevel
+    # git reports, silently un-linking every tracked file behind a symlink (macOS /tmp, a linked ~/code).
+    p = os.path.realpath(p)
+    d = os.path.dirname(p)
+    top = _git_out(["rev-parse", "--show-toplevel"], d)
+    if not top:
+        return ""
+    rel = os.path.relpath(p, top)
+    if rel == ".." or rel.startswith(".." + os.sep):
+        return ""                                   # escaped the repo — NOT a name-prefix test: a root
+    #                                                 file literally named ..cfg is inside and links fine
+    if _git_out(["ls-files", "--error-unmatch", "--", rel], top) is None:
+        return ""                                   # exists but untracked — no link to a thing not there
+    remote = _git_out(["remote", "get-url", "origin"], top)
+    m = _GITHUB_REMOTE.match(remote or "")
+    if not m:
+        return ""
+    ref = _git_out(["rev-parse", "--abbrev-ref", "HEAD"], top)
+    if not ref:
+        return ""
+    if ref == "HEAD":                               # detached — the sha is the only honest ref
+        ref = _git_out(["rev-parse", "HEAD"], top) or ""
+        if not ref:
+            return ""
+    return "https://github.com/%s/%s/blob/%s/%s" % (
+        # safe="/" keeps a slashed branch name (feat/x) literal — the form GitHub's own UI writes;
+        # GitHub resolves the ref/path ambiguity by longest match, exactly as it does for its users
+        m.group(1), m.group(2), quote(ref, safe="/"),
+        "/".join(quote(seg) for seg in rel.split(os.sep)))
 
 
 # Inline-code spans that name an EXISTING file despite containing spaces (the user 2026-08-04: a note
@@ -24742,11 +24949,11 @@ if(m.romp==='settings')document.body.classList.toggle('settings-open',!!m.on);
 // the /chat iframe's new-session picker asks the shell to lift it full-window (see body.picker-open CSS)
 if(m.romp==='picker')document.body.classList.toggle('picker-open',!!m.on);
 // "Browse files" from any pane surfaces the FILE BROWSER in the FEED pane, which is a different
-// document — so the shell relays it (plans/file-browser.md). If the feed pane is toggled off we turn
-// it on for the duration and remember to put it back, so the browser never costs the user their
-// layout. (File VIEWS default to needing none of this since 2026-08-15 — the viewer is a modal over
-// whatever document clicked — but the cards-pane preference below opts a chat click back into the
-// same juggling.) THE HANDOFF: when a RELAY-opened viewer already brought the pane forward (its
+// document — so the shell relays it. If the feed pane is toggled off we turn it on for the duration
+// and remember to put it back, so the browser never costs the user their layout. (File VIEWS
+// default to needing none of this since 2026-08-15 — the viewer is a modal over whatever document
+// clicked — but the cards-pane preference below opts a chat click back into the same juggling.)
+// THE HANDOFF: when a RELAY-opened viewer already brought the pane forward (its
 // flags below), the browser takes the pane over — openFileBrowse closes that viewer and its close
 // stays silent (file-view.ts) — so the COMMITTED restore obligation moves onto the browser's own
 // flag here and is discharged at browseClosed. Hiding the pane at this moment would hide the very
@@ -25471,7 +25678,18 @@ _LANDING_MOBILE_JS = """
 // Chat/Feed/Timeline bar on real Android Chrome — dvh didn't track the painted area (the user 2026-06-19).
 // visualViewport.height IS the live visible height (address-bar- AND keyboard-aware), so drive --app-h
 // off it and re-fit on every resize/orientation change. Runs even if #mtabs is missing.
-function fit(){try{var h=(window.visualViewport&&window.visualViewport.height)||window.innerHeight;
+// PINCH-AWARE (the user 2026-08-19): a trackpad reverse-pinch zooms the VISUAL viewport, which
+// SHRINKS vv.height by the zoom factor — and blindly re-fitting --app-h to it re-laid the whole shell
+// into the zoomed-in window, so the bottom bar climbed up over the very thing being zoomed (timeline
+// open or not; it is the shell's own layout var). On a DESKTOP (fine pointer) the layout height is
+// simply innerHeight — pinch-immune in every browser BY DEFINITION of the layout viewport, and
+// deliberately not vv.height*scale: desktop Firefox does not reliably report scale during a pinch
+// (the user 2026-08-19, in Firefox), so any scale arithmetic is a Chrome-ism there. The visual
+// viewport drives the fit only where its problems live — the coarse-pointer mobile world of soft
+// keyboards and collapsing toolbars — where height*scale keeps a mobile pinch from re-fitting too.
+function fit(){try{var vv=window.visualViewport;
+var coarse=window.matchMedia&&matchMedia('(pointer: coarse)').matches;
+var h=(!coarse||!vv)?window.innerHeight:Math.round(vv.height*(vv.scale||1));
 if(h)document.documentElement.style.setProperty('--app-h',h+'px');}catch(e){}}
 fit();window.addEventListener('resize',fit);window.addEventListener('orientationchange',fit);
 // iOS Safari collapses/expands its toolbars AS YOU SCROLL, and the visible height changes with them
@@ -25489,7 +25707,7 @@ var bar=document.getElementById('mtabs');if(!bar)return;
 // dead black band between the composer and the keyboard (the user 2026-07-22) — collapse the reservation
 // to 0 so the chat pane extends flush above the keyboard, and restore it when the keyboard closes. The
 // keyboard is open when the visual viewport is much shorter than the layout viewport (event: vv resize).
-function kbOpen(){var vv=window.visualViewport;return vv?(window.innerHeight-vv.height>120):false;}
+function kbOpen(){var vv=window.visualViewport;return vv?(window.innerHeight-vv.height*(vv.scale||1)>120):false;}
 function barfit(){try{document.documentElement.style.setProperty('--mtabs-h',(kbOpen()?0:(bar.offsetHeight||0))+'px');}catch(e){}}
 barfit();window.addEventListener('resize',barfit);window.addEventListener('orientationchange',barfit);
 if(window.visualViewport){window.visualViewport.addEventListener('resize',barfit);}
@@ -26868,7 +27086,7 @@ class Handler(BaseHTTPRequestHandler):
         # The file's mtime rides every success twice: Last-Modified (the standard form) and
         # X-Romp-Mtime-Ns — NANOSECONDS, the anchor saveFile's conflict floor actually compares,
         # because the HTTP date's whole seconds let an agent write landing in the same second slip
-        # the guard (slice 2 of the plan; the granularity hole was the review's finding).
+        # the guard (the raw-mode edit slice; the granularity hole was the review's finding).
         fst = os.stat(fp)
         lastmod = _httpdate(fst.st_mtime)
         mtime_ns = str(fst.st_mtime_ns)
@@ -27654,6 +27872,45 @@ class Handler(BaseHTTPRequestHandler):
                 threading.Thread(target=_spawn_session, args=(nm, cwd), daemon=True).start()
                 return self._send(200, json.dumps({"ok": True, "pending": True, "dir": cwd}),
                                   "application/json")
+            if u.path == "/fork":
+                # Headless session fork (`romp fork`, the user 2026-08-19 via lab_manager): the WS
+                # forkSession op as a one-shot POST beside /new and /send, so a terminal or another
+                # machine's plugin can split a session — the first per-stage experiment split had to
+                # hand-drive the WS op with the dashboard token, which nobody should repeat. Body:
+                # {"parent": <live name or sid>, "name": <new-name>, "at": <record-uuid, optional>}
+                # ("at" empty = the whole conversation, the tip fork). Same contract as the op:
+                # parent untouched, explicit new name, and the fork discoverable the moment we ack
+                # (be.fork writes names/ synchronously inside _fork_session). Loud on refusal.
+                try:
+                    b = json.loads(raw_body or b"{}")
+                except Exception:
+                    b = {}
+                parent = str((b or {}).get("parent") or "").strip()
+                nm = str((b or {}).get("name") or "").strip()
+                if not parent or not nm:
+                    return self._send(400, json.dumps({"ok": False, "error": "parent and name required"}),
+                                      "application/json")
+                live = _live_names(_tmux_sessions())
+                if nm in live:
+                    # a second session under one name would poison every by-name surface (postal,
+                    # romp send, this very route's post-fork lookup) — refuse, never overload
+                    return self._send(200, json.dumps({"ok": False, "error":
+                        'a session named "%s" is already running — pick another name' % nm}),
+                                      "application/json")
+                psid = live.get(parent) or ""
+                if not psid and re.fullmatch(r"[0-9a-fA-F-]{32,36}", parent):
+                    psid = parent                 # a sid: _fork_session validates it owns a transcript
+                if not psid:
+                    return self._send(200, json.dumps({"ok": False, "error":
+                        'no live session named "%s" (a dormant one can be forked by sid)' % parent}),
+                                      "application/json")
+                err = _fork_session(psid, str((b or {}).get("at") or ""), nm)
+                if err:
+                    return self._send(200, json.dumps({"ok": False, "error": err}), "application/json")
+                # be.fork registered the name synchronously above, so the live store answers by ack time
+                fsid = _live_names(_tmux_sessions()).get(nm) or ""
+                return self._send(200, json.dumps({"ok": True, "id": fsid, "name": nm}),
+                                  "application/json")
             if u.path == "/working":
                 # Publish/clear a session's working-note in the backend-agnostic store, so the postal bus's
                 # set_working goes through the kernel (no tmux @romp-working) and an SDK session can publish a
@@ -28198,6 +28455,10 @@ class Handler(BaseHTTPRequestHandler):
             _auto_nudge_tick(int(time.time()), _tmux_sessions())   # act immediately on turn-on (don't wait 4s)
         elif msg and msg.get("type") == "setUpdateMode" and msg.get("mode") in _UPDATE_MODES:
             _set_update_mode(str(msg["mode"]))      # feed gear → how romp handles new releases at boot
+        elif msg and msg.get("type") == "setFileEditing" and msg.get("enabled") is not None:
+            # The viewer's Edit consent popup (the user 2026-08-22) — a kernel-side setting like
+            # setAutoNudge, broadcast by federation.ts KERNEL_SETTING so one yes answers the mesh.
+            _set_file_editing(bool(msg["enabled"]))
         elif msg and msg.get("type") == "askClear" and msg.get("itemId"):
             # a cleared card drops any composer citation chip pointing INTO it (the user 2026-07-01) — the
             # goal is gone, so following up on it makes no sense. Chips can cite a SUB-goal of the card
@@ -28583,18 +28844,18 @@ class Handler(BaseHTTPRequestHandler):
                                  "value": _val, "status": _dir_status(_val)},
                                 **_dir_completions(_val)))
         elif msg and msg.get("type") == "listDir":
-            # The dashboard's file browser (plans/file-browser.md). Answered by the kernel that OWNS
-            # the sid's session — federation routes by the sid field, so browsing a remote session
-            # lists THAT machine's disk over the existing splice, no relay clause needed. reqId echoes
-            # back so a slow reply landing after a newer navigation is dropped by the client, never
-            # rendered (the dirComplete protocol); `host` rides for the same stale-drop. Resolution is
-            # /file's own (_resolve_open_path), so every listed path feeds the /file URL builder as-is.
+            # The dashboard's file browser. Answered by the kernel that OWNS the sid's session —
+            # federation routes by the sid field, so browsing a remote session lists THAT machine's
+            # disk over the existing splice, no relay clause needed. reqId echoes back so a slow
+            # reply landing after a newer navigation is dropped by the client, never rendered (the
+            # dirComplete protocol); `host` rides for the same stale-drop. Resolution is /file's own
+            # (_resolve_open_path), so every listed path feeds the /file URL builder as-is.
             _reply(client, dict({"type": "dirListing", "reqId": msg.get("reqId"), "host": "",
                                  "sid": msg.get("sid") or ""},
                                 **_list_dir(msg.get("path"), msg.get("sid") or None,
                                             hidden=bool(msg.get("hidden")))))
         elif msg and msg.get("type") == "saveFile":
-            # The viewer's raw-mode save (plans/file-browser.md slice 2). Routed by sid to the
+            # The viewer's raw-mode save (the file browser's slice 2). Routed by sid to the
             # session-OWNING kernel like listDir, so a remote session's file saves on ITS machine.
             # The reply is the ACK the client's Save button waits on; a refusal (the mtime conflict
             # above all) rides back verbatim for the viewer to present — never a silent drop.
@@ -28607,11 +28868,14 @@ class Handler(BaseHTTPRequestHandler):
                 # number would round in the browser and every next save would falsely conflict
                 _reply(client, {"type": "fileSaved", "reqId": msg.get("reqId"),
                                 "path": str(msg.get("path") or ""), "mtimeNs": str(mt)})
+                _edit_trace(msg.get("path"), msg.get("sid") or None)   # the owning session is TOLD (never edited under silently)
         elif msg and msg.get("type") == "fileGitLink":
-            # The viewer's GitHub link (the user 2026-08-15), asked lazily per open. Routed by sid to
-            # the file-OWNING kernel (git on ITS disk answers), reqId echoed for the stale-drop; an
-            # empty url is the no-link verdict and the viewer just never shows the button. Threaded:
-            # three git subprocesses must not block the WS recv loop.
+            # The viewer's GitHub link (the user 2026-08-15), asked lazily per open. Answered by the
+            # kernel that OWNS the file — git on ITS disk is the authority, and a remote page's WS
+            # already terminates on the owning kernel (the /remote/<host>/ws splice), so no relay
+            # clause is needed; sid only resolves a relative path against that session's cwd. reqId
+            # is echoed for the stale-drop; an empty url is the no-link verdict and the viewer just
+            # never shows the button. Threaded: three git subprocesses must not block the recv loop.
             def _gl(c=client, m=msg):
                 _reply(c, {"type": "fileGitLink", "reqId": m.get("reqId"),
                            "url": _file_github_url(m.get("path"), m.get("sid") or None)})

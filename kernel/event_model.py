@@ -439,10 +439,11 @@ _JSONL_CACHE_MAX = 256            # bounds MEMORY only — past the cap, evict t
                                   # background burn (recurred 2026-08-15, kernel pinned at ~30-60% CPU; the survival
                                   # guarantee is pinned by tests/test_kernel_jsonl_cache.py).
 _JSONL_TAIL_GUARD = 64            # bytes of pre-offset content re-verified before an incremental read
-_JSONL_CACHE_LOCK = threading.Lock()   # the cache has cross-thread callers (judge courier workers, the SDK
-                                       # loop) and HITS mutate (LRU reinsert): the lock covers only the cheap
-                                       # dict ops — the parse runs outside it — and pops stay guarded so a
-                                       # lost race degrades to a re-parse, never a raise
+_JSONL_CACHE_LOCK = threading.Lock()   # the cache has cross-thread callers (the judge tiers' worker pools,
+                                       # the pusher, the warm threads) and HITS mutate (LRU reinsert): the
+                                       # lock covers only the cheap dict ops — the parse runs outside it —
+                                       # and pops stay guarded so a lost race degrades to a re-parse, never
+                                       # a raise
 
 
 def _scan_jsonl_bytes(data, base_offset):

@@ -945,6 +945,12 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
 /* a card sub-goal is clickable just like the modal tree node (the user 2026-06-17): the checkbox + text are
    separate links. Per-ZONE hover highlight (.lz-hl, JS-toggled) — a halo on the mark, a fill on the text. */
 .fcheck .lz-nav { cursor: pointer; }
+/* the REVIEWED-EARLIER fold row (the user 2026-08-19): sub-goals already reviewed before the follow-up
+   collapse behind this one dimmer row; whole-row click toggles (state in cardTreeExpanded) */
+.fcheck.freviewed { opacity: 0.6; cursor: pointer; }
+.fcheck.freviewed:hover { opacity: 0.85; }
+/* the STALE-takeaway note above a completed card's summary: the user followed up after reading it */
+.fsum-stale { font-style: italic; opacity: 0.62; font-size: 0.92em; margin-bottom: 3px; }
 .fcheck-text.lz-hl { background: rgba(255, 255, 255, 0.12); border-radius: 3px; box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.12); }
 .fcheck-mark.lz-hl { box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.16); }
 /* standalone-completion modal: same tree vocabulary as ask cards; pending
@@ -1288,7 +1294,7 @@ body.fileview-open { overflow: hidden; }
 .fitem.ask .fask-bellbtn:hover { opacity: 1; background: rgba(255, 255, 255, 0.10); }
 .fask-bellbtn.on { visibility: visible; opacity: 0.85; color: var(--accent); }
 
-/* ── the file BROWSER (plans/file-browser.md) ── the viewer's sibling overlay, one z layer BENEATH it
+/* ── the file BROWSER (file-browse.ts) ── the viewer's sibling overlay, one z layer BENEATH it
    so a file opened from a listing overlays the listing and closing the file returns to it. Same
    pane-takeover reasoning as .fileview; body.filebrowse-open stops the cards scrolling behind it. */
 .filebrowse { position: fixed; inset: 0; z-index: 890; display: flex; flex-direction: column;
@@ -1328,12 +1334,16 @@ body.filebrowse-open { overflow: hidden; }
 #fb-ctx { z-index: 950; }
 /* the way above a "~"-rooted trail: the kernel-sent parent, worn as a dim leading crumb */
 .fb-crumb-up { opacity: 0.65; }
-/* the raw-mode editor (slice 2): a plain textarea wearing the code view's own metrics — an editor
-   component is a different project; a textarea that keeps your changes beats a half-editor.
+/* the raw-mode editor: a plain textarea wearing the code view's own metrics — an editor component
+   is a different project; a textarea that keeps your changes beats a half-editor.
    height: 100% (not flex): .fileview-body is a plain overflow block, not a flex container, so a
    flex basis on its child is inert — the textarea sat at the UA's default rows (the user 2026-08-17,
    whose edit window was a few lines tall). The percentage resolves because the body's own height is
    fixed by the pane's flex layout. */
+/* the CodeMirror host (the user 2026-08-22): the chunk styles the editor itself; the host just
+   fills the body the way the fallback textarea does */
+.fileview-cm { height: 100%; width: 100%; box-sizing: border-box; overflow: hidden; }
+.fileview-cm .cm-editor { height: 100%; }
 .fileview-editor { display: block; height: 100%; width: 100%; box-sizing: border-box;
   margin: 0; padding: 10px 12px; border: none; outline: none; resize: none;
   background: var(--bg, #1e1e1e); color: var(--fg);
@@ -1384,8 +1394,15 @@ mark.fv-hl:hover { background: color-mix(in srgb, var(--cmt-hl) 58%, transparent
 .judge-limit-banner .jl-switch:hover { background: #3c3c3c; }
 .judge-limit-banner .jl-switch:disabled { opacity: 0.6; cursor: default; }
 
-/* the Stack toggle while the narrow container query FORCES stacking (2026-08-19): faded and inert —
-   unclicking it would change nothing at this width, and the tooltip names the way out (more width).
-   pointer-events stays on so the tooltip still shows on hover; the click handler no-ops instead. */
-#feed-stacked.forced { opacity: 0.4; cursor: default; }
-#feed-stacked.forced:hover { color: inherit; background: inherit; }
+/* the Stack toggle while the narrow container query FORCES stacking (2026-08-19): stacking IS on,
+   so the button keeps the pressed accent — grayed by opacity, never stripped of its on-state (the
+   user 2026-08-19, who wanted it grayed but still blue). Hover stays responsive (a gentle brighten,
+   not the action-blue that promises a click); the tooltip names the way out. The selector MUST tie
+   the .on rule's (1,2,0) specificity and sit LATER in this file: the first two cuts keyed the
+   rule on the button id alone at (1,1,0), so `.on { opacity: 1 }` silently won the cascade and the
+   fade never painted while the button was pressed — which forced stacking always implies (the user's
+   third report, 2026-08-19). */
+#feed-foot .feed-modetoggle.forced { opacity: 0.5; cursor: default;
+  color: var(--accent); border-color: var(--accent); }
+#feed-foot .feed-modetoggle.forced:hover { opacity: 0.75;
+  background: rgba(156, 210, 255, 0.12); }   /* keep the pressed wash — never the action hover's promise */

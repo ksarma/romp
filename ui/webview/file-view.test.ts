@@ -5,9 +5,9 @@
 // opener was macOS-only (the user 2026-08-08). The bytes have to reach the browser, so the click routes
 // to a viewer fed by the same /file route the image previews use — now in the SAME document as the
 // click, so the chat needs no shell relay. The FEED still hosts the viewer too: the file BROWSER
-// (file-browse.ts, a fork feature) opens files through the same module in its own document, which is
-// why the feed sheet mirrors the viewer CSS instead of dropping it. Source pins (no jsdom for these
-// modules) + executed replicas of the pure helpers.
+// (file-browse.ts) opens files through the same module in its own document, which is why the feed
+// sheet mirrors the viewer CSS instead of dropping it. Source pins (no jsdom for these modules) +
+// executed replicas of the pure helpers.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -89,7 +89,7 @@ test("the shell relays viewFile again — the click site gates it; the pane jugg
   assert.match(VIEW, /viaRelay = true;/);
   assert.match(VIEW, /if \(viaRelay\) \{/);
   assert.match(VIEW, /window\.parent\.postMessage\(\{ romp: "viewFileClosed" \}, "\*"\);/);
-  // the file BROWSER's relay (plans/file-browser.md, fork-only) keeps its own door: its own was-off
+  // the file BROWSER's relay (plans/file-browser.md) keeps its own door: its own was-off
   // flag, its own browseClosed restore
   assert.match(KERNEL, /if\(m\.romp==='browseFiles'\)\{var bf=document\.getElementById\('f-feed'\);/);
   assert.match(KERNEL, /window\.__rompFeedWasOff=true;/);
@@ -239,15 +239,15 @@ test("the viewer is a singleton MODAL over its pane: ~95% card, dimmed backdrop,
   assert.match(FEED_CSS, /#romp-fileview \{ position: fixed; inset: 0;/);
   assert.match(FEED_CSS, /\.fileview \{ width: 95%; height: 95%;/);
   assert.match(FEED, /initFileView\(\(m\) => vscodeApi\?\.postMessage\(m\)\);/,
-    "the feed boots the listener with the WS poster (saves ride it — slice 2)");
+    "the feed boots the listener with the WS poster (saves ride it — the raw-mode slice)");
 });
 
 test("the FEED-hosted viewer registers no comment sink, so the review layer gates itself off", () => {
   // the review layer's Submit drafts into the CHAT composer via a sink render.ts registers; the feed
-  // boots initFileView without one, so every comment affordance must gate on the sink or Submit is a
-  // dead button in that document (2026-08-19) — the hidden-affordance idiom the GitHub anchor uses
+  // hosts the same viewer without one, so every comment affordance must gate on the sink or Submit is
+  // a dead button in that document (2026-08-19) — no real target, no affordance
   assert.doesNotMatch(FEED, /setCommentSink/, "no composer in the feed to draft into");
-  assert.match(RENDER, /setCommentSink\(\(text\) => \{/, "the chat bundle keeps the full behavior");
+  assert.match(RENDER, /setCommentSink\(\(sid, text\) => \{/, "the chat bundle keeps the full behavior");
   assert.match(VIEW, /if \(!commentSink\) return;/, "the gate exists in the viewer itself");
 });
 
@@ -420,7 +420,7 @@ test("the Wrap toggle persists, hides with rendered prose, and its numbers still
     assert.match(SHEET, /\.fileview-wrap \.fv-cl::before \{[\s\S]*?user-select: none/);
   }
   // wrap governs the pre view only — rendered prose always wraps — so the button leaves with it
-  // (and with edit mode, whose textarea has no wrap toggle to govern — slice 2)
+  // (and with edit mode, whose textarea has no wrap toggle to govern — the raw-mode slice)
   assert.match(VIEW, /wrapBtn\.hidden = rendered \|\| editing;/);
   assert.match(VIEW, /wrapBtn\.classList\.toggle\("on", fmt\.wrap\);/, "pressed state flips synchronously");
 });
@@ -473,6 +473,21 @@ test("a refusal renders the kernel's words PLUS the way out — gated on offersD
   assert.match(VIEW, /offer\.addEventListener\("click", \(\) => startDownload\(dlUrl, offer\)\);/);
   assert.match(FEED_CSS, /\.fileview-err-dl \{ display: block; margin-top: 10px; \}/);
   assert.match(CHAT_CSS, /\.fileview-err-dl \{ display: block; margin-top: 10px; \}/);
+});
+
+test("Edit is consent-gated, and the gate is the KERNEL's flag, not the button (the user 2026-08-22)", () => {
+  // the click asks the kernel's live flag first — never a cached copy, another machine may have flipped it
+  assert.match(VIEW, /fetch\(kernelUrl\("\/version"\), \{ cache: "no-store" \}\)/);
+  assert.match(VIEW, /\.fileEditing;/);
+  // no flag → a plain-words popup; only a YES posts the opt-in, and it broadcasts (KERNEL_SETTING)
+  assert.match(VIEW, /window\.confirm\(\s*\n?\s*"Allow editing files from the dashboard\?/);
+  assert.match(VIEW, /post\(\{ type: "setFileEditing", enabled: true \}\);/);
+  // the popup's promise of a gear off-switch is real, and the save route refuses server-side
+  const GEAR = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "gear.js"), "utf8");
+  assert.ok(GEAR.includes("'setFileEditing'"), "the gear can turn it back off");
+  const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
+  assert.match(KERNEL, /if not _file_editing_on\(\):/);
+  assert.match(KERNEL, /dashboard file editing is off on this machine/);
 });
 
 // executed: the gutter is a SIBLING of the code, so selecting the code copies it without line numbers

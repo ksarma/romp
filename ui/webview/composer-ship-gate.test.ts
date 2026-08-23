@@ -26,14 +26,43 @@ test("a send with ships in flight is gated by the confirm: send-without is expli
 });
 
 test("the held send fires on the LAST ack — event-based — and a nack cancels it loudly", () => {
-  assert.match(RENDER, /if \(owner && sendOnShip\.has\(owner\) && !\(pendingShips\.get\(owner\) \|\| \[\]\)\.length\) \{/,
-    "the deciding event is the last pending ship retiring");
+  assert.match(RENDER, /if \(owner && \(sendOnShip\.has\(owner\) \|\| gateOpen\) && !\(pendingShips\.get\(owner\) \|\| \[\]\)\.length\) \{/,
+    "the deciding event is the last pending ship retiring — for a held send AND an open gate dialog");
   assert.match(RENDER, /if \(owner === activeId\) fireHeldSend\(\);/);
   assert.match(RENDER, /the held message was not sent; review it there/,
     "a mid-hold tab switch surfaces instead of sending a background composer");
   assert.match(RENDER, /const held = !!owner && sendOnShip\.delete\(owner\);/,
     "a failed save cancels the hold — it must not fire without the file it waited for");
-  assert.match(RENDER, /\+ \(held \? " Your message was NOT sent\." : ""\)/);
+  assert.match(RENDER, /\+ \(held \|\| gateWasOpen \? " Your message was NOT sent\." : ""\)/);
+});
+
+test("the OPEN gate dialog resolves itself on the last ack: closes and sends, no click needed", () => {
+  // the user 2026-08-19: pressing Enter mid-upload popped the dialog, the upload finished, and the
+  // dialog just sat there. The upload finishing IS the answer to the question the dialog asks.
+  assert.match(RENDER, /let shipGateSid: string \| null = null;/);
+  assert.match(RENDER, /shipGateSid = sid;\s*\/\/ the last-ship ack resolves the open dialog itself/);
+  assert.match(RENDER, /const gateOpen = shipGateSid === owner;/);
+  assert.match(RENDER, /if \(gateOpen\) \{ shipGateSid = null; closeConfirm\(null\); \}/,
+    "the dialog dismisses itself the moment the last ship lands, then the send fires");
+  assert.match(RENDER, /shipGateSid = null;\n\s*if \(v === "now"\)/,
+    "any button (or cancel) un-registers the gate — the ack path can never resolve a closed dialog");
+  // a FAILED save also moots the dialog — it closes, but never auto-sends without the file
+  assert.match(RENDER, /const gateWasOpen = shipGateSid === owner;/);
+  assert.match(RENDER, /if \(gateWasOpen\) \{ shipGateSid = null; closeConfirm\(null\); \}/);
+});
+
+test("a held send LOOKS staged: the files strip wears the staged head with a live count and a Cancel", () => {
+  // the user 2026-08-22: after "Wait for the upload" the only cue was the dimmed send button, which
+  // read as nothing happening. The head rides renderComposerFiles — the renderer that already runs
+  // on the wait click, every ack, and every tab switch, so the line tracks exactly those events.
+  assert.match(RENDER, /if \(id && sendOnShip\.has\(id\)\) \{\s*\n\s*const head = el\("div", "staged-head held-head"\);/);
+  assert.match(RENDER, /"staged — sends when the upload finishes"/);
+  assert.match(RENDER, /pending\.length > 1 \? " \(" \+ pending\.length \+ " still uploading\)" : ""/,
+    "the live count rides each ack's re-render");
+  assert.match(RENDER, /cancel\.addEventListener\("click", \(\) => \{ sendOnShip\.delete\(id\); renderComposerFiles\(id\); \}\);/,
+    "Cancel un-holds — message and attachments stay, nothing sends");
+  const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "styles.css"), "utf8");
+  assert.match(CSS, /\.held-head \{ flex: 1 1 100%; \}/, "full-width: it owns the strip's top line");
 });
 
 test("any successful send supersedes a hold, so a spent hold can never double-send", () => {

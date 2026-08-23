@@ -3191,7 +3191,16 @@ class SdkBackend:
                     if r.get("effortPending") or r.get("modelPending"):
                         self._update_reg(sid, effortPending=False, modelPending=False)
                     queued = _queue_texts(r.get("queue"))
-                    cut = last_state_value(self.state_dir, sid) == "working"
+                    # A cut turn is any MACHINE-ACTIVE last state, not just "working" (the user
+                    # 2026-08-19, whose figure session sat blocked-on-you after every restart that
+                    # landed mid-API-retry): "retrying" is a long-lived open-turn state — the CLI is
+                    # mid-turn waiting out an API error — and "compacting" likewise. A restart
+                    # during either cut the turn exactly as a working cut does, but the == "working"
+                    # test skipped the machineCut stamp AND the resume nudge, so the bare stop
+                    # record read as the user's Esc (INTERRUPT_BLOCK_WHY) and nothing ever resumed
+                    # the session. "permission"/"picker" stay excluded: those turns were already
+                    # waiting on the user, so blocked-on-you is the truth there.
+                    cut = last_state_value(self.state_dir, sid) in ("working", "retrying", "compacting")
                     # bg tasks the dead kernel's CLI took with it (the reg mirror, _on_task_event):
                     # the session must HEAR about them or it waits forever on a dead timer/watcher.
                     dead_tasks = [t for t in (r.get("bgTasks") or []) if isinstance(t, dict)]
@@ -3278,8 +3287,9 @@ class SdkBackend:
             the next parse re-checks once the operation settles. Mid-turn arrivals SURVIVE the parse
             (a turn's records clear only the entries whose text they carry — see
             _undelivered_wake_tail) and drive once the turn settles;
-          * an ENDED session (reg alive=False) never revives for housekeeping, and a CUT turn (state
-            tail 'working') belongs to the boot/crash resume machinery;
+          * an ENDED session (reg alive=False) never revives for housekeeping, and a CUT turn (any
+            machine-active state tail — 'working'/'retrying'/'compacting', boot reconcile's own cut
+            discriminator) belongs to the boot/crash resume machinery;
           * a recorded launchError stands down (the usage-limit queue hold owns that session until a
             connect proves the CLI up again);
           * ONE DRIVE PER WATERMARK: the newest driven wrapper's (path, pos, ts) — the tick marks
@@ -3336,8 +3346,11 @@ class SdkBackend:
                         continue                   # the user ended this session — never revive it for housekeeping
                     if reg.get("launchError"):
                         continue                   # can't even start (usage limit etc.) — that hold owns it
-                    if last_state_value(self.state_dir, sid) == "working":
-                        continue                   # a CUT turn — the boot/crash resume machinery's recovery
+                    if last_state_value(self.state_dir, sid) in ("working", "retrying", "compacting"):
+                        continue                   # a CUT turn — any MACHINE-ACTIVE last state, the same
+                    #                                discriminator boot reconcile uses (a restart mid-retry or
+                    #                                mid-compact cuts the turn exactly as a working cut does) —
+                    #                                is the boot/crash resume machinery's recovery, not the drive's
                 texts = [e["text"] for e in c["entries"]
                          if e.get("wrapper") and e.get("text")
                          and (prev[0] != path or e["pos"] > prev[1] or e["ts"] > prev[2])]
