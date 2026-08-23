@@ -147,6 +147,9 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
             # applies — it must read as the agent's own notes, never a tracking system's; naming
             # withdraw_user_todo is correct (the agent holds that tool)
             "user-todo context block": km._user_todo_context_block(SID),
+            # the dashboard-edit trace (the user 2026-08-22): the file viewer saved over a file in this
+            # session's tree, and the session is told in the person's voice — never edited under silently
+            "edit trace": km._edit_trace_body("/TESTDIR/notes-api/README.md"),
         }
         # every repeat-nudge variant wears the same voice as the first fire (the user 2026-08-11): the
         # rotation exists so a re-ask doesn't read canned, so a variant that broke the voice rule would
@@ -199,10 +202,12 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
             # a user-todo answer is the user's own reply to a need the agent flagged — same class;
             # the user-todo context block is the agent's OWN notes handed back after context loss —
             # a memory aid with a withdraw invitation, not a status ask
+            # …and the edit trace is an FYI about something the user already DID (a file changed under
+            # the session) — telling, not asking; a status question bolted on would be noise
             if name in ("clear wrap-up", "clear wrap-up (batch)", "typed follow-up on a summary",
                         "debt reminder (question)", "debt reminder (handoff)",
                         "debt reminder (several)", "comment thread opener", "user-todo answer",
-                        "user-todo context block"):
+                        "user-todo context block", "edit trace"):
                 continue
             text = prose(body).lower()
             with self.subTest(message=name):

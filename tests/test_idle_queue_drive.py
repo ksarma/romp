@@ -506,6 +506,23 @@ class DriveDelivery(unittest.TestCase):
             self.be.drive_idle_queue([self._cand()], wait=True)
         self.assertEqual(ensured, [], "a cut turn is the boot/crash resume machinery's recovery")
 
+    def test_a_turn_cut_mid_retry_stands_down(self):
+        # 'retrying' is a machine-active open-turn state (the CLI mid-turn, waiting out an API
+        # error): a restart there cuts the turn exactly as a working cut does, and boot reconcile's
+        # widened cut discriminator claims it — the drive must yield, not deliver into the resume.
+        sb.append_state(self.state, SID, "retrying")
+        ensured = []
+        with mock.patch.object(self.be, "_ensure", lambda sid, **kw: ensured.append(sid)):
+            self.be.drive_idle_queue([self._cand()], wait=True)
+        self.assertEqual(ensured, [], "a mid-retry cut is boot reconcile's recovery, not the drive's")
+
+    def test_a_turn_cut_mid_compact_stands_down(self):
+        sb.append_state(self.state, SID, "compacting")   # machine-active, same as retrying
+        ensured = []
+        with mock.patch.object(self.be, "_ensure", lambda sid, **kw: ensured.append(sid)):
+            self.be.drive_idle_queue([self._cand()], wait=True)
+        self.assertEqual(ensured, [], "a mid-compact cut is boot reconcile's recovery, not the drive's")
+
     def test_one_drive_per_watermark(self):
         s = self._live()
         self.be.drive_idle_queue([self._cand()], wait=True)

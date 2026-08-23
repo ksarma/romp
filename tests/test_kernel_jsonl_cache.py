@@ -100,13 +100,15 @@ class JsonlCacheEviction(unittest.TestCase):
 
 class JsonlCacheThreadSafety(unittest.TestCase):
     """The LRU made cache HITS mutate (pop + reinsert) and evictions iterate, while the
-    cache now has cross-thread callers (judge courier workers via chain_membership, the
-    SDK loop's rewind_resolved callback) alongside the pusher's parse. One thread's
-    eviction can pop the entry another just matched — KeyError from an unconditional
-    pop, RuntimeError from next(iter()) over a dict resizing under it — and the callers
-    catch-and-degrade: _rewound_away fails OPEN and mints a goal on a rewound-away
-    branch. So the cache must never raise cross-thread, and a lost race must degrade to
-    a re-parse, never to wrong records."""
+    cache has cross-thread callers: the index and triage judge tiers run as parallel
+    threads each producer pass, each parsing via worker pools, alongside the pusher's
+    per-cycle parse and the parse-warm/boot-warm threads. One thread's eviction can pop
+    the entry another just matched — KeyError from an unconditional pop, RuntimeError
+    from next(iter()) over a dict resizing under it — and the callers catch-and-degrade
+    (the tier runner's per-session futures swallow + log), so the raise surfaces as
+    silently missing judge output for that pass, not a crash. So the cache must never
+    raise cross-thread, and a lost race must degrade to a re-parse, never to wrong
+    records."""
 
     def setUp(self):
         self.dir = tempfile.mkdtemp(prefix="jsonl-cache-mt-")
@@ -134,7 +136,7 @@ class JsonlCacheThreadSafety(unittest.TestCase):
         def hammer(k):
             # Half the threads hammer two SHARED hot files (the mutating hit path), half
             # rotate cold ones (constant eviction of exactly those entries) — the collision
-            # the courier workers + pusher produce over a live transcript set.
+            # the judge tier workers + pusher produce over a live transcript set.
             i = 0
             try:
                 while time.monotonic() < stop and not errors:

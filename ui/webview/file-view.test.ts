@@ -5,9 +5,9 @@
 // opener was macOS-only (the user 2026-08-08). The bytes have to reach the browser, so the click routes
 // to a viewer fed by the same /file route the image previews use — now in the SAME document as the
 // click, so the chat needs no shell relay. The FEED still hosts the viewer too: the file BROWSER
-// (file-browse.ts, a fork feature) opens files through the same module in its own document, which is
-// why the feed sheet mirrors the viewer CSS instead of dropping it. Source pins (no jsdom for these
-// modules) + executed replicas of the pure helpers.
+// (file-browse.ts) opens files through the same module in its own document, which is why the feed
+// sheet mirrors the viewer CSS instead of dropping it. Source pins (no jsdom for these modules) +
+// executed replicas of the pure helpers.
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -89,7 +89,7 @@ test("the shell relays viewFile again — the click site gates it; the pane jugg
   assert.match(VIEW, /viaRelay = true;/);
   assert.match(VIEW, /if \(viaRelay\) \{/);
   assert.match(VIEW, /window\.parent\.postMessage\(\{ romp: "viewFileClosed" \}, "\*"\);/);
-  // the file BROWSER's relay (plans/file-browser.md, fork-only) keeps its own door: its own was-off
+  // the file BROWSER's relay (plans/file-browser.md) keeps its own door: its own was-off
   // flag, its own browseClosed restore
   assert.match(KERNEL, /if\(m\.romp==='browseFiles'\)\{var bf=document\.getElementById\('f-feed'\);/);
   assert.match(KERNEL, /window\.__rompFeedWasOff=true;/);
@@ -239,15 +239,15 @@ test("the viewer is a singleton MODAL over its pane: ~95% card, dimmed backdrop,
   assert.match(FEED_CSS, /#romp-fileview \{ position: fixed; inset: 0;/);
   assert.match(FEED_CSS, /\.fileview \{ width: 95%; height: 95%;/);
   assert.match(FEED, /initFileView\(\(m\) => vscodeApi\?\.postMessage\(m\)\);/,
-    "the feed boots the listener with the WS poster (saves ride it — slice 2)");
+    "the feed boots the listener with the WS poster (saves ride it — the raw-mode slice)");
 });
 
 test("the FEED-hosted viewer registers no comment sink, so the review layer gates itself off", () => {
   // the review layer's Submit drafts into the CHAT composer via a sink render.ts registers; the feed
-  // boots initFileView without one, so every comment affordance must gate on the sink or Submit is a
-  // dead button in that document (2026-08-19) — the hidden-affordance idiom the GitHub anchor uses
+  // hosts the same viewer without one, so every comment affordance must gate on the sink or Submit is
+  // a dead button in that document (2026-08-19) — no real target, no affordance
   assert.doesNotMatch(FEED, /setCommentSink/, "no composer in the feed to draft into");
-  assert.match(RENDER, /setCommentSink\(\(text\) => \{/, "the chat bundle keeps the full behavior");
+  assert.match(RENDER, /setCommentSink\(\(sid, text\) => \{/, "the chat bundle keeps the full behavior");
   assert.match(VIEW, /if \(!commentSink\) return;/, "the gate exists in the viewer itself");
 });
 
@@ -420,7 +420,7 @@ test("the Wrap toggle persists, hides with rendered prose, and its numbers still
     assert.match(SHEET, /\.fileview-wrap \.fv-cl::before \{[\s\S]*?user-select: none/);
   }
   // wrap governs the pre view only — rendered prose always wraps — so the button leaves with it
-  // (and with edit mode, whose textarea has no wrap toggle to govern — slice 2)
+  // (and with edit mode, whose textarea has no wrap toggle to govern — the raw-mode slice)
   assert.match(VIEW, /wrapBtn\.hidden = rendered \|\| editing;/);
   assert.match(VIEW, /wrapBtn\.classList\.toggle\("on", fmt\.wrap\);/, "pressed state flips synchronously");
 });
@@ -473,6 +473,110 @@ test("a refusal renders the kernel's words PLUS the way out — gated on offersD
   assert.match(VIEW, /offer\.addEventListener\("click", \(\) => startDownload\(dlUrl, offer\)\);/);
   assert.match(FEED_CSS, /\.fileview-err-dl \{ display: block; margin-top: 10px; \}/);
   assert.match(CHAT_CSS, /\.fileview-err-dl \{ display: block; margin-top: 10px; \}/);
+});
+
+test("Edit is consent-gated, and the gate is the KERNEL's flag, not the button (the user 2026-08-22)", () => {
+  // the click asks the kernel's live flag first — never a cached copy, another machine may have flipped it
+  assert.match(VIEW, /fetch\(kernelUrl\("\/version"\), \{ cache: "no-store" \}\)/);
+  assert.match(VIEW, /\.fileEditing;/);
+  // no flag → a plain-words popup; only a YES posts the opt-in, and it broadcasts (KERNEL_SETTING)
+  assert.match(VIEW, /window\.confirm\(\s*\n?\s*"Allow editing files from the dashboard\?/);
+  assert.match(VIEW, /post\(\{ type: "setFileEditing", enabled: true \}\);/);
+  // the popup's promise of a gear off-switch is real, and the save route refuses server-side
+  const GEAR = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "gear.js"), "utf8");
+  assert.ok(GEAR.includes("'setFileEditing'"), "the gear can turn it back off");
+  const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
+  assert.match(KERNEL, /if not _file_editing_on\(\):/);
+  assert.match(KERNEL, /dashboard file editing is off on this machine/);
+});
+
+// executed: the Escape handler's LIFECYCLE. Each open registers its own document-level onKey
+// closure; the REPLACE path (the conflict-Reload re-open) used to leave the old viewer's handler
+// registered, and with a new viewer up its `!getElementById` guard no longer no-ops — the stale
+// closure (editing still true from before the replace) ran exitEdit against the NEW viewer's
+// world and nulled the module-level editHooks an in-flight save was waiting on, so the fileSaved
+// ack matched nothing and Save wedged at "Saving…" (Reload → re-edit → Escape mid-save). The
+// model replays that journey against both lifecycles.
+test("replace-open drops the previous viewer's Escape handler — a stale closure cannot null a new save's hooks", () => {
+  const sim = (dropOnReplace: boolean) => {
+    const listeners: Array<() => void> = [];
+    let editHooks: { reqId: number } | null = null;     // module-level, as in the source
+    let live: (() => void) | null = null;
+    const dropOnKey = () => {
+      if (live) { const i = listeners.indexOf(live); if (i >= 0) listeners.splice(i, 1); live = null; }
+    };
+    const open = () => {
+      if (dropOnReplace) dropOnKey();                   // the fix: the replace path unregisters
+      editHooks = null;                                 // the replace path's existing module drops
+      const v = { editing: false, dirty: false };
+      const exitEdit = () => { v.editing = false; editHooks = null; };  // source: exitEdit nulls the hooks
+      const onKey = () => {                             // Escape peels edit mode behind confirmDiscard
+        if (v.editing && !v.dirty) exitEdit();          // !dirty short-circuits the confirm — no user gate
+      };
+      listeners.push(onKey); live = onKey;
+      return v;
+    };
+    const a = open();
+    a.editing = true; a.dirty = true;                   // mid-edit when the agent's write conflicts
+    a.dirty = false;                                    // Reload's confirmed discard clears it pre-replace
+    const b = open();                                   // the replace-open (openFileView over viewer A)
+    b.editing = true; b.dirty = true;                   // re-edit…
+    editHooks = { reqId: 7 };                           // …Save in flight ("Saving…")
+    for (const fn of [...listeners]) fn();              // Escape mid-save; the user keeps B's edits
+    return { ackLands: editHooks !== null, liveHandlers: listeners.length };
+  };
+  assert.equal(sim(false).ackLands, false,
+    "pre-fix lifecycle: A's stale closure nulls the hooks and B's ack is dropped — the wedge");
+  const fixed = sim(true);
+  assert.equal(fixed.ackLands, true, "with the replace-path drop only the live viewer's handler runs");
+  assert.equal(fixed.liveHandlers, 1, "one viewer, one document-level handler");
+  // replica ↔ source: ONE live handler tracked at module level, dropped by BOTH exits after their
+  // dirty guards — closeFileView and the replace path — and re-pointed at each open's own closure
+  assert.match(VIEW, /let onKeyLive: \(\(e: KeyboardEvent\) => void\) \| null = null;/);
+  const closeFn = VIEW.split("export function closeFileView")[1].split("/** Show `path`")[0];
+  assert.match(closeFn, /dropOnKey\(\);/, "closeFileView unregisters the handler it would strand");
+  const openFn = VIEW.split("export function openFileView")[1].split("function offersDownload")[0];
+  assert.ok(openFn.indexOf("dropOnKey();") > openFn.indexOf("closeGuard && !closeGuard()) return false;"),
+    "the drop sits AFTER the dirty-guard veto — a kept viewer keeps its handler");
+  assert.ok(openFn.indexOf("dropOnKey();") < openFn.indexOf('document.getElementById("romp-fileview")?.remove();'),
+    "…and with the replace path's other module-level drops, before the old viewer is torn down");
+  assert.match(openFn, /document\.addEventListener\("keydown", onKey\);\s*\n\s*onKeyLive = onKey;/);
+});
+
+// executed: the consent gate is enforced by the file-OWNING kernel, but the Edit click's /version
+// read sees only the LOCAL flag — a mesh kernel attached AFTER the one yes never heard the
+// broadcast, so it refuses every save with copy pointing at a popup the local flag keeps from ever
+// re-showing. The failed handler therefore recognizes the gate refusal, re-offers the SAME consent
+// naming the machine that refused, and a yes re-broadcasts setFileEditing (KERNEL_SETTING reaches
+// every attached kernel, the late one included) and retries the save — the broadcast and the save
+// ride the same ordered socket, so the flag lands first.
+test("a save refused by the OWNING kernel's edit gate re-offers the consent and re-broadcasts", () => {
+  const gateRefusal = (err: string): boolean => /file editing is off/.test(err);
+  assert.equal(gateRefusal("cannot save ~/notes-api/app.py: dashboard file editing is off on this "
+    + "machine — the viewer's Edit button asks to turn it on"), true);
+  assert.equal(gateRefusal("~/notes-api/app.py changed on disk since you opened it — reload before "
+    + "editing (someone else, likely an agent, wrote it)"), false,
+    "a conflict keeps its Reload offer — never a consent popup");
+  assert.equal(gateRefusal("cannot save ~/notes-api/app.py: the file is not UTF-8 on disk — saving "
+    + "would silently re-encode bytes you never touched"), false);
+  // replica ↔ source: the failed handler carries the branch, names the host, re-posts, retries
+  assert.match(VIEW, /if \(\/file editing is off\/\.test\(err\)\) \{/);
+  assert.match(VIEW, /import \{ hostOf \} from "\.\/host-prefix";/,
+    "the popup names the refusing machine — the host prefix the viewer's sid already carries");
+  const failedArm = VIEW.split("failed: (err) => {")[1].split("body.prepend(bar2);")[0];
+  assert.ok(failedArm.includes('post({ type: "setFileEditing", enabled: true });'),
+    "a yes re-broadcasts the SAME opt-in the first popup sends");
+  assert.ok(failedArm.includes("doSave();"), "…and retries the save the refusal interrupted");
+  assert.ok(failedArm.indexOf("setFileEditing") < failedArm.indexOf("doSave();"),
+    "the opt-in rides the socket ahead of the retry");
+  // the two sides of the text match are pinned TOGETHER so drift fails loudly, and the broadcast
+  // route the re-offer relies on is federation's, not a new one
+  const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
+  assert.match(KERNEL, /dashboard file editing is off on this machine/);
+  const FED = web("federation.ts");
+  assert.ok(FED.includes('"setFileEditing"'), "setFileEditing is a KERNEL_SETTING…");
+  assert.match(FED, /if \(KERNEL_SETTING\.has\(msg\.type\)\) return \[LOCAL, \.\.\.\(knownHosts \|\| \[\]\)\]/,
+    "…and KERNEL_SETTING broadcasts to every attached kernel");
 });
 
 // executed: the gutter is a SIBLING of the code, so selecting the code copies it without line numbers

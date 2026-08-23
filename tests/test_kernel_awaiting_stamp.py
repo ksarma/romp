@@ -585,11 +585,30 @@ class AwaitingWake(unittest.TestCase):
         self._seed(at=now - 7 * 3600)                # the closer filed a genuinely NEW wait
         self.assertTrue(self._wake(now, rec=rec), "a fresh anchor re-arms the wake")
 
-    def test_dormant_session_is_not_woken(self):
+    def test_dormant_session_is_not_woken_but_converts_to_the_dead_wait_block(self):
+        # (the user 2026-08-22) a dormant CLI still gets no WAKE — its dispatched work is gone, not
+        # asleep — but the branch no longer dead-ends: the stamped Working card converts once to the
+        # dead-wait procedural block, so it reaches a terminal column instead of pausing forever.
+        # The conversion is owner-corroborated: the session carries its launch record (the names
+        # entry both backends write — without it no owner here could answer for the sid), and the
+        # owner scan is pinned to an authoritative empty answer rather than this box's real tmux.
+        km.jd.NAMES.mkdir(parents=True, exist_ok=True)
+        (km.jd.NAMES / SID).write_text("web\t~/notes-api\t#3355aa\t#ffffff\n")
+        self.addCleanup(lambda: (km.jd.NAMES / SID).unlink())
+        km._TMUX.available = lambda: True
+        km._TMUX.alive_sids = lambda t=3: set()
+        self.addCleanup(lambda: [km._TMUX.__dict__.pop(nm, None)
+                                 for nm in ("available", "alive_sids")])
         now = 1_000_000
         self._seed(at=now - 7 * 3600)
-        self.assertFalse(self._wake(now, tmux={}))   # SID not in the live set → not a live CLI
-        self.assertEqual(self.fb.sent, [], "a dormant session's dispatched work is gone, not asleep")
+        (km.jd.STATE / "states").mkdir(parents=True, exist_ok=True)
+        (km.jd.STATE / "states" / (SID + ".jsonl")).write_text(
+            json.dumps({"state": "idle", "t": now - 6 * 3600}) + "\n")
+        self.assertTrue(self._wake(now, tmux={}), "the conversion fired (the tick pushes once)")
+        self.assertEqual(self.fb.sent, [], "no wake message: nothing that could answer is running")
+        nd = km.jd.load_goals(SID)["nodes"][self.gid]
+        self.assertTrue(nd.get("blocked"), "the card lands in Blocked, the ladder's promised terminal")
+        self.assertTrue(str(nd.get("blockWhy") or "").startswith(km.jd.DEAD_WAIT_WHY_PREFIX))
 
     def test_wake_that_judges_resolved_mid_tick_stands_down(self):
         now = 1_000_000

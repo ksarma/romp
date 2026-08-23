@@ -78,8 +78,8 @@ class GitHubUrl(_Repo):
                          "https://github.com/TESTORG/notes-api/blob/%s/src/app.py" % sha)
 
     def test_a_symlinked_path_prefix_still_links(self):
-        # review, executed repro: git reports the PHYSICAL toplevel, so a logical path through a
-        # symlink escaped relpath and silently un-linked every tracked file behind one
+        # executed repro: git reports the PHYSICAL toplevel, so a logical path through a symlink
+        # escaped relpath and silently un-linked every tracked file behind one
         _git("remote", "add", "origin", "git@github.com:TESTORG/notes-api.git", cwd=self.tmp)
         outer = tempfile.mkdtemp()
         link = os.path.join(outer, "via-link")
@@ -88,8 +88,8 @@ class GitHubUrl(_Repo):
                          "https://github.com/TESTORG/notes-api/blob/main/src/app.py")
 
     def test_dotdot_through_a_symlink_never_links_the_wrong_file(self):
-        # review, executed repro: a LEXICAL '..' collapse linked a different file than the bytes the
-        # viewer shows; realpath resolves the symlink first, and the escape gets the honest no-link
+        # executed repro: a LEXICAL '..' collapse linked a different file than the bytes the viewer
+        # shows; realpath resolves the symlink first, and the escape gets the honest no-link
         _git("remote", "add", "origin", "git@github.com:TESTORG/notes-api.git", cwd=self.tmp)
         os.symlink(tempfile.mkdtemp(), os.path.join(self.tmp, "ext"))
         self.assertEqual(

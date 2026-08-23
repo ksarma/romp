@@ -9433,13 +9433,28 @@ def debt_block_why(peer):
             "Ping them again, take the work back, or drop the wait." % (DEBT_BLOCK_WHY_PREFIX, peer))
 
 
+DEAD_WAIT_WHY_PREFIX = "This session ended while still waiting on "
+
+
+def dead_wait_block_why(why):
+    """The block why for a judged wait whose OWNING session died with the stamp standing (the user
+    2026-08-22): nothing that could answer the wait is running, so more patience is a lie — the card
+    needs the user's call (revive, or drop the wait). The tail quotes the stamp's own why (what the
+    wait was on), a wait description, never user-question text — the same exact-shape rationale as
+    the debt block above."""
+    tail = (why or "").strip().rstrip(".")
+    return ("%s%s. Reviving the session picks the thread back up; replying here or clearing the "
+            "card drops the wait." % (DEAD_WAIT_WHY_PREFIX, tail or "background work"))
+
+
 def procedural_block_why(why):
     """True if `why` is romp's own procedural block bookkeeping rather than a decision the user was asked
-    for. EXACT match on the kernel-authored constants — plus the ONE prefix-recognized shape above (its
-    tail is a peer name, not question text): a real question that merely resembles one of these is still
-    a real question, so nothing fuzzy belongs here."""
+    for. EXACT match on the kernel-authored constants — plus the TWO prefix-recognized shapes above (their
+    tails are a peer name / a wait description, not question text): a real question that merely resembles
+    one of these is still a real question, so nothing fuzzy belongs here."""
     w = (why or "").strip()
-    return w in _PROCEDURAL_BLOCK_WHYS or w.startswith(DEBT_BLOCK_WHY_PREFIX)
+    return (w in _PROCEDURAL_BLOCK_WHYS or w.startswith(DEBT_BLOCK_WHY_PREFIX)
+            or w.startswith(DEAD_WAIT_WHY_PREFIX))
 
 
 # The BLOCK-DISTILLER (the user 2026-06-18, via business): the done-distiller's twin for a BLOCKED top.
@@ -9727,6 +9742,26 @@ def _done_owed(store, nid):
     return _dmt != due
 
 
+def review_boundary(nd):
+    """The newest moment the user has already REVIEWED this top through (None = never reviewed mid-goal):
+    the settle boundary the latest reopen ended (deltaSince), ADVANCED to the summary watermark when a
+    reopen postdates the last read summary (the user 2026-08-19). deltaSince alone missed the fast
+    read-then-reply flow: the summary shows at the DONE VERDICT, so replying while the card is still
+    confirming reopens BEFORE any settle exists — 15 of 56 real re-completions replayed as full-history
+    recaps for exactly that reason, and a STALE deltaSince from a prior episode has the same effect.
+    distilledMt is the authoritative "what the user was shown" (it is the done-event time the summary
+    covers). Shared by the distiller's delta scoping and the feed's reviewed-earlier fold, so the two
+    surfaces can never disagree about what counts as already reviewed."""
+    b = nd.get("deltaSince")
+    dm = nd.get("distilledMt")
+    if dm and (nd.get("summary") or "").strip() \
+            and any(e.get("kind") == "reopen" and (e.get("ev_t") or 0) > dm
+                    for e in (nd.get("log") or [])) \
+            and (b is None or dm > b):
+        b = dm
+    return b
+
+
 def _distill_session(fsid, path, now):
     """Distill each newly-(re)resolved TOP goal of ONE session, COMPLETED and BLOCKED alike (the user
     2026-06-18). Gather the goal's full WORK history — the text of every segment in its trail and its whole
@@ -9820,7 +9855,7 @@ def _distill_session(fsid, path, now):
         # deltaSince (a prior settle boundary from an intervening follow-up) → splice the FOLLOWUP_DIVIDER so the
         # done-distiller scopes its takeaway to the most recent stretch. Only for the DONE side: the block brief
         # already leads with the recent owed question, and BLOCK_BRIEF_SYS isn't taught to read the marker.
-        boundary_t = None if (blocked or stalled) else nodes[top].get("deltaSince")
+        boundary_t = None if (blocked or stalled) else review_boundary(nodes[top])
         work = _goal_work_text(store, seg_by_id, top, DISTILL_WORK_CHARS, marks=marks, boundary_t=boundary_t)
         prior = "" if (blocked or stalled) else (nodes[top].get("summary") or "")
         if prior and FOLLOWUP_DIVIDER in work:
@@ -10037,6 +10072,13 @@ def _distill_session(fsid, path, now):
         _dsubs = sorted([nodes[x] for x in sub
                          if x != top and nodes[x].get("nodeComplete")
                          and str(nodes[x].get("doneWhy") or "").strip()], key=_done_since)
+        if prior and boundary_t:
+            # Delta re-distill (the user 2026-08-19): everything the user already reviewed lives in
+            # <prior-summary>, so only the POST-boundary outcomes are <completed-items> — the unfiltered
+            # list invited the model to re-present up to 30 reviewed outcomes as fresh paragraphs, and
+            # summaryParts (stamped from this same list below) re-aged them all on the card. Replayed on
+            # real re-distills: filtering loses no post-boundary coverage.
+            _dsubs = [d for d in _dsubs if _done_since(d) > boundary_t]
         out = distill_llm(nodes[top].get("text", ""), work, nodes[top].get("doneWhy") or "", prior_summary=prior,
                           items=[(d.get("text", ""), d.get("doneWhy", "")) for d in _dsubs])
         if not out:
