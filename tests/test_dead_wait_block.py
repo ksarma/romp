@@ -6,10 +6,13 @@ and it sat "paused" in Working forever (two live cards measured at 79 hours). Th
 event-triggered (the death transition; a boot catch-up sweep), once per stamp episode, stands down
 for restart cuts (the resume machinery owns those), and its why is a recognized procedural block.
 SYNTHETIC fixtures only (placeholder UUIDs, invented text)."""
+import contextlib
+import io
 import json
 import os
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from importlib.machinery import SourceFileLoader
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -40,7 +43,19 @@ SID = ""
 GID = ""
 
 
-def _seed_store(awaiting=True):
+def _register_name(sid):
+    """A names-registry entry — the launch record BOTH backends write at creation. It is what marks
+    a reg-less sid as one tmux could have run; a sid with no reg and no names entry exists only as
+    a transcript (the file fallback's world), and no liveness owner here can answer for it."""
+    jd.NAMES.mkdir(parents=True, exist_ok=True)
+    (jd.NAMES / sid).write_text("web\t~/notes-api\t#3355aa\t#ffffff\n")
+
+
+def _seed_store(awaiting=True, named=True):
+    # named=True: the fixture models a romp-LAUNCHED session (the usual world), so the owner scan
+    # is entitled to settle it; named=False models a transcript-derived one (no launch record).
+    if named:
+        _register_name(SID)
     store = jd.load_goals(SID)
     nd = {"id": GID, "text": "delegate the batch and report", "parentId": None,
           "nodeComplete": False, "blocked": False, "cleared": False, "t": STAMP_T - 100,
@@ -80,7 +95,7 @@ class _HermeticDeadWait(unittest.TestCase):
     def tearDown(self):
         for nm in ("available", "alive_sids"):
             km._TMUX.__dict__.pop(nm, None)   # instance attrs shadow the class methods; drop them
-        for d in (jd.GOALDIR, jd.STATE / "states", jd.SDKDIR, jd.STATE / "gone"):
+        for d in (jd.GOALDIR, jd.STATE / "states", jd.SDKDIR, jd.STATE / "gone", jd.NAMES):
             if d.is_dir():
                 for f in d.glob("*"):
                     f.unlink()
@@ -216,7 +231,7 @@ class DeadWaitCorroboration(_HermeticDeadWait):
         # a no-tmux box's _alive_sessions falls back to FILE-derived sessions, which reach
         # _wake_goal absent from the merged map while genuinely ALIVE — no owner here can answer
         # for a reg-less one, so nothing may file
-        _seed_store()
+        _seed_store(named=False)                  # transcript-derived: no launch record
         _write_state("idle", STAMP_T + 50)
         km._TMUX.available = lambda: False
         store = jd.load_goals(SID)
@@ -231,6 +246,160 @@ class DeadWaitCorroboration(_HermeticDeadWait):
                               STAMP_T + 950, {}, {})
         self.assertTrue(fired)
         self.assertTrue(self._blocked())
+
+    def test_tmux_appearing_mid_flight_cannot_settle_a_sid_it_never_owned(self):
+        # AUTHORITY FOLLOWS OWNERSHIP: a headless box's file fallback lists a LIVE
+        # transcript-derived session (no reg, no names entry — launched by neither backend); it
+        # drops out of the file-derived alive set, arming its death transition… and THEN tmux is
+        # installed. The availability probe is live (shutil.which), so keying the stand-down on
+        # the BOX's tmux availability let the fresh, EMPTY server — which never ran this sid —
+        # answer as its liveness owner: a false conversion of a live session's card. An owner
+        # scan settles only sids the owner could have run; this one stands down REGARDLESS of
+        # tmux availability.
+        _seed_store(named=False)                  # transcript-derived: no launch record
+        _write_state("idle", STAMP_T + 50)
+        km._TMUX.available = lambda: True         # tmux just appeared mid-flight…
+        km._TMUX.alive_sids = lambda t=3: set()   # …and its fresh server owns nothing
+        self.assertIsNone(km._dead_wait_corroborated(SID),
+                          "an owner scan settles only sids the owner could have run")
+        km._PREV_ALIVE = {SID}
+        km._dead_wait_sweep(set(), self.nudged, STAMP_T + 900)
+        self.assertFalse(self._blocked(), "a sid tmux never ran must not convert on tmux's word")
+        self.assertIn(SID, km._PREV_ALIVE, "stood down and kept armed, never spent")
+        # …while the SAME sid WITH a launch record is the owner's to settle: it converts
+        _register_name(SID)
+        km._dead_wait_sweep(set(), self.nudged, STAMP_T + 950)
+        self.assertTrue(self._blocked())
+
+
+class DeadWaitStandDownLogging(_HermeticDeadWait):
+    """Wedge-time log ergonomics: a stand-down is LOUD (the fail-loudly rule — a silent one wedges
+    a candidate forever with no trace to act on) but collapsed to ONE line per sweep pass
+    (_death_sweep_tick's idiom) — the per-candidate line multiplied by the candidate count under
+    exactly the wedge it reports (a 20-session listing collapse logged every candidate every
+    tick, ~40 lines/s at the pusher cadence)."""
+
+    def _blocked(self):
+        return bool(jd.load_goals(SID)["nodes"][GID].get("blocked"))
+
+    def test_probe_failure_logs_one_line_per_pass_not_per_candidate(self):
+        sid2 = _fresh_sid()
+        _register_name(SID)
+        _register_name(sid2)
+        km._TMUX.alive_sids = lambda t=3: None    # a REAL probe failure, shared by the whole pass
+        km._PREV_ALIVE = {SID, sid2}
+        buf = io.StringIO()
+        with redirect_stderr(buf):
+            km._dead_wait_sweep(set(), {}, STAMP_T + 900)
+        lines = [ln for ln in buf.getvalue().splitlines() if "dead-wait" in ln and "probe" in ln]
+        self.assertEqual(len(lines), 1, "one line per pass, not per candidate: %r" % lines)
+        self.assertIn("2 candidate(s) stood down this pass", lines[0])
+        self.assertEqual({SID, sid2} & km._PREV_ALIVE, {SID, sid2}, "both kept armed")
+
+    def test_unreadable_reg_stand_down_is_loud_and_per_pass_deduped(self):
+        sid2 = _fresh_sid()
+        jd.SDKDIR.mkdir(parents=True, exist_ok=True)
+        (jd.SDKDIR / (SID + ".json")).write_text("{not json")     # an unreadable owner reg
+        (jd.SDKDIR / (sid2 + ".json")).write_text("{not json")
+        km._PREV_ALIVE = {SID, sid2}
+        buf = io.StringIO()
+        with redirect_stderr(buf):
+            km._dead_wait_sweep(set(), {}, STAMP_T + 900)
+        lines = [ln for ln in buf.getvalue().splitlines()
+                 if "dead-wait" in ln and "unreadable" in ln]
+        self.assertEqual(len(lines), 1,
+                         "silent forever is a wedge with no trace; per-candidate is a flood: %r" % lines)
+        self.assertIn("2 candidate(s) stood down this pass", lines[0])
+        self.assertEqual({SID, sid2} & km._PREV_ALIVE, {SID, sid2}, "both kept armed")
+
+    def test_single_probe_callers_still_name_the_sid(self):
+        # _wake_goal's dormant branch corroborates ONE sid per call — there its line IS the pass,
+        # and naming the sid is what makes the trace actionable
+        jd.SDKDIR.mkdir(parents=True, exist_ok=True)
+        (jd.SDKDIR / (SID + ".json")).write_text("{not json")
+        buf = io.StringIO()
+        with redirect_stderr(buf):
+            self.assertIsNone(km._dead_wait_corroborated(SID))
+        out = buf.getvalue()
+        self.assertIn(SID, out, "the unreadable-reg stand-down must be loud (fail-loudly rule)")
+        self.assertIn("unreadable", out)
+
+
+class DeadWaitOneObserver(_HermeticDeadWait):
+    """The death transition has ONE observer. _dead_wait_sweep's prev-swap (_PREV_ALIVE) is a
+    lock-free read-modify-write, safe only because exactly one caller — the pusher's periodic
+    tick — ever runs it. setAutoNudge's WS handler also fires _auto_nudge_tick (to re-arm nudging
+    immediately on turn-on); racing the pusher, its swap could spend a death transition
+    mid-pass without corroboration, losing the re-arm until the boot catch-up. So the
+    WS-triggered tick SKIPS the sweep (run_dead_wait=False): its purpose is nudge re-arming,
+    and the pusher re-runs the sweep on its own cadence anyway."""
+
+    def _blocked(self):
+        return bool(jd.load_goals(SID)["nodes"][GID].get("blocked"))
+
+    @contextlib.contextmanager
+    def _tick_stubs(self):
+        """Stub the tick's OTHER legs (session walk, peer-wait graph, debt sweep, wake outcomes)
+        so a tick-level call exercises only the sweep — the leg under test — hermetically."""
+        saved = {nm: getattr(km, nm) for nm in
+                 ("_alive_sessions", "_wait_for_graph", "_debt_backstop_tick",
+                  "_awaiting_wake_outcomes")}
+        km._alive_sessions = lambda now, tmux: []
+        km._wait_for_graph = lambda now, alive_sids: {}
+        km._debt_backstop_tick = lambda now: None
+        km._awaiting_wake_outcomes = lambda now: False
+        try:
+            yield
+        finally:
+            for nm, fn in saved.items():
+                setattr(km, nm, fn)
+
+    def test_ws_shaped_tick_skips_the_sweep_and_the_pusher_shape_runs_it(self):
+        _seed_store()
+        _write_state("idle", STAMP_T + 50)
+        km._PREV_ALIVE = {SID}                    # a pending death transition
+        with self._tick_stubs():
+            km._auto_nudge_tick(STAMP_T + 900, {}, run_dead_wait=False)   # setAutoNudge's tick
+            self.assertEqual(km._PREV_ALIVE, {SID},
+                             "the WS-triggered tick must not observe (or spend) the transition")
+            self.assertFalse(self._blocked())
+            km._auto_nudge_tick(STAMP_T + 950, {})                        # the pusher's tick
+        self.assertTrue(self._blocked(), "the one observer still converts, on its own cadence")
+
+    def test_a_mid_pass_ws_tick_leaves_the_transition_alone(self):
+        # the racing interleave, deterministically: the pusher is MID-PASS (inside a candidate's
+        # corroboration) when the WS handler's tick fires. The transition set must be exactly
+        # what the pusher's pass installed — untouched by the nested tick.
+        _seed_store()
+        _write_state("idle", STAMP_T + 50)
+        km._PREV_ALIVE = {SID}
+        real = km._dead_wait_corroborated
+        seen = {}
+
+        def hooked(sid, scan=None, stats=None):
+            if "ran" not in seen:
+                seen["ran"] = True
+                before = set(km._PREV_ALIVE)
+                km._auto_nudge_tick(STAMP_T + 901, {}, run_dead_wait=False)   # WS fires mid-pass
+                seen["moved"] = set(km._PREV_ALIVE) != before
+            return real(sid, scan=scan, stats=stats)
+
+        km._dead_wait_corroborated = hooked
+        try:
+            with self._tick_stubs():
+                km._auto_nudge_tick(STAMP_T + 900, {})                        # the pusher's tick
+        finally:
+            km._dead_wait_corroborated = real
+        self.assertTrue(seen.get("ran"), "the pusher's pass reached its corroboration")
+        self.assertFalse(seen.get("moved"), "the nested WS tick swapped the transition mid-pass")
+        self.assertTrue(self._blocked(), "the pusher's own pass still completed its conversion")
+
+    def test_the_setautonudge_call_site_skips_the_sweep(self):
+        # the ownership rule holds at the ONE other call site, pinned the way
+        # test_wake_goal_routes_its_dormant_branch_here pins its wiring
+        src = open(os.path.join(BIN, "romp-kernel")).read()
+        self.assertIn("_auto_nudge_tick(int(time.time()), _tmux_sessions(), run_dead_wait=False)",
+                      src)
 
 
 if __name__ == "__main__":
