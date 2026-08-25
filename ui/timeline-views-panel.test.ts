@@ -66,6 +66,63 @@ test("executed: an optimistic edit holds until the kernel echoes it — then yie
   assert.equal(p._pendingViews, null, "the third silent push adopts the kernel's blob");
 });
 
+test("executed: the echo key compares per-surface lenses and ignores the retired hidden set", () => {
+  // a LENS-ONLY edit (same tags, this surface's lens added): a stale views-bearing frame still
+  // carrying the PRE-EDIT blob must NOT clear the pending copy — with `actives` missing from the
+  // key the first stale frame compared equal, the optimistic filter reverted, and the tag filter
+  // visibly flapped (revert-then-jump-back) until the kernel's real echo arrived
+  const p: any = Object.create(TimelinePanel.prototype);
+  p._pendingViews = { active: "all", tags: [G], actives: { timeline: { tags: ["pool"] } } };
+  p._pendingViewsAge = 0;
+  p._views = { active: "all", tags: [G] };   // the pre-edit blob — no lens on it yet
+  p._reconcileViews();
+  assert.ok(p._pendingViews, "a stale frame without the lens edit must not clear the pending copy");
+  // the kernel's genuine echo (lists re-sorted, the lens present) clears it
+  p._views = { active: "all", tags: [{ id: "g1", name: "pool", color: "#DD42FF", members: ["s3", "s2"] }],
+               actives: { timeline: { tags: ["pool"] } } };
+  p._reconcileViews();
+  assert.equal(p._pendingViews, null, "the echo carrying the lens clears the pending edit");
+  // …and the RETIRED hidden set (2026-08-24) is OUT of the key: the kernel drops it, so a local
+  // copy still carrying a legacy hidden entry must compare EQUAL to the echo that shed it —
+  // serializing hidden made every such edit ride the 3-push yield instead of clearing on echo
+  p._pendingViews = { active: "all", hidden: ["s9"], tags: [] }; p._pendingViewsAge = 0;
+  p._views = { active: "all", tags: [] };
+  p._reconcileViews();
+  assert.equal(p._pendingViews, null, "hidden is retired — it cannot hold an echo hostage");
+});
+
+test("pin: _viewsKey serializes the SAME shape as its twin, session-views.ts viewsKey", () => {
+  // the timeline cannot import TS, so _viewsKey is a hand-copy of the webview's viewsKey — this
+  // pin compares the two serializations at the source level (comments/quotes/whitespace
+  // normalized) so the copies cannot drift apart again (the 2026-08-25 lens fix landed in the
+  // twin and left the hand-copy behind)
+  const TS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "session-views.ts"), "utf8");
+  const norm = (s: string) => s.replace(/\/\/[^\n]*/g, "").replace(/'/g, '"').replace(/\s+/g, " ").trim();
+  const grab = (src: string, marker: string) => {
+    const i = src.indexOf(marker);
+    assert.ok(i >= 0, marker + " found");
+    // the slice STARTS at the null guard, not at JSON.stringify — the guard's return value is part
+    // of the key's contract too (a drifted `if (!v) return ...` sat outside the old compared slice)
+    const j = src.indexOf("if (!v)", i);
+    assert.ok(j > i, "the null guard heads " + marker);
+    const body = src.slice(j, src.indexOf("});", j) + 3);
+    return norm(body);
+  };
+  assert.equal(grab(SRC, "_viewsKey(v)"), grab(TS, "export function viewsKey("),
+    "the timeline's hand-copied echo key drifted from ui/webview/session-views.ts viewsKey");
+  // viewTags is the key's one FREE identifier, and it is ITSELF an independent hand-copy (the
+  // timeline's function viewTags vs session-views.ts's export) — identical key bodies still
+  // serialize different shapes if the two viewTags diverge, so the pin covers that twin pair too
+  const grabReturn = (src: string, marker: string) => {
+    const i = src.indexOf(marker);
+    assert.ok(i >= 0, marker + " found");
+    const j = src.indexOf("return", i);
+    return norm(src.slice(j, src.indexOf(";", j) + 1));
+  };
+  assert.equal(grabReturn(SRC, "function viewTags(views)"), grabReturn(TS, "export function viewTags("),
+    "the timeline's hand-copied viewTags drifted from ui/webview/session-views.ts viewTags");
+});
+
 test("the lane gate composes the view filter first, and the all-quiet fallback respects it", () => {
   assert.match(SRC, /const inView = \(s\) => \{ const v = this\._curViews\(\); return lensVisible\(timelineLens\(v\), viewTagUnion\(v\), s\.id\); \};/,
     "lanes key on THIS surface's lens (per-surface selections, 2026-08-25)");

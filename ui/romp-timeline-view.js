@@ -2563,11 +2563,16 @@ class TimelinePanel {
     return v;
   }
 
-  // one canonical serialization for echo comparison: the kernel normalizer sorts hidden/members and
-  // may clamp names, so compare shapes, not object identity
+  // one canonical serialization for echo comparison — the hand-copy of session-views.ts viewsKey
+  // (the timeline can't import TS; timeline-views-panel.test.ts pins the two shapes equal): the
+  // kernel normalizer re-sorts lists and may clamp names, so compare shapes, not object identity.
+  // The retired hidden set (2026-08-24) stays OUT — the kernel drops it, so serializing it held
+  // every echo hostage — and omitting `actives` let a stale views frame clear a pending lens-only
+  // edit, flapping the tag filter (revert-then-jump-back).
   _viewsKey(v) {
+    if (!v) return '';
     return JSON.stringify({ active: v.active || 'all',
-      hidden: (v.hidden || []).slice().sort(),
+      actives: v.actives || {},   // per-surface lenses are client-posted state — the echo compares them (2026-08-25)
       tags: viewTags(v).map((t) => ({ id: t.id, name: t.name, color: t.color,
                                       members: (t.members || []).slice().sort() })) });
   }

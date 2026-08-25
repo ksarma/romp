@@ -97,5 +97,22 @@ class MarkerNeutralizerVariants(unittest.TestCase):
                          "build romp-goal-id notes")   # no colon = no marker; the words pass untouched
 
 
+class OneCanonicalNeutralizer(unittest.TestCase):
+    """Structural pin: exactly ONE module-level def of _neutralize_romp_markers (and one
+    _ROMP_MARKER_OPEN_RE). The 2026-08-25 fold left TWO — the fork's older opener-only copy above
+    the user-todo callers plus the canonical evolved one (opener + the bare "romp-goal-id:"
+    goal-reopen form) — and last-def-wins made the older copy dead code with a misleading
+    docstring: a future reorder would have silently weakened user-todo hygiene to the opener-only
+    class. One def, one home; the callers reach it late-bound wherever it sits."""
+
+    def test_exactly_one_def_module_wide(self):
+        with open(os.path.join(BIN, "romp-kernel")) as f:
+            src = f.read()
+        self.assertEqual(src.count("\ndef _neutralize_romp_markers("), 1,
+                         "one canonical neutralizer — a second def shadows or is shadowed silently")
+        self.assertEqual(src.count("\n_ROMP_MARKER_OPEN_RE = "), 1,
+                         "its opener regex has the same one home")
+
+
 if __name__ == "__main__":
     unittest.main()

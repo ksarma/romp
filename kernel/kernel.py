@@ -2449,25 +2449,11 @@ def _user_todo_idle(sid, ps, who_working, sess_awaiting_why, perm_state, aerr, p
     return True
 
 
-# The marker-opening CLASS every downstream reader tolerates: "<!--" then ANY whitespace before
-# "romp-" (the event model's ROMP_INJECT_RE / POSTAL_RE / MSG_TAG_RE and the judge's
-# NUDGE_MARKER_RE are all "<!--\s*romp-"). The neutralizer must break this same class, not one
-# literal spelling — round 2 (2026-08-22) caught the first cut closing only the one-space form
-# while a no-space "<!--romp-injected-->" sailed through and the user's own answer rendered as
-# romp's system card. tests import those regexes verbatim and prove no variant survives.
-_ROMP_MARKER_OPEN_RE = re.compile(r"<!--(?=\s*romp-)")
-
-
-def _neutralize_romp_markers(text):
-    """Break the marker-OPENING sequence in user/agent-supplied text before it rides an injected
-    body: a todo or reply containing a literal "<!--romp-…" (any whitespace — exactly the
-    tolerance the matchers themselves have, see _ROMP_MARKER_OPEN_RE) would otherwise inject a
-    lookalike marker, and downstream readers key on that comment form (the event model's
-    ROMP_INJECT_RE author attribution, the SDK echo's romp-injected check) — a reply quoting a
-    marker would render as romp's own gray card instead of the user's words. Minimal, visible
-    escape of the opener alone ("<!--" → "<!- -", whitespace and words untouched): the text stays
-    readable, the comment form can no longer match."""
-    return _ROMP_MARKER_OPEN_RE.sub("<!- -", str(text))
+# Marker hygiene for the user-todo bodies below: _neutralize_romp_markers has its ONE home beside
+# the edit-trace builders (near _edit_trace_body, far below — late binding makes the distance
+# free). That canonical def breaks the comment openers AND the bare "romp-goal-id:" goal-reopen
+# form. The 2026-08-25 fold briefly left an older opener-only copy HERE, dead under last-def-wins;
+# tests/test_marker_neutralizer.py pins the single def so a reorder can't resurrect the weaker one.
 
 
 def _user_todo_answer_body(todo_text, reply):
@@ -14959,13 +14945,27 @@ def _patch_rows(sp):
     "@@ -old +new @@" header. Removed lines carry only an old number, added lines only a new one, context both.
     Capped so a huge MultiEdit can't bloat the payload. Returns [] when there's nothing usable."""
     rows = []
-    for h in (sp or []):
+    if not isinstance(sp, list):
+        return rows                                  # the CONTAINER is external input too: a truthy
+                                                     # non-iterable (int/bool/float) TypeError'd at
+                                                     # the for itself, OUTSIDE the per-hunk try —
+                                                     # the same escape to the push loop's outer
+                                                     # except, the same permanent push-cycle abort
+    for h in sp:
         try:
             o = int(h["oldStart"]); n = int(h["newStart"])
+            lines = h.get("lines") or []
+            if not isinstance(lines, list) or not all(isinstance(ln, str) for ln in lines):
+                continue                             # a non-list lines (a STRING's chars pass the
+                                                     # per-entry check — one garbage row per char) or
+                                                     # a non-string line entry (the record is external
+                                                     # input) degrades its hunk like every other bad
+                                                     # shape — a TypeError here escaped the chat build
+                                                     # and aborted every push cycle permanently
         except Exception:
             continue
         rows.append({"sign": "@", "text": "@@ -%d +%d @@" % (o, n), "oldNo": None, "newNo": None})
-        for ln in (h.get("lines") or []):
+        for ln in lines:
             mark = ln[:1]
             if mark == "+":
                 rows.append({"sign": "+", "text": ln[1:], "oldNo": None, "newNo": n}); n += 1
@@ -20485,14 +20485,19 @@ def build_feed(now, tmux=None):
                 # 2026-08-16: the badge used to vanish at the exact moment the recipient finished —
                 # run_propagate completes the sender's tracking node instantly — so a COMPLETED card
                 # never showed where its work came from, and a propagated clear read as one card
-                # mysteriously taking another with it). `live` says whether the sender's linked goal
-                # is still OPEN: live → the affordance of an active handoff; absorbed → the same badge,
-                # dimmed, purely historical. This is the completed-column MERGE, heuristic-free: the
-                # one surviving card wears both identities, keyed on the courier's recorded link.
+                # mysteriously taking another with it). origin_live says whether the sender's linked
+                # goal is still OPEN: live → the affordance of an active handoff; absorbed → the same
+                # badge, dimmed, purely historical. This is the completed-column MERGE, heuristic-free:
+                # the one surviving card wears both identities, keyed on the courier's recorded link.
+                # NAMED origin_live, never `live` (fold audit 2026-08-25): this block once reused the
+                # session-level `live` — the backend-alive bit — so every LATER card of the session,
+                # and the placeholders built after the loop, wore the badge's bool: a live session's
+                # cards dressed .dead and took the revive path; a dead session's offered Continue.
+                # Badges persist for the card's life, so one absorbed badge poisoned the whole tail.
                 psid, gid = o["peer"], o.get("goalId")
                 sgoal = jd.load_goals(psid).get("nodes", {}).get(gid) if gid else None
-                live = bool(sgoal and not sgoal.get("nodeComplete") and not sgoal.get("cleared")
-                            and gid not in cleared)
+                origin_live = bool(sgoal and not sgoal.get("nodeComplete") and not sgoal.get("cleared")
+                                   and gid not in cleared)
                 # Name resolution: the live names registry first (a local sender may have been
                 # renamed), then the courier's plant-time snapshot (the only source for a
                 # FEDERATED sender, whose sid this kernel can't resolve), then the sid stub.
@@ -20501,7 +20506,7 @@ def build_feed(now, tmux=None):
                 pname = _name_of(psid)
                 origin = {"peer": pname or o.get("peerName") or psid[:8],
                           "peerHost": ("" if pname else o.get("peerHost") or ""),
-                          "peerSid": psid, "color": _name_color(psid), "live": live}
+                          "peerSid": psid, "color": _name_color(psid), "live": origin_live}
             # SENDER-SIDE handoff provenance (the user 2026-08-24): a TOP-LEVEL "↪ delegated to
             # <peer>" tracking node wore its provenance as the card TITLE, arrow and all. The card
             # now titles the WORK and ships the delegation as the badge mirroring origin above —
