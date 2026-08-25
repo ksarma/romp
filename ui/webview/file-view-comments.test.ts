@@ -66,7 +66,9 @@ test("the click is acknowledged before the round trip", () => {
 });
 
 test("a file that changed under the reader is called out, not silently mis-numbered", () => {
-  assert.match(VIEW, /\.then\(\(fresh\) => fresh !== text\)/);
+  // …compared against the text THE VIEW SHOWS — the SVG Source view's decoded XML, or the text
+  // pipeline's bytes (viewText, pinned below) — so an SVG review isn't declared stale against null
+  assert.match(VIEW, /\.then\(\(fresh\) => fresh !== viewText\(\)\)/);
   assert.match(VIEW, /the file changed while I was reading it/);
   // a failed re-read must not fabricate staleness nobody observed
   assert.match(VIEW, /\.catch\(\(\) => false\)/);
@@ -118,6 +120,40 @@ test("review controls: hidden without a sink even when the store already holds c
   assert.equal(visible(null, 3), false, "authored-elsewhere comments stay invisible here");
   assert.equal(visible(() => { /* sink */ }, 3), true, "with a sink, the count shows as before");
   assert.equal(visible(() => { /* sink */ }, 0), false, "…and still hides until a comment exists");
+});
+
+// ── media gating is RENDERED-media gating (review 2026-08-25): pre-image-mode an .svg rendered as
+// highlighted XML with a WORKING comment layer, and image mode's blanket media gate stranded any
+// stored un-submitted comments on it invisible. The gate's rationale — "no text nodes" — is true
+// of the img/PDF surfaces only: the SVG SOURCE view is codeBlock output, real text nodes, so there
+// the contextmenu Comment, the marks, the count and Submit work exactly as any text view. ──
+
+test("comments gate off RENDERED media only — the SVG Source view is a text view like any other", () => {
+  // executed: the contextmenu offer across the view states (the sink gate holds throughout)
+  const commentable = (sink: boolean, isImage: boolean, isPdf: boolean, srcView: boolean): boolean =>
+    sink && !((isImage || isPdf) && !srcView);
+  assert.equal(commentable(true, true, false, true), true, "SVG Source view: Comment is offered");
+  assert.equal(commentable(true, true, false, false), false, "the img view has no text nodes to anchor to");
+  assert.equal(commentable(true, false, true, false), false, "the PDF iframe owns its own surface");
+  assert.equal(commentable(false, true, false, true), false, "no sink still gates everything off");
+  assert.equal(commentable(true, false, false, false), true, "plain text views are untouched");
+  // source: the media arm of the contextmenu gate carves out the Source view — sitting AFTER the
+  // no-sink gate, whose first-line position the sink-gating test above pins
+  assert.match(VIEW, /if \(!commentSink\) return;.*\n\s*if \(\(isImage \|\| isPdf\) && !\(svgSource && svgText !== null\)\) return;/);
+  // the Source view renders codeBlock THEN runs the comment pass — marks, count, Submit, delivering
+  // any stranded stored comments; the img/PDF arm below it stays comment-free (file-view.test.ts
+  // pins that arm's side)
+  const mediaBranch = VIEW.split("if (isImage || isPdf) {")[1].split("if (text === null || editing) return;")[0];
+  const srcArm = (mediaBranch.split("if (svgSource && svgText !== null) {")[1] || "").split("\n      }")[0];
+  assert.ok(srcArm, "the Source-view arm exists inside the media branch");
+  assert.match(srcArm, /body\.replaceChildren\(codeBlock\(svgText, path, fmt\.wrap\)\);/);
+  assert.match(srcArm, /markComments\(\);/, "the comment pass runs in the Source view");
+  // anchoring and Submit read the text THE VIEW SHOWS — the Source view's decoded XML, never the
+  // text pipeline's null — so a comment on the XML anchors to its line, and Submit's staleness
+  // check compares like against like
+  assert.match(VIEW, /const viewText = \(\): string \| null => \(svgSource && svgText !== null \? svgText : text\);/);
+  assert.match(VIEW, /anchorFor\(viewText\(\) \|\| "", picked\)/);
+  assert.match(VIEW, /\.then\(\(fresh\) => fresh !== viewText\(\)\)/);
 });
 
 // ── Submit during an edit: the delivery tail used to closeFileView() unconditionally, so a dirty

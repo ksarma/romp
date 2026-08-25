@@ -55,6 +55,10 @@ class FilePreviewEndpoint(unittest.TestCase):
         cls.svg = os.path.join(cls.tmp.name, "diagram.svg")
         with open(cls.svg, "w") as f:
             f.write('<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>')
+        # a minimal synthetic PDF — the media contract's OTHER half (the viewer's isPdf branch)
+        cls.pdf = os.path.join(cls.tmp.name, "report.pdf")
+        with open(cls.pdf, "wb") as f:
+            f.write(b"%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n")
         # …and something served NEITHER as media nor as text, which is what "off the allowlist" means
         # now that source/text is ON it (2026-08-08 — see tests/test_file_view.py)
         cls.bin = os.path.join(cls.tmp.name, "archive.zip")
@@ -81,18 +85,21 @@ class FilePreviewEndpoint(unittest.TestCase):
         self.assertEqual(hdrs.get("Content-Type"), "image/png")
         self.assertEqual(body, PNG)
 
-    def test_an_image_200_carries_image_mime_and_no_text_utf8_marker(self):
-        # The viewer's media branch (ui/webview/file-view.ts) keys on exactly this contract: an image
-        # 200 wears its locally-derived image/* mime and NOT the text pipeline's X-Romp-Text-Utf8
-        # marker — that header belongs to the text branch alone, and its absence tells the client no
-        # text decode happened. SVG is the load-bearing case: XML on disk, image on the wire, nosniff
-        # so the browser never reinterprets it as a document.
-        for p, mime in ((self.png, "image/png"), (self.svg, "image/svg+xml")):
+    def test_a_media_200_carries_its_mime_and_no_text_utf8_marker(self):
+        # The viewer's media branches (ui/webview/file-view.ts) key on exactly this contract: a media
+        # 200 wears its locally-derived mime — image/* for the isImage branch, application/pdf for
+        # the isPdf one — and NOT the text pipeline's X-Romp-Text-Utf8 marker; that header belongs
+        # to the text branch alone, and its absence tells the client no text decode happened. SVG is
+        # the load-bearing image case: XML on disk, image on the wire, nosniff so the browser never
+        # reinterprets it as a document. The PDF trio (mime + marker absence + nosniff) is what the
+        # viewer's iframe arm believes without a client-side extension re-test.
+        for p, mime in ((self.png, "image/png"), (self.svg, "image/svg+xml"),
+                        (self.pdf, "application/pdf")):
             code, hdrs, _ = self._req("/file?path=" + urllib.parse.quote(p))
             self.assertEqual(code, 200)
             self.assertEqual(hdrs.get("Content-Type"), mime)
             self.assertIsNone(hdrs.get("X-Romp-Text-Utf8"),
-                              "the text marker must never ride an image response")
+                              "the text marker must never ride a media response")
             self.assertEqual(hdrs.get("X-Content-Type-Options"), "nosniff")
         code, hdrs, _ = self._req("/file?path=" + urllib.parse.quote(self.txt))
         self.assertEqual(code, 200)
