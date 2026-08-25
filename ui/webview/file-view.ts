@@ -132,6 +132,18 @@ let onKeyLive: ((e: KeyboardEvent) => void) | null = null;
 function dropOnKey(): void {
   if (onKeyLive) { document.removeEventListener("keydown", onKeyLive); onKeyLive = null; }
 }
+// ONE live media object URL at a time (the user 2026-08-25: images used to render as line-numbered
+// mojibake; now an image/PDF view holds its bytes in an object URL). The URL is per-open state, but —
+// like editHooks and onKeyLive above — the teardown must be reachable from BOTH exits (closeFileView
+// and the replace path), so the open viewer registers its URL here and each exit revokes it. Without
+// the revoke every image view leaks its blob for the page's life.
+let mediaUrlLive: string | null = null;
+function dropMediaUrl(): void {
+  if (mediaUrlLive) {
+    try { URL.revokeObjectURL(mediaUrlLive); } catch { /* already gone */ }
+    mediaUrlLive = null;
+  }
+}
 // Set when the open viewer arrived via the SHELL's viewFile relay (the chat's cards-pane preference,
 // render.ts openPath → kernel.py's landing shell): that relay may have brought a toggled-off feed
 // pane forward, and only the viewer knows when it closes — so a relay-opened close announces itself
@@ -229,6 +241,7 @@ export function closeFileView(): void {
   editHooks = null;
   gitHooks = null;                                     // a reply landing after the close decorates nothing
   dropOnKey();                                         // the closing viewer's handler leaves with it
+  dropMediaUrl();                                      // an image/PDF view's bytes leave with the viewer
   wrap.remove();
   document.body.classList.remove("fileview-open");
   if (viaRelay) {
@@ -262,6 +275,7 @@ export function openFileView(path: string, sid?: string | null): boolean {
   editHooks = null;
   gitHooks = null;                                     // the replace path skips closeFileView — same drop
   dropOnKey();                                         // …and the same for the old viewer's Escape handler
+  dropMediaUrl();                                      // …and the old viewer's image bytes (the Reload path)
   document.getElementById("romp-fileview")?.remove();
   // backdrop (the whole overlay carries the id every open/closed check targets) + the ~95% card.
   // The backdrop treatment matches the lightbox: dimmed, click outside the card closes, content
@@ -326,6 +340,17 @@ export function openFileView(path: string, sid?: string | null): boolean {
   //   saveFile's conflict floor (ns because whole seconds let a same-second agent write slip the
   //   guard; a string because ~1.7e18 exceeds JS's safe-integer range and a number would round)
   let isText = false;                         // the kernel's verdicts (text/plain AND faithful UTF-8)
+  // ── the media verdicts (the user 2026-08-25: a .png opened as line-numbered mojibake — the fetch
+  // pipeline called r.text() on ANY 200). All read from the KERNEL's Content-Type, never a client-side
+  // extension re-test (the authoritative-source rule; the kernel derives the mime locally and the
+  // relay re-derives it, so the header is a verdict, not an echo).
+  let isImage = false;                        // image/* → one <img> at an object URL
+  let isPdf = false;                          // application/pdf → the lightbox's iframe treatment
+  let isSvgImage = false;                     // image/svg+xml exactly — unlocks the Source toggle
+  let svgSource = false;                      // the SVG Source view is up (the highlighted XML)
+  let svgText: string | null = null;          // the decoded SVG bytes, read once on first toggle
+  let mediaBlob: Blob | null = null;          // the fetched bytes — the Source toggle decodes THESE
+  let objUrl: string | null = null;           // this open's object URL (registered as mediaUrlLive)
   let editing = false;
   let dirty = false;
   let eolCRLF = false;                        // the file's dominant line ending — textareas normalize
@@ -350,6 +375,22 @@ export function openFileView(path: string, sid?: string | null): boolean {
   wrapBtn.type = "button"; wrapBtn.textContent = "Wrap"; wrapBtn.title = "Soft-wrap long lines";
   wrapBtn.addEventListener("click", () => { fmt.wrap = !fmt.wrap; saveFmt(fmt); renderBody(); });
   acts.appendChild(wrapBtn);
+  // ── the SVG Source toggle ── an SVG is served (and shown) as an image, but it IS also XML worth
+  // reading; the toggle swaps in the existing highlighted-code view (langFor maps svg → xml) built
+  // from the SAME fetched bytes — no second request. Appears only once an image/svg+xml body landed.
+  const srcBtn = el("button", "fileview-btn") as HTMLButtonElement;
+  srcBtn.type = "button"; srcBtn.textContent = "Source"; srcBtn.title = "The SVG's XML, highlighted";
+  srcBtn.hidden = true;
+  srcBtn.addEventListener("click", () => {
+    if (svgText === null) {
+      if (!mediaBlob) return;
+      void mediaBlob.text().then((t) => { svgText = t; svgSource = true; renderBody(); });
+      return;
+    }
+    svgSource = !svgSource;
+    renderBody();
+  });
+  acts.appendChild(srcBtn);
 
   // ── edit (the raw-mode slice) ── exactly what raw mode can show is what Edit can touch: the
   // button arms only when the kernel served text/plain WITH a Last-Modified to anchor the save's
@@ -455,6 +496,23 @@ export function openFileView(path: string, sid?: string | null): boolean {
     editBtn.hidden = editing || text === null || !isText || !mtimeNs;
     saveBtn.hidden = !editing;
     cancelBtn.hidden = !editing;
+    if (isImage || isPdf) {
+      // Media mode. The review affordances stay OFF entirely: comments anchor to text nodes and an
+      // <img> body has none (affordance honesty — the no-sink gating precedent: no real target, no
+      // affordance; the contextmenu arm below gates the same way). Edit is already off through the
+      // isText arm above; the md segs cannot exist (an .md is never served image/*); Download, Copy
+      // path, the GitHub link, ✕ and the dir-link all keep working — none of them needs the text.
+      cmtCount.hidden = true;
+      submitBtn.hidden = true;
+      wrapBtn.hidden = !(svgSource && svgText !== null);   // Wrap governs the Source code view only
+      srcBtn.hidden = !(isSvgImage && objUrl !== null);
+      srcBtn.classList.toggle("on", svgSource);
+      srcBtn.setAttribute("aria-pressed", String(svgSource));
+      if (objUrl === null) return;            // the romp loader holds the body until the bytes land
+      if (svgSource && svgText !== null) { body.replaceChildren(codeBlock(svgText, path, fmt.wrap)); return; }
+      body.replaceChildren(isPdf ? pdfBlock(objUrl, path) : imgBlock(objUrl, path));
+      return;
+    }
     if (text === null || editing) return;   // loading, or the textarea owns the body right now
     body.replaceChildren(rendered ? mdBlock(text) : codeBlock(text, path, fmt.wrap));
     markComments();
@@ -524,6 +582,7 @@ export function openFileView(path: string, sid?: string | null): boolean {
   // own selection menu behind the backdrop.
   body.addEventListener("contextmenu", (ev) => {
     if (!commentSink) return;                   // no sink → no Comment to offer; the native menu keeps Copy
+    if (isImage || isPdf) return;               // a media body has no text nodes to anchor a comment to
     const sel = window.getSelection();
     const picked = sel ? sel.toString() : "";
     if (!picked.trim() || !sel?.anchorNode || !body.contains(sel.anchorNode)) return;
@@ -791,7 +850,7 @@ export function openFileView(path: string, sid?: string | null): boolean {
   document.addEventListener("keydown", onKey);
   onKeyLive = onKey;
 
-  fetch(fileUrl(path, sid), { cache: "no-store" }).then((r) => {
+  fetch(fileUrl(path, sid), { cache: "no-store" }).then((r): Promise<string | Blob> => {
     // Every failure says WHY, in the pane, rather than leaving a blank one: the kernel distinguishes
     // "not a type I serve" from "too big" from "not text after all", and that is exactly what the
     // person who clicked needs to know (a 413 names the size and the cap). The status rides along so
@@ -806,9 +865,26 @@ export function openFileView(path: string, sid?: string | null): boolean {
     isText = (r.headers.get("Content-Type") || "").startsWith("text/plain")
       && r.headers.get("X-Romp-Text-Utf8") !== "0";
     mtimeNs = r.headers.get("X-Romp-Mtime-Ns") || "";
-    return r.text();
+    // Media branches on the SAME kernel verdict (an image 200 wears image/* and no X-Romp-Text-Utf8 —
+    // tests/test_kernel_preview.py pins that contract server-side). The bytes below are the one fetch
+    // either way: media takes them as a blob for an object URL, never a second request.
+    const ct = r.headers.get("Content-Type") || "";
+    isImage = ct.startsWith("image/");
+    isPdf = ct.startsWith("application/pdf");
+    isSvgImage = ct === "image/svg+xml";
+    return isImage || isPdf ? r.blob() : r.text();
   }).then((t) => {
     if (!document.getElementById("romp-fileview")) return;    // closed while it was in flight
+    if (t instanceof Blob) {
+      // Minted only now — a viewer closed (above) or REPLACED mid-flight creates nothing to leak,
+      // and never clobbers the new open's mediaUrlLive registration.
+      if (!wrap.isConnected) return;
+      mediaBlob = t;
+      objUrl = URL.createObjectURL(t);
+      mediaUrlLive = objUrl;                   // registered so close/replace can revoke (dropMediaUrl)
+      renderBody();
+      return;
+    }
     text = t;
     renderBody();
   }).catch((err) => {
@@ -950,6 +1026,30 @@ function mdBlock(text: string): HTMLElement {
     } catch { /* leave plain */ }
   });
   return box;
+}
+
+// The image body: ONE <img> aimed at the object URL — never innerHTML, never an iframe. That is the
+// whole SVG-safety story (an <img> never runs SVG scripts — the same surface the kernel's preview
+// comments and the relay's local type re-derivation rely on), and for every other image it is simply
+// the right element. Centered and capped like the lightbox's image (.romp-lightbox-img), so a huge
+// plot fits the card and a small icon renders at its own size.
+function imgBlock(objUrl: string, path: string): HTMLElement {
+  const box = el("div", "fileview-imgbox");
+  const img = el("img", "fileview-img") as HTMLImageElement;
+  img.src = objUrl;
+  img.alt = path;
+  box.appendChild(img);
+  return box;
+}
+
+// The PDF body mirrors the lightbox's treatment exactly (openLightbox's pdf arm, preview.ts): the
+// browser's own viewer in a PLAIN iframe — className, src, title, nothing more — aimed at the
+// already-fetched bytes instead of a second network fetch.
+function pdfBlock(objUrl: string, path: string): HTMLElement {
+  const frame = el("iframe", "fileview-frame") as HTMLIFrameElement;
+  frame.src = objUrl;
+  frame.title = path;
+  return frame;
 }
 
 /** Bind the pane's WS poster and route saveFile + fileGitLink replies back to the open viewer.

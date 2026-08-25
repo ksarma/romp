@@ -51,6 +51,10 @@ class FilePreviewEndpoint(unittest.TestCase):
         cls.txt = os.path.join(cls.tmp.name, "notes.txt")
         with open(cls.txt, "w") as f:
             f.write("not renderable")
+        # a synthetic SVG — XML on disk, but SERVED as an image (an <img> never runs its scripts)
+        cls.svg = os.path.join(cls.tmp.name, "diagram.svg")
+        with open(cls.svg, "w") as f:
+            f.write('<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>')
         # …and something served NEITHER as media nor as text, which is what "off the allowlist" means
         # now that source/text is ON it (2026-08-08 — see tests/test_file_view.py)
         cls.bin = os.path.join(cls.tmp.name, "archive.zip")
@@ -76,6 +80,24 @@ class FilePreviewEndpoint(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertEqual(hdrs.get("Content-Type"), "image/png")
         self.assertEqual(body, PNG)
+
+    def test_an_image_200_carries_image_mime_and_no_text_utf8_marker(self):
+        # The viewer's media branch (ui/webview/file-view.ts) keys on exactly this contract: an image
+        # 200 wears its locally-derived image/* mime and NOT the text pipeline's X-Romp-Text-Utf8
+        # marker — that header belongs to the text branch alone, and its absence tells the client no
+        # text decode happened. SVG is the load-bearing case: XML on disk, image on the wire, nosniff
+        # so the browser never reinterprets it as a document.
+        for p, mime in ((self.png, "image/png"), (self.svg, "image/svg+xml")):
+            code, hdrs, _ = self._req("/file?path=" + urllib.parse.quote(p))
+            self.assertEqual(code, 200)
+            self.assertEqual(hdrs.get("Content-Type"), mime)
+            self.assertIsNone(hdrs.get("X-Romp-Text-Utf8"),
+                              "the text marker must never ride an image response")
+            self.assertEqual(hdrs.get("X-Content-Type-Options"), "nosniff")
+        code, hdrs, _ = self._req("/file?path=" + urllib.parse.quote(self.txt))
+        self.assertEqual(code, 200)
+        self.assertEqual(hdrs.get("X-Romp-Text-Utf8"), "1",
+                         "…while the text branch carries its marker — the asymmetry is the signal")
 
     def _req_range(self, path, rng):
         url = "http://127.0.0.1:%d%s&token=%s" % (self.port, path, TOKEN)

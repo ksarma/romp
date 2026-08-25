@@ -579,6 +579,155 @@ test("a save refused by the OWNING kernel's edit gate re-offers the consent and 
     "…and KERNEL_SETTING broadcasts to every attached kernel");
 });
 
+// ── inline images + PDFs (the user 2026-08-25: a clicked .png opened as line-numbered mojibake — the
+// fetch pipeline called r.text() unconditionally on any 200). The viewer branches on the KERNEL'S OWN
+// Content-Type verdict (the authoritative-source rule; the kernel derives mime locally and the relay
+// re-derives it, so the header is a verdict, never an echo — no client-side extension re-test), takes
+// the already-fetched bytes as a blob (no second request), and renders media as media. ──
+
+// executed: the routing replica — which body call a 200 gets, by the kernel's header alone
+test("the media branch keys on the kernel's Content-Type verdict, never the extension", () => {
+  const mediaKind = (ct: string): "img" | "pdf" | null =>
+    ct.startsWith("image/") ? "img" : ct.startsWith("application/pdf") ? "pdf" : null;
+  assert.equal(mediaKind("image/png"), "img");
+  assert.equal(mediaKind("image/svg+xml"), "img", "SVG is an image here — the <img> surface");
+  assert.equal(mediaKind("application/pdf"), "pdf");
+  assert.equal(mediaKind("text/plain; charset=utf-8"), null, "text keeps the r.text() pipeline unchanged");
+  assert.equal(mediaKind(""), null, "no header → the text path, exactly the pre-image behavior");
+  // replica ↔ source: the flags read the kernel's header, and blob is taken ONLY for media
+  assert.match(VIEW, /const ct = r\.headers\.get\("Content-Type"\) \|\| "";/);
+  assert.match(VIEW, /isImage = ct\.startsWith\("image\/"\);/);
+  assert.match(VIEW, /isPdf = ct\.startsWith\("application\/pdf"\);/);
+  assert.match(VIEW, /return isImage \|\| isPdf \? r\.blob\(\) : r\.text\(\);/);
+  // never a client-side extension re-test: preview.ts's extension probe stays out of this module
+  assert.doesNotMatch(VIEW, /previewKind\(/);
+  assert.doesNotMatch(VIEW, /IMG_EXT/);
+});
+
+test("a 200 image renders ONE <img> at an object URL; the comment layer stays off media views", () => {
+  const openFn = VIEW.split("export function openFileView")[1].split("function offersDownload")[0];
+  // the blob becomes an object URL only AFTER the still-open/still-this-viewer checks — a viewer
+  // closed or replaced mid-flight creates nothing to leak
+  assert.ok(openFn.indexOf('if (!document.getElementById("romp-fileview")) return;')
+            < openFn.indexOf("URL.createObjectURL"),
+    "no URL is minted for a viewer that is already gone");
+  assert.match(openFn, /if \(!wrap\.isConnected\) return;/);
+  // renderBody's media branch returns BEFORE markComments — no marks, no count, no Submit can paint
+  // over an image (affordance honesty: comments anchor to text nodes and an <img> has none — the
+  // no-sink gating precedent), and the review controls are hidden explicitly
+  const mediaBranch = VIEW.split("if (isImage || isPdf) {")[1].split("if (text === null || editing) return;")[0];
+  assert.ok(mediaBranch.includes("cmtCount.hidden = true;"));
+  assert.ok(mediaBranch.includes("submitBtn.hidden = true;"));
+  assert.ok(!mediaBranch.includes("markComments"), "the media branch returns before the comment pass");
+  assert.match(mediaBranch, /imgBlock\(objUrl, path\)/);
+  // …and the contextmenu Comment affordance gates off media the same way (right after the no-sink
+  // gate, whose first-line position file-view-comments.test.ts pins)
+  assert.match(VIEW, /if \(!commentSink\) return;.*\n\s*if \(isImage \|\| isPdf\) return;/);
+  // the romp loader holds the body until the bytes land (the loading-state rule)
+  assert.match(mediaBranch, /if \(objUrl === null\) return;/);
+  // the <img> itself: one element, src = the object URL, capped like the lightbox's image on BOTH
+  // sheets (the viewer mounts in both documents — the .romp-acted precedent)
+  const imgFn = VIEW.split("function imgBlock")[1].split("// The PDF body")[0];
+  assert.match(imgFn, /el\("img", "fileview-img"\)/);
+  assert.match(imgFn, /img\.src = objUrl;/);
+  for (const SHEET of [FEED_CSS, CHAT_CSS]) {
+    assert.match(SHEET, /\.fileview-img \{[^}]*object-fit: contain[^}]*\}/);
+    assert.match(SHEET, /\.fileview-imgbox \{/);
+  }
+});
+
+test("image mode hides Wrap and Edit; Download, Copy path, GitHub, ✕ and the dir-link survive", () => {
+  const mediaBranch = VIEW.split("if (isImage || isPdf) {")[1].split("if (text === null || editing) return;")[0];
+  // Wrap governs text views; over an image it hides (the SVG Source view is the one code view left)
+  assert.match(mediaBranch, /wrapBtn\.hidden = !\(svgSource && svgText !== null\);/);
+  // Edit was ALREADY gated on the kernel's text verdict — an image/* response sets isText false, so
+  // the existing arm hides it; both halves stay pinned (file-edit.test.ts pins the isText line too)
+  assert.match(VIEW, /isText = \(r\.headers\.get\("Content-Type"\) \|\| ""\)\.startsWith\("text\/plain"\)/);
+  assert.match(VIEW, /editBtn\.hidden = editing \|\| text === null \|\| !isText \|\| !mtimeNs;/);
+  // the media branch touches NONE of the keepers — they are built unconditionally before the fetch
+  // (the dir-link rides the title bar, outside renderBody entirely)
+  for (const keeper of ["dl.", "copy.", "close.", "gh."])
+    assert.ok(!mediaBranch.includes(keeper), keeper + " must not be re-hidden for images");
+  // markdown's Rendered/Raw segs exist only for .md files (the isMd gate, pinned above), and an .md
+  // is never served image/* — so the segs cannot coexist with an image body by construction
+});
+
+test("SVG renders via <img> ONLY — never innerHTML, never an iframe: its scripts must never run", () => {
+  // the kernel serves .svg as image/svg+xml on purpose (an <img> never runs SVG scripts — kernel.py's
+  // preview comment), and the relay re-derives the type locally; the viewer must keep that surface
+  const imgFn = VIEW.split("function imgBlock")[1].split("// The PDF body")[0];
+  assert.doesNotMatch(imgFn, /innerHTML/, "the XSS property: SVG bytes never become live DOM");
+  assert.doesNotMatch(imgFn, /iframe/, "an iframed SVG is a document — scripts would run");
+  assert.match(imgFn, /el\("img", "fileview-img"\)/);
+  // the Source toggle shows the XML through codeBlock — the same escape/highlight path every text
+  // file takes (textContent / escapeHtml), never a parse into live DOM
+  const mediaBranch = VIEW.split("if (isImage || isPdf) {")[1].split("if (text === null || editing) return;")[0];
+  assert.match(mediaBranch, /codeBlock\(svgText, path, fmt\.wrap\)/);
+  assert.match(VIEW, /isSvgImage = ct === "image\/svg\+xml";/, "the toggle keys on the kernel's verdict too");
+  assert.match(VIEW, /mediaBlob\.text\(\)/, "the source view decodes the SAME fetched bytes — no second request");
+});
+
+// executed: the object-URL lifecycle (the Escape-handler test's shape) — every teardown revokes
+test("the object URL is revoked on close AND on replace-open — none leaks, one live at a time", () => {
+  const sim = () => {
+    let live: string | null = null;
+    let seq = 0;
+    const revoked: string[] = [];
+    const dropMediaUrl = () => { if (live) { revoked.push(live); live = null; } };
+    const openView = () => { dropMediaUrl(); live = "blob:" + ++seq; };  // replace-teardown, then the fetch lands
+    const closeView = () => dropMediaUrl();
+    openView();          // an image opens
+    openView();          // Reload / a second click replaces it — blob:1 must go
+    closeView();         // ✕ — blob:2 must go
+    return { revoked, live };
+  };
+  const r = sim();
+  assert.deepEqual(r.revoked, ["blob:1", "blob:2"], "the replaced URL AND the closed URL both go");
+  assert.equal(r.live, null, "nothing outlives the viewer");
+  // replica ↔ source: ONE module-level registration, dropped by BOTH exits (the editHooks/gitHooks/
+  // onKeyLive precedent), revoking through URL.revokeObjectURL
+  assert.match(VIEW, /let mediaUrlLive: string \| null = null;/);
+  assert.match(VIEW, /URL\.revokeObjectURL\(mediaUrlLive\)/);
+  const closeFn = VIEW.split("export function closeFileView")[1].split("/** Show `path`")[0];
+  assert.match(closeFn, /dropMediaUrl\(\);/, "close revokes");
+  const openFn = VIEW.split("export function openFileView")[1].split("function offersDownload")[0];
+  assert.match(openFn, /dropMediaUrl\(\);/, "the replace path revokes (the conflict Reload re-opens through here)");
+  assert.ok(openFn.indexOf("dropMediaUrl();") < openFn.indexOf('document.getElementById("romp-fileview")?.remove();'),
+    "…before the old viewer is torn down, beside the other module-level drops");
+  assert.match(openFn, /mediaUrlLive = objUrl;/, "the minted URL is exactly what the teardowns revoke");
+});
+
+test("an oversize image lands on the kernel's words + Download — a 413 never reaches the media branch", () => {
+  // executed: the pipeline model — !ok throws (status attached) BEFORE any Content-Type branching
+  const route = (ok: boolean, ct: string): "error" | "img" | "pdf" | "text" => {
+    if (!ok) return "error";
+    return ct.startsWith("image/") ? "img" : ct.startsWith("application/pdf") ? "pdf" : "text";
+  };
+  assert.equal(route(false, "text/plain"), "error",
+    "the kernel 413s an oversize image with a text/plain body naming the size and the cap");
+  assert.equal(route(true, "image/png"), "img");
+  const offersDownload = (status: number | undefined): boolean => status === 413 || status === 415;
+  assert.equal(offersDownload(413), true, "…and the error pane still offers the Download the view could not be");
+  // source ordering: the throw sits before the media flags are ever assigned
+  assert.ok(VIEW.indexOf("if (!r.ok) return r.text().then((t) => {")
+            < VIEW.indexOf('isImage = ct.startsWith("image/");'));
+});
+
+test("a PDF takes the lightbox's exact iframe treatment, aimed at the already-fetched blob", () => {
+  const PREVIEW = web("preview.ts");
+  // the reference: openLightbox's pdf arm is a PLAIN iframe — className, src, title, no sandbox
+  // attributes to mirror or forget
+  assert.match(PREVIEW, /frame\.className = "romp-lightbox-frame";\s*\n\s*frame\.src = fileUrl\(path, sid\);\s*\n\s*frame\.title = path;/);
+  const pdfFn = VIEW.split("function pdfBlock")[1].split("/** Bind the pane's WS poster")[0];
+  assert.match(pdfFn, /el\("iframe", "fileview-frame"\)/);
+  assert.match(pdfFn, /frame\.src = objUrl;/, "the blob URL — the bytes were already fetched once");
+  assert.match(pdfFn, /frame\.title = path;/);
+  assert.doesNotMatch(pdfFn, /sandbox/, "the lightbox sets none; inventing one here would be a different surface");
+  const mediaBranch = VIEW.split("if (isImage || isPdf) {")[1].split("if (text === null || editing) return;")[0];
+  assert.match(mediaBranch, /isPdf \? pdfBlock\(objUrl, path\) : imgBlock\(objUrl, path\)/);
+  for (const SHEET of [FEED_CSS, CHAT_CSS]) assert.match(SHEET, /\.fileview-frame \{[^}]*height: 100%/);
+});
+
 // executed: the gutter is a SIBLING of the code, so selecting the code copies it without line numbers
 test("the line gutter numbers every line and drops a trailing newline's phantom line", () => {
   const lines = (text: string): string[] => {
