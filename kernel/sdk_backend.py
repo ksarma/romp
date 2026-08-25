@@ -362,11 +362,18 @@ def msg_to_atom(msg, sid, fsid, t, skill_tool_ids=()):
         # AskUserQuestion rendered via the lossy regex scrape until the disk record was parsed, and
         # Edit's diffRows lagged a parse behind the stream.
         tur = getattr(msg, "tool_use_result", None)
-        if has_tool_result and isinstance(tur, dict):
+        if has_tool_result and isinstance(tur, dict) and (set(tur) & TUR_CONSUMED_KEYS):
+            # same consumed-keys gate as the file adapter: a Read result's dict holds the whole
+            # file — carrying shapes nothing reads only bloats the live tail
             atom["toolUseResult"] = tur
         return atom
     return None
 
+
+# The toolUseResult keys a consumer actually reads — MIRRORS event_model.TUR_CONSUMED_KEYS (this
+# module loads standalone, so it cannot import the event model; a drift pin in test_sdk_backend.py
+# holds the two sets equal). Widen both together when a new consumer appears; never carry-all.
+TUR_CONSUMED_KEYS = frozenset(("answers", "structuredPatch"))
 
 TYPE_SOMETHING = "Type something"   # meta-option label the webview turns into the inline "add your own" field
 
@@ -852,6 +859,13 @@ BOOT_RESUME_CONCURRENCY = max(1, int(os.environ.get("ROMP_BOOT_RESUME_CONCURRENC
 # Backstop ONLY (never the mechanism): a CLI that wedges before init would otherwise hold its slot
 # forever and trap the whole sweep — after this long the sweep proceeds anyway, loudly.
 BOOT_RESUME_SLOT_S = float(os.environ.get("ROMP_BOOT_RESUME_SLOT_S", "180"))
+
+# The rename ping (the user 2026-08-24): a renamed session hears its OWN new name — one line ahead
+# of whatever next enters it (send() below), never a wake of its own. Same [romp] mechanics-notice
+# family as the restart notices above (the housekeeping note in the session prompt gives the prefix
+# meaning), but MARKER-FREE: this line joins an EXISTING message, and the romp-injected marker
+# would re-author the host message's echo and transcript atom.
+RENAME_NUDGE = "[romp] This session was renamed: it is now '%s'. A note for your own records — carry on."
 
 # Same recovery, different death: the session's OWN claude process died mid-turn (killed or crashed)
 # while the kernel stayed up, so the kernel itself resumes it (_heal_cut_session) instead of waiting
@@ -1386,6 +1400,29 @@ def _queue_wire(t):
 
 class _AskCancelled(Exception):
     pass
+
+
+
+_MODEL_TIERS = ("haiku", "sonnet", "opus", "fable", "mythos")   # rank = index; fable/mythos share the top in
+#                                                                 practice but a swap between them is lateral,
+#                                                                 not a fallback, so distinct ranks are fine
+
+
+def _model_rank(name):
+    """The model FAMILY rank of a model id/display name, or None when no family matches — substring
+    match, so 'claude-sonnet-5', 'Sonnet 5' and 'us.anthropic.claude-sonnet-…' all rank the same."""
+    low = str(name or "").lower()
+    for i, fam in enumerate(_MODEL_TIERS):
+        if fam in low:
+            return i
+    return None
+
+
+def _model_downgrade(frm, to):
+    """True only for a KNOWN down-tier transition — the shape of an API capacity fallback. Unknown
+    names never qualify: a mint on a user's own exotic pick is worse than a missed exotic fallback."""
+    a, b = _model_rank(frm), _model_rank(to)
+    return a is not None and b is not None and b < a
 
 
 class SdkSession:
@@ -2315,6 +2352,22 @@ class SdkSession:
             if cleared:
                 self.backend._poke()
             return
+        if self.model and not self._model_pending and not cleared \
+                and _model_downgrade(self.model, pm):
+            # A DOWN-TIER transition nobody asked for (no /model pick pending): the API fell back
+            # mid-turn. Surface it as a completed card via the kernel-wired hook (the user
+            # 2026-08-23) — never silently (the swap was invisible before this). DOWNGRADES ONLY
+            # (the user 2026-08-23, from a card reading "fallback" on their own upgrade): romp only
+            # sees ITS OWN picks pending — a /model typed inside the CLI, or any user-side switch,
+            # arrives here as an unrequested transition too, and a capacity fallback never moves a
+            # session UP-tier. An up-tier, lateral, or unknown-name change is treated as the user's
+            # doing and just updates the badge, exactly as before the card existed.
+            fb = getattr(type(self.backend), "on_model_fallback", None)
+            if fb:
+                try:
+                    fb(self.sid, self.model, pm)
+                except Exception as e:
+                    self.backend._log("model-fallback card (%s): %s" % (self.name, e), problem=True)
         self.model = pm
         try:
             self.backend._update_reg(self.sid, liveModel=pm, modelPending=bool(self._model_pending))
@@ -2533,6 +2586,16 @@ class SdkSession:
             self.retry_count = 0
             self.retry_info = None
             m = getattr(msg, "model", None)
+            # SIDECHAIN turns never teach the session its model (the user 2026-08-24): a Task/Agent
+            # subagent streams its OWN AssistantMessages tagged parent_tool_use_id, routinely on a
+            # LOWER tier than the parent — learning one filed a false "Model changed automatically"
+            # downgrade card (the subagent's model read as a capacity fallback) and wrote the
+            # subagent's model over the registry's liveModel, which the statusline badge reads,
+            # until _do_refresh_context healed it after the turn. The same drop the chat-atom path
+            # applies to sidechain traffic (msg_to_atom) — the parent stream teaches only the
+            # parent's own turns.
+            if getattr(msg, "parent_tool_use_id", None):
+                m = None
             # Only adopt a REAL model id. Injected / synthetic assistant turns carry model="<synthetic>" (and
             # the CLI writes it to the transcript too); pretty_model passes unrecognised ids through verbatim,
             # so an unguarded assign would CORRUPT the model badge to "<synthetic>". A real id always contains
@@ -3537,7 +3600,8 @@ class SdkBackend:
         asked, rather than returning quietly. API-keyed sessions are not candidates (per-session auth,
         the user 2026-08-08): their get_usage only times out, and the windows belong to the login. A box
         where EVERY live session is keyed says so too (the all-keyed branch) instead of clicking into
-        silence — once per episode, since the rail timer calls this every 60s."""
+        silence — once per episode, not per call: both standing callers repeat (the rail's 60s timer and
+        the kernel's 15-minute usage poll, _usage_poll_tick), so the one-shot is load-bearing."""
         with self._lock:
             sessions = list(self.sessions.values())
         connected = [s for s in sessions if s.client and s.loop and not s.ended]
@@ -3547,12 +3611,15 @@ class SdkBackend:
             # per-turn refreshes make unremarkable): nobody can poll the subscription windows, and the
             # log line below sat inside `if live:`, so the condition was COMPLETELY silent (the user
             # 2026-08-15). Under a ROMP_EXPECTED_AUTH=key declaration this is the box working as
-            # designed — an info line; undeclared, an all-keyed box is the surprising case and rings.
+            # designed — an info line; anything else rings: undeclared (the surprising case), and a
+            # declared-LOGIN box gone all-keyed, which CONTRADICTS its own declaration — `not
+            # _expected_auth()` read that contradiction as quiet, muting the exact state the
+            # declaration exists to flag.
             if connected and not self._usage_all_keyed:
                 self._usage_all_keyed = True
                 self._log("usage refresh: %d live session(s), all billing API keys — no session can "
                           "poll the subscription windows, so rate-limit telemetry is unavailable"
-                          % len(connected), problem=not _expected_auth())
+                          % len(connected), problem=_expected_auth() != "key")
             return
         if any(s.auth_live == "login" for s in live):
             # Re-armed only by an init that CONFIRMED a login — a fresh spawn's default-False flag
@@ -4139,6 +4206,11 @@ class SdkBackend:
             reg["threadOf"] = thread_of
         if parent.get("model") and parent["model"] != "default":
             reg["model"] = parent["model"]
+        if parent.get("fast"):
+            # fast rides the fork like model/effort do (the user 2026-08-25: a comment made from an
+            # Opus-high-FAST session came up slow) — the reg's `fast` is the persisted ask fast_opt
+            # reads at connect, so the thread's first frame already reports it
+            reg["fast"] = True
         # Per-fork model/effort OVERRIDES (the user 2026-08-17: a comment thread on a different model
         # or effort, without touching the parent). Applied HERE, in the reg the first connect reads —
         # never via set_model, whose write_sdk_default side effect would make a thread's pick the seed
@@ -4339,6 +4411,23 @@ class SdkBackend:
         s = self._ensure(sid)
         if not s:
             return False
+        # RENAME PING (the user 2026-08-24; own-record form 2026-08-25): one line ahead of the
+        # next thing that enters the session, so it hears its own new name instead of inferring
+        # it. Its OWN record in the machine-sent dress — string-prepending it into the incoming
+        # text put the bookkeeping line inside the USER's bubble, rendered as if they typed it
+        # (the user 2026-08-25, on their very first message). The romp-injected markers are safe
+        # here precisely BECAUSE the record is separate: they author this line 'romp' (the gray
+        # machine bubble, the restart notices' dress) without touching the user's own record. It
+        # still rides the same wake — the recursive send enqueues back-to-back with the message
+        # that triggered it, and an idle session stays idle. A slash-command send passes untouched
+        # (the CLI must see the bare command) and the note holds for the next real prompt; the
+        # recursion terminates because the note is cleared before the ping is sent.
+        if not text.lstrip().startswith("/"):
+            _reg = read_reg(self.state_dir, sid) or {}
+            if _reg.get("renameNote"):
+                _note = _reg["renameNote"]
+                self._update_reg(sid, renameNote=None)
+                self.send(sid, "<!-- romp-injected --><!-- romp-system -->" + RENAME_NUDGE % _note)
         if _is_compact_cmd(text):
             # Delivering /compact: mark the session compacting NOW (authoritative), covering the gap between
             # this send and the CLI actually starting the turn — so a drive op the producer tick checks in
@@ -4448,7 +4537,35 @@ class SdkBackend:
                  and a["_echo_text"] not in qs]
         if not newly:
             return
+        # RE-DELIVER, don't just flag (the user 2026-08-23, their strongest point in the restart
+        # audit: "it would be very, very bad if we ever lost stuff because of restarts" — a typed
+        # prompt queued at 11:20 was silently discarded by the 11:25 restart). A HUMAN send whose
+        # loss is proven — and whose text a direct transcript scan confirms never landed as a user
+        # record (the flag path self-corrects on a wrong guess; a re-delivery would DUPLICATE, so it
+        # verifies first) — goes back into the persisted queue in send order: the next spawn feeds
+        # it to the fresh CLI exactly like the surviving queue, recreating the pre-restart state.
+        # romp-authored echoes (nudges) keep the flag path: re-delivering one could double-nudge,
+        # and its content is regenerable machinery, not the user's words.
+        redeliver = []
+        for a in sorted(newly, key=lambda x: x.get("t") or 0):
+            if a.get("author") == "human" and not self._text_landed(sid, a["_echo_text"]):
+                redeliver.append(a)
+        if redeliver:
+            with self._reg_lock:
+                reg = read_reg(self.state_dir, sid)
+                if reg is not None:
+                    have = [t for t in (reg.get("queue") or []) if isinstance(t, str) and t]
+                    add = [a["_echo_text"] for a in redeliver if a["_echo_text"] not in have]
+                    if add:
+                        reg["queue"] = have + add          # behind the surviving queue: original send order
+                        write_reg(self.state_dir, sid, reg)
+                        for a in redeliver:
+                            self._log("%s: re-delivering a typed send the dead CLI was holding: %.80r"
+                                      % (sid[:8], a["_echo_text"]))
+        rekeyed = {a["_echo_text"] for a in redeliver}
         for a in newly:
+            if a["_echo_text"] in rekeyed:
+                continue                                   # now in the queue → renders as queued, prunes on landing
             a["dropped"] = True
             self._log("%s: a send never reached its CLI (the process died holding it) — kept in the chat "
                       "as never-delivered: %.80r" % (sid[:8], a["_echo_text"]), problem=True)
@@ -4460,6 +4577,36 @@ class SdkBackend:
                 self._todo_lost(sid, a["_todo"], a["_echo_text"])
         self._persist_echoes(sid)
         self._wake_push()
+
+    def _text_landed(self, sid: str, text: str) -> bool:
+        """Did `text` land as a USER record in the sid's transcript? The re-delivery guard: the echo
+        prune is lazy (a landed echo may still be un-pruned at boot), so a queue re-add without this
+        scan would duplicate a delivered message. Reads the transcript TAIL (the loss window is recent
+        by construction — the send predates the death that orphaned it); unreadable → True, the safe
+        side: never re-deliver on doubt, the flag path still surfaces the loss for a human call."""
+        try:
+            reg = read_reg(self.state_dir, sid) or {}
+            path = transcript_path(reg.get("cwd") or "", reg.get("lastSid") or sid)
+            want = " ".join(text.split())
+            with open(path, "rb") as f:
+                f.seek(max(0, os.path.getsize(path) - 2_000_000))
+                for line in f.read().decode(errors="replace").splitlines():
+                    if '"user"' not in line or want[:60] not in " ".join(line.split()):
+                        continue
+                    try:
+                        rec = json.loads(line)
+                    except ValueError:
+                        continue
+                    if rec.get("type") != "user":
+                        continue
+                    c = ((rec.get("message") or {}).get("content"))
+                    txt = c if isinstance(c, str) else " ".join(
+                        b.get("text", "") for b in c if isinstance(b, dict)) if isinstance(c, list) else ""
+                    if want in " ".join(txt.split()):
+                        return True
+            return False
+        except Exception:
+            return True
 
     def dismiss_echo(self, sid: str, uuid: str | None = None, t: int | None = None) -> str | None:
         """✕ on a never-delivered bubble: retire a DROPPED echo the user has acknowledged. Matched by the
@@ -4684,6 +4831,22 @@ class SdkBackend:
         self._poke()
         return True
 
+    def thread_sessions(self) -> dict[str, dict]:
+        """{sid: {state, threadOf}} for every alive COMMENT-THREAD session — exactly the rows
+        live_sessions deliberately hides (a thread's surface is the parent chat's comment UI, never a
+        tab). Served only to callers that ask (kernel /sessions?threads=1 → the postal bus), so a
+        thread can mail its PARENT under its own name (the user 2026-08-22) without ever gaining a
+        tab, a lane, or a feed card."""
+        out = {}
+        for reg in list_regs(self.state_dir):
+            if not reg.get("alive") or not reg.get("threadOf"):
+                continue
+            sid = reg["sid"]
+            s = self.sessions.get(sid)
+            st = (s.snapshot() if s and s.thread.is_alive() else {"state": "waiting", "backend": "sdk"})
+            out[sid] = {"state": st.get("state", "waiting"), "threadOf": str(reg.get("threadOf") or "")}
+        return out
+
     def fork_children(self) -> dict:
         """{parent sid: [{sid, name, cut, t}, …]} for every session carrying a durable forkedFrom —
         the parent chat's branch chips. Comment threads are skipped (their anchor is the comment
@@ -4723,11 +4886,49 @@ class SdkBackend:
                 return ""
         return ""
 
+    def session_since(self, sid: str) -> int:
+        """Epoch seconds the sid's current state began (0 unknown) — session_state's twin, read by
+        the comments frame so the popover's working chip can carry the chat's counting timer."""
+        with self._lock:
+            s = self.sessions.get(sid)
+        if s and s.thread.is_alive():
+            try:
+                return int(float(s.snapshot().get("since") or 0))
+            except Exception:
+                return 0
+        return 0
+
+    def session_meta(self, sid: str) -> dict:
+        """{'mode','fast'} from the live snapshot ({} unknown) — the comments frame's statusline
+        parity: the popover shows the chat statusline's FULL element set (the user 2026-08-25)."""
+        with self._lock:
+            s = self.sessions.get(sid)
+        if s and s.thread.is_alive():
+            try:
+                snap = s.snapshot()
+                return {"mode": str(snap.get("mode") or ""), "fast": str(snap.get("fast") or "")}
+            except Exception:
+                return {}
+        return {}
+
     def rename(self, sid: str, new_name: str) -> bool:
         reg = read_reg(self.state_dir, sid)
         if not reg:
             return False
-        self._update_reg(sid, name=new_name)   # locked RMW — see set_effort's race note
+        # renameNote: the one-line "you were renamed" ping, delivered by send() as its OWN
+        # machine-dressed record ahead of whatever NEXT enters the session (the user 2026-08-24: a
+        # renamed worker learned its own new name only by inference from a peer's prose).
+        # Reg-persisted so it survives restarts; never a wake of its own — the queue wakes
+        # sessions, this rides a send that already happens. ONLY when prior turns exist under the
+        # old name (the transcript is the record of prior turns): a rename before the first turn
+        # has no stale self-knowledge to correct — the fresh session learns its name the normal
+        # way, and pinging it put bookkeeping ahead of the user's very first words (the user
+        # 2026-08-25).
+        _ls = reg.get("lastSid")
+        _tp = Path(transcript_path(reg.get("cwd") or "", _ls)) if _ls else None
+        _has_history = bool(_tp) and _tp.exists() and _tp.stat().st_size > 0
+        self._update_reg(sid, name=new_name,
+                         **({"renameNote": new_name} if _has_history else {}))   # locked RMW — see set_effort's race note
         # keep the shared names/ identity file in sync (preserve colours)
         try:
             parts = (Path(self.state_dir) / "names" / sid).read_text().rstrip("\n").split("\t")

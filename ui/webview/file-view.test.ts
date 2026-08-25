@@ -24,8 +24,10 @@ test("openPath routes by HOST: the in-pane viewer modal on the web, the editor i
   assert.match(RENDER, /function openPath\(path: string, sid\?: string \| null\): void/);
   // web default → the viewer opens in THIS document; the cards-pane preference relays instead (below)
   assert.match(RENDER, /openFileView\(path, sid \|\| activeId \|\| null\);/);
-  // (the import also carries setCommentSink since 2026-08-14 — the review layer's way back to the composer)
-  assert.match(RENDER, /import \{ openFileView, setCommentSink \} from "\.\/file-view";/);
+  // (setCommentSink left the import with the review layer, 2026-08-23 — quote chips replaced it.
+  // Upstream also asserts the viewFile relay is GONE from render.ts; here it is alive on purpose —
+  // the fork's fileLinkPane preference sends it since 2026-08-20, pinned by fileLinkRoute below.)
+  assert.match(RENDER, /import \{ openFileView \} from "\.\/file-view";/);
   // VS Code keeps the host editor
   assert.match(RENDER, /vscodeApi\.postMessage\(sid \? \{ type: "openFile", path, id: sid \} : \{ type: "openFile", path \}\);/);
 });
@@ -242,13 +244,54 @@ test("the viewer is a singleton MODAL over its pane: ~95% card, dimmed backdrop,
     "the feed boots the listener with the WS poster (saves ride it — the raw-mode slice)");
 });
 
-test("the FEED-hosted viewer registers no comment sink, so the review layer gates itself off", () => {
-  // the review layer's Submit drafts into the CHAT composer via a sink render.ts registers; the feed
-  // hosts the same viewer without one, so every comment affordance must gate on the sink or Submit is
-  // a dead button in that document (2026-08-19) — no real target, no affordance
-  assert.doesNotMatch(FEED, /setCommentSink/, "no composer in the feed to draft into");
-  assert.match(RENDER, /setCommentSink\(\(sid, text\) => \{/, "the chat bundle keeps the full behavior");
-  assert.match(VIEW, /if \(!commentSink\) return;/, "the gate exists in the viewer itself");
+// ── selection → quote chip (the user 2026-08-23, the three-verbs consolidation): the viewer's
+// separate review layer (per-file comment store, marks, one-shot Submit — romp:fileviewComments +
+// buildReviewMessage) is GONE. Selecting a passage now seeds the chat composer's own labeled quote
+// chip, exactly like a VS Code editor highlight, and batching rides the chip + ⌘⏎ staging flow the
+// chat already has. "Comment" means only the transcript's live threads now. ──
+
+test("selecting in the viewer seeds the composer's editor chip — the editorSelection shape, path:line label", () => {
+  // mouseup posts to our OWN window (the browseFiles precedent — no import cycle with render.ts),
+  // and render.ts's existing editorSelection handler owns the chip end to end
+  assert.match(VIEW, /box\.addEventListener\("mouseup", \(\) => \{/);
+  assert.match(VIEW, /window\.postMessage\(\{ type: "editorSelection", text: picked, sid: sid \|\| undefined, src: quoteSrcLabel\(path, doc, picked\) \}, "\*"\);/);
+  // a collapsed or out-of-viewer selection seeds nothing, and CodeMirror selections are edits
+  assert.match(VIEW, /if \(!sel \|\| sel\.isCollapsed \|\| !sel\.anchorNode \|\| !box\.contains\(sel\.anchorNode\)\) return;/);
+  assert.match(VIEW, /if \(editing\) return;/);
+});
+
+test("the chip lands in the session the file was opened FOR — the posted sid beats activeId-at-gesture", () => {
+  // the modal stays up across a tab switch (nothing closes it on focus), so seeding into activeId
+  // would put session A's path:line quote into session B's composer — the 2026-08-19 routing rule
+  // the retired review layer already learned once. Host (VS Code) posts carry no sid → activeId.
+  assert.match(RENDER, /const to = typeof m\.sid === "string" && m\.sid \? m\.sid : activeId;/);
+  assert.match(RENDER, /if \(to\) seedEditorQuote\(to, m\.text, typeof m\.src === "string" \? m\.src : undefined\);/);
+});
+
+test("the label's line is minted against a FRESH read, and a failed re-read falls back to the snapshot", () => {
+  // agents edit these same trees while you read: the open-time snapshot's numbering may have moved,
+  // so the line is anchored at selection time — and a failed re-read must not fabricate drift
+  // nobody observed (the retired Submit guard's rule), so it anchors the snapshot instead. The
+  // snapshot is viewText, not text: the SVG Source view's snapshot is the decoded blob and `text`
+  // stays null in media mode, so falling back to it would strip every SVG quote's line label.
+  assert.match(VIEW, /const seq = \+\+seedSeq;/);
+  assert.match(VIEW, /fetch\(fileUrl\(path, sid\), \{ cache: "no-store" \}\)\n\s*\.then\(\(r\) => \(r\.ok \? r\.text\(\) : Promise\.reject\(new Error\(String\(r\.status\)\)\)\)\)\n\s*\.catch\(\(\) => viewText\(\)\)/);
+  assert.match(VIEW, /const viewText = \(\): string \| null => \(svgSource && svgText !== null \? svgText : text\);/);
+  assert.match(VIEW, /if \(seq !== seedSeq\) return;/, "two racing reads: the last gesture wins");
+});
+
+test("the FEED-hosted viewer stays inert: no editorSelection listener there, and no review layer anywhere", () => {
+  // the feed document has no composer and no editorSelection handler — so the seed gesture itself
+  // stands down there (the fork's no-sink gating, re-expressed for the chip era: no real target,
+  // no post, and no dead-work fresh read per selection). Presence is the DOM id, the Back button's
+  // import-free idiom.
+  assert.match(VIEW, /if \(!document\.getElementById\("composer-input"\)\) return;/);
+  assert.doesNotMatch(FEED, /editorSelection/);
+  // the review layer is gone from every module and both sheets, and the orphaned store is swept
+  for (const source of [VIEW, RENDER, FEED, CHAT_CSS, FEED_CSS]) {
+    assert.doesNotMatch(source, /setCommentSink|buildReviewMessage|fv-hl|fileview-submit/);
+  }
+  assert.match(VIEW, /localStorage\.removeItem\("romp:fileviewComments"\)/);
 });
 
 test("it waits with the romp loader and fails with the kernel's own words, never a blank pane", () => {
@@ -318,24 +361,26 @@ test("the hljs token palette lives in feed.css too, identical to the chat's", ()
 // call, 2026-08-09) and any malformed stored value reads as the defaults — a corrupt entry may cost the
 // preference, never the viewer (feed-view-state's parseViewState contract).
 test("format prefs: rendered is the markdown default, and a corrupt entry reads as the defaults", () => {
-  type Fmt = { md: "rendered" | "raw"; wrap: boolean };
+  // wrap is GONE from the format state (the user 2026-08-24) — a stored wrap key from the toggle
+  // era parses away silently
+  type Fmt = { md: "rendered" | "raw" };
   const parseFmt = (raw: string | null): Fmt => {
-    const def: Fmt = { md: "rendered", wrap: false };
+    const def: Fmt = { md: "rendered" };
     if (!raw) return def;
     try {
-      const o = JSON.parse(raw) as { md?: unknown; wrap?: unknown };
+      const o = JSON.parse(raw) as { md?: unknown };
       if (!o || typeof o !== "object") return def;
-      return { md: o.md === "raw" ? "raw" : "rendered", wrap: o.wrap === true };
+      return { md: o.md === "raw" ? "raw" : "rendered" };
     } catch { return def; }
   };
-  assert.deepEqual(parseFmt(null), { md: "rendered", wrap: false }, "first open: rendered, unwrapped");
-  assert.deepEqual(parseFmt('{"md":"raw","wrap":true}'), { md: "raw", wrap: true }, "the round-trip");
-  assert.deepEqual(parseFmt("not json"), { md: "rendered", wrap: false });
-  assert.deepEqual(parseFmt('{"md":"purple","wrap":"yes"}'), { md: "rendered", wrap: false },
+  assert.deepEqual(parseFmt(null), { md: "rendered" }, "first open: rendered");
+  assert.deepEqual(parseFmt('{"md":"raw","wrap":true}'), { md: "raw" }, "the toggle-era wrap key parses away");
+  assert.deepEqual(parseFmt("not json"), { md: "rendered" });
+  assert.deepEqual(parseFmt('{"md":"purple","wrap":"yes"}'), { md: "rendered" },
                    "foreign values fall to the defaults field by field");
   // replica ↔ source
-  assert.match(VIEW, /const def: FileViewFmt = \{ md: "rendered", wrap: false \};/);
-  assert.match(VIEW, /return \{ md: o\.md === "raw" \? "raw" : "rendered", wrap: o\.wrap === true \};/);
+  assert.match(VIEW, /const def: FileViewFmt = \{ md: "rendered" \};/);
+  assert.match(VIEW, /return \{ md: o\.md === "raw" \? "raw" : "rendered" \};/);
   // …and the prefs persist in localStorage, the feed-view-state call: per-BROWSER view state that must
   // survive a kernel restart without a round-trip to the thing that just restarted
   assert.match(VIEW, /const FMT_KEY = "romp:fileviewFmt";/);
@@ -408,8 +453,9 @@ test("wrap mode: per-line rows, spans rebalanced across newlines, no phantom tra
 });
 
 // C: the toggle and the CSS that carries the honest gutter answer
-test("the Wrap toggle persists, hides with rendered prose, and its numbers still never copy", () => {
-  assert.match(VIEW, /wrapBtn\.addEventListener\("click", \(\) => \{ fmt\.wrap = !fmt\.wrap; saveFmt\(fmt\); renderBody\(\); \}\);/);
+test("long lines ALWAYS soft-wrap — the dedicated toggle button is gone (the user 2026-08-24)", () => {
+  assert.doesNotMatch(VIEW, /wrapBtn/, "no wrap chrome anywhere in the modal");
+  assert.match(VIEW, /codeBlock\(text, path, true\)/, "the pre view is born wrapped");
   // wrap mode returns BEFORE the sibling gutter is built — a misaligned column cannot exist
   assert.match(VIEW, /if \(wrapLines\) \{[\s\S]*?return wrap;\s*\}\s*const gutter = el\("div", "fileview-gutter"\);/);
   // plain files wrap too: no grammar → the text is HTML-escaped before the line walk
@@ -419,10 +465,14 @@ test("the Wrap toggle persists, hides with rendered prose, and its numbers still
     assert.match(SHEET, /\.fileview-wrap \.fv-cl::before \{[\s\S]*?counter-increment: fvln/);
     assert.match(SHEET, /\.fileview-wrap \.fv-cl::before \{[\s\S]*?user-select: none/);
   }
-  // wrap governs the pre view only — rendered prose always wraps — so the button leaves with it
-  // (and with edit mode, whose textarea has no wrap toggle to govern — the raw-mode slice)
-  assert.match(VIEW, /wrapBtn\.hidden = rendered \|\| editing;/);
-  assert.match(VIEW, /wrapBtn\.classList\.toggle\("on", fmt\.wrap\);/, "pressed state flips synchronously");
+});
+
+test("a file opened FROM the listing offers the way back — close only the viewer, listing intact beneath", () => {
+  // the one-directional stack: the browser sits beneath, so closing just the viewer IS the back;
+  // presence-gated on the browser's DOM id (import-free), absent for path-link opens
+  assert.match(VIEW, /if \(document\.getElementById\("romp-filebrowse"\)\) \{/);
+  assert.match(VIEW, /back\.textContent = "‹ Files"; back\.title = "Back to the file listing";/);
+  assert.match(VIEW, /back\.addEventListener\("click", \(\) => closeFileView\(\)\);/);
 });
 
 // ── download (the user 2026-08-09): any linked file can be SAVED, including everything the pane cannot
@@ -604,7 +654,7 @@ test("the media branch keys on the kernel's Content-Type verdict, never the exte
   assert.doesNotMatch(VIEW, /IMG_EXT/);
 });
 
-test("a 200 image renders ONE <img> at an object URL; the comment layer stays off RENDERED media", () => {
+test("a 200 image renders ONE <img> at an object URL; the quote gesture stays off RENDERED media", () => {
   const openFn = VIEW.split("export function openFileView")[1].split("function offersDownload")[0];
   // the blob becomes an object URL only AFTER the still-open/still-this-viewer checks — a viewer
   // closed or replaced mid-flight creates nothing to leak
@@ -612,20 +662,15 @@ test("a 200 image renders ONE <img> at an object URL; the comment layer stays of
             < openFn.indexOf("URL.createObjectURL"),
     "no URL is minted for a viewer that is already gone");
   assert.match(openFn, /if \(!wrap\.isConnected\) return;/);
-  // renderBody's img/PDF arm returns WITHOUT markComments — no marks, no count, no Submit can paint
-  // over an image (affordance honesty: comments anchor to text nodes and an <img> has none — the
-  // no-sink gating precedent), and the review controls are hidden explicitly. The SVG SOURCE view is
-  // the deliberate exception — a text view, covered in file-view-comments.test.ts.
+  // renderBody's img/PDF arm renders and returns — an <img>/iframe body has no honest text to
+  // quote (affordance honesty — the no-sink gating precedent), so the mouseup seed gates off
+  // RENDERED media too. The SVG SOURCE view is the deliberate exception — a text view, covered by
+  // the media-gate test below.
   const mediaBranch = VIEW.split("if (isImage || isPdf) {")[1].split("if (text === null || editing) return;")[0];
-  assert.ok(mediaBranch.includes("cmtCount.hidden = true;"));
-  assert.ok(mediaBranch.includes("submitBtn.hidden = true;"));
   const renderedArm = mediaBranch.slice(mediaBranch.indexOf("body.replaceChildren(isPdf"));
   assert.ok(renderedArm.length > 0, "the img/PDF render arm exists");
-  assert.ok(!renderedArm.includes("markComments"), "the img/PDF arm renders and returns — no comment pass");
   assert.match(mediaBranch, /imgBlock\(objUrl, path, imgFailed\)/);
-  // …and the contextmenu Comment affordance gates off RENDERED media the same way (right after the
-  // no-sink gate, whose first-line position file-view-comments.test.ts pins)
-  assert.match(VIEW, /if \(!commentSink\) return;.*\n\s*if \(\(isImage \|\| isPdf\) && !\(svgSource && svgText !== null\)\) return;/);
+  assert.match(VIEW, /if \(\(isImage \|\| isPdf\) && !\(svgSource && svgText !== null\)\) return;/);
   // the romp loader holds the body until the bytes land (the loading-state rule)
   assert.match(mediaBranch, /if \(objUrl === null\) return;/);
   // the <img> itself: one element, src = the object URL, capped like the lightbox's image on BOTH
@@ -639,10 +684,36 @@ test("a 200 image renders ONE <img> at an object URL; the comment layer stays of
   }
 });
 
-test("image mode hides Wrap and Edit; Download, Copy path, GitHub, ✕ and the dir-link survive", () => {
+// ── media gating is RENDERED-media gating (review 2026-08-25, re-homed from the retired review
+// layer's suite): the gate's rationale — "no honest text to quote" — is true of the img/PDF
+// surfaces only. The SVG SOURCE view is codeBlock output, real text nodes, so a selection there
+// seeds a labeled quote chip exactly as in any text view; a blanket media gate would make an
+// .svg's XML unquotable. ──
+test("the quote seed gates off RENDERED media only — the SVG Source view is a text view like any other", () => {
+  // executed: the seed offer across the view states (the no-target gate holds throughout —
+  // composerHere plays the role the old comment sink did: no real target, no gesture)
+  const seedable = (composerHere: boolean, isImage: boolean, isPdf: boolean, srcView: boolean): boolean =>
+    composerHere && !((isImage || isPdf) && !srcView);
+  assert.equal(seedable(true, true, false, true), true, "SVG Source view: the selection seeds a chip");
+  assert.equal(seedable(true, true, false, false), false, "the img view has no honest text to quote");
+  assert.equal(seedable(true, false, true, false), false, "the PDF iframe owns its own surface");
+  assert.equal(seedable(false, true, false, true), false, "no composer in this document still gates everything off");
+  assert.equal(seedable(true, false, false, false), true, "plain text views are untouched");
+  // source: the media arm of the mouseup gate carves out the Source view, sitting AFTER the
+  // no-target gate (whose pin lives in the feed-inert test above)
+  assert.match(VIEW, /if \(!document\.getElementById\("composer-input"\)\) return;\n(\s*\/\/[^\n]*\n)*\s*if \(\(isImage \|\| isPdf\) && !\(svgSource && svgText !== null\)\) return;/);
+  // anchoring reads the text THE VIEW SHOWS — the Source view's decoded XML, never the text
+  // pipeline's null — so a quote on the XML earns its path:line label (viewText, pinned with the
+  // fresh-read test above); renderBody's Source arm builds those text nodes through codeBlock
   const mediaBranch = VIEW.split("if (isImage || isPdf) {")[1].split("if (text === null || editing) return;")[0];
-  // Wrap governs text views; over an image it hides (the SVG Source view is the one code view left)
-  assert.match(mediaBranch, /wrapBtn\.hidden = !\(svgSource && svgText !== null\);/);
+  const srcArm = (mediaBranch.split("if (svgSource && svgText !== null) {")[1] || "").split("\n      }")[0];
+  assert.ok(srcArm, "the Source-view arm exists inside the media branch");
+  assert.match(srcArm, /body\.replaceChildren\(codeBlock\(svgText, path, true\)\);/);
+});
+
+test("image mode hides Edit; Download, Copy path, GitHub, ✕ and the dir-link survive", () => {
+  const mediaBranch = VIEW.split("if (isImage || isPdf) {")[1].split("if (text === null || editing) return;")[0];
+  // (Wrap needs no hiding any more — the toggle button is gone everywhere, pinned above)
   // Edit was ALREADY gated on the kernel's text verdict — an image/* response sets isText false, so
   // the existing arm hides it; both halves stay pinned (file-edit.test.ts pins the isText line too)
   assert.match(VIEW, /isText = \(r\.headers\.get\("Content-Type"\) \|\| ""\)\.startsWith\("text\/plain"\)/);
@@ -679,8 +750,8 @@ test("SVG renders via <img> ONLY — never innerHTML, never an iframe: its scrip
   // …and the Source toggle's codeBlock render — the same escape/highlight path every text file
   // takes (textContent / escapeHtml), never a parse into live DOM — is LIVE CODE, not a comment
   const live = mediaBranch.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
-  assert.match(live, /body\.replaceChildren\(codeBlock\(svgText, path, fmt\.wrap\)\)/,
-    "the SVG Source view renders through codeBlock, uncommented");
+  assert.match(live, /body\.replaceChildren\(codeBlock\(svgText, path, true\)\)/,
+    "the SVG Source view renders through codeBlock, uncommented (born wrapped, like every code view)");
   assert.match(VIEW, /isSvgImage = ct === "image\/svg\+xml";/, "the toggle keys on the kernel's verdict too");
   assert.match(VIEW, /mediaBlob\.text\(\)/, "the source view decodes the SAME fetched bytes — no second request");
 });
