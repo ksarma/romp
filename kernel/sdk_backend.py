@@ -1693,6 +1693,23 @@ class SdkSession:
         if loop is not None and wake is not None:
             loop.call_soon_threadsafe(wake.set)
 
+    def enqueue_if_empty(self, text: str) -> bool:
+        """Enqueue `text` only when NOTHING is queued — the emptiness check and the append share
+        ONE lock hold. The rename ping's gate (found 2026-08-26): with the check and the enqueue
+        in separate holds, a send racing the gap between them queued AHEAD of the ping, and the
+        CLI's pre-turn batching folded the user's words into the ping's machine record — the
+        exact 2026-08-25 fold the empty-queue gate exists to prevent. Returns whether the text
+        was queued; False leaves the queue untouched."""
+        with self._lock:
+            if self._pending:
+                return False
+            self._pending.append(text)
+            loop, wake = self.loop, self._input_wake
+        self._persist_queue()
+        if loop is not None and wake is not None:
+            loop.call_soon_threadsafe(wake.set)
+        return True
+
     def pending(self) -> list[str]:
         """The queued user turns not yet started (oldest first); thread-safe. The kernel
         renders these as the chat's 'queued' indicator for this SDK session."""
@@ -4456,7 +4473,8 @@ class SdkBackend:
         """Can a ✕ on this session's queued bubble still win? False while a turn is running UN-HELD:
         there the input generator forwards a queued send to the CLI within milliseconds, and once it's
         inside the CLI no recall exists — so offering a cancel would be a lie that ends in "too late".
-        True when the queue is genuinely romp-held — the interrupt hold, the rewind hold — or when no
+        True when the queue is genuinely romp-held — the interrupt hold, the rewind hold, the rename
+        ping's feed-hold (while the ping's turn is in flight the drain releases nothing) — or when no
         turn is in flight (idle/connecting: entries sit in _pending until the client drains them).
         The kernel reads this to decide whether the queued bubble gets its ✕ at all; the loud
         unqueue-miss toast covers the races this gate can't (a click on a just-stale push)."""
@@ -4467,7 +4485,9 @@ class SdkBackend:
         with s._lock:
             if s.inflight <= 0:
                 return True
-            return bool(s._interrupted or (s._rewind_to and not getattr(s, "_rewind_armed", False)))
+            return bool(s._interrupted
+                        or getattr(s, "_ping_feeding", False)   # getattr: test doubles skip __init__
+                        or (s._rewind_to and not getattr(s, "_rewind_armed", False)))
 
     def send(self, sid: str, text: str, user_todo: str | None = None) -> bool:
         """`user_todo` is the id of the user todo this text ANSWERS (the kernel's _backend_send):
@@ -4590,8 +4610,10 @@ class SdkBackend:
         # prompt queued at 11:20 was silently discarded by the 11:25 restart). A HUMAN send whose
         # loss is proven — and whose text a direct transcript scan confirms never landed as a user
         # record (the flag path self-corrects on a wrong guess; a re-delivery would DUPLICATE, so it
-        # verifies first) — goes back into the persisted queue in send order: the next spawn feeds
-        # it to the fresh CLI exactly like the surviving queue, recreating the pre-restart state.
+        # verifies first) — goes back into the queue in send order, exactly like the surviving
+        # queue, recreating the pre-restart state: the LIVE session's _pending when one is running
+        # (its mirror rewrites reg['queue'] on every mutation, so only _pending sticks), else the
+        # persisted reg queue the next spawn's seed reads.
         # romp-authored echoes (nudges) keep the flag path: re-delivering one could double-nudge,
         # and its content is regenerable machinery, not the user's words.
         redeliver = []
@@ -4599,17 +4621,55 @@ class SdkBackend:
             if a.get("author") == "human" and not self._text_landed(sid, a["_echo_text"]):
                 redeliver.append(a)
         if redeliver:
-            with self._reg_lock:
-                reg = read_reg(self.state_dir, sid)
-                if reg is not None:
-                    have = [t for t in (reg.get("queue") or []) if isinstance(t, str) and t]
-                    add = [a["_echo_text"] for a in redeliver if a["_echo_text"] not in have]
-                    if add:
-                        reg["queue"] = have + add          # behind the surviving queue: original send order
-                        write_reg(self.state_dir, sid, reg)
+            # The LIVE-session callers (a fresh spawn's _run, a reconnect's _reconcile_stranded)
+            # must deliver through the session's own queue: there the in-memory _pending is
+            # authoritative and its very next _persist_queue snapshot rewrites reg['queue'] — a
+            # reg-only write sat in limbo (echo unmarked, todo 'answered', nothing fed) until a
+            # future kernel boot re-read the reg (found 2026-08-26). The boot caller
+            # (_reseed_echoes) runs before any session spawns, so the reg IS the queue there.
+            sess_map = getattr(self, "sessions", None)   # getattr: bound-method test doubles skip __init__
+            s = None
+            if sess_map is not None:
+                with self._lock:
+                    s = sess_map.get(sid)
+            if s is not None:
+                have = {str(t) for t in s.pending()}
+                for a in redeliver:                        # already in send order (sorted above)
+                    if a["_echo_text"] in have:
+                        continue                           # already back in the queue — never duplicate
+                    if _is_compact_cmd(a["_echo_text"]):
+                        s._compacting = True               # same enqueue-time semantics as send()
+                    if _is_clear_cmd(a["_echo_text"]):
+                        s._clearing = True
+                    # `todo`: a redelivered user-todo ANSWER keeps the id its echo carries (_TodoText
+                    # through enqueue), so a recall or a later loss can still reopen exactly that ask
+                    s.enqueue(a["_echo_text"], todo=str(a.get("_todo") or ""))
+                    self._log("%s: re-delivering a typed send the dead CLI was holding: %.80r"
+                              % (sid[:8], a["_echo_text"]))
+            else:
+                with self._reg_lock:
+                    reg = read_reg(self.state_dir, sid)
+                    if reg is not None:
+                        # Dict-aware like every other reg['queue'] RMW (round 2, 2026-08-22): the
+                        # strings-only filter this replaces silently ERASED a persisted user-todo
+                        # answer's {"text","todo"} entry — the todo stayed 'answered', the answer
+                        # never delivered, and nothing reopened the ask. _queue_texts keeps every
+                        # well-formed entry (id-carrying included); _queue_wire writes them back.
+                        have = _queue_texts(reg.get("queue"))
+                        have_texts = {str(t) for t in have}
+                        add = []
                         for a in redeliver:
-                            self._log("%s: re-delivering a typed send the dead CLI was holding: %.80r"
-                                      % (sid[:8], a["_echo_text"]))
+                            if a["_echo_text"] in have_texts:
+                                continue
+                            todo = str(a.get("_todo") or "")   # a redelivered ANSWER keeps its ask's id
+                            add.append(_TodoText(a["_echo_text"], todo) if todo else a["_echo_text"])
+                        if add:
+                            # behind the surviving queue: original send order
+                            reg["queue"] = [_queue_wire(t) for t in have + add]
+                            write_reg(self.state_dir, sid, reg)
+                            for t in add:
+                                self._log("%s: re-delivering a typed send the dead CLI was holding: %.80r"
+                                          % (sid[:8], str(t)))
         rekeyed = {a["_echo_text"] for a in redeliver}
         for a in newly:
             if a["_echo_text"] in rekeyed:
@@ -5517,11 +5577,15 @@ class SdkBackend:
         note = reg.get("renameNote")
         if not note:
             return False
-        with s._lock:
-            if s._pending:
-                return False               # a queued turn would share the pre-turn window — hold the note
+        # ONE lock hold for the emptiness check AND the enqueue (enqueue_if_empty, found
+        # 2026-08-26): checking under the lock, then enqueueing after the reg write, left a
+        # window where a racing send queued AHEAD of the ping — folding the user's words into
+        # its pre-turn record, the very fold this gate guards. The note is spent only AFTER the
+        # ping is provably queued; a kernel death between the two re-pings at a later settle
+        # (a repeat of a true fact) instead of losing the note.
+        if not s.enqueue_if_empty("<!-- romp-injected --><!-- romp-system -->" + RENAME_NUDGE % note):
+            return False                   # a queued turn would share the pre-turn window — hold the note
         self._update_reg(s.sid, renameNote=None)
-        s.enqueue("<!-- romp-injected --><!-- romp-system -->" + RENAME_NUDGE % note)
         return True
 
     def _update_reg(self, sid: str, **fields):

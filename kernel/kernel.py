@@ -3970,7 +3970,20 @@ def _pure_delegation_top(nodes, top_id):
     inbox card (the user 2026-06-23): consistent with _all_outstanding_delegated already treating
     delegated-only work as not-needs-you. Unlike that (which weighs only OPEN leaves for the nudge gate), this
     weighs ALL leaves — a delegation stays coordination even after it completes — so the card is suppressed in
-    every column. A top with ANY own-work leaf still shows."""
+    every column. A top with ANY own-work leaf still shows.
+
+    THE ASK-UNIT EXEMPTION (2026-08-26, the T101 fold review): T101 made the dictated ask itself host
+    the fan-out — the courier plants its tracking nodes UNDER the ask and mints NO recipient tops — so
+    an ask fully fanned to workers is exactly this all-leaves-are-handoffs shape, and suppressing it
+    left the user's ask with no card ANYWHERE (T101's own rule: one ask fanned to two workers = ONE
+    card with two handoff children). A top that IS the ask — its promptUuid root (the dictated
+    prompt's anchor, stamped at mint) or T105's chain-proven `userAsk` record — is never pure
+    coordination, whatever its leaves. A top that is ITSELF a handoff tracker never qualifies: the
+    parentless '↪ delegated' record stays suppressed as before."""
+    root = nodes.get(top_id) or {}
+    if ((root.get("promptUuid") or isinstance(root.get("userAsk"), dict))
+            and not isinstance(root.get("handoff"), dict)):
+        return False
     children = {}
     for nid, nd in nodes.items():
         children.setdefault(nd.get("parentId"), []).append(nid)

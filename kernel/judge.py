@@ -4085,11 +4085,34 @@ def rollup_status(store, session_closed, now=None):
     # TOP-LEVEL with their own provenance intact, and the empty container leaves the store. This is
     # what un-strands the asks the provenance audit measured (every dead chain ended at a promptless
     # container): once the child is a top again, its promptUuid/origin evidence is reachable by the
-    # mint-time trace and the closer's nominations. Idempotent by construction (no umbrellas remain
-    # after one pass) and self-healing like the lift above: a save-rebase republishing a stale
-    # parentId is re-dissolved on the very next rollup. Diary-less container removal follows the
-    # born-done backlog self-heal precedent — an umbrella has no verdicts of its own to preserve.
-    _umbrellas = {k for k, v in nodes.items() if isinstance(v, dict) and v.get("umbrella")}
+    # mint-time trace and the closer's nominations. Idempotent by construction (no undissolved
+    # umbrellas remain after one pass) and self-healing like the lift above: a save-rebase
+    # republishing a stale parentId is re-dissolved on the very next rollup. Diary-less container
+    # removal follows the born-done backlog self-heal precedent — an umbrella has no verdicts of
+    # its own to preserve.
+    #
+    # THE SWEEP YIELDS TO THE USER'S UNDO (2026-08-26, the T101 fold review): archives keep their
+    # containers, so UndoClear can pull a pre-T101 umbrella back into the live store — and the
+    # sweep was eating the card the user had JUST restored, promoting its children in its place.
+    # The un-clear is NEWER information than the standing purge (a writer whose evidence predates
+    # the diary stands down): a container whose latest clear-family diary row is the user's
+    # undo-restore (the reopen/undo=True row _mark_nodes_cleared's dual-write and the unclear
+    # override replay both record) is SPARED — it stays the card the user asked back for, until
+    # they clear it again. A flag-CLEARED container is spared too: it is already off the board and
+    # the compactor archives it whole; dissolving it in that window would promote its children out
+    # of the user's seal. Peer-adopted and legacy copies carry neither mark and dissolve as before.
+    def _undo_restored(v):
+        latest = ""
+        latest_t = -1
+        for e in (v.get("log") or []):
+            k = e.get("kind")
+            if k == "clear" or (k == "reopen" and e.get("undo")):
+                et = int(e.get("ev_t") or 0)
+                if et >= latest_t:                      # ties go to the later row (append order):
+                    latest_t, latest = et, k            # the restore that popped a same-second clear wins
+        return latest == "reopen"
+    _umbrellas = {k for k, v in nodes.items() if isinstance(v, dict) and v.get("umbrella")
+                  and not v.get("cleared") and not _undo_restored(v)}
     if _umbrellas:
         _uparent = {k: nodes[k].get("parentId") for k in _umbrellas}
         def _solid_parent(uid):
@@ -11506,12 +11529,20 @@ def _delegate_user_rooted(sender, link_id, paths, now, _depth=0, _seen=None):
     recipient — is bounded by what surfaces regardless of this trace: the SENDER-side tracking
     node (planted either way, with the parked cue and the report-back closure), and every
     needs-you state (the hard-block floor + placeholder synthesize a board card from the live
-    prompt with zero goal nodes; interrupt only when the human is the bottleneck)."""
+    prompt with zero goal nodes; interrupt only when the human is the bottleneck).
+
+    `carded` (2026-08-26, the T101 fold review): the record also says whether the node whose own
+    promptUuid yielded the proof is LIVE in its session's store — i.e. whether the ask still has a
+    card a tracking node can plant under. Proof recovered from ARCHIVED history alone (a cleared
+    ask's chain, the container-sibling rescue below) reads carded:False — the shape where T101's
+    mint fallback fires, because "the recipient card IS the ask's card". Rides up origin hops
+    unchanged: it reports on the ask node itself, wherever in the local chain it lives."""
     if not link_id or _depth >= 8:
         return None
     seen = _seen if _seen is not None else set()
+    live = load_goals(sender).get("nodes") or {}
     nodes = dict(load_goal_archive(sender).get("nodes") or {})
-    nodes.update(load_goals(sender).get("nodes") or {})
+    nodes.update(live)
     x, last = link_id, None
     while x is not None and (sender, x) not in seen:
         seen.add((sender, x))
@@ -11528,6 +11559,7 @@ def _delegate_user_rooted(sender, link_id, paths, now, _depth=0, _seen=None):
         if pu and sender in paths:
             rec = _session_user_prompt_record(sender, paths[sender], pu, now)
             if rec:
+                rec["carded"] = x in live
                 return rec
         last = nd
         x = nd.get("parentId")
@@ -11551,6 +11583,7 @@ def _delegate_user_rooted(sender, link_id, paths, now, _depth=0, _seen=None):
             if pu and sender in paths:
                 rec = _session_user_prompt_record(sender, paths[sender], pu, now)
                 if rec:
+                    rec["carded"] = cid in live   # the rescue reads archived history — almost never live
                     return rec
             o = cd.get("origin")
             if (isinstance(o, dict) and o.get("peer") and o.get("goalId")
@@ -11904,15 +11937,27 @@ def run_courier(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, v
             # goal node. Uncertainty quiets by design (the trace's docstring names the surface).
             rooted = _delegate_user_rooted(sender, link_id, paths_map, now)
             # THE ASK IS THE CARD UNIT (the user 2026-08-26, T101): a dispatch whose chain roots to
-            # an ask that ALREADY HAS A CARD — link_id resolved to the sender's ask node — LINKS
-            # instead of minting: the tracking node below plants under that ask (fan-out lives
-            # INSIDE the ask card, per-dispatch progress one click down), and the recipient gets NO
-            # standalone top (one ask fanned to three workers used to mint three near-duplicate
-            # cards). Only a rooted dispatch with NO resolvable ask node still mints the recipient
-            # top — there the recipient card IS the ask's card, the fallback that keeps every user
-            # ask carded somewhere. Linking alone never moves the ask card's column: planting a
-            # tracking child writes no verdict on the ask.
-            mint_recipient = rooted and not link_id
+            # an ask that ALREADY HAS A CARD LINKS instead of minting: the tracking node below
+            # plants under the linked goal (fan-out lives INSIDE the ask card, per-dispatch
+            # progress one click down), and the recipient gets NO standalone top (one ask fanned to
+            # three workers used to mint three near-duplicate cards). Only a rooted dispatch with
+            # NO resolvable ask node still mints the recipient top — there the recipient card IS
+            # the ask's card, the fallback that keeps every user ask carded somewhere. Linking
+            # alone never moves the ask card's column: planting a tracking child writes no verdict
+            # on the ask.
+            #
+            # "Has a card" is the TRACE's answer, not the link's (2026-08-26, the fold review): as
+            # merged this read `rooted and not link_id`, which can never be true — the trace
+            # returns None without a link (its own no-link pin), so `rooted` implied `link_id` and
+            # the mint below was dead code. The record's `carded` says whether the chain's proof
+            # still sits on a LIVE ask node: proof from a live card links; proof recovered from
+            # ARCHIVED history alone mints (the ask's own card is gone). A truthy NON-dict (tests
+            # stub the trace with literal True, the same shape apply_courier tolerates) carries no
+            # node evidence, so it falls back to the link itself — the stubbed suites' contract.
+            # A genuinely link-less dispatch stays quiet either way: no link, no chain, no proof
+            # (uncertainty quiets, the 2026-08-25 verdict).
+            carded = rooted.get("carded") if isinstance(rooted, dict) else bool(link_id)
+            mint_recipient = bool(rooted) and not carded
             # Mint the sender's precise '↪ delegated to <recipient>' tracking node (the user 2026-06-22) and
             # point B's goal at IT — so run_propagate checks off only the handed-off piece, never the sender's
             # broader linked goal. Saved to the sender's tree before planting G on the recipient's.

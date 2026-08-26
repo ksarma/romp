@@ -186,6 +186,25 @@ class TraceRule(unittest.TestCase):
         self._store(MGR, {"a": _node("a", "x", "b"), "b": _node("b", "y", "a")})
         self.assertFalse(jd._delegate_user_rooted(MGR, "a", self.paths, NOW))
 
+    def test_the_record_reports_whether_the_asks_card_is_live(self):
+        # the T101 mint fallback's discriminator (2026-08-26 review of the fold): proof found at a
+        # LIVE ask node means the ask still has a card the tracker can link under; the record says
+        # so (`carded`), and the courier links instead of minting.
+        self._store(MGR, {"g1": _node("g1", "Ship the demo", None, promptUuid="hu")})
+        self._human(MGR)
+        self.assertTrue(jd._delegate_user_rooted(MGR, "g1", self.paths, NOW).get("carded"))
+
+    def test_archive_only_evidence_reads_uncarded(self):
+        # …while proof recovered from ARCHIVED history alone means the ask's own card is gone —
+        # the shape where T101's "the recipient card IS the ask's card" fallback mints.
+        self._store(MGR, {"g2": _node("g2", "follow-up work", "g1")})
+        self._store(MGR, {"g1": _node("g1", "the original ask", None, promptUuid="hu")},
+                    archive=True)
+        self._human(MGR)
+        rec = jd._delegate_user_rooted(MGR, "g2", self.paths, NOW)
+        self.assertTrue(rec, "the chain still proves the human root")
+        self.assertFalse(rec.get("carded"), "…but no live ask node carries it")
+
 
 BODY = ("Verify the staged run references and report drift.\n"
         "<!-- romp-msg-id: %s -->\n<!-- romp-msg-kind: delegate -->" % MID)
@@ -258,6 +277,62 @@ class CourierMintMatrix(unittest.TestCase):
         self.assertEqual(trackers[0].get("parentId"), MGR + ":g1", "…under the ask it serves")
         self.assertTrue(trackers[0]["handoff"].get("quiet"),
                         "no recipient goal will carry this msgId — the reply-sweep owns the ending")
+
+    def test_a_rooted_dispatch_whose_ask_card_is_gone_mints_the_fallback_top(self):
+        # T101's FALLBACK, MADE SATISFIABLE (2026-08-26 review of the fold): as merged,
+        # `mint_recipient = rooted and not link_id` could never fire — the trace returns None
+        # without a link (test_no_link_quiets is the pin), so `rooted` implied `link_id` and the
+        # apply_courier mint below it was dead code. The condition keys on the trace's OWN answer
+        # now: the root record says whether the chain's proof still sits on a live ask node
+        # (`carded`). Here the courier links the sender's live follow-up node, but the human proof
+        # lives only in the ARCHIVE — the ask's own card is gone, so the recipient card IS the
+        # ask's card: minted, origin-stamped, frame + userAsk intact, tracker un-quiet (the origin
+        # back-link owns its ending, exactly the pre-T101 rooted-mint wiring).
+        jd.save_goals(MGR, {"rompUuid": MGR, "seq": 2, "nodes": {
+            MGR + ":g2": _node(MGR + ":g2", "Verification follow-up", MGR + ":g1")},
+            "placements": {}, "status": {}})
+        jd.save_goal_archive(MGR, {"rompUuid": MGR, "nodes": {
+            MGR + ":g1": _node(MGR + ":g1", "Ship the staged-run verification", None,
+                               promptUuid="hu")},
+            "placements": {}, "status": {}})
+        self.mpath.write_text("\n".join(json.dumps(r) for r in [
+            uline(T0 - 600, "please verify the staged run references", "hu"),
+            aline(T0 - 540, "Dispatching.", "ha", "hu")]) + "\n")
+        jd.run_courier(now=NOW)
+        w = jd.load_goals(WKR)
+        planted = [nd for nd in w["nodes"].values() if isinstance(nd.get("origin"), dict)]
+        self.assertEqual(len(planted), 1,
+                         "no live ask card anywhere → the recipient card IS the ask's card")
+        self.assertTrue(planted[0].get("frame"), "the fallback keeps the frame enrichment")
+        self.assertEqual((planted[0].get("userAsk") or {}).get("sid"), MGR,
+                         "…and stores the chain-proven root record (T105)")
+        m = jd.load_goals(MGR)
+        trackers = [nd for nd in m["nodes"].values()
+                    if isinstance(nd.get("handoff"), dict) and nd["handoff"].get("msgId") == MID]
+        self.assertEqual(len(trackers), 1)
+        self.assertFalse(trackers[0]["handoff"].get("quiet"),
+                         "a recipient goal carries the msgId — the origin back-link owns the ending")
+
+    def test_a_genuinely_unlinked_delegate_still_files_quiet(self):
+        # THE FALLBACK DECISION'S OTHER HALF, pinned: with no link there is no chain to trace, so a
+        # linkless dispatch is never PROVABLY rooted — and at mint time uncertainty files quiet
+        # (the 2026-08-25 verdict; test_no_link_quiets is the trace-side pin). The mint keys on
+        # proof-without-a-live-card, never on linklessness alone.
+        self._mgr_store("hu", [uline(T0 - 600, "please verify the staged run references", "hu"),
+                               aline(T0 - 540, "Dispatching.", "ha", "hu")])
+        jd.courier_llm = lambda text, menu, declared=None: \
+            '{"verdict": "delegating", "goal": 0, "text": "verify staged run references"}'
+        jd.run_courier(now=NOW)
+        w = jd.load_goals(WKR)
+        self.assertEqual([nd for nd in w["nodes"].values()
+                          if isinstance(nd.get("origin"), dict)], [],
+                         "no recipient top on an unprovable chain")
+        m = jd.load_goals(MGR)
+        trackers = [nd for nd in m["nodes"].values()
+                    if isinstance(nd.get("handoff"), dict) and nd["handoff"].get("msgId") == MID]
+        self.assertEqual(len(trackers), 1, "the sender tracker still plants")
+        self.assertTrue(trackers[0]["handoff"].get("quiet"),
+                        "…quiet: the reply-sweep owns its ending")
 
     def test_an_untraceable_delegate_files_quiet(self):
         # the sender's linked goal roots at a COORDINATE mail record — team-internal, not the user

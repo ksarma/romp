@@ -360,5 +360,117 @@ class TodoAnswersAnnounceTheirLoss(unittest.TestCase):
                         "the loss stays visible even when the reopen seam raises")
 
 
+class RedeliveryFeedsTheAuthoritativeQueue(unittest.TestCase):
+    """The redeliver arm of _mark_dropped_echoes (2026-08-23: a proven-lost HUMAN send goes back
+    into the queue instead of just flagging) must write the queue that is AUTHORITATIVE for its
+    caller, and must not lose what is already there (found 2026-08-26):
+      - the reg rewrite is dict-aware like every other reg['queue'] RMW (round 2, 2026-08-22) —
+        the strings-only filter it shipped with silently ERASED a persisted user-todo answer's
+        {"text","todo"} entry: the todo stayed 'answered', the answer never delivered, and
+        nothing could reopen the ask;
+      - a redelivered answer KEEPS the id its echo carries, so recall/loss can still reopen;
+      - on the LIVE-session callers (a fresh spawn's _run, a reconnect's _reconcile_stranded)
+        the in-memory _pending is authoritative — a reg-only write is clobbered by the very next
+        _persist_queue snapshot, leaving the recovered send in limbo until a future kernel boot.
+    SYNTHETIC fixtures only."""
+
+    ANSWER = "Re: pick a database - use sqlite"
+    TID = "ut-2f7a9c11"
+    STRAY = "unrelated typed message the dead CLI was holding"
+
+    def setUp(self):
+        self.state = tempfile.mkdtemp()
+        # a real (empty) transcript, so _text_landed answers False (readable, nothing landed)
+        # and the redeliver arm actually runs — unreadable fails safe toward the flag path
+        os.environ["CLAUDE_CONFIG_DIR"] = os.path.join(self.state, "claude")
+        self.cwd = os.path.join(self.state, "proj")
+        os.makedirs(self.cwd, exist_ok=True)
+        tp = sb.transcript_path(self.cwd, SID)
+        os.makedirs(os.path.dirname(tp), exist_ok=True)
+        open(tp, "w").close()
+        self.losses = []
+        self.be = sb.SdkBackend(self.state, "/bin/true", lambda *a, **k: None,
+                                todo_lost=lambda sid, tid, text: self.losses.append((sid, tid, text)))
+
+    def _reg(self, **extra):
+        reg = {"sid": SID, "name": "web", "mode": "acceptEdits",
+               "alive": True, "cwd": self.cwd, "lastSid": SID}
+        reg.update(extra)
+        sb.write_reg(self.be.state_dir, SID, reg)
+        return reg
+
+    def _sess(self, reg):
+        s = sb.SdkSession(self.be, dict(reg))
+        self.be.sessions[SID] = s          # register WITHOUT starting the thread (no loop)
+        return s
+
+    def _stash_echo(self, text, t=100, todo=""):
+        e = {"type": "user", "uuid": "echo:" + text[:10], "session_id": SID, "t": t,
+             "parentUuid": None, "author": "human", "_echo_text": text,
+             "message": {"role": "user", "content": [{"type": "text", "text": text}]}}
+        if todo:
+            e["_todo"] = todo
+        self.be._live.setdefault(SID, {})[e["uuid"]] = e
+        return e
+
+    def _queue(self):
+        return (sb.read_reg(self.be.state_dir, SID) or {}).get("queue") or []
+
+    def test_the_reg_rewrite_preserves_a_persisted_todo_answer(self):
+        # the two-part shape: a persisted ANSWER (dict entry, its echo still queued) plus one
+        # stranded typed send whose redelivery triggers the rewrite that used to erase the dict
+        answer = {"text": self.ANSWER, "todo": self.TID}
+        self._reg(queue=[answer])
+        self._stash_echo(self.ANSWER, t=100, todo=self.TID)
+        self._stash_echo(self.STRAY, t=200)
+        self.be._mark_dropped_echoes(SID, sb._queue_texts([answer]))   # the boot reseed's call shape
+        q = self._queue()
+        self.assertIn(answer, q, "the persisted user-todo answer must survive the re-delivery rewrite")
+        self.assertEqual(q, [answer, self.STRAY],
+                         "…and the recovered send queues BEHIND the surviving queue")
+        self.assertEqual(self.losses, [], "nothing was lost — the reopen seam must stay quiet")
+
+    def test_a_redelivered_answer_keeps_its_todo_id_in_the_reg(self):
+        self._reg(queue=[])
+        self._stash_echo(self.ANSWER, todo=self.TID)
+        self.be._mark_dropped_echoes(SID, [])
+        self.assertEqual(self._queue(), [{"text": self.ANSWER, "todo": self.TID}],
+                         "the id rides the redelivered entry, so recall/loss can still reopen the ask")
+        self.assertEqual(self.losses, [], "redelivered, not lost")
+
+    def test_live_session_redelivery_reaches_pending_and_survives_the_next_persist(self):
+        reg = self._reg(queue=[])
+        s = self._sess(reg)
+        e = self._stash_echo("typed while the old client was dying", t=300)
+        self.be._mark_dropped_echoes(SID, s.pending())     # the spawn/reconnect-strand call shape
+        self.assertEqual(s.pending(), ["typed while the old client was dying"],
+                         "a live session's recovered send must enter _pending — a reg-only write "
+                         "is overwritten by the very next queue mirror")
+        s._persist_queue()          # the mirror snapshot a reg-only write could not survive
+        self.assertEqual(self._queue(), ["typed while the old client was dying"])
+        self.assertFalse(e.get("dropped"), "re-delivered → renders as queued, not never-delivered")
+
+    def test_live_session_redelivery_keeps_the_answer_id_end_to_end(self):
+        reg = self._reg(queue=[])
+        s = self._sess(reg)
+        self._stash_echo(self.ANSWER, todo=self.TID)
+        self.be._mark_dropped_echoes(SID, s.pending())
+        self.assertEqual([getattr(t, "todo", "") for t in s.pending()], [self.TID],
+                         "the recovered answer carries its ask's id in the live queue")
+        s._persist_queue()
+        self.assertEqual(self._queue(), [{"text": self.ANSWER, "todo": self.TID}],
+                         "…and the id survives the mirror round-trip")
+        self.assertEqual(self.losses, [])
+
+    def test_live_session_redelivery_never_duplicates_a_pending_text(self):
+        reg = self._reg(queue=[])
+        s = self._sess(reg)
+        s.enqueue("already back in the queue")
+        self._stash_echo("already back in the queue")
+        # a caller's queued snapshot can predate the enqueue — the write-moment check must dedupe
+        self.be._mark_dropped_echoes(SID, [])
+        self.assertEqual(s.pending(), ["already back in the queue"], "one copy, not two")
+
+
 if __name__ == "__main__":
     unittest.main()

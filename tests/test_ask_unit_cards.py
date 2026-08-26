@@ -30,6 +30,7 @@ os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 jd = SourceFileLoader("romp_judge_askunit", os.path.join(BIN, "romp-judge")).load_module()
+km = SourceFileLoader("romp_kernel_askunit", os.path.join(BIN, "romp-kernel")).load_module()
 
 NOW = 1_787_500_000
 T0 = NOW - 3600
@@ -184,6 +185,31 @@ class CourierWorld(unittest.TestCase):
         self.assertEqual(len(planted), 1, "no ask node resolved → the recipient card IS the ask's card")
         self.assertTrue(planted[0].get("frame"), "the fallback mint keeps the frame enrichment")
 
+    def test_the_fanned_ask_keeps_one_visible_card_through_completion(self):
+        # THE BOARD CONSEQUENCE of the link path (2026-08-26 review of the T101 fold): the kernel's
+        # _pure_delegation_top suppressed any top whose every leaf is a handoff dict — exactly the
+        # shape T101's own link path builds for a fully-fanned ask — so one dictated ask fanned to
+        # two workers had NO card anywhere (no recipient tops by design, the ask top suppressed).
+        # The suppression exempts the ask-unit now: ONE card, visible in Working with its two
+        # tracker children, and still visible when it lands in Completed.
+        self._mgr()
+        jd.run_courier(now=NOW)
+        m = jd.load_goals(MGR)
+        ask = MGR + ":g1"
+        self.assertEqual(len(self._trackers_under(ask)), 2)
+        self.assertFalse(km._pure_delegation_top(m["nodes"], ask),
+                         "the dictated ask keeps its card — fan-out lives INSIDE it")
+        jd.rollup_status(m, False)
+        self.assertEqual(m["status"].get(ask, "working"), "working", "…in Working while open")
+        for nid, nd in m["nodes"].items():
+            if isinstance(nd.get("handoff"), dict):
+                jd.record_verdict(m, nd, "romp", "done", NOW + 10, why="the peer reported back")
+        jd.record_verdict(m, m["nodes"][ask], "closer", "done", NOW + 20, why="both halves landed")
+        jd.rollup_status(m, True)
+        self.assertEqual(m["status"].get(ask), "completed", "…and lands in Completed")
+        self.assertFalse(km._pure_delegation_top(m["nodes"], ask),
+                         "a finished ask is still the ask — never re-read as pure coordination")
+
     def test_linking_never_moves_the_ask_cards_column(self):
         self._mgr()
         st = jd.load_goals(MGR)
@@ -309,6 +335,52 @@ class UmbrellaDissolution(unittest.TestCase):
         jd.rollup_status(st, False)
         self.assertEqual(st["nodes"][MGR + ":a1"].get("promptUuid"), "hu",
                          "the un-stranded ask carries its own evidence — the trace can reach it now")
+
+    def test_an_undo_restored_container_survives_the_dissolution(self):
+        # THE SWEEP YIELDS TO THE USER'S UNDO (2026-08-26 review of the T101 fold): UndoClear pulls
+        # an archived pre-T101 container back into the live store (archives keep their containers),
+        # and the very next rollup dissolved it — the card the user just restored vanished into its
+        # promoted children. The un-clear IS newer information than the standing purge: it is
+        # recorded on the node by the real writers (_mark_nodes_cleared's dual-write and the
+        # unclear override replay both file the user reopen row with undo=True), and a container
+        # whose latest clear-family event is that restore is SPARED. Everything without that fresh
+        # restore — legacy leftovers, peer-adopted copies — dissolves exactly as before.
+        st = self._legacy()
+        u1 = st["nodes"][MGR + ":u1"]
+        self.assertTrue(jd.record_verdict(st, u1, "user", "clear", NOW - 100,
+                                          why="cleared from the feed"))
+        self.assertTrue(jd.record_verdict(st, u1, "user", "reopen", NOW - 50,
+                                          why="undo clear", undo=True))
+        u1["cleared"] = False
+        jd.rollup_status(st, False)
+        self.assertIn(MGR + ":u1", st["nodes"], "the card the user restored survives the sweep")
+        self.assertEqual(st["nodes"][MGR + ":a1"].get("parentId"), MGR + ":u1",
+                         "…with its children where the user left them")
+        self.assertEqual(st["placements"].get("segX"), MGR + ":u1", "…and its placement intact")
+        self.assertNotIn(MGR + ":u2", st["nodes"],
+                         "the spare is exact: a nested container with no restore still dissolves")
+        self.assertEqual(st["nodes"][MGR + ":a2"].get("parentId"), MGR + ":u1",
+                         "…its child re-parents to the first surviving non-dissolved ancestor")
+        snap = json.dumps(st["nodes"], sort_keys=True, default=dict)
+        jd.rollup_status(st, False)
+        self.assertEqual(json.dumps(st["nodes"], sort_keys=True, default=dict), snap, "idempotent")
+
+    def test_a_re_cleared_spared_container_waits_for_the_compactor(self):
+        # the round trip's other half: after the restore the user clears the card AGAIN. Between
+        # that clear and the archive compaction the container sits flag-cleared in the live store —
+        # the sweep must stand down there too, or it pops the container and promotes its children
+        # OUT of the user's seal as fresh live tops. The compactor owns a cleared card's exit.
+        st = self._legacy()
+        u1 = st["nodes"][MGR + ":u1"]
+        jd.record_verdict(st, u1, "user", "clear", NOW - 100, why="cleared from the feed")
+        jd.record_verdict(st, u1, "user", "reopen", NOW - 50, why="undo clear", undo=True)
+        jd.record_verdict(st, u1, "user", "clear", NOW - 10, why="cleared from the feed")
+        u1["cleared"] = True
+        jd.rollup_status(st, False)
+        self.assertIn(MGR + ":u1", st["nodes"],
+                      "flag-cleared: the compactor archives it whole — the sweep never dissolves it")
+        self.assertEqual(st["nodes"][MGR + ":a1"].get("parentId"), MGR + ":u1",
+                         "…so its children never escape the user's clear")
 
 
 if __name__ == "__main__":

@@ -2537,6 +2537,18 @@ class PendingQueue(unittest.TestCase):
         self.assertFalse(self.be.queue_recallable("qr1"), "armed rewind releases the hold")
         self.assertTrue(self.be.queue_recallable("no-such-sid"), "unknown session fails toward the ✕")
 
+    def test_queue_recallable_during_the_ping_feed_hold(self):
+        # the rename ping's feed-hold (2026-08-25) is a romp-side hold exactly like the interrupt
+        # and rewind ones: while the ping's turn is in flight the drain releases nothing, so a
+        # recall can still win — withholding the ✕ there denies a cancel that would succeed
+        # (found 2026-08-26).
+        s = self._sess("qr2")
+        s.inflight = 1
+        s._ping_feeding = True
+        self.assertTrue(self.be.queue_recallable("qr2"), "ping feed-hold → the queue is romp-held")
+        s._ping_feeding = False
+        self.assertFalse(self.be.queue_recallable("qr2"), "hold cleared → forwards instantly again")
+
 
 @unittest.skipUnless(_HAVE_SDK, "claude_agent_sdk not installed")
 class PendingQueueLoop(unittest.TestCase):

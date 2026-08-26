@@ -140,6 +140,31 @@ class PureDelegationTop(unittest.TestCase):
     def test_plain_top_is_not_pure(self):
         self.assertFalse(km._pure_delegation_top({"t": {"id": "t", "parentId": None}}, "t"))
 
+    def test_a_dictated_ask_top_hosting_only_trackers_still_shows(self):
+        # T101 (the user 2026-08-26): the ask is the card unit — one ask fanned to two workers is
+        # ONE card with two handoff children, and the courier plants the trackers UNDER the ask
+        # instead of minting recipient tops. A top that IS the dictated ask (its promptUuid root)
+        # is therefore never "pure coordination", even when every leaf is a tracker: suppressing
+        # it left the fully-delegated ask with no card anywhere.
+        nodes = {"t": {"id": "t", "parentId": None, "promptUuid": "hu"},
+                 "a": {"id": "a", "parentId": "t", "handoff": {"peer": "p", "msgId": "1"}},
+                 "b": {"id": "b", "parentId": "t", "handoff": {"peer": "q", "msgId": "2"}}}
+        self.assertFalse(km._pure_delegation_top(nodes, "t"))
+
+    def test_a_mint_proven_user_ask_top_shows_too(self):
+        # the courier-minted shape: T105's userAsk (the chain-proven root record) marks the
+        # ask-unit even when the mint carried no prompt anchor
+        nodes = {"t": {"id": "t", "parentId": None, "userAsk": {"text": "the ask", "sid": "s"}},
+                 "a": {"id": "a", "parentId": "t", "handoff": {"peer": "p", "msgId": "1"}}}
+        self.assertFalse(km._pure_delegation_top(nodes, "t"))
+
+    def test_a_prompt_stamped_tracker_top_stays_pure(self):
+        # the exemption never reaches a top that is ITSELF a handoff tracker — a '↪ delegated'
+        # record wearing a stray prompt anchor is still coordination, not the ask
+        nodes = {"t": {"id": "t", "parentId": None, "promptUuid": "hu",
+                       "handoff": {"peer": "p", "msgId": "m"}}}
+        self.assertTrue(km._pure_delegation_top(nodes, "t"))
+
 
 if __name__ == "__main__":
     unittest.main()
