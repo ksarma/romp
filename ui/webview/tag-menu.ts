@@ -22,12 +22,15 @@ export interface TagMenuOpts {
   lens: () => TagLens;                       // the surface's current selection (re-read per repaint)
   unions: () => TagUnion[];                  // the name-keyed union rows (re-read per repaint)
   onApply: (l: TagLens, done: boolean) => void;  // done=true → the pick closes the menu (All)
-  scopeCaption: string;                      // "filters these tabs" — which surface this governs
   onConfigure?: () => void;                  // the one management entry, when the surface has a route
 }
 
 let echoInstalled = false;
-/** Every pane writes the pointerdown echo ONCE per document — sibling panes' open menus close on it. */
+/** Every pane writes the pointerdown echo ONCE per document — sibling panes' open menus close on it.
+ *  Installed AT MODULE LOAD by the guard below, never lazily (the user 2026-08-26: a menu opened
+ *  from the sessions panel stood through clicks in the chat — the chat imports this module but had
+ *  never opened a menu, so its document held no writer). Exported for documents that mount no tag
+ *  menu at all (the shell page's palette-main) to compose the same writer explicitly. */
 export function installMenuEcho(): void {
   if (echoInstalled) return;
   echoInstalled = true;
@@ -44,6 +47,7 @@ export function closeTagMenu(): void {
 // module-level closers, guarded: the model half of this module (and its constants) is importable
 // from non-DOM contexts (the node test runner) — only a real document wires the listeners
 if (typeof document !== "undefined") {
+  installMenuEcho();   // the WRITER rides every bundle at load — a pane must broadcast before it ever opens a menu
   document.addEventListener("click", () => closeTagMenu());
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeTagMenu(); });
   try {
@@ -54,7 +58,6 @@ if (typeof document !== "undefined") {
 /** Open (or toggle shut) the lens menu anchored under `anchor`. The ctx-family skin — the chat
  *  pane's .ctx-menu is the reference spec (CLAUDE.md menu vocabulary). */
 export function openTagMenu(anchor: HTMLElement, opts: TagMenuOpts): void {
-  installMenuEcho();
   const reopen = !!openMenu && openMenu.dataset.tagMenu === "1";
   closeTagMenu();
   if (reopen) return;
@@ -68,20 +71,8 @@ export function openTagMenu(anchor: HTMLElement, opts: TagMenuOpts): void {
   const build = () => {
     menu.textContent = "";
     const lens = opts.lens();
-    const cap = document.createElement("div");
-    cap.setAttribute("style", "display:flex;align-items:center;gap:6px;margin:4px 6px;");
-    const capMk = (grow: boolean) => {
-      const d = document.createElement("div");
-      d.setAttribute("style", "height:1px;" + (grow ? "flex:1;" : "flex:0 0 8px;") + "background:rgba(255,255,255,0.12);");
-      return d;
-    };
-    cap.appendChild(capMk(false));
-    const capT = document.createElement("span");
-    capT.textContent = opts.scopeCaption;
-    capT.setAttribute("style", "font-size:0.82em;opacity:0.6;font-style:italic;white-space:nowrap;");
-    cap.appendChild(capT);
-    cap.appendChild(capMk(true));
-    menu.appendChild(cap);
+    // (the scope caption retired 2026-08-25 — the user: the button tooltip already names the
+    // surface, so it is the ONE scope carrier and the menu opens straight onto its rows)
     const row = (label: string, current: boolean, dot?: string | null, dim?: boolean) => {
       const r = document.createElement("div");
       r.setAttribute("style", "padding:4px 22px 4px 8px;border-radius:4px;cursor:pointer;position:relative;white-space:nowrap;"

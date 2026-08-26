@@ -45,7 +45,11 @@ function viewTags(views) { return (views && (views.tags || views.groups)) || [];
 // stored duplicates stay separate under the hood (no automatic store merges — the anti-clobber
 // rule); this is PRESENTATION, and the mirrors (session-views.ts, kernel _view_visible) agree.
 function viewTagUnion(views) {
-  const out = [], byName = {};
+  // byName is null-prototype: a user-typed tag NAME can be "constructor"/"toString", which a
+  // plain {} resolves through the prototype chain — the lookup returned a Function and the
+  // union builder crashed on it (found in adversarial review 2026-08-25; the ordering lookups
+  // below wear the same guard)
+  const out = [], byName = Object.create(null);
   for (const t of viewTags(views)) {
     const g = byName[t.name] || (byName[t.name] = { name: t.name || 'tag', color: '', members: [],
                                                     ids: [], localId: null, homes: [], remotes: [] });
@@ -63,6 +67,19 @@ function viewTagUnion(views) {
     g.remotes.push(rt);
     for (const m of (rt.members || [])) if (g.members.indexOf(m) < 0) g.members.push(m);
     if (out.indexOf(g) < 0) out.push(g);
+  }
+  // THE ordering rule, stated once per mirror (the user 2026-08-25; session-views.ts is the
+  // typed twin): unions render in the user's dragged order (views.tagOrder, name-keyed — a
+  // remote-homed name holds its position too); unlisted names follow in natural order (stable
+  // sort, so a new tag lands at the end). Every chip list, menu row list, and dialog row list
+  // here renders through this union, so the order flows everywhere from this line.
+  const ord = (views && views.tagOrder) || [];
+  if (ord.length) {
+    // null-prototype lookup: a user-typed tag NAME can be "constructor"/"toString", which a plain
+    // {} would resolve through the prototype chain (the TS twin uses a Map for the same reason)
+    const ix = Object.create(null);
+    ord.forEach((n, i) => { if (!(n in ix)) ix[n] = i; });
+    out.sort((a, b) => (a.name in ix ? ix[a.name] : ord.length) - (b.name in ix ? ix[b.name] : ord.length));
   }
   return out;
 }
@@ -2573,6 +2590,7 @@ class TimelinePanel {
     if (!v) return '';
     return JSON.stringify({ active: v.active || 'all',
       actives: v.actives || {},   // per-surface lenses are client-posted state — the echo compares them (2026-08-25)
+      order: v.tagOrder || [],    // the dragged union order is client-posted state too (2026-08-25)
       tags: viewTags(v).map((t) => ({ id: t.id, name: t.name, color: t.color,
                                       members: (t.members || []).slice().sort() })) });
   }
@@ -2784,10 +2802,21 @@ class TimelinePanel {
     const unions = viewTagUnion(v);
     const more = viewMoreCount(v, (this.data && this.data.sessions) || []);
     const active = !lensAll(lens);
-    const chips = active ? (lens.tags || []).map((n) => {
-      const u = unions.find((x) => x.name === n);
-      return { label: n, color: (u && u.color) || MODEL_FG, pick: { tag: n } };
-    }).concat(lens.none ? [{ label: 'no tags', color: MODEL_FG, pick: 'none' }] : []) : [];
+    // "no tags" sits LEFTMOST, the tags following in the USER'S order (the user 2026-08-25):
+    // the unions arrive ordered (viewTagUnion's one rule), so walking them IS the order; a
+    // selected name missing from the unions (a stale lens) appends last in the gray.
+    const chips = [];
+    if (active) {
+      if (lens.none) chips.push({ label: 'no tags', color: MODEL_FG, pick: 'none' });
+      const picked = Object.create(null);   // null-prototype: a tag named "constructor" must not read as picked
+      (lens.tags || []).forEach((n) => { picked[n] = true; });
+      for (const u of unions) {
+        if (!picked[u.name]) continue;
+        delete picked[u.name];
+        chips.push({ label: u.name, color: u.color || MODEL_FG, pick: { tag: u.name } });
+      }
+      for (const n of (lens.tags || [])) if (picked[n]) chips.push({ label: n, color: MODEL_FG, pick: { tag: n } });
+    }
     const GAP = 8, BTNW = 34;   // the bar's flex gap; the feed tag button's measured box width
     const tailStr = more ? more + ' more' : '';
     const chipW = (c) => 18 + this.labelWidth(c.label) + 6 + 8;   // pad+border + name + gap + ✕ (the 12px measure over-covers the 10.7px render)
@@ -2908,17 +2937,9 @@ class TimelinePanel {
       const s = menu.createDiv();
       s.setAttribute('style', 'height:1px;margin:4px 6px;background:rgba(255,255,255,0.12);');
     };
-    // a CAPTIONED divider (the user 2026-08-25): the hairline carries a tiny italic dim label —
-    // the menu says which surface its selection governs. The sub-line scale (0.82em/0.6), never a
-    // new size; one shared idiom other menus adopt.
-    const capSep = (label) => {
-      const s = menu.createDiv();
-      s.setAttribute('style', 'display:flex;align-items:center;gap:6px;margin:4px 6px;');
-      const l1 = s.createDiv(); l1.setAttribute('style', 'height:1px;flex:0 0 8px;background:rgba(255,255,255,0.12);');
-      const t = s.createSpan({ text: label });
-      t.setAttribute('style', 'font-size:0.82em;opacity:0.6;font-style:italic;white-space:nowrap;');
-      const l2 = s.createDiv(); l2.setAttribute('style', 'height:1px;flex:1;background:rgba(255,255,255,0.12);');
-    };
+    // (the menu's scope caption retired 2026-08-25 — the user: the button's tooltip already says
+    // which surface this governs, so the menu opens straight onto its rows. The captioned-divider
+    // idiom itself lives on in the dialog's sections.)
     // MULTI-SELECT (the user 2026-08-25): rows are TOGGLES on this surface's lens — All exclusive
     // and a plain pick; (no tags) and every tag combine arbitrarily; the ✓ marks each selected row
     // and the menu STAYS OPEN across toggles (a settings panel, not a command — the gear's rule),
@@ -2938,7 +2959,6 @@ class TimelinePanel {
         this._setViews(nv);
         if (close) this._closeViewsMenu(); else build();
       };
-      capSep('filters this timeline');
       item('All', { current: lensAll(lens) }).addEventListener('click', () => apply({ all: true }, true));
       item('(no tags)', { current: !lensAll(lens) && !!lens.none })
         .addEventListener('click', () => apply(lensToggle(lens, 'none'), false));
@@ -2982,12 +3002,7 @@ class TimelinePanel {
       row.addEventListener('mouseleave', () => { row.style.background = 'transparent'; });
       return row;
     };
-    const cap = menu.createDiv();
-    cap.setAttribute('style', 'display:flex;align-items:center;gap:6px;margin:4px 6px;');
-    cap.createDiv().setAttribute('style', 'height:1px;flex:0 0 8px;background:rgba(255,255,255,0.12);');
-    const capT = cap.createSpan({ text: 'how this timeline draws' });
-    capT.setAttribute('style', 'font-size:0.82em;opacity:0.6;font-style:italic;white-space:nowrap;');
-    cap.createDiv().setAttribute('style', 'height:1px;flex:1;background:rgba(255,255,255,0.12);');
+    // (no header — the user 2026-08-25: the menu is just its two entries)
     const flip = (key, cur) => {
       let s = {}; try { s = JSON.parse(localStorage.getItem('romp:settings') || '{}') || {}; } catch (e) {}
       s[key] = !cur;
@@ -3026,9 +3041,17 @@ class TimelinePanel {
       + 'display:flex;align-items:center;justify-content:center;');
     const card = back.createDiv();
     // the dialog is a FORM, not a menu: it reads at 13px (the page's standard reading size, the
-    // user 2026-08-25: the menu 12px read too small here) — sub-lines keep the one 0.82em scale
-    card.setAttribute('style', 'width:min(560px,94vw);max-height:78vh;overflow:hidden;display:flex;flex-direction:column;padding:14px 16px;'
-      + MENU_STYLE + 'font-size:13px;');
+    // user 2026-08-25: the menu 12px read too small here) — sub-lines keep the one 0.82em scale.
+    // It sizes to the SCREEN (the user 2026-08-25, round two: 560px read cramped and made rows
+    // wrap for no reason): up to 90% of the viewport both axes — the big panels' family norm —
+    // capped at 1200px so a huge monitor doesn't stretch a form unreadably wide, with real
+    // breathing room inside the card's edges. The centered-card-over-dim treatment stands.
+    // the card's own declarations come AFTER the shared menu spec: MENU_STYLE opens with the
+    // MENU padding (4px), and in one style string the later declaration wins — with the paddings
+    // stated first the dialog had been rendering 4px edges all along, which IS the claustrophobia
+    // the user reported (2026-08-25); the 14px/22px in the source never applied.
+    card.setAttribute('style', MENU_STYLE + 'box-sizing:border-box;width:min(1200px,90vw);max-height:90vh;'
+      + 'overflow:hidden;display:flex;flex-direction:column;padding:22px 26px;font-size:13px;');
     card.addEventListener('click', (e) => e.stopPropagation());
     // the open [+] menu's key rides the INSTANCE (this._tagAddFor: sid, or '*' for the bulk bar)
     // so the shared join builder can close it from either surface — the dialog or the lane gear
@@ -3091,8 +3114,60 @@ class TimelinePanel {
         for (const tg of viewTagUnion(v)) {
           const editable = tg.localId || canEdit;
           const tc = tg.color || MODEL_FG;
-          // the tag itself: the normal pill, NO ✕ — actions live beside it, never on it
+          // the tag itself: the normal pill, NO ✕ — actions live beside it, never on it.
+          // DRAGGABLE (the user 2026-08-25): grab a pill to reorder the tags — the drop writes
+          // tagOrder (the union display order, viewer-side) AND re-sorts the local tags array to
+          // match (the natural store for local-only readers). The membership drag's discipline:
+          // pointer capture, an accent border cue that moves WITHOUT rebuilding mid-drag (the
+          // redraw-eats-pointer rule); the rebuild and the write happen on the drop. The rename
+          // input keeps the cell — no drag while editing.
           const pillCell = tgrid.createDiv();
+          pillCell._tname = tg.name;
+          if (this._tagEditorFor !== tg.name || !editable) {
+            pillCell.style.cursor = 'grab';
+            pillCell.addEventListener('pointerdown', (e) => {
+              e.preventDefault();
+              const cells = Array.from(tgrid.children).filter((c) => c._tname);
+              const fromIdx = cells.indexOf(pillCell);
+              if (fromIdx < 0) return;
+              let toIdx = fromIdx;
+              try { pillCell.setPointerCapture(e.pointerId); } catch (e2) {}
+              pillCell.style.opacity = '0.45';
+              const clearCues = () => cells.forEach((c) => { c.style.borderTop = ''; c.style.borderBottom = ''; });
+              const onMove = (ev) => {
+                const ys = cells.map((c) => { const r = c.getBoundingClientRect(); return (r.top + r.bottom) / 2; });
+                let idx = ys.findIndex((y) => ev.clientY < y);
+                if (idx < 0) idx = cells.length - 1;
+                if (idx !== toIdx) {
+                  toIdx = idx;
+                  clearCues();
+                  if (toIdx !== fromIdx) cells[toIdx].style[toIdx > fromIdx ? 'borderBottom' : 'borderTop'] = '2px solid #9cd2ff';
+                }
+              };
+              const onUp = () => {
+                pillCell.removeEventListener('pointermove', onMove);
+                pillCell.removeEventListener('pointerup', onUp);
+                pillCell.removeEventListener('pointercancel', onUp);
+                pillCell.style.opacity = '';
+                clearCues();
+                if (toIdx === fromIdx) return;
+                const names = cells.map((c) => c._tname);
+                names.splice(toIdx, 0, names.splice(fromIdx, 1)[0]);
+                const nv = JSON.parse(JSON.stringify(this._curViews()));
+                nv.tagOrder = names;                       // the union display order, remote-homed names included
+                const pos = Object.create(null);           // null-prototype (the prototype-key name hazard)
+                names.forEach((n, i) => { pos[n] = i; });
+                nv.tags = viewTags(nv).slice().sort((a, b) =>
+                  ((a.name in pos) ? pos[a.name] : names.length) - ((b.name in pos) ? pos[b.name] : names.length));
+                delete nv.groups;
+                this._setViews(nv);
+                build();
+              };
+              pillCell.addEventListener('pointermove', onMove);
+              pillCell.addEventListener('pointerup', onUp);
+              pillCell.addEventListener('pointercancel', onUp);
+            });
+          }
           if (this._tagEditorFor === tg.name && editable) {
             const nameIn = document.createElement('input');
             nameIn.value = tg.name; nameIn.maxLength = 40;

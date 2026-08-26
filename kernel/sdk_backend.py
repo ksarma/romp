@@ -866,6 +866,8 @@ BOOT_RESUME_SLOT_S = float(os.environ.get("ROMP_BOOT_RESUME_SLOT_S", "180"))
 # meaning), but MARKER-FREE: this line joins an EXISTING message, and the romp-injected marker
 # would re-author the host message's echo and transcript atom.
 RENAME_NUDGE = "[romp] This session was renamed: it is now '%s'. A note for your own records — carry on."
+# the dressed ping's detectable head — the drain's feed-hold keys on it (see _deliver_rename_ping)
+RENAME_PING_HEAD = "<!-- romp-injected --><!-- romp-system -->[romp] This session was renamed"
 
 # Same recovery, different death: the session's OWN claude process died mid-turn (killed or crashed)
 # while the kernel stayed up, so the kernel itself resumes it (_heal_cut_session) instead of waiting
@@ -1285,6 +1287,28 @@ def _expected_auth() -> str:
     return v if v in ("key", "login") else ""
 
 
+def _declared_auth(state_dir) -> tuple:
+    """The EFFECTIVE box-wide auth expectation and where it came from: ("key"|"login"|"", "pick"|"env"|"").
+    One explicit gear Billing pick makes ROMP_EXPECTED_AUTH INERT (Q3, 2026-08-26): set_auth is the
+    ONLY writer of the remembered auth default, so that entry existing IS "the user has picked
+    billing by hand at least once" — from then on the remembered pick is the box's expectation and
+    the env declaration stops speaking (it described the box's unpicked design; once billing is
+    hand-managed it is stale doctrine, and its per-init alarms fought the user's own choice on
+    every re-seeded spawn). A SPAWN re-seeding reg.auth from the remembered default never counts
+    as explicit — inertness keys on the PICK EVENT's durable trace (the defaults entry), never on
+    any session's seeded state; hand-editing sdk-defaults.json stays the sanctioned escape hatch
+    (the mode precedent)."""
+    try:
+        d = read_sdk_defaults(Path(state_dir))
+    except Exception:
+        d = {}
+    a = d.get("auth")
+    if a in ("key", "login"):
+        return a, "pick"
+    v = _expected_auth()
+    return v, ("env" if v else "")
+
+
 # ---------------------------------------------------------------------------
 # Fast-mode permission for key-billed sessions — ask the account that PAYS.
 # ---------------------------------------------------------------------------
@@ -1611,6 +1635,10 @@ class SdkSession:
         # Entries are plain strs, except a user-todo ANSWER which is a _TodoText carrying the id
         # of the ask it answers — the seed restores the id so a post-restart recall still reopens.
         self._pending: list[str] = _queue_texts(reg.get("queue"))
+        self._ping_feeding = False   # a rename ping was fed and its turn hasn't streamed yet: hold the
+        #                              queue so no message can share its pre-turn window (the CLI batches
+        #                              everything pre-start into ONE record — the 2026-08-25 fold); cleared
+        #                              by the turn's first streamed message, an exact event, or a reconnect
         # A RESTORED /compact must light the compacting bracket too (the user 2026-07-22). send() sets
         # _compacting when it enqueues a compact command, but a persisted queue lands here INSTEAD of
         # going through send() — any /compact still queued when the kernel died arrives this way. Without
@@ -1664,6 +1692,23 @@ class SdkSession:
         self._persist_queue()
         if loop is not None and wake is not None:
             loop.call_soon_threadsafe(wake.set)
+
+    def enqueue_if_empty(self, text: str) -> bool:
+        """Enqueue `text` only when NOTHING is queued — the emptiness check and the append share
+        ONE lock hold. The rename ping's gate (found 2026-08-26): with the check and the enqueue
+        in separate holds, a send racing the gap between them queued AHEAD of the ping, and the
+        CLI's pre-turn batching folded the user's words into the ping's machine record — the
+        exact 2026-08-25 fold the empty-queue gate exists to prevent. Returns whether the text
+        was queued; False leaves the queue untouched."""
+        with self._lock:
+            if self._pending:
+                return False
+            self._pending.append(text)
+            loop, wake = self.loop, self._input_wake
+        self._persist_queue()
+        if loop is not None and wake is not None:
+            loop.call_soon_threadsafe(wake.set)
+        return True
 
     def pending(self) -> list[str]:
         """The queued user turns not yet started (oldest first); thread-safe. The kernel
@@ -1825,8 +1870,13 @@ class SdkSession:
           after our receive loop was cancelled — repeats a kickoff message, which beats silently losing
           it.)
         - A RESUMABLE conversation: the atom may genuinely have landed, so re-feeding risks a real
-          duplicate. Surface the loss instead: the drop-mark flips the echo to "never delivered" NOW,
-          rather than hours later at the next thread spawn."""
+          duplicate. Surface the loss instead, FLAG-ONLY (refeed=False, round 2 2026-08-26): the
+          drop-mark flips the echo to "never delivered" NOW — with the todo-reopen seam — rather than
+          hours later at the next thread spawn. _mark_dropped_echoes' redeliver arm must not run here:
+          its _text_landed scan is a bounded transcript-tail read whose miss would land the message
+          TWICE in the resumed conversation, the exact duplicate this branch is documented to refuse.
+          The re-feed lives only where the conversation is NOT resumable — the re-head above, and the
+          boot/dead-spawn callers (_reseed_echoes, _run), where no client survives to have landed it."""
         if not self.inflight:
             return
         stranded = list(self._inflight_texts)      # fed to the abandoned client, never resulted
@@ -1843,7 +1893,7 @@ class SdkSession:
                 self._pending[0:0] = stranded
             self._persist_queue()                  # the fresh inputs() drains _pending on its first pass
         elif stranded:
-            self.backend._mark_dropped_echoes(self.sid, self.pending())
+            self.backend._mark_dropped_echoes(self.sid, self.pending(), refeed=False)
         self.backend._poke()
 
     # ---- async internals (run inside the quarantined loop) ----
@@ -2160,6 +2210,7 @@ class SdkSession:
                     # up (_rewind_armed, set by _options) — feeding the edit turn to the CURRENT client
                     # would land it on the un-rewound branch (the exact wrong-branch delivery this guards)
                     blocked = blocked or bool(self._rewind_to and not self._rewind_armed)
+                    blocked = blocked or self._ping_feeding   # the ping's record must not share its window
                     item = self._pending.pop(0) if (self._pending and not blocked) else None
                     fresh = item is not None and self.inflight == 0     # starting from idle, not mid-turn
                 if item is None:
@@ -2172,6 +2223,8 @@ class SdkSession:
                     self._intr_level = 0             #   ...and its escalation episode (a new stop starts polite)
                 self.inflight += 1
                 self._inflight_texts.append(item)   # the fed-turn twin — see its init comment
+                if item.startswith(RENAME_PING_HEAD):
+                    self._ping_feeding = True       # hold feeds until this turn's first streamed message
                 self._mark("working")
                 self.backend._poke()
                 yield {"type": "user",
@@ -2195,6 +2248,7 @@ class SdkSession:
         while not self.ended:
             self._wake.clear()
             self._reconnect = False
+            self._ping_feeding = False   # a reconnect restarts the feed — a stale hold must not wedge it
             # settle + recover anything the abandoned client stranded — see _reconcile_stranded
             self._reconcile_stranded()
             opts = self.backend._options(self, ClaudeAgentOptions)
@@ -2429,6 +2483,13 @@ class SdkSession:
         append_state(self.backend.state_dir, self.sid, state)
 
     def _on_message(self, msg, AssistantMessage, ResultMessage, SystemMessage):
+        if getattr(self, "_ping_feeding", False):   # getattr: __new__-built test doubles skip __init__
+            # the ping's turn is streaming — the CLI demonstrably started it, so a message fed from
+            # here on lands MID-TURN as its own record (the CLI's designed forward behavior); the
+            # queue can flow again
+            self._ping_feeding = False
+            if self._input_wake is not None:
+                self._input_wake.set()   # same-loop thread — the settle path sets it the same way
         if isinstance(msg, SystemMessage) and msg.subtype == "init":
             self._fire_boot_settled()   # the CLI is up and streaming — its transcript catch-up burst
             #                             is over, so the boot-stagger slot (if any) frees NOW
@@ -2622,7 +2683,7 @@ class SdkSession:
                     last = self._last_usage_totals.get(k, 0)
                     turn_u[k] = v - last if v >= last else v
                     self._last_usage_totals[k] = v
-                self.backend._record_spend(delta, turn_u, keyed=self.api_key_auth)   # the rail's spend
+                self.backend._record_spend(delta, turn_u, keyed=self.api_key_auth, sid=self.sid)   # the rail's spend
                 #   + token readout; keyed = THIS session's init-reported auth, so the API sum stays
                 #   honest on a mixed host (see _record_spend)
             self.retrying = False
@@ -2667,6 +2728,9 @@ class SdkSession:
             self.backend._poke()
             if self._input_wake is not None:   # turn done → release the next queued turn, if any
                 self._input_wake.set()
+            # a pending rename ping delivers HERE, as its own turn (the user answered first; the
+            # empty-queue guard + the feed-hold make its record unfoldable — see _deliver_rename_ping)
+            self.backend._deliver_rename_ping(self)
             if self._reconnect_when_idle and not self.ended:   # an effort change waited for this turn to end
                 self._reconnect_when_idle = False
                 self._reconnect = True
@@ -3619,7 +3683,7 @@ class SdkBackend:
                 self._usage_all_keyed = True
                 self._log("usage refresh: %d live session(s), all billing API keys — no session can "
                           "poll the subscription windows, so rate-limit telemetry is unavailable"
-                          % len(connected), problem=_expected_auth() != "key")
+                          % len(connected), problem=_declared_auth(self.state_dir)[0] != "key")
             return
         if any(s.auth_live == "login" for s in live):
             # Re-armed only by an init that CONFIRMED a login — a fresh spawn's default-False flag
@@ -3631,7 +3695,7 @@ class SdkBackend:
         self._log("usage refresh: %d live session(s), none with a loop to run it on — the rail bars "
                   "keep their last reading" % len(live), problem=True)
 
-    def _record_spend(self, cost, usage=None, keyed=False) -> None:
+    def _record_spend(self, cost, usage=None, keyed=False, sid=None) -> None:
         """Accumulate a turn's total_cost_usd AND its token counts into spend.json, keyed by LOCAL date —
         the rail's spend readout where the subscription bars sat, under API-key auth (the user
         2026-08-04; tokens added the same day, who wanted them beside the dollars). Recorded on every
@@ -3642,7 +3706,14 @@ class SdkBackend:
         rail's API readout must sum ONLY the key's turns — a login turn's computed cost there would be
         dollars nobody is billed (the user 2026-08-08). Token fields mirror the ResultMessage usage
         dict: input/output plus the two cache flavors, kept separately so the tooltip can break them
-        down. Pruned to the last 90 days; atomic."""
+        down. Pruned to the last 90 days; atomic.
+        PER-SESSION ATTRIBUTION (T100, the nightly optimizer's accepted ask 2026-08-24: key-billed
+        cost per session — 63%% of a day was untraceable): each bucket carries a `bySid` sub-map,
+        {sid: {usd, turns, tok, key:{usd,turns,tok}}} — SID-keyed (rename-proof; names flap), the
+        keyed split carried PER SID because that split is the point. Living inside the buckets, the
+        maps inherit the prune and the atomic write; rows without bySid stay readable (lossless
+        legacy, the T18 discipline). Inherited edge, unrecoverable here: a restart-killed turn
+        never emits its ResultMessage, so its cost is missing from every dimension alike."""
         if not isinstance(cost, (int, float)) or cost <= 0:
             return
         u = usage if isinstance(usage, dict) else {}
@@ -3669,12 +3740,26 @@ class SdkBackend:
                      "tokCacheR": int(e.get("tokCacheR") or 0) + _tok("cache_read_input_tokens"),
                      "tokCacheW": int(e.get("tokCacheW") or 0) + _tok("cache_creation_input_tokens")}
                 ke = e.get("key") if isinstance(e.get("key"), dict) else {}
+                tok_total = sum(_tok(k) for k in ("input_tokens", "output_tokens",
+                                                  "cache_read_input_tokens", "cache_creation_input_tokens"))
                 if keyed or ke:   # carry an existing key split forward even on a login turn
                     n["key"] = {"usd": round(float(ke.get("usd") or 0) + (float(cost) if keyed else 0), 6),
                                 "turns": int(ke.get("turns") or 0) + (1 if keyed else 0),
-                                "tok": int(ke.get("tok") or 0) + (sum(_tok(k) for k in (
-                                    "input_tokens", "output_tokens", "cache_read_input_tokens",
-                                    "cache_creation_input_tokens")) if keyed else 0)}
+                                "tok": int(ke.get("tok") or 0) + (tok_total if keyed else 0)}
+                by = e.get("bySid") if isinstance(e.get("bySid"), dict) else {}
+                if sid:
+                    se = by.get(sid) if isinstance(by.get(sid), dict) else {}
+                    sn = {"usd": round(float(se.get("usd") or 0) + float(cost), 6),
+                          "turns": int(se.get("turns") or 0) + 1,
+                          "tok": int(se.get("tok") or 0) + tok_total}
+                    ske = se.get("key") if isinstance(se.get("key"), dict) else {}
+                    if keyed or ske:   # the keyed split rides each sid too — carried forward on login turns
+                        sn["key"] = {"usd": round(float(ske.get("usd") or 0) + (float(cost) if keyed else 0), 6),
+                                     "turns": int(ske.get("turns") or 0) + (1 if keyed else 0),
+                                     "tok": int(ske.get("tok") or 0) + (tok_total if keyed else 0)}
+                    by[sid] = sn
+                if by:   # a sid-less fold (a non-rail caller) must not drop the attribution already there
+                    n["bySid"] = by
                 buckets[key] = n
                 for k in sorted(buckets)[:-keep]:
                     buckets.pop(k, None)
@@ -3723,12 +3808,14 @@ class SdkBackend:
         # the box's UNPICKED design, while set_auth's contract is that the next init confirms the
         # PICK — judged (and worded) against what the pick launched, so a landing honoring the pick
         # stays quiet whatever the box declares, and one contradicting it still rings.
-        exp = "" if sess.auth in ("login", "key") else _expected_auth()
+        exp, exp_src = ("", "") if sess.auth in ("login", "key") else _declared_auth(self.state_dir)
         if keyed != ((exp == "key") if exp else sess._launched_keyed):
             if exp:
-                self._log("auth (%s): ROMP_EXPECTED_AUTH=%s but the CLI reports apiKeySource=%r — this "
+                what = ("ROMP_EXPECTED_AUTH=%s" % exp) if exp_src == "env" \
+                    else ("the remembered Billing pick is %s" % exp)
+                self._log("auth (%s): %s but the CLI reports apiKeySource=%r — this "
                           "session is billing the %s. Check the helper and service.env."
-                          % (sess.name, exp, source, "API key" if keyed else "login"), problem=True)
+                          % (sess.name, what, source, "API key" if keyed else "login"), problem=True)
             else:
                 self._log("auth (%s): launched for %s but the CLI reports apiKeySource=%r — this session "
                           "is billing the %s. Check the login (claude /login) and service.env."
@@ -4391,7 +4478,8 @@ class SdkBackend:
         """Can a ✕ on this session's queued bubble still win? False while a turn is running UN-HELD:
         there the input generator forwards a queued send to the CLI within milliseconds, and once it's
         inside the CLI no recall exists — so offering a cancel would be a lie that ends in "too late".
-        True when the queue is genuinely romp-held — the interrupt hold, the rewind hold — or when no
+        True when the queue is genuinely romp-held — the interrupt hold, the rewind hold, the rename
+        ping's feed-hold (while the ping's turn is in flight the drain releases nothing) — or when no
         turn is in flight (idle/connecting: entries sit in _pending until the client drains them).
         The kernel reads this to decide whether the queued bubble gets its ✕ at all; the loud
         unqueue-miss toast covers the races this gate can't (a click on a just-stale push)."""
@@ -4402,7 +4490,9 @@ class SdkBackend:
         with s._lock:
             if s.inflight <= 0:
                 return True
-            return bool(s._interrupted or (s._rewind_to and not getattr(s, "_rewind_armed", False)))
+            return bool(s._interrupted
+                        or getattr(s, "_ping_feeding", False)   # getattr: test doubles skip __init__
+                        or (s._rewind_to and not getattr(s, "_rewind_armed", False)))
 
     def send(self, sid: str, text: str, user_todo: str | None = None) -> bool:
         """`user_todo` is the id of the user todo this text ANSWERS (the kernel's _backend_send):
@@ -4411,23 +4501,6 @@ class SdkBackend:
         s = self._ensure(sid)
         if not s:
             return False
-        # RENAME PING (the user 2026-08-24; own-record form 2026-08-25): one line ahead of the
-        # next thing that enters the session, so it hears its own new name instead of inferring
-        # it. Its OWN record in the machine-sent dress — string-prepending it into the incoming
-        # text put the bookkeeping line inside the USER's bubble, rendered as if they typed it
-        # (the user 2026-08-25, on their very first message). The romp-injected markers are safe
-        # here precisely BECAUSE the record is separate: they author this line 'romp' (the gray
-        # machine bubble, the restart notices' dress) without touching the user's own record. It
-        # still rides the same wake — the recursive send enqueues back-to-back with the message
-        # that triggered it, and an idle session stays idle. A slash-command send passes untouched
-        # (the CLI must see the bare command) and the note holds for the next real prompt; the
-        # recursion terminates because the note is cleared before the ping is sent.
-        if not text.lstrip().startswith("/"):
-            _reg = read_reg(self.state_dir, sid) or {}
-            if _reg.get("renameNote"):
-                _note = _reg["renameNote"]
-                self._update_reg(sid, renameNote=None)
-                self.send(sid, "<!-- romp-injected --><!-- romp-system -->" + RENAME_NUDGE % _note)
         if _is_compact_cmd(text):
             # Delivering /compact: mark the session compacting NOW (authoritative), covering the gap between
             # this send and the CLI actually starting the turn — so a drive op the producer tick checks in
@@ -4517,7 +4590,7 @@ class SdkBackend:
             if self._live.get(reg["sid"]):
                 self._mark_dropped_echoes(reg["sid"], _queue_texts(reg.get("queue")))
 
-    def _mark_dropped_echoes(self, sid: str, queued_texts) -> None:
+    def _mark_dropped_echoes(self, sid: str, queued_texts, refeed: bool = True) -> None:
         """A fresh CLI is spawning for this sid, or the kernel just booted: whatever process held any
         earlier send is gone. An input echo whose text is neither in the surviving queue (about to be
         delivered to the new CLI) nor landed in the transcript has no holder left — its send is provably
@@ -4527,7 +4600,14 @@ class SdkBackend:
         history). Event-based — keyed on the spawn/boot that orphaned the send, never on age — and
         self-correcting: an echo whose text actually LANDED still prunes by text on the next build, so a
         premature flag can never stick to a delivered message. The flag rides the registry mirror
-        (_persist_echoes), so it survives further restarts."""
+        (_persist_echoes), so it survives further restarts.
+
+        `refeed=False` (round 2, 2026-08-26, honoring _reconcile_stranded's documented policy): the
+        RESUMABLE-reconnect caller takes the flag path ONLY — the redeliver arm's _text_landed scan is
+        a bounded tail read whose miss would land the message a second time in a conversation that
+        genuinely kept the first, exactly the duplicate that branch refuses by design. The loss still
+        surfaces in full (dropped flag, todo-reopen seam); only the queue re-add is withheld. Boot and
+        dead-spawn callers keep the default: no client survived there to have landed anything."""
         d = self._live.get(sid)
         if not d:
             return
@@ -4542,26 +4622,68 @@ class SdkBackend:
         # prompt queued at 11:20 was silently discarded by the 11:25 restart). A HUMAN send whose
         # loss is proven — and whose text a direct transcript scan confirms never landed as a user
         # record (the flag path self-corrects on a wrong guess; a re-delivery would DUPLICATE, so it
-        # verifies first) — goes back into the persisted queue in send order: the next spawn feeds
-        # it to the fresh CLI exactly like the surviving queue, recreating the pre-restart state.
+        # verifies first) — goes back into the queue in send order, exactly like the surviving
+        # queue, recreating the pre-restart state: the LIVE session's _pending when one is running
+        # (its mirror rewrites reg['queue'] on every mutation, so only _pending sticks), else the
+        # persisted reg queue the next spawn's seed reads.
         # romp-authored echoes (nudges) keep the flag path: re-delivering one could double-nudge,
-        # and its content is regenerable machinery, not the user's words.
+        # and its content is regenerable machinery, not the user's words. A refeed=False caller
+        # (the resumable reconnect — docstring above) keeps EVERY echo on the flag path.
         redeliver = []
-        for a in sorted(newly, key=lambda x: x.get("t") or 0):
-            if a.get("author") == "human" and not self._text_landed(sid, a["_echo_text"]):
-                redeliver.append(a)
+        if refeed:
+            for a in sorted(newly, key=lambda x: x.get("t") or 0):
+                if a.get("author") == "human" and not self._text_landed(sid, a["_echo_text"]):
+                    redeliver.append(a)
         if redeliver:
-            with self._reg_lock:
-                reg = read_reg(self.state_dir, sid)
-                if reg is not None:
-                    have = [t for t in (reg.get("queue") or []) if isinstance(t, str) and t]
-                    add = [a["_echo_text"] for a in redeliver if a["_echo_text"] not in have]
-                    if add:
-                        reg["queue"] = have + add          # behind the surviving queue: original send order
-                        write_reg(self.state_dir, sid, reg)
+            # The LIVE-session caller (a fresh spawn's _run) must deliver through the session's
+            # own queue: there the in-memory _pending is authoritative and its very next
+            # _persist_queue snapshot rewrites reg['queue'] — a reg-only write sat in limbo (echo
+            # unmarked, todo 'answered', nothing fed) until a future kernel boot re-read the reg
+            # (found 2026-08-26). The boot caller (_reseed_echoes) runs before any session spawns,
+            # so the reg IS the queue there.
+            sess_map = getattr(self, "sessions", None)   # getattr: bound-method test doubles skip __init__
+            s = None
+            if sess_map is not None:
+                with self._lock:
+                    s = sess_map.get(sid)
+            if s is not None:
+                have = {str(t) for t in s.pending()}
+                for a in redeliver:                        # already in send order (sorted above)
+                    if a["_echo_text"] in have:
+                        continue                           # already back in the queue — never duplicate
+                    if _is_compact_cmd(a["_echo_text"]):
+                        s._compacting = True               # same enqueue-time semantics as send()
+                    if _is_clear_cmd(a["_echo_text"]):
+                        s._clearing = True
+                    # `todo`: a redelivered user-todo ANSWER keeps the id its echo carries (_TodoText
+                    # through enqueue), so a recall or a later loss can still reopen exactly that ask
+                    s.enqueue(a["_echo_text"], todo=str(a.get("_todo") or ""))
+                    self._log("%s: re-delivering a typed send the dead CLI was holding: %.80r"
+                              % (sid[:8], a["_echo_text"]))
+            else:
+                with self._reg_lock:
+                    reg = read_reg(self.state_dir, sid)
+                    if reg is not None:
+                        # Dict-aware like every other reg['queue'] RMW (round 2, 2026-08-22): the
+                        # strings-only filter this replaces silently ERASED a persisted user-todo
+                        # answer's {"text","todo"} entry — the todo stayed 'answered', the answer
+                        # never delivered, and nothing reopened the ask. _queue_texts keeps every
+                        # well-formed entry (id-carrying included); _queue_wire writes them back.
+                        have = _queue_texts(reg.get("queue"))
+                        have_texts = {str(t) for t in have}
+                        add = []
                         for a in redeliver:
-                            self._log("%s: re-delivering a typed send the dead CLI was holding: %.80r"
-                                      % (sid[:8], a["_echo_text"]))
+                            if a["_echo_text"] in have_texts:
+                                continue
+                            todo = str(a.get("_todo") or "")   # a redelivered ANSWER keeps its ask's id
+                            add.append(_TodoText(a["_echo_text"], todo) if todo else a["_echo_text"])
+                        if add:
+                            # behind the surviving queue: original send order
+                            reg["queue"] = [_queue_wire(t) for t in have + add]
+                            write_reg(self.state_dir, sid, reg)
+                            for t in add:
+                                self._log("%s: re-delivering a typed send the dead CLI was holding: %.80r"
+                                          % (sid[:8], str(t)))
         rekeyed = {a["_echo_text"] for a in redeliver}
         for a in newly:
             if a["_echo_text"] in rekeyed:
@@ -5396,7 +5518,17 @@ class SdkBackend:
                     # /clear streams one) — nothing the user watched, nothing to salvage. Persisted, it
                     # resurfaced as a worked reply on the bare command turn (the user 2026-07-27); the
                     # parse-side guard in synthesize_orphans covers markers already written.
-                    if txt.strip() and txt.strip() != "(no content)":
+                    # VERIFIED AT THE WRITE MOMENT (the user 2026-08-26): a marker claims "this reply
+                    # is on disk nowhere", and the claim's precondition — prune_live retired every
+                    # landed atom — holds only for sessions the chat BUILDS. A comment thread is never
+                    # built (hidden by design), so its landed replies were still live at settle and
+                    # EVERY thread reply minted a spurious marker: states/ litter, and the judge's
+                    # per-push marker scan grows with it. One tail read of the sid's own transcript
+                    # per would-be marker (settles are rare; healthy sessions already pruned) keeps
+                    # the salvage honest for every hidden-session shape, threads and future ones. A
+                    # genuinely-lost reply (the API-error discard) is on disk nowhere and still mints.
+                    if txt.strip() and txt.strip() != "(no content)" \
+                            and not self._reply_on_disk(sid, a.get("uuid") or ""):
                         try:
                             append_orphan_reply(self.state_dir, sid, a.get("uuid") or "", txt, t=a.get("t"))
                         except Exception:
@@ -5404,6 +5536,24 @@ class SdkBackend:
                 del d[k]
         if not d:
             self._live.pop(sid, None)
+
+    def _reply_on_disk(self, sid: str, uuid: str) -> bool:
+        """Does the sid's transcript already hold this uuid? The orphan salvage's own precondition,
+        checked against the file it makes claims about (see retire_live_work). Tail-windowed: the
+        settle runs moments after the write, so a landed reply sits near the end; a discarded one's
+        uuid appears nowhere at any offset that matters."""
+        if not uuid:
+            return False
+        try:
+            reg = read_reg(self.state_dir, sid) or {}
+            p = transcript_path(reg.get("cwd") or "", reg.get("lastSid") or sid)
+            size = os.path.getsize(p)
+            with open(p, "rb") as f:
+                if size > 4_000_000:
+                    f.seek(size - 4_000_000)
+                return uuid.encode() in f.read()
+        except OSError:
+            return False
 
     def live_atom_kinds(self, sid: str) -> list:
         """Read-only DEBUG summary of the sid's live-tail atoms: uuid/type + the flags that decide their
@@ -5421,6 +5571,36 @@ class SdkBackend:
                         "echo": bool(a.get("_echo_text")), "command": bool(a.get("command")),
                         "apiError": bool(a.get("isApiError")), "hasText": bool(_atom_text(a).strip())})
         return out
+
+    def _deliver_rename_ping(self, s) -> bool:
+        """Deliver a pending rename ping (reg renameNote) as its OWN turn, at a turn's SETTLE — the
+        only window where its record cannot fold into anyone else's (the user 2026-08-25: the
+        enqueue-AHEAD form fed the ping and the user's message back-to-back, and the CLI batches
+        every message that arrives before a turn starts into ONE user record — the user's own words
+        rendered inside the ping's machine bubble, worse than the bug it replaced). Three gates make
+        the fold unreachable: delivery only at settle (the user is answered first), only when the
+        queue is EMPTY (a queued message would share the pre-turn window), and the drain's feed-hold
+        (RENAME_PING_HEAD) keeps the next item back until the ping's turn demonstrably starts — its
+        first streamed message, an exact event — after which a racing send lands mid-turn as its own
+        record by the CLI's own design. A held note simply waits for a later settle; it survives
+        restarts in the reg."""
+        try:
+            reg = read_reg(self.state_dir, s.sid) or {}
+        except Exception:
+            return False
+        note = reg.get("renameNote")
+        if not note:
+            return False
+        # ONE lock hold for the emptiness check AND the enqueue (enqueue_if_empty, found
+        # 2026-08-26): checking under the lock, then enqueueing after the reg write, left a
+        # window where a racing send queued AHEAD of the ping — folding the user's words into
+        # its pre-turn record, the very fold this gate guards. The note is spent only AFTER the
+        # ping is provably queued; a kernel death between the two re-pings at a later settle
+        # (a repeat of a true fact) instead of losing the note.
+        if not s.enqueue_if_empty("<!-- romp-injected --><!-- romp-system -->" + RENAME_NUDGE % note):
+            return False                   # a queued turn would share the pre-turn window — hold the note
+        self._update_reg(s.sid, renameNote=None)
+        return True
 
     def _update_reg(self, sid: str, **fields):
         with self._reg_lock:                       # kernel + loop threads both write (queue mirror);

@@ -1732,7 +1732,21 @@ def _norm_timeline_views(d):
     for sf in _LENS_SURFACES:
         actives[sf] = _norm_lens(posted.get(sf), tags) if posted and isinstance(posted.get(sf), dict) \
             else (_lens_seed(active, tags) if posted is None else {"all": True})
-    return {"active": active, "actives": actives, "tags": tags}
+    out = {"active": active, "actives": actives, "tags": tags}
+    # TAG ORDER (the user 2026-08-25): the union DISPLAY order — a NAME list, viewer-side, so a
+    # remote-homed tag holds its dragged position without any cross-kernel write (a display
+    # preference must not need another kernel up; the lane order's viewer-side philosophy). Local
+    # tags ALSO keep their array order (the drag rewrites both); this list extends the same order
+    # across the whole name-keyed union. Names are not validated against the local store — a
+    # remote name is unknowable here by design; junk entries cost nothing and age out on the next
+    # drag. Absent stays absent, so pre-order blobs round-trip byte-identical.
+    order = []
+    for n in _lst(d.get("tagOrder"))[:_VIEWS_MAX_TAGS * 2]:
+        if isinstance(n, str) and n and n[:_VIEWS_MAX_NAME] not in order:
+            order.append(n[:_VIEWS_MAX_NAME])
+    if order:
+        out["tagOrder"] = order
+    return out
 
 
 def _timeline_views():
@@ -3950,13 +3964,75 @@ def _open_leaves_for_nudge(nodes, top_id):
             if nid != top_id and not isinstance(nodes.get(nid, {}).get("handoff"), dict)]
 
 
-def _pure_delegation_top(nodes, top_id):
+def _dictated_prompt_uuid(sid, path, pu):
+    """Does a node's stored promptUuid name a HUMAN-DICTATED prompt record in the session's own
+    transcript? True / False / None(unknown) — the ask-unit exemption's discriminator (round 2,
+    2026-08-26). promptUuid alone proves nothing: it is the g200 LANDABLE-ANCHOR field, stamped on
+    essentially every minted top (_seg_anchor hands a peer/system/AUTONOMOUS segment's mint the
+    segment head — often the agent's own assistant atom — and apply_courier stamps the delegate
+    MAIL's anchor), so only the RECORD it names can say whether the top is the dictated ask. The
+    rule is jd._human_prompt_record — the same author-'human'-minus-interrupts / unmarked-attachment
+    classification T101/T105's own trace uses (_session_user_prompt_record, _user_ask_text's quote
+    gate) — read against the CACHED parse only (_parse_cached never parses, preserving build_feed's
+    cold-start contract; the anchors fill in a beat later the same way the dots do). None when the
+    verdict cannot be reached: no path threaded, no cached parse yet, or the uuid absent from the
+    stitched chain (a rewound/compacted record) — the caller decides what doubt means."""
+    if not (pu and path):
+        return None
+    ps = _parse_cached(str(path))
+    if not ps:
+        return None
+    for turn in ps.get("turns") or []:
+        for a in turn.get("atoms") or []:
+            if a.get("uuid") == pu:
+                return jd._human_prompt_record(a, str(sid or "")) is not None
+    return None
+
+
+def _pure_delegation_top(nodes, top_id, sid=None, path=None):
     """True if EVERY leaf in top_id's subtree is a courier handoff-tracking node — the whole top is just work
     handed to PEERS, nothing this session does itself. Such a top is pure peer-coordination and is NOT an
     inbox card (the user 2026-06-23): consistent with _all_outstanding_delegated already treating
     delegated-only work as not-needs-you. Unlike that (which weighs only OPEN leaves for the nudge gate), this
     weighs ALL leaves — a delegation stays coordination even after it completes — so the card is suppressed in
-    every column. A top with ANY own-work leaf still shows."""
+    every column. A top with ANY own-work leaf still shows.
+
+    THE ASK-UNIT EXEMPTION (2026-08-26, the T101 fold review; discriminator fixed in round 2 the
+    same day): T101 made the dictated ask itself host the fan-out — the courier plants its tracking
+    nodes UNDER the ask and mints NO recipient tops — so an ask fully fanned to workers is exactly
+    this all-leaves-are-handoffs shape, and suppressing it left the user's ask with no card
+    ANYWHERE (T101's own rule: one ask fanned to two workers = ONE card with two handoff children).
+    A top IS the ask only on real dictation evidence:
+      - T105's chain-proven `userAsk` record — the ONLY evidence a courier-planted top (`origin`)
+        can carry: its promptUuid is the delegate MAIL's anchor by construction (g200), never the
+        dictated prompt, so a bare anchor there re-showed every mid-chain coordination top;
+      - a promptUuid that PROVABLY resolves to a human-dictated record (_dictated_prompt_uuid
+        above; callers thread sid+path). A resolved machine anchor — an autonomous segment's head,
+        a peer mail — is not the ask and the suppression stands. An UNRESOLVABLE anchor fails OPEN
+        (exempt): suppressing on doubt re-opens the no-card-anywhere hole this exemption closes,
+        and a shown coordination card is recoverable noise where a hidden ask is not.
+    A top that is ITSELF a handoff tracker never qualifies: the parentless '↪ delegated' record
+    stays suppressed as before.
+
+    THE LATCH OUTRANKS THE CACHE (round 3, 2026-08-26, item 1): `askAnchor` is the judge's durable
+    verdict on this exact question, filed from a WARM parse by the planner pass
+    (jd._latch_ask_anchors) — 'human'/'absent' exempt, 'machine' suppresses, and NEITHER is ever
+    re-derived here: re-deriving per build from _parse_cached made the verdict flap with cache
+    temperature (a machine-anchored coordination card re-showed on every restart/cold beat with no
+    new information — the cards-move-on-new-information rule). Only an UNLATCHED node still reads
+    the cached parse below — today's fail-open on doubt — and the judge latches it on its next
+    pass, so that flap happens at most once per node ever, not per beat."""
+    root = nodes.get(top_id) or {}
+    if not isinstance(root.get("handoff"), dict):
+        if isinstance(root.get("userAsk"), dict):
+            return False
+        pu = root.get("promptUuid")
+        if pu and not isinstance(root.get("origin"), dict):
+            latch = root.get("askAnchor")
+            if latch in ("human", "absent"):
+                return False                          # the dictated ask (or durable doubt) — stable
+            if latch != "machine" and _dictated_prompt_uuid(sid, path, pu) is not False:
+                return False                          # unlatched → the cached-parse read, fail-open
     children = {}
     for nid, nd in nodes.items():
         children.setdefault(nd.get("parentId"), []).append(nid)
@@ -7018,7 +7094,7 @@ def _comment_cut_target(path, sid, anchor_uuid):
     context the anchor asked for; the quote still names the passage exactly."""
     ad = _anchor_adapter(path, sid)
     if anchor_uuid not in ad.by_uuid:
-        return None, 0, "that message isn't in the transcript yet; try again in a moment"
+        return None, 0, ANCHOR_LAG_ERR
     is_boundary = lambda r: r is not None and r.get("type") == "system" and r.get("subtype") == "compact_boundary"
     u, hops, on_active = ad.leaf_uuid, 0, False
     while u is not None and hops < 500000:
@@ -7271,16 +7347,9 @@ def _comments_frame(sid, tmux=None):
         unread = any(m["who"] == "agent" and m["t"] > seen for m in msgs)
         events = [] if status == "promoted" else _thread_events(tsid, str(th.get("cutUuid") or ""), now, tmux)
         reg = _thread_reg(tsid)
-        # the settle count (see _comment_settle_step): raw_busy mirrors the client's threadInFlight
-        # (comments.ts) exactly — live work or an owed reply, on an open unstuck thread
-        tid = str(th.get("tid") or "")
-        raw_busy = (status == "open" and not err and state not in ("permission", "picker")
-                    and (state in ("working", "retrying", "compacting")
-                         or bool(msgs and msgs[-1]["who"] == "you")))
-        quiet = _comment_settle_step(_comment_settle.get(tid), raw_busy, status != "open" or bool(err))
-        _comment_settle[tid] = quiet
-        if len(_comment_settle) > 512:
-            _comment_settle.clear()
+        # (T102: the push-count settle — settledPushes — is RETIRED. The client's pulse is exchange-
+        # scoped now: latched at the send gesture, cleared by the reply RECORD arriving in msgs; the
+        # frame's msgs already carry that event, so no per-push counter rides here anymore.)
         # sinceEpoch (MILLISECONDS, the client convention): when the thread's current state began —
         # the popover's working chip counts from it, exactly as the chat's statusline does
         since_ms = 0
@@ -7304,7 +7373,7 @@ def _comments_frame(sid, tmux=None):
                         "unread": unread, "promotedName": th.get("promotedName") or "",
                         "model": (reg.get("liveModel") or reg.get("model") or "") if reg else "",
                         "effort": (reg.get("effort") or "") if reg else "",
-                        "settledPushes": quiet, "sinceEpoch": since_ms,
+                        "sinceEpoch": since_ms,
                         "mode": str(meta.get("mode") or ""), "fast": str(meta.get("fast") or ""),
                         # the same rank tints the chat statusline's badges wear (the user 2026-08-25,
                         # color rider: the popover's model/effort rendered plain gray — metaColor
@@ -7315,26 +7384,6 @@ def _comments_frame(sid, tmux=None):
                                                      cm.stops_for(_colormap())),
                         "msgs": msgs, "events": events})
     return {"type": "comments", "id": sid, "threads": threads}
-
-
-# The client's green→yellow settle needs TWO CONFIRMING PUSHES (comments.ts latchBusy), but
-# _send_client's dedup withholds unchanged frames — so after a reply landed, the second confirming
-# frame never arrived and the passage stayed green until some unrelated change minted one (the user
-# 2026-08-25: it didn't flip until clicking back into the main chat). The frame now carries the
-# count ITSELF: pushes since the thread last read busy, clamped at 2 — each step is a real pusher
-# cycle (an event, never a timer), the frame changes at most twice after settling, and then the
-# dedup resumes. tid → count; pure step logic split out for the test.
-_comment_settle = {}
-
-
-def _comment_settle_step(prev, raw_busy, decided):
-    """One pusher cycle's step of the settle count: busy → 0; a decided status (closed/errored)
-    settles immediately; otherwise count up, clamped at 2 (the client's SETTLE_CONFIRM_PUSHES)."""
-    if decided:
-        return 2
-    if raw_busy:
-        return 0
-    return min(2, (2 if prev is None else prev) + 1)
 
 
 def _comment_markers(sid):
@@ -7354,6 +7403,14 @@ def _comment_markers(sid):
                     "uuid": th.get("anchorUuid") or "", "tid": th.get("tid"),
                     "status": th.get("status") or "open"})
     return out
+
+
+# The one TRANSIENT create refusal (T106 lab find, 2026-08-26): the anchor record streamed to the
+# client but this kernel's parse hasn't caught up yet. The ws handler sends a typed nack with
+# transient=True for exactly this string; the client keeps its optimistic mark and re-posts when the
+# next session frame proves the parse caught up — so a comment made seconds after a reply lands is
+# never dropped on the floor with a try-again toast.
+ANCHOR_LAG_ERR = "that message isn't in the transcript yet; try again in a moment"
 
 
 def _comment_create(parent_sid, anchor_uuid, exact, text, name="", model="", effort="", color="", now=None):
@@ -8649,7 +8706,13 @@ def _drive(msg, client):
                                    model=str(msg.get("model") or ""), effort=str(msg.get("effort") or ""),
                                    color=str(msg.get("color") or ""))
         if err:
-            client["send"](json.dumps({"type": "warn", "text": err}))
+            # a TRANSIENT refusal (parse lag) is the client's cue to hold + retry — no toast for
+            # plumbing the retry makes moot; every real refusal stays loud (fail loudly)
+            if err != ANCHOR_LAG_ERR:
+                client["send"](json.dumps({"type": "warn", "text": err}))
+            client["send"](json.dumps({"type": "commentCreateFailed", "id": sid,
+                                       "uuid": str(msg["uuid"]), "transient": err == ANCHOR_LAG_ERR,
+                                       "text": err}))
         else:
             # the FRAME rides ahead of the ack: the ack's handler adopts the new thread from the
             # client's thread map, so the thread must be in it first (reversed, the popover looked
@@ -13702,7 +13765,24 @@ def _session_stamp_read(sid):
         mkey = (mst.st_mtime_ns, mst.st_size)
     except OSError:
         mkey = None                                    # no postal log yet is normal
-    key = (gkey, okey, mkey)
+    # The ask-unit discriminator reads the SAME transcript the feed does (round 3, 2026-08-26,
+    # item 2): discover hands build_feed the registry's lastSid file for a /cleared or
+    # resume-forked SDK session, while _sdk_transcript_path names the ANCHOR file — dead after a
+    # fork — so the chip's suppression call answered from a transcript the feed no longer reads
+    # (the feed suppressed a machine-anchored top; the chip lit 'waiting on peers' for it — one
+    # fact, two answers). Same project dir, lastSid stem — the exact resolution discover applies.
+    _stamp_path = _sdk_transcript_path(sid)
+    _last = jd._sdk_last_sid(sid)
+    if _last:
+        _stamp_path = _stamp_path.with_name(_last + ".jsonl")
+    _stamp_path = str(_stamp_path)
+    # …and the discriminator's remaining cache-temperature input joins the KEY. A LATCHED verdict
+    # (askAnchor, item 1) rides the goal store, so the goals mtime/size above already re-reads on
+    # every latch write — that part is store-keyed and temperature-blind by design. Only a
+    # NOT-YET-LATCHED node still derives from _parse_cached, so the resolved path + its warmth are
+    # keyed too: without them the chip served a cold-beat fail-open long after the feed's fresh
+    # per-build read had warmed, and held it until an unrelated store/postal write.
+    key = (gkey, okey, mkey, _stamp_path, _parse_cached(_stamp_path) is not None)
     hit = _SESSION_STAMP_CACHE.get(sid)
     if hit and hit[0] == key:
         return hit[1]
@@ -13754,7 +13834,8 @@ def _session_stamp_read(sid):
         for tid, td_ in nodes.items():
             if td_.get("parentId") is not None or td_.get("nodeComplete") or td_.get("cleared"):
                 continue
-            if not _all_outstanding_delegated(nodes, tid) or _pure_delegation_top(nodes, tid):
+            if not _all_outstanding_delegated(nodes, tid) \
+                    or _pure_delegation_top(nodes, tid, sid=sid, path=_stamp_path):
                 continue
             for x in _open_leaves(nodes, tid):
                 h = nodes.get(x, {}).get("handoff")
@@ -18402,7 +18483,8 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
             _dmemo[nid] = False
             return False
         res = bool(nd.get("nodeComplete"))
-        if not res and nd.get("umbrella"):             # a grouper container completes structurally — the
+        if not res and nd.get("umbrella"):             # ARCHIVED pre-T101 container (mints retired; live
+            # ones dissolve every rollup) — history still renders structurally-complete: the
             # mint asserted "this node IS its children"; cleared kids are out of the closure either
             # way (neither done nor holding it open), mirroring build_feed's _closure_done
             kids = [c for c in gkids.get(nid, []) if not _cleared(c)]
@@ -19795,166 +19877,6 @@ def _state_unknown_names(alive, tmux, working, awaiting):
     return out
 
 
-# ───────────────────────── provenance split (the user 2026-08-25) ─────────────────────────
-# Option (iii) of the dashboard provenance audit, the user's pick: the DEFAULT board shows cards
-# whose evidence chain roots in a USER prompt; team-internal cards (peer-chatter roots, romp's own
-# bookkeeping, machine-injected kickoffs) live one click away behind the feed footer's
-# "team internals" lens. Mint machinery untouched — this classifies at BUILD time and stamps a
-# display field; needs-you always breaks through (feed-side, the same rule the satellite wears).
-
-_prov_auth_cache = {}   # sid -> ((mtime, size), {uuid: klass}) — parse-identity keyed, like _parse_cached
-_prov_store_cache = {}  # sid -> (stat keys, merged nodes) — build_feed runs every push (0.5–3s), and
-#                         re-parsing every session's goals-archive JSON that often is real money; the
-#                         walk reads only immutable-ish chain fields (parentId/promptUuid/origin), so a
-#                         raw stat-keyed read is exact and skips _feed_goals' snapshot/GuardedNode work
-
-
-def _prov_atom_text(a):
-    m = a.get("message")
-    if isinstance(m, dict):
-        c = m.get("content")
-        if isinstance(c, str):
-            return c
-        if isinstance(c, list):
-            return " ".join(b.get("text", "") for b in c if isinstance(b, dict) and b.get("type") == "text")
-    return a.get("text") or ""
-
-
-def _prov_atom_klass(a):
-    """One record's provenance class: 'user' (a human prompt), 'internal' (romp bookkeeping,
-    machine-injected input, or files-nothing peer mail), 'delegate' (a delegate mail record —
-    the chain continues through the courier's origin link, not this record), or None (no
-    confident read → the card SHOWS; false-quiet is the failure option (iii) was chosen to
-    avoid). Attachment records (old cards minted before the attachment-free anchor rule) are
-    read by their markers: postal kind, romp-injected, else the queued human dictation they
-    wrap."""
-    au = a.get("author")
-    if isinstance(au, dict):
-        k = au.get("kind") or ""
-        if k == "delegate":
-            return "delegate"
-        return "internal" if k in ("coordinate", "question") else None
-    if au == "human":
-        return "internal" if em.is_interrupt_record(a) else "user"
-    if au in ("romp", "sdk"):
-        return "internal"
-    if a.get("type") == "attachment":
-        txt = _prov_atom_text(a)
-        pairs = em.postal_pairs(txt)
-        if pairs:
-            k = pairs[-1][1]
-            return "delegate" if k == "delegate" else ("internal" if k in ("coordinate", "question") else None)
-        if em.ROMP_INJECT_RE.search(txt):
-            return "internal"
-        return "user" if txt.strip() else None
-    return None
-
-
-class _ProvenanceWalk:
-    """Build-time provenance classifier: walks a top card's evidence chain — self-then-ancestors
-    within its store, hopping stores through courier origin links (origin.goalId is the sender's
-    tracking node, parented under the sender's linked ask) — to the nearest record that reads
-    confidently 'user' or 'internal'. Deterministic and cache-only: records come from
-    _parse_cached (never a cold parse — a cold classification is None → SHOWN, and self-heals on
-    the next push once _warm_fleet_bg fills the cache, the working-dot idiom). Cross-host origins
-    are unclassifiable by design (their stores live on another kernel; the row arrives already
-    classified there and the field rides the merge). Cycle-safe, hop-capped."""
-    MAX_HOPS = 12
-
-    def __init__(self, alive):
-        self._paths = {s["sid"]: s["path"] for s in alive}
-        self._stores = {}    # sid -> {nid: node} (live + archive merged; archive never shadows live)
-        self._memo = {}      # (sid, nid) -> "user" | "internal" | None
-
-    def _nodes(self, sid):
-        n = self._stores.get(sid)
-        if n is not None:
-            return n
-        files = [jd.GOALARCHDIR / (sid + ".json"), jd.GOALDIR / (sid + ".json")]   # archive first; live shadows
-        key = []
-        for p in files:
-            try:
-                st = p.stat()
-                key.append((st.st_mtime_ns, st.st_size))
-            except OSError:
-                key.append(None)
-        hit = _prov_store_cache.get(sid)
-        if hit is not None and hit[0] == key:
-            n = hit[1]
-        else:
-            n = {}
-            for p in files:
-                try:
-                    n.update(json.loads(p.read_text()).get("nodes") or {})
-                except Exception:
-                    pass                               # unreadable store → its chains stay unclassifiable (shown)
-            _prov_store_cache[sid] = (key, n)
-        self._stores[sid] = n
-        return n
-
-    def _authors(self, sid):
-        path = self._paths.get(sid)
-        if not path:
-            return None
-        try:
-            st = os.stat(path)
-            key = (st.st_mtime, st.st_size)
-        except OSError:
-            return None
-        hit = _prov_auth_cache.get(sid)
-        if hit is not None and hit[0] == key:
-            return hit[1]
-        ps = _parse_cached(path)
-        if ps is None:
-            return None                                # cold cache → unclassifiable, never a cold parse
-        idx = {}
-        for turn in ps.get("turns") or []:
-            for a in turn.get("atoms") or []:
-                u = a.get("uuid")
-                if u:
-                    idx[u] = _prov_atom_klass(a)
-        _prov_auth_cache[sid] = (key, idx)
-        return idx
-
-    def klass(self, sid, nid, _seen=None, _hops=0):
-        """'user' | 'internal' | None (unclassifiable → shown)."""
-        if _hops >= self.MAX_HOPS:
-            return None
-        key = (sid, nid)
-        if key in self._memo:
-            return self._memo[key]
-        seen = _seen if _seen is not None else set()
-        out = None
-        nodes = self._nodes(sid)
-        x = nid
-        while x is not None and (sid, x) not in seen:
-            seen.add((sid, x))
-            nd = nodes.get(x)
-            if not isinstance(nd, dict):
-                break
-            o = nd.get("origin")
-            if isinstance(o, dict) and o.get("peer") and o.get("goalId") and not o.get("peerHost"):
-                r = self.klass(o["peer"], o["goalId"], seen, _hops + 1)
-                if r is not None:
-                    out = r
-                    break
-            pu = nd.get("promptUuid")
-            if pu:
-                auth = self._authors(sid)
-                k = auth.get(pu) if auth else None
-                if k in ("user", "internal"):
-                    out = k
-                    break
-                # 'delegate' with no usable origin, or a record outside the cached window →
-                # keep climbing; a higher ancestor may still resolve
-            x = nd.get("parentId")
-        self._memo[key] = out
-        return out
-
-    def internal(self, sid, nid):
-        return self.klass(sid, nid) == "internal"
-
-
 def build_feed(now, tmux=None):
     """The {type:"feed"} message the tuned feed.js bundle consumes (ui-parity.md: feed = ADAPT).
     Goals map onto the AskItem/AskTreeNode shape the render already speaks: the goal tree IS the
@@ -19973,7 +19895,6 @@ def build_feed(now, tmux=None):
     _ut_map = {}              # sid -> OPEN user-todo count (plans/user-todos.md): the feed-card marker's data,
     #                           riding the payload the way working[]/bgServices do; built behind the ended gate
     alive = _alive_sessions(now, tmux)               # hard filter: living sessions only
-    _prov = _ProvenanceWalk(alive)                   # build-time provenance classes (the user 2026-08-25)
     wmap = _wait_for_graph(now, {s["sid"] for s in alive})   # per-session 'waiting on a live peer' (the user 2026-06-22)
     _stalls = _stalled_goals()                       # goals romp's nudge gate is holding → the card's Stalled section
     _jauth_map = jd._auth_down_map()                 # judge-auth-down latch → the per-session card floor below
@@ -20107,7 +20028,8 @@ def build_feed(now, tmux=None):
                 _cdone[nid] = False
                 return False
             res = bool(nd.get("nodeComplete"))
-            if not res and nd.get("umbrella"):         # a grouper container completes structurally — the
+            if not res and nd.get("umbrella"):         # ARCHIVED pre-T101 container — history renders
+                # structurally-complete (mints retired; live ones dissolve every rollup): the
                 kids = [c for c in children.get(nid, []) if not nodes[c].get("cleared")]
                 res = bool(kids) and all(_closure_done(c) for c in kids)
             _cdone[nid] = res
@@ -20358,7 +20280,7 @@ def build_feed(now, tmux=None):
             if (f in nodes and status.get(f) not in ("completed", "cleared")
                     and f not in confirming):
                 todo_top = f
-            if todo_top is None or _pure_delegation_top(nodes, todo_top):
+            if todo_top is None or _pure_delegation_top(nodes, todo_top, sid=fsid, path=s["path"]):
                 # FOCUS-CHAIN MISS (review 2026-08-22): lastNode can point into a COMPLETED top —
                 # the session's last judged work finished — while another top still reads working.
                 # The walk above dead-ends there, the floor never fires, and had_working (the other
@@ -20373,7 +20295,7 @@ def build_feed(now, tmux=None):
                                  if status.get(g, "working") == "working"
                                  and g not in cleared and not nodes[g].get("cleared")
                                  and g not in confirming
-                                 and not _pure_delegation_top(nodes, g)), None)
+                                 and not _pure_delegation_top(nodes, g, sid=fsid, path=s["path"])), None)
         plain_user_t = _last_plain_user_turn_t(ps["turns"]) if ps else 0   # re-check: a plain reply after a soft block de-urgents it
         had_working = False                          # does this session show ANY working card? → drives the provisional placeholder
         had_awaiting = False                         # …and does any of them read AWAITING? → the session's await-green dot (below)
@@ -20394,8 +20316,8 @@ def build_feed(now, tmux=None):
             col = status.get(nid, "working")
             if col == "cleared" or nid in cleared:
                 continue
-            if _pure_delegation_top(nodes, nid):         # whole top is just peer handoffs → coordination, not an inbox card
-                continue
+            if _pure_delegation_top(nodes, nid, sid=fsid, path=s["path"]):   # whole top is just peer
+                continue                                 # handoffs → coordination, not an inbox card
             # AWAITING floor (event-based, the user 2026-06-22): a session paused on dispatched/delegated
             # work is a WORKING flavor, never needs-input. Floor a working OR stale-blocked top to awaiting
             # from (a) the session-level awaiting signal (live subagents / SDK states overlay),
@@ -20787,12 +20709,6 @@ def build_feed(now, tmux=None):
                 # card instead of work running in secret (review 2026-08-24).
                 **({"satellite": True} if isinstance(o, dict) and o.get("tracked")
                    and origin and origin.get("live") and column != "needs_input" else {}),
-                # team-internal (the user 2026-08-25, option (iii)): the card's evidence chain roots
-                # in peer chatter / romp bookkeeping / machine-injected input, never a user prompt.
-                # A display CLASS, not a hide: the feed's footer lens decides visibility (its
-                # needs-you breakthrough included) — kernel-side the fact is stamped unconditionally
-                # so counts stay honest and the toggle needs no kernel round-trip.
-                **({"internal": True} if _prov.internal(fsid, nid) else {}),
                 "followupPending": nodes[nid].get("followupPending"),   # optimistic reopen → "Followed up" chip until the judge catches up
                 # DONE-CONFIRMING (the user 2026-07-24): the done verdict is in; only the settle event is
                 # pending. The card STAYS in Working (the settle gate exists precisely so the column never
@@ -22005,10 +21921,19 @@ def _derive_judging(sid, caps, goals, t0, out, seg_ends=None):
             continue
         text = n.get("text", "")
         mt = n.get("mt") or t
+        go = n.get("groupOp")
+        if isinstance(go, dict) and (go.get("t") or 0) >= t0:
+            # the grouper's surviving housekeeping (T103): merge/split/retitle append no diary
+            # events by design, so the lane keys on the apply-time structure stamp — additive
+            # beside the node's own mint/plant mark (a merged survivor is both)
+            out.append({"judge": "grouper", "sid": sid, "t": go["t"],
+                        "kind": go.get("kind") or "group", "text": text})
         if n.get("origin"):                                   # courier planted it from a peer's handoff
             if t >= t0:
                 out.append({"judge": "courier", "sid": sid, "t": t, "kind": "plant", "text": text})
-        elif n.get("umbrella"):                               # grouper minted this umbrella
+        elif n.get("umbrella"):                               # ARCHIVED-history rendering only (T101
+            # retired every umbrella mint; live containers dissolve each rollup) — an archived
+            # pre-T101 container still shows the grouper mark it earned
             if mt >= t0:
                 out.append({"judge": "grouper", "sid": sid, "t": mt, "kind": "group", "text": text})
         elif t >= t0:                                         # planner placed it (top = mint, else a step)
@@ -30695,6 +30620,18 @@ class Handler(BaseHTTPRequestHandler):
                 _dok, _derr = False, (str(_e) or _e.__class__.__name__)
                 sys.stderr.write("redistill: %s\n" % traceback.format_exc())
             _send_to_app("feed", {"type": "redistillResult", "itemId": _dnid, "ok": _dok, "error": _derr})
+        elif msg and msg.get("type") == "cardOpened" and msg.get("itemId"):
+            # the card-open event (the user 2026-08-25, the metrics round): one append-only row per
+            # modal open, so cleared-WITHOUT-open — the confusion signal the clear log alone cannot
+            # see — becomes measurable. Best-effort: a failed write loses one metric row, never a
+            # gesture.
+            try:
+                p = jd.STATE / "card-opens.jsonl"
+                with open(p, "a") as f:
+                    f.write(json.dumps({"t": int(time.time()), "itemId": str(msg["itemId"])[:200],
+                                        "sid": str(msg.get("sid") or "")[:64]}) + "\n")
+            except OSError:
+                pass
         elif msg and msg.get("type") == "clearAll":
             d = build_feed(int(time.time()))
             _clear_all([a["itemId"] for a in d["asks"]] + [c["itemId"] for c in d["items"]])
