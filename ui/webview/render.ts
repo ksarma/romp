@@ -47,7 +47,7 @@ import { mediaSrc, kernelUrl } from "./media";
 import { initStrip, fmtReset } from "./strip";
 import { apiErrorReason } from "./api-error-reason";
 import { mathBlock, mathInline } from "./math";
-import { threadInFlight, latchBusy, settleConfirmed, type BusyLatch, threadsByAnchor, threadBusy, threadStuck, findAnchorRange, sliceRanges, prunePending, type CommentThread } from "./comments";
+import { agentCount, replyOwed, threadsByAnchor, threadBusy, threadStuck, findAnchorRange, sliceRanges, prunePending, type CommentThread } from "./comments";
 
 for (const [name, lang] of Object.entries({
   bash, sh: bash, shell: bash, python, py: python, javascript, js: javascript,
@@ -4670,19 +4670,22 @@ function renderTabs() {
         v.actives = Object.assign({}, v.actives, { chat: l });
         postViews(v);
       },
-      scopeCaption: "filters these tabs",
       onConfigure: () => { vscodeApi?.postMessage({ type: "openTagsDialog" }); },
     });
   });
   tagBtn.classList.add("tab-tagfilter");
-  // vertically centered against the + tab's box (the user 2026-08-25 — it sat high)
-  tagBtn.style.alignSelf = "center";
-  bar.appendChild(tagBtn);
+  // button + chips ride ONE box that reserves the + tab's exact height (.tab-tagbox, 31px) and
+  // centers them in it — a wrapped controls-only line used to stand only pill-tall and sat nearly
+  // flush under the row above (the user 2026-08-25); the box makes every line the controls form
+  // as tall as a line the + is on, wherever the strip wraps them
+  const tagBox = el("span", "tab-tagbox");
+  tagBox.appendChild(tagBtn);
   // THE BUTTON CONVENTION (the user 2026-08-25): gray alone at rest; accent + the chips of
   // everything selected when narrowed — the shared renderer, identical on every mount
   const tagChipsHost = el("span", "tab-tagchips");
-  tagChipsHost.setAttribute("style", "display:inline-flex;gap:5px;align-items:center;align-self:center;margin-left:2px;");
-  bar.appendChild(tagChipsHost);
+  tagChipsHost.setAttribute("style", "display:inline-flex;gap:5px;align-items:center;margin-left:2px;");
+  tagBox.appendChild(tagChipsHost);
+  bar.appendChild(tagBox);
   {
     const v = effViews();
     syncTagFilter(tagBtn, tagChipsHost, surfaceLens(v, "chat"), viewTagUnion(v), (l) => {
@@ -6317,19 +6320,52 @@ function showUserTodoReply(sid: string, todoId: string, todoText: string): void 
 // re-render (the transcript rebuilds constantly) reapplies it — the openFolds pattern.
 const commentThreads = new Map<string, CommentThread[]>();          // parent sid → last frame's threads
 const commentPending = new Map<string, { text: string; t: number }[]>(); // tid → optimistic sends
-// the one busy answer for the mark + rail tick: the LIVE reading (the pure predicate plus this
-// pane's own optimistic sends) OR the settle latch — a turn boundary inside a continuing thread can
-// read settled for one push, and the green must not blip yellow on it (the user 2026-08-24, second
-// report; comments.ts latchBusy has the rule). The latch advances once per comments FRAME (the
-// event); the live OR keeps optimistic sends instant between frames.
-const commentBusyLatch = new Map<string, BusyLatch>();
+// THE EXCHANGE LATCH (T102, the user 2026-08-26): tid → the agent-message count at the newest SEND.
+// Set at the send GESTURE (create seeds 0 under the synth tid, transferred on adopt; a reply stamps
+// the count at its send), cleared ONLY by the reply-arrived event — the agent's reply record landing
+// in th.msgs (agentCount rising past the base; see the comments frame handler). Follow-ups re-latch
+// identically, each until ITS reply arrives. No push counting, no thread-state proxy: the old
+// push-count settle killed the create-window green while the fork booted (its frames read
+// all-quiet) and any stall in its stepping parked green forever — both ends of the reported bug.
+const cmtAwaitBase = new Map<string, number>();
+// Creates in flight (T106 lab find, 2026-08-26): a comment made seconds after a reply lands can be
+// refused by the kernel's parse lag ("isn't in the transcript yet"). The payload holds here from the
+// send; a TRANSIENT nack keeps the optimistic mark + latch alive and the create RE-POSTS when the
+// next session frame for the sid arrives (frames are built from the kernel's parse — a new frame IS
+// the parse catching up). Bounded by attempts, not time; a real refusal or the ack drops the hold.
+const cmtCreateInFlight = new Map<string, { sid: string; uuid: string; exact: string; text: string;
+  name: string; model: string; effort: string; color: string; tries: number }>();
+const CMT_CREATE_MAX_TRIES = 12;
+
+function retryCmtCreates(sid: string): void {
+  for (const [u, c] of Array.from(cmtCreateInFlight.entries())) {
+    if (c.sid !== sid || c.tries < 1) continue;            // tries starts counting after the first transient nack
+    if (c.tries > CMT_CREATE_MAX_TRIES) {                  // the can't-trap bound: give up honestly
+      cmtCreateInFlight.delete(u);
+      dropSynthThread(c.sid, u);
+      warnToast("couldn't anchor the comment — the message never appeared in the kernel's transcript.");
+      continue;
+    }
+    c.tries++;
+    vscodeApi?.postMessage({ type: "commentCreate", id: c.sid, uuid: c.uuid, exact: c.exact,
+      text: c.text, name: c.name, model: c.model, effort: c.effort, color: c.color });
+  }
+}
+
+/** Drop a refused create's optimistic synth thread + latch + mark — the honest retreat. */
+function dropSynthThread(sid: string, uuid: string): void {
+  const tid = "pending:" + uuid;
+  const cur = commentThreads.get(sid) || [];
+  if (cur.some((t) => t.tid === tid)) commentThreads.set(sid, cur.filter((t) => t.tid !== tid));
+  cmtAwaitBase.delete(tid);
+  applyCommentMarks(sid);
+}
+// the one busy answer for the mark + rail tick: an in-flight EXCHANGE (the gesture latch above), or
+// — after a reload lost the client latch — the exchange's own records still saying a reply is owed
+// (msgs ending with the user's message). A stuck/errored/closed thread never pulses: green would lie.
 const commentInFlight = (th: CommentThread): boolean => {
-  const raw = threadInFlight(th) || (th.status === "open" && !!(commentPending.get(th.tid) || []).length);
-  // the kernel-carried confirm makes the settle LIVE (the user 2026-08-25: green→yellow waited for a
-  // click): green holds until the frame says two pushes read settled; older kernels → the client latch
-  const confirmed = settleConfirmed(th);
-  if (confirmed !== null) return raw || (th.status === "open" && !th.error && !confirmed);
-  return raw || !!commentBusyLatch.get(th.tid)?.green;
+  if (th.status !== "open" || !!th.error || threadStuck(th.state)) return false;
+  return cmtAwaitBase.has(th.tid) || replyOwed(th);
 };
 const commentDrafts = new Map<string, string>();                    // draft key → unsent popover text
 // The popover-boot hold (fillCommentMsgs): tid → when the loader first held the list. Held until the
@@ -6662,6 +6698,10 @@ function openCommentPopover(sid: string, tid: string, _x?: number, _y?: number):
  *  kernel sends the frame first, then the ack naming the tid). When the frame hasn't landed yet
  *  (a dropped/reordered leg), the tid parks in pendingAdoptTid and the next frame adopts it. */
 function adoptCommentThread(sid: string, tid: string): void {
+  // the create's gesture latch carries onto the real thread (the synth tid retires with the anchor)
+  for (const k of Array.from(cmtAwaitBase.keys())) {
+    if (k.startsWith("pending:")) { cmtAwaitBase.set(tid, cmtAwaitBase.get(k)!); cmtAwaitBase.delete(k); }
+  }
   if (pendingCommentAnchor && pendingCommentAnchor.sid === sid) {
     commentDrafts.delete("new:" + pendingCommentAnchor.uuid);
     commentDrafts.delete("newname:" + pendingCommentAnchor.uuid);
@@ -6672,6 +6712,18 @@ function adoptCommentThread(sid: string, tid: string): void {
   vscodeApi?.postMessage({ type: "commentSeen", id: sid, tid });
   renderCommentPopover();
   applyCommentMarks(sid);
+}
+
+/** The popover's unconfirmed sends, rendered through the CHAT'S OWN queued idiom — renderQueued's
+ *  bare optimistic group, the exact component an unconfirmed chat send wears (T104, the user
+ *  2026-08-26: the thread-local echo was a washed-gray one-off pill, the "third look" the chat
+ *  killed 2026-07-16 reborn in the popover; "I really want to be inheriting all the stuff for how
+ *  the chat normally renders"). Inherited, never restyled: the dashed bubble, the sent-just-now
+ *  title, the no-header bare form all come from the one code path. */
+function cmtPendingQueued(pend: { text: string; t: number }[]): HTMLElement {
+  return renderQueued({ kind: "queued", bare: true,
+    texts: pend.map((p) => ({ md: p.text, optimistic: true, cancelable: false })),
+    uuid: OPT_PREFIX + pend[0].t } as Extract<ChatEvent, { kind: "queued" }>);
 }
 
 function commentMsgEl(who: "you" | "agent", text: string): HTMLElement {
@@ -6699,7 +6751,13 @@ function fillCommentMsgs(list: HTMLElement, th: CommentThread, sid: string): voi
   const overflowed = list.scrollHeight > list.clientHeight + 2;
   const atTail = overflowed && list.scrollTop >= list.scrollHeight - list.clientHeight - 8;
   list.replaceChildren();
-  const pend = prunePending(commentPending.get(th.tid) || [], th.msgs);
+  // pruned against BOTH projections (T106 lab, screenshot: the follow-up double-showed — its
+  // landed user TURN rendered from th.events while the echo, pruned only against th.msgs, waited
+  // for the slower projection to catch up). A user event's md is the same landed fact.
+  const evUserMsgs = ((th.events || []) as ChatEvent[])
+    .filter((e): e is Extract<ChatEvent, { kind: "user" }> => e.kind === "user" && typeof (e as { md?: string }).md === "string")
+    .map((e) => ({ who: "you" as const, text: e.md, t: 0 }));
+  const pend = prunePending(commentPending.get(th.tid) || [], [...th.msgs, ...evUserMsgs]);
   commentPending.set(th.tid, pend);
   const evs = (th.events || []) as ChatEvent[];
   // ONE final format (the user 2026-08-25: a fresh thread flashed the plain msgs projection for a
@@ -6712,11 +6770,7 @@ function fillCommentMsgs(list: HTMLElement, th: CommentThread, sid: string): voi
     const boot = el("div", "cmt-boot");
     boot.appendChild(rompLoaderInner("opening the thread…", { wordmark: false }));
     list.appendChild(boot);
-    for (const pb of pend) {
-      const n = commentMsgEl("you", pb.text);
-      n.classList.add("pending");
-      list.appendChild(n);
-    }
+    if (pend.length) list.appendChild(cmtPendingQueued(pend));
     list.scrollTop = list.scrollHeight;
     return;
   }
@@ -6783,11 +6837,7 @@ function fillCommentMsgs(list: HTMLElement, th: CommentThread, sid: string): voi
       list.closest(".cmt-pop")?.querySelector(":scope > .cmt-quote")?.remove();
     }
   } else for (const m of th.msgs) list.appendChild(commentMsgEl(m.who, m.text));
-  for (const p of pend) {
-    const n = commentMsgEl("you", p.text);
-    n.classList.add("pending");
-    list.appendChild(n);
-  }
+  if (pend.length) list.appendChild(cmtPendingQueued(pend));
   // (the typing dots that rendered here while the thread was busy are RETIRED — the user 2026-08-24:
   // the await-green highlight carries the in-flight signal, and the reply's arrival is announced by
   // the green→yellow settle; the pending bubble still acknowledges the user's own send)
@@ -6959,16 +7009,21 @@ function commentSendFromPop(pop: HTMLElement): void {
       unread: false, promotedName: "", msgs: [], name: nm || "comment", color: create.color || "" };
     const cur0 = commentThreads.get(create.sid) || [];
     commentThreads.set(create.sid, [...cur0.filter((t) => t.tid !== synth.tid), synth]);
+    cmtAwaitBase.set(synth.tid, 0);   // the SEND gesture latches the pulse — before any kernel round-trip (T102)
     applyCommentMarks(create.sid);
     vscodeApi.postMessage({ type: "commentCreate", id: create.sid, uuid: create.uuid, exact: create.exact,
       text, name: nm, model: create.model || "", effort: create.effort || "",
       color: create.color || "" });
+    cmtCreateInFlight.set(create.uuid, { sid: create.sid, uuid: create.uuid, exact: create.exact,
+      text, name: nm, model: create.model || "", effort: create.effort || "",
+      color: create.color || "", tries: 0 });
     return;
   }
   const cur = openCommentThread();
   if (!cur) return;
   vscodeApi.postMessage({ type: "commentReply", id: cur.sid, tid: cur.th.tid, text });
-  cur.th.state = "working";                     // optimistic: the ants march on the SEND, not the
+  cmtAwaitBase.set(cur.th.tid, agentCount(cur.th));   // a follow-up RE-LATCHES at its own send, until ITS reply (T102)
+  cur.th.state = "working";                     // optimistic: the pulse rides the SEND, not the
   applyCommentMarks(cur.sid);                   // round-trip (the kernel's next frame confirms)
   const pl = commentPending.get(cur.th.tid) || [];
   pl.push({ text, t: Date.now() / 1000 });
@@ -7758,6 +7813,39 @@ function scrollToAnchor(uuid: string): boolean {
   return true;
 }
 
+/** The time-only landing (see landActive): the event whose epoch sits nearest `t` among the
+ *  RESIDENT events, landed with the honest note. Returns true when it landed. */
+function landNearestMoment(t: number): boolean {
+  const v = activeId ? views.get(activeId) : null;
+  const s = activeId ? sessions.get(activeId) : null;
+  if (!v || !s || !s.events.length) return false;
+  let best = -1, bestD = Infinity, headEp: number | null = null;
+  for (let i = 0; i < s.events.length; i++) {
+    const ep = eventEpoch(s.events[i]);
+    if (ep == null) continue;
+    if (headEp == null) headEp = ep;
+    const d = Math.abs(ep - t);
+    if (d < bestD) { bestD = d; best = i; }
+  }
+  if (best < 0) return false;
+  const uuid = (s.events[best] as { uuid?: string }).uuid || "";
+  const items = displayItems(s);
+  let u = items.findIndex((it) => it.kind === "toolgroup" ? it.indices.includes(best) : it.index === best);
+  if (u < 0) u = Math.max(0, items.findIndex((it) => itemFirstEvent(it) >= best));
+  const working = s.status.state === "working" || s.status.state === "compacting";
+  renderWindowItems(v, s, items, Math.max(0, u - WINDOW_RADIUS), Math.min(items.length, u + WINDOW_RADIUS), working);
+  const target = (uuid ? v.el.querySelector(`.turn[data-uuid="${cssEscape(uuid)}"]`) : null)
+    || (v.el.querySelector(`[data-unit="${u}"]`) as HTMLElement | null);
+  if (!target) { landTrail.push("time-nearest-miss"); return false; }
+  landTrail.push("time-nearest");
+  landOn(target as HTMLElement, uuid || undefined);
+  const beforeHead = headEp != null && t < headEp && (s.headFrom ?? 0) > 0;
+  landToast(beforeHead
+    ? "that link points at a moment before the loaded history — landed at the oldest loaded message"
+    : "that link points at a time, not a message — landed at the closest one");
+  return true;
+}
+
 // Land on a turn at the TOP of the viewport and KEEP it landed while the chrome
 // above the scroll container settles. Top-align (not center) so a jump lands on
 // the START of the thing and you read DOWN into it — a long work period isn't
@@ -8469,6 +8557,15 @@ function landActive(content: HTMLElement | null, v: View): void {
   const att = { anchor: pendingAnchor, t: pendingAnchorT, kind: pendingAnchorKind, keep: pendingAnchorKeepY != null };   // this pass's landing attempt, for diagnostics
   if (att.anchor || att.t != null) landTrail = [];
   let scrolled = pendingAnchor ? scrollToAnchor(pendingAnchor) : false;
+  // TIME-ONLY navigation (the user 2026-08-25, the fifth can't-locate shape): some producers — the
+  // timeline's lane clicks, deep links, cards minted from segments with no anchorable atom — send
+  // anchorT with NO uuid, and the by-id-only landing left the whole class dead-ending in the bare
+  // toast (audit rows: anchor null, empty trail). When the TIME is the anchor's only datum it is
+  // the datum, not a proxy (the 2026-06-20 removal was about silently substituting time for a
+  // KNOWN id): land at the event nearest that moment and SAY SO, never impersonating an exact jump
+  // and never dead-ending. If the moment predates the loaded history, the oldest loaded message is
+  // the nearest reachable point — the note names that too (fail loudly, land nearest).
+  if (!scrolled && !att.anchor && att.t != null) scrolled = landNearestMoment(att.t);
   if (seek && att.anchor === seek.uuid) {
     if (scrolled) clearSeek();             // the landing event — the indicator dies with the seek
     else showSeekNote();                   // outlived the immediate landing → say the search is on
@@ -10929,6 +11026,7 @@ function sharesAnyUuid(a: ChatEvent[], b: ChatEvent[]): boolean {
 }
 
 function upsert(msg: any) {
+  retryCmtCreates(String(msg.id || ""));   // a session frame = the kernel re-parsed → retry a lag-refused create (T106)
   const existed = sessions.has(msg.id);
   const prev = sessions.get(msg.id);
   awaitingFull.delete(msg.id);   // a full session landed → this session is re-based; a later gap may ask again
@@ -11023,6 +11121,7 @@ function upsert(msg: any) {
 }
 
 function update(msg: any) {
+  retryCmtCreates(String(msg.id || ""));   // ditto for the delta path (T106)
   const s = sessions.get(msg.id);
   if (!s) return;
   s.events = msg.events || s.events;
@@ -11622,10 +11721,24 @@ window.addEventListener("message", (e: MessageEvent) => {
   else if (m.type === "comments" && m.id) {
     const sid = String(m.id);
     const threads = (m.threads || []) as CommentThread[];
-    commentThreads.set(sid, threads);
-    // the settle latch steps ONCE per frame — the deciding events are pushes (see comments.ts)
-    for (const t of threads) commentBusyLatch.set(t.tid, latchBusy(commentBusyLatch.get(t.tid), t, !!(commentPending.get(t.tid) || []).length));
-    for (const k of Array.from(commentBusyLatch.keys())) if (!threads.some((t) => t.tid === k)) commentBusyLatch.delete(k);
+    // an OPTIMISTIC synth thread (a create still in flight) survives the frame rebuild until its
+    // real thread supersedes it (same anchor) or its create fails — the frame used to wipe it, so
+    // every create's mark BLINKED between the gesture and the thread's first frame, and a
+    // parse-lag refusal erased the comment entirely (the T106 lab's first catch, 2026-08-26)
+    const synths = (commentThreads.get(sid) || []).filter((t) =>
+      t.tid.startsWith("pending:") && cmtCreateInFlight.has(t.tid.slice("pending:".length))
+      && !threads.some((r) => r.anchorUuid === t.anchorUuid));
+    commentThreads.set(sid, synths.length ? [...threads, ...synths] : threads);
+    // THE REPLY-ARRIVED EVENT (T102): a frame whose msgs hold MORE agent records than the send's
+    // base means THAT send's reply landed — the exchange latch clears here and nowhere else. A
+    // thread that left "open" (or errored) drops its latch too: green would lie about a reply
+    // that is no longer on the way.
+    for (const t of threads) {
+      const base = cmtAwaitBase.get(t.tid);
+      if (base !== undefined && (agentCount(t) > base || t.status !== "open" || !!t.error)) cmtAwaitBase.delete(t.tid);
+    }
+    for (const k of Array.from(cmtAwaitBase.keys()))
+      if (!k.startsWith("pending:") && !threads.some((t) => t.tid === k)) cmtAwaitBase.delete(k);
     const live = new Set(threads.filter((t) => t.status !== "promoted").map((t) => t.tid));
     for (const k of Array.from(commentPending.keys())) if (!live.has(k)) commentPending.delete(k);
     for (const k of Array.from(commentDrafts.keys())) if (!k.startsWith("new:") && !live.has(k)) commentDrafts.delete(k);
@@ -11646,7 +11759,19 @@ window.addEventListener("message", (e: MessageEvent) => {
   // frame first; if this ack somehow beat it, park the tid and the next frame adopts. The draft is
   // spent UNCONDITIONALLY off the echoed anchor uuid — a popover closed before the ack otherwise
   // leaves its sent words to resurface in the next composer on the same passage.
+  else if (m.type === "commentCreateFailed" && m.id && m.uuid) {
+    // the typed nack (T106): a TRANSIENT refusal (the kernel's parse hasn't caught the anchor
+    // record up yet) keeps the optimistic mark + latch and arms the frame-keyed retry — the next
+    // session frame for the sid IS the parse catching up (retryCmtCreates). A real refusal drops
+    // the synth honestly; the kernel's warn already said why.
+    const held = cmtCreateInFlight.get(String(m.uuid));
+    if (held) {
+      if (m.transient) { if (held.tries === 0) held.tries = 1; }
+      else { cmtCreateInFlight.delete(String(m.uuid)); dropSynthThread(held.sid, held.uuid); }
+    }
+  }
   else if (m.type === "commentCreated" && m.id && m.tid) {
+    if (m.uuid) cmtCreateInFlight.delete(String(m.uuid));   // the ack retires the retry hold
     if (m.uuid) commentDrafts.delete("new:" + String(m.uuid));
     if (pendingCommentAnchor && pendingCommentAnchor.sid === m.id) {
       const tid = String(m.tid);

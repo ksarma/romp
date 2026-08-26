@@ -154,8 +154,12 @@ test("an active tag is a REMOVABLE CHIP: outline only in its colour, a dim separ
   // a SENTINEL view's chip dims to the corner line's own gray at the N-more opacity (the user
   // 2026-08-24: at #cccccc it read bright as a tag) — real tag chips keep their tag colors, full strength
   // per-selection chips since 2026-08-25: each pick derives its own colour (no-tags in the gray)
-  assert.match(SRC, /return \{ label: n, color: \(u && u\.color\) \|\| MODEL_FG, pick: \{ tag: n \} \};/);
-  assert.match(SRC, /\.concat\(lens\.none \? \[\{ label: 'no tags', color: MODEL_FG, pick: 'none' \}\] : \[\]\)/);
+  // ORDER (the user 2026-08-25): "no tags" leftmost, then the tags in the USER'S order — the
+  // chips walk the ordered unions instead of the raw selection (superseding the none-last form)
+  assert.match(SRC, /if \(lens\.none\) chips\.push\(\{ label: 'no tags', color: MODEL_FG, pick: 'none' \}\);/,
+    "no-tags sits leftmost in the corner's selection render");
+  assert.match(SRC, /if \(lens\.none\) chips\.push[\s\S]{0,400}for \(const u of unions\) \{/,
+    "…and the tag chips follow by walking the ORDERED unions");
   assert.match(SRC, /x\.textContent = '\\u2715';/);
   assert.match(SRC, /\.romp-tl-chipx\{cursor:pointer;opacity:0\.75;/, "the ✕ dim and separate");
   assert.match(SRC, /remove \\u201c' \+ c\.label \+ '\\u201d from this timeline/,
@@ -275,6 +279,25 @@ test("membership rows drag-reorder into the SHARED session order (the user 2026-
     "drop = merge, apply, persist — the lane-drag's exact sequence");
   assert.match(SRC, /renderRows\(\);\n\s*\};\n\s*nameCell\.addEventListener\('pointermove', onMove\);/,
     "the rebuild happens on the drop, after the persist");
+});
+
+test("the dialog sizes to the screen: 90% ceiling both axes, padded edges, wrap only when narrow (the user 2026-08-25)", () => {
+  // 560px read cramped — no padding at the edges, rows wrapping with plenty of screen left. The
+  // card grows with the window to the big panels' ~90% family norm (capped 1200px so a huge
+  // monitor doesn't stretch a form unreadably wide) with real breathing room inside the edges.
+  // the card declarations come AFTER MENU_STYLE: the menu spec opens with ITS padding (4px), and
+  // in one style string the later declaration wins — stated first, the dialog's padding had been
+  // silently 4px all along (found by headless computed-style measurement, 2026-08-25)
+  assert.match(SRC, /MENU_STYLE \+ 'box-sizing:border-box;width:min\(1200px,90vw\);max-height:90vh;'\s*\n\s*\+ 'overflow:hidden;display:flex;flex-direction:column;padding:22px 26px;font-size:13px;'/,
+    "the card's screen-sized border-box footprint + edge padding, declared after the menu spec");
+  // wrap stays GRACEFUL, not needless: the wide card lays the rows out on their lines; these
+  // containers wrap only when the window genuinely narrows
+  assert.match(SRC, /row\.setAttribute\('style', 'display:flex;align-items:center;gap:6px;margin:2px 0;flex-wrap:wrap;'\);/,
+    "the five filter rows fold only under real pressure");
+  assert.match(SRC, /chips\.setAttribute\('style', 'display:flex;gap:5px;flex-wrap:wrap;align-items:center;min-width:0;'\);/,
+    "membership chip cells ditto");
+  assert.match(SRC, /gridBox\.setAttribute\('style', 'flex:1 1 auto;min-height:0;overflow-y:auto;'\);/,
+    "only the session rows pan when height runs out — the card itself never scrolls whole");
 });
 
 test("federation, NAME-KEYED (user ruling 2026-08-24): one name = one row/label/union — kernels are plumbing", () => {
@@ -503,10 +526,11 @@ test("the corner grew two icon buttons and the menus split (the user 2026-08-25)
   assert.match(SRC, /btn\('timeline display options',[\s\S]{0,900}btn\('filter these lanes by tag',/,
     "sliders sit left, the tag button beside it (append order = flex order)");
   assert.match(SRC, /_openDisplayMenu\(b\)/);
-  assert.match(SRC, /capSep\('filters this timeline'\)/,
-    "the captioned divider says which surface the selection governs");
-  assert.match(SRC, /font-size:0\.82em;opacity:0\.6;font-style:italic/,
-    "caption at the sub-line scale — no new font sizes");
+  // the menu scope captions retired 2026-08-25 (the user: the tooltip already says it) — the
+  // button TOOLTIP is the one scope carrier now, and the menus open straight onto their rows
+  assert.ok(!SRC.includes("capSep("), "the tag menu's scope caption is gone");
+  assert.ok(!SRC.includes("how this timeline draws"), "the display menu's header is gone");
+  assert.match(SRC, /btn\('filter these lanes by tag',/, "…the tooltip names the surface instead");
   assert.match(SRC, /item\('Configure tags…', \{ dim: true \}\)/, "one management entry");
   assert.ok(!/item\('New tag…', \{ dim: true \}\)/.test(SRC), "New tag left the menu…");
   assert.match(SRC, /text: '\+ New tag'/,
@@ -526,7 +550,8 @@ test("cross-pane dismissal rides the storage echo (the user 2026-08-25)", () => 
 
 test("dialog polish + reachable tag management (the user 2026-08-25)", () => {
   // the dialog reads at the page's 13px form scale (the menu 12px was the too-small complaint)
-  assert.match(SRC, /MENU_STYLE \+ 'font-size:13px;'/);
+  assert.match(SRC, /padding:22px 26px;font-size:13px;'/,
+    "the 13px form scale rides the card's own declarations (after MENU_STYLE, whose 4px padding they beat)");
   // the session table scrolls WITHIN the modal — chrome stays put
   assert.match(SRC, /gridBox\.setAttribute\('style', 'flex:1 1 auto;min-height:0;overflow-y:auto;'\)/);
   // [+] is a rounded RECTANGLE in its own column between name and tags

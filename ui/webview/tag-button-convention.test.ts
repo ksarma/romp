@@ -23,14 +23,20 @@ const UNIONS = [
   { name: "workers", color: "#4EC9B0", members: [] },
 ];
 
-test("executed: lensChips — All bare; narrowed = every selection incl. the no-tags chip", () => {
+test("executed: lensChips — All bare; no-tags LEFTMOST; tags follow in the unions' (user) order", () => {
   assert.deepEqual(lensChips({ all: true }, UNIONS as never), [], "All → the button stands alone");
   assert.deepEqual(lensChips({ tags: ["infra"] }, UNIONS as never),
     [{ label: "infra", color: "#DD42FF", pick: { tag: "infra" } }]);
   assert.deepEqual(lensChips({ none: true, tags: ["workers"] }, UNIONS as never),
-    [{ label: "workers", color: "#4EC9B0", pick: { tag: "workers" } },
-     { label: "no tags", color: null, pick: "none" }],
-    "the no-tags bucket is its own chip, last");
+    [{ label: "no tags", color: null, pick: "none" },
+     { label: "workers", color: "#4EC9B0", pick: { tag: "workers" } }],
+    "no-tags sits LEFTMOST in every selection render (the user 2026-08-25, superseding the none-last form)");
+  // the tags render in the UNIONS' order (the user's dragged order), not the selection's insertion order
+  assert.deepEqual(lensChips({ tags: ["workers", "infra"] }, UNIONS as never).map((c) => c.label),
+    ["infra", "workers"], "selection insertion order yields to the user's tag order");
+  // a stale selected name (no union) still shows, dressless, after the ordered ones
+  assert.deepEqual(lensChips({ tags: ["ghost", "infra"] }, UNIONS as never).map((c) => c.label),
+    ["infra", "ghost"]);
 });
 
 test("cross-mount computed equality: one gray, one accent, everywhere", () => {
@@ -50,8 +56,8 @@ test("cross-mount computed equality: one gray, one accent, everywhere", () => {
 test("every JS mount renders through the ONE convention function", () => {
   for (const [name, src] of [["render", RENDER], ["fleet", FLEET], ["feed", FEED]] as const)
     assert.match(src, /syncTagFilter\(/, name + " mounts the shared renderer");
-  assert.match(RENDER, /tagBtn\.style\.alignSelf = "center";/,
-    "the chat button centers against the + tab's box (the user 2026-08-25 — it sat high)");
+  assert.match(RENDER, /const tagBox = el\("span", "tab-tagbox"\);/,
+    "the chat button + chips ride the .tab-tagbox, which reserves the + tab's box and centers them (the user 2026-08-25 — a wrapped controls line sat flush under the row above)");
 });
 
 test("THE BUTTON OUTLINE (the user 2026-08-25, round two): every mount wears the feed word-button's box", () => {
