@@ -19271,14 +19271,20 @@ def build_feed(now, tmux=None):
                 # 2026-08-16: the badge used to vanish at the exact moment the recipient finished —
                 # run_propagate completes the sender's tracking node instantly — so a COMPLETED card
                 # never showed where its work came from, and a propagated clear read as one card
-                # mysteriously taking another with it). `live` says whether the sender's linked goal
-                # is still OPEN: live → the affordance of an active handoff; absorbed → the same badge,
-                # dimmed, purely historical. This is the completed-column MERGE, heuristic-free: the
-                # one surviving card wears both identities, keyed on the courier's recorded link.
+                # mysteriously taking another with it). origin_live says whether the sender's linked
+                # goal is still OPEN: live → the affordance of an active handoff; absorbed → the same
+                # badge, dimmed, purely historical. This is the completed-column MERGE, heuristic-free:
+                # the one surviving card wears both identities, keyed on the courier's recorded link.
+                # NAMED origin_live, never `live`: this block once reused the session-level `live` —
+                # the backend-alive bit set at the top of the session loop — so every LATER card of
+                # the session, and the placeholders built after the loop, wore the badge's bool: a
+                # live session's cards dressed .dead and took the revive path; a dead session's
+                # offered Continue. Badges persist for the card's life, so one absorbed badge
+                # poisoned the session's whole card tail.
                 psid, gid = o["peer"], o.get("goalId")
                 sgoal = jd.load_goals(psid).get("nodes", {}).get(gid) if gid else None
-                live = bool(sgoal and not sgoal.get("nodeComplete") and not sgoal.get("cleared")
-                            and gid not in cleared)
+                origin_live = bool(sgoal and not sgoal.get("nodeComplete") and not sgoal.get("cleared")
+                                   and gid not in cleared)
                 # Name resolution: the live names registry first (a local sender may have been
                 # renamed), then the courier's plant-time snapshot (the only source for a
                 # FEDERATED sender, whose sid this kernel can't resolve), then the sid stub.
@@ -19287,7 +19293,7 @@ def build_feed(now, tmux=None):
                 pname = _name_of(psid)
                 origin = {"peer": pname or o.get("peerName") or psid[:8],
                           "peerHost": ("" if pname else o.get("peerHost") or ""),
-                          "peerSid": psid, "color": _name_color(psid), "live": live}
+                          "peerSid": psid, "color": _name_color(psid), "live": origin_live}
             # SENDER-SIDE handoff provenance (the user 2026-08-24): a TOP-LEVEL "↪ delegated to
             # <peer>" tracking node wore its provenance as the card TITLE, arrow and all. The card
             # now titles the WORK and ships the delegation as the badge mirroring origin above —
