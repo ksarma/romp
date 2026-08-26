@@ -3382,7 +3382,7 @@ class TimelinePanel {
           const [hpre, bare] = nameParts(s);
           if (hpre) {
             const hp = nameCell.createSpan({ text: hpre });
-            hp.setAttribute('style', 'color:' + MODEL_FG + ';font-style:italic;font-size:0.88em;');
+            hp.setAttribute('style', 'color:' + MODEL_FG + ';font-style:italic;font-size:0.86em;');
           }
           const nm = nameCell.createSpan({ text: bare });
           nm.setAttribute('style', 'font-weight:650;color:' + (s.color || '#cccccc') + ';');   // rows are live-only now — no strike variant

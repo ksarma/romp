@@ -450,7 +450,7 @@ body.tabbar-resizing { cursor: ns-resize; user-select: none; }
 .empty-state { color: var(--dim); text-align: center; padding: 40px; }
 /* brief hint while a first-visited tab's transcript builds on the next frame (the deferred build keeps the
    switch itself instant — the user 2026-06-17); the build replaces it. */
-.tx-loading { color: var(--dim); text-align: center; padding: 28px; font-size: 0.9em;
+.tx-loading { color: var(--dim); text-align: center; padding: 28px; font-size: 0.92em;
   display: flex; align-items: center; justify-content: center; gap: 8px; }
 /* the standing romp loader treatment (swirl reverse-spin + wordmark + pulsing accent dots) for the
    first-visit transcript build — the boot splash / pane loader language, never a bare text hint */
@@ -464,12 +464,12 @@ body.tabbar-resizing { cursor: ns-resize; user-select: none; }
 @keyframes tx-dot-pulse { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
 /* a genuinely empty transcript (a session with no turns yet) — shown instead of "Loading transcript…",
    which would be a lie since the full events payload already arrived (the user 2026-06-19). */
-.tx-empty { color: var(--dim); text-align: center; padding: 28px; font-size: 0.9em; }
+.tx-empty { color: var(--dim); text-align: center; padding: 28px; font-size: 0.92em; }
 
 /* ---------- ledger: rolling per-session digest, just below the tabs ---------- */
 #ledger {
   flex: 0 0 auto; box-sizing: border-box; width: 100%; max-width: var(--chat-col); margin: 0 auto;
-  padding: 7px 24px 9px; border-bottom: 1px solid var(--box-border); font-size: 0.95em;
+  padding: 7px 24px 9px; border-bottom: 1px solid var(--box-border); font-size: 0.92em;
   background: rgba(255, 255, 255, 0.05); border-radius: 0 0 7px 7px; /* subtle dark panel → max contrast for the bright, constant-lightness recency bullets (ageColorReadable) */
 }
 /* (the in-chat ledger box's head/caret/summary/label rules were removed with their DOM — 2026-07-07
@@ -550,7 +550,7 @@ body.tabbar-resizing { cursor: ns-resize; user-select: none; }
 /* (the ⊕ distiller-summary expander + its .ledger-tsum panel were removed 2026-06-27 — the Fleet tree shows
    just the goals now, no distiller takeaway / decision-brief line.) */
 /* extra whitespace before the right-aligned times so they don't crowd the text (the user 2026-06-16). */
-.ledger-ttime { flex: 0 0 auto; margin-left: 1.75em; font-size: 0.85em; font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--dim); }
+.ledger-ttime { flex: 0 0 auto; margin-left: 1.75em; font-size: 0.86em; font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--dim); }
 /* a done item's text is tinted to its recency colour inline (renderLedger); this is the fallback for a
    done node with no timestamp. */
 .ledger-tnode.done .ledger-ttext { color: var(--dim); }
@@ -581,7 +581,7 @@ body.tabbar-resizing { cursor: ns-resize; user-select: none; }
   padding: 7px 11px; cursor: pointer; user-select: none; font-size: 12px; }
 .bg-fold-head.open { border-bottom: 1px solid var(--box-border); }
 .bg-fold-head:hover { background: rgba(255, 255, 255, 0.04); }
-.bg-stop { flex: 0 0 auto; font-size: 0.74em; padding: 1px 8px; border-radius: 9px; cursor: pointer;
+.bg-stop { flex: 0 0 auto; font-size: 0.72em; padding: 1px 8px; border-radius: 9px; cursor: pointer;
   border: 1px solid color-mix(in srgb, var(--fg) 25%, transparent); background: transparent; color: var(--fg); }
 .bg-stop:hover { border-color: var(--accent); color: var(--accent); }
 .bg-stop:disabled { opacity: 0.55; cursor: default; }
@@ -665,7 +665,7 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
   border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); }
 .composer-file-doc { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 6px;
   background: color-mix(in srgb, var(--accent) 14%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); }
-.composer-file-ext { font-size: 0.74em; font-weight: 600; color: var(--accent); letter-spacing: 0.04em; }
+.composer-file-ext { font-size: 0.72em; font-weight: 600; color: var(--accent); letter-spacing: 0.04em; }
 .composer-file-name { font-size: 0.86em; max-width: 22ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .composer-file-x { position: absolute; top: -6px; right: -6px; width: 16px; height: 16px; line-height: 14px; padding: 0;
   border-radius: 50%; border: 1px solid color-mix(in srgb, var(--fg) 25%, transparent); background: var(--bg, #1e1e1e);
@@ -710,7 +710,7 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
    user 2026-08-16, screenshot) — the ellipsis never got the chance to engage */
 #composer-files, #composer-staged, #composer-chips { flex: 1 1 100%; min-width: 0; max-width: 100%; }
 #composer-staged { flex-direction: column; gap: 3px; padding: 5px 8px 0; }
-.staged-head { display: flex; align-items: center; gap: 8px; font-size: 0.78em; color: var(--dim); letter-spacing: 0.02em; }
+.staged-head { display: flex; align-items: center; gap: 8px; font-size: 0.82em; color: var(--dim); letter-spacing: 0.02em; }
 /* the held-send head rides the FILES strip (a wrapping row): full-width so it owns the top line,
    wearing the staged strip's exact dress — a held send IS a staged message (the user 2026-08-22) */
 .held-head { flex: 1 1 100%; }
@@ -724,7 +724,7 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
    accent outline next to the accent-blue chips read as already-pressed — accent is for
    hover/selected, never rest chrome */
 .composer-stage-btn { background: rgba(255, 255, 255, 0.06);
-  border: 1px solid var(--box-border); color: var(--dim); border-radius: 5px; font-size: 0.78em;
+  border: 1px solid var(--box-border); color: var(--dim); border-radius: 5px; font-size: 0.82em;
   padding: 1px 8px; cursor: pointer; }
 /* hover = the FEED's word-button treatment exactly (the user 2026-08-25: text + outline light up
    blue, like Clear/Undo — never a background fill; the wash values are the feed's .ftree-act-btn
@@ -746,7 +746,7 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
 .staged-chip .composer-chip-label { flex: 1 1 auto; max-width: 100%; min-width: 0; }
 .staged-chip.open .staged-row .composer-chip-label { white-space: pre-wrap; overflow: visible; }
 .staged-chip.open .staged-row { align-items: flex-start; }
-.staged-expand { flex: 0 0 auto; color: var(--dim); font-size: 0.85em; }   /* chrome, not message text */
+.staged-expand { flex: 0 0 auto; color: var(--dim); font-size: 0.86em; }   /* chrome, not message text */
 .composer-chip-x {
   flex: 0 0 auto; border: none; background: none; cursor: pointer; color: var(--dim);
   font-size: 11px; line-height: 1; padding: 2px 4px; border-radius: 8px;
@@ -774,7 +774,7 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
   background: var(--vscode-menu-background, #252526);
   border: 1px solid var(--box-border); border-radius: var(--radius-menu);
   box-shadow: var(--shadow-menu); padding: 4px;
-  font-size: 12.5px;
+  font-size: 12px;
 }
 .slash-row { display: flex; align-items: baseline; gap: 9px; padding: 5px 9px; border-radius: 5px; cursor: pointer; }
 .slash-row.sel { background: var(--accent); }
@@ -904,7 +904,7 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
 .dot.working { background: var(--st-working-bg); border: none; }
 .apierror-card { border: 1px solid var(--st-blocked-bg); border-radius: 7px; padding: 7px 9px; background: rgba(229, 72, 77, 0.07); }
 .apierror-head { display: flex; align-items: center; gap: 8px; }
-.apierror-countdown { flex: 0 0 auto; font-size: 0.8em; color: var(--st-blocked-bg); font-variant-numeric: tabular-nums; opacity: 0.9; }
+.apierror-countdown { flex: 0 0 auto; font-size: 0.82em; color: var(--st-blocked-bg); font-variant-numeric: tabular-nums; opacity: 0.9; }
 .apierror-badge { flex: 0 0 auto; font-size: 0.72em; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase;
   color: var(--st-blocked-bg); border: 1px solid var(--st-blocked-bg); border-radius: 5px; padding: 1px 7px; }
 .apierror-retry { margin-left: auto; font-size: 11px; padding: 2px 11px; border-radius: 5px; cursor: pointer;
@@ -998,7 +998,7 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
   cursor: pointer; border-radius: 4px; padding: 1px 4px; margin: -1px -2px;
 }
 .meta-btn:hover { background: rgba(255, 255, 255, 0.08); color: var(--fg); }
-.meta-caret { font-size: 0.78em; opacity: 0.65; }
+.meta-caret { font-size: 0.82em; opacity: 0.65; }
 /* waiting for the TUI to confirm the change (tmux var not republished yet) */
 .meta-pending .meta-label { opacity: 0.5; animation: meta-pulse 1.1s ease-in-out infinite; }
 @keyframes meta-pulse { 50% { opacity: 1; } }
@@ -1085,7 +1085,7 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
 }
 .ctx-fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; transition: width 0.3s ease, background 0.3s ease; }
 .ctx-text {
-  position: relative; z-index: 1; font-family: var(--mono); font-size: 0.74em; font-weight: 700;
+  position: relative; z-index: 1; font-family: var(--mono); font-size: 0.72em; font-weight: 700;
   font-variant-numeric: tabular-nums; color: var(--fg); text-shadow: 0 0 2px rgba(0, 0, 0, 0.75);
 }
 .statusline:empty { display: none; }
@@ -1135,7 +1135,7 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
 .turn-compacting { padding-top: 4px; padding-bottom: 4px; }
 .turn-compacting .dot, .turn-compacting .time-marker { top: 10px; }
 .turn-compacting .dot { background: var(--st-compacting-bg, #14b8a6); border: none; }
-.compacting-inline { display: inline-flex; align-items: center; gap: 8px; color: var(--st-compacting-bg, #14b8a6); font-size: 0.9em; font-weight: 600; letter-spacing: 0.02em; }
+.compacting-inline { display: inline-flex; align-items: center; gap: 8px; color: var(--st-compacting-bg, #14b8a6); font-size: 0.92em; font-weight: 600; letter-spacing: 0.02em; }
 .compacting-bar { position: relative; display: inline-block; width: 42px; height: 11px; border-radius: 2px; overflow: hidden; background: color-mix(in srgb, var(--st-compacting-bg, #14b8a6) 18%, transparent); }
 .compacting-bar-fill { position: absolute; left: 1px; top: 1px; bottom: 1px; width: calc(100% - 2px); border-radius: 1px; background: var(--st-compacting-bg, #14b8a6); transform-origin: left center; animation: ctx-compress 3.2s linear infinite; }
 .compacting-text { letter-spacing: 0.02em; }
@@ -1144,13 +1144,13 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
 .turn-reconnecting { padding-top: 4px; padding-bottom: 4px; }
 .turn-reconnecting .dot, .turn-reconnecting .time-marker { top: 10px; }
 .turn-reconnecting .dot { background: var(--accent); border: none; }
-.reconnecting-line { display: inline-flex; align-items: center; gap: 8px; color: var(--dim); font-size: 0.9em; font-weight: 600; letter-spacing: 0.02em; }
+.reconnecting-line { display: inline-flex; align-items: center; gap: 8px; color: var(--dim); font-size: 0.92em; font-weight: 600; letter-spacing: 0.02em; }
 /* LIVE /clear in progress — the loader dots + a muted "Clearing conversation…" line; a transient sibling
    of the reconnecting element (same treatment: an in-flight romp-driven session operation). */
 .turn-clearing { padding-top: 4px; padding-bottom: 4px; }
 .turn-clearing .dot, .turn-clearing .time-marker { top: 10px; }
 .turn-clearing .dot { background: var(--accent); border: none; }
-.clearing-line { display: inline-flex; align-items: center; gap: 8px; color: var(--dim); font-size: 0.9em; font-weight: 600; letter-spacing: 0.02em; }
+.clearing-line { display: inline-flex; align-items: center; gap: 8px; color: var(--dim); font-size: 0.92em; font-weight: 600; letter-spacing: 0.02em; }
 /* LIVE api_retry (rate-limit/overload backoff) — the loader dots + an AMBER "API retrying…" line, tinted the
    SAME retrying status color as the tab border (#e67e22 — a STATUS color, not accent chrome) so the chat
    element reads as that state; a transient sibling of the compacting/reconnecting elements. */
@@ -1158,10 +1158,10 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
 .turn-retrying .dot, .turn-retrying .time-marker { top: 10px; }
 .turn-retrying .dot { background: #e67e22; border: none; }
 .turn-retrying .meta-dots i { background: #e67e22; }   /* tint the loader dots amber to match the state (default is accent blue) */
-.retrying-line { display: inline-flex; align-items: center; gap: 8px; color: #e67e22; font-size: 0.9em; font-weight: 600; letter-spacing: 0.02em; }
+.retrying-line { display: inline-flex; align-items: center; gap: 8px; color: #e67e22; font-size: 0.92em; font-weight: 600; letter-spacing: 0.02em; }
 /* the error behind the backoff (kernel retryInfo, the user 2026-07-10) — same 0.9em as the retrying line
    (one size per information type), muted so the amber headline stays the signal */
-.retrying-err { margin-top: 2px; color: color-mix(in srgb, #e67e22 55%, var(--dim)); font-size: 0.9em; overflow-wrap: anywhere; }
+.retrying-err { margin-top: 2px; color: color-mix(in srgb, #e67e22 55%, var(--dim)); font-size: 0.92em; overflow-wrap: anywhere; }
 /* the LIVE next-attempt countdown (the user 2026-07-24) — inherits the retrying line's size/weight (it IS
    that line's text, not a new information type); tabular digits so the ticking number never jitters the row */
 .retrying-countdown { font-variant-numeric: tabular-nums; }
@@ -1175,7 +1175,7 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
 /* the durable "effort set to X" note shares the retried note's slim rail treatment (the user 2026-07-16) */
 .turn-retried, .turn-effort { padding-top: 4px; padding-bottom: 4px; }
 .turn-retried .dot, .turn-retried .time-marker, .turn-effort .dot, .turn-effort .time-marker { top: 10px; }
-.retried-line, .effort-line { display: inline-flex; align-items: center; gap: 8px; color: var(--dim); font-size: 0.9em; letter-spacing: 0.02em; }
+.retried-line, .effort-line { display: inline-flex; align-items: center; gap: 8px; color: var(--dim); font-size: 0.92em; letter-spacing: 0.02em; }
 /* the FAILED twin — "API errors — gave up after N retries": same slim line, in the blocked/red voice,
    so a storm that produced nothing never reads like a recovery (the user 2026-07-25) */
 .gaveup-text { color: var(--st-blocked-bg); font-weight: 600; }
@@ -1185,7 +1185,7 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
 .modelswap-text { color: var(--warn, #d7a23a); font-weight: 600; }
 .modelswap-line { cursor: pointer; }
 .modelswap-line:hover .modelswap-text { filter: brightness(1.15); }
-.modelswap-body { display: none; color: var(--dim); font-size: 0.9em; margin: 4px 0 2px;
+.modelswap-body { display: none; color: var(--dim); font-size: 0.92em; margin: 4px 0 2px;
   white-space: pre-wrap; max-width: 72ch; }
 .modelswap-body.expanded { display: block; }
 /* the durable record of a died turn — the live card's chrome without its buttons; slightly dimmer body
@@ -1193,7 +1193,7 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
 .apierror-note .apierror-body { color: var(--dim); }
 /* compact-mode collapsed tool run → one line ("▸ 3 Edits, 2 Reads"); click to expand/collapse */
 .turn-toolgroup .dot, .turn-toolgroup .time-marker { top: 10px; }
-.toolgroup-line { color: var(--dim); font-size: 0.9em; line-height: 1.4; cursor: pointer; width: fit-content; padding-right: 6px; }
+.toolgroup-line { color: var(--dim); font-size: 0.92em; line-height: 1.4; cursor: pointer; width: fit-content; padding-right: 6px; }
 .toolgroup-line:hover { color: var(--fg); }
 .toolgroup-caret { display: inline-block; font-size: 1.3em; color: var(--vscode-foreground, #fff); line-height: 1; margin-right: 2px; }
 .toolgroup-tool { font-weight: 700; color: var(--vscode-foreground, #fff); }   /* matches .tool-name */
@@ -1236,7 +1236,7 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
 .time-marker {
   position: absolute; top: 13px; left: -45px; width: 48px; z-index: 2;
   text-align: right; white-space: nowrap; line-height: 1;       /* right edge sits ~3px LEFT of the dot (dot is at 6px); text fills the empty gutter to its left, aligned to the dot's row */
-  font-size: 0.76em; font-variant-numeric: tabular-nums; letter-spacing: 0.02em;
+  font-size: 0.72em; font-variant-numeric: tabular-nums; letter-spacing: 0.02em;
   color: var(--dim);
 }
 /* Sticky rail stamp: a fixed overlay pinned to the top of the gutter while you scroll THROUGH a turn
@@ -1267,7 +1267,7 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
 @media (prefers-reduced-motion: reduce) { .scroll-marks .scroll-mark { transition: none; } }
 .rail-day {
   position: fixed; z-index: 3; pointer-events: none; white-space: nowrap; line-height: 1;
-  font-size: 0.68em; letter-spacing: 0.03em; color: var(--dim); opacity: 0.85;
+  font-size: 0.66em; letter-spacing: 0.03em; color: var(--dim); opacity: 0.85;
   background: var(--bg);   /* the widest labels ("2 weeks ago") poke a few px past the gutter into the
                               session rail line; a pane-bg plate interrupts the line cleanly instead of
                               striking text through it */
@@ -1283,7 +1283,7 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
 .day-divider {
   display: flex; align-items: center; gap: 9px;
   margin: 16px 0 6px; padding-left: 24px;
-  font-size: 0.76em; letter-spacing: 0.02em;   /* same size as .time-marker — same kind of label */
+  font-size: 0.72em; letter-spacing: 0.02em;   /* same size as .time-marker — same kind of label */
 }
 .day-divider-label { flex: 0 0 auto; color: var(--fg); font-weight: 700; white-space: nowrap; }
 .day-divider::after { content: ""; flex: 1 1 auto; height: 1px; background: var(--box-border); }
@@ -1410,7 +1410,7 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
    the blue bubble — a darkened, outlined pill so it reads as a command, not prose. Args sit after it as text. */
 .slash-cmd-chip {
   display: inline-block; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-weight: 650; font-size: 0.9em; letter-spacing: 0.02em;
+  font-weight: 650; font-size: 0.92em; letter-spacing: 0.02em;
   background: rgba(0, 0, 0, 0.24); color: #fff;
   border: 1px solid rgba(255, 255, 255, 0.38); border-radius: 6px;
   padding: 1px 7px; line-height: 1.5; white-space: nowrap;
@@ -1487,7 +1487,7 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
    not yet a turn. Right-aligned like his sent bubbles, but faint + dashed to read
    as "waiting", with a header count. (Mirrors the queue Claude Code shows.) */
 .turn-queued { display: flex; flex-direction: column; align-items: flex-end; padding: 6px 0 10px; gap: 5px; }
-.queued-head { display: inline-flex; align-items: center; gap: 5px; font-size: 0.78em; color: var(--dim); letter-spacing: 0.02em; }
+.queued-head { display: inline-flex; align-items: center; gap: 5px; font-size: 0.82em; color: var(--dim); letter-spacing: 0.02em; }
 .queued-head .queued-icon { color: var(--accent); display: flex; }   /* wireframe hourglass in the accent blue */
 .queued-bubble {
   max-width: 72%; overflow-wrap: anywhere; display: flow-root;
@@ -1503,7 +1503,7 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
 .queued-x {
   position: absolute; top: 3px; right: 4px; width: 20px; height: 20px;
   display: flex; align-items: center; justify-content: center;
-  font: inherit; font-size: 0.78em; line-height: 1; cursor: pointer;
+  font: inherit; font-size: 0.82em; line-height: 1; cursor: pointer;
   color: var(--dim); background: transparent; border: 0; border-radius: 6px; padding: 0;
 }
 .queued-x:hover { color: var(--vscode-errorForeground, #f48771); background: rgba(255, 255, 255, 0.08); }
@@ -1518,7 +1518,7 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
 }
 .undelivered-note { display: flex; align-items: center; gap: 4px; align-self: flex-end; margin-top: 3px; }
 .undelivered-label {
-  font-size: 0.78em; color: var(--vscode-errorForeground, #f48771);
+  font-size: 0.82em; color: var(--vscode-errorForeground, #f48771);
   letter-spacing: 0.02em; margin-right: 4px;
 }
 .undelivered-act {
@@ -1534,7 +1534,7 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
    0.74/0.78/0.9em and the bare "↩ Follow-up" text node — unstylable as an anonymous flex item — wrapped
    into a 3-line column. Project rule: similar information wears the same size; see CLAUDE.md Design). */
 .followup-tag { display: flex; align-items: baseline; gap: 6px; max-width: 72%; margin-bottom: 1px;
-  font-size: 0.78em; color: var(--accent); }
+  font-size: 0.82em; color: var(--accent); }
 .followup-lbl { flex: none; white-space: nowrap; }
 .followup-goal { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dim); }
 /* expandable follow-up header (the user 2026-07-01): ▸ toggles a muted block showing the goal context romp
@@ -1546,10 +1546,10 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
 .followup-tri { color: var(--dim); }   /* inherits the header's one size */
 .followup-ctx { max-width: 72%; margin-bottom: 2px; padding: 5px 9px; border-left: 2px solid var(--accent);
   border-radius: 6px; background: color-mix(in srgb, var(--accent) 8%, transparent); color: var(--dim);
-  font-size: 0.78em; white-space: pre-wrap; overflow-wrap: anywhere; }
+  font-size: 0.82em; white-space: pre-wrap; overflow-wrap: anywhere; }
 /* pasted images inside the bubble */
 .user-img { display: block; max-width: 100%; max-height: 320px; border-radius: 8px; margin-top: 6px; }
-.user-img-path { display: inline-block; margin-top: 6px; padding: 3px 9px; border-radius: 8px; background: rgba(255, 255, 255, 0.16); font-size: 0.85em; }
+.user-img-path { display: inline-block; margin-top: 6px; padding: 3px 9px; border-radius: 8px; background: rgba(255, 255, 255, 0.16); font-size: 0.86em; }
 /* image + its open/copy caption (the full absolute path, in place) */
 .user-img-wrap { display: block; }
 .img-caption { display: flex; align-items: baseline; gap: 6px; margin-top: 3px; font-size: 0.82em; opacity: 0.85; }
@@ -1593,7 +1593,7 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
 /* Subagent (Task/Agent) dispatch — the prompt and the report each get their OWN caret fold (.fold),
    collapsed by default (the user 2026-07-08). Each fold's body is an .agent-report: a faded, green-edged
    sub-transcript look, markdown-rendered (the user 2026-06-14). */
-.agent-report { padding: 6px 11px; color: var(--dim); font-size: 0.95em; border-left: 2px solid rgba(87, 181, 15, 0.5); background: rgba(87, 181, 15, 0.06); border-radius: 0 6px 6px 0; }
+.agent-report { padding: 6px 11px; color: var(--dim); font-size: 0.92em; border-left: 2px solid rgba(87, 181, 15, 0.5); background: rgba(87, 181, 15, 0.06); border-radius: 0 6px 6px 0; }
 .agent-report > :first-child { margin-top: 0; }
 .agent-report > :last-child { margin-bottom: 0; }
 .io-row { display: flex; gap: 12px; padding: 10px 13px; }
@@ -1603,7 +1603,7 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
   padding-top: 2px; min-width: 26px; user-select: none;
 }
 .io-pre {
-  margin: 0; flex: 1; font-family: var(--mono); font-size: 0.9em; line-height: 1.5;
+  margin: 0; flex: 1; font-family: var(--mono); font-size: 0.92em; line-height: 1.5;
   white-space: pre-wrap; word-break: break-word; color: var(--fg);
 }
 .io-out .io-pre { color: var(--dim); }
@@ -1623,12 +1623,12 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
    answered row is INLINE with a hanging indent: the mark hangs in the indent, the label wraps beside it
    like prose, and the description takes its own dim line(s) at the same indent. */
 .ask-opt { display: block; padding: 2px 0 2px 18px; color: var(--dim); }
-.ask-opt .ask-mark { display: inline-block; width: 18px; margin-left: -18px; color: var(--dim); font-size: 0.8em; }
+.ask-opt .ask-mark { display: inline-block; width: 18px; margin-left: -18px; color: var(--dim); font-size: 0.82em; }
 .ask-opt.chosen { color: var(--fg); }
 .ask-opt.chosen .ask-mark { color: var(--check-bg); }
 .ask-opt.chosen .ask-optlabel { font-weight: 600; }
 .ask-optlabel { flex: 0 1 auto; min-width: 0; overflow-wrap: anywhere; }   /* flex props serve the live rows below; inert in the inline answered row */
-.ask-optdesc { color: var(--dim); font-size: 0.9em; overflow-wrap: anywhere; flex: 1 1 14em; min-width: 0; }
+.ask-optdesc { color: var(--dim); font-size: 0.92em; overflow-wrap: anywhere; flex: 1 1 14em; min-width: 0; }
 .ask-opt .ask-optdesc { display: block; }   /* answered card: the description under the label, not beside */
 /* a free-text "Other" answer: the user's verbatim words, readable (not dimmed), on their own line
    under the "Other" label (same hanging indent as a description) */
@@ -1780,7 +1780,7 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
 }
 .postal-service-head {
   display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
-  margin-bottom: 6px; font-size: 0.9em;
+  margin-bottom: 6px; font-size: 0.92em;
 }
 .postal-service-romp-logo { width: 13px; height: 13px; flex: 0 0 auto; border-radius: 2px; }   /* romp-postal-service identity mark (the user 2026-06-23) */
 .postal-service-arrow { color: var(--peer-bg, var(--dim)); font-weight: 700; }
@@ -1795,7 +1795,7 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
 /* a session-name chip that navigates on click (sender/recipient name) */
 .chip-nav { cursor: pointer; }
 .chip-nav:hover { filter: brightness(1.12); text-decoration: underline; text-underline-offset: 2px; }
-.postal-service-badge { font-size: 0.74em; font-weight: 700; letter-spacing: 0.03em; padding: 2px 8px; border-radius: 9px; }
+.postal-service-badge { font-size: 0.72em; font-weight: 700; letter-spacing: 0.03em; padding: 2px 8px; border-radius: 9px; }
 .postal-service-badge.parked { background: var(--st-awaiting-bg); color: var(--st-awaiting-fg); }
 .postal-service-badge.delivered { color: var(--check-bg); }
 /* interaction-type chip on a postal card — THREE top-level categories (the user 2026-06-17): delegation /
@@ -1814,7 +1814,7 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
 .postal-service-summary { display: flex; align-items: baseline; gap: 6px; }
 .postal-service-expandable .postal-service-summary { cursor: pointer; }
 .postal-service-expandable .postal-service-summary:hover .postal-service-summary-text { text-decoration: underline; text-underline-offset: 2px; }
-.postal-service-expand-caret { flex: 0 0 auto; font-size: 0.78em; opacity: 0.7; }
+.postal-service-expand-caret { flex: 0 0 auto; font-size: 0.82em; opacity: 0.7; }
 /* the collapsed gist: at most two FULL lines, ellipsized by the box (the user 2026-07-25 — the old
    100-char pre-truncation parked its "…" mid-line and wasted the second line) */
 .postal-service-summary-text { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere;
@@ -1832,7 +1832,7 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
 .turn-teammate { padding-top: 11px; padding-bottom: 11px; }
 .dot.teammate { border-style: dashed; }
 .teammate-card { border: 1px dashed var(--box-border); border-radius: 6px; padding: 8px 13px; background: var(--box-bg); }
-.teammate-head { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin-bottom: 6px; font-size: 0.9em; }
+.teammate-head { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin-bottom: 6px; font-size: 0.92em; }
 .teammate-tag { font-size: 0.7em; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
   padding: 1px 7px; border-radius: 9px; border: 1px dashed var(--dim); color: var(--dim); }
 .teammate-names { font-size: 0.82em; font-weight: 600; color: var(--fg); opacity: 0.85; overflow-wrap: anywhere; }
@@ -1842,7 +1842,7 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
 .teammate-summary { display: flex; align-items: baseline; gap: 6px; }
 .teammate-expandable .teammate-summary { cursor: pointer; }
 .teammate-expandable .teammate-summary:hover .teammate-summary-text { text-decoration: underline; text-underline-offset: 2px; }
-.teammate-expand-caret { flex: 0 0 auto; font-size: 0.78em; opacity: 0.7; }
+.teammate-expand-caret { flex: 0 0 auto; font-size: 0.82em; opacity: 0.7; }
 .teammate-summary-text { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; color: var(--dim); }
 .teammate-full { display: none; margin-top: 7px; }
 .teammate-expandable.expanded .teammate-full { display: block; }
@@ -1857,7 +1857,7 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
 
 /* clickable file name → opens the real file in the editor */
 .tool-file {
-  font-family: var(--mono); font-size: 0.9em;
+  font-family: var(--mono); font-size: 0.92em;
   color: var(--vscode-textLink-foreground, #4daafc); cursor: pointer;
   text-decoration: underline dotted; text-underline-offset: 2px;   /* persistent link affordance */
 }
@@ -1867,10 +1867,10 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
 .fold { margin-top: 3px; }
 .fold-head {
   display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
-  color: var(--dim); font-size: 0.85em; user-select: none; padding: 2px 0;
+  color: var(--dim); font-size: 0.86em; user-select: none; padding: 2px 0;
 }
 .fold-head:hover { color: var(--fg); }
-.fold-caret { display: inline-block; font-size: 0.8em; transition: transform 0.12s ease; }
+.fold-caret { display: inline-block; font-size: 0.82em; transition: transform 0.12s ease; }
 .fold.open .fold-caret { transform: rotate(90deg); }
 .fold > :not(.fold-head) { display: none; }
 .fold.open > :not(.fold-head) { display: block; }
@@ -1883,7 +1883,7 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
    it stays right-justified past this. */
 /* a persistent DOTTED underline marks the clickable "12 lines" / "+5 −0" / "prompt" expander as a
    link (the user 2026-06-15: make what's clickable obvious); it goes solid on hover. */
-.tool-fold-toggle { flex: 0 0 auto; cursor: pointer; color: var(--dim); font-size: 0.85em; user-select: none; text-decoration: underline dotted; text-underline-offset: 2px; }
+.tool-fold-toggle { flex: 0 0 auto; cursor: pointer; color: var(--dim); font-size: 0.86em; user-select: none; text-decoration: underline dotted; text-underline-offset: 2px; }
 .tool-fold-toggle:hover { color: var(--fg); text-decoration: underline; }
 .turn-tool .tool-fold-body { display: none; }
 .turn-tool.fold-open .tool-fold-body { display: block; margin-top: 5px; }
@@ -1925,9 +1925,9 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
    output and stay left. The dot and time marker are absolute, so the flex moves only the card. */
 .turn-notice.notice-romp { display: flex; flex-direction: column; align-items: flex-end; }
 .turn-notice.notice-romp > .notice-card { max-width: 72%; }
-.notice-head { display: flex; align-items: baseline; gap: 7px; font-size: 0.9em; }
+.notice-head { display: flex; align-items: baseline; gap: 7px; font-size: 0.92em; }
 .notice-collapsible .notice-head { cursor: pointer; }
-.notice-caret { flex: 0 0 auto; font-size: 0.74em; opacity: 0.7; }
+.notice-caret { flex: 0 0 auto; font-size: 0.72em; opacity: 0.7; }
 .notice-chip {
   flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px;
   font-size: 0.7em; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
@@ -1984,19 +1984,19 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
 .sys-card { border: 1px solid var(--box-border); border-radius: 9px; background: var(--box-bg); overflow: hidden; }
 .sys-card-head {
   display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none;
-  padding: 8px 12px; font-size: 0.88em;
+  padding: 8px 12px; font-size: 0.86em;
 }
 .sys-card-head:hover { background: var(--hover-bg, rgba(127, 127, 127, 0.08)); }
 .sys-gear { flex: 0 0 auto; opacity: 0.85; }
 .sys-title { font-weight: 600; color: var(--fg); }
 .sys-sub { color: var(--dim); font-size: 0.92em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.sys-caret { flex: 0 0 auto; margin-left: auto; color: var(--dim); font-size: 0.8em; transition: transform 0.12s ease; }
+.sys-caret { flex: 0 0 auto; margin-left: auto; color: var(--dim); font-size: 0.82em; transition: transform 0.12s ease; }
 .sys-card.open .sys-caret { transform: rotate(90deg); }
 .sys-card-body { display: none; padding: 2px 12px 12px; }
 .sys-card.open .sys-card-body { display: block; }
 .sys-meta {
   display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px;
-  font-size: 0.85em; margin: 4px 0 10px; align-items: baseline;
+  font-size: 0.86em; margin: 4px 0 10px; align-items: baseline;
 }
 .sys-key { color: var(--dim); }
 .sys-val { color: var(--fg); font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace); word-break: break-all; }
@@ -2009,7 +2009,7 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
 .sys-doc-scope.global { background: var(--dim); }
 .sys-doc-scope.project { background: var(--active-accent, #2b6cef); }
 .sys-doc-path { color: var(--dim); font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace); word-break: break-all; }
-.sys-note { margin-top: 11px; color: var(--dim); font-size: 0.8em; font-style: italic; line-height: 1.45; }
+.sys-note { margin-top: 11px; color: var(--dim); font-size: 0.82em; font-style: italic; line-height: 1.45; }
 
 /* folded tool IN/OUT (Bash/Grep/…): bounded scroll box, like the Read fold */
 .tool-io-fold {
@@ -2063,7 +2063,7 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
 }
 .md pre code {
   background: none; padding: 0; display: block;
-  font-family: var(--mono); font-size: 0.9em; line-height: 1.5; color: var(--code-fg);
+  font-family: var(--mono); font-size: 0.92em; line-height: 1.5; color: var(--code-fg);
   white-space: pre-wrap; overflow-wrap: anywhere;   /* fallback wrap if line-numbering didn't run */
 }
 /* subtle line-number gutter on wrapped code blocks: .cl = one logical line, .ct = its wrapping content;
@@ -2073,7 +2073,7 @@ pre code .cl { display: flex; align-items: baseline; }
 pre code .cl::before {
   counter-increment: ln; content: counter(ln);
   flex: 0 0 2.3em; margin-right: 0.85em; text-align: right;
-  color: var(--dim); opacity: 0.32; user-select: none; font-size: 0.9em;
+  color: var(--dim); opacity: 0.32; user-select: none; font-size: 0.92em;
 }
 pre code .ct { flex: 1 1 auto; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 /* automatic per-block Copy button (the user 2026-06-22): parked top-right, faint until the block is
@@ -2222,7 +2222,7 @@ body.picker-lifted > #picker.kb-tight { align-items: flex-start; padding: 12px 1
   display: none;
   padding: 6px 14px;
   color: var(--vscode-errorForeground, #f48771);
-  font-family: var(--sans); font-size: 0.85em;
+  font-family: var(--sans); font-size: 0.86em;
   border-bottom: 1px solid var(--box-border);
 }
 .picker-error.show { display: block; }
@@ -2231,7 +2231,7 @@ body.picker-lifted > #picker.kb-tight { align-items: flex-start; padding: 12px 1
    (No border-top: the dir row sits directly under the name box now — create controls first, the
    resume list last, the user 2026-08-12 — and the search box's own border-bottom draws that seam.) */
 .picker-dir { display: flex; align-items: center; gap: 6px; padding: 8px 14px; position: relative; }
-.picker-dir::before { content: "📁"; opacity: 0.55; font-size: 0.9em; flex: 0 0 auto; }
+.picker-dir::before { content: "📁"; opacity: 0.55; font-size: 0.92em; flex: 0 0 auto; }
 /* the input and its in-box verdict share one box: the hint overlays the input's right end, and
    render.ts reserves that much input padding so the typed path never runs under it */
 .picker-dir-field { position: relative; flex: 1 1 auto; display: flex; min-width: 0; }
@@ -2316,7 +2316,7 @@ body.picker-lifted > #picker.kb-tight { align-items: flex-start; padding: 12px 1
 .picker-row.hidden { display: none; }
 .picker-row-top { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
 .picker-name { font-weight: 600; color: var(--fg); }
-.picker-time { color: var(--dim); font-size: 0.85em; flex: 0 0 auto; }
+.picker-time { color: var(--dim); font-size: 0.86em; flex: 0 0 auto; }
 .picker-row.running .picker-time { color: var(--st-ready-bg); font-weight: 600; }
 /* a still-RUNNING session whose tab is closed (surfaced at the top of the + picker to reopen, the user
    2026-07-15): a green badge with a live dot in the time slot */
@@ -2329,7 +2329,7 @@ body.picker-lifted > #picker.kb-tight { align-items: flex-start; padding: 12px 1
 }
 .picker-list.searching .picker-group-label { display: none; }
 .picker-summary {
-  color: var(--dim); font-size: 0.85em; margin-top: 2px;
+  color: var(--dim); font-size: 0.86em; margin-top: 2px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 /* Foot of the + picker's list: the lazy 30-day fetch's wait (the romp loader's .rl-dots) and, once it
@@ -2337,7 +2337,7 @@ body.picker-lifted > #picker.kb-tight { align-items: flex-start; padding: 12px 1
    list chrome rather than another row. */
 .picker-more {
   display: flex; align-items: center; gap: 9px;
-  padding: 9px 14px; color: var(--dim); font-size: 0.85em;
+  padding: 9px 14px; color: var(--dim); font-size: 0.86em;
 }
 .picker-actions { border-top: 1px solid var(--box-border); padding: 8px 10px; }
 .picker-action {
@@ -2359,7 +2359,7 @@ body.picker-lifted > #picker.kb-tight { align-items: flex-start; padding: 12px 1
 .confirm-overlay { display: flex; align-items: center; padding: 16px; }
 .confirm-box { width: min(440px, 96%); padding: 16px 18px; gap: 10px; }
 .confirm-title { font-family: var(--sans); font-weight: 700; font-size: 1.05em; color: var(--fg); }
-.confirm-detail { font-family: var(--sans); font-size: 0.9em; color: var(--dim); line-height: 1.45; }
+.confirm-detail { font-family: var(--sans); font-size: 0.92em; color: var(--dim); line-height: 1.45; }
 .confirm-actions { display: flex; gap: 8px; margin-top: 6px; }
 .confirm-btn { width: auto; flex: 1; }
 .confirm-btn.danger { border-color: var(--vscode-errorForeground, #f48771); color: var(--vscode-errorForeground, #f48771); }
@@ -2373,7 +2373,7 @@ body.picker-lifted > #picker.kb-tight { align-items: flex-start; padding: 12px 1
   max-width: 82%; padding: 6px 14px; border-radius: var(--radius-toast); z-index: 60;
   background: var(--surface-raised); border: 1px solid rgba(224, 176, 32, 0.55);
   box-shadow: var(--shadow-toast);
-  color: var(--fg); font-size: 0.85em; pointer-events: none;
+  color: var(--fg); font-size: 0.86em; pointer-events: none;
   transition: opacity 0.7s ease;
 }
 .locate-toast.fade { opacity: 0; }
@@ -2407,7 +2407,7 @@ body.picker-lifted > #picker.kb-tight { align-items: flex-start; padding: 12px 1
   background: var(--surface-raised);
   box-shadow: var(--shadow-toast);
   border: 1px solid var(--vscode-errorForeground, #f48771);
-  color: var(--fg); font-size: 0.85em;
+  color: var(--fg); font-size: 0.86em;
   transition: opacity 0.7s ease;
 }
 .warn-toast-msg { min-width: 0; }
@@ -2556,8 +2556,8 @@ body.picker-lifted > #picker.kb-tight { align-items: flex-start; padding: 12px 1
 .path-img-loading { display: none; }   /* the <img> takes the spot the instant it has pixels */
 @media (prefers-reduced-motion: reduce) { .path-load-spin { animation: none; } }
 /* the PDF card's label + filename (preview.ts previewFull's pdf branch) */
-.path-thumb-tag { font-size: 0.74em; font-weight: 700; letter-spacing: 0.04em; color: var(--accent); flex: 0 0 auto; }
-.path-thumb-name { font-size: 0.74em; color: var(--fg); overflow: hidden; text-overflow: ellipsis;
+.path-thumb-tag { font-size: 0.72em; font-weight: 700; letter-spacing: 0.04em; color: var(--accent); flex: 0 0 auto; }
+.path-thumb-name { font-size: 0.72em; color: var(--fg); overflow: hidden; text-overflow: ellipsis;
   white-space: nowrap; max-width: 200px; }
 
 /* FULL-SIZE inline render (the user 2026-07-20): a mentioned image shows AS the image, at the same
@@ -2578,13 +2578,13 @@ body.picker-lifted > #picker.kb-tight { align-items: flex-start; padding: 12px 1
    never silently removed (preview.ts previewFull) */
 .path-full-retry { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 8px;
   background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.14);
-  font-size: 0.85em; opacity: 0.85; cursor: pointer; }
+  font-size: 0.86em; opacity: 0.85; cursor: pointer; }
 .path-full-retry:hover { border-color: var(--accent); }
 /* the fixed-footprint wait box shared by the retrying swirl AND the failure chip, so retry churn
    never shifts the chat's scroll (preview.ts mkWait; the user 2026-08-16 watched it thrash ~a line) */
 .path-full-wait { display: inline-flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 4px; min-width: 200px; min-height: 56px; border-radius: 8px; background: rgba(255, 255, 255, 0.04); }
-.path-load-note { font-size: 0.85em; opacity: 0.65; }
+.path-load-note { font-size: 0.86em; opacity: 0.65; }
 /* a repeat failure pulses once on swap-in so an identical-looking outcome still reads as a
    RESPONSE to the tap (preview.ts previewFull) — on the give-up chip and the retrying note alike */
 .path-full-retry.path-retry-flash, .path-load-note.path-retry-flash { animation: path-retry-flash 0.45s ease; }
@@ -2625,7 +2625,7 @@ body.picker-lifted > #picker.kb-tight { align-items: flex-start; padding: 12px 1
    (the user 2026-07-11) — quiet gray, never bold, italic, a step smaller than the name it precedes.
    Inherits nothing from the session's identity color (the parent sets color; this overrides). Defined
    in feed.css too — the feed page loads only that sheet (the .romp-acted precedent). */
-.host-prefix { color: var(--dim); font-weight: 400; font-style: italic; font-size: 0.88em; }
+.host-prefix { color: var(--dim); font-weight: 400; font-style: italic; font-size: 0.86em; }
 /* ...but it must FADE with the name it precedes. Because the rule above is a declaration on the child,
    the at-rest tab's inline faded color can't inherit into it, so a remote session's "host:" stayed bright
    while its name dimmed (the user 2026-07-22). renderTabs adds .name-faded whenever it applies the faded
@@ -2867,7 +2867,7 @@ mark.cmt-hl.hl-last { border-top-right-radius: 2px; border-bottom-right-radius: 
    accent on hover, the 0.78em label tier */
 .cmt-act {
   background: rgba(255, 255, 255, 0.06);
-  border: 1px solid var(--box-border); color: var(--dim); border-radius: 5px; font-size: 0.78em;
+  border: 1px solid var(--box-border); color: var(--dim); border-radius: 5px; font-size: 0.82em;
   padding: 1px 8px; cursor: pointer;
 }
 .cmt-act:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-wash); }   /* the feed word-button hover (2026-08-25): Break out / Merge / Delete light up like Clear/Undo */

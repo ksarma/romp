@@ -40,10 +40,10 @@ test("running an item closes the palette FIRST so its own modal never lands unde
 
 test("session rows wear the TAB identity language: bold name in the session color, host: prefix dim italic", () => {
   // the user 2026-08-08: visual consistency across surfaces — .tab.colored .tab-label is 600-weight
-  // in the identity color; .host-prefix is dim italic at 0.88em. The switcher copies both, and the
+  // in the identity color; .host-prefix is dim italic at 0.86em. The switcher copies both, and the
   // fuzzy-match marks underline instead of recoloring so the identity color stays intact.
   assert.match(PALETTE, /\.rpal-name\{font-weight:600\}/);
-  assert.match(PALETTE, /\.rpal-host\{color:#9aa0a6;font-weight:400;font-style:italic;font-size:0\.88em\}/);
+  assert.match(PALETTE, /\.rpal-host\{color:#9aa0a6;font-weight:400;font-style:italic;font-size:0\.86em\}/);
   assert.match(PALETTE, /\.rpal-name b,\.rpal-host b\{color:inherit;font-weight:inherit;text-decoration:underline\}/);
   assert.match(PALETTE, /n\.style\.color = item\.color;/);
   assert.match(PALETTE, /\.rpal-dim\{[^}]*font-size:11px/);
@@ -53,7 +53,7 @@ test("session rows wear the TAB identity language: bold name in the session colo
   // …and the same treatment the tabs use, pinned at its source so the two can't drift silently
   const STYLES = read("styles.css");
   assert.match(STYLES, /\.tab\.colored \.tab-label \{ color: var\(--chip-bg\); font-weight: 600; \}/);
-  assert.match(STYLES, /\.host-prefix \{ color: var\(--dim\); font-weight: 400; font-style: italic; font-size: 0\.88em; \}/);
+  assert.match(STYLES, /\.host-prefix \{ color: var\(--dim\); font-weight: 400; font-style: italic; font-size: 0\.86em; \}/);
 });
 
 // ── the shell boot: the bindings dispatcher, wired into every pane ─────────────────────────

@@ -56,7 +56,7 @@ test("chat: a mentioned image/PDF grows a FULL render at its mention, deduped an
 
 test("the chat sheet carries the lightbox + preview styles (the feed no longer previews)", () => {
   assert.match(CHAT_CSS, /#romp-lightbox \{ position: fixed; inset: 0; z-index: 1300;/);
-  assert.match(CHAT_CSS, /\.path-thumb-tag \{ font-size: 0\.74em;/, "the PDF card's label (previewFull)");
+  assert.match(CHAT_CSS, /\.path-thumb-tag \{ font-size: 0\.72em;/, "the PDF card's label (previewFull)");
   assert.match(CHAT_CSS, /\.path-full-img \{ display: block; max-width: 100%;/, "the full render's image scale");
   assert.match(CHAT_CSS, /\.path-thumbs \{ display: flex; flex-wrap: wrap;/, "the chat strip container");
 });

@@ -34,5 +34,5 @@ test("the badge is a warning-yellow pill, same treatment as the warn chip", () =
   // was neutral gray and too easy to miss (the user 2026-07-06); one warning yellow across the card
   assert.match(CSS, /\.fask-interrupted \{[^}]*color: #ffd166/);
   assert.match(CSS, /\.fask-warnchip \{[^}]*color: #ffd166/, "shares the warn chip's yellow, no new color");
-  assert.match(CSS, /\.fask-interrupted \{[^}]*font-size: 0\.64em/, "same size as its sibling pills");
+  assert.match(CSS, /\.fask-interrupted \{[^}]*font-size: 0\.66em/, "same size as its sibling pills");
 });

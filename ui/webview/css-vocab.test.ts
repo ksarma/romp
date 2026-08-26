@@ -143,6 +143,20 @@ test("same-row badges wear the SAME metric set; micro-labels wear the section-he
   }
 });
 
+test("the em type ladder is SIX sizes below 1em: 0.66 / 0.7 / 0.72 / 0.82 / 0.86 / 0.92", () => {
+  // CLAUDE.md: font sizes — few, consistent by information type. Sixteen sub-1em sizes had
+  // accumulated in the two sheets, most a rounding-error apart (0.9 vs 0.92 is a quarter pixel at
+  // the 13px base); collapsed 2026-08-26. A new size below 1em must join an existing rung — if a
+  // genuinely new information type needs its own, widen this list in the same commit and say why.
+  const LADDER = new Set(["0.66em", "0.7em", "0.72em", "0.82em", "0.86em", "0.92em"]);
+  for (const [name, css] of [["styles.css", CHAT], ["feed.css", FEED]] as const) {
+    for (const m of css.match(/font-size: (0\.\d+em)/g) || []) {
+      const v = m.slice("font-size: ".length);
+      assert.ok(LADDER.has(v), name + " uses off-ladder size " + v);
+    }
+  }
+});
+
 test("the transcript's rhythm: 7px turns, 11px user turns, ONE bubble padding, dots on the first line", () => {
   // slightly-more-compact pass (the user 2026-08-26): turn padding 9→7 and user turns 14→11, with
   // the rail dots/time markers moved the same distance so they keep sitting on the first line;

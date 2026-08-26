@@ -75,5 +75,5 @@ test("the divider label matches the rail marker's type size", () => {
   };
   const size = (s: string): string | null => (s.match(/font-size: ([\d.]+em)/) ?? [])[1] ?? null;
   assert.equal(size(rule(".day-divider")), size(rule(".time-marker")));
-  assert.equal(size(rule(".day-divider")), "0.76em");
+  assert.equal(size(rule(".day-divider")), "0.72em");
 });

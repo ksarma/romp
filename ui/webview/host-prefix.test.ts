@@ -48,7 +48,7 @@ test("every surface renders the prefix through the shared treatment", () => {
   // one class, both sheets (the feed page loads only feed.css — the .romp-acted precedent)
   const CSS = read("styles.css"), FCSS = read("feed.css");
   for (const sheet of [CSS, FCSS]) {
-    assert.match(sheet, /\.host-prefix \{ color: var\(--dim\); font-weight: 400; font-style: italic; font-size: 0\.88em; \}/);
+    assert.match(sheet, /\.host-prefix \{ color: var\(--dim\); font-weight: 400; font-style: italic; font-size: 0\.86em; \}/);
   }
   // the timeline lane label (one plain-JS file, SVG tspans) applies the same rule off the sid marker
   const TL = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "romp-timeline-view.js"), "utf8");

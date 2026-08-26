@@ -82,8 +82,8 @@ test("the stop control reuses the API-error card's control chrome, and the count
   assert.match(CSS, /\.retrying-countdown \{[^}]*font-variant-numeric: tabular-nums/);
 });
 
-test("the error line wears the SAME 0.9em as the retrying line (one size per information type), muted", () => {
-  assert.match(CSS, /\.retrying-err \{[^}]*font-size: 0\.9em/);
+test("the error line wears the SAME 0.92em as the retrying line (one size per information type), muted", () => {
+  assert.match(CSS, /\.retrying-err \{[^}]*font-size: 0\.92em/);
   assert.match(CSS, /\.retrying-err \{[^}]*color: color-mix\(in srgb, #e67e22 55%, var\(--dim\)\)/);
 });
 

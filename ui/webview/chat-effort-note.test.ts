@@ -27,5 +27,5 @@ test("renderEffortApplied is a static, muted 'effort set to X' rail note", () =>
 test("the effort note reuses the retried note's slim treatment (one shared style, per the font rule)", () => {
   // grouped selectors → the effort note inherits the SAME size/colour as the retried note, not a new one
   assert.match(CSS, /\.turn-retried, \.turn-effort \{/);
-  assert.match(CSS, /\.retried-line, \.effort-line \{[^}]*font-size: 0\.9em/);
+  assert.match(CSS, /\.retried-line, \.effort-line \{[^}]*font-size: 0\.92em/);
 });
