@@ -23985,7 +23985,7 @@ def _pusher():
 # ───────────────────────── HTTP / page serving ─────────────────────────
 THEME_CSS = """@font-face{font-family:'Inter';src:url(/media/InterVariable.woff2) format('woff2-variations');font-weight:100 900;font-style:normal;font-display:swap}@font-face{font-family:'Inter';src:url(/media/InterVariable-Italic.woff2) format('woff2-variations');font-weight:100 900;font-style:italic;font-display:swap}:root{--vscode-font-family:'Inter',system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
 --vscode-editor-font-family:ui-monospace,"SF Mono",Menlo,Consolas,"DejaVu Sans Mono",monospace;--vscode-chat-font-family:var(--vscode-font-family);
---vscode-chat-font-size:13px;--vscode-foreground:#cccccc;--vscode-descriptionForeground:rgba(204,204,204,.7);
+--vscode-chat-font-size:13px;--vscode-foreground:#cccccc;--vscode-descriptionForeground:#9aa3ad;
 --vscode-errorForeground:#f48771;--vscode-editor-background:#1e1e1e;--vscode-editorWidget-background:#252526;
 --vscode-editorHoverWidget-border:#454545;--vscode-sideBar-background:#252526;--vscode-widget-border:#303031;
 --vscode-focusBorder:#007fd4;--vscode-input-background:#3c3c3c;--vscode-input-foreground:#cccccc;
@@ -26515,10 +26515,10 @@ def _landing():
             ".rail-acts{flex:0 0 auto;display:flex;flex-direction:row;align-items:center;gap:6px;margin-left:auto}"   # compact: tight row of refresh/network/settings   # pinned to the RIGHT of the bottom bar, always visible
             ".rail-btn{flex:0 0 auto;letter-spacing:.04em;line-height:1;"
             "font:600 11px 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;color:#8a8a8a;margin:0;"
-            "padding:4px 9px;border-radius:5px;cursor:pointer;user-select:none;display:flex;align-items:center;"
-            "justify-content:center;transition:color .1s,background .1s}"
+            "padding:4px 9px;border-radius:5px;border:1px solid transparent;cursor:pointer;user-select:none;display:flex;align-items:center;"
+            "justify-content:center;transition:color .1s,background .1s,border-color .1s}"
             ".rail-btn:hover{color:#cfe6ff;background:rgba(255,255,255,0.06)}"
-            ".rail-btn.on{color:var(--accent);background:rgba(156,210,255,0.12)}"
+            ".rail-btn.on{color:var(--accent);background:rgba(156,210,255,0.12);border-color:rgba(156,210,255,0.35)}"
             # the ↻ refresh + ⛭ settings actions sit in .rail-acts, pinned to the RIGHT (margin-left:auto on the
             # wrapper) of the bottom bar and ALWAYS visible — settings (⛭, last in the DOM) at the far right.
             ".rail-act{flex:0 0 auto;display:flex;align-items:center;justify-content:center;margin:1px 4px;padding:4px 0;"
@@ -26561,7 +26561,7 @@ def _landing():
             "background:rgba(0,0,0,0.55)}#rnet-back[hidden]{display:none}"
             "#rnet-panel{width:min(560px,94%);max-height:88vh;overflow:auto;"   # matches the settings .rs-card
             "background:#252526;border:1px solid #3a3a3a;border-radius:10px;box-shadow:0 12px 36px #000000aa;"
-            "padding:16px 20px;color:#ccc;font:13px/1.6 system-ui,-apple-system,'Segoe UI',sans-serif}"
+            "padding:16px 20px;color:#ccc;font:13px/1.6 'Inter',system-ui,-apple-system,'Segoe UI',sans-serif}"
             "#rnet-panel .rnet-top{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;color:#e8eaed;"
             "margin:0 0 12px;padding-bottom:10px;border-bottom:1px solid #34343a}"
             ".rnet-top span{flex:1 1 auto}"
@@ -26663,7 +26663,7 @@ def _landing():
             "background:rgba(0,0,0,0.55)}"
             "#rfleet-panel{width:min(560px,94%);max-height:80vh;overflow:auto;background:#252526;"
             "border:1px solid #3a3a3a;border-radius:10px;box-shadow:0 12px 36px #000000aa;padding:16px 20px;"
-            "color:#ccc;font:13px/1.6 system-ui,-apple-system,'Segoe UI',sans-serif}"
+            "color:#ccc;font:13px/1.6 'Inter',system-ui,-apple-system,'Segoe UI',sans-serif}"
             ".rfleet-top{font-size:14px;font-weight:600;color:#e8eaed;margin-bottom:2px}"
             ".rfleet-sub{color:#8a8a8a;margin-bottom:10px}"
             ".rfleet-row{display:flex;gap:8px;align-items:baseline;padding:5px 0;border-top:1px solid #33343a}"
@@ -26782,7 +26782,7 @@ def _landing():
             # off hides it AND the now-orphaned gutters. Fixed order: chat, fleet, feed. Timeline is the band.
             "#chat-pane{flex:var(--g-chat,60) 1 0}#fleet-pane{flex:var(--g-fleet,34) 1 0}#feed-pane{flex:var(--g-feed,40) 1 0}"
             "body:not(.po-chat) #chat-pane{display:none}body:not(.po-fleet) #fleet-pane{display:none}body:not(.po-feed) #feed-pane{display:none}"
-            ".row>.gv{flex:0 0 5px}"
+            ".row>.gv{flex:0 0 7px}"
             # gv-a sits chat|fleet (only when both shown); gv-b sits (fleet|chat)|feed — the chat|feed gutter when fleet off.
             "body:not(.po-chat) #gv-a,body:not(.po-fleet) #gv-a{display:none}"
             "body:not(.po-feed) #gv-b,body:not(.po-chat):not(.po-fleet) #gv-b{display:none}"
@@ -26791,10 +26791,18 @@ def _landing():
             # Band + gutter both hide when the toggle is off, so the pane row fills the height.
             "#tl-pane{flex:0 0 var(--tl,200px)}"
             "body:not(.po-timeline) #gh,body:not(.po-timeline) #tl-pane{display:none}"
-            ".gv{cursor:col-resize;background:linear-gradient(90deg,transparent 2px,#333 2px,#333 3px,transparent 3px)}"
-            ".gh{flex:0 0 5px;cursor:row-resize;background:linear-gradient(180deg,transparent 2px,#333 2px,#333 3px,transparent 3px)}"
-            ".gv:hover{background:linear-gradient(90deg,transparent 2px,#007fd4 2px,#007fd4 3px,transparent 3px)}"
-            ".gh:hover{background:linear-gradient(180deg,transparent 2px,#007fd4 2px,#007fd4 3px,transparent 3px)}"
+            # the splitters wear the composer-grip affordance (the user 2026-08-26, who liked that handle):
+            # a centered pill, always faintly visible so the drag is discoverable, accent + longer on hover —
+            # and 7px of air instead of 5 so the panes read clearly separated. Hover accent is the romp blue
+            # (#9cd2ff), not VS Code's #007fd4 (CLAUDE.md: focus cues wear the accent).
+            ".gv{cursor:col-resize;position:relative;background:linear-gradient(90deg,transparent 3px,#333 3px,#333 4px,transparent 4px)}"
+            ".gh{flex:0 0 7px;cursor:row-resize;position:relative;background:linear-gradient(180deg,transparent 3px,#333 3px,#333 4px,transparent 4px)}"
+            ".gv::after,.gh::after{content:'';position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);"
+            "border-radius:2px;background:#43454b;transition:background .12s,width .12s,height .12s}"
+            ".gv::after{width:3px;height:36px}.gh::after{width:36px;height:3px}"
+            ".gv:hover{background:linear-gradient(90deg,transparent 3px,#3a4a58 3px,#3a4a58 4px,transparent 4px)}"
+            ".gh:hover{background:linear-gradient(180deg,transparent 3px,#3a4a58 3px,#3a4a58 4px,transparent 4px)}"
+            ".gv:hover::after{background:#9cd2ff;height:52px}.gh:hover::after{background:#9cd2ff;width:52px}"
             "body.drag iframe{pointer-events:none}body.dragv{cursor:col-resize}body.dragh{cursor:row-resize}"
             ".pane{position:relative;min-width:0;min-height:0;overflow:hidden}"
             ".pane>iframe{position:absolute;inset:0;width:100%;height:100%}"
@@ -26803,7 +26811,7 @@ def _landing():
             # the others get nothing, so the only lines on screen are the splitters + this focus ring. The ring
             # is pointer-events:none (never blocks) and z below the timeline collapse handle (z-30).
             ".pane.pane-focused::after{content:'';position:absolute;inset:0;pointer-events:none;z-index:6;"
-            "box-shadow:inset 0 0 0 2px rgba(120,170,225,0.55)}"
+            "box-shadow:inset 0 0 0 2px rgba(156,210,255,0.55)}"   # the romp accent — focus cues wear it (CLAUDE.md)
             "#mtabs{display:none}"
             # narrow OR a touch device up to 1024px → one pane + bottom tabs; mouse desktops keep the grid
             "@media (max-width:820px),(pointer:coarse) and (max-width:1024px){"
@@ -26903,7 +26911,7 @@ def _landing():
             # dim times (the network panel's information-type sizes), rnet-style action button + close.
             "#rerr-panel{width:min(700px,94vw);max-height:min(60vh,480px);"   # 60% wider (the user 2026-07-28); a flex child of the centered backdrop, no own positioning
             "display:flex;flex-direction:column;background:#252526;border:1px solid #3a3a3a;border-radius:10px;"
-            "box-shadow:0 12px 36px #000000aa;color:#ccc;font:13px/1.6 system-ui,-apple-system,'Segoe UI',sans-serif}"
+            "box-shadow:0 12px 36px #000000aa;color:#ccc;font:13px/1.6 'Inter',system-ui,-apple-system,'Segoe UI',sans-serif}"
             "#rerr-panel .rerr-top{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;color:#e8eaed;"
             "padding:10px 12px;border-bottom:1px solid #34343a;flex:0 0 auto}"
             "#rerr-panel .rerr-top .sp{flex:1}"
