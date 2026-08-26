@@ -1,6 +1,15 @@
 /* romp feed — a stream of rounded "deliverable cards" floating on a darker
    background. Shares the romp panel's theme-variable palette (see styles.css). */
 
+/* Inter (SIL OFL 1.1 — media/InterVariable-LICENSE.txt): THE romp UI typeface (the user
+   2026-08-26, who wanted the dashboard genuinely nice to look at). A variable face, so every
+   weight ships in one file; italic is its own optical design, not a slant. First in --sans, so
+   it beats the host font on every surface; falls back to the modern system stack unloaded. */
+@font-face { font-family: 'Inter'; src: url(../media/InterVariable.woff2) format('woff2-variations');
+  font-weight: 100 900; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Inter'; src: url(../media/InterVariable-Italic.woff2) format('woff2-variations');
+  font-weight: 100 900; font-style: italic; font-display: swap; }
+
 :root {
   --bg: var(--vscode-editor-background, #1e1e1e);
   --fg: var(--vscode-foreground, #cccccc);
@@ -52,7 +61,7 @@
      status text/chips stay --rel-done green (they encode status, not a check). */
   --check-bg: #1EA1EB;
 
-  --sans: var(--vscode-chat-font-family, var(--vscode-font-family, system-ui, -apple-system, "Segoe UI", sans-serif));
+  --sans: "Inter", var(--vscode-chat-font-family, var(--vscode-font-family, system-ui, -apple-system, "Segoe UI", sans-serif));
   --fs: var(--vscode-chat-font-size, 13px);
 }
 

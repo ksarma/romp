@@ -40,7 +40,7 @@ const CSS =
   "#rpal-back[hidden]{display:none}" +
   "#rpal{width:min(560px,94%);max-height:60vh;display:flex;flex-direction:column;background:#252526;" +
   "border:1px solid #3a3a3a;border-radius:10px;box-shadow:0 12px 36px #000000aa;padding:8px;" +
-  "color:#ccc;font:13px/1.6 system-ui,-apple-system,'Segoe UI',sans-serif;box-sizing:border-box}" +
+  "color:#ccc;font:13px/1.6 'Inter',system-ui,-apple-system,'Segoe UI',sans-serif;box-sizing:border-box}" +
   "#rpal-in{flex:0 0 auto;background:#1b1b1c;border:1px solid #3a3a3a;border-radius:6px;color:#e8eaed;" +
   "font:inherit;padding:7px 10px;outline:none;box-sizing:border-box;width:100%}" +
   "#rpal-in:focus{border-color:var(--accent,#9cd2ff)}" +
