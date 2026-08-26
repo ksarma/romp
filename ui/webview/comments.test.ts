@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { threadsByAnchor, threadBusy, threadStuck, threadInFlight, replyOwed, latchBusy, type BusyLatch, SETTLE_CONFIRM_PUSHES, findExact, findAnchorRange, sliceRanges, prunePending,
+import { threadsByAnchor, threadBusy, threadStuck, replyOwed, agentCount, findExact, findAnchorRange, sliceRanges, prunePending,
          type CommentThread } from "./comments";
 import { compactDisplay } from "./compact";
 
@@ -385,7 +385,7 @@ test("while the thread is WRITING the passage holds the await-green tint and NOT
 
 test("the popover renders the thread with the CHAT's own renderer from the branch point", () => {
   assert.match(UI, /renderingSid = th\.tid;/);
-  assert.match(UI, /const node = renderEvent\(ev, prev, null\);\s*\n\s*list\.appendChild\(node\);/);
+  assert.match(UI, /const node = renderEvent\(ev, prev, turnWorkedSecs\(evs, it\.index, thWorking\)\);\s*\n\s*list\.appendChild\(node\);/);   // + the chat's worked footers (the parity bundle, 2026-08-26)
   assert.match(KERNEL, /def _thread_events\(tsid, cut_uuid, now, tmux\):/);
   assert.match(KERNEL, /evs = evs\[at \+ 1:\]/, "sliced to AFTER the branch point — the head system card never rides");
   // the thread's own statusline posts the chat's own ops through the SHARED menu, keyed to the
@@ -465,59 +465,66 @@ test("the popover's typing dots are retired — the green highlight is the only 
   assert.match(UI, /the pending bubble IS the acknowledgement/);
 });
 
-// ── the in-flight color keys on the EXCHANGE, not the worker session's state (the user 2026-08-24,
-// second report): create → green for a second → YELLOW while the thread CLI booted (its live state
-// read idle) → green once generation started. The exact reported sequence, executed: ─────────────
-test("the mark stays green from send to landed reply, through the CLI-boot state wobble", () => {
+// ── T104 (the user 2026-08-26, screenshot): the popover's pending echo wore a one-off washed-gray
+// pill — the "third look" the chat killed 2026-07-16, reborn thread-locally — while the chip read
+// Ready off one stale relayed frame, so it read as a stuck queued thing with no queued dress. The
+// echo now RIDES the chat's own component: renderQueued's bare optimistic group, inherited. ──────
+test("the popover's pending echo IS the chat's queued idiom — one component, both boot and live", () => {
+  assert.match(UI, /function cmtPendingQueued\(pend: \{ text: string; t: number; imgPaths\?: string\[\] \}\[\]\): HTMLElement \{\s*\n\s*return renderQueued\(\{ kind: "queued", bare: true,/);
+  assert.match(UI, /texts: pend\.map\(\(p\) => \(\{ md: p\.text, optimistic: true, cancelable: false, imgPaths: p\.imgPaths \}\)\),/);
+  // the parity bundle (2026-08-26): a shipped image rides the pending entry, so the echo renders
+  // the SAME thumbnails the chat's echo does — event-sourced from the drop ack, never text-parsed
+  assert.match(UI, /if \(previewKind\(m\.path\) === "img"\) cmtShippedImgs\.push\(m\.path\);/);
+  assert.match(UI, /imgPaths: cmtShippedImgs\.filter\(\(p2\) => text\.includes\(p2\)\) \}\);/);
+  const sites = (UI.match(/cmtPendingQueued\(pend\)/g) || []).length;
+  assert.equal(sites, 2, "both render sites — the boot view and the live list — share it");
+  // the one-off is gone root and branch: no .pending class minted, no washed-gray CSS
+  assert.doesNotMatch(UI, /classList\.add\("pending"\)/);
+  assert.doesNotMatch(CSS, /\.cmt-msg\.pending/);
+});
+
+// ── THE EXCHANGE LATCH (T102, the user 2026-08-26 — replacing the push-count settle): busy latches
+// at the SEND GESTURE (cmtAwaitBase.set in render.ts, before any kernel round-trip — thread-open is
+// never the start trigger) and clears ONLY on the reply-arrived event: th.msgs holding MORE
+// who==="agent" records than at the send. No push counting (the banned proxy: its all-quiet
+// fork-birth frames killed the create-window green, and a stall in its stepping parked green
+// forever), no thread-state proxy, no clocks. ────────────────────────────────────────────────────
+test("agentCount is the reply-arrived detector's datum — records of the exchange itself", () => {
   const msg = (who: "you" | "agent") => ({ who, text: "x", t: 1 });
-  // 1) optimistic create: a synthetic working thread — green
-  assert.ok(threadInFlight(th({ state: "working", msgs: [] })), "optimistic create reads in-flight");
-  // 2) the kernel's frame replaces it mid-boot: state idle/empty, the comment is the newest message —
-  //    the reply is OWED, so STILL green (this is the wobble that flashed yellow)
-  assert.ok(threadInFlight(th({ state: "", msgs: [msg("you")] })), "boot window: owed reply keeps it green");
-  // 3) the reply lands: agent message newest, state settled — yellow
-  assert.ok(!threadInFlight(th({ state: "", msgs: [msg("you"), msg("agent")] })), "landed reply settles to yellow");
-  // 4) a follow-up from the user re-arms it
-  assert.ok(threadInFlight(th({ state: "", msgs: [msg("you"), msg("agent"), msg("you")] })), "a follow-up re-owes");
-  // live work still counts even with the agent's message newest (a continuing turn)
-  assert.ok(threadInFlight(th({ state: "working", msgs: [msg("you"), msg("agent")] })));
-  // …but never on a blocked, errored, or closed thread — green must not lie
-  assert.ok(!threadInFlight(th({ state: "permission", msgs: [msg("you")] })), "a stuck reply is NOT on the way");
-  assert.ok(!threadInFlight(th({ state: "", msgs: [msg("you")], error: "spawn failed" } as any)), "errored: the note speaks, not the green");
-  assert.ok(!threadInFlight(th({ state: "", msgs: [msg("you")], status: "resolved" })), "resolved threads are done");
+  assert.equal(agentCount(th({ msgs: [] })), 0);
+  assert.equal(agentCount(th({ msgs: [msg("you")] })), 0, "the send alone arrives no reply");
+  assert.equal(agentCount(th({ msgs: [msg("you"), msg("agent")] })), 1, "the reply record raises the count");
+  assert.equal(agentCount(th({ msgs: [msg("you"), msg("agent"), msg("you")] })), 1, "a follow-up send does not");
   assert.equal(replyOwed(th({ msgs: [] })), false, "an empty thread owes nothing");
+  assert.equal(replyOwed(th({ msgs: [msg("you")] })), true, "…the durable owed half survives reloads");
 });
 
-// ── the SETTLE LATCH (the user 2026-08-24, third report: green → a ~1s YELLOW blip mid-churn →
-// green → correct settle). At a turn boundary inside a continuing thread one push reads
-// quiet-state + agent-tail — frame-locally identical to the true end — so the green now holds until
-// TWO consecutive pushes confirm the settle (pushes are events; the pendingSessionViews idiom).
-// The user's exact sequence, executed: the state changes at most ONCE across it. ────────────────
-test("the mark never blips: the user's churn sequence yields exactly one green→yellow transition", () => {
-  const msg = (who: "you" | "agent") => ({ who, text: "x", t: 1 });
-  const frames = [
-    th({ state: "working", msgs: [msg("you")] }),                    // churn
-    th({ state: "", msgs: [msg("you"), msg("agent")] }),             // the boundary frame that blipped
-    th({ state: "working", msgs: [msg("you"), msg("agent")] }),      // churn resumes
-    th({ state: "", msgs: [msg("you"), msg("agent")] }),             // quiet 1
-    th({ state: "", msgs: [msg("you"), msg("agent")] }),             // quiet 2 → settle
-  ];
-  let l: BusyLatch | undefined;
-  const seen: boolean[] = [];
-  for (const f of frames) { l = latchBusy(l, f); seen.push(l.green); }
-  assert.deepEqual(seen, [true, true, true, true, false], "green held through the boundary, settled on confirmation");
-  assert.equal(seen.filter((s, i) => i && s !== seen[i - 1]).length, 1, "at most one change per deciding event");
-  assert.equal(SETTLE_CONFIRM_PUSHES, 2, "two consecutive confirming pushes decide the settle");
+test("busy latches at the SEND gesture and clears exactly on the reply-arrived record (source pins)", () => {
+  // create: the gesture latches under the synth tid, before any kernel round-trip
+  assert.match(UI, /cmtAwaitBase\.set\(synth\.tid, 0\);\s+\/\/ the SEND gesture latches the pulse/);
+  // follow-up: re-latches at ITS send, with the agent count at that moment as the base
+  assert.match(UI, /cmtAwaitBase\.set\(cur\.th\.tid, agentCount\(cur\.th\)\);/);
+  // the create's latch carries onto the real thread at adopt (the synth tid retires)
+  assert.match(UI, /if \(k\.startsWith\("pending:"\)\) \{ cmtAwaitBase\.set\(tid, cmtAwaitBase\.get\(k\)!\); cmtAwaitBase\.delete\(k\); \}/);
+  // the ONE clearing site: the comments frame whose msgs carry MORE agent records than the base —
+  // or the thread leaving "open"/erroring (green would lie about a reply no longer on the way)
+  assert.match(UI, /if \(base !== undefined && \(agentCount\(t\) > base \|\| t\.status !== "open" \|\| !!t\.error\)\) cmtAwaitBase\.delete\(t\.tid\);/);
+  // the mark's predicate: the latch, or (post-reload) the records' own owed reading; never state
+  assert.match(UI, /return cmtAwaitBase\.has\(th\.tid\) \|\| replyOwed\(th\);/);
+  assert.match(UI, /if \(th\.status !== "open" \|\| !!th\.error \|\| threadStuck\(th\.state\)\) return false;/);
+  // the push-count proxy is GONE root and branch
+  assert.doesNotMatch(UI, /settledPushes|commentBusyLatch|latchBusy|SETTLE_CONFIRM_PUSHES/);
 });
 
-test("status flips decide IMMEDIATELY — resolve/merge/error never wait out the confirmation window", () => {
+test("stuck-green regression: a stalled or missing later frame can never park the pulse", () => {
+  // the old settle needed the 0→1→2 stepping to arrive; a parent dropping out of the pushed set (or
+  // any withheld frame) left !confirmed true with nothing to clear it. The new clear is the reply
+  // RECORD itself: the frame that shows the reply clears the latch in the same breath, and a thread
+  // with no latch entry and an agent-tail msgs reads settled with NO further frames needed.
   const msg = (who: "you" | "agent") => ({ who, text: "x", t: 1 });
-  let l = latchBusy(undefined, th({ state: "working", msgs: [msg("you")] }));
-  assert.equal(l.green, true);
-  assert.equal(latchBusy(l, th({ state: "working", msgs: [msg("you")], status: "resolved" })).green, false, "resolved drops the green on ITS event");
-  assert.equal(latchBusy(l, th({ state: "", msgs: [msg("you")], error: "spawn failed" } as any)).green, false, "an errored thread is never green");
-  // an optimistic pending send (alsoBusy) arms the latch like any busy reading
-  assert.equal(latchBusy(undefined, th({ state: "", msgs: [] }), true).green, true, "a just-typed reply reads busy immediately");
+  assert.equal(replyOwed(th({ msgs: [msg("you"), msg("agent")] })), false,
+    "the reply record alone reads settled — no confirmation pushes exist to stall");
+  assert.doesNotMatch(UI, /settleConfirmed/);
 });
 
 // ── LEG C (the user 2026-08-24): the popover ignored the chat's display settings — thinking blocks
@@ -552,4 +559,52 @@ test("everything that re-renders the chat's units refills the open popover live"
   assert.match(UI, /function refillOpenCommentPop\(\): void \{/);
   assert.match(UI, /refillOpenCommentPop\(\);   \/\/ the popover renders the same units — its copy of this run must flip too/);
   assert.match(UI, /onExternalSettingsChange\(\(s\) => \{ settings = s; applyChatScheme\(s\); renderTabs\(\); rerenderAll\(\); refillOpenCommentPop\(\); \}\);/);
+});
+
+// ── T106 (the user 2026-08-26, found by the romp-lab loop's first full pass): three seam fixes ────
+test("a create refused by parse lag holds its mark and retries on the frame event — never dropped", () => {
+  // the kernel's typed nack: transient (the anchor record hasn't hit its parse yet) vs real
+  const KERNELSRC = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
+  assert.match(KERNELSRC, /ANCHOR_LAG_ERR = "that message isn't in the transcript yet; try again in a moment"/);
+  assert.match(KERNELSRC, /"transient": err == ANCHOR_LAG_ERR,/);
+  assert.match(KERNELSRC, /else:\s*\n\s*client\["send"\]\(json\.dumps\(\{"type": "warn", "text": err\}\)\)/,
+    "no toast for plumbing the retry makes moot; real refusals stay loud");
+  // …and the kernel PARKS the lag-refused create and retries it per pusher cycle (the file it is
+  // waiting on is its own): a settled session emits no further frames, so the client-side re-post
+  // alone starved — the park covers that; the client's frame-keyed belt covers a restart's lost park
+  assert.match(KERNELSRC, /_parked_creates\.append\(\{"sid": sid, "uuid": str\(msg\["uuid"\]\)/);
+  assert.match(KERNELSRC, /def _retry_parked_creates\(\):/);
+  assert.match(KERNELSRC, /_retry_parked_creates\(\)   # lag-parked comment creates ride every pusher cycle \(T106\)/);
+  assert.match(KERNELSRC, /_PARK_MAX_TRIES = 30/);
+  // the client holds the payload at send and re-posts when a session frame proves the parse caught up
+  assert.match(UI, /cmtCreateInFlight\.set\(create\.uuid, \{ sid: create\.sid,/);
+  assert.match(UI, /retryCmtCreates\(String\(msg\.id \|\| ""\)\);\s+\/\/ a session frame = the kernel re-parsed/);
+  assert.match(UI, /const CMT_CREATE_MAX_TRIES = 12;/);
+  // the ack retires the hold; a REAL refusal drops the synth honestly
+  assert.match(UI, /if \(m\.uuid\) cmtCreateInFlight\.delete\(String\(m\.uuid\)\);\s+\/\/ the ack retires the retry hold/);
+  assert.match(UI, /else \{ cmtCreateInFlight\.delete\(String\(m\.uuid\)\); dropSynthThread\(held\.sid, held\.uuid\); \}/);
+});
+
+test("the optimistic synth thread survives comments frames until superseded or failed", () => {
+  // the frame used to WIPE it: every create's mark blinked between the gesture and the real
+  // thread's first frame, and a lag-refused create erased the comment entirely
+  assert.match(UI, /const synths = \(commentThreads\.get\(sid\) \|\| \[\]\)\.filter\(\(t\) =>\s*\n\s*t\.tid\.startsWith\("pending:"\) && cmtCreateInFlight\.has\(t\.tid\.slice\("pending:"\.length\)\)/);
+  assert.match(UI, /&& !threads\.some\(\(r\) => r\.anchorUuid === t\.anchorUuid\)\);/,
+    "a real thread on the same anchor supersedes the synth");
+});
+
+test("the pending echo prunes against EVENTS too — a landed user turn never double-shows", () => {
+  assert.match(UI, /const evUserMsgs = \(\(th\.events \|\| \[\]\) as ChatEvent\[\]\)/);
+  assert.match(UI, /prunePending\(commentPending\.get\(th\.tid\) \|\| \[\], \[\.\.\.th\.msgs, \.\.\.evUserMsgs\]\);/);
+});
+
+test("the parity bundle (2026-08-26): dividers, owner-scoped in-turn controls, the sid stamp", () => {
+  // day dividers open new days in the popover exactly as in the chat (same helper, same idiom)
+  assert.match(UI, /const dayOpen = eventEpoch\(evs\[itemFirstEvent\(it\)\]\);\s*\n\s*if \(dayOpen != null\) \{\s*\n\s*const dv = dayDividerFor\(dayOpen, prev\);/);
+  // the popover's list is stamped with the THREAD sid, and in-turn controls resolve their owner
+  // from the DOM at click time — queued ✕ and the api-error card act on the thread, never the tab
+  assert.match(UI, /list\.dataset\.session = th\.tid;/);
+  assert.match(UI, /function owningSidOf\(el0: HTMLElement \| null\): string \| null \{/);
+  assert.match(UI, /\{ type: "cancelQueued", id: owningSidOf\(el\), md: qmd \}/);
+  assert.match(UI, /\{ type: "dismissDialog", id: owningSidOf\(dismiss\) \}/);
 });

@@ -1858,11 +1858,22 @@ function updateAskCard(card: HTMLElement, it: AskItem) {
         const nm = el("span", "fask-waiton-name");
         nm.replaceChildren(...hostPartsNodes(p.host, p.name));
         if (p.color && p.color.bg) nm.style.color = p.color.bg;
+        if (p.sid) {
+          // the standard session-chip gesture (the handoffTo idiom above): click opens the session
+          nm.title = "waiting on " + p.name + " — click opens the session";
+          nm.style.cursor = "pointer";
+          nm.onclick = (ev: Event) => { ev.stopPropagation(); vscodeApi?.postMessage({ type: "openSession", id: p.sid }); };
+        }
         a._awaitWhy.appendChild(nm);
       });
       a._awaitWhy.append(waitedSuffix(it.awaiting && it.awaiting.since, Date.now() / 1000));
     } else a._awaitWhy.textContent = spinCaption;
     a._awaitSpin.title = spinTip || spinCaption;
+    // HONEST fallback (the user 2026-08-26): a peer-kind wait with no named session says WHY the
+    // name is missing, instead of presenting "peer" as a style — identity is only truly unknowable
+    // when the record predates identity capture or an older/offline kernel shipped the payload.
+    if (awaitingBg && !awPeers.length && it.awaiting && it.awaiting.kind === "peer")
+      a._awaitSpin.title += " (No session is named in this wait's record — it predates identity capture, or an older kernel shipped it.)";
   }
   // The swirl's "Analyzing…" caption + tooltip REPLACES the separate "↩ re-judging" chip (the user
   // 2026-06-29: don't show both) — drop the chip the recheck branch set above when the swirl is saying it.
@@ -3205,6 +3216,14 @@ type Entry =
   // `folded` = how many of this run's cards the header is standing in for (0 when the thread is expanded)
   | { kind: "sess"; t: number; sid: string; name: string; color: { bg: string; fg: string } | null; live: boolean; folded: number };
 
+// ONE counting rule (the user 2026-08-26): every number on the board counts CARDS, never rows — a
+// turn-group entry is worth its members, a folded session header is worth the cards it stands in for.
+// Both the section chips and the fold accumulator read THIS, so expanded and collapsed can never
+// disagree (the traced bug: the chip counted a group as 1 row while the fold header said "cards").
+function entryCards(e: Entry): number {
+  return e.kind === "sess" ? e.folded : e.kind === "group" ? e.group.members.length : 1;
+}
+
 // Grouped-mode session headers, one reused element per (column, sid) — same keyed-incremental treatment as
 // cards so re-renders never rebuild a header mid-press. Pruned when a reconcile drops them from the DOM.
 const sessHeadEls = new Map<string, HTMLElement>();
@@ -3246,7 +3265,9 @@ function updateSessHead(h: HTMLElement, e: Entry & { kind: "sess" }): void {
   fold.setAttribute("aria-expanded", shut ? "false" : "true");
   fold.setAttribute("aria-label", (shut ? "expand " : "collapse ") + e.name);
   foldn.style.display = shut && e.folded ? "" : "none";
-  foldn.textContent = e.folded === 1 ? "1 card" : e.folded + " cards";
+  // just the number (the user 2026-08-26) — the section chips' own vocabulary; the words live on hover
+  foldn.textContent = String(e.folded);
+  foldn.title = e.folded === 1 ? "1 card folded under this session" : e.folded + " cards folded under this session";
   fold.onclick = (ev) => {
     ev.stopPropagation();   // the fold IS the acknowledgement: local state + an immediate re-render
     if (collapsedThreads.has(e.sid)) collapsedThreads.delete(e.sid); else collapsedThreads.add(e.sid);
@@ -4319,8 +4340,9 @@ function render() {
           withHeads.push(head);
         }
         // A COLLAPSED thread contributes its header and nothing else — the run's cards are counted onto the
-        // header instead of rendered, so the folded row still says how much is under it.
-        if (collapsedThreads.has(s)) { if (head) head.folded++; continue; }
+        // header instead of rendered, so the folded row still says how much is under it. CARDS, not rows
+        // (entryCards): a turn-group folds as its member count, the same rule the section chip reads.
+        if (collapsedThreads.has(s)) { if (head) head.folded += entryCards(e); continue; }
         withHeads.push(e);
       }
       buckets[k] = withHeads;
@@ -4352,8 +4374,11 @@ function render() {
   const setCount = (elc: HTMLElement, n: number) => { elc.textContent = n ? String(n) : ""; elc.style.display = n ? "" : "none"; };
   // Headers aren't cards — but a FOLDED header stands in for its run, so its cards count. The column chip
   // reports what is on the board, never what you happen to have open: folding a thread must not read as
-  // work having left the column (the user 2026-07-31).
-  const nCards = (es: Entry[]) => es.reduce((n, e) => n + (e.kind === "sess" ? e.folded : 1), 0);
+  // work having left the column (the user 2026-07-31). ONE counting rule (the user 2026-08-26): a number
+  // is always CARDS, never rows — a turn-group row is its members, a folded header is the cards it hides
+  // (entryCards, which the fold accumulator uses too) — so a section's number cannot move on any fold or
+  // grouping, only when cards actually enter or leave the column.
+  const nCards = (es: Entry[]) => es.reduce((n, e) => n + entryCards(e), 0);
   setCount(cols.asksCount, nCards(buckets.asks));
   setCount(cols.needsInputCount, nCards(buckets.needsInput));
   setCount(cols.completedCount, nCards(buckets.completed));

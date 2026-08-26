@@ -366,12 +366,10 @@ WHY_TURN_IN_FLIGHT = "a judge has ruled on a turn that hasn't finished yet"
 # never-paint rule as the holds above; clears on the closer's next word (any newer judge row on the
 # goal) or the deferral backstop.
 WHY_UNBLOCK_UNSETTLED = "an unblock is awaiting the closer's next word on this goal"
-# The CONSOLIDATOR (the user 2026-06-19): the grouper's twin for the COMPLETED column. The working grouper
-# only ever sees OPEN tops, so related goals that finish before they get
-# grouped land as separate cards. The consolidator groups related ALL-COMPLETED sibling tops under a
-# completed umbrella (safe: every child is done, so the umbrella rolls up to completed — nothing reverts to
-# working), and clears any umbrella that ended up empty. A later reopen of a grouped child reverts the whole
-# umbrella to working via rollup_status (the user's choice). Toggle: ROMP_CONSOLIDATE=0 to disable.
+# The CONSOLIDATOR (the user 2026-06-19): the grouper's twin for the COMPLETED column. Post-T101
+# (2026-08-26, the ask-unit ruling) it is housekeeping only — merge completed twins, retitle — the
+# working grouper's surviving ops over the done column; container mints retired with the umbrella.
+# Toggle: ROMP_CONSOLIDATE=0 to disable.
 CONSOLIDATE_ON = os.environ.get("ROMP_CONSOLIDATE", "1") != "0"
 TEST_UNITS  = 12                         # --test: caption at most this many recent units
 
@@ -394,6 +392,8 @@ CAPTION_SYS = (
     "rest. For example, 'Validated the parser, fixed a compaction bug' becomes 'Reworked the parser's "
     "compaction handling'; 'Renamed the file and updated its imports' becomes 'Renamed the module'; "
     "'Explained the edit and offered to revert' becomes 'Explained the edit'.\n"
+    "Never use a coined or internal name (an engine, a module, a codename, a team shorthand) the "
+    "unit's own messages don't use; say it in plain words instead.\n"
     "Describe what the reply delivered, not the user's state or question: 'User asked about "
     "batch-marking' is wrong. If the unit shows no finished assistant work, reply with an empty line, "
     "nothing at all. Output only the phrase: no surrounding quotes, no JSON, no notes, no markdown.")
@@ -1299,6 +1299,8 @@ GIST_SYS = (
     "past-tense result and not a restatement of the whole sentence. Examples: 'a dark-mode toggle for "
     "settings'; 'the feed card recency tint'; 'why the parser drops compaction boundaries'; 'a regression "
     "test for the planner'.\n"
+    "Keep the request's own vocabulary: never import a coined or internal name the request itself "
+    "does not use.\n"
     "When the request rambles or bundles several things, name the single most salient topic. Output only "
     "the phrase.")
 
@@ -1991,7 +1993,9 @@ PLAN_SYS = (
     "self-narration (\"The assistant…\", \"The segment…\"): say what happened or what's needed, the "
     "real reason first, concrete verbs, the words a person actually says. Cut filler (\"in order to\", "
     "\"it is worth noting\", \"notably\"), no em dashes, state facts plainly and hedge only actual "
-    "guesses, say it once. Most segments do one thing, but emit more ops when the segment actually did "
+    "guesses, say it once. Goal text speaks the requester's vocabulary: never a coined or internal "
+    "name (an engine, a module, a codename, a team shorthand) unless the user's own message uses "
+    "it; say what the work is in plain words. Most segments do one thing, but emit more ops when the segment actually did "
     "more (e.g. finished one goal and started another). Op kinds:\n"
     '- {\"why\",\"do\":\"mint\",\"text\":\"<outcome ≤10 words>\"}: a new top-level request from the '
     "user. Be selective: only a real new ask mints a top-level goal — but a **distinct deliverable** "
@@ -2018,7 +2022,7 @@ PLAN_SYS = (
     "awaiting the user\" is stopped on a question only the user can answer; filing new work under it "
     "declares that this segment takes up that ask and pulls the card back to working — when the "
     "segment is about something else, mint instead. (\"ref\":<k> files under a "
-    "node you minted earlier in this reply instead of \"under\", e.g. a fresh umbrella goal.)\n"
+    "node you minted earlier in this reply instead of \"under\".)\n"
     '- {\"why\",\"do\":\"done\",\"goal\":<n>}: open goal/step #n is now finished. Mark done eagerly: '
     "the moment a segment delivers a goal's outcome (committed, shipped, tested, or answered), done it "
     "in this reply; don't leave finished work open for a later pass to notice. If the segment "
@@ -4046,6 +4050,36 @@ def rollup_status(store, session_closed, now=None):
         _hn = nodes[_hid]
         if isinstance(_hn.get("handoff"), dict) and _hn.get("nodeComplete") and not _hn.get("rolledUp"):
             _lift_handoff_children(store, _hid)
+    # UMBRELLA DISSOLUTION (the user 2026-08-26, T101: the board's unit is the individual ask; the
+    # round is never a tracked unit): container nodes the retired grouper/consolidator minted
+    # (umbrella:True) dissolve here, in every writer's rollup — their children re-parent to
+    # TOP-LEVEL with their own provenance intact, and the empty container leaves the store. This is
+    # what un-strands the asks the provenance audit measured (every dead chain ended at a promptless
+    # container): once the child is a top again, its promptUuid/origin evidence is reachable by the
+    # mint-time trace and the closer's nominations. Idempotent by construction (no umbrellas remain
+    # after one pass) and self-healing like the lift above: a save-rebase republishing a stale
+    # parentId is re-dissolved on the very next rollup. Diary-less container removal follows the
+    # born-done backlog self-heal precedent — an umbrella has no verdicts of its own to preserve.
+    _umbrellas = {k for k, v in nodes.items() if isinstance(v, dict) and v.get("umbrella")}
+    if _umbrellas:
+        _uparent = {k: nodes[k].get("parentId") for k in _umbrellas}
+        def _solid_parent(uid):
+            p, _seen = _uparent.get(uid), set()
+            while p in _umbrellas and p not in _seen:   # nested containers dissolve to the first
+                _seen.add(p); p = _uparent.get(p)       # NON-container ancestor (usually None)
+            return None if p in _umbrellas else p
+        for _uid in _umbrellas:
+            newp = _solid_parent(_uid)
+            for _cn in nodes.values():
+                if isinstance(_cn, dict) and _cn.get("parentId") == _uid:
+                    _cn["parentId"] = newp              # usually None → its own card again
+            nodes.pop(_uid, None)
+            store.get("status", {}).pop(_uid, None)
+        _pl = store.get("placements") or {}
+        for _k, _v in list(_pl.items()):
+            if _v in _umbrellas:
+                _pl[_k] = None                          # placed-and-processed; never re-planned, never
+                #                                         a dangling target (None reads final downstream)
     children = {}
     for nid, nd in nodes.items():
         children.setdefault(nd.get("parentId"), []).append(nid)
@@ -5102,8 +5136,10 @@ def _run_index(now=None, budget=BUDGET, fairness=FAIRNESS, concurrency=CONCURREN
             task = futs[fut]
             try:
                 cap, cap_paused = fut.result()
-            except Exception:
+            except Exception as e:
                 cap, cap_paused = "", True                # a crashed worker is not the model's verdict
+                _log_judge_error("captioner", str(task.get("fsid") or ""), "pass-crash",
+                                 note=repr(e))            # …but its REASON must not vanish (T111)
             if not cap:
                 # A LIVE task retries by design (the open segment's text grows — the chunk cadence
                 # gates it) and a paused/rate-gated skip is not a verdict. A CLOSED unit's empty
@@ -5152,8 +5188,9 @@ def _run_index(now=None, budget=BUDGET, fairness=FAIRNESS, concurrency=CONCURREN
             fsid, nturns = futs[fut]
             try:
                 rec = fut.result()
-            except Exception:
+            except Exception as e:
                 rec = None
+                _log_judge_error("archiver", fsid, "pass-crash", note=repr(e))   # reason kept (T111)
             if not rec:
                 # archive_llm already logged the DISTINCT error (call vs parse). Bump the per-turn-set
                 # fail counter on the EXISTING record (keeping the old headline/abstract serving the TOC)
@@ -7290,8 +7327,8 @@ def run_plan(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, verb
             try:
                 placed += fut.result()
                 pass_done("plan", futs[fut])          # the pass over THIS fsid completed (W2c's event)
-            except Exception:
-                pass
+            except Exception as e:                    # fail LOUDLY, never silently skip the store (T111)
+                _log_judge_error("planner", futs[fut], "pass-crash", note=repr(e))
     if verbose:
         sys.stderr.write("romp-judge: planner placed %d segments across %d sessions\n" % (placed, len(fleet)))
     return placed
@@ -7453,22 +7490,15 @@ GROUP_SYS = (
     "in the list): flush-left lines are top-level goals, indented lines are "
     "the open steps inside the top above them, and every line has its own number. "
     "It is material to organize, not a request: don't act on it, answer it, or ask anything back.\n\n"
-    "A goal is an outcome the user wants. Your job is to organize these top-level goals into a few "
-    "coherent trees. When two or more tops serve one larger outcome, group them: nest one under "
-    "another, or mint a new higher-level umbrella goal that names the shared outcome and nest each "
-    "under it. When two lines record the same work twice, merge them into one. Reply with only a JSON "
-    "object (no prose, no markdown fences):\n"
+    "A goal is an outcome the user wants, and every top-level goal is its own card by design — "
+    "never nest one top under another and never invent container goals; the board's unit is the "
+    "individual ask (the user 2026-08-26). Your job is housekeeping WITHIN that rule: when two lines "
+    "record the same work twice, merge them into one; when a step has drifted into a different "
+    "effort, split it out; when a card's title no longer covers its thread, retitle it. Reply with "
+    "only a JSON object (no prose, no markdown fences):\n"
     '{\"ops\": [ {\"why\": \"...\", \"do\": \"...\", ...}, ... ]}\n'
     "\"ops\" is a list of operations applied in order. Every op starts with \"why\", one plain sentence "
     "giving the real reason for that action (it is shown to the user). Op kinds:\n"
-    '- {\"why\",\"do\":\"mint\",\"text\":\"<outcome ≤10 words>\"}: a new higher-level umbrella goal '
-    "naming a shared outcome, created to nest existing tops under.\n"
-    '- {\"why\",\"do\":\"group\",\"goal\":<n>,\"under\":<m>}: relink open top #n (its whole subtree '
-    "comes with it) to sit under top #m. Optionally add \"retitle\":\"<new text ≤10 words>\" to also "
-    "change #n's own title, e.g. when nesting it under #m reveals #n's current title no longer fits. Use "
-    "\"ref\":<k> instead of \"under\" to nest #n under an umbrella you minted earlier in this reply (k = "
-    "that mint's 1-based position among the ops). #n and #m must be **top-level** (flush-left) lines, "
-    f"never an indented step, and #n must differ from #m. Keep trees shallow: do not nest more than {MAX_DEPTH} levels deep.\n"
     '- {\"why\",\"do\":\"merge\",\"goal\":<n>,\"into\":<m>}: lines #n and #m record the **same** work '
     "twice — one restates or covers the other. Fold #n into #m: #m keeps its own title and state, "
     "absorbs #n's steps and history, and #n leaves the board. Either line may be a top or an indented "
@@ -7492,15 +7522,10 @@ GROUP_SYS = (
     "**receives** work too: after nesting tops under #m (or as a card quietly accretes steps), reread "
     "#m's title against everything now inside it — a title that names one narrow fix while the tree "
     "runs a whole campaign misleads, so retitle #m to the outcome that covers its steps.\n"
-    "Be aggressive about grouping a real shared purpose, since a few real trees beat a flat list of "
-    "every request, but never group on look-alike wording alone, and leave a standalone goal as its "
-    "own top. A top marked \"from the agent's own to-do list\" is a to-do mirror: it always starts "
-    "flat by design, and placing it is your job — when it records the same work as a line already "
-    "inside another top, merge it into that line; when it reads as its own distinct step of another "
-    "open top's outcome (wrap-up, verification, a task the agent queued for that work), group it under "
-    "that top. Reuse an existing umbrella rather than minting a duplicate. Doing nothing is a valid, "
-    "common outcome: if no clear cluster stands out, because the tops are already well-organized or "
-    'simply unrelated, return {\"ops\": []} and change nothing. Never invent a grouping just to act.\n'
+    "A top marked \"from the agent's own to-do list\" is a to-do mirror: when it records the same "
+    "work as a line already inside another top, merge it into that line; otherwise leave it as its "
+    "own card. Doing nothing is a valid, common outcome: if there are no twins, no drifted tangents, "
+    'and no outgrown titles, return {\"ops\": []} and change nothing. Never invent an op just to act.\n'
     "Write each \"why\" plainly: the real reason first, concrete verbs, the words a person actually "
     "says, cut filler (\"in order to\", \"it is worth noting\", \"notably\"), no em dashes, say it "
     "once. Output only the JSON object: nothing before it, and nothing after the closing brace. No "
@@ -7625,23 +7650,14 @@ def _parse_group(raw, menu_len):
         do = str(o.get("do", "")).strip().lower()
         why = " ".join(str(o.get("why", "")).split())[:300]
         text = " ".join(str(o.get("text", "")).split())[:120]
-        if do == "mint":
-            if re.sub(r"[^A-Za-z]", "", text):                          # an umbrella needs real text
-                ops.append({"do": "mint", "why": why, "text": text})
-        elif do == "group":
-            g, n, r = _int(o, "goal"), _int(o, "under"), _int(o, "ref")
-            retitle = " ".join(str(o.get("retitle", "")).split())[:120]
-            retitle = retitle if re.sub(r"[^A-Za-z]", "", retitle) else ""
-            if g and 1 <= g <= menu_len:                                # relink an open top under another node
-                if n and 1 <= n <= menu_len and n != g:
-                    op = {"do": "group", "why": why, "goal": g, "under": n}
-                elif r and r >= 1:
-                    op = {"do": "group", "why": why, "goal": g, "ref": r}
-                else:
-                    continue
-                if retitle:
-                    op["retitle"] = retitle
-                ops.append(op)
+        if do in ("mint", "group"):
+            # RETIRED (the user 2026-08-26, T101): the board's unit is the individual ask — no
+            # container goals, no nesting one top under another. A store-level umbrella is
+            # unavoidably a TRACKED unit (it owns rollup and swallowed chain provenance: every
+            # stranded ask in the provenance audit died at a promptless container), and the
+            # visual-grouping job has a display-side owner with no store footprint. A model that
+            # still emits these ops (an older cached reply) is silently ignored, never applied.
+            continue
         elif do == "merge":
             g, m = _int(o, "goal"), _int(o, "into")
             if g and m and 1 <= g <= menu_len and 1 <= m <= menu_len and g != m:
@@ -7681,26 +7697,12 @@ def _tie_pivot(store, ytop, cited, now):
     is untouched — the dismiss already restored it, so a done card stays done inside the umbrella while the
     pivot works beside it, and the umbrella's rollup carries the live story. Deterministic and idempotent;
     cleared cards never reach here (a follow-up to a cleared card is a fresh goal by rule)."""
-    nodes = store["nodes"]
-    if cited not in nodes or ytop not in nodes:
-        return
-    xtop = _top_ancestor(nodes, cited)
-    if xtop == ytop or xtop not in nodes:
-        return                                        # routed into the cited card's tree already
-    x, y = nodes[xtop], nodes[ytop]
-    if x.get("cleared") or y.get("parentId"):
-        return                                        # sealed thread, or Y already nested by routing
-    if x.get("umbrella"):
-        apply_group(store, [x, y], [{"do": "group", "goal": 2, "under": 1,
-                                     "why": "follow-up work stays with the card it replied to"}], now)
-    else:
-        apply_group(store, [x, y],
-                    [{"do": "mint", "text": x.get("text") or "Follow-up thread",
-                      "why": "follow-up work stays with the card it replied to"},
-                     {"do": "group", "goal": 1, "ref": 1,
-                      "why": "follow-up work stays with the card it replied to"},
-                     {"do": "group", "goal": 2, "ref": 1,
-                      "why": "follow-up work stays with the card it replied to"}], now)
+    # T101 (the user 2026-08-26): the STRUCTURAL tie retired with the umbrella — a container over
+    # the cited card and the pivot was exactly the round-shaped tracked unit the ruling removes,
+    # and the dissolution sweep would undo it on the next rollup anyway. The tie survives as pure
+    # PROVENANCE: ytop already carries pivotFrom (set by the caller before this), which display
+    # layers may group on with no store footprint. Nothing structural to do.
+    return
 
 
 def _merge_nodes(store, dupe_id, surv_id, t, why):
@@ -7771,6 +7773,8 @@ def _merge_nodes(store, dupe_id, surv_id, t, why):
         surv["quote"] = dupe["quote"]
     if not surv.get("promptUuid") and dupe.get("promptUuid"):
         surv["promptUuid"] = dupe["promptUuid"]
+    if not surv.get("userAsk") and dupe.get("userAsk"):
+        surv["userAsk"] = dupe["userAsk"]
     surv["t"] = min(surv.get("t") or t, dupe.get("t") or t)
     surv["mt"] = t
     # chained merges keep every tombstone: the dupe's own mergedFrom rides along, so an id merged
@@ -7806,33 +7810,24 @@ def apply_group(store, menu, ops, t):
     re-merged; the candidate forests still keep the columns apart (the working grouper sees only OPEN
     tops, the consolidator only ALL-COMPLETED ones)."""
     nodes = store["nodes"]
-    created = []
-
-    def new_umbrella(text, why):
-        store["seq"] = store.get("seq", 0) + 1
-        nid = "%s:g%d" % (store["rompUuid"], store["seq"])
-        nodes[nid] = GuardedNode({"id": nid, "text": text or "(umbrella)", "parentId": None, "nodeComplete": False,
-                      "blocked": False, "cleared": False, "trail": [], "t": t, "mt": t, "why": why,
-                      "umbrella": True, "log": []})
-        created.append(nid)
-        return nid
-
-    def _is_ancestor(a, b):                            # is node a AT or ABOVE node b? (cycle/self guard)
-        x, seen = b, set()
-        while x and x not in seen:
-            if x == a:
-                return True
-            seen.add(x); x = nodes.get(x, {}).get("parentId")
-        return False
 
     relinks = 0
     for o in ops:
-        if o["do"] == "mint":
-            new_umbrella(o["text"], o["why"])
-            continue
+        if o["do"] in ("mint", "group"):
+            continue                                   # retired ops (T101) — the parser drops them; this
+            #                                            is the second lock for hand-built op lists
         if o["do"] == "merge":                         # fold twin #goal into #into (_merge_nodes refuses
-            relinks += _merge_nodes(store, menu[o["goal"] - 1]["id"],   # gone / double-mirror targets)
-                                    menu[o["into"] - 1]["id"], t, o.get("why") or "")
+            _n = _merge_nodes(store, menu[o["goal"] - 1]["id"],   # gone / double-mirror targets)
+                              menu[o["into"] - 1]["id"], t, o.get("why") or "")
+            if _n:
+                _surv = nodes.get(menu[o["into"] - 1]["id"])
+                if _surv is not None:                  # the grouper's lane mark (T103): the surviving ops
+                    _surv["groupOp"] = {"kind": "merge", "t": t}   # append no diary events by design, so the
+                    #                                    timeline judging band keys on this lightweight
+                    #                                    structure stamp — the umbrella flag it used to
+                    #                                    key on no longer mints (it survives read-side
+                    #                                    for ARCHIVED history only)
+            relinks += _n
             continue
         if o["do"] == "split":                         # promote step #goal (its whole subtree comes with
             child = menu[o["goal"] - 1]["id"]          # it) to a top-level card of its own — the inverse
@@ -7842,6 +7837,7 @@ def apply_group(store, menu, ops, t):
             if o.get("retitle"):                       # a step-phrased title may not stand alone as a card
                 nodes[child]["text"] = o["retitle"]
             nodes[child]["mt"] = t
+            nodes[child]["groupOp"] = {"kind": "split", "t": t}   # the lane mark (see merge above)
             relinks += 1
             continue
         if o["do"] == "retitle":                       # re-title a drifted CARD in place: its first-ask
@@ -7849,39 +7845,9 @@ def apply_group(store, menu, ops, t):
             if tgt in nodes and nodes[tgt].get("parentId") is None and o.get("text"):
                 nodes[tgt]["text"] = o["text"]
                 nodes[tgt]["mt"] = t
+                nodes[tgt]["groupOp"] = {"kind": "retitle", "t": t}   # the lane mark (see merge above)
                 relinks += 1                           # counts as a change: the caller persists + re-rolls
             continue
-        # group: relink top #goal under #under (a menu top) or a same-reply umbrella (ref)
-        child = menu[o["goal"] - 1]["id"]
-        if child not in nodes or nodes[child].get("parentId") is not None:
-            continue                                   # merged away this reply, or an indented step —
-        #                                                grouping moves TOPS only; a placed step stays put
-        if "under" in o:
-            parent = menu[o["under"] - 1]["id"]
-            if parent in nodes:                        # a step parent walks up to its card (the intent —
-                parent = _top_ancestor(nodes, parent)  # "nest under that card" — is preserved)
-        else:
-            r = o.get("ref")
-            parent = created[r - 1] if (r and 1 <= r <= len(created)) else None
-        if not parent or parent not in nodes or parent == child or _is_ancestor(child, parent):
-            continue                                   # missing/merged parent / self / would cycle → skip
-        while _depth(nodes, parent) >= MAX_DEPTH:      # keep trees shallow; clamp the parent up
-            parent = nodes[parent]["parentId"]
-        nodes[child]["parentId"] = parent
-        if o.get("retitle"):                           # the user 2026-07-01: a relink may also correct the
-            nodes[child]["text"] = o["retitle"]         # child's own title, now that it sits under `parent`
-        nodes[child]["mt"] = t
-        relinks += 1
-
-    kids = {}                                          # umbrella anchor backfill (so it deep-links to its work)
-    for nd in nodes.values():
-        kids.setdefault(nd.get("parentId"), []).append(nd)
-    for uid in created:
-        ch = sorted(kids.get(uid, []), key=lambda c: c.get("t", 0))
-        anchor_seg = next((c["trail"][0] for c in ch if c.get("trail")), None)
-        if anchor_seg is not None:
-            nodes[uid]["trail"] = [anchor_seg]
-            nodes[uid]["t"] = ch[0].get("t", t)
     return relinks
 
 
@@ -7981,8 +7947,8 @@ def run_group(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, ver
         for fut in as_completed(futs):
             try:
                 n += fut.result()
-            except Exception:
-                pass
+            except Exception as e:                    # fail LOUDLY, never silently skip the store (T111)
+                _log_judge_error("grouper", futs[fut], "pass-crash", note=repr(e))
     if verbose:
         sys.stderr.write("romp-judge: grouper relinked %d top goals\n" % n)
     return n
@@ -8015,34 +7981,15 @@ def _consolidate_tops(store, cap=20):
     return tops[-cap:] if len(tops) > cap else tops
 
 
-def _clear_empty_umbrellas(store):
-    """Mark cleared any umbrella goal that has no live (non-cleared, non-view-cleared) children — an umbrella
-    groups nothing once empty, so it is pure clutter. Heals an umbrella minted over tops it could not adopt
-    (e.g. every group op skipped as a would-be cycle) and one whose children were
-    all cleared. Returns True if it cleared any."""
-    nodes = store["nodes"]
-    vc = _view_cleared()
-    live = {}
-    for nd in nodes.values():
-        p = nd.get("parentId")
-        if p is not None and not nd.get("cleared") and nd["id"] not in vc:
-            live[p] = live.get(p, 0) + 1
-    changed = False
-    for nd in nodes.values():
-        if nd.get("umbrella") and not nd.get("cleared") and live.get(nd["id"], 0) == 0:
-            record_verdict(store, nd, "grouper", "clear", int(time.time()), why="empty umbrella")
-            changed = True
-    return changed
-
-
 def _consolidate_store(store, fsid, now):
-    """Group the session's COMPLETED tops in place + clear empty umbrellas; return True on any change (caller
-    persists + re-rolls status). EVENT-GATED by store["consolidatedSig"] (the completed-top id set) so a
-    stable completed column never re-asks the model. Reuses the grouper model/menu/parse + apply_group
-    (every candidate is done by construction, so the umbrella rolls up to completed)."""
+    """Housekeep the session's COMPLETED tops in place (merge twins, retitle — the post-T101 op set);
+    return True on any change (caller persists + re-rolls status). EVENT-GATED by
+    store["consolidatedSig"] (the completed-top id set) so a stable completed column never re-asks
+    the model. Reuses the grouper model/menu/parse + apply_group."""
     if not CONSOLIDATE_ON:
         return False
-    changed = _clear_empty_umbrellas(store)            # heal empties every pass, gated or not (no model call)
+    changed = False                                    # (empty-umbrella healing subsumed by the T101
+    #                                                    dissolution sweep in every writer's rollup)
     comp = _consolidate_tops(store)
     sig = sorted(nd["id"] for nd in comp)
     if len(comp) < 2 or sig == store.get("consolidatedSig"):
@@ -8081,8 +8028,8 @@ def _consolidate_session(fsid, path, now):
 
 
 def run_consolidate(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, verbose=False):
-    """One CONSOLIDATOR pass (triage tier), run after run_group / before run_distill so a newly minted
-    completed umbrella gets a distilled summary this same cycle. Event-gated per session. Returns the number
+    """One CONSOLIDATOR pass (triage tier), run after run_group / before run_distill so a card the
+    housekeeping touched re-distills this same cycle. Event-gated per session. Returns the number
     of sessions whose completed column changed."""
     if now is None:
         now = int(time.time())
@@ -8094,8 +8041,8 @@ def run_consolidate(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENC
         for fut in as_completed(futs):
             try:
                 n += fut.result()
-            except Exception:
-                pass
+            except Exception as e:                    # fail LOUDLY, never silently skip the store (T111)
+                _log_judge_error("consolidator", futs[fut], "pass-crash", note=repr(e))
     if verbose:
         sys.stderr.write("romp-judge: consolidator reorganized %d completed columns\n" % n)
     return n
@@ -8127,7 +8074,7 @@ CLOSER_SYS = (
     "state:\n"
     "- done: its outcome is now fully delivered, achieved with no real work left, even if no one said "
     "'done'. It is not done if any real work remains, even a small piece, and a broad or open-ended "
-    "goal (an umbrella with ongoing sub-work, or a standing 'keep doing X') is not done. An explanation "
+    "goal (one with ongoing sub-work, or a standing 'keep doing X') is not done. An explanation "
     "or answer fully given to the user is done, **unless** the turn ends by asking the user to approve or "
     "decide a clear next step it has lined up (see blocked): a thorough answer, plan, or scoping writeup "
     "that closes with \"want me to build this?\", \"which option?\", or \"shall I proceed?\" is **not** done, "
@@ -8522,7 +8469,8 @@ def _subtree_done_candidates(store):
             #                                            (2026-08-26 — a finished goal must not be uncompletable
             #                                            just because the user stopped the session)
         if nd.get("umbrella"):
-            continue                                   # a pure container completes structurally (is_complete's
+            continue                                   # transient pre-dissolution copy only (T101 dissolves
+            #                                            live containers every rollup; adopt-copies self-heal) —
             #                                            umbrella carve-out) — nothing to ask the closer
         kids = children.get(nid, [])
         if not kids or not all(nodes[c].get("nodeComplete") or nodes[c].get("cleared") for c in kids):
@@ -8664,37 +8612,9 @@ def _status_report_candidates(store, turn):
         if nd.get("umbrella") or _task_open_below(nodes, children, nid):
             continue
         out.append(nd)
-    # CITED-UMBRELLA OPEN DESCENDANTS (the user 2026-08-25, the re-asking umbrella): a nudge/
-    # follow-up names its goal and the reply accounts for THAT goal's work — and when the named
-    # goal is an UMBRELLA, the top itself is unrulable (a structural container, skipped above)
-    # while the open LEAF actually holding it at working rides NO channel: the turn menu needs
-    # placements (a nudge spliced into a busy session's running turn strips its dones, so nothing
-    # ever places), steps-finished needs all-children-done, starved needs an empty diary. Three
-    # "it's finished" replies filed nothing on the audited specimen. So a cited UMBRELLA's open
-    # descendants ride this same closer call, with the sibling channels' skips — handoff trackers
-    # stay run_propagate's (their ending event is the recipient's completion, not this reply),
-    # blocked stays the unblocker's, and an agentTask-open subtree stays the agent's own. A PLAIN
-    # cited goal keeps the 2026-07-26 shape exactly: the closer rules the goal itself, and its
-    # subs never ride (the widened-menu pin in test_judge StatusReportMenu).
-    seen_ids = {nd["id"] for nd in out}
-    cited = set()
-    for s in _segs(turn, store):
-        for tgt in _seg_followup_all(s) or []:
-            if tgt in nodes and (nodes[tgt] or {}).get("umbrella"):
-                cited.add(tgt)
-    for top in sorted(cited):
-        stack = list(children.get(top, []))
-        while stack:
-            cid = stack.pop()
-            stack.extend(children.get(cid, []))
-            cd = nodes.get(cid) or {}
-            if (cid in seen_ids or cd.get("nodeComplete") or cd.get("cleared") or cd.get("blocked")
-                    or cd.get("settledDone") or cd.get("umbrella")
-                    or isinstance(cd.get("handoff"), dict)
-                    or _task_open_below(nodes, children, cid)):
-                continue
-            seen_ids.add(cid)
-            out.append(cd)
+    # (The 2026-08-25 cited-umbrella descendants channel retired with T101/T103: live containers
+    # dissolve in every writer's rollup, so a stuck leaf IS a top now and rides the plain channel
+    # above; a nudge citing a dissolved container's id resolves to nothing and no-ops.)
     out.sort(key=lambda nd: nd.get("t", 0))
     return out
 
@@ -9324,8 +9244,8 @@ def run_close(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, ver
             try:
                 n += len(fut.result())
                 pass_done("close", futs[fut])         # the pass over THIS fsid completed (W2c's event)
-            except Exception:
-                pass
+            except Exception as e:                    # fail LOUDLY, never silently skip the store (T111)
+                _log_judge_error("closer", futs[fut], "pass-crash", note=repr(e))
     if verbose:
         sys.stderr.write("romp-judge: closer completed %d nodes\n" % n)
     return n
@@ -9600,8 +9520,8 @@ def run_unblock(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, v
         for fut in as_completed(futs):
             try:
                 n += len(fut.result())
-            except Exception:
-                pass
+            except Exception as e:                    # fail LOUDLY, never silently skip the store (T111)
+                _log_judge_error("unblocker", futs[fut], "pass-crash", note=repr(e))
     if verbose:
         sys.stderr.write("romp-judge: unblocker lifted %d stale blocks\n" % n)
     return n
@@ -9816,6 +9736,16 @@ DISTILL_SYS = (
     "one-clause definition at its first mention: the reader may be seeing the name for the first "
     "time, and a digest that assumes the name costs them a question just to understand it (write "
     "'the run registry, the shared index of capture runs', never a bare 'the run registry').\n\n"
+    "The reader is the person who asked, not the team that built it. When a <user-ask> section is "
+    "present, it is their ask in their own words: anchor on its vocabulary. Never use a coined or "
+    "internal name (an engine, a module, a codename, a team shorthand) in an opening sentence "
+    "unless the <user-ask> itself uses it; gloss any internal noun you keep in plain words, and a "
+    "noun you cannot explain from the material given stays out.\n\n"
+    "When <work> contains a message the assistant wrote to the person as its finished report, a "
+    "wrap-up addressed to them rather than to a teammate, condense that report as the takeaway's "
+    "primary source: it was already written for their eyes, and it outranks your own reading of "
+    "the raw work. Prefer sources in this order: that report, then the <user-ask>, then the "
+    "<delegating-request>, then the rest of <work>.\n\n"
     "BACKGROUND: orientation for you returning days later, the thread forgotten. Say what you had asked "
     "for and the context the takeaway leans on: what prompted the ask, or an approach or constraint "
     "settled along the way. One or two sentences. Never the outcome; that belongs to the takeaway.\n\n"
@@ -9844,7 +9774,8 @@ DISTILL_SYS = (
     "closely it names the goal. This line is parsed off and never shown.")
 
 
-def distill_llm(goal_text, work_text, done_why="", prior_summary="", items=None, frame=None):
+def distill_llm(goal_text, work_text, done_why="", prior_summary="", items=None, frame=None,
+                user_ask=None):
     """The distiller's key-takeaway for one completed goal from the TRIAGE-tier model (Sonnet). '' on
     failure. done_why = the closer's completion verdict (the node's doneWhy), fed as <completed> ground
     truth so the summary reflects what was ACCOMPLISHED even when the work history is thin or mostly the
@@ -9853,20 +9784,37 @@ def distill_llm(goal_text, work_text, done_why="", prior_summary="", items=None,
     done first — rendered as a numbered <completed-items> list so a multi-outcome goal MAY split its
     takeaway one paragraph per item in that order (DISTILL_SYS leaves it the model's call: a single
     story stays one takeaway). The caller stamps summaryParts in the same order; the feed's
-    count-match gate stamps per-paragraph ages only when the model actually split."""
+    count-match gate stamps per-paragraph ages only when the model actually split.
+    `user_ask` (the user 2026-08-26, T105): the ROOT human ask (shaped text, _user_ask_text) — the
+    frame is an intermediary's restatement one hop up a team chain, so anchoring on it alone still
+    speaks the manager's implementation nouns; the root is what the person actually asked."""
     mk = _mark()
     user = "%s\n%s" % (_sec("goal", goal_text, mk), _sec("work", work_text, mk))
+    if user_ask:
+        # the ROOT ask (the user 2026-08-26, T105): one hop down a team, the frame is a MANAGER's
+        # restatement in implementation nouns — the writers faithfully anchored one hop up instead
+        # of at the person who asked. Marked section, like every quoted why.
+        user += "\n%s" % _sec("user-ask", user_ask, mk)
     if frame:
         # the delegating request's framing (the user 2026-08-25): the card belongs to work HANDED
         # to this session, and <work> speaks in the worker's implementation nouns — the frame is
         # how the request was actually put (usually the user's own phrasing). Marked section, like
         # every quoted why: sender-written text never rides romp's instruction prose.
-        user += ("\n%s"
-                 "\n<note>The <delegating-request> is how this work was framed when it was handed "
+        user += "\n%s" % _sec("delegating-request", frame, mk)
+    if user_ask:
+        user += ("\n<note>The <user-ask> is what the person this board belongs to actually asked, "
+                 "in their own words."
+                 + (" The <delegating-request> is an intermediary's restatement, a manager handing "
+                    "the work on." if frame else "")
+                 + " Open the takeaway in the <user-ask>'s terms: what they asked for and how it "
+                 "ended; use " + ("<delegating-request> and <work>" if frame else "<work>")
+                 + " for supporting detail only.</note>")
+    elif frame:
+        # frame without a root record: the pre-T105 note, byte-identical
+        user += ("\n<note>The <delegating-request> is how this work was framed when it was handed "
                  "to this session — usually the requester's own words. Open the takeaway in those "
                  "terms: what the request asked for and how it ended. Keep implementation nouns to "
-                 "the supporting detail; never open with them.</note>"
-                 % _sec("delegating-request", frame, mk))
+                 "the supporting detail; never open with them.</note>")
     if done_why:
         user += "\n%s" % _sec("completed", done_why, mk)
     if items and len(items) > 1:
@@ -10074,6 +10022,15 @@ BLOCK_BRIEF_SYS = (
     "repeat.\n\n"
     "If something apart from the decision is still open and worth knowing, it gets the last paragraph, "
     "alone, in one short sentence with no label. Never attach it to a paragraph about the decision.\n\n"
+    "The reader is the person who asked, not the team that built it. When a <user-ask> section is "
+    "present, it is their ask in their own words: anchor on its vocabulary. Never use a coined or "
+    "internal name (an engine, a module, a codename, a team shorthand) in an opening sentence "
+    "unless the <user-ask> itself uses it; gloss any internal noun you keep in plain words, and a "
+    "noun you cannot explain from the material given stays out.\n\n"
+    "When <work> contains a message the assistant wrote to the person about this decision, laid "
+    "out for their eyes rather than a teammate's, condense it as the primary source; the owed "
+    "decision still leads. Prefer sources in this order: that message, then the <user-ask>, then "
+    "the <delegating-request>, then the rest of <work>.\n\n"
     "Assistant messages in <work> may carry [mN] labels. When they do, your reply is complete **only** "
     "with a third element after the takeaway: a final line that is exactly SOURCE: mN, nothing before it "
     "on the line and nothing after it. Never omit it while labels are present, and never invent a label "
@@ -10085,7 +10042,7 @@ BLOCK_BRIEF_SYS = (
     "must be exactly SOURCE: mN. Do not stop at the takeaway; the SOURCE line always comes last.")
 
 
-def brief_llm(goal_text, work_text, owed, frame=None):
+def brief_llm(goal_text, work_text, owed, frame=None, user_ask=None):
     """The briefer's decision brief for one blocked goal from the TRIAGE-tier model (Sonnet). '' on
     failure. Logged as judge='briefer' — its own name, its own prompt (the user 2026-07-08). Its timeline
     mark still rides the distiller row: the kernel folds fine labels to role-family rows (_JUDGE_FAMILY),
@@ -10103,14 +10060,25 @@ def brief_llm(goal_text, work_text, owed, frame=None):
     mk = _mark()
     user = "%s\n%s\n%s" % (_sec("goal", goal_text, mk), _sec("work", work_text, mk),
                            _sec("owed", owed_block, mk))
+    if user_ask:
+        # same root anchoring as the distiller (the user 2026-08-26, T105)
+        user += "\n%s" % _sec("user-ask", user_ask, mk)
     if frame:
         # same enrichment as the distiller (the user 2026-08-25): state the owed decision in the
         # delegating request's terms, not the worker's build vocabulary
-        user += ("\n%s"
-                 "\n<note>The <delegating-request> is how this work was framed when it was handed "
+        user += "\n%s" % _sec("delegating-request", frame, mk)
+    if user_ask:
+        user += ("\n<note>The <user-ask> is what the person this board belongs to actually asked, "
+                 "in their own words."
+                 + (" The <delegating-request> is an intermediary's restatement, a manager handing "
+                    "the work on." if frame else "")
+                 + " State what is owed in the <user-ask>'s terms; keep implementation nouns to "
+                 "the supporting detail.</note>")
+    elif frame:
+        # frame without a root record: the pre-T105 note, byte-identical
+        user += ("\n<note>The <delegating-request> is how this work was framed when it was handed "
                  "to this session — usually the requester's own words. State what is owed in those "
-                 "terms; keep implementation nouns to the supporting detail.</note>"
-                 % _sec("delegating-request", frame, mk))
+                 "terms; keep implementation nouns to the supporting detail.</note>")
     return _judge_run(_distill_model(), BLOCK_BRIEF_SYS, user, judge="briefer", tier="distill",
                       mark=mk).strip()   # caller splits SOURCE, then caps
 
@@ -10244,6 +10212,52 @@ def _live_prompt_since(fsid):
     except OSError:
         return None
     return since
+
+
+def _ask_head(s, cap=700):
+    """A dictated ask shaped for the <user-ask> section (T105): romp comment markers stripped, a
+    quoted `> …` context block dropped, the courier's "USER ASKED:" prefix removed, blank runs
+    collapsed — but NEWLINES KEPT, unlike _frame_head's first-line cut: a dictated round holds
+    several asks on several lines and the relevant one may not be the first. Head-capped at `cap`
+    chars on a word boundary (the section is grounding, not an archive)."""
+    t = re.sub(r"<!--.*?-->", "", str(s or ""), flags=re.S)
+    lines, prev_blank = [], True
+    for ln in t.split("\n"):
+        if ln.lstrip().startswith(">"):
+            continue
+        ln = " ".join(ln.split())
+        if ln:
+            lines.append(ln)
+            prev_blank = False
+        elif not prev_blank:
+            lines.append("")
+            prev_blank = True
+    t = re.sub(r"^USER ASKED:\s*", "", "\n".join(lines).strip())
+    if len(t) > cap:
+        t = (t[:cap].rsplit(None, 1)[0] or t[:cap]).rstrip(" ,.;:") + " …"
+    return t
+
+
+def _user_ask_text(store, nid, fsid=None, path=None, now=None):
+    """The ROOT human ask a card's prose should anchor on (the user 2026-08-26, T105: the cards
+    that make sense are the ones anchored in what THEY asked — a manager's dispatch restates the
+    ask in implementation nouns, so the frame alone anchors one hop up, not at the root). Two
+    CONFIDENT sources, else "": the mint-time `userAsk` the courier's chain trace proved human
+    (multi-hop), or — for a board's own prompt-minted tops — the node's verbatim `quote`, gated on
+    its promptUuid resolving to a human record in the CACHED parse (a quote can be an injected
+    peer body: mail rides user-type atoms; continuation stubs refused via junk_quote). Absent
+    evidence returns "" and the writers' prompts are byte-identical to before — the frame
+    rollout's discipline: uncertainty enriches nothing rather than guessing."""
+    nd = store.get("nodes", {}).get(nid) or {}
+    ua = nd.get("userAsk")
+    if isinstance(ua, dict) and str(ua.get("text") or "").strip():
+        return _ask_head(str(ua["text"]))
+    q = str(nd.get("quote") or "").strip()
+    pu = nd.get("promptUuid")
+    if q and pu and fsid and path and not junk_quote(q) \
+            and _session_user_prompt_record(fsid, path, pu, now):
+        return _ask_head(q)
+    return ""
 
 
 def _deleg_frame(store, nid):
@@ -10605,7 +10619,8 @@ def _distill_session(fsid, path, now):
             # decision from <work>. Stored as the card's blockSummary through the same fail/retry path.
             out = (stall_llm(nodes[top].get("text", ""), work, proc_whys[-1]) if proc_only
                    else brief_llm(nodes[top].get("text", ""), work, owed,
-                                  frame=_deleg_frame(store, top)))
+                                  frame=_deleg_frame(store, top),
+                                  user_ask=_user_ask_text(store, top, fsid, path, now)))
             if not out:
                 if getattr(_judge_ctx, "paused", False):   # the call was SKIPPED (global retry-pause on), not
                     continue                               # tried — never count a pause-skip toward give-up, else
@@ -10687,7 +10702,8 @@ def _distill_session(fsid, path, now):
             _dsubs = [d for d in _dsubs if _done_since(d) > boundary_t]
         out = distill_llm(nodes[top].get("text", ""), work, nodes[top].get("doneWhy") or "", prior_summary=prior,
                           items=[(d.get("text", ""), d.get("doneWhy", "")) for d in _dsubs],
-                          frame=_deleg_frame(store, top))
+                          frame=_deleg_frame(store, top),
+                          user_ask=_user_ask_text(store, top, fsid, path, now))
         if not out:
             if getattr(_judge_ctx, "paused", False):   # pause-skip, not a real failure — don't count it toward
                 continue                               # give-up (leave summary null → re-enters once unpaused)
@@ -10876,9 +10892,56 @@ def rearm_failed_summaries(now=None, auto=False):
     return n
 
 
+def _drain_undiscovered(now, fleet_sids):
+    """Stragglers the fleet walk can't reach (the user 2026-08-26, T110): a completed top whose
+    summary is still null in a store whose SESSION the pass never visits — outside discover's
+    recency window, or its transcripts gone — never meets the distiller, so its card reads
+    "Distilling…" forever. The dissolution wave surfaced the class (re-parented completed children
+    drain through the normal event gate, but only in stores a pass actually visits); the hole is
+    older than the wave. Keyed on the exact owed predicate (completed/confirming top, summary is
+    None, not cleared), never on age: a pass scans only ABSENT stores, and only when one still owes
+    does it pay for the windowless discover walk to resolve transcripts by direct sid lookup — a
+    session merely outside the window still gets its REAL summary; a transcript-less one settles
+    through _distill_session's own no-work branch, the "" sentinel plus the history-unreadable
+    warn, loud instead of an eternal spinner. Self-retiring: the sentinel is non-null, so a drained
+    store never re-enters the predicate and the steady state costs one status read per absent
+    store. Returns goals distilled."""
+    stuck = []
+    for f in sorted(GOALDIR.glob("*.json")):
+        sid = f.stem
+        if sid in fleet_sids:
+            continue
+        try:
+            store = load_goals(sid)
+        except Exception:
+            continue
+        status, nodes = store.get("status", {}), store.get("nodes", {})
+        confirming = set(store.get("confirming") or ())
+        if any((st == "completed" or nid in confirming)
+               and isinstance(nodes.get(nid), dict)
+               and not nodes[nid].get("cleared")
+               and nodes[nid].get("summary") is None
+               for nid, st in status.items()):
+            stuck.append(sid)
+    if not stuck:
+        return 0
+    paths = {fsid: str(path) for fsid, path, _anchor, _name in discover(now, window=now)}
+    n = 0
+    for sid in stuck:
+        try:
+            n += _distill_session(sid, paths.get(sid) or os.devnull, now)
+        except Exception as e:
+            _log_judge_error("distiller", sid, "pass-crash",
+                             note="straggler drain: %r" % e)
+    return n
+
+
 def run_distill(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, verbose=False):
     """One DISTILLER pass (triage tier), run after the closer/grouper: store a key-takeaway summary on each
-    newly-(re)completed top goal's card. Event-gated per goal. Returns goals distilled."""
+    newly-(re)completed top goal's card. Event-gated per goal. Also drains stores the fleet walk
+    can't reach (_drain_undiscovered) and logs a session pass that dies instead of swallowing it —
+    one poisoned goal used to kill a whole store's distills with zero calls and zero errors, the
+    undiagnosable shape of the T110 report. Returns goals distilled."""
     if now is None:
         now = int(time.time())
     fleet = discover(now)[:sessions_cap]
@@ -10888,8 +10951,9 @@ def run_distill(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, v
         for fut in as_completed(futs):
             try:
                 n += fut.result()
-            except Exception:
-                pass
+            except Exception as e:                     # fail LOUDLY, never silently skip the store
+                _log_judge_error("distiller", futs[fut], "pass-crash", note=repr(e))
+    n += _drain_undiscovered(now, {fsid for fsid, _p, _a, _n2 in fleet})
     if verbose:
         sys.stderr.write("romp-judge: distiller summarized %d completed goals\n" % n)
     return n
@@ -10962,7 +11026,9 @@ COURIER_SYS = (
     "The sender's lead word is a hint, not the verdict: DELEGATE:/HANDOFF: usually means delegating; "
     "COORDINATE:/FYI: means coordinating; QUESTION:/Q: means coordinating; ASK: is ambiguous, so read "
     "the body and decide by whether B actually ends up owning work. Write text in plain concrete words "
-    "(the outcome itself, no filler or stock AI phrasing, no em dashes). Output only the JSON object.")
+    "(the outcome itself, no filler or stock AI phrasing, no em dashes). When the body names its "
+    "subject by a coined or internal name, prefer the plain words around it: the outcome in words "
+    "anyone can read. Output only the JSON object.")
 
 
 def _seg_peer(seg):
@@ -11279,7 +11345,7 @@ def _postal_from(mid):
     return _postal_row(mid)[:2]
 
 
-def apply_courier(store, seg_id, seg_t, text, origin, prompt_uuid=None, frame=None):
+def apply_courier(store, seg_id, seg_t, text, origin, prompt_uuid=None, frame=None, user_ask=None):
     """Plant a top-level goal in the recipient's tree for a delegating message, with origin
     provenance. Idempotent by seg_id and origin.msgId (one planted goal per message). Returns nid.
     `prompt_uuid` (the user 2026-07-20, g200): the peer segment's anchor (its head record), so the
@@ -11287,7 +11353,11 @@ def apply_courier(store, seg_id, seg_t, text, origin, prompt_uuid=None, frame=No
     `frame` (the user 2026-08-25, the confusing-worker-cards round): the delegating mail's cleaned
     first line — usually the USER's own phrasing of the round — stored as the ADDITIVE node field
     `frame` so the distiller/briefer open the card's summary in the user's terms instead of the
-    worker's implementation nouns. Absent on non-delegated goals; old payloads render unchanged."""
+    worker's implementation nouns. Absent on non-delegated goals; old payloads render unchanged.
+    `user_ask` (the user 2026-08-26, T105): the ROOT human prompt record the chain trace proved
+    ({"text","sid"}) — the frame is an INTERMEDIARY's restatement one hop up, and a manager's
+    dispatch speaks implementation nouns, so the writers also need the root. Stored shaped
+    (_ask_head). A non-dict truthy (tests stub the trace with literal True) stores nothing."""
     nodes, placements = store["nodes"], store["placements"]
     mid = origin.get("msgId")
     if mid:
@@ -11302,6 +11372,8 @@ def apply_courier(store, seg_id, seg_t, text, origin, prompt_uuid=None, frame=No
                "trail": [seg_id], "t": seg_t, "origin": origin, "promptUuid": prompt_uuid, "log": []}
     if frame:
         payload["frame"] = frame
+    if isinstance(user_ask, dict) and str(user_ask.get("text") or "").strip():
+        payload["userAsk"] = {"text": _ask_head(str(user_ask["text"])), "sid": user_ask.get("sid")}
     nodes[nid] = GuardedNode(payload)
     placements[seg_id] = nid
     store["lastNode"] = nid                            # the delegation is now the active focus
@@ -11406,39 +11478,48 @@ def _lift_handoff_children(store, hid):
 
 
 def _session_user_prompt_record(sender, path, uuid, now):
-    """True only when `uuid` in the sender's session is a HUMAN prompt record — read from the
-    CACHED stitched parse (parsed_session: fork-aware, author-stamped with the SDK-human channel
-    applied), so the courier pays no extra parse. author 'human' minus the CLI's interrupt
-    artifacts is the rule the board audit used; an attachment record (a queued_command wrapping
-    what the user dictated mid-turn) counts as human exactly when it carries no postal or
-    romp-injected marker. Everything else — mail, romp's own lines, machine input, a record the
-    stitched chain no longer holds — is False."""
+    """The HUMAN prompt record behind `uuid` in the sender's session — {"text","sid"}, always
+    truthy — or None. Read from the CACHED stitched parse (parsed_session: fork-aware,
+    author-stamped with the SDK-human channel applied), so the courier pays no extra parse. author
+    'human' minus the CLI's interrupt artifacts is the rule the board audit used; an attachment
+    record (a queued_command wrapping what the user dictated mid-turn) counts as human exactly when
+    it carries no postal or romp-injected marker. Everything else — mail, romp's own lines, machine
+    input, a record the stitched chain no longer holds — is None. The record carries the atom's RAW
+    text (markers and all; shape it with _ask_head at the point of use): returning the record
+    instead of True is T105 — the prose writers anchor at the ROOT ask, so the trace must carry the
+    evidence up the chain, not just the verdict."""
     try:
         s = parsed_session(sender, [str(path)], now)
     except Exception:
-        return False
+        return None
     for turn in s.get("turns") or []:
         for a in turn.get("atoms") or []:
             if a.get("uuid") != uuid:
                 continue
             if a.get("author") == "human":
-                return not em.is_interrupt_record(a)
+                if em.is_interrupt_record(a):
+                    return None
+                c = (a.get("message") or {}).get("content")
+                # human prompt records carry content as a plain string; block lists ride _atom_text
+                txt = c if isinstance(c, str) else (_atom_text(a) or str(a.get("text") or ""))
+                return {"text": txt, "sid": sender}
             if a.get("type") == "attachment":
                 txt = _atom_text(a) or str(a.get("text") or "")
                 if em.postal_pairs(txt) or NUDGE_MARKER_RE.search(txt):
-                    return False
-                return bool(txt.strip())
-            return False
-    return False
+                    return None
+                return {"text": txt, "sid": sender} if txt.strip() else None
+            return None
+    return None
 
 
 def _delegate_user_rooted(sender, link_id, paths, now, _depth=0, _seen=None):
     """MINT-TIME chain trace (the user 2026-08-25 ~19:4x, who wants team-internal cards not
-    CREATED rather than foldable behind a lens): True only when the SENDER's linked goal traces
+    CREATED rather than foldable behind a lens): the ROOT HUMAN PROMPT RECORD ({"text","sid"},
+    always truthy; record-not-boolean is T105) when the SENDER's linked goal traces
     to a HUMAN prompt — self-then-ancestors in the sender's store (live+archive merged), an
     origin hop into a LOCAL grand-sender's chain first (a mid-chain worker's ask was itself
     courier-planted), then the node's own promptUuid read against the sender's stitched parse
-    (_session_user_prompt_record). EVERYTHING ELSE IS FALSE — no link at all, a machine/mail/
+    (_session_user_prompt_record). EVERYTHING ELSE IS None — no link at all, a machine/mail/
     romp root, a missing store/node/record, a cross-host hop (that kernel's stores are not ours
     to read), a cycle, the depth cap: at mint time uncertainty files QUIET, the inverse of the
     retired display split's default (uncertainty SHOWED there; the user's verdict is that the
@@ -11449,26 +11530,57 @@ def _delegate_user_rooted(sender, link_id, paths, now, _depth=0, _seen=None):
     needs-you state (the hard-block floor + placeholder synthesize a board card from the live
     prompt with zero goal nodes; interrupt only when the human is the bottleneck)."""
     if not link_id or _depth >= 8:
-        return False
+        return None
     seen = _seen if _seen is not None else set()
     nodes = dict(load_goal_archive(sender).get("nodes") or {})
     nodes.update(load_goals(sender).get("nodes") or {})
-    x = link_id
+    x, last = link_id, None
     while x is not None and (sender, x) not in seen:
         seen.add((sender, x))
         nd = nodes.get(x)
         if not isinstance(nd, dict):
-            return False
+            return None
         o = nd.get("origin")
         if (isinstance(o, dict) and o.get("peer") and o.get("goalId")
                 and not o.get("peerHost") and o["peer"] in paths):
-            if _delegate_user_rooted(o["peer"], o["goalId"], paths, now, _depth + 1, seen):
-                return True
+            rec = _delegate_user_rooted(o["peer"], o["goalId"], paths, now, _depth + 1, seen)
+            if rec:
+                return rec
         pu = nd.get("promptUuid")
-        if pu and sender in paths and _session_user_prompt_record(sender, paths[sender], pu, now):
-            return True
+        if pu and sender in paths:
+            rec = _session_user_prompt_record(sender, paths[sender], pu, now)
+            if rec:
+                return rec
+        last = nd
         x = nd.get("parentId")
-    return False
+    # CONTAINER-SIBLING RESCUE (the user 2026-08-26, T101): live umbrellas dissolve now, but
+    # ARCHIVED history keeps its containers — and the provenance audit measured that a chain
+    # dead-ending at a promptless container almost always has the dictated-round evidence sitting
+    # in the container's OTHER children (22 of 23 stranded asks). When the climb exhausts at an
+    # evidence-free container, one bounded look at its children recovers exactly that class —
+    # still a CONFIDENT rule (a sibling's human record IS the round's evidence), never a guess.
+    if last is not None and last.get("umbrella"):
+        cap = 0
+        for cid, cd in nodes.items():
+            if not isinstance(cd, dict) or cd.get("parentId") != last.get("id"):
+                continue
+            cap += 1
+            if cap > 40:
+                break
+            if (sender, cid) in seen:
+                continue
+            pu = cd.get("promptUuid")
+            if pu and sender in paths:
+                rec = _session_user_prompt_record(sender, paths[sender], pu, now)
+                if rec:
+                    return rec
+            o = cd.get("origin")
+            if (isinstance(o, dict) and o.get("peer") and o.get("goalId")
+                    and not o.get("peerHost") and o["peer"] in paths):
+                rec = _delegate_user_rooted(o["peer"], o["goalId"], paths, now, _depth + 1, seen)
+                if rec:
+                    return rec
+    return None
 
 
 def run_propagate(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, verbose=False):
@@ -11615,7 +11727,8 @@ def run_courier(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, v
     for fsid, path, anchor, name in fleet:
         try:
             session = parsed_session(fsid, [str(path)], now)   # states-aware + cached, so _session_closed is correct
-        except Exception:
+        except Exception as e:                         # a poisoned transcript must not skip silently (T111)
+            _log_judge_error("courier", fsid, "pass-crash", note="parse: %r" % e)
             continue
         cstore = load_goals(fsid)
         closed[fsid] = _session_settled(fsid, str(path), session, cstore)
@@ -11634,8 +11747,8 @@ def run_courier(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, v
                         pm0 = _seg_peer(seg)
                         if pm0 and pm0[0] and pm0[1] and _seg_peer_kind(seg) == "delegate":
                             _attach_courier_link(cstore, seg["id"], pm0[1])
-                    except Exception:
-                        pass
+                    except Exception as e:             # bookkeeping, but its failure is not nothing (T111)
+                        _log_judge_error("courier", fsid, "pass-crash", note="link-attach: %r" % e)
                     continue
                 if floor and seg["t"] < floor:
                     # pre-episode: conversation the agent can no longer see. The planner retires these
@@ -11813,24 +11926,34 @@ def run_courier(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, v
             # state still reaches the board through the hard-block floor/placeholder, which need no
             # goal node. Uncertainty quiets by design (the trace's docstring names the surface).
             rooted = _delegate_user_rooted(sender, link_id, paths_map, now)
+            # THE ASK IS THE CARD UNIT (the user 2026-08-26, T101): a dispatch whose chain roots to
+            # an ask that ALREADY HAS A CARD — link_id resolved to the sender's ask node — LINKS
+            # instead of minting: the tracking node below plants under that ask (fan-out lives
+            # INSIDE the ask card, per-dispatch progress one click down), and the recipient gets NO
+            # standalone top (one ask fanned to three workers used to mint three near-duplicate
+            # cards). Only a rooted dispatch with NO resolvable ask node still mints the recipient
+            # top — there the recipient card IS the ask's card, the fallback that keeps every user
+            # ask carded somewhere. Linking alone never moves the ask card's column: planting a
+            # tracking child writes no verdict on the ask.
+            mint_recipient = rooted and not link_id
             # Mint the sender's precise '↪ delegated to <recipient>' tracking node (the user 2026-06-22) and
             # point B's goal at IT — so run_propagate checks off only the handed-off piece, never the sender's
             # broader linked goal. Saved to the sender's tree before planting G on the recipient's.
             track_id = _plant_handoff_track(sender_store, link_id, edit["text"], fsid, id2name.get(fsid), seg_t, mid,
-                                            tracked=trk and rooted)
-            if not rooted:
+                                            tracked=trk and mint_recipient)
+            if not mint_recipient:
                 h = sender_store["nodes"][track_id].get("handoff")
                 if isinstance(h, dict) and not h.get("quiet"):
                     # QUIET mark: no recipient goal will ever carry this msgId, so run_propagate's
                     # origin back-link can never end this tracker — the recipient's REPLY (any kind,
                     # at/after the send) is its report-back event instead, the same rule the
-                    # cross-host arm has always used. Also the breadcrumb for "where is the card?":
-                    # the delegation chose quiet filing because its chain roots in team-internal
-                    # work, not a user ask.
+                    # cross-host arm has always used. Both no-recipient-top shapes wear it: an
+                    # untraceable dispatch (team-internal chain) and, since T101, a LINKED dispatch
+                    # (the ask card carries the fan-out; the tracker under it is the unit that ends).
                     h["quiet"] = True
             rollup_status(sender_store, False)
             save_goals(sender, sender_store)
-            if not rooted:
+            if not mint_recipient:
                 store["placements"][seg_id] = "fyi"    # quiet: processed, no recipient top (the #d
                 #                                        delegation phase retires on this, exactly the
                 #                                        coordinate treatment)
@@ -11851,7 +11974,8 @@ def run_courier(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, v
             if frm_host:                               # stamped only on cross-host delivery
                 origin["peerHost"] = frm_host
             apply_courier(store, seg_id, seg_t, edit["text"], origin, prompt_uuid=anchor_uuid,
-                          frame=_postal_body_head(mid) or _frame_head(text))
+                          frame=_postal_body_head(mid) or _frame_head(text),
+                          user_ask=rooted if isinstance(rooted, dict) else None)
             #             ^ the ledger row's body is authoritative; a row the local ledger lacks
             #               (some cross-host deliveries) falls back to the delivered segment's own
             #               head — same content, one hop later

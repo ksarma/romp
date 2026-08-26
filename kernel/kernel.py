@@ -3017,8 +3017,9 @@ def _goal_awaiting_stamp(nodes, top, children=None, answered_at=0):
 
 
 def _goal_awaiting_stamp_full(nodes, top, children=None, answered_at=0):
-    """(awaitingAt, why, kind) of the freshest live ⏳ stamp in `top`'s subtree, or None —
-    _goal_awaiting_stamp with the ANCHOR and the wait's KIND (jd.AWAIT_KINDS or None) alongside the why.
+    """(awaitingAt, why, kind, peer keys) of the freshest live ⏳ stamp in `top`'s subtree, or None —
+    _goal_awaiting_stamp with the ANCHOR, the wait's KIND (jd.AWAIT_KINDS or None) and the stamp's own
+    awaitingPeers (the judge's pair-aware keys; () when unrecorded) alongside the why.
     The awaiting wake's due-check needs the anchor (see the awaiting branch of _auto_nudge_session's
     goal walk); display consumers that only word the wait keep the why-only twin above."""
     if children is None:
@@ -3045,10 +3046,10 @@ def _goal_awaiting_stamp_full(nodes, top, children=None, answered_at=0):
             # 2026-08-19 audit. `answered_at` here may be the pair-aware _peer_answered(sid) tuple
             # or a legacy scalar (tests, older callers) — the predicate normalizes both.
             if not _peer_stamp_superseded(nd, answered_at):
-                cand = (at, nd["awaitingWhy"], kind or "")   # "" keeps max() comparable
+                cand = (at, nd["awaitingWhy"], kind or "", tuple(nd.get("awaitingPeers") or ()))   # "" keeps max() comparable
                 best = cand if best is None else max(best, cand)
         stack.extend(children.get(x, []))
-    return (best[0], best[1], best[2] or None) if best else None
+    return (best[0], best[1], best[2] or None, best[3]) if best else None
 
 
 def _mark_nudge_failed(gid, ev_t=None, wake=False):
@@ -4188,7 +4189,8 @@ def _dead_handoff_block(sid, nid, h, nd, nudged, now):
         cur = store.get("nodes", {}).get(nid)
         if not cur or cur.get("nodeComplete") or cur.get("blocked"):
             return False
-        peer = _name_of(h.get("peer") or "") or (h.get("peer") or "")[:8] or "a peer"
+        _pid = _peer_identity(h.get("peer") or "")
+        peer = (("%s:%s" % (_pid["host"], _pid["name"])) if _pid["host"] else _pid["name"]) or "a peer"
         blkwhy = jd.dead_wait_block_why("the delegation to %s (%s)"
                                         % (peer, (cur.get("text") or "").replace("↪ ", "")[:80]))
         _ev = int(max(anchor, last_t or 0) or now)
@@ -6270,7 +6272,7 @@ def _comment_cut_target(path, sid, anchor_uuid):
     context the anchor asked for; the quote still names the passage exactly."""
     ad = _anchor_adapter(path, sid)
     if anchor_uuid not in ad.by_uuid:
-        return None, 0, "that message isn't in the transcript yet; try again in a moment"
+        return None, 0, ANCHOR_LAG_ERR
     is_boundary = lambda r: r is not None and r.get("type") == "system" and r.get("subtype") == "compact_boundary"
     u, hops, on_active = ad.leaf_uuid, 0, False
     while u is not None and hops < 500000:
@@ -6523,16 +6525,9 @@ def _comments_frame(sid, tmux=None):
         unread = any(m["who"] == "agent" and m["t"] > seen for m in msgs)
         events = [] if status == "promoted" else _thread_events(tsid, str(th.get("cutUuid") or ""), now, tmux)
         reg = _thread_reg(tsid)
-        # the settle count (see _comment_settle_step): raw_busy mirrors the client's threadInFlight
-        # (comments.ts) exactly — live work or an owed reply, on an open unstuck thread
-        tid = str(th.get("tid") or "")
-        raw_busy = (status == "open" and not err and state not in ("permission", "picker")
-                    and (state in ("working", "retrying", "compacting")
-                         or bool(msgs and msgs[-1]["who"] == "you")))
-        quiet = _comment_settle_step(_comment_settle.get(tid), raw_busy, status != "open" or bool(err))
-        _comment_settle[tid] = quiet
-        if len(_comment_settle) > 512:
-            _comment_settle.clear()
+        # (T102: the push-count settle — settledPushes — is RETIRED. The client's pulse is exchange-
+        # scoped now: latched at the send gesture, cleared by the reply RECORD arriving in msgs; the
+        # frame's msgs already carry that event, so no per-push counter rides here anymore.)
         # sinceEpoch (MILLISECONDS, the client convention): when the thread's current state began —
         # the popover's working chip counts from it, exactly as the chat's statusline does
         since_ms = 0
@@ -6556,7 +6551,7 @@ def _comments_frame(sid, tmux=None):
                         "unread": unread, "promotedName": th.get("promotedName") or "",
                         "model": (reg.get("liveModel") or reg.get("model") or "") if reg else "",
                         "effort": (reg.get("effort") or "") if reg else "",
-                        "settledPushes": quiet, "sinceEpoch": since_ms,
+                        "sinceEpoch": since_ms,
                         "mode": str(meta.get("mode") or ""), "fast": str(meta.get("fast") or ""),
                         # the same rank tints the chat statusline's badges wear (the user 2026-08-25,
                         # color rider: the popover's model/effort rendered plain gray — metaColor
@@ -6567,26 +6562,6 @@ def _comments_frame(sid, tmux=None):
                                                      cm.stops_for(_colormap())),
                         "msgs": msgs, "events": events})
     return {"type": "comments", "id": sid, "threads": threads}
-
-
-# The client's green→yellow settle needs TWO CONFIRMING PUSHES (comments.ts latchBusy), but
-# _send_client's dedup withholds unchanged frames — so after a reply landed, the second confirming
-# frame never arrived and the passage stayed green until some unrelated change minted one (the user
-# 2026-08-25: it didn't flip until clicking back into the main chat). The frame now carries the
-# count ITSELF: pushes since the thread last read busy, clamped at 2 — each step is a real pusher
-# cycle (an event, never a timer), the frame changes at most twice after settling, and then the
-# dedup resumes. tid → count; pure step logic split out for the test.
-_comment_settle = {}
-
-
-def _comment_settle_step(prev, raw_busy, decided):
-    """One pusher cycle's step of the settle count: busy → 0; a decided status (closed/errored)
-    settles immediately; otherwise count up, clamped at 2 (the client's SETTLE_CONFIRM_PUSHES)."""
-    if decided:
-        return 2
-    if raw_busy:
-        return 0
-    return min(2, (2 if prev is None else prev) + 1)
 
 
 def _comment_markers(sid):
@@ -6606,6 +6581,47 @@ def _comment_markers(sid):
                     "uuid": th.get("anchorUuid") or "", "tid": th.get("tid"),
                     "status": th.get("status") or "open"})
     return out
+
+
+# The one TRANSIENT create refusal (T106 lab find, 2026-08-26): the reply the user just commented
+# on rendered from the LIVE STREAM, and the CLI flushes the transcript file a beat later — so the
+# kernel's (fresh) file read genuinely lacks the record for a second or two. The ws handler parks
+# the create HERE and the pusher retries it each cycle until the file catches up (the kernel owns
+# the file it is waiting on — a settled session emits no further frames, so a client-side retry
+# alone starves; the client's frame-keyed re-post stays as the belt for a kernel restart that loses
+# this in-memory park). The typed transient nack keeps the client's optimistic mark alive meanwhile.
+ANCHOR_LAG_ERR = "that message isn't in the transcript yet; try again in a moment"
+_parked_creates = []                       # [{sid,uuid,exact,text,name,model,effort,color,tries}]
+_PARK_MAX_TRIES = 30                       # pusher cycles (~15-90s) — past this the record isn't coming
+
+
+def _retry_parked_creates():
+    """One pusher cycle's pass over lag-parked comment creates: re-run each against the (now
+    possibly caught-up) transcript; success acks commentCreated + a fresh comments frame to every
+    chat client (the creating client's socket may be gone — the adopt keys on the uuid, and clients
+    without a matching pending simply ignore it). Still lagging → keep, bounded; any OTHER error →
+    drop (the client's own attempt cap surfaces the failure honestly)."""
+    if not _parked_creates:
+        return
+    for pk in list(_parked_creates):
+        pk["tries"] += 1
+        err, tid = _comment_create(pk["sid"], pk["uuid"], pk["exact"], pk["text"], name=pk["name"],
+                                   model=pk["model"], effort=pk["effort"], color=pk["color"])
+        if err == ANCHOR_LAG_ERR and pk["tries"] < _PARK_MAX_TRIES:
+            continue
+        _parked_creates.remove(pk)
+        if not err:
+            fr = _comments_frame(pk["sid"])
+            with _clients_lock:
+                targets = [c for c in _clients if c.get("app") == "chat"]
+            for c in targets:
+                try:
+                    if fr:
+                        c["send"](json.dumps(fr))
+                    c["send"](json.dumps({"type": "commentCreated", "id": pk["sid"], "tid": tid,
+                                          "uuid": pk["uuid"]}))
+                except Exception:
+                    pass
 
 
 def _comment_create(parent_sid, anchor_uuid, exact, text, name="", model="", effort="", color="", now=None):
@@ -7844,7 +7860,21 @@ def _drive(msg, client):
                                    model=str(msg.get("model") or ""), effort=str(msg.get("effort") or ""),
                                    color=str(msg.get("color") or ""))
         if err:
-            client["send"](json.dumps({"type": "warn", "text": err}))
+            # a TRANSIENT refusal (the live-streamed reply's file flush lagging) PARKS the create —
+            # the pusher retries it each cycle until the transcript catches up — and the typed nack
+            # keeps the client's optimistic mark alive; no toast for plumbing the retry makes moot.
+            # Every real refusal stays loud (fail loudly).
+            if err == ANCHOR_LAG_ERR:
+                _parked_creates.append({"sid": sid, "uuid": str(msg["uuid"]), "exact": str(msg["exact"]),
+                                        "text": str(msg["text"]), "name": str(msg.get("name") or ""),
+                                        "model": str(msg.get("model") or ""),
+                                        "effort": str(msg.get("effort") or ""),
+                                        "color": str(msg.get("color") or ""), "tries": 0})
+            else:
+                client["send"](json.dumps({"type": "warn", "text": err}))
+            client["send"](json.dumps({"type": "commentCreateFailed", "id": sid,
+                                       "uuid": str(msg["uuid"]), "transient": err == ANCHOR_LAG_ERR,
+                                       "text": err}))
         else:
             # the FRAME rides ahead of the ack: the ack's handler adopts the new thread from the
             # client's thread map, so the thread must be in it first (reversed, the popover looked
@@ -12774,7 +12804,7 @@ def _session_stamp_read(sid):
         gs = (jd.GOALDIR / (sid + ".json")).stat()
         gkey = (gs.st_mtime, gs.st_size)
     except Exception:
-        return ((None, None, None, None), frozenset(), ())   # no store yet → nothing to stamp, nothing delegated
+        return ((None, None, None, None, ()), frozenset(), ())   # no store yet → nothing to stamp, nothing delegated
     try:
         ostt = (jd._overrides_dir() / (sid + ".jsonl")).stat()
         okey = (ostt.st_mtime, ostt.st_size)
@@ -12789,7 +12819,7 @@ def _session_stamp_read(sid):
     hit = _SESSION_STAMP_CACHE.get(sid)
     if hit and hit[0] == key:
         return hit[1]
-    full, tops, deleg = (None, None, None, None), set(), ()
+    full, tops, deleg = (None, None, None, None, ()), set(), ()
     try:                                               # load_goals (not a raw read) so overrides replay —
         store = jd.load_goals(sid)                     # the same view _goal_awaiting_stamp sees on the card
         nodes = store.get("nodes", {})
@@ -12822,10 +12852,10 @@ def _session_stamp_read(sid):
                 # The TOPS SET above stays status-blind on purpose: it feeds _bg_split's awaited-vs-
                 # service classification, where a temporarily blocked top's live task is still awaited.
                 if status.get(top, "working") == "working":
-                    cand = (at, nid, nd["awaitingWhy"], kind)
+                    cand = (at, nid, nd["awaitingWhy"], kind, tuple(nd.get("awaitingPeers") or ()))
                     best = cand if best is None else max(best, cand)
         if best:
-            full = (best[1], best[0], best[2], best[3])   # (gid, at, why, kind)
+            full = (best[1], best[0], best[2], best[3], best[4])   # (gid, at, why, kind, awaited peer keys)
         # DELEGATION, the same pass (the user 2026-08-08, whose fully-delegated session wore the feed's
         # green awaiting dot while chat/timeline/rail read plain ready): a top whose every OPEN leaf is a
         # courier handoff node is work handed to PEERS — the exact evidence the feed's per-card flavor
@@ -12845,15 +12875,16 @@ def _session_stamp_read(sid):
                     peers.add(str(h["peer"]))
         deleg = tuple(sorted(peers))
     except Exception:
-        full, tops, deleg = (None, None, None, None), set(), ()
+        full, tops, deleg = (None, None, None, None, ()), set(), ()
     val = (full, frozenset(tops), deleg)
     _SESSION_STAMP_CACHE[sid] = (key, val)
     return val
 
 
 def _session_stamp_full(sid):
-    """(gid, awaitingAt, why, kind) of the freshest durable ⏳ awaiting stamp across ALL of a session's
-    goals, or (None, None, None, None)."""
+    """(gid, awaitingAt, why, kind, peer keys) of the freshest durable ⏳ awaiting stamp across ALL of a
+    session's goals, or (None, None, None, None, ()) — the 5th slot is the stamp's own awaitingPeers
+    (the judge's pair-aware keys), so the session surfaces can NAME the wait (2026-08-26)."""
     return _session_stamp_read(sid)[0]
 
 
@@ -12862,6 +12893,32 @@ def _session_stamped_tops(sid):
     (_bg_split): a placed launch owned by one of these tops is AWAITED, any other placed launch is a
     SERVICE."""
     return _session_stamp_read(sid)[1]
+
+
+_UUIDISH_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+
+
+def _peer_identity(psid):
+    """ONE identity ladder for every peer reference romp records (the user 2026-08-26: a peer-kind
+    wait names the ACTUAL session — 'a peer' is a bug to trace, not a style). Accepts the three
+    recorded shapes — a bare sid, the courier's cross-host "<host>:<tail>" composite, the wait map's
+    "peer:<host>:<name>" key — and resolves {name, host, sid, color}: the names REGISTRY first
+    (identity persists for DORMANT sessions; liveness is never a prerequisite for naming), else the
+    composite's own parts (display-join on the canonical pair, per the federation rule — a name tail
+    reads whole, a sid tail stubs to 8), else the sid stub. Color is registry-only: a peer another
+    kernel owns keeps color None (its identity colors live on its home kernel), so the UIs render an
+    uncolored host-prefixed name rather than a guessed hue."""
+    raw = str(psid or "")
+    if raw.startswith("peer:"):
+        raw = raw[len("peer:"):]
+    pn = _name_of(raw)
+    if pn:
+        return {"name": pn, "host": "", "sid": raw, "color": _name_color(raw)}
+    if ":" in raw:
+        h, _, tail = raw.partition(":")
+        return {"name": (tail[:8] if _UUIDISH_RE.match(tail) else tail) or raw[:8],
+                "host": h, "sid": raw, "color": _name_color(raw)}
+    return {"name": raw[:8], "host": "", "sid": raw, "color": _name_color(raw)}
 
 
 def _handoff_peer_identities(nodes, hnodes):
@@ -12877,10 +12934,7 @@ def _handoff_peer_identities(nodes, hnodes):
         psid = str((nodes.get(x, {}).get("handoff") or {}).get("peer") or "")
         if not psid or psid in seen:
             continue
-        pn = _name_of(psid)
-        seen[psid] = {"name": pn or psid.split(":")[-1][:8],
-                      "host": ("" if pn or ":" not in psid else psid.split(":", 1)[0]),
-                      "sid": psid, "color": _name_color(psid)}
+        seen[psid] = _peer_identity(psid)     # the ONE ladder (2026-08-26) — same resolve everywhere
     return sorted(seen.values(), key=lambda d: d["name"]) or None
 
 
@@ -13016,11 +13070,22 @@ def _session_delegated_why(sid):
     awaiting dot while every session-scoped surface read plain ready (the user 2026-08-08, who asked why
     three surfaces disagreed on one fact). Peer SIDS ride the mtime cache; names resolve here so a
     renamed peer reads fresh."""
+    idents = _session_delegated_identities(sid)
+    if not idents:
+        return None
+    names = sorted({("%s:%s" % (d["host"], d["name"])) if d["host"] else d["name"] for d in idents})
+    return "delegated to %s; waiting on their result" % ", ".join(names)
+
+
+def _session_delegated_identities(sid):
+    """The STRUCTURED identities behind the session-scoped delegation wait, or None. Sids ride the
+    mtime cache; names/colors resolve HERE at read time (a renamed peer reads fresh) through the one
+    _peer_identity ladder — before this, a cross-host "<host>:<name>" composite fell to a bare
+    registry read and every such delegation was announced as 'a peer' (the user 2026-08-26)."""
     peers = _session_stamp_read(sid)[2]
     if not peers:
         return None
-    names = sorted(_name_of(p) or "a peer" for p in peers)
-    return "delegated to %s; waiting on their result" % ", ".join(names)
+    return sorted((_peer_identity(p) for p in peers), key=lambda d: d["name"])
 
 
 def _session_awaiting(sid, path, idle, stamp=False):
@@ -13145,12 +13210,21 @@ def _session_awaiting(sid, path, idle, stamp=False):
         y = _owned_yield_why(sid, path)
         if y:
             return {"kind": "task", "why": y, "since": None}   # a live owned dispatch — in-harness work (no single event time to show)
-        _gid, _at, st_why, st_kind = _session_stamp_full(sid)
+        _gid, _at, st_why, st_kind, st_peers = _session_stamp_full(sid)
         if st_why:
-            return {"kind": st_kind, "why": st_why, "since": _at or None}   # the judge's own classification rides the stamp, with its awaitingAt
+            out = {"kind": st_kind, "why": st_why, "since": _at or None}   # the judge's own classification rides the stamp, with its awaitingAt
+            if st_kind == "peer" and st_peers:
+                # the stamp RECORDS who the wait is on (judge awaitPeers) — name them (2026-08-26);
+                # `peers` rides only when known, so every other arm's shape is byte-identical
+                out["peers"] = sorted((_peer_identity(p) for p in st_peers), key=lambda d_: d_["name"])
+            return out
         d = _session_delegated_why(sid)
         if d:
-            return {"kind": "peer", "why": d, "since": None}   # the courier handoff graph is peer by construction
+            out = {"kind": "peer", "why": d, "since": None}   # the courier handoff graph is peer by construction
+            pi = _session_delegated_identities(sid)
+            if pi:
+                out["peers"] = pi
+            return out
     return None
 
 
@@ -17369,7 +17443,8 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
             _dmemo[nid] = False
             return False
         res = bool(nd.get("nodeComplete"))
-        if not res and nd.get("umbrella"):             # a grouper container completes structurally — the
+        if not res and nd.get("umbrella"):             # ARCHIVED pre-T101 container (mints retired; live
+            # ones dissolve every rollup) — history still renders structurally-complete: the
             # mint asserted "this node IS its children"; cleared kids are out of the closure either
             # way (neither done nor holding it open), mirroring build_feed's _closure_done
             kids = [c for c in gkids.get(nid, []) if not _cleared(c)]
@@ -17516,6 +17591,9 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
                   # pill), so a multi-task wait can list them all on hover.
                   "awaitingWhy": awaiting_why or None,
                   "awaitingKind": awaiting_kind,   # WHAT the wait is on (jd.AWAIT_KINDS; None = kindless)
+                  # WHO a peer-kind wait is on — [{name, host, sid, color}], the same identities the feed
+                  # box wears, so the chat chip + awaiting box name the actual session (2026-08-26)
+                  "awaitingPeers": ((_aw or {}).get("peers") or None),
                   "awaitingTasks": (_awaiting_task_descs(sid, sess["path"]) if awaiting_why else []),
                   # …and the same tasks' launch ids, so the #bg-tasks box outlines exactly the awaited
                   # rows in the chip's await-green (the user 2026-08-19)
@@ -18871,7 +18949,8 @@ def build_feed(now, tmux=None):
                 _cdone[nid] = False
                 return False
             res = bool(nd.get("nodeComplete"))
-            if not res and nd.get("umbrella"):         # a grouper container completes structurally — the
+            if not res and nd.get("umbrella"):         # ARCHIVED pre-T101 container — history renders
+                # structurally-complete (mints retired; live ones dissolve every rollup): the
                 kids = [c for c in children.get(nid, []) if not nodes[c].get("cleared")]
                 res = bool(kids) and all(_closure_done(c) for c in kids)
             _cdone[nid] = res
@@ -19038,6 +19117,7 @@ def build_feed(now, tmux=None):
         sess_awaiting_why = _sess_aw["why"] if _sess_aw else None
         sess_awaiting_kind = _sess_aw["kind"] if _sess_aw else None
         sess_awaiting_since = _sess_aw.get("since") if _sess_aw else None   # the wait's own event time (the user 2026-08-23)
+        sess_awaiting_peers = _sess_aw.get("peers") if _sess_aw else None   # named identities when the arm knows them (2026-08-26)
         if sess_awaiting_why and not who_working:
             awaiting.append(name)                    # the AWAITING dot list (await-green, the user 2026-07-13) — the
             #                                          same split _session_chip makes; feed/chat dots match the chip
@@ -19140,6 +19220,11 @@ def build_feed(now, tmux=None):
             _stamp_why = _sf[1] if _sf else None
             _stamp_kind = _sf[2] if _sf else None
             _stamp_since = (_sf[0] or None) if _sf else None   # the stamp's awaitingAt — when the judge filed the wait
+            # the stamp arm NAMES its peers too (2026-08-26): the judge's awaitPeers keys resolve through
+            # the one identity ladder, so a judge-classified peer wait wears the same identity chips the
+            # delegation arm always has — before this the or-chain hardcoded peers=None on this arm
+            _stamp_peers = (sorted((_peer_identity(p) for p in _sf[3]), key=lambda d_: d_["name"])
+                            if _sf and _stamp_kind == "peer" and _sf[3] else None)
             # DELEGATION-derived awaiting (the courier's durable handoff graph, not the question-regex):
             # every OPEN leaf under this top is a handoff-tracking node → the only outstanding work lives
             # with peers, so the card reads ⏳ "delegated to <peer>" instead of plain working (which reads
@@ -19152,9 +19237,13 @@ def build_feed(now, tmux=None):
             _deleg_peers = None
             if col == "working" and not _stamp_why and not _await_ok \
                     and _all_outstanding_delegated(nodes, nid):
-                _hnodes = [x for x in _subtree(nid)
-                           if isinstance(nodes[x].get("handoff"), dict)
-                           and not nodes[x].get("nodeComplete") and not nodes[x].get("cleared")]
+                # the SAME open test the gate used (2026-08-26): _all_outstanding_delegated proved every
+                # OPEN LEAF is a handoff via _open_leaves (whose agent-open pierce ignores a done marker),
+                # so the peers/since read here must walk the same set — the raw nodeComplete filter this
+                # replaces could see an EMPTY set the gate saw as non-empty, minting a nameless, durationless
+                # "delegated to a peer" card
+                _hnodes = [x for x in _open_leaves(nodes, nid)
+                           if isinstance(nodes[x].get("handoff"), dict)]
                 _deleg_peers = _handoff_peer_identities(nodes, _hnodes)
                 _peers = sorted({d["name"] for d in (_deleg_peers or [])} or {"a peer"})
                 _deleg_why = "delegated to %s; waiting on their result" % ", ".join(_peers)
@@ -19209,8 +19298,8 @@ def build_feed(now, tmux=None):
             await_since = None                       # mirroring the or-chain exactly (a kindless winner
             await_peers = None                       # stays kindless; since = the wait's own event time).
             if col == "awaiting":                    # peers = structured identities, delegation arm only
-                for _w, _k, _s, _p in ((sess_awaiting_why, sess_awaiting_kind, sess_awaiting_since, None),
-                                       (_stamp_why, _stamp_kind, _stamp_since, None),
+                for _w, _k, _s, _p in ((sess_awaiting_why, sess_awaiting_kind, sess_awaiting_since, sess_awaiting_peers),
+                                       (_stamp_why, _stamp_kind, _stamp_since, _stamp_peers),
                                        (_deleg_why, "peer", _deleg_since, _deleg_peers),
                                        (_owned_why, "task", _owned_since, None)):
                     if _w:
@@ -20663,10 +20752,19 @@ def _derive_judging(sid, caps, goals, t0, out, seg_ends=None):
             continue
         text = n.get("text", "")
         mt = n.get("mt") or t
+        go = n.get("groupOp")
+        if isinstance(go, dict) and (go.get("t") or 0) >= t0:
+            # the grouper's surviving housekeeping (T103): merge/split/retitle append no diary
+            # events by design, so the lane keys on the apply-time structure stamp — additive
+            # beside the node's own mint/plant mark (a merged survivor is both)
+            out.append({"judge": "grouper", "sid": sid, "t": go["t"],
+                        "kind": go.get("kind") or "group", "text": text})
         if n.get("origin"):                                   # courier planted it from a peer's handoff
             if t >= t0:
                 out.append({"judge": "courier", "sid": sid, "t": t, "kind": "plant", "text": text})
-        elif n.get("umbrella"):                               # grouper minted this umbrella
+        elif n.get("umbrella"):                               # ARCHIVED-history rendering only (T101
+            # retired every umbrella mint; live containers dissolve each rollup) — an archived
+            # pre-T101 container still shows the grouper mark it earned
             if mt >= t0:
                 out.append({"judge": "grouper", "sid": sid, "t": mt, "kind": "group", "text": text})
         elif t >= t0:                                         # planner placed it (top = mint, else a step)
@@ -21384,6 +21482,7 @@ def build_timeline(now, tmux=None, with_bars=True, live_only=False):
         sessions.append({
             "id": sid, "name": name, "live": live, "state": state, "awaitingBg": awaiting_bg,
             "awaitingKind": awaiting_kind,
+            "awaitingPeers": ((_aw_bg or {}).get("peers") or None),   # named identities for a peer wait (2026-08-26)
             # the live bg-task descriptions behind awaitingBg (the user 2026-07-13): the lane draws the
             # idle-but-waiting stretch as a thin dashed segment whose hover lists exactly what's pending
             "awaitingTasks": (_awaiting_task_descs(sid, s["path"]) if awaiting_bg else []),
@@ -23086,6 +23185,7 @@ def _push(targets, connect=False, tmux=None):
                     _built_chat.pop(sid, None)
                     _prev_chat_events.pop(sid, None)
                     _prev_chat_ledger.pop(sid, None)
+            _retry_parked_creates()   # lag-parked comment creates ride every pusher cycle (T106)
             # COMMENT THREADS: one {type:"comments"} frame per session that has ever had one (its
             # comments/ store exists — an ~free stat for everyone else). Each frame rides its OWN
             # per-sid dedup slot, never the chat delta baseline (the 2026-07-28 stranded-delta rule):
