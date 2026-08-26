@@ -13,11 +13,17 @@ export type CommentThread = {
   color?: string;             // the comment's identity color — picked distinct from its parent's
   anchorUuid: string;
   exact: string;
-  status: "open" | "resolved" | "promoting" | "promoted";
+  status: "open" | "resolved" | "promoting" | "promoted" | "merging" | "merged";   // merging/merged: folded back into the parent (the user 2026-08-23)
   createdT: number;
   state: string;              // the thread session's live state ("working"/"waiting"/…, "" when dormant)
   error?: string;             // the thread CLI's launch error, when it could not start
   unread: boolean;            // an agent reply newer than the read watermark
+  settledPushes?: number;     // kernel pushes since the thread last read busy, clamped at 2 (settleConfirmed)
+  sinceEpoch?: number;        // ms epoch the thread's current state began — the popover chip's timer
+  mode?: string;              // the thread's permission mode — the popover statusline's Auto badge
+  fast?: string;              // fast-mode state ("on"/"off"/"cooldown"; "" = unknown → no badge)
+  modelColor?: number[];      // the chat statusline's rank tints, so metaColor paints the popover
+  effortColor?: number[];     //   badges exactly as the chat's (the 2026-08-25 color rider)
   promotedName: string;       // the board session it became, when status === "promoted"
   model?: string;             // the thread's live/chosen model (the popover's switchable chip)
   effort?: string;            // the thread's effort level (ditto)
@@ -44,8 +50,53 @@ export function threadBusy(state: string): boolean {
 
 /** The thread session is stuck on an interactive prompt the popover can't answer — say so, and point
  *  at Break out (a full session can). */
+// A reply is OWED the moment the user's message is the thread's newest with no agent reply landed
+// since (the user 2026-08-24, second report: the mark flashed green on create, dropped to YELLOW
+// while the thread CLI was still booting — its live state read idle, a flapping boot-time proxy —
+// then went green again once generation started). The in-flight color keys on the EXCHANGE's own
+// events: user message in → green until the reply message lands, however the worker session's state
+// wobbles on the way. The find-the-event rule, applied to a color.
+export function replyOwed(th: CommentThread): boolean {
+  const last = th.msgs.length ? th.msgs[th.msgs.length - 1] : null;
+  return !!last && last.who === "you";
+}
+// The ONE in-flight predicate every busy surface reads (the passage mark, the rail tick): live work
+// OR an owed reply, on an open, non-errored thread that isn't blocked on the user — a stuck thread's
+// reply is NOT on the way, and green would lie.
+export function threadInFlight(th: CommentThread): boolean {
+  return th.status === "open" && !th.error && !threadStuck(th.state)
+    && (threadBusy(th.state) || replyOwed(th));
+}
+// SETTLE LATCH (the user 2026-08-24, second report: the passage went green, blipped YELLOW for a
+// second mid-churn, then back to green). At a turn boundary inside a continuing thread, one push can
+// read quiet-state + agent-tail — frame-locally indistinguishable from the true end, so no predicate
+// over a single frame can avoid the flap. The repo rule: transient states latch until the deciding
+// event. Here the deciding evidence is CONSECUTIVE confirming pushes (the pendingSessionViews idiom:
+// pushes are events, never timers): the green holds until TWO pushes in a row read settled; any busy
+// or owed reading resets the count; a status flip (resolved/merged/error) decides IMMEDIATELY — those
+// are real events, never held. The state changes at most once per deciding event by construction.
+export type BusyLatch = { green: boolean; quiet: number };
+export const SETTLE_CONFIRM_PUSHES = 2;
+export function latchBusy(prev: BusyLatch | undefined, th: CommentThread, alsoBusy = false): BusyLatch {
+  if (th.status !== "open" || th.error) return { green: false, quiet: 0 };
+  const raw = alsoBusy || (!threadStuck(th.state) && (threadBusy(th.state) || replyOwed(th)));
+  if (raw) return { green: true, quiet: 0 };
+  if (!prev || !prev.green) return { green: false, quiet: 0 };
+  const quiet = prev.quiet + 1;
+  return quiet >= SETTLE_CONFIRM_PUSHES ? { green: false, quiet: 0 } : { green: true, quiet };
+}
 export function threadStuck(state: string): boolean {
   return state === "permission" || state === "picker";
+}
+// The kernel-carried settle confirmation (2026-08-25): the latch above needs two confirming PUSHES,
+// but the wire dedup withholds unchanged frames — the second confirm never arrived, and the green
+// held until an unrelated change minted a frame (the user: it didn't flip until clicking back into
+// the main chat). The kernel now counts pushes-since-busy on the frame itself (settledPushes,
+// clamped at SETTLE_CONFIRM_PUSHES so dedup resumes once decided). null = an older kernel without
+// the field — callers fall back to the client latch.
+export function settleConfirmed(th: CommentThread): boolean | null {
+  const sp = (th as { settledPushes?: number }).settledPushes;
+  return typeof sp === "number" ? sp >= SETTLE_CONFIRM_PUSHES : null;
 }
 
 // ── exact-text re-anchoring ────────────────────────────────────────────────────────────────────

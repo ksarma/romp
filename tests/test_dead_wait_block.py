@@ -157,12 +157,75 @@ class DeadWaitBlock(_HermeticDeadWait):
         km._dead_wait_sweep({SID}, self.nudged, STAMP_T + 900)
         self.assertFalse(jd.load_goals(SID)["nodes"][GID].get("blocked"))
 
+    def test_a_post_stamp_peer_ack_does_not_hide_the_wait_from_the_sweep(self):
+        # the 100-hour survivors (2026-08-23): a worker's "starting now" mail seconds after the stamp
+        # made the peer-answered supersede read the wait as met, so the sweep stood down forever while
+        # the chip kept showing awaiting. The sweep reads the RAW stamp: a dormant owner can't process
+        # an answer anyway, so a recorded wait on a Working card converts regardless.
+        _seed_store()
+        _write_state("idle", STAMP_T + 50)
+        saved = km._peer_answered_at
+        km._peer_answered_at = lambda sid: STAMP_T + 110   # an ack landed just after the stamp
+        try:
+            km._PREV_ALIVE = None
+            km._dead_wait_sweep(set(), self.nudged, STAMP_T + 900)
+        finally:
+            km._peer_answered_at = saved
+        self.assertTrue(jd.load_goals(SID)["nodes"][GID].get("blocked"),
+                        "the supersede must not hide a dormant owner's wait from the sweep")
+
     def test_death_transition_triggers_between_ticks(self):
         _seed_store()
         _write_state("idle", STAMP_T + 50)
         km._PREV_ALIVE = {SID}                  # was alive last tick…
         km._dead_wait_sweep(set(), self.nudged, STAMP_T + 900)   # …gone this tick: the death event
         self.assertTrue(jd.load_goals(SID)["nodes"][GID].get("blocked"))
+
+    def test_the_block_writer_settles_the_brief_inline(self):
+        # "Stuck on Distilling" (the user 2026-08-23): a dead store falls out of discover's 48h window,
+        # so no distill pass ever writes its brief — the card asked for one forever. The procedural why
+        # IS the decision; the writer settles blockSummary/briefedMt itself.
+        _seed_store()
+        _write_state("idle", STAMP_T + 50)
+        km._PREV_ALIVE = None
+        km._dead_wait_sweep(set(), self.nudged, STAMP_T + 900)
+        nd = jd.load_goals(SID)["nodes"][GID]
+        self.assertTrue(nd.get("blocked"))
+        self.assertEqual(nd.get("blockSummary"), nd.get("blockWhy"),
+                         "the brief settles at the writer — never left for a pass that will not come")
+        self.assertIsNotNone(nd.get("briefedMt"))
+
+    def test_the_sweep_heals_a_pre_existing_briefless_procedural_block(self):
+        # Blocks written before the writers settled briefs inline: blocked, procedural why, no brief.
+        _seed_store()
+        st = jd.load_goals(SID)
+        nd = st["nodes"][GID]
+        jd.record_verdict(st, nd, "nudge", "block", STAMP_T + 100,
+                          why=jd.dead_wait_block_why("the full test suite it kicked off"))
+        jd.rollup_status(st, False)
+        jd.save_goals(SID, st)
+        self.assertIsNone(jd.load_goals(SID)["nodes"][GID].get("blockSummary"))
+        _write_state("idle", STAMP_T + 50)
+        km._PREV_ALIVE = None
+        km._dead_wait_sweep(set(), self.nudged, STAMP_T + 900)
+        nd = jd.load_goals(SID)["nodes"][GID]
+        self.assertTrue((nd.get("blockSummary") or "").startswith(jd.DEAD_WAIT_WHY_PREFIX),
+                        "the repair settles the stuck card's brief from its own why")
+
+    def test_a_genuine_block_why_is_never_repaired_over(self):
+        # The repair takes PROCEDURAL whys only: a genuine decision brief stays the briefer's job.
+        _seed_store()
+        st = jd.load_goals(SID)
+        nd = st["nodes"][GID]
+        jd.record_verdict(st, nd, "closer", "block", STAMP_T + 100,
+                          why="pick a database: sqlite or postgres?")
+        jd.rollup_status(st, False)
+        jd.save_goals(SID, st)
+        _write_state("idle", STAMP_T + 50)
+        km._PREV_ALIVE = None
+        km._dead_wait_sweep(set(), self.nudged, STAMP_T + 900)
+        self.assertIsNone(jd.load_goals(SID)["nodes"][GID].get("blockSummary"),
+                          "a substantive ask keeps waiting for the real briefer")
 
     def test_wake_goal_routes_its_dormant_branch_here(self):
         src = open(os.path.join(BIN, "romp-kernel")).read()
@@ -177,7 +240,7 @@ class DeadWaitCorroboration(_HermeticDeadWait):
     on the user's board with nothing to lift it when the listing returns. So absence alone NEVER
     files: the death is corroborated with the liveness OWNER first (the SDK reg's alive bit / a
     standing death record / the owner scan), and an unconfirmable candidate stands down for the
-    cycle with its transition kept armed — the _confirmed_ended doctrine the kill paths follow."""
+    cycle with its transition kept armed — the doctrine _death_sweep_tick and _death_boot_pass follow."""
 
     def _blocked(self):
         return bool(jd.load_goals(SID)["nodes"][GID].get("blocked"))
@@ -252,10 +315,10 @@ class DeadWaitCorroboration(_HermeticDeadWait):
         # transcript-derived session (no reg, no names entry — launched by neither backend); it
         # drops out of the file-derived alive set, arming its death transition… and THEN tmux is
         # installed. The availability probe is live (shutil.which), so keying the stand-down on
-        # the BOX's tmux availability let the fresh, EMPTY server — which never ran this sid —
-        # answer as its liveness owner: a false conversion of a live session's card. An owner
-        # scan settles only sids the owner could have run; this one stands down REGARDLESS of
-        # tmux availability.
+        # the BOX's tmux availability would let the fresh, EMPTY server — which never ran this
+        # sid — answer as its liveness owner: a false conversion of a live session's card. An
+        # owner scan settles only sids the owner could have run; this one stands down REGARDLESS
+        # of tmux availability.
         _seed_store(named=False)                  # transcript-derived: no launch record
         _write_state("idle", STAMP_T + 50)
         km._TMUX.available = lambda: True         # tmux just appeared mid-flight…
@@ -275,9 +338,9 @@ class DeadWaitCorroboration(_HermeticDeadWait):
 class DeadWaitStandDownLogging(_HermeticDeadWait):
     """Wedge-time log ergonomics: a stand-down is LOUD (the fail-loudly rule — a silent one wedges
     a candidate forever with no trace to act on) but collapsed to ONE line per sweep pass
-    (_death_sweep_tick's idiom) — the per-candidate line multiplied by the candidate count under
-    exactly the wedge it reports (a 20-session listing collapse logged every candidate every
-    tick, ~40 lines/s at the pusher cadence)."""
+    (_death_sweep_tick's idiom) — the per-candidate line multiplies by the candidate count under
+    exactly the wedge it reports (a 20-session listing collapse would log every candidate every
+    tick at the pusher cadence)."""
 
     def _blocked(self):
         return bool(jd.load_goals(SID)["nodes"][GID].get("blocked"))

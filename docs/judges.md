@@ -124,7 +124,15 @@ and tagged follow-ups (file under the cited goal unless the reply starts a
 different thread — and even then the new goal groups with the cited card
 under one umbrella: the follow-up tie). A segment opened by an
 untargeted kernel notice (restart or resume) carries a housekeeping note:
-pure verification sweeps file nothing.
+pure verification sweeps file nothing. Since 2026-08-25 that is also a
+mechanical floor, not just a request: a work-run whose segment was opened by
+romp's own bookkeeping — a kernel notice, or the CLI's `[Request
+interrupted…]` stop artifact — never mints a fresh top-level goal (its
+menu-targeted ops still apply, so the work keeps advancing existing cards),
+and no mint anywhere roots its promptUuid at a record that files nothing (a
+coordinate/question mail, a bookkeeping record): the anchor substitutes the
+segment's first assistant atom. The clear wrap-up is exempt — its one
+blocked card is the designed needs-you escape.
 
 **placer.** The second, scoped call, only when the chosen card already has
 open sub-goals: it sees just that card's subtree and picks the spot, biased
@@ -142,7 +150,22 @@ to narrate it. The closer supplies the missing verdicts; the unblocker retires t
 ones; the distiller and the briefer write what you read on the resolved card.
 
 **closer.** The turn-end completion backstop; it exists because agents
-rarely say "done". It audits only the goals the turn actually touched;
+rarely say "done". Since 2026-08-25 a delegated goal's report-back rides its
+audit: when a "delegated to" tracking item completes, the recipient's own
+resolution travels into the sender's tree (run_propagate) and the
+steps-finished nomination shows it to the closer as a marked
+"Delegation reports" section — before that, a delegated ask's only visible
+history was the dispatch, the closer correctly omitted, and the look-stamp
+sealed a finished question open forever (the auto-nudge then re-asked it
+seven times in 75 minutes). Two guardrails ride the same fix: the closer
+never completes a "delegated to" tracking item itself (its ending event is
+the recipient's completion — a dispatch-time done consumed the slot and
+starved the report), and on a status-reporting turn (nudge / follow-up /
+wrap-up) a cited UMBRELLA's open descendants ride the audit too — the
+umbrella's open leaf was otherwise reachable by no channel, since a nudge
+spliced into a busy session's running turn strips its own resolutions (a
+plain cited goal keeps the tops-only shape: the closer rules it directly).
+It audits only the goals the turn actually touched;
 verdict done, blocked, or omit, with "when in doubt, omit". Idempotent per
 turn. Its diary events carry src `closer`, so planner and closer verdicts
 stay distinguishable, and both defer to the user floor: a verdict computed
@@ -325,7 +348,12 @@ permission/API-error floors: one interrupt at a time, the present event first.
   durable awaiting verdict (the goal store's ⏳ stamp) carrying a KIND naming
   what the wait is on: agents, task, job (an external computation), peer, timer.
   The kind scopes the rules: a peer's answer supersedes only peer waits, and a
-  job stamp survives its watcher dying (the wake is its backstop).
+  job stamp survives its watcher dying. The wake's clock is a DEAD-MAN'S SWITCH
+  for waits whose ending romp cannot observe — kind=job (external compute),
+  cross-host peers, legacy kindless stamps, hung-forever agents/tasks, and
+  prose-declared timer check-backs; every observable ending (a notification
+  pairing, the restart epoch, a tool's declared deadline, a peer's answer or
+  death) retires its wait as an event, with no clock at all.
 
 ## Where responsibilities overlap
 

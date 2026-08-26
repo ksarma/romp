@@ -45,11 +45,15 @@ EXPECTED_BARE = {
     "test_kernel.py": 2,
     # The mention-is-not-a-delivery case: writing the bare form IS the case.
     "test_teammate_message.py": 3,
-    # The round-2 neutralizer tests (MarkerNeutralizerVariants) assemble whitespace VARIANTS of
-    # the comment form ("<!--%sromp-msg-id: …" over ws ∈ {"", " ", "\n", …}) to prove
+    # The neutralizer suite (MarkerNeutralizerVariants) assembles whitespace VARIANTS of the
+    # comment form ("<!--%sromp-msg-id: …" over ws ∈ {"", " ", "\n", …}) to prove
     # _neutralize_romp_markers breaks the whole "<!--\s*romp-" class the downstream matchers
     # accept — each assembled string IS comment-form (the test asserts POSTAL_RE matches it
     # before neutralizing); only the %s placeholder keeps this source line from reading as one.
+    "test_marker_neutralizer.py": 1,
+    # test_user_todos.py keeps its own copy of that variant probe to cover the answer body's two
+    # halves (_user_todo_answer_body — this repo's user-todos feature, which the standalone
+    # neutralizer suite doesn't exercise): the same assembled comment-form string, one bare hit.
     "test_user_todos.py": 1,
 }
 

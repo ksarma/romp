@@ -24,6 +24,10 @@ test("renderTodo shows the surfaced error instead of the task list", () => {
   const errIdx = body.indexOf("if (ev.error)");
   const loopIdx = body.indexOf("else if (ev.tasks.length)");
   assert.ok(errIdx > -1 && loopIdx > -1 && errIdx < loopIdx, "the error branch supplants the task list");
+  // upstream's row builder + completed-item fold (2026-08-24) live INSIDE that else-branch, so an
+  // erroring store skips all the task machinery while the user-todos section below still renders
+  const rowIdx = body.indexOf("const row = (t:");
+  assert.ok(rowIdx > loopIdx, "the row machinery sits in the task branch, behind the error gate");
 });
 
 test("the error card is styled in the error color, not a normal card", () => {

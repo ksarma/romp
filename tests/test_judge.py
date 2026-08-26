@@ -3657,11 +3657,21 @@ class StatusReportMenu(unittest.TestCase):
         blocked = _mknode(store, "waiting on the user"); blocked["blocked"] = True
         owed = _mknode(store, "agent still owes work")
         owed["agentTask"] = {"key": "k1", "status": "open"}
-        sub = _mknode(store, "a sub, not a card", parent=g1["id"])
+        g1["umbrella"] = True                          # the cited goal is a CONTAINER here (see below)
+        cited_sub = _mknode(store, "the cited goals own open leaf", parent=g1["id"])
+        other_top = _mknode(store, "an unrelated top")
+        other_sub = _mknode(store, "a sub of an uncited top", parent=other_top["id"])
         captured = self._spy('{"done": []}')
         jd._close_turn(store, turn)
-        for absent in ("already finished", "waiting on the user", "agent still owes work", "a sub, not a card"):
+        for absent in ("already finished", "waiting on the user", "agent still owes work",
+                       "a sub of an uncited top"):
             self.assertNotIn(absent, captured["mt"], "%r must not ride the widened menu" % absent)
+        # a cited UMBRELLA's open descendants DO ride since 2026-08-25 (the re-asking umbrella):
+        # the reply accounts for the named goal's work, and a container's top is unrulable — its
+        # open leaf, the node holding it at working, was reachable by no channel at all. A PLAIN
+        # cited goal keeps the tops-only menu exactly (the closer rules the goal itself;
+        # tests/test_deleg_report_close.py pins that shape).
+        self.assertIn("the cited goals own open leaf", captured["mt"])
 
 
 class SweepSession(unittest.TestCase):
@@ -7617,7 +7627,11 @@ class AwaitingVerdict(unittest.TestCase):
         # then suppressed the goal's awaiting entirely (blocked outranks awaiting by design), so a
         # session genuinely watching an external job read as needing the user.
         for phrase in ("The mirror image is NOT blocked", "will report back on its own",
-                       "never blocked; filing it blocked parks a card on the user"):
+                       # narrowed 2026-08-24 (the awaiting-peer audit): a handoff is the peer's own
+                       # (omitted, tracked by the handoff graph); "peer" needs an open sent-question
+                       'never blocked: an external process still running is awaiting (kind "job")',
+                       '"peer" is only for a question this session sent and still needs answered',
+                       "Filing these blocked parks a card on the user"):
             self.assertIn(phrase, jd.CLOSER_SYS)
 
     def test_closer_prompt_offers_awaiting_with_the_tight_rule(self):
