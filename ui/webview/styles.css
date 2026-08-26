@@ -150,10 +150,11 @@ body { display: flex; flex-direction: column; overflow-x: hidden; }   /* the cha
   border-bottom: 1px solid color-mix(in srgb, var(--active-accent, rgba(255, 255, 255, 0.3)) 40%, transparent);
   background: var(--vscode-sideBar-background, var(--bg));
 }
-/* #tabs fills the bar width and wraps its tabs across multiple rows. gap 0 (was 4px, the user
-   2026-08-08): the strip trades its empty inter-tab space for room for the per-tab context gauge —
-   the active/hover fills and per-tab padding still separate neighbours visually. */
-#tabs { display: flex; flex: 1 1 auto; flex-wrap: wrap; align-items: stretch; gap: 0; }
+/* #tabs fills the bar width and wraps its tabs across multiple rows. gap: a hair of air between
+   tabs (the user 2026-08-26) — the flat identity tints turned the strip into touching colored
+   blocks with no seam. 3px, not the old 4px the 2026-08-08 gauge-room trade removed: most of that
+   trade's room stays. */
+#tabs { display: flex; flex: 1 1 auto; flex-wrap: wrap; align-items: stretch; gap: 0 3px; }
 /* Drag handle straddling the tab strip's bottom border (the user 2026-08-18): the strip scrolls past
    its max-height cap, which clipped the fifth row of a many-session strip with no way to see more.
    Drag DOWN for more rows, UP for fewer; double-click resets; the strip stays a scroll pane at every
@@ -296,20 +297,17 @@ body.tabbar-resizing { cursor: ns-resize; user-select: none; }
 .tab-ph-swirl { width: 12px; height: 12px; border-radius: 2px; flex: none;
   animation: tab-ph-swirl-spin 7s linear infinite; }   /* .tab is flex with its own gap, so no margin needed */
 @keyframes tab-ph-swirl-spin { to { transform: rotate(-360deg); } }
-/* SELECTED: gray fill; a COLORED session wears its identity as a soft GRADIENT TINT instead of the
-   old harsh 1.5px inset ring (the user 2026-08-26: gradients, not outlines). At rest the tint is a
-   whisper; hover warms it; the ACTIVE tab wears it strongest plus a soft top/side border in the same
-   color — its bottom is open, so it fuses with the identity-tinted #tabbar line below and the pane
-   frame around everything (#winframe): one color, one object. :not(.tab-blocked) throughout — the
-   blocked red fill outranks identity (the user 2026-07-24), same stand-down as the old ring's. */
+/* SELECTED: gray fill; a COLORED session wears its identity as a FLAT soft tint instead of the old
+   harsh 1.5px inset ring. (First cut was a vertical gradient — the user 2026-08-26: old-school and
+   ugly; a single flat wash is the modern read.) A whisper at rest, warmer on hover, strongest when
+   active plus a soft top/side border in the same color — its bottom is open, so it fuses with the
+   identity-tinted #tabbar line below and the pane frame (#winframe): one color, one object.
+   :not(.tab-blocked) throughout — the blocked red fill outranks identity (the user 2026-07-24). */
 .tab.active { color: var(--fg); background: rgba(255, 255, 255, 0.14); }
-.tab.colored:not(.tab-blocked) { background: linear-gradient(180deg,
-  color-mix(in srgb, var(--chip-bg) 13%, transparent), color-mix(in srgb, var(--chip-bg) 4%, transparent)); }
-.tab.colored:not(.tab-blocked):hover { background: linear-gradient(180deg,
-  color-mix(in srgb, var(--chip-bg) 18%, transparent), color-mix(in srgb, var(--chip-bg) 7%, transparent)); }
+.tab.colored:not(.tab-blocked) { background: color-mix(in srgb, var(--chip-bg) 9%, transparent); }
+.tab.colored:not(.tab-blocked):hover { background: color-mix(in srgb, var(--chip-bg) 15%, transparent); }
 .tab.active.colored:not(.tab-blocked) {
-  background: linear-gradient(180deg,
-    color-mix(in srgb, var(--chip-bg) 26%, transparent), color-mix(in srgb, var(--chip-bg) 10%, transparent));
+  background: color-mix(in srgb, var(--chip-bg) 22%, transparent);
   border-color: color-mix(in srgb, var(--chip-bg) 55%, transparent);
 }
 /* tab title in the session's romp identity color (bold), like the dashboard */

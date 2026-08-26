@@ -23,11 +23,13 @@ test("session identity: rail (2px, 70%) + the soft 1px pane ring in the SAME col
   assert.match(CSS, /#winframe \{ display: block; position: fixed; inset: 0; z-index: 900; pointer-events: none;\n  border: 1px solid color-mix\(in srgb, var\(--active-accent, transparent\) 30%, transparent\); \}/);
   assert.doesNotMatch(CSS, /#winframe \{[^}]*border: 2px solid/);
   assert.match(CSS, /\.turn::before \{[^}]*width: 2px[^}]*background: var\(--active-accent[^}]*opacity: 0\.7/);
-  // the tab wears the identity as a gradient TINT (no more harsh 1.5px inset ring), strongest when
-  // active, with a soft border whose open bottom fuses into the identity-tinted #tabbar line
+  // the tab wears the identity as a FLAT soft tint (no more harsh 1.5px inset ring; the gradient
+  // cut read old-school — the user 2026-08-26), strongest when active, with a soft border whose
+  // open bottom fuses into the identity-tinted #tabbar line
   assert.doesNotMatch(CSS, /inset 0 0 0 1\.5px var\(--chip-bg\)/);
-  assert.match(CSS, /\.tab\.colored:not\(\.tab-blocked\) \{ background: linear-gradient\(180deg,\n  color-mix\(in srgb, var\(--chip-bg\) 13%, transparent\)/);
-  assert.match(CSS, /\.tab\.active\.colored:not\(\.tab-blocked\) \{\n  background: linear-gradient\(180deg,\n    color-mix\(in srgb, var\(--chip-bg\) 26%, transparent\)/);
+  assert.doesNotMatch(CSS, /\.tab[^{]*\{[^}]*linear-gradient\(180deg/, "no glossy tab gradients");
+  assert.match(CSS, /\.tab\.colored:not\(\.tab-blocked\) \{ background: color-mix\(in srgb, var\(--chip-bg\) 9%, transparent\); \}/);
+  assert.match(CSS, /\.tab\.active\.colored:not\(\.tab-blocked\) \{\n  background: color-mix\(in srgb, var\(--chip-bg\) 22%, transparent\);/);
   assert.match(CSS, /#tabbar \{[^}]*border-bottom: 1px solid color-mix\(in srgb, var\(--active-accent, rgba\(255, 255, 255, 0\.3\)\) 40%, transparent\);/s);
 });
 
