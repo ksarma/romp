@@ -16,12 +16,19 @@ test("the fold toggle and file links have a persistent dotted-underline link aff
   assert.match(CSS, /\.tool-file \{[^}]*text-decoration: underline dotted/);
 });
 
-test("session identity is on the rail (2px, 70%); the chat's own window frame is gone", () => {
-  // the user 2026-06-23: #winframe (the chat's extra 2px frame around the whole pane) is removed so the pane
-  // fills the full space — only the splitters + the focus ring draw lines. Identity stays on the turn rail.
-  assert.match(CSS, /#winframe \{ display: none; \}/);
+test("session identity: rail (2px, 70%) + the soft 1px pane ring in the SAME color", () => {
+  // 2026-06-23 removed the old 2px decorative frame; 2026-08-26 the user asked for the identity
+  // color to go all the way around the current session, linked to its tab — re-introduced at a
+  // third of the weight (1px, 30% tint), transparent when no session color. Never 2px again.
+  assert.match(CSS, /#winframe \{ display: block; position: fixed; inset: 0; z-index: 900; pointer-events: none;\n  border: 1px solid color-mix\(in srgb, var\(--active-accent, transparent\) 30%, transparent\); \}/);
   assert.doesNotMatch(CSS, /#winframe \{[^}]*border: 2px solid/);
   assert.match(CSS, /\.turn::before \{[^}]*width: 2px[^}]*background: var\(--active-accent[^}]*opacity: 0\.7/);
+  // the tab wears the identity as a gradient TINT (no more harsh 1.5px inset ring), strongest when
+  // active, with a soft border whose open bottom fuses into the identity-tinted #tabbar line
+  assert.doesNotMatch(CSS, /inset 0 0 0 1\.5px var\(--chip-bg\)/);
+  assert.match(CSS, /\.tab\.colored:not\(\.tab-blocked\) \{ background: linear-gradient\(180deg,\n  color-mix\(in srgb, var\(--chip-bg\) 13%, transparent\)/);
+  assert.match(CSS, /\.tab\.active\.colored:not\(\.tab-blocked\) \{\n  background: linear-gradient\(180deg,\n    color-mix\(in srgb, var\(--chip-bg\) 26%, transparent\)/);
+  assert.match(CSS, /#tabbar \{[^}]*border-bottom: 1px solid color-mix\(in srgb, var\(--active-accent, rgba\(255, 255, 255, 0\.3\)\) 40%, transparent\);/s);
 });
 
 test("dot colors are decoupled from the session (no ring, absolute hues)", () => {
@@ -50,11 +57,11 @@ test("a SELECTED blocked tab blends the selection white OVER the red, so it read
   assert.match(rule, /rgba\(229, 72, 77, 0\.42\)/, "over a stronger red than the unselected fill");
 });
 
-test("the identity ring stands down on a selected blocked tab, so it can't mask the dashed red", () => {
-  // the ring is an inset 1.5px shadow and the state outline is 2px at offset -2px — the SAME band. On a
-  // session whose identity colour is near red, the solid ring painted over the dashes and the tab just
-  // looked outlined, not blocked. Blocked outranks identity while it lasts.
-  assert.match(CSS, /\.tab\.tab-blocked\.active\.colored \{ box-shadow: none; \}/);
-  // ...and the ring is otherwise untouched for every non-blocked active tab
-  assert.match(CSS, /\.tab\.active\.colored \{ box-shadow: inset 0 0 0 1\.5px var\(--chip-bg\); \}/);
+test("identity stands down on a blocked tab, so it can't mask the red (structural :not now)", () => {
+  // the old form was a box-shadow:none override on the ring; the 2026-08-26 gradient tint bakes the
+  // stand-down into every identity rule's selector instead — blocked outranks identity by construction
+  assert.doesNotMatch(CSS, /box-shadow: inset 0 0 0 1\.5px var\(--chip-bg\)/);
+  for (const m of CSS.match(/\.tab[^ ,{]*\.colored[^,{]*\{[^}]*var\(--chip-bg\)[^}]*background/gs) || []) {
+    assert.ok(m.includes(":not(.tab-blocked)"), "an identity TINT rule must except blocked: " + m.slice(0, 60));
+  }
 });

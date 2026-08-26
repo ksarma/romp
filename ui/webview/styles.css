@@ -126,13 +126,15 @@ html, body {
 }
 body { display: flex; flex-direction: column; overflow-x: hidden; }   /* the chat pane NEVER scrolls
    sideways (the user 2026-08-16) — a wide child is a layout bug to fix, not a scroll to offer */
-/* a 2px NEUTRAL frame around the WHOLE pane — drawn as a fixed overlay ON TOP so the tab bar /
-   composer backgrounds can't paint over it. pointer-events:none so it never blocks clicks. The
-   session's identity color now lives on the conversation RAIL instead (the user 2026-06-15). */
-/* The chat used to draw its OWN 2px frame around the whole pane (#winframe) — an extra border the other
-   panes don't have. Removed (the user 2026-06-23): the pane fills the full space, the only lines are the
-   splitters between panes, and focus is shown by a ring (shell, .pane-focused), not a decorative frame. */
-#winframe { display: none; }
+/* The active session's identity color goes ALL THE WAY AROUND its pane (the user 2026-08-26, who
+   wanted the current session unmistakably linked to its tab) — a whisper-thin tinted ring, drawn as
+   a fixed overlay ON TOP so the tab bar / composer backgrounds can't paint over it, pointer-events:
+   none so it never blocks. History: a 2px frame here was removed on 2026-06-23 as decorative noise;
+   this re-introduction is that user's own later call, at a third of the weight (1px, 30% tint) and
+   CARRYING MEANING — it is the same color as the active tab's tint and the transcript rail, so the
+   three read as one linked object. No session color → transparent, no frame at all. */
+#winframe { display: block; position: fixed; inset: 0; z-index: 900; pointer-events: none;
+  border: 1px solid color-mix(in srgb, var(--active-accent, transparent) 30%, transparent); }
 
 /* ---------- tab bar ---------- */
 #tabbar {
@@ -143,7 +145,9 @@ body { display: flex; flex-direction: column; overflow-x: hidden; }   /* the cha
      #tabbar-resize drag can move it while the mobile page's max-height:none still wins over it
      (an inline max-height would override that media rule and clip the mobile header) */
   max-height: var(--tabbar-cap, 150px); overflow-y: auto; overflow-x: hidden;
-  border-bottom: 1px solid var(--box-border);
+  /* the line the tabs sit on wears the ACTIVE session's color (40%) — the tab's tint fuses into it,
+     so tab and pane read as one object (the user 2026-08-26). Neutral (= --box-border) with no color. */
+  border-bottom: 1px solid color-mix(in srgb, var(--active-accent, rgba(255, 255, 255, 0.3)) 40%, transparent);
   background: var(--vscode-sideBar-background, var(--bg));
 }
 /* #tabs fills the bar width and wraps its tabs across multiple rows. gap 0 (was 4px, the user
@@ -209,12 +213,9 @@ body.tabbar-resizing { cursor: ns-resize; user-select: none; }
 .tab.tab-blocked.active {
   background: linear-gradient(rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.14)), rgba(229, 72, 77, 0.42);
 }
-/* ...and the identity-coloured ring STANDS DOWN while blocked. It is an inset 1.5px shadow, and the dashed
-   state outline is 2px at offset -2px, so the two occupy the very same band: on a session whose identity
-   colour is anywhere near red, the solid ring painted straight over the dashes and a selected blocked tab
-   just looked outlined, not blocked (the user 2026-07-24). Blocked outranks identity for those few seconds —
-   the tab still carries its colour in the label, and the dashed red is the entire point of the state. */
-.tab.tab-blocked.active.colored { box-shadow: none; }
+/* (The identity stand-down while blocked — the user 2026-07-24 — is structural now: every identity
+   TINT rule carries :not(.tab-blocked), so the red fill wins by construction. The old box-shadow:none
+   override died with the ring it overrode, 2026-08-26.) */
 /* STATE ring on all four sides, no layout jitter. WORKING shows a yellow dot
    (.tab-dot) instead; COMPACTING intentionally gets NO outline (the user: it's
    transient plumbing, not something to flag — the statusline's scan bar is the
@@ -295,9 +296,22 @@ body.tabbar-resizing { cursor: ns-resize; user-select: none; }
 .tab-ph-swirl { width: 12px; height: 12px; border-radius: 2px; flex: none;
   animation: tab-ph-swirl-spin 7s linear infinite; }   /* .tab is flex with its own gap, so no margin needed */
 @keyframes tab-ph-swirl-spin { to { transform: rotate(-360deg); } }
-/* SELECTED: gray fill PLUS an outline in the session's own identity color. */
+/* SELECTED: gray fill; a COLORED session wears its identity as a soft GRADIENT TINT instead of the
+   old harsh 1.5px inset ring (the user 2026-08-26: gradients, not outlines). At rest the tint is a
+   whisper; hover warms it; the ACTIVE tab wears it strongest plus a soft top/side border in the same
+   color — its bottom is open, so it fuses with the identity-tinted #tabbar line below and the pane
+   frame around everything (#winframe): one color, one object. :not(.tab-blocked) throughout — the
+   blocked red fill outranks identity (the user 2026-07-24), same stand-down as the old ring's. */
 .tab.active { color: var(--fg); background: rgba(255, 255, 255, 0.14); }
-.tab.active.colored { box-shadow: inset 0 0 0 1.5px var(--chip-bg); }
+.tab.colored:not(.tab-blocked) { background: linear-gradient(180deg,
+  color-mix(in srgb, var(--chip-bg) 13%, transparent), color-mix(in srgb, var(--chip-bg) 4%, transparent)); }
+.tab.colored:not(.tab-blocked):hover { background: linear-gradient(180deg,
+  color-mix(in srgb, var(--chip-bg) 18%, transparent), color-mix(in srgb, var(--chip-bg) 7%, transparent)); }
+.tab.active.colored:not(.tab-blocked) {
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--chip-bg) 26%, transparent), color-mix(in srgb, var(--chip-bg) 10%, transparent));
+  border-color: color-mix(in srgb, var(--chip-bg) 55%, transparent);
+}
 /* tab title in the session's romp identity color (bold), like the dashboard */
 .tab.colored .tab-label { color: var(--chip-bg); font-weight: 600; }
 /* inactive (at rest) sessions fade their color, like the romp timeline */
