@@ -1870,8 +1870,13 @@ class SdkSession:
           after our receive loop was cancelled — repeats a kickoff message, which beats silently losing
           it.)
         - A RESUMABLE conversation: the atom may genuinely have landed, so re-feeding risks a real
-          duplicate. Surface the loss instead: the drop-mark flips the echo to "never delivered" NOW,
-          rather than hours later at the next thread spawn."""
+          duplicate. Surface the loss instead, FLAG-ONLY (refeed=False, round 2 2026-08-26): the
+          drop-mark flips the echo to "never delivered" NOW — with the todo-reopen seam — rather than
+          hours later at the next thread spawn. _mark_dropped_echoes' redeliver arm must not run here:
+          its _text_landed scan is a bounded transcript-tail read whose miss would land the message
+          TWICE in the resumed conversation, the exact duplicate this branch is documented to refuse.
+          The re-feed lives only where the conversation is NOT resumable — the re-head above, and the
+          boot/dead-spawn callers (_reseed_echoes, _run), where no client survives to have landed it."""
         if not self.inflight:
             return
         stranded = list(self._inflight_texts)      # fed to the abandoned client, never resulted
@@ -1888,7 +1893,7 @@ class SdkSession:
                 self._pending[0:0] = stranded
             self._persist_queue()                  # the fresh inputs() drains _pending on its first pass
         elif stranded:
-            self.backend._mark_dropped_echoes(self.sid, self.pending())
+            self.backend._mark_dropped_echoes(self.sid, self.pending(), refeed=False)
         self.backend._poke()
 
     # ---- async internals (run inside the quarantined loop) ----
@@ -4585,7 +4590,7 @@ class SdkBackend:
             if self._live.get(reg["sid"]):
                 self._mark_dropped_echoes(reg["sid"], _queue_texts(reg.get("queue")))
 
-    def _mark_dropped_echoes(self, sid: str, queued_texts) -> None:
+    def _mark_dropped_echoes(self, sid: str, queued_texts, refeed: bool = True) -> None:
         """A fresh CLI is spawning for this sid, or the kernel just booted: whatever process held any
         earlier send is gone. An input echo whose text is neither in the surviving queue (about to be
         delivered to the new CLI) nor landed in the transcript has no holder left — its send is provably
@@ -4595,7 +4600,14 @@ class SdkBackend:
         history). Event-based — keyed on the spawn/boot that orphaned the send, never on age — and
         self-correcting: an echo whose text actually LANDED still prunes by text on the next build, so a
         premature flag can never stick to a delivered message. The flag rides the registry mirror
-        (_persist_echoes), so it survives further restarts."""
+        (_persist_echoes), so it survives further restarts.
+
+        `refeed=False` (round 2, 2026-08-26, honoring _reconcile_stranded's documented policy): the
+        RESUMABLE-reconnect caller takes the flag path ONLY — the redeliver arm's _text_landed scan is
+        a bounded tail read whose miss would land the message a second time in a conversation that
+        genuinely kept the first, exactly the duplicate that branch refuses by design. The loss still
+        surfaces in full (dropped flag, todo-reopen seam); only the queue re-add is withheld. Boot and
+        dead-spawn callers keep the default: no client survived there to have landed anything."""
         d = self._live.get(sid)
         if not d:
             return
@@ -4615,18 +4627,20 @@ class SdkBackend:
         # (its mirror rewrites reg['queue'] on every mutation, so only _pending sticks), else the
         # persisted reg queue the next spawn's seed reads.
         # romp-authored echoes (nudges) keep the flag path: re-delivering one could double-nudge,
-        # and its content is regenerable machinery, not the user's words.
+        # and its content is regenerable machinery, not the user's words. A refeed=False caller
+        # (the resumable reconnect — docstring above) keeps EVERY echo on the flag path.
         redeliver = []
-        for a in sorted(newly, key=lambda x: x.get("t") or 0):
-            if a.get("author") == "human" and not self._text_landed(sid, a["_echo_text"]):
-                redeliver.append(a)
+        if refeed:
+            for a in sorted(newly, key=lambda x: x.get("t") or 0):
+                if a.get("author") == "human" and not self._text_landed(sid, a["_echo_text"]):
+                    redeliver.append(a)
         if redeliver:
-            # The LIVE-session callers (a fresh spawn's _run, a reconnect's _reconcile_stranded)
-            # must deliver through the session's own queue: there the in-memory _pending is
-            # authoritative and its very next _persist_queue snapshot rewrites reg['queue'] — a
-            # reg-only write sat in limbo (echo unmarked, todo 'answered', nothing fed) until a
-            # future kernel boot re-read the reg (found 2026-08-26). The boot caller
-            # (_reseed_echoes) runs before any session spawns, so the reg IS the queue there.
+            # The LIVE-session caller (a fresh spawn's _run) must deliver through the session's
+            # own queue: there the in-memory _pending is authoritative and its very next
+            # _persist_queue snapshot rewrites reg['queue'] — a reg-only write sat in limbo (echo
+            # unmarked, todo 'answered', nothing fed) until a future kernel boot re-read the reg
+            # (found 2026-08-26). The boot caller (_reseed_echoes) runs before any session spawns,
+            # so the reg IS the queue there.
             sess_map = getattr(self, "sessions", None)   # getattr: bound-method test doubles skip __init__
             s = None
             if sess_map is not None:

@@ -165,6 +165,181 @@ class PureDelegationTop(unittest.TestCase):
                        "handoff": {"peer": "p", "msgId": "m"}}}
         self.assertTrue(km._pure_delegation_top(nodes, "t"))
 
+    def test_a_courier_planted_top_without_userask_stays_pure(self):
+        # SHAPE A (round 2, 2026-08-26): promptUuid is the g200 LANDABLE-ANCHOR field — apply_courier
+        # stamps the delegate MAIL's anchor on every planted top — so bare-promptUuid truthiness read
+        # every courier-planted mid-chain top as "the dictated ask" and re-showed the exact
+        # coordination card the 2026-06-23 rule suppresses. A courier top's dictated-ask evidence is
+        # T105's chain-proven userAsk, never its own anchor: without one it stays pure coordination.
+        nodes = {"t": {"id": "t", "parentId": None, "promptUuid": "mail-anchor-uuid",
+                       "origin": {"peer": "p0", "goalId": "g0", "msgId": "m0"}},
+                 "a": {"id": "a", "parentId": "t", "handoff": {"peer": "p", "msgId": "1"}},
+                 "b": {"id": "b", "parentId": "t", "handoff": {"peer": "q", "msgId": "2"}}}
+        self.assertTrue(km._pure_delegation_top(nodes, "t"),
+                        "a mail anchor is not the dictated ask — the courier top stays suppressed")
+
+    def test_a_courier_top_with_the_chain_proven_userask_still_shows(self):
+        nodes = {"t": {"id": "t", "parentId": None, "promptUuid": "mail-anchor-uuid",
+                       "origin": {"peer": "p0", "goalId": "g0", "msgId": "m0"},
+                       "userAsk": {"text": "the ask", "sid": "s"}},
+                 "a": {"id": "a", "parentId": "t", "handoff": {"peer": "p", "msgId": "1"}}}
+        self.assertFalse(km._pure_delegation_top(nodes, "t"),
+                         "T105's userAsk IS the courier top's dictated-ask evidence")
+
+    def test_a_segment_anchored_top_resolving_machine_stays_pure(self):
+        # SHAPE A2 (round 2, 2026-08-26): _seg_anchor gives an AUTONOMOUS segment's mint the segment
+        # HEAD — an assistant atom's uuid ("a minted node always gets an anchor"). When the caller can
+        # resolve the anchor against the session's cached parse and it is provably NOT a human-dictated
+        # prompt record, the exemption must not fire.
+        nodes = {"t": {"id": "t", "parentId": None, "promptUuid": "a9"},
+                 "a": {"id": "a", "parentId": "t", "handoff": {"peer": "p", "msgId": "1"}}}
+        saved = km._parse_cached
+        km._parse_cached = lambda p: {"turns": [{"atoms": [
+            {"uuid": "a9", "type": "assistant",
+             "message": {"role": "assistant",
+                         "content": [{"type": "text", "text": "wrapping up the sweep"}]}}]}]}
+        try:
+            self.assertTrue(km._pure_delegation_top(nodes, "t", sid=SID, path="/dev/null"),
+                            "a segment-head anchor resolving to the agent's own atom is not the ask")
+        finally:
+            km._parse_cached = saved
+
+    def test_a_mail_record_anchor_resolving_peer_stays_pure(self):
+        # the same resolution refuses a peer-mail anchor (mail rides user-type atoms)
+        nodes = {"t": {"id": "t", "parentId": None, "promptUuid": "pm"},
+                 "a": {"id": "a", "parentId": "t", "handoff": {"peer": "p", "msgId": "1"}}}
+        saved = km._parse_cached
+        km._parse_cached = lambda p: {"turns": [{"atoms": [
+            {"uuid": "pm", "type": "user", "author": {"peer": "p0", "kind": "delegate"},
+             "message": {"role": "user", "content": "DELEGATE: the fanned piece"}}]}]}
+        try:
+            self.assertTrue(km._pure_delegation_top(nodes, "t", sid=SID, path="/dev/null"))
+        finally:
+            km._parse_cached = saved
+
+    def test_a_dictated_prompt_resolution_keeps_the_card(self):
+        # the positive control: the anchor resolves to a HUMAN record → the ask keeps its card
+        nodes = {"t": {"id": "t", "parentId": None, "promptUuid": "hu"},
+                 "a": {"id": "a", "parentId": "t", "handoff": {"peer": "p", "msgId": "1"}}}
+        saved = km._parse_cached
+        km._parse_cached = lambda p: {"turns": [{"atoms": [
+            {"uuid": "hu", "type": "user", "author": "human",
+             "message": {"role": "user", "content": "please ship the drag-range round"}}]}]}
+        try:
+            self.assertFalse(km._pure_delegation_top(nodes, "t", sid=SID, path="/dev/null"))
+        finally:
+            km._parse_cached = saved
+
+    def test_an_unresolvable_anchor_fails_open_to_the_card(self):
+        # UNKNOWN is not FALSE: with no cached parse (cold kernel, no path threaded, a rewound-away
+        # record) the anchor is unresolvable — suppressing on doubt would hide a real dictated ask,
+        # the exact no-card-anywhere hole T101's exemption exists to close. Uncertainty shows.
+        nodes = {"t": {"id": "t", "parentId": None, "promptUuid": "hu"},
+                 "a": {"id": "a", "parentId": "t", "handoff": {"peer": "p", "msgId": "1"}}}
+        saved = km._parse_cached
+        km._parse_cached = lambda p: None
+        try:
+            self.assertFalse(km._pure_delegation_top(nodes, "t", sid=SID, path="/dev/null"))
+        finally:
+            km._parse_cached = saved
+
+
+class AskAnchorLatch(unittest.TestCase):
+    """Round 3 (2026-08-26), item 1: the ask-unit exemption's anchor verdict LATCHES on the node.
+    _dictated_prompt_uuid answers None both for durable doubt AND for 'the parse is not warm this
+    beat', and the exemption fails open on None — so a machine-anchored coordination card flapped
+    shown→hidden on every restart/cache-cold beat with NO new information (the
+    cards-move-on-new-information rule). Once a WARM parse answers, the judge stamps the verdict
+    durably (askAnchor: human/machine/absent) through the planner apply path — the store's normal
+    judge-side writer, never build_feed, which stays read-only — and the kernel reads the latch
+    before ever consulting cache temperature. Cache-cold with NO latch keeps today's fail-open, so
+    the flap happens at most once per node ever, not per beat."""
+
+    MACHINE = {"turns": [{"atoms": [
+        {"uuid": "a9", "type": "assistant",
+         "message": {"role": "assistant",
+                     "content": [{"type": "text", "text": "wrapping up the sweep"}]}},
+        {"uuid": "hu", "type": "user", "author": "human",
+         "message": {"role": "user", "content": "please ship the drag-range round"}}]}]}
+
+    def _fanned(self, **top_kw):
+        top = {"id": "t", "parentId": None, "promptUuid": "a9"}
+        top.update(top_kw)
+        return {"t": top, "a": {"id": "a", "parentId": "t",
+                                "handoff": {"peer": "p", "msgId": "1"}}}
+
+    def test_the_latch_stamps_all_three_verdicts_and_only_where_the_exemption_reads(self):
+        store = {"rompUuid": SID, "nodes": {
+            "th": {"id": "th", "parentId": None, "promptUuid": "hu"},
+            "tm": {"id": "tm", "parentId": None, "promptUuid": "a9"},
+            "tg": {"id": "tg", "parentId": None, "promptUuid": "gone-uuid"},
+            "tc": {"id": "tc", "parentId": None, "promptUuid": "a9",       # courier top: origin —
+                   "origin": {"peer": "p0", "goalId": "g0", "msgId": "m0"}},  # the exemption reads
+            "tk": {"id": "tk", "parentId": None, "promptUuid": "a9",       # userAsk there, no anchor
+                   "handoff": {"peer": "p", "msgId": "2"}},                # tracker top: never asks
+            "kid": {"id": "kid", "parentId": "th", "promptUuid": "a9"},    # not a top
+            "tl": {"id": "tl", "parentId": None, "promptUuid": "a9",
+                   "askAnchor": "human"}},                                 # already latched: kept
+            "placements": {}, "status": {}}
+        n = jd._latch_ask_anchors(SID, self.MACHINE, store)
+        self.assertEqual(n, 3, "exactly the exemption-relevant unlatched tops latch")
+        self.assertEqual(store["nodes"]["th"].get("askAnchor"), "human")
+        self.assertEqual(store["nodes"]["tm"].get("askAnchor"), "machine")
+        self.assertEqual(store["nodes"]["tg"].get("askAnchor"), "absent")
+        for nid in ("tc", "tk", "kid"):
+            self.assertNotIn("askAnchor", store["nodes"][nid], nid)
+        self.assertEqual(store["nodes"]["tl"].get("askAnchor"), "human",
+                         "a latched verdict is never re-derived")
+
+    def test_an_atomless_parse_latches_nothing(self):
+        # a missing/unreadable transcript is NO EVIDENCE of absence — 'absent' latched off one
+        # would freeze a fail-open verdict a later warm parse could have resolved machine
+        store = {"rompUuid": SID, "nodes": {
+            "t": {"id": "t", "parentId": None, "promptUuid": "hu"}},
+            "placements": {}, "status": {}}
+        self.assertEqual(jd._latch_ask_anchors(SID, {"turns": []}, store), 0)
+        self.assertNotIn("askAnchor", store["nodes"]["t"])
+
+    def test_a_latched_machine_verdict_is_stable_across_cache_temperature(self):
+        # warm → cold → warm: the judge latched from its warm parse; the kernel's cold beat must
+        # answer from the latch, not re-derive from the (cold) cache and fail open into a flap
+        store = {"rompUuid": SID, "nodes": self._fanned(), "placements": {}, "status": {}}
+        jd._latch_ask_anchors(SID, self.MACHINE, store)
+        self.assertEqual(store["nodes"]["t"]["askAnchor"], "machine")
+        saved = km._parse_cached
+        try:
+            for temp in (None,                                            # restart / cache-cold beat
+                         lambda: self.MACHINE):                           # …and warm again
+                km._parse_cached = (lambda p: None) if temp is None else (lambda p: temp())
+                self.assertTrue(
+                    km._pure_delegation_top(store["nodes"], "t", sid=SID, path="/dev/null"),
+                    "the latched machine anchor holds — no shown→hidden flap on temperature")
+        finally:
+            km._parse_cached = saved
+
+    def test_latched_human_and_absent_keep_the_card_cold_or_warm(self):
+        saved = km._parse_cached
+        try:
+            km._parse_cached = lambda p: None
+            for verdict in ("human", "absent"):
+                nodes = self._fanned(askAnchor=verdict)
+                self.assertFalse(km._pure_delegation_top(nodes, "t", sid=SID, path="/dev/null"),
+                                 verdict)
+            # the latch outranks a later contradicting cache read: it was filed from a warm parse,
+            # and re-deriving per build is exactly the flapping input the latch retires
+            km._parse_cached = lambda p: self.MACHINE
+            nodes = self._fanned(askAnchor="human")
+            self.assertFalse(km._pure_delegation_top(nodes, "t", sid=SID, path="/dev/null"))
+        finally:
+            km._parse_cached = saved
+
+    def test_the_planner_pass_is_the_latch_writer(self):
+        # the write rides an existing legitimate judge-side writer (_plan_session's end-of-pass
+        # save) — never a build_feed-side write; build_feed stays read-only
+        from inspect import getsource
+        self.assertIn("_latch_ask_anchors", getsource(jd._plan_session))
+        self.assertNotIn("_latch_ask_anchors", getsource(km.build_feed))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -369,9 +369,10 @@ class RedeliveryFeedsTheAuthoritativeQueue(unittest.TestCase):
         {"text","todo"} entry: the todo stayed 'answered', the answer never delivered, and
         nothing could reopen the ask;
       - a redelivered answer KEEPS the id its echo carries, so recall/loss can still reopen;
-      - on the LIVE-session callers (a fresh spawn's _run, a reconnect's _reconcile_stranded)
-        the in-memory _pending is authoritative — a reg-only write is clobbered by the very next
-        _persist_queue snapshot, leaving the recovered send in limbo until a future kernel boot.
+      - on the LIVE-session caller (a fresh spawn's _run; the resumable reconnect is flag-only —
+        ReconnectStrandIsFlagOnly below) the in-memory _pending is authoritative — a reg-only
+        write is clobbered by the very next _persist_queue snapshot, leaving the recovered send
+        in limbo until a future kernel boot.
     SYNTHETIC fixtures only."""
 
     ANSWER = "Re: pick a database - use sqlite"
@@ -442,7 +443,7 @@ class RedeliveryFeedsTheAuthoritativeQueue(unittest.TestCase):
         reg = self._reg(queue=[])
         s = self._sess(reg)
         e = self._stash_echo("typed while the old client was dying", t=300)
-        self.be._mark_dropped_echoes(SID, s.pending())     # the spawn/reconnect-strand call shape
+        self.be._mark_dropped_echoes(SID, s.pending())     # the fresh-spawn (_run) call shape
         self.assertEqual(s.pending(), ["typed while the old client was dying"],
                          "a live session's recovered send must enter _pending — a reg-only write "
                          "is overwritten by the very next queue mirror")
@@ -470,6 +471,87 @@ class RedeliveryFeedsTheAuthoritativeQueue(unittest.TestCase):
         # a caller's queued snapshot can predate the enqueue — the write-moment check must dedupe
         self.be._mark_dropped_echoes(SID, [])
         self.assertEqual(s.pending(), ["already back in the queue"], "one copy, not two")
+
+
+class ReconnectStrandIsFlagOnly(unittest.TestCase):
+    """Round 2 (2026-08-26), finding 4: _reconcile_stranded's RESUMABLE branch is documented
+    flag-only — the fed atom may genuinely have landed, so re-feeding risks a REAL duplicate the
+    user sees twice. The redeliver arm of _mark_dropped_echoes silently flipped that policy: a
+    missed _text_landed scan (a tail-window miss, an unusual content shape) re-fed the message
+    into the resumed conversation. On the resumable branch the loss is SURFACED (dropped flag,
+    todo-reopen seam) and never re-fed; the re-feed belongs only where the conversation is NOT
+    resumable (the no-init re-head, the boot/spawn dead paths). SYNTHETIC fixtures only."""
+
+    TEXT = "typed while the reconnect tore the client down"
+    TID = "ut-3a8b0c22"
+
+    def setUp(self):
+        self.state = tempfile.mkdtemp()
+        # a real (empty) transcript: _text_landed answers False — the exact "missed scan" shape,
+        # since the resumable branch must not trust that answer with a re-feed
+        os.environ["CLAUDE_CONFIG_DIR"] = os.path.join(self.state, "claude")
+        self.cwd = os.path.join(self.state, "proj")
+        os.makedirs(self.cwd, exist_ok=True)
+        tp = sb.transcript_path(self.cwd, SID)
+        os.makedirs(os.path.dirname(tp), exist_ok=True)
+        open(tp, "w").close()
+        self.losses = []
+        self.be = sb.SdkBackend(self.state, "/bin/true", lambda *a, **k: None,
+                                todo_lost=lambda sid, tid, text: self.losses.append((sid, tid, text)))
+
+    def _sess(self, **extra):
+        reg = {"sid": SID, "name": "web", "mode": "acceptEdits",
+               "alive": True, "cwd": self.cwd, "lastSid": SID}
+        reg.update(extra)
+        sb.write_reg(self.be.state_dir, SID, reg)
+        s = sb.SdkSession(self.be, dict(reg))
+        self.be.sessions[SID] = s          # register WITHOUT starting the thread (no loop)
+        return s
+
+    def _stash_echo(self, text, t=100, todo=""):
+        e = {"type": "user", "uuid": "echo:" + text[:10], "session_id": SID, "t": t,
+             "parentUuid": None, "author": "human", "_echo_text": text,
+             "message": {"role": "user", "content": [{"type": "text", "text": text}]}}
+        if todo:
+            e["_todo"] = todo
+        self.be._live.setdefault(SID, {})[e["uuid"]] = e
+        return e
+
+    def test_a_resumable_reconnect_flags_and_never_refeeds(self):
+        s = self._sess()                                # lastSid set → the conversation is resumable
+        self.assertEqual(s.resume_sid, SID)
+        s.inflight = 1
+        s._inflight_texts.append(self.TEXT)
+        e = self._stash_echo(self.TEXT, t=300)
+        s._reconcile_stranded()
+        self.assertEqual(s.pending(), [],
+                         "flag-only: a fed turn on a resumable conversation is never re-fed — "
+                         "re-feeding risks a real duplicate")
+        self.assertEqual((sb.read_reg(self.be.state_dir, SID) or {}).get("queue") or [], [],
+                         "…and no reg-queue back door either")
+        self.assertTrue(e.get("dropped"), "the loss surfaces NOW as never-delivered")
+
+    def test_the_resumable_branch_still_reopens_a_lost_todo_answer(self):
+        s = self._sess()
+        s.inflight = 1
+        s._inflight_texts.append(self.TEXT)
+        e = self._stash_echo(self.TEXT, t=300, todo=self.TID)
+        s._reconcile_stranded()
+        self.assertEqual(s.pending(), [])
+        self.assertTrue(e.get("dropped"))
+        self.assertEqual(self.losses, [(SID, self.TID, self.TEXT)],
+                         "the todo-reopen seam fires on the flag path — the ask visibly returns")
+
+    def test_a_fresh_conversation_reconnect_still_reheads(self):
+        # the documented other branch: no init ever streamed → nothing the user can see exists,
+        # so re-feeding cannot duplicate — the queue re-head is the loss-proof path here
+        s = self._sess(lastSid="")                      # never resumed → resume_sid None
+        self.assertIsNone(s.resume_sid)
+        s.inflight = 1
+        s._inflight_texts.append(self.TEXT)
+        s._reconcile_stranded()
+        self.assertEqual(s.pending(), [self.TEXT],
+                         "the not-yet-materialized conversation re-heads the queue, as documented")
 
 
 if __name__ == "__main__":

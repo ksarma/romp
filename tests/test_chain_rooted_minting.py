@@ -205,6 +205,83 @@ class TraceRule(unittest.TestCase):
         self.assertTrue(rec, "the chain still proves the human root")
         self.assertFalse(rec.get("carded"), "…but no live ask node carries it")
 
+    def test_a_cleared_live_ask_reads_uncarded(self):
+        # SHAPE B1 (round 2, 2026-08-26): `carded` answers "does this node currently RENDER on a
+        # visible card", not "is it in the live store" — a user-cleared ask sits live until the
+        # compactor takes it, but its card is off every column, so linking into it hides the
+        # fan-out completely. Uncarded → the fallback mints.
+        self._store(MGR, {"g1": _node("g1", "Ship the demo", None, promptUuid="hu", cleared=True)})
+        self._human(MGR)
+        rec = jd._delegate_user_rooted(MGR, "g1", self.paths, NOW)
+        self.assertTrue(rec, "the human proof stands — clearing a card does not erase the chain")
+        self.assertFalse(rec.get("carded"), "…but a cleared card renders nowhere")
+
+    def test_a_sealed_ask_reads_uncarded(self):
+        # B1's sealed flavor: a complete/cleared ANCESTOR folds the subtree into done-display —
+        # nothing planted under the ask would render as live fan-out (the sealed-open leak).
+        self._store(MGR, {"top": _node("top", "done umbrella", None, nodeComplete=True),
+                          "g1": _node("g1", "the ask", "top", promptUuid="hu")})
+        self._human(MGR)
+        rec = jd._delegate_user_rooted(MGR, "g1", self.paths, NOW)
+        self.assertTrue(rec)
+        self.assertFalse(rec.get("carded"))
+
+    def test_a_dangling_ask_reads_uncarded(self):
+        # SHAPE B2 (round 2, 2026-08-26): a rewind-swept parent leaves the ask node live but
+        # reachable from NO live top — the feed walks top subtrees, so the node renders nowhere.
+        self._store(MGR, {"g1": _node("g1", "the ask", "swept-away", promptUuid="hu")})
+        self._human(MGR)
+        rec = jd._delegate_user_rooted(MGR, "g1", self.paths, NOW)
+        self.assertTrue(rec)
+        self.assertFalse(rec.get("carded"), "a dangling node has no card to link into")
+
+    def test_carded_never_flips_across_the_compaction_boundary(self):
+        # THE BOUNDARY PIN (round 2): a cleared ask answers the same before and after the
+        # compactor moves it to the archive — both uncarded, both mint. Before the fix the same
+        # cleared card read carded=True live and carded=False archived, so the mint decision
+        # flipped on a compaction pass that carried no new information.
+        self._store(MGR, {"g1": _node("g1", "the ask", None, promptUuid="hu", cleared=True)})
+        self._human(MGR)
+        live_rec = jd._delegate_user_rooted(MGR, "g1", self.paths, NOW)
+        self._store(MGR, {})
+        self._store(MGR, {"g1": _node("g1", "the ask", None, promptUuid="hu", cleared=True)},
+                    archive=True)
+        arch_rec = jd._delegate_user_rooted(MGR, "g1", self.paths, NOW)
+        self.assertTrue(live_rec and arch_rec)
+        self.assertEqual(bool(live_rec.get("carded")), bool(arch_rec.get("carded")),
+                         "compaction is bookkeeping, never a mint-decision event")
+        self.assertFalse(arch_rec.get("carded"))
+
+    def test_a_visible_intermediate_userask_top_reads_carded(self):
+        # HOP STAND-DOWN, trace side (round 2, finding 3): the climb passes a LIVE, VISIBLE
+        # userAsk-bearing top — the ask already has a card on the intermediate's board, so the
+        # record reads carded even when the ROOT ask node is archive-only (which used to ride the
+        # origin hop up as carded=False and re-mint at every hop level).
+        self._store(MGR, {"gM": _node("gM", "mid-chain ask", None,
+                                      origin={"peer": GRAND, "goalId": "t1", "msgId": "m0"},
+                                      userAsk={"text": "the user's ask", "sid": GRAND})})
+        self._store(GRAND, {"g9": _node("g9", "the original ask", None, promptUuid="hu"),
+                            "t1": _node("t1", "↪ delegated", "g9")}, archive=True)
+        self._human(GRAND)
+        rec = jd._delegate_user_rooted(MGR, "gM", self.paths, NOW)
+        self.assertTrue(rec)
+        self.assertTrue(rec.get("carded"),
+                        "the intermediate top IS the ask's card — no re-mint below it")
+        self.assertEqual(rec.get("sid"), GRAND, "…and it still speaks for the root ask")
+
+    def test_a_cleared_intermediate_userask_top_does_not_stand_down(self):
+        # …but a cleared intermediate renders nowhere, so it cannot claim the card: the climb
+        # falls through to the origin hop and the root's own (archive-only → uncarded) answer.
+        self._store(MGR, {"gM": _node("gM", "mid-chain ask", None, cleared=True,
+                                      origin={"peer": GRAND, "goalId": "t1", "msgId": "m0"},
+                                      userAsk={"text": "the user's ask", "sid": GRAND})})
+        self._store(GRAND, {"g9": _node("g9", "the original ask", None, promptUuid="hu"),
+                            "t1": _node("t1", "↪ delegated", "g9")}, archive=True)
+        self._human(GRAND)
+        rec = jd._delegate_user_rooted(MGR, "gM", self.paths, NOW)
+        self.assertTrue(rec, "the chain still proves the root")
+        self.assertFalse(rec.get("carded"), "a cleared intermediate is no card — the fallback mints")
+
 
 BODY = ("Verify the staged run references and report drift.\n"
         "<!-- romp-msg-id: %s -->\n<!-- romp-msg-kind: delegate -->" % MID)
@@ -240,7 +317,7 @@ class CourierMintMatrix(unittest.TestCase):
         jd.MESSAGES = self._msgs
         jd.discover = self._disc
         jd.courier_llm = self._llm
-        for sid in (MGR, WKR):
+        for sid in (MGR, WKR, GRAND):
             for d in (jd.GOALDIR, jd.GOALARCHDIR):
                 try:
                     (d / (sid + ".json")).unlink()
@@ -313,6 +390,54 @@ class CourierMintMatrix(unittest.TestCase):
         self.assertFalse(trackers[0]["handoff"].get("quiet"),
                          "a recipient goal carries the msgId — the origin back-link owns the ending")
 
+    def test_a_dispatch_linked_to_a_dangling_ask_mints(self):
+        # SHAPE B2 END TO END (round 2, 2026-08-26): the courier's link resolves to a live ask
+        # whose parent was rewind-swept — the node pierces the menu (a missing ancestor never
+        # seals) but renders on NO card (the feed walks top subtrees). Reading it "carded" linked
+        # the fan-out into a card that renders nowhere; it must take the fallback mint instead.
+        jd.save_goals(MGR, {"rompUuid": MGR, "seq": 1, "nodes": {
+            MGR + ":g1": _node(MGR + ":g1", "Ship the staged-run verification", "swept-away",
+                               promptUuid="hu")},
+            "placements": {}, "status": {}})
+        self.mpath.write_text("\n".join(json.dumps(r) for r in [
+            uline(T0 - 600, "please verify the staged run references", "hu"),
+            aline(T0 - 540, "Dispatching.", "ha", "hu")]) + "\n")
+        jd._PARSE_CACHE.clear()
+        jd.run_courier(now=NOW)
+        w = jd.load_goals(WKR)
+        planted = [nd for nd in w["nodes"].values() if isinstance(nd.get("origin"), dict)]
+        self.assertEqual(len(planted), 1,
+                         "a dangling ask has no visible card — the recipient card IS the ask's card")
+
+    def test_a_cleared_live_ask_mints_like_an_archived_one(self):
+        # SHAPE B1 END TO END + the compaction-boundary pin (round 2): the root ask is CLEARED but
+        # still live (the compactor hasn't run). The chain reaches it through the origin hop of a
+        # courier-planted mid-chain top (pre-T105: no userAsk on it). Before the fix the live
+        # membership read carded=True and the courier filed quiet — the same world a compaction
+        # pass later minted, so the decision flipped on bookkeeping. A cleared card renders
+        # nowhere: mint now, exactly as the archived twin does.
+        gpath = Path(self.td.name) / (GRAND + ".jsonl")
+        gpath.write_text(json.dumps(uline(T0 - 900, "the dictated round", "hu")) + "\n")
+        jd.discover = lambda now, window=None, forks=True: [
+            (WKR, str(self.wpath), None, "api"), (MGR, str(self.mpath), None, "web"),
+            (GRAND, str(gpath), None, "tests")]
+        jd.save_goals(GRAND, {"rompUuid": GRAND, "seq": 2, "nodes": {
+            GRAND + ":g9": _node(GRAND + ":g9", "the original ask", None, promptUuid="hu",
+                                 cleared=True),
+            GRAND + ":t1": _node(GRAND + ":t1", "↪ delegated", GRAND + ":g9")},
+            "placements": {}, "status": {}})
+        jd.save_goals(MGR, {"rompUuid": MGR, "seq": 1, "nodes": {
+            MGR + ":g1": _node(MGR + ":g1", "mid-chain ask", None,
+                               origin={"peer": GRAND, "goalId": GRAND + ":t1", "msgId": "m0"})},
+            "placements": {}, "status": {}})
+        self.mpath.write_text(json.dumps(aline(T0 - 540, "Working the round.", "ha")) + "\n")
+        jd._PARSE_CACHE.clear()
+        jd.run_courier(now=NOW)
+        w = jd.load_goals(WKR)
+        planted = [nd for nd in w["nodes"].values() if isinstance(nd.get("origin"), dict)]
+        self.assertEqual(len(planted), 1,
+                         "a cleared-live ask is exactly as card-less as its archived twin — mint")
+
     def test_a_genuinely_unlinked_delegate_still_files_quiet(self):
         # THE FALLBACK DECISION'S OTHER HALF, pinned: with no link there is no chain to trace, so a
         # linkless dispatch is never PROVABLY rooted — and at mint time uncertainty files quiet
@@ -354,6 +479,246 @@ class CourierMintMatrix(unittest.TestCase):
                          "the delegation still lives one glance away on the SENDER's board")
         self.assertTrue(trackers[0]["handoff"].get("quiet"),
                         "marked for report-back completion: no recipient goal will carry this msgId")
+
+
+MID_B = "1787099000.000002_1.TESTHOST"
+BODY_B = ("Verify the staged run references, second pass.\n"
+          "<!-- romp-msg-id: %s -->\n<!-- romp-msg-kind: delegate -->" % MID_B)
+
+
+class FanOutDedupe(unittest.TestCase):
+    """Round 2 (2026-08-26), finding 3: the fallback mint was idempotent per msgId ONLY, so one ask
+    fanned N times with archive-only proof minted N origin-stamped tops on the same recipient, and
+    every origin-hop level could re-mint. The mint dedupes by ASK IDENTITY — the proof node's
+    (sender sid, goal id), carried up the trace as askRef and stamped on the minted top — and an
+    intermediate userAsk-bearing top that already shows stands the whole re-mint down (the trace's
+    carded short-circuit). Each RECIPIENT session still gets its one card: the dedupe is per
+    (recipient store, ask identity), never global."""
+
+    def setUp(self):
+        self.td = tempfile.TemporaryDirectory()
+        d = Path(self.td.name)
+        self.wpath = d / (WKR + ".jsonl")
+        self.mpath = d / (MGR + ".jsonl")
+        self.gpath = d / (GRAND + ".jsonl")
+        self._msgs = jd.MESSAGES
+        jd.MESSAGES = d / "messages.jsonl"
+        self._disc = jd.discover
+        roster = [(WKR, str(self.wpath), None, "api"), (MGR, str(self.mpath), None, "web"),
+                  (GRAND, str(self.gpath), None, "tests")]
+        jd.discover = lambda now, window=None, forks=True: roster
+        self._llm = jd.courier_llm
+        jd.courier_llm = lambda text, menu, declared=None: LINK_REPLY
+        self.gpath.write_text(json.dumps(aline(T0 - 1000, "quiet.", "gz")) + "\n")
+        jd._PARSE_CACHE.clear()
+
+    def tearDown(self):
+        jd.MESSAGES = self._msgs
+        jd.discover = self._disc
+        jd.courier_llm = self._llm
+        for sid in (MGR, WKR, GRAND):
+            for d in (jd.GOALDIR, jd.GOALARCHDIR):
+                try:
+                    (d / (sid + ".json")).unlink()
+                except OSError:
+                    pass
+        self.td.cleanup()
+
+    def test_one_ask_fanned_twice_to_one_recipient_mints_once(self):
+        # the archive-only fallback shape, dispatched TWICE to the same worker: msgId idempotency
+        # alone minted two near-duplicate tops (the exact card T101 exists to prevent)
+        jd.save_goals(MGR, {"rompUuid": MGR, "seq": 2, "nodes": {
+            MGR + ":g2": _node(MGR + ":g2", "Verification follow-up", MGR + ":g1")},
+            "placements": {}, "status": {}})
+        jd.save_goal_archive(MGR, {"rompUuid": MGR, "nodes": {
+            MGR + ":g1": _node(MGR + ":g1", "Ship the staged-run verification", None,
+                               promptUuid="hu")},
+            "placements": {}, "status": {}})
+        self.mpath.write_text("\n".join(json.dumps(r) for r in [
+            uline(T0 - 600, "please verify the staged run references", "hu"),
+            aline(T0 - 540, "Dispatching.", "ha", "hu")]) + "\n")
+        self.wpath.write_text("\n".join(json.dumps(r) for r in [
+            uline(T0, BODY, "m1", ps="sdk"), aline(T0 + 60, "On it.", "a1", "m1"),
+            uline(T0 + 120, BODY_B, "m2", "a1", ps="sdk"),
+            aline(T0 + 180, "And the second pass.", "a2", "m2")]) + "\n")
+        jd.MESSAGES.write_text("\n".join(json.dumps(r) for r in [
+            {"t": T0, "ev": "sent", "id": MID, "from": "web", "from_id": MGR,
+             "to_id": WKR, "kind": "delegate", "body": BODY.split("\n")[0]},
+            {"t": T0 + 120, "ev": "sent", "id": MID_B, "from": "web", "from_id": MGR,
+             "to_id": WKR, "kind": "delegate", "body": BODY_B.split("\n")[0]}]) + "\n")
+        jd._PARSE_CACHE.clear()
+        jd.run_courier(now=NOW)
+        w = jd.load_goals(WKR)
+        planted = [nd for nd in w["nodes"].values() if isinstance(nd.get("origin"), dict)]
+        self.assertEqual(len(planted), 1, "one ask, one recipient card — however many dispatches")
+        top = planted[0]
+        self.assertEqual(top.get("askRef"), {"peer": MGR, "goalId": MGR + ":g1"},
+                         "the mint carries the ask identity the dedupe keys on")
+        self.assertIn(MID_B, [l.get("msgId") for l in (top.get("links") or [])],
+                      "the second dispatch LINKS into the standing card, so its tracker still ends")
+        m = jd.load_goals(MGR)
+        trackers = [nd for nd in m["nodes"].values() if isinstance(nd.get("handoff"), dict)]
+        self.assertEqual(len(trackers), 2, "each dispatch keeps its sender-side tracker")
+        self.assertFalse(any(t["handoff"].get("quiet") for t in trackers),
+                         "both trackers have a completion event on the one recipient card")
+
+    def test_a_hop_re_mint_stands_down_when_the_intermediate_ask_top_shows(self):
+        # the hop shape: the root ask is archive-only on GRAND, but MGR's own courier-planted top
+        # (userAsk-bearing, live, visible) IS the ask's card — dispatching onward must file quiet
+        # under it, not re-mint an origin-stamped top on the worker at every hop level
+        jd.save_goals(MGR, {"rompUuid": MGR, "seq": 1, "nodes": {
+            MGR + ":gM": _node(MGR + ":gM", "mid-chain ask", None,
+                               origin={"peer": GRAND, "goalId": GRAND + ":t1", "msgId": "m0"},
+                               userAsk={"text": "the dictated round", "sid": GRAND})},
+            "placements": {}, "status": {}})
+        jd.save_goal_archive(GRAND, {"rompUuid": GRAND, "nodes": {
+            GRAND + ":g9": _node(GRAND + ":g9", "the original ask", None, promptUuid="hu"),
+            GRAND + ":t1": _node(GRAND + ":t1", "↪ delegated", GRAND + ":g9")},
+            "placements": {}, "status": {}})
+        self.gpath.write_text(json.dumps(uline(T0 - 900, "the dictated round", "hu")) + "\n")
+        self.mpath.write_text(json.dumps(aline(T0 - 540, "Fanning the round out.", "ha")) + "\n")
+        self.wpath.write_text("\n".join(json.dumps(r) for r in [
+            uline(T0, BODY, "m1", ps="sdk"), aline(T0 + 60, "On it.", "a1", "m1")]) + "\n")
+        jd.MESSAGES.write_text(json.dumps(
+            {"t": T0, "ev": "sent", "id": MID, "from": "web", "from_id": MGR,
+             "to_id": WKR, "kind": "delegate", "body": BODY.split("\n")[0]}) + "\n")
+        jd._PARSE_CACHE.clear()
+        jd.run_courier(now=NOW)
+        w = jd.load_goals(WKR)
+        self.assertEqual([nd for nd in w["nodes"].values() if isinstance(nd.get("origin"), dict)],
+                         [], "the ask already shows on the intermediate's board — no re-mint")
+        self.assertIn("fyi", set(w["placements"].values()), "the recipient files quietly")
+        m = jd.load_goals(MGR)
+        trackers = [nd for nd in m["nodes"].values() if isinstance(nd.get("handoff"), dict)]
+        self.assertEqual(len(trackers), 1)
+        self.assertEqual(trackers[0].get("parentId"), MGR + ":gM",
+                         "the fan-out lives INSIDE the intermediate's ask card")
+        self.assertTrue(trackers[0]["handoff"].get("quiet"),
+                        "no recipient goal will carry this msgId — the reply-sweep owns the ending")
+
+
+class ConfirmingWindowDispatch(unittest.TestCase):
+    """Round 3 (2026-08-26), item 3: a done-verdict-filed top whose settle is pending — the
+    rollup's `confirming` export — still renders visibly in Working (the steady doneConfirming
+    cue), so a same-ask dispatch must LINK into it, not mint beside it. _node_carded read bare
+    nodeComplete and called the confirming window dead. Only a genuinely SETTLED completion stays
+    uncarded — the sealed-open trade holds."""
+
+    def setUp(self):
+        self._saved = jd.parsed_session
+        jd.parsed_session = lambda sid, files, now: _fake_session([
+            {"uuid": "hu", "type": "user", "author": "human",
+             "message": {"role": "user", "content": "verify the staged run references"}}])
+
+    def tearDown(self):
+        jd.parsed_session = self._saved
+        for sid in (MGR, WKR):
+            for d in (jd.GOALDIR, jd.GOALARCHDIR):
+                try:
+                    (d / (sid + ".json")).unlink()
+                except OSError:
+                    pass
+
+    def _confirming_store(self):
+        st = {"rompUuid": MGR, "seq": 1, "nodes": {
+            MGR + ":g1": _node(MGR + ":g1", "Ship the staged-run verification", None,
+                               promptUuid="hu")},
+            "placements": {}, "status": {}, "lastNode": MGR + ":g1"}
+        jd.record_verdict(st, st["nodes"][MGR + ":g1"], "closer", "done", T0 + 100,
+                          why="both halves landed")
+        jd.rollup_status(st, False)                    # focus held → the settle is still pending
+        return st
+
+    def test_a_confirming_ask_reads_carded_so_the_dispatch_links(self):
+        st = self._confirming_store()
+        self.assertIn(MGR + ":g1", st.get("confirming") or (),
+                      "fixture: the rollup exports the done-confirming window")
+        self.assertEqual(st["status"].get(MGR + ":g1", "working"), "working",
+                         "fixture: the card still renders in Working")
+        jd.save_goals(MGR, st)
+        rec = jd._delegate_user_rooted(MGR, MGR + ":g1", {MGR: "/dev/null"}, NOW)
+        self.assertTrue(rec)
+        self.assertTrue(rec.get("carded"),
+                        "the confirming card is visible — link into it, never mint beside it")
+
+    def test_a_settled_completion_stays_uncarded(self):
+        st = self._confirming_store()
+        jd.rollup_status(st, True)                     # the session hands back the floor → settle
+        self.assertEqual(st["status"].get(MGR + ":g1"), "completed")
+        jd.save_goals(MGR, st)
+        rec = jd._delegate_user_rooted(MGR, MGR + ":g1", {MGR: "/dev/null"}, NOW)
+        self.assertTrue(rec, "the chain still proves the human root")
+        self.assertFalse(rec.get("carded"),
+                         "a settled completion renders in Completed, not Working — mint")
+
+    def test_a_second_dispatch_links_into_the_confirming_recipient_top(self):
+        # recipient side: the standing origin-stamped top is done-confirming — the ask dedupe
+        # must accept it as the standing card rather than minting a twin beside the cue
+        wtop = WKR + ":g1"
+        wstore = {"rompUuid": WKR, "seq": 1, "nodes": {
+            wtop: _node(wtop, "Verify the staged run references", None,
+                        origin={"peer": MGR, "goalId": MGR + ":t1", "msgId": MID},
+                        userAsk={"text": "verify the staged run references", "sid": MGR},
+                        askRef={"peer": MGR, "goalId": MGR + ":g1"})},
+            "placements": {}, "status": {}, "lastNode": wtop}
+        jd.record_verdict(wstore, wstore["nodes"][wtop], "closer", "done", T0 + 100, why="landed")
+        jd.rollup_status(wstore, False)
+        self.assertIn(wtop, wstore.get("confirming") or ())
+        rec = {"text": "verify the staged run references", "sid": MGR, "carded": False,
+               "askRef": {"peer": MGR, "goalId": MGR + ":g1"}}
+        before = set(wstore["nodes"])
+        nid = jd.apply_courier(wstore, "seg2", NOW, "verify the refs, second pass",
+                               {"peer": MGR, "goalId": MGR + ":t2", "msgId": MID_B},
+                               prompt_uuid="anchor2", frame="second pass", user_ask=rec)
+        self.assertEqual(nid, wtop, "the dispatch LINKS into the confirming card")
+        self.assertEqual(set(wstore["nodes"]), before, "…and mints nothing beside it")
+        self.assertIn(MID_B, [l.get("msgId") for l in (wstore["nodes"][wtop].get("links") or [])],
+                      "the new dispatch's tracker still gets its completion event")
+
+
+class AskRefRecycling(unittest.TestCase):
+    """Round 3 (2026-08-26), item 6 (probe-confirmed): goal ids are sid:gN with a per-store seq
+    that RESETS when the sender's store file is lost, so a NEW ask can recycle an OLD ask's exact
+    goal id — and a dedupe keyed on (sender sid, goal id) alone linked the new ask's dispatch into
+    the OLD ask's standing card: no card for the new ask, and the old card's completion would end
+    the new dispatch's tracker. The standing top's own userAsk text is the identity cross-check —
+    the stamp and the dedupe share one shaping (_ask_stamp_text) — so the same ask still links
+    while a recycled id over DIFFERENT dictation mints its own card."""
+
+    def _standing(self):
+        wtop = WKR + ":g1"
+        return wtop, {"rompUuid": WKR, "seq": 1, "nodes": {
+            wtop: _node(wtop, "Ship the demo build", None,
+                        origin={"peer": MGR, "goalId": MGR + ":t1", "msgId": "m1"},
+                        userAsk={"text": "ship the demo build", "sid": MGR},
+                        askRef={"peer": MGR, "goalId": MGR + ":g1"})},
+            "placements": {}, "status": {}}
+
+    def test_a_recycled_askref_over_different_dictation_mints_fresh(self):
+        wtop, wstore = self._standing()
+        rec = {"text": "audit the release checklist", "sid": MGR, "carded": False,
+               "askRef": {"peer": MGR, "goalId": MGR + ":g1"}}   # the RECYCLED identity
+        nid = jd.apply_courier(wstore, "seg2", NOW, "audit the release checklist",
+                               {"peer": MGR, "goalId": MGR + ":t9", "msgId": "m2"},
+                               prompt_uuid="anchor2", frame="audit the release checklist",
+                               user_ask=rec)
+        self.assertNotEqual(nid, wtop,
+                            "different dictation behind the same goal id is a NEW ask — mint")
+        self.assertEqual((wstore["nodes"][nid].get("userAsk") or {}).get("text"),
+                         "audit the release checklist", "…carrying its own dictation evidence")
+        self.assertEqual(wstore["nodes"][wtop].get("links") or [], [],
+                         "…and the old ask's card is untouched — its completion ends nothing new")
+
+    def test_the_same_dictation_still_links(self):
+        wtop, wstore = self._standing()
+        rec = {"text": "ship the demo build", "sid": MGR, "carded": False,
+               "askRef": {"peer": MGR, "goalId": MGR + ":g1"}}
+        nid = jd.apply_courier(wstore, "seg3", NOW, "ship the demo build",
+                               {"peer": MGR, "goalId": MGR + ":t2", "msgId": "m3"},
+                               prompt_uuid="anchor3", frame="ship it", user_ask=rec)
+        self.assertEqual(nid, wtop, "the ask's identity holds — one card")
+        self.assertIn("m3", [l.get("msgId")
+                             for l in (wstore["nodes"][wtop].get("links") or [])])
 
 
 class QuietReportBack(unittest.TestCase):

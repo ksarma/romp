@@ -45,7 +45,8 @@ class _FakeBackend:
     def _poke(self): pass
     def _deliver_rename_ping(self, s): return False   # settle hook (2026-08-25); no ping in these worlds
     def _update_reg(self, *a, **k): pass
-    def _mark_dropped_echoes(self, sid, surviving): self.dropped_calls.append((sid, list(surviving)))
+    def _mark_dropped_echoes(self, sid, surviving, refeed=True):
+        self.dropped_calls.append((sid, list(surviving), refeed))
     # the ResultMessage settle's other hooks (mirrors test_sdk_compacting_signal's fake)
     def _turn_completed(self, sid): pass
     def _record_spend(self, *a, **k): pass
@@ -89,6 +90,9 @@ class ReconcileStranded(unittest.TestCase):
         s._reconcile_stranded()
         self.assertEqual(s._pending, [], "never re-fed into a resumable conversation")
         self.assertEqual(len(be.dropped_calls), 1, "the loss is surfaced immediately")
+        self.assertIs(be.dropped_calls[0][2], False,
+                      "…and FLAG-ONLY (round 2, 2026-08-26): the redeliver arm's missed "
+                      "_text_landed scan must never land the message twice here")
 
     def test_clean_reconnect_is_a_no_op(self):
         s, be = _session()

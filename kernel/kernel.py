@@ -3964,7 +3964,32 @@ def _open_leaves_for_nudge(nodes, top_id):
             if nid != top_id and not isinstance(nodes.get(nid, {}).get("handoff"), dict)]
 
 
-def _pure_delegation_top(nodes, top_id):
+def _dictated_prompt_uuid(sid, path, pu):
+    """Does a node's stored promptUuid name a HUMAN-DICTATED prompt record in the session's own
+    transcript? True / False / None(unknown) — the ask-unit exemption's discriminator (round 2,
+    2026-08-26). promptUuid alone proves nothing: it is the g200 LANDABLE-ANCHOR field, stamped on
+    essentially every minted top (_seg_anchor hands a peer/system/AUTONOMOUS segment's mint the
+    segment head — often the agent's own assistant atom — and apply_courier stamps the delegate
+    MAIL's anchor), so only the RECORD it names can say whether the top is the dictated ask. The
+    rule is jd._human_prompt_record — the same author-'human'-minus-interrupts / unmarked-attachment
+    classification T101/T105's own trace uses (_session_user_prompt_record, _user_ask_text's quote
+    gate) — read against the CACHED parse only (_parse_cached never parses, preserving build_feed's
+    cold-start contract; the anchors fill in a beat later the same way the dots do). None when the
+    verdict cannot be reached: no path threaded, no cached parse yet, or the uuid absent from the
+    stitched chain (a rewound/compacted record) — the caller decides what doubt means."""
+    if not (pu and path):
+        return None
+    ps = _parse_cached(str(path))
+    if not ps:
+        return None
+    for turn in ps.get("turns") or []:
+        for a in turn.get("atoms") or []:
+            if a.get("uuid") == pu:
+                return jd._human_prompt_record(a, str(sid or "")) is not None
+    return None
+
+
+def _pure_delegation_top(nodes, top_id, sid=None, path=None):
     """True if EVERY leaf in top_id's subtree is a courier handoff-tracking node — the whole top is just work
     handed to PEERS, nothing this session does itself. Such a top is pure peer-coordination and is NOT an
     inbox card (the user 2026-06-23): consistent with _all_outstanding_delegated already treating
@@ -3972,18 +3997,42 @@ def _pure_delegation_top(nodes, top_id):
     weighs ALL leaves — a delegation stays coordination even after it completes — so the card is suppressed in
     every column. A top with ANY own-work leaf still shows.
 
-    THE ASK-UNIT EXEMPTION (2026-08-26, the T101 fold review): T101 made the dictated ask itself host
-    the fan-out — the courier plants its tracking nodes UNDER the ask and mints NO recipient tops — so
-    an ask fully fanned to workers is exactly this all-leaves-are-handoffs shape, and suppressing it
-    left the user's ask with no card ANYWHERE (T101's own rule: one ask fanned to two workers = ONE
-    card with two handoff children). A top that IS the ask — its promptUuid root (the dictated
-    prompt's anchor, stamped at mint) or T105's chain-proven `userAsk` record — is never pure
-    coordination, whatever its leaves. A top that is ITSELF a handoff tracker never qualifies: the
-    parentless '↪ delegated' record stays suppressed as before."""
+    THE ASK-UNIT EXEMPTION (2026-08-26, the T101 fold review; discriminator fixed in round 2 the
+    same day): T101 made the dictated ask itself host the fan-out — the courier plants its tracking
+    nodes UNDER the ask and mints NO recipient tops — so an ask fully fanned to workers is exactly
+    this all-leaves-are-handoffs shape, and suppressing it left the user's ask with no card
+    ANYWHERE (T101's own rule: one ask fanned to two workers = ONE card with two handoff children).
+    A top IS the ask only on real dictation evidence:
+      - T105's chain-proven `userAsk` record — the ONLY evidence a courier-planted top (`origin`)
+        can carry: its promptUuid is the delegate MAIL's anchor by construction (g200), never the
+        dictated prompt, so a bare anchor there re-showed every mid-chain coordination top;
+      - a promptUuid that PROVABLY resolves to a human-dictated record (_dictated_prompt_uuid
+        above; callers thread sid+path). A resolved machine anchor — an autonomous segment's head,
+        a peer mail — is not the ask and the suppression stands. An UNRESOLVABLE anchor fails OPEN
+        (exempt): suppressing on doubt re-opens the no-card-anywhere hole this exemption closes,
+        and a shown coordination card is recoverable noise where a hidden ask is not.
+    A top that is ITSELF a handoff tracker never qualifies: the parentless '↪ delegated' record
+    stays suppressed as before.
+
+    THE LATCH OUTRANKS THE CACHE (round 3, 2026-08-26, item 1): `askAnchor` is the judge's durable
+    verdict on this exact question, filed from a WARM parse by the planner pass
+    (jd._latch_ask_anchors) — 'human'/'absent' exempt, 'machine' suppresses, and NEITHER is ever
+    re-derived here: re-deriving per build from _parse_cached made the verdict flap with cache
+    temperature (a machine-anchored coordination card re-showed on every restart/cold beat with no
+    new information — the cards-move-on-new-information rule). Only an UNLATCHED node still reads
+    the cached parse below — today's fail-open on doubt — and the judge latches it on its next
+    pass, so that flap happens at most once per node ever, not per beat."""
     root = nodes.get(top_id) or {}
-    if ((root.get("promptUuid") or isinstance(root.get("userAsk"), dict))
-            and not isinstance(root.get("handoff"), dict)):
-        return False
+    if not isinstance(root.get("handoff"), dict):
+        if isinstance(root.get("userAsk"), dict):
+            return False
+        pu = root.get("promptUuid")
+        if pu and not isinstance(root.get("origin"), dict):
+            latch = root.get("askAnchor")
+            if latch in ("human", "absent"):
+                return False                          # the dictated ask (or durable doubt) — stable
+            if latch != "machine" and _dictated_prompt_uuid(sid, path, pu) is not False:
+                return False                          # unlatched → the cached-parse read, fail-open
     children = {}
     for nid, nd in nodes.items():
         children.setdefault(nd.get("parentId"), []).append(nid)
@@ -13716,7 +13765,24 @@ def _session_stamp_read(sid):
         mkey = (mst.st_mtime_ns, mst.st_size)
     except OSError:
         mkey = None                                    # no postal log yet is normal
-    key = (gkey, okey, mkey)
+    # The ask-unit discriminator reads the SAME transcript the feed does (round 3, 2026-08-26,
+    # item 2): discover hands build_feed the registry's lastSid file for a /cleared or
+    # resume-forked SDK session, while _sdk_transcript_path names the ANCHOR file — dead after a
+    # fork — so the chip's suppression call answered from a transcript the feed no longer reads
+    # (the feed suppressed a machine-anchored top; the chip lit 'waiting on peers' for it — one
+    # fact, two answers). Same project dir, lastSid stem — the exact resolution discover applies.
+    _stamp_path = _sdk_transcript_path(sid)
+    _last = jd._sdk_last_sid(sid)
+    if _last:
+        _stamp_path = _stamp_path.with_name(_last + ".jsonl")
+    _stamp_path = str(_stamp_path)
+    # …and the discriminator's remaining cache-temperature input joins the KEY. A LATCHED verdict
+    # (askAnchor, item 1) rides the goal store, so the goals mtime/size above already re-reads on
+    # every latch write — that part is store-keyed and temperature-blind by design. Only a
+    # NOT-YET-LATCHED node still derives from _parse_cached, so the resolved path + its warmth are
+    # keyed too: without them the chip served a cold-beat fail-open long after the feed's fresh
+    # per-build read had warmed, and held it until an unrelated store/postal write.
+    key = (gkey, okey, mkey, _stamp_path, _parse_cached(_stamp_path) is not None)
     hit = _SESSION_STAMP_CACHE.get(sid)
     if hit and hit[0] == key:
         return hit[1]
@@ -13768,7 +13834,8 @@ def _session_stamp_read(sid):
         for tid, td_ in nodes.items():
             if td_.get("parentId") is not None or td_.get("nodeComplete") or td_.get("cleared"):
                 continue
-            if not _all_outstanding_delegated(nodes, tid) or _pure_delegation_top(nodes, tid):
+            if not _all_outstanding_delegated(nodes, tid) \
+                    or _pure_delegation_top(nodes, tid, sid=sid, path=_stamp_path):
                 continue
             for x in _open_leaves(nodes, tid):
                 h = nodes.get(x, {}).get("handoff")
@@ -20213,7 +20280,7 @@ def build_feed(now, tmux=None):
             if (f in nodes and status.get(f) not in ("completed", "cleared")
                     and f not in confirming):
                 todo_top = f
-            if todo_top is None or _pure_delegation_top(nodes, todo_top):
+            if todo_top is None or _pure_delegation_top(nodes, todo_top, sid=fsid, path=s["path"]):
                 # FOCUS-CHAIN MISS (review 2026-08-22): lastNode can point into a COMPLETED top —
                 # the session's last judged work finished — while another top still reads working.
                 # The walk above dead-ends there, the floor never fires, and had_working (the other
@@ -20228,7 +20295,7 @@ def build_feed(now, tmux=None):
                                  if status.get(g, "working") == "working"
                                  and g not in cleared and not nodes[g].get("cleared")
                                  and g not in confirming
-                                 and not _pure_delegation_top(nodes, g)), None)
+                                 and not _pure_delegation_top(nodes, g, sid=fsid, path=s["path"])), None)
         plain_user_t = _last_plain_user_turn_t(ps["turns"]) if ps else 0   # re-check: a plain reply after a soft block de-urgents it
         had_working = False                          # does this session show ANY working card? → drives the provisional placeholder
         had_awaiting = False                         # …and does any of them read AWAITING? → the session's await-green dot (below)
@@ -20249,8 +20316,8 @@ def build_feed(now, tmux=None):
             col = status.get(nid, "working")
             if col == "cleared" or nid in cleared:
                 continue
-            if _pure_delegation_top(nodes, nid):         # whole top is just peer handoffs → coordination, not an inbox card
-                continue
+            if _pure_delegation_top(nodes, nid, sid=fsid, path=s["path"]):   # whole top is just peer
+                continue                                 # handoffs → coordination, not an inbox card
             # AWAITING floor (event-based, the user 2026-06-22): a session paused on dispatched/delegated
             # work is a WORKING flavor, never needs-input. Floor a working OR stale-blocked top to awaiting
             # from (a) the session-level awaiting signal (live subagents / SDK states overlay),
