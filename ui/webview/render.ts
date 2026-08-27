@@ -1947,24 +1947,29 @@ function eventUnitIndex(s: Session): Int32Array {
 // ONE content-space frame for every scrollbar overlay (the user 2026-08-17, watching comment ticks
 // drift past message notches as history loaded): marks anchored to transcript positions share an
 // inherent monotonic order, so every overlay must place them with the SAME event-index → pixel
-// mapping — rendered turns by their true offset, spacer-covered turns by cumulative cached heights
-// normalized to the spacer's real height. The comment rail's old uniform index-fraction percents
-// were a second, disagreeing frame. Returns null while the pane is hidden or degenerate; offsetOf
-// returns null for an event mid-window-update — callers skip that mark, the next paint lands it.
+// mapping. Since T129 (the user 2026-08-27, filming marks moving RELATIVE TO EACH OTHER while
+// scrolling — geometrically impossible for a linear map) the frame is fully VIRTUAL: one
+// prefix-sum over ALL units, the cached measured height where a unit was ever rendered, the
+// renderer's average else. The old frame was PIECEWISE — live getBoundingClientRect offsets
+// inside the virtualization window, cache sums normalized to each spacer's rendered height
+// outside it — so pure scrolling changed the map every frame the window slid: marks flipped
+// basis crossing the window edge, the spacer denominators flapped, and first-render measurements
+// reshuffled the slots mid-scroll. In the virtual frame a mark's position does not depend on
+// scrollTop or the window AT ALL: under pure scrolling nothing moves, and a mark moves only when
+// information arrives — a height first measured (or remeasured: an image sizing in, a fold
+// toggling), events appending — the event-keyed remap the design rule asks for. The rendered
+// window still feeds the cache every paint, so the frame converges to truth as units are seen;
+// the scrollbar thumb lives in the real-pixel frame, whose totals the cache tracks to within the
+// average-height estimate for never-rendered units — same accuracy class as the spacers that
+// size that scrollbar in the first place. Returns null while the pane is hidden or degenerate;
+// offsetOf returns null out of range — callers skip that mark, the next paint lands it.
 function contentOffsetFrame(content: HTMLElement, v: View, s: Session):
     { sh: number; offsetOf: (i: number) => number | null } | null {
   const cRect = content.getBoundingClientRect();
-  const sh = content.scrollHeight;
-  if (!sh || cRect.height <= 40) return null;
-  const winStart = v.winStart ?? 0;
-  const winEnd = v.winEnd ?? s.events.length;
+  if (!content.scrollHeight || cRect.height <= 40) return null;
   const unitTotal = v.unitTotal ?? s.events.length;
-  const topSp = v.el.querySelector<HTMLElement>(".tx-spacer-top");
-  const botSp = v.el.querySelector<HTMLElement>(".tx-spacer-bot");
-  const topH = topSp ? topSp.offsetHeight : 0;
-  const botH = botSp ? botSp.offsetHeight : 0;
-  const scrollTop = content.scrollTop;
-  // remember every rendered unit's measured height — the spacer estimates below feed on them
+  if (!(unitTotal > 0)) return null;
+  // remember every rendered unit's measured height — the virtual frame feeds on them
   let uh = unitHeights.get(activeId!);
   if (!uh) { uh = new Map(); unitHeights.set(activeId!, uh); }
   for (const node of Array.from(v.el.querySelectorAll<HTMLElement>(".turn[data-unit]"))) {
@@ -1973,37 +1978,14 @@ function contentOffsetFrame(content: HTMLElement, v: View, s: Session):
     if (Number.isFinite(u) && h > 0) uh.set(u, h);
   }
   const avg = v.avgTurnH ?? 60;
-  // Cumulative-height slots within each spacer run, NORMALIZED to the spacer's actual rendered
-  // height (the frame the scrollbar itself stands on) — cached truth where a unit was ever
-  // rendered, the renderer's average for the rest. One prefix-sum pass per spacer per paint (O(n)
-  // total), then O(1) per mark. Normalizing keeps mark and thumb in one frame even when the
-  // cache disagrees with the spacer's uniform sizing.
-  const prefixOver = (from: number, to: number): number[] => {
-    const pre: number[] = [0];
-    let t = 0;
-    for (let u = from; u < to; u++) { t += uh!.get(u) ?? avg; pre.push(t); }
-    return pre;
-  };
-  const topPre = winStart > 0 ? prefixOver(0, winStart) : null;
-  const botPre = unitTotal > winEnd ? prefixOver(winEnd, unitTotal) : null;
-  const slotIn = (pre: number[], k: number, spanH: number): number => {
-    const total = pre[pre.length - 1];
-    if (!(total > 0)) return spanH / 2;
-    return spanH * ((pre[k] + (pre[k + 1] - pre[k]) / 2) / total);
-  };
-  const offsetOf = (i: number): number | null => {
-    let off: number | null = null;
-    if (i >= winStart && i < winEnd) {
-      const node = v.el.querySelector<HTMLElement>('.turn[data-unit="' + i + '"]');
-      if (node) off = node.getBoundingClientRect().top - cRect.top + scrollTop;
-    }
-    if (off == null) {
-      if (i < winStart && topPre) off = slotIn(topPre, i, topH);                        // inside the top spacer
-      else if (i >= winEnd && botPre) off = (sh - botH) + slotIn(botPre, i - winEnd, botH);
-    }
-    return off;                                      // null → window bookkeeping mid-update — skip this one, next paint has it
-  };
-  return { sh, offsetOf };
+  // one prefix-sum pass per paint (O(n)), then O(1) per mark
+  const pre: number[] = [0];
+  let t = 0;
+  for (let u = 0; u < unitTotal; u++) { t += uh.get(u) ?? avg; pre.push(t); }
+  if (!(t > 0)) return null;
+  const offsetOf = (i: number): number | null =>
+    (i >= 0 && i < unitTotal) ? pre[i] + (pre[i + 1] - pre[i]) / 2 : null;   // the unit's slot MIDDLE, uniform for every unit
+  return { sh: t, offsetOf };
 }
 
 function ensureScrollMarks(): HTMLElement {
@@ -4130,6 +4112,37 @@ function auditTabOrder(ids: string[]) {
   lastTabIds = ids.slice();
 }
 let draggedId: string | null = null;
+let tabDragCommitted = false;   // set by the strip's drop handler; dragend without it = a cancel (Escape / dropped outside)
+// FLIP the strip around a DOM mutation (T127 live reorder): snapshot every tab's rect by id, run
+// the mutation, then play each moved tab from its old rect to its new one — an inverted transform
+// released a frame later. A row jump is just a bigger delta: the wrap layout reflows and the
+// animation follows, which is what makes true cross-row live reorder work. Under
+// prefers-reduced-motion the mutation still happens (the reorder IS the information, per the
+// spec) — only the transition is skipped, so positions update instantly. Duration is
+// presentation, not logic: nothing waits on it.
+function flipTabs(mutate: () => void): void {
+  const bar = document.getElementById("tabs");
+  if (!bar) { mutate(); return; }
+  const before = new Map<string, DOMRect>();
+  bar.querySelectorAll<HTMLElement>(".tab[data-id]").forEach((t) => { if (t.dataset.id) before.set(t.dataset.id, t.getBoundingClientRect()); });
+  mutate();
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  bar.querySelectorAll<HTMLElement>(".tab[data-id]").forEach((t) => {
+    const a = t.dataset.id ? before.get(t.dataset.id) : undefined;
+    if (!a) return;
+    const b = t.getBoundingClientRect();
+    const dx = a.left - b.left, dy = a.top - b.top;
+    if (!dx && !dy) return;
+    t.style.transition = "none";
+    t.style.transform = `translate(${dx}px, ${dy}px)`;
+    requestAnimationFrame(() => {
+      t.style.transition = "transform 0.12s ease";
+      t.style.transform = "";
+      const done = () => { t.style.transition = ""; t.removeEventListener("transitionend", done); };
+      t.addEventListener("transitionend", done);
+    });
+  });
+}
 function reorderTo(dragId: string, targetId: string, after: boolean) {
   const di = order.indexOf(dragId);
   if (di < 0) return;
@@ -4266,6 +4279,14 @@ let renderPendingAfterRename = false;
 // dispatches right after pointerup, fires against the still-present node first.
 let tabPointerHeld = false;
 let renderPendingWhilePressed = false;
+// Release the press-hold and flush any deferred rebuild. Hoisted so the DRAG handlers can call it
+// too: a native drag swallows the pointerup, so without this a finished drag would leave the strip
+// frozen against pushes until the next unrelated press (see the dragend handler).
+function releaseTabStrip(): void {
+  if (!tabPointerHeld) return;
+  tabPointerHeld = false;
+  if (renderPendingWhilePressed) { renderPendingWhilePressed = false; setTimeout(() => renderTabs(), 0); }
+}
 // A loading PLACEHOLDER tab (the user 2026-06-26): name + identity color from the kernel's tabOrder push,
 // shown while the session's build_session is still in flight so the strip's full width is reserved up front
 // (no one-by-one pop-in). CLICKABLE (the user 2026-08-25: "I'd like to click it so when the session
@@ -4401,23 +4422,22 @@ function renderTabs() {
     tab.addEventListener("keydown", onTabKey);
     // drag-to-reorder (synced with the timeline via the shared session-order file)
     tab.draggable = true;
-    tab.addEventListener("dragstart", (e) => { draggedId = id; if (e.dataTransfer) e.dataTransfer.effectAllowed = "move"; tab.classList.add("dragging"); });
-    tab.addEventListener("dragend", () => { draggedId = null; document.querySelectorAll(".tab.dragging,.tab.drop-before,.tab.drop-after").forEach((t) => t.classList.remove("dragging", "drop-before", "drop-after")); });
-    tab.addEventListener("dragover", (e) => {
-      if (!draggedId || draggedId === id) return;
-      e.preventDefault();
-      const r = tab.getBoundingClientRect();
-      const after = e.clientX > r.left + r.width / 2;
-      tab.classList.toggle("drop-after", after);
-      tab.classList.toggle("drop-before", !after);
-    });
-    tab.addEventListener("dragleave", () => tab.classList.remove("drop-before", "drop-after"));
-    tab.addEventListener("drop", (e) => {
-      tab.classList.remove("drop-before", "drop-after");
-      if (!draggedId || draggedId === id) return;
-      e.preventDefault();
-      const r = tab.getBoundingClientRect();
-      reorderTo(draggedId, id, e.clientX > r.left + r.width / 2);
+    tab.addEventListener("dragstart", (e) => { draggedId = id; tabDragCommitted = false; if (e.dataTransfer) e.dataTransfer.effectAllowed = "move"; tab.classList.add("dragging"); });
+    // dragend closes EVERY drag (drop, Escape, released outside). The pointerdown that started the
+    // drag latched tabPointerHeld, and the drag swallowed the matching pointerup — so the hold is
+    // released here by hand, covering the whole gesture against pushes (the click-safe rule). A
+    // CANCELLED drag re-renders from the untouched order and everything FLIP-animates home — that
+    // render also folds in any push that arrived, deferred, mid-drag. A committed drop's reorderTo
+    // already asked for its render; it ran deferred, so flush it.
+    tab.addEventListener("dragend", () => {
+      const cancelled = !tabDragCommitted;
+      draggedId = null; tabDragCommitted = false;
+      tab.classList.remove("dragging");
+      tabPointerHeld = false;
+      const pending = renderPendingWhilePressed;
+      renderPendingWhilePressed = false;
+      if (cancelled) flipTabs(() => renderTabs());
+      else if (pending) setTimeout(() => renderTabs(), 0);
     });
     if (s.color) {
       tab.style.setProperty("--chip-bg", s.color.bg);
@@ -12698,14 +12718,42 @@ setupSettings();
   // may end in another frame / outside the window, where no pointerup reaches us). The flush is a setTimeout(0)
   // so the click — dispatched immediately after pointerup, before the timer — fires against the live node first.
   tabs.addEventListener("pointerdown", () => { tabPointerHeld = true; });
-  const releaseTabs = () => {
-    if (!tabPointerHeld) return;
-    tabPointerHeld = false;
-    if (renderPendingWhilePressed) { renderPendingWhilePressed = false; setTimeout(() => renderTabs(), 0); }
-  };
-  window.addEventListener("pointerup", releaseTabs);
-  window.addEventListener("pointercancel", releaseTabs);
-  window.addEventListener("blur", releaseTabs);
+  window.addEventListener("pointerup", releaseTabStrip);
+  window.addEventListener("pointercancel", releaseTabStrip);
+  window.addEventListener("blur", releaseTabStrip);
+  // LIVE REORDER (T127, the user 2026-08-27: dragging should push the other tabs into their new
+  // locations as you drag, the way browsers do): while a tab drags, its in-flow element moves
+  // through the strip's DOM as the pointer crosses the MIDPOINT of the tab under it — the
+  // slot-boundary event, never a timer — and the wrap layout reflows rows natively, so a tab
+  // pushed past a row's end wraps to the next row mid-drag; siblings FLIP to their new rects
+  // (flipTabs). The no-op guard (already sitting immediately before the reference node) is what
+  // keeps a pointer resting inside one slot from churning the DOM on every dragover tick.
+  tabs.addEventListener("dragover", (e) => {
+    if (!draggedId) return;
+    e.preventDefault();   // the whole strip is a valid drop target
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+    const over = (e.target as HTMLElement).closest?.(".tab[data-id]") as HTMLElement | null;
+    const dragged = tabs.querySelector<HTMLElement>(`.tab[data-id="${CSS.escape(draggedId)}"]`);
+    if (!over || !dragged || over === dragged) return;
+    const r = over.getBoundingClientRect();
+    const ref = e.clientX > r.left + r.width / 2 ? over.nextElementSibling : over;
+    if (ref !== dragged && dragged.nextElementSibling !== ref) flipTabs(() => tabs.insertBefore(dragged, ref));
+  });
+  // Drop commits the LIVE DOM position through the same reorderTo the strip has always used —
+  // neighbor id + side — so persistence and the kernel write are byte-identical, and ids that a
+  // filtered view HIDES (present in `order`, absent from the DOM) keep their places: a wholesale
+  // order-from-DOM write would silently drop them.
+  tabs.addEventListener("drop", (e) => {
+    if (!draggedId) return;
+    e.preventDefault();
+    const dragged = tabs.querySelector<HTMLElement>(`.tab[data-id="${CSS.escape(draggedId)}"]`);
+    if (!dragged) return;
+    const prev = dragged.previousElementSibling as HTMLElement | null;
+    const next = dragged.nextElementSibling as HTMLElement | null;
+    if (prev?.dataset?.id) reorderTo(draggedId, prev.dataset.id, true);
+    else if (next?.dataset?.id) reorderTo(draggedId, next.dataset.id, false);
+    tabDragCommitted = true;   // dragend must not treat this as a cancel (it fires next)
+  });
 })();
 // right-click a selection in the transcript → Reply (quote it) / Copy
 document.getElementById("content")?.addEventListener("contextmenu", showSelectionMenu);
