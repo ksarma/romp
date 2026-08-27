@@ -660,6 +660,7 @@ EOF
     _romp_cmd "romp color <session> [<#hex|1-9>]" -     "Recolor a session's identity swatch (palette hex or slot 1-9; no color arg reads bg/fg)"
     _romp_cmd "romp tag [<name>] [--add ...]" -         "Session tags: bare lists them; <name> with --add/--remove/--color/--delete merges one (a tagged session leaves the no-tags view); --host <kernel> edits an attached kernel's tag; --rename renames"
     _romp_cmd "romp watch-pr <n> [--repo o/r]" -        "One mail here when the PR lands or fails — the kernel owns the watch, so it survives restarts (replaces the mortal shell loop)"
+    _romp_cmd "romp watch --cmd '<pred>' [...]" -       "One mail when the command exits 0 (or the timeout passes) — kernel-owned like watch-pr, for ANY background wait (--every Ns --timeout Ns --note '...' | --list | --cancel <id>)"
     _romp_cmd "romp mail ..."              romp-postal-service  "Romp Postal Service: send <to> <text> | inbox | agents | remote"
     _romp_cmd "romp send <session> [--tag <label>] <text>" - "Hand a session a message; scripts/cron SHOULD pass --tag so it renders machine-sent, not as your typed words"
     _romp_cmd "romp interrupt <session>"   -            "Interrupt a session's current turn"
@@ -954,6 +955,77 @@ fi
 # The SESSION defaults to the caller (ROMP_SID, spawn-frozen in SDK sessions; --session overrides);
 # the REPO defaults to the caller's checkout (gh resolves it from cwd; --repo overrides). Both
 # resolve CLIENT-side so the kernel route stays explicit.
+if [[ "${1:-}" == "watch" ]]; then
+    shift
+    _w_usage="usage: romp watch --cmd '<predicate>' [--every <s>] [--timeout <s>] [--note '<what>'] [--session <name>]
+       romp watch --list
+       romp watch --cancel <id>"
+    _w_cmd=""; _w_every=""; _w_timeout=""; _w_note=""; _w_sess=""; _w_list=0; _w_cancel=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --cmd)     shift; [[ $# -eq 0 || -z "$1" ]] && { echo "$_w_usage" >&2; exit 2; }; _w_cmd="$1"; shift ;;
+            --every)   shift; [[ $# -eq 0 || ! "$1" =~ ^[0-9]+$ ]] && { echo "$_w_usage" >&2; exit 2; }; _w_every="$1"; shift ;;
+            --timeout) shift; [[ $# -eq 0 || ! "$1" =~ ^[0-9]+$ ]] && { echo "$_w_usage" >&2; exit 2; }; _w_timeout="$1"; shift ;;
+            --note)    shift; [[ $# -eq 0 ]] && { echo "$_w_usage" >&2; exit 2; }; _w_note="$1"; shift ;;
+            --session) shift; [[ $# -eq 0 || -z "$1" || "$1" == -* ]] && { echo "$_w_usage" >&2; exit 2; }; _w_sess="$1"; shift ;;
+            --list)    _w_list=1; shift ;;
+            --cancel)  shift; [[ $# -eq 0 || -z "$1" ]] && { echo "$_w_usage" >&2; exit 2; }; _w_cancel="$1"; shift ;;
+            *)         echo "$_w_usage" >&2; exit 2 ;;
+        esac
+    done
+    _tok="$(_romp_token)"
+    _kport="${ROMP_KERNEL_PORT:-29855}"
+    if [[ -z "$_tok" ]]; then
+        echo "romp watch: the kernel isn't running (no serve token). Start romp first." >&2
+        exit 1
+    fi
+    if [[ "$_w_list" == "1" ]]; then
+        _romp_token_cfg | curl -sf -m 15 --config - "http://127.0.0.1:$_kport/watches" \
+            | python3 -c 'import json,sys
+rows = json.load(sys.stdin).get("watches") or []
+if not rows: print("romp watch: nothing registered"); raise SystemExit
+for r in rows:
+    print("%s  every %ss  timeout %ss  %s" % (r["id"], r["every"], r["timeoutS"], r.get("note") or r["cmd"]))' \
+            || { echo "romp watch: kernel not reachable on :$_kport" >&2; exit 1; }
+    exit 0
+    fi
+    if [[ -n "$_w_cancel" ]]; then
+        _resp="$(_romp_token_cfg | curl -sf -m 15 --config - -X POST "http://127.0.0.1:$_kport/watch" \
+                     -H 'Content-Type: application/json' -d "{\"cancel\": \"$_w_cancel\"}")" \
+            || { echo "romp watch: kernel not reachable on :$_kport" >&2; exit 1; }
+        [[ "$_resp" == *'"ok": true'* || "$_resp" == *'"ok":true'* ]] \
+            && { echo "romp watch: cancelled $_w_cancel"; exit 0; }
+        echo "romp watch: refused — $_resp" >&2; exit 1
+    fi
+    if [[ -z "$_w_cmd" ]]; then echo "$_w_usage" >&2; exit 2; fi
+    _w_who="$_w_sess"
+    if [[ -z "$_w_who" ]]; then
+        if [[ -z "${ROMP_SID:-}" ]]; then
+            echo "romp watch: --session <name> required outside a romp SDK session (ROMP_SID is not set)" >&2
+            exit 2
+        fi
+        _w_who="$ROMP_SID"
+    fi
+    _w_key="id"; [[ -n "$_w_sess" ]] && _w_key="name"
+    _payload="$(python3 -c 'import json,sys
+b = {"cmd": sys.argv[1], sys.argv[2]: sys.argv[3]}
+if sys.argv[4]: b["every"] = int(sys.argv[4])
+if sys.argv[5]: b["timeoutS"] = int(sys.argv[5])
+if sys.argv[6]: b["note"] = sys.argv[6]
+print(json.dumps(b))' "$_w_cmd" "$_w_key" "$_w_who" "$_w_every" "$_w_timeout" "$_w_note")"
+    _resp="$(_romp_token_cfg | curl -sf -m 15 --config - -X POST "http://127.0.0.1:$_kport/watch" \
+                  -H 'Content-Type: application/json' -d "$_payload")" \
+        || { echo "romp watch: kernel not reachable on :$_kport (is romp running?)" >&2; exit 1; }
+    if [[ "$_resp" == *'"ok": true'* || "$_resp" == *'"ok":true'* ]]; then
+        _wid="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["watch"]["id"])' "$_resp" 2>/dev/null || true)"
+        echo "romp watch: registered${_wid:+ ($_wid)} — one mail here when the condition holds or the timeout passes"
+        exit 0
+    fi
+    _err="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("error") or sys.argv[1])' "$_resp" 2>/dev/null || printf '%s' "$_resp")"
+    echo "romp watch: refused — $_err" >&2
+    exit 1
+fi
+
 if [[ "${1:-}" == "watch-pr" ]]; then
     shift
     _wp_usage="usage: romp watch-pr <number> [--repo <owner/name>] [--session <name>]"
