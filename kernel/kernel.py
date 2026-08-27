@@ -8417,9 +8417,11 @@ class TmuxBackend(sb.SessionBackend):
         # The floor never PRUNES a plain tmux echo: it must SURVIVE a later turn to keep a dropped send
         # visible, so retirement stays text/uuid-only. It does SETTLE it — an echo the transcript has
         # overtaken is marked dropped (the "never delivered" treatment), which is what keeps a two-day-old
-        # loss from posing as a pending queued message (_tmux_echo_settle).
+        # loss from posing as a pending queued message (_tmux_echo_settle). The settle also sees what the
+        # queue ledger still OWES (pending_queued is mtime-cached, so the read is free on a quiet
+        # transcript): a send still listed there is waiting, not lost.
         _tmux_echo_prune(str(sid), tx_uuids, tx_user_texts)
-        _tmux_echo_settle(str(sid), human_floor)
+        _tmux_echo_settle(str(sid), human_floor, still_queued=self.pending_queued(sid))
 
     def dismiss_echo(self, sid, uuid=None, t=None):
         """Drop ONE settled echo on the user's ✕ (the chat's echodismiss), by synthetic uuid or send time.
@@ -16530,7 +16532,7 @@ def _echo_overtaken(atom, human_floor):
     return bool(atom.get("_echo_text")) and bool(human_floor) and human_floor > atom.get("t", 0)
 
 
-def _tmux_echo_settle(sid, human_floor):
+def _tmux_echo_settle(sid, human_floor, still_queued=()):
     """Mark every overtaken tmux echo `dropped`, so the chat draws the shipped "never delivered" treatment
     (dashed bubble + restore/dismiss, renderQueued's sibling) instead of an ordinary sent bubble, and the
     queued fold stops enlisting it as a pending message (the user 2026-08-26: a session's queued header
@@ -16544,15 +16546,26 @@ def _tmux_echo_settle(sid, human_floor):
     because the transcript extracts image paths out of the user text, so that flavor is retired the way
     sdk_backend.prune_live retires it rather than labelled a loss it may not be. With the SDK module
     unavailable the predicate is simply unavailable too, and marking (the visible, reversible outcome)
-    covers every echo."""
+    covers every echo.
+
+    STANDS DOWN for an echo whose text the queue ledger still lists as pending (`still_queued`,
+    2026-08-27): the floor is a per-SESSION clock, so an OLDER queued sibling delivering raises it past
+    a younger send still genuinely waiting in the CLI's queue — overtaken by the floor, but not lost.
+    Marking it would have /diag/sendvis call one message both pending and dropped, the exact
+    misdiagnosis the dropped field exists to prevent. The queue ledger is the authoritative "still
+    owed" record, so it outranks the floor here; once the ledger releases the text (delivery or
+    recall), the next settle rules on it normally."""
     d = _tmux_echo.get(sid)
     if not d:
         return
+    owed = {t.strip() for t in still_queued if isinstance(t, str)}
     path_bearing = getattr(sys.modules.get("romp_sdk_backend"), "_path_bearing", None)
     for k in list(d.keys()):
         a = d[k]
         if not _echo_overtaken(a, human_floor):
             continue
+        if (a.get("_echo_text") or "").strip() in owed:
+            continue                                     # still owed by the queue ledger → waiting, not lost
         if path_bearing is not None and path_bearing(a.get("_echo_text") or ""):
             d.pop(k, None)
         else:
@@ -17179,11 +17192,14 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
                             # interrupt marker on the rail instead of a person-blue bubble (the user 2026-07-02).
                             if prompt.strip().startswith("[Request interrupted by user"):
                                 ev["interruptMarker"] = True
-                            # A provably-LOST send (a live echo whose CLI died holding it — the backend's
-                            # dropped-echo marking): the client renders "never delivered" with restore/
-                            # dismiss instead of a sent-looking bubble that poses as history (the user
-                            # 2026-07-29). echoT is the dismiss handle that survives kernel restarts —
-                            # the echo uuid regenerates on every boot reseed; its send time does not.
+                            # A send that never made the transcript (the backend's dropped-echo marking:
+                            # an SDK echo whose CLI died holding it, or a tmux echo the session moved past
+                            # — a pane-dropped keystroke, or a delivery the transcript recorded under
+                            # different text; the population widened 2026-08-26): the client renders
+                            # "never delivered" with restore/dismiss instead of a sent-looking bubble that
+                            # poses as history (the user 2026-07-29). echoT is the dismiss handle that
+                            # survives kernel restarts — the echo uuid regenerates on every boot reseed;
+                            # its send time does not.
                             if a.get("dropped") and a.get("_echo_text"):
                                 ev["undelivered"] = True
                                 ev["echoT"] = a.get("t")
