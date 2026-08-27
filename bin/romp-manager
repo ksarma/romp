@@ -325,8 +325,12 @@ function quietGate(st, busy, now, opts) {
 
 let pendingQuiet = null;   // {since, count, mode:'all'|<kernel id>, timer}
 
-function fetchBusy(port, cb) {
-  const req = http.get({ host: HOST, port, path: '/busy', timeout: 2000 }, (res) => {
+function fetchBusy(port, cb, path) {
+  // the PARKED quiet poll passes '/busy?drain=1' (T121): the same probe that reads the count also
+  // refreshes the kernel's drain lease, so new turn starts hold while the restart is parked and
+  // the count falls on turn-end events. The lease dies by itself (~12s) when this manager stops
+  // polling — no off-switch to forget — and a fresh kernel boots clear by construction.
+  const req = http.get({ host: HOST, port, path: path || '/busy', timeout: 2000 }, (res) => {
     let b = ''; res.on('data', (d) => (b += d));
     res.on('end', () => { let n = null; try { const v = JSON.parse(b).busy; n = Number.isFinite(v) ? v : null; } catch { n = null; } cb(n); });
   });
@@ -379,7 +383,7 @@ function queueQuietRestart(mode) {
   log(`refresh queued — applying at the next quiet window (no SDK turn in flight; backstop ${Math.round(QUIET_MAX_DEFER_MS / 60000)} min)`);
   const tick = () => quietTick({
     pending: () => pendingQuiet,
-    fetchBusy: (cb) => fetchBusy(KERNEL_PORT, cb),
+    fetchBusy: (cb) => fetchBusy(KERNEL_PORT, cb, '/busy?drain=1'),   // parked → hold new turn starts (T121)
     now: Date.now,
     opts: { maxDeferMs: QUIET_MAX_DEFER_MS },
     log,
