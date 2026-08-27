@@ -214,7 +214,7 @@ test("the sessions dialog is a TABLE speaking romp's own conventions (the user 2
   // proxy dot), the host: prefix is quiet lowercase italic, a dead session is struck — the same
   // read as the lanes and the feed. No model column, no instruction caption, no ellipsized names.
   assert.match(SRC, /font-weight:650;color:' \+ \(s\.color \|\| '#cccccc'\)/);
-  assert.match(SRC, /font-style:italic;font-size:0\.88em;/);
+  assert.match(SRC, /font-style:italic;font-size:0\.86em;/);
   // closed sessions LEFT the membership table (the user 2026-08-25 revision) — live rows only,
   // so the strike variant is gone with them
   assert.match(SRC, /\.filter\(\(s\) => s\.live\)/, "the crossed-out ones don't show");

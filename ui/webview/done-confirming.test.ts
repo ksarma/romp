@@ -37,6 +37,6 @@ test("the tooltip explains what happens next in the user's terms", () => {
 
 test("the pill wears the done-check blue family, same shape as its sibling pills", () => {
   assert.match(CSS, /\.fask-doneconfirming \{[^}]*color: var\(--check-bg\)/, "the ✓ family's blue, no new color");
-  assert.match(CSS, /\.fask-doneconfirming \{[^}]*font-size: 0\.64em/, "same size as its sibling pills");
+  assert.match(CSS, /\.fask-doneconfirming \{[^}]*font-size: 0\.66em/, "same size as its sibling pills");
   assert.match(CSS, /\.fask-doneconfirming \{[^}]*border-radius: var\(--radius-pill\)/);
 });

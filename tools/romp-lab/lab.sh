@@ -15,6 +15,10 @@ echo "# a synthetic scratch project for the lab session" > "$LAB/project/README.
 
 export XDG_STATE_HOME="$LAB/state"
 unset ROMP_STATE_DIR || true
+# never the machine's real manager: an inherited ROMP_MANAGER_PORT would let the lab kernel
+# restart the live deployment. Poisoned to a dead port, not unset — absent maps to the DEFAULT
+# (live) port in the update path, so only a dead value is safe against every consumer.
+export ROMP_MANAGER_PORT=1
 # the SDK venv is PACKAGES, not state — symlink the machine's real one into the hermetic root so
 # lab sessions can actually run their CLI (without it every SDK session reports unable to start).
 # A symlink shares bytes only; nothing here writes into the venv.

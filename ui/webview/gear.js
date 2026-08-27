@@ -107,6 +107,10 @@ var GEAR_HTML =
   "border:1px solid #3a3a3a;border-radius:5px;padding:3px 4px;cursor:pointer'>" +
   '<option value=chat>The pane you clicked</option><option value=feed>The Feed pane</option>' +
   '</select></span></div>' +
+  "<div class='rs-row' style='cursor:default'><span style='flex:1 1 auto'><b>Chat tabs</b>" +
+  "<span class=rs-sub>The tab strip's look. Classic keeps the thick outline on the selected tab with a faint per-session tint; Yatharth is the contributed flat-wash aesthetic with the tinted line under the strip.</span>" +
+  "<div id=rs-tabtheme style='margin-top:5px;display:flex;flex-direction:column;gap:4px'></div>" +
+  '</span></div>' +
   "<div class='rs-row' style='cursor:default'><span style='flex:1 1 auto'><b>Text scheme</b>" +
   "<span class=rs-sub>Chat text colors only. Each row previews its own tiers — prose, the dimmer tool text, code. (Solarized Light is omitted — its tiers are made for a light page and turn muddy here.)</span>" +
   "<div id=rs-chatscheme style='margin-top:5px;display:flex;flex-direction:column;gap:4px'></div>" +
@@ -181,6 +185,7 @@ function initGear(post) {
     dd = document.getElementById('rs-defaultdir'), gb = document.getElementById('rs-branch'),
     tc = document.getElementById('rs-tabctx'), fl = document.getElementById('rs-filelink'),
     cs = document.getElementById('rs-chatscheme'),
+    tt = document.getElementById('rs-tabtheme'),
     cg = document.getElementById('rs-collapsegaps'), ao = document.getElementById('rs-activeonly'),
     fc = document.getElementById('rs-feedcollapsed'),
     jm = document.getElementById('rs-judgemodel'),
@@ -240,6 +245,27 @@ function initGear(post) {
       cs.appendChild(row);
     });
   }
+  var TABTHEMES = [
+    { id: 'classic', name: 'Classic', sub: 'the original high-contrast strip \u00b7 thick selected outline \u00b7 no session tint' },
+    { id: 'yatharth', name: 'Yatharth', sub: 'flat session wash \u00b7 soft selected border \u00b7 tinted line under the strip' }
+  ];
+  function ttPaint() {
+    if (!tt) return;
+    var cur = load().chatTabTheme === 'yatharth' ? 'yatharth' : 'classic';
+    tt.innerHTML = '';
+    TABTHEMES.forEach(function (th) {
+      var row = document.createElement('button');
+      row.type = 'button'; row.dataset.tabtheme = th.id;
+      row.style.cssText = 'display:flex;align-items:center;gap:8px;text-align:left;background:#1e1e1e;' +
+        'border:1px solid ' + (th.id === cur ? '#1EA1EB' : '#3a3a3a') + ';border-radius:5px;padding:5px 8px;cursor:pointer;font:inherit;color:#ccc';
+      row.innerHTML = '<span style="flex:0 0 auto;width:15px;color:#1EA1EB">' + (th.id === cur ? '\u2713' : '') + '</span>' +
+        '<span style="flex:0 0 auto;min-width:96px;color:#ccc">' + th.name + '</span>' +
+        '<span style="flex:1 1 auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#8a8a8a">' + th.sub + '</span>';
+      row.addEventListener('click', function () { var s = load(); s.chatTabTheme = th.id; save(s); ttPaint(); });
+      tt.appendChild(row);
+    });
+  }
+  ttPaint();
   jix.addEventListener('change', function () { var s = load(); s.showIndexJudges = jix.checked; save(s); });
   jtr.addEventListener('change', function () { var s = load(); s.showTriageJudges = jtr.checked; save(s); });
   if (cg) cg.addEventListener('change', function () { var s = load(); s.collapseGaps = cg.checked; save(s); });

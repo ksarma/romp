@@ -493,6 +493,8 @@ class Drain(unittest.TestCase):
         be.sessions[sid] = s
         r = be.drain(1.0)
         self.assertEqual((r["stopped"], r["inflight"]), (1, 1))
+        self.assertEqual(r["cutTurns"], [{"sid": sid, "name": reg.get("name", sid)}],
+                         "the drain names what it cuts — the restart-cut ledger's rows (T121)")
         self.assertTrue(s.ended, "shutdown was requested on the session")
         self.assertEqual(sb.last_state_value(Path(d), sid), "working",
                          "drain writes no idle/waiting — the trailing 'working' IS the boot "
@@ -500,7 +502,8 @@ class Drain(unittest.TestCase):
 
     def test_drain_with_nothing_running_is_a_quiet_noop(self):
         be = _backend()
-        self.assertEqual(be.drain(0.1), {"stopped": 0, "inflight": 0, "unjoined": 0, "reaped": 0})
+        self.assertEqual(be.drain(0.1), {"stopped": 0, "inflight": 0, "unjoined": 0, "reaped": 0,
+                                         "cutTurns": []})
 
     def test_drain_reaps_the_cli_of_a_session_that_wont_close(self):
         # The 2026-07-25 twin incident: the drain's bound expired on a busy session ("still

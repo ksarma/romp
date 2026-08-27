@@ -3,9 +3,9 @@ survive the goal loop: the origin badge's own bool ("is the SENDER's linked goal
 a different fact and must never shadow it. Before the fix the badge block reused the name `live`,
 so once one card carried a delegation-origin badge, every LATER card of the SAME session — and the
 placeholders built after the loop — wore the badge's bool instead of session liveness: a live
-session's cards dressed .dead and took the revive path; a dead session's offered Continue.
-Pre-existing in both parents, made routine by the tags era (origin badges persist for life).
-SYNTHETIC fixtures only: placeholder UUIDs, the notes-api demo world."""
+session's cards dressed .dead and took the revive path; a dead session's offered Continue. Origin
+badges persist for the card's life, so one absorbed badge poisoned the session's whole card tail
+on every build. SYNTHETIC fixtures only: placeholder UUIDs, the notes-api demo world."""
 import json
 import os
 import tempfile
@@ -73,6 +73,22 @@ class _FeedWorld(unittest.TestCase):
             "nodes": {"gS": {"parentId": None, "t": NOW - 1000, "text": "handoff",
                              "nodeComplete": not sender_goal_open}}}))
 
+    def _settled_transcript(self):
+        """A real settled transcript on disk, wired into the session row and parse cache —
+        build_feed reads the parse cache-only, and the placeholder chain needs ps."""
+        iso = lambda t: datetime.fromtimestamp(t, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        recs = [
+            {"type": "user", "timestamp": iso(NOW - 500), "uuid": "u1", "parentUuid": None,
+             "promptSource": "typed", "message": {"role": "user", "content": "do the thing"}},
+            {"type": "assistant", "timestamp": iso(NOW - 480), "uuid": "a1", "parentUuid": "u1",
+             "message": {"role": "assistant", "content": [{"type": "text", "text": "Done."}],
+                         "stop_reason": "end_turn"}},
+        ]
+        tpath = Path(self.td.name) / (SID + ".jsonl")
+        tpath.write_text("\n".join(json.dumps(r) for r in recs) + "\n")
+        self.sessions[0]["path"] = str(tpath)
+        return km._parse(str(tpath), SID, NOW)
+
 
 class LiveSessionAfterAbsorbedBadge(_FeedWorld):
     """ALIVE session, ABSORBED badge (sender's goal closed → origin.live False): every card must
@@ -90,6 +106,26 @@ class LiveSessionAfterAbsorbedBadge(_FeedWorld):
         self.assertTrue(cards["gA"]["live"],
                         "card A belongs to a LIVE session — its live bit is session liveness")
 
+    def test_the_provisional_placeholder_after_an_absorbed_badge_keeps_live_true(self):
+        # complete gB too — nodeComplete AND the judge's persisted rollup status, which is what
+        # had_working actually reads — so no working card fronts the placeholder chain
+        self._write_goals(sender_goal_open=False)
+        st = json.loads((jd.GOALDIR / (SID + ".json")).read_text())
+        st["nodes"]["gB"]["nodeComplete"] = True
+        st["nodes"]["gB"]["blocked"] = False
+        st["status"] = {"gA": "completed", "gB": "completed"}
+        (jd.GOALDIR / (SID + ".json")).write_text(json.dumps(st))
+        # a real settled transcript whose latest human segment the planner has NOT placed — no
+        # placements written — which is exactly the segment _provisional_card surfaces
+        self._settled_transcript()
+        feed = km.build_feed(NOW, {SID: {"state": "ready"}})
+        ph = next((a for a in feed["asks"] if a["itemId"] == "provisional:" + SID), None)
+        self.assertIsNotNone(ph, "the unplaced settled prompt surfaces a provisional card — "
+                                 "pre-fix the poisoned bit suppresses it entirely "
+                                 "(_provisional_card gates on `if not live`)")
+        self.assertTrue(ph["live"],
+                        "the placeholder's live bit is the session's, not the last badge's")
+
     def test_the_user_todo_placeholder_after_an_absorbed_badge_keeps_live_true(self):
         # complete gB too — nodeComplete AND the judge's persisted rollup status, which is what the
         # todo floor and had_working actually read — so the floor has no top to land on and the
@@ -101,19 +137,7 @@ class LiveSessionAfterAbsorbedBadge(_FeedWorld):
         st["status"] = {"gA": "completed", "gB": "completed"}
         km._add_user_todo(SID, "Need the auth-scheme decision to wire login")
         # a real settled transcript so _user_todo_idle can read idle (ps None reads unknown)
-        iso = lambda t: datetime.fromtimestamp(t, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
-        recs = [
-            {"type": "user", "timestamp": iso(NOW - 500), "uuid": "u1", "parentUuid": None,
-             "promptSource": "typed", "message": {"role": "user", "content": "do the thing"}},
-            {"type": "assistant", "timestamp": iso(NOW - 480), "uuid": "a1", "parentUuid": "u1",
-             "message": {"role": "assistant", "content": [{"type": "text", "text": "Done."}],
-                         "stop_reason": "end_turn"}},
-        ]
-        tpath = Path(self.td.name) / (SID + ".jsonl")
-        tpath.write_text("\n".join(json.dumps(r) for r in recs) + "\n")
-        self.sessions[0]["path"] = str(tpath)
-        ps = km._parse(str(tpath), SID, NOW)   # warm the cache: build_feed reads the parse
-        #                                        cache-only, and the placeholder chain needs ps
+        ps = self._settled_transcript()
         # the planner PLACED the settled segment (onto the completed top) → no provisional card
         # stands in front of the todo placeholder in the chain
         held = km._segs_seam(ps["turns"][-1], st)[-1]

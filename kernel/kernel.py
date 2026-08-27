@@ -666,6 +666,9 @@ def _ct_eq(a, b):
 # the token once, the redirect's ?token= sets the year-long cookie, never see this page again. Static,
 # self-contained (every other asset route is token-gated), leaks nothing. Colors follow the UI: the
 # accent button is --accent #9cd2ff on --accent-fg #0c1a2e.
+# The login page stays on the SYSTEM stack, deliberately: it renders pre-auth and /media is
+# token-gated (only the install icons ride exempt), so an 'Inter' lead could never load here —
+# it would just misstate the stack (PR-730 review, 2026-08-27).
 _TOKEN_LOGIN_HTML = """<!doctype html>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>romp</title>
@@ -2216,11 +2219,16 @@ def _prune_notify_cards(live_ids):
 # it). Registration rides POST /usertodo from the postal bus's add_user_todo, the way set_working
 # rides POST /working. Same mtime+size cache as _session_flags; _atomic_write publish.
 _user_todos_cache = {}   # str(path) -> ((mtime_ns,size), dict)
-_user_todos_lock = threading.Lock()   # store read-modify-writes from route/WS/pusher threads (the
+_user_todos_lock = threading.RLock()  # store read-modify-writes from route/WS/pusher threads (the
 #                                       _comments_lock doctrine): every mutation below reads, edits a
 #                                       copy, and publishes under this lock, or two postal buses
 #                                       registering concurrently lose confirmed rows and a racing
-#                                       answer+dismiss both "win" — first-stamp-wins must be real
+#                                       answer+dismiss both "win" — first-stamp-wins must be real.
+#                                       RE-ENTRANT (round 3, 2026-08-27): the answered stamp's
+#                                       stand-down and the loss seam's verdict are each ONE critical
+#                                       section that nests the locked store/mark helpers it rules
+#                                       with — deciding and recording must not straddle a release,
+#                                       or the write the record exists to stand down lands in the gap
 
 
 def _user_todos():
@@ -2520,7 +2528,7 @@ def _user_todo_context_block(sid):
     return "\n".join(lines)
 
 
-def _stamp_user_todo_answered(sid, tid, text):
+def _stamp_user_todo_answered(sid, tid, text, nonce=None):
     """The delivery-keyed stamp (docs/adr/0001's fatal class): fires ONLY at the moment an answer
     actually reaches a backend send — the immediate path's truthy be.send, or a parked op draining
     (_deliver_send_batch) — never at the userTodoAnswer call, whose send may still be recalled
@@ -2539,19 +2547,94 @@ def _stamp_user_todo_answered(sid, tid, text):
         removes and reopens — restart-proof, because the entry itself is persisted;
       * loss (a drop-marked echo at boot/spawn/reconnect, a rewind-dropped queue head) → the
         backend hands the id to _user_todo_answer_lost, which reopens unless the transcript
-        proves the text landed (the surviving windows are stated there)."""
-    _resolve_user_todo(sid, tid, "answered")
+        proves the text landed (the surviving windows are stated there);
+      * refusal (tmux, merge wave 2026-08-27) → the truthy TmuxBackend.send is fire-and-forget
+        and _tmux_send's clear-guard can refuse the paste on its thread; the id (or a drained
+        batch's ids) arms that send's on_refused hook, which hands them to the same
+        _user_todo_answer_lost reopen from the refusal point itself — so both stamping callers
+        (the drive handler and _deliver_send_batch) are covered by one seam. A pending-paste
+        mark persisted before the truthy send makes that seam kernel-death-durable
+        (_tmux_paste_mark / _tmux_paste_loss_boot_pass, adversarial verify 2026-08-27).
+
+    STAND-DOWN AT THE WRITE MOMENT (round 3, 2026-08-27): the refusal can OUTRUN this stamp — a
+    dead tmux server fails the clear-guard's first capture in milliseconds while the caller is
+    still between its truthy send and this call — and the seam's reopen then finds nothing to
+    lift. The refusal records its verdict on the pending-paste mark instead
+    (_tmux_paste_flag_refused), and THIS writer checks that record before stamping, under the
+    same lock: a refused mark means a verdict already ruled on this very send, newer information
+    than the truthy send this stamp is acting on, so the stamp yields (the cards doctrine — a
+    writer whose evidence predates the diary stands down). The todo stays open, the loss is said
+    out loud, the consumed mark closes the loop, and the unlatch re-floors the ask exactly as
+    the seam's reopen would have. Check-and-stamp are ONE critical section: split, the stamp
+    lands in the gap and the record it should have read is orphaned until the next boot.
+
+    BOUND TO ITS SEND (round 4, 2026-08-27): `nonce` names the send this stamp records — the
+    tmux callers thread it from the mark they (or their be.send) wrote — and the stand-down
+    consumes only a refusal carrying the same nonce, so a stale flag stranded by an EARLIER
+    send of this todo's answer can never stand down a delivered one's stamp (the stranded flag
+    dies at the boot split instead). A nonce-less stamp yields to any refusal on the todo —
+    fail toward the visible ask."""
+    with _user_todos_lock:
+        stood_down = _tmux_paste_consume_refused(sid, tid, nonce)
+        if not stood_down:
+            _resolve_user_todo(sid, tid, "answered")
+    if stood_down:
+        _notify_ut_unlatch(sid, tid)
+        sys.stderr.write("user-todos: %s's answer for %s was refused by the pane before its "
+                         "'answered' stamp landed — the stamp stands down: nothing is stamped, "
+                         "the ask is still waiting on the user, and the refused mark is "
+                         "consumed\n" % (str(sid)[:8], tid))
 
 
-def _user_todo_answer_lost(sid, tid, text, wait=False):
-    """The backend's todo_lost seam (SdkBackend._mark_dropped_echoes; a rewind-dropped head): a
-    queued user-todo ANSWER lost its holder, so its 'answered' stamp may be recording a delivery
-    that never happened — the silent-loss class docs/adr/0001 names fatal. Reopen the ask so it
-    visibly returns to "waiting on you", UNLESS the transcript proves the text LANDED: a
-    landed-but-unpruned echo at kernel death is the COMMON case (prune_live runs only while a
-    client watches), and reopening those would flap a genuinely answered ask open on every
-    restart — the transcript, not the drop mark, is the authoritative word on delivery, and a
-    landed answer is in the conversation the next resume continues, i.e. delivered.
+def _paste_landed_texts(text):
+    """Every EXACT byte form a delivered paste of `text` can wear as transcript user text — the
+    landed check's match set (round 3, 2026-08-27). When the text carries image paths (the same
+    _IMG_PATH_RE detection _injected_img_paths and _tmux_send's pre-Enter wait key on), Claude
+    Code reads each path and rewrites it in the input to "[Image #N]" (1-based, in order of
+    appearance) before the submit — the very rewrite the pre-Enter wait exists to let finish —
+    so a DELIVERED image-carrying answer appears in the transcript in the rewritten form, and a
+    check keyed on the raw bytes alone falsely reopened it at every boot. Both forms stay exact
+    matches, never substrings: same whole body = the same answer delivered, the check's own
+    contract. The raw form stays in the set — a path the CLI never rewrote (no image read fired)
+    submits as typed."""
+    forms = {text}
+    seen = [0]
+
+    def _img(m):
+        seen[0] += 1
+        return m.group(0).replace(m.group(1), "[Image #%d]" % seen[0])
+    rewritten = _IMG_PATH_RE.sub(_img, text or "")
+    if seen[0]:
+        forms.add(rewritten)
+    return forms
+
+
+def _user_todo_answer_lost(sid, tid, text, wait=False, nonce=None):
+    """The backends' todo_lost seam (SdkBackend._mark_dropped_echoes; a rewind-dropped head; a
+    tmux paste the clear-guard refused — _tmux_send's on_refused, merge wave 2026-08-27; a stale
+    tmux pending-paste mark at boot — _tmux_paste_loss_boot_pass): a
+    user-todo ANSWER lost its holder or never reached the pane, so its 'answered' stamp may be
+    recording a delivery that never happened — the silent-loss class docs/adr/0001 names fatal.
+    Reopen the ask so it visibly returns to "waiting on you", UNLESS the transcript proves the
+    text LANDED: a landed-but-unpruned echo at kernel death is the COMMON case (prune_live runs
+    only while a client watches), and reopening those would flap a genuinely answered ask open on
+    every restart — the transcript, not the drop mark, is the authoritative word on delivery, and
+    a landed answer is in the conversation the next resume continues, i.e. delivered. The landed
+    check matches any exact delivered form of the text (_paste_landed_texts: the CLI rewrites
+    pasted image paths to "[Image #N]" before submit, so that form IS the delivery too).
+
+    REPORTS ITS VERDICT (round 3, 2026-08-27) when run inline (wait=True; the threaded default
+    returns None): "landed" (the stamp stands), "reopened" (the lift landed), "open" (no
+    'answered' row because the row is still OPEN — the refusal outran the caller's stamp, or an
+    earlier loss already reopened it), or "stale" (cleared meanwhile / evicted — nothing left to
+    heal). The verdict is what the tmux mark callers key their clear on: "open" means the mark
+    must NOT be consumed — under the same lock that found the row open, the pending-paste mark
+    OF THE SEND THIS VERDICT RULED ON (`nonce`, threaded by every tmux caller; None flips every
+    unflagged entry for the todo, the pre-nonce read) is flipped to refused
+    (_tmux_paste_flag_refused), so the late stamp reads the verdict at its own write moment and
+    stands down (_stamp_user_todo_answered) — and ONLY that stamp: a send this verdict did not
+    rule on keeps its own stamp's claim (round 4, 2026-08-27). Deciding and
+    recording are one critical section: split, the stamp lands in the gap, unmarked forever.
 
     THREADED by default; `wait` is the test seam. The loss events fire on threads where the
     landed check must not run: the session's asyncio loop (a reconnect reconcile would stall the
@@ -2567,9 +2650,9 @@ def _user_todo_answer_lost(sid, tid, text, wait=False):
     reopen); and a byte-identical text already in the transcript reads as landed (same body =
     the same todo answered in the same words — the stamp is true anyway)."""
     if not wait:
-        threading.Thread(target=_user_todo_answer_lost, args=(sid, tid, text, True),
+        threading.Thread(target=_user_todo_answer_lost, args=(sid, tid, text, True, nonce),
                          name="user-todo-lost", daemon=True).start()
-        return
+        return None
     sid = str(sid)
     try:
         now = int(time.time())
@@ -2586,11 +2669,12 @@ def _user_todo_answer_lost(sid, tid, text, wait=False):
             sess = {"sid": ent[0], "path": str(ent[1])} if ent else None
         if sess is not None:
             parsed = _parse(sess["path"], sid, now)
-            if any(text == t for turn in parsed["turns"] for a in turn["atoms"]
+            landed = _paste_landed_texts(text)
+            if any(t in landed for turn in parsed["turns"] for a in turn["atoms"]
                    for t in _atom_user_texts(a)):
                 sys.stderr.write("user-todos: %s's answer for %s landed before its holder died — "
                                  "delivered, the stamp stands\n" % (sid[:8], tid))
-                return
+                return "landed"
         else:
             sys.stderr.write("user-todos: no transcript found for %s anywhere (the wide walk "
                              "included) — the landed check for %s cannot run; reopening on the "
@@ -2598,7 +2682,22 @@ def _user_todo_answer_lost(sid, tid, text, wait=False):
     except Exception as e:
         sys.stderr.write("user-todos: landed-check for %s (%s) failed — reopening anyway: %s\n"
                          % (tid, sid[:8], e))
-    if _reopen_user_todo(sid, tid):
+    with _user_todos_lock:
+        # verdict and record are ONE critical section (round 3, 2026-08-27): deciding "the row
+        # is still open" and flipping its pending-paste mark to refused must not straddle a lock
+        # release, or the very stamp the flip exists to stand down lands in the gap — stamped
+        # after this verdict, never unmarked, unhealable until the next boot.
+        if _reopen_user_todo(sid, tid):
+            verdict = "reopened"
+        else:
+            row = next((t for t in (_user_todos().get(sid) or [])
+                        if isinstance(t, dict) and t.get("id") == tid), None)
+            if row is not None and not row.get("resolved"):
+                verdict = "open"
+                _tmux_paste_flag_refused(sid, tid, nonce)
+            else:
+                verdict = "stale"
+    if verdict == "reopened":
         # the reopened ask is NEWS again (round 2, 2026-08-22): the same id going back under the
         # floor would be eaten by the push latch's set dedup, and this re-floor is the one signal
         # telling the user their answer never arrived — the loss EVENT clears the id so the next
@@ -2608,17 +2707,27 @@ def _user_todo_answer_lost(sid, tid, text, wait=False):
         sys.stderr.write("user-todos: %s's answer for %s died with its holder — the ask is "
                          "reopened and waiting on the user again\n" % (sid[:8], tid))
         _mark_views_dirty()
+    elif verdict == "open":
+        # the race the stand-down closes (findings 1+4, round 3): the row is still OPEN — the
+        # caller's 'answered' stamp has not landed yet (this verdict outran it), or an earlier
+        # loss already reopened it. Nothing to lift; the flip above left the refusal ON the
+        # pending mark (when one exists), so the late stamp yields at its own write moment
+        # instead of recording a delivery that never happened.
+        sys.stderr.write("user-todos: %s's answer for %s was lost while its row is still open — "
+                         "no stamp to lift; any pending paste mark now carries the refusal, and "
+                         "a late 'answered' stamp for it will stand down\n" % (sid[:8], tid))
     else:
         # LOUD like the recall path's no-op (_cancel_backend_queued): a reopen that finds no
-        # 'answered' row means the answer never landed AND no row remains to show the ask —
-        # cleared meanwhile, already reopened by an earlier loss event, or evicted by the
-        # resolved-history cap (_USER_TODO_RESOLVED_KEEP's corollary). For an evicted row this
+        # liftable row means the answer never landed AND no row remains to show the ask —
+        # cleared meanwhile, or evicted by the resolved-history cap
+        # (_USER_TODO_RESOLVED_KEEP's corollary). For an evicted row this
         # line is the ONLY record anywhere that the user still owes this session an answer.
         sys.stderr.write("user-todos: %s's answer for %s was lost, but no 'answered' row exists "
-                         "to reopen (cleared meanwhile, already reopened, or evicted by the "
+                         "to reopen (cleared meanwhile, or evicted by the "
                          "resolved-history cap) — nothing reopened; if the row was evicted, the "
                          "ask is gone from the store while its answer never landed\n"
                          % (sid[:8], tid))
+    return verdict
 
 
 def _user_todo_loss_boot_pass(wait=False):
@@ -2671,6 +2780,286 @@ def _user_todo_loss_boot_pass(wait=False):
             seen.add((sid, tid))
             _user_todo_answer_lost(sid, tid, str(e.get("text") or ""), wait=wait)
             offered += 1
+    return offered
+
+
+# ── tmux pending-paste marks (adversarial verify, 2026-08-27) ────────────────────────────────────
+# The tmux refusal seam (_tmux_send's on_refused) was PROCESS-LIFETIME-ONLY: TmuxBackend.send
+# returns truthy while the paste runs on a daemon thread, so a kernel death in the stamp→verdict
+# window (0.3–4s: the clear presses, the pre-Enter gap, the image-path wait) killed the thread
+# before Enter with no refusal ever firing — and nothing persisted even RECORDED that a paste was
+# in flight, so the optimistic 'answered' stamp survived the restart: docs/adr/0001's silent-loss
+# class, the exact window _user_todo_loss_boot_pass closes for the SDK's drop-marked echoes. These
+# marks are the tmux twin, in the SDK marks' storage idiom (per-sid json under STATE, atomic
+# replace): a mark is persisted on the CALLER's thread before the truthy send returns, the paste
+# thread clears it on its verdict (delivered → just clear; refused → the seam rules and the clear
+# follows the VERDICT: a landed reopen or a row cleared meanwhile clears the mark, while a row
+# still OPEN — the caller's stamp hasn't landed — flips the mark to refused instead, and the
+# stamp itself consumes it as it stands down), and a mark still on disk at boot is a paste whose
+# verdict died with the previous kernel. Each entry also carries a send NONCE — the send's
+# identity, minted at mark time and threaded to both the verdict hooks and the caller's stamp
+# (round 4, 2026-08-27): the refusal flips BY nonce and the stand-down consumes BY nonce, so a
+# refusal only ever stands down the stamp OF THE SEND IT RULED ON — a stale flag stranded by an
+# earlier send (e.g. the boot pass's threaded offer racing a reopen) can never eat a later,
+# delivered answer's stamp; it dies at the boot split instead.
+
+def _tmux_paste_pending_path(sid):
+    return jd.STATE / "tmux-paste" / (str(sid) + ".json")
+
+
+def _tmux_paste_mark(sid, entries):
+    """Persist pending-paste marks for `entries` = [(todo id, pasted text, send nonce)] — BEFORE
+    the truthy send returns, on the caller's thread, so a kernel death at any later instant
+    leaves a durable record the boot pass can act on. `text` is the text the PASTE carries (the
+    merged body for a drained batch, the answer body otherwise): it is what the boot pass's
+    landed check must find in the transcript to prove the delivery happened. `nonce` is the
+    SEND's identity (round 4, 2026-08-27): minted by the marking caller and threaded both to the
+    verdict hooks (_tmux_paste_flag_refused flips by it) and to the caller's own 'answered'
+    stamp (_tmux_paste_consume_refused matches by it), so a refusal verdict can only stand down
+    the stamp of the send it ruled on. The file is a read-modify-write shared with the daemon
+    thread's clear, so it holds the todo store's own lock (_user_todos_lock). A failed write is
+    LOUD, never silent: without the mark the live seam still covers the common case, but a
+    kernel death before this paste's verdict would re-lose the answer — and a refusal that
+    outran the caller's stamp would have no entry to flip, so the late stamp would stand
+    (the stand-down reads its verdict off this record: _tmux_paste_flag_refused)."""
+    entries = [(tid, text, nonce) for tid, text, nonce in entries or [] if tid]
+    if not entries:
+        return
+    with _user_todos_lock:
+        p = _tmux_paste_pending_path(sid)
+        try:
+            cur = json.loads(p.read_text())
+        except (OSError, ValueError):
+            cur = None
+        pend = ([e for e in cur.get("pending") or [] if isinstance(e, dict)]
+                if isinstance(cur, dict) else [])
+        now = int(time.time())
+        pend.extend({"todo": str(tid), "text": str(text), "t": now, "nonce": str(nonce)}
+                    for tid, text, nonce in entries)
+        try:
+            _atomic_write(p, json.dumps({"sid": str(sid), "pending": pend}))
+        except Exception:
+            sys.stderr.write("user-todos: pending-paste mark for %s (%s) failed to persist — a "
+                             "kernel death before this paste's verdict would not reopen the ask: "
+                             "%s\n" % (", ".join(str(t) for t, _, _ in entries), str(sid)[:8],
+                                       traceback.format_exc()))
+
+
+def _tmux_paste_unmark(sid, entries, path=None):
+    """Clear pending-paste marks on the paste thread's VERDICT — either verdict. A delivered
+    paste just clears; a refusal clears only on the seam's answer (every caller keys the clear on
+    the verdict _user_todo_answer_lost returns): a landed reopen — or a row cleared/evicted
+    meanwhile — clears, while an "open" verdict must NOT reach here at all (the mark was flipped
+    to refused inside the seam's own critical section, and _stamp_user_todo_answered consumes it
+    as the late stamp stands down). A mark cleared before the verdict is recorded re-opens the
+    very window the mark exists to close: a death between the two would leave the false stamp
+    with no record anywhere. One mark per verdict — a same-keyed duplicate (the same answer
+    re-sent) keeps its own mark. `path` is the boot pass's seam (finding 3, round 3 2026-08-27):
+    it clears the file it DISCOVERED, never one re-derived from a sid field the file itself
+    carries; and a clear that fails is SAID (the mark will be re-offered at the next boot —
+    benign, the landed check is idempotent — but never silent)."""
+    entries = [(str(tid), str(text)) for tid, text in entries or []]
+    if not entries:
+        return
+    with _user_todos_lock:
+        p = Path(path) if path else _tmux_paste_pending_path(sid)
+        try:
+            cur = json.loads(p.read_text())
+        except (OSError, ValueError):
+            return
+        if not isinstance(cur, dict):
+            return
+        drop = list(entries)
+        kept = []
+        for e in cur.get("pending") or []:
+            if not isinstance(e, dict):
+                continue                             # junk rides no verdict — swept on any rewrite
+            k = (str(e.get("todo") or ""), str(e.get("text") or ""))
+            if k in drop:
+                drop.remove(k)                       # one instance per verdict, not every same-keyed mark
+                continue
+            kept.append(e)
+        try:
+            if kept:
+                _atomic_write(p, json.dumps({"sid": str(sid), "pending": kept}))
+            else:
+                p.unlink()
+        except OSError:
+            sys.stderr.write("user-todos: pending-paste mark %s failed to clear — it may be "
+                             "re-offered at the next boot\n" % p)
+
+
+def _tmux_paste_flag_refused(sid, tid, nonce=None):
+    """Record a refusal verdict ON this todo's pending mark entry — the loss seam's write for
+    the row-still-OPEN case (findings 1+4, round 3 2026-08-27: the refusal outran the caller's
+    'answered' stamp). NOT a clear: the entry must survive so the late stamp can read the verdict
+    and stand down (_stamp_user_todo_answered → _tmux_paste_consume_refused) — an unmark here
+    forfeits the only record, and the late stamp then stands forever, unhealable even at boot.
+    `nonce` names the SEND this verdict ruled on (round 4, 2026-08-27): only that send's entry
+    is flipped — a sibling send's pending mark for the same todo keeps its own verdict open,
+    since flipping it would convert a verdict about one paste into a stand-down of another's
+    stamp. A None nonce (a verdict that cannot name its send: a pre-nonce mark re-offered at
+    boot) keeps the old read and flips every unflagged entry for the todo — erring toward the
+    stand-down, i.e. the visible ask. Same lock and atomic-replace idiom as the mark/clear; a
+    missing or markless file is a quiet no-op (the SDK loss paths route through the same seam
+    with no tmux mark to flip). Called under _user_todos_lock (the seam's verdict critical
+    section); re-acquiring keeps it safe standalone. A failed persist is LOUD: without the flag
+    the late stamp would stand."""
+    with _user_todos_lock:
+        p = _tmux_paste_pending_path(sid)
+        try:
+            cur = json.loads(p.read_text())
+        except (OSError, ValueError):
+            return
+        if not isinstance(cur, dict):
+            return
+        pend = [e for e in cur.get("pending") or [] if isinstance(e, dict)]
+        hit = [e for e in pend if str(e.get("todo") or "") == str(tid) and not e.get("refused")
+               and (nonce is None or str(e.get("nonce") or "") == str(nonce))]
+        if not hit:
+            return
+        for e in hit:
+            e["refused"] = True
+        try:
+            _atomic_write(p, json.dumps({"sid": str(sid), "pending": pend}))
+        except Exception:
+            sys.stderr.write("user-todos: the refused flag for %s (%s) failed to persist — a "
+                             "late 'answered' stamp for this send would stand: %s\n"
+                             % (tid, str(sid)[:8], traceback.format_exc()))
+
+
+def _tmux_paste_consume_refused(sid, tid, nonce=None):
+    """The stamp's stand-down read (findings 1+4, round 3 2026-08-27): True when a pending-paste
+    mark for this (sid, tid) carries a refusal verdict FOR THE STAMP'S OWN SEND — the paste
+    thread already ruled on that very send, so the caller's 'answered' stamp is older evidence
+    than the diary and must yield. `nonce` is how the stamp names its send (round 4,
+    2026-08-27): only a refused entry matching it is a verdict about this stamp — a refused flag
+    stranded by an EARLIER send is somebody else's verdict, left in place (the boot split sweeps
+    it: refused + answered row reopens through the seam, refused + open row is consumed quietly)
+    so it can never stand down a delivered answer's stamp. A stamp that cannot name its send
+    (None — no live caller does this) yields to ANY refused entry for the todo: erring toward
+    the stand-down keeps the ask visible, the fail-safe direction. Consumes exactly what it
+    matched; an un-flagged entry for the same todo (a NEWER send, its own verdict still pending)
+    keeps its mark. Runs inside the stamp's check-and-stamp critical section
+    (_stamp_user_todo_answered holds _user_todos_lock); re-acquiring keeps it safe standalone.
+    A failed clear after a positive read is loud — the next boot sweeps the leftover."""
+    with _user_todos_lock:
+        p = _tmux_paste_pending_path(sid)
+        try:
+            cur = json.loads(p.read_text())
+        except (OSError, ValueError):
+            return False
+        if not isinstance(cur, dict):
+            return False
+        kept, found = [], False
+        for e in cur.get("pending") or []:
+            if not isinstance(e, dict):
+                continue                             # junk rides no verdict — swept on any rewrite
+            if (str(e.get("todo") or "") == str(tid) and e.get("refused")
+                    and (nonce is None or str(e.get("nonce") or "") == str(nonce))):
+                found = True
+                continue
+            kept.append(e)
+        if found:
+            try:
+                if kept:
+                    _atomic_write(p, json.dumps({"sid": str(sid), "pending": kept}))
+                else:
+                    p.unlink()
+            except OSError:
+                sys.stderr.write("user-todos: %s's refused mark failed to clear after the "
+                                 "stand-down — the next boot sweeps it\n" % tid)
+        return found
+
+
+def _tmux_paste_loss_boot_pass(wait=False):
+    """The tmux seam's BOOT durability backstop — _user_todo_loss_boot_pass's twin (adversarial
+    verify, 2026-08-27). A pending-paste mark still on disk at boot is a paste whose daemon
+    thread died with the previous kernel before its verdict: no refusal fired, no delivery
+    cleared it. Re-offer every such mark whose store row still reads 'answered' to the same
+    landed-check-then-reopen seam (_user_todo_answer_lost): a paste that actually LANDED before
+    the death keeps its stamp via the transcript check (the kernel died between Enter and the
+    clear — the common benign shape, and the check accepts the CLI's "[Image #N]" rewrite of an
+    image-carrying paste, its other delivered form), one that never landed reopens. The mark is
+    consumed only AFTER the seam has ruled (the SDK pass's round-3 lesson: consuming before the
+    reopen lands hands a crash-looping boot the very window this pass closes); marks with
+    nothing to reopen — the row open because the death beat the caller's stamp (including a
+    refused-flagged mark whose stand-down never got its stamp), cleared meanwhile, or junk — are
+    swept now. A refused-flagged mark that somehow sits beside an 'answered' row anyway reads
+    exactly like a stale mark: the seam rules, the ask reopens.
+
+    IDENTITY AND CONSUMPTION (round 3, 2026-08-27): the FILENAME is the mark's identity, and
+    every consume acts on the path this loop DISCOVERED — never one re-derived from the sid
+    field inside the file, which let a mismatched file dodge its own consume and be re-read
+    (and re-acted-on) every boot, forever. A file whose embedded sid disagrees with its stem is
+    refused loudly and consumed without acting — a record whose two identities disagree is
+    corrupt, and acting on either is a guess. A directory posing as a mark, or a file the pass
+    cannot unlink, gets a loud stderr line every boot: it WILL be re-read, and silence here is
+    exactly the quiet rot the pass exists to end. Runs in main() beside its SDK sibling, before
+    _boot_warm/_sdk and before any route serves, so no live send is writing new marks
+    underneath it. Returns the re-offered count."""
+    offered = 0
+    seen = set()                                     # one offer per (sid, tid), however many marks
+    store = _user_todos()
+    try:
+        marks = sorted((jd.STATE / "tmux-paste").glob("*.json"))
+    except OSError:
+        return 0
+
+    def _consume(path):
+        try:
+            path.unlink()
+        except OSError:
+            sys.stderr.write("user-todos: pending-paste mark %s cannot be consumed (unlink "
+                             "failed) — it will be re-read at the next boot\n" % path)
+    for p in marks:
+        if p.is_dir():
+            sys.stderr.write("user-todos: %s is a DIRECTORY in the pending-paste store — not a "
+                             "mark and not consumable; remove it by hand\n" % p)
+            continue
+        try:
+            d = json.loads(p.read_text())
+        except (OSError, ValueError):
+            d = None
+        sid = p.stem                                 # the filename IS the identity
+        if isinstance(d, dict) and d.get("sid") and str(d["sid"]) != sid:
+            sys.stderr.write("user-todos: pending-paste mark %s embeds sid %s but is filed under "
+                             "%s — a mark whose two identities disagree is corrupt; consuming it "
+                             "without acting\n" % (p, str(d["sid"])[:8], sid[:8]))
+            _consume(p)
+            continue
+        ents = ([e for e in d.get("pending") or [] if isinstance(e, dict)]
+                if isinstance(d, dict) else [])
+        if not ents:
+            _consume(p)                              # junk or empty: nothing to offer, nothing to keep
+            continue
+        rows = store.get(sid) or []
+        sweep = []
+        for e in ents:
+            tid = str(e.get("todo") or "")
+            text = str(e.get("text") or "")
+            row = next((t for t in rows if isinstance(t, dict) and t.get("id") == tid), None)
+            if (not tid or (sid, tid) in seen
+                    or not row or (row.get("resolved") or {}).get("kind") != "answered"):
+                sweep.append((tid, text))
+                continue
+            seen.add((sid, tid))
+
+            def _offer(sid=sid, tid=tid, text=text, p=p,
+                       nonce=str(e.get("nonce") or "") or None):
+                # the entry's own nonce rides the offer: an "open" verdict flags THIS mark, and
+                # the flag it leaves can only ever stand down the stamp of the send it names —
+                # never a later delivered answer's (round 4, 2026-08-27; a pre-nonce mark
+                # offers None and keeps the old flip-all read)
+                if _user_todo_answer_lost(sid, tid, text, wait=True, nonce=nonce) != "open":
+                    _tmux_paste_unmark(sid, [(tid, text)], path=p)   # …the seam rules first,
+                    #                                     then the verdict clears the mark
+            if wait:
+                _offer()
+            else:
+                threading.Thread(target=_offer, name="tmux-paste-loss", daemon=True).start()
+            offered += 1
+        _tmux_paste_unmark(sid, sweep, path=p)
     return offered
 
 
@@ -3113,11 +3502,22 @@ def _main_drift_check():
                                "cur": _kernel_sha() or "", "tag": target, "boot": _BOOT_ID})
 
 
-def _run_main_update(kind, immediate=False):
+# HTTP-triggered restarts resolve ROMP_MANAGER_PORT BEFORE their ack goes out (2026-08-27): the
+# env read used to trail the ack by a thread hop, so a caller that set the var for the duration
+# of its request — a test suite fencing off a live deployment does exactly this — could have the
+# RESTORED value read instead of the one in force when the kernel answered. The handlers now read
+# the env once, pre-ack, and hand the value down. _PORT_FROM_ENV keeps every non-HTTP caller
+# exactly as before: the env is read at use time, absent still meaning "no manager" in
+# _restart_this_kernel and "the default port" in _run_main_update.
+_PORT_FROM_ENV = object()
+
+
+def _run_main_update(kind, immediate=False, manager_port=_PORT_FROM_ENV):
     """Converge on newest main: advance the checkout (fast-forward only; a DIRTY shared tree refuses
     LOUDLY — peer sessions' uncommitted work is never discarded) and bounce every kernel through the
     manager. `kind` "restart" skips the pull (the checkout is already ahead). Unattended (auto mode)
-    the bounce rides the quiet window; a banner CLICK is the user's own deliberate cut → immediate."""
+    the bounce rides the quiet window; a banner CLICK is the user's own deliberate cut → immediate.
+    `manager_port` is the value the /update handler resolved before its ack (see _PORT_FROM_ENV)."""
     if kind == "pull":
         try:
             dirty = subprocess.run(["git", "status", "--porcelain"], cwd=str(ROOT),
@@ -3150,10 +3550,12 @@ def _run_main_update(kind, immediate=False):
             return
         _sync_notice("UI-only update failed to build in place (%s) — taking the restart path" % err,
                      ok=False)
+    if manager_port is _PORT_FROM_ENV:
+        manager_port = os.environ.get("ROMP_MANAGER_PORT")
     try:
         import urllib.request
         req = urllib.request.Request("http://127.0.0.1:%d/restart-all%s"
-                                     % (int(os.environ.get("ROMP_MANAGER_PORT") or 7432),
+                                     % (int(manager_port or 7432),
                                         "" if immediate else "?when=quiet"), method="POST")
         urllib.request.urlopen(req, timeout=5).read()
     except Exception as e:
@@ -8695,7 +9097,11 @@ def _drive(msg, client):
             if got == "parked":
                 pass                                  # stamps when the park drains into a real send
             elif got:
-                _stamp_user_todo_answered(sid, tid, body)
+                # a tmux send returns its NONCE — the pending mark's identity — so the stamp's
+                # stand-down is bound to THIS send's refusal verdict, never a stale flag from an
+                # earlier send (round 4, 2026-08-27); an SDK send returns a plain bool
+                _stamp_user_todo_answered(sid, tid, body,
+                                          nonce=got if isinstance(got, str) else None)
             else:
                 # the backend refused the send (an unrevivable SDK session) — be loud, leave it open
                 client["send"](json.dumps({"type": "warn",
@@ -9193,6 +9599,28 @@ class TmuxBackend(sb.SessionBackend):
     def paste_buffer(self, name):
         self._run(["paste-buffer", "-b", "rompkernel", "-d", "-p", "-t", name])
 
+    # CHECKED variants of the three paste-critical primitives (adversarial verify, 2026-08-27):
+    # the same argv as their forgiving twins, but the exit code is READ. _run/_fire swallow exec
+    # errors and ignore nonzero exits — right for the read-side chrome, fatal for the steps that
+    # ARE a delivery: a tmux server that died after _tmux_send's clear made set-buffer,
+    # paste-buffer and the submitting Enter silent no-ops while the paste claimed success, and
+    # the delivery-keyed user-todo stamp stood on a message nothing received. tmux's exit codes
+    # are a sane contract for all three (verified on tmux 3.4: dead server → 1 "no server
+    # running", dead session → 1 "can't find pane", missing buffer → 1 "no buffer"; success → 0).
+    # True iff tmux itself answered 0; an exec failure, a timeout, a missing tmux, or a nonzero
+    # exit all read as NOT done. Other callers keep the forgiving twins on purpose.
+    def set_buffer_checked(self, text):
+        r = self._run(["set-buffer", "-b", "rompkernel", text])
+        return r is not None and r.returncode == 0
+
+    def paste_buffer_checked(self, name):
+        r = self._run(["paste-buffer", "-b", "rompkernel", "-d", "-p", "-t", name])
+        return r is not None and r.returncode == 0
+
+    def send_keys_checked(self, name, *keys, t=3):
+        r = self._run(["send-keys", "-t", name, *keys], t)
+        return r is not None and r.returncode == 0
+
     def kill_by_name(self, name, t=4):
         self._fire(["kill-session", "-t", name], t)
 
@@ -9241,8 +9669,54 @@ class TmuxBackend(sb.SessionBackend):
     # control — map sid→name, delegate to the existing injectors. send() does NOT echo: the kernel adds the
     # optimistic input echo for a composer send (see _optimistic_echo), matching today's split where the
     # command sends (/compact, /model, follow-ups) don't echo on tmux.
-    def send(self, sid, text):
-        _tmux_send(_name_of(sid) or sid, text)
+    send_reports_refusal = True   # the truthy send below is fire-and-forget, and _tmux_send's clear-guard
+    #                               can still REFUSE the paste on its thread — this flag tells _backend_send
+    #                               and the park drain that send() can carry a user-todo id / refusal hook,
+    #                               so the refusal reopens the ask instead of vanishing (merge, 2026-08-27)
+
+    def send(self, sid, text, user_todo=None, on_refused=None, on_delivered=None):
+        """Truthy = ACCEPTED for delivery, not delivered: the paste runs on _tmux_send's daemon
+        thread, whose clear-guard may still refuse it. user_todo arms the seam's default hooks: a
+        pending-paste mark persisted BEFORE this returns truthy (a kernel death before the paste's
+        verdict is then a recorded loss the boot pass reopens — _tmux_paste_mark, adversarial
+        verify 2026-08-27), the refusal hook — _user_todo_answer_lost's reopen, the same one the
+        SDK's dropped-echo seam uses, with the mark cleared on its verdict — and the delivered
+        hook, where the mark just clears. When it arms those defaults the truthy return IS the
+        send's NONCE (round 4, 2026-08-27) — the mark's identity, which the caller must thread
+        into its 'answered' stamp so the stand-down is bound to THIS send's verdict, never a
+        stale flag from an earlier one. on_refused/on_delivered override the defaults when one
+        paste carries several answers (_deliver_send_batch's merged run writes its own marks and
+        nonces, one per unique todo). EITHER ORDERING of stamp and refusal converges on the same
+        truth (round 3 for the mechanism; round 4 made it hold for duplicate answers too): a
+        refusal that finds the row already stamped reopens it and clears the mark; one that
+        outruns the stamp finds the row still open, flips THIS send's mark to refused inside the
+        seam's own critical section, and the stamp stands down at its write moment and consumes
+        that mark (_stamp_user_todo_answered) — the writer whose evidence is the older truthy
+        send yields to the newer refusal verdict. Both orderings end identically: the row open
+        and visibly waiting on the user, the mark consumed, nothing refused left on disk — and
+        because verdict and stand-down are matched BY NONCE, no ordering can leave a flag that
+        outlives its send to eat a later delivered answer's stamp."""
+        if on_refused is None and user_todo:
+            nonce = uuid.uuid4().hex                 # this send's identity in the mark store
+            _tmux_paste_mark(sid, [(user_todo, text, nonce)])
+
+            def on_refused():
+                # the seam rules FIRST, and the clear follows its verdict: reopened / landed /
+                # stale clears the mark here; "open" (the refusal outran the caller's stamp)
+                # must NOT — the seam flipped the mark to refused, and clearing it would forfeit
+                # the only record the late stamp's stand-down (and the boot pass) can read.
+                # Inline (wait=True) is safe here — the hook runs on the dedicated paste thread,
+                # not one of the threads the seam's docstring bars the landed check from.
+                if _user_todo_answer_lost(sid, user_todo, text, wait=True,
+                                          nonce=nonce) != "open":
+                    _tmux_paste_unmark(sid, [(user_todo, text)])
+
+            def on_delivered():
+                _tmux_paste_unmark(sid, [(user_todo, text)])
+            _tmux_send(_name_of(sid) or sid, text, on_refused=on_refused,
+                       on_delivered=on_delivered)
+            return nonce
+        _tmux_send(_name_of(sid) or sid, text, on_refused=on_refused, on_delivered=on_delivered)
         return True
 
     def interrupt(self, sid):
@@ -9317,9 +9791,36 @@ class TmuxBackend(sb.SessionBackend):
         return _tmux_echo_atoms(str(sid))
 
     def prune_live(self, sid, tx_uuids, tx_user_texts=(), human_floor=0):
-        # human_floor is SDK-only: a tmux echo must SURVIVE a later turn to keep a dropped send visible, so it
-        # keeps the text/uuid-only prune (the SDK's FIFO-floor echo retirement doesn't apply here).
+        # The floor never PRUNES a plain tmux echo: it must SURVIVE a later turn to keep a dropped send
+        # visible, so retirement stays text/uuid-only. It does SETTLE it — an echo the transcript has
+        # overtaken is marked dropped (the "never delivered" treatment), which is what keeps a two-day-old
+        # loss from posing as a pending queued message (_tmux_echo_settle). The settle also sees what the
+        # queue ledger still OWES (pending_queued is mtime-cached, so the read is free on a quiet
+        # transcript): a send still listed there is waiting, not lost.
         _tmux_echo_prune(str(sid), tx_uuids, tx_user_texts)
+        _tmux_echo_settle(str(sid), human_floor, still_queued=self.pending_queued(sid))
+
+    def dismiss_echo(self, sid, uuid=None, t=None):
+        """Drop ONE settled echo on the user's ✕ (the chat's echodismiss), by synthetic uuid or send time.
+        Without this the "never delivered" bubble's dismiss button was a fake affordance on tmux — the
+        kernel's drive op is gated on hasattr(be, "dismiss_echo"), so the click acknowledged and the bubble
+        came straight back on the next push. Only a DROPPED echo is dismissible: an in-flight send is not
+        the user's to clear, and mirroring sdk_backend.dismiss_echo keeps one rule across both backends.
+        Matched exactly as sdk_backend.dismiss_echo matches — store key first, else the echo's send time,
+        as an OR so a client whose handle came from a different paint still lands. Returns the dismissed
+        text (idempotent: None when it's already gone)."""
+        d = _tmux_echo.get(str(sid))
+        if not d:
+            return None
+        for k, a in list(d.items()):
+            if not (a.get("_echo_text") and a.get("dropped")):
+                continue
+            if (uuid is not None and k == uuid) or (t is not None and int(a.get("t") or 0) == t):
+                d.pop(k, None)
+                if not d:
+                    _tmux_echo.pop(str(sid), None)
+                return a.get("_echo_text")
+        return None
 
     # ask picker — translate a webview action into pane keystrokes (AskDriver); current_ask SCRAPES the pane
     # (the SDK answers its own callback / reads its stored ask instead).
@@ -12329,10 +12830,12 @@ def _fleet_restart_plan(r):
     return "skip", "its build isn't in this repo's history, so nothing can be proven safe to sync"
 
 
-def _fleet_restart_run():
+def _fleet_restart_run(manager_port=_PORT_FROM_ENV):
     """Do the remote half of a fleet restart, write the report, then restart this machine's kernel last —
     the local restart kills this process, so anything that must be REPORTED has to be on disk before it.
-    The page reads the report back after it reloads."""
+    The page reads the report back after it reloads. `manager_port` carries the /restart handler's
+    ack-time resolution through to the local restart (see _PORT_FROM_ENV) — this thread runs for
+    seconds of network first, so a use-time env read here would be even further from the ack."""
     rows = []
     with _remotes_lock:
         remotes = [dict(x) for x in _remotes.values()]
@@ -12362,7 +12865,7 @@ def _fleet_restart_run():
         _atomic_write(FLEET_REPORT, json.dumps(report))
     except OSError:
         sys.stderr.write("fleet-restart: could not write the report: %s\n" % traceback.format_exc())
-    _restart_this_kernel("fleet-restart: the local half of the fleet Restart")
+    _restart_this_kernel("fleet-restart: the local half of the fleet Restart", manager_port=manager_port)
 
 
 def _audit_restart_request(action, **kw):
@@ -12380,12 +12883,70 @@ def _audit_restart_request(action, **kw):
         pass
 
 
-def _restart_this_kernel(reason=""):
+RESTART_CUTS_FILE = jd.STATE / "restart-cuts.jsonl"
+
+
+def _restart_cut_row(drain_res, watches_armed=0, audit_reason="", now=None):
+    """One ledger row per restart — what THIS restart cut (T121: the drain's effect is measurable
+    only if every restart writes its row, so a clean drain's row with an empty cutTurns list is the
+    success metric, not noise). cutTurns names the sessions whose in-flight turns the drain
+    interrupted (sid-keyed, rename-proof); watchesArmed counts the PERSISTED kernel watches at cut
+    time — those SURVIVE by construction (pr-watches.json + the generic store re-arm at boot) and
+    ride along as context. In-session background watchers and Claude-side workflows are INVISIBLE
+    to the kernel and cannot be counted here — moving waits into the kernel watch primitive is what
+    makes them survivable AND countable. NOTE on the false interrupted-by-user transcript stamps:
+    those records are written by the CLI into its own transcript when the SDK client closes
+    mid-turn; romp does not rewrite CLI transcripts (ever), and romp's OWN records already
+    distinguish machine cuts (the INTR_RESTART_SIG resume notice + the machine-cut stop record) —
+    so the ledger documents the cut honestly on our side and the stamps stay a documented CLI
+    artifact."""
+    d = drain_res if isinstance(drain_res, dict) else {}
+    return {"t": int(now if now is not None else time.time()),
+            "pid": os.getpid(),
+            "cutTurns": list(d.get("cutTurns") or []),
+            "stopped": int(d.get("stopped") or 0),
+            "unjoined": int(d.get("unjoined") or 0),
+            "reaped": int(d.get("reaped") or 0),
+            "watchesArmed": int(watches_armed or 0),
+            "reason": str(audit_reason or "")}
+
+
+def _append_restart_cut(row):
+    """Best-effort append in a dying process: flushed line-buffered write, never raises — the
+    ledger must not be able to break the restart itself (the audit's discipline)."""
+    try:
+        with open(RESTART_CUTS_FILE, "a", encoding="utf-8") as f:
+            f.write(json.dumps(row) + "\n")
+            f.flush()
+    except Exception:
+        pass
+
+
+def _recent_restart_reason(window=90, now=None):
+    """The most recent restart-audit action within `window` seconds — joins the cut row to WHO asked
+    (deploy refresh, self-update, the rail button…). Best-effort: an anonymous SIGTERM has no row
+    and reads as ""."""
+    try:
+        tail = (jd.STATE / "restart-audit.jsonl").read_text().strip().splitlines()
+        if not tail:
+            return ""
+        rec = json.loads(tail[-1])
+        t0 = int(now if now is not None else time.time())
+        if isinstance(rec, dict) and isinstance(rec.get("t"), int) and t0 - rec["t"] <= window:
+            return str(rec.get("action") or "") + (": " + str(rec["reason"]) if rec.get("reason") else "")
+    except Exception:
+        pass
+    return ""
+
+
+def _restart_this_kernel(reason="", manager_port=_PORT_FROM_ENV):
     """Ask the manager to restart-all (it SIGTERMs this kernel; its exit handler spawns a fresh one).
     Standalone (no manager) → nothing to restart, which is not an error. `reason` lands in
-    restart-audit.jsonl so the manager hop is never an anonymous SIGTERM (see _audit_restart_request)."""
+    restart-audit.jsonl so the manager hop is never an anonymous SIGTERM (see _audit_restart_request).
+    `manager_port` is the value an HTTP handler resolved BEFORE its ack went out (see _PORT_FROM_ENV);
+    the default reads the env here, for callers with no ack to sequence against."""
     _audit_restart_request("kernel-asks-manager-restart-all", reason=reason, pid=os.getpid())
-    mport = os.environ.get("ROMP_MANAGER_PORT")
+    mport = os.environ.get("ROMP_MANAGER_PORT") if manager_port is _PORT_FROM_ENV else manager_port
     if not mport:
         return
     try:
@@ -12937,18 +13498,79 @@ def _picker_check(sid):
         time.sleep(0.5)
 
 
+# Ctrl+U kills ONE line of the CLI's input box, and a multi-line box takes TWO presses per line (the text,
+# then the emptied line itself), so the clear below presses until the box READS empty. Bounded so a box that
+# will not empty — a keystroke the pane never applies, a CLI that stopped honoring the binding — ends as a
+# refusal instead of a spin: 40 presses covers a 20-line draft, far past anything typed at a prompt.
+_CLEAR_KILL_PRESSES = 40
+# …and the outer bound is not the one that normally fires. A press that moves nothing means the binding
+# isn't landing, and pressing on cannot fix that — so two consecutive no-change presses end it. Two, not
+# one, because a single slow repaint is not evidence of a dead binding.
+_CLEAR_UNCHANGED_GIVE_UP = 2
+
+
 def _clear_pane_input(name):
-    """Select-all + delete the pane's input box. The romp composer and the tmux pane must agree on the
-    input: when a turn is INTERRUPTED (Esc), Claude Code RESTORES the in-progress prompt into the input —
-    invisible to the web composer — and our inject pastes by APPENDING, so Stop → type-and-send in the
-    composer concatenated the recalled prompt and the new message into ONE submission (the user
-    2026-06-19). Clearing first makes a paste REPLACE, never append. Ctrl+A selects the whole (possibly
-    multi-line) input in Claude Code >=2.1.18, Backspace deletes the selection — and BOTH are NO-OPS on an
-    already-empty input, so this is safe to send unconditionally before every paste (no regression to the
-    normal empty-input send)."""
+    """Empty the pane's input box, returning True ONLY when it is provably empty. The romp composer and the
+    tmux pane must agree on the input: when a turn is INTERRUPTED (Esc), Claude Code RESTORES the in-progress
+    prompt into the input — invisible to the web composer — and a paste APPENDS, so Stop → type-and-send in
+    the composer concatenated the recalled prompt and the new message into ONE submission (the user
+    2026-06-19). Clearing first makes a paste REPLACE, never append.
+
+    This used to send Ctrl+A + Backspace, on the understanding that Ctrl+A selects the whole input and
+    Backspace deletes the selection. Measured against Claude Code 2.1.223 (a scratch CLI in tmux, 2026-08-26)
+    that is NOT what happens: Ctrl+A does not select, and the Backspace deletes exactly ONE character — so
+    for two months the clear was a silent no-op on any non-empty input, and every composer send into a pane
+    holding text was concatenated onto it. The damage is worse than a cosmetic one: the joined submission
+    carries BOTH texts, so the delivered message never matches what romp echoed, and the CLI answers a
+    prompt the user never wrote. Ctrl+U measurably empties the box (the killed text stays in the CLI's own
+    kill ring — Ctrl+Y — so this destroys nothing the human cannot get back).
+
+    Verified EVENT-BASED per press (the box REGION changing), never a fixed sleep; an empty box costs one
+    capture and zero keystrokes, so the ordinary send is cheaper than it was before. False when the box
+    cannot be READ at all (no locatable prompt box) — the caller must not paste on a maybe — and false
+    once presses stop moving the box, which is the shape the Ctrl+A regression itself had.
+
+    The change detector compares the RAW box region (lines, count included), never the stripped text: a
+    press that pops an emptied or blank LINE moves the region but not the text, so the stripped compare
+    read two structural pops in a row — any draft holding a blank line — as a dead binding and refused a
+    perfectly clearable box (PR-741 review, 2026-08-27). Raw-region compares also return the instant a
+    pop lands instead of burning the full wait on an 'unchanged' press, so a multi-line clear is fast
+    again."""
     if not name:
-        return
-    _TMUX.send_keys(name, "C-a", "BSpace")
+        return False
+    unchanged = 0
+    for _ in range(_CLEAR_KILL_PRESSES):
+        cap = _TMUX.capture(name, colour=True)
+        region = _box_region(cap)
+        if region is None:
+            return False                                            # can't see the box → can't claim it's clear
+        if not _box_text(cap):
+            return True
+        held = list(region)
+        _TMUX.send_keys(name, "C-u")
+        if _deliver_wait(lambda: _box_region(_TMUX.capture(name, colour=True)) != held, 1.0):
+            unchanged = 0
+        else:
+            unchanged += 1
+            if unchanged >= _CLEAR_UNCHANGED_GIVE_UP:
+                return False
+    return False
+
+
+# One lock per pane serializing the read-decide-keystroke sequences: _interrupt's post-Esc wipe and
+# _tmux_send's clear+paste+Enter ran as unserialized daemon threads on the same pane, so an interrupt's
+# kill loop still draining a restored prompt could read a send's JUST-PASTED message as leftover and
+# C-u it away inside the pre-Enter gap — Enter then submitted an empty box (PR-741 review, 2026-08-27:
+# Stop, then Send within the drain window). Whichever sequence acquires second now rules on the pane's
+# true state instead of a snapshot the other thread is mid-way through changing. Never pruned — a lock
+# is a few bytes and the key space is the live session list.
+_pane_io_locks = {}
+_pane_io_locks_guard = threading.Lock()
+
+
+def _pane_io_lock(name):
+    with _pane_io_locks_guard:
+        return _pane_io_locks.setdefault(str(name), threading.Lock())
 
 
 def _interrupt(name, _async=True):
@@ -12960,9 +13582,14 @@ def _interrupt(name, _async=True):
         return
 
     def go():
+        # Esc itself rides OUTSIDE the pane lock: stopping the turn must not wait behind a send mid-paste
+        # (the user's Stop is the higher-priority gesture), and the restore beat gives the lock a window.
         _TMUX.send_keys(name, "Escape")
         time.sleep(0.15)                              # let Claude Code restore the recalled prompt before we wipe it
-        _clear_pane_input(name)
+        with _pane_io_lock(name):
+            if not _clear_pane_input(name):           # loud, but nothing is pasted here — the next send's own
+                #                                       guard is what refuses to concatenate onto the leftover
+                sys.stderr.write("interrupt: %s still holds the recalled prompt after the input clear\n" % name)
     threading.Thread(target=go, daemon=True).start() if _async else go()
 
 
@@ -13239,22 +13866,67 @@ def _record_idle(sid, now):
         pass
 
 
-def _tmux_send(name, text, model_cmd=False, _async=True):
+def _tmux_send(name, text, model_cmd=False, _async=True, on_refused=None, on_delivered=None):
     """Inject text into a session's tmux pane — clear the input, then set-buffer + bracketed paste-buffer +
     Enter, the old TmuxBackend.send sequence (a 250ms gap lets the bracketed paste land before Enter
     submits). name = the tmux session name. Drives the chat composer, /compact, and the model/effort
     pickers. Runs in a daemon thread so the WS recv loop isn't blocked by the gaps. model_cmd: /model opens
-    a confirm that needs a second Enter."""
+    a confirm that needs a second Enter.
+
+    on_refused: called — from the paste thread, AFTER the pane lock is released — iff the message
+    demonstrably never reached the CLI: the clear-guard refusal below, a checked delivery step
+    failing (a tmux server or session that died after the clear — set-buffer, paste-buffer and the
+    submitting Enter read their exit codes, since a silent no-op here IS a lost delivery), or a
+    death before Enter submitted. The seam exists because this send is fire-and-forget while a
+    caller's bookkeeping keys on the truthy TmuxBackend.send (the user-todo answer stamp,
+    docs/adr/0001): the refusal is the loss EVENT that corrects that optimistic stamp (merge wave
+    2026-08-27 — the clear-guard landed under the fork's delivery-keyed stamp, and a refused
+    answer stayed 'answered' forever while nothing was delivered). Once the submitting Enter has
+    landed the hook never fires, whatever the hookless /model confirm does after it — on_delivered
+    fires instead, the verdict's other half (the pending-paste mark clears on it). Both hooks are
+    exception-guarded the same way: a throwing hook is stderr-logged and never masks paste()'s own
+    exception. The no-op early return below fires on_refused SYNCHRONOUSLY on the caller's thread
+    — the one exception to "from the paste thread" — under the same guard."""
     if not name or not text:
+        if on_refused is not None:
+            try:
+                on_refused()                          # nothing was ever sent — the same loss, said the same way
+            except Exception:
+                sys.stderr.write("tmux send: %s's refusal hook failed: %s\n"
+                                 % (name, traceback.format_exc()))
         return
 
-    def go():
+    def paste():
+      # The whole clear→paste→Enter sequence holds the pane lock: an interrupt's kill loop running beside
+      # it read the just-pasted message as leftover and C-u'd it away in the pre-Enter gap, so Enter
+      # submitted an empty box (PR-741 review, 2026-08-27). Under the lock the paste cannot be sniped.
+      with _pane_io_lock(name):
         if _TMUX.pane_in_mode(name):
             _TMUX.send_keys(name, "-X", "cancel", t=2)              # exit copy-mode so paste+Enter land
-        _clear_pane_input(name)                                     # wipe any leftover (e.g. an interrupt-restored prompt) so the paste REPLACES, never appends
-        time.sleep(0.05)                                            # let the clear land before the paste
-        _TMUX.set_buffer(text)
-        _TMUX.paste_buffer(name)                                    # bracketed (-p), delete buf (-d)
+        # Leftover in the box (an interrupt-restored prompt, or text typed straight into the terminal) must
+        # be GONE before the paste, which appends. Pasting anyway is not a lesser evil: the CLI receives the
+        # two texts joined, answers a prompt nobody wrote, and the delivered text no longer matches romp's
+        # echo — which is then indistinguishable from a lost send. So a clear that cannot finish REFUSES the
+        # send, loudly; the echo stays on screen and settles as never-delivered, which is the truth.
+        if not _clear_pane_input(name):
+            sys.stderr.write("tmux send: %s holds input that would not clear — NOT pasting, the message "
+                             "would have been concatenated onto it\n" % name)
+            return False
+        # The three steps that ARE the delivery run CHECKED (adversarial verify, 2026-08-27): the
+        # forgiving primitives swallow exec errors and ignore exit codes, so a tmux server that
+        # died after the clear made set-buffer, paste-buffer and the submitting Enter silent
+        # no-ops while paste() answered True — the 'answered' stamp stood on a message nothing
+        # received. Any failure/exception/nonzero exit reads as NOT delivered → False → the
+        # refusal seam reopens the ask (exit codes verified sane on tmux 3.4 — see the checked
+        # variants). Success-path sequencing and timing are unchanged.
+        if not _TMUX.set_buffer_checked(text):
+            sys.stderr.write("tmux send: %s's set-buffer failed — the message was never staged\n"
+                             % name)
+            return False
+        if not _TMUX.paste_buffer_checked(name):                    # bracketed (-p), delete buf (-d)
+            sys.stderr.write("tmux send: %s's paste-buffer failed — the message never reached the "
+                             "input\n" % name)
+            return False
         paths = _injected_img_paths(text)
         if paths:
             # Claude Code reads each pasted image PATH asynchronously and rewrites it to "[Image #N]" in the
@@ -13269,10 +13941,38 @@ def _tmux_send(name, text, model_cmd=False, _async=True):
             time.sleep(0.2)
         else:
             time.sleep(0.25)
-        _TMUX.send_keys(name, "Enter")
+        if not _TMUX.send_keys_checked(name, "Enter"):
+            sys.stderr.write("tmux send: %s's submitting Enter failed — the message was pasted "
+                             "but never submitted\n" % name)
+            return False
         if model_cmd:
             time.sleep(0.85)
             _TMUX.send_keys(name, "Enter")                          # accept the hookless /model confirm
+        return True
+
+    def go():
+        delivered = False
+        try:
+            delivered = paste()
+        finally:
+            # The verdict seam, fired OUTSIDE the pane lock (the hooks take their own locks —
+            # _user_todos_lock via _user_todo_answer_lost and the pending-mark clear — and nothing
+            # paste() holds may outlive it) and on the exception path too: a death between the
+            # clear and Enter left the message undelivered just as surely as the refuse branch.
+            # The exception itself stays loud — it propagates to the daemon thread's excepthook
+            # (or the sync caller) — and a throwing hook never masks it.
+            if not delivered and on_refused is not None:
+                try:
+                    on_refused()
+                except Exception:
+                    sys.stderr.write("tmux send: %s's refusal hook failed: %s\n"
+                                     % (name, traceback.format_exc()))
+            elif delivered and on_delivered is not None:
+                try:
+                    on_delivered()
+                except Exception:
+                    sys.stderr.write("tmux send: %s's delivered hook failed: %s\n"
+                                     % (name, traceback.format_exc()))
     threading.Thread(target=go, daemon=True).start() if _async else go()
 
 
@@ -13581,12 +14281,31 @@ def _split_followup(text):
 
 
 def _pending_queued(path):
-    """Still-pending queued messages, folded FIFO from the transcript's queue-operation records
-    (type:"queue-operation"; operation enqueue/dequeue/remove; content on enqueue). enqueue appends; each
-    dequeue/remove resolves the oldest pending one; the unresolved genuine tail is what's still queued, in
-    submission order. Claude Code writes these the instant a message is queued (while busy/compacting), so
-    they show before reaching the turn DAG — the archive's foldQueue, event-based instead of pane-scraped
-    (the pane scrape mis-parsed a second queued message and dropped both — the user 2026-06-16)."""
+    """Still-pending queued messages, folded from the transcript's queue-operation records
+    (type:"queue-operation"; operation enqueue/dequeue/remove/popAll; content on enqueue, and usually on a
+    remove/popAll too). enqueue appends; a content-bearing `remove` discards exactly the entry carrying that
+    text (the CLI's removes are content-addressed single-item discards — measured live 2026-08-18, see
+    _undelivered_wake_tail, which resolves this same ledger for the idle-queue drive); a content-less remove
+    and every `dequeue` resolve the OLDEST pending entry; a `popAll` is the whole queue recalled at once, so
+    it clears everything pending. The unresolved genuine tail is what's still queued, in submission order.
+    Claude Code writes these the instant a message is queued (while busy/compacting), so they show before
+    reaching the turn DAG — the archive's foldQueue, event-based instead of pane-scraped (the pane scrape
+    mis-parsed a second queued message and dropped both — the user 2026-06-16).
+
+    popAll WAS UNHANDLED until 2026-08-26, and an unrecognized clear is no harmless no-op: its enqueues
+    stayed pending forever, so every later dequeue resolved an entry one slot too old and the newest
+    DELIVERED message sat in the chat as a queued bubble for good — a session showed a slash command it had
+    already finished running, and the same phantom held the queue-aware nudge gate (_backend_queued) shut.
+    Content-addressed removes land in the same pass for the same reason: the FIFO pairing is the fragile
+    part, and one missing or extra resolution shifts every later one (the failure that made the event model
+    drop this ledger for placement altogether — see event_model._absorbed).
+
+    One DELIBERATE divergence from _undelivered_wake_tail: a content-bearing remove naming text that isn't
+    pending here (this fold credits dequeues, so a dequeue may already have taken it) still resolves the
+    oldest, where the drive's reader resolves nothing. The two failure directions are not symmetric for a
+    DISPLAY — an unresolved entry is a bubble that never leaves, the bug this whole pass exists to end,
+    while an over-resolved one self-heals at the next record — and the case is vanishingly rare besides
+    (live corpus: one such remove in 305, and it is where a credited dequeue had already taken the entry)."""
     try:
         st = os.stat(path)
         key = (st.st_mtime, st.st_size)
@@ -13595,7 +14314,7 @@ def _pending_queued(path):
     hit = _queued_parse_cache.get(path)
     if hit is not None and key is not None and hit[0] == key:
         return hit[1]
-    texts, resolved = [], 0
+    pending = []
     try:
         with open(path, errors="replace") as f:
             for line in f:
@@ -13608,13 +14327,18 @@ def _pending_queued(path):
                 if o.get("type") != "queue-operation":
                     continue
                 op = o.get("operation")
+                content = o.get("content") if isinstance(o.get("content"), str) else None
                 if op == "enqueue":
-                    texts.append(o.get("content") if isinstance(o.get("content"), str) else "")
-                elif op in ("dequeue", "remove") and resolved < len(texts):
-                    resolved += 1                            # FIFO: this dequeue clears the oldest enqueue
+                    pending.append(content or "")
+                elif op == "popAll":                         # the whole queue recalled — nothing is left owed
+                    pending.clear()
+                elif op == "remove" and content is not None and content in pending:
+                    pending.remove(content)                  # that entry only; the rest keep their places
+                elif op in ("dequeue", "remove") and pending:
+                    del pending[0]                           # anonymous resolution: the oldest is the one taken
     except OSError:
         return []
-    out = [t.strip() for t in texts[resolved:] if _genuine_queued(t)]
+    out = [t.strip() for t in pending if _genuine_queued(t)]
     if key is not None:
         if len(_queued_parse_cache) > 256:                   # bounded by fleet size; never unbounded
             _queued_parse_cache.clear()
@@ -13672,7 +14396,10 @@ def _undelivered_wake_tail(path):
     CLI actually writes (measured live 2026-08-18 — the comment block above):
       * a `remove` carrying content discards exactly the entry with that text (the CLI's removes are
         content-addressed single-item discards, routinely of a NON-oldest entry while others stay
-        pending); a content-less remove discards the oldest, matching _pending_queued's FIFO fold;
+        pending); a content-less remove discards the oldest, matching _pending_queued's fold;
+      * a `popAll` discards EVERY pending entry — the whole queue withdrawn in one record, so none of it
+        is still owed a turn (unhandled until 2026-08-26: a recalled queue went on reading as undriven
+        signals indefinitely, one session holding twelve of them);
       * a `dequeue` alone clears NOTHING — the CLI's idle deliveries write no dequeue at all, and an
         agent notification's instant dequeue must not wipe an older undriven signal; the delivery
         evidence is the user record it produces;
@@ -13734,6 +14461,10 @@ def _undelivered_wake_tail(path):
                                 del tail[i]                  # the CLI's call on THAT entry only
                         elif tail:
                             del tail[0]                      # content-less: the oldest, as _pending_queued folds
+                    elif op == "popAll":                     # the whole queue recalled at once: every entry is
+                        tail.clear()                         # withdrawn, so nothing here is owed a turn any more
+                        #                                      (unhandled until 2026-08-26 — a recalled queue kept
+                        #                                      reading as undriven signals, one session holding 12)
                     #      a `dequeue` clears nothing — its delivery evidence is the user record it produces
                     continue
                 if not tail:
@@ -17035,15 +17766,22 @@ def _forwards_sends(be):
 
 
 def _backend_send(be, sid, text, user_todo=None):
-    """be.send, carrying a user-todo ANSWER's id onto the backend queue entry when the backend can
-    hold one (SdkBackend.queue_carries_todos): the id travels WITH the message — the entry, its
-    persisted reg mirror, and the send's echo — so the recall (_cancel_backend_queued) and loss
-    (_user_todo_answer_lost) machinery read it off the object they act on, with no kernel-side
-    table to restart away or evict (round 2, 2026-08-22). getattr-guarded like _forwards_sends: a
-    backend or test fake without the capability takes the plain two-argument send — tmux delivers
-    by typing into the pane, so there is no queue entry to carry an id on and the truthy send IS
-    the delivery."""
-    if user_todo and getattr(be, "queue_carries_todos", False):
+    """be.send, carrying a user-todo ANSWER's id WITH the message whenever the backend can act on
+    a later un-delivery. Two capability flags, both getattr-guarded like _forwards_sends (a
+    backend or test fake with neither takes the plain two-argument send):
+      * queue_carries_todos (SDK): the id rides the backend queue entry, its persisted reg
+        mirror, and the send's echo — so the recall (_cancel_backend_queued) and loss
+        (_user_todo_answer_lost) machinery read it off the object they act on, with no
+        kernel-side table to restart away or evict (round 2, 2026-08-22);
+      * send_reports_refusal (tmux): no queue entry — the send types into the pane — but the
+        truthy send is NOT the delivery: the paste runs on a fire-and-forget thread whose
+        clear-guard can still REFUSE it (_tmux_send, merge wave 2026-08-27). The id arms that
+        send's refusal hook, which hands it to the same _user_todo_answer_lost reopen — the
+        stamp at the truthy send stays optimistic and the refusal event corrects it. (Before
+        the clear-guard the paste was unconditional, so the truthy tmux send really WAS the
+        delivery; that contract died with PR-741.)"""
+    if user_todo and (getattr(be, "queue_carries_todos", False)
+                      or getattr(be, "send_reports_refusal", False)):
         return be.send(sid, text, user_todo=user_todo)
     return be.send(sid, text)
 
@@ -17172,7 +17910,22 @@ def _deliver_send_batch(be, sid, run):
     event the stamp keys on (docs/adr/0001's fatal class: stamping at park time left a recalled or
     dropped answer permanently 'answered' with nothing ever delivered). A falsy send stamps nothing:
     the ask still stands. The drain hands the id to the backend too (_backend_send), so the drained
-    entry is recallable/loss-tracked exactly like an immediate send's."""
+    entry is recallable/loss-tracked exactly like an immediate send's — and the tmux merge below
+    arms the merged send's refusal hook the same way: its truthy send is fire-and-forget, and one
+    clear-guard refusal loses every answer the paste carried (merge wave 2026-08-27).
+
+    ACCOUNTING IS PER DELIVERY EVENT, NOT PER OP (round 4, 2026-08-27). A run can carry TWO
+    parked answers for the SAME todo — the stamp is delivery-keyed, so the row stays open until
+    this drain, and a second dashboard's answer (or a re-answer) legitimately parks a second op.
+    On the SDK each op stays its own delivery event (its own queue entry, echo, recall handle and
+    loss tracking), so per-op stamping is the correct grain there and a duplicate's second stamp
+    is the documented idempotent no-op. The tmux MERGE collapses the whole run into ONE paste, so
+    there the unit is the unique todo: one pending mark, one seam ruling, one stamp per tid —
+    per-op accounting double-ruled the seam (the second 'open' verdict flipped entries the first
+    stamp's stand-down then swallowed wholesale, landing a permanent false 'answered' with the
+    mark store empty) and single-instance-unmarked a double flip (stranding a refused flag that
+    stood down the NEXT delivered answer). Both bodies still ride the merged paste — dedup is in
+    the bookkeeping, never the delivery — and the one stamp records them joined as one answer."""
     if not run:
         return
     if _forwards_sends(be):
@@ -17184,14 +17937,50 @@ def _deliver_send_batch(be, sid, run):
                 _stamp_user_todo_answered(sid, op[3], op[1])
         return
     merged = "\n\n".join(op[1] for op in run)          # tmux: one message, blank-line separated between turns
-    got = be.send(sid, merged)
+    answers = {}                                       # unique tid → its ops' bodies, in park order
+    for op in run:
+        if len(op) > 3 and op[3]:
+            answers.setdefault(op[3], []).append(op[1])
+    if answers and getattr(be, "send_reports_refusal", False):
+        # one paste carries every answer in the run, so one refusal loses them all: hand each
+        # UNIQUE id to the same loss seam the immediate path arms (TmuxBackend.send), keyed at
+        # the refusal point itself — the stamps below stay optimistic; the refusal event
+        # corrects them. The pending-paste marks persist BEFORE the truthy send (a kernel death
+        # before the paste's verdict is a recorded loss the boot pass reopens), ONE per unique
+        # todo, keyed on the MERGED text — the text the paste carries is what the boot pass's
+        # landed check must find to prove delivery — each carrying this send's nonce, and clear
+        # on the verdict: delivered just clears; a refusal clears each answer as its reopen
+        # lands (an answer whose stamp the refusal outran keeps its mark, flipped refused, for
+        # the stamp's own stand-down), so a death between the verdict and the clear re-offers
+        # at boot instead of re-losing the answers.
+        nonces = {tid: uuid.uuid4().hex for tid in answers}
+        _tmux_paste_mark(sid, [(tid, merged, nonces[tid]) for tid in answers])
+
+        def _batch_refused():
+            # inline (wait=True): the paste thread is dedicated. ONE ruling per unique todo —
+            # the merged paste is one delivery event, and ruling per op re-judged a row the
+            # first ruling had just reopened (round 4). The clear follows each answer's VERDICT
+            # (round 3, 2026-08-27): an "open" ruling means this answer's stamp hasn't landed —
+            # the seam flipped its mark to refused, the entry stays for the stand-down
+            # (_stamp_user_todo_answered), and unmarking it here would forfeit that record.
+            ruled = [(tid, merged) for tid in answers
+                     if _user_todo_answer_lost(sid, tid, merged, wait=True,
+                                               nonce=nonces[tid]) != "open"]
+            _tmux_paste_unmark(sid, ruled)
+        got = be.send(sid, merged, on_refused=_batch_refused,
+                      on_delivered=lambda: _tmux_paste_unmark(
+                          sid, [(tid, merged) for tid in answers]))
+    else:
+        nonces = {}
+        got = be.send(sid, merged)
     author = next((op[2] for op in run if op[2]), None)
     if author:
         _optimistic_echo(sid, merged, author=author)
     if got:
-        for op in run:
-            if len(op) > 3 and op[3]:
-                _stamp_user_todo_answered(sid, op[3], op[1])
+        for tid, bodies in answers.items():
+            # one stamp per unique todo, presenting this send's nonce; the answer it records is
+            # the tid's bodies joined the way the merged paste carries them
+            _stamp_user_todo_answered(sid, tid, "\n\n".join(bodies), nonce=nonces.get(tid))
 
 
 def _apply_pending_ops():
@@ -17553,6 +18342,71 @@ def _tmux_echo_prune(sid, tx_uuids, tx_texts):
         _tmux_echo.pop(sid, None)
 
 
+def _human_turn_floor(session):
+    """The newest GENUINE-HUMAN user atom's timestamp in the parsed session, or 0. The one event that says
+    "the transcript has moved past anything typed before this": read by the SDK's echo floor
+    (sdk_backend.prune_live), by the tmux echo's settle below, and by the queued fold.
+
+    EXCLUDES the interrupt record (the user 2026-07-07): it authors 'human' but is a STOP event, not a
+    message that landed and processed the echo. When a just-sent message hadn't hit disk yet, the
+    interrupt's timestamp floored past the echo and retired it — so an interrupted send that got a partial
+    reply then VANISHED on the next push. Mirrors _last_genuine_turn_t, which floors on genuine turns only."""
+    return max((a.get("t", 0) for turn in session["turns"] for a in turn["atoms"]
+                if a.get("type") == "user" and a.get("author") == "human"
+                and not em.is_interrupt_record(a)), default=0)
+
+
+def _echo_overtaken(atom, human_floor):
+    """True when the transcript has taken a genuine-human turn STRICTLY LATER than this echo's send — the
+    event that settles whether the send is still in flight. The pane is FIFO, so a message the CLI still
+    held could not be overtaken by one typed after it: past this point the echo is a LOSS, not a pending
+    message. Strictly later, never at-or-later, so a send landing in the same second as another turn keeps
+    the optimistic queued treatment (the no-flicker path the 2026-06-29 fold bought)."""
+    return bool(atom.get("_echo_text")) and bool(human_floor) and human_floor > atom.get("t", 0)
+
+
+def _tmux_echo_settle(sid, human_floor, still_queued=()):
+    """Mark every overtaken tmux echo `dropped`, so the chat draws the shipped "never delivered" treatment
+    (dashed bubble + restore/dismiss, renderQueued's sibling) instead of an ordinary sent bubble, and the
+    queued fold stops enlisting it as a pending message (the user 2026-08-26: a session's queued header
+    counted sends from two days earlier, which it had long since answered — one of them genuinely lost at
+    the pane, two delivered under text the transcript recorded differently, all three indistinguishable
+    from a message actually waiting in the CLI's queue).
+
+    Marking, NOT pruning: a tmux echo is the only record of a send the pane dropped, and that loss must
+    stay on screen — the whole reason the echo outlives a later turn (see TmuxBackend.prune_live). The one
+    exception mirrors the SDK's own floor: a PATH-BEARING echo can fail the text match STRUCTURALLY,
+    because the transcript extracts image paths out of the user text, so that flavor is retired the way
+    sdk_backend.prune_live retires it rather than labelled a loss it may not be. With the SDK module
+    unavailable the predicate is simply unavailable too, and marking (the visible, reversible outcome)
+    covers every echo.
+
+    STANDS DOWN for an echo whose text the queue ledger still lists as pending (`still_queued`,
+    2026-08-27): the floor is a per-SESSION clock, so an OLDER queued sibling delivering raises it past
+    a younger send still genuinely waiting in the CLI's queue — overtaken by the floor, but not lost.
+    Marking it would have /diag/sendvis call one message both pending and dropped, the exact
+    misdiagnosis the dropped field exists to prevent. The queue ledger is the authoritative "still
+    owed" record, so it outranks the floor here; once the ledger releases the text (delivery or
+    recall), the next settle rules on it normally."""
+    d = _tmux_echo.get(sid)
+    if not d:
+        return
+    owed = {t.strip() for t in still_queued if isinstance(t, str)}
+    path_bearing = getattr(sys.modules.get("romp_sdk_backend"), "_path_bearing", None)
+    for k in list(d.keys()):
+        a = d[k]
+        if not _echo_overtaken(a, human_floor):
+            continue
+        if (a.get("_echo_text") or "").strip() in owed:
+            continue                                     # still owed by the queue ledger → waiting, not lost
+        if path_bearing is not None and path_bearing(a.get("_echo_text") or ""):
+            d.pop(k, None)
+        else:
+            a["dropped"] = True
+    if not d:
+        _tmux_echo.pop(sid, None)
+
+
 def _sendvis_diag(sid):
     """Send-visibility snapshot for /diag/sendvis (the user 2026-07-20): the exact inputs the chat build
     consults to render an in-flight send. When a sent message is invisible, this names the layer that
@@ -17582,7 +18436,10 @@ def _sendvis_diag(sid):
                             for a in (be.live_atoms(sid) if be else [])]
     except Exception as e:
         out["liveAtoms"] = "error: %s" % e
-    out["tmuxEchoes"] = [{"t": a.get("t"), "echo": (a.get("_echo_text") or "")[:120]}
+    # `dropped` is the whole diagnosis for a stale echo (the user 2026-08-26): without it a settled loss and
+    # a genuinely in-flight send read identically here, which is how three days-old echoes went unexplained.
+    out["tmuxEchoes"] = [{"t": a.get("t"), "echo": (a.get("_echo_text") or "")[:120],
+                          "dropped": bool(a.get("dropped"))}
                          for a in _tmux_echo_atoms(sid)]
     try:
         out["compacting"] = bool(_compacting_now(sid))
@@ -17626,17 +18483,7 @@ def _merge_live_atoms(session, sid, shown_texts=()):
                        and _atom_prose_chars(a) > 0}
     tx_uuids -= (live_text_uuids - tx_text_uuids)
     tx_texts = {t for turn in session["turns"] for a in turn["atoms"] for t in _atom_user_texts(a)}
-    # FIFO floor: the newest GENUINE-HUMAN turn the transcript has — retires an input echo whose text can't
-    # match because the transcript extracted an image path out of it (screenshots piling up at the bottom, the
-    # user 2026-06-25). SDK-only semantics: TmuxBackend.prune_live IGNORES the floor, since a tmux echo must
-    # SURVIVE a later turn to keep a dropped send visible (it keeps the text/uuid-only prune).
-    # EXCLUDE the interrupt record (the user 2026-07-07): it authors 'human' but is a STOP event, not a message
-    # that landed and processed the echo. When a just-sent message hadn't hit disk yet, the interrupt's
-    # timestamp floored past the echo and retired it — so an interrupted send that got a partial reply then
-    # VANISHED on the next push. Mirror _last_genuine_turn_t, which floors on genuine turns only.
-    human_floor = max((a.get("t", 0) for turn in session["turns"] for a in turn["atoms"]
-                       if a.get("type") == "user" and a.get("author") == "human"
-                       and not em.is_interrupt_record(a)), default=0)
+    human_floor = _human_turn_floor(session)
     be.prune_live(sid, tx_uuids, tx_texts, human_floor)
     hide = tx_texts | {t.strip() for t in shown_texts if t}    # transcript dups + already-shown queued msgs
     fresh = [a for a in live if a.get("uuid") not in tx_uuids
@@ -17979,12 +18826,19 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
     compacting_now = (False if path_override else
                       _compacting(sid, (tm0 or {}).get("state", ""), parsed, now, (tm0 or {}).get("since")))
     busy = not path_override and (_session_working(parsed["turns"]) or compacting_now)
+    # The fold takes only echoes STILL IN FLIGHT — one the transcript has already overtaken with a later
+    # genuine-human turn is a loss, not a pending message, and enlisting it here was how sends from days
+    # earlier kept inflating the queued header on a busy session (the user 2026-08-26). _echo_overtaken is
+    # the same event TmuxBackend.prune_live settles them on, read directly rather than off the `dropped`
+    # mark, since the mark is written by the merge BELOW this fold (one build later would be one build of
+    # phantom).
     if not hasattr(be, "unqueue") and busy:
         already = {q.strip() for q in queued}
         tx_user = {t for turn in parsed["turns"] for a in turn["atoms"] for t in _atom_user_texts(a)}
+        echo_floor = _human_turn_floor(parsed)
         for a in be.live_atoms(sid):
             et = (a.get("_echo_text") or "").strip()
-            if et and et not in already and et not in tx_user:
+            if et and et not in already and et not in tx_user and not _echo_overtaken(a, echo_floor):
                 queued = queued + [et]; already.add(et)
     session = parsed if path_override else _merge_live_atoms(parsed, sid, shown_texts=queued)
     caps = _captions(sid)
@@ -18171,11 +19025,14 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
                             # interrupt marker on the rail instead of a person-blue bubble (the user 2026-07-02).
                             if prompt.strip().startswith("[Request interrupted by user"):
                                 ev["interruptMarker"] = True
-                            # A provably-LOST send (a live echo whose CLI died holding it — the backend's
-                            # dropped-echo marking): the client renders "never delivered" with restore/
-                            # dismiss instead of a sent-looking bubble that poses as history (the user
-                            # 2026-07-29). echoT is the dismiss handle that survives kernel restarts —
-                            # the echo uuid regenerates on every boot reseed; its send time does not.
+                            # A send that never made the transcript (the backend's dropped-echo marking:
+                            # an SDK echo whose CLI died holding it, or a tmux echo the session moved past
+                            # — a pane-dropped keystroke, or a delivery the transcript recorded under
+                            # different text; the population widened 2026-08-26): the client renders
+                            # "never delivered" with restore/dismiss instead of a sent-looking bubble that
+                            # poses as history (the user 2026-07-29). echoT is the dismiss handle that
+                            # survives kernel restarts — the echo uuid regenerates on every boot reseed;
+                            # its send time does not.
                             if a.get("dropped") and a.get("_echo_text"):
                                 ev["undelivered"] = True
                                 ev["echoT"] = a.get("t")
@@ -20511,11 +21368,12 @@ def build_feed(now, tmux=None):
                 # goal is still OPEN: live → the affordance of an active handoff; absorbed → the same
                 # badge, dimmed, purely historical. This is the completed-column MERGE, heuristic-free:
                 # the one surviving card wears both identities, keyed on the courier's recorded link.
-                # NAMED origin_live, never `live` (fold audit 2026-08-25): this block once reused the
-                # session-level `live` — the backend-alive bit — so every LATER card of the session,
-                # and the placeholders built after the loop, wore the badge's bool: a live session's
-                # cards dressed .dead and took the revive path; a dead session's offered Continue.
-                # Badges persist for the card's life, so one absorbed badge poisoned the whole tail.
+                # NAMED origin_live, never `live`: this block once reused the session-level `live` —
+                # the backend-alive bit set at the top of the session loop — so every LATER card of
+                # the session, and the placeholders built after the loop, wore the badge's bool: a
+                # live session's cards dressed .dead and took the revive path; a dead session's
+                # offered Continue. Badges persist for the card's life, so one absorbed badge
+                # poisoned the session's whole card tail.
                 psid, gid = o["peer"], o.get("goalId")
                 sgoal = jd.load_goals(psid).get("nodes", {}).get(gid) if gid else None
                 origin_live = bool(sgoal and not sgoal.get("nodeComplete") and not sgoal.get("cleared")
@@ -25567,9 +26425,9 @@ def _pusher():
 
 
 # ───────────────────────── HTTP / page serving ─────────────────────────
-THEME_CSS = """:root{--vscode-font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+THEME_CSS = """@font-face{font-family:'Inter';src:url(/media/InterVariable.woff2) format('woff2-variations');font-weight:100 900;font-style:normal;font-display:swap}@font-face{font-family:'Inter';src:url(/media/InterVariable-Italic.woff2) format('woff2-variations');font-weight:100 900;font-style:italic;font-display:swap}:root{--vscode-font-family:'Inter',system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
 --vscode-editor-font-family:ui-monospace,"SF Mono",Menlo,Consolas,"DejaVu Sans Mono",monospace;--vscode-chat-font-family:var(--vscode-font-family);
---vscode-chat-font-size:13px;--vscode-foreground:#cccccc;--vscode-descriptionForeground:rgba(204,204,204,.7);
+--vscode-chat-font-size:13px;--vscode-foreground:#cccccc;--vscode-descriptionForeground:#9aa3ad;
 --vscode-errorForeground:#f48771;--vscode-editor-background:#1e1e1e;--vscode-editorWidget-background:#252526;
 --vscode-editorHoverWidget-border:#454545;--vscode-sideBar-background:#252526;--vscode-widget-border:#303031;
 --vscode-focusBorder:#007fd4;--vscode-input-background:#3c3c3c;--vscode-input-foreground:#cccccc;
@@ -25607,7 +26465,7 @@ function netState(s){try{if(window.parent!==window)window.parent.postMessage({ro
 // directly) has no shell, so self-inject a minimal top bar with the same Reload action.
 function selfBar(t,kind){try{if(document.getElementById("romp-stale-self"))return;
 var b=document.createElement("div");b.id="romp-stale-self";b.dataset.kind=kind||"conn";
-b.style.cssText="position:fixed;top:0;left:0;right:0;z-index:99999;display:flex;gap:12px;align-items:center;justify-content:center;background:#2b2d30;color:#e6e6e6;border-bottom:1px solid #4a4d51;padding:9px 14px;font:13px/1.4 system-ui,-apple-system,'Segoe UI',Roboto,sans-serif";
+b.style.cssText="position:fixed;top:0;left:0;right:0;z-index:99999;display:flex;gap:12px;align-items:center;justify-content:center;background:#2b2d30;color:#e6e6e6;border-bottom:1px solid #4a4d51;padding:9px 14px;font:13px/1.4 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif";
 var m=document.createElement("span");m.textContent=t;b.appendChild(m);
 var r=document.createElement("button");r.textContent="Reload";
 r.style.cssText="font:inherit;cursor:pointer;border-radius:6px;padding:4px 11px;font-weight:600;background:#54B204;color:#0c1a00;border:1px solid #3f8a00";
@@ -25726,7 +26584,7 @@ _CHAT_MOBILE_CSS = (
     "#mhdr{display:flex;align-items:stretch;gap:6px;width:100%}"
     "#mcur{flex:1 1 auto;min-width:0;display:flex;align-items:center;gap:8px;cursor:pointer;"
     "background:#2a2a2a;color:#dddddd;border:1px solid #3a3a3a;border-radius:6px;padding:7px 10px;"
-    "font:600 13px system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}"
+    "font:600 13px 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}"
     # colored session: the identity color reads as the NAME (bold) on the same grey chip as the +/madd
     # button, with a hairline color border, not the color as a fill (the user 2026-07-22).
     "#mcur.colored{background:#2a2a2a;color:var(--cbg);border-color:var(--cbg)}"
@@ -25744,7 +26602,7 @@ _CHAT_MOBILE_CSS = (
     "box-shadow:0 8px 24px #000000aa}"
     "#mlist.open{display:block}"
     ".mrow{display:flex;align-items:center;gap:9px;padding:10px 12px;cursor:pointer;"
-    "border-bottom:1px solid #ffffff12;font:600 13px system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}"
+    "border-bottom:1px solid #ffffff12;font:600 13px 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}"
     ".mrow:last-child{border-bottom:0}"
     # match desktop: the session's identity color tints the NAME text (set inline, like the Fleet list and
     # the colored tab label), and the only dot is the gold WORKING dot, shown just for working sessions.
@@ -25898,7 +26756,7 @@ _LOADER_CSS = (
     # (baseline + x-height/2). Geometry from assets/make_wordmark.py: the swirl-o glyph is the
     # CENTERED 102..820 crop, sized SWIRL_EM=0.65em, with side margins -(0.65-0.583)/2 = -0.0335em so its
     # advance equals Anta's 'o' (0.583em) and m/p land where a real "o" puts them.
-    ".rl-word{font-family:'RompAnta',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;font-size:38px;"
+    ".rl-word{font-family:'RompAnta','Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;font-size:38px;"
     "line-height:1;white-space:nowrap}"
     ".rl-o{width:.65em;height:.65em;vertical-align:middle;margin:0 -.0335em;animation:rl-spin 7s linear infinite}"
     ".rl-dots{display:flex;gap:7px}"
@@ -26016,7 +26874,7 @@ def _fleet_page():
     try:
         fleet_css = (UI / "webview" / "fleet-pane.css").read_text()
     except OSError:
-        return ("<!DOCTYPE html><html><body style='font-family:system-ui,-apple-system,sans-serif;color:#999;"
+        return ("<!DOCTYPE html><html><body style='font-family:Inter,system-ui,-apple-system,sans-serif;color:#999;"
                 "background:#1e1e1e;padding:12px'>romp outline needs the ui/ modules "
                 "(webview/fleet-pane.css).</body></html>")
     v = _dist_ver()
@@ -26091,7 +26949,7 @@ def _timeline_page():
         view_js = (UI / "romp-timeline-view.js").read_text()
         tl_css = (UI / "webview" / "timeline-pane.css").read_text()
     except OSError:
-        return ("<!DOCTYPE html><html><body style='font-family:system-ui,-apple-system,sans-serif;color:#999;"
+        return ("<!DOCTYPE html><html><body style='font-family:Inter,system-ui,-apple-system,sans-serif;color:#999;"
                 "background:#1e1e1e;padding:12px'>romp timeline needs the ui/ modules "
                 "(romp-timeline-view.js + webview/timeline-pane.css).</body></html>")
     v = _dist_ver()
@@ -27740,7 +28598,7 @@ _STALE_CSS = (
     "#rstale{position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:99999;display:none;"
     "align-items:center;gap:12px;max-width:92vw;background:#252526;border:1px solid rgba(255,255,255,0.12);"
     "border-radius:8px;padding:10px 14px;color:#e6e6e6;box-shadow:0 8px 28px rgba(0,0,0,0.45);"
-    "font:13px/1.4 system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}"
+    "font:13px/1.4 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}"
     "#rstale.show{display:flex}#rstale .rs-msg{font-weight:500}"
     "#rstale button{font:inherit;cursor:pointer;border-radius:6px;padding:5px 11px;"
     "border:1px solid transparent;white-space:nowrap}"
@@ -27846,7 +28704,7 @@ _UPD_CSS = (
     "#rupd{position:fixed;top:56px;left:50%;transform:translateX(-50%);z-index:99999;display:none;"
     "align-items:center;gap:12px;max-width:92vw;background:#252526;border:1px solid rgba(255,255,255,0.12);"
     "border-radius:8px;padding:10px 14px;color:#e6e6e6;box-shadow:0 8px 28px rgba(0,0,0,0.45);"
-    "font:13px/1.4 system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}"
+    "font:13px/1.4 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}"
     "#rupd.show{display:flex}#rupd .rup-msg{font-weight:500}"
     "#rupd button{font:inherit;cursor:pointer;border-radius:6px;padding:5px 11px;"
     "border:1px solid transparent;white-space:nowrap}"
@@ -27938,7 +28796,7 @@ _RDRIFT_CSS = (
     "#rdrift{position:fixed;top:104px;left:50%;transform:translateX(-50%);z-index:99998;display:none;"
     "align-items:center;gap:10px;max-width:92vw;background:#252526;border:1px solid rgba(255,255,255,0.12);"
     "border-radius:8px;padding:10px 14px;color:#e6e6e6;box-shadow:0 8px 28px rgba(0,0,0,0.45);"
-    "font:13px/1.4 system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}"
+    "font:13px/1.4 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}"
     "#rdrift.show{display:flex}#rdrift .rd-msg{font-weight:500}"
     "#rdrift .rd-spin{width:14px;height:14px;flex:0 0 auto;display:none;"
     "background:url(/media/romp-swirl-glyph.svg) center/contain no-repeat;animation:rd-spin 2.4s linear infinite}"
@@ -28083,6 +28941,12 @@ def _landing():
             "<meta name=theme-color content='#1e1e1e'>"
             "<link rel=icon type=image/svg+xml href=/media/romp-swirl-glyph.svg><title>Romp</title><style>"
             ":root{--accent:#9cd2ff;--accent-fg:#0c1a2e}"
+            # Inter loads PER DOCUMENT (2026-08-27, PR-730 review): the shell names 'Inter' in every
+            # sans stack below, but @font-face never crosses an iframe boundary — without these two
+            # rules the panes rendered Inter while the shell around them silently kept the system
+            # font on any machine without Inter installed OS-wide. The same two faces THEME_CSS ships.
+            "@font-face{font-family:'Inter';src:url(/media/InterVariable.woff2) format('woff2-variations');font-weight:100 900;font-style:normal;font-display:swap}"
+            "@font-face{font-family:'Inter';src:url(/media/InterVariable-Italic.woff2) format('woff2-variations');font-weight:100 900;font-style:italic;font-display:swap}"
             # The chain, widest support last-wins: 100% (always right where the viewport is static), then
             # 100dvh (tracks browser chrome appearing/collapsing), then --app-h, the live
             # visualViewport.height _LANDING_MOBILE_JS publishes. This used to be a mobile-only rule, so a
@@ -28157,11 +29021,11 @@ def _landing():
             ".rail-scroll::-webkit-scrollbar{width:0;height:0}"
             ".rail-acts{flex:0 0 auto;display:flex;flex-direction:row;align-items:center;gap:6px;margin-left:auto}"   # compact: tight row of refresh/network/settings   # pinned to the RIGHT of the bottom bar, always visible
             ".rail-btn{flex:0 0 auto;letter-spacing:.04em;line-height:1;"
-            "font:600 11px system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;color:#8a8a8a;margin:0;"
-            "padding:4px 9px;border-radius:5px;cursor:pointer;user-select:none;display:flex;align-items:center;"
-            "justify-content:center;transition:color .1s,background .1s}"
+            "font:600 11px 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;color:#8a8a8a;margin:0;"
+            "padding:4px 9px;border-radius:5px;border:1px solid transparent;cursor:pointer;user-select:none;display:flex;align-items:center;"
+            "justify-content:center;transition:color .1s,background .1s,border-color .1s}"
             ".rail-btn:hover{color:#cfe6ff;background:rgba(255,255,255,0.06)}"
-            ".rail-btn.on{color:var(--accent);background:rgba(156,210,255,0.12)}"
+            ".rail-btn.on{color:var(--accent);background:rgba(156,210,255,0.12);border-color:rgba(156,210,255,0.35)}"
             # the ↻ refresh + ⛭ settings actions sit in .rail-acts, pinned to the RIGHT (margin-left:auto on the
             # wrapper) of the bottom bar and ALWAYS visible — settings (⛭, last in the DOM) at the far right.
             ".rail-act{flex:0 0 auto;display:flex;align-items:center;justify-content:center;margin:1px 4px;padding:4px 0;"
@@ -28204,7 +29068,7 @@ def _landing():
             "background:rgba(0,0,0,0.55)}#rnet-back[hidden]{display:none}"
             "#rnet-panel{width:min(560px,94%);max-height:88vh;overflow:auto;"   # matches the settings .rs-card
             "background:#252526;border:1px solid #3a3a3a;border-radius:10px;box-shadow:0 12px 36px #000000aa;"
-            "padding:16px 20px;color:#ccc;font:13px/1.6 system-ui,-apple-system,'Segoe UI',sans-serif}"
+            "padding:16px 20px;color:#ccc;font:13px/1.6 'Inter',system-ui,-apple-system,'Segoe UI',sans-serif}"
             "#rnet-panel .rnet-top{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;color:#e8eaed;"
             "margin:0 0 12px;padding-bottom:10px;border-bottom:1px solid #34343a}"
             ".rnet-top span{flex:1 1 auto}"
@@ -28306,7 +29170,7 @@ def _landing():
             "background:rgba(0,0,0,0.55)}"
             "#rfleet-panel{width:min(560px,94%);max-height:80vh;overflow:auto;background:#252526;"
             "border:1px solid #3a3a3a;border-radius:10px;box-shadow:0 12px 36px #000000aa;padding:16px 20px;"
-            "color:#ccc;font:13px/1.6 system-ui,-apple-system,'Segoe UI',sans-serif}"
+            "color:#ccc;font:13px/1.6 'Inter',system-ui,-apple-system,'Segoe UI',sans-serif}"
             ".rfleet-top{font-size:14px;font-weight:600;color:#e8eaed;margin-bottom:2px}"
             ".rfleet-sub{color:#8a8a8a;margin-bottom:10px}"
             ".rfleet-row{display:flex;gap:8px;align-items:baseline;padding:5px 0;border-top:1px solid #33343a}"
@@ -28353,7 +29217,7 @@ def _landing():
             # the windows sit side-by-side. Full detail (elapsed %, reset countdown, age) stays in the hover panel.
             "#rail-usage{flex:0 0 auto;display:flex;flex-direction:row;align-items:center;gap:16px}"
             ".ru-w{display:flex;flex-direction:row;align-items:center;gap:7px;cursor:default}"
-            ".ru-name{font:600 10px system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;color:#9aa4ad;letter-spacing:.02em;white-space:nowrap}"
+            ".ru-name{font:600 10px 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;color:#9aa4ad;letter-spacing:.02em;white-space:nowrap}"
             ".ru-bars{display:flex;flex-direction:column;gap:2px;flex:0 0 auto}"   # used bar stacked over elapsed bar
             ".ru-track{position:relative;width:54px;height:5px;background:rgba(255,255,255,0.12);border-radius:3px;overflow:hidden;flex:0 0 auto}"
             ".ru-fill{position:absolute;left:0;top:0;height:100%;border-radius:3px;transition:width .3s ease}"
@@ -28361,7 +29225,7 @@ def _landing():
             # drawn on the bar AT ALL — only what we know shows there. The last-known reading survives in
             # the tooltip, labelled "last known" and faded, which is honest because it says what it is.
             ".ru-tip-row.ru-unk i{opacity:.3}.ru-tip-row.ru-unk .ru-tip-k,.ru-tip-row.ru-unk .ru-tip-v{color:#8a97a6}"
-            ".ru-pct{font:600 10px system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;color:#cfe6ff;font-variant-numeric:tabular-nums;white-space:nowrap}"
+            ".ru-pct{font:600 10px 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;color:#cfe6ff;font-variant-numeric:tabular-nums;white-space:nowrap}"
             # ONE shared hover panel for BOTH windows (the user 2026-06-26): it reproduces exactly the used/
             # elapsed bars that used to sit under the timeline — per window, a "used" bar (selected colormap)
             # over an "elapsed" bar (slate) with the % + reset countdown, and nothing else (no prose).
@@ -28381,7 +29245,7 @@ def _landing():
             "#ru-back{position:fixed;inset:0;z-index:290;display:none;background:rgba(0,0,0,0.4)}"
             "#ru-back.on{display:block}"
             "#ru-tip{position:fixed;z-index:300;background:#1e1e1e;border:1px solid #3a3a3a;border-radius:7px;"
-            "padding:8px 10px;font:500 11px system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;color:#cfd6dd;"
+            "padding:8px 10px;font:500 11px 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;color:#cfd6dd;"
             "box-shadow:0 5px 18px rgba(0,0,0,0.45);pointer-events:none;line-height:1.4}"
             ".ru-tip-win{margin-bottom:8px}#ru-tip .ru-tip-win:last-child{margin-bottom:0}"
             # Multi-host breakdown: one COLUMN per host, side by side (the user 2026-08-08 — not one
@@ -28413,19 +29277,19 @@ def _landing():
             # aggregates one set of bars + one API cell, and the per-host story lives in the hover, whose
             # .ru-tip-host heading keeps the quiet lowercase-italic treatment a federated session's name
             # wears in the chat tabs.)
-            ".ru-tip-host{font:italic 400 10px system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;"
+            ".ru-tip-host{font:italic 400 10px 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;"
             "color:#9aa0a6;text-transform:lowercase;margin:0 0 4px}"
             "#ru-tip .ru-tip-host:not(:first-child){margin-top:10px;padding-top:8px;"
             "border-top:1px solid rgba(255,255,255,0.08)}"
             # the login the window bars belong to (the user 2026-08-09) — quiet, above the sections,
             # the host heading's size without its lowercase-italic host vocabulary
-            ".ru-tip-acct{font:400 10px system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;"
+            ".ru-tip-acct{font:400 10px 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;"
             "color:#9aa0a6;margin:0 0 4px}"
             # the three TOP panes flex-grow by a per-pane var (resized by the gutters, persisted); toggling one
             # off hides it AND the now-orphaned gutters. Fixed order: chat, fleet, feed. Timeline is the band.
             "#chat-pane{flex:var(--g-chat,60) 1 0}#fleet-pane{flex:var(--g-fleet,34) 1 0}#feed-pane{flex:var(--g-feed,40) 1 0}"
             "body:not(.po-chat) #chat-pane{display:none}body:not(.po-fleet) #fleet-pane{display:none}body:not(.po-feed) #feed-pane{display:none}"
-            ".row>.gv{flex:0 0 5px}"
+            ".row>.gv{flex:0 0 7px}"
             # gv-a sits chat|fleet (only when both shown); gv-b sits (fleet|chat)|feed — the chat|feed gutter when fleet off.
             "body:not(.po-chat) #gv-a,body:not(.po-fleet) #gv-a{display:none}"
             "body:not(.po-feed) #gv-b,body:not(.po-chat):not(.po-fleet) #gv-b{display:none}"
@@ -28434,10 +29298,18 @@ def _landing():
             # Band + gutter both hide when the toggle is off, so the pane row fills the height.
             "#tl-pane{flex:0 0 var(--tl,200px)}"
             "body:not(.po-timeline) #gh,body:not(.po-timeline) #tl-pane{display:none}"
-            ".gv{cursor:col-resize;background:linear-gradient(90deg,transparent 2px,#333 2px,#333 3px,transparent 3px)}"
-            ".gh{flex:0 0 5px;cursor:row-resize;background:linear-gradient(180deg,transparent 2px,#333 2px,#333 3px,transparent 3px)}"
-            ".gv:hover{background:linear-gradient(90deg,transparent 2px,#007fd4 2px,#007fd4 3px,transparent 3px)}"
-            ".gh:hover{background:linear-gradient(180deg,transparent 2px,#007fd4 2px,#007fd4 3px,transparent 3px)}"
+            # the splitters wear the composer-grip affordance (the user 2026-08-26, who liked that handle):
+            # a centered pill, always faintly visible so the drag is discoverable, accent + longer on hover —
+            # and 7px of air instead of 5 so the panes read clearly separated. Hover accent is the romp blue
+            # (#9cd2ff), not VS Code's #007fd4 (CLAUDE.md: focus cues wear the accent).
+            ".gv{cursor:col-resize;position:relative;background:linear-gradient(90deg,transparent 3px,#333 3px,#333 4px,transparent 4px)}"
+            ".gh{flex:0 0 7px;cursor:row-resize;position:relative;background:linear-gradient(180deg,transparent 3px,#333 3px,#333 4px,transparent 4px)}"
+            ".gv::after,.gh::after{content:'';position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);"
+            "border-radius:2px;background:#43454b;transition:background .12s,width .12s,height .12s}"
+            ".gv::after{width:3px;height:36px}.gh::after{width:36px;height:3px}"
+            ".gv:hover{background:linear-gradient(90deg,transparent 3px,#3a4a58 3px,#3a4a58 4px,transparent 4px)}"
+            ".gh:hover{background:linear-gradient(180deg,transparent 3px,#3a4a58 3px,#3a4a58 4px,transparent 4px)}"
+            ".gv:hover::after{background:var(--accent,#9cd2ff);height:52px}.gh:hover::after{background:var(--accent,#9cd2ff);width:52px}"
             "body.drag iframe{pointer-events:none}body.dragv{cursor:col-resize}body.dragh{cursor:row-resize}"
             ".pane{position:relative;min-width:0;min-height:0;overflow:hidden}"
             ".pane>iframe{position:absolute;inset:0;width:100%;height:100%}"
@@ -28446,7 +29318,7 @@ def _landing():
             # the others get nothing, so the only lines on screen are the splitters + this focus ring. The ring
             # is pointer-events:none (never blocks) and z below the timeline collapse handle (z-30).
             ".pane.pane-focused::after{content:'';position:absolute;inset:0;pointer-events:none;z-index:6;"
-            "box-shadow:inset 0 0 0 2px rgba(120,170,225,0.55)}"
+            "box-shadow:inset 0 0 0 2px rgba(156,210,255,0.55)}"   # the romp accent — focus cues wear it (CLAUDE.md)
             "#mtabs{display:none}"
             # narrow OR a touch device up to 1024px → one pane + bottom tabs; mouse desktops keep the grid
             "@media (max-width:820px),(pointer:coarse) and (max-width:1024px){"
@@ -28501,7 +29373,7 @@ def _landing():
             # which includes this padding, so .col's reservation tracks it for free.
             "html.ios-standalone #mtabs{padding-bottom:env(safe-area-inset-bottom,0px)}"
             "#mtabs button{flex:1;border:0;background:none;cursor:pointer;-webkit-tap-highlight-color:transparent;"
-            "color:#9aa0a6;font:600 12px system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;"
+            "color:#9aa0a6;font:600 12px 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;"
             "padding:6px 0;display:flex;align-items:center;justify-content:center}"
             "#mtabs button.on{color:#4da4ff}"
             # action buttons: dimmer + fixed-width so the four pane tabs keep the room; thin divider between
@@ -28546,7 +29418,7 @@ def _landing():
             # dim times (the network panel's information-type sizes), rnet-style action button + close.
             "#rerr-panel{width:min(700px,94vw);max-height:min(60vh,480px);"   # 60% wider (the user 2026-07-28); a flex child of the centered backdrop, no own positioning
             "display:flex;flex-direction:column;background:#252526;border:1px solid #3a3a3a;border-radius:10px;"
-            "box-shadow:0 12px 36px #000000aa;color:#ccc;font:13px/1.6 system-ui,-apple-system,'Segoe UI',sans-serif}"
+            "box-shadow:0 12px 36px #000000aa;color:#ccc;font:13px/1.6 'Inter',system-ui,-apple-system,'Segoe UI',sans-serif}"
             "#rerr-panel .rerr-top{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;color:#e8eaed;"
             "padding:10px 12px;border-bottom:1px solid #34343a;flex:0 0 auto}"
             "#rerr-panel .rerr-top .sp{flex:1}"
@@ -29521,12 +30393,20 @@ class Handler(BaseHTTPRequestHandler):
                                        addr=str(self.client_address[0]),
                                        origin=str(self.headers.get("Origin") or ""),
                                        ua=str(self.headers.get("User-Agent") or ""))
+                # Resolve the manager port BEFORE the ack (2026-08-27): the read used to sit inside
+                # _restart_this_kernel, AFTER _send returned — so a caller that set ROMP_MANAGER_PORT
+                # for exactly the request window (a test suite fencing a live deployment off does
+                # this) raced its restore against this thread, and the RESTORED value could win.
+                # The value in force when the kernel acks is the value acted on; absent still means
+                # what it always meant (no manager → nothing to restart).
+                _mport = os.environ.get("ROMP_MANAGER_PORT")
                 self._send(200, json.dumps({"ok": True, "restarting": True, "boot": _BOOT_ID,
                                             "fleet": bool(_fleet)}), "application/json")
                 if _fleet and _remotes:
-                    threading.Thread(target=_fleet_restart_run, daemon=True).start()
+                    threading.Thread(target=_fleet_restart_run,
+                                     kwargs={"manager_port": _mport}, daemon=True).start()
                 else:
-                    _restart_this_kernel("http /restart (local-only)")
+                    _restart_this_kernel("http /restart (local-only)", manager_port=_mport)
                 return
             if u.path == "/fleet-restart":
                 # What the last fleet restart did, read back by the page AFTER it reloads (the restart
@@ -29551,7 +30431,11 @@ class Handler(BaseHTTPRequestHandler):
                 if kind:
                     _audit_restart_request("main-converge", tag=_MAIN_DRIFT[0] or _MAIN_DRIFT[1],
                                            addr=str(self.client_address[0]))
-                    threading.Thread(target=_run_main_update, args=(kind, True), daemon=True).start()
+                    # same ack-time port resolution as /restart: the daemon thread's env read could
+                    # otherwise land after this response, on a value the caller has already restored
+                    threading.Thread(target=_run_main_update, args=(kind, True),
+                                     kwargs={"manager_port": os.environ.get("ROMP_MANAGER_PORT")},
+                                     daemon=True).start()
                     _send_to_app("shell", {"type": "updateAvail", "state": "running", "boot": _BOOT_ID})
                     return self._send(200, json.dumps({"ok": True, "state": "converging"}), "application/json")
                 return self._send(409, "no newer release or main commit known to this kernel", "text/plain")
@@ -31575,8 +32459,14 @@ def _graceful_term(signum, frame):
     try:
         sys.stderr.write("romp-kernel: SIGTERM — draining SDK sessions\n")
         be = _sdk_backend or None
+        res = {}
         if be is not None and hasattr(be, "drain"):
-            be.drain(2.0)
+            res = be.drain(2.0)
+        # the restart-cut ledger (T121): one row per restart, empty cutTurns included — a clean
+        # drain's row IS the metric. Written after the drain (the cutter knows what it cut) and
+        # before exit; best-effort like the audit.
+        _append_restart_cut(_restart_cut_row(res, watches_armed=len(_pr_watches),
+                                             audit_reason=_recent_restart_reason()))
     except Exception:
         sys.stderr.write("romp-kernel: drain failed: %s\n" % traceback.format_exc())
     finally:
@@ -31616,6 +32506,13 @@ def main():
                              "loss-reopen seam\n" % _n)       # the dead kernel left them (see the pass's docstring)
     except Exception:
         sys.stderr.write("user-todo loss boot pass: %s\n" % traceback.format_exc())
+    try:                                                      # tmux pastes whose verdict died with a previous
+        _n = _tmux_paste_loss_boot_pass()                     # kernel: a stale pending-paste mark is a loss —
+        if _n:                                                # re-offer it to the same seam (the SDK pass's
+            sys.stderr.write("romp-kernel: re-offered %d pending tmux paste answer(s) to the "
+                             "loss-reopen seam\n" % _n)       # tmux twin; runs here for the same ordering)
+    except Exception:
+        sys.stderr.write("tmux paste loss boot pass: %s\n" % traceback.format_exc())
     _write_palette_mirror()                                   # keep bin/romp's palette-colors mirror current across code updates
     _boot_warm()                                              # pre-parse the live fleet during the reconnect gap (fast first paint)
     threading.Thread(target=_sdk, daemon=True).start()        # construct the SDK backend NOW so its boot

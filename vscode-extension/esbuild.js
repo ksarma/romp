@@ -63,8 +63,9 @@ const webview = {
   // to the emitted dist/feed.css; esbuild must not try to resolve it against the source tree.
   // .woff/.ttf stay external too: KaTeX's @font-face lists woff2 first and every current
   // engine takes it, so those fallback urls are never fetched and bundling them would
-  // triple the font payload for nothing.
-  external: ["*.png", "*.svg", "*.woff", "*.ttf"],
+  // triple the font payload for nothing. The Inter faces are media assets like the pngs —
+  // external by PATH (the extension-wide woff2 file-loader below is for KaTeX's, which do bundle).
+  external: ["*.png", "*.svg", "*.woff", "*.ttf", "../media/*.woff2"],
   // KaTeX fonts (referenced by katex.min.css, @imported from styles.css) are copied to
   // dist/fonts/ and the css urls rewritten relative to dist — served by the kernel's /dist/
   // route and the VS Code webview's dist resource root alike.

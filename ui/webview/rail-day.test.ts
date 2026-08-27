@@ -49,7 +49,7 @@ test("the label rides ABOVE the stamp and never clips at the pane's left edge", 
   // nothing crosses the label's path — and the clamp keeps it off the tab bar in every case.
   assert.match(RENDER, /day\.style\.top = Math\.max\(cTop \+ 1, slotTop - dayH - 4\) \+ "px";/);
   // Natural width, right edge on the gutter's right edge, left edge never past the pane's:
-  // "2 days ago" at 0.68em is wider than the 47px gutter, and the old box pinned to the gutter's
+  // "2 days ago" at 0.66em is wider than the 47px gutter, and the old box pinned to the gutter's
   // left/width clipped its leading digit at the pane edge (the user 2026-08-18, with a screenshot).
   assert.match(RENDER, /day\.style\.left = Math\.max\(3, gRect!\.right - dayW \+ 1\) \+ "px";/);
   assert.doesNotMatch(RENDER, /day\.style\.width/, "no width pin — the box shrinkwraps its text");
@@ -57,7 +57,7 @@ test("the label rides ABOVE the stamp and never clips at the pane's left edge", 
 
 test("the label is passive fixed chrome, smaller and dimmer than the stamp", () => {
   assert.match(CSS, /\.rail-day \{\s*\n\s*position: fixed; z-index: 3; pointer-events: none; white-space: nowrap; line-height: 1;/);
-  assert.match(CSS, /font-size: 0\.68em; letter-spacing: 0\.03em; color: var\(--dim\); opacity: 0\.85;/,
+  assert.match(CSS, /font-size: 0\.66em; letter-spacing: 0\.03em; color: var\(--dim\); opacity: 0\.85;/,
     "context, not the time itself — smaller and dimmer than the stamp");
 });
 

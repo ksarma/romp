@@ -66,5 +66,5 @@ test("the caret is a bare glyph, and a folded header keeps its group's spacing",
   assert.match(CSS, /\.feed-sess-fold:hover, \.feed-sess-fold:focus-visible \{ color: var\(--fg\); \}/);
   assert.match(CSS, /\.feed-sess-head\.folded \{ margin-bottom: 7px; \}/);
   // the count reuses the header's existing label size rather than adding one
-  assert.match(CSS, /\.feed-sess-foldn \{[^}]*font-size: 0\.74em/);
+  assert.match(CSS, /\.feed-sess-foldn \{[^}]*font-size: 0\.72em/);
 });

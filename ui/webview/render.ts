@@ -41,7 +41,7 @@ import { openFileView } from "./file-view";
 import { initFileView } from "./file-view";
 import { initFileBrowse, openFileBrowse } from "./file-browse";   // the browser is pane-local here now (the user 2026-08-24)
 import { pastedFilePath } from "./paste-path";
-import { hostNameNodes, hostPrefix, hostOf, hostIsDown, hostDownNote } from "./host-prefix";
+import { hostNameNodes, hostPartsNodes, hostPrefix, hostOf, hostIsDown, hostDownNote } from "./host-prefix";
 import { dirStatusHint, nextDirActive, createDirPrompt, type DirStatus } from "./dir-complete";
 import { mediaSrc, kernelUrl } from "./media";
 import { initStrip, fmtReset } from "./strip";
@@ -2434,7 +2434,12 @@ function renderEventInner(ev: ChatEvent): HTMLElement {
         turn.classList.add("undelivered");
         bubble.classList.add("undelivered-bubble");
         const note = el("div", "undelivered-note");
-        note.title = "This message never reached the session: its process died holding it before it was written to the conversation.";
+        // covers BOTH dropped-echo populations (the copy predated the 2026-08-26 widening and claimed a
+        // process death for every loss): an SDK echo really is a send its CLI died holding, but a tmux
+        // echo settles dropped when the session simply moved past it — a keystroke the pane dropped, or
+        // a delivery the transcript recorded under different text. Say what is KNOWN (it never made the
+        // conversation), not a cause that is only sometimes true.
+        note.title = "This message never made it into the conversation: the session moved on without recording it (a dropped keystroke, a process that died holding it, or a delivery recorded under different text).";
         const label = el("span", "undelivered-label");
         label.textContent = "never delivered";
         note.appendChild(label);
@@ -10172,16 +10177,22 @@ function updateStatusline() {
     chip.classList.add("chip-awaiting-" + (s.status.awaitingKind || "untyped"));   // per-kind hook, one hue today
     const chipPeers = s.status.awaitingPeers || [];
     if (chipPeers.length) {
-      // the pill names the actual session (the user 2026-08-26): "Awaiting <name>" with the peer's
-      // identity-colour dot; several peers keep the one-line rule as a count, names on the tooltip
+      // the pill names the actual session (the user 2026-08-26): "Awaiting <name>", the NAME itself
+      // in the peer's identity colour — the dot it launched with retired the same day (round two:
+      // it read stupid). The name sits on an always-on ~85% black backing (.chip-peer-name), mostly
+      // opaque so ANY identity colour reads against any chip hue (their green-on-green example),
+      // translucent enough that the chip's own colour still glows through around it. Several peers
+      // keep the one-line rule as a count, names on the tooltip.
       chip.append(CHIP_LABEL.awaitingBg + " ");
       if (chipPeers.length === 1) {
-        if (chipPeers[0].color && chipPeers[0].color.bg) {
-          const dot = el("span", "chip-peer-dot");
-          dot.style.background = chipPeers[0].color.bg;
-          chip.appendChild(dot);
-        }
-        chip.append((chipPeers[0].host ? chipPeers[0].host + ":" : "") + chipPeers[0].name);
+        const nm = el("span", "chip-peer-name");
+        // the HOUSE session-reference idiom (the user 2026-08-26, round three — one undifferentiated
+        // string read wrong): the shared renderer, so the host prefix wears .host-prefix (italic
+        // gray) and the NAME text takes the identity colour — the card headers' own treatment,
+        // never a restyled copy
+        nm.replaceChildren(...hostPartsNodes(chipPeers[0].host, chipPeers[0].name));
+        if (chipPeers[0].color && chipPeers[0].color.bg) nm.style.color = chipPeers[0].color.bg;
+        chip.appendChild(nm);
       } else chip.append(chipPeers.length + " peers");
     } else chip.textContent = CHIP_LABEL.awaitingBg + (kw ? " " + kw : "");
     chip.title = (s.status.awaitingWhy || "idle, waiting on background work it dispatched")
@@ -12672,6 +12683,9 @@ function shipFileToHost(f: File, sidAt: string | null = activeId) {
 function applyChatScheme(s: RompSettings): void {
   document.body.classList.toggle("scheme-high-contrast", s.chatScheme === "high-contrast");
   document.body.classList.toggle("scheme-solarized-dark", s.chatScheme === "solarized-dark");
+  // the chat-tab appearance theme (T113): Classic is the unscoped default; Yatharth scopes PR 730's
+  // strip aesthetic under this class. Applies live — onExternalSettingsChange re-runs this + renderTabs.
+  document.body.classList.toggle("chat-theme-yatharth", s.chatTabTheme === "yatharth");
 }
 function setupSettings(): void {
   applyChatScheme(settings);   // the persisted pick applies at startup — it survives reloads

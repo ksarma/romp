@@ -133,11 +133,11 @@ let onKeyLive: ((e: KeyboardEvent) => void) | null = null;
 function dropOnKey(): void {
   if (onKeyLive) { document.removeEventListener("keydown", onKeyLive); onKeyLive = null; }
 }
-// ONE live media object URL at a time (the user 2026-08-25: images used to render as line-numbered
-// mojibake; now an image/PDF view holds its bytes in an object URL). The URL is per-open state, but —
-// like editHooks and onKeyLive above — the teardown must be reachable from BOTH exits (closeFileView
-// and the replace path), so the open viewer registers its URL here and each exit revokes it. Without
-// the revoke every image view leaks its blob for the page's life.
+// ONE live media object URL at a time (images used to render as line-numbered mojibake; now an
+// image/PDF view holds its bytes in an object URL). The URL is per-open state, but — like editHooks
+// and onKeyLive above — the teardown must be reachable from BOTH exits (closeFileView and the replace
+// path), so the open viewer registers its URL here and each exit revokes it. Without the revoke
+// every image view leaks its blob for the page's life.
 let mediaUrlLive: string | null = null;
 function dropMediaUrl(): void {
   if (mediaUrlLive) {
@@ -312,10 +312,10 @@ export function openFileView(path: string, sid?: string | null): boolean {
   //   saveFile's conflict floor (ns because whole seconds let a same-second agent write slip the
   //   guard; a string because ~1.7e18 exceeds JS's safe-integer range and a number would round)
   let isText = false;                         // the kernel's verdicts (text/plain AND faithful UTF-8)
-  // ── the media verdicts (the user 2026-08-25: a .png opened as line-numbered mojibake — the fetch
-  // pipeline called r.text() on ANY 200). All read from the KERNEL's Content-Type, never a client-side
-  // extension re-test (the authoritative-source rule; the kernel derives the mime locally and the
-  // relay re-derives it, so the header is a verdict, not an echo).
+  // ── the media verdicts: a .png used to open as line-numbered mojibake — the fetch pipeline called
+  // r.text() on ANY 200. All read from the KERNEL's Content-Type, never a client-side extension
+  // re-test (the authoritative-source rule; the kernel derives the mime locally and the relay
+  // re-derives it, so the header is a verdict, not an echo).
   let isImage = false;                        // image/* → one <img> at an object URL
   let isPdf = false;                          // application/pdf → the lightbox's iframe treatment
   let isSvgImage = false;                     // image/svg+xml exactly — unlocks the Source toggle
@@ -452,11 +452,11 @@ export function openFileView(path: string, sid?: string | null): boolean {
 
   // A 200 whose bytes will not DECODE — a zero-byte file, a mid-write/truncated image — fires the
   // img's error event and used to leave the browser's mute broken-image glyph: no reason, no way
-  // out (review 2026-08-25). This is the 413/415 pane idiom instead: plain words naming what
-  // happened, the path, and the Download the view could not be. Keyed on the img's own error
-  // event, the exact deciding signal (never a timer, never a byte sniff). The PDF iframe has no
-  // equivalent failure event — the browser's viewer owns that surface and reports inside it — so
-  // this covers images only, deliberately.
+  // out. This is the 413/415 pane idiom instead: plain words naming what happened, the path, and
+  // the Download the view could not be. Keyed on the img's own error event, the exact deciding
+  // signal (never a timer, never a byte sniff). The PDF iframe has no equivalent failure event —
+  // the browser's viewer owns that surface and reports inside it — so this covers images only,
+  // deliberately.
   const imgFailed = () => {
     if (!wrap.isConnected) return;              // settled after a close/replace — paint nothing
     const why = el("div", "fileview-err");
@@ -488,13 +488,12 @@ export function openFileView(path: string, sid?: string | null): boolean {
     cancelBtn.hidden = !editing;
     if (isImage || isPdf) {
       // Media mode. The quote gesture gates off the RENDERED views only: a chip's label anchors to
-      // text and an <img>/iframe body has none (affordance honesty — the no-sink gating precedent:
-      // no real target, no affordance; the mouseup seed below gates the same way). The SVG SOURCE
-      // view is a TEXT view — codeBlock output, real text nodes — so selections there quote like
-      // any text view (a blanket media gate made an .svg's XML unquotable — review 2026-08-25).
-      // Edit is already off through the isText arm above; the md segs cannot exist (an .md is never
-      // served image/*); Download, Copy path, the GitHub link, ✕ and the dir-link all keep working —
-      // none of them needs the text.
+      // text and an <img>/iframe body has none (affordance honesty: no real target, no affordance —
+      // the mouseup seed below gates the same way). The SVG SOURCE view is a TEXT view — codeBlock
+      // output, real text nodes — so selections there quote like any text view (a blanket media
+      // gate would make an .svg's XML unquotable). Edit is already off through the isText arm
+      // above; the md segs cannot exist (an .md is never served image/*); Download, Copy path, the
+      // GitHub link, ✕ and the dir-link all keep working — none of them needs the text.
       srcBtn.hidden = !(isSvgImage && objUrl !== null);
       srcBtn.classList.toggle("on", svgSource);
       srcBtn.setAttribute("aria-pressed", String(svgSource));
