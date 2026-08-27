@@ -11519,6 +11519,62 @@ def _audit_restart_request(action, **kw):
         pass
 
 
+RESTART_CUTS_FILE = jd.STATE / "restart-cuts.jsonl"
+
+
+def _restart_cut_row(drain_res, watches_armed=0, audit_reason="", now=None):
+    """One ledger row per restart — what THIS restart cut (T121: the drain's effect is measurable
+    only if every restart writes its row, so a clean drain's row with an empty cutTurns list is the
+    success metric, not noise). cutTurns names the sessions whose in-flight turns the drain
+    interrupted (sid-keyed, rename-proof); watchesArmed counts the PERSISTED kernel watches at cut
+    time — those SURVIVE by construction (pr-watches.json + the generic store re-arm at boot) and
+    ride along as context. In-session background watchers and Claude-side workflows are INVISIBLE
+    to the kernel and cannot be counted here — moving waits into the kernel watch primitive is what
+    makes them survivable AND countable. NOTE on the false interrupted-by-user transcript stamps:
+    those records are written by the CLI into its own transcript when the SDK client closes
+    mid-turn; romp does not rewrite CLI transcripts (ever), and romp's OWN records already
+    distinguish machine cuts (the INTR_RESTART_SIG resume notice + the machine-cut stop record) —
+    so the ledger documents the cut honestly on our side and the stamps stay a documented CLI
+    artifact."""
+    d = drain_res if isinstance(drain_res, dict) else {}
+    return {"t": int(now if now is not None else time.time()),
+            "pid": os.getpid(),
+            "cutTurns": list(d.get("cutTurns") or []),
+            "stopped": int(d.get("stopped") or 0),
+            "unjoined": int(d.get("unjoined") or 0),
+            "reaped": int(d.get("reaped") or 0),
+            "watchesArmed": int(watches_armed or 0),
+            "reason": str(audit_reason or "")}
+
+
+def _append_restart_cut(row):
+    """Best-effort append in a dying process: flushed line-buffered write, never raises — the
+    ledger must not be able to break the restart itself (the audit's discipline)."""
+    try:
+        with open(RESTART_CUTS_FILE, "a", encoding="utf-8") as f:
+            f.write(json.dumps(row) + "\n")
+            f.flush()
+    except Exception:
+        pass
+
+
+def _recent_restart_reason(window=90, now=None):
+    """The most recent restart-audit action within `window` seconds — joins the cut row to WHO asked
+    (deploy refresh, self-update, the rail button…). Best-effort: an anonymous SIGTERM has no row
+    and reads as ""."""
+    try:
+        tail = (jd.STATE / "restart-audit.jsonl").read_text().strip().splitlines()
+        if not tail:
+            return ""
+        rec = json.loads(tail[-1])
+        t0 = int(now if now is not None else time.time())
+        if isinstance(rec, dict) and isinstance(rec.get("t"), int) and t0 - rec["t"] <= window:
+            return str(rec.get("action") or "") + (": " + str(rec["reason"]) if rec.get("reason") else "")
+    except Exception:
+        pass
+    return ""
+
+
 def _restart_this_kernel(reason="", manager_port=_PORT_FROM_ENV):
     """Ask the manager to restart-all (it SIGTERMs this kernel; its exit handler spawns a fresh one).
     Standalone (no manager) → nothing to restart, which is not an error. `reason` lands in
@@ -30104,8 +30160,14 @@ def _graceful_term(signum, frame):
     try:
         sys.stderr.write("romp-kernel: SIGTERM — draining SDK sessions\n")
         be = _sdk_backend or None
+        res = {}
         if be is not None and hasattr(be, "drain"):
-            be.drain(2.0)
+            res = be.drain(2.0)
+        # the restart-cut ledger (T121): one row per restart, empty cutTurns included — a clean
+        # drain's row IS the metric. Written after the drain (the cutter knows what it cut) and
+        # before exit; best-effort like the audit.
+        _append_restart_cut(_restart_cut_row(res, watches_armed=len(_pr_watches),
+                                             audit_reason=_recent_restart_reason()))
     except Exception:
         sys.stderr.write("romp-kernel: drain failed: %s\n" % traceback.format_exc())
     finally:

@@ -3437,7 +3437,10 @@ class SdkBackend:
         test seam."""
         with self._lock:
             sessions = list(self.sessions.values())
-        inflight = sum(1 for s in sessions if s.inflight)
+        # the identities of the turns this drain is about to cut — the restart-cut ledger's rows
+        # (T121: the drain's effect is measured by what still gets cut; sid-keyed like spend)
+        cut = [{"sid": s.sid, "name": s.name} for s in sessions if s.inflight and not s.ended]
+        inflight = len(cut)
         for s in sessions:
             try:
                 s.shutdown()
@@ -3474,7 +3477,7 @@ class SdkBackend:
                          "; still closing: " + ", ".join(names) if names else "",
                          "; reaped: " + ", ".join(reaped) if reaped else ""))
         return {"stopped": len(sessions), "inflight": inflight, "unjoined": len(unjoined),
-                "reaped": len(reaped)}
+                "reaped": len(reaped), "cutTurns": cut}
 
     def available(self) -> bool:
         """Can this backend actually RUN a session? False when claude_agent_sdk isn't importable.
