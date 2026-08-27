@@ -2528,7 +2528,7 @@ def _user_todo_context_block(sid):
     return "\n".join(lines)
 
 
-def _stamp_user_todo_answered(sid, tid, text):
+def _stamp_user_todo_answered(sid, tid, text, nonce=None):
     """The delivery-keyed stamp (docs/adr/0001's fatal class): fires ONLY at the moment an answer
     actually reaches a backend send — the immediate path's truthy be.send, or a parked op draining
     (_deliver_send_batch) — never at the userTodoAnswer call, whose send may still be recalled
@@ -2566,9 +2566,16 @@ def _stamp_user_todo_answered(sid, tid, text):
     writer whose evidence predates the diary stands down). The todo stays open, the loss is said
     out loud, the consumed mark closes the loop, and the unlatch re-floors the ask exactly as
     the seam's reopen would have. Check-and-stamp are ONE critical section: split, the stamp
-    lands in the gap and the record it should have read is orphaned until the next boot."""
+    lands in the gap and the record it should have read is orphaned until the next boot.
+
+    BOUND TO ITS SEND (round 4, 2026-08-27): `nonce` names the send this stamp records — the
+    tmux callers thread it from the mark they (or their be.send) wrote — and the stand-down
+    consumes only a refusal carrying the same nonce, so a stale flag stranded by an EARLIER
+    send of this todo's answer can never stand down a delivered one's stamp (the stranded flag
+    dies at the boot split instead). A nonce-less stamp yields to any refusal on the todo —
+    fail toward the visible ask."""
     with _user_todos_lock:
-        stood_down = _tmux_paste_consume_refused(sid, tid)
+        stood_down = _tmux_paste_consume_refused(sid, tid, nonce)
         if not stood_down:
             _resolve_user_todo(sid, tid, "answered")
     if stood_down:
@@ -2602,7 +2609,7 @@ def _paste_landed_texts(text):
     return forms
 
 
-def _user_todo_answer_lost(sid, tid, text, wait=False):
+def _user_todo_answer_lost(sid, tid, text, wait=False, nonce=None):
     """The backends' todo_lost seam (SdkBackend._mark_dropped_echoes; a rewind-dropped head; a
     tmux paste the clear-guard refused — _tmux_send's on_refused, merge wave 2026-08-27; a stale
     tmux pending-paste mark at boot — _tmux_paste_loss_boot_pass): a
@@ -2621,9 +2628,12 @@ def _user_todo_answer_lost(sid, tid, text, wait=False):
     'answered' row because the row is still OPEN — the refusal outran the caller's stamp, or an
     earlier loss already reopened it), or "stale" (cleared meanwhile / evicted — nothing left to
     heal). The verdict is what the tmux mark callers key their clear on: "open" means the mark
-    must NOT be consumed — under the same lock that found the row open, any pending-paste mark
-    for this todo is flipped to refused (_tmux_paste_flag_refused), so the late stamp reads the
-    verdict at its own write moment and stands down (_stamp_user_todo_answered). Deciding and
+    must NOT be consumed — under the same lock that found the row open, the pending-paste mark
+    OF THE SEND THIS VERDICT RULED ON (`nonce`, threaded by every tmux caller; None flips every
+    unflagged entry for the todo, the pre-nonce read) is flipped to refused
+    (_tmux_paste_flag_refused), so the late stamp reads the verdict at its own write moment and
+    stands down (_stamp_user_todo_answered) — and ONLY that stamp: a send this verdict did not
+    rule on keeps its own stamp's claim (round 4, 2026-08-27). Deciding and
     recording are one critical section: split, the stamp lands in the gap, unmarked forever.
 
     THREADED by default; `wait` is the test seam. The loss events fire on threads where the
@@ -2640,7 +2650,7 @@ def _user_todo_answer_lost(sid, tid, text, wait=False):
     reopen); and a byte-identical text already in the transcript reads as landed (same body =
     the same todo answered in the same words — the stamp is true anyway)."""
     if not wait:
-        threading.Thread(target=_user_todo_answer_lost, args=(sid, tid, text, True),
+        threading.Thread(target=_user_todo_answer_lost, args=(sid, tid, text, True, nonce),
                          name="user-todo-lost", daemon=True).start()
         return None
     sid = str(sid)
@@ -2684,7 +2694,7 @@ def _user_todo_answer_lost(sid, tid, text, wait=False):
                         if isinstance(t, dict) and t.get("id") == tid), None)
             if row is not None and not row.get("resolved"):
                 verdict = "open"
-                _tmux_paste_flag_refused(sid, tid)
+                _tmux_paste_flag_refused(sid, tid, nonce)
             else:
                 verdict = "stale"
     if verdict == "reopened":
@@ -2786,24 +2796,33 @@ def _user_todo_loss_boot_pass(wait=False):
 # follows the VERDICT: a landed reopen or a row cleared meanwhile clears the mark, while a row
 # still OPEN — the caller's stamp hasn't landed — flips the mark to refused instead, and the
 # stamp itself consumes it as it stands down), and a mark still on disk at boot is a paste whose
-# verdict died with the previous kernel.
+# verdict died with the previous kernel. Each entry also carries a send NONCE — the send's
+# identity, minted at mark time and threaded to both the verdict hooks and the caller's stamp
+# (round 4, 2026-08-27): the refusal flips BY nonce and the stand-down consumes BY nonce, so a
+# refusal only ever stands down the stamp OF THE SEND IT RULED ON — a stale flag stranded by an
+# earlier send (e.g. the boot pass's threaded offer racing a reopen) can never eat a later,
+# delivered answer's stamp; it dies at the boot split instead.
 
 def _tmux_paste_pending_path(sid):
     return jd.STATE / "tmux-paste" / (str(sid) + ".json")
 
 
 def _tmux_paste_mark(sid, entries):
-    """Persist pending-paste marks for `entries` = [(todo id, pasted text)] — BEFORE the truthy
-    send returns, on the caller's thread, so a kernel death at any later instant leaves a durable
-    record the boot pass can act on. `text` is the text the PASTE carries (the merged body for a
-    drained batch, the answer body otherwise): it is what the boot pass's landed check must find
-    in the transcript to prove the delivery happened. The file is a read-modify-write shared with
-    the daemon thread's clear, so it holds the todo store's own lock (_user_todos_lock). A failed
-    write is LOUD, never silent: without the mark the live seam still covers the common case, but
-    a kernel death before this paste's verdict would re-lose the answer — and a refusal that
+    """Persist pending-paste marks for `entries` = [(todo id, pasted text, send nonce)] — BEFORE
+    the truthy send returns, on the caller's thread, so a kernel death at any later instant
+    leaves a durable record the boot pass can act on. `text` is the text the PASTE carries (the
+    merged body for a drained batch, the answer body otherwise): it is what the boot pass's
+    landed check must find in the transcript to prove the delivery happened. `nonce` is the
+    SEND's identity (round 4, 2026-08-27): minted by the marking caller and threaded both to the
+    verdict hooks (_tmux_paste_flag_refused flips by it) and to the caller's own 'answered'
+    stamp (_tmux_paste_consume_refused matches by it), so a refusal verdict can only stand down
+    the stamp of the send it ruled on. The file is a read-modify-write shared with the daemon
+    thread's clear, so it holds the todo store's own lock (_user_todos_lock). A failed write is
+    LOUD, never silent: without the mark the live seam still covers the common case, but a
+    kernel death before this paste's verdict would re-lose the answer — and a refusal that
     outran the caller's stamp would have no entry to flip, so the late stamp would stand
     (the stand-down reads its verdict off this record: _tmux_paste_flag_refused)."""
-    entries = [(tid, text) for tid, text in entries or [] if tid]
+    entries = [(tid, text, nonce) for tid, text, nonce in entries or [] if tid]
     if not entries:
         return
     with _user_todos_lock:
@@ -2815,13 +2834,14 @@ def _tmux_paste_mark(sid, entries):
         pend = ([e for e in cur.get("pending") or [] if isinstance(e, dict)]
                 if isinstance(cur, dict) else [])
         now = int(time.time())
-        pend.extend({"todo": str(tid), "text": str(text), "t": now} for tid, text in entries)
+        pend.extend({"todo": str(tid), "text": str(text), "t": now, "nonce": str(nonce)}
+                    for tid, text, nonce in entries)
         try:
             _atomic_write(p, json.dumps({"sid": str(sid), "pending": pend}))
         except Exception:
             sys.stderr.write("user-todos: pending-paste mark for %s (%s) failed to persist — a "
                              "kernel death before this paste's verdict would not reopen the ask: "
-                             "%s\n" % (", ".join(str(t) for t, _ in entries), str(sid)[:8],
+                             "%s\n" % (", ".join(str(t) for t, _, _ in entries), str(sid)[:8],
                                        traceback.format_exc()))
 
 
@@ -2869,16 +2889,22 @@ def _tmux_paste_unmark(sid, entries, path=None):
                              "re-offered at the next boot\n" % p)
 
 
-def _tmux_paste_flag_refused(sid, tid):
-    """Record a refusal verdict ON this todo's pending mark entries — the loss seam's write for
+def _tmux_paste_flag_refused(sid, tid, nonce=None):
+    """Record a refusal verdict ON this todo's pending mark entry — the loss seam's write for
     the row-still-OPEN case (findings 1+4, round 3 2026-08-27: the refusal outran the caller's
     'answered' stamp). NOT a clear: the entry must survive so the late stamp can read the verdict
     and stand down (_stamp_user_todo_answered → _tmux_paste_consume_refused) — an unmark here
     forfeits the only record, and the late stamp then stands forever, unhealable even at boot.
-    Same lock and atomic-replace idiom as the mark/clear; a missing or markless file is a quiet
-    no-op (the SDK loss paths route through the same seam with no tmux mark to flip). Called
-    under _user_todos_lock (the seam's verdict critical section); re-acquiring keeps it safe
-    standalone. A failed persist is LOUD: without the flag the late stamp would stand."""
+    `nonce` names the SEND this verdict ruled on (round 4, 2026-08-27): only that send's entry
+    is flipped — a sibling send's pending mark for the same todo keeps its own verdict open,
+    since flipping it would convert a verdict about one paste into a stand-down of another's
+    stamp. A None nonce (a verdict that cannot name its send: a pre-nonce mark re-offered at
+    boot) keeps the old read and flips every unflagged entry for the todo — erring toward the
+    stand-down, i.e. the visible ask. Same lock and atomic-replace idiom as the mark/clear; a
+    missing or markless file is a quiet no-op (the SDK loss paths route through the same seam
+    with no tmux mark to flip). Called under _user_todos_lock (the seam's verdict critical
+    section); re-acquiring keeps it safe standalone. A failed persist is LOUD: without the flag
+    the late stamp would stand."""
     with _user_todos_lock:
         p = _tmux_paste_pending_path(sid)
         try:
@@ -2888,7 +2914,8 @@ def _tmux_paste_flag_refused(sid, tid):
         if not isinstance(cur, dict):
             return
         pend = [e for e in cur.get("pending") or [] if isinstance(e, dict)]
-        hit = [e for e in pend if str(e.get("todo") or "") == str(tid) and not e.get("refused")]
+        hit = [e for e in pend if str(e.get("todo") or "") == str(tid) and not e.get("refused")
+               and (nonce is None or str(e.get("nonce") or "") == str(nonce))]
         if not hit:
             return
         for e in hit:
@@ -2901,15 +2928,21 @@ def _tmux_paste_flag_refused(sid, tid):
                              % (tid, str(sid)[:8], traceback.format_exc()))
 
 
-def _tmux_paste_consume_refused(sid, tid):
+def _tmux_paste_consume_refused(sid, tid, nonce=None):
     """The stamp's stand-down read (findings 1+4, round 3 2026-08-27): True when a pending-paste
-    mark for this (sid, tid) carries a refusal verdict — the paste thread already ruled on this
-    very send, so the caller's 'answered' stamp is older evidence than the diary and must yield.
-    Consumes exactly the refused entries; an un-flagged entry for the same todo (a NEWER send of
-    the same answer, its own verdict still pending) keeps its mark. Runs inside the stamp's
-    check-and-stamp critical section (_stamp_user_todo_answered holds _user_todos_lock);
-    re-acquiring keeps it safe standalone. A failed clear after a positive read is loud — the
-    next boot sweeps the leftover (refused + open row = nothing to heal)."""
+    mark for this (sid, tid) carries a refusal verdict FOR THE STAMP'S OWN SEND — the paste
+    thread already ruled on that very send, so the caller's 'answered' stamp is older evidence
+    than the diary and must yield. `nonce` is how the stamp names its send (round 4,
+    2026-08-27): only a refused entry matching it is a verdict about this stamp — a refused flag
+    stranded by an EARLIER send is somebody else's verdict, left in place (the boot split sweeps
+    it: refused + answered row reopens through the seam, refused + open row is consumed quietly)
+    so it can never stand down a delivered answer's stamp. A stamp that cannot name its send
+    (None — no live caller does this) yields to ANY refused entry for the todo: erring toward
+    the stand-down keeps the ask visible, the fail-safe direction. Consumes exactly what it
+    matched; an un-flagged entry for the same todo (a NEWER send, its own verdict still pending)
+    keeps its mark. Runs inside the stamp's check-and-stamp critical section
+    (_stamp_user_todo_answered holds _user_todos_lock); re-acquiring keeps it safe standalone.
+    A failed clear after a positive read is loud — the next boot sweeps the leftover."""
     with _user_todos_lock:
         p = _tmux_paste_pending_path(sid)
         try:
@@ -2922,7 +2955,8 @@ def _tmux_paste_consume_refused(sid, tid):
         for e in cur.get("pending") or []:
             if not isinstance(e, dict):
                 continue                             # junk rides no verdict — swept on any rewrite
-            if str(e.get("todo") or "") == str(tid) and e.get("refused"):
+            if (str(e.get("todo") or "") == str(tid) and e.get("refused")
+                    and (nonce is None or str(e.get("nonce") or "") == str(nonce))):
                 found = True
                 continue
             kept.append(e)
@@ -3011,9 +3045,15 @@ def _tmux_paste_loss_boot_pass(wait=False):
                 continue
             seen.add((sid, tid))
 
-            def _offer(sid=sid, tid=tid, text=text, p=p):
-                if _user_todo_answer_lost(sid, tid, text, wait=True) != "open":   # the seam rules first…
-                    _tmux_paste_unmark(sid, [(tid, text)], path=p)   # …then the verdict clears the mark
+            def _offer(sid=sid, tid=tid, text=text, p=p,
+                       nonce=str(e.get("nonce") or "") or None):
+                # the entry's own nonce rides the offer: an "open" verdict flags THIS mark, and
+                # the flag it leaves can only ever stand down the stamp of the send it names —
+                # never a later delivered answer's (round 4, 2026-08-27; a pre-nonce mark
+                # offers None and keeps the old flip-all read)
+                if _user_todo_answer_lost(sid, tid, text, wait=True, nonce=nonce) != "open":
+                    _tmux_paste_unmark(sid, [(tid, text)], path=p)   # …the seam rules first,
+                    #                                     then the verdict clears the mark
             if wait:
                 _offer()
             else:
@@ -9057,7 +9097,11 @@ def _drive(msg, client):
             if got == "parked":
                 pass                                  # stamps when the park drains into a real send
             elif got:
-                _stamp_user_todo_answered(sid, tid, body)
+                # a tmux send returns its NONCE — the pending mark's identity — so the stamp's
+                # stand-down is bound to THIS send's refusal verdict, never a stale flag from an
+                # earlier send (round 4, 2026-08-27); an SDK send returns a plain bool
+                _stamp_user_todo_answered(sid, tid, body,
+                                          nonce=got if isinstance(got, str) else None)
             else:
                 # the backend refused the send (an unrevivable SDK session) — be loud, leave it open
                 client["send"](json.dumps({"type": "warn",
@@ -9637,18 +9681,24 @@ class TmuxBackend(sb.SessionBackend):
         verdict is then a recorded loss the boot pass reopens — _tmux_paste_mark, adversarial
         verify 2026-08-27), the refusal hook — _user_todo_answer_lost's reopen, the same one the
         SDK's dropped-echo seam uses, with the mark cleared on its verdict — and the delivered
-        hook, where the mark just clears. on_refused/on_delivered override the defaults
-        when one paste carries several answers (_deliver_send_batch's merged run writes its own
-        marks). EITHER ORDERING of stamp and refusal holds (round 3, 2026-08-27 — a dead tmux
-        server refuses on the FIRST capture, in milliseconds, so the refusal really can outrun
-        the stamp that is the caller's next statement): a refusal that finds the row already
-        stamped reopens it and clears the mark; one that outruns the stamp finds the row still
-        open, flips the mark to refused inside the seam's own critical section, and the stamp
-        itself stands down at its write moment and consumes the mark
-        (_stamp_user_todo_answered) — the writer whose evidence is the older truthy send yields
-        to the newer refusal verdict."""
+        hook, where the mark just clears. When it arms those defaults the truthy return IS the
+        send's NONCE (round 4, 2026-08-27) — the mark's identity, which the caller must thread
+        into its 'answered' stamp so the stand-down is bound to THIS send's verdict, never a
+        stale flag from an earlier one. on_refused/on_delivered override the defaults when one
+        paste carries several answers (_deliver_send_batch's merged run writes its own marks and
+        nonces, one per unique todo). EITHER ORDERING of stamp and refusal converges on the same
+        truth (round 3 for the mechanism; round 4 made it hold for duplicate answers too): a
+        refusal that finds the row already stamped reopens it and clears the mark; one that
+        outruns the stamp finds the row still open, flips THIS send's mark to refused inside the
+        seam's own critical section, and the stamp stands down at its write moment and consumes
+        that mark (_stamp_user_todo_answered) — the writer whose evidence is the older truthy
+        send yields to the newer refusal verdict. Both orderings end identically: the row open
+        and visibly waiting on the user, the mark consumed, nothing refused left on disk — and
+        because verdict and stand-down are matched BY NONCE, no ordering can leave a flag that
+        outlives its send to eat a later delivered answer's stamp."""
         if on_refused is None and user_todo:
-            _tmux_paste_mark(sid, [(user_todo, text)])
+            nonce = uuid.uuid4().hex                 # this send's identity in the mark store
+            _tmux_paste_mark(sid, [(user_todo, text, nonce)])
 
             def on_refused():
                 # the seam rules FIRST, and the clear follows its verdict: reopened / landed /
@@ -9657,11 +9707,15 @@ class TmuxBackend(sb.SessionBackend):
                 # the only record the late stamp's stand-down (and the boot pass) can read.
                 # Inline (wait=True) is safe here — the hook runs on the dedicated paste thread,
                 # not one of the threads the seam's docstring bars the landed check from.
-                if _user_todo_answer_lost(sid, user_todo, text, wait=True) != "open":
+                if _user_todo_answer_lost(sid, user_todo, text, wait=True,
+                                          nonce=nonce) != "open":
                     _tmux_paste_unmark(sid, [(user_todo, text)])
 
             def on_delivered():
                 _tmux_paste_unmark(sid, [(user_todo, text)])
+            _tmux_send(_name_of(sid) or sid, text, on_refused=on_refused,
+                       on_delivered=on_delivered)
+            return nonce
         _tmux_send(_name_of(sid) or sid, text, on_refused=on_refused, on_delivered=on_delivered)
         return True
 
@@ -17858,7 +17912,20 @@ def _deliver_send_batch(be, sid, run):
     the ask still stands. The drain hands the id to the backend too (_backend_send), so the drained
     entry is recallable/loss-tracked exactly like an immediate send's — and the tmux merge below
     arms the merged send's refusal hook the same way: its truthy send is fire-and-forget, and one
-    clear-guard refusal loses every answer the paste carried (merge wave 2026-08-27)."""
+    clear-guard refusal loses every answer the paste carried (merge wave 2026-08-27).
+
+    ACCOUNTING IS PER DELIVERY EVENT, NOT PER OP (round 4, 2026-08-27). A run can carry TWO
+    parked answers for the SAME todo — the stamp is delivery-keyed, so the row stays open until
+    this drain, and a second dashboard's answer (or a re-answer) legitimately parks a second op.
+    On the SDK each op stays its own delivery event (its own queue entry, echo, recall handle and
+    loss tracking), so per-op stamping is the correct grain there and a duplicate's second stamp
+    is the documented idempotent no-op. The tmux MERGE collapses the whole run into ONE paste, so
+    there the unit is the unique todo: one pending mark, one seam ruling, one stamp per tid —
+    per-op accounting double-ruled the seam (the second 'open' verdict flipped entries the first
+    stamp's stand-down then swallowed wholesale, landing a permanent false 'answered' with the
+    mark store empty) and single-instance-unmarked a double flip (stranding a refused flag that
+    stood down the NEXT delivered answer). Both bodies still ride the merged paste — dedup is in
+    the bookkeeping, never the delivery — and the one stamp records them joined as one answer."""
     if not run:
         return
     if _forwards_sends(be):
@@ -17870,40 +17937,50 @@ def _deliver_send_batch(be, sid, run):
                 _stamp_user_todo_answered(sid, op[3], op[1])
         return
     merged = "\n\n".join(op[1] for op in run)          # tmux: one message, blank-line separated between turns
-    todos = [(op[3], op[1]) for op in run if len(op) > 3 and op[3]]
-    if todos and getattr(be, "send_reports_refusal", False):
-        # one paste carries every answer in the run, so one refusal loses them all: hand each id
-        # to the same loss seam the immediate path arms (TmuxBackend.send), keyed at the refusal
-        # point itself — the stamps below stay optimistic; the refusal event corrects them. The
-        # pending-paste marks persist BEFORE the truthy send (a kernel death before the paste's
-        # verdict is a recorded loss the boot pass reopens), keyed on the MERGED text — the text
-        # the paste carries is what the boot pass's landed check must find to prove delivery —
-        # and clear on the verdict: delivered just clears; a refusal clears each answer as its
-        # reopen lands (an answer whose stamp the refusal outran keeps its mark, flipped refused,
-        # for the stamp's own stand-down), so a death between the verdict and the clear
-        # re-offers at boot instead of re-losing the answers.
-        marks = [(tid, merged) for tid, _body in todos]
-        _tmux_paste_mark(sid, marks)
+    answers = {}                                       # unique tid → its ops' bodies, in park order
+    for op in run:
+        if len(op) > 3 and op[3]:
+            answers.setdefault(op[3], []).append(op[1])
+    if answers and getattr(be, "send_reports_refusal", False):
+        # one paste carries every answer in the run, so one refusal loses them all: hand each
+        # UNIQUE id to the same loss seam the immediate path arms (TmuxBackend.send), keyed at
+        # the refusal point itself — the stamps below stay optimistic; the refusal event
+        # corrects them. The pending-paste marks persist BEFORE the truthy send (a kernel death
+        # before the paste's verdict is a recorded loss the boot pass reopens), ONE per unique
+        # todo, keyed on the MERGED text — the text the paste carries is what the boot pass's
+        # landed check must find to prove delivery — each carrying this send's nonce, and clear
+        # on the verdict: delivered just clears; a refusal clears each answer as its reopen
+        # lands (an answer whose stamp the refusal outran keeps its mark, flipped refused, for
+        # the stamp's own stand-down), so a death between the verdict and the clear re-offers
+        # at boot instead of re-losing the answers.
+        nonces = {tid: uuid.uuid4().hex for tid in answers}
+        _tmux_paste_mark(sid, [(tid, merged, nonces[tid]) for tid in answers])
 
         def _batch_refused():
-            # inline (wait=True): the paste thread is dedicated. The clear follows each answer's
-            # VERDICT (round 3, 2026-08-27): an "open" ruling means this answer's stamp hasn't
-            # landed — the seam flipped its mark to refused, the entry stays for the stand-down
+            # inline (wait=True): the paste thread is dedicated. ONE ruling per unique todo —
+            # the merged paste is one delivery event, and ruling per op re-judged a row the
+            # first ruling had just reopened (round 4). The clear follows each answer's VERDICT
+            # (round 3, 2026-08-27): an "open" ruling means this answer's stamp hasn't landed —
+            # the seam flipped its mark to refused, the entry stays for the stand-down
             # (_stamp_user_todo_answered), and unmarking it here would forfeit that record.
-            ruled = [(tid, merged) for tid, body in todos
-                     if _user_todo_answer_lost(sid, tid, body, wait=True) != "open"]
+            ruled = [(tid, merged) for tid in answers
+                     if _user_todo_answer_lost(sid, tid, merged, wait=True,
+                                               nonce=nonces[tid]) != "open"]
             _tmux_paste_unmark(sid, ruled)
         got = be.send(sid, merged, on_refused=_batch_refused,
-                      on_delivered=lambda: _tmux_paste_unmark(sid, marks))
+                      on_delivered=lambda: _tmux_paste_unmark(
+                          sid, [(tid, merged) for tid in answers]))
     else:
+        nonces = {}
         got = be.send(sid, merged)
     author = next((op[2] for op in run if op[2]), None)
     if author:
         _optimistic_echo(sid, merged, author=author)
     if got:
-        for op in run:
-            if len(op) > 3 and op[3]:
-                _stamp_user_todo_answered(sid, op[3], op[1])
+        for tid, bodies in answers.items():
+            # one stamp per unique todo, presenting this send's nonce; the answer it records is
+            # the tid's bodies joined the way the merged paste carries them
+            _stamp_user_todo_answered(sid, tid, "\n\n".join(bodies), nonce=nonces.get(tid))
 
 
 def _apply_pending_ops():

@@ -1490,8 +1490,9 @@ class TmuxPasteRefusalReopens(_StoreSandbox):
         body = km._user_todo_answer_body("Need the auth-scheme decision to wire login",
                                          "Go with the session cookie.")
         got = km._send_or_park(self.be, SID, body, user_todo=tid)   # the drive handler's call…
-        self.assertIs(got, True, "fire-and-forget: the tmux send is truthy before any paste")
-        km._stamp_user_todo_answered(SID, tid, body)                # …and its stamp at the truthy send
+        self.assertTrue(got, "fire-and-forget: the tmux send is truthy before any paste "
+                             "(the truthy value is the send's nonce)")
+        km._stamp_user_todo_answered(SID, tid, body, nonce=got)     # …and its stamp at the truthy send
         self.assertTrue(self._await(lambda: "resolved" not in self._rows()[0]),
                         "the clear-guard refusal is a loss event — the ask visibly returns")
         self.assertEqual(km._TMUX.pastes, [], "nothing was pasted onto the leftover (the guard held)")
@@ -1504,8 +1505,9 @@ class TmuxPasteRefusalReopens(_StoreSandbox):
         tid = km._add_user_todo(SID, "Need the auth-scheme decision to wire login")
         body = km._user_todo_answer_body("Need the auth-scheme decision to wire login",
                                          "Go with the session cookie.")
-        self.assertIs(km._send_or_park(self.be, SID, body, user_todo=tid), True)
-        km._stamp_user_todo_answered(SID, tid, body)
+        got = km._send_or_park(self.be, SID, body, user_todo=tid)
+        self.assertTrue(got)
+        km._stamp_user_todo_answered(SID, tid, body, nonce=got)
         self.assertTrue(self._await(lambda: ("Enter",) in km._TMUX.keys_sent),
                         "the paste completed and submitted")
         time.sleep(0.3)                              # a beat for any (wrong) reopen thread to land
@@ -1589,8 +1591,9 @@ class TmuxPasteRefusalReopens(_StoreSandbox):
         tid = km._add_user_todo(SID, "Need the auth-scheme decision to wire login")
         body = km._user_todo_answer_body("Need the auth-scheme decision to wire login",
                                          "Go with the session cookie.")
-        self.assertIs(km._send_or_park(self.be, SID, body, user_todo=tid), True)
-        km._stamp_user_todo_answered(SID, tid, body)
+        got = km._send_or_park(self.be, SID, body, user_todo=tid)
+        self.assertTrue(got)
+        km._stamp_user_todo_answered(SID, tid, body, nonce=got)
         return tid, body
 
     def test_a_dead_server_at_set_buffer_is_a_refusal_not_a_delivery(self):
@@ -1766,7 +1769,11 @@ class TmuxPendingPasteMarks(_TmuxPasteHarness):
         gate = self._gate_clear(True)
         tid = km._add_user_todo(SID, "Need the staging port")
         body = km._user_todo_answer_body("Need the staging port", "8443.")
-        self.assertIs(self.be.send(SID, body, user_todo=tid), True)
+        got = self.be.send(SID, body, user_todo=tid)
+        self.assertTrue(got, "truthy = accepted for delivery")
+        self.assertEqual(got, self._raw_marks()[0].get("nonce"),
+                         "…and the truthy value NAMES the send: it is the mark's nonce, for "
+                         "the caller to thread into its stamp (round 4, 2026-08-27)")
         self.assertEqual(self._marks(), [(tid, body)],
                          "the mark is on disk WHILE the verdict is pending — a kernel death "
                          "here leaves a record, not a silent false stamp")
@@ -1778,8 +1785,9 @@ class TmuxPendingPasteMarks(_TmuxPasteHarness):
         km._TMUX = _FakeTmuxPane(["a draft typed straight into the terminal"], honors_kill=False)
         tid = km._add_user_todo(SID, "Need the staging port")
         body = km._user_todo_answer_body("Need the staging port", "8443.")
-        self.assertIs(self.be.send(SID, body, user_todo=tid), True)
-        km._stamp_user_todo_answered(SID, tid, body)
+        got = self.be.send(SID, body, user_todo=tid)
+        self.assertTrue(got)
+        km._stamp_user_todo_answered(SID, tid, body, nonce=got)
         self.assertTrue(self._await(lambda: "resolved" not in self._rows()[0]),
                         "the refusal reopened the ask")
         self.assertTrue(self._await(lambda: self._marks() == []),
@@ -1974,12 +1982,13 @@ class TmuxStampStandDown(_TmuxPasteHarness):
         km._TMUX = _FakeTmuxPane(["a draft typed straight into the terminal"], honors_kill=False)
         tid = km._add_user_todo(SID, "Need the staging port")
         body = km._user_todo_answer_body("Need the staging port", "8443.")
-        self.assertIs(self.be.send(SID, body, user_todo=tid), True)
+        got = self.be.send(SID, body, user_todo=tid)         # truthy return = this send's nonce
+        self.assertTrue(got)
         self.assertTrue(self._await(self._verdict_recorded),
                         "the refusal ruled first — provably, before the stamp below lands")
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
-            km._stamp_user_todo_answered(SID, tid, body)     # the late stamp finally lands…
+            km._stamp_user_todo_answered(SID, tid, body, nonce=got)   # the late stamp lands…
         self.assertNotIn("resolved", self._rows()[0],
                          "…and stands down: the refusal verdict is newer information than the "
                          "truthy send the stamp is acting on")
@@ -1997,10 +2006,10 @@ class TmuxStampStandDown(_TmuxPasteHarness):
         km._TMUX = _FakeTmuxPane(["a draft typed straight into the terminal"], honors_kill=False)
         real = km._stamp_user_todo_answered
 
-        def gated(sid, tid, text):
+        def gated(sid, tid, text, *a, **kw):
             self.assertTrue(self._await(self._verdict_recorded),
                             "the batch refusal ruled before this stamp")
-            return real(sid, tid, text)
+            return real(sid, tid, text, *a, **kw)
         km._stamp_user_todo_answered = gated
         self.addCleanup(setattr, km, "_stamp_user_todo_answered", real)
         tid1 = km._add_user_todo(SID, "Need the auth-scheme decision to wire login")
@@ -2047,8 +2056,8 @@ class SeamOrderPins(_TmuxPasteHarness):
         real_lost = km._user_todo_answer_lost
         real_unmark = km._tmux_paste_unmark
 
-        def lost(sid, tid, text, wait=False):
-            got = real_lost(sid, tid, text, wait=wait)
+        def lost(sid, tid, text, wait=False, nonce=None):
+            got = real_lost(sid, tid, text, wait=wait, nonce=nonce)
             calls.append(("ruled", tid))             # appended AFTER the seam returns…
             return got
 
@@ -2066,7 +2075,7 @@ class SeamOrderPins(_TmuxPasteHarness):
         calls = self._recorded()
         km._TMUX = _FakeTmuxPane(["a draft typed straight into the terminal"], honors_kill=False)
         tid, body = self._stamped()                  # stamped FIRST: the refusal finds the row
-        self.assertIs(self.be.send(SID, body, user_todo=tid), True)
+        self.assertTrue(self.be.send(SID, body, user_todo=tid))
         self.assertTrue(self._await(lambda: self._marks() == []))
         self.assertEqual(calls, [("ruled", tid), ("unmark", (tid,))],
                          "the seam ruled to completion before the mark was touched")
@@ -2092,6 +2101,174 @@ class SeamOrderPins(_TmuxPasteHarness):
         self.assertEqual(km._tmux_paste_loss_boot_pass(wait=True), 1)
         self.assertEqual(calls, [("ruled", tid), ("unmark", (tid,))],
                          "the seam ruled first; the discovered mark was consumed after")
+
+
+class TmuxBatchDuplicateAnswers(_TmuxPasteHarness):
+    """Round 4 (2026-08-27): a drained batch can carry TWO parked answers for the SAME todo —
+    the stamp is delivery-keyed, so the row stays open until the drain, and a second dashboard's
+    answer (or a re-answer) legitimately parks a second op for the same id. The merged paste is
+    ONE delivery event per todo, but the batch's accounting ran PER OP, in both orderings:
+    - refusal outruns the stamps: the seam's 'open' verdict flips BOTH mark entries refused, the
+      first stamp's stand-down consumes them ALL, and the second stamp lands a permanent false
+      'answered' with the mark store empty — nothing for boot to heal (the ADR fatal class);
+    - stamps land first: the seam rules the same tid twice ('reopened', then 'open' on the
+      just-reopened row), flips the surviving entry refused, and the single-instance unmark
+      strands it on disk — where it falsely stands down the NEXT delivered answer's stamp.
+    The fix, two coordinated pieces: (1) unique-tid accounting through the batch seam — one
+    mark, one seam ruling, one stamp per unique todo, while every parked body still rides the
+    merged paste; (2) every mark carries a send NONCE, the refusal verdict flips by it, and the
+    stamp's stand-down consumes only the mark OF THE SEND IT PRESENTED — a stale flag from any
+    earlier send can never eat a delivered answer's stamp, and dies at the boot split instead."""
+
+    ASK = "Need the staging port"
+
+    def _dup_run(self):
+        tid = km._add_user_todo(SID, self.ASK)
+        body = km._user_todo_answer_body(self.ASK, "8443.")
+        return tid, body, [("send", body, None, tid), ("send", body, None, tid)]
+
+    def test_a_refusal_that_outruns_a_duplicate_answer_batch_never_stamps_answered(self):
+        # finding A (probe ordering 1): the clear-guard refuses on the paste thread while both
+        # stamps are still pending — deterministic via gating each stamp on the refusal verdict
+        # being RECORDED in the mark store (an event, never a sleep)
+        km._TMUX = _FakeTmuxPane(["a draft typed straight into the terminal"], honors_kill=False)
+
+        def _verdict_recorded():
+            raw = self._raw_marks()
+            return raw == [] or all(e.get("refused") for e in raw)
+        real = km._stamp_user_todo_answered
+
+        def gated(sid, tid, text, *a, **kw):
+            self.assertTrue(self._await(_verdict_recorded),
+                            "the batch refusal ruled before this stamp — the outrun ordering")
+            return real(sid, tid, text, *a, **kw)
+        km._stamp_user_todo_answered = gated
+        self.addCleanup(setattr, km, "_stamp_user_todo_answered", real)
+        tid, body, run = self._dup_run()
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            km._deliver_send_batch(self.be, SID, run)
+        self.assertNotIn("resolved", self._rows()[0],
+                         "one delivery event, one stamp, stood down on the refusal — a "
+                         "duplicate op must never land a second, false 'answered'")
+        self.assertEqual(self._marks(), [], "the stand-down consumed its own send's mark")
+        self.assertIn("stand", err.getvalue(), "the stood-down stamp is said out loud")
+        self.assertEqual(km._tmux_paste_loss_boot_pass(wait=True), 0)
+        self.assertNotIn("resolved", self._rows()[0], "healed for good — not parked for a boot")
+
+    def test_a_refusal_after_duplicate_stamps_strands_no_flag(self):
+        # finding B (probe ordering 2): stamps land first, the refusal rules after — the seam
+        # must rule the tid ONCE, unmark its one mark, and leave nothing refused on disk
+        km._TMUX = _FakeTmuxPane()
+        gate = self._gate_clear(False)
+        tid, body, run = self._dup_run()
+        km._deliver_send_batch(self.be, SID, run)
+        merged = body + "\n\n" + body
+        self.assertEqual(self._marks(), [(tid, merged)],
+                         "one delivery event per todo = ONE mark, on the merged text")
+        self.assertEqual(self._rows()[0]["resolved"]["kind"], "answered",
+                         "the stamps landed first — the normal ordering")
+        with contextlib.redirect_stderr(io.StringIO()):
+            gate.set()                               # NOW the clear-guard refuses the paste
+            self.assertTrue(self._await(lambda: self._raw_marks() == []
+                                        and "resolved" not in self._rows()[0]),
+                            "the refusal reopened the ask and consumed the one mark — a "
+                            "stranded refused entry would stand down the NEXT delivered answer")
+        # the user re-answers the reopened ask; this time the paste delivers, and the stamp
+        # (presenting its own send's nonce — or none: nothing refused remains either way) LANDS
+        body2 = km._user_todo_answer_body(self.ASK, "8444 actually.")
+        km._stamp_user_todo_answered(SID, tid, body2)
+        self.assertEqual((self._rows()[0].get("resolved") or {}).get("kind"), "answered",
+                         "the delivered re-answer's stamp lands — nothing stale stands it down")
+
+    def test_a_delivered_duplicate_batch_carries_both_bodies_and_stamps_once(self):
+        # delivery semantics unchanged by the unique-tid accounting: BOTH parked bodies still
+        # ride the one merged paste; the one stamp records them as one answer
+        km._TMUX = _FakeTmuxPane()
+        gate = self._gate_clear(True)
+        tid = km._add_user_todo(SID, self.ASK)
+        b1 = km._user_todo_answer_body(self.ASK, "8443.")
+        b2 = km._user_todo_answer_body(self.ASK, "8444 actually — checked twice.")
+        km._deliver_send_batch(self.be, SID, [("send", b1, None, tid),
+                                              ("send", b2, None, tid)])
+        merged = b1 + "\n\n" + b2
+        self.assertEqual(self._marks(), [(tid, merged)],
+                         "one mark per unique todo, keyed on the merged text")
+        self.assertEqual(self._rows()[0]["resolved"]["kind"], "answered")
+        gate.set()                                   # the paste delivers
+        self.assertTrue(self._await(lambda: km._TMUX.buffers == [merged]),
+                        "never drop a parked body: both answers rode the one paste")
+        self.assertTrue(self._await(lambda: self._marks() == []),
+                        "…and the delivered verdict cleared the one mark")
+
+    def test_the_refusal_flips_only_its_own_sends_mark(self):
+        # piece 2's write half: the verdict names the paste it ruled on — a sibling send's
+        # pending mark for the same todo keeps its own verdict open
+        tid = km._add_user_todo(SID, self.ASK)
+        body = km._user_todo_answer_body(self.ASK, "8443.")
+        self._mark_file([{"todo": tid, "text": body, "t": 1, "nonce": "1111aaaa"},
+                         {"todo": tid, "text": body, "t": 2, "nonce": "2222bbbb"}])
+        km._tmux_paste_flag_refused(SID, tid, nonce="1111aaaa")
+        self.assertEqual([bool(e.get("refused")) for e in self._raw_marks()], [True, False])
+
+    def test_a_stale_flag_from_an_earlier_send_never_stands_down_a_delivered_stamp(self):
+        # piece 2's read half, pinned directly: a refused flag stranded by an EARLIER send
+        # cannot eat a later delivered answer's stamp — the stamp presents its own nonce, the
+        # flag names a different send, the stamp lands, and the leftover dies at the boot split
+        tid = km._add_user_todo(SID, self.ASK)
+        old = km._user_todo_answer_body(self.ASK, "8443.")
+        self._mark_file([{"todo": tid, "text": old, "t": 1, "refused": True,
+                          "nonce": "1111aaaa"}])
+        body2 = km._user_todo_answer_body(self.ASK, "8444 actually.")
+        km._stamp_user_todo_answered(SID, tid, body2, nonce="2222bbbb")
+        self.assertEqual(self._rows()[0]["resolved"]["kind"], "answered",
+                         "the flag rode an earlier send — this delivered stamp lands")
+        self.assertEqual(len(self._raw_marks()), 1,
+                         "…and the stale flag stays for the boot split, unconsumed")
+        # the boot split still rules with nonces riding the entries: refused beside an
+        # 'answered' row → the seam rules (nothing landed) → reopen, mark consumed
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(km._tmux_paste_loss_boot_pass(wait=True), 1)
+        self.assertNotIn("resolved", self._rows()[0])
+        self.assertEqual(self._marks(), [])
+
+    def test_a_nonceless_stamp_still_yields_to_any_refusal_on_its_todo(self):
+        # fail toward the visible ask: a stamp that cannot name its send (no nonce) yields to
+        # ANY refusal recorded for the todo — the legacy read, kept as the conservative default
+        tid = km._add_user_todo(SID, self.ASK)
+        body = km._user_todo_answer_body(self.ASK, "8443.")
+        self._mark_file([{"todo": tid, "text": body, "t": 1, "refused": True,
+                          "nonce": "1111aaaa"}])
+        with contextlib.redirect_stderr(io.StringIO()):
+            km._stamp_user_todo_answered(SID, tid, body)
+        self.assertNotIn("resolved", self._rows()[0])
+        self.assertEqual(self._marks(), [], "the stand-down consumed the refused entry")
+
+    def test_a_row_reopened_between_the_boot_check_and_the_offer_strands_no_usable_flag(self):
+        # the boot pass's threaded-offer variant (wait=False): the row can flip answered→open
+        # between the loop's answered filter and the offer thread's seam run, whose 'open'
+        # verdict then flags the mark refused and leaves it (correctly) unconsumed.
+        # Deterministic stand-in for the interleaving: lift the stamp just before the seam
+        # rules. The flag carries ITS send's nonce, so a later delivered answer still stamps.
+        tid, body = self._stamped()
+        self._mark_file([{"todo": tid, "text": body, "t": 1, "nonce": "1111aaaa"}])
+        real = km._user_todo_answer_lost
+
+        def raced(sid, t, text, *a, **kw):
+            km._reopen_user_todo(sid, t)             # the interleaved writer wins the gap
+            return real(sid, t, text, *a, **kw)
+        km._user_todo_answer_lost = raced
+        self.addCleanup(setattr, km, "_user_todo_answer_lost", real)
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(km._tmux_paste_loss_boot_pass(wait=True), 1)
+        self.assertEqual([(e["todo"], bool(e.get("refused")), e.get("nonce"))
+                          for e in self._raw_marks()],
+                         [(tid, True, "1111aaaa")],
+                         "the 'open' verdict flagged the mark it ruled on, nonce intact")
+        body2 = km._user_todo_answer_body("Need the staging port", "8444 actually.")
+        km._stamp_user_todo_answered(SID, tid, body2, nonce="2222bbbb")
+        self.assertEqual((self._rows()[0].get("resolved") or {}).get("kind"), "answered",
+                         "the stranded flag names the dead send — the delivered stamp lands")
 
 
 class MarkerNeutralizerVariants(unittest.TestCase):

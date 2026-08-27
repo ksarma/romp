@@ -46,7 +46,10 @@ class SessionBackend(ABC):
     @abstractmethod
     def send(self, sid: str, text: str) -> bool:
         """Deliver a user message / command to `sid` (the chat composer, /compact, retry, an injected
-        nudge). True if delivered/queued."""
+        nudge). Truthy if delivered/queued — a backend may answer with a richer truthy value
+        (TmuxBackend returns a user-todo answer's send NONCE, the pending-mark identity its caller
+        threads into the 'answered' stamp; round 4, 2026-08-27), so callers gate on truthiness,
+        never on `is True`."""
 
     @abstractmethod
     def interrupt(self, sid: str) -> bool:
