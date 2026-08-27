@@ -14161,13 +14161,27 @@ def _patch_rows(sp):
     "@@ -old +new @@" header. Removed lines carry only an old number, added lines only a new one, context both.
     Capped so a huge MultiEdit can't bloat the payload. Returns [] when there's nothing usable."""
     rows = []
-    for h in (sp or []):
+    if not isinstance(sp, list):
+        return rows                                  # the CONTAINER is external input too: a truthy
+                                                     # non-iterable (int/bool/float) TypeError'd at
+                                                     # the for itself, OUTSIDE the per-hunk try —
+                                                     # the same escape to the push loop's outer
+                                                     # except, the same permanent push-cycle abort
+    for h in sp:
         try:
             o = int(h["oldStart"]); n = int(h["newStart"])
+            lines = h.get("lines") or []
+            if not isinstance(lines, list) or not all(isinstance(ln, str) for ln in lines):
+                continue                             # a non-list lines (a STRING's chars pass the
+                                                     # per-entry check — one garbage row per char) or
+                                                     # a non-string line entry (the record is external
+                                                     # input) degrades its hunk like every other bad
+                                                     # shape — a TypeError here escaped the chat build
+                                                     # and aborted every push cycle permanently
         except Exception:
             continue
         rows.append({"sign": "@", "text": "@@ -%d +%d @@" % (o, n), "oldNo": None, "newNo": None})
-        for ln in (h.get("lines") or []):
+        for ln in lines:
             mark = ln[:1]
             if mark == "+":
                 rows.append({"sign": "+", "text": ln[1:], "oldNo": None, "newNo": n}); n += 1
