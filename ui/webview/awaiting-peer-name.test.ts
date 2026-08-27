@@ -40,10 +40,13 @@ test("the chat pane names the peer: box in identity colour, pill with the colour
   assert.match(box, /nm\.style\.color = pr\.color\.bg/);
   const chipAt = RENDER.indexOf("const chipPeers = s.status.awaitingPeers");
   const chip = RENDER.slice(chipAt, RENDER.indexOf("chip.title =", chipAt));
-  assert.match(chip, /el\("span", "chip-peer-dot"\)/, "'Awaiting <name>' wears the identity dot");
-  assert.match(chip, /dot\.style\.background = chipPeers\[0\]\.color\.bg/);
+  assert.ok(!chip.includes("chip-peer-dot"), "the dot retired (the user 2026-08-26, round two) — the name wears the colour");
+  assert.match(chip, /el\("span", "chip-peer-name"\)/, "'Awaiting <name>' — the NAME itself in identity colour");
+  assert.match(chip, /nm\.style\.color = chipPeers\[0\]\.color\.bg/);
   assert.match(chip, /chipPeers\.length \+ " peers"/, "several peers keep the one-line rule as a count");
-  assert.match(CSS, /\.chip-peer-dot \{ display: inline-block; width: 7px; height: 7px; border-radius: 50%;/);
+  assert.match(CSS, /\.chip-peer-name \{ background: rgba\(0, 0, 0, 0\.85\); color: #fff; border-radius: 7px;/,
+    "the ~85% black backing — any colour reads on it, the chip hue still glows around it");
+  assert.ok(!/\.chip-peer-dot/.test(CSS), "the dot's CSS goes with it");
 });
 
 test("the kernel ships identities on every arm — the or-chain's hardcoded Nones are gone", () => {
