@@ -10807,6 +10807,178 @@ def _pr_watch_tick(now):
         _pr_watches_save()
 
 
+# ── kernel-owned GENERIC watches (T121 part 2, 2026-08-27): the pr-watch machinery, generalized —
+# sessions kept arming IN-PROCESS background watchers for every other kind of wait (a CI run, a
+# file appearing, a remote queue), and every kernel restart killed them mid-wait (the optimizer
+# measured 15+ in one window, plus ~40 near-empty re-arm wakes in a single watcher session). A
+# generic watch is a PREDICATE COMMAND the KERNEL runs on a cadence: exit 0 means the condition
+# holds → ONE [romp] mail to the registering session (with the predicate's output tail) and the
+# watch retires. Anything else means "not yet" — except an exec failure (127/126) on the FIRST
+# run, which retires LOUDLY at once (a typo'd command must not wait silently for its timeout).
+# Every watch carries a TIMEOUT (default 24h): the giving-up mail is the other end of the standing
+# watcher rule — never a silent dead loop. Same discipline as pr-watches end to end: persisted
+# (watches.json), boot re-armed, one mail through the park-aware injector, rate-gated per row.
+# pr-watches stays its OWN store on purpose: its verdicts are structured gh reads (merged/closed/
+# failed + the busy cadence hint), not a predicate exit — the two share the delivery and the
+# discipline, not a row shape; nothing migrates.
+
+WATCH_FILE = jd.STATE / "watches.json"
+WATCH_MIN_EVERY = 15          # floor: a predicate is a subprocess — never let a watch hammer
+WATCH_DEFAULT_EVERY = 60
+WATCH_DEFAULT_TIMEOUT = 24 * 3600   # a watch with no bound is a leak; the giving-up mail names it
+WATCH_RUN_TIMEOUT = 45        # one predicate run's own bound
+WATCH_MAX = 200               # registration cap — a runaway loop's backstop, far above real use
+_watches = []                 # [{id, cmd, every, timeoutS, sid, note, at} + runtime {_next, _ran}]
+_watch_lock = threading.Lock()
+_WATCH_KEYS = ("id", "cmd", "every", "timeoutS", "sid", "note", "at")
+
+
+def _watches_load():
+    try:
+        rows = json.loads(WATCH_FILE.read_text())
+    except Exception:
+        return
+    if not isinstance(rows, list):
+        return
+    with _watch_lock:
+        _watches[:] = [dict(r) for r in rows
+                       if isinstance(r, dict) and r.get("id") and r.get("cmd") and r.get("sid")]
+        for r in _watches:          # boot re-arm (the pr-watch idiom): fresh counters, poll soon
+            r["_next"], r["_ran"] = 0, True   # a re-armed watch is never "first run" — no exec-fail retire on a boot blip
+    if _watches:
+        sys.stderr.write("romp-kernel: re-armed %d generic watch(es)\n" % len(_watches))
+
+
+def _watches_save():
+    with _watch_lock:
+        rows = [{k: r.get(k) for k in _WATCH_KEYS} for r in _watches]
+    try:
+        _atomic_write(WATCH_FILE, json.dumps(rows))
+    except Exception:
+        sys.stderr.write("watches save: %s\n" % traceback.format_exc())
+
+
+def add_watch(cmd, sid, every=None, timeout_s=None, note="", now=None):
+    """Register a generic watch. Returns (row, error): the persisted row on success, else a
+    human-readable refusal — loud, never a silent drop."""
+    cmd = str(cmd or "").strip()
+    if not cmd:
+        return None, "a watch needs a command (the predicate: exit 0 = condition met)"
+    if len(cmd) > 4000:
+        return None, "that command is too long to be a predicate (4000 chars max)"
+    try:
+        every = max(WATCH_MIN_EVERY, int(every)) if every else WATCH_DEFAULT_EVERY
+    except Exception:
+        return None, "every must be seconds (a number)"
+    try:
+        timeout_s = max(every, int(timeout_s)) if timeout_s else WATCH_DEFAULT_TIMEOUT
+    except Exception:
+        return None, "timeout must be seconds (a number)"
+    with _watch_lock:
+        if len(_watches) >= WATCH_MAX:
+            return None, "too many watches are registered (%d) — cancel some first" % WATCH_MAX
+        wid = os.urandom(4).hex()
+        row = {"id": wid, "cmd": cmd, "every": every, "timeoutS": timeout_s,
+               "sid": str(sid), "note": str(note or "")[:200],
+               "at": int(now if now is not None else time.time()),
+               "_next": 0, "_ran": False}
+        _watches.append(row)
+    _watches_save()
+    return {k: row[k] for k in _WATCH_KEYS}, None
+
+
+def cancel_watch(wid):
+    with _watch_lock:
+        hit = next((r for r in _watches if r.get("id") == wid), None)
+        if hit:
+            _watches.remove(hit)
+    if hit:
+        _watches_save()
+    return bool(hit)
+
+
+def list_watches():
+    with _watch_lock:
+        return [{k: r.get(k) for k in _WATCH_KEYS} for r in _watches]
+
+
+def _watch_notice(kind, row, detail=""):
+    """The one mail a generic watch sends — the [romp] mechanics-notice family (ABOUT romp's own
+    watch service, like the pr-watch and restart notices). PURE for the voice test. The session's
+    own `note` leads when present — the user's words for what they were waiting on."""
+    what = row.get("note") or ("`%s`" % str(row.get("cmd") or "")[:120])
+    if kind == "met":
+        body = ("[romp] The condition you asked romp to watch now HOLDS: %s. This watch is done."
+                % what)
+        tail = (detail or "").strip()
+        if tail:
+            body += "\n\nThe check's last output:\n" + tail[:800]
+    elif kind == "timeout":
+        body = ("[romp] romp gave up watching after %s: %s never held (the check kept saying not-yet). "
+                "This watch is done — re-register with `romp watch` if you still need it."
+                % (_fmt_span_s(int(row.get("timeoutS") or 0)), what))
+    else:   # execfail — the first run could not even execute
+        body = ("[romp] The watch command could not run at all (%s): %s. This watch was dropped — "
+                "fix the command and re-register with `romp watch`."
+                % (detail or "exec failed", what))
+    return body + "\n\n<!-- romp-tag: watch -->"
+
+
+def _fmt_span_s(s):
+    if s >= 3600:
+        return "%dh%s" % (s // 3600, ("%02dm" % (s % 3600 // 60)) if s % 3600 else "")
+    if s >= 60:
+        return "%dm" % (s // 60)
+    return "%ds" % s
+
+
+def _watch_run(cmd):
+    """One predicate run → (exitcode, output tail). Bounded; a timeout reads as not-yet (the
+    predicate gets another try — its own bound is the watch timeout)."""
+    try:
+        r = subprocess.run(["/bin/sh", "-c", cmd], capture_output=True, text=True,
+                           timeout=WATCH_RUN_TIMEOUT)
+        out = ((r.stdout or "") + (("\n" + r.stderr) if r.stderr else "")).strip()
+        return r.returncode, out[-1000:]
+    except subprocess.TimeoutExpired:
+        return None, "the check ran past %ds" % WATCH_RUN_TIMEOUT
+    except Exception as e:
+        return 127, str(e)[:200]
+
+
+def _watch_tick(now):
+    """One supervisor-pass sweep (rate-gated per row) — the pr-watch pump's twin."""
+    with _watch_lock:
+        rows = list(_watches)
+    done = []
+    for r in rows:
+        if now < r.get("_next", 0):
+            continue
+        if now - int(r.get("at") or 0) >= int(r.get("timeoutS") or WATCH_DEFAULT_TIMEOUT):
+            _pr_watch_deliver(r["sid"], _watch_notice("timeout", r))
+            done.append(r)
+            continue
+        code, out = _watch_run(r["cmd"])
+        first = not r.get("_ran")
+        r["_ran"] = True
+        if code == 0:
+            _pr_watch_deliver(r["sid"], _watch_notice("met", r, out))
+            done.append(r)
+            continue
+        if first and code in (126, 127):
+            # a command that cannot exec at all must not wait silently for its timeout
+            _pr_watch_deliver(r["sid"], _watch_notice("execfail", r, out or ("exit %s" % code)))
+            done.append(r)
+            continue
+        r["_next"] = now + int(r.get("every") or WATCH_DEFAULT_EVERY)
+    if done:
+        with _watch_lock:
+            for r in done:
+                if r in _watches:
+                    _watches.remove(r)
+        _watches_save()
+
+
 def _fleet_usage():
     """One row per HOST whose usage is known — local always first (the notices read off it), each row
     {host, acct, usage}.
@@ -11965,6 +12137,7 @@ def _tunnel_supervisor():
                 # Once per (host, level); a failed push retries next pass.
                 _push_origin_trust_rows()
             _pr_watch_tick(now)          # PR-landing watches (rate-gated per row; loud on gh failure)
+            _watch_tick(now)             # generic predicate watches (T121 part 2) — same pump discipline
             # Everything above is the supervisor's own state (status, fails, next_try, kernel_sha, detail).
             # None of it used to reach disk — only the act routes saved — so the file could sit frozen on a
             # failure long after the row recovered. Signature-gated: a steady fleet writes nothing.
@@ -28109,6 +28282,11 @@ class Handler(BaseHTTPRequestHandler):
                               "records": {k: v for k, v in (nd.get("nudged") or {}).items() if mine(k)},
                               "walkGates": {k: v for k, v in (nd.get("walkGates") or {}).items() if mine(k)}},
                 }), "application/json", cache="no-cache")
+            if p == "/watches":
+                # the registered generic watches, for `romp watch --list` — AUTHED (rows carry
+                # user-written commands; nothing here is exempt-safe like the bare /busy count)
+                return self._send(200, json.dumps({"watches": list_watches()}), "application/json",
+                                  cache="no-cache")
             if p == "/views":                             # the session-views blob (active view, hidden set,
                 # tags) for scripts/agents: the read half of POST /tag, AND the remote-poll source of
                 # tag federation v0. CANONICAL shape (member pairs), remoteTags absent on purpose:
@@ -28755,6 +28933,35 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(200, json.dumps({"ok": False, "error":
                         'no session answers to "%s"' % who}), "application/json")
                 row = add_pr_watch(prn, repo, tsid)
+                return self._send(200, json.dumps({"ok": True, "watch": row}), "application/json")
+            if u.path == "/watch":
+                # Register a GENERIC predicate watch (T121 part 2): the kernel runs `cmd` on a
+                # cadence; exit 0 = the condition holds → one [romp] mail to the session and the
+                # watch retires; a timeout mails the giving-up notice (never a silent dead loop).
+                # Body: {"cmd": "...", "id"|"name": <session>, "every"?: s, "timeoutS"?: s,
+                # "note"?: "..."} — or {"cancel": <watch id>} to retire one early.
+                try:
+                    b = json.loads(raw_body or b"{}")
+                except Exception:
+                    b = {}
+                if b.get("cancel"):
+                    ok = cancel_watch(str(b["cancel"]).strip())
+                    return self._send(200, json.dumps({"ok": ok} if ok else
+                        {"ok": False, "error": "no watch with that id (see `romp watch --list`)"}),
+                        "application/json")
+                who = str(b.get("id") or b.get("name") or "").strip()
+                if not str(b.get("cmd") or "").strip() or not who:
+                    return self._send(400, json.dumps({"ok": False, "error":
+                        "cmd (the predicate: exit 0 = met) and id|name (the session to mail) required"}),
+                        "application/json")
+                tsid = _sid_of(who)
+                if not tsid:
+                    return self._send(200, json.dumps({"ok": False, "error":
+                        'no session answers to "%s"' % who}), "application/json")
+                row, err = add_watch(b.get("cmd"), tsid, every=b.get("every"),
+                                     timeout_s=b.get("timeoutS"), note=b.get("note"))
+                if err:
+                    return self._send(200, json.dumps({"ok": False, "error": err}), "application/json")
                 return self._send(200, json.dumps({"ok": True, "watch": row}), "application/json")
             if u.path in ("/tag", "/group"):
                 # Headless tag edit (`romp tag`, the user 2026-08-23, the manager/worker workflow:
@@ -30288,6 +30495,7 @@ def main():
     _known_load()                                              # remembered past hosts (popover's re-attach rows)
     _remotes_load()                                            # re-attach remote kernels from a prior run
     _pr_watches_load()                                         # re-arm PR-landing watches (same intent rule)
+    _watches_load()                                            # …and the generic watches (T121 part 2)
     _consume_update_report()                                   # last self-update's outcome → the Log, once
     threading.Thread(target=_update_check_loop, daemon=True).start()   # newer release? boot + every 6h (mode-gated inside)
     threading.Thread(target=_ensure_postal_bus, daemon=True).start()   # a sessionless machine still needs its bus
