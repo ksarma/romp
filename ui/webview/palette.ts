@@ -50,7 +50,7 @@ const CSS =
   ".rpal-title{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}" +
   ".rpal-title b{color:var(--accent,#9cd2ff);font-weight:600}" +
   // the tabs' identity language, verbatim: .tab.colored .tab-label is 600-weight in the session
-  // color; .host-prefix is dim italic at 0.88em. Matched characters keep the row's own colors
+  // color; .host-prefix is dim italic at 0.86em (the six-rung ladder, 2026-08-26). Matched characters keep the row's own colors
   // (underline marks them) — an accent-blue <b> inside a colored name would fight the identity.
   ".rpal-name{font-weight:600}" +
   ".rpal-host{color:#9aa0a6;font-weight:400;font-style:italic;font-size:0.86em}" +

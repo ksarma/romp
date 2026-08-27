@@ -63,7 +63,13 @@ test("identity stands down on a blocked tab, so it can't mask the red (structura
   // the old form was a box-shadow:none override on the ring; the 2026-08-26 gradient tint bakes the
   // stand-down into every identity rule's selector instead — blocked outranks identity by construction
   assert.doesNotMatch(CSS, /box-shadow: inset 0 0 0 1\.5px var\(--chip-bg\)/);
-  for (const m of CSS.match(/\.tab[^ ,{]*\.colored[^,{]*\{[^}]*var\(--chip-bg\)[^}]*background/gs) || []) {
+  // matched on the DECLARATION as written (background: color-mix(... var(--chip-bg) ...)) and
+  // COUNTED: the first form of this loop required var(--chip-bg) BEFORE the word background, an
+  // order the sheet never uses, so it matched zero rules and asserted nothing (PR-730 review,
+  // 2026-08-27). A guard that can match nothing must fail loudly instead.
+  const tints = CSS.match(/\.tab[^,{]*\.colored[^,{]*\{[^}]*background: color-mix\(in srgb, var\(--chip-bg\)/gs) || [];
+  assert.ok(tints.length >= 3, "the tint family (9/15/22%) is present — zero matches would make this guard vacuous");
+  for (const m of tints) {
     assert.ok(m.includes(":not(.tab-blocked)"), "an identity TINT rule must except blocked: " + m.slice(0, 60));
   }
 });

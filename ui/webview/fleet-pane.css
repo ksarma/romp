@@ -4,7 +4,10 @@
    chat's styles.css (linked before this file on both hosts); these rules own the page
    layout so the chat rules don't fight the fleet page. */
 html,body{margin:0;height:100%;background:var(--vscode-editor-background,#1e1e1e);
-color:var(--vscode-foreground,#cccccc);font-family:var(--vscode-font-family,system-ui,-apple-system,'Segoe UI',sans-serif);
+color:var(--vscode-foreground,#cccccc);font-family:'Inter',var(--vscode-font-family,system-ui,-apple-system,'Segoe UI',sans-serif);
+/* Inter leads HERE, not only inside the var: in VS Code --vscode-font-family is the editor's real
+   font, so a var-only lead never reached this pane (PR-730 review, 2026-08-27; the document's
+   @font-face rides in via styles.css, linked before this file on both hosts). */
 font-size:13px;display:flex;flex-direction:column;overflow:hidden}
 /* docked search bar at the TOP (the user 2026-06-29): filter the fleet to sessions whose NAME matches. */
 #fleet-search-bar{flex:0 0 auto;display:flex;align-items:center;flex-wrap:wrap;gap:6px;padding:8px 12px;border-bottom:1px solid var(--vscode-editorHoverWidget-border,rgba(255,255,255,0.12))}

@@ -621,11 +621,14 @@ def _ct_eq(a, b):
 # the token once, the redirect's ?token= sets the year-long cookie, never see this page again. Static,
 # self-contained (every other asset route is token-gated), leaks nothing. Colors follow the UI: the
 # accent button is --accent #9cd2ff on --accent-fg #0c1a2e.
+# The login page stays on the SYSTEM stack, deliberately: it renders pre-auth and /media is
+# token-gated (only the install icons ride exempt), so an 'Inter' lead could never load here —
+# it would just misstate the stack (PR-730 review, 2026-08-27).
 _TOKEN_LOGIN_HTML = """<!doctype html>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>romp</title>
 <body style="margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;\
-background:#101418;color:#dfe7ee;font:15px/1.5 'Inter',system-ui,-apple-system,sans-serif">
+background:#101418;color:#dfe7ee;font:15px/1.5 system-ui,-apple-system,sans-serif">
 <form style="text-align:center;max-width:26em;padding:2em" onsubmit="\
 location.replace('/?token='+encodeURIComponent(document.getElementById('t').value.trim()));return false">
   <div style="font-size:1.6em;letter-spacing:.04em;margin-bottom:.4em">romp</div>
@@ -24520,7 +24523,7 @@ def _fleet_page():
     try:
         fleet_css = (UI / "webview" / "fleet-pane.css").read_text()
     except OSError:
-        return ("<!DOCTYPE html><html><body style='font-family:'Inter',system-ui,-apple-system,sans-serif;color:#999;"
+        return ("<!DOCTYPE html><html><body style='font-family:Inter,system-ui,-apple-system,sans-serif;color:#999;"
                 "background:#1e1e1e;padding:12px'>romp outline needs the ui/ modules "
                 "(webview/fleet-pane.css).</body></html>")
     v = _dist_ver()
@@ -24595,7 +24598,7 @@ def _timeline_page():
         view_js = (UI / "romp-timeline-view.js").read_text()
         tl_css = (UI / "webview" / "timeline-pane.css").read_text()
     except OSError:
-        return ("<!DOCTYPE html><html><body style='font-family:'Inter',system-ui,-apple-system,sans-serif;color:#999;"
+        return ("<!DOCTYPE html><html><body style='font-family:Inter,system-ui,-apple-system,sans-serif;color:#999;"
                 "background:#1e1e1e;padding:12px'>romp timeline needs the ui/ modules "
                 "(romp-timeline-view.js + webview/timeline-pane.css).</body></html>")
     v = _dist_ver()
@@ -26540,6 +26543,12 @@ def _landing():
             "<meta name=theme-color content='#1e1e1e'>"
             "<link rel=icon type=image/svg+xml href=/media/romp-swirl-glyph.svg><title>Romp</title><style>"
             ":root{--accent:#9cd2ff;--accent-fg:#0c1a2e}"
+            # Inter loads PER DOCUMENT (2026-08-27, PR-730 review): the shell names 'Inter' in every
+            # sans stack below, but @font-face never crosses an iframe boundary — without these two
+            # rules the panes rendered Inter while the shell around them silently kept the system
+            # font on any machine without Inter installed OS-wide. The same two faces THEME_CSS ships.
+            "@font-face{font-family:'Inter';src:url(/media/InterVariable.woff2) format('woff2-variations');font-weight:100 900;font-style:normal;font-display:swap}"
+            "@font-face{font-family:'Inter';src:url(/media/InterVariable-Italic.woff2) format('woff2-variations');font-weight:100 900;font-style:italic;font-display:swap}"
             # The chain, widest support last-wins: 100% (always right where the viewport is static), then
             # 100dvh (tracks browser chrome appearing/collapsing), then --app-h, the live
             # visualViewport.height _LANDING_MOBILE_JS publishes. This used to be a mobile-only rule, so a
@@ -26902,7 +26911,7 @@ def _landing():
             ".gv::after{width:3px;height:36px}.gh::after{width:36px;height:3px}"
             ".gv:hover{background:linear-gradient(90deg,transparent 3px,#3a4a58 3px,#3a4a58 4px,transparent 4px)}"
             ".gh:hover{background:linear-gradient(180deg,transparent 3px,#3a4a58 3px,#3a4a58 4px,transparent 4px)}"
-            ".gv:hover::after{background:#9cd2ff;height:52px}.gh:hover::after{background:#9cd2ff;width:52px}"
+            ".gv:hover::after{background:var(--accent,#9cd2ff);height:52px}.gh:hover::after{background:var(--accent,#9cd2ff);width:52px}"
             "body.drag iframe{pointer-events:none}body.dragv{cursor:col-resize}body.dragh{cursor:row-resize}"
             ".pane{position:relative;min-width:0;min-height:0;overflow:hidden}"
             ".pane>iframe{position:absolute;inset:0;width:100%;height:100%}"

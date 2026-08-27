@@ -4052,7 +4052,7 @@ class TimelinePanel {
       if (hpre && s.name && s.name.startsWith(hpre) && s.name.length > hpre.length) {
         // its own fill, so the parent <text>'s faded color can NOT reach it — fade it explicitly (and
         // un-fade it with the name on hover, below) or "host:" outshines the dimmed name (the user 2026-07-22)
-        hostTsp = el('tspan', { fill: F(MODEL_FG), 'font-weight': 400, 'font-style': 'italic', 'font-size': 10.5 });
+        hostTsp = el('tspan', { fill: F(MODEL_FG), 'font-weight': 400, 'font-style': 'italic', 'font-size': 10.3 });   // the px mirror of the webview's 0.86em host-prefix (12px base; 10.5 was the old 0.88em step)
         // A lane whose HOST is unreachable strikes the "host:" token (the user 2026-07-29): the lane
         // keeps its bars — they happened — but nothing on it is current, and a frozen lane is otherwise
         // indistinguishable from an idle one. Striking the host, not the name, keeps it distinct from
