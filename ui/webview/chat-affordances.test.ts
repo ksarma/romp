@@ -23,18 +23,14 @@ test("session identity: rail (2px, 70%) + the soft 1px pane ring in the SAME col
   assert.match(CSS, /#winframe \{ display: block; position: fixed; inset: 0; z-index: 900; pointer-events: none;\n  border: 1px solid color-mix\(in srgb, var\(--active-accent, transparent\) 30%, transparent\); \}/);
   assert.doesNotMatch(CSS, /#winframe \{[^}]*border: 2px solid/);
   assert.match(CSS, /\.turn::before \{[^}]*width: 2px[^}]*background: var\(--active-accent[^}]*opacity: 0\.7/);
-  // T113 (the user 2026-08-27): CLASSIC is the default — the thick 1.5px selected ring returns,
-  // the identity wash drops to the user's 5% (vars, trivially tunable), and the strip has NO
-  // bottom line (transparent keeps geometry). PR 730's aesthetic lives on, exactly, as the opt-in
-  // Yatharth theme scoped under body.chat-theme-yatharth.
-  assert.match(CSS, /#tabbar \{ --tab-tint-rest: 5%; --tab-tint-hover: 8%; --tab-tint-active: 5%; \}/);
-  assert.match(CSS, /\.tab\.active\.colored:not\(\.tab-blocked\) \{[^}]*box-shadow: inset 0 0 0 1\.5px var\(--chip-bg\);/s,
+  // T113→T115 (the user 2026-08-27): CLASSIC is the default and is the PRE-720 strip verbatim,
+  // typography excepted — the thick 1.5px selected ring, NO identity tint at any state, the
+  // neutral line under the strip. The contributor's aesthetic lives on, exactly, as the opt-in
+  // Yatharth theme scoped under body.chat-theme-yatharth (tab-theme.test.ts pins both in full).
+  assert.match(CSS, /\.tab\.active\.colored \{ box-shadow: inset 0 0 0 1\.5px var\(--chip-bg\); \}/,
     "the classic selected ring — the user: the thicker outline makes the selected tab easy to tell");
-  assert.match(CSS, /\.tab\.colored:not\(\.tab-blocked\) \{ background: color-mix\(in srgb, var\(--chip-bg\) var\(--tab-tint-rest\), transparent\); \}/);
-  assert.match(CSS, /border-bottom: 1px solid transparent;/, "no line under the strip in Classic (multi-row strips)");
+  assert.match(CSS, /border-bottom: 1px solid var\(--box-border\);/, "the pre-720 neutral line under the strip");
   assert.doesNotMatch(CSS, /\.tab[^{]*\{[^}]*linear-gradient\(180deg/, "no glossy tab gradients");
-  // the Yatharth scope carries 730's values verbatim: tinted line, 9/15/22 wash, soft border, no ring
-  assert.match(CSS, /body\.chat-theme-yatharth #tabbar \{\n  --tab-tint-rest: 9%; --tab-tint-hover: 15%; --tab-tint-active: 22%;\n  border-bottom: 1px solid color-mix\(in srgb, var\(--active-accent, rgba\(255, 255, 255, 0\.3\)\) 40%, transparent\);/);
   assert.match(CSS, /body\.chat-theme-yatharth \.tab\.active\.colored:not\(\.tab-blocked\) \{[^}]*border-color: color-mix\(in srgb, var\(--chip-bg\) 55%, transparent\);[^}]*box-shadow: none;/s);
 });
 

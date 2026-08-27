@@ -4002,7 +4002,6 @@ function bgRgb(): [number, number, number] {
 // its luminance hits a uniform low target, so a bright hue (yellow) fades as much
 // as a dim one (blue) — consistent "faded-ness" regardless of color. Never
 // touches the bright color (only used for at-rest tabs).
-const CLASSIC_FADE_SCALE = 0.8;   // the user's ~20% brighter faded tab labels (T113) — one tunable knob
 function fadedColor(hex: string): string {
   const m = /^#?([0-9a-fA-F]{6})$/.exec(hex.trim());
   if (!m) return hex;
@@ -4012,10 +4011,7 @@ function fadedColor(hex: string): string {
   const lum = (x: number, y: number, z: number) => 0.2126 * x + 0.7152 * y + 0.0722 * z;
   const Lc = lum(r, g, b), Lb = lum(br, bgc, bb), Lt = Lb + 38;
   if (Lc <= Lt) return hex; // already dim — leave it
-  // CLASSIC brightens the faded labels ~20% (T113 item 4 — unselected tabs were hard to read, a
-  // complaint predating 730): fade 20% less far toward the background. Yatharth keeps the full fade.
-  const scale = settings.chatTabTheme === "yatharth" ? 1 : CLASSIC_FADE_SCALE;
-  const t = Math.min(0.85, (Lc - Lt) / (Lc - Lb)) * scale;
+  const t = Math.min(0.85, (Lc - Lt) / (Lc - Lb));
   const hx = (a: number, c: number) => Math.round(a * (1 - t) + c * t).toString(16).padStart(2, "0");
   return `#${hx(r, br)}${hx(g, bgc)}${hx(b, bb)}`;
 }
