@@ -1,8 +1,7 @@
 // The chat-tab appearance themes (T113, tightened by T115, tuned by T118 — the user 2026-08-27):
 // CLASSIC, the default, is the PRE-720 tab strip modulo exactly THREE sanctioned deltas —
-// typography (the strip inherits the global Inter/type ladder), T118's 2% neutral rest wash, and
-// T118's 0.9 faded-label scale (the user partially restoring parked T113 tunings with new
-// numbers). Everything else reads pre-720: NO identity tint at any state, the thick 1.5px
+// typography (the strip inherits the global Inter/type ladder), T123's 1px hover-gray rest
+// outline, and T118's 0.9 faded-label scale (the user restoring parked tunings, redirected). Everything else reads pre-720: NO identity tint at any state, the thick 1.5px
 // selected ring, the neutral line under the strip, gap 0. T115 verified the baseline equality by
 // pixel-diffing a real pre-720 build: with fonts normalized, zero differing pixels outside the
 // (out-of-scope) tag-controls box — a re-run must subtract the two T118 washes the same way it
@@ -45,7 +44,7 @@ test("Classic: the pre-720 strip verbatim — line, gap 0, gray active fill, rin
 test("Classic: NO identity tint — every tint rule lives under the theme class", () => {
   // The user revoked the IDENTITY wash (T115 amendment): outside the yatharth block there must be
   // no identity-tinted tab background at all. Every tinted background in the stylesheet is scoped.
-  // (T118's rest wash is NEUTRAL white, not identity — pinned in its own test below.)
+  // (T123's rest OUTLINE is neutral hover-gray, not identity — pinned in its own test below.)
   const tintRules = CSS.split("\n").filter((l) => /\.tab[^{]*\{[^}]*color-mix\(in srgb, var\(--chip-bg\)/.test(l));
   for (const l of tintRules) assert.match(l, /^body\.chat-theme-yatharth /, "tint rule must be theme-scoped: " + l);
   const ringLine = CSS.match(/^\.tab\.active\.colored \{.*$/m)![0];
@@ -58,16 +57,19 @@ test("Classic: faded labels brighten 10% — one tunable knob, Yatharth keeps hi
   assert.match(RENDER, /const t = Math\.min\(0\.85, \(Lc - Lt\) \/ \(Lc - Lb\)\) \* scale;/);
 });
 
-test("Classic: the 2% NEUTRAL rest wash — rest only, never a state, never the + tab, never Yatharth (T118)", () => {
-  const rule = CSS.match(/^body:not\(\.chat-theme-yatharth\) \.tab([^ ]*) \{ background: (rgba\([^)]*\)); \}$/m);
-  assert.ok(rule, "the rest-wash rule exists, body-scoped OUT of the Yatharth theme in one rule (no cancel rule to race)");
-  assert.equal(rule![2], "rgba(255, 255, 255, 0.02)", "the slightest lighter gray — neutral white, the user's ~2% starting number");
-  for (const excl of [":not(.tab-blocked)", ":not(.active)", ":not(:hover)", ":not(.tab-add)"]) {
-    assert.ok(rule![1].includes(excl), "rest only — the rule never MATCHES " + excl.slice(5, -1) +
-      ", so the stateful backgrounds keep winning without a specificity race (the cascade-tiebreak lesson)");
+test("Classic: the rest OUTLINE — 1px in the hover gray, no fill, states stand down (T123)", () => {
+  const rule = CSS.match(/^body:not\(\.chat-theme-yatharth\) \.tab([^ ]*) \{ border-color: (rgba\([^)]*\)); \}$/m);
+  assert.ok(rule, "the rest-outline rule exists, body-scoped OUT of the Yatharth theme");
+  assert.equal(rule![2], "rgba(255, 255, 255, 0.06)", "EXACTLY the hover fill's gray — tune them in lockstep");
+  for (const excl of [":not(.tab-blocked)", ":not(.active)", ":not(.tab-add)"]) {
+    assert.ok(rule![1].includes(excl), "the outline stands down for " + excl.slice(5, -1) +
+      " — those states own their border/ring band");
   }
-  // hover keeps its existing stronger gray exactly
+  // border-color is a different property from the state FILLS, so hover needs no exclusion — the
+  // outline stays under hover's fill (same color, one object filling in) and the fill itself…
   assert.match(CSS, /\.tab:hover \{ color: var\(--fg\); background: rgba\(255, 255, 255, 0\.06\); \}/);
+  // …and no resting FILL remains: the T118 2% wash was replaced by this outline (T123).
+  assert.doesNotMatch(CSS, /\.tab[^{]*\{ background: rgba\(255, 255, 255, 0\.0[24]\); \}/);
 });
 
 test("Yatharth: his strip verbatim, scoped to the theme class", () => {
