@@ -3436,6 +3436,28 @@ def _interrupt_block_tick(now, tmux):
         _push_all()
 
 
+def _walk_root_record(sid):
+    """Kernel side of the bus's send-time enrichment (the user 2026-08-27, T126): walk the SENDING
+    session's chain on THIS kernel, where the evidence is local, so a cross-host delegate can carry
+    a walk-proved root-ask record the receiving kernel could never resolve (its walk rightly
+    refuses foreign hops at read time). Start node = the sender's active focus chain (lastNode):
+    the round the session is serving when it dispatches — a positional proxy for the courier's
+    later semantic link, tolerant of error in the safe direction (a wrong-chain start usually
+    dead-ends to None, which enriches nothing; T101's quiet-on-uncertainty). None when the chain
+    resolves no human record — the mail relays unenriched, never blocked."""
+    try:
+        store = jd.load_goals(sid)
+        start = store.get("lastNode")
+        if not start:
+            return None
+        now = int(time.time())
+        paths = {f: str(p) for f, p, _a, _n in jd.discover(now)}
+        rec = jd._delegate_user_rooted(sid, start, paths, now)
+        return rec if isinstance(rec, dict) and str(rec.get("text") or "").strip() else None
+    except Exception:
+        return None
+
+
 def _log_nudge_event(sid, gid, t, count, verdict="fired", ev_t=None):
     """Append one auto-nudge event to STATE/nudge-events.jsonl — {sid, gid, t, count, verdict, evT} —
     for the timeline's DEBUG judging band (per-nudge ⚡ marker) AND the redundancy accounting (the
@@ -29238,6 +29260,16 @@ class Handler(BaseHTTPRequestHandler):
                 if pub is None:
                     return self._send(404, json.dumps({"ok": False, "error": "no attached host '%s' — attach it first" % host}), "application/json")
                 return self._send(200, json.dumps({"ok": True, "tunnel": pub}), "application/json")
+            if u.path == "/walk-root":
+                # the postal bus asks for the sending session's walked root-ask record at relay
+                # time (T126) — best-effort: {} when the chain resolves nothing, and the bus
+                # degrades to an unenriched relay either way
+                try:
+                    body = json.loads(raw_body or b"{}")
+                except Exception:
+                    body = {}
+                rec = _walk_root_record(str((body or {}).get("sid") or ""))
+                return self._send(200, json.dumps(rec or {}), "application/json")
             if u.path == "/redial":
                 # A CONSUMER just needed a host and found it unreachable (the postal bus parking mail,
                 # the composer refusing a send to a downed host): user demand, so re-send the connect
