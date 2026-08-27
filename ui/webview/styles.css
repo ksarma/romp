@@ -160,11 +160,14 @@ body.chat-theme-yatharth #winframe { display: block; position: fixed; inset: 0; 
    closed by the existing --box-border hairline at its bottom edge. This is how tab strips are
    grounded in the polished multi-tab precedents (browser frame bands, editor tab-group headers,
    design-system "tabs on a surface + divider"): the plane says "one control", the hairline says
-   "it ends here" — per-row separator lines were rejected as clutter. 3% white over the page bg
-   (tunable one-liner); background only, so zero layout shift, and the selected ring / blocked
+   "it ends here" — per-row separator lines were rejected as clutter. 5% white over the page bg
+   (tunable one-liner; shipped at 3%, stepped up 2026-08-27 after the T128 triage: on the user's
+   dark theme 3% was an ~11-gray-level delta that read as nothing at a glance — the eyeball
+   comparison lives in their drops, and 3%/6% stay one edit away); background only, so zero
+   layout shift, and the selected ring / blocked
    dashed / rest outline / hover fill all read as before, now against the band. Classic only:
    Yatharth keeps his merged look via the body scope. */
-body:not(.chat-theme-yatharth) #tabbar { background: linear-gradient(rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.03)), var(--vscode-sideBar-background, var(--bg)); }
+body:not(.chat-theme-yatharth) #tabbar { background: linear-gradient(rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.05)), var(--vscode-sideBar-background, var(--bg)); }
 /* Drag handle straddling the tab strip's bottom border (the user 2026-08-18): the strip scrolls past
    its max-height cap, which clipped the fifth row of a many-session strip with no way to see more.
    Drag DOWN for more rows, UP for fewer; double-click resets; the strip stays a scroll pane at every
