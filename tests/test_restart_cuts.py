@@ -1,0 +1,78 @@
+#!/usr/bin/env python3
+"""The per-restart CUT LEDGER (T121, 2026-08-27): every restart writes ONE row to
+restart-cuts.jsonl naming what it cut — the drain's effect is measurable only if clean restarts
+write rows too (an empty cutTurns list is the success metric, not noise). The row joins the
+restart-audit tail for WHO asked, counts the persisted kernel watches (which SURVIVE restarts by
+construction — they ride as context, not cuts), and its docstring documents the two things the
+kernel cannot do: count in-session watchers/Claude-side workflows (invisible here — the kernel
+watch primitive is the fix), and un-write the CLI's own interrupted-by-user transcript stamps
+(romp never rewrites CLI transcripts; romp's own records already distinguish machine cuts).
+Hermetic state; synthetic sids only."""
+import json
+import os
+import tempfile
+import unittest
+from pathlib import Path
+from importlib.machinery import SourceFileLoader
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+BIN = os.path.join(os.path.dirname(HERE), "bin")
+os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
+os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
+# Hermetic state BEFORE the loads — module import runs boot reconcile against the state root.
+os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
+os.environ.pop("ROMP_STATE_DIR", None)
+km = SourceFileLoader("romp_kernel_cuts", os.path.join(BIN, "romp-kernel")).load_module()
+jd = km.jd
+
+SID = "11111111-2222-3333-4444-00000000c001"
+
+
+class CutRow(unittest.TestCase):
+    def test_row_shape_from_a_cutting_drain(self):
+        row = km._restart_cut_row({"stopped": 3, "inflight": 2, "unjoined": 1, "reaped": 1,
+                                   "cutTurns": [{"sid": SID, "name": "web"}]},
+                                  watches_armed=4, audit_reason="kernel-asks-manager-restart-all: self-update",
+                                  now=1_781_000_000)
+        self.assertEqual(row["t"], 1_781_000_000)
+        self.assertEqual(row["cutTurns"], [{"sid": SID, "name": "web"}])
+        self.assertEqual((row["stopped"], row["unjoined"], row["reaped"]), (3, 1, 1))
+        self.assertEqual(row["watchesArmed"], 4, "persisted watches SURVIVE — context, never cuts")
+        self.assertIn("self-update", row["reason"])
+
+    def test_a_clean_drain_still_writes_its_row(self):
+        # the success metric: a restart that cut NOTHING is a row with an empty list
+        row = km._restart_cut_row({"stopped": 5, "inflight": 0, "unjoined": 0, "reaped": 0,
+                                   "cutTurns": []}, now=1)
+        self.assertEqual(row["cutTurns"], [])
+        row = km._restart_cut_row(None, now=1)   # no backend at all — still a row
+        self.assertEqual(row["cutTurns"], [])
+
+    def test_append_is_jsonl_and_never_raises(self):
+        km._append_restart_cut(km._restart_cut_row({"cutTurns": []}, now=2))
+        km._append_restart_cut(km._restart_cut_row({"cutTurns": [{"sid": SID, "name": "api"}]}, now=3))
+        rows = [json.loads(l) for l in km.RESTART_CUTS_FILE.read_text().strip().splitlines()]
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[1]["cutTurns"][0]["sid"], SID)
+        km.RESTART_CUTS_FILE.unlink()
+
+    def test_reason_joins_the_recent_audit_tail_only(self):
+        audit = jd.STATE / "restart-audit.jsonl"
+        audit.write_text(json.dumps({"t": 1000, "action": "kernel-asks-manager-restart-all",
+                                     "reason": "self-update"}) + "\n")
+        self.assertIn("self-update", km._recent_restart_reason(window=90, now=1050))
+        self.assertEqual(km._recent_restart_reason(window=90, now=5000), "",
+                         "a stale audit row is not this restart's cause")
+        audit.unlink()
+        self.assertEqual(km._recent_restart_reason(now=1050), "", "no audit → anonymous, honestly")
+
+    def test_sigterm_handler_writes_the_ledger(self):
+        src = open(os.path.join(os.path.dirname(HERE), "kernel", "kernel.py")).read()
+        block = src[src.index("def _graceful_term"):src.index("def main():")]
+        self.assertIn("_append_restart_cut(_restart_cut_row(res, watches_armed=len(_pr_watches),",
+                      block, "the SIGTERM drain writes one ledger row before exit")
+        self.assertIn("audit_reason=_recent_restart_reason()", block)
+
+
+if __name__ == "__main__":
+    unittest.main()

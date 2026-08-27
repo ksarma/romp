@@ -289,7 +289,7 @@ class ErrorCenterWiring(unittest.TestCase):
         self.assertNotIn("aria-label=Errors", html)
         # the panel speaks the shared modal vocabulary (network panel / settings card), never the
         # undefined --vscode-font-family shorthand that rendered oversized in the browser shell
-        self.assertIn("font:13px/1.6 system-ui,-apple-system,'Segoe UI',sans-serif}#rerr-panel .rerr-top", html)
+        self.assertIn("font:13px/1.6 'Inter',system-ui,-apple-system,'Segoe UI',sans-serif}#rerr-panel .rerr-top", html)
         # the chip family mirrors feed.css's .fask-* colours
         self.assertIn(".rerr-chip.k-stalled,.rerr-chip.k-warn{color:#ffd166", html)
         # 'not sent' shares the follow-up-failed red: both mean a message of yours didn't land

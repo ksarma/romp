@@ -29,7 +29,7 @@ const CSS =
   "#rkeys-back[hidden]{display:none}" +
   "#rkeys{width:min(640px,94%);max-height:76vh;display:flex;flex-direction:column;background:#252526;" +
   "border:1px solid #3a3a3a;border-radius:10px;box-shadow:0 12px 36px #000000aa;padding:14px 16px;" +
-  "color:#ccc;font:13px/1.6 system-ui,-apple-system,'Segoe UI',sans-serif;box-sizing:border-box}" +
+  "color:#ccc;font:13px/1.6 'Inter',system-ui,-apple-system,'Segoe UI',sans-serif;box-sizing:border-box}" +
   "#rkeys-h{flex:0 0 auto;font-size:14px;font-weight:600;color:#e8eaed;margin-bottom:8px}" +
   "#rkeys-in{flex:0 0 auto;background:#1b1b1c;border:1px solid #3a3a3a;border-radius:6px;color:#e8eaed;" +
   "font:inherit;padding:6px 10px;outline:none;box-sizing:border-box;width:100%}" +

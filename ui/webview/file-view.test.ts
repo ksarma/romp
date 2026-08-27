@@ -629,11 +629,11 @@ test("a save refused by the OWNING kernel's edit gate re-offers the consent and 
     "…and KERNEL_SETTING broadcasts to every attached kernel");
 });
 
-// ── inline images + PDFs (the user 2026-08-25: a clicked .png opened as line-numbered mojibake — the
-// fetch pipeline called r.text() unconditionally on any 200). The viewer branches on the KERNEL'S OWN
-// Content-Type verdict (the authoritative-source rule; the kernel derives mime locally and the relay
-// re-derives it, so the header is a verdict, never an echo — no client-side extension re-test), takes
-// the already-fetched bytes as a blob (no second request), and renders media as media. ──
+// ── inline images + PDFs: a clicked .png used to open as line-numbered mojibake — the fetch pipeline
+// called r.text() unconditionally on any 200. The viewer branches on the KERNEL'S OWN Content-Type
+// verdict (the authoritative-source rule; the kernel derives mime locally and the relay re-derives
+// it, so the header is a verdict, never an echo — no client-side extension re-test), takes the
+// already-fetched bytes as a blob (no second request), and renders media as media. ──
 
 // executed: the routing replica — which body call a 200 gets, by the kernel's header alone
 test("the media branch keys on the kernel's Content-Type verdict, never the extension", () => {
@@ -663,7 +663,7 @@ test("a 200 image renders ONE <img> at an object URL; the quote gesture stays of
     "no URL is minted for a viewer that is already gone");
   assert.match(openFn, /if \(!wrap\.isConnected\) return;/);
   // renderBody's img/PDF arm renders and returns — an <img>/iframe body has no honest text to
-  // quote (affordance honesty — the no-sink gating precedent), so the mouseup seed gates off
+  // quote (affordance honesty: no real target, no affordance), so the mouseup seed gates off
   // RENDERED media too. The SVG SOURCE view is the deliberate exception — a text view, covered by
   // the media-gate test below.
   const mediaBranch = VIEW.split("if (isImage || isPdf) {")[1].split("if (text === null || editing) return;")[0];
@@ -684,8 +684,8 @@ test("a 200 image renders ONE <img> at an object URL; the quote gesture stays of
   }
 });
 
-// ── media gating is RENDERED-media gating (review 2026-08-25, re-homed from the retired review
-// layer's suite): the gate's rationale — "no honest text to quote" — is true of the img/PDF
+// ── media gating is RENDERED-media gating (re-homed from the retired review layer's
+// suite): the gate's rationale — "no honest text to quote" — is true of the img/PDF
 // surfaces only. The SVG SOURCE view is codeBlock output, real text nodes, so a selection there
 // seeds a labeled quote chip exactly as in any text view; a blanket media gate would make an
 // .svg's XML unquotable. ──
@@ -713,7 +713,7 @@ test("the quote seed gates off RENDERED media only — the SVG Source view is a 
 
 test("image mode hides Edit; Download, Copy path, GitHub, ✕ and the dir-link survive", () => {
   const mediaBranch = VIEW.split("if (isImage || isPdf) {")[1].split("if (text === null || editing) return;")[0];
-  // (Wrap needs no hiding any more — the toggle button is gone everywhere, pinned above)
+  // (Wrap needs no hiding — the toggle button is gone everywhere, its stored key pinned away above)
   // Edit was ALREADY gated on the kernel's text verdict — an image/* response sets isText false, so
   // the existing arm hides it; both halves stay pinned (file-edit.test.ts pins the isText line too)
   assert.match(VIEW, /isText = \(r\.headers\.get\("Content-Type"\) \|\| ""\)\.startsWith\("text\/plain"\)/);
@@ -733,7 +733,7 @@ test("SVG renders via <img> ONLY — never innerHTML, never an iframe: its scrip
   assert.doesNotMatch(imgFn, /innerHTML/, "the XSS property: SVG bytes never become live DOM");
   assert.doesNotMatch(imgFn, /iframe/, "an iframed SVG is a document — scripts would run");
   assert.match(imgFn, /el\("img", "fileview-img"\)/);
-  // THE MEDIA BRANCH ITSELF is the surface a mutation actually hits (review 2026-08-25: a
+  // THE MEDIA BRANCH ITSELF is the surface a mutation actually hits (a proven mutation: a
   // `body.innerHTML = svgText` swapped into the branch kept every test green — the innerHTML pin
   // above covers only imgBlock, and a codeBlock string pin matched its own commented-out corpse).
   // So the branch source is audited directly: no HTML-parsing sink of ANY kind, in code or comment.
@@ -817,13 +817,13 @@ test("a PDF takes the lightbox's exact iframe treatment, aimed at the already-fe
   for (const SHEET of [FEED_CSS, CHAT_CSS]) assert.match(SHEET, /\.fileview-frame \{[^}]*height: 100%/);
 });
 
-// ── decode failure (review 2026-08-25): a zero-byte or mid-write/truncated image is a 200 whose
-// BYTES will not decode — the browser fires the img's error event and used to leave its mute
-// broken-image glyph: no reason, no way out. The viewer answers with the 413/415 pane idiom
-// instead: plain words naming what happened, the path, and the Download the view could not be.
-// The img's own error event is the exact deciding signal (never a timer, never a byte sniff).
-// The PDF iframe has NO equivalent failure event — the browser's own viewer owns that surface
-// and reports inside it — so this covers images only, deliberately. ──
+// ── decode failure: a zero-byte or mid-write/truncated image is a 200 whose BYTES will not decode —
+// the browser fires the img's error event and used to leave its mute broken-image glyph: no reason,
+// no way out. The viewer answers with the 413/415 pane idiom instead: plain words naming what
+// happened, the path, and the Download the view could not be. The img's own error event is the
+// exact deciding signal (never a timer, never a byte sniff). The PDF iframe has NO equivalent
+// failure event — the browser's own viewer owns that surface and reports inside it — so this
+// covers images only, deliberately. ──
 
 test("an image 200 that fails to DECODE swaps to the failure pane: plain words + Download, never a mute glyph", () => {
   // executed: the handler's continuation — an object URL of garbage bytes fires `error` once, and

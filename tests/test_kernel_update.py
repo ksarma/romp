@@ -408,8 +408,9 @@ class Routes(Fresh):
         km._UPDATE_AVAIL[0] = ""
         km._MAIN_DRIFT[0], km._MAIN_DRIFT[1] = "aaaa1111", ""
         ran = []
-        with mock.patch.object(km, "_run_main_update",
-                               side_effect=lambda kind, immediate=False: ran.append((kind, immediate))):
+        with mock.patch.object(km, "_run_main_update",   # the route hands over its ack-time port too
+                               side_effect=lambda kind, immediate=False, manager_port=None:
+                                   ran.append((kind, immediate))):
             code, body = self._post("/update")
             self.assertEqual(code, 200)
             self.assertIn("converging", body)

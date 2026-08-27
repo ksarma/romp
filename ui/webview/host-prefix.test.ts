@@ -48,12 +48,14 @@ test("every surface renders the prefix through the shared treatment", () => {
   // one class, both sheets (the feed page loads only feed.css — the .romp-acted precedent)
   const CSS = read("styles.css"), FCSS = read("feed.css");
   for (const sheet of [CSS, FCSS]) {
-    assert.match(sheet, /\.host-prefix \{ color: var\(--dim\); font-weight: 400; font-style: italic; font-size: 0\.88em; \}/);
+    assert.match(sheet, /\.host-prefix \{ color: var\(--dim\); font-weight: 400; font-style: italic; font-size: 0\.86em; \}/);
   }
   // the timeline lane label (one plain-JS file, SVG tspans) applies the same rule off the sid marker
   const TL = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "romp-timeline-view.js"), "utf8");
   assert.match(TL, /const hci = String\(s\.id \|\| ''\)\.indexOf\(':'\)/);
-  assert.match(TL, /'font-style': 'italic', 'font-size': 10\.5/);
+  // 10.3 = the px mirror of the sheets' 0.86em at the lane label's 12px base (PR-730 review,
+  // 2026-08-27: the em homes moved to 0.86 while this mirror sat at the old 0.88 step's 10.5)
+  assert.match(TL, /'font-style': 'italic', 'font-size': 10\.3/);
 });
 
 test("the host prefix FADES in tandem with the name it precedes (the user 2026-07-22)", () => {

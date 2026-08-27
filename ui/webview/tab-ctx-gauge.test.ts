@@ -43,7 +43,8 @@ test("the gauge is a slim VERTICAL bar and the strip tightened to make room for 
   assert.ok(g, ".tab-ctx must declare width+height");
   assert.ok(+g![1] < +g![2], `gauge must be vertical (w ${g![1]} < h ${g![2]})`);
   assert.match(CSS, /\.tab-ctx-fill \{ position: absolute; left: 0; right: 0; bottom: 0/);
-  // the strip's spacing trade (the user 2026-08-08): inter-tab gap 0; in-tab gap/padding shrunk
+  // the strip's spacing trade (the user 2026-08-08): inter-tab gap 0; in-tab gap/padding shrunk.
+  // (The Yatharth theme reopens a 3px seam under its scope — tab-theme.test.ts pins that.)
   assert.match(CSS, /#tabs \{ display: flex; flex: 1 1 auto; flex-wrap: wrap; align-items: stretch; gap: 0; \}/);
   assert.match(CSS, /\.tab \{[\s\S]{0,400}gap: 4px;[^\n]*\n\s*padding: 6px 7px;/);
 });

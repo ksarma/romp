@@ -155,7 +155,7 @@ test("a flaky link finishes the picture ACROSS retries: resume, narrate progress
   // swirl and chip share one fixed-footprint wait box — retry churn cannot shift the scroll
   assert.match(PREVIEW, /function mkWait\(box: HTMLElement\): HTMLElement/);
   assert.match(CSS, /\.path-full-wait \{ display: inline-flex; flex-direction: column;/);
-  assert.match(CSS, /\.path-load-note \{ font-size: 0\.85em;/);
+  assert.match(CSS, /\.path-load-note \{ font-size: 0\.86em;/);
   // no artificial deadline anywhere: patience is the point — only a real error ends an attempt
   assert.doesNotMatch(pf, /AbortController|setTimeout\([^,]*abort/i, "no client-side fetch deadline");
   // the kernel side: /file honors the one suffix form and the federation relay passes 206 through

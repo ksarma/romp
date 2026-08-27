@@ -65,7 +65,7 @@ class DriftWiring(unittest.TestCase):
         src = inspect.getsource(km._run_main_update)
         self.assertIn('"" if immediate else "?when=quiet"', src)
         route = inspect.getsource(km)
-        self.assertIn('threading.Thread(target=_run_main_update, args=(kind, True), daemon=True)', route,
+        self.assertIn('threading.Thread(target=_run_main_update, args=(kind, True),', route,
                       "the banner click is the user's own deliberate cut")
 
     def test_auto_converges_batch_behind_the_cool_down(self):

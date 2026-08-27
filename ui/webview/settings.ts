@@ -19,11 +19,16 @@ export interface RompSettings {
   tabCtx: TabCtxMode;        // chat tabs: WHEN the context gauge shows beside each session name (the user 2026-08-08) — "over50" (default: only once half full, so quiet tabs stay clean), "always", or "never".
   fileLinkPane: FileLinkPane; // where a chat file-link click opens on the WEB (the user 2026-08-20): "chat" (default, upstream's design — the viewer over the pane you clicked) or "feed" (relay the open into the Feed pane so the transcript stays readable while the file is up). Read at click time (render.ts openPath); VS Code (host editor) and standalone /chat (no shell to relay to) are unaffected.
   chatScheme: ChatScheme;    // chat TEXT scheme (the user 2026-08-24): raises body-text contrast without collapsing the tool-dimmer-than-prose hierarchy. A scheme = a text-tier variable set (styles.css body.scheme-*); "default" applies nothing — today's values exactly.
+  chatTabTheme: ChatTabTheme;   // the chat TAB STRIP's appearance (T113, the user 2026-08-27): "classic" = the tuned default (no bottom line, the thick selected ring, a 5% identity wash, brighter faded labels); "yatharth" = PR 730's aesthetic as merged, named for its contributor at the user's ask. Tab strip only — never a global reskin.
 }
 // Solarized LIGHT is deliberately absent (the user allowed skipping it): its text tiers are designed
 // for a paper-light ground and invert into mud on romp's dark canvas — an unreadable preset is worse
 // than none.
 export type ChatScheme = "default" | "high-contrast" | "solarized-dark";
+export type ChatTabTheme = "classic" | "yatharth";
+export function chatTabTheme(v: unknown): ChatTabTheme {
+  return v === "yatharth" ? "yatharth" : "classic";
+}
 export function chatScheme(v: unknown): ChatScheme {
   return v === "high-contrast" || v === "solarized-dark" ? v : "default";
 }
@@ -48,7 +53,7 @@ export function tabCtxMode(v: unknown): TabCtxMode {
 // hand-written "why" as their line; they show the distiller's summary instead (the why demotes to a hover).
 // compact defaults ON (the user 2026-07-14): a fresh install reads the tidy transcript
 // (thinking hidden, tool runs folded); the gear opts back into the full stream.
-export const DEFAULT_SETTINGS: RompSettings = { compact: true, colormap: "aurora", subgoals: true, showIndexJudges: false, showTriageJudges: false, backend: "sdk", defaultDir: "", showBranch: false, tabCtx: "over50", fileLinkPane: "chat", chatScheme: "default" };
+export const DEFAULT_SETTINGS: RompSettings = { compact: true, colormap: "aurora", subgoals: true, showIndexJudges: false, showTriageJudges: false, backend: "sdk", defaultDir: "", showBranch: false, tabCtx: "over50", fileLinkPane: "chat", chatScheme: "default", chatTabTheme: "classic" };
 const KEY = "romp:settings";
 
 export function loadSettings(): RompSettings {
@@ -59,6 +64,7 @@ export function loadSettings(): RompSettings {
       s.tabCtx = tabCtxMode(s.tabCtx);   // a store written by the boolean-era gear holds true/false
       s.fileLinkPane = fileLinkPane(s.fileLinkPane);   // foreign values read as the default
       s.chatScheme = chatScheme(s.chatScheme);   // unknown/legacy values normalize to "default"
+      s.chatTabTheme = chatTabTheme(s.chatTabTheme);   // unknown/legacy values normalize to "classic"
       return s;
     }
   } catch { /* corrupt / unavailable → defaults */ }
