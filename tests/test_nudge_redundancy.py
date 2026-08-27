@@ -77,9 +77,12 @@ class NudgeRedundancy(unittest.TestCase):
         self.assertIn("jd.nudge_redundant(gtxt, report)", src)
         self.assertIn('recent, recent_ts = _last_assistant_report(s["path"])', src)
         self.assertIn("redundantSkips=skips + 1", src)
-        self.assertIn("if skips < 2 and gtxt", src,
-                      "two consecutive skips max — past that the nudge fires regardless, so the "
-                      "gate can never become a forever-pause with no reviver")
+        self.assertIn("if gtxt and jd.nudge_redundant", src,
+                      "the judge is consulted on EVERY due fire — past two consecutive skips the "
+                      "cap escalates to one more judgment on the freshest evidence (T120), never "
+                      "past one; fired-at-cap is how the forever-pause still ends")
+        self.assertIn('"skipped-redundant-at-cap" if skips >= 2', src,
+                      "a still-redundant verdict at the cap skips with its own countable row")
         self.assertIn("redundantSkips=0", src, "a real fire resets the count")
 
 

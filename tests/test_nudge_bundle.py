@@ -351,6 +351,24 @@ class AutoNudgeBundlesSameTick(unittest.TestCase):
         self.assertIn(G1, recs)
         self.assertNotIn(G2, recs, "a dropped goal gets no record — it never fired")
 
+    def test_the_bundle_body_renders_the_send_moment_world(self):
+        # T120 (the user 2026-08-27): the card body used to render the tick's snapshot while the
+        # redundancy judge deliberated for seconds — a retitle landing in that gap shipped stale.
+        # The send-moment re-read that drops resolved items also hands the body the fresh nodes.
+        snap = self.store
+        fresh = _store({G1: _node(G1, "Ship the auth refactor, retitled by the planner"),
+                        G2: _node(G2, "Write the migration guide")})
+        calls = {"n": 0}
+
+        def load(sid):
+            calls["n"] += 1
+            return snap if calls["n"] == 1 else fresh
+        jd.load_goals = load
+        self._tick()
+        self.assertEqual(len(self.sent), 1)
+        self.assertIn("retitled by the planner", self.sent[0],
+                      "the delivered card speaks the send-moment world, not the snapshot")
+
 
 class PromptPins(unittest.TestCase):
     def test_plan_sys_sweeps_other_cards_the_segment_resolved(self):
