@@ -22,9 +22,9 @@ test("renderTabs defers its rebuild while a pointer is pressed on the tab strip"
 
 test("the press guard is armed on #tabs pointerdown and released on pointerup/cancel/blur", () => {
   assert.match(RENDER, /tabs\.addEventListener\("pointerdown", \(\) => \{ tabPointerHeld = true; \}\)/);
-  assert.match(RENDER, /window\.addEventListener\("pointerup", releaseTabs\)/);
-  assert.match(RENDER, /window\.addEventListener\("pointercancel", releaseTabs\)/);
-  assert.match(RENDER, /window\.addEventListener\("blur", releaseTabs\)/);   // press may end off-strip / in another frame
+  assert.match(RENDER, /window\.addEventListener\("pointerup", releaseTabStrip\)/);
+  assert.match(RENDER, /window\.addEventListener\("pointercancel", releaseTabStrip\)/);
+  assert.match(RENDER, /window\.addEventListener\("blur", releaseTabStrip\)/);   // press may end off-strip / in another frame
 });
 
 test("release flushes a pending rebuild a tick LATER so the click fires against the live node first", () => {

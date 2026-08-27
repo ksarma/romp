@@ -198,13 +198,12 @@ body.tabbar-resizing { cursor: ns-resize; user-select: none; }
      dashed state outlines (.tab.tab-awaiting / .tab-blocked / .tab-retrying). */
   outline: none;
 }
-/* drag-to-reorder: dim the dragged tab, show an insertion line on the drop target */
+/* drag-to-reorder: dim the in-flow dragged tab — it marks the live landing slot while the native
+   drag image follows the pointer, and the OTHER tabs rearrange in real time around it (T127, the
+   user 2026-08-27: dragging should push the other tabs into their new locations as you drag, the
+   way browser tab strips do). The mechanics live in render.ts (flipTabs + the strip's dragover);
+   the old two-px landing marker and its classes are deleted with this. */
 .tab.dragging { opacity: 0.45; }
-.tab.drop-before::after, .tab.drop-after::after {
-  content: ""; position: absolute; top: 3px; bottom: 3px; width: 2px; background: var(--fg); border-radius: 1px;
-}
-.tab.drop-before::after { left: -3px; }
-.tab.drop-after::after { right: -3px; }
 .tab:hover { color: var(--fg); background: rgba(255, 255, 255, 0.06); }
 .tab.tab-awaiting { --state: var(--st-awaiting-bg); }
 /* RETRYING: an amber dashed ring (soft 'blocked on the API' auto-retry) — same dashed treatment as awaiting,
