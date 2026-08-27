@@ -1,10 +1,12 @@
-// The chat-tab appearance themes (T113, tightened by T115 — the user 2026-08-27, reacting to the
-// contributor's strip pass): CLASSIC, the default, is the PRE-720 tab strip byte-for-byte, with
-// typography the ONE permitted difference — the user's amended words: fine with any font changes,
-// nothing else. So: NO identity tint at any state, the thick 1.5px selected ring, the neutral
-// line under the strip, gap 0, and the full pre-720 label fade. T115 verified this by pixel-diffing
-// a real pre-720 build: with fonts normalized, zero differing pixels outside the (out-of-scope)
-// tag-controls box. YATHARTH is the contributor's merged strip aesthetic exactly, opt-in via
+// The chat-tab appearance themes (T113, tightened by T115, tuned by T118 — the user 2026-08-27):
+// CLASSIC, the default, is the PRE-720 tab strip modulo exactly THREE sanctioned deltas —
+// typography (the strip inherits the global Inter/type ladder), T118's 2% neutral rest wash, and
+// T118's 0.9 faded-label scale (the user partially restoring parked T113 tunings with new
+// numbers). Everything else reads pre-720: NO identity tint at any state, the thick 1.5px
+// selected ring, the neutral line under the strip, gap 0. T115 verified the baseline equality by
+// pixel-diffing a real pre-720 build: with fonts normalized, zero differing pixels outside the
+// (out-of-scope) tag-controls box — a re-run must subtract the two T118 washes the same way it
+// subtracts fonts. YATHARTH is the contributor's merged strip aesthetic exactly, opt-in via
 // settings and named for him at the user's explicit ask. The seam is the CHAT TAB STRIP only.
 // Source pins per the repo convention; the round-trip is executable.
 import { test } from "node:test";
@@ -41,17 +43,31 @@ test("Classic: the pre-720 strip verbatim — line, gap 0, gray active fill, rin
 });
 
 test("Classic: NO identity tint — every tint rule lives under the theme class", () => {
-  // The user revoked the at-rest wash (T115 amendment): outside the yatharth block there must be
+  // The user revoked the IDENTITY wash (T115 amendment): outside the yatharth block there must be
   // no identity-tinted tab background at all. Every tinted background in the stylesheet is scoped.
+  // (T118's rest wash is NEUTRAL white, not identity — pinned in its own test below.)
   const tintRules = CSS.split("\n").filter((l) => /\.tab[^{]*\{[^}]*color-mix\(in srgb, var\(--chip-bg\)/.test(l));
   for (const l of tintRules) assert.match(l, /^body\.chat-theme-yatharth /, "tint rule must be theme-scoped: " + l);
   const ringLine = CSS.match(/^\.tab\.active\.colored \{.*$/m)![0];
   assert.ok(!ringLine.includes("color-mix"), "the classic selected tab is the gray fill + ring, no tint layer");
 });
 
-test("Classic: the label fade is the pre-720 formula — no theme branch, no brightening scale", () => {
-  assert.match(RENDER, /const t = Math\.min\(0\.85, \(Lc - Lt\) \/ \(Lc - Lb\)\);/);
-  assert.doesNotMatch(RENDER, /chatTabTheme[^\n]*\? 1 :/, "fadedColor no longer branches on the theme");
+test("Classic: faded labels brighten 10% — one tunable knob, Yatharth keeps his full fade (T118)", () => {
+  assert.match(RENDER, /const CLASSIC_FADE_SCALE = 0\.9;/);
+  assert.match(RENDER, /const scale = settings\.chatTabTheme === "yatharth" \? 1 : CLASSIC_FADE_SCALE;/);
+  assert.match(RENDER, /const t = Math\.min\(0\.85, \(Lc - Lt\) \/ \(Lc - Lb\)\) \* scale;/);
+});
+
+test("Classic: the 2% NEUTRAL rest wash — rest only, never a state, never the + tab, never Yatharth (T118)", () => {
+  const rule = CSS.match(/^body:not\(\.chat-theme-yatharth\) \.tab([^ ]*) \{ background: (rgba\([^)]*\)); \}$/m);
+  assert.ok(rule, "the rest-wash rule exists, body-scoped OUT of the Yatharth theme in one rule (no cancel rule to race)");
+  assert.equal(rule![2], "rgba(255, 255, 255, 0.02)", "the slightest lighter gray — neutral white, the user's ~2% starting number");
+  for (const excl of [":not(.tab-blocked)", ":not(.active)", ":not(:hover)", ":not(.tab-add)"]) {
+    assert.ok(rule![1].includes(excl), "rest only — the rule never MATCHES " + excl.slice(5, -1) +
+      ", so the stateful backgrounds keep winning without a specificity race (the cascade-tiebreak lesson)");
+  }
+  // hover keeps its existing stronger gray exactly
+  assert.match(CSS, /\.tab:hover \{ color: var\(--fg\); background: rgba\(255, 255, 255, 0\.06\); \}/);
 });
 
 test("Yatharth: his strip verbatim, scoped to the theme class", () => {
