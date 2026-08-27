@@ -42,7 +42,10 @@ test("the chat pane names the peer: box in identity colour, pill with the colour
   const chip = RENDER.slice(chipAt, RENDER.indexOf("chip.title =", chipAt));
   assert.ok(!chip.includes("chip-peer-dot"), "the dot retired (the user 2026-08-26, round two) — the name wears the colour");
   assert.match(chip, /el\("span", "chip-peer-name"\)/, "'Awaiting <name>' — the NAME itself in identity colour");
+  assert.match(chip, /nm\.replaceChildren\(\.\.\.hostPartsNodes\(chipPeers\[0\]\.host, chipPeers\[0\]\.name\)\)/,
+    "the HOUSE idiom via the SHARED renderer (the user 2026-08-26, round three) — host in .host-prefix italic gray, never a restyled copy");
   assert.match(chip, /nm\.style\.color = chipPeers\[0\]\.color\.bg/);
+  assert.ok(!/nm\.textContent = .*host/.test(chip), "no one-string concatenation of host and name");
   assert.match(chip, /chipPeers\.length \+ " peers"/, "several peers keep the one-line rule as a count");
   assert.match(CSS, /\.chip-peer-name \{ background: rgba\(0, 0, 0, 0\.85\); color: #fff; border-radius: 7px;/,
     "the ~85% black backing — any colour reads on it, the chip hue still glows around it");

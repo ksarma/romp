@@ -41,7 +41,7 @@ import { openFileView } from "./file-view";
 import { initFileView } from "./file-view";
 import { initFileBrowse, openFileBrowse } from "./file-browse";   // the browser is pane-local here now (the user 2026-08-24)
 import { pastedFilePath } from "./paste-path";
-import { hostNameNodes, hostPrefix, hostOf, hostIsDown, hostDownNote } from "./host-prefix";
+import { hostNameNodes, hostPartsNodes, hostPrefix, hostOf, hostIsDown, hostDownNote } from "./host-prefix";
 import { dirStatusHint, nextDirActive, createDirPrompt, type DirStatus } from "./dir-complete";
 import { mediaSrc, kernelUrl } from "./media";
 import { initStrip, fmtReset } from "./strip";
@@ -9984,7 +9984,11 @@ function updateStatusline() {
       chip.append(CHIP_LABEL.awaitingBg + " ");
       if (chipPeers.length === 1) {
         const nm = el("span", "chip-peer-name");
-        nm.textContent = (chipPeers[0].host ? chipPeers[0].host + ":" : "") + chipPeers[0].name;
+        // the HOUSE session-reference idiom (the user 2026-08-26, round three — one undifferentiated
+        // string read wrong): the shared renderer, so the host prefix wears .host-prefix (italic
+        // gray) and the NAME text takes the identity colour — the card headers' own treatment,
+        // never a restyled copy
+        nm.replaceChildren(...hostPartsNodes(chipPeers[0].host, chipPeers[0].name));
         if (chipPeers[0].color && chipPeers[0].color.bg) nm.style.color = chipPeers[0].color.bg;
         chip.appendChild(nm);
       } else chip.append(chipPeers.length + " peers");
