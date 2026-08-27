@@ -21,7 +21,7 @@ test("a romp bubble renders a one-line gist by default, full text behind a keyed
   assert.match(fn, /: firstLine\.length > 90 \? firstLine\.slice\(0, 88\)\.replace\(\/\\s\+\\S\*\$\/, ""\) \+ "…" : firstLine;/);
   assert.match(fn, /lines\.find\(\(l\) => l && !l\.startsWith\(">"\)\)/, "the text gist never shows the quoted goal context");
   // the romp markers are stripped before the gist is cut (they'd read as literal comment text)
-  assert.match(fn, /ev\.md\.replace\(\/<!--\[\\s\\S\]\*\?-->\/g, ""\)\.trim\(\);/);
+  assert.match(fn, /ev\.md\.replace\(\/<!--\[\\s\\S\]\*\?-->\/g, ""\)\.replace\(\/\^\\s\*\\\[romp\\\]\\s\*\/, ""\)\.trim\(\);/);   // markers AND the [romp] source prefix strip for display (T130)
   // collapsible ONLY when there is more than the gist; the caret marks it
   assert.match(fn, /const more = collapseWs\(raw\) !== collapseWs\(gist\);/);
   assert.match(fn, /if \(more\) \{ const c = el\("span", "nudge-caret"\); c\.textContent = "▸"; gistEl\.appendChild\(c\); \}/);

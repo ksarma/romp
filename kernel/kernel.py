@@ -10816,7 +10816,10 @@ def _pr_watch_notice(verdict, repo, pr, detail=""):
         body = ("[romp] romp could not read %s (gh said: %s) after several tries, so this watch was "
                 "dropped — check `gh auth status` on this machine and re-register with `romp watch-pr` "
                 "if you still need it." % (ref, detail or "an unknown error"))
-    return body + "\n\n<!-- romp-tag: pr-watch -->"
+    # romp-injected: the chat classifies by MARKER, never by prose (T130) — without it this notice
+    # rendered as a generic tagged machine message instead of wearing the romp attribution the
+    # nudges wear; romp-system marks the mechanics-notice family; the tag stays as the shape's id.
+    return body + "\n\n<!-- romp-injected --><!-- romp-system --><!-- romp-tag: pr-watch -->"
 
 
 def _pr_watch_read(pr, repo):
@@ -10987,7 +10990,8 @@ def _watch_notice(kind, row, detail=""):
         body = ("[romp] The watch command could not run at all (%s): %s. This watch was dropped — "
                 "fix the command and re-register with `romp watch`."
                 % (detail or "exec failed", what))
-    return body + "\n\n<!-- romp-tag: watch -->"
+    # same marker discipline as the pr-watch notice above (T130)
+    return body + "\n\n<!-- romp-injected --><!-- romp-system --><!-- romp-tag: watch -->"
 
 
 def _fmt_span_s(s):
