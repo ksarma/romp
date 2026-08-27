@@ -13,6 +13,27 @@ import pytest
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp(prefix="romp-tests-state-")
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel exports this to its sessions; it outranks the XDG floor
 
+# No test may reach a REAL manager control port (2026-08-27): on a machine running a live romp,
+# every shell the manager tree spawns inherits ROMP_MANAGER_PORT, and any test kernel that dials
+# "the manager" through the inherited value restarts the ACTUAL deployment — the serve-layer
+# restart test's pop-then-restore raced the /restart handler's post-ack env read and took a
+# self-hosted instance down mid-suite, repeatedly. POISONED to a dead port, never popped: an
+# absent var is the one unsafe state, because _restart_this_kernel treats absent as "no manager"
+# but _run_main_update maps absent to the DEFAULT port — the live one — so only a dead value is
+# safe against every consumer. Import-time, so collection-time code is floored too.
+os.environ["ROMP_MANAGER_PORT"] = "1"
+
+
+@pytest.fixture(autouse=True)
+def _dead_manager_port():
+    """The import-time poison above covers collection, but a module-level env write in a test file
+    ALSO executes during collection — so one module's write (or pop) would otherwise hold for the
+    entire run phase, erasing the floor for every test after it. Re-assert per test: no
+    module-level write can outlive collection against this."""
+    os.environ["ROMP_MANAGER_PORT"] = "1"
+    yield
+
+
 # No test may reach the REAL `claude` CLI (2026-08-12): _judge_claude_bin honors ROMP_CLAUDE_BIN
 # first, so this floors every judge call a test forgot to stub at /bin/false — empty stdout, the
 # dead-CLI row, byte-for-byte what a claude-less CI runner produces. Found when an unstubbed

@@ -31,7 +31,10 @@ SourceFileLoader("romp_event_model", os.path.join(BIN, "romp-event-model")).load
 jd = SourceFileLoader("romp_judge", os.path.join(BIN, "romp-judge")).load_module()
 os.environ["ROMP_KERNEL_NO_OPEN"] = "1"
 os.environ.setdefault("ROMP_SERVE_TOKEN", "test-token-DO-NOT-USE")
-os.environ.pop("ROMP_MANAGER_PORT", None)   # no manager → _restart_this_kernel audits, then no-ops
+os.environ["ROMP_MANAGER_PORT"] = "1"   # dead port → _restart_this_kernel audits, then its dial is
+#   refused (its except: pass). NEVER pop: pytest imports this module at COLLECTION, so a pop here
+#   would erase conftest's suite-wide floor before any test runs — and an ABSENT var is the one
+#   unsafe state (_run_main_update maps absent to the DEFAULT port: the live manager).
 km = SourceFileLoader("romp_kernel", os.path.join(BIN, "romp-kernel")).load_module()
 
 def _audit_path():
