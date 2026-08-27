@@ -151,6 +151,20 @@ class SendRefusesToConcatenate(unittest.TestCase):
         def paste_buffer(self, name):
             self.pastes.append(name)
 
+        # the checked variants paste() drives since the delivered-means-delivered fix (2026-08-27):
+        # this pane's tmux is healthy, so each delegates to its forgiving twin and answers True
+        def set_buffer_checked(self, text):
+            self.set_buffer(text)
+            return True
+
+        def paste_buffer_checked(self, name):
+            self.paste_buffer(name)
+            return True
+
+        def send_keys_checked(self, name, *keys, t=3):
+            self.send_keys(name, *keys, t=t)
+            return True
+
     def test_an_unclearable_box_blocks_the_paste_and_the_Enter(self):
         pane = self._RecordingPane(["a draft typed straight into the terminal"], honors_kill=False)
         km._TMUX = pane
