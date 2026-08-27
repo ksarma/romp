@@ -2601,11 +2601,22 @@ def _main_drift_check():
                                "cur": _kernel_sha() or "", "tag": target, "boot": _BOOT_ID})
 
 
-def _run_main_update(kind, immediate=False):
+# HTTP-triggered restarts resolve ROMP_MANAGER_PORT BEFORE their ack goes out (2026-08-27): the
+# env read used to trail the ack by a thread hop, so a caller that set the var for the duration
+# of its request — a test suite fencing off a live deployment does exactly this — could have the
+# RESTORED value read instead of the one in force when the kernel answered. The handlers now read
+# the env once, pre-ack, and hand the value down. _PORT_FROM_ENV keeps every non-HTTP caller
+# exactly as before: the env is read at use time, absent still meaning "no manager" in
+# _restart_this_kernel and "the default port" in _run_main_update.
+_PORT_FROM_ENV = object()
+
+
+def _run_main_update(kind, immediate=False, manager_port=_PORT_FROM_ENV):
     """Converge on newest main: advance the checkout (fast-forward only; a DIRTY shared tree refuses
     LOUDLY — peer sessions' uncommitted work is never discarded) and bounce every kernel through the
     manager. `kind` "restart" skips the pull (the checkout is already ahead). Unattended (auto mode)
-    the bounce rides the quiet window; a banner CLICK is the user's own deliberate cut → immediate."""
+    the bounce rides the quiet window; a banner CLICK is the user's own deliberate cut → immediate.
+    `manager_port` is the value the /update handler resolved before its ack (see _PORT_FROM_ENV)."""
     if kind == "pull":
         try:
             dirty = subprocess.run(["git", "status", "--porcelain"], cwd=str(ROOT),
@@ -2638,10 +2649,12 @@ def _run_main_update(kind, immediate=False):
             return
         _sync_notice("UI-only update failed to build in place (%s) — taking the restart path" % err,
                      ok=False)
+    if manager_port is _PORT_FROM_ENV:
+        manager_port = os.environ.get("ROMP_MANAGER_PORT")
     try:
         import urllib.request
         req = urllib.request.Request("http://127.0.0.1:%d/restart-all%s"
-                                     % (int(os.environ.get("ROMP_MANAGER_PORT") or 7432),
+                                     % (int(manager_port or 7432),
                                         "" if immediate else "?when=quiet"), method="POST")
         urllib.request.urlopen(req, timeout=5).read()
     except Exception as e:
@@ -11451,10 +11464,12 @@ def _fleet_restart_plan(r):
     return "skip", "its build isn't in this repo's history, so nothing can be proven safe to sync"
 
 
-def _fleet_restart_run():
+def _fleet_restart_run(manager_port=_PORT_FROM_ENV):
     """Do the remote half of a fleet restart, write the report, then restart this machine's kernel last —
     the local restart kills this process, so anything that must be REPORTED has to be on disk before it.
-    The page reads the report back after it reloads."""
+    The page reads the report back after it reloads. `manager_port` carries the /restart handler's
+    ack-time resolution through to the local restart (see _PORT_FROM_ENV) — this thread runs for
+    seconds of network first, so a use-time env read here would be even further from the ack."""
     rows = []
     with _remotes_lock:
         remotes = [dict(x) for x in _remotes.values()]
@@ -11484,7 +11499,7 @@ def _fleet_restart_run():
         _atomic_write(FLEET_REPORT, json.dumps(report))
     except OSError:
         sys.stderr.write("fleet-restart: could not write the report: %s\n" % traceback.format_exc())
-    _restart_this_kernel("fleet-restart: the local half of the fleet Restart")
+    _restart_this_kernel("fleet-restart: the local half of the fleet Restart", manager_port=manager_port)
 
 
 def _audit_restart_request(action, **kw):
@@ -11502,12 +11517,14 @@ def _audit_restart_request(action, **kw):
         pass
 
 
-def _restart_this_kernel(reason=""):
+def _restart_this_kernel(reason="", manager_port=_PORT_FROM_ENV):
     """Ask the manager to restart-all (it SIGTERMs this kernel; its exit handler spawns a fresh one).
     Standalone (no manager) → nothing to restart, which is not an error. `reason` lands in
-    restart-audit.jsonl so the manager hop is never an anonymous SIGTERM (see _audit_restart_request)."""
+    restart-audit.jsonl so the manager hop is never an anonymous SIGTERM (see _audit_restart_request).
+    `manager_port` is the value an HTTP handler resolved BEFORE its ack went out (see _PORT_FROM_ENV);
+    the default reads the env here, for callers with no ack to sequence against."""
     _audit_restart_request("kernel-asks-manager-restart-all", reason=reason, pid=os.getpid())
-    mport = os.environ.get("ROMP_MANAGER_PORT")
+    mport = os.environ.get("ROMP_MANAGER_PORT") if manager_port is _PORT_FROM_ENV else manager_port
     if not mport:
         return
     try:
@@ -28106,12 +28123,20 @@ class Handler(BaseHTTPRequestHandler):
                                        addr=str(self.client_address[0]),
                                        origin=str(self.headers.get("Origin") or ""),
                                        ua=str(self.headers.get("User-Agent") or ""))
+                # Resolve the manager port BEFORE the ack (2026-08-27): the read used to sit inside
+                # _restart_this_kernel, AFTER _send returned — so a caller that set ROMP_MANAGER_PORT
+                # for exactly the request window (a test suite fencing a live deployment off does
+                # this) raced its restore against this thread, and the RESTORED value could win.
+                # The value in force when the kernel acks is the value acted on; absent still means
+                # what it always meant (no manager → nothing to restart).
+                _mport = os.environ.get("ROMP_MANAGER_PORT")
                 self._send(200, json.dumps({"ok": True, "restarting": True, "boot": _BOOT_ID,
                                             "fleet": bool(_fleet)}), "application/json")
                 if _fleet and _remotes:
-                    threading.Thread(target=_fleet_restart_run, daemon=True).start()
+                    threading.Thread(target=_fleet_restart_run,
+                                     kwargs={"manager_port": _mport}, daemon=True).start()
                 else:
-                    _restart_this_kernel("http /restart (local-only)")
+                    _restart_this_kernel("http /restart (local-only)", manager_port=_mport)
                 return
             if u.path == "/fleet-restart":
                 # What the last fleet restart did, read back by the page AFTER it reloads (the restart
@@ -28136,7 +28161,11 @@ class Handler(BaseHTTPRequestHandler):
                 if kind:
                     _audit_restart_request("main-converge", tag=_MAIN_DRIFT[0] or _MAIN_DRIFT[1],
                                            addr=str(self.client_address[0]))
-                    threading.Thread(target=_run_main_update, args=(kind, True), daemon=True).start()
+                    # same ack-time port resolution as /restart: the daemon thread's env read could
+                    # otherwise land after this response, on a value the caller has already restored
+                    threading.Thread(target=_run_main_update, args=(kind, True),
+                                     kwargs={"manager_port": os.environ.get("ROMP_MANAGER_PORT")},
+                                     daemon=True).start()
                     _send_to_app("shell", {"type": "updateAvail", "state": "running", "boot": _BOOT_ID})
                     return self._send(200, json.dumps({"ok": True, "state": "converging"}), "application/json")
                 return self._send(409, "no newer release or main commit known to this kernel", "text/plain")
