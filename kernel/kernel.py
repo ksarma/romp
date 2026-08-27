@@ -2219,11 +2219,16 @@ def _prune_notify_cards(live_ids):
 # it). Registration rides POST /usertodo from the postal bus's add_user_todo, the way set_working
 # rides POST /working. Same mtime+size cache as _session_flags; _atomic_write publish.
 _user_todos_cache = {}   # str(path) -> ((mtime_ns,size), dict)
-_user_todos_lock = threading.Lock()   # store read-modify-writes from route/WS/pusher threads (the
+_user_todos_lock = threading.RLock()  # store read-modify-writes from route/WS/pusher threads (the
 #                                       _comments_lock doctrine): every mutation below reads, edits a
 #                                       copy, and publishes under this lock, or two postal buses
 #                                       registering concurrently lose confirmed rows and a racing
-#                                       answer+dismiss both "win" — first-stamp-wins must be real
+#                                       answer+dismiss both "win" — first-stamp-wins must be real.
+#                                       RE-ENTRANT (round 3, 2026-08-27): the answered stamp's
+#                                       stand-down and the loss seam's verdict are each ONE critical
+#                                       section that nests the locked store/mark helpers it rules
+#                                       with — deciding and recording must not straddle a release,
+#                                       or the write the record exists to stand down lands in the gap
 
 
 def _user_todos():
@@ -2549,8 +2554,52 @@ def _stamp_user_todo_answered(sid, tid, text):
         _user_todo_answer_lost reopen from the refusal point itself — so both stamping callers
         (the drive handler and _deliver_send_batch) are covered by one seam. A pending-paste
         mark persisted before the truthy send makes that seam kernel-death-durable
-        (_tmux_paste_mark / _tmux_paste_loss_boot_pass, adversarial verify 2026-08-27)."""
-    _resolve_user_todo(sid, tid, "answered")
+        (_tmux_paste_mark / _tmux_paste_loss_boot_pass, adversarial verify 2026-08-27).
+
+    STAND-DOWN AT THE WRITE MOMENT (round 3, 2026-08-27): the refusal can OUTRUN this stamp — a
+    dead tmux server fails the clear-guard's first capture in milliseconds while the caller is
+    still between its truthy send and this call — and the seam's reopen then finds nothing to
+    lift. The refusal records its verdict on the pending-paste mark instead
+    (_tmux_paste_flag_refused), and THIS writer checks that record before stamping, under the
+    same lock: a refused mark means a verdict already ruled on this very send, newer information
+    than the truthy send this stamp is acting on, so the stamp yields (the cards doctrine — a
+    writer whose evidence predates the diary stands down). The todo stays open, the loss is said
+    out loud, the consumed mark closes the loop, and the unlatch re-floors the ask exactly as
+    the seam's reopen would have. Check-and-stamp are ONE critical section: split, the stamp
+    lands in the gap and the record it should have read is orphaned until the next boot."""
+    with _user_todos_lock:
+        stood_down = _tmux_paste_consume_refused(sid, tid)
+        if not stood_down:
+            _resolve_user_todo(sid, tid, "answered")
+    if stood_down:
+        _notify_ut_unlatch(sid, tid)
+        sys.stderr.write("user-todos: %s's answer for %s was refused by the pane before its "
+                         "'answered' stamp landed — the stamp stands down: nothing is stamped, "
+                         "the ask is still waiting on the user, and the refused mark is "
+                         "consumed\n" % (str(sid)[:8], tid))
+
+
+def _paste_landed_texts(text):
+    """Every EXACT byte form a delivered paste of `text` can wear as transcript user text — the
+    landed check's match set (round 3, 2026-08-27). When the text carries image paths (the same
+    _IMG_PATH_RE detection _injected_img_paths and _tmux_send's pre-Enter wait key on), Claude
+    Code reads each path and rewrites it in the input to "[Image #N]" (1-based, in order of
+    appearance) before the submit — the very rewrite the pre-Enter wait exists to let finish —
+    so a DELIVERED image-carrying answer appears in the transcript in the rewritten form, and a
+    check keyed on the raw bytes alone falsely reopened it at every boot. Both forms stay exact
+    matches, never substrings: same whole body = the same answer delivered, the check's own
+    contract. The raw form stays in the set — a path the CLI never rewrote (no image read fired)
+    submits as typed."""
+    forms = {text}
+    seen = [0]
+
+    def _img(m):
+        seen[0] += 1
+        return m.group(0).replace(m.group(1), "[Image #%d]" % seen[0])
+    rewritten = _IMG_PATH_RE.sub(_img, text or "")
+    if seen[0]:
+        forms.add(rewritten)
+    return forms
 
 
 def _user_todo_answer_lost(sid, tid, text, wait=False):
@@ -2563,7 +2612,19 @@ def _user_todo_answer_lost(sid, tid, text, wait=False):
     text LANDED: a landed-but-unpruned echo at kernel death is the COMMON case (prune_live runs
     only while a client watches), and reopening those would flap a genuinely answered ask open on
     every restart — the transcript, not the drop mark, is the authoritative word on delivery, and
-    a landed answer is in the conversation the next resume continues, i.e. delivered.
+    a landed answer is in the conversation the next resume continues, i.e. delivered. The landed
+    check matches any exact delivered form of the text (_paste_landed_texts: the CLI rewrites
+    pasted image paths to "[Image #N]" before submit, so that form IS the delivery too).
+
+    REPORTS ITS VERDICT (round 3, 2026-08-27) when run inline (wait=True; the threaded default
+    returns None): "landed" (the stamp stands), "reopened" (the lift landed), "open" (no
+    'answered' row because the row is still OPEN — the refusal outran the caller's stamp, or an
+    earlier loss already reopened it), or "stale" (cleared meanwhile / evicted — nothing left to
+    heal). The verdict is what the tmux mark callers key their clear on: "open" means the mark
+    must NOT be consumed — under the same lock that found the row open, any pending-paste mark
+    for this todo is flipped to refused (_tmux_paste_flag_refused), so the late stamp reads the
+    verdict at its own write moment and stands down (_stamp_user_todo_answered). Deciding and
+    recording are one critical section: split, the stamp lands in the gap, unmarked forever.
 
     THREADED by default; `wait` is the test seam. The loss events fire on threads where the
     landed check must not run: the session's asyncio loop (a reconnect reconcile would stall the
@@ -2581,7 +2642,7 @@ def _user_todo_answer_lost(sid, tid, text, wait=False):
     if not wait:
         threading.Thread(target=_user_todo_answer_lost, args=(sid, tid, text, True),
                          name="user-todo-lost", daemon=True).start()
-        return
+        return None
     sid = str(sid)
     try:
         now = int(time.time())
@@ -2598,11 +2659,12 @@ def _user_todo_answer_lost(sid, tid, text, wait=False):
             sess = {"sid": ent[0], "path": str(ent[1])} if ent else None
         if sess is not None:
             parsed = _parse(sess["path"], sid, now)
-            if any(text == t for turn in parsed["turns"] for a in turn["atoms"]
+            landed = _paste_landed_texts(text)
+            if any(t in landed for turn in parsed["turns"] for a in turn["atoms"]
                    for t in _atom_user_texts(a)):
                 sys.stderr.write("user-todos: %s's answer for %s landed before its holder died — "
                                  "delivered, the stamp stands\n" % (sid[:8], tid))
-                return
+                return "landed"
         else:
             sys.stderr.write("user-todos: no transcript found for %s anywhere (the wide walk "
                              "included) — the landed check for %s cannot run; reopening on the "
@@ -2610,7 +2672,22 @@ def _user_todo_answer_lost(sid, tid, text, wait=False):
     except Exception as e:
         sys.stderr.write("user-todos: landed-check for %s (%s) failed — reopening anyway: %s\n"
                          % (tid, sid[:8], e))
-    if _reopen_user_todo(sid, tid):
+    with _user_todos_lock:
+        # verdict and record are ONE critical section (round 3, 2026-08-27): deciding "the row
+        # is still open" and flipping its pending-paste mark to refused must not straddle a lock
+        # release, or the very stamp the flip exists to stand down lands in the gap — stamped
+        # after this verdict, never unmarked, unhealable until the next boot.
+        if _reopen_user_todo(sid, tid):
+            verdict = "reopened"
+        else:
+            row = next((t for t in (_user_todos().get(sid) or [])
+                        if isinstance(t, dict) and t.get("id") == tid), None)
+            if row is not None and not row.get("resolved"):
+                verdict = "open"
+                _tmux_paste_flag_refused(sid, tid)
+            else:
+                verdict = "stale"
+    if verdict == "reopened":
         # the reopened ask is NEWS again (round 2, 2026-08-22): the same id going back under the
         # floor would be eaten by the push latch's set dedup, and this re-floor is the one signal
         # telling the user their answer never arrived — the loss EVENT clears the id so the next
@@ -2620,17 +2697,27 @@ def _user_todo_answer_lost(sid, tid, text, wait=False):
         sys.stderr.write("user-todos: %s's answer for %s died with its holder — the ask is "
                          "reopened and waiting on the user again\n" % (sid[:8], tid))
         _mark_views_dirty()
+    elif verdict == "open":
+        # the race the stand-down closes (findings 1+4, round 3): the row is still OPEN — the
+        # caller's 'answered' stamp has not landed yet (this verdict outran it), or an earlier
+        # loss already reopened it. Nothing to lift; the flip above left the refusal ON the
+        # pending mark (when one exists), so the late stamp yields at its own write moment
+        # instead of recording a delivery that never happened.
+        sys.stderr.write("user-todos: %s's answer for %s was lost while its row is still open — "
+                         "no stamp to lift; any pending paste mark now carries the refusal, and "
+                         "a late 'answered' stamp for it will stand down\n" % (sid[:8], tid))
     else:
         # LOUD like the recall path's no-op (_cancel_backend_queued): a reopen that finds no
-        # 'answered' row means the answer never landed AND no row remains to show the ask —
-        # cleared meanwhile, already reopened by an earlier loss event, or evicted by the
-        # resolved-history cap (_USER_TODO_RESOLVED_KEEP's corollary). For an evicted row this
+        # liftable row means the answer never landed AND no row remains to show the ask —
+        # cleared meanwhile, or evicted by the resolved-history cap
+        # (_USER_TODO_RESOLVED_KEEP's corollary). For an evicted row this
         # line is the ONLY record anywhere that the user still owes this session an answer.
         sys.stderr.write("user-todos: %s's answer for %s was lost, but no 'answered' row exists "
-                         "to reopen (cleared meanwhile, already reopened, or evicted by the "
+                         "to reopen (cleared meanwhile, or evicted by the "
                          "resolved-history cap) — nothing reopened; if the row was evicted, the "
                          "ask is gone from the store while its answer never landed\n"
                          % (sid[:8], tid))
+    return verdict
 
 
 def _user_todo_loss_boot_pass(wait=False):
@@ -2695,8 +2782,11 @@ def _user_todo_loss_boot_pass(wait=False):
 # class, the exact window _user_todo_loss_boot_pass closes for the SDK's drop-marked echoes. These
 # marks are the tmux twin, in the SDK marks' storage idiom (per-sid json under STATE, atomic
 # replace): a mark is persisted on the CALLER's thread before the truthy send returns, the paste
-# thread clears it on its verdict (delivered → just clear; refused → the reopen lands, THEN the
-# clear), and a mark still on disk at boot is a paste whose verdict died with the previous kernel.
+# thread clears it on its verdict (delivered → just clear; refused → the seam rules and the clear
+# follows the VERDICT: a landed reopen or a row cleared meanwhile clears the mark, while a row
+# still OPEN — the caller's stamp hasn't landed — flips the mark to refused instead, and the
+# stamp itself consumes it as it stands down), and a mark still on disk at boot is a paste whose
+# verdict died with the previous kernel.
 
 def _tmux_paste_pending_path(sid):
     return jd.STATE / "tmux-paste" / (str(sid) + ".json")
@@ -2710,7 +2800,9 @@ def _tmux_paste_mark(sid, entries):
     in the transcript to prove the delivery happened. The file is a read-modify-write shared with
     the daemon thread's clear, so it holds the todo store's own lock (_user_todos_lock). A failed
     write is LOUD, never silent: without the mark the live seam still covers the common case, but
-    a kernel death before this paste's verdict would re-lose the answer."""
+    a kernel death before this paste's verdict would re-lose the answer — and a refusal that
+    outran the caller's stamp would have no entry to flip, so the late stamp would stand
+    (the stand-down reads its verdict off this record: _tmux_paste_flag_refused)."""
     entries = [(tid, text) for tid, text in entries or [] if tid]
     if not entries:
         return
@@ -2733,17 +2825,24 @@ def _tmux_paste_mark(sid, entries):
                                        traceback.format_exc()))
 
 
-def _tmux_paste_unmark(sid, entries):
+def _tmux_paste_unmark(sid, entries, path=None):
     """Clear pending-paste marks on the paste thread's VERDICT — either verdict. A delivered
-    paste just clears; a refusal clears only AFTER its reopen has landed (every caller orders it
-    so), because a mark cleared before the reopen re-opens the very window the mark exists to
-    close: a death between the two would leave the false stamp with no record anywhere. One mark
-    per verdict — a same-keyed duplicate (the same answer re-sent) keeps its own mark."""
+    paste just clears; a refusal clears only on the seam's answer (every caller keys the clear on
+    the verdict _user_todo_answer_lost returns): a landed reopen — or a row cleared/evicted
+    meanwhile — clears, while an "open" verdict must NOT reach here at all (the mark was flipped
+    to refused inside the seam's own critical section, and _stamp_user_todo_answered consumes it
+    as the late stamp stands down). A mark cleared before the verdict is recorded re-opens the
+    very window the mark exists to close: a death between the two would leave the false stamp
+    with no record anywhere. One mark per verdict — a same-keyed duplicate (the same answer
+    re-sent) keeps its own mark. `path` is the boot pass's seam (finding 3, round 3 2026-08-27):
+    it clears the file it DISCOVERED, never one re-derived from a sid field the file itself
+    carries; and a clear that fails is SAID (the mark will be re-offered at the next boot —
+    benign, the landed check is idempotent — but never silent)."""
     entries = [(str(tid), str(text)) for tid, text in entries or []]
     if not entries:
         return
     with _user_todos_lock:
-        p = _tmux_paste_pending_path(sid)
+        p = Path(path) if path else _tmux_paste_pending_path(sid)
         try:
             cur = json.loads(p.read_text())
         except (OSError, ValueError):
@@ -2766,7 +2865,77 @@ def _tmux_paste_unmark(sid, entries):
             else:
                 p.unlink()
         except OSError:
-            pass
+            sys.stderr.write("user-todos: pending-paste mark %s failed to clear — it may be "
+                             "re-offered at the next boot\n" % p)
+
+
+def _tmux_paste_flag_refused(sid, tid):
+    """Record a refusal verdict ON this todo's pending mark entries — the loss seam's write for
+    the row-still-OPEN case (findings 1+4, round 3 2026-08-27: the refusal outran the caller's
+    'answered' stamp). NOT a clear: the entry must survive so the late stamp can read the verdict
+    and stand down (_stamp_user_todo_answered → _tmux_paste_consume_refused) — an unmark here
+    forfeits the only record, and the late stamp then stands forever, unhealable even at boot.
+    Same lock and atomic-replace idiom as the mark/clear; a missing or markless file is a quiet
+    no-op (the SDK loss paths route through the same seam with no tmux mark to flip). Called
+    under _user_todos_lock (the seam's verdict critical section); re-acquiring keeps it safe
+    standalone. A failed persist is LOUD: without the flag the late stamp would stand."""
+    with _user_todos_lock:
+        p = _tmux_paste_pending_path(sid)
+        try:
+            cur = json.loads(p.read_text())
+        except (OSError, ValueError):
+            return
+        if not isinstance(cur, dict):
+            return
+        pend = [e for e in cur.get("pending") or [] if isinstance(e, dict)]
+        hit = [e for e in pend if str(e.get("todo") or "") == str(tid) and not e.get("refused")]
+        if not hit:
+            return
+        for e in hit:
+            e["refused"] = True
+        try:
+            _atomic_write(p, json.dumps({"sid": str(sid), "pending": pend}))
+        except Exception:
+            sys.stderr.write("user-todos: the refused flag for %s (%s) failed to persist — a "
+                             "late 'answered' stamp for this send would stand: %s\n"
+                             % (tid, str(sid)[:8], traceback.format_exc()))
+
+
+def _tmux_paste_consume_refused(sid, tid):
+    """The stamp's stand-down read (findings 1+4, round 3 2026-08-27): True when a pending-paste
+    mark for this (sid, tid) carries a refusal verdict — the paste thread already ruled on this
+    very send, so the caller's 'answered' stamp is older evidence than the diary and must yield.
+    Consumes exactly the refused entries; an un-flagged entry for the same todo (a NEWER send of
+    the same answer, its own verdict still pending) keeps its mark. Runs inside the stamp's
+    check-and-stamp critical section (_stamp_user_todo_answered holds _user_todos_lock);
+    re-acquiring keeps it safe standalone. A failed clear after a positive read is loud — the
+    next boot sweeps the leftover (refused + open row = nothing to heal)."""
+    with _user_todos_lock:
+        p = _tmux_paste_pending_path(sid)
+        try:
+            cur = json.loads(p.read_text())
+        except (OSError, ValueError):
+            return False
+        if not isinstance(cur, dict):
+            return False
+        kept, found = [], False
+        for e in cur.get("pending") or []:
+            if not isinstance(e, dict):
+                continue                             # junk rides no verdict — swept on any rewrite
+            if str(e.get("todo") or "") == str(tid) and e.get("refused"):
+                found = True
+                continue
+            kept.append(e)
+        if found:
+            try:
+                if kept:
+                    _atomic_write(p, json.dumps({"sid": str(sid), "pending": kept}))
+                else:
+                    p.unlink()
+            except OSError:
+                sys.stderr.write("user-todos: %s's refused mark failed to clear after the "
+                                 "stand-down — the next boot sweeps it\n" % tid)
+        return found
 
 
 def _tmux_paste_loss_boot_pass(wait=False):
@@ -2776,12 +2945,25 @@ def _tmux_paste_loss_boot_pass(wait=False):
     cleared it. Re-offer every such mark whose store row still reads 'answered' to the same
     landed-check-then-reopen seam (_user_todo_answer_lost): a paste that actually LANDED before
     the death keeps its stamp via the transcript check (the kernel died between Enter and the
-    clear — the common benign shape), one that never landed reopens. The mark is consumed only
-    AFTER the seam has ruled (the SDK pass's round-3 lesson: consuming before the reopen lands
-    hands a crash-looping boot the very window this pass closes); marks with nothing to reopen —
-    the row open because the death beat the caller's stamp, cleared meanwhile, or junk — are
-    swept now. Runs in main() beside its SDK sibling, before _boot_warm/_sdk and before any route
-    serves, so no live send is writing new marks underneath it. Returns the re-offered count."""
+    clear — the common benign shape, and the check accepts the CLI's "[Image #N]" rewrite of an
+    image-carrying paste, its other delivered form), one that never landed reopens. The mark is
+    consumed only AFTER the seam has ruled (the SDK pass's round-3 lesson: consuming before the
+    reopen lands hands a crash-looping boot the very window this pass closes); marks with
+    nothing to reopen — the row open because the death beat the caller's stamp (including a
+    refused-flagged mark whose stand-down never got its stamp), cleared meanwhile, or junk — are
+    swept now. A refused-flagged mark that somehow sits beside an 'answered' row anyway reads
+    exactly like a stale mark: the seam rules, the ask reopens.
+
+    IDENTITY AND CONSUMPTION (round 3, 2026-08-27): the FILENAME is the mark's identity, and
+    every consume acts on the path this loop DISCOVERED — never one re-derived from the sid
+    field inside the file, which let a mismatched file dodge its own consume and be re-read
+    (and re-acted-on) every boot, forever. A file whose embedded sid disagrees with its stem is
+    refused loudly and consumed without acting — a record whose two identities disagree is
+    corrupt, and acting on either is a guess. A directory posing as a mark, or a file the pass
+    cannot unlink, gets a loud stderr line every boot: it WILL be re-read, and silence here is
+    exactly the quiet rot the pass exists to end. Runs in main() beside its SDK sibling, before
+    _boot_warm/_sdk and before any route serves, so no live send is writing new marks
+    underneath it. Returns the re-offered count."""
     offered = 0
     seen = set()                                     # one offer per (sid, tid), however many marks
     store = _user_todos()
@@ -2789,20 +2971,34 @@ def _tmux_paste_loss_boot_pass(wait=False):
         marks = sorted((jd.STATE / "tmux-paste").glob("*.json"))
     except OSError:
         return 0
+
+    def _consume(path):
+        try:
+            path.unlink()
+        except OSError:
+            sys.stderr.write("user-todos: pending-paste mark %s cannot be consumed (unlink "
+                             "failed) — it will be re-read at the next boot\n" % path)
     for p in marks:
+        if p.is_dir():
+            sys.stderr.write("user-todos: %s is a DIRECTORY in the pending-paste store — not a "
+                             "mark and not consumable; remove it by hand\n" % p)
+            continue
         try:
             d = json.loads(p.read_text())
         except (OSError, ValueError):
             d = None
+        sid = p.stem                                 # the filename IS the identity
+        if isinstance(d, dict) and d.get("sid") and str(d["sid"]) != sid:
+            sys.stderr.write("user-todos: pending-paste mark %s embeds sid %s but is filed under "
+                             "%s — a mark whose two identities disagree is corrupt; consuming it "
+                             "without acting\n" % (p, str(d["sid"])[:8], sid[:8]))
+            _consume(p)
+            continue
         ents = ([e for e in d.get("pending") or [] if isinstance(e, dict)]
                 if isinstance(d, dict) else [])
         if not ents:
-            try:
-                p.unlink()                           # junk or empty: nothing to offer, nothing to keep
-            except OSError:
-                pass
+            _consume(p)                              # junk or empty: nothing to offer, nothing to keep
             continue
-        sid = str(d.get("sid") or p.stem)
         rows = store.get(sid) or []
         sweep = []
         for e in ents:
@@ -2815,15 +3011,15 @@ def _tmux_paste_loss_boot_pass(wait=False):
                 continue
             seen.add((sid, tid))
 
-            def _offer(sid=sid, tid=tid, text=text):
-                _user_todo_answer_lost(sid, tid, text, wait=True)   # the seam rules first…
-                _tmux_paste_unmark(sid, [(tid, text)])              # …then the mark is consumed
+            def _offer(sid=sid, tid=tid, text=text, p=p):
+                if _user_todo_answer_lost(sid, tid, text, wait=True) != "open":   # the seam rules first…
+                    _tmux_paste_unmark(sid, [(tid, text)], path=p)   # …then the verdict clears the mark
             if wait:
                 _offer()
             else:
                 threading.Thread(target=_offer, name="tmux-paste-loss", daemon=True).start()
             offered += 1
-        _tmux_paste_unmark(sid, sweep)
+        _tmux_paste_unmark(sid, sweep, path=p)
     return offered
 
 
@@ -9440,24 +9636,29 @@ class TmuxBackend(sb.SessionBackend):
         pending-paste mark persisted BEFORE this returns truthy (a kernel death before the paste's
         verdict is then a recorded loss the boot pass reopens — _tmux_paste_mark, adversarial
         verify 2026-08-27), the refusal hook — _user_todo_answer_lost's reopen, the same one the
-        SDK's dropped-echo seam uses, and the mark clears only after it has landed — and the
-        delivered hook, where the mark just clears. on_refused/on_delivered override the defaults
+        SDK's dropped-echo seam uses, with the mark cleared on its verdict — and the delivered
+        hook, where the mark just clears. on_refused/on_delivered override the defaults
         when one paste carries several answers (_deliver_send_batch's merged run writes its own
-        marks). Residual window, stated precisely: the reopen lifts only an EXISTING 'answered'
-        stamp, so a refusal that somehow outran the caller's stamp would no-op (loudly — the seam
-        logs it) and the late stamp would stand; unreachable in practice, because the refusal
-        costs at least a capture round-trip plus the clear's give-up presses while the stamp is
-        the caller's next statement after this return."""
+        marks). EITHER ORDERING of stamp and refusal holds (round 3, 2026-08-27 — a dead tmux
+        server refuses on the FIRST capture, in milliseconds, so the refusal really can outrun
+        the stamp that is the caller's next statement): a refusal that finds the row already
+        stamped reopens it and clears the mark; one that outruns the stamp finds the row still
+        open, flips the mark to refused inside the seam's own critical section, and the stamp
+        itself stands down at its write moment and consumes the mark
+        (_stamp_user_todo_answered) — the writer whose evidence is the older truthy send yields
+        to the newer refusal verdict."""
         if on_refused is None and user_todo:
             _tmux_paste_mark(sid, [(user_todo, text)])
 
             def on_refused():
-                # reopen FIRST, then clear the mark: a death between the two leaves the mark for
-                # the boot pass; the reverse order re-opens the window the mark exists to close.
+                # the seam rules FIRST, and the clear follows its verdict: reopened / landed /
+                # stale clears the mark here; "open" (the refusal outran the caller's stamp)
+                # must NOT — the seam flipped the mark to refused, and clearing it would forfeit
+                # the only record the late stamp's stand-down (and the boot pass) can read.
                 # Inline (wait=True) is safe here — the hook runs on the dedicated paste thread,
                 # not one of the threads the seam's docstring bars the landed check from.
-                _user_todo_answer_lost(sid, user_todo, text, wait=True)
-                _tmux_paste_unmark(sid, [(user_todo, text)])
+                if _user_todo_answer_lost(sid, user_todo, text, wait=True) != "open":
+                    _tmux_paste_unmark(sid, [(user_todo, text)])
 
             def on_delivered():
                 _tmux_paste_unmark(sid, [(user_todo, text)])
@@ -17677,15 +17878,21 @@ def _deliver_send_batch(be, sid, run):
         # pending-paste marks persist BEFORE the truthy send (a kernel death before the paste's
         # verdict is a recorded loss the boot pass reopens), keyed on the MERGED text — the text
         # the paste carries is what the boot pass's landed check must find to prove delivery —
-        # and clear on the verdict: delivered just clears; a refusal clears after its reopens
-        # land, so a death between the two re-offers at boot instead of re-losing the answers.
+        # and clear on the verdict: delivered just clears; a refusal clears each answer as its
+        # reopen lands (an answer whose stamp the refusal outran keeps its mark, flipped refused,
+        # for the stamp's own stand-down), so a death between the verdict and the clear
+        # re-offers at boot instead of re-losing the answers.
         marks = [(tid, merged) for tid, _body in todos]
         _tmux_paste_mark(sid, marks)
 
         def _batch_refused():
-            for tid, body in todos:
-                _user_todo_answer_lost(sid, tid, body, wait=True)   # inline: the paste thread is dedicated
-            _tmux_paste_unmark(sid, marks)
+            # inline (wait=True): the paste thread is dedicated. The clear follows each answer's
+            # VERDICT (round 3, 2026-08-27): an "open" ruling means this answer's stamp hasn't
+            # landed — the seam flipped its mark to refused, the entry stays for the stand-down
+            # (_stamp_user_todo_answered), and unmarking it here would forfeit that record.
+            ruled = [(tid, merged) for tid, body in todos
+                     if _user_todo_answer_lost(sid, tid, body, wait=True) != "open"]
+            _tmux_paste_unmark(sid, ruled)
         got = be.send(sid, merged, on_refused=_batch_refused,
                       on_delivered=lambda: _tmux_paste_unmark(sid, marks))
     else:

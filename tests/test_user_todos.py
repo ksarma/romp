@@ -200,7 +200,11 @@ class StoreLock(_StoreSandbox):
         seen = []
 
         def guarded(cur):
-            seen.append(km._user_todos_lock.locked())
+            # the lock is re-entrant since the stamp stand-down (round 3, 2026-08-27), and an
+            # RLock has no .locked() on 3.12 — _is_owned() is the sharper predicate anyway:
+            # every mutation publishes on the thread that took the lock, so "the CALLING thread
+            # holds it" is exactly the claim, where .locked() would settle for "someone does"
+            seen.append(km._user_todos_lock._is_owned())
             real_write(cur)
 
         km._write_user_todos = guarded
@@ -1676,16 +1680,10 @@ class TmuxPasteRefusalReopens(_StoreSandbox):
         self.assertIn(("Enter",), pane.keys_sent, "the paste itself completed")
 
 
-class TmuxPendingPasteMarks(_StoreSandbox):
-    """Finding 1 (adversarial verify, 2026-08-27): the tmux refusal seam was process-lifetime-
-    only. TmuxBackend.send returns truthy while the paste runs on a daemon thread, so a kernel
-    death in the stamp→verdict window (0.3–4s) killed the thread pre-Enter: no refusal fired,
-    and nothing persisted even RECORDED the attempt — the false 'answered' survived the restart,
-    docs/adr/0001's silent-loss class, the exact window the SDK closed with persisted drop marks
-    + _user_todo_loss_boot_pass. These pin the tmux twin: a pending-paste mark persists BEFORE
-    the truthy send returns, the paste thread clears it on its verdict (delivered → clear;
-    refused → the reopen lands, THEN the clear), and _tmux_paste_loss_boot_pass re-offers any
-    mark a dead kernel left to the same landed-check-then-reopen seam."""
+class _TmuxPasteHarness(_StoreSandbox):
+    """Shared rig for the pending-paste mark suites: the REAL TmuxBackend over a fake pane, the
+    LostAnswerReopens transcript stubs (self.turns feeds the seam's landed check), and the
+    mark-store readers/writers the assertions speak in."""
 
     def setUp(self):
         super().setUp()
@@ -1718,11 +1716,14 @@ class TmuxPendingPasteMarks(_StoreSandbox):
         return km._user_todos().get(SID) or []
 
     def _marks(self, sid=SID):
+        return [(e["todo"], e["text"]) for e in self._raw_marks(sid)]
+
+    def _raw_marks(self, sid=SID):
         try:
             d = json.loads((jd.STATE / "tmux-paste" / (sid + ".json")).read_text())
         except OSError:
             return []
-        return [(e["todo"], e["text"]) for e in d["pending"]]
+        return list(d["pending"])
 
     def _mark_file(self, pending, sid=SID):
         d = jd.STATE / "tmux-paste"
@@ -1743,6 +1744,19 @@ class TmuxPendingPasteMarks(_StoreSandbox):
         km._clear_pane_input = lambda name: bool(gate.wait(10)) and verdict
         self.addCleanup(setattr, km, "_clear_pane_input", saved)
         return gate
+
+
+class TmuxPendingPasteMarks(_TmuxPasteHarness):
+    """Finding 1 (adversarial verify, 2026-08-27): the tmux refusal seam was process-lifetime-
+    only. TmuxBackend.send returns truthy while the paste runs on a daemon thread, so a kernel
+    death in the stamp→verdict window (0.3–4s) killed the thread pre-Enter: no refusal fired,
+    and nothing persisted even RECORDED the attempt — the false 'answered' survived the restart,
+    docs/adr/0001's silent-loss class, the exact window the SDK closed with persisted drop marks
+    + _user_todo_loss_boot_pass. These pin the tmux twin: a pending-paste mark persists BEFORE
+    the truthy send returns, the paste thread clears it on its verdict (delivered → clear;
+    refused → the verdict is recorded on the store, THEN the clear), and
+    _tmux_paste_loss_boot_pass re-offers any mark a dead kernel left to the same
+    landed-check-then-reopen seam."""
 
     def test_the_mark_is_persisted_before_the_truthy_send_returns(self):
         # THE window: kernel death between the truthy send (whose caller stamps 'answered') and
@@ -1841,6 +1855,243 @@ class TmuxPendingPasteMarks(_StoreSandbox):
         self.assertLess(i, src.index("_boot_warm()"),
                         "_boot_warm's _alive_sessions constructs the backend — the pass runs first")
         self.assertLess(i, src.index("target=_sdk"))
+
+    # ── the landed check accepts the CLI's image rewrite (finding 2, round 3 2026-08-27) ──
+    # Claude Code reads each pasted image PATH and rewrites it in the input to "[Image #N]"
+    # before submit — the very rewrite _tmux_send's pre-Enter wait exists for — so a DELIVERED
+    # image-carrying answer appears in the transcript in the rewritten form. A landed check
+    # keyed on the raw bytes alone falsely reopened such an answer at every boot.
+
+    def _turn_with(self, text):
+        return [{"atoms": [{"type": "user", "author": "human", "uuid": "u1",
+                            "message": {"role": "user",
+                                        "content": [{"type": "text", "text": text}]}}]}]
+
+    def test_a_delivered_image_paste_keeps_its_stamp_at_boot(self):
+        ask = "Need the failing form state"
+        tid = km._add_user_todo(SID, ask)
+        body = km._user_todo_answer_body(ask, "See /tmp/staging-form.png — the port field is blank.")
+        km._stamp_user_todo_answered(SID, tid, body)
+        self.turns = self._turn_with(body.replace("/tmp/staging-form.png", "[Image #1]"))
+        self._mark_file([{"todo": tid, "text": body, "t": 1}])
+        self.assertEqual(km._tmux_paste_loss_boot_pass(wait=True), 1)
+        self.assertEqual(self._rows()[0]["resolved"]["kind"], "answered",
+                         "the rewritten form IS the delivery — the stamp stands")
+        self.assertEqual(self._marks(), [])
+
+    def test_the_rewrite_numbers_every_image_in_order(self):
+        ask = "Need the failing form state"
+        tid = km._add_user_todo(SID, ask)
+        body = km._user_todo_answer_body(ask, "Before: /tmp/form-empty.png after: /tmp/form-filled.png done.")
+        km._stamp_user_todo_answered(SID, tid, body)
+        rew = body.replace("/tmp/form-empty.png", "[Image #1]").replace("/tmp/form-filled.png",
+                                                                        "[Image #2]")
+        self.turns = self._turn_with(rew)
+        self._mark_file([{"todo": tid, "text": body, "t": 1}])
+        self.assertEqual(km._tmux_paste_loss_boot_pass(wait=True), 1)
+        self.assertEqual(self._rows()[0]["resolved"]["kind"], "answered")
+
+    def test_the_rewritten_match_stays_exact_never_substring(self):
+        # the check's own contract holds for the new form too: the rewritten text EMBEDDED in a
+        # longer message is somebody quoting it, not this paste's delivery — the ask reopens
+        ask = "Need the failing form state"
+        tid = km._add_user_todo(SID, ask)
+        body = km._user_todo_answer_body(ask, "See /tmp/staging-form.png — the port field is blank.")
+        km._stamp_user_todo_answered(SID, tid, body)
+        rew = body.replace("/tmp/staging-form.png", "[Image #1]")
+        self.turns = self._turn_with("Quoting what I never received: " + rew)
+        self._mark_file([{"todo": tid, "text": body, "t": 1}])
+        self.assertEqual(km._tmux_paste_loss_boot_pass(wait=True), 1)
+        self.assertNotIn("resolved", self._rows()[0], "an embedded match is not a delivery")
+
+    # ── the boot pass consumes what it DISCOVERED (finding 3, round 3 2026-08-27) ──
+    # Discovery is by glob, but consumption re-derived the path from the EMBEDDED sid field: a
+    # file whose two identities disagree was re-read (and possibly re-acted-on) every boot,
+    # forever — and a directory named *.json survived silently just as long.
+
+    def test_a_mark_whose_embedded_sid_disagrees_is_consumed_loudly(self):
+        d = jd.STATE / "tmux-paste"
+        d.mkdir(parents=True, exist_ok=True)
+        p = d / (SID + ".json")
+        p.write_text(json.dumps({"sid": SID2,
+                                 "pending": [{"todo": "ut-11111111", "text": "Re: x — y", "t": 1}]}))
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(km._tmux_paste_loss_boot_pass(wait=True), 0,
+                             "a mark whose identities disagree is never acted on")
+        self.assertFalse(p.exists(),
+                         "consumed by the path it was DISCOVERED at — never re-read next boot")
+        self.assertNotEqual(err.getvalue(), "", "…and refused loudly, never silently")
+
+    def test_a_directory_in_the_marks_store_is_loud_never_silent(self):
+        d = jd.STATE / "tmux-paste"
+        (d / "not-a-mark.json").mkdir(parents=True)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(km._tmux_paste_loss_boot_pass(wait=True), 0)
+        self.assertNotEqual(err.getvalue(), "",
+                            "a directory named *.json is announced, not skipped silently")
+        self.assertTrue((d / "not-a-mark.json").is_dir(), "…and left for a human, never rmtree'd")
+
+    def test_an_unconsumable_mark_is_loud_never_silent(self):
+        if os.geteuid() == 0:
+            self.skipTest("root ignores directory write bits — the unlink cannot be made to fail")
+        d = jd.STATE / "tmux-paste"
+        d.mkdir(parents=True)
+        (d / (SID + ".json")).write_text("not json{")
+        os.chmod(d, 0o555)                           # the unlink now fails: EACCES on the dir
+        try:
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                self.assertEqual(km._tmux_paste_loss_boot_pass(wait=True), 0)
+            self.assertNotEqual(err.getvalue(), "",
+                                "an unlinkable mark is announced — it WILL be re-read next boot")
+        finally:
+            os.chmod(d, 0o755)
+
+
+class TmuxStampStandDown(_TmuxPasteHarness):
+    """Findings 1+4 (round 3, 2026-08-27) — one defect, two lenses: the refusal can OUTRUN the
+    caller's 'answered' stamp (a dead tmux server fails the clear-guard's first capture in
+    milliseconds while the stamp queues on _user_todos_lock), and the refusal hook's
+    unconditional unmark then forfeited the healing record — the seam's reopen no-oped (no
+    'answered' row yet), the mark was consumed anyway, and the late stamp stood forever,
+    unhealable even at boot. The fix is the repo's own doctrine at the write moment: the stamp's
+    evidence is the truthy send; the refusal verdict is NEWER information; the stamp yields.
+    Mechanism: the seam reports its verdict, an open-row refusal flips the mark to refused
+    (never consumes it), and _stamp_user_todo_answered checks the mark store under the same lock
+    before stamping — a refused mark stands the stamp down, records the loss, and consumes the
+    mark itself. Ordering is proven by gating the stamp on the refusal verdict being RECORDED —
+    an event, never a sleep."""
+
+    def _verdict_recorded(self):
+        # the refusal's verdict has reached the store: the mark was consumed (the old,
+        # record-forfeiting shape) or flagged refused (the healing record)
+        raw = self._raw_marks()
+        return raw == [] or all(e.get("refused") for e in raw)
+
+    def test_a_refusal_that_outruns_the_stamp_stands_it_down(self):
+        km._TMUX = _FakeTmuxPane(["a draft typed straight into the terminal"], honors_kill=False)
+        tid = km._add_user_todo(SID, "Need the staging port")
+        body = km._user_todo_answer_body("Need the staging port", "8443.")
+        self.assertIs(self.be.send(SID, body, user_todo=tid), True)
+        self.assertTrue(self._await(self._verdict_recorded),
+                        "the refusal ruled first — provably, before the stamp below lands")
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            km._stamp_user_todo_answered(SID, tid, body)     # the late stamp finally lands…
+        self.assertNotIn("resolved", self._rows()[0],
+                         "…and stands down: the refusal verdict is newer information than the "
+                         "truthy send the stamp is acting on")
+        self.assertEqual(self._marks(), [], "the stand-down consumed the refused mark itself")
+        self.assertIn("stand", err.getvalue(), "a stood-down stamp is said out loud")
+        # healed for good, not parked for a boot: the next pass has nothing to re-offer and the
+        # ask is still visibly waiting on the user
+        self.assertEqual(km._tmux_paste_loss_boot_pass(wait=True), 0)
+        self.assertNotIn("resolved", self._rows()[0])
+
+    def test_a_refusal_that_outruns_the_batch_stamps_stands_them_all_down(self):
+        # the other stamping caller: _deliver_send_batch stamps every answer after the truthy
+        # merged send — the descheduled-caller interleaving, made deterministic by gating each
+        # stamp on the batch refusal's verdict being recorded
+        km._TMUX = _FakeTmuxPane(["a draft typed straight into the terminal"], honors_kill=False)
+        real = km._stamp_user_todo_answered
+
+        def gated(sid, tid, text):
+            self.assertTrue(self._await(self._verdict_recorded),
+                            "the batch refusal ruled before this stamp")
+            return real(sid, tid, text)
+        km._stamp_user_todo_answered = gated
+        self.addCleanup(setattr, km, "_stamp_user_todo_answered", real)
+        tid1 = km._add_user_todo(SID, "Need the auth-scheme decision to wire login")
+        tid2 = km._add_user_todo(SID, "Need the staging port")
+        b1 = km._user_todo_answer_body("Need the auth-scheme decision to wire login", "Cookie.")
+        b2 = km._user_todo_answer_body("Need the staging port", "8443.")
+        with contextlib.redirect_stderr(io.StringIO()):
+            km._deliver_send_batch(self.be, SID, [("send", b1, None, tid1),
+                                                  ("send", b2, None, tid2)])
+        self.assertTrue(all("resolved" not in r for r in self._rows()),
+                        "every late stamp stood down — both asks still wait on the user")
+        self.assertEqual(km._tmux_paste_loss_boot_pass(wait=True), 0)
+        self.assertTrue(all("resolved" not in r for r in self._rows()))
+
+    def test_a_refused_flag_that_never_met_its_stamp_is_swept_quietly_at_boot(self):
+        # the kernel died between the flip and the stamp: the row is OPEN (nothing was ever
+        # stamped) and the refused mark has nothing left to heal — consumed, no re-offer
+        tid = km._add_user_todo(SID, "Need the staging port")
+        body = km._user_todo_answer_body("Need the staging port", "8443.")
+        self._mark_file([{"todo": tid, "text": body, "t": 1, "refused": True}])
+        self.assertEqual(km._tmux_paste_loss_boot_pass(wait=True), 0)
+        self.assertNotIn("resolved", self._rows()[0], "still open — exactly as the refusal left it")
+        self.assertFalse((jd.STATE / "tmux-paste" / (SID + ".json")).exists())
+
+    def test_a_refused_flag_beside_an_answered_row_reopens_at_boot(self):
+        # defense in depth: a stamp that somehow landed anyway (a version-skewed kernel, a
+        # by-hand store edit) reads exactly like a stale mark — the seam rules, the ask reopens
+        tid, body = self._stamped()
+        self._mark_file([{"todo": tid, "text": body, "t": 1, "refused": True}])
+        self.assertEqual(km._tmux_paste_loss_boot_pass(wait=True), 1)
+        self.assertNotIn("resolved", self._rows()[0])
+        self.assertEqual(self._marks(), [])
+
+
+class SeamOrderPins(_TmuxPasteHarness):
+    """Finding 5 (round 3, 2026-08-27): the load-bearing orderings — a refusal's clear follows
+    its verdict; the boot pass consumes only after the seam rules — were asserted only via end
+    states that are identical under inverted order, so swapping the calls passed the suite.
+    The fix makes the unmark data-DEPENDENT on the seam's verdict (structural enforcement);
+    these pin the observed sequence itself, for all three callers."""
+
+    def _recorded(self):
+        calls = []
+        real_lost = km._user_todo_answer_lost
+        real_unmark = km._tmux_paste_unmark
+
+        def lost(sid, tid, text, wait=False):
+            got = real_lost(sid, tid, text, wait=wait)
+            calls.append(("ruled", tid))             # appended AFTER the seam returns…
+            return got
+
+        def unmark(sid, entries, path=None):
+            if entries:                              # an empty call is the no-op sweep, no verdict rides it
+                calls.append(("unmark", tuple(t for t, _ in entries)))   # …and BEFORE any consume
+            return real_unmark(sid, entries, path=path)
+        km._user_todo_answer_lost = lost
+        km._tmux_paste_unmark = unmark
+        self.addCleanup(setattr, km, "_user_todo_answer_lost", real_lost)
+        self.addCleanup(setattr, km, "_tmux_paste_unmark", real_unmark)
+        return calls
+
+    def test_the_single_send_hook_rules_before_it_consumes(self):
+        calls = self._recorded()
+        km._TMUX = _FakeTmuxPane(["a draft typed straight into the terminal"], honors_kill=False)
+        tid, body = self._stamped()                  # stamped FIRST: the refusal finds the row
+        self.assertIs(self.be.send(SID, body, user_todo=tid), True)
+        self.assertTrue(self._await(lambda: self._marks() == []))
+        self.assertEqual(calls, [("ruled", tid), ("unmark", (tid,))],
+                         "the seam ruled to completion before the mark was touched")
+
+    def test_the_batch_hook_rules_every_answer_before_it_consumes(self):
+        calls = self._recorded()
+        km._TMUX = _FakeTmuxPane()
+        gate = self._gate_clear(False)
+        tid1 = km._add_user_todo(SID, "Need the auth-scheme decision to wire login")
+        tid2 = km._add_user_todo(SID, "Need the staging port")
+        b1 = km._user_todo_answer_body("Need the auth-scheme decision to wire login", "Cookie.")
+        b2 = km._user_todo_answer_body("Need the staging port", "8443.")
+        km._deliver_send_batch(self.be, SID, [("send", b1, None, tid1), ("send", b2, None, tid2)])
+        gate.set()                                   # stamps are in; NOW the clear-guard refuses
+        self.assertTrue(self._await(lambda: self._marks() == []))
+        self.assertEqual(calls, [("ruled", tid1), ("ruled", tid2), ("unmark", (tid1, tid2))],
+                         "every answer was ruled on before the batch's marks were consumed")
+
+    def test_the_boot_pass_rules_before_it_consumes(self):
+        calls = self._recorded()
+        tid, body = self._stamped()
+        self._mark_file([{"todo": tid, "text": body, "t": 1}])
+        self.assertEqual(km._tmux_paste_loss_boot_pass(wait=True), 1)
+        self.assertEqual(calls, [("ruled", tid), ("unmark", (tid,))],
+                         "the seam ruled first; the discovered mark was consumed after")
 
 
 class MarkerNeutralizerVariants(unittest.TestCase):
