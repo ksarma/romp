@@ -19,6 +19,7 @@ const RULES = [
   "a.fileview-btn {", "a.fileview-btn[hidden] {", ".fileview-body {",
   ".fileview-cm {", ".fileview-cm .cm-editor {", ".fileview-editor {",
   ".fileview-dir-link {", ".fileview-dir-link:hover {",
+  ".fileview-imgbox {", ".fileview-img {", ".fileview-frame {",
 ];
 
 function ruleOf(css: string, head: string): string {
