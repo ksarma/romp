@@ -16,11 +16,12 @@ test("the fold toggle and file links have a persistent dotted-underline link aff
   assert.match(CSS, /\.tool-file \{[^}]*text-decoration: underline dotted/);
 });
 
-test("session identity: rail (2px, 70%) + the soft 1px pane ring in the SAME color", () => {
-  // 2026-06-23 removed the old 2px decorative frame; 2026-08-26 the user asked for the identity
-  // color to go all the way around the current session, linked to its tab — re-introduced at a
-  // third of the weight (1px, 30% tint), transparent when no session color. Never 2px again.
-  assert.match(CSS, /#winframe \{ display: block; position: fixed; inset: 0; z-index: 900; pointer-events: none;\n  border: 1px solid color-mix\(in srgb, var\(--active-accent, transparent\) 30%, transparent\); \}/);
+test("session identity: rail (2px, 70%) + the pane ring THEMED under Yatharth, none in Classic", () => {
+  // 2026-06-23 removed the old 2px decorative frame; PR 730 re-introduced a 1px/30% linkage ring;
+  // T122 (the user 2026-08-27: there never used to be an outline around the chat, and there
+  // wasn't) scopes it under the Yatharth theme — Classic is frameless, byte-equal to pre-730.
+  assert.match(CSS, /#winframe \{ display: none; \}/);
+  assert.match(CSS, /body\.chat-theme-yatharth #winframe \{ display: block; position: fixed; inset: 0; z-index: 900; pointer-events: none;\n  border: 1px solid color-mix\(in srgb, var\(--active-accent, transparent\) 30%, transparent\); \}/);
   assert.doesNotMatch(CSS, /#winframe \{[^}]*border: 2px solid/);
   assert.match(CSS, /\.turn::before \{[^}]*width: 2px[^}]*background: var\(--active-accent[^}]*opacity: 0\.7/);
   // T113→T115 (the user 2026-08-27): CLASSIC is the default and is the PRE-720 strip verbatim,

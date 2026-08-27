@@ -23,7 +23,7 @@ const pickBody = (() => {
 })();
 
 test("closed state is ONE row: a full-width button with the current option + caret, no option list", () => {
-  assert.match(pickBody, /btn\.innerHTML = rowHTML\(cur\) \+ '<span style="flex:0 0 auto;margin-left:auto;opacity:0\.55">\\u25BE<\/span>'/,
+  assert.match(pickBody, /btn\.innerHTML = \(cur \? rowHTML\(cur\) : '<span style="flex:1 1 auto;min-width:0;color:#8a8a8a">\\u2026<\/span>'\) \+\n\s*'<span style="flex:0 0 auto;margin-left:auto;opacity:0\.55">\\u25BE<\/span>'/,
     "the button re-paints to the CURRENT option each paint — name + description in one row, caret at the end");
   assert.match(pickBody, /width:100%;min-width:0/, "the button fills the row and can shrink — the ellipsis engages instead of overrunning");
   assert.match(pickBody, /menu\.hidden = true;?\n/, "the option menu starts hidden — options are one click away, never always-expanded");
@@ -77,6 +77,24 @@ test("both pickers build on the ONE dropdown, and repaint on every settings open
   assert.match(GEAR, /var ttDrop = housePick\(tt, 'tabtheme', tabThemeRowHTML,/);
   assert.match(GEAR, /tcPaint\(\); csPaint\(\); ttPaint\(\); if \(cg\)/,
     "openSettings repaints ALL closed rows — a pick made in another pane shows current on open");
+});
+
+test("an empty option list paints a placeholder, never a crash — the effort selects start blank", () => {
+  // The swept effort pickers have NO options until /models resolves; options[0].name on an empty
+  // list threw inside initGear and took the whole settings panel down (caught headless, pre-merge).
+  assert.match(GEAR, /if \(!cur\) cur = options\.length \? options\[0\] : null;/);
+  assert.match(GEAR, /cur \? rowHTML\(cur\) : '<span style="flex:1 1 auto;min-width:0;color:#8a8a8a">\\u2026<\/span>'/);
+  assert.match(GEAR, /if \(cur && o\.id === cur\.id\) \{/);
+});
+
+test("every remaining native select rides the adapter — one vocabulary across the panel", () => {
+  assert.match(GEAR, /selectPick\(upm, 'margin-top:5px'\);/);
+  assert.match(GEAR, /selectPick\(bk, 'margin-top:5px'\);/);
+  assert.match(GEAR, /selectPick\(je, 'flex:0 0 auto;width:45%'\);/);
+  assert.match(GEAR, /selectPick\(ie, 'flex:0 0 auto;width:45%'\);/);
+  assert.match(GEAR, /selectPick\(de, 'flex:0 0 auto;width:45%'\);/);
+  assert.match(GEAR, /repaintSelectPicks\(\);   \/\/ fill\(\) writes sel\.value directly/,
+    "fill() sets values with no change event — the closed rows repaint at its end");
 });
 
 test("the Context-gauge picker rides the same builder; its hidden select stays the value holder", () => {

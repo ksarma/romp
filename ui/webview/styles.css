@@ -126,14 +126,16 @@ html, body {
 }
 body { display: flex; flex-direction: column; overflow-x: hidden; }   /* the chat pane NEVER scrolls
    sideways (the user 2026-08-16) — a wide child is a layout bug to fix, not a scroll to offer */
-/* The active session's identity color goes ALL THE WAY AROUND its pane (the user 2026-08-26, who
-   wanted the current session unmistakably linked to its tab) — a whisper-thin tinted ring, drawn as
-   a fixed overlay ON TOP so the tab bar / composer backgrounds can't paint over it, pointer-events:
-   none so it never blocks. History: a 2px frame here was removed on 2026-06-23 as decorative noise;
-   this re-introduction is that user's own later call, at a third of the weight (1px, 30% tint) and
-   CARRYING MEANING — it is the same color as the active tab's tint and the transcript rail, so the
-   three read as one linked object. No session color → transparent, no frame at all. */
-#winframe { display: block; position: fixed; inset: 0; z-index: 900; pointer-events: none;
+/* The whole-pane session-color ring is the CONTRIBUTOR's linkage piece, themed (T122, the user
+   2026-08-27, who confirmed there never used to be a thin session-color outline around the chat —
+   and there wasn't): Classic renders NO frame, byte-equal to pre-730. History: a 2px frame here
+   was removed 2026-06-23 as decorative noise; PR 730 re-introduced the idea at a third of the
+   weight (1px, 30% tint, the same color as the active tab + transcript rail so the three read as
+   one linked object); T122 scopes that re-introduction under the Yatharth theme, where the rest
+   of his aesthetic lives. Fixed overlay ON TOP, pointer-events:none; no session color →
+   transparent even there. */
+#winframe { display: none; }
+body.chat-theme-yatharth #winframe { display: block; position: fixed; inset: 0; z-index: 900; pointer-events: none;
   border: 1px solid color-mix(in srgb, var(--active-accent, transparent) 30%, transparent); }
 
 /* ---------- tab bar ---------- */
@@ -297,23 +299,25 @@ body.tabbar-resizing { cursor: ns-resize; user-select: none; }
 @keyframes tab-ph-swirl-spin { to { transform: rotate(-360deg); } }
 /* CLASSIC (the default; T113, tightened by T115, tuned by T118 — the user 2026-08-27): the tab
    strip is the PRE-720 strip — verified by pixel-diffing a real pre-720 build — modulo exactly
-   three sanctioned deltas: typography (the strip inherits the global Inter/type ladder), the 2%
-   neutral rest wash below, and the 0.9 faded-label scale (fadedColor, render.ts; both T118, the
-   user partially restoring parked tunings with new numbers). No identity tint at any state, the
+   three sanctioned deltas: typography (the strip inherits the global Inter/type ladder), the 1px
+   hover-gray rest outline below (T123), and the 0.9 faded-label scale (fadedColor, render.ts;
+   T118 — both are the user restoring parked tunings, renumbered). No identity tint at any state, the
    thick 1.5px inset identity ring on the selected tab, the neutral line under the strip. The
    Yatharth theme below is the opt-in restoration of the contributor's merged strip aesthetic. */
 .tab.active { color: var(--fg); background: rgba(255, 255, 255, 0.14); }
-/* T118 (the user 2026-08-27, partially restoring a parked tuning with a NEW number): resting tabs
-   get the hover box's shape in "the slightest slightest lighter gray than the default nothing" —
-   a NEUTRAL 2% white wash, never identity-colored. Rest only: the :not chain excludes every state
-   that paints its own background (hover 0.06 / active 0.14 / blocked red), so there is no
-   same-specificity race to lose — the rule simply never matches those states (the cascade-tiebreak
-   lesson) — and excludes the + affordance (.tab-add, class "tab tab-add", which is not a session
-   tab). Scoped body:not(.chat-theme-yatharth): one rule instead of a Classic rule plus a Yatharth
-   cancel that would need its own specificity juggling. With this and the fadedColor scale in
-   render.ts, Classic = the pre-720 strip modulo exactly three sanctioned deltas: typography, this
-   2% rest wash, and the 0.9 label-fade scale. */
-body:not(.chat-theme-yatharth) .tab:not(.tab-blocked):not(.active):not(:hover):not(.tab-add) { background: rgba(255, 255, 255, 0.02); }
+/* T123 (the user 2026-08-27, redirecting T118's resting-tab distinction — the merged 2% fill
+   came out for this): resting tabs wear a SUPER-THIN outline at all times, no fill — the tab body
+   stays the dark background, ringed by 1px in EXACTLY the gray the hover fill uses
+   (rgba(255,255,255,0.06) — keep the two in lockstep if either is tuned; the width rides .tab's
+   existing 1px border, so there is zero layout shift and both are one-line tunables). It rides
+   border-color, a DIFFERENT property from the state backgrounds, so hover's fill needs no
+   exclusion — the outline stays under the fill, same color, and the tab reads as one object
+   filling in. The :not chain stands down for the states that own their border/ring band: active
+   (the identity ring + baseline transparent border), blocked (the dashed red outline), and the +
+   affordance, which is not a session tab. Yatharth untouched via the body scope. With this and
+   fadedColor's 0.9 scale (render.ts), Classic = the pre-720 strip modulo exactly three sanctioned
+   deltas: typography, this rest outline, and the label-fade scale. */
+body:not(.chat-theme-yatharth) .tab:not(.tab-blocked):not(.active):not(.tab-add) { border-color: rgba(255, 255, 255, 0.06); }
 .tab.active.colored { box-shadow: inset 0 0 0 1.5px var(--chip-bg); }
 /* the identity ring STANDS DOWN while blocked (the user 2026-07-24): the dashed red state outline
    occupies the same band, and blocked outranks identity */

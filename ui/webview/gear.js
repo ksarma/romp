@@ -67,14 +67,12 @@ var GEAR_HTML =
   '</span></label>' +
   "<div class='rs-row' style='cursor:default'><span style='flex:1 1 auto'><b>Automatic updates <span class=rs-mixed hidden></span></b>" +
   '<span class=rs-sub>romp watches for new tagged releases (every 6 hours) AND new commits on main (origin polled every few minutes, plus a restart offer when updated code sits on disk unbooted) — one banner covers both, and acting on it converges every attached machine. Check and ask (the default) offers the banner with an Update button; Install automatically converges by itself, restarting at the next quiet moment; Off never checks. Kernel-side setting.</span>' +
-  "<select id=rs-updates style='margin-top:5px;width:100%;background:#1e1e1e;color:#ccc;" +
-  "border:1px solid #3a3a3a;border-radius:5px;padding:3px 4px;cursor:pointer'>" +
+  "<select id=rs-updates style='display:none'>" +
   '<option value=ask>Check and ask</option><option value=auto>Install automatically</option><option value=off>Off</option>' +
   '</select></span></div>' +
   "<div class='rs-row rs-sep' style='cursor:default'><span style='flex:1 1 auto'><b>Default backend</b>" +
   '<span class=rs-sub>What the + button uses for a NEW session — tmux drives a terminal pane; SDK runs via the Agent SDK. Both kinds run side by side; this only sets the default.</span>' +
-  "<select id=rs-backend style='margin-top:5px;width:100%;background:#1e1e1e;color:#ccc;" +
-  "border:1px solid #3a3a3a;border-radius:5px;padding:3px 4px;cursor:pointer'>" +
+  "<select id=rs-backend style='display:none'>" +
   '<option value=sdk>SDK</option><option value=tmux>tmux (terminal)</option>' +
   '</select></span></div>' +
   '<div class=rs-sec>Judges</div>' +
@@ -254,9 +252,16 @@ function initGear(post) {
     try { window.addEventListener('storage', function (e) { if (e.key === 'romp:menu-echo' && e.newValue) close(); }); } catch (e) {}
     // paint(options, curId): the closed row shows the CURRENT option, the menu one row per option
     return function (options, curId) {
-      var cur = options[0];
+      // options can be EMPTY: the swept effort selects start blank until /models resolves
+      // (fillChoices) — paint a quiet placeholder row instead of dying on options[0].name,
+      // which would abort the whole initGear before anything else wired (caught in the
+      // Playwright harness pre-merge; kernel tests also pin this file clear of retired option
+      // words, so keep comments plain here).
+      var cur = null;
       options.forEach(function (o) { if (o.id === curId) cur = o; });
-      btn.innerHTML = rowHTML(cur) + '<span style="flex:0 0 auto;margin-left:auto;opacity:0.55">\u25BE</span>';
+      if (!cur) cur = options.length ? options[0] : null;
+      btn.innerHTML = (cur ? rowHTML(cur) : '<span style="flex:1 1 auto;min-width:0;color:#8a8a8a">\u2026</span>') +
+        '<span style="flex:0 0 auto;margin-left:auto;opacity:0.55">\u25BE</span>';
       menu.innerHTML = '';
       options.forEach(function (o) {
         var row = document.createElement('div');
@@ -264,7 +269,7 @@ function initGear(post) {
         row.style.cssText = 'display:flex;align-items:center;gap:8px;min-width:0;position:relative;' +
           'padding:4px 22px 4px 8px;border-radius:4px;cursor:pointer';
         row.innerHTML = rowHTML(o);
-        if (o.id === cur.id) {
+        if (cur && o.id === cur.id) {
           var ck = document.createElement('span'); ck.textContent = '\u2713';
           ck.setAttribute('style', 'position:absolute;right:6px;top:50%;transform:translateY(-50%);background:#1EA1EB;color:#fff;border-radius:50%;width:13px;height:13px;font-size:9px;font-weight:900;display:inline-flex;align-items:center;justify-content:center;line-height:1;');
           row.appendChild(ck);
@@ -334,6 +339,42 @@ function initGear(post) {
     tcDrop(TABCTX, tc ? tc.value : 'over50');
   }
   tcPaint();
+  // The remaining native selects sweep onto the same builder (the user 2026-08-27, closing the
+  // 3-house/3-native split the gauge migration left): a generic adapter over ANY hidden select —
+  // options snapshot from sel.options (so the effort selects, whose options arrive from /models
+  // in fillChoices, stay correct), the pick writes sel.value and fires the select's own change
+  // event, so every existing persistence path (setUpdateMode / s.backend / setJudgeEffort / ...)
+  // and the fillMixedMarks row lookup keep working untouched. Repaints ride the same events the
+  // value rides: the change event, a childList mutation (fillChoices rewriting options), and the
+  // end of fill() (which sets values silently — repaintSelectPicks below). The model pickers keep
+  // versionMenu (they need family→version submenus); tabctx/scheme/theme have their own rows.
+  var selectPickPaints = [];
+  function repaintSelectPicks() { selectPickPaints.forEach(function (fn) { fn(); }); }
+  function selectPick(sel, wrapStyle) {
+    if (!sel) return;
+    sel.style.display = 'none';
+    var wrap = document.createElement('div');
+    wrap.setAttribute('style', 'position:relative;' + wrapStyle);
+    sel.parentNode.insertBefore(wrap, sel.nextSibling);
+    var rowHTML = function (o) {
+      return '<span style="flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#ccc">' + o.name + '</span>';
+    };
+    var drop = housePick(wrap, 'val', rowHTML, function (id) {
+      sel.value = id; sel.dispatchEvent(new Event('change')); paint();
+    });
+    function paint() {
+      drop(Array.prototype.map.call(sel.options, function (o) { return { id: o.value, name: o.textContent }; }), sel.value);
+    }
+    sel.addEventListener('change', paint);
+    new MutationObserver(paint).observe(sel, { childList: true });
+    selectPickPaints.push(paint);
+    paint();
+  }
+  selectPick(upm, 'margin-top:5px');
+  selectPick(bk, 'margin-top:5px');
+  selectPick(je, 'flex:0 0 auto;width:45%');
+  selectPick(ie, 'flex:0 0 auto;width:45%');
+  selectPick(de, 'flex:0 0 auto;width:45%');
   jix.addEventListener('change', function () { var s = load(); s.showIndexJudges = jix.checked; save(s); });
   jtr.addEventListener('change', function () { var s = load(); s.showTriageJudges = jtr.checked; save(s); });
   if (cg) cg.addEventListener('change', function () { var s = load(); s.collapseGaps = cg.checked; save(s); });
@@ -629,6 +670,7 @@ function initGear(post) {
     // field takes a typed path, which is what that machine has. An older kernel sends no verdict and
     // keeps the button it always had.
     if (ddb && typeof v.nativeDialogs === 'boolean') ddb.style.display = v.nativeDialogs ? '' : 'none';
+    repaintSelectPicks();   // fill() writes sel.value directly (no change event) — the closed rows follow
     var x = lv(); b.innerHTML = 'kernel ' + (v.kernel_sha || '?') + '\nserving v' + v.dist_ver + '\nthis tab v' + (x || '?');
   }).catch(function () { b.textContent = '(version unavailable)'; }); }
   // The settings modal is full-WINDOW in the web shell — ask it to expand the
