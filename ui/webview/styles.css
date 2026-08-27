@@ -155,6 +155,16 @@ body.chat-theme-yatharth #winframe { display: block; position: fixed; inset: 0; 
    the active/hover fills and per-tab padding still separate neighbours visually. (The Yatharth
    theme reopens a 3px seam — its flat tints need one; see its block below.) */
 #tabs { display: flex; flex: 1 1 auto; flex-wrap: wrap; align-items: stretch; gap: 0; }
+/* T125 (the user 2026-08-27, screenshot: with wrapped rows the tabs read as floating boxes): the
+   strip is a BAND — its own background plane a hair above the page, containing every wrapped row,
+   closed by the existing --box-border hairline at its bottom edge. This is how tab strips are
+   grounded in the polished multi-tab precedents (browser frame bands, editor tab-group headers,
+   design-system "tabs on a surface + divider"): the plane says "one control", the hairline says
+   "it ends here" — per-row separator lines were rejected as clutter. 3% white over the page bg
+   (tunable one-liner); background only, so zero layout shift, and the selected ring / blocked
+   dashed / rest outline / hover fill all read as before, now against the band. Classic only:
+   Yatharth keeps his merged look via the body scope. */
+body:not(.chat-theme-yatharth) #tabbar { background: linear-gradient(rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.03)), var(--vscode-sideBar-background, var(--bg)); }
 /* Drag handle straddling the tab strip's bottom border (the user 2026-08-18): the strip scrolls past
    its max-height cap, which clipped the fifth row of a many-session strip with no way to see more.
    Drag DOWN for more rows, UP for fewer; double-click resets; the strip stays a scroll pane at every
@@ -299,9 +309,9 @@ body.tabbar-resizing { cursor: ns-resize; user-select: none; }
 @keyframes tab-ph-swirl-spin { to { transform: rotate(-360deg); } }
 /* CLASSIC (the default; T113, tightened by T115, tuned by T118 — the user 2026-08-27): the tab
    strip is the PRE-720 strip — verified by pixel-diffing a real pre-720 build — modulo exactly
-   three sanctioned deltas: typography (the strip inherits the global Inter/type ladder), the 1px
-   hover-gray rest outline below (T123), and the 0.9 faded-label scale (fadedColor, render.ts;
-   T118 — both are the user restoring parked tunings, renumbered). No identity tint at any state, the
+   four sanctioned deltas: typography (the strip inherits the global Inter/type ladder), the 1px
+   hover-gray rest outline below (T123), the 0.9 faded-label scale (fadedColor, render.ts; T118),
+   and the strip band (T125, below). No identity tint at any state, the
    thick 1.5px inset identity ring on the selected tab, the neutral line under the strip. The
    Yatharth theme below is the opt-in restoration of the contributor's merged strip aesthetic. */
 .tab.active { color: var(--fg); background: rgba(255, 255, 255, 0.14); }
