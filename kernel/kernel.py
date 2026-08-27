@@ -2370,7 +2370,11 @@ def _run_update(tag):
     q = shlex.quote
     log, rep = q(str(jd.STATE / "update.log")), q(str(jd.STATE / "update-report.json"))
     mport = os.environ.get("ROMP_MANAGER_PORT") or ""
-    restart = ("  curl -s -X POST http://127.0.0.1:%d/restart-all >/dev/null 2>&1\n" % int(mport)) if mport.isdigit() \
+    # ?when=quiet (T121): the self-update is a DEPLOY — it rides the manager's quiet-window gate
+    # (drain first, backstop-capped) exactly like `romp refresh`, instead of cutting every in-flight
+    # turn immediately. The human Restart buttons (_restart_this_kernel) stay immediate on purpose:
+    # a person pressing Restart wants it now.
+    restart = ("  curl -s -X POST 'http://127.0.0.1:%d/restart-all?when=quiet' >/dev/null 2>&1\n" % int(mport)) if mport.isdigit() \
         else "  : # no manager — the new code arms on the next romp start (the report says so)\n"
     ok_rep = {"ok": True, "tag": tag, "restarted": bool(mport.isdigit())}
     script = (
@@ -27988,9 +27992,18 @@ class Handler(BaseHTTPRequestHandler):
                 # In-flight SDK turn count — the manager's quiet-window gate for deferred deploy
                 # refreshes (it polls this only while a refresh is pending). Auth-exempt like
                 # /healthz: the manager holds no token, and a bare count leaks nothing.
+                # ?drain=1 (T121): the PARKED poll also refreshes the kernel's drain lease — new
+                # turn starts hold so this count falls to 0 on turn-end events instead of only via
+                # the manager's backstop cut. One round-trip arms both; a plain /busy never holds.
                 be = _sdk()
                 n = be.busy_count() if be and hasattr(be, "busy_count") else 0
-                return self._send(200, json.dumps({"busy": n}), "application/json", cache="no-cache")
+                draining = False
+                if be is not None and hasattr(be, "refresh_drain_hold"):
+                    if parse_qs(urlparse(self.path).query).get("drain", [""])[0] == "1":
+                        be.refresh_drain_hold()
+                    draining = be.drain_holding()
+                return self._send(200, json.dumps({"busy": n, "draining": draining}),
+                                  "application/json", cache="no-cache")
             if p == "/manifest.webmanifest":
                 # the install manifest — auth-exempt like /healthz, and for a hard reason: the
                 # browser's manifest fetch sends NO credentials, so behind the gate it 403s at the

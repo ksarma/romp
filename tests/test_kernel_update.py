@@ -287,7 +287,9 @@ class RunUpdate(Fresh):
         # the restart rides the SUCCESS branch only: everything after `if` up to `else` has it,
         # the failure branch does not
         ok_branch, fail_branch = script.split("else\n", 1)
-        self.assertIn("/restart-all", ok_branch)
+        self.assertIn("/restart-all?when=quiet", ok_branch,
+                      "the self-update is a DEPLOY: it rides the quiet-window gate (drain first, "
+                      "backstop-capped) instead of cutting every in-flight turn (T121)")
         self.assertNotIn("/restart-all", fail_branch)
         self.assertEqual(km._UPDATE_STATE[0], "running")
 

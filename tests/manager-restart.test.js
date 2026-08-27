@@ -118,3 +118,15 @@ test('quietTick: a quiet fleet applies through the injected apply', () => {
               opts: QOPTS, log: () => {}, schedule: () => {}, apply: (g) => { applied = g; } });
   assert.equal(applied && applied.reason, 'quiet');
 });
+
+// T121: the PARKED quiet poll is also the kernel's drain-lease refresher — one probe reads the
+// count AND holds new turn starts, and the lease dies by itself when this manager stops polling
+// (no off-switch to forget; a fresh kernel boots clear by construction).
+test('the parked quiet poll refreshes the kernel drain lease in the same probe', () => {
+  const fs = require('node:fs');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'bin', 'romp-manager'), 'utf8');
+  assert.ok(src.includes("fetchBusy(KERNEL_PORT, cb, '/busy?drain=1')"),
+    'the quiet tick binds the drain-refresh spelling of the probe');
+  assert.ok(src.includes('path: path || \'/busy\''),
+    'a plain /busy stays side-effect free — only the parked poll holds');
+});

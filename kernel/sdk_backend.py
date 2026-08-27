@@ -2067,6 +2067,11 @@ class SdkSession:
                     # would land it on the un-rewound branch (the exact wrong-branch delivery this guards)
                     blocked = blocked or bool(self._rewind_to and not self._rewind_armed)
                     blocked = blocked or self._ping_feeding   # the ping's record must not share its window
+                    # a parked deploy restart is DRAINING (T121): hold NEW turn starts — the queued
+                    # prompt persists (the checkpoint) and /busy falls to 0 on this box's own
+                    # turn-end events. Mid-turn forwards keep flowing (inflight > 0), so the
+                    # in-flight turn can still finish; the wedged/rewind holds above are untouched.
+                    blocked = blocked or (self.inflight == 0 and self.backend.drain_holding())
                     item = self._pending.pop(0) if (self._pending and not blocked) else None
                     fresh = item is not None and self.inflight == 0     # starting from idle, not mid-turn
                 if item is None:
@@ -3030,6 +3035,10 @@ class SdkBackend:
         self._pending_ask: dict[str, bool] = {}   # sid -> has an ask awaiting answer
         self._live: dict[str, dict] = {}          # sid -> {key -> atom}: the in-memory LIVE TAIL (ahead of disk)
         self._rl_lock = threading.Lock()          # serializes usage.json read-merge-write (_record_rate_limit)
+        self._drain_hold_until = 0.0              # deploy-drain lease (T121): RUNTIME-ONLY — a fresh boot starts clear by construction
+        self._drain_hold_since = 0.0
+        self._drain_hold_rang = False
+        self._drain_wake_timer = None
         self._usage_all_keyed = False             # refresh_usage's one-shot: the last refresh found only
         #                                           keyed candidates (already logged); reset when a
         #                                           pollable session exists again, so the 60s rail timer
@@ -3500,6 +3509,66 @@ class SdkBackend:
         with self._lock:
             sessions = list(self.sessions.values())
         return sum(1 for s in sessions if s.inflight and not s.ended)
+
+    # ── deploy-drain hold (T121 part 1) ─────────────────────────────────────
+    # While a quiet deploy restart is PARKED at the manager, this kernel holds NEW turn starts so
+    # /busy genuinely drains to 0 on its own turn-end events (before this, kernels kept starting
+    # queued turns and a busy box only ever "drained" via the manager's backstop cut). A LEASE, not
+    # a latch: the manager's quiet poll refreshes it every ~3s (/busy?drain=1), it expires seconds
+    # after the holder dies, and it is RUNTIME-ONLY — a freshly booted kernel starts clear by
+    # construction (the restart the hold served already happened), the manager-approved stale-flag
+    # guard. Mid-turn forwards keep flowing (the in-flight turn must be able to finish); queued
+    # prompts persist to disk — that IS the checkpoint. Visibility: arming logs the parked state
+    # once per episode, and a drain that outlives DRAIN_LOUD_S escalates to the problems ring so a
+    # long-held box never reads as mysteriously idle.
+    DRAIN_HOLD_TTL = 12.0     # seconds; ~4 manager polls — the lease outlives a missed poll, not a dead manager
+    DRAIN_LOUD_S = 300.0      # a drain still holding after 5 min rings — visible, never mysterious
+
+    def refresh_drain_hold(self) -> None:
+        """Arm/extend the drain lease (the manager's parked quiet poll calls this each tick)."""
+        now = time.time()
+        with self._lock:
+            first = self._drain_hold_until <= now
+            self._drain_hold_until = now + self.DRAIN_HOLD_TTL
+            if first:
+                self._drain_hold_since = now
+                self._drain_hold_rang = False
+            t = self._drain_wake_timer
+            self._drain_wake_timer = threading.Timer(self.DRAIN_HOLD_TTL + 0.5, self._wake_all_inputs)
+            self._drain_wake_timer.daemon = True
+            nt = self._drain_wake_timer
+        if t is not None:
+            t.cancel()
+        nt.start()
+        if first:
+            self._log("deploy restart parked: draining — %d in-flight turn(s); new turn starts held "
+                      "until this box quiets (queued prompts persist and start after the bounce)"
+                      % self.busy_count())
+        elif now - self._drain_hold_since > self.DRAIN_LOUD_S and not self._drain_hold_rang:
+            with self._lock:
+                self._drain_hold_rang = True
+            self._log("deploy restart still parked after %d min — %d in-flight turn(s) have not "
+                      "finished; new turn starts remain held (the manager's backstop will apply "
+                      "the restart regardless)" % (int((now - self._drain_hold_since) / 60),
+                                                   self.busy_count()), problem=True)
+
+    def drain_holding(self) -> bool:
+        """Whether new turn starts are currently held for a parked deploy restart."""
+        with self._lock:
+            return self._drain_hold_until > time.time()
+
+    def _wake_all_inputs(self) -> None:
+        """Nudge every session's input generator to re-check its gate — the lease just expired
+        (holder gone), so held fresh turns must start without waiting for another event."""
+        with self._lock:
+            sessions = list(self.sessions.values())
+        for s in sessions:
+            try:
+                loop, wake = s.loop, s._input_wake
+                if loop is not None and wake is not None:
+                    loop.call_soon_threadsafe(wake.set)
+            except Exception:
+                pass
 
     def refresh_usage(self):
         """Ask a live connected session for the exact /usage snapshot (get_usage control request). The
