@@ -1,7 +1,7 @@
 // The chat-tab appearance themes (T113, tightened by T115, tuned by T118 — the user 2026-08-27):
 // CLASSIC, the default, is the PRE-720 tab strip modulo exactly THREE sanctioned deltas —
 // typography (the strip inherits the global Inter/type ladder), T123's 1px hover-gray rest
-// outline, and T118's 0.9 faded-label scale (the user restoring parked tunings, redirected). Everything else reads pre-720: NO identity tint at any state, the thick 1.5px
+// outline, T118's 0.9 faded-label scale, and T125's strip band (the multi-row grounding). Everything else reads pre-720: NO identity tint at any state, the thick 1.5px
 // selected ring, the neutral line under the strip, gap 0. T115 verified the baseline equality by
 // pixel-diffing a real pre-720 build: with fonts normalized, zero differing pixels outside the
 // (out-of-scope) tag-controls box — a re-run must subtract the two T118 washes the same way it
@@ -78,6 +78,17 @@ test("Yatharth: his strip verbatim, scoped to the theme class", () => {
   assert.match(CSS, /body\.chat-theme-yatharth \.tab\.colored:not\(\.tab-blocked\) \{\n  background: color-mix\(in srgb, var\(--chip-bg\) 9%, transparent\);\n\}/);
   assert.match(CSS, /body\.chat-theme-yatharth \.tab\.colored:not\(\.tab-blocked\):hover \{\n  background: color-mix\(in srgb, var\(--chip-bg\) 15%, transparent\);\n\}/);
   assert.match(CSS, /body\.chat-theme-yatharth \.tab\.active\.colored:not\(\.tab-blocked\) \{\n  background: color-mix\(in srgb, var\(--chip-bg\) 22%, transparent\);\n  border-color: color-mix\(in srgb, var\(--chip-bg\) 55%, transparent\);\n  box-shadow: none;\n\}/);
+});
+
+test("Classic: the strip is a BAND — a 3% plane over the page bg, closed by the hairline (T125)", () => {
+  // The user (2026-08-27, screenshot): wrapped rows read as floating boxes. The survey verdict
+  // across editors (VS Code wrapTabs, JetBrains multi-row), browsers/terminals, and design-system
+  // specs (Material's mandatory divider, Carbon/Ant contained tabs) is unanimous: containment
+  // comes from the strip owning a background PLANE, closed by ONE bottom hairline — not from
+  // per-row lines. 3% white over --bg reproduces VS Code's canonical #252526-over-#1E1E1E band.
+  assert.match(CSS, /^body:not\(\.chat-theme-yatharth\) #tabbar \{ background: linear-gradient\(rgba\(255, 255, 255, 0\.03\), rgba\(255, 255, 255, 0\.03\)\), var\(--vscode-sideBar-background, var\(--bg\)\); \}$/m,
+    "the band: one Classic-scoped background line, tunable in place; Yatharth keeps his merged look");
+  assert.match(CSS, /border-bottom: 1px solid var\(--box-border\);/, "…closed by the ONE existing hairline at the band's bottom edge");
 });
 
 test("the gear offers the picker in the one menu vocabulary, Classic first", () => {
