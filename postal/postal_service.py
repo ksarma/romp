@@ -264,8 +264,25 @@ def _tl_append(fname, obj):
     except Exception:
         pass
 
+def _walk_root_record(frm_id):
+    """The sending session's kernel-walked root-ask record, fetched at SEND time for a cross-host
+    delegate (the user 2026-08-27, T126): the receiving kernel's chain walk rightly refuses
+    foreign-kernel hops because the evidence (goal stores + transcripts) lives on THIS machine's
+    disk — but at send time that evidence and the outgoing payload share a disk and the host is
+    definitionally online, so the origin kernel walks its own chain and the proof rides the wire.
+    The bus is stdlib-only by design, so the walk is a kernel HTTP ask (the /redial pattern):
+    best-effort, and an unreachable kernel enriches nothing — mail never blocks on enrichment.
+    The record is KERNEL-written (never agent prose), which is what earns it the walk-proved trust
+    class on the receiving side."""
+    r = _kernel_post("/walk-root", {"sid": frm_id}) or {}
+    txt = str((r or {}).get("text") or "").strip()
+    if not txt:
+        return None
+    return {"text": txt[:1200], "sid": str(r.get("sid") or frm_id), "host": self_host()}
+
+
 def deliver(to_id, from_name, from_id, body, park=False, kind="", from_host="",
-            relay_mid="", relay_via="", tracked=False):
+            relay_mid="", relay_via="", tracked=False, user_ask=None):
     # park=True marks a HANDOFF parked for a session that's currently dead. The
     # maildir is keyed by the session UUID (which `romp resume` reuses), so the
     # message simply waits on disk until that session is revived — delivered then,
@@ -324,6 +341,11 @@ def deliver(to_id, from_name, from_id, body, park=False, kind="", from_host="",
         #                                              no header, no prose (the recipient reads nothing)
     if from_host:
         ev["from_host"] = from_host                  # additive (consumer contract above)
+    if isinstance(user_ask, dict) and str(user_ask.get("text") or "").strip():
+        # the origin kernel's walked root-ask record (T126) — whitelisted copy, additive: the
+        # receiving courier reads it off this row (_postal_row) as walk-proved provenance
+        ev["userAsk"] = {"text": str(user_ask["text"])[:1200], "sid": str(user_ask.get("sid") or ""),
+                         "host": str(user_ask.get("host") or "")}
     _tl_append("messages.jsonl", ev)
     return name   # the message id (maildir filename); joins to the log + status-bar prefix
 
@@ -1318,9 +1340,16 @@ class Handler(BaseHTTPRequestHandler):
                 tnote = (" — report-back tracking does not cross hosts yet; sent as a plain handoff"
                          if tracked else "")
                 mid = "px-" + _unique()
-                outbox_put(phost, {"mid": mid, "to": hit.get("name") or to, "frm": frm,
-                                   "frm_id": frm_id, "body": body, "kind": kind,
-                                   "t": int(time.time())})
+                relay_msg = {"mid": mid, "to": hit.get("name") or to, "frm": frm,
+                             "frm_id": frm_id, "body": body, "kind": kind,
+                             "t": int(time.time())}
+                if kind == "delegate":
+                    # kernel-walked-at-relay provenance (the user 2026-08-27, T126): park time IS
+                    # send time (this write), so the walk always runs where the evidence is local
+                    ua = _walk_root_record(frm_id)
+                    if ua:
+                        relay_msg["userAsk"] = ua
+                outbox_put(phost, relay_msg)
                 _tl_append("messages.jsonl", {"t": int(time.time()), "ev": "sent", "id": mid,
                                               "from": frm, "from_id": frm_id,
                                               "to_id": "peer:%s" % phost,
@@ -2051,6 +2080,8 @@ def _quarantine_put(origin, m, to_id, via=""):
     rec = {"mid": mid, "to": m.get("to") or "", "toId": to_id, "frm": m.get("frm") or "?",
            "frmId": m.get("frm_id") or "", "body": m.get("body") or "", "kind": m.get("kind") or "",
            "origin": origin, "via": via or origin, "at": int(time.time())}
+    if isinstance(m.get("userAsk"), dict):
+        rec["userAsk"] = m["userAsk"]                # held with its provenance; approve replays it (T126)
     try:
         QUARANTINE.mkdir(parents=True, exist_ok=True)
         tmp = QUARANTINE / (mid + ".tmp")
@@ -2129,7 +2160,8 @@ def quarantine_decide(mid, action, text=None, feedback=None):
             to_id = match[0]["id"]
         deliver(to_id, rec.get("frm") or "?", rec.get("frmId") or "", body, kind=rec.get("kind") or "",
                 from_host=rec.get("origin") or "",
-                relay_mid=rec.get("mid") or "", relay_via=rec.get("via") or rec.get("origin") or "")
+                relay_mid=rec.get("mid") or "", relay_via=rec.get("via") or rec.get("origin") or "",
+                user_ask=rec.get("userAsk"))
         quarantine_del(mid)
         return True, None
     return False, "unknown action '%s' (approve|deny)" % action
@@ -2182,7 +2214,8 @@ def _relay_in(host, m, token_proven=False):
         if trust == "trusted":
             deliver(match[0]["id"], m.get("frm") or "?", m.get("frm_id") or "", m.get("body") or "",
                     kind=m.get("kind") or "", from_host=origin,
-                    relay_mid=mid, relay_via=host)       # read-receipt route: back through the direct peer
+                    relay_mid=mid, relay_via=host,       # read-receipt route: back through the direct peer
+                    user_ask=m.get("userAsk"))           # origin-kernel walked record rides through (T126)
         elif trust == "directed":
             _quarantine_put(origin, m, match[0]["id"], via=host)   # HELD for human approve/deny/edit; never injects
         # else isolated → drop: ack so the sender stops resending, but deliver nothing (no communication).

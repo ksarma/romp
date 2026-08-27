@@ -247,35 +247,39 @@ class CourierStoresTheAsk(unittest.TestCase):
         self.assertIsNotNone(nd)
         self.assertNotIn("userAsk", nd)
 
-    def test_a_carried_quote_licenses_the_mint_when_the_walk_resolves_nothing(self):
-        # the cross-host shape (T126): the walk rightly refuses foreign hops — the sender's
-        # explicit <user-ask> block is the ask flowing down in their own hand, and it mints
+    def test_a_walked_at_relay_record_licenses_the_mint_when_the_local_walk_resolves_nothing(self):
+        # the cross-host shape (T126): the local walk rightly refuses foreign hops — the ORIGIN
+        # kernel walked the chain at relay time and the bus stamped the proof onto the ledger row;
+        # kernel-proved, it licenses the mint exactly like a local root
         jd._delegate_user_rooted = lambda *a, **k: None
-        body = (BODY + "\n<user-ask>\n" + DICTATION + "\n</user-ask>")
         jd.MESSAGES.write_text(json.dumps(
             {"t": T0, "ev": "sent", "id": MID, "from": "web", "from_id": MGR,
-             "to_id": WKR, "kind": "delegate", "body": body}) + "\n")
+             "to_id": WKR, "kind": "delegate", "body": BODY, "from_host": "TESTHOST",
+             "userAsk": {"text": DICTATION, "sid": MGR, "host": "TESTHOST"}}) + "\n")
         jd.run_courier(now=NOW)
         nd = self._planted()
-        self.assertIsNotNone(nd, "the carried quote licenses the mint")
+        self.assertIsNotNone(nd, "the walked-at-relay record licenses the mint")
         self.assertEqual(nd["userAsk"]["text"], DICTATION)
-        self.assertTrue(nd["userAsk"].get("carried"))
+        self.assertEqual(nd["userAsk"]["host"], "TESTHOST", "provenance names the proving kernel")
+        self.assertNotIn("carried", nd["userAsk"], "kernel-proved needs no trust asterisk")
 
-    def test_without_the_block_an_unresolvable_delegate_still_files_quiet(self):
+    def test_without_the_record_an_unresolvable_delegate_still_files_quiet(self):
         jd._delegate_user_rooted = lambda *a, **k: None
         jd.run_courier(now=NOW)
         self.assertIsNone(self._planted(), "T101's quiet-on-uncertainty stands")
 
-    def test_a_walk_resolved_root_outranks_a_carried_claim(self):
+    def test_a_local_walk_resolved_root_outranks_the_wire_record(self):
         jd._delegate_user_rooted = lambda *a, **k: {"text": DICTATION, "sid": MGR}
-        body = (BODY + "\n<user-ask>\nsomething the sender claims instead\n</user-ask>")
         jd.MESSAGES.write_text(json.dumps(
             {"t": T0, "ev": "sent", "id": MID, "from": "web", "from_id": MGR,
-             "to_id": WKR, "kind": "delegate", "body": body}) + "\n")
+             "to_id": WKR, "kind": "delegate", "body": BODY,
+             "userAsk": {"text": "an older claim from the wire", "sid": MGR,
+                         "host": "TESTHOST"}}) + "\n")
         jd.run_courier(now=NOW)
         nd = self._planted()
-        self.assertEqual(nd["userAsk"]["text"], DICTATION)
-        self.assertNotIn("carried", nd["userAsk"])
+        self.assertEqual(nd["userAsk"]["text"], DICTATION,
+                         "the fresher local proof wins")
+        self.assertNotIn("host", nd["userAsk"])
 
 
 class UserAskText(unittest.TestCase):
@@ -373,68 +377,53 @@ class BuildersCarryTheAsk(unittest.TestCase):
                          "nothing of it in the unmarked (romp-authored) half")
 
 
-class TicketLeadStrip(unittest.TestCase):
-    """A ticket-shaped LEAD token never titles a card (the user 2026-08-27, T126: a dispatch led
-    with an opaque tracking id, the courier compressed it into goal text, and every writer treated
-    the id as the work's proper name). The mechanical rule is deliberately narrow — shapes that
-    cannot be natural language; the general shape is the writers' prompt-level call."""
+class WalkedAtRelay(unittest.TestCase):
+    """Kernel-walked-at-relay provenance (the user 2026-08-27, T126): the local walk rightly
+    refuses foreign-kernel hops because the EVIDENCE lives on the origin machine's disk — but at
+    send time the origin kernel holds everything, so it walks its own chain and the proof rides
+    the wire ({text, sid, host}, kernel-written, never agent prose). Stored on the minted top, it
+    is ALSO how re-delegation continues the chain: the planted node's own promptUuid is the mail
+    segment (refused as a human record) and its origin hop is cross-host (refused as a foreign
+    read), so the stored proof is the surviving evidence the walk resolves."""
 
-    def test_ticket_leads_strip(self):
-        for raw, want in (("T120: nudge cap re-judges at fire time", "nudge cap re-judges at fire time"),
-                          ("T120 — the nudge cap escalates", "the nudge cap escalates"),
-                          ("[T99] fix the tint", "fix the tint"),
-                          ("#752: merge it", "merge it"),
-                          ("T12 verify the refs", "verify the refs")):
-            self.assertEqual(jd._strip_ticket_lead(raw), want, raw)
-
-    def test_natural_leads_survive(self):
-        for raw in ("Test the parser end to end", "T-shirt mockups for the launch",
-                    "GPT-4 evaluation results", "COVID-19 response plan",
-                    "2026 planning doc", "B2 bomber history page",
-                    "T5 fine-tuning run"):
-            self.assertEqual(jd._strip_ticket_lead(raw), raw, raw)
-
-    def test_a_bare_token_title_keeps_itself(self):
-        self.assertEqual(jd._strip_ticket_lead("T120:"), "T120:",
-                         "better a bare id than an empty card")
-
-    def test_the_courier_mint_strips_but_the_frame_keeps_the_raw_line(self):
-        st = {"rompUuid": MGR, "seq": 0, "nodes": {}, "placements": {}, "status": {}}
-        nid = jd.apply_courier(st, "s1", NOW, "T120: factor the layout engine",
-                               {"peer": WKR, "goalId": "t1", "msgId": MID},
-                               frame="T120 — factor the layout engine into a shared module")
-        self.assertEqual(st["nodes"][nid]["text"], "factor the layout engine")
-        self.assertEqual(st["nodes"][nid]["frame"],
-                         "T120 — factor the layout engine into a shared module",
-                         "provenance survives in the frame, verbatim")
-
-    def test_the_sender_tracker_label_is_stripped_too(self):
-        st = {"rompUuid": MGR, "seq": 0, "nodes": {}, "placements": {}, "status": {}}
-        nid = jd._plant_handoff_track(st, None, "T99: verify the refs", WKR, "api", NOW, MID)
-        self.assertEqual(st["nodes"][nid]["text"], "\u21aa delegated to api: verify the refs")
-
-
-class CarriedUserAsk(unittest.TestCase):
-    """A delegating mail may CARRY the requester's quoted ask (the user 2026-08-27, T126): a chain
-    routed through a FOREIGN kernel rightly refuses the walk's hops, so no walk-resolved record can
-    ride along — the sender-declared <user-ask> block (the frame's trust class) fills the seat, and
-    it LICENSES the mint: an explicit quote of the requester is the ask flowing down in the
-    sender's own hand, not the uncertainty T101 quiets on. A walk-resolved root outranks it."""
-
-    def test_extraction(self):
-        self.assertEqual(jd._carried_user_ask(
-            "Do the thing.\n<user-ask>\nmake the two views identical\n</user-ask>\nrest"),
-            "make the two views identical")
-        self.assertEqual(jd._carried_user_ask("no block here"), "")
-
-    def test_carried_ask_stores_with_its_flag(self):
+    def test_the_walked_record_stores_with_its_host(self):
         st = {"rompUuid": MGR, "seq": 0, "nodes": {}, "placements": {}, "status": {}}
         nid = jd.apply_courier(st, "s1", NOW, "factor the engine",
                                {"peer": WKR, "goalId": "t1", "msgId": MID},
-                               user_ask={"text": DICTATION, "sid": WKR, "carried": True})
+                               user_ask={"text": DICTATION, "sid": WKR, "host": "TESTHOST"})
         ua = st["nodes"][nid]["userAsk"]
         self.assertEqual(ua["text"], DICTATION)
-        self.assertTrue(ua.get("carried"), "sender-declared, distinguishable from walk-proved")
+        self.assertEqual(ua["host"], "TESTHOST")
+        self.assertNotIn("carried", ua)
+
+    def test_a_node_wearing_the_proof_resolves_the_walk_for_re_delegation(self):
+        saved = jd.parsed_session
+        jd.parsed_session = lambda sid, files, now: {"turns": []}
+        try:
+            st = {"rompUuid": MGR, "nodes": {
+                "top": _node("top", "the planted cross-host ask", None,
+                             origin={"peer": WKR, "goalId": "t1", "msgId": MID,
+                                     "peerHost": "TESTHOST"},
+                             promptUuid="mail-seg",
+                             userAsk={"text": DICTATION, "sid": WKR, "host": "TESTHOST"}),
+                "kid": _node("kid", "a step under it", "top")},
+                  "placements": {}, "status": {}}
+            jd.save_goals(MGR, st)
+            rec = jd._delegate_user_rooted(MGR, "kid", {MGR: "/dev/null"}, NOW)
+            self.assertEqual(rec["text"], DICTATION,
+                             "the stored kernel proof is the surviving evidence")
+            self.assertEqual(rec["host"], "TESTHOST")
+        finally:
+            jd.parsed_session = saved
+            for d in (jd.GOALDIR, jd.GOALARCHDIR):
+                try:
+                    (d / (MGR + ".json")).unlink()
+                except OSError:
+                    pass
+            try:
+                (jd._overrides_dir() / (MGR + ".jsonl")).unlink()
+            except OSError:
+                pass
 
 
 class PromptGates(unittest.TestCase):
@@ -455,7 +444,7 @@ class PromptGates(unittest.TestCase):
                       "the <delegating-request>, then the rest of <work>.", jd.BLOCK_BRIEF_SYS)
 
     def test_tracking_ids_are_jargon_in_every_writer_that_titles_or_opens(self):
-        for name in ("DISTILL_SYS", "BLOCK_BRIEF_SYS", "PLAN_SYS", "GIST_SYS"):
+        for name in ("DISTILL_SYS", "BLOCK_BRIEF_SYS", "PLAN_SYS", "GIST_SYS", "COURIER_SYS"):
             with self.subTest(prompt=name):
                 self.assertIn("ticket", getattr(jd, name).lower(),
                               "a tracking id is jargon-gated like any coined name (T126)")

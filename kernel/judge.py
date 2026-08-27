@@ -10240,42 +10240,6 @@ def _live_prompt_since(fsid):
     return since
 
 
-_TICKET_SEP_RE = re.compile(r"^\s*[\[\(]?(?:T\d{1,6}|#\d{1,6})[\]\)]?\s*[:,\-—–]+\s*")
-_TICKET_BARE_RE = re.compile(r"^\s*[\[\(]?T\d{2,6}[\]\)]?\s+")
-
-
-def _strip_ticket_lead(s):
-    """Drop a ticket-shaped LEAD token from card-bound text (the user 2026-08-27, T126: a
-    dispatch led with an opaque tracking id, the courier compressed that first line into goal
-    text, and every writer thereafter treated the id as the work's proper name — the jargon gate
-    read it as the title, not as jargon). MECHANICAL scope is deliberately narrow: T<digits> and
-    #<digits> with an explicit separator, or T<2+ digits> on bare space — shapes that cannot be
-    natural language. The GENERAL shape (bare alphanumeric ids) is the writers' judgment call via
-    their prompt lines: a mechanical rule wide enough to catch ABC-42 also beheads real titles
-    about GPT-4 or COVID-19. A title that IS only the token keeps it (better a bare id than an
-    empty card); the raw line survives in the stored frame for provenance either way."""
-    t = str(s or "")
-    out = _TICKET_SEP_RE.sub("", t, count=1)
-    if out == t:
-        out = _TICKET_BARE_RE.sub("", t, count=1)
-    out = out.strip()
-    return out if out else t.strip()
-
-
-_CARRIED_ASK_RE = re.compile(r"<user-ask>\s*(.*?)\s*</user-ask>", re.S | re.I)
-
-
-def _carried_user_ask(body):
-    """A delegating mail's EXPLICIT quoted requester ask — the sender-declared <user-ask> block
-    (the user 2026-08-27, T126): a chain that routes through a FOREIGN kernel rightly refuses the
-    root walk's hops, so no walk-resolved record can ever ride along, and the writers anchored on
-    the intermediary's framing. Same trust class as the frame (sender-declared, stored verbatim-
-    shaped); a walk-RESOLVED root always outranks a carried claim. '' when the body carries no
-    block."""
-    m = _CARRIED_ASK_RE.search(str(body or ""))
-    return m.group(1).strip() if m else ""
-
-
 def _ask_head(s, cap=700):
     """A dictated ask shaped for the <user-ask> section (T105): romp comment markers stripped, a
     quoted `> …` context block dropped, the courier's "USER ASKED:" prefix removed, blank runs
@@ -11090,7 +11054,8 @@ COURIER_SYS = (
     "the body and decide by whether B actually ends up owning work. Write text in plain concrete words "
     "(the outcome itself, no filler or stock AI phrasing, no em dashes). When the body names its "
     "subject by a coined or internal name, prefer the plain words around it: the outcome in words "
-    "anyone can read. Output only the JSON object.")
+    "anyone can read. A ticket-shaped lead token in the body (T120, ABC-42) is an id, not the "
+    "outcome: never open text with it. Output only the JSON object.")
 
 
 def _seg_peer(seg):
@@ -11351,21 +11316,24 @@ _postal_from_memo = {"key": None, "map": {}}   # messages.jsonl (mtime,size) -> 
 
 
 def _postal_row(mid):
-    """(from_name, from_host, tracked) for a delivered postal message id, from the messages log's
+    """(from_name, from_host, tracked, body, userAsk) for a delivered postal message id, from the
     "sent" row — the AUTHORITATIVE record of who sent it and how (the row schema is the postal
     consumer contract). The sender may be a session of ANOTHER kernel (federated mail), so the local
     names registry cannot resolve it; the log row carries the name the sender wore, the origin host
     the bus stamped on cross-host delivery (2026-07-26), and the tracked report-back flag
-    (2026-08-24 — read off the row, never off message prose), and since 2026-08-25 the BODY —
-    whose cleaned first line is the delegating frame the card enrichment stores at mint.
-    ("", "", False, "") for None/unknown mids. Memoized on the log file's (mtime, size)."""
+    (2026-08-24 — read off the row, never off message prose), since 2026-08-25 the BODY — whose
+    cleaned first line is the delegating frame the card enrichment stores at mint — and since
+    2026-08-27 (T126) the origin kernel's WALKED root-ask record ({text, sid, host} or None): the
+    sending kernel ran its local chain walk at relay time and the bus carried the proof, so a
+    cross-host delegate reads user-anchored though the local walk rightly refuses foreign hops.
+    ("", "", False, "", None) for None/unknown mids. Memoized on the log file's (mtime, size)."""
     if not mid:
-        return ("", "", False, "")
+        return ("", "", False, "", None)
     try:
         st = os.stat(MESSAGES)
         key = (st.st_mtime, st.st_size)
     except OSError:
-        return ("", "", False, "")
+        return ("", "", False, "", None)
     if _postal_from_memo["key"] != key:
         mp = {}
         try:
@@ -11375,12 +11343,14 @@ def _postal_row(mid):
                 except Exception:
                     continue
                 if r.get("ev") == "sent" and r.get("id"):
+                    ua = r.get("userAsk")
                     mp[r["id"]] = (r.get("from") or "", r.get("from_host") or "", bool(r.get("tracked")),
-                                   str(r.get("body") or ""))
+                                   str(r.get("body") or ""),
+                                   ua if isinstance(ua, dict) and str(ua.get("text") or "").strip() else None)
         except OSError:
-            return ("", "", False, "")
+            return ("", "", False, "", None)
         _postal_from_memo["key"], _postal_from_memo["map"] = key, mp
-    return _postal_from_memo["map"].get(mid, ("", "", False, ""))
+    return _postal_from_memo["map"].get(mid, ("", "", False, "", None))
 
 
 def _frame_head(s):
@@ -11429,14 +11399,14 @@ def apply_courier(store, seg_id, seg_t, text, origin, prompt_uuid=None, frame=No
                 return nid
     store["seq"] = store.get("seq", 0) + 1
     nid = "%s:g%d" % (store["rompUuid"], store["seq"])
-    payload = {"id": nid, "text": (_strip_ticket_lead(text) or "(delegation)")[:120], "parentId": None,
+    payload = {"id": nid, "text": (text or "(delegation)")[:120], "parentId": None,
                "nodeComplete": False, "blocked": False, "cleared": False,
                "trail": [seg_id], "t": seg_t, "origin": origin, "promptUuid": prompt_uuid, "log": []}
     if frame:
         payload["frame"] = frame
     if isinstance(user_ask, dict) and str(user_ask.get("text") or "").strip():
         payload["userAsk"] = {"text": _ask_head(str(user_ask["text"])), "sid": user_ask.get("sid"),
-                              **({"carried": True} if user_ask.get("carried") else {})}
+                              **({"host": str(user_ask["host"])} if user_ask.get("host") else {})}
     nodes[nid] = GuardedNode(payload)
     placements[seg_id] = nid
     store["lastNode"] = nid                            # the delegation is now the active focus
@@ -11501,7 +11471,7 @@ def _plant_handoff_track(store, parent_id, text, peer_sid, peer_name, t, mid, tr
         parent_id = None                                # linked goal vanished → file as a top, never orphan
     store["seq"] = store.get("seq", 0) + 1
     nid = "%s:g%d" % (store["rompUuid"], store["seq"])
-    label = "↪ delegated to %s: %s" % (peer_name or peer_sid[:8], _strip_ticket_lead(text) or "(work)")
+    label = "↪ delegated to %s: %s" % (peer_name or peer_sid[:8], text or "(work)")
     handoff = {"peer": peer_sid, "msgId": mid}
     if tracked:
         handoff["tracked"] = True
@@ -11603,6 +11573,16 @@ def _delegate_user_rooted(sender, link_id, paths, now, _depth=0, _seen=None):
         nd = nodes.get(x)
         if not isinstance(nd, dict):
             return None
+        ua = nd.get("userAsk")
+        if isinstance(ua, dict) and str(ua.get("text") or "").strip():
+            # KERNEL-PROVED ROOT ON THE NODE (the user 2026-08-27, T126): only apply_courier writes
+            # userAsk, from a record either walked locally at mint or walked at RELAY time by the
+            # kernel that held the evidence — so a chain reaching such a node is resolved. This is
+            # the arm that lets a walked-remote chain RE-DELEGATE onward: the planted top's own
+            # promptUuid is the mail segment (refused as a human record) and its origin hop is
+            # cross-host (refused as a foreign read); the stored proof is the surviving evidence.
+            return {"text": ua["text"], "sid": ua.get("sid"),
+                    **({"host": ua["host"]} if ua.get("host") else {})}
         o = nd.get("origin")
         if (isinstance(o, dict) and o.get("peer") and o.get("goalId")
                 and not o.get("peerHost") and o["peer"] in paths):
@@ -11989,14 +11969,15 @@ def run_courier(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, v
             # state still reaches the board through the hard-block floor/placeholder, which need no
             # goal node. Uncertainty quiets by design (the trace's docstring names the surface).
             rooted = _delegate_user_rooted(sender, link_id, paths_map, now)
-            # CARRIED USER-ASK (the user 2026-08-27, T126): a dispatch may QUOTE the requester in
-            # an explicit <user-ask> block — the cross-host shape, where the walk rightly refuses
-            # foreign-kernel hops and could never resolve a local record. Sender-declared, the
-            # frame's trust class; consulted only when the walk resolves nothing (a walk-resolved
-            # root outranks a carried claim), and it LICENSES the mint below: an explicit quote of
-            # the requester is the ask flowing down in the sender's own hand, not the uncertainty
-            # T101 quiets on.
-            carried = "" if rooted else _carried_user_ask(_postal_row(mid)[3] or text)
+            # WALKED-AT-RELAY ROOT (the user 2026-08-27, T126): a cross-host dispatch carries the
+            # record the ORIGIN kernel walked at send time — the evidence (stores + transcripts)
+            # lives on that machine's disk, so the local walk rightly refuses the hop, but at the
+            # relay moment the origin kernel held everything and stamped the proof onto the mail
+            # (kernel-written, never agent prose — the same trust class as a local walk). Consulted
+            # only when the local walk resolves nothing (fresher local proof outranks), and it
+            # LICENSES the mint below exactly like a local root: every link of the chain was proved
+            # by the kernel that held its evidence, not the uncertainty T101 quiets on.
+            wired = None if rooted else _postal_row(mid)[4]
             # THE ASK IS THE CARD UNIT (the user 2026-08-26, T101): a dispatch whose chain roots to
             # an ask that ALREADY HAS A CARD — link_id resolved to the sender's ask node — LINKS
             # instead of minting: the tracking node below plants under that ask (fan-out lives
@@ -12006,7 +11987,7 @@ def run_courier(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, v
             # top — there the recipient card IS the ask's card, the fallback that keeps every user
             # ask carded somewhere. Linking alone never moves the ask card's column: planting a
             # tracking child writes no verdict on the ask.
-            mint_recipient = (rooted or carried) and not link_id
+            mint_recipient = (rooted or wired) and not link_id
             # Mint the sender's precise '↪ delegated to <recipient>' tracking node (the user 2026-06-22) and
             # point B's goal at IT — so run_propagate checks off only the handed-off piece, never the sender's
             # broader linked goal. Saved to the sender's tree before planting G on the recipient's.
@@ -12046,9 +12027,7 @@ def run_courier(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, v
                 origin["peerHost"] = frm_host
             apply_courier(store, seg_id, seg_t, edit["text"], origin, prompt_uuid=anchor_uuid,
                           frame=_postal_body_head(mid) or _frame_head(text),
-                          user_ask=(rooted if isinstance(rooted, dict)
-                                    else {"text": carried, "sid": sender, "carried": True}
-                                    if carried else None))
+                          user_ask=rooted if isinstance(rooted, dict) else wired)
             #             ^ the ledger row's body is authoritative; a row the local ledger lacks
             #               (some cross-host deliveries) falls back to the delivered segment's own
             #               head — same content, one hop later

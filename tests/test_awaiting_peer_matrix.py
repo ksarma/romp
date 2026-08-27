@@ -359,7 +359,10 @@ class CrossHostDelegation(_Base):
         self.assertEqual(hs[0]["handoff"]["peer"], "TESTHOST-B:web",
                          "the identity is toName — displays resolve it, the remote arm re-keys from it")
         self.assertIn("↪ delegated to TESTHOST-B:web", hs[0]["text"])
-        self.assertNotIn("tracked", hs[0]["handoff"], "tracked never rides the relay — the boundary")
+        self.assertNotIn("tracked", hs[0]["handoff"],
+                         "tracked never rides the relay (its primary view lives on the sender's "
+                         "kernel); the ONE thing that crosses beyond the mail itself is the "
+                         "kernel-walked root-ask record, T126 — proof, not machinery")
         jd.run_courier(now=T0 + 200)
         self.assertEqual(len(self._handoffs()), 1, "idempotent by msgId — one plant per message ever")
 
