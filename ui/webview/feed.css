@@ -1,6 +1,15 @@
 /* romp feed — a stream of rounded "deliverable cards" floating on a darker
    background. Shares the romp panel's theme-variable palette (see styles.css). */
 
+/* Inter (SIL OFL 1.1 — media/InterVariable-LICENSE.txt): THE romp UI typeface (the user
+   2026-08-26, who wanted the dashboard genuinely nice to look at). A variable face, so every
+   weight ships in one file; italic is its own optical design, not a slant. First in --sans, so
+   it beats the host font on every surface; falls back to the modern system stack unloaded. */
+@font-face { font-family: 'Inter'; src: url(../media/InterVariable.woff2) format('woff2-variations');
+  font-weight: 100 900; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Inter'; src: url(../media/InterVariable-Italic.woff2) format('woff2-variations');
+  font-weight: 100 900; font-style: italic; font-display: swap; }
+
 :root {
   --bg: var(--vscode-editor-background, #1e1e1e);
   --fg: var(--vscode-foreground, #cccccc);
@@ -52,7 +61,7 @@
      status text/chips stay --rel-done green (they encode status, not a check). */
   --check-bg: #1EA1EB;
 
-  --sans: var(--vscode-chat-font-family, var(--vscode-font-family, system-ui, -apple-system, "Segoe UI", sans-serif));
+  --sans: "Inter", var(--vscode-chat-font-family, var(--vscode-font-family, system-ui, -apple-system, "Segoe UI", sans-serif));
   --fs: var(--vscode-chat-font-size, 13px);
 }
 
@@ -69,7 +78,7 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
 /* header bar removed per the user — the columns are self-labeling */
 #feed-head { display: none; }
 .fh-title { font-weight: 600; }
-.fh-meta { color: var(--dim); font-size: 0.9em; }
+.fh-meta { color: var(--dim); font-size: 0.92em; }
 .fh-live { color: var(--green); }
 
 /* relevance filter badges — colored per class; click toggles that class off
@@ -264,7 +273,7 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
 .feed-sess-fold:hover, .feed-sess-fold:focus-visible { color: var(--fg); }
 /* what the folded row stands in for. The header's other label size (0.74em) and dim, so the name stays the
    thing you read; drawn only while folded — expanded, the cards speak for themselves. */
-.feed-sess-foldn { flex: none; font-weight: 400; font-size: 0.74em; color: var(--dim); }
+.feed-sess-foldn { flex: none; font-weight: 400; font-size: 0.72em; color: var(--dim); }
 /* a folded header IS its whole group, so it takes the bottom margin the run of cards would have had —
    without it, consecutive folded threads jam into one unreadable stack of names. */
 .feed-sess-head.folded { margin-bottom: 7px; }
@@ -329,12 +338,12 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
 
 /* decision sub-card — an OPEN question needing the user, rendered in the ask card */
 .fq { border: 1px solid rgba(30, 161, 235, 0.4); border-left: 3px solid var(--rel-decision); border-radius: 8px; padding: 8px 10px; background: rgba(30, 161, 235, 0.07); }
-.fq-input { flex: 1 1 auto; min-width: 0; font: inherit; font-size: 0.88em; outline: none;
+.fq-input { flex: 1 1 auto; min-width: 0; font: inherit; font-size: 0.86em; outline: none;
   background: var(--vscode-input-background, rgba(255, 255, 255, 0.05)); color: var(--fg);
   border: 1px solid var(--card-border); border-radius: 6px; padding: 5px 8px; }
 /* action (to-do) card: amber accent instead of decision-blue; ☐ glyph on the task
    line; the "✓ Done — I did it" button greens on hover (it's a check-off). */
-.fq-send { flex: 0 0 auto; font: inherit; font-size: 0.85em; cursor: pointer; color: var(--fg);
+.fq-send { flex: 0 0 auto; font: inherit; font-size: 0.86em; cursor: pointer; color: var(--fg);
   background: rgba(255, 255, 255, 0.08); border: 1px solid var(--card-border); border-radius: 6px; padding: 5px 12px; }
 .fq-send:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-wash); }
 /* "didn't need me" — the false-awaiting teaching dismissal */
@@ -347,7 +356,7 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
    right of the name when it fits; when the name + provenance + chips can't all fit, row2 wraps it to
    the next line instead of overflowing on top of the chips (the user 2026-06-20, was margin-left:auto
    + nested in .fask-id, which spilled the provenance over the chips on a narrow card). */
-.fask-origin { flex: 0 0 auto; font-size: 0.8em; cursor: pointer; white-space: nowrap; }
+.fask-origin { flex: 0 0 auto; font-size: 0.82em; cursor: pointer; white-space: nowrap; }
 .fask-origin-pre { color: var(--dim); }
 .fask-origin-peer { font-weight: 600; }
 .fask-origin-absorbed { opacity: 0.55; }   /* provenance of a finished handoff — history, not an active link */
@@ -371,7 +380,7 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
    REAL buttons in the Clear button's chrome (border, radius, muted text; NEUTRAL hover, not Clear's red). */
 .fask-secs { margin-top: 4px; }
 .fask-secbtn { flex: none; padding: 1px 9px; color: var(--dim); background: transparent;
-  border: 1px solid var(--card-border); border-radius: 6px; font: inherit; font-size: 0.74em;
+  border: 1px solid var(--card-border); border-radius: 6px; font: inherit; font-size: 0.72em;
   cursor: pointer; white-space: nowrap; transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease; }
 .fask-secbtn:hover { color: var(--fg); border-color: var(--fg); }
 /* the SELECTED (accent) toggle had no hover feedback — .on overrode the plain :hover, so mousing it read as
@@ -436,43 +445,43 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
 .ftask-swirl.fask-awaiting-swirl { display: inline-block; width: 11px; height: 11px; vertical-align: -1px; }
 
 /* "Followed up" — optimistic reopen pending the judge's re-file (judges delegation, 2026-06-17); blue pill */
-.fask-followedup { flex: 0 0 auto; font-size: 0.64em; font-weight: 700; letter-spacing: 0.04em;
+.fask-followedup { flex: 0 0 auto; font-size: 0.66em; font-weight: 700; letter-spacing: 0.04em;
   padding: 1px 6px; border-radius: var(--radius-pill); line-height: 1.4;
   color: #5aa2ff; border: 1px solid rgba(90, 162, 255, 0.6); }
 /* "done, confirming" — the done verdict is in, only the settle event is pending (the user 2026-07-24):
    a steady cue on the Working card, never an early column move (that flicker is what the settle gate
    prevents). Outline pill in the done-check blue (--check-bg), the same family as the ✓ it will wear. */
-.fask-doneconfirming { flex: 0 0 auto; font-size: 0.64em; font-weight: 700; letter-spacing: 0.04em;
+.fask-doneconfirming { flex: 0 0 auto; font-size: 0.66em; font-weight: 700; letter-spacing: 0.04em;
   padding: 1px 6px; border-radius: var(--radius-pill); line-height: 1.4;
   color: var(--check-bg); border: 1px solid rgba(30, 161, 235, 0.55); }
 /* "nudge failed" — the one auto-nudge didn't resolve the stall and is never re-asked (design/
    stalled-open-todos-nudge.md); red pill: this thread is waiting on the human now */
-.fask-nudgefailed { flex: 0 0 auto; font-size: 0.64em; font-weight: 700; letter-spacing: 0.04em;
+.fask-nudgefailed { flex: 0 0 auto; font-size: 0.66em; font-weight: 700; letter-spacing: 0.04em;
   padding: 1px 6px; border-radius: var(--radius-pill); line-height: 1.4;
   color: #ff6a6a; border: 1px solid rgba(255, 106, 106, 0.6); }
 /* "interrupted" — the user stopped this session mid-turn and hasn't re-engaged; auto-nudge holds
    off until their next message. WARNING yellow (the user 2026-07-06, was neutral gray and too easy
    to miss): the pause is user-chosen but the thread IS dangling — same yellow as the warn chip,
    one warning treatment across the card (see .fask-warnchip) */
-.fask-interrupted { flex: 0 0 auto; font-size: 0.64em; font-weight: 700; letter-spacing: 0.04em;
+.fask-interrupted { flex: 0 0 auto; font-size: 0.66em; font-weight: 700; letter-spacing: 0.04em;
   padding: 1px 6px; border-radius: var(--radius-pill); line-height: 1.4;
   color: #ffd166; border: 1px solid rgba(255, 209, 102, 0.6); }
 /* "interrupting…" — a stop is IN FLIGHT (the user 2026-07-07): the turn is still winding down, so this
    wears the WORKING treatment (filled yellow, faded) exactly like the chat chip's .chip-interrupting —
    an active state, visually distinct from the interrupted OUTLINE badge (paused/done). It holds steady
    from the click until the interrupt settles, then yields to .fask-interrupted. */
-.fask-interrupting { flex: 0 0 auto; font-size: 0.64em; font-weight: 700; letter-spacing: 0.04em;
+.fask-interrupting { flex: 0 0 auto; font-size: 0.66em; font-weight: 700; letter-spacing: 0.04em;
   padding: 1px 6px; border-radius: var(--radius-pill); line-height: 1.4;
   background: var(--st-working-bg); color: var(--st-working-fg); opacity: 0.75; }
 /* "warning" — a judge stamped an anomaly on this goal (judge _node_warn; the user 2026-07-02): yellow
    pill, a BUTTON — click opens the warn-detail overlay (what happened + why it's unexpected) */
-.fask-warnchip { flex: 0 0 auto; font-size: 0.64em; font-weight: 700; letter-spacing: 0.04em;
+.fask-warnchip { flex: 0 0 auto; font-size: 0.66em; font-weight: 700; letter-spacing: 0.04em;
   padding: 1px 6px; border-radius: var(--radius-pill); line-height: 1.4; font-family: inherit;
   color: #ffd166; border: 1px solid rgba(255, 209, 102, 0.6); background: transparent; cursor: pointer; }
 .fask-warnchip:hover { background: rgba(255, 209, 102, 0.14); }
 /* "waiting on <peer>" — an unanswered message out to a live peer; held in Working, not stalled (the user
    2026-06-22); teal pill, red for a mutual-wait deadlock cycle */
-.fask-waiton { flex: 0 0 auto; font-size: 0.64em; font-weight: 700; letter-spacing: 0.04em;
+.fask-waiton { flex: 0 0 auto; font-size: 0.66em; font-weight: 700; letter-spacing: 0.04em;
   padding: 1px 6px; border-radius: var(--radius-pill); line-height: 1.4;
   color: #4ec9b0; border: 1px solid rgba(78, 201, 176, 0.6); }
 .fask-waiton-cycle { color: #ff6a6a; border-color: rgba(255, 106, 106, 0.7); }
@@ -486,11 +495,11 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
 /* ---- ask DAG tree (expanded body) — nodes only; click a node for its history ---- */
 /* width:fit-content hugs the widest row so the right-aligned "(Xm ago)" node times sit just past the
    longest item instead of way out at the modal's right edge (the user 2026-06-16). */
-.ftree { margin-top: 8px; font-size: 0.9em; line-height: 1.5; width: fit-content; max-width: 100%; }
+.ftree { margin-top: 8px; font-size: 0.92em; line-height: 1.5; width: fit-content; max-width: 100%; }
 /* hierarchy via indentation only (paddingLeft set inline per depth) */
 .ftree-node{ display: flex; align-items: baseline; gap: 6px; border-radius: 5px; padding: 1px 4px; }
 /* the root goal (depth 0) reads as the heading — a notch larger than its sub-items (the user 2026-06-16) */
-.ftree-node.ftree-root .ftree-text { font-size: 1.08em; font-weight: 600; }
+.ftree-node.ftree-root .ftree-text { font-size: 1.05em; font-weight: 600; }
 .ftree-node.nav{ cursor: pointer; }
 .ftree-node.nav:hover{ background: rgba(255, 255, 255, 0.06); }
 /* the modal tree node splits into the SAME three click/hover zones as the ledger (the user 2026-06-17):
@@ -503,7 +512,7 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
    checkbox stays a CIRCLE (its halo ring), the text its fill (the user 2026-06-17). No square/bridged fill. */
 /* disclosure triangle (▶/▼) before the mark; .empty = blank spacer, keeps alignment.
    .nav = expandable: the triangle is the ONLY toggle (the line itself navigates). */
-.ftree-tri { flex: 0 0 auto; width: 1em; text-align: center; color: var(--dim); font-size: 0.74em; }
+.ftree-tri { flex: 0 0 auto; width: 1em; text-align: center; color: var(--dim); font-size: 0.72em; }
 .ftree-tri.nav { cursor: pointer; }
 .ftree-tri.nav:hover { color: var(--fg); }
 .ftree-mark{ flex: 0 0 auto; width: 1.1em; text-align: center; font-weight: 700; }
@@ -527,7 +536,7 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
    state; the point is that no-information renders as itself instead of as an empty spot, which is
    what lets a blank pip mean "alive and quiet". Hex here because this sheet loads standalone. */
 .fwork-dot.unknown { background: transparent; box-shadow: inset 0 0 0 1.5px #8a8a8a; }
-.ftree-meta { flex: 0 0 auto; margin-left: 6px; color: var(--dim); font-size: 0.9em; font-weight: 400;
+.ftree-meta { flex: 0 0 auto; margin-left: 6px; color: var(--dim); font-size: 0.92em; font-weight: 400;
   white-space: nowrap; }   /* same size as the card checklist lines it corresponds to, never bold (the user 2026-07-02) */
 /* the DISTILLER's per-node line in the modal (restored 2026-06-29): a done node's takeaway / a blocked node's
    decision brief. No why-rationale lines (those stay removed); shown only when produced. pre-wrap for artifacts. */
@@ -614,7 +623,7 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
 .ftree-log-row:hover { background: rgba(255, 255, 255, 0.07); }
 .ftree-log-when { flex: 0 0 auto; color: var(--dim); white-space: nowrap; }
 .ftree-log-what { overflow-wrap: anywhere; }
-.ftree-followedup { flex: 0 0 auto; margin-left: 8px; font-size: 0.68em; font-weight: 700; letter-spacing: 0.03em;
+.ftree-followedup { flex: 0 0 auto; margin-left: 8px; font-size: 0.66em; font-weight: 700; letter-spacing: 0.03em;
   padding: 0 6px; border-radius: var(--radius-pill); line-height: 1.6; color: #5aa2ff; border: 1px solid rgba(90, 162, 255, 0.6); white-space: nowrap; }
 .ftree-node.repeat { opacity: 0.5; }
 
@@ -672,9 +681,9 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
    multi-paragraph what-happened/why-unexpected detail reads comfortably; scrolls when long */
 .fwarn-box { max-width: 560px; max-height: 80vh; overflow-y: auto; }
 .fwarn-head { color: #ffd166; font-weight: 700; letter-spacing: 0.03em; margin-bottom: 2px; }
-.fwarn-sub { color: var(--dim); font-size: 0.9em; margin-bottom: 12px; overflow-wrap: anywhere; }
+.fwarn-sub { color: var(--dim); font-size: 0.92em; margin-bottom: 12px; overflow-wrap: anywhere; }
 .fwarn-entry { border-top: 1px solid var(--card-border, rgba(255, 255, 255, 0.18)); padding: 10px 0 12px; }
-.fwarn-meta { color: var(--dim); font-size: 0.78em; letter-spacing: 0.04em; margin-bottom: 6px; }
+.fwarn-meta { color: var(--dim); font-size: 0.82em; letter-spacing: 0.04em; margin-bottom: 6px; }
 .fwarn-detail { color: var(--fg); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.92em; }
 
 #feed-modal { position: fixed; inset: 0; z-index: 100; background: var(--overlay-dim);
@@ -688,7 +697,7 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
 .feed-modal-title.nav:hover { text-decoration: underline; text-underline-offset: 2px; }
 .feed-modal-agent { flex: 0 0 auto; font-weight: 600; cursor: pointer; text-decoration: none; }
 .feed-modal-agent:hover { text-decoration: underline; }
-.feed-modal-age { flex: 0 0 auto; color: var(--dim); font-size: 0.85em; }
+.feed-modal-age { flex: 0 0 auto; color: var(--dim); font-size: 0.86em; }
 .feed-modal-clear { flex: 0 0 auto; }
 /* the ✕ pins to the far right of the top bar — margin-left:auto pushes it past the session name (and
    the title, when shown for group/standalone modals). */
@@ -877,12 +886,12 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
 .feed-modal-agent.dead:hover { text-decoration: line-through underline; }
 
 .ftime {
-  flex: 0 0 auto; font-size: 0.8em; color: var(--dim);
+  flex: 0 0 auto; font-size: 0.82em; color: var(--dim);
   font-variant-numeric: tabular-nums; white-space: nowrap;
 }
 /* controls row — the "+" expand toggle (left, below the title) + Dismiss to its
    right; replaces the old right-rail button stack. */ .fdismiss {
-  font: inherit; font-size: 0.74em; cursor: pointer; white-space: nowrap;
+  font: inherit; font-size: 0.72em; cursor: pointer; white-space: nowrap;
   color: var(--dim); background: transparent;
   border: 1px solid var(--card-border); border-radius: 6px;
   transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
@@ -932,7 +941,7 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
 #feed-lensmore:hover { color: var(--accent); text-decoration: underline; }
 #feed-lensmore.prominent { margin: 6px 8px 2px; padding: 10px 14px; background: #252526;
   border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 6px;
-  color: var(--fg); font-size: 0.9em; }
+  color: var(--fg); font-size: 0.92em; }
 #feed-lensmore.prominent:hover { color: var(--fg); text-decoration: none; border-color: var(--accent); }
 /* The per-host loading strip (the user 2026-08-25; round two same day): an attached host's sessions
    are on the tabs but its cards haven't merged yet — one quiet line per pending host, the SHARED
@@ -1001,17 +1010,17 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
    (a line only exists while its session is live-working on an open branch) */
 .fask-delegations { display: flex; flex-direction: column; gap: 2px; margin-top: 5px; }
 .fask-delegation-line { display: flex; align-items: baseline; gap: 4px; padding-left: 2px; }
-.fask-delegation { font-weight: 600; font-size: 0.88em; cursor: pointer; }
+.fask-delegation { font-weight: 600; font-size: 0.86em; cursor: pointer; }
 .fask-delegation:hover { text-decoration: underline; text-underline-offset: 2px; }
 /* inline sub-goal checklist on a card: the goal's DIRECT sub-goals (top 2 levels) — ✓ done / ? / ▢ open */
 .fask-checklist { display: flex; flex-direction: column; row-gap: 1px; margin: 4px 0 1px; padding-left: 2px; }
-.fcheck { display: flex; align-items: baseline; column-gap: 7px; line-height: 1.4; font-size: 0.9em; }
+.fcheck { display: flex; align-items: baseline; column-gap: 7px; line-height: 1.4; font-size: 0.92em; }
 /* disclosure triangle — same treatment as the modal outline's .ftree-tri (the user 2026-07-08): ▶/▼ on an
    expandable node, a blank same-width spacer otherwise so the marks stay aligned down a level. */
 .fcheck-tri { flex: 0 0 auto; width: 1em; text-align: center; color: var(--dim); font-size: 0.72em; }
 .fcheck-tri.nav { cursor: pointer; }
 .fcheck-tri.nav:hover { color: var(--fg); }
-.fcheck-mark { flex: 0 0 auto; width: 1em; text-align: center; color: var(--dim); font-size: 0.9em; }
+.fcheck-mark { flex: 0 0 auto; width: 1em; text-align: center; color: var(--dim); font-size: 0.92em; }
 .fcheck-text { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; color: var(--fg); }
 /* a node reached under two parents renders ONCE at full weight and dim on the repeat — same as the modal
    tree's .ftree-node.repeat, so the card's full sub-goal tree reads identically to the outline. */
@@ -1076,9 +1085,9 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
 .feed-modal-foot { flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; padding: 10px 16px; border-top: 1px solid var(--card-border); }
 /* nudge HISTORY line (the user 2026-07-02): the stalled chip's evidence — when romp auto-followed-up
    on this goal; dim meta text above the age row */
-.feed-modal-nudges { font-size: 0.8em; color: var(--dim); }
+.feed-modal-nudges { font-size: 0.82em; color: var(--dim); }
 /* per-sub follow-up target label (the user 2026-06-17): names the blocked sub the composer is aimed at; click to revert to the whole card */
-.feed-modal-follow-target { font-size: 0.8em; color: #5aa2ff; cursor: pointer; }
+.feed-modal-follow-target { font-size: 0.82em; color: #5aa2ff; cursor: pointer; }
 .feed-modal-follow-target:hover { text-decoration: underline; text-underline-offset: 2px; }
 .feed-modal-foot-row { display: flex; align-items: baseline; gap: 10px; }
 .feed-modal-foot-row .feed-modal-age { margin-right: auto; }   /* age left, Follow up + Clear pushed right */
@@ -1150,7 +1159,7 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
   padding: 8px 10px; cursor: pointer; text-align: left;
   background: rgba(255, 255, 255, 0.05); color: var(--vscode-foreground, #ccc);
   border: 1px solid var(--vscode-widget-border, #303031); border-radius: 6px;
-  font-size: 0.95em;
+  font-size: 0.92em;
 }
 .pickdlg-opt:hover { background: rgba(255, 255, 255, 0.1); }
 .pickdlg-opt:focus { outline: 1px solid var(--vscode-focusBorder, #4daafc); }
@@ -1325,7 +1334,7 @@ a.fileview-btn[hidden] { display: none; }
 .hljs-deletion { color: var(--err); }
 
 /* the "host:" prefix on a federated session's name — see styles.css (one treatment, two sheets) */
-.host-prefix { color: var(--dim); font-weight: 400; font-style: italic; font-size: 0.88em; }
+.host-prefix { color: var(--dim); font-weight: 400; font-style: italic; font-size: 0.86em; }
 /* DISCONNECTED host (the user 2026-07-29): its sessions keep their tabs, lanes and cards — dropping them
    would lose the thread — but the "host:" token says the link is down, so nobody reads a frozen transcript
    thinking it is live. Marked on the HOST only: a marked WHOLE name already means a dead session, and this
@@ -1476,10 +1485,10 @@ body.filebrowse-open { overflow: hidden; }
    self-resolving at the window reset. */
 .judge-limit-banner { display: flex; align-items: center; gap: 10px; margin: 6px 8px 2px;
   padding: 7px 12px; background: #252526; border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 6px; font-size: 0.9em; }
+  border-radius: 6px; font-size: 0.92em; }
 .judge-limit-banner .jl-text { opacity: 0.85; }
 .judge-limit-banner .jl-switch { flex: none; padding: 3px 10px; border-radius: 4px; border: 1px solid
-  rgba(255, 255, 255, 0.18); background: #333; color: inherit; cursor: pointer; font-size: 0.95em; }
+  rgba(255, 255, 255, 0.18); background: #333; color: inherit; cursor: pointer; font-size: 0.92em; }
 .judge-limit-banner .jl-switch:hover { background: #3c3c3c; }
 .judge-limit-banner .jl-switch:disabled { opacity: 0.6; cursor: default; }
 

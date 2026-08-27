@@ -621,6 +621,9 @@ def _ct_eq(a, b):
 # the token once, the redirect's ?token= sets the year-long cookie, never see this page again. Static,
 # self-contained (every other asset route is token-gated), leaks nothing. Colors follow the UI: the
 # accent button is --accent #9cd2ff on --accent-fg #0c1a2e.
+# The login page stays on the SYSTEM stack, deliberately: it renders pre-auth and /media is
+# token-gated (only the install icons ride exempt), so an 'Inter' lead could never load here —
+# it would just misstate the stack (PR-730 review, 2026-08-27).
 _TOKEN_LOGIN_HTML = """<!doctype html>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>romp</title>
@@ -24083,9 +24086,9 @@ def _pusher():
 
 
 # ───────────────────────── HTTP / page serving ─────────────────────────
-THEME_CSS = """:root{--vscode-font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+THEME_CSS = """@font-face{font-family:'Inter';src:url(/media/InterVariable.woff2) format('woff2-variations');font-weight:100 900;font-style:normal;font-display:swap}@font-face{font-family:'Inter';src:url(/media/InterVariable-Italic.woff2) format('woff2-variations');font-weight:100 900;font-style:italic;font-display:swap}:root{--vscode-font-family:'Inter',system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
 --vscode-editor-font-family:ui-monospace,"SF Mono",Menlo,Consolas,"DejaVu Sans Mono",monospace;--vscode-chat-font-family:var(--vscode-font-family);
---vscode-chat-font-size:13px;--vscode-foreground:#cccccc;--vscode-descriptionForeground:rgba(204,204,204,.7);
+--vscode-chat-font-size:13px;--vscode-foreground:#cccccc;--vscode-descriptionForeground:#9aa3ad;
 --vscode-errorForeground:#f48771;--vscode-editor-background:#1e1e1e;--vscode-editorWidget-background:#252526;
 --vscode-editorHoverWidget-border:#454545;--vscode-sideBar-background:#252526;--vscode-widget-border:#303031;
 --vscode-focusBorder:#007fd4;--vscode-input-background:#3c3c3c;--vscode-input-foreground:#cccccc;
@@ -24123,7 +24126,7 @@ function netState(s){try{if(window.parent!==window)window.parent.postMessage({ro
 // directly) has no shell, so self-inject a minimal top bar with the same Reload action.
 function selfBar(t,kind){try{if(document.getElementById("romp-stale-self"))return;
 var b=document.createElement("div");b.id="romp-stale-self";b.dataset.kind=kind||"conn";
-b.style.cssText="position:fixed;top:0;left:0;right:0;z-index:99999;display:flex;gap:12px;align-items:center;justify-content:center;background:#2b2d30;color:#e6e6e6;border-bottom:1px solid #4a4d51;padding:9px 14px;font:13px/1.4 system-ui,-apple-system,'Segoe UI',Roboto,sans-serif";
+b.style.cssText="position:fixed;top:0;left:0;right:0;z-index:99999;display:flex;gap:12px;align-items:center;justify-content:center;background:#2b2d30;color:#e6e6e6;border-bottom:1px solid #4a4d51;padding:9px 14px;font:13px/1.4 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif";
 var m=document.createElement("span");m.textContent=t;b.appendChild(m);
 var r=document.createElement("button");r.textContent="Reload";
 r.style.cssText="font:inherit;cursor:pointer;border-radius:6px;padding:4px 11px;font-weight:600;background:#54B204;color:#0c1a00;border:1px solid #3f8a00";
@@ -24242,7 +24245,7 @@ _CHAT_MOBILE_CSS = (
     "#mhdr{display:flex;align-items:stretch;gap:6px;width:100%}"
     "#mcur{flex:1 1 auto;min-width:0;display:flex;align-items:center;gap:8px;cursor:pointer;"
     "background:#2a2a2a;color:#dddddd;border:1px solid #3a3a3a;border-radius:6px;padding:7px 10px;"
-    "font:600 13px system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}"
+    "font:600 13px 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}"
     # colored session: the identity color reads as the NAME (bold) on the same grey chip as the +/madd
     # button, with a hairline color border, not the color as a fill (the user 2026-07-22).
     "#mcur.colored{background:#2a2a2a;color:var(--cbg);border-color:var(--cbg)}"
@@ -24258,7 +24261,7 @@ _CHAT_MOBILE_CSS = (
     "box-shadow:0 8px 24px #000000aa}"
     "#mlist.open{display:block}"
     ".mrow{display:flex;align-items:center;gap:9px;padding:10px 12px;cursor:pointer;"
-    "border-bottom:1px solid #ffffff12;font:600 13px system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}"
+    "border-bottom:1px solid #ffffff12;font:600 13px 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}"
     ".mrow:last-child{border-bottom:0}"
     # match desktop: the session's identity color tints the NAME text (set inline, like the Fleet list and
     # the colored tab label), and the only dot is the gold WORKING dot, shown just for working sessions.
@@ -24402,7 +24405,7 @@ _LOADER_CSS = (
     # (baseline + x-height/2). Geometry from assets/make_wordmark.py: the swirl-o glyph is the
     # CENTERED 102..820 crop, sized SWIRL_EM=0.65em, with side margins -(0.65-0.583)/2 = -0.0335em so its
     # advance equals Anta's 'o' (0.583em) and m/p land where a real "o" puts them.
-    ".rl-word{font-family:'RompAnta',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;font-size:38px;"
+    ".rl-word{font-family:'RompAnta','Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;font-size:38px;"
     "line-height:1;white-space:nowrap}"
     ".rl-o{width:.65em;height:.65em;vertical-align:middle;margin:0 -.0335em;animation:rl-spin 7s linear infinite}"
     ".rl-dots{display:flex;gap:7px}"
@@ -24520,7 +24523,7 @@ def _fleet_page():
     try:
         fleet_css = (UI / "webview" / "fleet-pane.css").read_text()
     except OSError:
-        return ("<!DOCTYPE html><html><body style='font-family:system-ui,-apple-system,sans-serif;color:#999;"
+        return ("<!DOCTYPE html><html><body style='font-family:Inter,system-ui,-apple-system,sans-serif;color:#999;"
                 "background:#1e1e1e;padding:12px'>romp outline needs the ui/ modules "
                 "(webview/fleet-pane.css).</body></html>")
     v = _dist_ver()
@@ -24595,7 +24598,7 @@ def _timeline_page():
         view_js = (UI / "romp-timeline-view.js").read_text()
         tl_css = (UI / "webview" / "timeline-pane.css").read_text()
     except OSError:
-        return ("<!DOCTYPE html><html><body style='font-family:system-ui,-apple-system,sans-serif;color:#999;"
+        return ("<!DOCTYPE html><html><body style='font-family:Inter,system-ui,-apple-system,sans-serif;color:#999;"
                 "background:#1e1e1e;padding:12px'>romp timeline needs the ui/ modules "
                 "(romp-timeline-view.js + webview/timeline-pane.css).</body></html>")
     v = _dist_ver()
@@ -26197,7 +26200,7 @@ _STALE_CSS = (
     "#rstale{position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:99999;display:none;"
     "align-items:center;gap:12px;max-width:92vw;background:#252526;border:1px solid rgba(255,255,255,0.12);"
     "border-radius:8px;padding:10px 14px;color:#e6e6e6;box-shadow:0 8px 28px rgba(0,0,0,0.45);"
-    "font:13px/1.4 system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}"
+    "font:13px/1.4 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}"
     "#rstale.show{display:flex}#rstale .rs-msg{font-weight:500}"
     "#rstale button{font:inherit;cursor:pointer;border-radius:6px;padding:5px 11px;"
     "border:1px solid transparent;white-space:nowrap}"
@@ -26303,7 +26306,7 @@ _UPD_CSS = (
     "#rupd{position:fixed;top:56px;left:50%;transform:translateX(-50%);z-index:99999;display:none;"
     "align-items:center;gap:12px;max-width:92vw;background:#252526;border:1px solid rgba(255,255,255,0.12);"
     "border-radius:8px;padding:10px 14px;color:#e6e6e6;box-shadow:0 8px 28px rgba(0,0,0,0.45);"
-    "font:13px/1.4 system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}"
+    "font:13px/1.4 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}"
     "#rupd.show{display:flex}#rupd .rup-msg{font-weight:500}"
     "#rupd button{font:inherit;cursor:pointer;border-radius:6px;padding:5px 11px;"
     "border:1px solid transparent;white-space:nowrap}"
@@ -26395,7 +26398,7 @@ _RDRIFT_CSS = (
     "#rdrift{position:fixed;top:104px;left:50%;transform:translateX(-50%);z-index:99998;display:none;"
     "align-items:center;gap:10px;max-width:92vw;background:#252526;border:1px solid rgba(255,255,255,0.12);"
     "border-radius:8px;padding:10px 14px;color:#e6e6e6;box-shadow:0 8px 28px rgba(0,0,0,0.45);"
-    "font:13px/1.4 system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}"
+    "font:13px/1.4 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}"
     "#rdrift.show{display:flex}#rdrift .rd-msg{font-weight:500}"
     "#rdrift .rd-spin{width:14px;height:14px;flex:0 0 auto;display:none;"
     "background:url(/media/romp-swirl-glyph.svg) center/contain no-repeat;animation:rd-spin 2.4s linear infinite}"
@@ -26540,6 +26543,12 @@ def _landing():
             "<meta name=theme-color content='#1e1e1e'>"
             "<link rel=icon type=image/svg+xml href=/media/romp-swirl-glyph.svg><title>Romp</title><style>"
             ":root{--accent:#9cd2ff;--accent-fg:#0c1a2e}"
+            # Inter loads PER DOCUMENT (2026-08-27, PR-730 review): the shell names 'Inter' in every
+            # sans stack below, but @font-face never crosses an iframe boundary — without these two
+            # rules the panes rendered Inter while the shell around them silently kept the system
+            # font on any machine without Inter installed OS-wide. The same two faces THEME_CSS ships.
+            "@font-face{font-family:'Inter';src:url(/media/InterVariable.woff2) format('woff2-variations');font-weight:100 900;font-style:normal;font-display:swap}"
+            "@font-face{font-family:'Inter';src:url(/media/InterVariable-Italic.woff2) format('woff2-variations');font-weight:100 900;font-style:italic;font-display:swap}"
             # The chain, widest support last-wins: 100% (always right where the viewport is static), then
             # 100dvh (tracks browser chrome appearing/collapsing), then --app-h, the live
             # visualViewport.height _LANDING_MOBILE_JS publishes. This used to be a mobile-only rule, so a
@@ -26614,11 +26623,11 @@ def _landing():
             ".rail-scroll::-webkit-scrollbar{width:0;height:0}"
             ".rail-acts{flex:0 0 auto;display:flex;flex-direction:row;align-items:center;gap:6px;margin-left:auto}"   # compact: tight row of refresh/network/settings   # pinned to the RIGHT of the bottom bar, always visible
             ".rail-btn{flex:0 0 auto;letter-spacing:.04em;line-height:1;"
-            "font:600 11px system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;color:#8a8a8a;margin:0;"
-            "padding:4px 9px;border-radius:5px;cursor:pointer;user-select:none;display:flex;align-items:center;"
-            "justify-content:center;transition:color .1s,background .1s}"
+            "font:600 11px 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;color:#8a8a8a;margin:0;"
+            "padding:4px 9px;border-radius:5px;border:1px solid transparent;cursor:pointer;user-select:none;display:flex;align-items:center;"
+            "justify-content:center;transition:color .1s,background .1s,border-color .1s}"
             ".rail-btn:hover{color:#cfe6ff;background:rgba(255,255,255,0.06)}"
-            ".rail-btn.on{color:var(--accent);background:rgba(156,210,255,0.12)}"
+            ".rail-btn.on{color:var(--accent);background:rgba(156,210,255,0.12);border-color:rgba(156,210,255,0.35)}"
             # the ↻ refresh + ⛭ settings actions sit in .rail-acts, pinned to the RIGHT (margin-left:auto on the
             # wrapper) of the bottom bar and ALWAYS visible — settings (⛭, last in the DOM) at the far right.
             ".rail-act{flex:0 0 auto;display:flex;align-items:center;justify-content:center;margin:1px 4px;padding:4px 0;"
@@ -26661,7 +26670,7 @@ def _landing():
             "background:rgba(0,0,0,0.55)}#rnet-back[hidden]{display:none}"
             "#rnet-panel{width:min(560px,94%);max-height:88vh;overflow:auto;"   # matches the settings .rs-card
             "background:#252526;border:1px solid #3a3a3a;border-radius:10px;box-shadow:0 12px 36px #000000aa;"
-            "padding:16px 20px;color:#ccc;font:13px/1.6 system-ui,-apple-system,'Segoe UI',sans-serif}"
+            "padding:16px 20px;color:#ccc;font:13px/1.6 'Inter',system-ui,-apple-system,'Segoe UI',sans-serif}"
             "#rnet-panel .rnet-top{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;color:#e8eaed;"
             "margin:0 0 12px;padding-bottom:10px;border-bottom:1px solid #34343a}"
             ".rnet-top span{flex:1 1 auto}"
@@ -26763,7 +26772,7 @@ def _landing():
             "background:rgba(0,0,0,0.55)}"
             "#rfleet-panel{width:min(560px,94%);max-height:80vh;overflow:auto;background:#252526;"
             "border:1px solid #3a3a3a;border-radius:10px;box-shadow:0 12px 36px #000000aa;padding:16px 20px;"
-            "color:#ccc;font:13px/1.6 system-ui,-apple-system,'Segoe UI',sans-serif}"
+            "color:#ccc;font:13px/1.6 'Inter',system-ui,-apple-system,'Segoe UI',sans-serif}"
             ".rfleet-top{font-size:14px;font-weight:600;color:#e8eaed;margin-bottom:2px}"
             ".rfleet-sub{color:#8a8a8a;margin-bottom:10px}"
             ".rfleet-row{display:flex;gap:8px;align-items:baseline;padding:5px 0;border-top:1px solid #33343a}"
@@ -26810,7 +26819,7 @@ def _landing():
             # the windows sit side-by-side. Full detail (elapsed %, reset countdown, age) stays in the hover panel.
             "#rail-usage{flex:0 0 auto;display:flex;flex-direction:row;align-items:center;gap:16px}"
             ".ru-w{display:flex;flex-direction:row;align-items:center;gap:7px;cursor:default}"
-            ".ru-name{font:600 10px system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;color:#9aa4ad;letter-spacing:.02em;white-space:nowrap}"
+            ".ru-name{font:600 10px 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;color:#9aa4ad;letter-spacing:.02em;white-space:nowrap}"
             ".ru-bars{display:flex;flex-direction:column;gap:2px;flex:0 0 auto}"   # used bar stacked over elapsed bar
             ".ru-track{position:relative;width:54px;height:5px;background:rgba(255,255,255,0.12);border-radius:3px;overflow:hidden;flex:0 0 auto}"
             ".ru-fill{position:absolute;left:0;top:0;height:100%;border-radius:3px;transition:width .3s ease}"
@@ -26818,7 +26827,7 @@ def _landing():
             # drawn on the bar AT ALL — only what we know shows there. The last-known reading survives in
             # the tooltip, labelled "last known" and faded, which is honest because it says what it is.
             ".ru-tip-row.ru-unk i{opacity:.3}.ru-tip-row.ru-unk .ru-tip-k,.ru-tip-row.ru-unk .ru-tip-v{color:#8a97a6}"
-            ".ru-pct{font:600 10px system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;color:#cfe6ff;font-variant-numeric:tabular-nums;white-space:nowrap}"
+            ".ru-pct{font:600 10px 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;color:#cfe6ff;font-variant-numeric:tabular-nums;white-space:nowrap}"
             # ONE shared hover panel for BOTH windows (the user 2026-06-26): it reproduces exactly the used/
             # elapsed bars that used to sit under the timeline — per window, a "used" bar (selected colormap)
             # over an "elapsed" bar (slate) with the % + reset countdown, and nothing else (no prose).
@@ -26838,7 +26847,7 @@ def _landing():
             "#ru-back{position:fixed;inset:0;z-index:290;display:none;background:rgba(0,0,0,0.4)}"
             "#ru-back.on{display:block}"
             "#ru-tip{position:fixed;z-index:300;background:#1e1e1e;border:1px solid #3a3a3a;border-radius:7px;"
-            "padding:8px 10px;font:500 11px system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;color:#cfd6dd;"
+            "padding:8px 10px;font:500 11px 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;color:#cfd6dd;"
             "box-shadow:0 5px 18px rgba(0,0,0,0.45);pointer-events:none;line-height:1.4}"
             ".ru-tip-win{margin-bottom:8px}#ru-tip .ru-tip-win:last-child{margin-bottom:0}"
             # Multi-host breakdown: one COLUMN per host, side by side (the user 2026-08-08 — not one
@@ -26870,19 +26879,19 @@ def _landing():
             # aggregates one set of bars + one API cell, and the per-host story lives in the hover, whose
             # .ru-tip-host heading keeps the quiet lowercase-italic treatment a federated session's name
             # wears in the chat tabs.)
-            ".ru-tip-host{font:italic 400 10px system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;"
+            ".ru-tip-host{font:italic 400 10px 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;"
             "color:#9aa0a6;text-transform:lowercase;margin:0 0 4px}"
             "#ru-tip .ru-tip-host:not(:first-child){margin-top:10px;padding-top:8px;"
             "border-top:1px solid rgba(255,255,255,0.08)}"
             # the login the window bars belong to (the user 2026-08-09) — quiet, above the sections,
             # the host heading's size without its lowercase-italic host vocabulary
-            ".ru-tip-acct{font:400 10px system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;"
+            ".ru-tip-acct{font:400 10px 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;"
             "color:#9aa0a6;margin:0 0 4px}"
             # the three TOP panes flex-grow by a per-pane var (resized by the gutters, persisted); toggling one
             # off hides it AND the now-orphaned gutters. Fixed order: chat, fleet, feed. Timeline is the band.
             "#chat-pane{flex:var(--g-chat,60) 1 0}#fleet-pane{flex:var(--g-fleet,34) 1 0}#feed-pane{flex:var(--g-feed,40) 1 0}"
             "body:not(.po-chat) #chat-pane{display:none}body:not(.po-fleet) #fleet-pane{display:none}body:not(.po-feed) #feed-pane{display:none}"
-            ".row>.gv{flex:0 0 5px}"
+            ".row>.gv{flex:0 0 7px}"
             # gv-a sits chat|fleet (only when both shown); gv-b sits (fleet|chat)|feed — the chat|feed gutter when fleet off.
             "body:not(.po-chat) #gv-a,body:not(.po-fleet) #gv-a{display:none}"
             "body:not(.po-feed) #gv-b,body:not(.po-chat):not(.po-fleet) #gv-b{display:none}"
@@ -26891,10 +26900,18 @@ def _landing():
             # Band + gutter both hide when the toggle is off, so the pane row fills the height.
             "#tl-pane{flex:0 0 var(--tl,200px)}"
             "body:not(.po-timeline) #gh,body:not(.po-timeline) #tl-pane{display:none}"
-            ".gv{cursor:col-resize;background:linear-gradient(90deg,transparent 2px,#333 2px,#333 3px,transparent 3px)}"
-            ".gh{flex:0 0 5px;cursor:row-resize;background:linear-gradient(180deg,transparent 2px,#333 2px,#333 3px,transparent 3px)}"
-            ".gv:hover{background:linear-gradient(90deg,transparent 2px,#007fd4 2px,#007fd4 3px,transparent 3px)}"
-            ".gh:hover{background:linear-gradient(180deg,transparent 2px,#007fd4 2px,#007fd4 3px,transparent 3px)}"
+            # the splitters wear the composer-grip affordance (the user 2026-08-26, who liked that handle):
+            # a centered pill, always faintly visible so the drag is discoverable, accent + longer on hover —
+            # and 7px of air instead of 5 so the panes read clearly separated. Hover accent is the romp blue
+            # (#9cd2ff), not VS Code's #007fd4 (CLAUDE.md: focus cues wear the accent).
+            ".gv{cursor:col-resize;position:relative;background:linear-gradient(90deg,transparent 3px,#333 3px,#333 4px,transparent 4px)}"
+            ".gh{flex:0 0 7px;cursor:row-resize;position:relative;background:linear-gradient(180deg,transparent 3px,#333 3px,#333 4px,transparent 4px)}"
+            ".gv::after,.gh::after{content:'';position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);"
+            "border-radius:2px;background:#43454b;transition:background .12s,width .12s,height .12s}"
+            ".gv::after{width:3px;height:36px}.gh::after{width:36px;height:3px}"
+            ".gv:hover{background:linear-gradient(90deg,transparent 3px,#3a4a58 3px,#3a4a58 4px,transparent 4px)}"
+            ".gh:hover{background:linear-gradient(180deg,transparent 3px,#3a4a58 3px,#3a4a58 4px,transparent 4px)}"
+            ".gv:hover::after{background:var(--accent,#9cd2ff);height:52px}.gh:hover::after{background:var(--accent,#9cd2ff);width:52px}"
             "body.drag iframe{pointer-events:none}body.dragv{cursor:col-resize}body.dragh{cursor:row-resize}"
             ".pane{position:relative;min-width:0;min-height:0;overflow:hidden}"
             ".pane>iframe{position:absolute;inset:0;width:100%;height:100%}"
@@ -26903,7 +26920,7 @@ def _landing():
             # the others get nothing, so the only lines on screen are the splitters + this focus ring. The ring
             # is pointer-events:none (never blocks) and z below the timeline collapse handle (z-30).
             ".pane.pane-focused::after{content:'';position:absolute;inset:0;pointer-events:none;z-index:6;"
-            "box-shadow:inset 0 0 0 2px rgba(120,170,225,0.55)}"
+            "box-shadow:inset 0 0 0 2px rgba(156,210,255,0.55)}"   # the romp accent — focus cues wear it (CLAUDE.md)
             "#mtabs{display:none}"
             # narrow OR a touch device up to 1024px → one pane + bottom tabs; mouse desktops keep the grid
             "@media (max-width:820px),(pointer:coarse) and (max-width:1024px){"
@@ -26958,7 +26975,7 @@ def _landing():
             # which includes this padding, so .col's reservation tracks it for free.
             "html.ios-standalone #mtabs{padding-bottom:env(safe-area-inset-bottom,0px)}"
             "#mtabs button{flex:1;border:0;background:none;cursor:pointer;-webkit-tap-highlight-color:transparent;"
-            "color:#9aa0a6;font:600 12px system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;"
+            "color:#9aa0a6;font:600 12px 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;"
             "padding:6px 0;display:flex;align-items:center;justify-content:center}"
             "#mtabs button.on{color:#4da4ff}"
             # action buttons: dimmer + fixed-width so the four pane tabs keep the room; thin divider between
@@ -27003,7 +27020,7 @@ def _landing():
             # dim times (the network panel's information-type sizes), rnet-style action button + close.
             "#rerr-panel{width:min(700px,94vw);max-height:min(60vh,480px);"   # 60% wider (the user 2026-07-28); a flex child of the centered backdrop, no own positioning
             "display:flex;flex-direction:column;background:#252526;border:1px solid #3a3a3a;border-radius:10px;"
-            "box-shadow:0 12px 36px #000000aa;color:#ccc;font:13px/1.6 system-ui,-apple-system,'Segoe UI',sans-serif}"
+            "box-shadow:0 12px 36px #000000aa;color:#ccc;font:13px/1.6 'Inter',system-ui,-apple-system,'Segoe UI',sans-serif}"
             "#rerr-panel .rerr-top{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;color:#e8eaed;"
             "padding:10px 12px;border-bottom:1px solid #34343a;flex:0 0 auto}"
             "#rerr-panel .rerr-top .sp{flex:1}"

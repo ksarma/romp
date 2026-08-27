@@ -6399,7 +6399,7 @@ class ServeSecurity(unittest.TestCase):
         html = km._landing()
         # the ring: an inset box-shadow ON the focused pane (NOT a fill, NOT on the others), click-through
         self.assertIn(".pane.pane-focused::after{content:'';position:absolute;inset:0;pointer-events:none;z-index:6;", html)
-        self.assertIn("box-shadow:inset 0 0 0 2px rgba(120,170,225,0.55)}", html)
+        self.assertIn("box-shadow:inset 0 0 0 2px rgba(156,210,255,0.55)}", html)  # the romp accent (2026-08-26)
         self.assertNotIn("background:rgba(0,0,0,0.5)", html)            # the dimming veil is gone
         self.assertNotIn(".pane:not(.pane-focused)::after", html)       # the OTHERS are NOT touched
         self.assertNotIn("nav-typing", html)                           # the typing/dimming logic is gone
