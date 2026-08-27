@@ -1300,7 +1300,8 @@ GIST_SYS = (
     "settings'; 'the feed card recency tint'; 'why the parser drops compaction boundaries'; 'a regression "
     "test for the planner'.\n"
     "Keep the request's own vocabulary: never import a coined or internal name the request itself "
-    "does not use.\n"
+    "does not use. A ticket-shaped lead token (T120, ABC-42) is an id, not the topic: name what "
+    "the request is about instead.\n"
     "When the request rambles or bundles several things, name the single most salient topic. Output only "
     "the phrase.")
 
@@ -2015,7 +2016,8 @@ PLAN_SYS = (
     "\"it is worth noting\", \"notably\"), no em dashes, state facts plainly and hedge only actual "
     "guesses, say it once. Goal text speaks the requester's vocabulary: never a coined or internal "
     "name (an engine, a module, a codename, a team shorthand) unless the user's own message uses "
-    "it; say what the work is in plain words. Most segments do one thing, but emit more ops when the segment actually did "
+    "it; say what the work is in plain words. A ticket-shaped lead token in the message (T120, "
+    "ABC-42) is an id, not the ask: never open goal text with it. Most segments do one thing, but emit more ops when the segment actually did "
     "more (e.g. finished one goal and started another). Op kinds:\n"
     '- {\"why\",\"do\":\"mint\",\"text\":\"<outcome ≤10 words>\"}: a new top-level request from the '
     "user. Be selective: only a real new ask mints a top-level goal — but a **distinct deliverable** "
@@ -9760,7 +9762,9 @@ DISTILL_SYS = (
     "present, it is their ask in their own words: anchor on its vocabulary. Never use a coined or "
     "internal name (an engine, a module, a codename, a team shorthand) in an opening sentence "
     "unless the <user-ask> itself uses it; gloss any internal noun you keep in plain words, and a "
-    "noun you cannot explain from the material given stays out.\n\n"
+    "noun you cannot explain from the material given stays out. A bare tracking id (T120, ABC-42: "
+    "an opaque ticket token) is an internal name like any other: never open with one, and never "
+    "treat it as the work's proper name.\n\n"
     "When <work> contains a message the assistant wrote to the person as its finished report, a "
     "wrap-up addressed to them rather than to a teammate, condense that report as the takeaway's "
     "primary source: it was already written for their eyes, and it outranks your own reading of "
@@ -10046,7 +10050,9 @@ BLOCK_BRIEF_SYS = (
     "present, it is their ask in their own words: anchor on its vocabulary. Never use a coined or "
     "internal name (an engine, a module, a codename, a team shorthand) in an opening sentence "
     "unless the <user-ask> itself uses it; gloss any internal noun you keep in plain words, and a "
-    "noun you cannot explain from the material given stays out.\n\n"
+    "noun you cannot explain from the material given stays out. A bare tracking id (T120, ABC-42: "
+    "an opaque ticket token) is an internal name like any other: never open with one, and never "
+    "treat it as the work's proper name.\n\n"
     "When <work> contains a message the assistant wrote to the person about this decision, laid "
     "out for their eyes rather than a teammate's, condense it as the primary source; the owed "
     "decision still leads. Prefer sources in this order: that message, then the <user-ask>, then "
@@ -10232,6 +10238,42 @@ def _live_prompt_since(fsid):
     except OSError:
         return None
     return since
+
+
+_TICKET_SEP_RE = re.compile(r"^\s*[\[\(]?(?:T\d{1,6}|#\d{1,6})[\]\)]?\s*[:,\-—–]+\s*")
+_TICKET_BARE_RE = re.compile(r"^\s*[\[\(]?T\d{2,6}[\]\)]?\s+")
+
+
+def _strip_ticket_lead(s):
+    """Drop a ticket-shaped LEAD token from card-bound text (the user 2026-08-27, T126: a
+    dispatch led with an opaque tracking id, the courier compressed that first line into goal
+    text, and every writer thereafter treated the id as the work's proper name — the jargon gate
+    read it as the title, not as jargon). MECHANICAL scope is deliberately narrow: T<digits> and
+    #<digits> with an explicit separator, or T<2+ digits> on bare space — shapes that cannot be
+    natural language. The GENERAL shape (bare alphanumeric ids) is the writers' judgment call via
+    their prompt lines: a mechanical rule wide enough to catch ABC-42 also beheads real titles
+    about GPT-4 or COVID-19. A title that IS only the token keeps it (better a bare id than an
+    empty card); the raw line survives in the stored frame for provenance either way."""
+    t = str(s or "")
+    out = _TICKET_SEP_RE.sub("", t, count=1)
+    if out == t:
+        out = _TICKET_BARE_RE.sub("", t, count=1)
+    out = out.strip()
+    return out if out else t.strip()
+
+
+_CARRIED_ASK_RE = re.compile(r"<user-ask>\s*(.*?)\s*</user-ask>", re.S | re.I)
+
+
+def _carried_user_ask(body):
+    """A delegating mail's EXPLICIT quoted requester ask — the sender-declared <user-ask> block
+    (the user 2026-08-27, T126): a chain that routes through a FOREIGN kernel rightly refuses the
+    root walk's hops, so no walk-resolved record can ever ride along, and the writers anchored on
+    the intermediary's framing. Same trust class as the frame (sender-declared, stored verbatim-
+    shaped); a walk-RESOLVED root always outranks a carried claim. '' when the body carries no
+    block."""
+    m = _CARRIED_ASK_RE.search(str(body or ""))
+    return m.group(1).strip() if m else ""
 
 
 def _ask_head(s, cap=700):
@@ -11387,13 +11429,14 @@ def apply_courier(store, seg_id, seg_t, text, origin, prompt_uuid=None, frame=No
                 return nid
     store["seq"] = store.get("seq", 0) + 1
     nid = "%s:g%d" % (store["rompUuid"], store["seq"])
-    payload = {"id": nid, "text": (text or "(delegation)")[:120], "parentId": None,
+    payload = {"id": nid, "text": (_strip_ticket_lead(text) or "(delegation)")[:120], "parentId": None,
                "nodeComplete": False, "blocked": False, "cleared": False,
                "trail": [seg_id], "t": seg_t, "origin": origin, "promptUuid": prompt_uuid, "log": []}
     if frame:
         payload["frame"] = frame
     if isinstance(user_ask, dict) and str(user_ask.get("text") or "").strip():
-        payload["userAsk"] = {"text": _ask_head(str(user_ask["text"])), "sid": user_ask.get("sid")}
+        payload["userAsk"] = {"text": _ask_head(str(user_ask["text"])), "sid": user_ask.get("sid"),
+                              **({"carried": True} if user_ask.get("carried") else {})}
     nodes[nid] = GuardedNode(payload)
     placements[seg_id] = nid
     store["lastNode"] = nid                            # the delegation is now the active focus
@@ -11458,7 +11501,7 @@ def _plant_handoff_track(store, parent_id, text, peer_sid, peer_name, t, mid, tr
         parent_id = None                                # linked goal vanished → file as a top, never orphan
     store["seq"] = store.get("seq", 0) + 1
     nid = "%s:g%d" % (store["rompUuid"], store["seq"])
-    label = "↪ delegated to %s: %s" % (peer_name or peer_sid[:8], text or "(work)")
+    label = "↪ delegated to %s: %s" % (peer_name or peer_sid[:8], _strip_ticket_lead(text) or "(work)")
     handoff = {"peer": peer_sid, "msgId": mid}
     if tracked:
         handoff["tracked"] = True
@@ -11946,6 +11989,14 @@ def run_courier(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, v
             # state still reaches the board through the hard-block floor/placeholder, which need no
             # goal node. Uncertainty quiets by design (the trace's docstring names the surface).
             rooted = _delegate_user_rooted(sender, link_id, paths_map, now)
+            # CARRIED USER-ASK (the user 2026-08-27, T126): a dispatch may QUOTE the requester in
+            # an explicit <user-ask> block — the cross-host shape, where the walk rightly refuses
+            # foreign-kernel hops and could never resolve a local record. Sender-declared, the
+            # frame's trust class; consulted only when the walk resolves nothing (a walk-resolved
+            # root outranks a carried claim), and it LICENSES the mint below: an explicit quote of
+            # the requester is the ask flowing down in the sender's own hand, not the uncertainty
+            # T101 quiets on.
+            carried = "" if rooted else _carried_user_ask(_postal_row(mid)[3] or text)
             # THE ASK IS THE CARD UNIT (the user 2026-08-26, T101): a dispatch whose chain roots to
             # an ask that ALREADY HAS A CARD — link_id resolved to the sender's ask node — LINKS
             # instead of minting: the tracking node below plants under that ask (fan-out lives
@@ -11955,7 +12006,7 @@ def run_courier(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, v
             # top — there the recipient card IS the ask's card, the fallback that keeps every user
             # ask carded somewhere. Linking alone never moves the ask card's column: planting a
             # tracking child writes no verdict on the ask.
-            mint_recipient = rooted and not link_id
+            mint_recipient = (rooted or carried) and not link_id
             # Mint the sender's precise '↪ delegated to <recipient>' tracking node (the user 2026-06-22) and
             # point B's goal at IT — so run_propagate checks off only the handed-off piece, never the sender's
             # broader linked goal. Saved to the sender's tree before planting G on the recipient's.
@@ -11995,7 +12046,9 @@ def run_courier(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, v
                 origin["peerHost"] = frm_host
             apply_courier(store, seg_id, seg_t, edit["text"], origin, prompt_uuid=anchor_uuid,
                           frame=_postal_body_head(mid) or _frame_head(text),
-                          user_ask=rooted if isinstance(rooted, dict) else None)
+                          user_ask=(rooted if isinstance(rooted, dict)
+                                    else {"text": carried, "sid": sender, "carried": True}
+                                    if carried else None))
             #             ^ the ledger row's body is authoritative; a row the local ledger lacks
             #               (some cross-host deliveries) falls back to the delivered segment's own
             #               head — same content, one hop later
