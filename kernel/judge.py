@@ -5188,8 +5188,10 @@ def _run_index(now=None, budget=BUDGET, fairness=FAIRNESS, concurrency=CONCURREN
             task = futs[fut]
             try:
                 cap, cap_paused = fut.result()
-            except Exception:
+            except Exception as e:
                 cap, cap_paused = "", True                # a crashed worker is not the model's verdict
+                _log_judge_error("captioner", str(task.get("fsid") or ""), "pass-crash",
+                                 note=repr(e))            # …but its REASON must not vanish (T111)
             if not cap:
                 # A LIVE task retries by design (the open segment's text grows — the chunk cadence
                 # gates it) and a paused/rate-gated skip is not a verdict. A CLOSED unit's empty
@@ -5238,8 +5240,9 @@ def _run_index(now=None, budget=BUDGET, fairness=FAIRNESS, concurrency=CONCURREN
             fsid, nturns = futs[fut]
             try:
                 rec = fut.result()
-            except Exception:
+            except Exception as e:
                 rec = None
+                _log_judge_error("archiver", fsid, "pass-crash", note=repr(e))   # reason kept (T111)
             if not rec:
                 # archive_llm already logged the DISTINCT error (call vs parse). Bump the per-turn-set
                 # fail counter on the EXISTING record (keeping the old headline/abstract serving the TOC)
@@ -7423,8 +7426,8 @@ def run_plan(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, verb
             try:
                 placed += fut.result()
                 pass_done("plan", futs[fut])          # the pass over THIS fsid completed (W2c's event)
-            except Exception:
-                pass
+            except Exception as e:                    # fail LOUDLY, never silently skip the store (T111)
+                _log_judge_error("planner", futs[fut], "pass-crash", note=repr(e))
     if verbose:
         sys.stderr.write("romp-judge: planner placed %d segments across %d sessions\n" % (placed, len(fleet)))
     return placed
@@ -8066,8 +8069,8 @@ def run_group(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, ver
         for fut in as_completed(futs):
             try:
                 n += fut.result()
-            except Exception:
-                pass
+            except Exception as e:                    # fail LOUDLY, never silently skip the store (T111)
+                _log_judge_error("grouper", futs[fut], "pass-crash", note=repr(e))
     if verbose:
         sys.stderr.write("romp-judge: grouper relinked %d top goals\n" % n)
     return n
@@ -8160,8 +8163,8 @@ def run_consolidate(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENC
         for fut in as_completed(futs):
             try:
                 n += fut.result()
-            except Exception:
-                pass
+            except Exception as e:                    # fail LOUDLY, never silently skip the store (T111)
+                _log_judge_error("consolidator", futs[fut], "pass-crash", note=repr(e))
     if verbose:
         sys.stderr.write("romp-judge: consolidator reorganized %d completed columns\n" % n)
     return n
@@ -9363,8 +9366,8 @@ def run_close(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, ver
             try:
                 n += len(fut.result())
                 pass_done("close", futs[fut])         # the pass over THIS fsid completed (W2c's event)
-            except Exception:
-                pass
+            except Exception as e:                    # fail LOUDLY, never silently skip the store (T111)
+                _log_judge_error("closer", futs[fut], "pass-crash", note=repr(e))
     if verbose:
         sys.stderr.write("romp-judge: closer completed %d nodes\n" % n)
     return n
@@ -9639,8 +9642,8 @@ def run_unblock(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, v
         for fut in as_completed(futs):
             try:
                 n += len(fut.result())
-            except Exception:
-                pass
+            except Exception as e:                    # fail LOUDLY, never silently skip the store (T111)
+                _log_judge_error("unblocker", futs[fut], "pass-crash", note=repr(e))
     if verbose:
         sys.stderr.write("romp-judge: unblocker lifted %d stale blocks\n" % n)
     return n
@@ -11011,9 +11014,56 @@ def rearm_failed_summaries(now=None, auto=False):
     return n
 
 
+def _drain_undiscovered(now, fleet_sids):
+    """Stragglers the fleet walk can't reach (the user 2026-08-26, T110): a completed top whose
+    summary is still null in a store whose SESSION the pass never visits — outside discover's
+    recency window, or its transcripts gone — never meets the distiller, so its card reads
+    "Distilling…" forever. The dissolution wave surfaced the class (re-parented completed children
+    drain through the normal event gate, but only in stores a pass actually visits); the hole is
+    older than the wave. Keyed on the exact owed predicate (completed/confirming top, summary is
+    None, not cleared), never on age: a pass scans only ABSENT stores, and only when one still owes
+    does it pay for the windowless discover walk to resolve transcripts by direct sid lookup — a
+    session merely outside the window still gets its REAL summary; a transcript-less one settles
+    through _distill_session's own no-work branch, the "" sentinel plus the history-unreadable
+    warn, loud instead of an eternal spinner. Self-retiring: the sentinel is non-null, so a drained
+    store never re-enters the predicate and the steady state costs one status read per absent
+    store. Returns goals distilled."""
+    stuck = []
+    for f in sorted(GOALDIR.glob("*.json")):
+        sid = f.stem
+        if sid in fleet_sids:
+            continue
+        try:
+            store = load_goals(sid)
+        except Exception:
+            continue
+        status, nodes = store.get("status", {}), store.get("nodes", {})
+        confirming = set(store.get("confirming") or ())
+        if any((st == "completed" or nid in confirming)
+               and isinstance(nodes.get(nid), dict)
+               and not nodes[nid].get("cleared")
+               and nodes[nid].get("summary") is None
+               for nid, st in status.items()):
+            stuck.append(sid)
+    if not stuck:
+        return 0
+    paths = {fsid: str(path) for fsid, path, _anchor, _name in discover(now, window=now)}
+    n = 0
+    for sid in stuck:
+        try:
+            n += _distill_session(sid, paths.get(sid) or os.devnull, now)
+        except Exception as e:
+            _log_judge_error("distiller", sid, "pass-crash",
+                             note="straggler drain: %r" % e)
+    return n
+
+
 def run_distill(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, verbose=False):
     """One DISTILLER pass (triage tier), run after the closer/grouper: store a key-takeaway summary on each
-    newly-(re)completed top goal's card. Event-gated per goal. Returns goals distilled."""
+    newly-(re)completed top goal's card. Event-gated per goal. Also drains stores the fleet walk
+    can't reach (_drain_undiscovered) and logs a session pass that dies instead of swallowing it —
+    one poisoned goal used to kill a whole store's distills with zero calls and zero errors, the
+    undiagnosable shape of the T110 report. Returns goals distilled."""
     if now is None:
         now = int(time.time())
     fleet = discover(now)[:sessions_cap]
@@ -11023,8 +11073,9 @@ def run_distill(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, v
         for fut in as_completed(futs):
             try:
                 n += fut.result()
-            except Exception:
-                pass
+            except Exception as e:                     # fail LOUDLY, never silently skip the store
+                _log_judge_error("distiller", futs[fut], "pass-crash", note=repr(e))
+    n += _drain_undiscovered(now, {fsid for fsid, _p, _a, _n2 in fleet})
     if verbose:
         sys.stderr.write("romp-judge: distiller summarized %d completed goals\n" % n)
     return n
@@ -11920,7 +11971,8 @@ def run_courier(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, v
     for fsid, path, anchor, name in fleet:
         try:
             session = parsed_session(fsid, [str(path)], now)   # states-aware + cached, so _session_closed is correct
-        except Exception:
+        except Exception as e:                         # a poisoned transcript must not skip silently (T111)
+            _log_judge_error("courier", fsid, "pass-crash", note="parse: %r" % e)
             continue
         cstore = load_goals(fsid)
         closed[fsid] = _session_settled(fsid, str(path), session, cstore)
@@ -11939,8 +11991,8 @@ def run_courier(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, v
                         pm0 = _seg_peer(seg)
                         if pm0 and pm0[0] and pm0[1] and _seg_peer_kind(seg) == "delegate":
                             _attach_courier_link(cstore, seg["id"], pm0[1])
-                    except Exception:
-                        pass
+                    except Exception as e:             # bookkeeping, but its failure is not nothing (T111)
+                        _log_judge_error("courier", fsid, "pass-crash", note="link-attach: %r" % e)
                     continue
                 if floor and seg["t"] < floor:
                     # pre-episode: conversation the agent can no longer see. The planner retires these
