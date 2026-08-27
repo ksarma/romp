@@ -237,7 +237,7 @@ function initGear(post) {
     });
   }
   var TABTHEMES = [
-    { id: 'classic', name: 'Classic', sub: 'thick selected outline \u00b7 faint 5% session tint \u00b7 no line under the strip' },
+    { id: 'classic', name: 'Classic', sub: 'the original high-contrast strip \u00b7 thick selected outline \u00b7 no session tint' },
     { id: 'yatharth', name: 'Yatharth', sub: 'flat session wash \u00b7 soft selected border \u00b7 tinted line under the strip' }
   ];
   function ttPaint() {
