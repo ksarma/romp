@@ -85,8 +85,11 @@ test("Classic: the strip is a BAND — a 3% plane over the page bg, closed by th
   // across editors (VS Code wrapTabs, JetBrains multi-row), browsers/terminals, and design-system
   // specs (Material's mandatory divider, Carbon/Ant contained tabs) is unanimous: containment
   // comes from the strip owning a background PLANE, closed by ONE bottom hairline — not from
-  // per-row lines. 3% white over --bg reproduces VS Code's canonical #252526-over-#1E1E1E band.
-  assert.match(CSS, /^body:not\(\.chat-theme-yatharth\) #tabbar \{ background: linear-gradient\(rgba\(255, 255, 255, 0\.03\), rgba\(255, 255, 255, 0\.03\)\), var\(--vscode-sideBar-background, var\(--bg\)\); \}$/m,
+  // per-row lines. Shipped at 3% (VS Code's canonical #252526-over-#1E1E1E); stepped to 5% by the
+  // T128 triage (the user 2026-08-27: on their dark theme 3% read as nothing at a glance — the
+  // 3/5/6% eyeball comparison sits in their drops, and the placement of the ONE hairline at the
+  // strip's bottom edge stands per the precedent survey, the user's alone to overturn).
+  assert.match(CSS, /^body:not\(\.chat-theme-yatharth\) #tabbar \{ background: linear-gradient\(rgba\(255, 255, 255, 0\.05\), rgba\(255, 255, 255, 0\.05\)\), var\(--vscode-sideBar-background, var\(--bg\)\); \}$/m,
     "the band: one Classic-scoped background line, tunable in place; Yatharth keeps his merged look");
   assert.match(CSS, /border-bottom: 1px solid var\(--box-border\);/, "…closed by the ONE existing hairline at the band's bottom edge");
 });
