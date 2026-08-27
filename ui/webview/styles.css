@@ -3107,6 +3107,17 @@ body.filebrowse-open { overflow: hidden; }
 .fileview-md th { background: rgba(255, 255, 255, 0.03); }
 .fileview-md img { max-width: 100%; }
 
+/* ── the viewer's image + PDF bodies (a .png used to open as line-numbered mojibake). The <img>
+   wears the lightbox image's own treatment (.romp-lightbox-img: capped, object-fit contain, the
+   same radius + shadow) so media presents one way everywhere; the frame is the lightbox's PDF
+   iframe filling the card. Mirrored in feed.css — the viewer mounts in both documents (the
+   .romp-acted precedent). */
+.fileview-imgbox { display: flex; align-items: center; justify-content: center;
+  min-height: 100%; padding: 14px; box-sizing: border-box; }
+.fileview-img { max-width: 100%; max-height: 82vh; object-fit: contain; border-radius: 8px;
+  box-shadow: var(--shadow-modal); }
+.fileview-frame { display: block; width: 100%; height: 100%; border: 0; background: #fff; }
+
 /* a MACHINE-sent message's notch (romp injections, ⚙-tagged sends — the same senderKind verdict the
    bubble wears): light gray, visibly quieter than the user's blue, so the scroll map separates "you
    spoke" from "something was injected" at a glance (the user 2026-08-18) */
