@@ -3039,6 +3039,7 @@ class SdkBackend:
         self._drain_hold_since = 0.0
         self._drain_hold_rang = False
         self._drain_wake_timer = None
+        self.login_ok = lambda: True              # the kernel wires its credential-store probe (T124); permissive unwired
         self._usage_all_keyed = False             # refresh_usage's one-shot: the last refresh found only
         #                                           keyed candidates (already logged); reset when a
         #                                           pollable session exists again, so the 60s rail timer
@@ -5032,6 +5033,13 @@ class SdkBackend:
             return False
         if value == "key" and not self.work_key:
             return False   # nothing to inject — the UI never offers this; refuse rather than half-apply
+        if value == "login" and not self.login_ok():
+            # the SAME bar the key side always had (T124: set_auth accepted 'login' unconditionally,
+            # so on a login-less box the pick sat in the UI as applied fact while the reconnect
+            # errored or landed keyed via an apiKeyHelper — the silent-degrade class). login_ok is
+            # the kernel's credential-store probe (the authority the usage bars trust); the default
+            # is permissive so a bare backend (tests, no kernel wiring) keeps the old behavior.
+            return False
         if not read_reg(self.state_dir, sid):
             return False
         # authPending: the applying reconnect hasn't completed → badge dots. Locked RMW — see set_effort.

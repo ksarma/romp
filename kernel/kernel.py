@@ -7119,6 +7119,10 @@ def _sdk_locked():
             # ends, so an idle fleet's usage.json goes stale — measured ~15h — and the rate gate is
             # only as good as that file); the backend picks any live login session to ask
             jd._USAGE_REFRESH_FN = getattr(_sdk_backend, "refresh_usage", None)   # best-effort hook (judge guards None)
+            # the Billing pick's login gate (T124): set_auth refuses 'login' when the credential
+            # store names no signed-in account — the same authority the usage bars trust, so the
+            # pick can never sit in the UI as applied fact on a box that demonstrably cannot apply it
+            _sdk_backend.login_ok = lambda: bool(_claude_account())
             # silent mid-turn model swaps mint a completed card (the user 2026-08-23) — the backend
             # observes the transition; the judge store owns the card; the kernel wires the two
             type(_sdk_backend).on_model_fallback = staticmethod(
@@ -7937,7 +7941,8 @@ def _drive(msg, client):
         if not _set_auth_or_park(be, sid, str(msg["value"])):
             client["send"](json.dumps({"type": "warn",
                                        "text": "Couldn't switch the account this session bills — "
-                                               "it isn't an SDK session, or no API key is configured."}))
+                                               "it isn't an SDK session, no API key is configured, "
+                                               "or this machine has no Claude login to switch to."}))
         _push_soon()
     elif t == "stopTask" and msg.get("taskId"):
         # the SDK's designed stop_task control request, addressed by the id the bg-task box shows.
