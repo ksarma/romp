@@ -127,7 +127,8 @@ class ReportSurvivesTheRestart(unittest.TestCase):
                                             "_restart_this_kernel", "_local_head", "_local_branch")}
         km._fleet_restart_plan = lambda r: ("restart", "already on this build")
         km._restart_remote_kernel = lambda h: (_ for _ in ()).throw(RuntimeError("ssh exploded"))
-        km._restart_this_kernel = lambda reason="": None   # audits its reason since 2026-07-31
+        # audits its reason since 2026-07-31; carries the handler's ack-time port since 2026-08-27
+        km._restart_this_kernel = lambda reason="", manager_port=None: None
         km._local_head = lambda short=False: "abc1234"
         km._local_branch = lambda: "main"
         km._remotes.clear()
@@ -151,7 +152,9 @@ class ReportSurvivesTheRestart(unittest.TestCase):
         src = inspect.getsource(km.Handler)
         self.assertIn('if u.path == "/fleet-restart":', src)
         self.assertIn("FLEET_REPORT.read_text()", src)
-        self.assertIn("threading.Thread(target=_fleet_restart_run, daemon=True).start()", src)
+        self.assertIn("threading.Thread(target=_fleet_restart_run,", src)
+        self.assertIn('kwargs={"manager_port": _mport}, daemon=True).start()', src,
+                      "the remote leg carries the port resolved before the ack, like the local one")
         # the page reads it back AFTER reloading and shows it exactly once (keyed on the report's stamp).
         # It rides the block that owns the Restart button itself, so the two can never drift apart.
         js = km._LANDING_SETTINGS_JS
@@ -163,7 +166,8 @@ class ReportSurvivesTheRestart(unittest.TestCase):
     def test_a_kernel_with_no_remotes_restarts_exactly_as_before(self):
         src = inspect.getsource(km.Handler)
         self.assertIn("if _fleet and _remotes:", src)
-        self.assertIn("else:\n                    _restart_this_kernel(\"http /restart (local-only)\")", src)
+        self.assertIn("else:\n                    _restart_this_kernel(\"http /restart (local-only)\", "
+                      "manager_port=_mport)", src)
 
 
 class GlyphSaysTheFleetState(unittest.TestCase):
