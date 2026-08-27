@@ -1957,9 +1957,29 @@ def load_archive(fsid):
         return None
 
 
+_publish_tmp_lock = threading.Lock()
+_publish_tmp_seq = [0]
+
+
+def _publish_tmp(dirpath, fsid):
+    """A publish temp beside <fsid>.json, UNIQUELY named per (pid, thread, call).
+
+    The old names keyed on the pid alone, but the writers here are concurrent THREADS of one
+    process: judge passes run per-session workers while the kernel stamps blocks and archives
+    clears on its own threads. Two threads publishing the SAME session's file shared one temp
+    path, so the loser renamed a temp the winner had already moved — FileNotFoundError from a
+    plain save — or renamed the other writer's half-written bytes into place. The counter
+    covers thread-ident reuse (a died thread's ident is recycled while its orphaned temp may
+    still exist). Same shape as the kernel's _atomic_write, for the same reason."""
+    with _publish_tmp_lock:
+        _publish_tmp_seq[0] += 1
+        n = _publish_tmp_seq[0]
+    return dirpath / (fsid + ".json.tmp.%d.%d.%d" % (os.getpid(), threading.get_ident(), n))
+
+
 def write_archive(fsid, rec):
     ARCHDIR.mkdir(parents=True, exist_ok=True)
-    tmp = ARCHDIR / (fsid + ".json.tmp.%d" % os.getpid())
+    tmp = _publish_tmp(ARCHDIR, fsid)
     tmp.write_text(json.dumps(rec))
     tmp.rename(ARCHDIR / (fsid + ".json"))            # atomic publish
 
@@ -2800,7 +2820,7 @@ def save_goals(fsid, store):
         store["rev"] = _disk_rev(fsid) + 1
     else:
         store["rev"] = int(store.get("rev") or 0) + 1
-    tmp = GOALDIR / (fsid + ".json.tmp.%d" % os.getpid())
+    tmp = _publish_tmp(GOALDIR, fsid)
     tmp.write_text(json.dumps(store))
     tmp.rename(GOALDIR / (fsid + ".json"))            # atomic publish
 
@@ -2819,7 +2839,7 @@ def load_goal_archive(fsid):
 
 def save_goal_archive(fsid, store):
     GOALARCHDIR.mkdir(parents=True, exist_ok=True)
-    tmp = GOALARCHDIR / (fsid + ".json.tmp.%d" % os.getpid())
+    tmp = _publish_tmp(GOALARCHDIR, fsid)
     tmp.write_text(json.dumps(store))
     tmp.rename(GOALARCHDIR / (fsid + ".json"))        # atomic publish
 
