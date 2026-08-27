@@ -2404,7 +2404,12 @@ function renderEventInner(ev: ChatEvent): HTMLElement {
         turn.classList.add("undelivered");
         bubble.classList.add("undelivered-bubble");
         const note = el("div", "undelivered-note");
-        note.title = "This message never reached the session: its process died holding it before it was written to the conversation.";
+        // covers BOTH dropped-echo populations (the copy predated the 2026-08-26 widening and claimed a
+        // process death for every loss): an SDK echo really is a send its CLI died holding, but a tmux
+        // echo settles dropped when the session simply moved past it — a keystroke the pane dropped, or
+        // a delivery the transcript recorded under different text. Say what is KNOWN (it never made the
+        // conversation), not a cause that is only sometimes true.
+        note.title = "This message never made it into the conversation: the session moved on without recording it (a dropped keystroke, a process that died holding it, or a delivery recorded under different text).";
         const label = el("span", "undelivered-label");
         label.textContent = "never delivered";
         note.appendChild(label);

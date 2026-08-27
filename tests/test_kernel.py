@@ -7,6 +7,7 @@ UUIDs; no real session data.
 import json
 import os
 import re
+import sys
 import tempfile
 import time
 import types
@@ -7300,6 +7301,55 @@ class TmuxEchoSettledByALaterTurn(unittest.TestCase):
         self.assertIsNone(backend.dismiss_echo(SID, uuid=settled["uuid"]), "idempotent: a miss is a no-op")
         remaining = [a.get("_echo_text") for a in km._tmux_echo_atoms(SID)]
         self.assertEqual(remaining, ["still going out"], "only the dismissed one goes")
+
+    # ── the settle's two side arms, previously untested (PR-740 review follow-up, 2026-08-27) ──
+    # Direct _tmux_echo_settle calls: the arms live there, and the merge path's threading is one line
+    # (TmuxBackend.prune_live passes still_queued=self.pending_queued(sid)).
+
+    def test_path_bearing_overtaken_echo_is_RETIRED_when_the_predicate_resolves(self):
+        # The pop arm mirrors sdk_backend.prune_live: a path-bearing echo fails the text match
+        # STRUCTURALLY (the transcript extracts image paths out of the user text), so "overtaken" is not
+        # evidence of loss — labelling it "never delivered" would libel a delivered screenshot send.
+        echo_atom = self._echo_at("see /tmp/shot.png", self.SENT_BEFORE)
+        fake = types.ModuleType("romp_sdk_backend")
+        fake._path_bearing = lambda t: "/tmp/shot.png" in t
+        saved = sys.modules.get("romp_sdk_backend")
+        sys.modules["romp_sdk_backend"] = fake
+        try:
+            km._tmux_echo_settle(SID, human_floor=self.LANDED_AT)
+        finally:
+            if saved is None:
+                sys.modules.pop("romp_sdk_backend", None)
+            else:
+                sys.modules["romp_sdk_backend"] = saved
+        self.assertNotIn(SID, km._tmux_echo, "retired the SDK way, not labelled a loss it may not be")
+        self.assertFalse(echo_atom.get("dropped"))
+
+    def test_path_bearing_echo_is_MARKED_when_the_sdk_module_is_absent(self):
+        # With the predicate unavailable the settle cannot tell path-bearing from plain, and marking is
+        # the visible, reversible outcome — the dashed bubble's ✕ undoes a wrong call, a silent retire
+        # cannot be undone.
+        echo_atom = self._echo_at("see /tmp/shot.png", self.SENT_BEFORE)
+        saved = sys.modules.pop("romp_sdk_backend", None)
+        try:
+            km._tmux_echo_settle(SID, human_floor=self.LANDED_AT)
+        finally:
+            if saved is not None:
+                sys.modules["romp_sdk_backend"] = saved
+        self.assertTrue(echo_atom.get("dropped"), "marked, the reversible outcome")
+        self.assertIn(SID, km._tmux_echo)
+
+    def test_a_still_queued_echo_stands_down_and_settles_on_release(self):
+        # The floor is a per-SESSION clock: an older queued sibling delivering raises it past a younger
+        # send still genuinely waiting in the CLI's queue. The queue ledger is the authoritative "still
+        # owed" record, so the settle defers to it — marking would have /diag/sendvis call one message
+        # both pending and dropped. Once the ledger releases the text, the next settle rules normally.
+        echo_atom = self._echo_at("the younger queued send", self.SENT_BEFORE)
+        km._tmux_echo_settle(SID, human_floor=self.LANDED_AT,
+                             still_queued=["the younger queued send"])
+        self.assertFalse(echo_atom.get("dropped"), "still owed by the queue ledger — waiting, not lost")
+        km._tmux_echo_settle(SID, human_floor=self.LANDED_AT, still_queued=[])
+        self.assertTrue(echo_atom.get("dropped"), "the ledger released it — the floor's ruling stands")
 
 
 class TestCloserSettledGate(unittest.TestCase):
