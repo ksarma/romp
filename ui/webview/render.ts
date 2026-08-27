@@ -231,7 +231,8 @@ interface TodoTask { id: string; subject: string; activeForm?: string; status: s
 interface UserTodo { id: string; text: string; detail?: string; createdT?: number }
 
 type ChipState = "working" | "ready" | "needsInput" | "awaiting" | "awaitingBg" | "idle" | "closed" | "compacting" | "clearing" | "blocked" | "retrying" | "interrupting" | "opening";   // needsInput = a live permission/picker prompt (on YOU) — renamed from the legacy "awaiting" (2026-08-15), which stays accepted for OLDER REMOTE KERNELS across federation; awaitingBg = idle main thread waiting on background work it dispatched (the user 2026-07-13)
-interface Status { state: ChipState; sinceEpoch: number | null; awaitingWhy?: string | null; awaitingKind?: string | null; awaitingTasks?: string[]; awaitingTaskIds?: string[]; effort?: string; model?: string; modelPending?: boolean; effortPending?: boolean; mode?: string; fast?: string; auth?: string; authLive?: string; authPending?: boolean; authBoth?: boolean; authAcct?: string; ctx?: string; ctxColor?: number[]; modelColor?: number[]; effortColor?: number[]; faded?: boolean; backend?: string; apiTooLong?: boolean; apiSpendLimit?: boolean; apiModelLimit?: boolean; apiAuthErr?: boolean; apiRefusal?: boolean; retrySuppressed?: boolean; retryNextAt?: number | null; retryTries?: number | null; }   // awaitingWhy/awaitingTasks = what an awaitingBg session is waiting on (kernel _session_awaiting's phrasing + the live awaited task descriptions) — the #bg-tasks box renders it when no tracked tasks claim the box (renderAwaitWhy; the user 2026-08-13, who moved it out of the statusline the same day PR #350 put it there)   // retrySuppressed = the user interrupted this thread's API-error storm → romp's auto-retry stays OFF for it until a successful turn re-arms (the user 2026-07-06). backend = "tmux" | "sdk"; apiTooLong = the "blocked" is a "prompt is too long" error (on you → red tab) vs a transient API error (amber/retrying); apiSpendLimit = a monthly spend cap (on you → raise it; NEVER auto-retried — retrying can't fix it, the user 2026-07-14); apiModelLimit = this session's MODEL is out of allowance (on you → switch model or add credits; not auto-retried either, the user 2026-08-01); apiRefusal = the model's safeguards refused the prompt itself (on you → rewrite it or drop the thread; never auto-retried — a refusal is deterministic on the same input, so a retry just manufactures the same refusal, the user 2026-08-15); ctxColor = the GLOBAL colormap's RGB for the context%, computed server-side; modelColor/effortColor = the same map's RGB tint for the model name + effort (by capability/effort rank), server-computed; modelPending = a /model switch is resolving → the badge shows switching-dots until the new name lands (server-driven, event-based, the user 2026-07-03); fast = the CLI's fast-mode state ("on"/"off"/"cooldown", from the SDK init's fast_mode_state; absent = unknown/unavailable → no fast badge)
+type PeerIdent = { name: string; host?: string; sid?: string; color?: { bg: string; fg: string } | null };   // a named peer behind a peer-kind wait (kernel _peer_identity, 2026-08-26)
+interface Status { state: ChipState; sinceEpoch: number | null; awaitingWhy?: string | null; awaitingKind?: string | null; awaitingPeers?: PeerIdent[] | null; awaitingTasks?: string[]; awaitingTaskIds?: string[]; effort?: string; model?: string; modelPending?: boolean; effortPending?: boolean; mode?: string; fast?: string; auth?: string; authLive?: string; authPending?: boolean; authBoth?: boolean; authAcct?: string; ctx?: string; ctxColor?: number[]; modelColor?: number[]; effortColor?: number[]; faded?: boolean; backend?: string; apiTooLong?: boolean; apiSpendLimit?: boolean; apiModelLimit?: boolean; apiAuthErr?: boolean; apiRefusal?: boolean; retrySuppressed?: boolean; retryNextAt?: number | null; retryTries?: number | null; }   // awaitingWhy/awaitingTasks = what an awaitingBg session is waiting on (kernel _session_awaiting's phrasing + the live awaited task descriptions) — the #bg-tasks box renders it when no tracked tasks claim the box (renderAwaitWhy; the user 2026-08-13, who moved it out of the statusline the same day PR #350 put it there)   // retrySuppressed = the user interrupted this thread's API-error storm → romp's auto-retry stays OFF for it until a successful turn re-arms (the user 2026-07-06). backend = "tmux" | "sdk"; apiTooLong = the "blocked" is a "prompt is too long" error (on you → red tab) vs a transient API error (amber/retrying); apiSpendLimit = a monthly spend cap (on you → raise it; NEVER auto-retried — retrying can't fix it, the user 2026-07-14); apiModelLimit = this session's MODEL is out of allowance (on you → switch model or add credits; not auto-retried either, the user 2026-08-01); apiRefusal = the model's safeguards refused the prompt itself (on you → rewrite it or drop the thread; never auto-retried — a refusal is deterministic on the same input, so a retry just manufactures the same refusal, the user 2026-08-15); ctxColor = the GLOBAL colormap's RGB for the context%, computed server-side; modelColor/effortColor = the same map's RGB tint for the model name + effort (by capability/effort rank), server-computed; modelPending = a /model switch is resolving → the badge shows switching-dots until the new name lands (server-driven, event-based, the user 2026-07-03); fast = the CLI's fast-mode state ("on"/"off"/"cooldown", from the SDK init's fast_mode_state; absent = unknown/unavailable → no fast badge)
 interface Color { bg: string; fg: string; }
 // A run_in_background task surfaced in the #bg-tasks box (the kernel's _bg_tasks): a one-line summary +
 // status, expandable to the command + its output. status = running | completed | failed. For a dispatched
@@ -3574,8 +3575,9 @@ function renderApiError(ev: Extract<ChatEvent, { kind: "apiError" }>): HTMLEleme
       // (the kernel gate is for the auto-loop only); without it "Retry now" was a dead no-op on a suppressed
       // session (the user 2026-07-06). Acknowledge the click AT ONCE — disable + "Retrying…" — so it never
       // reads as unresponsive; the next render (a fresh error card, or the turn resuming) restores it.
-      if (vscodeApi) vscodeApi.postMessage({ type: "apiRetry", id: activeId, manual: true });
-      if (activeId) apiRetryNext.set(activeId, Date.now() + API_RETRY_MS);   // restart the countdown
+      const own = owningSidOf(retry);
+      if (vscodeApi) vscodeApi.postMessage({ type: "apiRetry", id: own, manual: true });
+      if (own) apiRetryNext.set(own, Date.now() + API_RETRY_MS);   // restart the countdown
       retry.disabled = true;
       retry.textContent = "Retrying…";
       setTimeout(() => { if (retry.isConnected) { retry.disabled = false; retry.textContent = "Retry now"; } }, 2500);
@@ -3587,7 +3589,7 @@ function renderApiError(ev: Extract<ChatEvent, { kind: "apiError" }>): HTMLEleme
     dismiss.textContent = "Dismiss dialog";
     dismiss.title = "the terminal is showing the spend-limit menu — send Esc to close it (cancels; changes no billing setting)";
     dismiss.addEventListener("click", () => {
-      if (vscodeApi) vscodeApi.postMessage({ type: "dismissDialog", id: activeId });
+      if (vscodeApi) vscodeApi.postMessage({ type: "dismissDialog", id: owningSidOf(dismiss) });
       dismiss.disabled = true;
       dismiss.textContent = "Dismissing…";
       setTimeout(() => { if (dismiss.isConnected) { dismiss.disabled = false; dismiss.textContent = "Dismiss dialog"; } }, 2500);
@@ -6319,7 +6321,10 @@ function showUserTodoReply(sid: string, todoId: string, todoText: string): void 
 // drifts, so a thread is never unreachable. State lives in module maps keyed by sid/tid, so every
 // re-render (the transcript rebuilds constantly) reapplies it — the openFolds pattern.
 const commentThreads = new Map<string, CommentThread[]>();          // parent sid → last frame's threads
-const commentPending = new Map<string, { text: string; t: number }[]>(); // tid → optimistic sends
+const commentPending = new Map<string, { text: string; t: number; imgPaths?: string[] }[]>(); // tid → optimistic sends (+ shipped image paths → echo thumbnails, the parity bundle 2026-08-26)
+// image paths shipped into the OPEN popover's box (the droppedPath ack) and not yet sent — the next
+// send attaches them to its pending entry so the echo renders the same thumbnails the chat's does
+let cmtShippedImgs: string[] = [];
 // THE EXCHANGE LATCH (T102, the user 2026-08-26): tid → the agent-message count at the newest SEND.
 // Set at the send GESTURE (create seeds 0 under the synth tid, transferred on adopt; a reply stamps
 // the count at its send), cleared ONLY by the reply-arrived event — the agent's reply record landing
@@ -6720,9 +6725,9 @@ function adoptCommentThread(sid: string, tid: string): void {
  *  killed 2026-07-16 reborn in the popover; "I really want to be inheriting all the stuff for how
  *  the chat normally renders"). Inherited, never restyled: the dashed bubble, the sent-just-now
  *  title, the no-header bare form all come from the one code path. */
-function cmtPendingQueued(pend: { text: string; t: number }[]): HTMLElement {
+function cmtPendingQueued(pend: { text: string; t: number; imgPaths?: string[] }[]): HTMLElement {
   return renderQueued({ kind: "queued", bare: true,
-    texts: pend.map((p) => ({ md: p.text, optimistic: true, cancelable: false })),
+    texts: pend.map((p) => ({ md: p.text, optimistic: true, cancelable: false, imgPaths: p.imgPaths })),
     uuid: OPT_PREFIX + pend[0].t } as Extract<ChatEvent, { kind: "queued" }>);
 }
 
@@ -6743,7 +6748,16 @@ function openCommentThread(): { sid: string; th: CommentThread } | null {
 
 /** The popover's conversation area, (re)filled in place — shared by the full build and the
  *  frame-driven refresh so an update never rebuilds the composer under the user's caret. */
+/** The OWNING session of a control's DOM at click time: the thread root (chat views) or the
+ *  popover's list (stamped with the THREAD sid below) — so in-turn controls rendered through the
+ *  shared path (queued ✕, api-error Retry) act on the session that owns them, never on whichever
+ *  tab is active (the parity bundle, 2026-08-26; the render-time twin is renderingOwnerSid). */
+function owningSidOf(el0: HTMLElement | null): string | null {
+  return (el0?.closest("[data-session]") as HTMLElement | null)?.dataset.session || activeId;
+}
+
 function fillCommentMsgs(list: HTMLElement, th: CommentThread, sid: string): void {
+  list.dataset.session = th.tid;   // the THREAD owns its queue/errors — in-turn controls resolve to it
   const prevScroll = list.scrollTop;
   // the slack rule (the user 2026-08-25, same word as the chat's appendActive): while the thread's
   // content hasn't overflowed the fixed box, streaming writes in place — no follow, no jump; once
@@ -6795,7 +6809,15 @@ function fillCommentMsgs(list: HTMLElement, th: CommentThread, sid: string): voi
     const items: DisplayItem[] = settings.compact
       ? compactDisplay(evs.map((e) => e.kind), evs.map((e) => e.kind === "tool" ? e.name : undefined))
       : evs.map((_, i) => ({ kind: "event", index: i } as DisplayItem));
+    const thWorking = threadBusy(th.state);
     for (const it of items) {
+      // a new day opens with the chat's own divider (the parity bundle, 2026-08-26) — same helper,
+      // same placement idiom as appendItem
+      const dayOpen = eventEpoch(evs[itemFirstEvent(it)]);
+      if (dayOpen != null) {
+        const dv = dayDividerFor(dayOpen, prev);
+        if (dv) list.appendChild(dv);
+      }
       if (it.kind === "toolgroup") {
         const tools = it.indices.map((ix) => evs[ix]) as Extract<ChatEvent, { kind: "tool" }>[];
         const key = toolGroupKey(tools[0]);
@@ -6803,7 +6825,7 @@ function fillCommentMsgs(list: HTMLElement, th: CommentThread, sid: string): voi
         list.appendChild(renderToolGroup(tools, prev, key, open));
         if (open) {
           it.indices.forEach((ix, j) => {   // the tools only — it.indices already excludes thinking
-            const child = renderEvent(evs[ix], prev, null);
+            const child = renderEvent(evs[ix], prev, turnWorkedSecs(evs, ix, thWorking));
             child.classList.add("tg-child"); if (j === it.indices.length - 1) child.classList.add("tg-last");
             list.appendChild(child);
             const ep = eventEpoch(evs[ix]); if (ep != null) prev = ep;
@@ -6814,7 +6836,9 @@ function fillCommentMsgs(list: HTMLElement, th: CommentThread, sid: string): voi
         continue;
       }
       const ev = evs[it.index];
-      const node = renderEvent(ev, prev, null);
+      // the "worked Ns" footer rides exactly as in the chat (the parity bundle) — the same
+      // turnWorkedSecs, with the thread session's own busy reading standing in for `working`
+      const node = renderEvent(ev, prev, turnWorkedSecs(evs, it.index, thWorking));
       list.appendChild(node);
       if (!quoteHost && ev.kind === "user") quoteHost = node;
       const ep = eventEpoch(ev);
@@ -7026,7 +7050,9 @@ function commentSendFromPop(pop: HTMLElement): void {
   cur.th.state = "working";                     // optimistic: the pulse rides the SEND, not the
   applyCommentMarks(cur.sid);                   // round-trip (the kernel's next frame confirms)
   const pl = commentPending.get(cur.th.tid) || [];
-  pl.push({ text, t: Date.now() / 1000 });
+  pl.push({ text, t: Date.now() / 1000,
+            imgPaths: cmtShippedImgs.filter((p2) => text.includes(p2)) });   // only paths still in the sent text
+  cmtShippedImgs = [];
   commentPending.set(cur.th.tid, pl);
   commentDrafts.delete(cur.th.tid);
   box.value = "";
@@ -9145,7 +9171,23 @@ function renderAwaitWhy(host: HTMLElement, s: Session | null) {
   // the kernel's why leads with the verb ("waiting on a background task: …") — strip it so the
   // labeled header doesn't stutter; the expanded body keeps the full sentence
   const kw = KIND_WORD[(s!.status.awaitingKind || "")] || "";
-  lab.textContent = "Awaiting" + (kw ? " " + kw : "") + " · " + why.replace(/^(waiting on|awaiting)\s+/i, "");
+  const awPeers = s!.status.awaitingPeers || [];
+  if (awPeers.length) {
+    // a peer-kind wait NAMES the actual session (the user 2026-08-26) — identity colour, quiet
+    // host: prefix, the feed box's own treatment; the why tail keeps the wait's verb without
+    // restating the names ("delegated to X; " is the names, already rendered)
+    lab.append("Awaiting ");
+    awPeers.forEach((pr, i) => {
+      if (i) lab.append(", ");
+      const nm = el("span", "bg-await-peer");
+      nm.textContent = (pr.host ? pr.host + ":" : "") + pr.name;
+      if (pr.color && pr.color.bg) nm.style.color = pr.color.bg;
+      lab.appendChild(nm);
+    });
+    lab.append(" · " + why.replace(/^delegated to [^;]*;\s*/i, "").replace(/^(waiting on|awaiting)\s+/i, ""));
+  } else {
+    lab.textContent = "Awaiting" + (kw ? " " + kw : "") + " · " + why.replace(/^(waiting on|awaiting)\s+/i, "");
+  }
   head.appendChild(lab);
   host.appendChild(head);
   if (!open) return;
@@ -9195,9 +9237,14 @@ function isCoarsePointer(): boolean {
 function composerRestingPlaceholder(): string {
   // the one canonical hint line (the user 2026-08-15): send, newline, stage, commands — and just
   // "/ for commands", not "type / for commands". The static skeletons carry the same string.
-  return isCoarsePointer()
-    ? "Message this session…"
-    : "Message this session…  (⏎ send · ⇧⏎ newline · ⌘⏎ stage · ↑ history · / for commands)";
+  // WIDTH-ADAPTIVE (the user 2026-08-26, whose narrow pane wrapped the full hint onto a clipped
+  // second line): below ~620px of box the hint drops to the core prompt + the one undiscoverable
+  // key ("/"); the full key chart stays a wide-desktop hint. Re-fitted event-based on pane resize
+  // (the ResizeObserver beside the composer's other wiring), never re-measured per keystroke.
+  if (isCoarsePointer()) return "Message this session…";
+  const ta = document.getElementById("composer-input");
+  if (ta && ta.clientWidth > 0 && ta.clientWidth < 620) return "Message this session…  (/ for commands)";
+  return "Message this session…  (⏎ send · ⇧⏎ newline · ⌘⏎ stage · ↑ history · / for commands)";
 }
 
 // How a message typed into the NORMAL composer should be routed while a live picker is up — the picker's
@@ -10123,7 +10170,20 @@ function updateStatusline() {
     // dead on the touch PWA, so the word must be visible; the subject stays in the #bg-tasks box
     const kw = KIND_WORD[s.status.awaitingKind || ""] || "";
     chip.classList.add("chip-awaiting-" + (s.status.awaitingKind || "untyped"));   // per-kind hook, one hue today
-    chip.textContent = CHIP_LABEL.awaitingBg + (kw ? " " + kw : "");
+    const chipPeers = s.status.awaitingPeers || [];
+    if (chipPeers.length) {
+      // the pill names the actual session (the user 2026-08-26): "Awaiting <name>" with the peer's
+      // identity-colour dot; several peers keep the one-line rule as a count, names on the tooltip
+      chip.append(CHIP_LABEL.awaitingBg + " ");
+      if (chipPeers.length === 1) {
+        if (chipPeers[0].color && chipPeers[0].color.bg) {
+          const dot = el("span", "chip-peer-dot");
+          dot.style.background = chipPeers[0].color.bg;
+          chip.appendChild(dot);
+        }
+        chip.append((chipPeers[0].host ? chipPeers[0].host + ":" : "") + chipPeers[0].name);
+      } else chip.append(chipPeers.length + " peers");
+    } else chip.textContent = CHIP_LABEL.awaitingBg + (kw ? " " + kw : "");
     chip.title = (s.status.awaitingWhy || "idle, waiting on background work it dispatched")
                + " — clears when the result lands";
     sl.appendChild(chip);
@@ -11679,6 +11739,7 @@ window.addEventListener("message", (e: MessageEvent) => {
       retirePendingShip(m.path);
       cbox.value = (cbox.value ? cbox.value.trimEnd() + " " : "") + m.path + " ";
       cbox.dispatchEvent(new Event("input"));   // the draft listener persists it
+      if (previewKind(m.path) === "img") cmtShippedImgs.push(m.path);   // the echo's thumbnail ride
       cbox.focus();
       return;
     }
@@ -11729,13 +11790,17 @@ window.addEventListener("message", (e: MessageEvent) => {
       t.tid.startsWith("pending:") && cmtCreateInFlight.has(t.tid.slice("pending:".length))
       && !threads.some((r) => r.anchorUuid === t.anchorUuid));
     commentThreads.set(sid, synths.length ? [...threads, ...synths] : threads);
-    // THE REPLY-ARRIVED EVENT (T102): a frame whose msgs hold MORE agent records than the send's
-    // base means THAT send's reply landed — the exchange latch clears here and nowhere else. A
-    // thread that left "open" (or errored) drops its latch too: green would lie about a reply
-    // that is no longer on the way.
+    // THE REPLY-COMPLETED EVENT (T102, sharpened by T112): a frame whose msgs hold MORE agent
+    // records than the send's base AND whose thread reads settled — the turn that produced the
+    // reply has ENDED, so what the reader sees is the answer, not a mid-turn interim. Counting
+    // records alone cleared 40s early on the specimen: the model wrote "checking…" first, ran
+    // tools, then answered — the interim record raised the count while the turn was still working
+    // and the pulse went yellow before the answer existed. threadBusy here can only DELAY the
+    // clear (the latch side never re-derives from state), so the boot-flap class T102 removed
+    // cannot re-green anything. Leaving "open" (or erroring) still clears immediately.
     for (const t of threads) {
       const base = cmtAwaitBase.get(t.tid);
-      if (base !== undefined && (agentCount(t) > base || t.status !== "open" || !!t.error)) cmtAwaitBase.delete(t.tid);
+      if (base !== undefined && ((agentCount(t) > base && !threadBusy(t.state)) || t.status !== "open" || !!t.error)) cmtAwaitBase.delete(t.tid);
     }
     for (const k of Array.from(cmtAwaitBase.keys()))
       if (!k.startsWith("pending:") && !threads.some((t) => t.tid === k)) cmtAwaitBase.delete(k);
@@ -12113,6 +12178,15 @@ function setupComposer() {
     // a double-click on the handle resets to auto (one line) — a quick escape hatch without sending
     grip.addEventListener("dblclick", () => { composerManualH = null; growComposer(ta); });
   }
+
+  // ── width-adaptive resting placeholder (the user 2026-08-26) ── the pane resized across the
+  // short/long hint threshold → re-fit the placeholder, but ONLY while it is showing a resting
+  // form: a picker's "add your own answer…" or the closed-session notice must never be clobbered.
+  try {
+    new ResizeObserver(() => {
+      if (ta.placeholder.startsWith("Message this session…")) ta.placeholder = composerRestingPlaceholder();
+    }).observe(ta);
+  } catch (e) { /* tests: no ResizeObserver in the DOM shim */ }
 
   // ── slash-command autocomplete (the user 2026-06-29) ── a "/" at the START of the box opens a filterable,
   // arrow-navigable menu of THIS session's slash commands (name + description + arg hint), sourced from the
@@ -12719,7 +12793,7 @@ setupSettings();
     qx: (el) => {
       if (!activeId || !vscodeApi) return;
       const qmd = (el as any)._qmd as string | undefined;
-      const msg: Record<string, unknown> = { type: "cancelQueued", id: activeId, md: qmd };
+      const msg: Record<string, unknown> = { type: "cancelQueued", id: owningSidOf(el), md: qmd };
       if (el.dataset.qidx !== undefined) msg.idx = Number(el.dataset.qidx);
       if (el.dataset.qpark !== undefined) msg.park = Number(el.dataset.qpark);
       vscodeApi.postMessage(msg);
