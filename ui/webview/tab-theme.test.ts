@@ -65,5 +65,5 @@ test("Yatharth: his strip verbatim, scoped to the theme class", () => {
 test("the gear offers the picker in the one menu vocabulary, Classic first", () => {
   assert.match(GEAR, /\{ id: 'classic', name: 'Classic',/);
   assert.match(GEAR, /\{ id: 'yatharth', name: 'Yatharth',/);
-  assert.match(GEAR, /s\.chatTabTheme = th\.id; save\(s\); ttPaint\(\);/);
+  assert.match(GEAR, /housePick\(tt, 'tabtheme', tabThemeRowHTML, function \(id\) \{ var s = load\(\); s\.chatTabTheme = id; save\(s\); ttPaint\(\); \}\);/);
 });
