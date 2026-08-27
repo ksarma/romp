@@ -221,3 +221,77 @@ class ClearChatViewTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PreClearNotesStayInTheirEpisode(unittest.TestCase):
+    """T131 (the user 2026-08-27, screenshot): seventeen pre-clear "Recovered after N retries"
+    rows stood in a freshly /clear-ed thread. The side-store notes (recoveries, gave-ups, command
+    gestures, effort notes, orphan replies) are time-anchored against transcript atoms, and the
+    /clear re-points the transcript to a fresh file — so the first new atom's flush dumped every
+    note older than the clear into the new conversation. The floor: the live render drops notes
+    at/before the last episode boundary; the EPISODE render keeps them (they live in the boundary
+    card's fold, with the rest of the pre-clear conversation). Synthetic data only."""
+
+    def setUp(self):
+        self._td = tempfile.mkdtemp()
+        jd._rebind_state(Path(self._td))
+        jd.PROJECTS = Path(self._td) / "projects"
+        jd._discover_cache["fp"] = None
+        jd._discover_cache["result"] = None
+        self.cwd = os.path.realpath(os.path.join(self._td, "notes-api"))
+        os.makedirs(self.cwd, exist_ok=True)
+        self.proj = jd._proj_dir(self.cwd)
+        self.proj.mkdir(parents=True)
+        (jd.STATE / "names").mkdir(parents=True, exist_ok=True)
+        (jd.STATE / "names" / SID).write_text("web\t" + self.cwd)
+        _write_jsonl(self.proj / (SID + ".jsonl"), [
+            _urec(NOW - 3600, "u1", "set up the api server"),
+            _arec(NOW - 3590, "a1", "done - the notes-api server runs on port 8080", "u1"),
+        ])
+        _write_jsonl(self.proj / (NEWFSID + ".jsonl"), [
+            _urec(NOW - 50, "n1", "hello again", fsid=NEWFSID),
+            _arec(NOW - 40, "n2", "fresh start - what next?", "n1", fsid=NEWFSID),
+        ])
+        (jd.STATE / "sdk").mkdir(parents=True, exist_ok=True)
+        (jd.STATE / "sdk" / (SID + ".json")).write_text(json.dumps(
+            {"sid": SID, "name": "web", "alive": True, "lastSid": NEWFSID}))
+        _write_jsonl(jd.STATE / "episodes" / (SID + ".jsonl"), [
+            {"head": "u1", "fsid": SID, "t": NOW - 3600},
+            {"head": "n1", "fsid": NEWFSID, "t": CLEAR_T},
+        ])
+        # the side-store: a pre-clear recovery storm + a pre-clear /auth gesture (the filmed pair),
+        # and one POST-clear recovery that must keep rendering live
+        _write_jsonl(jd.STATE / "states" / (SID + ".jsonl"), [
+            {"t": NOW - 3000, "retriesRecovered": 1},
+            {"t": NOW - 2900, "retriesRecovered": 3},
+            {"t": NOW - 2800, "cmdGesture": "/auth login"},
+            {"t": NOW - 30, "retriesRecovered": 2},
+        ])
+
+    def tearDown(self):
+        shutil.rmtree(self._td, ignore_errors=True)
+
+    def test_live_render_shows_only_the_current_episodes_notes(self):
+        events = km.build_session(SID, NOW)["events"]
+        retried = [e for e in events if e.get("kind") == "retried"]
+        self.assertEqual([e["retries"] for e in retried], [2],
+                         "pre-clear recoveries belong to the previous episode's render, not the fresh thread")
+        self.assertEqual([e for e in events if e.get("kind") == "cmdGesture"], [],
+                         "the pre-clear /auth gesture chip goes with them")
+
+    def test_the_episode_render_keeps_its_own_eras_notes(self):
+        got = km.build_episode(SID, NOW)
+        self.assertNotIn("error", got or {}, "the pre-clear transcript must resolve")
+        kinds = [(e.get("kind"), e.get("retries")) for e in got["events"] if e.get("kind") in ("retried", "cmdGesture")]
+        self.assertIn(("retried", 1), kinds, "the boundary card's fold is where the pre-clear notes live")
+        self.assertIn(("retried", 3), kinds)
+        self.assertIn(("cmdGesture", None), kinds)
+
+    def test_a_single_episode_session_keeps_every_note(self):
+        _write_jsonl(jd.STATE / "episodes" / (SID + ".jsonl"),
+                     [{"head": "u1", "fsid": SID, "t": NOW - 3600}])
+        (jd.STATE / "sdk" / (SID + ".json")).write_text(json.dumps(
+            {"sid": SID, "name": "web", "alive": True, "lastSid": SID}))
+        events = km.build_session(SID, NOW)["events"]
+        self.assertEqual([e["retries"] for e in events if e.get("kind") == "retried"], [1, 3, 2],
+                         "no boundary, no floor — the whole history is one episode")

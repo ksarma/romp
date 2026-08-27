@@ -17501,14 +17501,27 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
     # Persistent "effort set to X" notes (the user 2026-07-16): same time-anchored durable-note mechanism as
     # the recovery markers — the /effort reconnect leaves no transcript atom, so this pins when the new effort
     # took effect and survives scroll-back (and the next message, which pruned the ephemeral /effort chip).
-    recoveries = _retry_recoveries(sid); _ri = 0
-    gaveups = _retry_gaveups(sid); _gi = 0            # the storm that DIDN'T recover → "gave up after N retries"
-    efforts = _effort_changes(sid); _ei = 0
+    # T131 (the user 2026-08-27, screenshot: seventeen pre-clear "Recovered after N retries" rows
+    # standing in a freshly /clear-ed thread): side-store notes are time-anchored against TRANSCRIPT
+    # atoms, and a /clear re-points the transcript to a fresh file — so the first new atom's flush
+    # dumped every note older than the clear into the new conversation's top. The floor is the last
+    # episode boundary's time: notes at/before it belong to the PREVIOUS episode's render (the
+    # boundary card's fold reads the same stores with tail_cap_t as its upper bound and no floor —
+    # nothing is lost, it moves where the rest of the pre-clear conversation lives). Live render
+    # only: an episode render (path_override) must keep its own era's notes.
+    _epi_rows_for_notes = [] if path_override else jd.episode_rows(sid)
+    _note_floor = (_epi_rows_for_notes[-1].get("t")
+                   if len(_epi_rows_for_notes) >= 2 and _epi_rows_for_notes[-1].get("t") else None)
+    def _past_floor(rows):
+        return rows if _note_floor is None else [r for r in rows if r.get("t") and r["t"] > _note_floor]
+    recoveries = _past_floor(_retry_recoveries(sid)); _ri = 0
+    gaveups = _past_floor(_retry_gaveups(sid)); _gi = 0   # the storm that DIDN'T recover → "gave up after N retries"
+    efforts = _past_floor(_effort_changes(sid)); _ei = 0
     # Persistent command-gesture chips (the user 2026-08-14): the synthesized /model-/effort-/auth chip lives
     # only in the backend's _live tail and stale_cmd prunes it on the next human turn — the durable marker
     # takes over here. DEDUP'd by (t, text) against a still-live chip so the same gesture never doubles;
     # flushed BEFORE the efforts loop so a same-second "/effort X" gesture sits above its "effort set to X".
-    gestures = _cmd_gestures(sid); _cgi = 0
+    gestures = _past_floor(_cmd_gestures(sid)); _cgi = 0
     _live_cmd_keys = set()
     for _t in session["turns"]:
         for _a in _t["atoms"]:
@@ -17518,7 +17531,7 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
     # (an API-errored try). Interleave it back at its timestamp, DEDUP'd against what the disk DID keep — a
     # retry that re-replied must not double. Match exact, and either-way prefix (a partial stream vs its full
     # retry). NB: build the disk-text set from the SAME session["turns"] atoms this loop renders.
-    orphans = _orphan_replies(sid); _oi = 0
+    orphans = _past_floor(_orphan_replies(sid)); _oi = 0
     _disk_texts = set()
     for _t in session["turns"]:
         for _a in _t["atoms"]:
@@ -18289,7 +18302,7 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
     # conversation on expand (loadEpisode → build_episode). It also guarantees a just-cleared session is
     # never events-empty, so the "No messages yet." placeholder can't lie about a conversation that DID
     # exist. Ordered ABOVE the system card: the cleared history predates the current conversation's frame.
-    _epi_rows = jd.episode_rows(sid)
+    _epi_rows = _epi_rows_for_notes   # loaded once above, with the note floor (T131)
     boundary = _epi_rows[-1] if len(_epi_rows) >= 2 else None
     if events or boundary:
         if docs or any(sysinfo[k] for k in ("model", "cwd", "gitBranch", "version", "mode")):
