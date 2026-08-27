@@ -28,7 +28,10 @@ pal = SourceFileLoader("romp_palette", str(HERE / "palette.py")).load_module()  
 ap = SourceFileLoader("romp_askparse", str(HERE / "askparse.py")).load_module()  # tmux-pane → live AskUserQuestion picker
 sb = SourceFileLoader("romp_session_backend", str(HERE / "session_backend.py")).load_module()  # the SessionBackend ABC
 CHAT_VIEW = ROOT / "vscode-extension"               # the tuned UI, current in this worktree via `git merge main`
-DIST = CHAT_VIEW / "dist"                    # bundles built from ui/webview sources (the human's tuned render layer)
+# ROMP_DIST_DIR: test seam (romp-lab serves a COPY of the built bundles, so its rebuild simulations —
+# mtime bumps that must raise the reload banner — never touch the dist the LIVE kernel serves).
+DIST = (Path(os.environ["ROMP_DIST_DIR"]) if os.environ.get("ROMP_DIST_DIR")
+        else CHAT_VIEW / "dist")                 # bundles built from ui/webview sources (the human's tuned render layer)
 MEDIA = CHAT_VIEW / "media"
 UI = ROOT / "ui"                             # the browser UI: timeline view + webview sources (served/built from here)
 NAMES = jd.STATE / "names"
@@ -2555,6 +2558,56 @@ def _rebuild_dist():
         return False, str(e)
 
 
+_DIST_CONVERGE_TRIED = [0.0]
+
+
+def _dist_src_newest():
+    """Newest mtime across the served bundles' INPUTS (the ui/ tree + the esbuild config) — the exact
+    staleness _rebuild_dist cures. Cheap stat sweep, _dist_ver's twin on the source side."""
+    newest = 0.0
+    try:
+        cfg = CHAT_VIEW / "esbuild.js"
+        if cfg.is_file():
+            newest = cfg.stat().st_mtime
+        for pth in UI.rglob("*"):
+            if pth.suffix in (".ts", ".js", ".css") and pth.is_file():
+                m = pth.stat().st_mtime
+                if m > newest:
+                    newest = m
+    except OSError:
+        pass
+    return newest
+
+
+def _dist_converge_check():
+    """Serve bundles that MATCH the checkout, or say LOUDLY that we cannot (T119, the user 2026-08-27:
+    a restart onto real UI changes served the OLD dist for 15 minutes — a restart execs new kernel code
+    but nothing on that path rebuilds the bundles, and the sha-based drift check sees checkout == running
+    == origin, so `dv` stayed equal to every open page's LOADEDV and NO raiser owed the reload banner.
+    The exact silent-degrade the house rule forbids: the staleness that matters — dist older than the
+    checkout's UI sources — was checked nowhere). Runs at boot and every drift pass, regardless of
+    update MODE: serving bundles that match one's own checkout is correctness, not update policy.
+    One rebuild attempt per distinct source state (the in-memory latch): a failure stays visible in its
+    notice and on stderr, retries on the next source change or the next boot — never a 5-minute storm.
+    The ROMP_DIST_DIR seam disables it: a redirected dist is the test's own to control."""
+    if os.environ.get("ROMP_DIST_DIR"):
+        return
+    newest = _dist_src_newest()
+    if not newest or newest <= _dist_ver():
+        return
+    if newest == _DIST_CONVERGE_TRIED[0]:
+        return
+    _DIST_CONVERGE_TRIED[0] = newest
+    ok, err = _rebuild_dist()
+    if ok:
+        _sync_notice("new build served in place (the running bundles predated the checkout's UI "
+                     "sources — a restart doesn't rebuild them) — reload the dashboard to pick it up")
+    else:
+        _sync_notice("the served UI bundles are OLDER than the checkout's sources and the in-place "
+                     "rebuild failed (%s) — dashboards are running stale UI until this builds" % err,
+                     ok=False)
+
+
 def _main_drift_check():
     """One origin/checkout/running comparison pass; fires the SAME banner as the release check (the
     shell's offer() renders the main-drift wording off kind:"main"). Re-fires only when the target sha
@@ -2673,6 +2726,10 @@ def _update_check_loop():
                 _update_check()
         except Exception:
             sys.stderr.write("update check pass: %s\n" % traceback.format_exc())
+        try:
+            _dist_converge_check()                # bundles-vs-checkout staleness — the restart path's gap (T119)
+        except Exception:
+            sys.stderr.write("dist converge pass: %s\n" % traceback.format_exc())
         try:
             _main_drift_check()
         except Exception:
