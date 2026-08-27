@@ -58,3 +58,14 @@ The default run drives TWO phases, banner first (it spends no model turns):
 
 A lab run spends a handful of short turns on the configured model (default Haiku)
 against the machine's own key — the same key live sessions bill.
+
+## rail-drift.mjs — the scroll-marks invariance assertion (T129)
+
+Under pure scrolling, the transcript rail's notches must never move relative to each other (the
+user filmed exactly that, 2026-08-27). `node rail-drift.mjs [--dist <dir>]` renders a synthetic
+long mixed transcript over the built bundle (no kernel needed — file:// page, placeholder UUIDs),
+scrolls two full round trips sampling every notch per frame, and asserts the second round trip —
+the learned regime, after the height cache primes — shows zero pairwise drift (tolerance 1.5px for
+style rounding; the pre-fix map drifted 5.7px, endlessly). The first round trip's remaps are
+event-keyed cache learning and are reported but not gated. Run it after any change to
+contentOffsetFrame, the virtualization window, or the scroll-marks/comment-rail painters.

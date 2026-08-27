@@ -1947,24 +1947,29 @@ function eventUnitIndex(s: Session): Int32Array {
 // ONE content-space frame for every scrollbar overlay (the user 2026-08-17, watching comment ticks
 // drift past message notches as history loaded): marks anchored to transcript positions share an
 // inherent monotonic order, so every overlay must place them with the SAME event-index → pixel
-// mapping — rendered turns by their true offset, spacer-covered turns by cumulative cached heights
-// normalized to the spacer's real height. The comment rail's old uniform index-fraction percents
-// were a second, disagreeing frame. Returns null while the pane is hidden or degenerate; offsetOf
-// returns null for an event mid-window-update — callers skip that mark, the next paint lands it.
+// mapping. Since T129 (the user 2026-08-27, filming marks moving RELATIVE TO EACH OTHER while
+// scrolling — geometrically impossible for a linear map) the frame is fully VIRTUAL: one
+// prefix-sum over ALL units, the cached measured height where a unit was ever rendered, the
+// renderer's average else. The old frame was PIECEWISE — live getBoundingClientRect offsets
+// inside the virtualization window, cache sums normalized to each spacer's rendered height
+// outside it — so pure scrolling changed the map every frame the window slid: marks flipped
+// basis crossing the window edge, the spacer denominators flapped, and first-render measurements
+// reshuffled the slots mid-scroll. In the virtual frame a mark's position does not depend on
+// scrollTop or the window AT ALL: under pure scrolling nothing moves, and a mark moves only when
+// information arrives — a height first measured (or remeasured: an image sizing in, a fold
+// toggling), events appending — the event-keyed remap the design rule asks for. The rendered
+// window still feeds the cache every paint, so the frame converges to truth as units are seen;
+// the scrollbar thumb lives in the real-pixel frame, whose totals the cache tracks to within the
+// average-height estimate for never-rendered units — same accuracy class as the spacers that
+// size that scrollbar in the first place. Returns null while the pane is hidden or degenerate;
+// offsetOf returns null out of range — callers skip that mark, the next paint lands it.
 function contentOffsetFrame(content: HTMLElement, v: View, s: Session):
     { sh: number; offsetOf: (i: number) => number | null } | null {
   const cRect = content.getBoundingClientRect();
-  const sh = content.scrollHeight;
-  if (!sh || cRect.height <= 40) return null;
-  const winStart = v.winStart ?? 0;
-  const winEnd = v.winEnd ?? s.events.length;
+  if (!content.scrollHeight || cRect.height <= 40) return null;
   const unitTotal = v.unitTotal ?? s.events.length;
-  const topSp = v.el.querySelector<HTMLElement>(".tx-spacer-top");
-  const botSp = v.el.querySelector<HTMLElement>(".tx-spacer-bot");
-  const topH = topSp ? topSp.offsetHeight : 0;
-  const botH = botSp ? botSp.offsetHeight : 0;
-  const scrollTop = content.scrollTop;
-  // remember every rendered unit's measured height — the spacer estimates below feed on them
+  if (!(unitTotal > 0)) return null;
+  // remember every rendered unit's measured height — the virtual frame feeds on them
   let uh = unitHeights.get(activeId!);
   if (!uh) { uh = new Map(); unitHeights.set(activeId!, uh); }
   for (const node of Array.from(v.el.querySelectorAll<HTMLElement>(".turn[data-unit]"))) {
@@ -1973,37 +1978,14 @@ function contentOffsetFrame(content: HTMLElement, v: View, s: Session):
     if (Number.isFinite(u) && h > 0) uh.set(u, h);
   }
   const avg = v.avgTurnH ?? 60;
-  // Cumulative-height slots within each spacer run, NORMALIZED to the spacer's actual rendered
-  // height (the frame the scrollbar itself stands on) — cached truth where a unit was ever
-  // rendered, the renderer's average for the rest. One prefix-sum pass per spacer per paint (O(n)
-  // total), then O(1) per mark. Normalizing keeps mark and thumb in one frame even when the
-  // cache disagrees with the spacer's uniform sizing.
-  const prefixOver = (from: number, to: number): number[] => {
-    const pre: number[] = [0];
-    let t = 0;
-    for (let u = from; u < to; u++) { t += uh!.get(u) ?? avg; pre.push(t); }
-    return pre;
-  };
-  const topPre = winStart > 0 ? prefixOver(0, winStart) : null;
-  const botPre = unitTotal > winEnd ? prefixOver(winEnd, unitTotal) : null;
-  const slotIn = (pre: number[], k: number, spanH: number): number => {
-    const total = pre[pre.length - 1];
-    if (!(total > 0)) return spanH / 2;
-    return spanH * ((pre[k] + (pre[k + 1] - pre[k]) / 2) / total);
-  };
-  const offsetOf = (i: number): number | null => {
-    let off: number | null = null;
-    if (i >= winStart && i < winEnd) {
-      const node = v.el.querySelector<HTMLElement>('.turn[data-unit="' + i + '"]');
-      if (node) off = node.getBoundingClientRect().top - cRect.top + scrollTop;
-    }
-    if (off == null) {
-      if (i < winStart && topPre) off = slotIn(topPre, i, topH);                        // inside the top spacer
-      else if (i >= winEnd && botPre) off = (sh - botH) + slotIn(botPre, i - winEnd, botH);
-    }
-    return off;                                      // null → window bookkeeping mid-update — skip this one, next paint has it
-  };
-  return { sh, offsetOf };
+  // one prefix-sum pass per paint (O(n)), then O(1) per mark
+  const pre: number[] = [0];
+  let t = 0;
+  for (let u = 0; u < unitTotal; u++) { t += uh.get(u) ?? avg; pre.push(t); }
+  if (!(t > 0)) return null;
+  const offsetOf = (i: number): number | null =>
+    (i >= 0 && i < unitTotal) ? pre[i] + (pre[i + 1] - pre[i]) / 2 : null;   // the unit's slot MIDDLE, uniform for every unit
+  return { sh: t, offsetOf };
 }
 
 function ensureScrollMarks(): HTMLElement {
