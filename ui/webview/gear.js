@@ -100,13 +100,13 @@ var GEAR_HTML =
   "border:1px solid #3a3a3a;border-radius:5px;padding:3px 4px;cursor:pointer'>" +
   '<option value=over50>When above 50%</option><option value=always>Always</option><option value=never>Never</option>' +
   '</select></span></div>' +
-  "<div class='rs-row' style='cursor:default'><span style='flex:1 1 auto'><b>Chat tabs</b>" +
-  "<span class=rs-sub>The tab strip's look. Classic keeps the thick outline on the selected tab with a faint per-session tint; Yatharth is the contributed flat-wash aesthetic with the tinted line under the strip.</span>" +
-  "<div id=rs-tabtheme style='margin-top:5px;display:flex;flex-direction:column;gap:4px'></div>" +
+  "<div class='rs-row' style='cursor:default'><span style='flex:1 1 auto;min-width:0'><b>Chat tabs</b>" +
+  "<span class=rs-sub>The tab strip's look. Classic is the original high-contrast strip; Yatharth is the contributed flat-wash aesthetic with the tinted line under the strip.</span>" +
+  "<div id=rs-tabtheme style='position:relative;margin-top:5px'></div>" +
   '</span></div>' +
-  "<div class='rs-row' style='cursor:default'><span style='flex:1 1 auto'><b>Text scheme</b>" +
-  "<span class=rs-sub>Chat text colors only. Each row previews its own tiers — prose, the dimmer tool text, code. (Solarized Light is omitted — its tiers are made for a light page and turn muddy here.)</span>" +
-  "<div id=rs-chatscheme style='margin-top:5px;display:flex;flex-direction:column;gap:4px'></div>" +
+  "<div class='rs-row' style='cursor:default'><span style='flex:1 1 auto;min-width:0'><b>Text scheme</b>" +
+  "<span class=rs-sub>Chat text colors only. Each option previews its own tiers — prose, the dimmer tool text, code. (Solarized Light is omitted — its tiers are made for a light page and turn muddy here.)</span>" +
+  "<div id=rs-chatscheme style='position:relative;margin-top:5px'></div>" +
   '</span></div>' +
   '<div class=rs-sec>Feed</div>' +
   '<label class=rs-row><input type=checkbox id=rs-feedcollapsed>' +
@@ -207,54 +207,108 @@ function initGear(post) {
   cc.addEventListener('change', function () { var s = load(); s.compact = cc.checked; save(s); });
   if (gb) gb.addEventListener('change', function () { var s = load(); s.showBranch = gb.checked; save(s); });
   if (tc) tc.addEventListener('change', function () { var s = load(); s.tabCtx = tc.value; save(s); });
-  // The scheme PREVIEW CARDS (the user 2026-08-24, on the live check: "I need to see a preview").
-  // Tier hexes MIRROR styles.css body.scheme-* (this file can't read the sheet across webviews);
-  // chat-scheme.test.ts pins the two byte-equal so they cannot drift. Default previews the stock
-  // tiers. Each card paints ITS OWN tiers on the chat's dark ground; the current pick wears the
-  // menu vocabulary's ✓-in-circle. Clicking applies live (save() dispatches romp:settings).
+  // ── the settings' value-picker DROPDOWNS (T117, the user 2026-08-27, screenshot: the Chat
+  // tabs and Text scheme pickers rendered every option always-expanded, and the description spans
+  // ran off the card's right edge). Progressive disclosure: the CLOSED state is ONE row — the
+  // current option's name + its description/preview, ellipsized so it can never overrun — and the
+  // options are one click away in the house menu vocabulary (the chat .ctx-menu spec; versionMenu
+  // below inlines the same values: #252526 card, hairline border, 6px radius, the 0 4px 12px
+  // shadow, 12px text, 0.82em sub-lines, the #1EA1EB \u2713-in-circle current mark). NOT a native
+  // <select> like the Context-gauge row above: these options carry rich row content — the scheme
+  // rows preview their own colored tiers (the user 2026-08-24: "I need to see a preview") — which
+  // <option> cannot render. The open menu is position:absolute inside the row's wrapper (the
+  // #rs-cmap/#rs-pal mechanic, proven inside this scrolling card): left:0;right:0 pins its width
+  // to the card's content width, so it can never overflow the panel sideways, and rows clamp
+  // their text with the same ellipsis as the closed state; opening scrolls it into view so the
+  // card's bottom edge never clips it either. Dismissal is event-based: any outside click in this
+  // document, Escape, a pick, opening the sibling dropdown — plus the cross-pane menu echo
+  // (romp:menu-echo): sibling panes' clicks never reach this document, so tag-menu.ts writes a
+  // pointerdown echo in every webview bundle (feed.ts and render.ts both load it) and this menu,
+  // like versionMenu, wires the LISTENER half via the storage event. Persistence and live-apply
+  // are the caller's pick() verbatim — the dropdown changes when the options are visible, never
+  // what a pick does.
+  var openHousePick = null;   // at most one of the card's dropdowns is open (a click that opens one closes the other)
+  function housePick(wrap, attr, rowHTML, pick) {
+    if (!wrap) return null;
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.style.cssText = 'display:flex;align-items:center;gap:8px;width:100%;min-width:0;text-align:left;' +
+      'background:#1e1e1e;border:1px solid #3a3a3a;border-radius:5px;padding:5px 8px;cursor:pointer;font:inherit;color:#ccc';
+    var menu = document.createElement('div');
+    menu.hidden = true;
+    menu.style.cssText = 'position:absolute;left:0;right:0;top:100%;margin-top:4px;z-index:30;padding:4px;' +
+      'background:#252526;border:1px solid rgba(255,255,255,0.12);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.35);' +
+      'font-size:12px;line-height:1.4;color:#cccccc;user-select:none';
+    wrap.appendChild(btn); wrap.appendChild(menu);
+    var close = function () { menu.hidden = true; if (openHousePick === menu) openHousePick = null; };
+    btn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      if (!menu.hidden) { close(); return; }
+      if (openHousePick && openHousePick !== menu) openHousePick.hidden = true;
+      menu.hidden = false; openHousePick = menu;
+      if (menu.scrollIntoView) menu.scrollIntoView({ block: 'nearest' });   // the card scrolls to reveal it — never clipped at the bottom
+    });
+    document.addEventListener('click', close);
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') close(); });
+    try { window.addEventListener('storage', function (e) { if (e.key === 'romp:menu-echo' && e.newValue) close(); }); } catch (e) {}
+    // paint(options, curId): the closed row shows the CURRENT option, the menu one row per option
+    return function (options, curId) {
+      var cur = options[0];
+      options.forEach(function (o) { if (o.id === curId) cur = o; });
+      btn.innerHTML = rowHTML(cur) + '<span style="flex:0 0 auto;margin-left:auto;opacity:0.55">\u25BE</span>';
+      menu.innerHTML = '';
+      options.forEach(function (o) {
+        var row = document.createElement('div');
+        row.setAttribute('data-' + attr, o.id);
+        row.style.cssText = 'display:flex;align-items:center;gap:8px;min-width:0;position:relative;' +
+          'padding:4px 22px 4px 8px;border-radius:4px;cursor:pointer';
+        row.innerHTML = rowHTML(o);
+        if (o.id === cur.id) {
+          var ck = document.createElement('span'); ck.textContent = '\u2713';
+          ck.setAttribute('style', 'position:absolute;right:6px;top:50%;transform:translateY(-50%);background:#1EA1EB;color:#fff;border-radius:50%;width:13px;height:13px;font-size:9px;font-weight:900;display:inline-flex;align-items:center;justify-content:center;line-height:1;');
+          row.appendChild(ck);
+        }
+        row.addEventListener('mouseenter', function () { row.style.background = 'rgba(255,255,255,0.09)'; });
+        row.addEventListener('mouseleave', function () { row.style.background = 'transparent'; });
+        row.addEventListener('click', function (e) { e.stopPropagation(); close(); pick(o.id); });
+        menu.appendChild(row);
+      });
+    };
+  }
+  // The scheme options preview their own tiers (the user 2026-08-24, on the live check: "I need
+  // to see a preview"). Tier hexes MIRROR styles.css body.scheme-* (this file can't read the
+  // sheet across webviews); chat-scheme.test.ts pins the two byte-equal so they cannot drift.
+  // Default previews the stock tiers. Each row paints ITS OWN tiers on the chat's dark ground.
   var SCHEMES = [
     { id: 'default', name: 'Default', fg: '#cccccc', dim: '#9a9a9a', code: '#e1c08d' },
     { id: 'high-contrast', name: 'High contrast', fg: '#e8e8e8', dim: '#b8b8b8', code: '#ecd9ae' },
     { id: 'solarized-dark', name: 'Solarized Dark', fg: '#eee8d5', dim: '#93a1a1', code: '#d5b02d' }
   ];
+  function schemeRowHTML(sc) {
+    return '<span style="flex:0 0 auto;min-width:96px;color:#ccc">' + sc.name + '</span>' +
+      '<span style="flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' +
+      '<span style="color:' + sc.fg + '">Prose text</span> \u00b7 ' +
+      '<span style="color:' + sc.dim + '">tool / meta</span> \u00b7 ' +
+      '<span style="color:' + sc.code + ';font-family:monospace">code()</span></span>';
+  }
+  var csDrop = housePick(cs, 'scheme', schemeRowHTML, function (id) { var s = load(); s.chatScheme = id; save(s); csPaint(); });
   function csPaint() {
-    if (!cs) return;
+    if (!csDrop) return;
     var cur = load().chatScheme; cur = (cur === 'high-contrast' || cur === 'solarized-dark') ? cur : 'default';
-    cs.innerHTML = '';
-    SCHEMES.forEach(function (sc) {
-      var row = document.createElement('button');
-      row.type = 'button'; row.dataset.scheme = sc.id;
-      row.style.cssText = 'display:flex;align-items:center;gap:8px;text-align:left;background:#1e1e1e;' +
-        'border:1px solid ' + (sc.id === cur ? '#1EA1EB' : '#3a3a3a') + ';border-radius:5px;padding:5px 8px;cursor:pointer;font:inherit;color:#ccc';
-      row.innerHTML = '<span style="flex:0 0 auto;width:15px;color:#1EA1EB">' + (sc.id === cur ? '\u2713' : '') + '</span>' +
-        '<span style="flex:0 0 auto;min-width:96px;color:#ccc">' + sc.name + '</span>' +
-        '<span style="flex:1 1 auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' +
-        '<span style="color:' + sc.fg + '">Prose text</span> \u00b7 ' +
-        '<span style="color:' + sc.dim + '">tool / meta</span> \u00b7 ' +
-        '<span style="color:' + sc.code + ';font-family:monospace">code()</span></span>';
-      row.addEventListener('click', function () { var s = load(); s.chatScheme = sc.id; save(s); csPaint(); });
-      cs.appendChild(row);
-    });
+    csDrop(SCHEMES, cur);
   }
   var TABTHEMES = [
     { id: 'classic', name: 'Classic', sub: 'the original high-contrast strip \u00b7 thick selected outline \u00b7 no session tint' },
     { id: 'yatharth', name: 'Yatharth', sub: 'flat session wash \u00b7 soft selected border \u00b7 tinted line under the strip' }
   ];
+  function tabThemeRowHTML(th) {
+    return '<span style="flex:0 0 auto;min-width:96px;color:#ccc">' + th.name + '</span>' +
+      '<span style="flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:0.82em;color:#cccccc;opacity:0.6">' + th.sub + '</span>';
+  }
+  var ttDrop = housePick(tt, 'tabtheme', tabThemeRowHTML, function (id) { var s = load(); s.chatTabTheme = id; save(s); ttPaint(); });
   function ttPaint() {
-    if (!tt) return;
-    var cur = load().chatTabTheme === 'yatharth' ? 'yatharth' : 'classic';
-    tt.innerHTML = '';
-    TABTHEMES.forEach(function (th) {
-      var row = document.createElement('button');
-      row.type = 'button'; row.dataset.tabtheme = th.id;
-      row.style.cssText = 'display:flex;align-items:center;gap:8px;text-align:left;background:#1e1e1e;' +
-        'border:1px solid ' + (th.id === cur ? '#1EA1EB' : '#3a3a3a') + ';border-radius:5px;padding:5px 8px;cursor:pointer;font:inherit;color:#ccc';
-      row.innerHTML = '<span style="flex:0 0 auto;width:15px;color:#1EA1EB">' + (th.id === cur ? '\u2713' : '') + '</span>' +
-        '<span style="flex:0 0 auto;min-width:96px;color:#ccc">' + th.name + '</span>' +
-        '<span style="flex:1 1 auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#8a8a8a">' + th.sub + '</span>';
-      row.addEventListener('click', function () { var s = load(); s.chatTabTheme = th.id; save(s); ttPaint(); });
-      tt.appendChild(row);
-    });
+    if (!ttDrop) return;
+    ttDrop(TABTHEMES, load().chatTabTheme === 'yatharth' ? 'yatharth' : 'classic');
   }
   ttPaint();
   jix.addEventListener('change', function () { var s = load(); s.showIndexJudges = jix.checked; save(s); });
@@ -591,7 +645,7 @@ function initGear(post) {
     // settings-open, which is what un-hides #feed-pane when the feed is toggled off — measuring first
     // burned the whole 5-frame retry against a display:none pane, latched rs-pane-gone, and the
     // full-viewport fallback box blacked out every pane behind the modal.
-    p.hidden = false; feedFull(true); setModalCls(true); var s = load(); cc.checked = !!s.compact; jix.checked = (s.showIndexJudges !== undefined ? !!s.showIndexJudges : !!s.debug); jtr.checked = (s.showTriageJudges !== undefined ? !!s.showTriageJudges : !!s.debug); if (gb) gb.checked = s.showBranch === true; if (tc) tc.value = tabCtxMode(s.tabCtx); csPaint(); if (cg) cg.checked = s.collapseGaps !== false; if (ao) ao.checked = s.activeOnly !== false; if (fc) fc.checked = s.collapsed === true; cmBuild(); cmPaint(s.colormap || 'aurora'); if (bk) bk.value = s.backend || 'sdk'; if (dd) dd.value = s.defaultDir || ''; plFill(); fill(); }
+    p.hidden = false; feedFull(true); setModalCls(true); var s = load(); cc.checked = !!s.compact; jix.checked = (s.showIndexJudges !== undefined ? !!s.showIndexJudges : !!s.debug); jtr.checked = (s.showTriageJudges !== undefined ? !!s.showTriageJudges : !!s.debug); if (gb) gb.checked = s.showBranch === true; if (tc) tc.value = tabCtxMode(s.tabCtx); csPaint(); ttPaint(); if (cg) cg.checked = s.collapseGaps !== false; if (ao) ao.checked = s.activeOnly !== false; if (fc) fc.checked = s.collapsed === true; cmBuild(); cmPaint(s.colormap || 'aurora'); if (bk) bk.value = s.backend || 'sdk'; if (dd) dd.value = s.defaultDir || ''; plFill(); fill(); }
   if (g) g.onclick = function (e) { e.stopPropagation(); openSettings(); };   // hidden anchor; hosts open via the message below
   window.addEventListener('message', function (e) { if (e.data && e.data.romp === 'openSettings') openSettings(); });
   // The shortcuts row: the web shell (same-origin parent) gets the customize link — it opens the
