@@ -80,6 +80,7 @@ import os
 import re
 import tempfile
 import threading
+import time
 import unittest
 from unittest import mock
 from importlib.machinery import SourceFileLoader
@@ -1367,6 +1368,188 @@ class LossBootPass(_StoreSandbox):
         self.assertLess(i, src.index("_boot_warm()"),
                         "_boot_warm's _alive_sessions constructs the backend — the pass runs first")
         self.assertLess(i, src.index("target=_sdk"))
+
+
+class _FakeTmuxPane:
+    """The raw-tmux primitives _tmux_send's paste sequence drives (capture / pane_in_mode /
+    send_keys / set_buffer / paste_buffer), over a modelled input box — test_kernel_pane_clear.py's
+    fake, reduced to what these tests read. `honors_kill` off is the clear-guard's refusal shape:
+    a box no Ctrl+U will empty, where the guard REFUSES the paste rather than concatenate."""
+
+    RULE = "─" * 40
+
+    def __init__(self, box_lines=("",), honors_kill=True):
+        self.box_lines = list(box_lines)
+        self.honors_kill = honors_kill
+        self.keys_sent = []
+        self.buffers = []
+        self.pastes = []
+
+    def capture(self, name, join=False, colour=False, t=2.5):
+        first, rest = (self.box_lines[0], self.box_lines[1:]) if self.box_lines else ("", [])
+        lines = ["  an earlier reply", self.RULE, km.PROMPT_GLYPH + " " + first]
+        lines.extend("  " + line for line in rest)
+        lines.append(self.RULE)
+        return "\n".join(lines)
+
+    def pane_in_mode(self, name, t=2):
+        return False
+
+    def send_keys(self, name, *keys, t=3):
+        self.keys_sent.append(keys)
+        if not self.honors_kill or keys != ("C-u",) or not self.box_lines:
+            return
+        if self.box_lines[-1]:
+            self.box_lines[-1] = ""                 # the CLI kills the line's TEXT first…
+        else:
+            self.box_lines.pop()                    # …then the emptied line itself
+
+    def set_buffer(self, text):
+        self.buffers.append(text)
+
+    def paste_buffer(self, name):
+        self.pastes.append(name)
+
+
+class TmuxPasteRefusalReopens(_StoreSandbox):
+    """Merge wave 2026-08-27: the clear-guard (PR-741) taught _tmux_send's paste thread to REFUSE
+    when the pane's input box will not empty — correct for the pane, fatal for the delivery-keyed
+    stamp it landed under. TmuxBackend.send stays truthy (fire-and-forget), so the answer stamps
+    'answered' at the truthy send, and the refused paste never reaches the agent: with no loss
+    seam on the tmux side that is docs/adr/0001's silent-loss class verbatim (before the guard
+    the paste was unconditional, so the truthy send really was the delivery). The refusal EVENT
+    now reopens the ask: the send carries the todo id, and the paste thread's refuse branch — or
+    a death before Enter — hands it to _user_todo_answer_lost, the same reopen the SDK loss path
+    uses, keyed at the refusal point itself so BOTH stamping callers (the drive handler's
+    immediate send, the park drain's merged batch) are covered by one seam."""
+
+    def setUp(self):
+        super().setUp()
+        self._saved = (km._TMUX, km._sessions, km._parse, km._compacting_now,
+                       dict(km._pending_ops))
+        self.be = km._TMUX                 # the REAL backend: send → _tmux_send → the fake pane
+        # the LostAnswerReopens stubs: a transcript exists and holds nothing — a refused paste
+        # never lands, so the seam's landed check must find no delivery and reopen
+        km._sessions = lambda now, window=None, forks=True: [{"sid": SID, "path": "/dev/null"}]
+        km._parse = lambda path, sid, now: {"turns": []}
+        km._compacting_now = lambda sid: False
+        km._pending_ops.clear()
+        km._pane_io_locks.clear()
+
+    def tearDown(self):
+        km._TMUX, km._sessions, km._parse, km._compacting_now = self._saved[:4]
+        km._pending_ops.clear()
+        km._pending_ops.update(self._saved[4])
+        km._pane_io_locks.clear()
+        super().tearDown()
+
+    def _await(self, pred, timeout=10.0):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if pred():
+                return True
+            time.sleep(0.02)
+        return pred()
+
+    def _rows(self):
+        return km._user_todos().get(SID) or []
+
+    def test_a_refused_paste_reopens_the_stamped_answer(self):
+        # THE defect the merge minted, end to end through the immediate path (_send_or_park →
+        # _backend_send → the real TmuxBackend.send → the real clear against an unclearable
+        # pane): truthy send → stamp; the paste thread then refuses; the ask must visibly return
+        km._TMUX = _FakeTmuxPane(["a draft typed straight into the terminal"], honors_kill=False)
+        tid = km._add_user_todo(SID, "Need the auth-scheme decision to wire login")
+        body = km._user_todo_answer_body("Need the auth-scheme decision to wire login",
+                                         "Go with the session cookie.")
+        got = km._send_or_park(self.be, SID, body, user_todo=tid)   # the drive handler's call…
+        self.assertIs(got, True, "fire-and-forget: the tmux send is truthy before any paste")
+        km._stamp_user_todo_answered(SID, tid, body)                # …and its stamp at the truthy send
+        self.assertTrue(self._await(lambda: "resolved" not in self._rows()[0]),
+                        "the clear-guard refusal is a loss event — the ask visibly returns")
+        self.assertEqual(km._TMUX.pastes, [], "nothing was pasted onto the leftover (the guard held)")
+        self.assertNotIn(("Enter",), km._TMUX.keys_sent, "and nothing was submitted")
+
+    def test_a_clean_paste_keeps_the_stamp(self):
+        # cards move on NEW information only: a send whose clear succeeded delivers, and the
+        # reopen must never fire — the seam is armed by the refusal event, not by the send
+        km._TMUX = _FakeTmuxPane(["an interrupt-restored prompt"])
+        tid = km._add_user_todo(SID, "Need the auth-scheme decision to wire login")
+        body = km._user_todo_answer_body("Need the auth-scheme decision to wire login",
+                                         "Go with the session cookie.")
+        self.assertIs(km._send_or_park(self.be, SID, body, user_todo=tid), True)
+        km._stamp_user_todo_answered(SID, tid, body)
+        self.assertTrue(self._await(lambda: ("Enter",) in km._TMUX.keys_sent),
+                        "the paste completed and submitted")
+        time.sleep(0.3)                              # a beat for any (wrong) reopen thread to land
+        self.assertEqual(km._TMUX.buffers, [body])
+        self.assertEqual(self._rows()[0]["resolved"]["kind"], "answered",
+                         "delivered — the stamp stands")
+
+    def test_a_refused_drain_reopens_every_answer_in_the_merged_batch(self):
+        # the OTHER stamping caller (_deliver_send_batch): tmux merges a parked run into ONE
+        # paste and stamps each answer on the truthy send — one refusal loses them all, so it
+        # must reopen them all. The clear is gated so the test proves the ORDER the defect had:
+        # stamps first, the refusal event later, and the reopen corrects the stamps.
+        km._TMUX = _FakeTmuxPane()
+        gate = threading.Event()
+        saved_clear = km._clear_pane_input
+        km._clear_pane_input = lambda name: bool(gate.wait(10)) and False
+        self.addCleanup(setattr, km, "_clear_pane_input", saved_clear)
+        tid1 = km._add_user_todo(SID, "Need the auth-scheme decision to wire login")
+        tid2 = km._add_user_todo(SID, "Need the staging port")
+        b1 = km._user_todo_answer_body("Need the auth-scheme decision to wire login", "Cookie.")
+        b2 = km._user_todo_answer_body("Need the staging port", "8443.")
+        km._deliver_send_batch(self.be, SID, [("send", b1, None, tid1), ("send", b2, None, tid2)])
+        self.assertEqual([r["resolved"]["kind"] for r in self._rows()], ["answered", "answered"],
+                         "the drain stamped both at the truthy merged send")
+        gate.set()                                   # NOW the clear-guard refuses the paste
+        self.assertTrue(self._await(lambda: all("resolved" not in r for r in self._rows())),
+                        "one refused paste = every answer it carried was lost — both asks return")
+        self.assertEqual(km._TMUX.pastes, [])
+
+    def test_a_death_between_clear_and_Enter_is_a_loss_event_too(self):
+        # not just the refuse branch: any exception before Enter means the message never reached
+        # the CLI — the hook fires on the way out, and the exception itself stays loud
+        pane = _FakeTmuxPane()                       # empty box: the clear succeeds at once
+        km._TMUX = pane
+
+        def boom(text):
+            raise RuntimeError("tmux died mid-send")
+
+        pane.set_buffer = boom
+        fired = []
+        with self.assertRaises(RuntimeError):
+            km._tmux_send("web", "the composer message", _async=False,
+                          on_refused=lambda: fired.append(True))
+        self.assertEqual(fired, [True])
+        self.assertNotIn(("Enter",), pane.keys_sent)
+
+    def test_the_hook_stays_quiet_when_the_paste_lands(self):
+        pane = _FakeTmuxPane()
+        km._TMUX = pane
+        fired = []
+        km._tmux_send("web", "the composer message", _async=False,
+                      on_refused=lambda: fired.append(True))
+        self.assertEqual(fired, [], "Enter landed — there is no loss to report")
+        self.assertIn(("Enter",), pane.keys_sent)
+
+    def test_backend_send_hands_the_id_to_a_refusal_reporting_backend(self):
+        # the _forwards_sends-style capability probe: tmux has no queue entry to carry the id,
+        # but its send watches for the refusal — the id must reach it. (A fake with NEITHER
+        # capability still takes the plain two-argument send: RecallRidesTheEntry pins that.)
+        seen = []
+
+        class _RefusalBackend:
+            send_reports_refusal = True
+
+            def send(self, sid, text, user_todo=None):
+                seen.append((sid, text, user_todo))
+                return True
+
+        km._backend_send(_RefusalBackend(), SID, "Re: Need the staging port — 8443.",
+                         user_todo="ut-11111111")
+        self.assertEqual(seen, [(SID, "Re: Need the staging port — 8443.", "ut-11111111")])
 
 
 class MarkerNeutralizerVariants(unittest.TestCase):

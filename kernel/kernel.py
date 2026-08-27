@@ -2542,19 +2542,25 @@ def _stamp_user_todo_answered(sid, tid, text):
         removes and reopens — restart-proof, because the entry itself is persisted;
       * loss (a drop-marked echo at boot/spawn/reconnect, a rewind-dropped queue head) → the
         backend hands the id to _user_todo_answer_lost, which reopens unless the transcript
-        proves the text landed (the surviving windows are stated there)."""
+        proves the text landed (the surviving windows are stated there);
+      * refusal (tmux, merge wave 2026-08-27) → the truthy TmuxBackend.send is fire-and-forget
+        and _tmux_send's clear-guard can refuse the paste on its thread; the id (or a drained
+        batch's ids) arms that send's on_refused hook, which hands them to the same
+        _user_todo_answer_lost reopen from the refusal point itself — so both stamping callers
+        (the drive handler and _deliver_send_batch) are covered by one seam."""
     _resolve_user_todo(sid, tid, "answered")
 
 
 def _user_todo_answer_lost(sid, tid, text, wait=False):
-    """The backend's todo_lost seam (SdkBackend._mark_dropped_echoes; a rewind-dropped head): a
-    queued user-todo ANSWER lost its holder, so its 'answered' stamp may be recording a delivery
-    that never happened — the silent-loss class docs/adr/0001 names fatal. Reopen the ask so it
-    visibly returns to "waiting on you", UNLESS the transcript proves the text LANDED: a
-    landed-but-unpruned echo at kernel death is the COMMON case (prune_live runs only while a
-    client watches), and reopening those would flap a genuinely answered ask open on every
-    restart — the transcript, not the drop mark, is the authoritative word on delivery, and a
-    landed answer is in the conversation the next resume continues, i.e. delivered.
+    """The backends' todo_lost seam (SdkBackend._mark_dropped_echoes; a rewind-dropped head; a
+    tmux paste the clear-guard refused — _tmux_send's on_refused, merge wave 2026-08-27): a
+    user-todo ANSWER lost its holder or never reached the pane, so its 'answered' stamp may be
+    recording a delivery that never happened — the silent-loss class docs/adr/0001 names fatal.
+    Reopen the ask so it visibly returns to "waiting on you", UNLESS the transcript proves the
+    text LANDED: a landed-but-unpruned echo at kernel death is the COMMON case (prune_live runs
+    only while a client watches), and reopening those would flap a genuinely answered ask open on
+    every restart — the transcript, not the drop mark, is the authoritative word on delivery, and
+    a landed answer is in the conversation the next resume continues, i.e. delivered.
 
     THREADED by default; `wait` is the test seam. The loss events fire on threads where the
     landed check must not run: the session's asyncio loop (a reconnect reconcile would stall the
@@ -9257,8 +9263,26 @@ class TmuxBackend(sb.SessionBackend):
     # control — map sid→name, delegate to the existing injectors. send() does NOT echo: the kernel adds the
     # optimistic input echo for a composer send (see _optimistic_echo), matching today's split where the
     # command sends (/compact, /model, follow-ups) don't echo on tmux.
-    def send(self, sid, text):
-        _tmux_send(_name_of(sid) or sid, text)
+    send_reports_refusal = True   # the truthy send below is fire-and-forget, and _tmux_send's clear-guard
+    #                               can still REFUSE the paste on its thread — this flag tells _backend_send
+    #                               and the park drain that send() can carry a user-todo id / refusal hook,
+    #                               so the refusal reopens the ask instead of vanishing (merge, 2026-08-27)
+
+    def send(self, sid, text, user_todo=None, on_refused=None):
+        """Truthy = ACCEPTED for delivery, not delivered: the paste runs on _tmux_send's daemon
+        thread, whose clear-guard may still refuse it. user_todo arms the default refusal hook —
+        _user_todo_answer_lost, the same reopen the SDK's dropped-echo seam uses — so a user-todo
+        answer stamped on this truthy return is corrected by the refusal event. on_refused
+        overrides it when one paste carries several answers (_deliver_send_batch's merged run).
+        Residual window, stated precisely: the reopen lifts only an EXISTING 'answered' stamp, so
+        a refusal that somehow outran the caller's stamp would no-op (loudly — the seam logs it)
+        and the late stamp would stand; unreachable in practice, because the refusal costs at
+        least a capture round-trip plus the clear's give-up presses while the stamp is the
+        caller's next statement after this return."""
+        if on_refused is None and user_todo:
+            def on_refused():
+                _user_todo_answer_lost(sid, user_todo, text)
+        _tmux_send(_name_of(sid) or sid, text, on_refused=on_refused)
         return True
 
     def interrupt(self, sid):
@@ -13408,16 +13432,27 @@ def _record_idle(sid, now):
         pass
 
 
-def _tmux_send(name, text, model_cmd=False, _async=True):
+def _tmux_send(name, text, model_cmd=False, _async=True, on_refused=None):
     """Inject text into a session's tmux pane — clear the input, then set-buffer + bracketed paste-buffer +
     Enter, the old TmuxBackend.send sequence (a 250ms gap lets the bracketed paste land before Enter
     submits). name = the tmux session name. Drives the chat composer, /compact, and the model/effort
     pickers. Runs in a daemon thread so the WS recv loop isn't blocked by the gaps. model_cmd: /model opens
-    a confirm that needs a second Enter."""
+    a confirm that needs a second Enter.
+
+    on_refused: called — from the paste thread, AFTER the pane lock is released — iff the message
+    demonstrably never reached the CLI: the clear-guard refusal below, or a death before Enter
+    submitted. The seam exists because this send is fire-and-forget while a caller's bookkeeping
+    keys on the truthy TmuxBackend.send (the user-todo answer stamp, docs/adr/0001): the refusal
+    is the loss EVENT that corrects that optimistic stamp (merge wave 2026-08-27 — the clear-guard
+    landed under the fork's delivery-keyed stamp, and a refused answer stayed 'answered' forever
+    while nothing was delivered). Once the submitting Enter has landed the hook never fires,
+    whatever the hookless /model confirm does after it."""
     if not name or not text:
+        if on_refused is not None:
+            on_refused()                              # nothing was ever sent — the same loss, said the same way
         return
 
-    def go():
+    def paste():
       # The whole clear→paste→Enter sequence holds the pane lock: an interrupt's kill loop running beside
       # it read the just-pasted message as leftover and C-u'd it away in the pre-Enter gap, so Enter
       # submitted an empty box (PR-741 review, 2026-08-27). Under the lock the paste cannot be sniped.
@@ -13432,7 +13467,7 @@ def _tmux_send(name, text, model_cmd=False, _async=True):
         if not _clear_pane_input(name):
             sys.stderr.write("tmux send: %s holds input that would not clear — NOT pasting, the message "
                              "would have been concatenated onto it\n" % name)
-            return
+            return False
         _TMUX.set_buffer(text)
         _TMUX.paste_buffer(name)                                    # bracketed (-p), delete buf (-d)
         paths = _injected_img_paths(text)
@@ -13453,6 +13488,24 @@ def _tmux_send(name, text, model_cmd=False, _async=True):
         if model_cmd:
             time.sleep(0.85)
             _TMUX.send_keys(name, "Enter")                          # accept the hookless /model confirm
+        return True
+
+    def go():
+        delivered = False
+        try:
+            delivered = paste()
+        finally:
+            # The refusal seam, fired OUTSIDE the pane lock (the hook takes its own locks —
+            # _user_todos_lock via _user_todo_answer_lost — and nothing paste() holds may outlive
+            # it) and on the exception path too: a death between the clear and Enter left the
+            # message undelivered just as surely as the refuse branch. The exception itself stays
+            # loud — it propagates to the daemon thread's excepthook (or the sync caller).
+            if not delivered and on_refused is not None:
+                try:
+                    on_refused()
+                except Exception:
+                    sys.stderr.write("tmux send: %s's refusal hook failed: %s\n"
+                                     % (name, traceback.format_exc()))
     threading.Thread(target=go, daemon=True).start() if _async else go()
 
 
@@ -17246,15 +17299,22 @@ def _forwards_sends(be):
 
 
 def _backend_send(be, sid, text, user_todo=None):
-    """be.send, carrying a user-todo ANSWER's id onto the backend queue entry when the backend can
-    hold one (SdkBackend.queue_carries_todos): the id travels WITH the message — the entry, its
-    persisted reg mirror, and the send's echo — so the recall (_cancel_backend_queued) and loss
-    (_user_todo_answer_lost) machinery read it off the object they act on, with no kernel-side
-    table to restart away or evict (round 2, 2026-08-22). getattr-guarded like _forwards_sends: a
-    backend or test fake without the capability takes the plain two-argument send — tmux delivers
-    by typing into the pane, so there is no queue entry to carry an id on and the truthy send IS
-    the delivery."""
-    if user_todo and getattr(be, "queue_carries_todos", False):
+    """be.send, carrying a user-todo ANSWER's id WITH the message whenever the backend can act on
+    a later un-delivery. Two capability flags, both getattr-guarded like _forwards_sends (a
+    backend or test fake with neither takes the plain two-argument send):
+      * queue_carries_todos (SDK): the id rides the backend queue entry, its persisted reg
+        mirror, and the send's echo — so the recall (_cancel_backend_queued) and loss
+        (_user_todo_answer_lost) machinery read it off the object they act on, with no
+        kernel-side table to restart away or evict (round 2, 2026-08-22);
+      * send_reports_refusal (tmux): no queue entry — the send types into the pane — but the
+        truthy send is NOT the delivery: the paste runs on a fire-and-forget thread whose
+        clear-guard can still REFUSE it (_tmux_send, merge wave 2026-08-27). The id arms that
+        send's refusal hook, which hands it to the same _user_todo_answer_lost reopen — the
+        stamp at the truthy send stays optimistic and the refusal event corrects it. (Before
+        the clear-guard the paste was unconditional, so the truthy tmux send really WAS the
+        delivery; that contract died with PR-741.)"""
+    if user_todo and (getattr(be, "queue_carries_todos", False)
+                      or getattr(be, "send_reports_refusal", False)):
         return be.send(sid, text, user_todo=user_todo)
     return be.send(sid, text)
 
@@ -17383,7 +17443,9 @@ def _deliver_send_batch(be, sid, run):
     event the stamp keys on (docs/adr/0001's fatal class: stamping at park time left a recalled or
     dropped answer permanently 'answered' with nothing ever delivered). A falsy send stamps nothing:
     the ask still stands. The drain hands the id to the backend too (_backend_send), so the drained
-    entry is recallable/loss-tracked exactly like an immediate send's."""
+    entry is recallable/loss-tracked exactly like an immediate send's — and the tmux merge below
+    arms the merged send's refusal hook the same way: its truthy send is fire-and-forget, and one
+    clear-guard refusal loses every answer the paste carried (merge wave 2026-08-27)."""
     if not run:
         return
     if _forwards_sends(be):
@@ -17395,7 +17457,17 @@ def _deliver_send_batch(be, sid, run):
                 _stamp_user_todo_answered(sid, op[3], op[1])
         return
     merged = "\n\n".join(op[1] for op in run)          # tmux: one message, blank-line separated between turns
-    got = be.send(sid, merged)
+    todos = [(op[3], op[1]) for op in run if len(op) > 3 and op[3]]
+    if todos and getattr(be, "send_reports_refusal", False):
+        # one paste carries every answer in the run, so one refusal loses them all: hand each id
+        # to the same loss seam the immediate path arms (TmuxBackend.send), keyed at the refusal
+        # point itself — the stamps below stay optimistic; the refusal event corrects them
+        def _batch_refused():
+            for tid, body in todos:
+                _user_todo_answer_lost(sid, tid, body)
+        got = be.send(sid, merged, on_refused=_batch_refused)
+    else:
+        got = be.send(sid, merged)
     author = next((op[2] for op in run if op[2]), None)
     if author:
         _optimistic_echo(sid, merged, author=author)
