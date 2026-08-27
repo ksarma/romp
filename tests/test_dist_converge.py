@@ -118,5 +118,29 @@ class BannerRaiserPins(unittest.TestCase):
         self.assertIn('Path(os.environ["ROMP_DIST_DIR"]) if os.environ.get("ROMP_DIST_DIR")', self.KERNEL)
 
 
+class DraggableBannerPins(BannerRaiserPins):
+    """T132 (the user 2026-08-27): the banner drags out of the way so it can STAY up. Source pins on
+    the shell's inline JS/CSS; the behavior itself (moves, clamps, never dismisses, holds across
+    pushes, Reload after any number of moves) runs live in the lab's banner phase."""
+
+    def test_buttons_never_start_a_drag(self):
+        self.assertIn("if(e.button!==0||e.target.tagName==='BUTTON')return;", self.KERNEL)
+
+    def test_drag_is_clamped_and_reclamped_on_resize(self):
+        self.assertIn("Math.max(0,Math.min(x,window.innerWidth-r.width))", self.KERNEL)
+        self.assertIn("window.addEventListener('resize',function(){if(!box.style.left)return;", self.KERNEL)
+
+    def test_the_affordance_is_the_house_grab_pair(self):
+        self.assertIn("cursor:grab;touch-action:none;", self.KERNEL)
+        self.assertIn("#rstale.dragging{cursor:grabbing;user-select:none}", self.KERNEL)
+
+    def test_dragging_never_dismisses(self):
+        # the drag handlers touch style/class only — the ONLY dismiss writers stay the two buttons
+        self.assertNotIn("classList.remove('show');}   # drag", self.KERNEL)
+        drag = self.KERNEL[self.KERNEL.index("var drag=null;"):self.KERNEL.index("rl.onclick=")]
+        self.assertNotIn("remove('show')", drag)
+        self.assertNotIn("dismissed=", drag)
+
+
 if __name__ == "__main__":
     unittest.main()

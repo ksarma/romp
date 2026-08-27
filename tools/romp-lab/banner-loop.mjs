@@ -78,7 +78,33 @@ await shot("raised");
 await sleep(3000);
 check("latch-across-pushes", (await bannerShown()).includes("newer romp build"));
 
-// ── 4. click-to-reload answers it — and only a click ever does ──
+// ── 3.5 T132: DRAG it out of the way — it moves, clamps, never dismisses, and holds its spot ──
+const box = page.locator("#rstale");
+const r0 = await box.boundingBox();
+const grabX = r0.x + 40, grabY = r0.y + Math.min(10, r0.height / 2);   // on the message, never a button
+await page.mouse.move(grabX, grabY);
+await page.mouse.down();
+await page.mouse.move(grabX + 250, grabY + 420, { steps: 8 });
+await page.mouse.up();
+const r1 = await box.boundingBox();
+check("drag-moves", r1.y - r0.y > 200, `y ${Math.round(r0.y)}→${Math.round(r1.y)}`);
+check("drag-keeps-shown", (await bannerShown()).includes("newer romp build"), "moving must never dismiss");
+// fling far past the bottom-right corner — it must stay fully on-screen
+await page.mouse.move(r1.x + 40, r1.y + Math.min(10, r1.height / 2));
+await page.mouse.down();
+await page.mouse.move(5000, 5000, { steps: 4 });
+await page.mouse.up();
+const r2 = await box.boundingBox();
+const vp = page.viewportSize();
+check("drag-clamps", r2.x + r2.width <= vp.width + 1 && r2.y + r2.height <= vp.height + 1,
+  `box ${JSON.stringify(r2)} vs viewport ${vp.width}x${vp.height}`);
+await shot("dragged");
+// pushes keep flowing — the moved banner must hold its spot (show() only swaps text, never position)
+await sleep(2 * KA * 1000);
+const r3 = await box.boundingBox();
+check("position-survives-pushes", Math.abs(r3.x - r2.x) < 2 && Math.abs(r3.y - r2.y) < 2);
+
+// ── 4. click-to-reload answers it — identically after any number of moves ──
 await page.click("#rstale-reload");
 await page.waitForSelector("#rstale", { state: "attached", timeout: 20000 });
 await sleep(2 * KA * 1000 + 1000);
