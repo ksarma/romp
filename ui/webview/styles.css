@@ -917,8 +917,11 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
 .chip-ready { background: var(--st-ready-bg); color: var(--st-ready-fg); }
 .chip-needsInput { background: var(--st-awaiting-bg); color: var(--st-awaiting-fg); }
 .chip-awaiting { background: var(--st-awaiting-bg); color: var(--st-awaiting-fg); }   /* legacy name — an older remote kernel */
-/* the awaiting chip's peer-identity dot (2026-08-26): the named session's colour beside its name */
-.chip-peer-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin: 0 4px 0 1px; }
+/* the awaiting chip's peer NAME wears the identity colour itself (the user 2026-08-26, round two —
+   the dot retired). The backing is ~85% black: opaque enough that any colour reads on it regardless
+   of the chip hue behind (their green-on-green case), translucent enough to keep the chip's flavor.
+   #fff default = the no-identity (cross-host) name stays legible on the dark backing. */
+.chip-peer-name { background: rgba(0, 0, 0, 0.85); color: #fff; border-radius: 7px; padding: 0 5px; margin-left: 1px; }
 .chip-awaitingBg { background: var(--st-awaitbg-bg); color: var(--st-awaitbg-fg); }
 /* retrying = a SOFT 'blocked on the API' (rate-limit / overload auto-retry) — not a hang, not working. Amber/
    orange, deliberately distinct from working-yellow and blocked-red (the user via api 2026-06-23). */
