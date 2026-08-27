@@ -145,9 +145,10 @@ body { display: flex; flex-direction: column; overflow-x: hidden; }   /* the cha
      #tabbar-resize drag can move it while the mobile page's max-height:none still wins over it
      (an inline max-height would override that media rule and clip the mobile header) */
   max-height: var(--tabbar-cap, 150px); overflow-y: auto; overflow-x: hidden;
-  /* the line the tabs sit on wears the ACTIVE session's color (40%) — the tab's tint fuses into it,
-     so tab and pane read as one object (the user 2026-08-26). Neutral (= --box-border) with no color. */
-  border-bottom: 1px solid color-mix(in srgb, var(--active-accent, rgba(255, 255, 255, 0.3)) 40%, transparent);
+  /* CLASSIC (T113, the user 2026-08-27): NO line under the tabs — with multiple tab rows it read
+     wrong. Transparent (not none) so the strip's geometry is identical across themes. The Yatharth
+     theme (body.chat-theme-yatharth, below the strip rules) restores PR 730's identity-tinted line. */
+  border-bottom: 1px solid transparent;
   background: var(--vscode-sideBar-background, var(--bg));
 }
 /* #tabs fills the bar width and wraps its tabs across multiple rows. gap: a hair of air between
@@ -297,18 +298,39 @@ body.tabbar-resizing { cursor: ns-resize; user-select: none; }
 .tab-ph-swirl { width: 12px; height: 12px; border-radius: 2px; flex: none;
   animation: tab-ph-swirl-spin 7s linear infinite; }   /* .tab is flex with its own gap, so no margin needed */
 @keyframes tab-ph-swirl-spin { to { transform: rotate(-360deg); } }
-/* SELECTED: gray fill; a COLORED session wears its identity as a FLAT soft tint instead of the old
-   harsh 1.5px inset ring. (First cut was a vertical gradient — the user 2026-08-26: old-school and
-   ugly; a single flat wash is the modern read.) A whisper at rest, warmer on hover, strongest when
-   active plus a soft top/side border in the same color — its bottom is open, so it fuses with the
-   identity-tinted #tabbar line below and the pane frame (#winframe): one color, one object.
+/* CLASSIC (the default; T113, the user 2026-08-27 reacting to PR 730): the pre-730 SELECTED
+   treatment returns — the thicker 1.5px inset identity ring ("makes it really easy to tell which
+   one is selected") — while the one keeper from 730, per-tab identity distinguishability, stays as
+   a FAINT background wash at the user's ~5% ("way too strong" at 730's 9/15/22). The percentages
+   are CSS vars so the tuning stays trivial; body.chat-theme-yatharth (below) restores 730's values
+   and treatment exactly, as the opt-in theme named for its contributor.
    :not(.tab-blocked) throughout — the blocked red fill outranks identity (the user 2026-07-24). */
+#tabbar { --tab-tint-rest: 5%; --tab-tint-hover: 8%; --tab-tint-active: 5%; }
 .tab.active { color: var(--fg); background: rgba(255, 255, 255, 0.14); }
-.tab.colored:not(.tab-blocked) { background: color-mix(in srgb, var(--chip-bg) 9%, transparent); }
-.tab.colored:not(.tab-blocked):hover { background: color-mix(in srgb, var(--chip-bg) 15%, transparent); }
+.tab.colored:not(.tab-blocked) { background: color-mix(in srgb, var(--chip-bg) var(--tab-tint-rest), transparent); }
+.tab.colored:not(.tab-blocked):hover { background: color-mix(in srgb, var(--chip-bg) var(--tab-tint-hover), transparent); }
 .tab.active.colored:not(.tab-blocked) {
-  background: color-mix(in srgb, var(--chip-bg) 22%, transparent);
+  /* the gray selected fill OVER the faint identity wash, ringed in the identity color */
+  background: linear-gradient(rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.14)),
+              color-mix(in srgb, var(--chip-bg) var(--tab-tint-active), transparent);
+  box-shadow: inset 0 0 0 1.5px var(--chip-bg);
+}
+/* the identity ring STANDS DOWN while blocked (the user 2026-07-24, restored with the ring): the
+   dashed red state outline occupies the same band, and blocked outranks identity */
+.tab.tab-blocked.active.colored { box-shadow: none; }
+
+/* ── the YATHARTH theme (opt-in via settings, named for its contributor at the user's ask): PR
+   730's tab-strip aesthetic exactly as merged — the identity-tinted bottom line, the flat soft
+   wash instead of the ring (9% rest / 15% hover / 22% active + a 55% top/side border whose open
+   bottom fuses with the line below). Scoped to the CHAT TAB STRIP only, per the T113 seam. ── */
+body.chat-theme-yatharth #tabbar {
+  --tab-tint-rest: 9%; --tab-tint-hover: 15%; --tab-tint-active: 22%;
+  border-bottom: 1px solid color-mix(in srgb, var(--active-accent, rgba(255, 255, 255, 0.3)) 40%, transparent);
+}
+body.chat-theme-yatharth .tab.active.colored:not(.tab-blocked) {
+  background: color-mix(in srgb, var(--chip-bg) var(--tab-tint-active), transparent);
   border-color: color-mix(in srgb, var(--chip-bg) 55%, transparent);
+  box-shadow: none;
 }
 /* tab title in the session's romp identity color (bold), like the dashboard */
 .tab.colored .tab-label { color: var(--chip-bg); font-weight: 600; }
