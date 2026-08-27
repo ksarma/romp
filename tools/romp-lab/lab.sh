@@ -7,7 +7,12 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 KEEP=0
-for a in "$@"; do case "$a" in --keep) KEEP=1 ;; esac; done
+MODE=all
+for a in "$@"; do case "$a" in
+  --keep) KEEP=1 ;;
+  --banner-only) MODE=banner ;;       # the T119 reload-banner phase alone (no model spend)
+  --highlight-only) MODE=highlight ;; # the T102/T106 highlight loop alone
+esac; done
 
 LAB="$(mktemp -d /tmp/romp-lab-XXXXXX)"
 mkdir -p "$LAB/state" "$LAB/shots" "$LAB/project"
@@ -40,9 +45,23 @@ export ROMP_KERNEL_PORT="$PORT"
 # serve the FRESH build, never a stale bundle (the T106 triage's first lesson)
 ( cd "$ROOT/vscode-extension" && node esbuild.js >/dev/null 2>&1 )
 
+# …and serve a COPY of it (T119): the banner phase simulates rebuilds by bumping dist mtimes, and
+# the repo's real dist is what the LIVE kernel serves — a lab run must never raise reload banners
+# on the user's real dashboard. ROMP_DIST_DIR is the kernel's test seam for exactly this; it also
+# stands the kernel's own dist-vs-source converge down, so the lab controls every mtime it asserts.
+mkdir -p "$LAB/dist"
+cp "$ROOT/vscode-extension/dist/"*.js "$LAB/dist/" 2>/dev/null || true
+cp "$ROOT/vscode-extension/dist/"*.css "$LAB/dist/" 2>/dev/null || true
+if [ -d "$ROOT/vscode-extension/dist/fonts" ]; then cp -r "$ROOT/vscode-extension/dist/fonts" "$LAB/dist/fonts"; fi
+export ROMP_DIST_DIR="$LAB/dist"
+# a fast heartbeat so the banner phase's one-heartbeat assertions run in seconds, not tens of them
+export ROMP_WS_KEEPALIVE=2
+
 "$ROOT/bin/romp-kernel" > "$LAB/kernel.log" 2>&1 &
 KPID=$!
 cleanup() {
+  # the banner phase restarts the kernel (its reconnect assertion) and records the new pid
+  [ -f "$LAB/kernel.pid" ] && KPID="$(cat "$LAB/kernel.pid")"
   kill "$KPID" 2>/dev/null || true
   wait "$KPID" 2>/dev/null || true
   if [ "$KEEP" = 1 ]; then echo "kept: $LAB (kernel.log, shots/)"; else rm -rf "$LAB"; fi
@@ -57,9 +76,22 @@ done
 curl -fsS "http://127.0.0.1:$PORT/healthz" >/dev/null || { echo "kernel never became healthy"; exit 1; }
 echo "lab kernel up on :$PORT (state: $LAB/state)"
 
-LAB_DIR="$LAB" PORT="$PORT" TOKEN="$ROMP_SERVE_TOKEN" PROJECT_DIR="$LAB/project" \
-  node "$ROOT/tools/romp-lab/highlight-loop.mjs"
-RC=$?
-echo "highlight loop exit: $RC (shots: $LAB/shots)"
+RC=0
+if [ "$MODE" != "highlight" ]; then
+  # the reload-banner contract (T119) — first, because it spends no model turns
+  LAB_DIR="$LAB" PORT="$PORT" TOKEN="$ROMP_SERVE_TOKEN" KPID="$KPID" KERNEL_BIN="$ROOT/bin/romp-kernel" \
+    node "$ROOT/tools/romp-lab/banner-loop.mjs" || RC=$?
+  echo "banner loop exit: $RC (shots: $LAB/shots)"
+  [ -f "$LAB/kernel.pid" ] && KPID="$(cat "$LAB/kernel.pid")"
+fi
+if [ "$MODE" != "banner" ] && [ "$RC" = 0 ]; then
+  # the kernel may have been bounced by the banner phase — wait for health before driving it
+  for i in $(seq 1 60); do
+    curl -fsS "http://127.0.0.1:$PORT/healthz" >/dev/null 2>&1 && break; sleep 0.5
+  done
+  LAB_DIR="$LAB" PORT="$PORT" TOKEN="$ROMP_SERVE_TOKEN" PROJECT_DIR="$LAB/project" \
+    node "$ROOT/tools/romp-lab/highlight-loop.mjs" || RC=$?
+  echo "highlight loop exit: $RC (shots: $LAB/shots)"
+fi
 [ "$RC" = 0 ] || KEEP=1
 exit "$RC"

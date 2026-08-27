@@ -40,6 +40,20 @@ Screenshots land in the temp root's `shots/` per phase; the script exits non-zer
 on the first divergence with the phase named, so it loops cleanly in a
 fix → re-run cycle.
 
+## Phases
+
+The default run drives TWO phases, banner first (it spends no model turns):
+
+- **banner-loop.mjs** (T119) — the reload-banner contract on the real stack: a fresh
+  page shows no banner; a dist rebuild (an mtime bump on the lab's own dist copy —
+  `ROMP_DIST_DIR`, so live viewers never see it) raises the shell's `#rstale` within
+  one heartbeat via the shim's keepalive dv-compare; the prompt latches across live
+  pushes (`wsFresh` never retires a build prompt); Reload answers it; and after a
+  real kernel kill + relaunch the reconnected page still banners on the next drift.
+  `--banner-only` runs just this phase.
+- **highlight-loop.mjs** (T102/T106) — the comment-mark contract described above.
+  `--highlight-only` skips the banner phase.
+
 ## Cost
 
 A lab run spends a handful of short turns on the configured model (default Haiku)
