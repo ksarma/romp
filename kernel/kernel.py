@@ -3440,9 +3440,12 @@ def _log_nudge_event(sid, gid, t, count, verdict="fired", ev_t=None):
     """Append one auto-nudge event to STATE/nudge-events.jsonl — {sid, gid, t, count, verdict, evT} —
     for the timeline's DEBUG judging band (per-nudge ⚡ marker) AND the redundancy accounting (the
     user 2026-08-25): every decision the gate takes is a row — fired / skipped-redundant /
-    held-fresh-re-judged / force-fired-at-cap — carrying the evidence snapshot's timestamp, so
-    redundant fires are countable from the log alone (this decides later whether the freshness
-    guard must extend to the cap path). Additive fields; older readers key on sid/gid/t/count."""
+    held-fresh-re-judged / fired-at-cap / skipped-redundant-at-cap / resolved-at-send /
+    blocked-on-user-at-send — carrying the evidence snapshot's timestamp, so redundant fires are
+    countable from the log alone. That accounting is what extended the freshness guard to the cap
+    path (the user 2026-08-27, T120: the pre-T120 force-fired-at-cap rows measured the blind fire
+    at 56% of deliveries; the cap now escalates to a fresh judgment instead). Additive fields;
+    older readers key on sid/gid/t/count."""
     try:
         p = jd.STATE / "nudge-events.jsonl"
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -5271,28 +5274,35 @@ def _auto_nudge_session(s, now, tmux, nudged, waitfor, alive_ids=None):
             def _judge_batch(cands, report, report_ts, held_pass):
                 keep = []
                 for f in cands:
-                    if held_pass and _verdicts.get(f[0], ("",))[0] == "force-fired-at-cap":
-                        keep.append(f)               # the cap path is UNCHANGED: it fires regardless,
-                        continue                     #   and never re-judges — only its log row says so
                     gtxt = (_nodes.get(f[0]) or {}).get("text") or ""
                     rec0 = nudged.get(f[0]) or {}
                     skips = rec0.get("redundantSkips") or 0
                     try:
-                        # CAPPED at two consecutive skips (the user 2026-08-23, the same day the gate
-                        # shipped: on a status-heavy session every due nudge can read as redundant, and
-                        # each skip restarting the patience window is a forever-pause with no reviver —
-                        # the exact suppressed-without-reviver class the ladder exists to prevent). Past
-                        # the cap the nudge fires regardless; any real fire or answer resets the count.
-                        if skips < 2 and gtxt and jd.nudge_redundant(gtxt, report):
+                        # THE CAP ESCALATES TO A FRESH JUDGMENT, NEVER PAST ONE (the user 2026-08-27,
+                        # T120, superseding the 2026-08-23 blind third fire). The cap exists because a
+                        # skip restarts the patience window — a forever-pause with no reviver on a
+                        # status-heavy session — but the in-window measurement showed the blind fire
+                        # delivering the MAJORITY of nudges (38 of 68), re-asking questions the
+                        # transcript had already answered (one specimen drew two more nudges AFTER the
+                        # report they asked about). Past two consecutive skips the judge is now
+                        # consulted once more on the freshest evidence instead of short-circuited: a
+                        # not-redundant verdict still fires (the forever-pause still ends, and
+                        # fired-at-cap says how), a still-redundant one skips — the report IS the
+                        # answer, and its skipped-redundant-at-cap row keeps the case countable so the
+                        # optimizer can see a wedge this would hide. The held-pass re-judge applies to
+                        # capped candidates exactly as to organic ones: the old early-keep was the
+                        # second half of the blind fire.
+                        if gtxt and jd.nudge_redundant(gtxt, report):
                             nudged[f[0]] = dict(rec0, answeredAt=int(now), redundantSkips=skips + 1)
                             _put_nudged(f[0], nudged[f[0]])
-                            _v = "held-fresh-re-judged" if held_pass else "skipped-redundant"
+                            _v = ("skipped-redundant-at-cap" if skips >= 2
+                                  else "held-fresh-re-judged" if held_pass else "skipped-redundant")
                             _log_nudge_event(sid, f[0], now, f[1], verdict=_v, ev_t=report_ts)
                             continue
                     except Exception:
                         pass
                     if skips >= 2:
-                        _verdicts[f[0]] = ("force-fired-at-cap", report_ts)
+                        _verdicts[f[0]] = ("fired-at-cap", report_ts)
                     if skips:
                         nudged[f[0]] = dict(rec0, redundantSkips=0)   # firing (or an unjudgeable check) resets
                         _put_nudged(f[0], nudged[f[0]])
@@ -5313,6 +5323,35 @@ def _auto_nudge_session(s, now, tmux, nudged, waitfor, alive_ids=None):
                 if _fresh and _fresh_ts and _fresh_ts > recent_ts:
                     to_fire = _judge_batch(to_fire, _fresh, _fresh_ts, held_pass=True)
                     recent_ts = _fresh_ts             # the fired rows carry the evidence they survived
+    _bnodes = nodes
+    if to_fire:
+        # SEND-MOMENT FRESHNESS (the user 2026-08-27, T120): the fire list read the store BEFORE the
+        # redundancy judge deliberated for seconds, and the card body rendered the tick's snapshot
+        # from before even that — so a verdict landing in the gap left already-resolved items on the
+        # delivered card (the measured specimen: a bundle whose items had all been ruled on by send
+        # time). One fresh read at the send moment, the wake re-key's own idiom: an item the fresh
+        # rollup exports no longer call working has been ruled on since the walk — it leaves the
+        # card with a row saying why (resolved-at-send for a completion/confirming/clear;
+        # blocked-on-user-at-send for a landed block: the user IS the pending event, and nudging the
+        # session re-asks a question already parked on the human). An empty card sends nothing.
+        # Event-keyed on the fresh exports' verdicts — status + confirming, never raw flags, and
+        # never an age window.
+        try:
+            _fr = jd.load_goals(sid)
+            _fst, _fcf = _fr.get("status") or {}, set(_fr.get("confirming") or ())
+            _keep = []
+            for f in to_fire:
+                _s = _fst.get(f[0], "working")
+                if _s == "working" and f[0] not in _fcf:
+                    _keep.append(f)
+                    continue
+                _log_nudge_event(sid, f[0], now, f[1],
+                                 verdict=("blocked-on-user-at-send" if _s == "blocked"
+                                          else "resolved-at-send"), ev_t=recent_ts)
+            to_fire = _keep
+            _bnodes = _fr.get("nodes") or nodes      # the bundle body renders the same fresh world
+        except Exception:
+            pass
     if len(to_fire) == 1:
         gid, count, stalled = to_fire[0]
         text = _nudge_text(count, stalled)             # variant by escalation count — a repeat re-asks in fresh words
@@ -5321,7 +5360,7 @@ def _auto_nudge_session(s, now, tmux, nudged, waitfor, alive_ids=None):
         # BUNDLE (the user 2026-07-24): several goals due in the SAME tick → ONE message naming them all,
         # instead of N separate status checks the SDK queue would fold into concatenated boilerplate anyway.
         Sessions.backend_for(sid).send(sid, _nudge_bundle_body(
-            [f[0] for f in to_fire], nodes, {f[0] for f in to_fire if f[2]}))
+            [f[0] for f in to_fire], _bnodes, {f[0] for f in to_fire if f[2]}))
     for gid, count, stalled in to_fire:
         _nudge_deferred_ok(gid, "", now, sid)        # the hold is over — drop any deferral record so a stale
         #                                              why can never outlive the wait it described
