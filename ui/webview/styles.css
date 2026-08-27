@@ -295,14 +295,25 @@ body.tabbar-resizing { cursor: ns-resize; user-select: none; }
 .tab-ph-swirl { width: 12px; height: 12px; border-radius: 2px; flex: none;
   animation: tab-ph-swirl-spin 7s linear infinite; }   /* .tab is flex with its own gap, so no margin needed */
 @keyframes tab-ph-swirl-spin { to { transform: rotate(-360deg); } }
-/* CLASSIC (the default; T113 then tightened by T115, the user 2026-08-27): the tab strip is the
-   PRE-720 strip, byte-for-byte — verified by pixel-diffing a real pre-720 build — with typography
-   the ONE permitted difference (the strip inherits the global Inter/type ladder; the user is fine
-   with any font changes, nothing else). No identity tint at any state, the thick 1.5px inset
-   identity ring on the selected tab, full-contrast faded labels (fadedColor, render.ts), the
-   neutral line under the strip. The Yatharth theme below is the opt-in restoration of the
-   contributor's merged strip aesthetic. */
+/* CLASSIC (the default; T113, tightened by T115, tuned by T118 — the user 2026-08-27): the tab
+   strip is the PRE-720 strip — verified by pixel-diffing a real pre-720 build — modulo exactly
+   three sanctioned deltas: typography (the strip inherits the global Inter/type ladder), the 2%
+   neutral rest wash below, and the 0.9 faded-label scale (fadedColor, render.ts; both T118, the
+   user partially restoring parked tunings with new numbers). No identity tint at any state, the
+   thick 1.5px inset identity ring on the selected tab, the neutral line under the strip. The
+   Yatharth theme below is the opt-in restoration of the contributor's merged strip aesthetic. */
 .tab.active { color: var(--fg); background: rgba(255, 255, 255, 0.14); }
+/* T118 (the user 2026-08-27, partially restoring a parked tuning with a NEW number): resting tabs
+   get the hover box's shape in "the slightest slightest lighter gray than the default nothing" —
+   a NEUTRAL 2% white wash, never identity-colored. Rest only: the :not chain excludes every state
+   that paints its own background (hover 0.06 / active 0.14 / blocked red), so there is no
+   same-specificity race to lose — the rule simply never matches those states (the cascade-tiebreak
+   lesson) — and excludes the + affordance (.tab-add, class "tab tab-add", which is not a session
+   tab). Scoped body:not(.chat-theme-yatharth): one rule instead of a Classic rule plus a Yatharth
+   cancel that would need its own specificity juggling. With this and the fadedColor scale in
+   render.ts, Classic = the pre-720 strip modulo exactly three sanctioned deltas: typography, this
+   2% rest wash, and the 0.9 label-fade scale. */
+body:not(.chat-theme-yatharth) .tab:not(.tab-blocked):not(.active):not(:hover):not(.tab-add) { background: rgba(255, 255, 255, 0.02); }
 .tab.active.colored { box-shadow: inset 0 0 0 1.5px var(--chip-bg); }
 /* the identity ring STANDS DOWN while blocked (the user 2026-07-24): the dashed red state outline
    occupies the same band, and blocked outranks identity */

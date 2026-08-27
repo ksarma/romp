@@ -75,10 +75,17 @@ test("dismissal is event-based: outside click, Escape, the sibling dropdown, and
 test("both pickers build on the ONE dropdown, and repaint on every settings open", () => {
   assert.match(GEAR, /var csDrop = housePick\(cs, 'scheme', schemeRowHTML,/);
   assert.match(GEAR, /var ttDrop = housePick\(tt, 'tabtheme', tabThemeRowHTML,/);
-  assert.match(GEAR, /csPaint\(\); ttPaint\(\); if \(cg\)/,
-    "openSettings repaints BOTH closed rows — a pick made in another pane shows current on open");
+  assert.match(GEAR, /tcPaint\(\); csPaint\(\); ttPaint\(\); if \(cg\)/,
+    "openSettings repaints ALL closed rows — a pick made in another pane shows current on open");
 });
 
-test("the Context-gauge picker stays a native select — plain-text options need no rich rows", () => {
-  assert.match(GEAR, /<select id=rs-tabctx/);
+test("the Context-gauge picker rides the same builder; its hidden select stays the value holder", () => {
+  // The user (2026-08-27) approved the flagged migration: one menu vocabulary across the panel.
+  // The select persists invisibly (the versionMenu pattern) so fill()/openSettings keep writing
+  // tc.value and the existing change handler keeps persisting — the pick fires that same event.
+  assert.match(GEAR, /<select id=rs-tabctx style='display:none'>/);
+  assert.match(GEAR, /var tcDrop = housePick\(document\.getElementById\('rs-tabctx-pick'\), 'tabctx', tabCtxRowHTML,/);
+  assert.match(GEAR, /tc\.value = id; tc\.dispatchEvent\(new Event\('change'\)\);/);
+  assert.match(GEAR, /if \(tc\) tc\.value = tabCtxMode\(s\.tabCtx\); tcPaint\(\);/,
+    "openSettings writes the authoritative value THEN repaints the closed row");
 });

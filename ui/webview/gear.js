@@ -94,12 +94,13 @@ var GEAR_HTML =
   '<span><b>Show git branch</b>' +
   "<span class=rs-sub>Show the session's git branch (when it's in a repo) in the chat bottom bar, beside the directory.</span>" +
   '</span></label>' +
-  "<div class='rs-row' style='cursor:default'><span style='flex:1 1 auto'><b>Context gauge in tabs</b>" +
+  "<div class='rs-row' style='cursor:default'><span style='flex:1 1 auto;min-width:0'><b>Context gauge in tabs</b>" +
   "<span class=rs-sub>A slim vertical bar beside each session's name in the tab strip, filling as its context fills — the same colors as the context battery, no number. By default it appears only once a session is half full, so quiet tabs stay clean.</span>" +
-  "<select id=rs-tabctx style='margin-top:5px;width:100%;background:#1e1e1e;color:#ccc;" +
-  "border:1px solid #3a3a3a;border-radius:5px;padding:3px 4px;cursor:pointer'>" +
+  "<select id=rs-tabctx style='display:none'>" +
   '<option value=over50>When above 50%</option><option value=always>Always</option><option value=never>Never</option>' +
-  '</select></span></div>' +
+  '</select>' +
+  "<div id=rs-tabctx-pick style='position:relative;margin-top:5px'></div>" +
+  '</span></div>' +
   "<div class='rs-row' style='cursor:default'><span style='flex:1 1 auto;min-width:0'><b>Chat tabs</b>" +
   "<span class=rs-sub>The tab strip's look. Classic is the original high-contrast strip; Yatharth is the contributed flat-wash aesthetic with the tinted line under the strip.</span>" +
   "<div id=rs-tabtheme style='position:relative;margin-top:5px'></div>" +
@@ -311,6 +312,28 @@ function initGear(post) {
     ttDrop(TABTHEMES, load().chatTabTheme === 'yatharth' ? 'yatharth' : 'classic');
   }
   ttPaint();
+  // The Context-gauge picker joins the same builder (the user 2026-08-27, approving the flagged
+  // migration: one menu vocabulary across the whole panel — the native select stuck out beside
+  // the two house menus). Plain-text options, so the rows are just labels; the HIDDEN select
+  // stays the VALUE holder (the versionMenu pattern): fill()/openSettings keep writing tc.value,
+  // and the pick fires the select's own change event so persistence is the existing handler.
+  var TABCTX = [
+    { id: 'over50', name: 'When above 50%' },
+    { id: 'always', name: 'Always' },
+    { id: 'never', name: 'Never' }
+  ];
+  function tabCtxRowHTML(o) {
+    return '<span style="flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#ccc">' + o.name + '</span>';
+  }
+  var tcDrop = housePick(document.getElementById('rs-tabctx-pick'), 'tabctx', tabCtxRowHTML, function (id) {
+    if (tc) { tc.value = id; tc.dispatchEvent(new Event('change')); }
+    tcPaint();
+  });
+  function tcPaint() {
+    if (!tcDrop) return;
+    tcDrop(TABCTX, tc ? tc.value : 'over50');
+  }
+  tcPaint();
   jix.addEventListener('change', function () { var s = load(); s.showIndexJudges = jix.checked; save(s); });
   jtr.addEventListener('change', function () { var s = load(); s.showTriageJudges = jtr.checked; save(s); });
   if (cg) cg.addEventListener('change', function () { var s = load(); s.collapseGaps = cg.checked; save(s); });
@@ -645,7 +668,7 @@ function initGear(post) {
     // settings-open, which is what un-hides #feed-pane when the feed is toggled off — measuring first
     // burned the whole 5-frame retry against a display:none pane, latched rs-pane-gone, and the
     // full-viewport fallback box blacked out every pane behind the modal.
-    p.hidden = false; feedFull(true); setModalCls(true); var s = load(); cc.checked = !!s.compact; jix.checked = (s.showIndexJudges !== undefined ? !!s.showIndexJudges : !!s.debug); jtr.checked = (s.showTriageJudges !== undefined ? !!s.showTriageJudges : !!s.debug); if (gb) gb.checked = s.showBranch === true; if (tc) tc.value = tabCtxMode(s.tabCtx); csPaint(); ttPaint(); if (cg) cg.checked = s.collapseGaps !== false; if (ao) ao.checked = s.activeOnly !== false; if (fc) fc.checked = s.collapsed === true; cmBuild(); cmPaint(s.colormap || 'aurora'); if (bk) bk.value = s.backend || 'sdk'; if (dd) dd.value = s.defaultDir || ''; plFill(); fill(); }
+    p.hidden = false; feedFull(true); setModalCls(true); var s = load(); cc.checked = !!s.compact; jix.checked = (s.showIndexJudges !== undefined ? !!s.showIndexJudges : !!s.debug); jtr.checked = (s.showTriageJudges !== undefined ? !!s.showTriageJudges : !!s.debug); if (gb) gb.checked = s.showBranch === true; if (tc) tc.value = tabCtxMode(s.tabCtx); tcPaint(); csPaint(); ttPaint(); if (cg) cg.checked = s.collapseGaps !== false; if (ao) ao.checked = s.activeOnly !== false; if (fc) fc.checked = s.collapsed === true; cmBuild(); cmPaint(s.colormap || 'aurora'); if (bk) bk.value = s.backend || 'sdk'; if (dd) dd.value = s.defaultDir || ''; plFill(); fill(); }
   if (g) g.onclick = function (e) { e.stopPropagation(); openSettings(); };   // hidden anchor; hosts open via the message below
   window.addEventListener('message', function (e) { if (e.data && e.data.romp === 'openSettings') openSettings(); });
   // The shortcuts row: the web shell (same-origin parent) gets the customize link — it opens the
