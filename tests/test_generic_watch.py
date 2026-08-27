@@ -93,6 +93,8 @@ class Tick(_Watches):
         self.assertIn("now HOLDS: the deploy finished", text, "the user's note leads — their words for the wait")
         self.assertIn("deployed v2 OK", text, "the check's output rides along")
         self.assertIn("<!-- romp-tag: watch -->", text)
+        # T130: marker-classified like every romp injection (see test_pr_watch's twin pin)
+        self.assertIn("<!-- romp-injected --><!-- romp-system -->", text)
         self.assertEqual(km.list_watches(), [], "one mail, then the watch retires")
 
     def test_timeout_mails_the_giving_up_notice(self):

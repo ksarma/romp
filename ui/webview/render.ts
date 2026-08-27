@@ -2337,7 +2337,13 @@ function renderEventInner(ev: ChatEvent): HTMLElement {
         // The gist SAYS WHAT ROMP DID, not the message's first line (the user 2026-07-17 ×2: a follow-up
         // opens with the goal-context "> …" quote, so the text gist read as the user's own words — pure
         // confusion). Known flavors get a semantic label; the text fallback skips quoted "> " lines.
-        const raw = ev.md.replace(/<!--[\s\S]*?-->/g, "").trim();
+        // display-only strip of the literal "[romp] " source prefix (T130, the user 2026-08-27: a
+        // nudge says romp above it, but a mechanics notice ALSO printed "[romp]" inside the bubble —
+        // two shapes for one sender). The prefix exists for the AGENT (the housekeeping-note design:
+        // it tells a model that has never heard of the dashboard where the message came from) and
+        // stays in the transcript record untouched; the romp attribution mark above the bubble
+        // already says the same thing to the READER, so showing both was double-labelling.
+        const raw = ev.md.replace(/<!--[\s\S]*?-->/g, "").replace(/^\s*\[romp\]\s*/, "").trim();
         const lines = raw.split("\n").map((l) => l.trim());
         const firstLine = lines.find((l) => l && !l.startsWith(">")) || lines.find((l) => l) || raw;
         const gist = ev.followUp ? "follow-up" + (ev.goal ? " · " + ev.goal : "")

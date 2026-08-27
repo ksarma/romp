@@ -62,6 +62,10 @@ class Notice(unittest.TestCase):
             self.assertIn("TESTORG/testrepo#7", n)
             self.assertIn(must, n)
             self.assertIn("<!-- romp-tag: pr-watch -->", n, "machine-sent dress, never the user's words")
+            # T130 (the user 2026-08-27): the chat classifies by MARKER — without romp-injected this
+            # notice wore the generic tagged dress instead of the romp attribution the nudges wear
+            self.assertIn("<!-- romp-injected --><!-- romp-system -->", n,
+                          "the mechanics-notice family's markers, so the one machine-injected rendering applies")
             for word in ("card", "board", "goal", "column", "nudge"):
                 self.assertNotIn(word, n.lower(), "no board vocabulary in an injected body")
 
