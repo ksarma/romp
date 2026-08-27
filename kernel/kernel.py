@@ -26798,9 +26798,11 @@ try{history.replaceState(null,'',u.pathname+(u.searchParams.toString()?'?'+u.sea
 # version only). Self-contained block (own style + node + script) so it injects at one point.
 _STALE_CSS = (
     "#rstale{position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:99999;display:none;"
+    "cursor:grab;touch-action:none;"   # T132: the banner drags out of the way — the box wears grab, buttons keep pointer
     "align-items:center;gap:12px;max-width:92vw;background:#252526;border:1px solid rgba(255,255,255,0.12);"
     "border-radius:8px;padding:10px 14px;color:#e6e6e6;box-shadow:0 8px 28px rgba(0,0,0,0.45);"
     "font:13px/1.4 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}"
+    "#rstale.dragging{cursor:grabbing;user-select:none}"
     "#rstale.show{display:flex}#rstale .rs-msg{font-weight:500}"
     "#rstale button{font:inherit;cursor:pointer;border-radius:6px;padding:5px 11px;"
     "border:1px solid transparent;white-space:nowrap}"
@@ -26846,6 +26848,27 @@ _STALE_JS = (
     "window.addEventListener('message',function(e){var m=e&&e.data;"
     "if(m&&m.romp==='wsStale'){if(m.build){buildStale=true;show(BUILDMSG);}else{connStale=true;show(CONNMSG);}}"
     "else if(m&&m.romp==='wsFresh'){connStale=false;if(buildStale)show(BUILDMSG);else box.classList.remove('show');}});"
+    # T132 (the user 2026-08-27): the banner is DRAGGABLE — movable out of the way so it can STAY up
+    # (it was covering a tab they needed before accepting the build). Moving never dismisses, mutes, or
+    # times it out; Reload keeps working identically after any number of moves (BUTTON targets never
+    # start a drag, so a click is never eaten). Position holds for the page's lifetime for free: the box
+    # is the shell's one static element — show() only swaps text and a class, so pushes/re-raises never
+    # reset it — and a fresh page's banner is a fresh drift, where the centered default is right.
+    # Clamped fully on-screen at drag time and re-clamped on resize (a shrunken window must not strand it).
+    "var drag=null;"
+    "function clampXY(x,y){var r=box.getBoundingClientRect();"
+    "return [Math.max(0,Math.min(x,window.innerWidth-r.width)),Math.max(0,Math.min(y,window.innerHeight-r.height))];}"
+    "box.addEventListener('pointerdown',function(e){if(e.button!==0||e.target.tagName==='BUTTON')return;"
+    "var r=box.getBoundingClientRect();box.style.left=r.left+'px';box.style.top=r.top+'px';box.style.transform='none';"
+    "drag={dx:e.clientX-r.left,dy:e.clientY-r.top};box.classList.add('dragging');"
+    "try{box.setPointerCapture(e.pointerId);}catch(err){}e.preventDefault();});"
+    "box.addEventListener('pointermove',function(e){if(!drag)return;"
+    "var p=clampXY(e.clientX-drag.dx,e.clientY-drag.dy);box.style.left=p[0]+'px';box.style.top=p[1]+'px';});"
+    "function endDrag(e){if(!drag)return;drag=null;box.classList.remove('dragging');"
+    "try{box.releasePointerCapture(e.pointerId);}catch(err){}}"
+    "box.addEventListener('pointerup',endDrag);box.addEventListener('pointercancel',endDrag);"
+    "window.addEventListener('resize',function(){if(!box.style.left)return;"
+    "var p=clampXY(parseFloat(box.style.left),parseFloat(box.style.top));box.style.left=p[0]+'px';box.style.top=p[1]+'px';});"
     "rl.onclick=function(){location.reload();};"
     "dm.onclick=function(){dismissed=served;connStale=false;buildStale=false;box.classList.remove('show');};"
     "check();setInterval(check,30000);})();")
