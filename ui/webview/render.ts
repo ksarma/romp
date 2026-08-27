@@ -4177,12 +4177,17 @@ function showTabTip(tab: HTMLElement, s: Session): void {
   // on a session launched for the login), the row carries the live truth beside the intent instead
   // of wearing the lie (the user 2026-08-15). The account name yields its parenthetical then: it is
   // not the account being billed.
+  // the row tells the TRUTH in every landing shape (T124: after a switch it showed the pick as
+  // applied fact through the whole reconnect window, and a wrong-side landing read as a quiet
+  // parenthetical): a pending pick says so, a confirmed contradiction leads with the warning.
   if (s.status.auth) rows.push(["Billing",
-    s.status.authLive && s.status.authLive !== s.status.auth
-      ? (s.status.auth === "key" ? "API key" : "Login")
-        + ` (CLI reports ${s.status.authLive === "key" ? "API key" : "login"})`
-      : s.status.auth === "key" ? "API key"
-        : (s.status.authAcct ? `Login (${s.status.authAcct})` : "Login")]);
+    s.status.authPending
+      ? (s.status.auth === "key" ? "API key" : "Login") + " (applying — not confirmed yet)"
+      : s.status.authLive && s.status.authLive !== s.status.auth
+        ? `⚠ ${s.status.auth === "key" ? "API key" : "Login"} picked, but the CLI reports `
+          + `${s.status.authLive === "key" ? "the API key" : "the login"} — this session bills that`
+        : s.status.auth === "key" ? "API key"
+          : (s.status.authAcct ? `Login (${s.status.authAcct})` : "Login")]);
   for (const [k, v] of rows) {
     const r = el("div", "tab-tip-row");
     const ke = el("span", "tab-tip-k"); ke.textContent = k;
@@ -4762,7 +4767,9 @@ function showTabMenu(e: MouseEvent, id: string) {
     const l = el("span", "ctx-item-label"); l.textContent = "Billing"; bodyEl.appendChild(l);
     const sb = el("span", "ctx-item-sub");
     sb.textContent = st.authPending ? "applying…"
-      : (st.auth === "key" ? "API key" : (st.authAcct ? `Login (${st.authAcct})` : "Login"));
+      : st.authLive && st.authLive !== st.auth
+        ? `⚠ CLI reports ${st.authLive === "key" ? "API key" : "login"}`   // the pick did not take — say so where the switch lives (T124)
+        : (st.auth === "key" ? "API key" : (st.authAcct ? `Login (${st.authAcct})` : "Login"));
     bodyEl.appendChild(sb);
     item.appendChild(bodyEl);
     const caret = el("span", "ctx-caret"); caret.textContent = "▸"; item.appendChild(caret);
