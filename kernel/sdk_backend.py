@@ -1662,11 +1662,13 @@ class SdkSession:
             self.loop.call_soon_threadsafe(
                 lambda: asyncio.ensure_future(self._do_set_model(model)))
 
-    def set_mode_live(self, mode):
-        """Change the permission mode on a CONNECTED session via the SDK control channel."""
+    def set_mode_live(self, mode, prev="default"):
+        """Change the permission mode on a CONNECTED session via the SDK control channel. `prev` is
+        the last CONFIRMED mode, captured by set_mode before its optimistic flip — the value every
+        layer reverts to if the CLI refuses the switch (T139)."""
         if self.loop and self.client:
             self.loop.call_soon_threadsafe(
-                lambda: asyncio.ensure_future(self._do_set_mode(mode)))
+                lambda: asyncio.ensure_future(self._do_set_mode(mode, prev)))
 
     def resolve_ask(self, kind: str, payload=None):
         """Deliver a picker/permission UI action (answer/toggle/submit/custom/
@@ -1808,11 +1810,22 @@ class SdkSession:
         await self._do_refresh_context()
         self.backend._poke()
 
-    async def _do_set_mode(self, mode):
+    async def _do_set_mode(self, mode, prev="default"):
         try:
             await self.client.set_permission_mode(mode)
         except Exception as e:
-            self.backend._log("set_permission_mode (%s -> %s) refused by the SDK: %s: %s" % (self.name, mode, type(e).__name__, e))
+            # the T124 rule, applied to modes (T139): set_mode flips the DISPLAYED mode
+            # optimistically — a refusal that only logged left the switcher asserting a mode the
+            # CLI never accepted, indefinitely. Revert every layer to the last confirmed mode
+            # (snapshot, session, registry — the next connect must not re-apply the refused pick
+            # either) and ring the problems so the failed switch is unmissable.
+            self.perm_mode = prev
+            self.mode = prev
+            self.backend._update_reg(self.sid, mode=prev)
+            self.backend._log("set_permission_mode (%s -> %s) refused by the SDK: %s: %s — the switch "
+                              "did NOT apply; the mode reverted to %s"
+                              % (self.name, mode, type(e).__name__, e, prev), problem=True)
+            self.backend._poke()
 
     async def _do_refresh_context(self):
         """Pull authoritative context-window usage from the SDK — the DESIGNED source. `get_context_usage()` is
@@ -2621,7 +2634,22 @@ class SdkSession:
                 updated_input={"questions": tool_input.get("questions", []), "answers": answers})
         if tool_name == "ExitPlanMode":
             return await self._approve_plan(tool_input)
-        # Ordinary tool permission. Options are Allow (1), optionally Allow-&-don't-ask-again (2 when the
+        # Ordinary tool permission. FIRST, the declared-intent guard (T139, the exp specimen): the
+        # SDK's own contract says bypassPermissions auto-approves every call before this callback
+        # is consulted (explicit deny rules aside) — yet CLI 2.1.221 consulted it once for a plain
+        # main-thread Bash, 30s after an equivalent command sailed through, and the session sat
+        # BLOCKED eleven hours on an ask the user had declared they never wanted. romp is the
+        # registered permission authority, so it re-imposes the declared intent: under bypass,
+        # auto-allow and ring the problems (the CLI broke its contract — visible, never silent),
+        # and never block a bypass session on an ask. Other modes keep asking: when the CLI
+        # consults under default/plan/acceptEdits, an ask IS the honest behavior for whatever its
+        # own evaluation could not auto-decide.
+        if self.perm_mode == "bypassPermissions":
+            self.backend._log("permission consult under bypassPermissions (%s, tool %s) — the CLI's "
+                              "contract says this cannot happen; auto-allowed per the declared mode"
+                              % (self.name, tool_name), problem=True)
+            return PermissionResultAllow(behavior="allow")
+        # Options are Allow (1), optionally Allow-&-don't-ask-again (2 when the
         # SDK supplied permission suggestions), then Deny (last). _next_ask_action returns the chosen
         # ordinal so we map it back to the action here.
         ask = permission_to_live(tool_name, tool_input, context)
@@ -4954,9 +4982,19 @@ class SdkBackend:
             write_sdk_default(self.state_dir, mode=mode)   # remember as the seed for the NEXT new session, like model/effort (the user 2026-06-27)
         s = self.sessions.get(sid)
         if s:
+            prev = s.perm_mode      # the last CONFIRMED mode — the revert target if the CLI refuses (T139)
             s.mode = mode
             s.perm_mode = mode      # snapshot reflects it immediately (clears the picker's meta-pending)
-            s.set_mode_live(mode)
+            if mode == "bypassPermissions" and prev != "bypassPermissions":
+                # the CLI REFUSES a live switch INTO bypass unless the process was LAUNCHED with
+                # --dangerously-skip-permissions (probed on CLI 2.1.221, T139: 'Cannot set permission
+                # mode to bypassPermissions because the session was not launched with…'). The honest
+                # apply is the RECONNECT (effort's pattern): the relaunch carries
+                # permission_mode=bypassPermissions, which the SDK maps to the launch flag — resume
+                # continues the conversation and the next init confirms perm_mode.
+                s.request_reconnect()
+            else:
+                s.set_mode_live(mode, prev=prev)
         return True
 
     def stop_task(self, sid: str, task_id: str) -> bool:
