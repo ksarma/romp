@@ -9,7 +9,9 @@
 //     multi-goal bundles · awaiting backstop · debt reminders · the retry message · goal check-ins
 //   PERSON-VOICED BY DESIGN (no marker — they are written as the person's own words, per the
 //   2026-06-20 rule and the injected-voice test): typed follow-ups · the Continue gesture ·
-//   comment-thread merges · comment-thread openers · edit traces — these stay the user's blue.
+//   comment-thread openers · edit traces — these stay the user's blue. (Thread RELAYS moved to
+//   the machine-voiced set by T145: the user ruled the arrival is romp moving content on their
+//   behalf, not their own typed words — the prose still speaks as the person for the AGENT.)
 //   THIRD-PARTY TAGGED (romp-tag with no romp-injected): the ⚙-labelled tag bubble.
 //
 // The classifier is executable here; the display strip and the marker discipline are source pins.
@@ -29,6 +31,7 @@ test("every machine-voiced shape classifies 'romp' — the flag the markers set,
     { name: "kernel-restart resume", ev: { romp: true, md: "[romp] The romp kernel restarted…" } },
     { name: "pr-watch landing", ev: { romp: true, md: "[romp] The pull request you asked romp to watch has MERGED…", tag: "pr-watch" } },
     { name: "generic watch", ev: { romp: true, md: "[romp] The condition you asked romp to watch now HOLDS…", tag: "watch" } },
+    { name: "thread relay (T145)", ev: { romp: true, md: "I took a side discussion with another assistant about this passage…", tag: "relay" } },
     { name: "auto-nudge", ev: { romp: true, rompAuto: true, md: "Where does this stand?" } },
     { name: "nudge button", ev: { romp: true, md: "Status update please?" } },
   ]) assert.equal(senderKind(shape.ev as never), "romp", shape.name + " wears the one machine treatment");

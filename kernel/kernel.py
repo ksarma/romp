@@ -6361,9 +6361,9 @@ def _comment_status_refusal(prior):
     if prior == "promoting":
         return "this thread is becoming its own session; give it a moment."
     if prior == "merging":
-        return "this thread is merging back into the session; give it a moment."
+        return "this thread is being relayed back to the session; give it a moment."
     if prior == "merged":
-        return "this thread was already merged back into the session."
+        return "this discussion was already relayed; reply in the thread to continue it."
     return "that thread is gone."
 
 
@@ -6701,6 +6701,7 @@ def _comments_frame(sid, tmux=None):
             except Exception:
                 meta = {}
         threads.append({"tid": th.get("tid"), "anchorUuid": th.get("anchorUuid"),
+                        "relayedT": th.get("relayedT") or 0,   # the persistent sent-back indicator's stamp (T145)
                         "name": th.get("name") or "", "color": th.get("color") or "",
                         "exact": str(th.get("exact") or "")[:500], "status": status,
                         "createdT": th.get("createdT") or 0, "state": state, "error": err,
@@ -6849,7 +6850,7 @@ def _comment_reply(parent_sid, tid, text):
     be = Sessions.backend_for(parent_sid)
     if not hasattr(be, "fork"):
         return "threads need the SDK backend."
-    prior, th = _comment_update_if(parent_sid, tid, ("open", "resolved"),
+    prior, th = _comment_update_if(parent_sid, tid, ("open", "resolved", "merged"),
                                    status="open", lastSeenT=int(time.time()))
     if th is None:
         if prior == "promoted":
@@ -6857,7 +6858,9 @@ def _comment_reply(parent_sid, tid, text):
             return "this thread is now the session '%s'; continue there." % (row.get("promotedName") or "")
         return _comment_status_refusal(prior)
     tsid = th["sid"]
-    if prior == "resolved":
+    if prior in ("resolved", "merged"):
+        # a RELAYED thread stays talkable (T145): replying reopens it exactly like a resolved one —
+        # the conversation continues, and a later relay sends only the new tail past relayedT
         reg = _thread_reg(tsid)
         be.resume(reg.get("name") or ("thread-" + tsid[:8]), tsid)   # alive again; names/ untouched
     if not be.send(tsid, str(text)):
@@ -6866,21 +6869,31 @@ def _comment_reply(parent_sid, tid, text):
     return None
 
 
-MERGE_BODY_CAP = 6000   # the thread exchange fed back on a merge — keep the most recent tail
+MERGE_BODY_CAP = 48000  # the relay sends the WHOLE exchange (T145, the user 2026-08-28: it looked
+#                           like only part of the thread merged — the old 6000 trimmed any real
+#                           discussion); this cap is a pathological-thread backstop only, and the
+#                           trim marker still says so honestly when it fires
 
 
 def _merge_body(exact, msgs):
-    """The MERGE handoff (the user 2026-08-23): fold a side discussion's outcome back into the main
-    conversation. Injected-voice rules apply (repo CLAUDE.md): the agent reading this has never heard
-    of romp, so it reads as the person it works for handing over the record of a discussion they had
-    elsewhere, grounded by the passage it was about. No machinery named, no reply slots."""
+    """The RELAY handoff (the user 2026-08-23 as 'merge'; renamed + machine-dressed by T145): send a
+    side discussion back into the main conversation. Injected-voice rules apply to the PROSE (repo
+    CLAUDE.md): the agent reading this has never heard of romp, so it reads as the person it works
+    for handing over the record of a discussion they had elsewhere, grounded by the passage it was
+    about — no machinery named, no reply slots. The MARKER TAIL is for the READER's chat: romp moved
+    this content on the user's behalf, so it renders machine-attributed (the T130 class), never as
+    the user's own typed bubble (their 2026-08-28 complaint). prose() in the voice test splits at
+    the first marker, so the voice audit covers exactly what the agent reads."""
     quote = (exact or "").strip()
     lines = []
     for m in msgs or []:
         t = (m.get("text") or "").strip()
         if not t:
             continue
-        lines.append(("Me: " if m.get("who") == "user" else "Them: ") + t)
+        # the projection's who is "you"/"agent" ("user" accepted for older fixtures) — the first lab
+        # run of this path shipped every line as "Them:", and the parent model read the incoherent
+        # log as fabricated and refused it (T145 lab find)
+        lines.append(("Me: " if m.get("who") in ("you", "user") else "Them: ") + t)
     convo = "\n\n".join(lines)
     if len(convo) > MERGE_BODY_CAP:
         convo = "… (earlier discussion trimmed)\n\n" + convo[-MERGE_BODY_CAP:]
@@ -6891,7 +6904,12 @@ def _merge_body(exact, msgs):
     parts.append(convo)
     parts.append("Treat what we settled there as my direction: fold it into your understanding and "
                  "account for it in everything you do on this from here on.")
-    return "\n\n".join(parts)
+    # romp-injected: the arrival wears the T130 machine attribution (the gray romp bubble + swirl),
+    # NEVER the user's own blue. Deliberately NOT romp-system: that marker routes to the kernel
+    # STATUS notice card (restart/resume family), and relayed CONTENT is a conversation, not a
+    # status — the first lab run of this path rendered as a notice card and the arrival assertion
+    # caught it.
+    return "\n\n".join(parts) + "\n\n<!-- romp-injected --><!-- romp-tag: relay -->"
 
 
 def _comment_merge(parent_sid, tid):
@@ -6909,15 +6927,23 @@ def _comment_merge(parent_sid, tid):
         _comment_update(parent_sid, tid, status=prior)
         return msg
     msgs = _thread_messages(th["sid"], th.get("cutUuid") or "", th.get("createdT") or 0)
+    # A LATER relay sends only the NEW tail (T145: the thread stays talkable after a relay, and
+    # relaying again must not repeat what the session already has). relayedT is EVIDENCE time — the
+    # last relayed message's own stamp, never wall clock (the design rule; wall clocks also skew
+    # cross-host). First relay: everything.
+    floor = th.get("relayedT") or 0
+    if floor:
+        msgs = [m for m in msgs if (m.get("t") or 0) > floor]
     if not any((m.get("text") or "").strip() for m in msgs):
-        return _revert("this thread has no discussion to merge yet.")
+        return _revert("nothing new to send back yet." if floor else "this thread has no discussion to send back yet.")
     body = _merge_body(th.get("exact"), msgs)
     be = Sessions.backend_for(parent_sid)
     try:
         be.send(parent_sid, body)
     except Exception as e:
         return _revert("the merge message could not be delivered: %s" % e)
-    _comment_update(parent_sid, tid, status="merged")
+    _comment_update(parent_sid, tid, status="merged",
+                    relayedT=max((m.get("t") or 0) for m in msgs))
     if hasattr(be, "kill"):
         try:
             be.kill(th["sid"])                      # its work is folded back; the CLI has nothing left

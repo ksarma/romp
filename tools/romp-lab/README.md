@@ -56,7 +56,9 @@ The default run drives TWO phases, banner first (it spends no model turns):
   reply), 4d clear-timing (the mark may never read settled while the final answer is
   not visible — T112), and 4e thread-interrupt (T138: the popover's working state
   offers the stop square, it targets the THREAD's own session, the ack is instant,
-  the pulse clears on the gesture — no reply record is coming — and the turn ends).
+  the pulse clears on the gesture — no reply record is coming — and the turn ends), and
+  6 relay (T145: the Relay button acks instantly, the WHOLE exchange arrives in the main
+  thread machine-dressed, the thread keeps its ↩ sent-back marker and stays talkable).
   `--highlight-only` skips the banner phase.
 
 ## Cost

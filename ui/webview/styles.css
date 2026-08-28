@@ -2919,6 +2919,8 @@ mark.cmt-hl.hl-last { border-top-right-radius: 2px; border-bottom-right-radius: 
 /* the chat's under-bubble button family, exactly (the composer-stage-btn dress — the user
    2026-08-25: the popover's buttons should be the chat's, one vocabulary): neutral at rest,
    accent on hover, the 0.78em label tier */
+/* the sent-back marker (T145): a quiet centered line in the house sub scale — a fact, not a state */
+.cmt-relayed-note { text-align: center; font-size: 0.82em; color: var(--dim); opacity: 0.85; padding: 5px 0 3px; }
 .cmt-act {
   background: transparent;   /* T141: one dress with the stage button + the feed's word-buttons */
   border: 1px solid var(--card-border); color: var(--dim); border-radius: 5px; font-size: 0.82em;

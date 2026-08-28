@@ -6567,7 +6567,7 @@ function styleCommentMark(m: HTMLElement, th: CommentThread): void {
   m.classList.toggle("unread", !!th.unread && th.status === "open");
   m.classList.toggle("busy", commentInFlight(th));
   m.title = th.status === "promoted" ? "thread, now the session '" + th.promotedName + "'"
-    : th.status === "merged" ? "merged thread: its outcome was folded back into the session"
+    : th.status === "merged" ? "relayed thread: its discussion was sent back into the session"
     : th.status === "resolved" ? "resolved thread: click to read or reopen"
     : "thread: click to open";
 }
@@ -6662,6 +6662,17 @@ function owningSidOf(el0: HTMLElement | null): string | null {
   return (el0?.closest("[data-session]") as HTMLElement | null)?.dataset.session || activeId;
 }
 
+// The persistent sent-back marker (T145): where the last relay CUT the thread — everything above
+// it went back to the main conversation; everything below is the new tail a later relay would
+// send. From the store (relayedT rides the comments frame), so it survives reopens; evidence-time
+// stamp, rendered in the rail's own HH:MM.
+function cmtRelayedNote(t: number): HTMLElement {
+  const n = el("div", "cmt-relayed-note");
+  n.textContent = `↩ sent back to the main conversation · ${markerLabel(t, null, Date.now()).hm}`;
+  n.title = "the discussion above was relayed into the session; anything below goes with the next relay";
+  return n;
+}
+
 function fillCommentMsgs(list: HTMLElement, th: CommentThread, sid: string): void {
   list.dataset.session = th.tid;   // the THREAD owns its queue/errors — in-turn controls resolve to it
   const prevScroll = list.scrollTop;
@@ -6716,10 +6727,15 @@ function fillCommentMsgs(list: HTMLElement, th: CommentThread, sid: string): voi
       ? compactDisplay(evs.map((e) => e.kind), evs.map((e) => e.kind === "tool" ? e.name : undefined))
       : evs.map((_, i) => ({ kind: "event", index: i } as DisplayItem));
     const thWorking = threadBusy(th.state);
+    let relayNoted = !th.relayedT;   // T145: drop the sent-back marker at its place in time, once
     for (const it of items) {
       // a new day opens with the chat's own divider (the parity bundle, 2026-08-26) — same helper,
       // same placement idiom as appendItem
       const dayOpen = eventEpoch(evs[itemFirstEvent(it)]);
+      if (!relayNoted && dayOpen != null && dayOpen > (th.relayedT || 0)) {
+        list.appendChild(cmtRelayedNote(th.relayedT || 0));
+        relayNoted = true;
+      }
       if (dayOpen != null) {
         const dv = dayDividerFor(dayOpen, prev);
         if (dv) list.appendChild(dv);
@@ -6752,6 +6768,7 @@ function fillCommentMsgs(list: HTMLElement, th: CommentThread, sid: string): voi
       const ep = eventEpoch(ev);
       if (ep != null) prev = ep;
     }
+    if (!relayNoted) list.appendChild(cmtRelayedNote(th.relayedT || 0));   // relay at the tail — nothing new after it yet
     renderingIntoThread = false;
     renderingSid = saved;
     renderingOwnerSid = savedOwner;
@@ -6929,8 +6946,8 @@ function commentPopTitle(create: boolean, th: CommentThread | null | undefined):
   return create ? "New comment:"
     : th!.status === "promoted" ? "Now its own session: " + th!.promotedName
     : th!.status === "promoting" ? "Breaking out…"
-    : th!.status === "merging" ? "Merging back in…"
-    : th!.status === "merged" ? nm + " (merged into the session)"
+    : th!.status === "merging" ? "Relaying back to the session…"
+    : th!.status === "merged" ? nm + " (relayed to the session)"
     : th!.status === "resolved" ? nm + " (resolved)" : nm;
 }
 
@@ -7156,7 +7173,7 @@ function renderCommentPopover(): void {
     box.className = "cmt-input";
     box.rows = 2;
     box.placeholder = create ? "Comment on this passage…"
-      : th!.status === "merged" ? "Merged — its outcome lives in the session now"
+      : th!.status === "merged" ? "Reply to continue — the discussion so far was relayed to the session…"
       : th!.status === "resolved" ? "Reply to reopen…" : "Reply…";
     box.value = commentDrafts.get(dk) || "";
     box.addEventListener("input", () => commentDrafts.set(dk, box.value));
@@ -7217,8 +7234,8 @@ function renderCommentPopover(): void {
       if (th.status === "open" || th.status === "resolved") {
         const mg = el("button", "cmt-act") as HTMLButtonElement;
         mg.type = "button";
-        mg.textContent = "Merge";
-        mg.title = "Send this discussion back into the session as direction going forward; the thread closes as merged";
+        mg.textContent = "Relay";   // T145: the verb is 'sending it back into the main thread with context' — Merge implied the thread closes, and it doesn't
+        mg.title = "Send this discussion back into the main conversation as context going forward; the thread stays open for more talk";
         mg.dataset.act = "cmtmerge";
         row.appendChild(mg);
       }
@@ -12755,7 +12772,7 @@ setupSettings();
       const cur = openCommentThread();
       if (!cur) return;
       (elx as HTMLButtonElement).disabled = true;   // acknowledge before the round-trip
-      elx.textContent = "Merging…";
+      elx.textContent = "Relaying…";
       vscodeApi?.postMessage({ type: "commentMerge", id: cur.sid, tid: cur.th.tid });
     },
     cmtresolve: (elx) => {
