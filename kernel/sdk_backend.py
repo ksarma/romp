@@ -1364,6 +1364,11 @@ class SdkSession:
         # the conversation into a NEW file pinned to THIS sid instead of continuing the parent's. One-shot:
         # cleared the moment the init's lastSid flip says the fork landed (see _on_message).
         self._fork_of = reg.get("forkOf") or ""
+        # the OWNING session for a highlight-reply comment thread (reg threadOf, durable): the
+        # thread's spend bills the OWNER's sid (T144 — fork sids minted phantom cheap sessions in
+        # spend.json and undercounted the owner: one session split $360.31 own + $3.11 + $5.36
+        # fork sids). A deliberate user fork has no threadOf and bills itself — it IS a session.
+        self.thread_of = reg.get("threadOf") or ""
         self._fork_at = reg.get("forkAt") or ""
         # Heal STRANDED pending-switch flags (the user 2026-07-11, who reported the three dots sitting there
         # forever): a /model or /effort switch that was mid-flight when the previous kernel/process
@@ -2553,7 +2558,10 @@ class SdkSession:
                     last = self._last_usage_totals.get(k, 0)
                     turn_u[k] = v - last if v >= last else v
                     self._last_usage_totals[k] = v
-                self.backend._record_spend(delta, turn_u, keyed=self.api_key_auth, sid=self.sid)   # the rail's spend
+                self.backend._record_spend(delta, turn_u, keyed=self.api_key_auth,
+                                           sid=self.thread_of or self.sid)   # the rail's spend —
+                #   a comment THREAD bills its owning session (T144: whole-session truth for the
+                #   rail and the optimizer; a deliberate fork has no threadOf and bills itself)
                 #   + token readout; keyed = THIS session's init-reported auth, so the API sum stays
                 #   honest on a mixed host (see _record_spend)
             self.retrying = False
@@ -4267,6 +4275,7 @@ class SdkBackend:
         s = self.sessions.get(sid)
         if s:
             s.name = name
+            s.thread_of = ""   # a promoted session bills ITSELF from this moment (T144's owner billing)
         self._poke()
         return True
 
