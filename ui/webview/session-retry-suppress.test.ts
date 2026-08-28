@@ -16,7 +16,7 @@ test("Status carries the per-session retrySuppressed flag", () => {
 
 test("the stop/interrupt button is now reachable on a retrying / blocked thread (so you can interrupt it)", () => {
   // it renders for working/compacting AND the stuck states — that's where it doubles as the per-thread off-switch
-  assert.match(R, /state === "retrying" \|\| s\.status\.state === "blocked"\) sl\.appendChild\(stopButton\(s\.status\.state\)\)/);
+  assert.match(R, /state === "retrying" \|\| s\.status\.state === "blocked"\) right\.appendChild\(stopButton\(s\.status\.state\)\)/);
   // the button adapts its label/title for the stuck states
   assert.match(R, /const stuck = state === "retrying" \|\| state === "blocked"/);
   assert.match(R, /Stop retrying — interrupt this thread/);

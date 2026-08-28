@@ -9571,6 +9571,29 @@ fetch(kernelUrl("/models"), { cache: "no-store" }).then((r) => r.json()).then((d
 // An SDK session sets it outright over the control channel (set_permission_mode), which is what makes
 // Bypass offerable there and only there: on tmux the click would land on a mode the cycle cannot
 // express, and _cycle_mode would drop it. `sdkOnly` is the filter, applied in toggleMetaMenu.
+// Permission-mode GLYPHS (the user 2026-08-28): each mode gets a small line icon beside its text —
+// the statusline badge and the picker rows carry it, always WITH the label (an icon alone is a
+// riddle). House icon style (the tag-glyph convention): 16-unit viewBox, stroke currentColor 1.4,
+// round caps/joins. The vocabulary: the GATE is a shield — Normal is the shield as-is, Bypass is
+// the shield slashed (the gate removed); Accept edits is the pencil (edits pre-approved); Auto is
+// the bolt (it decides at speed); Plan is the route pin-to-pin (look before touching); Don't ask
+// (renderable, not offerable) is the crossed speech bubble (it will never raise a question).
+const MODE_ICONS: Record<string, string> = {
+  default: '<path d="M8 2 L13 4 V8 C13 11.4 10.8 13.2 8 14 C5.2 13.2 3 11.4 3 8 V4 Z"/>',
+  acceptedits: '<path d="M3.5 12.5 L4.1 10.1 L10.9 3.3 A1.35 1.35 0 0 1 12.8 5.2 L6 12 L3.5 12.5 Z"/><path d="M9.9 4.3 L11.8 6.2"/>',
+  auto: '<path d="M8.8 2 L4.2 9 H7.4 L6.9 14 L11.8 6.8 H8.3 Z"/>',
+  plan: '<circle cx="4" cy="12" r="1.5"/><circle cx="12" cy="4" r="1.5"/><path d="M5.2 10.8 C7.5 9.5 8.5 6.5 10.8 5.2" stroke-dasharray="2 1.6"/>',
+  bypasspermissions: '<path d="M8 2 L13 4 V8 C13 11.4 10.8 13.2 8 14 C5.2 13.2 3 11.4 3 8 V4 Z"/><path d="M3.2 13 L12.8 3"/>',
+  dontask: '<path d="M3 3.5 H13 V10 H8.5 L5.5 12.8 V10 H3 Z"/><path d="M3.2 12.6 L12.8 2.6"/>',
+};
+function modeIconSvg(mode: string | undefined): string {
+  // accepts wire values AND display labels (metaButton receives prettyMode's text)
+  const raw = (mode || "default").toLowerCase().replace(/[\u2019' -]/g, "");
+  const k = raw === "normal" || raw === "" ? "default" : raw;
+  const body = MODE_ICONS[k] ?? MODE_ICONS.default;
+  return '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">' + body + "</svg>";
+}
+
 const MODE_CHOICES: MetaChoice[] = [
   { label: "Normal", value: "default" },
   { label: "Accept edits", value: "acceptEdits" },
@@ -9679,6 +9702,11 @@ function metaDots(): HTMLElement {
 function metaButton(kind: MetaKind, text: string, forSid?: string | null): HTMLElement {
   const btn = el("span", "meta-btn");
   btn.dataset.kind = kind;
+  if (kind === "mode") {   // the permission glyph, always beside its text (never instead of it)
+    const ico = el("span", "meta-ico mode-ico");
+    ico.innerHTML = modeIconSvg(text);   // refreshed by the sync loop below from st.mode
+    btn.appendChild(ico);
+  }
   const label = el("span", "meta-label");
   label.textContent = text;
   btn.appendChild(label);
@@ -9725,6 +9753,10 @@ function syncMetaControls(meta: HTMLElement, st: Status, forSid?: string | null)
     const disp = kind === "mode" ? prettyMode(st.mode) : kind === "fast" ? prettyFast(st.fast)
       : metaCurrent(kind, st);
     const label = b.querySelector(".meta-label") as HTMLElement | null;
+    if (kind === "mode") {
+      const ico = b.querySelector(".mode-ico") as HTMLElement | null;
+      if (ico) ico.innerHTML = modeIconSvg(st.mode);
+    }
     // A switching MODEL shows animated dots, not the stale/premature name (the user 2026-07-03): the
     // server drives it (st.modelPending) — event-based, cleared the instant the new model actually lands —
     // and the local click heuristic (isMetaPending) covers the sub-second before the first server push.
@@ -9788,13 +9820,19 @@ function toggleMetaMenu(kind: MetaKind, btn: HTMLElement, forSid?: string | null
   for (const c of META_CHOICES[kind].filter((c) => !c.sdkOnly || s.status.backend === "sdk")) {
     const item = el("div", "meta-item" + (isCurrentMeta(kind, s.status, c.value) ? " current" : ""));
     item.tabIndex = 0;
+    const rowIco = kind === "mode" ? el("span", "meta-ico mode-ico") : null;
+    if (rowIco) rowIco.innerHTML = modeIconSvg(c.value);
     if (c.sub) {
       const head = el("div");
-      head.textContent = c.label;
+      if (rowIco) head.appendChild(rowIco);
+      head.appendChild(document.createTextNode(c.label));
       const sub = el("div", "meta-item-sub");
       sub.textContent = c.sub;
       item.appendChild(head);
       item.appendChild(sub);
+    } else if (rowIco) {
+      item.appendChild(rowIco);
+      item.appendChild(document.createTextNode(c.label));
     } else {
       item.textContent = c.label;
     }
@@ -10057,12 +10095,7 @@ function updateStatusline() {
     chip.textContent = CHIP_LABEL[s.status.state] ?? (s.status.state[0].toUpperCase() + s.status.state.slice(1).toLowerCase());
     sl.appendChild(chip);
   }
-  // stop/interrupt button, right beside the state badge — while busy (working/compacting) AND while stuck
-  // retrying / blocked on an API error, where it doubles as the per-thread auto-retry off-switch (the user
-  // 2026-07-06). Omitted in idle states (nothing to interrupt) — the user 2026-06-19 — and while
-  // INTERRUPTING (the stop is already in flight; re-pressing it is a lie — the user 2026-07-02).
-  if (s.status.state === "working" || s.status.state === "compacting"
-      || s.status.state === "retrying" || s.status.state === "blocked") sl.appendChild(stopButton(s.status.state));
+
   // The right-side cluster — dir · branch · mode/model/effort/fast badges · ctx battery — grouped in ONE
   // container (.sl-right) that carries the right-justify margin and wraps INTERNALLY with right-aligned
   // rows. Grouped, not flat: when a narrow pane wraps the statusline, flat children restart each extra row
@@ -10102,6 +10135,14 @@ function updateStatusline() {
   const bar = ctxBar();
   setCtxBar(bar, s.status.ctx, s.status.state === "compacting", s.status.ctxColor);
   right.appendChild(bar);
+  // stop/interrupt button — at the FAR RIGHT of the statusline (the user 2026-08-28; it sat
+  // beside the state chip on the left before), riding inside the right cluster so a wrapped
+  // narrow statusline keeps it with the controls. Shown while busy (working/compacting) AND while
+  // stuck retrying / blocked, where it doubles as the per-thread auto-retry off-switch (the user
+  // 2026-07-06). Omitted in idle states (nothing to interrupt — the user 2026-06-19) and while
+  // INTERRUPTING (the stop is already in flight; re-pressing it is a lie — the user 2026-07-02).
+  if (s.status.state === "working" || s.status.state === "compacting"
+      || s.status.state === "retrying" || s.status.state === "blocked") right.appendChild(stopButton(s.status.state));
   sl.appendChild(right);
 }
 
