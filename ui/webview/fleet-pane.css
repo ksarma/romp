@@ -14,7 +14,7 @@ font-size:13px;display:flex;flex-direction:column;overflow:hidden}
 #fleet-search-wrap{position:relative;flex:1 1 140px;min-width:140px}
 #fleet-search{width:100%;box-sizing:border-box;background:var(--vscode-input-background,#3c3c3c);
 color:var(--vscode-input-foreground,#ccc);border:1px solid var(--vscode-input-border,#3c3c3c);
-border-radius:6px;padding:5px 28px 5px 10px;font:inherit;font-size:12.5px;outline:none}
+border-radius:6px;padding:5px 28px 5px 10px;font:inherit;font-size:12px;outline:none}
 #fleet-search:focus{border-color:var(--accent,#9cd2ff)}
 #fleet-search::placeholder{color:var(--vscode-descriptionForeground,#9a9a9a)}
 /* hide the engine's native search-cancel button — we draw our own clear button so it behaves the same everywhere */

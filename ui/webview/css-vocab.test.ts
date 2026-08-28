@@ -197,3 +197,15 @@ test("ONE accent wash: every selected/hovered accent chrome resolves through --a
       name + " reverse-highlights the selected viewer toggle");
   }
 });
+
+test("the px type set is CLOSED: chrome sizes come from the pinned set, like the em ladder", () => {
+  // the 2026-08-28 collapse retired 11.5px and 12.5px (the last strays); a new px size is a new
+  // rung — justify it here in the same commit or reuse a neighbour. (em sizes have their own
+  // ladder pin; px is chrome-only: kbd chips, micro-labels, statusline hardware.)
+  const ALLOWED = new Set(["8", "9", "10", "10.5", "11", "12", "13", "14", "15", "16", "19", "21", "38"]);   // 15 = the gear/strip icon glyphs
+  for (const [name, css] of [["styles.css", CHAT], ["feed.css", FEED], ["gear.css", GEAR], ["strip.css", STRIP]] as const) {
+    const sizes = [...css.matchAll(/font-size:\s*(\d+(?:\.\d+)?)px/g)].map((m) => m[1]);
+    const strays = sizes.filter((v) => !ALLOWED.has(v));
+    assert.deepEqual(strays, [], name + " px sizes outside the set");
+  }
+});
