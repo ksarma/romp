@@ -6264,9 +6264,19 @@ function dropSynthThread(sid: string, uuid: string): void {
 // the one busy answer for the mark + rail tick: an in-flight EXCHANGE (the gesture latch above), or
 // — after a reload lost the client latch — the exchange's own records still saying a reply is owed
 // (msgs ending with the user's message). A stuck/errored/closed thread never pulses: green would lie.
+// A thread whose trailing user message was ANSWERED BY A STOP (T138, found by lab phase 4e): the
+// user interrupted the turn, so no reply record is coming for that send — replyOwed's
+// trailing-user shape would otherwise hold the mark green forever. A plain until-the-next-send
+// tombstone: the only event that can OWE a new reply is the user's next send gesture, which
+// retires it (and latches the real base). A count-keyed first cut died in the lab: the CLI files
+// the interrupt itself as a trailing user-kind record, so any record-shape re-derivation re-fires
+// exactly like the flapping proxies the T102 rule bans — the gesture pair (stop sets, send
+// clears) is the event-true form.
+const cmtInterrupted = new Set<string>();
 const commentInFlight = (th: CommentThread): boolean => {
   if (th.status !== "open" || !!th.error || threadStuck(th.state)) return false;
-  return cmtAwaitBase.has(th.tid) || replyOwed(th);
+  if (cmtAwaitBase.has(th.tid)) return true;
+  return replyOwed(th) && !cmtInterrupted.has(th.tid);
 };
 const commentDrafts = new Map<string, string>();                    // draft key → unsent popover text
 // The popover-boot hold (fillCommentMsgs): tid → when the loader first held the list. Held until the
@@ -6810,6 +6820,21 @@ function cmtStateChip(th: CommentThread): HTMLElement {
   wrap.id = "cmt-state";
   if (th.status !== "open") return wrap;                    // closed threads carry their status in the title
   const st = th.state || "";
+  // the stop square, exactly the chat statusline's affordance owner-scoped to the THREAD (T138,
+  // the user 2026-08-27: threads couldn't be interrupted from the UI at all — the popover chip
+  // rendered working/retrying with no stop). data-act rides the stable document.body delegate
+  // (this statusline rebuilds per comments frame — a direct listener would be press-unsafe), and
+  // data-sid pins the target to the thread's own session, never the active tab.
+  const stopBtn = () => {
+    const b = el("button", "stop-btn cmt-stop");
+    (b as HTMLButtonElement).type = "button";
+    b.title = "Stop — interrupt this thread's turn";
+    b.setAttribute("aria-label", "Interrupt this thread");
+    b.dataset.act = "cmtinterrupt";
+    b.dataset.sid = th.tid;
+    b.appendChild(el("span", "stop-icon"));
+    return b;
+  };
   if (st === "working") {
     const chip = el("span", "chip chip-working");
     const label = el("span", "chip-pulse");
@@ -6818,11 +6843,11 @@ function cmtStateChip(th: CommentThread): HTMLElement {
     const timer = el("span", "status-timer");
     timer.id = "cmt-work-timer";
     timer.textContent = elapsedMs(th.sinceEpoch || null);
-    wrap.append(chip, timer);
+    wrap.append(chip, timer, stopBtn());
   } else if (st === "retrying") {
     const chip = el("span", "chip chip-retrying");
     chip.textContent = CHIP_LABEL.retrying;
-    wrap.appendChild(chip);
+    wrap.append(chip, stopBtn());
   } else if (st === "compacting") {
     const c = el("span", "compacting-line");
     c.textContent = "⟳ Compacting context…";
@@ -6945,6 +6970,7 @@ function commentSendFromPop(pop: HTMLElement): void {
   if (!cur) return;
   vscodeApi.postMessage({ type: "commentReply", id: cur.sid, tid: cur.th.tid, text });
   cmtAwaitBase.set(cur.th.tid, agentCount(cur.th));   // a follow-up RE-LATCHES at its own send, until ITS reply (T102)
+  cmtInterrupted.delete(cur.th.tid);                  // a fresh send re-owes a reply — the stop tombstone retires (T138)
   cur.th.state = "working";                     // optimistic: the pulse rides the SEND, not the
   applyCommentMarks(cur.sid);                   // round-trip (the kernel's next frame confirms)
   const pl = commentPending.get(cur.th.tid) || [];
@@ -12685,6 +12711,25 @@ setupSettings();
       openCommentPopover(activeId, tid, Math.min(r.left, window.innerWidth - 380), r.bottom + 6);
     },
     cmtclose: () => closeCommentPop(),
+    // Interrupt the THREAD's own turn (T138): the sid rides the button (the thread's session),
+    // never activeId — the exact owner-scoping class queued-x/Retry were fixed for. The gesture
+    // itself ENDS the exchange with no reply record coming, so the T102 send-latch clears on THIS
+    // event (a user gesture is a sanctioned mover; waiting for a reply-completed record would hang
+    // the pulse green forever). Acknowledge instantly per the buttons rule: the chip flips to
+    // Interrupting… and the timer + button go; the next comments frame rebuilds this statusline.
+    cmtinterrupt: (elx) => {
+      const sid = (elx as HTMLElement).dataset.sid;
+      if (!sid || !vscodeApi) return;
+      vscodeApi.postMessage({ type: "interrupt", id: sid });
+      cmtAwaitBase.delete(sid);
+      cmtInterrupted.add(sid);
+      const wrap = document.getElementById("cmt-state");
+      if (wrap) {
+        const chip = el("span", "chip chip-interrupting");
+        chip.textContent = CHIP_LABEL.interrupting;
+        wrap.replaceChildren(chip);
+      }
+    },
     // a scroll-rail tick: jump the chat to the commented message (fresh navigation → one flash)
     // and open its thread beside it
     cmtjump: (elx) => {
