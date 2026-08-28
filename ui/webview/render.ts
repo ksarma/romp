@@ -6697,9 +6697,19 @@ function fillCommentMsgs(list: HTMLElement, th: CommentThread, sid: string): voi
   // render appears once. Event-based fade (the comments frame carrying events refills this list);
   // the backstop falls through to the msgs projection so a thread whose events never come (an old
   // kernel) can't trap the loader.
-  if (!evs.length && th.status === "open" && !th.error && cmtBootHolds(th.tid)) {
+  // A CONTENTLESS open thread NEVER renders blank (T152, the user 2026-08-28, live specimen: a
+  // fork of a 40MB parent took 200+ seconds to spend across kernel restarts, the 8s boot backstop
+  // expired, and the popover showed the quote floating over nothing — 'nothing shows up when I
+  // click on it'). While BOTH projections are empty on an open, error-free thread, the loader
+  // stays; past the backstop it swaps to an honest slower message (the backstop changes the LABEL,
+  // never to blank — the error and stuck branches below still take over the moment the frame says
+  // so, and any content arriving replaces this whole render, all event-keyed).
+  if (!evs.length && !th.msgs.length && th.status === "open" && !th.error) {
+    const slow = !cmtBootHolds(th.tid);
     const boot = el("div", "cmt-boot");
-    boot.appendChild(rompLoaderInner("opening the thread…", { wordmark: false }));
+    boot.appendChild(rompLoaderInner(
+      slow ? "still opening — the thread's session is taking longer than usual…" : "opening the thread…",
+      { wordmark: false }));
     list.appendChild(boot);
     if (pend.length) list.appendChild(cmtPendingQueued(pend));
     list.scrollTop = list.scrollHeight;

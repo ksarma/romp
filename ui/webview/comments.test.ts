@@ -649,3 +649,16 @@ test("the popover interrupt posts the THREAD sid, clears the send-latch on the g
   assert.match(UI, /cmtInterrupted\.delete\(cur\.th\.tid\);/);
   assert.match(body, /chip chip-interrupting/, "instant acknowledgment: the chip flips before any kernel round-trip");
 });
+
+test("a contentless open thread NEVER renders blank — the loader stays past the backstop (T152)", () => {
+  // the live specimen: a fork of a 40MB parent took 200+s to spend across kernel restarts; the 8s
+  // boot backstop expired and the popover showed the quote floating over an empty list. The
+  // backstop now swaps the loader's LABEL (an honest 'taking longer'), never to blank; error and
+  // stuck branches still take over on the frame that says so.
+  const at = UI.indexOf('if (!evs.length && !th.msgs.length && th.status === "open" && !th.error) {');
+  assert.ok(at > 0, "the never-blank guard exists, gated on BOTH projections being empty");
+  const body = UI.slice(at, UI.indexOf("return;", at));
+  assert.match(body, /const slow = !cmtBootHolds\(th\.tid\);/);
+  assert.match(body, /still opening — the thread's session is taking longer than usual…/);
+  assert.match(body, /opening the thread…/);
+});
