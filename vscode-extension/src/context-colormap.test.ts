@@ -14,7 +14,7 @@ test("the chat battery applies the server ctxColor, falling back to the traffic-
   assert.match(RENDER, /ctxColor\?: number\[\];/);   // on the Status interface
   assert.match(RENDER, /function setCtxBar\(bar: HTMLElement, ctxStr: string \| undefined, compacting = false, ctxColor\?: number\[\]\)/);
   assert.match(RENDER, /\(ctxColor && ctxColor\.length === 3\) \? `rgb\(\$\{ctxColor\.join\(","\)\}\)`/);
-  assert.match(RENDER, /pct >= 85 \? "#c0392b" : pct >= 60 \? "#e0b020" : "#54B204"/);  // fallback intact
+  assert.match(RENDER, /: ctxFallbackColor\(pct\)/);  // fallback intact, via the ONE shared pair (ctx-color.ts)
 });
 
 test("every setCtxBar caller threads s.status.ctxColor (statusline, tick, tab tooltip)", () => {
@@ -24,5 +24,5 @@ test("every setCtxBar caller threads s.status.ctxColor (statusline, tick, tab to
 
 test("the timeline lane battery applies the server ctxColor with the same fallback", () => {
   assert.match(TL, /\(s\.ctxColor && s\.ctxColor\.length === 3\) \? 'rgb\(' \+ s\.ctxColor\.join\(','\) \+ '\)'/);
-  assert.match(TL, /p >= 85 \? '#c0392b' : \(p >= 60 \? '#e0b020' : '#54B204'\)/);   // fallback intact
+  assert.match(TL, /p >= 88 \? '#c0392b' : \(p >= 70 \? '#d7a23a' : '#5196B8'\)/);   // fallback intact — mirrors ctx-color.ts (grep parity below)
 });

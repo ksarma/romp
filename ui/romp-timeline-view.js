@@ -474,8 +474,10 @@ function ctxInfo(s) {
   // The GLOBAL colormap (the user 2026-06-26): the kernel computes the fill color server-side (s.ctxColor =
   // ramp(context%) on the selected map, bright = full) so the client just applies it — same pattern as the
   // usage bar. Fall back to the old traffic-light only if an older kernel didn't ship a color.
+  // fallback thresholds/palette mirror ui/webview/ctx-color.ts (this file runs inside Obsidian
+  // too, so it can't import it; a grep test pins the pair equal)
   const color = (s.ctxColor && s.ctxColor.length === 3) ? 'rgb(' + s.ctxColor.join(',') + ')'
-    : (p >= 85 ? '#c0392b' : (p >= 60 ? '#e0b020' : '#54B204'));
+    : (p >= 88 ? '#c0392b' : (p >= 70 ? '#d7a23a' : '#5196B8'));
   return { label: p + '%', pct: p, color: color };
 }
 
@@ -1523,7 +1525,7 @@ class TimelinePanel {
       const track = b.usage.fill.parentElement;
       if (track) track.style.display = rolled ? 'none' : '';
       b.usage.fill.style.width = pct + '%';
-      b.usage.fill.style.background = pct >= 90 ? '#c0392b' : (pct >= 70 ? '#e0b020' : '#54B204');
+      b.usage.fill.style.background = pct >= 88 ? '#c0392b' : (pct >= 70 ? '#d7a23a' : '#5196B8');   // mirrors ctx-color.ts
       b.usage.txt.textContent = rolled ? '?' : pct + '%';
       // TIME through the window: 0% at the window start (resets_at − winSec), 100% at the reset. Meaningless
       // once the window has rolled — that pace would describe a window nobody is in any more.

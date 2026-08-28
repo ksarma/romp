@@ -66,12 +66,32 @@ class ModelColors(unittest.TestCase):
         self.assertIsNone(km._effort_color("turbo", self.stops))
         self.assertIsNone(km._effort_color("", self.stops))
 
-    def test_ranks_use_the_full_ramp_ends(self):
-        # the most/least capable and the extreme efforts hit the map's endpoints exactly
-        self.assertEqual(km._model_color("fable", self.stops), list(km.cm.ramp(1.0, self.stops)))
-        self.assertEqual(km._model_color("haiku", self.stops), list(km.cm.ramp(0.0, self.stops)))
-        self.assertEqual(km._effort_color("ultracode", self.stops), list(km.cm.ramp(1.0, self.stops)))   # the ladder's new top (the user 2026-08-04)
-        self.assertEqual(km._effort_color("low", self.stops), list(km.cm.ramp(0.0, self.stops)))
+    def test_ranks_use_the_tone_ramp_ends(self):
+        # the most/least capable and the extreme efforts hit THEIR OWN tone ramp's endpoints exactly
+        # (2026-08-27: models wear the orange tone, efforts the violet — no longer the recency
+        # colormap, whose full extent made fable == ultracode == 100%-context one identical purple)
+        self.assertEqual(km._model_color("fable", self.stops), list(km.cm.tone_rgb("model", 1.0)))
+        self.assertEqual(km._model_color("haiku", self.stops), list(km.cm.tone_rgb("model", 0.0)))
+        self.assertEqual(km._effort_color("ultracode", self.stops), list(km.cm.tone_rgb("effort", 1.0)))   # the ladder's top (the user 2026-08-04)
+        self.assertEqual(km._effort_color("low", self.stops), list(km.cm.tone_rgb("effort", 0.0)))
+
+    def test_tone_families_are_distinct_and_legible_on_dark(self):
+        # the three quantities may never collide again, and every sampled value must clear ~5:1
+        # on the #1e1e1e page (the WCAG floor is 4.5; the ramps are tuned above it)
+        def lum(rgb):
+            def ch(c):
+                c = c / 255.0
+                return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+            return 0.2126 * ch(rgb[0]) + 0.7152 * ch(rgb[1]) + 0.0722 * ch(rgb[2])
+        dark = (30 / 255,) * 3  # (unused placeholder to keep the helper local and obvious)
+        dark_l = lum((30, 30, 30))
+        for fam in ("model", "effort", "context"):
+            for v in (0.0, 0.5, 1.0):
+                c = km.cm.tone_rgb(fam, v)
+                ratio = (lum(c) + 0.05) / (dark_l + 0.05)
+                self.assertGreaterEqual(ratio, 4.5, "%s@%s %s" % (fam, v, c))
+        self.assertNotEqual(km.cm.tone_rgb("model", 1.0), km.cm.tone_rgb("effort", 1.0))
+        self.assertNotEqual(km.cm.tone_rgb("model", 0.0), km.cm.tone_rgb("effort", 0.0))
 
     def test_build_session_status_carries_model_and_effort_colors(self):
         src = inspect.getsource(km.build_session)

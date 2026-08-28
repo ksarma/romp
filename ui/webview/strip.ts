@@ -33,9 +33,12 @@ const WINS: Array<[string, number, string, string]> = [
   ["fable", 7 * 86400, "Fable 5", "F5"],
 ];
 
-// The rail's usage color ramp: green under 70%, amber under 90%, red at 90+.
+import { ctxFallbackColor } from "./ctx-color";
+
+// The rail's usage color: the shared context-pressure palette + the ONE threshold pair
+// (ctx-color.ts, 2026-08-27 — the bars used to say 70/90 while the ctx gauges said 60/85).
 export function usageColor(pct: number): string {
-  return pct >= 90 ? "#c0392b" : pct >= 70 ? "#e0b020" : "#54B204";
+  return ctxFallbackColor(pct);
 }
 
 export function fmtAgo(ep: number, nowS: number): string {

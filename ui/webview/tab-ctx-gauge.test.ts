@@ -34,7 +34,7 @@ test("the gauge mirrors setCtxBar: clamped %, server ctxColor, the same traffic-
   assert.match(RENDER, /function tabCtxGauge\(ctxStr: string, ctxColor\?: number\[\]\)/);
   assert.match(RENDER, /Math\.max\(0, Math\.min\(100, parseInt\(ctxStr, 10\) \|\| 0\)\)[\s\S]{0,400}fill\.style\.height = pct \+ "%"/);
   // colormap colour when the kernel ships one; setCtxBar's exact fallback ramp when it doesn't
-  assert.match(RENDER, /tabCtxGauge[\s\S]{0,600}ctxColor && ctxColor\.length === 3\) \? `rgb\(\$\{ctxColor\.join\(","\)\}\)`\s*\n\s*: \(pct >= 85 \? "#c0392b" : pct >= 60 \? "#e0b020" : "#54B204"\)/);
+  assert.match(RENDER, /tabCtxGauge[\s\S]{0,600}ctxColor && ctxColor\.length === 3\) \? `rgb\(\$\{ctxColor\.join\(","\)\}\)`\s*\n\s*: ctxFallbackColor\(pct\)/);   // the ONE shared threshold pair (ctx-color.ts, 2026-08-27)
 });
 
 test("the gauge is a slim VERTICAL bar and the strip tightened to make room for it", () => {

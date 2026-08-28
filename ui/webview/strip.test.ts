@@ -19,12 +19,13 @@ test("fmtTok: 3 significant figures at every magnitude (the user 2026-08-13)", (
   assert.equal(fmtTok(999), "999");               // below 1k the raw count already carries 3 figures
 });
 
-test("usageColor mirrors the rail's green/amber/red ramp", () => {
-  assert.equal(usageColor(0), "#54B204");
-  assert.equal(usageColor(69), "#54B204");
-  assert.equal(usageColor(70), "#e0b020");
-  assert.equal(usageColor(89), "#e0b020");
-  assert.equal(usageColor(90), "#c0392b");
+test("usageColor wears the shared context-pressure palette + the ONE threshold pair (ctx-color.ts)", () => {
+  // 2026-08-27: was a private 70/90 green/amber/red while the ctx gauges said 60/85 — one pair now
+  assert.equal(usageColor(0), "#5196B8");
+  assert.equal(usageColor(69), "#5196B8");
+  assert.equal(usageColor(70), "#d7a23a");
+  assert.equal(usageColor(87), "#d7a23a");
+  assert.equal(usageColor(88), "#c0392b");
 });
 
 test("fmtReset renders d/h/m compactly and 'soon' at rollover", () => {

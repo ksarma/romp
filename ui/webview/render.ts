@@ -13,6 +13,7 @@ import diff from "highlight.js/lib/languages/diff";
 import yaml from "highlight.js/lib/languages/yaml";
 import type { ParsedAsk } from "../ask-types";
 import { TABBAR_H_KEY, TABBAR_H_DEFAULT, clampTabbarH, parseTabbarH } from "./tabbar-resize";
+import { ctxFallbackColor } from "./ctx-color";
 import { SessionViews, viewVisible, viewsKey, revealIn, viewTagUnion, viewTags, type TagUnion, type SessionTag } from "./session-views";
 import { lensVisible, surfaceLens } from "./tag-lens";
 import { openTagMenu, tagMenuButton, syncTagFilter } from "./tag-menu";
@@ -4367,7 +4368,7 @@ function tabCtxGauge(ctxStr: string, ctxColor?: number[]): HTMLElement {
   const fill = el("span", "tab-ctx-fill");
   fill.style.height = pct + "%";
   fill.style.background = (ctxColor && ctxColor.length === 3) ? `rgb(${ctxColor.join(",")})`
-    : (pct >= 85 ? "#c0392b" : pct >= 60 ? "#e0b020" : "#54B204");
+    : ctxFallbackColor(pct);   // the ONE threshold pair (ctx-color.ts, 2026-08-27)
   g.appendChild(fill);
   g.title = `context ${pct}% used`;
   return g;
@@ -9914,7 +9915,7 @@ function setCtxBar(bar: HTMLElement, ctxStr: string | undefined, compacting = fa
   // ramp(context%) on the selected map, bright = full) so the chat battery matches the timeline + usage bars.
   // Fall back to the old traffic-light if an older kernel didn't ship a color.
   const fillBg = (ctxColor && ctxColor.length === 3) ? `rgb(${ctxColor.join(",")})`
-    : (pct >= 85 ? "#c0392b" : pct >= 60 ? "#e0b020" : "#54B204");
+    : ctxFallbackColor(pct);   // the ONE threshold pair (ctx-color.ts, 2026-08-27)
   if (fill) { fill.style.width = pct + "%"; fill.style.background = fillBg; }
   if (txt) txt.textContent = pct + "%";
   bar.title = `context ${pct}% used — click to /compact`;

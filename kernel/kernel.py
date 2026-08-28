@@ -18250,9 +18250,11 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
                   # 2026-07-02): the statusline meta buttons just apply these (mirrors ctxColor). None = default.
                   "modelColor": _model_color(tm["model"], cm.stops_for(_colormap())),
                   "effortColor": _effort_color(tm["effort"], cm.stops_for(_colormap())),
-                  # context% on the GLOBAL colormap (the user 2026-06-26): computed server-side so the chat
-                  # battery + tab tooltip just apply it (mirrors the usage bar + timeline lanes). bright = full.
-                  "ctxColor": (list(cm.ramp(tm["context"] / 100.0, cm.stops_for(_colormap())))
+                  # context% on the shared context tone (the user 2026-08-27; was the global colormap):
+                  # computed server-side so the chat battery + tab tooltip just apply it (mirrors the
+                  # usage bars + timeline lanes). Calm teal filling up; amber past CTX_WARN, red past
+                  # CTX_DANGER — one threshold pair for every gauge.
+                  "ctxColor": (list(cm.context_rgb(tm["context"]))
                                if tm["context"] is not None else None)}
     elif tmux or _has_tmux():                          # tmux usable but this session isn't running → closed
         status = {"state": "closed", "sinceEpoch": since_ms, "faded": True}
@@ -20473,13 +20475,12 @@ def _usage():
         # 2026-08-13). An empty snapshot falls through instead; every read below tolerates absence.
         o = {}
 
-    stops = cm.stops_for(_colormap())                 # the GLOBAL colormap (the user 2026-06-26) colors the used bar
     def seg(s):
         if isinstance(s, dict) and isinstance(s.get("pct"), (int, float)):
             ra = s.get("resets_at")
             pct = max(0, min(100, round(s["pct"])))
             return {"pct": pct, "resetsAt": ra if isinstance(ra, (int, float)) else None,
-                    "color": list(cm.ramp(pct / 100.0, stops))}   # used-% on the selected colormap
+                    "color": list(cm.context_rgb(pct))}   # used-% on the shared context tone (2026-08-27)
         return None
     five, seven, fable = seg(o.get("five_hour")), seg(o.get("seven_day")), seg(o.get("fable"))
     # THE LOGIN THAT PRODUCED THESE WINDOWS MUST STILL BE SIGNED IN (the user 2026-08-04, who logged
@@ -22098,8 +22099,8 @@ def build_timeline(now, tmux=None, with_bars=True, live_only=False):
             "modelColor": _model_color(tm["model"] if tm else "", ctx_stops),
             "effortColor": _effort_color(tm["effort"] if tm else "", ctx_stops),
             "context": (tm["context"] if tm else None),
-            "ctxColor": (list(cm.ramp((tm["context"] or 0) / 100.0, ctx_stops))
-                         if tm and tm["context"] is not None else None),   # context% on the GLOBAL colormap (bright = full)
+            "ctxColor": (list(cm.context_rgb(tm["context"] or 0))
+                         if tm and tm["context"] is not None else None),   # context% on the shared tone (2026-08-27)
             "subagents": ((tm.get("subagents") if tm else None) or []),   # live Task subagents (SDK) → lane pill
             "awaiting": _state_intervals(sid, _NEEDS_INPUT_STATES, now),
             "compacting": _state_intervals(sid, "compacting", now),
@@ -22736,16 +22737,20 @@ _EFFORT_RANK = dict(_ramp_ranks(EFFORT_CHOICES, ascending=True))   # low 0.0 …
 
 
 def _model_color(model, stops):
+    # `stops` is vestigial (kept so every call site + the /models route pin stay unchanged): since
+    # 2026-08-27 models wear their OWN orange tone ramp (cm.tone_rgb), not the recency colormap —
+    # the full-extent colormap made fable, ultracode and a 100%-full context the same purple.
     m = (model or "").lower()
     for word, v in _MODEL_RANK:
         if word in m:
-            return list(cm.ramp(v, stops))
+            return list(cm.tone_rgb("model", v))
     return None
 
 
 def _effort_color(effort, stops):
+    # `stops` vestigial, as above — efforts wear the violet tone ramp.
     v = _EFFORT_RANK.get((effort or "").strip().lower())
-    return list(cm.ramp(v, stops)) if v is not None else None
+    return list(cm.tone_rgb("effort", v)) if v is not None else None
 
 
 def _set_colormap(name):
