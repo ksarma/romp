@@ -4369,7 +4369,7 @@ def rollup_status(store, session_closed, now=None):
     store["confirming"] = confirming
 
 
-def _sync_declared_plan(store, session, seg_id, seg_t, prompt_uuid=None):
+def _sync_declared_plan(store, session, seg_id, seg_t, prompt_uuid=None, ctx=None):
     """DETERMINISTIC (no LLM): mirror the agent's live to-do list (Claude Code's Task tool) into the goal
     graph as `agentTask:{key,status}` nodes — the authoritative tier rollup_status honors.
     `prompt_uuid` (the user 2026-07-11): the syncing segment's trigger uuid, stamped on every node
@@ -4390,7 +4390,20 @@ def _sync_declared_plan(store, session, seg_id, seg_t, prompt_uuid=None):
     record fell off the transcript's live chain (an api-error retry fork orphaned the completing update
     for a mirror that then stayed phantom-open and re-minted after every clear — g204, 2026-07-09).
     The fold remains only for a session with NO store dir; a store that exists but can't be read skips
-    the sync loudly (judge-errors row) instead of silently degrading to the lossy fold (repo policy)."""
+    the sync loudly (judge-errors row) instead of silently degrading to the lossy fold (repo policy).
+
+    `ctx` (the user 2026-08-28, T137: the mirror joins the ask-unit principle) — a lazy callable
+    returning (serving, user_ask), resolved once per pass and only when a mint needs it:
+    a step declared while the session serves a linked dispatch is that dispatch's fan-out, not a
+    standalone ask — the mint stamps the caller-resolved `serving` ref ({peer, msgId, goalId}, a
+    DISTINCT field from origin/links, which carry run_propagate's complete-the-tracker semantics)
+    plus the dispatch's frame and root-ask record so the prose writers anchor; the feed folds a
+    serving-marked top into the ask card at render (view-side join — the mirror stays in THIS
+    store, where plan-sync completion, nudge freshness, and clears all live). A dispatch-less
+    declaration threads the session's own prompt-chain record as `user_ask` instead. Both are
+    LATCHED at mint, never re-derived (cards move on new information, not on inference flaps);
+    the one-shot arm below back-fills existing OPEN un-stamped mirrors ONCE, resolving the same
+    event as-of each mirror's own declaring segment."""
     try:
         plan = em.task_store_plan(session.get("leafFsid") or "")
     except OSError as e:
@@ -4475,13 +4488,58 @@ def _sync_declared_plan(store, session, seg_id, seg_t, prompt_uuid=None):
             continue
         store["seq"] = store.get("seq", 0) + 1
         nid = "%s:g%d" % (store["rompUuid"], store["seq"])
-        nodes[nid] = GuardedNode({"id": nid, "text": it["text"] or it.get("activeForm") or "(declared step)",
-                      "parentId": None, "nodeComplete": False, "blocked": False, "cleared": False,
-                      "trail": [seg_id] if seg_id else [], "promptUuid": prompt_uuid, "t": seg_t, "mt": seg_t,
-                      "why": "declared in the agent's own to-do list",
-                      "agentTask": {"key": key, "status": "open", "raw": it["status"]}, "agentBornOpen": True, "log": []})
+        payload = {"id": nid, "text": it["text"] or it.get("activeForm") or "(declared step)",
+                   "parentId": None, "nodeComplete": False, "blocked": False, "cleared": False,
+                   "trail": [seg_id] if seg_id else [], "promptUuid": prompt_uuid, "t": seg_t, "mt": seg_t,
+                   "why": "declared in the agent's own to-do list",
+                   "agentTask": {"key": key, "status": "open", "raw": it["status"]}, "agentBornOpen": True,
+                   "servingT": seg_t, "log": []}
+        serving, user_ask = ctx() if ctx else (None, None)
+        if isinstance(serving, dict) and serving.get("msgId"):
+            payload["serving"] = dict(serving)
+            fr = _postal_body_head(serving["msgId"])
+            if fr:
+                payload["frame"] = fr
+        if isinstance(user_ask, dict) and str(user_ask.get("text") or "").strip():
+            payload["userAsk"] = {"text": _ask_head(str(user_ask["text"])), "sid": user_ask.get("sid"),
+                                  **({"host": user_ask["host"]} if user_ask.get("host") else {})}
+        nodes[nid] = GuardedNode(payload)
         key_nodes[key] = [nid]
         changed = True
+
+    # ONE-SHOT BACK-FILL (T137's deploy arm, the dissolution precedent): an OPEN mirror minted
+    # before the stamp existed resolves the SAME event as-of its OWN declaring segment (trail[0]
+    # position, not the current pass's — resolving as-of-now would re-attribute old steps to
+    # whatever dispatch arrived since). Latched by servingT whether or not anything resolves: a
+    # mirror whose transcript no longer holds its segment stays standalone forever rather than
+    # flapping between attributions.
+    for key, nids in list(key_nodes.items()):
+        for nid in nids:
+            nd = nodes.get(nid)
+            if (not isinstance(nd, dict) or nd.get("servingT")
+                    or (nd.get("agentTask") or {}).get("status") != "open"):
+                continue
+            nd["servingT"] = seg_t
+            changed = True
+            decl = (nd.get("trail") or [None])[0]
+            serv = _serving_dispatch(session, store, store.get("rompUuid") or "", decl) if decl else None
+            if not serv:
+                continue
+            serv = _serving_ref(serv)
+            nd["serving"] = serv
+            if not nd.get("frame"):
+                fr = _postal_body_head(serv["msgId"])
+                if fr:
+                    nd["frame"] = fr
+            if not nd.get("userAsk") and serv.get("goalId"):
+                try:
+                    paths = {f: str(p) for f, p, _a, _nm in discover(int(seg_t))}
+                    rec = _delegate_user_rooted(serv["peer"], serv["goalId"], paths, int(seg_t))
+                    if isinstance(rec, dict):
+                        nd["userAsk"] = {"text": _ask_head(str(rec["text"])), "sid": rec.get("sid"),
+                                         **({"host": rec["host"]} if rec.get("host") else {})}
+                except Exception:
+                    pass
 
     # 3) BACKSTOP (the user 2026-07-21): an OPEN to-do link belongs on a LEAF the card can render, never
     # on a CONTAINER that is not itself a to-do row — the root goal or an umbrella, whose done sub-goals
@@ -6834,6 +6892,36 @@ def _queued_sibling(store, seg_by_id, seg_id):
     return None
 
 
+def _mirror_mint_ctx(session, store, fsid, path, latest_seg, now):
+    """The lazy (serving, user_ask) resolver for mirror mints (T137) — memoized, so the transcript
+    walk, the sender-store join, and the chain walk run at most once per pass, and only on a pass
+    that actually mints. serving present → user_ask is the DISPATCH chain's root (the sender
+    tracker walked on this kernel; cross-host trackers degrade to None and the mirror anchors on
+    nothing rather than a guess). No dispatch → the session's own prompt-chain record when the
+    vetted anchor is a human prompt (autonomous declarations anchor on nothing — honest)."""
+    memo = {}
+
+    def ctx():
+        if "v" in memo:
+            return memo["v"]
+        serv = _serving_dispatch(session, store, fsid, (latest_seg or {}).get("id")) if latest_seg else None
+        serv = _serving_ref(serv) if serv else None
+        ua = None
+        if serv and serv.get("goalId"):
+            try:
+                paths = {f: str(p) for f, p, _a, _nm in discover(now)}
+                rec = _delegate_user_rooted(serv["peer"], serv["goalId"], paths, now)
+                ua = rec if isinstance(rec, dict) else None
+            except Exception:
+                ua = None
+        elif not serv and latest_seg is not None:
+            anch = _mint_anchor_uuid(latest_seg)
+            ua = _session_user_prompt_record(fsid, path, anch, now) if anch else None
+        memo["v"] = (serv, ua)
+        return memo["v"]
+    return ctx
+
+
 def _plan_session(fsid, path, now):
     """Advance ONE session's goal tree: place its un-placed planner UNITS oldest-first (each sees the prior
     tree's open menu) and GROUP after every placement (the user 2026-06-17: planner + grouper are both
@@ -7310,7 +7398,8 @@ def _plan_session(fsid, path, now):
         _log_judge_error("planner", fsid, "rewind-stand-down",
                          note="plan-sync skipped this pass: the latest segment was rewound away mid-pass")
     elif _sync_declared_plan(store, session, (latest_seg or {}).get("id"), (latest_seg or {}).get("t") or now,
-                             prompt_uuid=_mint_anchor_uuid(latest_seg) if latest_seg else None):
+                             prompt_uuid=_mint_anchor_uuid(latest_seg) if latest_seg else None,
+                             ctx=_mirror_mint_ctx(session, store, fsid, path, latest_seg, now)):
         # ^ the VETTED anchor, not the raw trigger (the user 2026-08-25, the audited g-specimen): the
         #   mirror stamps its promptUuid off whatever segment happens to be syncing, and when that
         #   segment was opened by a coordinate/question mail or a romp notice, the raw trigger made
@@ -10313,7 +10402,7 @@ def _deleg_frame(store, nid):
     stores are not ours to read), and for pre-fix nodes minted before the frame existed (they
     re-distill unchanged — absent frame is byte-identical to today)."""
     nd = store.get("nodes", {}).get(nid) or {}
-    o = nd.get("origin")
+    o = nd.get("origin") or nd.get("serving")          # a serving mirror's dispatch frames it (T137)
     if not isinstance(o, dict) or not o.get("peer") or not nd.get("frame"):
         return ""                                      # no mint-time frame → BYTE-IDENTICAL to today,
         #                                                including pre-fix delegated nodes re-distilling
@@ -11456,6 +11545,55 @@ def _attach_courier_link(store, seg_id, mid):
     nodes[top].setdefault("links", []).append({"peer": peer_sid, "goalId": peer_gid, "msgId": mid})
     save_goals(store["rompUuid"], store)
     return True
+
+
+def _serving_dispatch(session, store, fsid, upto_seg_id):
+    """The dispatch this session is SERVING at a given segment (the user 2026-08-28, T137): the
+    newest delegate-kind peer segment at or before `upto_seg_id` in TRANSCRIPT ORDER (segment
+    start times shift when a states-overlay atom lands before the trigger, so parse position is
+    the stable order), within the current episode. Returns {"peer", "msgId"} or None — the same
+    discriminator pair the courier files dispatches by (_seg_peer + _seg_peer_kind), read from the
+    delivered trigger record, never from placements (a linked dispatch leaves only an
+    indistinguishable 'fyi' there). Multi-dispatch honesty: newest-at-or-before misattributes only
+    when the agent declares steps for an OLDER dispatch after a newer one arrived — no event can
+    distinguish that without content heuristics, and the miss is bounded to a sibling dispatch."""
+    floor = episode_floor(fsid)
+    last = None
+    for turn in session.get("turns") or []:
+        for sg in _segs(turn, store):
+            if not (floor and (sg.get("t") or 0) < floor):
+                pm = _seg_peer(sg)
+                if pm and pm[0] and pm[1] and _seg_peer_kind(sg) == "delegate":
+                    last = {"peer": pm[0], "msgId": pm[1]}
+            if sg.get("id") == upto_seg_id:
+                return last
+    return None                                        # the declaring segment is not in this parse →
+    #                                                    no confident attribution (a newest-overall
+    #                                                    fallback would re-attribute a gone-segment
+    #                                                    mirror to whatever dispatch arrived since)
+
+
+def _serving_ref(serving):
+    """Complete a {"peer","msgId"} serving pair with the SENDER's tracking-node id (goalId) — a
+    read-only join on handoff.msgId in the sender's own store, the durable record the plant wrote
+    at dispatch time. Deliberately NOT _handoff_backref: that helper filters complete trackers
+    out, and a serving mirror's tracker is COMMONLY complete already (a quiet tracker ends on any
+    reply, so a worker that acked its dispatch closed it while still serving). Returns the ref
+    with goalId (or None when the sender's store no longer holds the tracker — cross-host, or
+    archived away) — a distinct field from origin/links ON PURPOSE: those carry run_propagate's
+    complete-the-tracker semantics, and a per-step mirror completing must never check off the
+    whole dispatch."""
+    ref = dict(serving)
+    ref["goalId"] = None
+    try:
+        for nid, nd in load_goals(serving["peer"]).get("nodes", {}).items():
+            h = nd.get("handoff")
+            if isinstance(h, dict) and h.get("msgId") == serving["msgId"]:
+                ref["goalId"] = nid
+                break
+    except Exception:
+        pass
+    return ref
 
 
 def _handoff_backref(mid):

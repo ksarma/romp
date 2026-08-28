@@ -19424,6 +19424,7 @@ def build_feed(now, tmux=None):
     # Zero cost when off: no rows read, no key emitted.
     dbg_rows = _judge_error_rows(now) if jd._debug_mode() else None
     asks, working, awaiting = [], [], []
+    serving_folds = []                                # T137: worker mirror cards awaiting the view-side fold
     bg_services = {}          # session name -> live SERVICE descs (judge-classified, _bg_split) → the neutral chip
     alive = _alive_sessions(now, tmux)               # hard filter: living sessions only
     wmap = _wait_for_graph(now, {s["sid"] for s in alive})   # per-session 'waiting on a live peer' (the user 2026-06-22)
@@ -20162,7 +20163,7 @@ def build_feed(now, tmux=None):
                 # serve the distiller's stored citation raw — the chat's own landing handles a bad uuid
                 # honestly, and the validated tiers take back over on the first warm push.
                 _sa_u = _cited
-            asks.append({
+            card = {
                 "itemId": nid, "sid": fsid, "name": name, "color": color, "text": card_text,
                 "t": disp_t, "live": live,
                 "trgb": list(cm.age_rgb(now - disp_t, _colormap())),
@@ -20262,7 +20263,22 @@ def build_feed(now, tmux=None):
                 "warnRows": (_card_warn_rows(dbg_rows, fsid, set(_subtree(nid)),
                                              store.get("placements") or {}) or None)
                             if dbg_rows is not None else None,   # debug mode only: the card's judge failures, modal "Warnings" section
-                "tree": flatten(nid, [], boundary=jd.review_boundary(nodes[nid]))})
+                "tree": flatten(nid, [], boundary=jd.review_boundary(nodes[nid]))}
+            # THE SERVING FOLD, candidate side (the user 2026-08-28, T137: fan-out lives inside the
+            # ask card — the T101 ruling applied to the mirror, view-side): a to-do mirror top the
+            # sync stamped as SERVING a dispatch folds into the sender's ask card instead of
+            # standing alone on the board. Candidate only — the fold commits in the post-pass IFF
+            # the sender's tracker row actually rendered this build (never orphan rows into an
+            # unrendered card; the candidate falls back to its own card). NEEDS-YOU BREAKS THROUGH:
+            # a serving mirror folds ONLY from the quiet columns (working/completed) — any
+            # needs-input state stands on the board like any needs-you card until it lifts, the
+            # store-independent breakthrough rule.
+            _srv = nodes[nid].get("serving")
+            if (isinstance(_srv, dict) and _srv.get("goalId")
+                    and column in ("working", "completed")):
+                serving_folds.append({"tracker": _srv["goalId"], "card": card})
+            else:
+                asks.append(card)
         # A session actively working a brand-new ask shows NO card until the planner classifies the held
         # segment at turn-end — surface a live-prompt placeholder so it isn't invisible. Only when nothing
         # already covers it (no working card); replaced by the real card once the planner places it.
@@ -20297,6 +20313,28 @@ def build_feed(now, tmux=None):
                 # hit ("there's no card there"). Ephemeral: gone the moment sess_awaiting_why clears.
                 asks.append(_awaiting_card(s, name, color, fsid, live, now, sess_awaiting_why,
                                            kind=sess_awaiting_kind, since=sess_awaiting_since))
+    # THE SERVING FOLD, commit side (T137): join each candidate's rows under its dispatch's
+    # tracker row — a read-only render-time join across stores (the node itself stays in the
+    # WORKER's store, where plan-sync completion, nudge freshness, and clears live; node ids are
+    # globally unique, so the tracker id is the whole key). A candidate whose tracker row is not
+    # on this build's board keeps its own card — suppression without a rendered home would
+    # silently hide live work.
+    if serving_folds:
+        _byrow = {}
+        for _c in asks:
+            for _r in _c.get("tree") or []:
+                if _r.get("kind") == "handoff":
+                    _byrow[_r["id"]] = (_c, _r)
+        for _f in serving_folds:
+            _hit = _byrow.get(_f["tracker"])
+            if not _hit:
+                asks.append(_f["card"])
+                continue
+            _c, _r = _hit
+            _rows = _f["card"].get("tree") or []
+            if _rows:
+                _r.setdefault("children", []).append(_rows[0]["id"])
+                _c["tree"].extend(_rows)
     if cold_parse:
         _warm_fleet_bg(now)                          # a living session wasn't parsed yet → warm it + re-push (dots/anchors)
     # NO caption stream. The feed's cards are TOP-LEVEL GOALS ONLY (read-side.md: Inbox = goal cards;
