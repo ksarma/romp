@@ -3477,7 +3477,11 @@ class SdkBackend:
             sessions = list(self.sessions.values())
         # the identities of the turns this drain is about to cut — the restart-cut ledger's rows
         # (T121: the drain's effect is measured by what still gets cut; sid-keyed like spend)
-        cut = [{"sid": s.sid, "name": s.name} for s in sessions if s.inflight and not s.ended]
+        # EVERY session with an in-flight turn is a cut — including one already flagged `ended`
+        # (mid-shutdown with a live turn: its CLI is reaped below all the same). The old
+        # `and not s.ended` clause was a FILTER where a join was meant (T143: romp_cards counted 10
+        # transcript-verified cuts against 7 ledger rows — the missing three were mid-shutdown).
+        cut = [{"sid": s.sid, "name": s.name} for s in sessions if s.inflight]
         inflight = len(cut)
         for s in sessions:
             try:
@@ -3486,8 +3490,11 @@ class SdkBackend:
                 self._log("drain: shutdown failed for %s: %s" % (s.name, e))
         deadline = time.time() + timeout
         for s in sessions:
-            s.thread.join(max(0.05, deadline - time.time()))
-        unjoined = [s for s in sessions if s.thread.is_alive()]
+            if s.thread is not None:   # a constructed-but-never-started session has no thread —
+                #   joining None raised here and the WHOLE drain died recordless (T143: 2 of 18
+                #   restarts lost their ledger rows to exactly this)
+                s.thread.join(max(0.05, deadline - time.time()))
+        unjoined = [s for s in sessions if s.thread is not None and s.thread.is_alive()]
         reaped = []
         for s in unjoined:
             try:

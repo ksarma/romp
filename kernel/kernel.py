@@ -10744,12 +10744,25 @@ def _poll_remote_views(r):
 # USAGE_POLL precedent): modest cadence, a touch slower while checks visibly run. Terminal means
 # MERGED, CLOSED, or a FAILED check — both ends of the standing watcher rule — and a gh failure is
 # LOUD: three consecutive errors deliver a failure notice and retire the watch, never a silent dead
-# loop the worker discovers hours later.
+# loop the worker discovers hours later. (A FAILED CHECK stopped being terminal in T143: it mails
+# the owner once and HOLDS — see the stalled-failure escalation block below.)
 
 PR_WATCH_FILE = jd.STATE / "pr-watches.json"
 PR_WATCH_EVERY = 60          # the base poll cadence (seconds)
 PR_WATCH_BUSY_EVERY = 90     # …relaxed while checks are visibly still running
 PR_WATCH_MAX_FAILS = 3       # consecutive gh failures before the loud retire
+# STALLED-FAILURE ESCALATION (T143, the ~6h invisible-ask specimen: the worker's failure notice
+# landed in a session a restart had killed, and the USER discovered the stalled PR). A FAILED check
+# no longer retires the watch: the failure mail goes to the owner as before, but the watch HOLDS
+# and keeps polling — resolution is EVENT-keyed (checks re-running clears the held state; merged/
+# closed ends the watch normally). Only the gap with no event — nobody acted — takes the bounded
+# check-back: held-failed past PR_WATCH_ESCALATE_S with the failure still standing, ONE mail to the
+# escalation target. The target is NAMED, never inferred (the kernel cannot trace a PR to a user
+# ask): per-watch (`romp watch-pr --escalate <session>`) or the box default
+# (STATE/watch-escalate.json {"name": ...}); unset = no ping, no false alarms for non-user work.
+# failedAt/escalated PERSIST with the row — the specimen window held ~21 restarts, and a clock that
+# reset on each would never fire.
+PR_WATCH_ESCALATE_S = 2 * 3600
 _pr_watches = []             # [{pr, repo, sid, at} + runtime {_next, _fails, _busy}]
 _pr_watch_lock = threading.Lock()
 
@@ -10771,23 +10784,29 @@ def _pr_watches_load():
 
 def _pr_watches_save():
     with _pr_watch_lock:
-        rows = [{k: r[k] for k in ("pr", "repo", "sid", "at")} for r in _pr_watches]
+        rows = [{k: r[k] for k in ("pr", "repo", "sid", "at", "escalate", "failedAt", "escalated")
+                 if k in r} for r in _pr_watches]
     try:
         _atomic_write(PR_WATCH_FILE, json.dumps(rows))
     except Exception:
         sys.stderr.write("pr-watches save: %s\n" % traceback.format_exc())
 
 
-def add_pr_watch(pr, repo, sid, now=None):
+def add_pr_watch(pr, repo, sid, now=None, escalate=""):
     """Register (idempotently) a landing watch: one mail to `sid` when repo#pr reaches a terminal
-    state. Returns the row."""
+    state. `escalate` names the session pinged if a FAILED check sits unresolved past the bound
+    (T143 — the delegating manager registers itself; the kernel infers nothing). Returns the row."""
     pr, repo, sid = int(pr), str(repo).strip(), str(sid).strip()
     with _pr_watch_lock:
         for r in _pr_watches:
             if r["pr"] == pr and r["repo"] == repo and r["sid"] == sid:
+                if escalate and not r.get("escalate"):
+                    r["escalate"] = str(escalate).strip()
                 return {k: r[k] for k in ("pr", "repo", "sid", "at")}
         row = {"pr": pr, "repo": repo, "sid": sid, "at": int(now if now is not None else time.time()),
                "_next": 0, "_fails": 0, "_busy": False}
+        if escalate:
+            row["escalate"] = str(escalate).strip()
         _pr_watches.append(row)
     _pr_watches_save()
     return {k: row[k] for k in ("pr", "repo", "sid", "at")}
@@ -10840,6 +10859,28 @@ def _pr_watch_notice(verdict, repo, pr, detail=""):
     return body + "\n\n<!-- romp-injected --><!-- romp-system --><!-- romp-tag: pr-watch -->"
 
 
+def _watch_escalate_default():
+    """The box-default escalation target (STATE/watch-escalate.json {"name": ...}) — set once by
+    the managing session; absent = no default, no pings (the kernel never guesses a manager)."""
+    try:
+        d = json.loads((jd.STATE / "watch-escalate.json").read_text())
+        return str(d.get("name") or "").strip() if isinstance(d, dict) else ""
+    except Exception:
+        return ""
+
+
+def _pr_watch_stalled_notice(r, now):
+    """The ONE escalation mail (T143): a watched PR has sat failed past the bound — the owner was
+    mailed when it failed, and nothing has moved since. The [romp] mechanics family; PURE for the
+    voice test."""
+    hours = max(1, int((now - int(r.get("failedAt") or now)) // 3600))
+    return ("[romp] A pull request romp is watching has sat with a FAILED check for ~%dh with no "
+            "movement: %s#%s (the session that registered the watch, %s, was told when it failed). "
+            "It will not land on its own — someone needs to pick it up."
+            % (hours, r["repo"], r["pr"], r.get("sid", "?")[:8])
+            + "\n\n<!-- romp-tag: pr-watch -->")
+
+
 def _pr_watch_read(pr, repo):
     """One gh read → (verdict, detail) or ("error", why). Subprocess, bounded."""
     try:
@@ -10882,7 +10923,31 @@ def _pr_watch_tick(now):
             continue
         r["_fails"] = 0
         if verdict is None:
+            if r.get("failedAt"):
+                # the failure RESOLVED by event (checks re-running / a new push) — the held state
+                # clears and the watch continues normally; no clock involved (T143)
+                r.pop("failedAt", None)
+                r.pop("escalated", None)
+                _pr_watches_save()
             r["_next"] = now + (PR_WATCH_BUSY_EVERY if detail == "busy" else PR_WATCH_EVERY)
+            continue
+        if verdict == "failed":
+            # a failed check HOLDS the watch instead of retiring it (T143: the one failure mail
+            # died with a restarted worker and the PR sat invisible ~6h): the owner is mailed once,
+            # the row keeps polling for the resolution events, and ONLY the no-event gap — nobody
+            # acted — takes the bounded escalation to the NAMED target.
+            if not r.get("failedAt"):
+                r["failedAt"] = int(now)
+                _pr_watches_save()
+                _pr_watch_deliver(r["sid"], _pr_watch_notice(verdict, r["repo"], r["pr"], detail))
+            elif (not r.get("escalated")) and now - int(r["failedAt"]) >= PR_WATCH_ESCALATE_S:
+                target = str(r.get("escalate") or _watch_escalate_default() or "").strip()
+                tsid = _sid_of(target) if target else ""
+                if tsid:
+                    r["escalated"] = True
+                    _pr_watches_save()
+                    _pr_watch_deliver(tsid, _pr_watch_stalled_notice(r, now))
+            r["_next"] = now + PR_WATCH_EVERY
             continue
         _pr_watch_deliver(r["sid"], _pr_watch_notice(verdict, r["repo"], r["pr"], detail))
         done.append(r)
@@ -11847,9 +11912,9 @@ def _restart_cut_row(drain_res, watches_armed=0, audit_reason="", now=None):
     """One ledger row per restart — what THIS restart cut (T121: the drain's effect is measurable
     only if every restart writes its row, so a clean drain's row with an empty cutTurns list is the
     success metric, not noise). cutTurns names the sessions whose in-flight turns the drain
-    interrupted (sid-keyed, rename-proof); watchesArmed counts the PERSISTED kernel watches at cut
-    time — those SURVIVE by construction (pr-watches.json + the generic store re-arm at boot) and
-    ride along as context. In-session background watchers and Claude-side workflows are INVISIBLE
+    interrupted (sid-keyed, rename-proof); watchesArmed counts BOTH persisted watch stores
+    (pr-watches.json + watches.json — T143: the count covered only PR watches while the claim said
+    all) — those SURVIVE by construction and ride along as context. In-session background watchers and Claude-side workflows are INVISIBLE
     to the kernel and cannot be counted here — moving waits into the kernel watch primitive is what
     makes them survivable AND countable. NOTE on the false interrupted-by-user transcript stamps:
     those records are written by the CLI into its own transcript when the SDK client closes
@@ -29094,7 +29159,8 @@ class Handler(BaseHTTPRequestHandler):
                 if not tsid:
                     return self._send(200, json.dumps({"ok": False, "error":
                         'no session answers to "%s"' % who}), "application/json")
-                row = add_pr_watch(prn, repo, tsid)
+                esc = str(b.get("escalate") or "").strip()
+                row = add_pr_watch(prn, repo, tsid, escalate=esc)
                 return self._send(200, json.dumps({"ok": True, "watch": row}), "application/json")
             if u.path == "/watch":
                 # Register a GENERIC predicate watch (T121 part 2): the kernel runs `cmd` on a
@@ -30606,20 +30672,28 @@ def _graceful_term(signum, frame):
     mutation, and a cut turn keeps its 'working' state tail — the NEXT kernel's boot reconcile
     resumes exactly those. Bounded (~2s) so `romp refresh` stays snappy. Never construct the
     backend here — no SDK sessions were running if it doesn't exist."""
+    res = {}
+    err = ""
     try:
         sys.stderr.write("romp-kernel: SIGTERM — draining SDK sessions\n")
         be = _sdk_backend or None
-        res = {}
         if be is not None and hasattr(be, "drain"):
             res = be.drain(2.0)
-        # the restart-cut ledger (T121): one row per restart, empty cutTurns included — a clean
-        # drain's row IS the metric. Written after the drain (the cutter knows what it cut) and
-        # before exit; best-effort like the audit.
-        _append_restart_cut(_restart_cut_row(res, watches_armed=len(_pr_watches),
-                                             audit_reason=_recent_restart_reason()))
     except Exception:
-        sys.stderr.write("romp-kernel: drain failed: %s\n" % traceback.format_exc())
+        # log-and-record, never die recordless (T143: a raising drain lost 2 of 18 restarts' rows)
+        err = traceback.format_exc()
+        sys.stderr.write("romp-kernel: drain failed: %s\n" % err)
     finally:
+        # the restart-cut ledger (T121): one row per restart, ALWAYS — an empty cutTurns row is the
+        # clean-drain metric, and a drain that errored writes what it knew plus the error (T143).
+        try:
+            row = _restart_cut_row(res, watches_armed=len(_pr_watches) + len(_watches),
+                                   audit_reason=_recent_restart_reason())
+            if err:
+                row["drainError"] = err.strip().splitlines()[-1][:200]
+            _append_restart_cut(row)
+        except Exception:
+            sys.stderr.write("romp-kernel: cut ledger failed: %s\n" % traceback.format_exc())
         os._exit(0)
 
 

@@ -408,6 +408,28 @@ class Drain(unittest.TestCase):
                          "drain writes no idle/waiting — the trailing 'working' IS the boot "
                          "reconcile's resume marker")
 
+    def test_drain_counts_mid_shutdown_cuts_and_survives_threadless_sessions(self):
+        # T143's two ledger undercounts, executed: an `ended` session with a live in-flight turn IS
+        # a cut (10 transcript-verified cuts vs 7 rows — the old filter dropped mid-shutdown ones),
+        # and a constructed-but-never-started session (thread None) crashed the WHOLE drain
+        # recordless on 2 of 18 restarts.
+        d = tempfile.mkdtemp()
+        be = _backend(d)
+        s1 = sb.SdkSession(be, _reg(d, "11111111-aaaa-0000-0000-0000000000c1"))
+        s1.inflight = 1
+        s1.ended = True                                   # mid-shutdown, turn still live
+        s1.thread = threading.Thread(target=lambda: None, daemon=True)
+        s1.thread.start()
+        s2 = sb.SdkSession(be, _reg(d, "11111111-aaaa-0000-0000-0000000000c2"))
+        s2.inflight = 1                                   # constructed, never started: thread is None
+        s2.thread = None
+        be.sessions[s1.sid] = s1
+        be.sessions[s2.sid] = s2
+        r = be.drain(0.2)
+        cut_sids = sorted(c["sid"] for c in r["cutTurns"])
+        self.assertEqual(cut_sids, [s1.sid, s2.sid],
+                         "both cuts recorded — ended included, threadless included, no crash")
+
     def test_drain_with_nothing_running_is_a_quiet_noop(self):
         be = _backend()
         self.assertEqual(be.drain(0.1), {"stopped": 0, "inflight": 0, "unjoined": 0, "reaped": 0,
