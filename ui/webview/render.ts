@@ -4634,6 +4634,42 @@ function renderTabs() {
       postViews(nv);
     });
   }
+  // T161 (the user 2026-08-28, Android: no tag control on mobile): the phone chat page hides the whole
+  // #tabs strip — and the mount above with it. The kernel's mobile header carries an empty #mtag-slot
+  // (left of +); mount the SAME shared button + chips into it ONCE — the slot is kernel-built and never
+  // rebuilt, so the ensure-once mount is click-safe by construction — and re-sync it every render like
+  // the desktop pair. Same chat lens, same house menu, same echo dismissal: one vocabulary, no copy.
+  // Absent slot (VS Code webview, desktop-only pages) → no-op; on the desktop kernel page the slot
+  // hides with #mhdr. The touch padding is set inline because the shared button styles inline by design.
+  const mslot = document.getElementById("mtag-slot");
+  if (mslot) {
+    if (!mslot.firstChild) {
+      const mBtn = tagMenuButton("filter sessions by tag", (btn) => {
+        openTagMenu(btn, {
+          lens: () => surfaceLens(effViews(), "chat"),
+          unions: () => viewTagUnion(effViews()),
+          onApply: (l) => {
+            const mv = JSON.parse(JSON.stringify(effViews() || { active: "all", tags: [] }));
+            mv.actives = Object.assign({}, mv.actives, { chat: l });
+            postViews(mv);
+          },
+          onConfigure: () => { vscodeApi?.postMessage({ type: "openTagsDialog" }); },
+        });
+      });
+      mBtn.classList.add("tab-tagfilter");
+      mBtn.style.padding = "8px 9px";   // the coarse-pointer target: ~32px tall, the header row's own scale
+      const mChips = el("span", "tab-tagchips");
+      mChips.setAttribute("style", "display:inline-flex;gap:5px;align-items:center;margin-left:2px;");
+      mslot.append(mBtn, mChips);
+    }
+    const mv2 = effViews();
+    syncTagFilter(mslot.children[0] as HTMLElement, mslot.children[1] as HTMLElement,
+      surfaceLens(mv2, "chat"), viewTagUnion(mv2), (l) => {
+        const nv = JSON.parse(JSON.stringify(mv2 || { active: "all", tags: [] }));
+        nv.actives = Object.assign({}, nv.actives, { chat: l });
+        postViews(nv);
+      });
+  }
   paintTabRowLines(bar);
   ensureTabRowObserver(bar);
   // Restore tab-mode focus if a tab held it before this rebuild (see the top of renderTabs).
