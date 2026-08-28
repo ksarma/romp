@@ -1046,6 +1046,21 @@ def find_session_cli(ps_lines: list[str], sids: list[str], parent_pid: int) -> i
     return None
 
 
+def recurring_crons(reg):
+    """The RECURRING entries of a reg's armed-timer set (sessionCrons) — THE shared predicate for
+    "this session needs a live CLI process", read by BOTH conserve_idle (refuses to close on it) and
+    ensure_scheduled (revives on it), so the two sides can never drift (the T148/769 seam, refined
+    2026-08-28 with the 769 author: recurring-only). One-shots are deliberately excluded on both
+    sides: a THREADLESS session's one-shot belongs to a dead process generation — a fresh CLI cannot
+    re-hydrate a lost wakeup (verified live 2026-08-28), so pinning or reviving a process buys the
+    wakeup nothing; deliver_lost_wakeups owns dead-generation one-shots outright and delivers the
+    prompt itself at due, which revives a dormant session through the normal send path. Recurring
+    entries have no such catch-up: their live CLI is the only scheduler, so they pin the process.
+    Reads the entry's `recurring` field, never the cron string's shape — toolhook-minted one-shots
+    carry an empty cron string."""
+    return [c for c in (reg.get("sessionCrons") or []) if isinstance(c, dict) and c.get("recurring")]
+
+
 def wakeup_due_epoch(cron: str, armed_t: float) -> "float | None":
     """The due moment of a ONE-SHOT wakeup cron ("<min> <hour> * * *", the shape ScheduleWakeup mints
     from delaySeconds, local time) — the first occurrence of H:M at/after the arm record. Any other
@@ -4966,11 +4981,15 @@ class SdkBackend:
 
     def conserve_idle(self, sid: str) -> bool:
         """Whether this session is safe to conserve-close: no in-flight turn, nothing queued,
-        no ask parked (T148 — never close work) — and NO ARMED SESSION TIMERS (the T148/769 seam:
-        a timer-armed session's CLI process IS its scheduler, and ensure_scheduled revives any
-        timer-armed session with no thread every producer pass — closing one here would be a
-        close/revive loop, one respawn per sweep, forever. The timer set living in the reg is the
-        same record ensure_scheduled reads, so the two sides can never disagree)."""
+        no ask parked (T148 — never close work) — and no armed RECURRING timers (the T148/769
+        seam: a recurring cron's CLI process is its only scheduler, no catch-up exists, and
+        ensure_scheduled revives any recurring-armed session with no thread every producer pass —
+        closing one here would be a close/revive loop, one respawn per sweep, forever). One-shot
+        wakeups do NOT hold the close (refined 2026-08-28 with the 769 author): the entry's
+        absolute dueEpoch + arming-generation stamp make the close safe — the dead generation
+        hands the wakeup to deliver_lost_wakeups, which delivers the prompt at due and revives
+        the session then. Both this guard and ensure_scheduled read recurring_crons(reg), the
+        same predicate over the same record, so the two sides can never disagree."""
         with self._lock:
             s = self.sessions.get(sid)
         if not s or s.ended:
@@ -4978,7 +4997,7 @@ class SdkBackend:
         if s.inflight or s.pending() or s._cur_ask_fut is not None:
             return False
         reg = read_reg(self.state_dir, sid) or {}
-        if reg.get("sessionCrons"):
+        if recurring_crons(reg):
             return False
         return True
 
@@ -5378,7 +5397,12 @@ class SdkBackend:
         for reg in list_regs(self.state_dir):
             if not reg.get("alive") or reg.get("threadOf"):
                 continue
-            if not reg.get("sessionCrons"):
+            rec = recurring_crons(reg)
+            if not rec:
+                # one-shot-only armed sets do NOT pin a process (refined 2026-08-28): a threadless
+                # session's one-shots are dead-generation — a fresh CLI cannot re-hydrate them, so a
+                # revival here buys nothing and would loop against conserve_close forever (close,
+                # revive, close…). deliver_lost_wakeups owns them and revives at due instead.
                 continue
             sid = reg["sid"]
             with self._lock:
@@ -5399,8 +5423,8 @@ class SdkBackend:
             try:
                 if self._ensure(sid, on_boot_settled=self._spawn_sem.release) is not None:
                     n += 1
-                    self._log("scheduled-session sweep: reviving %s — %d armed timer(s) need a live process"
-                              % (reg.get("name") or sid[:13], len(reg.get("sessionCrons") or [])))
+                    self._log("scheduled-session sweep: reviving %s — %d recurring timer(s) need a live process"
+                              % (reg.get("name") or sid[:13], len(rec)))
                 else:
                     self._spawn_sem.release()       # nothing spawned — the parked release never attaches
             except Exception:
