@@ -48,6 +48,7 @@ import { initStrip, fmtReset } from "./strip";
 import { apiErrorReason } from "./api-error-reason";
 import { mathBlock, mathInline } from "./math";
 import { agentCount, replyOwed, threadsByAnchor, threadBusy, threadStuck, findAnchorRange, sliceRanges, prunePending, type CommentThread } from "./comments";
+import { dragSlotIndex } from "./dragslot";
 
 for (const [name, lang] of Object.entries({
   bash, sh: bash, shell: bash, python, py: python, javascript, js: javascript,
@@ -4119,6 +4120,22 @@ function auditTabOrder(ids: string[]) {
 }
 let draggedId: string | null = null;
 let tabDragCommitted = false;   // set by the strip's drop handler; dragend without it = a cancel (Escape / dropped outside)
+// The drag hit-test's stable inputs (the drag-flap fix, 2026-08-28): every tab's outer width and
+// the strip's geometry, measured ONCE at dragstart. The pointer is then hit-tested against a
+// VIRTUAL wrap layout of the non-dragged tabs (dragslot.ts) — the live rects shift when the
+// provisional tab inserts (wrap cascade included), which is exactly the feedback loop that made
+// the slot oscillate between distant positions in the user's recording.
+let dragGeom: { widths: Map<string, number>; containerW: number; gapX: number; rowH: number } | null = null;
+function snapshotDragGeometry(sample: HTMLElement): void {
+  const bar = document.getElementById("tabs");
+  if (!bar) { dragGeom = null; return; }
+  const widths = new Map<string, number>();
+  bar.querySelectorAll<HTMLElement>(".tab[data-id]").forEach((t) => { if (t.dataset.id) widths.set(t.dataset.id, t.getBoundingClientRect().width); });
+  const cs = getComputedStyle(bar);
+  dragGeom = { widths, containerW: bar.clientWidth,
+               gapX: parseFloat(cs.columnGap || "0") || 0,
+               rowH: sample.getBoundingClientRect().height || 1 };
+}
 let dragBlankEl: HTMLElement | null = null;
 function dragImageBlank(): HTMLElement {
   if (!dragBlankEl || !dragBlankEl.isConnected) {
@@ -4178,6 +4195,7 @@ function reorderTo(dragId: string, targetId: string, after: boolean) {
 let tabTipEl: HTMLElement | null = null;
 function hideTabTip(): void { if (tabTipEl) tabTipEl.style.display = "none"; }
 function showTabTip(tab: HTMLElement, s: Session): void {
+  if (draggedId) return;   // a drag owns the strip — the info popover pinned open through the whole gesture, occluding the row below (the user's recording, 2026-08-28)
   if (!tabTipEl) { tabTipEl = el("div", "tab-tip"); document.body.appendChild(tabTipEl); }
   const tip = tabTipEl;
   tip.replaceChildren();
@@ -4478,6 +4496,8 @@ function renderTabs() {
       draggedId = id; tabDragCommitted = false;
       if (e.dataTransfer) { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setDragImage(dragImageBlank(), 0, 0); }
       tab.classList.add("dragging");
+      hideTabTip();                        // defect 2 (2026-08-28): the hover popover pinned open through the gesture
+      snapshotDragGeometry(tab);           // widths once at dragstart — the virtual hit-test's stable input (dragslot.ts)
     });
     // dragend closes EVERY drag (drop, Escape, released outside). The pointerdown that started the
     // drag latched tabPointerHeld, and the drag swallowed the matching pointerup — so the hold is
@@ -12999,15 +13019,26 @@ setupSettings();
   // (flipTabs). The no-op guard (already sitting immediately before the reference node) is what
   // keeps a pointer resting inside one slot from churning the DOM on every dragover tick.
   tabs.addEventListener("dragover", (e) => {
-    if (!draggedId) return;
+    if (!draggedId || !dragGeom) return;
     e.preventDefault();   // the whole strip is a valid drop target
     if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
-    const over = (e.target as HTMLElement).closest?.(".tab[data-id]") as HTMLElement | null;
     const dragged = tabs.querySelector<HTMLElement>(`.tab[data-id="${CSS.escape(draggedId)}"]`);
-    if (!over || !dragged || over === dragged) return;
-    const r = over.getBoundingClientRect();
-    const ref = e.clientX > r.left + r.width / 2 ? over.nextElementSibling : over;
-    if (ref !== dragged && dragged.nextElementSibling !== ref) flipTabs(() => tabs.insertBefore(dragged, ref));
+    if (!dragged) return;
+    // native feel: a pointer still inside the dragged tab's own box moves nothing (without this,
+    // the virtual mapping — which removes the dragged tab — can read the untouched start position
+    // as one slot over and hop the tab before the user has left it)
+    const dr = dragged.getBoundingClientRect();
+    if (e.clientX >= dr.left && e.clientX <= dr.right && e.clientY >= dr.top && e.clientY <= dr.bottom) return;
+    // the virtual layout: the OTHER tabs in current DOM order, widths from the dragstart snapshot —
+    // boundaries that cannot move in response to the insert they cause (dragslot.ts owns the math)
+    const others = Array.from(tabs.querySelectorAll<HTMLElement>(".tab[data-id]")).filter((t) => t !== dragged);
+    const boxes = others.map((t) => ({ id: t.dataset.id!, w: dragGeom!.widths.get(t.dataset.id!) ?? t.getBoundingClientRect().width }));
+    const br = tabs.getBoundingClientRect();
+    const idx = dragSlotIndex(boxes, dragGeom.containerW, dragGeom.gapX, dragGeom.rowH,
+                              e.clientX - br.left, e.clientY - br.top);
+    const ref = idx < others.length ? others[idx] : dragged.parentElement === tabs ? tabs.querySelector(".tab-add") : null;
+    if (ref !== dragged && dragged.nextElementSibling !== ref)
+      flipTabs(() => tabs.insertBefore(dragged, ref));
   });
   // Drop commits the LIVE DOM position through the same reorderTo the strip has always used —
   // neighbor id + side — so persistence and the kernel write are byte-identical, and ids that a
