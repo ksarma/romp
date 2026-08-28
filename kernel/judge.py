@@ -741,9 +741,17 @@ def active_runs():
         return [dict(v) for v in _active.values()]
 
 
-_USAGE_PRUNE_BYTES = 48 * 1024 * 1024   # prune trigger — never reached at healthy volume (a normal
-                                         # month is a few MB); the 2026-08-18 captioner storm grew the
-                                         # log to 59.5MB, which the kernel then re-read per timeline build
+_USAGE_PRUNE_BYTES = 128 * 1024 * 1024  # prune trigger — must sit comfortably ABOVE what the
+                                         # 31-day retention below keeps, or every prune is a full
+                                         # rewrite that lands back over the trigger and re-fires
+                                         # forever (the T142 finding: a 48MB trigger against a
+                                         # ~65MB retained month rewrote 67MB per pass and could
+                                         # never shrink the file). Retention is consumer-driven
+                                         # (the kernel's 30-day analytics view) and is the side
+                                         # that must NOT move; the trigger exists only for
+                                         # pathological growth beyond it — 2x the observed
+                                         # steady-state month, with T142's memo shrinking judge
+                                         # volume (and so the month) from here.
 _USAGE_RETAIN_S = 31 * 86400             # matches the kernel reader's widest consumer window
                                          # (_JUDGE_USAGE_RETAIN, the 30-day analytics view + slack)
 
