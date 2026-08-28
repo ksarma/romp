@@ -22,7 +22,8 @@ os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XD
 pal = SourceFileLoader("romp_palette", os.path.join(BIN, "romp_palette.py")).load_module()
 
 ROMP_BG = ["#1EA1EB", "#54B204", "#4EA8A9", "#DD42FF", "#E87221",
-           "#98998A", "#F85B5A", "#F9D849", "#9088F0", "#E0629C"]
+           "#98998A", "#F85B5A", "#F9D849", "#9088F0", "#E0629C",
+           "#B585B6", "#B69513"]
 
 
 def _lum(h):

@@ -35,15 +35,18 @@ DEFAULT = "romp"
 PALETTES = {
     "romp": {
         "label": "romp",
-        # slot 9 ROSE #E0629C (the user's explicit pick, 2026-08-28): lightness-matched to the
-        # band, zero new close pairs under normal/protan/deutan/tritan (validated before the ask);
-        # APPENDED so existing slot assignments never shift. White fg per the set's own convention
-        # for saturated warm mids (its neighbors #F85B5A and #DD42FF wear white at comparable
-        # contrast). Three more additions are expected here — append-only, same rule.
+        # slots 9-11, the user's 2026-08-28 picks, APPENDED so existing assignments never shift:
+        # ROSE #E0629C (white fg — the set's convention for saturated warm mids, like #F85B5A and
+        # #DD42FF), DUSTY MAUVE #B585B6 and DARK GOLD #B69513 (black fg — computed: white sits at
+        # 3.0 and 2.9 contrast respectively, at/below the pinned floor, while black clears 7.0 on
+        # both, matching the gray/yellow convention). All validated for lightness band + no new
+        # close pairs under normal/protan/deutan/tritan before the ask. Append-only, same rule.
         "bg": ["#1EA1EB", "#54B204", "#4EA8A9", "#DD42FF", "#E87221",
-               "#98998A", "#F85B5A", "#F9D849", "#9088F0", "#E0629C"],
+               "#98998A", "#F85B5A", "#F9D849", "#9088F0", "#E0629C",
+               "#B585B6", "#B69513"],
         "fg": ["white", "black", "white", "white", "black",
-               "black", "white", "black", "black", "white"],
+               "black", "white", "black", "black", "white",
+               "black", "black"],
     },
     "phase": {
         "label": "phase — cmocean",
