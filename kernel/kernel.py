@@ -842,10 +842,15 @@ def _set_palette(name):
         except Exception:
             continue
         loc = pal.find(parts[2]) if len(parts) > 2 else None
-        if not loc or (parts[2], parts[3] if len(parts) > 3 else "") == (new_bg[loc[1]], new_fg[loc[1]]):
+        if loc:
+            # palettes may differ in LENGTH now (the romp set grows append-only, 2026-08-28): a
+            # session on a slot the new set lacks wraps modulo — a total, deterministic mapping
+            # beats an IndexError or a stale off-palette color surviving the switch
+            _slot = loc[1] % len(new_bg)
+        if not loc or (parts[2], parts[3] if len(parts) > 3 else "") == (new_bg[_slot], new_fg[_slot]):
             continue
         parts += [""] * (4 - len(parts))
-        parts[2], parts[3] = new_bg[loc[1]], new_fg[loc[1]]
+        parts[2], parts[3] = new_bg[_slot], new_fg[_slot]
         _atomic_write(NAMES / sid, "\t".join(parts[:4]) + "\n")
     _write_palette_mirror()
     _send_to_app("chat", {"type": "palette", "colors": new_bg})   # fresh swatches for open right-click menus
