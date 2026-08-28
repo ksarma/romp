@@ -61,6 +61,18 @@ var GEAR_HTML =
   '<span><b>Auto Nudge</b><span class=rs-mixed id=rs-autonudge-split hidden></span>' +
   '<span class=rs-sub id=rs-autonudge-sub>' + AUTONUDGE_SUB + '</span>' +
   '</span></label>' +
+  "<div class='rs-row rs-sep' id=rs-billing>" +
+  '<span><b>Billing login</b>' +
+  '<span class=rs-sub id=rs-login-acct>…</span>' +
+  "<div id=rs-login-flow style='margin-top:6px'>" +
+  "<button id=rs-login-btn type=button style='cursor:pointer;background:#2a2a2a;color:#ccc;border:1px solid #3a3a3a;border-radius:5px;padding:3px 10px'>Log in…</button>" +
+  "<span id=rs-login-state class=rs-sub style='margin-left:8px'></span>" +
+  "<div id=rs-login-url hidden style='margin-top:6px'></div>" +
+  "<div id=rs-login-code hidden style='margin-top:6px;display:flex;gap:6px;align-items:center'>" +
+  "<input id=rs-login-input type=text autocomplete=off spellcheck=false placeholder='paste the code from the browser…' style='flex:1;background:#1e1e1e;color:#ccc;border:1px solid #3a3a3a;border-radius:5px;padding:4px 8px'>" +
+  "<button id=rs-login-send type=button style='cursor:pointer;background:#2a2a2a;color:#ccc;border:1px solid #3a3a3a;border-radius:5px;padding:3px 10px'>Submit</button>" +
+  "<button id=rs-login-cancel type=button style='cursor:pointer;background:transparent;color:#888;border:1px solid #3a3a3a;border-radius:5px;padding:3px 10px'>Cancel</button>" +
+  '</div></div></span></div>' +
   "<label class='rs-row'><input type=checkbox id=rs-conserve>" +
   '<span><b>Conserve memory</b><span class=rs-mixed hidden></span>' +
   '<span class=rs-sub>Close the claude process of a session that has FADED (idle over an hour) and is on no open tab (each averages ~340MB). Everything persists — it revives on a tab click, a message, or a scheduled wake. An open tab always keeps its process; off = every session keeps its process for as long as it lives.</span>' +
@@ -396,6 +408,63 @@ function initGear(post) {
   });
   if (fe) fe.addEventListener('change', function () { post({ type: 'setFileEditing', enabled: fe.checked }); });
   if (cvm) cvm.addEventListener('change', function () { post({ type: 'setConserve', enabled: cvm.checked }); });
+  // ── the in-dashboard LOGIN flow (T157): the dashboard is already on the phone over Tailscale,
+  // so streaming the CLI's paste-code OAuth URL here IS the phone login. The code input is a pure
+  // pass-through to the kernel's PTY — nothing is stored or logged on any side.
+  var lgB = document.getElementById('rs-login-btn'), lgS = document.getElementById('rs-login-state'),
+      lgU = document.getElementById('rs-login-url'), lgC = document.getElementById('rs-login-code'),
+      lgI = document.getElementById('rs-login-input'), lgSend = document.getElementById('rs-login-send'),
+      lgX = document.getElementById('rs-login-cancel'), lgA = document.getElementById('rs-login-acct');
+  var lgTimer = null;
+  function lgRender(v) {
+    if (!lgB) return;
+    var f = (v && v.login) || { state: '' };
+    if (lgA) lgA.textContent = v && v.acctLabel ? 'Logged in as ' + v.acctLabel + '. Each machine logs in its own credential store.'
+                                                : 'No Claude login on this machine — sessions can only bill an API key. Log in from any browser (your phone works: the code flow needs no localhost).';
+    lgB.hidden = f.state === 'url' || f.state === 'starting' || f.state === 'verifying';
+    lgS.textContent = f.state === 'starting' ? 'starting the login flow…'
+      : f.state === 'verifying' ? 'checking the code…'
+      : f.state === 'error' ? (f.err || 'the login flow failed — try again') : '';
+    lgS.style.color = f.state === 'error' ? '#F85B5A' : '';
+    lgU.hidden = f.state !== 'url';
+    lgC.hidden = f.state !== 'url';
+    if (f.state === 'url' && f.url && lgU.getAttribute('data-url') !== f.url) {
+      lgU.setAttribute('data-url', f.url);
+      lgU.textContent = '';
+      var a = document.createElement('a');
+      a.href = f.url; a.target = '_blank'; a.rel = 'noreferrer';
+      a.textContent = '1. Open the sign-in page (any device) →';
+      a.style.color = '#9cd2ff';
+      lgU.appendChild(a);
+      var hint = document.createElement('div');
+      hint.className = 'rs-sub';
+      hint.textContent = '2. Finish signing in there; it shows a code. 3. Paste the code below.';
+      lgU.appendChild(hint);
+    }
+  }
+  function lgPoll() {
+    fetch(ku('/version'), { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (v) {
+      lgRender(v);
+      var st = (v.login || {}).state;
+      if (st === 'starting' || st === 'url' || st === 'verifying') lgTimer = setTimeout(lgPoll, 1500);
+      else lgTimer = null;
+    }).catch(function () { lgTimer = setTimeout(lgPoll, 3000); });
+  }
+  if (lgB) lgB.addEventListener('click', function () {
+    post({ type: 'loginStart' });
+    lgS.textContent = 'starting the login flow…';
+    if (!lgTimer) lgTimer = setTimeout(lgPoll, 800);
+  });
+  if (lgSend) lgSend.addEventListener('click', function () {
+    var code = lgI && lgI.value ? lgI.value.trim() : '';
+    if (!code) return;
+    post({ type: 'loginCode', code: code });   // pass-through; the kernel writes it to the PTY and nothing else
+    if (lgI) lgI.value = '';
+    lgS.textContent = 'checking the code…';
+    if (!lgTimer) lgTimer = setTimeout(lgPoll, 800);
+  });
+  if (lgI) lgI.addEventListener('keydown', function (e) { if (e.key === 'Enter' && lgSend) lgSend.click(); });
+  if (lgX) lgX.addEventListener('click', function () { post({ type: 'loginCancel' }); if (lgTimer) { clearTimeout(lgTimer); lgTimer = null; } lgRender({ login: { state: '' } }); });
   if (upm) upm.addEventListener('change', function () { post({ type: 'setUpdateMode', mode: upm.value }); });
   // The judge MODEL pickers mirror the session pickers (the user 2026-08-25): families top-level,
   // clicking a family sends its /models `default` (the user's remembered version), hover or
@@ -664,6 +733,8 @@ function initGear(post) {
     }).catch(function () { fillAutoNudge(v.autoNudge, []); fillMixedMarks(v, []); });
     if (fe) fe.checked = !!v.fileEditing;   // the kernel's persisted opt-in is authoritative (see the viewer's consent popup)
     if (cvm) cvm.checked = !!v.conserveMemory;   // T148: the kernel's persisted conserve flag is authoritative
+    lgRender(v);   // the Billing login block (T157) rides the same /version read
+    if ((v.login || {}).state && !lgTimer) lgTimer = setTimeout(lgPoll, 1500);   // a flow mid-run resumes polling
     if (upm && typeof v.updateMode === 'string') upm.value = v.updateMode;   // the kernel's persisted mode is authoritative
     if (jm && typeof v.judgeModel === 'string') jm.value = v.judgeModel;   // the judge's ACTUAL current model/effort per tier is authoritative
     if (im && typeof v.indexModel === 'string') im.value = v.indexModel;
