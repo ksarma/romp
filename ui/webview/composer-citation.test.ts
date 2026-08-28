@@ -235,7 +235,10 @@ test("context stages ALONE, and the chips strip carries the visible Stage button
   assert.ok(loop >= 0 && btn > loop, "the Stage button is appended AFTER the context chips");
   // neutral at rest (the user 2026-08-23): an accent outline beside the accent-blue chips read as
   // already-pressed. Rest = the button family's dress; the accent appears only on hover.
-  assert.match(CSS, /\.composer-stage-btn \{ background: rgba\(255, 255, 255, 0\.06\);\n\s*border: 1px solid var\(--box-border\); color: var\(--dim\);/);
+  // T141 (the user 2026-08-28): buttons are consistent — the feed word-buttons' rest exactly:
+  // dark ground (transparent over the page), the feed's --card-border hairline (mirrored token)
+  assert.match(CSS, /\.composer-stage-btn \{ background: transparent;[^\n]*\n\s*border: 1px solid var\(--card-border\); color: var\(--dim\);/);
+  assert.match(CSS, /--card-border: rgba\(255, 255, 255, 0\.10\);/, "byte-equal mirror of feed.css --card-border");
   assert.match(CSS, /\.composer-stage-btn:hover \{ border-color: var\(--accent\); color: var\(--accent\); background: var\(--accent-wash\); \}/);   // the feed word-button hover (2026-08-25)
   assert.doesNotMatch(CSS, /\.composer-stage-btn \{ position: absolute/,
     "no absolute pin — the button flows in the strip, immediately after what it acts on");

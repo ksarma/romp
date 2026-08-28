@@ -62,6 +62,9 @@ body.scheme-solarized-dark {
   --code-bg: rgba(217, 119, 87, 0.10);
   --box-bg: rgba(255, 255, 255, 0.03);
   --box-border: var(--vscode-editorHoverWidget-border, rgba(255, 255, 255, 0.12));
+  /* the feed's button hairline, MIRRORED byte-equal from feed.css --card-border (T141: the chat's
+     button family wears the feed's exact rest treatment; the chat page cannot import feed.css) */
+  --card-border: rgba(255, 255, 255, 0.10);
   --err: #c0392b;   /* unified with the awaiting/blocked red (the user 2026-06-24): one "needs you" red. API-error (--st-blocked-bg #e5484d) stays distinct. */
   --warn: #d7a23a;  /* the heads-up amber — "attention, not an error". Was referenced with fallbacks but never
                        defined (a phantom token) until 2026-08-26; mirrored in feed.css (own :root). */
@@ -163,19 +166,12 @@ body.chat-theme-yatharth #winframe { display: block; position: fixed; inset: 0; 
 body:not(.chat-theme-yatharth) #tabs .tab-row-line {
   position: absolute; left: -8px; right: -8px; height: 1px; background: var(--box-border); pointer-events: none; }
 body.chat-theme-yatharth #tabs .tab-row-line { display: none; }
-/* T125 (the user 2026-08-27, screenshot: with wrapped rows the tabs read as floating boxes): the
-   strip is a BAND — its own background plane a hair above the page, containing every wrapped row,
-   closed by the existing --box-border hairline at its bottom edge. This is how tab strips are
-   grounded in the polished multi-tab precedents (browser frame bands, editor tab-group headers,
-   design-system "tabs on a surface + divider"): the plane says "one control", the hairline says
-   "it ends here" — per-row separator lines were rejected as clutter. 5% white over the page bg
-   (tunable one-liner; shipped at 3%, stepped up 2026-08-27 after the T128 triage: on the user's
-   dark theme 3% was an ~11-gray-level delta that read as nothing at a glance — the eyeball
-   comparison lives in their drops, and 3%/6% stay one edit away); background only, so zero
-   layout shift, and the selected ring / blocked
-   dashed / rest outline / hover fill all read as before, now against the band. Classic only:
-   Yatharth keeps his merged look via the body scope. */
-body:not(.chat-theme-yatharth) #tabbar { background: linear-gradient(rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.05)), var(--vscode-sideBar-background, var(--bg)); }
+/* T141 (the user 2026-08-28, explicit ruling): the T125/T128 band is OUT — one dark background
+   everywhere; the strip's plane is the page dark again (#tabbar's own background above), the same
+   color as the feed behind its cards and its bottom control bar. The grounding that survives the
+   band: the T134 per-row hairlines and the T123 rest outlines. (History: the band shipped for the
+   floating-rows read, stepped 3%→5% after T128, then lightened every surface it sat behind — the
+   extra shade is exactly what the ruling removes.) */
 /* Drag handle straddling the tab strip's bottom border (the user 2026-08-18): the strip scrolls past
    its max-height cap, which clipped the fifth row of a many-session strip with no way to see more.
    Drag DOWN for more rows, UP for fewer; double-click resets; the strip stays a scroll pane at every
@@ -319,20 +315,13 @@ body.tabbar-resizing { cursor: ns-resize; user-select: none; }
 @keyframes tab-ph-swirl-spin { to { transform: rotate(-360deg); } }
 /* CLASSIC (the default; T113, tightened by T115, tuned by T118 — the user 2026-08-27): the tab
    strip is the PRE-720 strip — verified by pixel-diffing a real pre-720 build — modulo exactly
-   five sanctioned deltas: typography (the strip inherits the global Inter/type ladder), the 1px
+   four sanctioned deltas: typography (the strip inherits the global Inter/type ladder), the 1px
    hover-gray rest outline below (T123), the 0.9 faded-label scale (fadedColor, render.ts; T118),
-   the strip band (T125, below), and the per-row hairlines (T134, above at #tabs). No identity tint at any state, the
+   and the per-row hairlines (T134, above at #tabs; the T125 band was ruled OUT by T141 — one dark
+   background everywhere). No identity tint at any state, the
    thick 1.5px inset identity ring on the selected tab, the neutral line under the strip. The
    Yatharth theme below is the opt-in restoration of the contributor's merged strip aesthetic. */
 .tab.active { color: var(--fg); background: rgba(255, 255, 255, 0.14); }
-/* T136 (the user 2026-08-27: every tab body reads lighter than four days ago — "restore it to
-   what it was"; they were right): the T125 band paints BEHIND the strip, and a transparent
-   resting tab let it show THROUGH the body, lightening every tab — the sanctioned delta was the
-   strip PLANE, never the tab fill. Resting tabs now paint the baseline body explicitly (the very
-   color the strip's background was before the band), so the band reads only between/around tabs.
-   Same :not chain as the retired T118 wash (hover/active/blocked own their fills; + is not a
-   session tab); pixel-verified against the pre-720 baseline in the T136 harness run. */
-body:not(.chat-theme-yatharth) .tab:not(.tab-blocked):not(.active):not(:hover):not(.tab-add) { background: var(--vscode-sideBar-background, var(--bg)); }
 /* T123 (the user 2026-08-27, redirecting T118's resting-tab distinction — the merged 2% fill
    came out for this): resting tabs wear a SUPER-THIN outline at all times, no fill — the tab body
    stays the dark background, ringed by 1px in EXACTLY the gray the hover fill uses
@@ -784,8 +773,8 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
    and the strip hides with the chips). NEUTRAL at rest (the under-bubble button family's dress): an
    accent outline next to the accent-blue chips read as already-pressed — accent is for
    hover/selected, never rest chrome */
-.composer-stage-btn { background: rgba(255, 255, 255, 0.06);
-  border: 1px solid var(--box-border); color: var(--dim); border-radius: 5px; font-size: 0.82em;
+.composer-stage-btn { background: transparent;   /* T141: the feed word-buttons' rest — dark ground, hairline, no wash */
+  border: 1px solid var(--card-border); color: var(--dim); border-radius: 5px; font-size: 0.82em;
   padding: 1px 8px; cursor: pointer; }
 /* hover = the FEED's word-button treatment exactly (the user 2026-08-25: text + outline light up
    blue, like Clear/Undo — never a background fill; the wash values are the feed's .ftree-act-btn
@@ -1432,7 +1421,7 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
   font-family: var(--sans); font-size: 11px; line-height: 1; padding: 3px 7px; border-radius: 4px;
   /* neutral ground, neutral chrome (the user 2026-08-23): these sit on the page, not on a code
      block, so the code tint .code-copy blends with read here as a faint red button */
-  border: 1px solid var(--box-border); background: rgba(255, 255, 255, 0.06); color: var(--dim);
+  border: 1px solid var(--card-border); background: transparent; color: var(--dim);   /* T141: the one button rest — dark ground, hairline */
   cursor: pointer; opacity: 0; user-select: none;
   transition: opacity 0.12s ease, color 0.12s ease, border-color 0.12s ease;
 }
@@ -1445,7 +1434,7 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
 .msg-del, .msg-restorefiles, .msg-fork {
   align-self: flex-end; margin-top: 3px;
   font-family: var(--sans); font-size: 11px; line-height: 1; padding: 3px 7px; border-radius: 4px;
-  border: 1px solid var(--box-border); background: rgba(255, 255, 255, 0.06); color: var(--dim);
+  border: 1px solid var(--card-border); background: transparent; color: var(--dim);   /* T141: the one button rest — dark ground, hairline */
   cursor: pointer; opacity: 0; user-select: none;
   transition: opacity 0.12s ease, color 0.12s ease, border-color 0.12s ease;
 }
@@ -1589,7 +1578,7 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
 }
 .undelivered-act {
   font-family: var(--sans); font-size: 11px; line-height: 1; padding: 3px 7px; border-radius: 4px;
-  border: 1px solid var(--box-border); background: rgba(255, 255, 255, 0.06); color: var(--dim);
+  border: 1px solid var(--card-border); background: transparent; color: var(--dim);   /* T141: the one button rest */
   cursor: pointer; user-select: none;
   transition: color 0.12s ease, border-color 0.12s ease;
 }
@@ -1775,7 +1764,7 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
 .ask-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
 .ask-btn {
   padding: 4px 13px; border-radius: 6px; font: inherit; cursor: pointer;
-  border: 1px solid var(--box-border); background: rgba(255, 255, 255, 0.06); color: var(--fg);
+  border: 1px solid var(--card-border); background: transparent; color: var(--fg);   /* T141: the one button rest */
 }
 .ask-btn:hover { background: rgba(255, 255, 255, 0.13); }
 /* keyboard focus ring on the Submit/Cancel buttons — they're part of the multi-select arrow-key nav now
@@ -2318,8 +2307,8 @@ body.picker-lifted > #picker.kb-tight { align-items: flex-start; padding: 12px 1
 .picker-dir-input::placeholder { color: var(--dim); }
 .picker-browse {
   flex: 0 0 auto; cursor: pointer; white-space: nowrap;
-  background: rgba(255, 255, 255, 0.06); color: var(--fg);
-  border: 1px solid var(--box-border); border-radius: 5px; padding: 5px 9px; font-size: 0.82em;
+  background: transparent; color: var(--fg);   /* T141: the one button rest */
+  border: 1px solid var(--card-border); border-radius: 5px; padding: 5px 9px; font-size: 0.82em;
 }
 .picker-browse:hover { background: rgba(255, 255, 255, 0.12); }
 /* Disabled while a REMOTE host is selected — that machine's dialog can't open on this screen. It had no
@@ -2931,8 +2920,8 @@ mark.cmt-hl.hl-last { border-top-right-radius: 2px; border-bottom-right-radius: 
    2026-08-25: the popover's buttons should be the chat's, one vocabulary): neutral at rest,
    accent on hover, the 0.78em label tier */
 .cmt-act {
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid var(--box-border); color: var(--dim); border-radius: 5px; font-size: 0.82em;
+  background: transparent;   /* T141: one dress with the stage button + the feed's word-buttons */
+  border: 1px solid var(--card-border); color: var(--dim); border-radius: 5px; font-size: 0.82em;
   padding: 1px 8px; cursor: pointer;
 }
 .cmt-act:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-wash); }   /* the feed word-button hover (2026-08-25): Break out / Merge / Delete light up like Clear/Undo */
