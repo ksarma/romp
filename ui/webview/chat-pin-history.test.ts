@@ -32,7 +32,10 @@ test("the embed and its lightbox request the pinned bytes; unpinned surfaces sta
 
 test("the kernel pins at the resolve latch and serves pins shape-gated with live fallback", () => {
   assert.match(KERNEL, /def _pin_mention\(fp\):/);
-  assert.match(KERNEL, /pin = _pin_for\(r, sid\)\s+# the resolve moment IS the mention-time snapshot/);
+  // durable-first since 2026-08-28 (the restart-rewrite hole): the latch CONSULTS the per-sid
+  // assoc sidecar before ever re-pinning — the first-ever resolve wins forever
+  assert.match(KERNEL, /pin = _pin_assoc\(sid, uuid\)\.get\(r\) or _pin_for\(r, sid\)/);
+  assert.match(KERNEL, /def _pin_assoc_append\(sid, uuid, target, pid\):/);
   assert.match(KERNEL, /ev\["pathPins"\] = pp/, "attached on both user and assistant events");
   assert.match(KERNEL, /_PIN_ID_RE = re\.compile\(r"\^\[0-9a-f\]\{64\}\\\.\[a-z0-9\]\{1,8\}\$"\)/);
   assert.match(KERNEL, /if pin and _PIN_ID_RE\.match\(pin\):/);

@@ -23778,10 +23778,12 @@ def _space_paths(md, sid, uuid):
                 out.append(tok)
         pins = {}
         for tok in out:                      # the verify moment doubles as the mention-time snapshot
-            pin = _pin_for(tok, sid)         # (see _pin_mention) — latched with the span's verdict
+            pin = _pin_assoc(sid, uuid).get(tok) or _pin_for(tok, sid)   # first-ever latch wins (durable sidecar)
             if pin:
                 pins[tok] = pin
-        if len(_SPACE_PATH_CACHE) > 50000:   # runaway backstop; one entry per rendered message
+                if _pin_assoc(sid, uuid).get(tok) != pin:
+                    _pin_assoc_append(sid, uuid, tok, pin)
+        if len(_SPACE_PATH_CACHE) > 50000:   # runaway backstop; harmless to pins now (assoc sidecar)
             _SPACE_PATH_CACHE.clear()
         _SPACE_PATH_CACHE[key] = hit = (tuple(out), pins)
     spans = hit[0] if isinstance(hit, tuple) and len(hit) == 2 and isinstance(hit[0], tuple) else hit
@@ -23937,6 +23939,60 @@ def _pin_dir():
     return _MENTION_PINS
 
 
+# ── durable pin associations (2026-08-28, the user catching history rewrite again after kernel
+# restarts): the 2026-08-16 pin fix latched (message → pin id) only in the in-memory caches below,
+# so every restart (routine here) re-resolved old messages and re-pinned the file's CURRENT bytes —
+# history rewrote exactly as before, just restart-shaped. The FIRST-EVER resolve now wins forever:
+# each latch appends (uuid, target → pin id) to a per-sid jsonl sidecar under mention-pins/assoc,
+# and every latch CONSULTS it before pinning. Rows are ~100 bytes, one per image mention, loaded
+# lazily once per sid; the blob store's bound/eviction and the evicted-pin → live-file fallback are
+# unchanged (an association whose blob aged out just falls back like today). The 50k cache clears
+# below become harmless by construction — re-resolves reload from here.
+_PIN_ASSOC_MEMO = {}                    # sid -> {uuid: {target: pin id}}, the sidecar's lazy load
+
+
+def _pin_assoc_dir():
+    d = _pin_dir() / "assoc"
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
+    return d
+
+
+def _pin_assoc(sid, uuid):
+    """The durable pins already latched for this message — {target: pin id}, {} when none."""
+    memo = _PIN_ASSOC_MEMO.get(sid)
+    if memo is None:
+        memo = {}
+        try:
+            with open(_pin_assoc_dir() / (str(sid) + ".jsonl"), encoding="utf-8") as f:
+                for line in f:
+                    try:
+                        row = json.loads(line)
+                        memo.setdefault(str(row["u"]), {})[str(row["t"])] = str(row["p"])
+                    except (ValueError, KeyError, TypeError):
+                        continue                     # a torn tail line loses one row, never the file
+        except OSError:
+            pass
+        if len(_PIN_ASSOC_MEMO) > 2048:              # sid-count bound; reloads are one small file read
+            _PIN_ASSOC_MEMO.clear()
+        _PIN_ASSOC_MEMO[sid] = memo
+    return memo.get(uuid) or {}
+
+
+def _pin_assoc_append(sid, uuid, target, pid):
+    """Record a first-ever latch durably (append + memo). Best-effort: a failed write degrades to
+    the old in-memory behavior for this message, never blocks the build."""
+    memo = _PIN_ASSOC_MEMO.setdefault(sid, {})
+    memo.setdefault(uuid, {})[target] = pid
+    try:
+        with open(_pin_assoc_dir() / (str(sid) + ".jsonl"), "a", encoding="utf-8") as f:
+            f.write(json.dumps({"u": uuid, "t": target, "p": pid}) + "\n")
+    except OSError:
+        pass
+
+
 def _pin_mention(fp):
     """Snapshot a mentioned IMAGE's bytes as they are RIGHT NOW, content-addressed — the pin an old
     chat message's embed keeps forever (the user 2026-08-16: an agent re-generating a plot under the
@@ -24019,12 +24075,17 @@ def _path_links(md, sid, uuid, memo):
                 still.append(tok)
             else:
                 links[tok] = r
-                pin = _pin_for(r, sid)                    # the resolve moment IS the mention-time snapshot
+                # the FIRST-EVER latch wins forever (durable sidecar): a restart or cache clear
+                # re-resolves this message, and without the lookup it would re-pin the file's
+                # CURRENT bytes — the history rewrite the pin store exists to prevent
+                pin = _pin_assoc(sid, uuid).get(r) or _pin_for(r, sid)
                 if pin:                                   # (see _pin_mention) — latched with the link, so an
                     pins[r] = pin                         # overwrite can never rewrite this message's embed
+                    if _pin_assoc(sid, uuid).get(r) != pin:
+                        _pin_assoc_append(sid, uuid, r, pin)
         misses = tuple(still)
-    if len(_PATH_LINK_CACHE) > 50000:                     # runaway backstop; one entry per rendered message
-        _PATH_LINK_CACHE.clear()
+    if len(_PATH_LINK_CACHE) > 50000:                     # runaway backstop; harmless to pins now —
+        _PATH_LINK_CACHE.clear()                          # re-resolves reload from the assoc sidecar
     _PATH_LINK_CACHE[key] = (links, misses, pins)
     return dict(links) if (links or misses) else None
 
