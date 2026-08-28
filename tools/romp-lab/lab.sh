@@ -12,6 +12,7 @@ for a in "$@"; do case "$a" in
   --keep) KEEP=1 ;;
   --banner-only) MODE=banner ;;       # the T119 reload-banner phase alone (no model spend)
   --highlight-only) MODE=highlight ;; # the T102/T106 highlight loop alone
+  --modes-only) MODE=modes ;;         # the T139 permission-mode sweep alone
 esac; done
 
 LAB="$(mktemp -d /tmp/romp-lab-XXXXXX)"
@@ -77,14 +78,14 @@ curl -fsS "http://127.0.0.1:$PORT/healthz" >/dev/null || { echo "kernel never be
 echo "lab kernel up on :$PORT (state: $LAB/state)"
 
 RC=0
-if [ "$MODE" != "highlight" ]; then
+if [ "$MODE" != "highlight" ] && [ "$MODE" != "modes" ]; then
   # the reload-banner contract (T119) — first, because it spends no model turns
   LAB_DIR="$LAB" PORT="$PORT" TOKEN="$ROMP_SERVE_TOKEN" KPID="$KPID" KERNEL_BIN="$ROOT/bin/romp-kernel" \
     node "$ROOT/tools/romp-lab/banner-loop.mjs" || RC=$?
   echo "banner loop exit: $RC (shots: $LAB/shots)"
   [ -f "$LAB/kernel.pid" ] && KPID="$(cat "$LAB/kernel.pid")"
 fi
-if [ "$MODE" != "banner" ] && [ "$RC" = 0 ]; then
+if [ "$MODE" != "banner" ] && [ "$MODE" != "modes" ] && [ "$RC" = 0 ]; then
   # the kernel may have been bounced by the banner phase — wait for health before driving it
   for i in $(seq 1 60); do
     curl -fsS "http://127.0.0.1:$PORT/healthz" >/dev/null 2>&1 && break; sleep 0.5
@@ -92,6 +93,15 @@ if [ "$MODE" != "banner" ] && [ "$RC" = 0 ]; then
   LAB_DIR="$LAB" PORT="$PORT" TOKEN="$ROMP_SERVE_TOKEN" PROJECT_DIR="$LAB/project" \
     node "$ROOT/tools/romp-lab/highlight-loop.mjs" || RC=$?
   echo "highlight loop exit: $RC (shots: $LAB/shots)"
+fi
+if [ "$MODE" != "banner" ] && [ "$MODE" != "highlight" ] && [ "$RC" = 0 ]; then
+  # the T139 permission-mode sweep: every mode's ask contract on the real stack
+  for i in $(seq 1 60); do
+    curl -fsS "http://127.0.0.1:$PORT/healthz" >/dev/null 2>&1 && break; sleep 0.5
+  done
+  LAB_DIR="$LAB" PORT="$PORT" TOKEN="$ROMP_SERVE_TOKEN" PROJECT_DIR="$LAB/project" \
+    node "$ROOT/tools/romp-lab/modes-loop.mjs" || RC=$?
+  echo "modes loop exit: $RC (shots: $LAB/shots)"
 fi
 [ "$RC" = 0 ] || KEEP=1
 exit "$RC"
