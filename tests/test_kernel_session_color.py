@@ -51,6 +51,10 @@ class SessionColor(unittest.TestCase):
         self.assertTrue(all(f in ("black", "white") for f in fgs))
         self.assertEqual(bgs[:2], ["#1EA1EB", "#54B204"], "existing assignments never shift")
         self.assertEqual((bgs[9], fgs[9]), ("#E0629C", "white"))
+        self.assertEqual((bgs[10], fgs[10]), ("#B585B6", "black"),
+                         "dusty mauve: white sits AT the 3.0 floor; black clears 7.0")
+        self.assertEqual((bgs[11], fgs[11]), ("#B69513", "black"),
+                         "dark gold: white FAILS the 3.0 floor (2.9); black clears 7.3")
         # the fg contrast floor the set's whites all clear: WCAG relative-luminance contrast >= 3.0
         r, g, b = (int("E0629C"[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
         lin = lambda c: c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
