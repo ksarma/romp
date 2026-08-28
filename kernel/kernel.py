@@ -20222,6 +20222,7 @@ def build_feed(now, tmux=None):
                 **({"satellite": True} if isinstance(o, dict) and o.get("tracked")
                    and origin and origin.get("live") and column != "needs_input" else {}),
                 "followupPending": nodes[nid].get("followupPending"),   # optimistic reopen → "Followed up" chip until the judge catches up
+                "followupAt": nodes[nid].get("followupAt") or None,   # WHEN the follow-up/continue went — the latched button's honest age (T150)
                 # DONE-CONFIRMING (the user 2026-07-24): the done verdict is in; only the settle event is
                 # pending. The card STAYS in Working (the settle gate exists precisely so the column never
                 # flickers working↔done) and wears a steady "done, confirming" cue instead. From the

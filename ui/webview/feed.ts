@@ -73,6 +73,7 @@ interface AskItem {
   trgb: [number, number, number];
   column: "working" | "needs_input" | "completed";   // RAW kernel value (build_feed): working/needs_input/completed. askColumn() maps it to the local Column. NOT "asks" — that was a stale lie that silently broke `it.column === "asks"` checks.
   followupPending?: boolean;                       // you followed up on a settled card → optimistically reopened, awaiting the judge's re-file (kernel)
+  followupAt?: number | null;                      // when that follow-up/continue went — the latched button's honest age (T150)
   doneConfirming?: boolean;                        // the done verdict is in, only the settle event is pending → steady "done, confirming" chip on the Working card; placement deliberately does NOT move early (no working↔done flicker) (kernel build_feed ← judge rollup confirming export; the user 2026-07-24)
   recheck?: boolean;                               // soft-block you answered with a TARGETED follow-up → de-urgented (dotted), moved to Working, dropped from the "need input" count, until the judge resolves or re-blocks it (kernel build_feed; the user 2026-06-27)
   rejudging?: boolean;                             // soft-block + a PLAIN thread reply after it → moves to WORKING while the reply is in flight (echo/open turn), with a "Re-judging…" swirl; returns to Needs-You on its own if the judge leaves it blocked (kernel build_feed; the user 2026-07-02, immediate)
@@ -772,6 +773,20 @@ function clockHM(t: number): string {
   return new Date(t * 1000).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 }
 
+// The latched Continue/Check-status button explains itself (T150, the user 2026-08-28: a card read
+// 'Sent' and clicking did nothing — the latch was honest, the silence was not). One title writer for
+// both states of both buttons: while held, it names WHAT was sent, WHEN, and the exact event that
+// re-arms it; enabled, it says what a click does. The hover title is the minimum honest surface for
+// a disabled control (the buttons rule) — the label itself stays one word.
+function contTitle(latched: boolean, verb: string, at?: number | null): string {
+  return latched
+    ? verb + " sent" + (at ? " " + relAge(hostNow - at) : "") +
+      " — waiting for the session's reply to be judged; this re-arms then, and the card moves on its own"
+    : verb === "a continue"
+      ? "nothing needed from you — asks the session to keep going"
+      : "asks the session where each open item stands";
+}
+
 function relAge(sec: number): string {
   const s = Math.max(0, sec);
   // Sub-minute ages all read "<1m ago" (the user 2026-07-20): a card the user just acted on stamps t=now,
@@ -1195,6 +1210,7 @@ function makeAskCard(it: AskItem): HTMLElement {
     // same optimistic move a typed reply gets; updateAskCard re-arms the label once the judge has ruled.
     vscodeApi?.postMessage({ type: "askFollowUp", itemId: it.itemId, sid: it.sid, cont: true });
     cont.disabled = true; cont.textContent = "Sent";
+    cont.title = contTitle(true, "a continue", null);
     optimisticFollowMove(it.itemId);
     render();
   };
@@ -2027,6 +2043,7 @@ function updateAskCard(card: HTMLElement, it: AskItem) {
   if (contBtn.disabled && !it.followupPending && !it.recheck && !it.rejudging) {
     contBtn.disabled = false; contBtn.textContent = "Continue";
   }
+  contBtn.title = contTitle(contBtn.disabled, "a continue", it.followupAt);
   if (showApiErr && it.blocked) {
     // on-you errors name themselves: a spend cap (raise it), "prompt too long" (compact), or a spent model
     // allowance (switch model); other API errors are transient and auto-retrying (2026-06-29 / 07-14 / 08-01).
@@ -3152,11 +3169,13 @@ function renderModal() {
     if (csEl && it.live && statusSweepText(it).n > 0) {
       csEl.style.display = "";
       if (csEl.disabled && !it.followupPending && !it.recheck && !it.rejudging) { csEl.disabled = false; csEl.textContent = "Check status"; }
+      csEl.title = contTitle(csEl.disabled, "a status ask", it.followupAt);
       csEl.onclick = () => {
         const sweep = statusSweepText(it);
         if (!sweep.n) return;
         vscodeApi?.postMessage({ type: "askFollowUp", itemId: it.itemId, text: sweep.text, sid: it.sid });
         csEl.disabled = true; csEl.textContent = "Asked";
+        csEl.title = contTitle(true, "a status ask", null);
         optimisticFollowMove(it.itemId);
         render();
       };
@@ -3165,9 +3184,11 @@ function renderModal() {
     if (contEl && askColumn(it) === "needsInput" && it.live && !it.provisional && !it.blocked) {
       contEl.style.display = "";
       if (contEl.disabled && !it.followupPending && !it.recheck && !it.rejudging) { contEl.disabled = false; contEl.textContent = "Continue"; }
+      contEl.title = contTitle(contEl.disabled, "a continue", it.followupAt);
       contEl.onclick = () => {
         vscodeApi?.postMessage({ type: "askFollowUp", itemId: it.itemId, sid: it.sid, cont: true });
         contEl.disabled = true; contEl.textContent = "Sent";
+        contEl.title = contTitle(true, "a continue", null);
         optimisticFollowMove(it.itemId);
         render();
       };
