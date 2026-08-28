@@ -4119,6 +4119,15 @@ function auditTabOrder(ids: string[]) {
 }
 let draggedId: string | null = null;
 let tabDragCommitted = false;   // set by the strip's drop handler; dragend without it = a cancel (Escape / dropped outside)
+let dragBlankEl: HTMLElement | null = null;
+function dragImageBlank(): HTMLElement {
+  if (!dragBlankEl || !dragBlankEl.isConnected) {
+    dragBlankEl = el("div", "");
+    dragBlankEl.style.cssText = "position:fixed;top:-10px;left:-10px;width:1px;height:1px;opacity:0;pointer-events:none";
+    document.body.appendChild(dragBlankEl);
+  }
+  return dragBlankEl;
+}
 // FLIP the strip around a DOM mutation (T127 live reorder): snapshot every tab's rect by id, run
 // the mutation, then play each moved tab from its old rect to its new one — an inverted transform
 // released a frame later. A row jump is just a bigger delta: the wrap layout reflows and the
@@ -4373,6 +4382,37 @@ function tabCtxGauge(ctxStr: string, ctxColor?: number[]): HTMLElement {
   return g;
 }
 
+// A hairline under EVERY row of tabs (T134, the user 2026-08-27, overturning the survey's
+// one-outer-line design — their call, flagged when it shipped: with three rows and a short third,
+// row 2's tabs "look like they're sitting there floating"). CSS cannot select flex-wrap rows, so
+// the painter groups the rendered tabs by offsetTop and lays one absolute full-bleed hairline
+// under each row but the last — the strip's existing bottom border already finishes the final row. Runs on
+// every strip rebuild and on wrap changes (a ResizeObserver on #tabs: width changes re-wrap rows
+// without a rebuild — event-keyed, no polling). Classic-scoped in CSS (the Yatharth theme hides
+// .tab-row-line), like every strip tuning.
+function paintTabRowLines(bar: HTMLElement): void {
+  for (const old of Array.from(bar.querySelectorAll(":scope > .tab-row-line"))) old.remove();
+  const rows = new Map<number, number>();   // rowTop → rowBottom (max tab bottom in that row)
+  for (const t of Array.from(bar.children) as HTMLElement[]) {
+    if (!t.classList.contains("tab")) continue;
+    const top = t.offsetTop, bot = t.offsetTop + t.offsetHeight;
+    rows.set(top, Math.max(rows.get(top) ?? 0, bot));
+  }
+  const bottoms = [...rows.values()].sort((a, b) => a - b);
+  bottoms.pop();   // the LAST row already has #tabbar's own border-bottom beneath it — no double line
+  for (const y of bottoms) {
+    const line = el("div", "tab-row-line");
+    line.style.top = y + "px";
+    bar.appendChild(line);
+  }
+}
+let tabRowObserver: ResizeObserver | null = null;
+function ensureTabRowObserver(bar: HTMLElement): void {
+  if (tabRowObserver) return;
+  tabRowObserver = new ResizeObserver(() => paintTabRowLines(bar));
+  tabRowObserver.observe(bar);
+}
+
 function renderTabs() {
   if (renameActive) { renderPendingAfterRename = true; return; }
   if (tabPointerHeld) { renderPendingWhilePressed = true; return; }   // don't destroy a tab mid-click (see tabPointerHeld)
@@ -4428,7 +4468,17 @@ function renderTabs() {
     tab.addEventListener("keydown", onTabKey);
     // drag-to-reorder (synced with the timeline via the shared session-order file)
     tab.draggable = true;
-    tab.addEventListener("dragstart", (e) => { draggedId = id; tabDragCommitted = false; if (e.dataTransfer) e.dataTransfer.effectAllowed = "move"; tab.classList.add("dragging"); });
+    // Exactly ONE thing on screen may look like the dragged tab (T133, the user 2026-08-27: the
+    // native drag image following the pointer PLUS the dimmed in-flow tab read as a ghost
+    // duplicate — "not how most softwares show it"). The native image is blanked, and the dimmed
+    // in-flow element — the one that live-reorders through the strip — is the single provisional
+    // visual, browser-style. dragImageBlank must be a rendered DOM node at dragstart (Chromium
+    // snapshots it), hence the fixed off-viewport 1px div installed once below.
+    tab.addEventListener("dragstart", (e) => {
+      draggedId = id; tabDragCommitted = false;
+      if (e.dataTransfer) { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setDragImage(dragImageBlank(), 0, 0); }
+      tab.classList.add("dragging");
+    });
     // dragend closes EVERY drag (drop, Escape, released outside). The pointerdown that started the
     // drag latched tabPointerHeld, and the drag swallowed the matching pointerup — so the hold is
     // released here by hand, covering the whole gesture against pushes (the click-safe rule). A
@@ -4584,6 +4634,8 @@ function renderTabs() {
       postViews(nv);
     });
   }
+  paintTabRowLines(bar);
+  ensureTabRowObserver(bar);
   // Restore tab-mode focus if a tab held it before this rebuild (see the top of renderTabs).
   if (refocusTab) focusActiveTab();
   syncNoSessionsPlaceholder(visibleIds.length, ids.length);

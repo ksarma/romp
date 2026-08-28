@@ -1,7 +1,7 @@
 // The chat-tab appearance themes (T113, tightened by T115, tuned by T118 — the user 2026-08-27):
 // CLASSIC, the default, is the PRE-720 tab strip modulo exactly THREE sanctioned deltas —
 // typography (the strip inherits the global Inter/type ladder), T123's 1px hover-gray rest
-// outline, T118's 0.9 faded-label scale, and T125's strip band (the multi-row grounding). Everything else reads pre-720: NO identity tint at any state, the thick 1.5px
+// outline, T118's 0.9 faded-label scale, T125's strip band, and T134's per-row hairlines. Everything else reads pre-720: NO identity tint at any state, the thick 1.5px
 // selected ring, the neutral line under the strip, gap 0. T115 verified the baseline equality by
 // pixel-diffing a real pre-720 build: with fonts normalized, zero differing pixels outside the
 // (out-of-scope) tag-controls box — a re-run must subtract the two T118 washes the same way it
@@ -35,7 +35,7 @@ test("the theme applies LIVE through the scheme plumbing — a body class, no re
 
 test("Classic: the pre-720 strip verbatim — line, gap 0, gray active fill, ring, stand-down", () => {
   assert.match(CSS, /border-bottom: 1px solid var\(--box-border\);/);
-  assert.match(CSS, /#tabs \{ display: flex; flex: 1 1 auto; flex-wrap: wrap; align-items: stretch; gap: 0; \}/);
+  assert.match(CSS, /#tabs \{ display: flex; flex: 1 1 auto; flex-wrap: wrap; align-items: stretch; gap: 0; position: relative; \}/);
   assert.match(CSS, /\.tab\.active \{ color: var\(--fg\); background: rgba\(255, 255, 255, 0\.14\); \}/);
   assert.match(CSS, /\.tab\.active\.colored \{ box-shadow: inset 0 0 0 1\.5px var\(--chip-bg\); \}/);
   assert.match(CSS, /\.tab\.tab-blocked\.active\.colored \{ box-shadow: none; \}/, "blocked outranks the ring (2026-07-24)");
@@ -57,6 +57,15 @@ test("Classic: faded labels brighten 10% — one tunable knob, Yatharth keeps hi
   assert.match(RENDER, /const t = Math\.min\(0\.85, \(Lc - Lt\) \/ \(Lc - Lb\)\) \* scale;/);
 });
 
+test("Classic: resting tab bodies paint the BASELINE color — the band never lightens them (T136)", () => {
+  // The user (2026-08-27): every tab body read lighter than four days before — and the harness
+  // proved it: the T125 band showed through transparent bodies, rgb(41,41,41) vs the pre-720
+  // baseline's rgb(30,30,30). The explicit body restores byte-equality (verified) while the band
+  // keeps reading between/around tabs. Same :not chain as the retired wash: hover/active/blocked
+  // own their fills, + is not a session tab, Yatharth untouched via the body scope.
+  assert.match(CSS, /^body:not\(\.chat-theme-yatharth\) \.tab:not\(\.tab-blocked\):not\(\.active\):not\(:hover\):not\(\.tab-add\) \{ background: var\(--vscode-sideBar-background, var\(--bg\)\); \}$/m);
+});
+
 test("Classic: the rest OUTLINE — 1px in the hover gray, no fill, states stand down (T123)", () => {
   const rule = CSS.match(/^body:not\(\.chat-theme-yatharth\) \.tab([^ ]*) \{ border-color: (rgba\([^)]*\)); \}$/m);
   assert.ok(rule, "the rest-outline rule exists, body-scoped OUT of the Yatharth theme");
@@ -68,7 +77,8 @@ test("Classic: the rest OUTLINE — 1px in the hover gray, no fill, states stand
   // border-color is a different property from the state FILLS, so hover needs no exclusion — the
   // outline stays under hover's fill (same color, one object filling in) and the fill itself…
   assert.match(CSS, /\.tab:hover \{ color: var\(--fg\); background: rgba\(255, 255, 255, 0\.06\); \}/);
-  // …and no resting FILL remains: the T118 2% wash was replaced by this outline (T123).
+  // …and no resting WASH remains: the T118 2% white lift was replaced by this outline (T123).
+  // (T136's explicit baseline-color body is not a wash — it restores the pre-720 pixel exactly.)
   assert.doesNotMatch(CSS, /\.tab[^{]*\{ background: rgba\(255, 255, 255, 0\.0[24]\); \}/);
 });
 
