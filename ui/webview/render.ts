@@ -14,6 +14,7 @@ import yaml from "highlight.js/lib/languages/yaml";
 import type { ParsedAsk } from "../ask-types";
 import { TABBAR_H_KEY, TABBAR_H_DEFAULT, clampTabbarH, parseTabbarH } from "./tabbar-resize";
 import { ctxFallbackColor } from "./ctx-color";
+import { applyTheme } from "./theme";
 import { SessionViews, viewVisible, viewsKey, revealIn, viewTagUnion, viewTags, type TagUnion, type SessionTag } from "./session-views";
 import { lensVisible, surfaceLens } from "./tag-lens";
 import { openTagMenu, tagMenuButton, syncTagFilter } from "./tag-menu";
@@ -12435,9 +12436,9 @@ function shipFileToHost(f: File, sidAt: string | null = activeId) {
 function applyChatScheme(s: RompSettings): void {
   document.body.classList.toggle("scheme-high-contrast", s.chatScheme === "high-contrast");
   document.body.classList.toggle("scheme-solarized-dark", s.chatScheme === "solarized-dark");
-  // the chat-tab appearance theme (T113): Classic is the unscoped default; Yatharth scopes PR 730's
-  // strip aesthetic under this class. Applies live — onExternalSettingsChange re-runs this + renderTabs.
-  document.body.classList.toggle("chat-theme-yatharth", s.chatTabTheme === "yatharth");
+  // the overall theme (T113 promoted 2026-08-28): the shared applier toggles the strip-aesthetic
+  // and light-theme classes from s.theme. Applies live — onExternalSettingsChange re-runs this.
+  applyTheme(document, s);
 }
 function setupSettings(): void {
   applyChatScheme(settings);   // the persisted pick applies at startup — it survives reloads

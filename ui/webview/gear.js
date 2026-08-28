@@ -99,10 +99,6 @@ var GEAR_HTML =
   '</select>' +
   "<div id=rs-tabctx-pick style='position:relative;margin-top:5px'></div>" +
   '</span></div>' +
-  "<div class='rs-row' style='cursor:default'><span style='flex:1 1 auto;min-width:0'><b>Chat tabs</b>" +
-  "<span class=rs-sub>The tab strip's look. Classic is the original high-contrast strip; Yatharth is the contributed flat-wash aesthetic with the tinted line under the strip.</span>" +
-  "<div id=rs-tabtheme style='position:relative;margin-top:5px'></div>" +
-  '</span></div>' +
   "<div class='rs-row' style='cursor:default'><span style='flex:1 1 auto;min-width:0'><b>Text scheme</b>" +
   "<span class=rs-sub>Chat text colors only. Each option previews its own tiers — prose, the dimmer tool text, code. (Solarized Light is omitted — its tiers are made for a light page and turn muddy here.)</span>" +
   "<div id=rs-chatscheme style='position:relative;margin-top:5px'></div>" +
@@ -121,8 +117,12 @@ var GEAR_HTML =
   '<span><b>Collapse idle gaps</b>' +
   '<span class=rs-sub>Squish long idle stretches (no work on any lane — e.g. overnight) into a thin break on the timeline, so the active periods get the width.</span>' +
   '</span></label>' +
-  '<div class=rs-sec>Colors</div>' +
-  "<div class=rs-row style='cursor:default'><span style='flex:1 1 auto'><b>Colormap</b>" +
+  '<div class=rs-sec>Appearance</div>' +   // renamed from Colors (2026-08-28): it owns the overall theme now, not just tints
+  "<div class='rs-row' style='cursor:default'><span style='flex:1 1 auto;min-width:0'><b>Theme</b>" +
+  "<span class=rs-sub>The dashboard's overall look, every pane. Classic and Yatharth are dark (they differ in the tab strip: original high-contrast vs the contributed flat-wash); Yatharth light is the warm light theme — inside VS Code it wins over the editor theme, deliberately.</span>" +
+  "<div id=rs-theme style='position:relative;margin-top:5px'></div>" +
+  '</span></div>' +
+  "<div class='rs-row rs-sep' style='cursor:default'><span style='flex:1 1 auto'><b>Colormap</b>" +
   '<span class=rs-sub>One ramp for the whole dashboard — feed recency, usage, and context bars. Brightest = newest / highest.</span>' +
   "<div id=rs-cmap><button id=rs-cmap-btn type=button title='Pick the recency colormap'></button>" +
   '<div id=rs-cmap-list hidden></div></div></span></div>' +
@@ -177,7 +177,7 @@ function initGear(post) {
     dd = document.getElementById('rs-defaultdir'), gb = document.getElementById('rs-branch'),
     tc = document.getElementById('rs-tabctx'),
     cs = document.getElementById('rs-chatscheme'),
-    tt = document.getElementById('rs-tabtheme'),
+    tt = document.getElementById('rs-theme'),
     cg = document.getElementById('rs-collapsegaps'), ao = document.getElementById('rs-activeonly'),
     fc = document.getElementById('rs-feedcollapsed'),
     jm = document.getElementById('rs-judgemodel'),
@@ -303,18 +303,27 @@ function initGear(post) {
     var cur = load().chatScheme; cur = (cur === 'high-contrast' || cur === 'solarized-dark') ? cur : 'default';
     csDrop(SCHEMES, cur);
   }
-  var TABTHEMES = [
-    { id: 'classic', name: 'Classic', sub: 'the original high-contrast strip \u00b7 thick selected outline \u00b7 no session tint' },
-    { id: 'yatharth', name: 'Yatharth', sub: 'flat session wash \u00b7 soft selected border \u00b7 tinted line under the strip' }
+  var THEMES = [
+    { id: 'classic', name: 'Classic', sub: 'dark \u00b7 the original high-contrast strip' },
+    { id: 'yatharth', name: 'Yatharth', sub: 'dark \u00b7 flat session wash \u00b7 tinted line under the strip' },
+    { id: 'yatharth-light', name: 'Yatharth light', sub: 'warm light \u00b7 cream page, clay accents \u00b7 the yatharth strip' }
   ];
-  function tabThemeRowHTML(th) {
+  function themeRowHTML(th) {
     return '<span style="flex:0 0 auto;min-width:96px;color:#ccc">' + th.name + '</span>' +
       '<span style="flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:0.82em;color:#cccccc;opacity:0.6">' + th.sub + '</span>';
   }
-  var ttDrop = housePick(tt, 'tabtheme', tabThemeRowHTML, function (id) { var s = load(); s.chatTabTheme = id; save(s); ttPaint(); });
+  function themeOf(s) {   // migration mirror of settings.ts loadSettings: pre-`theme` stores read their strip pick
+    if (s.theme === 'yatharth' || s.theme === 'yatharth-light' || s.theme === 'classic') return s.theme;
+    return s.chatTabTheme === 'yatharth' ? 'yatharth' : 'classic';
+  }
+  var ttDrop = housePick(tt, 'theme', themeRowHTML, function (id) {
+    var s = load(); s.theme = id;
+    s.chatTabTheme = (id === 'classic' ? 'classic' : 'yatharth');   // the derived LEGACY alias, kept in step for older readers
+    save(s); ttPaint();
+  });
   function ttPaint() {
     if (!ttDrop) return;
-    ttDrop(TABTHEMES, load().chatTabTheme === 'yatharth' ? 'yatharth' : 'classic');
+    ttDrop(THEMES, themeOf(load()));
   }
   ttPaint();
   // The Context-gauge picker joins the same builder (the user 2026-08-27, approving the flagged

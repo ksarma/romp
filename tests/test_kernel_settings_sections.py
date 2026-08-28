@@ -25,12 +25,12 @@ class SettingsSectionsTest(unittest.TestCase):
     def test_the_subsection_headers_are_present_in_order(self):
         h = _gear_src()
         self.assertIn("<div class='rs-sec rs-sec-first'>Sessions</div>", h)
-        for sec in ("Judges", "Keyboard shortcuts", "Chat", "Feed", "Sessions pane", "Colors", "Debug"):
+        for sec in ("Judges", "Keyboard shortcuts", "Chat", "Feed", "Sessions pane", "Appearance", "Debug"):
             self.assertIn("<div class=rs-sec>%s</div>" % sec, h)
         # (The 2026-07-12 "Feed dissolved into Colors" rule ended 2026-08-18: the Feed section is back,
         # carrying the collapse-by-default checkbox moved off the feed footer.)
         order = [">Sessions<", ">Judges<", ">Keyboard shortcuts<", ">Chat<",
-                 ">Feed<", ">Sessions pane<", ">Colors<", ">Debug<", ">romp · version<"]
+                 ">Feed<", ">Sessions pane<", ">Appearance<", ">Debug<", ">romp · version<"]
         idx = [h.index(t) for t in order]
         self.assertEqual(idx, sorted(idx), "sections in the 2026-07-12 order, version last")
 
@@ -47,10 +47,12 @@ class SettingsSectionsTest(unittest.TestCase):
         self.assertTrue(h.index(">Chat<") < h.index("id=rs-compact") < h.index(">Sessions pane<"))
         self.assertTrue(h.index(">Chat<") < h.index("id=rs-branch") < h.index(">Sessions pane<"))
         # Sessions pane (middle towards the bottom): collapse idle gaps before the Colors header
-        self.assertTrue(h.index(">Sessions pane<") < h.index("id=rs-collapsegaps") < h.index(">Colors<"))
+        self.assertTrue(h.index(">Sessions pane<") < h.index("id=rs-collapsegaps") < h.index(">Appearance<"))
         # Colors (bottom): the global colormap + the session palette between Colors and Debug
-        self.assertTrue(h.index(">Colors<") < h.index("id=rs-cmap") < h.index(">Debug<"))
-        self.assertTrue(h.index(">Colors<") < h.index("id=rs-pal") < h.index(">Debug<"))
+        # Appearance (renamed from Colors 2026-08-28): the overall Theme leads, then the tints
+        self.assertTrue(h.index(">Appearance<") < h.index("id=rs-theme") < h.index("id=rs-cmap"))
+        self.assertTrue(h.index(">Appearance<") < h.index("id=rs-cmap") < h.index(">Debug<"))
+        self.assertTrue(h.index(">Appearance<") < h.index("id=rs-pal") < h.index(">Debug<"))
         self.assertNotIn("rs-oldest", h)
         # Debug (bottom): the judge-set SHOW toggles after Debug; analytics + version after them
         self.assertLess(h.index(">Debug<"), h.index("id=rs-judges-index"))

@@ -5,6 +5,8 @@
 // bottom "Show completed" checkbox (default off). The recency colour helpers are copied verbatim from render.ts
 // so the colours are IDENTICAL to the ledger box.
 import { delegate } from "./actions";
+import { applyTheme } from "./theme";
+import { loadSettings } from "./settings";
 import { SessionViews, viewTagUnion } from "./session-views";
 import { lensVisible, surfaceLens } from "./tag-lens";
 import { openTagMenu, tagMenuButton, syncTagFilter } from "./tag-menu";
@@ -649,7 +651,8 @@ window.addEventListener("message", (e: MessageEvent) => {
     .map((a: any) => [a.itemId as string, a] as const));
   render();
 });
-window.addEventListener("storage", (e: StorageEvent) => { if (e.key === "romp:settings") render(); });   // colormap change → recolour
+window.addEventListener("storage", (e: StorageEvent) => { if (e.key === "romp:settings") { applyTheme(document, loadSettings()); render(); } });   // theme/colormap change → reskin + recolour
+applyTheme(document, loadSettings());   // the persisted theme applies at boot (2026-08-28)
 
 // Fleet-list clicks are DELEGATED to the stable #fleet-list (installed once). render() does
 // `#fleet-list`.replaceChildren() on every feed push, so a handler hung on a rebuilt row/header/caret is

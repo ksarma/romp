@@ -27168,7 +27168,7 @@ def _landing():
             "<meta name=mobile-web-app-capable content=yes>"
             "<meta name=apple-mobile-web-app-status-bar-style content=black>"
             "<meta name=apple-mobile-web-app-title content=Romp>"
-            "<meta name=theme-color content='#1e1e1e'>"
+            "<meta name=theme-color id=meta-theme content='#1e1e1e'>"
             "<link rel=icon type=image/svg+xml href=/media/romp-swirl-glyph.svg><title>Romp</title><style>"
             ":root{--accent:#9cd2ff;--accent-fg:#0c1a2e}"
             # Inter loads PER DOCUMENT (2026-08-27, PR-730 review): the shell names 'Inter' in every
@@ -27699,6 +27699,16 @@ def _landing():
             # text says it could not, and the network panel keeps the red on the row itself.
             ".rerr-chip.k-sync{color:var(--accent);border-color:rgba(156,210,255,0.6)}"
             "</style></head><body class='po-chat po-feed po-timeline'>"
+            # the theme classes, applied before anything paints and re-applied on every settings
+            # write (storage = another tab, romp:settings = this document) — mirrors theme.ts
+            "<script>(function(){function ap(){var t='classic';"
+            "try{var s=JSON.parse(localStorage.getItem('romp:settings')||'{}');"
+            "t=(s.theme==='yatharth'||s.theme==='yatharth-light')?s.theme:(s.theme==='classic'?'classic':(s.chatTabTheme==='yatharth'?'yatharth':'classic'));}catch(e){}"
+            "document.body.classList.toggle('chat-theme-yatharth',t!=='classic');"
+            "document.body.classList.toggle('theme-light',t==='yatharth-light');"
+            "var m=document.getElementById('meta-theme');if(m)m.setAttribute('content',t==='yatharth-light'?'#FAF9F5':'#1e1e1e');}"
+            "ap();window.addEventListener('storage',function(e){if(e.key==='romp:settings')ap();});"
+            "window.addEventListener('romp:settings',ap);})()</script>"
             "<div id=romp-boot>" + _loader_inner() + "</div>"
             # the notification popover (hidden until the bell is clicked; backdrop click closes). No
             # Reload button (the user 2026-07-27: redundant next to the rail's own restart/refresh —

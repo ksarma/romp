@@ -21,7 +21,8 @@ import { ageColorReadable } from "./age-color";
 import { badgeNotices, clearBoundaryNotices, sdkProblemNotices, syncNotices,
   type ClearNoticeRow, type SdkNoticeRow, type SyncNoticeRow } from "./badge-mirror";
 import { initStrip } from "./strip";
-import { installSettingsSync } from "./settings";
+import { installSettingsSync, loadSettings, onExternalSettingsChange } from "./settings";
+import { applyTheme } from "./theme";
 import { canPreview } from "./preview";
 import { initFileView } from "./file-view";
 import { initFileBrowse, openFileBrowse } from "./file-browse";
@@ -445,6 +446,11 @@ initGear((m: Record<string, unknown>) => vscodeApi?.postMessage(m));
 initStrip(() => window.postMessage({ romp: "openSettings" }, "*"),
   (m: Record<string, unknown>) => vscodeApi?.postMessage(m));
 installSettingsSync();   // a gear save in ANOTHER VS Code pane lands here via the host
+// the overall theme applies to THIS document too (2026-08-28): at boot and on every settings
+// write — before this only the chat pane wore the body classes, so a light theme could never
+// reach the feed
+applyTheme(document, loadSettings());
+onExternalSettingsChange((s) => { applyTheme(document, s); render(); });
 
 // Card-display prefs read straight from the shared 'romp:settings' (the kernel's ⛭ gear writes it; same
 // document as this feed bundle). Default ON. These gate the CARDS only — the modal always shows everything
