@@ -91,6 +91,13 @@
    key-parity test enforces the set). Contrast: fg 15.9:1, muted 6.6:1, accent 4.9:1 on the page.
 */
 body.theme-light {
+  /* feed-only tokens (parity with THIS sheet's :root) */
+  --card-border: rgba(0, 0, 0, 0.10);
+  --detail-bg: rgba(0, 0, 0, 0.04);
+  --rel-done: #3E7D0E;       /* the light ok-green (matches --green) */
+  --rel-decision: #1478B8;   /* the classic blue, darkened to read on cream */
+  --rel-action: #9A6A00;     /* the light warn amber (matches --warn) */
+  --rel-details: var(--dim);
   --chat-col: 100%;
   --bg: #FAF9F5;
   --fg: #1F1E1D;

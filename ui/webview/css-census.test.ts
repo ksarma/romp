@@ -15,6 +15,9 @@ const read = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "u
 
 // hexes outside comments and outside var() fallbacks; (?!-) keeps id selectors like #feed-head out
 const rawHexes = (css: string) => {
+  // a body.theme-light block's hexes are the theme's token DEFINITIONS (its one sanctioned home),
+  // not debt — strip those blocks before counting (2026-08-28, when the light theme landed)
+  css = css.replace(/body\.theme-light \{[\s\S]*?\n\}/g, "");
   const stripped = css.replace(/\/\*[\s\S]*?\*\//g, "").replace(/var\([^)]*\)/g, "V");
   return stripped.match(/#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})\b(?!-)/g) || [];
 };
