@@ -4,7 +4,7 @@
 // ledger, the SAME tree the ledger box draws) — the proven feed channel. Completed top goals hide behind a
 // bottom "Show completed" checkbox (default off). The recency colour helpers are copied verbatim from render.ts
 // so the colours are IDENTICAL to the ledger box.
-import { delegate } from "./actions";
+import { delegate, flash } from "./actions";
 import { applyTheme } from "./theme";
 import { loadSettings } from "./settings";
 import { SessionViews, viewTagUnion } from "./session-views";
@@ -592,10 +592,10 @@ function mountControls() {
   // again to leave, or fold something by hand to release it. id'd so paintFoldButtons can light the active one.
   const collapse = el("button", "fl-foot-btn"); collapse.id = "fl-collapse";
   collapse.textContent = "Collapse"; collapse.title = "Keep everything collapsed — folds every session + goal and stays that way as work streams in (click again, or fold something by hand, to release)";
-  collapse.addEventListener("click", () => { collapse.classList.add("romp-acted"); setTimeout(() => collapse.classList.remove("romp-acted"), 280); toggleFoldMode("collapse"); });
+  collapse.addEventListener("click", () => { flash(collapse); toggleFoldMode("collapse"); });
   const expand = el("button", "fl-foot-btn"); expand.id = "fl-expand";
   expand.textContent = "Expand"; expand.title = "Keep everything expanded — opens every goal and stays that way as work streams in (click again, or fold something by hand, to release)";
-  expand.addEventListener("click", () => { expand.classList.add("romp-acted"); setTimeout(() => expand.classList.remove("romp-acted"), 280); toggleFoldMode("expand"); });
+  expand.addEventListener("click", () => { flash(expand); toggleFoldMode("expand"); });
   left.append(grpLbl, collapse, expand);
 
   // ── RIGHT cluster: recency cutoff slider + Show completed ──

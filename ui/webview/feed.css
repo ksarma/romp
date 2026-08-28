@@ -11,6 +11,9 @@
   font-weight: 100 900; font-style: italic; font-display: swap; }
 
 :root {
+  /* the word-button vocabulary (2026-08-28) — mirrors styles.css; same values in both themes */
+  --btn-pad-sm: 1px 8px; --btn-pad-md: 3px 10px; --btn-pad-lg: 5px 13px;
+  --btn-fs-sm: 0.72em; --btn-fs-md: 0.82em;
   --bg: var(--vscode-editor-background, #1e1e1e);
   --fg: var(--vscode-foreground, #cccccc);
   --dim: var(--vscode-descriptionForeground, #9a9a9a);
@@ -92,6 +95,8 @@
 */
 body.theme-light {
   /* feed-only tokens (parity with THIS sheet's :root) */
+  --btn-pad-sm: 1px 8px; --btn-pad-md: 3px 10px; --btn-pad-lg: 5px 13px;   /* geometry, theme-invariant */
+  --btn-fs-sm: 0.72em; --btn-fs-md: 0.82em;
   --card-border: rgba(0, 0, 0, 0.10);
   --detail-bg: rgba(0, 0, 0, 0.04);
   --rel-done: #3E7D0E;       /* the light ok-green (matches --green) */
@@ -485,9 +490,10 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
    just the body container (a plain block; whichever body is open runs the full card width). The toggles are
    REAL buttons in the Clear button's chrome (border, radius, muted text; NEUTRAL hover, not Clear's red). */
 .fask-secs { margin-top: 4px; }
-.fask-secbtn { flex: none; padding: 1px 9px; color: var(--dim); background: transparent;
-  border: 1px solid var(--card-border); border-radius: 6px; font: inherit; font-size: 0.72em;
-  cursor: pointer; white-space: nowrap; transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease; }
+.fask-secbtn { flex: none; padding: var(--btn-pad-sm); color: var(--dim); background: transparent;
+  border: 1px solid var(--card-border); border-radius: 6px; font: inherit; font-size: var(--btn-fs-sm);
+  cursor: pointer; white-space: nowrap; transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease, transform 0.08s ease; }
+.fask-secbtn:active { transform: scale(0.96); }
 .fask-secbtn:hover { color: var(--fg); border-color: var(--fg); }
 /* the SELECTED (accent) toggle had no hover feedback — .on overrode the plain :hover, so mousing it read as
    dead. Give it a REVERSE highlight: the accent fills in, the text flips to accent-fg (the user 2026-07-15). */
@@ -681,9 +687,11 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
    "↻ Followed up" chip below shows while that sub is optimistically reopened. */
 .ftree-node-acts { flex: 0 0 auto; margin-left: 8px; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .ftree-act-btn {
-  font: inherit; font-size: 0.72em; line-height: 1.4; padding: 1px 8px; border-radius: 6px;
+  font: inherit; font-size: var(--btn-fs-sm); line-height: 1.4; padding: var(--btn-pad-sm); border-radius: 6px;
   background: transparent; border: 1px solid var(--dim); color: var(--dim); cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease, transform 0.08s ease;
 }
+.ftree-act-btn:active { transform: scale(0.96); }
 /* All four rest in the same neutral gray (.ftree-act-btn) and light up in ONE romp-accent hover (the
    user 2026-07-21): every action button across the UI shares this single accent highlight, Drop included
    (the user 2026-07-21, part 2: full uniformity — the only reds left anywhere are error/blocked STATUS).
@@ -776,9 +784,12 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
   border-radius: var(--radius-modal); padding: 18px 20px; max-width: 380px; box-shadow: var(--shadow-modal); }
 .fconfirm-msg { color: var(--fg); line-height: 1.45; margin-bottom: 14px; overflow-wrap: anywhere; }
 .fconfirm-btns { display: flex; justify-content: flex-end; gap: 8px; }
-.fconfirm-btn { font: inherit; padding: 5px 13px; border-radius: 6px; cursor: pointer;
-  border: 1px solid var(--card-border, rgba(255, 255, 255, 0.18)); background: transparent; color: var(--fg); }
-.fconfirm-btn:hover { background: rgba(255, 255, 255, 0.08); }
+.fconfirm-btn { font: inherit; padding: var(--btn-pad-lg); border-radius: 6px; cursor: pointer;
+  border: 1px solid var(--card-border, rgba(255, 255, 255, 0.18)); background: transparent; color: var(--fg);
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease, transform 0.08s ease; }
+.fconfirm-btn:active { transform: scale(0.96); }
+/* the ONE action-button hover (accent text + outline + wash); the primary keeps its filled dress */
+.fconfirm-btn:not(.primary):hover { border-color: var(--accent); color: var(--accent); background: var(--accent-wash); }
 .fconfirm-btn.primary { border-color: transparent;
   background: var(--vscode-button-background, #2b7fb8); color: var(--vscode-button-foreground, #fff); }
 .fconfirm-btn.primary:hover { background: var(--vscode-button-hoverBackground, #3690cc); }
@@ -1000,8 +1011,9 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
   font: inherit; font-size: 0.72em; cursor: pointer; white-space: nowrap;
   color: var(--dim); background: transparent;
   border: 1px solid var(--card-border); border-radius: 6px;
-  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease, transform 0.08s ease;
 }
+.fdismiss:active { transform: scale(0.96); }
 /* the expand toggle is a compact square showing "+" (collapsed) / "−" (open) */
 .fdismiss { padding: 2px 10px; }
 /* One accent hover for every action button (the user 2026-07-21): Clear, Move to Working, Follow up,
@@ -1318,10 +1330,12 @@ body.fileview-open { overflow: hidden; }
   overflow: hidden; text-overflow: ellipsis; }
 .fileview-base { flex: 0 0 auto; }
 .fileview-acts { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; }
-.fileview-btn { font: inherit; font-size: 0.82em; cursor: pointer; flex: 0 0 auto;
-  padding: 3px 9px; border-radius: 6px; background: rgba(255, 255, 255, 0.08); color: var(--fg);
-  border: 1px solid var(--box-border); }
-.fileview-btn:hover { border-color: var(--accent); }
+.fileview-btn { font: inherit; font-size: var(--btn-fs-md); cursor: pointer; flex: 0 0 auto;
+  padding: var(--btn-pad-md); border-radius: 6px; background: rgba(255, 255, 255, 0.08); color: var(--fg);
+  border: 1px solid var(--box-border);
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease, transform 0.08s ease; }
+.fileview-btn:active { transform: scale(0.96); }
+.fileview-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-wash); }
 /* the GitHub link wears the button treatment but IS an anchor — the browser owns the new tab */
 a.fileview-btn { text-decoration: none; display: inline-flex; align-items: center; }
 /* an author `display` beats the UA's [hidden] rule — without this the anchor shows hrefless
@@ -1536,7 +1550,7 @@ a.fileview-btn[hidden] { display: none; }
   background: transparent; color: var(--dim); cursor: pointer; opacity: 0.55;
 }
 .fitem.ask:hover .fask-bellbtn { visibility: visible; }
-.fitem.ask .fask-bellbtn:hover { opacity: 1; background: rgba(255, 255, 255, 0.10); }
+.fitem.ask .fask-bellbtn:hover { opacity: 1; color: var(--accent); background: var(--accent-wash); }
 .fask-bellbtn.on { visibility: visible; opacity: 0.85; color: var(--accent); }
 
 /* ── the file BROWSER (file-browse.ts) ── the viewer's sibling overlay, one z layer BENEATH it

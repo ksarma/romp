@@ -100,14 +100,21 @@ body.rs-lifted.rs-pane-gone::before { display: none; }
 #rsettings .rs-key[hidden] { display: none; }
 /* the customize link that replaced the static list (the shell's shortcuts dialog owns it now) */
 #rs-keys-btn { flex: 0 0 auto; cursor: pointer; background: var(--btn-bg, #2a2a2a); color: var(--fg, #ccc);
-  border: 1px solid var(--hairline, #3a3a3a); border-radius: 5px; padding: 3px 8px; font: inherit; }
-#rs-keys-btn:hover { background: var(--btn-hover-bg, #333); color: var(--text-bright, #e8eaed); }
+  border: 1px solid var(--hairline, #3a3a3a); border-radius: 5px; padding: 3px 8px; font: inherit;
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease, transform 0.08s ease; }
+#rs-keys-btn:active { transform: scale(0.96); }
+/* the ONE action-button hover (fallback literals — gear.css loads standalone, no :root to share) */
+#rs-keys-btn:hover { border-color: var(--accent, #9cd2ff); color: var(--accent, #9cd2ff);
+  background: var(--accent-wash, rgba(156, 210, 255, 0.12)); }
 #rsettings kbd { display: inline-block; background: var(--kbd-bg, #1c1c1f); border: 1px solid var(--kbd-border, #3d3d42); border-bottom-width: 2px;
   border-radius: 4px; padding: 1px 6px; font: 600 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; color: #e6e6e6; }
 /* token-usage analytics: a button in the gear panel opens a centered modal with the chart. */
 .ra-openbtn { margin-top: 8px; width: 100%; background: #2d2d2f; border: 1px solid var(--hairline, #3a3a3a); border-radius: 6px;
-  color: var(--text-soft, #cdd3da); font: 600 12px/1.4 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif; padding: 7px; cursor: pointer; }
-.ra-openbtn:hover { background: #343436; color: #fff; }
+  color: var(--text-soft, #cdd3da); font: 600 12px/1.4 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif; padding: 7px; cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease, transform 0.08s ease; }
+.ra-openbtn:active { transform: scale(0.96); }
+.ra-openbtn:hover { border-color: var(--accent, #9cd2ff); color: var(--accent, #9cd2ff);
+  background: var(--accent-wash, rgba(156, 210, 255, 0.12)); }
 #ranalytics-back { position: fixed; inset: 0; z-index: 70; background: rgba(0, 0, 0, 0.55); display: flex;
   align-items: center; justify-content: center; }
 /* an explicit display rule beats the UA [hidden]{display:none}; restore hiding at higher
@@ -122,8 +129,11 @@ body.rs-lifted.rs-pane-gone::before { display: none; }
 #ra-close:hover { color: #fff; }
 .ra-periods, .ra-group, .ra-metric { display: flex; gap: 4px; margin-bottom: 8px; flex-wrap: wrap; }
 .ra-periods button, .ra-group button, .ra-metric button { background: var(--btn-bg, #2a2a2a); border: 1px solid var(--hairline, #3a3a3a);
-  border-radius: 5px; color: var(--text-muted, #9aa0a6); font: 12px/1 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif; padding: 5px 9px; cursor: pointer; }
-.ra-periods button:hover, .ra-group button:hover, .ra-metric button:hover { background: var(--btn-hover-bg, #333); color: #ddd; }
+  border-radius: 5px; color: var(--text-muted, #9aa0a6); font: 12px/1 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif; padding: 5px 9px; cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease, transform 0.08s ease; }
+.ra-periods button:active, .ra-group button:active, .ra-metric button:active { transform: scale(0.96); }
+.ra-periods button:hover, .ra-group button:hover, .ra-metric button:hover { border-color: var(--accent, #9cd2ff);
+  color: var(--accent, #9cd2ff); background: var(--accent-wash, rgba(156, 210, 255, 0.12)); }
 .ra-periods button.on, .ra-group button.on, .ra-metric button.on { background: #0e639c; border-color: #1177bb; color: #fff; }
 .ra-chart { margin: 6px 0 10px; min-height: 120px; }
 .ra-empty { color: var(--text-muted, #9aa0a6); text-align: center; padding: 40px 0; }

@@ -49,6 +49,10 @@ body.scheme-solarized-dark {
      set a px value (e.g. 980px) to re-cap for prose readability. Shared by the transcript,
      ledger, statusline, composer, and live-ask picker so they stay aligned. */
   --chat-col: 100%;
+  /* the word-button vocabulary (2026-08-28): three boxes + two type sizes, same values in both
+     themes — a size is geometry, not a theme choice */
+  --btn-pad-sm: 1px 8px; --btn-pad-md: 3px 10px; --btn-pad-lg: 5px 13px;
+  --btn-fs-sm: 0.72em; --btn-fs-md: 0.82em;
   --bg: var(--vscode-editor-background, #1e1e1e);
   --fg: var(--vscode-foreground, #cccccc);
   --dim: var(--vscode-descriptionForeground, #9a9a9a);
@@ -145,6 +149,8 @@ body.scheme-solarized-dark {
 */
 body.theme-light {
   --chat-col: 100%;
+  --btn-pad-sm: 1px 8px; --btn-pad-md: 3px 10px; --btn-pad-lg: 5px 13px;   /* geometry, theme-invariant */
+  --btn-fs-sm: 0.72em; --btn-fs-md: 0.82em;
   --bg: #FAF9F5;
   --fg: #1F1E1D;
   --dim: #5D574E;
@@ -725,9 +731,11 @@ body.chat-theme-yatharth .tab.active.colored:not(.tab-blocked) {
   padding: 7px 11px; cursor: pointer; user-select: none; font-size: 12px; }
 .bg-fold-head.open { border-bottom: 1px solid var(--box-border); }
 .bg-fold-head:hover { background: rgba(255, 255, 255, 0.04); }
-.bg-stop { flex: 0 0 auto; font-size: 0.72em; padding: 1px 8px; border-radius: 9px; cursor: pointer;
-  border: 1px solid color-mix(in srgb, var(--fg) 25%, transparent); background: transparent; color: var(--fg); }
-.bg-stop:hover { border-color: var(--accent); color: var(--accent); }
+.bg-stop { flex: 0 0 auto; font-size: var(--btn-fs-sm); padding: var(--btn-pad-sm); border-radius: 9px; cursor: pointer;
+  border: 1px solid color-mix(in srgb, var(--fg) 25%, transparent); background: transparent; color: var(--fg);
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease, transform 0.08s ease; }
+.bg-stop:active { transform: scale(0.96); }
+.bg-stop:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-wash); }
 .bg-stop:disabled { opacity: 0.55; cursor: default; }
 .bg-fold-head.bg-failed { --bgt: var(--st-blocked-bg); }
 .bg-fold-head.bg-completed { --bgt: var(--st-ready-bg); }
@@ -868,8 +876,10 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
    accent outline next to the accent-blue chips read as already-pressed — accent is for
    hover/selected, never rest chrome */
 .composer-stage-btn { background: rgba(255, 255, 255, 0.06);
-  border: 1px solid var(--box-border); color: var(--dim); border-radius: 5px; font-size: 0.82em;
-  padding: 1px 8px; cursor: pointer; }
+  border: 1px solid var(--box-border); color: var(--dim); border-radius: 5px; font-size: var(--btn-fs-md);
+  padding: var(--btn-pad-sm); cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease, transform 0.08s ease; }
+.composer-stage-btn:active { transform: scale(0.96); }
 /* hover = the FEED's word-button treatment exactly (the user 2026-08-25: text + outline light up
    blue, like Clear/Undo — never a background fill; the wash values are the feed's .ftree-act-btn
    family, referenced not re-derived) */
@@ -1861,10 +1871,13 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
 .ask-pair-a { color: var(--fg); opacity: 0.85; padding-left: 14px; }
 .ask-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
 .ask-btn {
-  padding: 4px 13px; border-radius: 6px; font: inherit; cursor: pointer;
+  padding: var(--btn-pad-lg); border-radius: 6px; font: inherit; cursor: pointer;
   border: 1px solid var(--box-border); background: rgba(255, 255, 255, 0.06); color: var(--fg);
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease, transform 0.08s ease;
 }
-.ask-btn:hover { background: rgba(255, 255, 255, 0.13); }
+.ask-btn:active { transform: scale(0.96); }
+/* the ONE action-button hover (accent triple); the primary keeps its awaiting fill + brightness lift */
+.ask-btn:not(.ask-btn-primary):hover { border-color: var(--accent); color: var(--accent); background: var(--accent-wash); }
 /* keyboard focus ring on the Submit/Cancel buttons — they're part of the multi-select arrow-key nav now
    (arrow down past the checkboxes to reach them; Enter activates the focused one) (the user 2026-06-27) */
 .ask-btn.focus { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -3124,10 +3137,12 @@ body.fileview-open { overflow: hidden; }
   overflow: hidden; text-overflow: ellipsis; }
 .fileview-base { flex: 0 0 auto; }
 .fileview-acts { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; }
-.fileview-btn { font: inherit; font-size: 0.82em; cursor: pointer; flex: 0 0 auto;
-  padding: 3px 9px; border-radius: 6px; background: rgba(255, 255, 255, 0.08); color: var(--fg);
-  border: 1px solid var(--box-border); }
-.fileview-btn:hover { border-color: var(--accent); }
+.fileview-btn { font: inherit; font-size: var(--btn-fs-md); cursor: pointer; flex: 0 0 auto;
+  padding: var(--btn-pad-md); border-radius: 6px; background: rgba(255, 255, 255, 0.08); color: var(--fg);
+  border: 1px solid var(--box-border);
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease, transform 0.08s ease; }
+.fileview-btn:active { transform: scale(0.96); }
+.fileview-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-wash); }
 /* the GitHub link wears the button treatment but IS an anchor — the browser owns the new tab */
 a.fileview-btn { text-decoration: none; display: inline-flex; align-items: center; }
 /* an author `display` beats the UA's [hidden] rule — without this the anchor shows hrefless
