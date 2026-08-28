@@ -20311,7 +20311,23 @@ def build_feed(now, tmux=None):
                 if _tail:
                     _sa_u = _tail[1]
             if _sa_u is None and _cited and _cited in cite_uuids:
-                _sa_u = _cited
+                # THE GROUNDING CAN BE OUTRUN (the user 2026-08-28, T153): the citation names what
+                # the summary was WRITTEN FROM — but a reply that reopens the card adds stretches
+                # the stored summary has never seen (no re-completion yet, so no re-distill event),
+                # and the click then lands in the stale FIRST stretch of a visibly two-stretch
+                # card. When the follow-up stamp or any subtree trail segment postdates the
+                # summary's own coverage stamp, the cited tier YIELDS to the most-current-
+                # substantive walk below, so the click follows the freshest evidence; the citation
+                # resumes authority the moment a re-distill lands (the stamp catches up).
+                # Display-only: no column implication.
+                _cov = max(int(nodes[nid].get("distilledMt") or 0),
+                           int(nodes[nid].get("briefedMt") or 0))
+                _outrun = bool(_cov) and (
+                    (nodes[nid].get("followupAt") or 0) > _cov
+                    or any((seg_best.get(_seg_key(_sid), (None, False, 0))[2] or 0) > _cov
+                           for _x in _subtree(nid) for _sid in (nodes[_x].get("trail") or [])))
+                if not _outrun:
+                    _sa_u = _cited
             if _sa_u is None:
                 _best = None                             # (substantive, seg_t): prefer substantive, then latest
                 for _x in _subtree(nid):

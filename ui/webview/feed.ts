@@ -1960,6 +1960,22 @@ function updateAskCard(card: HTMLElement, it: AskItem) {
           const age = el("span", "fask-para-age");
           age.textContent = relAge(nowS - (bp[i].since || nowS));
           para.append(" ", age);
+          // Per-paragraph deep-link (the user 2026-08-28, T153): a split takeaway's paragraphs map
+          // 1:1 to <completed-items>, and each item's own tree row already carries its WORK anchor —
+          // so every paragraph can land on the stretch it is actually about, not just the card-level
+          // grounding. stopPropagation beats the whole-line summary link one level up.
+          const pid = bp[i].id;
+          const prow = pid ? (it.tree || []).find((r) => r.id === pid) : undefined;
+          if (prow && prow.anchorUuid) {
+            const au = prow.anchorUuid;
+            para.classList.add("fask-para-link");
+            para.title = "jump to where this piece resolved";
+            para.onclick = (ev: Event) => {
+              ev.stopPropagation(); focusEcho(it.sid);
+              vscodeApi?.postMessage({ type: "showOnTimeline", itemId: it.itemId, sid: it.sid,
+                                       t: it.t, anchor: "work", anchorUuid: au });
+            };
+          }
         }
         dle.append(para);
       });
