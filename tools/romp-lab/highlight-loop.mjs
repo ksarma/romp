@@ -203,6 +203,40 @@ await page.waitForFunction(() => !document.querySelector(".cmt-pop .cmt-state .c
   .catch(() => check("4e-turn-ends", false, "thread still working 60s after the interrupt"));
 await shot("interrupted-settled");
 
+// PHASE 6 (T145, permanent): RELAY — the discussion goes back to the main conversation whole,
+// machine-dressed, with staged feedback and a persistent sent-back marker; the thread stays
+// talkable. Runs BEFORE phase 5's quiet sampling so its own settling is covered by it.
+{
+  const relayBtn = await page.evaluate(() => {
+    const b = Array.from(document.querySelectorAll('.cmt-pop .cmt-act')).find((x) => x.textContent === "Relay");
+    if (!b) return false;
+    b.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    return true;
+  });
+  check("6-relay-button-renders-and-clicks", relayBtn, "no Relay button in the open popover");
+  // instant ack: the button flips before any kernel round-trip
+  const ack = await page.evaluate(() => {
+    const b = Array.from(document.querySelectorAll('.cmt-pop .cmt-act')).find((x) => x.textContent === "Relaying…");
+    return !!b && b.disabled;
+  });
+  check("6-instant-ack", ack, "the button did not flip to Relaying…");
+  // the arrival: a machine-dressed (romp-attributed) turn in the MAIN thread carrying the WHOLE
+  // exchange — both the user's question and the final answer text
+  await page.waitForFunction((f) => Array.from(document.querySelectorAll("#content .turn.romp"))
+    .some((t) => t.textContent.includes("side discussion") && t.textContent.includes(f)
+              && t.textContent.includes("Why is that the case?")), FINAL, { timeout: 120000 })
+    .then(() => check("6-machine-dressed-whole-exchange-arrives", true))
+    .catch(() => check("6-machine-dressed-whole-exchange-arrives", false,
+      "no romp-attributed arrival carrying both sides of the exchange in the main thread"));
+  // the persistent sent-back marker in the thread, and the composer still invites more talk
+  await page.waitForFunction(() => !!document.querySelector(".cmt-pop .cmt-relayed-note"), undefined, { timeout: 30000 })
+    .then(() => check("6-sent-back-marker", true))
+    .catch(() => check("6-sent-back-marker", false, "no ↩ sent-back marker in the popover"));
+  const talkable = await page.evaluate(() => !!document.querySelector(".cmt-pop .cmt-input"));
+  check("6-thread-stays-talkable", talkable, "the composer vanished after the relay");
+  await shot("relayed");
+}
+
 // PHASE 5: nothing sticks — sample well past several pushes
 await page.waitForTimeout(10000);
 check("5-nothing-sticks", (await busy()) === false, "busy after 10s quiet");

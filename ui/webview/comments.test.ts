@@ -541,7 +541,7 @@ test("stuck-green regression: a stalled or missing later frame can never park th
 // (tab strip) — not transcript-rendering settings, N/A both before and after. ───────────────────
 test("the popover renders the chat's display units — thinking hidden, tool runs folded, per the gear", () => {
   const at = UI.indexOf("renderingIntoThread = true;");
-  const block = UI.slice(at, at + 2200);
+  const block = UI.slice(at, at + 2800);   // widened past the T145 relay-note insert
   assert.ok(block.includes("? compactDisplay(evs.map((e) => e.kind), evs.map((e) => e.kind === \"tool\" ? e.name : undefined))"),
     "the SAME unit builder the chat uses, gated on the SAME settings.compact");
   assert.ok(block.includes('const key = it.kind === "toolgroup" ? toolGroupKey(run[0]) : retryGroupKey(run[0]);'),
@@ -607,7 +607,7 @@ test("the pending echo prunes against EVENTS too — a landed user turn never do
 
 test("the parity bundle (2026-08-26): dividers, owner-scoped in-turn controls, the sid stamp", () => {
   // day dividers open new days in the popover exactly as in the chat (same helper, same idiom)
-  assert.match(UI, /const dayOpen = eventEpoch\(evs\[itemFirstEvent\(it\)\]\);\s*\n\s*if \(dayOpen != null\) \{\s*\n\s*const dv = dayDividerFor\(dayOpen, prev\);/);
+  assert.match(UI, /const dayOpen = eventEpoch\(evs\[itemFirstEvent\(it\)\]\);[\s\S]{0,300}?if \(dayOpen != null\) \{\s*\n\s*const dv = dayDividerFor\(dayOpen, prev\);/);   // the T145 relay-note insert sits between
   // the popover's list is stamped with the THREAD sid, and in-turn controls resolve their owner
   // from the DOM at click time — queued ✕ and the api-error card act on the thread, never the tab
   assert.match(UI, /list\.dataset\.session = th\.tid;/);
