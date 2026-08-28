@@ -554,9 +554,11 @@ body.chat-theme-yatharth .tab.active.colored:not(.tab-blocked) {
    title can't colour/bold). */
 .tab-tip {
   position: fixed; z-index: 70; display: none; pointer-events: none;
-  background: var(--vscode-editorWidget-background, #252526);
-  border: 1px solid var(--box-border); border-radius: var(--radius-menu);
-  padding: 7px 10px; box-shadow: var(--shadow-menu);
+  /* the ONE tooltip dress's tokens (.romp-tip below) — every tip matches, only the mono body and the
+     pane-width cap stay this tip's own */
+  background: var(--vscode-editorWidget-background, var(--surface-raised));
+  border: 1px solid var(--box-border); border-radius: var(--radius-toast);
+  padding: 7px 10px; box-shadow: var(--shadow-toast);
   /* mono ON PURPOSE (unlike the menus' sans): the body is paths/branch/model, the statusline's own voice */
   font-family: var(--mono); font-size: 0.82em; line-height: 1.55;
   /* span the full chat pane width (the user 2026-06-25) so the recent-activity names don't get clipped — the
@@ -572,6 +574,17 @@ body.chat-theme-yatharth .tab.active.colored:not(.tab-blocked) {
    "(Xm ago)" time — the per-item colour comes from ageColorReadable, so no colour here. */
 .tab-tip-recent-list { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .tab-tip-recent-item { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* ── ONE tooltip dress (2026-08-28): the shared styled-tooltip node (ui/webview/tip.ts). Every styled
+   tip wears these tokens — the chat tab tip and the feed/sessions tips carry the same values — so all
+   tips match and theme for free. BYTE-MIRRORED in styles.css and feed.css (like .ctx-menu); tokens
+   only, no raw hex (tip.test.ts pins both). Behavior (show/hide/position) lives in tip.ts. */
+.romp-tip {
+  position: fixed; z-index: 210;
+  background: var(--vscode-editorWidget-background, var(--surface-raised)); color: var(--fg);
+  border: 1px solid var(--box-border); border-radius: var(--radius-toast); padding: 7px 10px;
+  box-shadow: var(--shadow-toast); font-size: 0.86em; line-height: 1.45;
+  max-width: min(440px, 92vw);
+}
 .tab-close:hover { opacity: 1; background: rgba(255, 255, 255, 0.12); }
 .tab-add { color: var(--dim); font-size: 1.1em; padding: 6px 10px; border-radius: 6px; line-height: 18px; }
 /* the tag controls reserve the + tab's EXACT vertical box — 18px line + 12px padding + 1px border

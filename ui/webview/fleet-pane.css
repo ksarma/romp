@@ -74,9 +74,12 @@ color:var(--vscode-descriptionForeground,#9a9a9a);font-size:12px;user-select:non
    goal text, Background + Key takeaway (or Decision brief), sub-goal checklist. Lives on document.body
    (render() wipes #fleet-list every push, which would kill anything mounted inside it mid-hover).
    Sizes reuse the pane's ranks: 12px body (.fl-toggle rank), 10.5px labels (the footer-control rank). */
+/* Surface/border/radius/shadow ride the ONE tooltip dress's tokens (.romp-tip, 2026-08-28) —
+   styles.css is linked before this file on both hosts, so the tokens resolve here. The card keeps
+   its own size ranks (12px body) and scroll cap; only the dress is shared. */
 .fl-hover{position:fixed;z-index:60;max-width:380px;min-width:220px;max-height:60vh;overflow-y:auto;
-  background:var(--vscode-editorWidget-background,#252526);border:1px solid rgba(255,255,255,0.16);
-  border-radius:8px;padding:9px 11px;box-shadow:0 6px 22px rgba(0,0,0,0.45);
+  background:var(--vscode-editorWidget-background,var(--surface-raised));border:1px solid var(--box-border);
+  border-radius:var(--radius-toast);padding:7px 10px;box-shadow:var(--shadow-toast);
   font-size:12px;line-height:1.45;pointer-events:auto}
 .fl-hover-state{color:var(--vscode-descriptionForeground,#9a9a9a);margin-bottom:3px}
 .fl-hover-title{font-weight:600;margin-bottom:2px;white-space:normal}

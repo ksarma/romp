@@ -14,6 +14,7 @@ import { fleetVisibleRoots } from "./fleet-roots";
 import { onlyTag, matchesOnly } from "./only-filter";
 import { hostPrefix } from "./host-prefix";
 import { ageColorReadable } from "./age-color";
+import { TIP_GRACE_MS } from "./tip";
 
 type Color = { bg: string; fg: string } | null;
 interface LedgerNode {
@@ -689,8 +690,9 @@ applyTheme(document, loadSettings());   // the persisted theme applies at boot (
 // sub-goal checklist — without leaving the Outline. ONE persistent panel on document.body: render()
 // wipes #fleet-list on every push (replaceChildren), so anything mounted inside it dies mid-hover
 // (the timeline SVG-wipe lesson) — the panel lives outside the wipe and only hides on a real
-// mouse-out / scroll / click. Wiring is DELEGATED to the stable #fleet-list; 120ms intent before
-// showing (the feed card's hover debounce) so row sweeps don't flash it.
+// mouse-out / scroll / click. Wiring is DELEGATED to the stable #fleet-list; the card shows INSTANTLY
+// on hover (the one tooltip treatment, 2026-08-28 — a hover IS the intent) and hides after the shared
+// TIP_GRACE_MS transit grace so sweeping into the card never flickers it.
 
 // WHY a node's checkbox reads the way it does — explicit vs inferred (roll-up = every sub-step done,
 // roll-down = a resolved parent) vs dismissed vs blocked vs open — worked out from the children the
@@ -713,21 +715,19 @@ function markReason(n: LedgerNode, byId: Map<string, LedgerNode>): string {
 
 const HOVER_SUB_CAP = 14;   // sub-goal rows shown before "…and N more" (the card stays a glance, not a scroll)
 let hoverCardEl: HTMLElement | null = null;
-let hoverKey = "";                      // "sid\0nid" currently shown (or pending)
-let hoverShowT: number | undefined, hoverHideT: number | undefined;
+let hoverKey = "";                      // "sid\0nid" currently shown
+let hoverHideT: number | undefined;
 
 function hideHoverCard(): void {
-  if (hoverShowT) { clearTimeout(hoverShowT); hoverShowT = undefined; }
   if (hoverHideT) { clearTimeout(hoverHideT); hoverHideT = undefined; }
   hoverKey = "";
   if (hoverCardEl) { hoverCardEl.remove(); hoverCardEl = null; }
 }
-// Leaving a row schedules the hide with a short transit grace, so crossing the small gap into the card
-// (or to the next row, which re-keys) doesn't flicker it; entering the card cancels.
+// Leaving a row schedules the hide with the shared tip grace (tip.ts TIP_GRACE_MS), so crossing the
+// small gap into the card (or to the next row, which re-keys) doesn't flicker it; entering cancels.
 function scheduleHideHover(): void {
-  if (hoverShowT) { clearTimeout(hoverShowT); hoverShowT = undefined; }
   if (hoverHideT) clearTimeout(hoverHideT);
-  hoverHideT = window.setTimeout(hideHoverCard, 160);
+  hoverHideT = window.setTimeout(hideHoverCard, TIP_GRACE_MS);
 }
 
 // The card body — the modal's sections from data the pane already holds: the ledger node (state, text,
@@ -808,10 +808,11 @@ function showHoverCard(row: HTMLElement, sid: string, nid: string): void {
     if (!row || !sid || !nid) return;                 // provisional rows (no nid) keep their native title
     if (hoverHideT) { clearTimeout(hoverHideT); hoverHideT = undefined; }
     const key = sid + "\0" + nid;
-    if (key === hoverKey) return;                     // already shown/pending for this row
-    if (hoverShowT) clearTimeout(hoverShowT);
+    if (key === hoverKey) return;                     // already shown for this row
     hoverKey = key;
-    hoverShowT = window.setTimeout(() => { hoverShowT = undefined; showHoverCard(row, sid, nid); }, 120);
+    // INSTANT show (the one tooltip treatment, 2026-08-28): a hover IS the intent — the old 120ms
+    // debounce made every row feel laggy; the key check above keeps child-element mouseovers cheap.
+    showHoverCard(row, sid, nid);
   });
   list.addEventListener("mouseout", (e) => {
     const to = e.relatedTarget as Element | null;

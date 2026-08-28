@@ -46,7 +46,9 @@ test("menus wear ONE vocabulary (CLAUDE.md): --radius-menu 6px + --shadow-menu o
   assert.match(CHAT, /--radius-menu: 6px;\n  --shadow-menu: 0 4px 12px rgba\(0, 0, 0, 0\.35\);/);
   assert.match(FEED, /--radius-menu: 6px;/);
   assert.match(FEED, /--shadow-menu: 0 4px 12px rgba\(0, 0, 0, 0\.35\);/);
-  for (const sel of [".ctx-menu", ".meta-menu", ".tab-tip", ".slash-pop"]) {
+  // .tab-tip left this list 2026-08-28: it is a TOOLTIP, not a dropdown, and wears the ONE tooltip
+  // dress's tokens (--radius-toast/--shadow-toast) now — tip.test.ts pins that.
+  for (const sel of [".ctx-menu", ".meta-menu", ".slash-pop"]) {
     const at = CHAT.indexOf(sel + " {");
     const rule = CHAT.slice(at, CHAT.indexOf("}", at));
     assert.ok(rule.includes("var(--radius-menu)"), sel + " radius through the token");

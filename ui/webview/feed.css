@@ -1496,18 +1496,27 @@ a.fileview-btn[hidden] { display: none; }
 #rpipe { position: fixed; top: 0; left: 0; right: 0; z-index: 99999; text-align: center;
   background: #2b2d30; color: #e6e6e6; border-bottom: 1px solid #4a4d51; padding: 7px 14px; }
 
-/* Age-stamp provenance popover (the user 2026-07-27): hover a card's "Nm ago" for the thread's story.
-   Replaces the native title tooltip (dense, unaligned). Panel wears the feed-toast card look; rows are
-   the modal history-row family (0.86em, dim time cell — .ftree-log-when's vocabulary) with the times in
-   ONE right-aligned tabular column so they read as a list. The closing line (what the visible stamp
-   marks) is its own section under a hairline. pointer-events:none — it can never eat a click. */
-#age-tip {
-  position: fixed; z-index: 210; display: none; max-width: min(440px, 92vw);
-  background: var(--vscode-menu-background, var(--surface-raised)); color: var(--fg);
-  border: 1px solid rgba(255, 255, 255, 0.12); border-radius: var(--radius-toast); padding: 7px 10px;
+/* ── ONE tooltip dress (2026-08-28): the shared styled-tooltip node (ui/webview/tip.ts). Every styled
+   tip wears these tokens — the chat tab tip and the feed/sessions tips carry the same values — so all
+   tips match and theme for free. BYTE-MIRRORED in styles.css and feed.css (like .ctx-menu); tokens
+   only, no raw hex (tip.test.ts pins both). Behavior (show/hide/position) lives in tip.ts. */
+.romp-tip {
+  position: fixed; z-index: 210;
+  background: var(--vscode-editorWidget-background, var(--surface-raised)); color: var(--fg);
+  border: 1px solid var(--box-border); border-radius: var(--radius-toast); padding: 7px 10px;
   box-shadow: var(--shadow-toast); font-size: 0.86em; line-height: 1.45;
-  pointer-events: none;
+  max-width: min(440px, 92vw);
 }
+
+/* Age-stamp provenance popover (the user 2026-07-27): hover a card's "Nm ago" for the thread's story.
+   Replaces the native title tooltip (dense, unaligned). The panel is the shared .romp-tip node
+   (tip.ts — pointer-events:none, so it can never eat a click; cards are keyed + updated IN PLACE
+   across pushes, so the hovered stamp usually survives a re-render, and the feed hides the tip only
+   when its anchor was actually torn out of the DOM via pruneTip — an unconditional hide made the tip
+   vanish ~a second into every hover, 2026-07-27). Rows are the modal history-row family (0.86em, dim
+   time cell — .ftree-log-when's vocabulary) with the times in ONE right-aligned tabular column so
+   they read as a list. The closing line (what the visible stamp marks) is its own section under a
+   hairline. */
 .age-tip-row { display: flex; column-gap: 10px; align-items: baseline; }
 .age-tip-when { flex: 0 0 auto; min-width: 118px; text-align: right; color: var(--dim);
   white-space: nowrap; font-variant-numeric: tabular-nums; }

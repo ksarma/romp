@@ -27,6 +27,7 @@ import { canPreview } from "./preview";
 import { initFileView } from "./file-view";
 import { initFileBrowse, openFileBrowse } from "./file-browse";
 import { VIEW_STATE_KEY, parseViewState, serializeViewState, pruneViewState, capViewState, type FeedViewState } from "./feed-view-state";
+import { wireTip, setTip, pruneTip } from "./tip";
 
 // (The standalone-deliverable "FeedItem" subsystem was REMOVED 2026-07-07: the kernel had emitted
 // items: [] permanently — goal cards are the only feed unit — so its types, renderers, expand/detail
@@ -860,8 +861,10 @@ function paintCardBell(card: HTMLElement, on: boolean): void {
   (btn as any)._bellOn = on;
   btn.classList.toggle("on", on);
   btn.innerHTML = cardBellSvg(!on);
-  btn.title = on ? "system notifications on for this task — click to stop"
+  const say = on ? "system notifications on for this task — click to stop"
     : "notify me when this task blocks on you or completes";
+  setTip(btn, say);                                    // styled tip (tip.ts), not a native title
+  btn.setAttribute("aria-label", say);                 // the icon-only button keeps an accessible name
 }
 
 // the ONE toggle path — the corner bell click and the right-click menu both land here
@@ -972,7 +975,7 @@ function makeAskCard(it: AskItem): HTMLElement {
   // past-tense "interrupted" badge. Working-yellow + faded (matches the chat chip's chip-interrupting), so
   // it reads as "still winding down" rather than a done state.
   const intingBadge = el("span", "fask-interrupting"); intingBadge.textContent = "interrupting…";
-  intingBadge.title = "stop sent — waiting for this session to reach a stopping point";
+  setTip(intingBadge, "stop sent — waiting for this session to reach a stopping point");   // styled tip (tip.ts), not a native title
   intingBadge.style.display = "none";
   // yellow "warning" chip (the user 2026-07-02): a judge stamped an anomaly on this goal (kernel `warns`,
   // judge _node_warn — e.g. a distiller cite-miss). Click → the warn-detail overlay: what happened and why
@@ -1898,7 +1901,7 @@ function updateAskCard(card: HTMLElement, it: AskItem) {
     // records a real block and the follow-up-failed CHIP carries that story)
     a._blocked.textContent = it.blocked.state === "permission" ? "⏸ approval"
       : "⏸ picker";
-    a._blocked.title = it.blocked.what + " — click to jump to the prompt in the chat";
+    setTip(a._blocked as HTMLElement, it.blocked.what + " — click to jump to the prompt in the chat");
     // the prompt (a picker / permission approval) is the session's LIVE bottom → `live` lands the chat right
     // on it, not wherever it was last scrolled (the user 2026-07-08).
     a._blocked.onclick = (ev: Event) => { ev.stopPropagation(); vscodeApi?.postMessage({ type: "openSession", id: it.sid, live: true }); };
@@ -2041,8 +2044,8 @@ function updateAskCard(card: HTMLElement, it: AskItem) {
       : modelLimit ? "⚠ Model limit"
       : refusal ? "⚠ Safeguards refused"
       : it.blocked.status ? `⚠ API error · ${it.blocked.status}` : "⚠ API error";
-    // a refusal's raw CLI text buries the remedy — the kernel's `what` states it plainly, so title with that
-    a._apiBadge.title = (spendLimit || refusal) ? it.blocked.what : (it.blocked.text || it.blocked.what);
+    // a refusal's raw CLI text buries the remedy — the kernel's `what` states it plainly, so tip with that
+    setTip(a._apiBadge as HTMLElement, (spendLimit || refusal) ? it.blocked.what : (it.blocked.text || it.blocked.what));
     a._apiRetry.disabled = false; a._apiRetry.textContent = "Retry";
     a._apiRetry.onclick = (ev: Event) => {
       ev.stopPropagation();
@@ -2057,8 +2060,8 @@ function updateAskCard(card: HTMLElement, it: AskItem) {
   (a._jauthBadge as HTMLElement).style.display = isJudgeAuth ? "" : "none";
   if (isJudgeAuth && it.blocked) {
     a._jauthBadge.textContent = it.blocked.mode === "key" ? "⚠ Can't analyze · API key" : "⚠ Can't analyze · login";
-    a._jauthBadge.title = (it.blocked.what || "")
-      + (it.blocked.text ? ` — the CLI said: ${it.blocked.text}` : "");
+    setTip(a._jauthBadge as HTMLElement, (it.blocked.what || "")
+      + (it.blocked.text ? ` — the CLI said: ${it.blocked.text}` : ""));
   }
   // "⚠ retrying since HH:MM" — the OPEN turn is inside an api-retry storm (kernel `retrying`: the live
   // backend state, with the storm's start from the states log). The card stays in Working — the storm is
@@ -2069,9 +2072,9 @@ function updateAskCard(card: HTMLElement, it: AskItem) {
   (a._retryBadge as HTMLElement).style.display = (rt && !isApiErr) ? "" : "none";
   if (rt && !isApiErr) {
     a._retryBadge.textContent = rt.since ? `⚠ retrying since ${clockHM(rt.since)}` : "⚠ retrying";
-    a._retryBadge.title = "this session's turn keeps hitting API errors and is auto-retrying"
+    setTip(a._retryBadge as HTMLElement, "this session's turn keeps hitting API errors and is auto-retrying"
       + (rt.count ? ` (attempt ${rt.count})` : "")
-      + " — still in motion, not stalled; it resumes on its own when the API recovers";
+      + " — still in motion, not stalled; it resumes on its own when the API recovers");
   }
   // PARKED HANDOFF → a "Revive" button that brings the offline recipient back so the parked message is
   // delivered; the existing Clear button dismisses it (rides cleared.jsonl). (the user 2026-06-22.)
@@ -2463,43 +2466,27 @@ function logPhrase(r: NodeLogRow): string {
 const logRowT = (r: NodeLogRow): number => r.at || r.evT || 0;
 // the provenance popover (hover the card's age stamp) borrows the same vocabulary the card renders with
 const PROV_FMT: ProvFmt = { rel: relAge, clock: clockHM, phrase: logPhrase };
-// One shared popover element for every age stamp (the user 2026-07-27: the native title tooltip was
-// dense and unaligned). Times sit in their own right-aligned column, rows wear the modal history-row
-// look (#age-tip in feed.css). pointer-events:none + rebuilt per hover, so it is click-safe; a lazy
-// rows thunk keeps the assembly off the render path entirely.
-let ageTipEl: HTMLElement | null = null;
-let ageTipAnchor: HTMLElement | null = null;   // the stamp the tip is up for — pruneAgeTip checks it survived the render
-function showAgeTip(anchor: HTMLElement, rows: ProvRow[]): void {
-  if (!ageTipEl) { ageTipEl = el("div", ""); ageTipEl.id = "age-tip"; document.body.appendChild(ageTipEl); }
-  ageTipAnchor = anchor;
-  const tip = ageTipEl;
-  tip.replaceChildren();
-  for (const r of rows) {
-    const row = el("div", "age-tip-row" + (r.kind === "stamp" ? " stamp" : ""));
-    const w = el("span", "age-tip-when"); w.textContent = r.when;
-    const x = el("span", "age-tip-what"); x.textContent = r.what;
-    // each line wears its own recency colour — time AND text, the chat tab-tip treatment (the user
-    // 2026-07-27); the un-timed remainder row keeps the panel's dim default
-    if (r.t > 0) { const c = ageColorReadable(hostNow - r.t); row.style.color = c; w.style.color = c; }
-    row.append(w, x); tip.appendChild(row);
-  }
-  tip.style.display = "block";
-  // above the stamp, clamped to the viewport; below it when there is no headroom
-  const rc = anchor.getBoundingClientRect();
-  const left = Math.max(8, Math.min(rc.left, window.innerWidth - tip.offsetWidth - 8));
-  const top = rc.top - tip.offsetHeight - 6;
-  tip.style.left = left + "px";
-  tip.style.top = (top < 8 ? rc.bottom + 6 : top) + "px";
-}
-function hideAgeTip(): void { ageTipAnchor = null; if (ageTipEl) ageTipEl.style.display = "none"; }
-// Cards are keyed + updated IN PLACE across pushes, so the hovered stamp usually survives a re-render —
-// unconditionally hiding here made the tip vanish ~a second into every hover (the feed re-renders on
-// every kernel push; the user 2026-07-27). Hide only when the anchor was actually torn out of the DOM
-// (a card rebuilt/removed), where its mouseleave can never fire.
-function pruneAgeTip(): void { if (ageTipAnchor && !ageTipAnchor.isConnected) hideAgeTip(); }
+// The shared styled tooltip (tip.ts) carries every age stamp's provenance (the user 2026-07-27: the
+// native title tooltip was dense and unaligned). Times sit in their own right-aligned column, rows
+// wear the modal history-row look (.age-tip-row in feed.css). Rebuilt per hover, so it is click-safe;
+// a lazy rows thunk keeps the assembly off the render path entirely. Placed ABOVE the stamp (it sits
+// at a card's bottom edge), flipping below when there is no headroom. Cards are keyed + updated IN
+// PLACE across pushes, so the hovered stamp usually survives a re-render — unconditionally hiding on
+// render made the tip vanish ~a second into every hover (the feed re-renders on every kernel push;
+// the user 2026-07-27): pruneTip (called after each render) hides only when the anchor was actually
+// torn out of the DOM, where its mouseleave can never fire.
 function wireAgeTip(elm: HTMLElement, rows: () => ProvRow[]): void {
-  elm.onmouseenter = () => showAgeTip(elm, rows());
-  elm.onmouseleave = hideAgeTip;
+  wireTip(elm, (tip) => {
+    for (const r of rows()) {
+      const row = el("div", "age-tip-row" + (r.kind === "stamp" ? " stamp" : ""));
+      const w = el("span", "age-tip-when"); w.textContent = r.when;
+      const x = el("span", "age-tip-what"); x.textContent = r.what;
+      // each line wears its own recency colour — time AND text, the chat tab-tip treatment (the user
+      // 2026-07-27); the un-timed remainder row keeps the panel's dim default
+      if (r.t > 0) { const c = ageColorReadable(hostNow - r.t); row.style.color = c; w.style.color = c; }
+      row.append(w, x); tip.appendChild(row);
+    }
+  }, { place: "above" });
 }
 // the node's owning session for navigation (a handoff node lives in the recipient's transcript) —
 // the same resolution wireNodeZones uses for its zones
@@ -4261,7 +4248,7 @@ function ensureHostLoad(list: HTMLElement): void {
 
 function render() {
   const list = document.getElementById("feed-list")!;
-  pruneAgeTip();   // drop the tip only if the render tore its hovered stamp out (see pruneAgeTip)
+  pruneTip();   // drop the styled tip only if the render tore its hovered anchor out (tip.ts pruneTip)
   applyFollowMove(asks);   // keep optimistically-moved follow-up cards in Working until the kernel confirms (or reverts)
   paintJudgeLimit();   // the usage-limit banner above the columns (build-once; hidden when unlatched)
   auditShownColumns(asks); // tripwire: what this render SHOWS is the record a bounce report needs

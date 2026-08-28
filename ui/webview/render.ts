@@ -49,6 +49,7 @@ import { mediaSrc, kernelUrl } from "./media";
 import { initStrip, fmtReset } from "./strip";
 import { apiErrorReason } from "./api-error-reason";
 import { mathBlock, mathInline } from "./math";
+import { setTip } from "./tip";
 import { agentCount, replyOwed, threadsByAnchor, threadBusy, threadStuck, findAnchorRange, sliceRanges, prunePending, type CommentThread } from "./comments";
 
 for (const [name, lang] of Object.entries({
@@ -9713,10 +9714,11 @@ function metaButton(kind: MetaKind, text: string, forSid?: string | null): HTMLE
   const caret = el("span", "meta-caret");
   caret.textContent = "▾";
   btn.appendChild(caret);
-  btn.title = kind === "model" ? "change model (sends /model)"
+  // the styled tip (tip.ts), not a native title — every tooltip wears the one .romp-tip dress
+  setTip(btn, kind === "model" ? "change model (sends /model)"
     : kind === "effort" ? "change thinking effort (sends /effort)"
     : kind === "fast" ? "toggle fast mode (sends /fast)"
-    : "change permission mode (shift+tab cycle)";
+    : "change permission mode (shift+tab cycle)");
   btn.addEventListener("click", (e) => { e.stopPropagation(); toggleMetaMenu(kind, btn, forSid ?? null); });
   return btn;
 }
@@ -9981,9 +9983,10 @@ function stopButton(state?: ChipState): HTMLElement {
   const btn = el("button", "stop-btn");
   (btn as HTMLButtonElement).type = "button";
   const stuck = state === "retrying" || state === "blocked";
-  btn.title = stuck
-    ? "Stop retrying — interrupt this thread and hold its auto-retry off until you send it a message"
-    : "Stop — interrupt this session (same as Ctrl+C)";
+  // styled tip (tip.ts): a label line + its explanation, so the icon-only square explains itself
+  setTip(btn, stuck
+    ? "Stop retrying\ninterrupt this thread and hold its auto-retry off until you send it a message"
+    : "Stop\ninterrupt this session (same as Ctrl+C)");
   btn.setAttribute("aria-label", stuck ? "Stop retrying this session" : "Interrupt session");
   btn.appendChild(el("span", "stop-icon"));   // a filled square (CSS), the universal stop glyph
   btn.addEventListener("click", (e) => {
@@ -11943,6 +11946,7 @@ function setupComposer() {
   // On a phone, though, keeping focus keeps the on-screen keyboard up and the composer pinned above it;
   // blur instead so the keyboard collapses and the box drops back to the bottom (the user 2026-07-22).
   const sendBtn = document.getElementById("composer-send") as HTMLButtonElement | null;
+  if (sendBtn) setTip(sendBtn, "Send (Enter)");   // styled tip replaces the skeleton's native title (aria-label stays)
   sendBtn?.addEventListener("mousedown", (e) => { e.preventDefault(); sendComposer(); if (isCoarsePointer()) ta.blur(); else ta.focus(); });
   fireHeldSend = () => sendComposer();   // the ack handler's door into this closure (see sendOnShip)
   fireStage = () => stageComposer();     // the chips strip's Stage button's door (renderComposerChips)
@@ -12407,6 +12411,9 @@ function setupComposer() {
   // a desktop browser gets an unscoped, multi-select picker — attributes are set
   // per open, at the moment the pointer type is known.
   const attach = document.getElementById("composer-attach") as HTMLButtonElement | null;
+  // upgrade the skeleton's native title to the styled tip (tip.ts removes the title attribute);
+  // the icon-only button keeps an accessible name via aria-label
+  if (attach) { setTip(attach, "Attach a file"); attach.setAttribute("aria-label", "Attach a file"); }
   const isTouch = isCoarsePointer;
   const isWebPage = location.protocol === "http:" || location.protocol === "https:";
   const filePicker = document.createElement("input");
