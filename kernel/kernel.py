@@ -25017,7 +25017,9 @@ _LOADER_CSS = (
     ".rl-dots i{width:7px;height:7px;border-radius:50%;background:#9cd2ff;animation:rl-bnc 1.1s ease-in-out infinite}"
     ".rl-dots i:nth-child(2){animation-delay:.16s}.rl-dots i:nth-child(3){animation-delay:.32s}"
     "@keyframes rl-bnc{0%,75%,100%{opacity:.25;transform:translateY(0)}38%{opacity:1;transform:translateY(-5px)}}"
-    "@keyframes rl-spin{to{transform:rotate(-360deg)}}")
+    "@keyframes rl-spin{to{transform:rotate(-360deg)}}"
+    # light theme (body.theme-light): the pulsing dots wear the clay accent instead of the blue
+    "body.theme-light .rl-dots i{background:#C2410C}")
 
 
 def _loader_inner():
@@ -25065,7 +25067,9 @@ def _pane_spin(cid, ignore_id=""):
     chat (the regression: tab names pulsed, no loader). Counting children whose id != ignore_id fixes it."""
     return ("<style>#pane-spin{position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;"
             "background:var(--vscode-editor-background,#1e1e1e);transition:opacity .3s ease}"
-            "#pane-spin.gone{opacity:0;pointer-events:none}" + _LOADER_CSS + "</style>"
+            "#pane-spin.gone{opacity:0;pointer-events:none}"
+            # light theme: the loader backdrop goes warm-light with the page
+            "body.theme-light #pane-spin{background:#FAF9F5}" + _LOADER_CSS + "</style>"
             "<div id=pane-spin>" + _loader_inner() + "</div>"
             "<script>(function(){var o=document.getElementById('pane-spin'),c=document.getElementById('" + cid + "'),IGN='" + ignore_id + "';"
             "if(!o)return;var fail=0;"
@@ -26822,7 +26826,12 @@ _STALE_CSS = (
     # which is what cramped the old one-row layout — and off-centers this one
     "@media (max-width:640px){#rstale{flex-wrap:wrap;gap:10px 12px;width:92vw;box-sizing:border-box}"
     "#rstale .rs-msg{flex:1 1 100%}"
-    "#rstale button{flex:1 1 auto}}")
+    "#rstale button{flex:1 1 auto}}"
+    # light theme (body.theme-light): white card, hairline border, warm dark text
+    "body.theme-light #rstale{background:#FFFFFF;border-color:rgba(0,0,0,0.12);color:#1F1E1D;"
+    "box-shadow:0 8px 28px rgba(31,26,20,0.18)}"
+    "body.theme-light #rstale .rs-dismiss{color:#5D574E;border-color:rgba(0,0,0,0.18)}"
+    "body.theme-light #rstale .rs-dismiss:hover{color:#1F1E1D}")
 _STALE_HTML = (
     "<div id=rstale role=alert><span class=rs-msg>A newer romp build is available.</span>"
     "<button class=rs-reload id=rstale-reload>Reload</button>"
@@ -26942,7 +26951,12 @@ _UPD_CSS = (
     "#rupd .rup-go{background:#54B204;color:#0c1a00;font-weight:600;border-color:#3f8a00}"
     "#rupd .rup-go:hover:not(:disabled){background:#62c80a}"
     "#rupd .rup-dismiss{background:none;color:#9aa0a6;border-color:#4a4d51}"
-    "#rupd .rup-dismiss:hover{color:#e6e6e6}")
+    "#rupd .rup-dismiss:hover{color:#e6e6e6}"
+    # light theme (body.theme-light): white card, hairline border, warm dark text
+    "body.theme-light #rupd{background:#FFFFFF;border-color:rgba(0,0,0,0.12);color:#1F1E1D;"
+    "box-shadow:0 8px 28px rgba(31,26,20,0.18)}"
+    "body.theme-light #rupd .rup-dismiss{color:#5D574E;border-color:rgba(0,0,0,0.18)}"
+    "body.theme-light #rupd .rup-dismiss:hover{color:#1F1E1D}")
 _UPD_HTML = (
     "<div id=rupd role=alert><span class=rup-msg></span>"
     "<button class=rup-go id=rupd-go>Update</button>"
@@ -27037,7 +27051,12 @@ _RDRIFT_CSS = (
     "#rdrift .rd-upd{background:var(--accent,#9cd2ff);color:var(--accent-fg,#0c1a2e);font-weight:600}"
     "#rdrift .rd-upd:disabled{opacity:0.6;cursor:default}"
     "#rdrift .rd-dismiss{background:none;color:#9aa0a6;border-color:#4a4d51}"
-    "#rdrift .rd-dismiss:hover{color:#e6e6e6}")
+    "#rdrift .rd-dismiss:hover{color:#e6e6e6}"
+    # light theme (body.theme-light): white card, hairline border, warm dark text
+    "body.theme-light #rdrift{background:#FFFFFF;border-color:rgba(0,0,0,0.12);color:#1F1E1D;"
+    "box-shadow:0 8px 28px rgba(31,26,20,0.18)}"
+    "body.theme-light #rdrift .rd-dismiss{color:#5D574E;border-color:rgba(0,0,0,0.18)}"
+    "body.theme-light #rdrift .rd-dismiss:hover{color:#1F1E1D}")
 _RDRIFT_HTML = (
     "<div id=rdrift role=alert><span class=rd-spin aria-hidden=true></span><span class=rd-msg></span>"
     "<button class=rd-upd id=rdrift-upd>Update</button>"
@@ -27698,6 +27717,61 @@ def _landing():
             # other "romp is doing something" cue wears. A failed sync still wears the sync chip; its own
             # text says it could not, and the network panel keeps the red on the row itself.
             ".rerr-chip.k-sync{color:var(--accent);border-color:rgba(156,210,255,0.6)}"
+            # ── LIGHT THEME (opt-in, body.theme-light — set by the inline theme reader below): the shell
+            # chrome's warm-light skin. Pure additive overrides; with the class absent nothing here matches,
+            # so the dark rendering is byte-identical. Accent goes clay (#C2410C) via the same --accent var
+            # every accent consumer already reads.
+            "body.theme-light{--accent:#C2410C;--accent-fg:#FFF8F2;background:#FAF9F5}"
+            # the html element keeps its dark background otherwise (body.theme-light can't reach an
+            # ancestor without :has); body covers the viewport, but paint the canvas right too
+            "html:has(> body.theme-light){background:#FAF9F5}"
+            # light iframes: scoped to the class so a dark pane never flashes light — the LIFTED
+            # settings/picker iframes keep their id-scoped background:transparent (higher specificity),
+            # so the modal dim still composites over the real panes (the 2026-08-08 lesson).
+            "body.theme-light iframe{background:#FAF9F5}"
+            "body.theme-light .pane-rail{background:#F0EEE6;border-top-color:#E3DFD3}"
+            "body.theme-light .rail-btn{color:#5D574E}"
+            "body.theme-light .rail-btn:hover{color:#C2410C;background:rgba(0,0,0,0.05)}"
+            "body.theme-light .rail-btn.on{background:rgba(194,65,12,0.10);border-color:rgba(194,65,12,0.35)}"
+            "body.theme-light .rail-act{color:#5D574E}"
+            "body.theme-light .rail-act:hover{color:#1F1E1D;background:rgba(0,0,0,0.06)}"
+            "body.theme-light .gv{background:linear-gradient(90deg,transparent 3px,rgba(0,0,0,0.14) 3px,rgba(0,0,0,0.14) 4px,transparent 4px)}"
+            "body.theme-light .gh{background:linear-gradient(180deg,transparent 3px,rgba(0,0,0,0.14) 3px,rgba(0,0,0,0.14) 4px,transparent 4px)}"
+            "body.theme-light .gv::after,body.theme-light .gh::after{background:rgba(0,0,0,0.22)}"
+            "body.theme-light .gv:hover{background:linear-gradient(90deg,transparent 3px,rgba(194,65,12,0.30) 3px,rgba(194,65,12,0.30) 4px,transparent 4px)}"
+            "body.theme-light .gh:hover{background:linear-gradient(180deg,transparent 3px,rgba(194,65,12,0.30) 3px,rgba(194,65,12,0.30) 4px,transparent 4px)}"
+            "body.theme-light .gv:hover::after,body.theme-light .gh:hover::after{background:var(--accent)}"
+            "body.theme-light .pane.pane-focused::after{box-shadow:inset 0 0 0 2px rgba(194,65,12,0.55)}"
+            "body.theme-light #romp-boot{background:#FAF9F5}"
+            # (the loader dots' light rule rides in _LOADER_CSS, included below)
+            # light cards: raised white over the warm page, dark warm text, hairline borders, soft shadows
+            "body.theme-light #rerr-panel{background:#FFFFFF;border-color:rgba(0,0,0,0.12);color:#1F1E1D;"
+            "box-shadow:0 12px 36px rgba(31,26,20,0.18)}"
+            "body.theme-light #rerr-panel .rerr-top{color:#1F1E1D;border-bottom-color:rgba(0,0,0,0.12)}"
+            "body.theme-light .rerr-row{color:#1F1E1D}"
+            "body.theme-light .rerr-row+.rerr-row{border-top-color:rgba(0,0,0,0.08)}"
+            "body.theme-light .rerr-row.link:hover{background:rgba(0,0,0,0.04)}"
+            "body.theme-light #rerr-clear{background:#F0EEE6;color:#1F1E1D;border-color:rgba(0,0,0,0.12)}"
+            "body.theme-light #rerr-clear:hover{background:#E3DFD3;color:#1F1E1D}"
+            "body.theme-light #rerr-x{color:#5D574E}body.theme-light #rerr-x:hover{color:#1F1E1D}"
+            "body.theme-light #rerr-filters{border-bottom-color:rgba(0,0,0,0.08)}"
+            "body.theme-light .rerr-flabel{color:#1F1E1D}"
+            "body.theme-light #rnet-panel{background:#FFFFFF;border-color:rgba(0,0,0,0.12);color:#1F1E1D;"
+            "box-shadow:0 12px 36px rgba(31,26,20,0.18)}"
+            "body.theme-light #rnet-panel .rnet-top{color:#1F1E1D;border-bottom-color:rgba(0,0,0,0.12)}"
+            "body.theme-light #rnet-x{color:#5D574E}body.theme-light #rnet-x:hover{color:#1F1E1D}"
+            "body.theme-light #rfleet-panel{background:#FFFFFF;border-color:rgba(0,0,0,0.12);color:#1F1E1D;"
+            "box-shadow:0 12px 36px rgba(31,26,20,0.18)}"
+            "body.theme-light #ru-tip{background:#FFFFFF;border-color:rgba(0,0,0,0.12);color:#1F1E1D;"
+            "box-shadow:0 5px 18px rgba(31,26,20,0.18)}"
+            "body.theme-light .ru-tip-name{color:#1F1E1D}"
+            "body.theme-light .ru-name{color:#5D574E}"
+            "body.theme-light .ru-pct{color:#1F1E1D}"
+            "body.theme-light .ru-track{background:rgba(0,0,0,0.10)}"
+            "body.theme-light #mtabs{background:#F0EEE6;border-top-color:#E3DFD3}"
+            "body.theme-light #mtabs button{color:#5D574E}"
+            "body.theme-light #mtabs button.on{color:#C2410C}"
+            "body.theme-light #mtabs .mtabs-div{background:#E3DFD3}"
             "</style></head><body class='po-chat po-feed po-timeline'>"
             # the theme classes, applied before anything paints and re-applied on every settings
             # write (storage = another tab, romp:settings = this document) — mirrors theme.ts
