@@ -9692,15 +9692,18 @@ fetch(kernelUrl("/models"), { cache: "no-store" }).then((r) => r.json()).then((d
 // An SDK session sets it outright over the control channel (set_permission_mode), which is what makes
 // Bypass offerable there and only there: on tmux the click would land on a mode the cycle cannot
 // express, and _cycle_mode would drop it. `sdkOnly` is the filter, applied in toggleMetaMenu.
+// Every mode wears a one-phrase sub-line (T140, the user 2026-08-28: where taglines exist under
+// some entries, add analogous ones saying what the other modes are — and 'Accept edits' reads
+// just 'Accept'; the mode ids stay the wire's). Each line states what the mode ENFORCES, worded
+// from the plumbing, not folklore: the SDK's permission engine owns the gate (romp's can_use_tool
+// only renders the asks it fires), auto's gate is the safety classifier (observed enforcement:
+// its outage refuses with "cannot determine the safety of"), and bypass's line keeps its 2026-08-15
+// cost warning — it never fires can_use_tool, so the approval RECORD goes too, not just the asking.
 const MODE_CHOICES: MetaChoice[] = [
-  { label: "Normal", value: "default" },
-  { label: "Accept edits", value: "acceptEdits" },
-  { label: "Auto", value: "auto" },
-  { label: "Plan", value: "plan" },
-  // The one mode that removes the gate rather than moving it, so it says what that costs right in the
-  // menu (the user 2026-08-15). Two things are worth the sub-line: every tool runs unasked, and romp's
-  // own approve/deny cards go with them — they are rendered from the SDK's can_use_tool callback, which
-  // bypass never fires, so you lose the RECORD of what ran, not just the asking.
+  { label: "Normal", value: "default", sub: "asks before edits and commands" },
+  { label: "Accept", value: "acceptEdits", sub: "file edits apply without asking; commands still ask" },
+  { label: "Auto", value: "auto", sub: "safe actions run unasked; risky ones still ask" },
+  { label: "Plan", value: "plan", sub: "reads and proposes only — changes nothing" },
   { label: "Bypass permissions", value: "bypassPermissions", sdkOnly: true,
     sub: "every tool runs unasked, and romp stops showing approvals" },
 ];
@@ -9744,7 +9747,7 @@ function fastAvailable(st: Status): boolean {
 function prettyMode(m: string | undefined): string {
   switch ((m || "").toLowerCase()) {
     case "plan": return "Plan";
-    case "acceptedits": return "Accept edits";
+    case "acceptedits": return "Accept";   // one word everywhere the mode renders (T140)
     case "auto": return "Auto";
     case "dontask": return "Don’t ask";
     case "bypasspermissions": return "Bypass";

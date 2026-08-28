@@ -7954,7 +7954,7 @@ def _drive(msg, client):
         if not be.set_mode(sid, str(msg["value"])):
             client["send"](json.dumps({"type": "warn",
                                        "text": "A terminal session can only reach the modes in its "
-                                               "shift+tab cycle — Normal, Accept edits, Auto, Plan."}))
+                                               "shift+tab cycle — Normal, Accept, Auto, Plan."}))
         _push_soon()
     elif t == "setAuth" and msg.get("value") in ("login", "key"):
         # per-session billing (login vs the manager env's API key) — SDK-only, applied via reconnect
