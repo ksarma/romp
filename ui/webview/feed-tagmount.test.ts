@@ -90,6 +90,6 @@ test("what the lens hides stays one glance away: whisper, promoted banner, click
     "the promoted line NAMES the lens");
   assert.match(FEED, /lmore\.onclick = \(\) => \{ setFeedLens\(\{ all: true \}\); render\(\); \};/,
     "the way out is purely local — no kernel round-trip");
-  assert.match(CSS, /#feed-lensmore\.prominent \{ margin: 6px 8px 2px; padding: 10px 14px; background: #252526;/,
-    "the judge-limit banner's card chrome — neutral, a narrowed board is a choice");
+  assert.match(CSS, /#feed-lensmore\.prominent \{ margin: 6px 8px 2px; padding: 10px 14px; background: var\(--vscode-editorWidget-background, #252526\);/,
+    "the judge-limit banner's card chrome — neutral, a narrowed board is a choice (tokenized, T151)");
 });

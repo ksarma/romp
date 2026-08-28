@@ -54,6 +54,15 @@ await page.fill("#picker-search", "lab-moon");
 await page.fill("#picker-dir", PROJ);
 await page.click("#picker-new-btn");
 await page.waitForSelector(".tab", { timeout: 30000 });
+// T151, permanent: the SERVED chat page (THEME_CSS vars defined — the exact context the T141
+// harness missed) paints the strip on the page dark; the tokens' fallbacks are dead code here.
+{
+  const t = await page.evaluate(() => ({
+    strip: getComputedStyle(document.getElementById("tabbar")).backgroundColor,
+    page: getComputedStyle(document.body).backgroundColor,
+  }));
+  check("0-strip-is-page-dark-when-served", t.strip === t.page, `strip ${t.strip} vs page ${t.page}`);
+}
 // wait until the session is REAL (composer live, statusline shows a state chip)
 await page.waitForSelector("#statusline .chip, #statusline .compacting-line", { timeout: 60000 });
 await shot("session-open");

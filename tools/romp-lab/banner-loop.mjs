@@ -66,6 +66,20 @@ await page.goto(`http://127.0.0.1:${PORT}/?token=${TOKEN}`);
 await page.waitForSelector("#rstale", { state: "attached", timeout: 20000 });
 await sleep(2 * KA * 1000 + 1000);            // two heartbeats of quiet — nothing may raise on a fresh page
 check("fresh-page-quiet", !(await bannerShown()), await bannerShown());
+// T151, permanent: the SERVED feed page (THEME_CSS vars defined) sits its control bar on the page
+// dark — the old editorWidget token resolved #252526 here, the exact lighter bar the one-dark
+// ruling removed. Same-origin iframe, so the probe reads the feed frame's computed styles.
+{
+  const feed = page.frames().find((f) => f.url().includes("/feed"));
+  if (feed) {
+    await feed.waitForSelector("#feed-foot", { timeout: 15000 }).catch(() => null);
+    const t = await feed.evaluate(() => {
+      const foot = document.getElementById("feed-foot");
+      return foot ? { foot: getComputedStyle(foot).backgroundColor, page: getComputedStyle(document.body).backgroundColor } : null;
+    }).catch(() => null);
+    check("feed-foot-is-page-dark-when-served", !!t && t.foot === t.page, t ? `foot ${t.foot} vs page ${t.page}` : "no #feed-foot in the served feed frame");
+  } else check("feed-foot-is-page-dark-when-served", false, "no /feed frame on the shell page");
+}
 await shot("fresh");
 
 // ── 2. dist bump → banner within one heartbeat (the shim's ka path, tighter than the 30s poll) ──

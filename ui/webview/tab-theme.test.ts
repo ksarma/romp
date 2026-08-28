@@ -66,7 +66,8 @@ test("Classic: ONE dark background — no band, no explicit body fill, baseline 
   assert.doesNotMatch(CSS, /#tabbar \{ background: linear-gradient/, "no band plane on the strip");
   assert.doesNotMatch(CSS, /\.tab:not\(\.tab-blocked\):not\(\.active\):not\(:hover\):not\(\.tab-add\) \{ background:/,
     "no explicit rest-body fill either — baseline transparency over the dark plane");
-  assert.match(CSS, /^  background: var\(--vscode-sideBar-background, var\(--bg\)\);$/m, "the strip's one background");
+  assert.match(CSS, /^  background: var\(--vscode-editor-background, var\(--bg\)\);$/m,
+    "the strip's one background — the EDITOR token: sideBar resolves #252526 under the served THEME_CSS (T151; served-theme.test.ts owns the resolution proof)");
 });
 
 test("Classic: the rest OUTLINE — 1px in the hover gray, no fill, states stand down (T123)", () => {

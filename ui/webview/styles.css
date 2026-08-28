@@ -151,7 +151,12 @@ body.chat-theme-yatharth #winframe { display: block; position: fixed; inset: 0; 
      (an inline max-height would override that media rule and clip the mobile header) */
   max-height: var(--tabbar-cap, 150px); overflow-y: auto; overflow-x: hidden;
   border-bottom: 1px solid var(--box-border);
-  background: var(--vscode-sideBar-background, var(--bg));
+  /* the EDITOR background token, not sideBar (T151): every kernel-served page inlines THEME_CSS,
+     which defines --vscode-sideBar-background:#252526 — so the var(--bg) fallback never fired in
+     the browser and the strip painted a lighter plane over the #1e1e1e page (the T141 harness
+     validated the fallback path only; see the served-theme test). editor-background IS the page
+     dark in both hosts — the same token #footer rides. */
+  background: var(--vscode-editor-background, var(--bg));
 }
 /* #tabs fills the bar width and wraps its tabs across multiple rows. gap 0 (was 4px, the user
    2026-08-08): the strip trades its empty inter-tab space for room for the per-tab context gauge —
@@ -2347,8 +2352,8 @@ body.picker-lifted > #picker.kb-tight { align-items: flex-start; padding: 12px 1
 .picker-backend { display: flex; align-items: center; gap: 6px; padding: 6px 14px 8px; }
 .picker-backend-label { flex: 0 0 auto; color: var(--dim); font-size: 0.82em; margin-right: 2px; }
 .picker-be-opt {
-  flex: 0 0 auto; cursor: pointer; background: rgba(255, 255, 255, 0.06); color: var(--dim);
-  border: 1px solid var(--box-border); border-radius: 5px; padding: 4px 12px; font-size: 0.82em; font-weight: 600;
+  flex: 0 0 auto; cursor: pointer; background: transparent; color: var(--dim);   /* T151: the one button rest */
+  border: 1px solid var(--card-border); border-radius: 5px; padding: 4px 12px; font-size: 0.82em; font-weight: 600;
 }
 .picker-be-opt:hover { background: rgba(255, 255, 255, 0.12); color: var(--fg); }
 .picker-be-opt.sel { background: var(--accent); color: var(--accent-fg); border-color: transparent; }   /* selected backend = accent, not working-yellow (the user 2026-06-24) */
@@ -2397,8 +2402,8 @@ body.picker-lifted > #picker.kb-tight { align-items: flex-start; padding: 12px 1
 .picker-actions { border-top: 1px solid var(--box-border); padding: 8px 10px; }
 .picker-action {
   width: 100%; padding: 7px 10px; cursor: pointer;
-  background: rgba(255, 255, 255, 0.05); color: var(--fg);
-  border: 1px solid var(--box-border); border-radius: 6px;
+  background: transparent; color: var(--fg);   /* T151: the one button rest */
+  border: 1px solid var(--card-border); border-radius: 6px;
   font-family: var(--sans); font-size: 0.92em;
 }
 .picker-action:hover { background: rgba(255, 255, 255, 0.1); }
@@ -2632,7 +2637,7 @@ body.picker-lifted > #picker.kb-tight { align-items: flex-start; padding: 12px 1
 /* a kernel-VERIFIED preview whose bytes failed to arrive (restart, tunnel blip) — visible, retryable,
    never silently removed (preview.ts previewFull) */
 .path-full-retry { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 8px;
-  background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.14);
+  background: transparent; border: 1px solid var(--card-border);   /* T151: the one button rest */
   font-size: 0.86em; opacity: 0.85; cursor: pointer; }
 .path-full-retry:hover { border-color: var(--accent); }
 /* the fixed-footprint wait box shared by the retrying swirl AND the failure chip, so retry churn
@@ -2643,7 +2648,7 @@ body.picker-lifted > #picker.kb-tight { align-items: flex-start; padding: 12px 1
 /* a repeat failure pulses once on swap-in so an identical-looking outcome still reads as a
    RESPONSE to the tap (preview.ts previewFull) — on the give-up chip and the retrying note alike */
 .path-full-retry.path-retry-flash, .path-load-note.path-retry-flash { animation: path-retry-flash 0.45s ease; }
-@keyframes path-retry-flash { 0% { background: rgba(255, 255, 255, 0.3); } 100% { background: rgba(255, 255, 255, 0.08); } }
+@keyframes path-retry-flash { 0% { background: rgba(255, 255, 255, 0.3); } 100% { background: transparent; } }
 @media (prefers-reduced-motion: reduce) { .path-full-retry.path-retry-flash, .path-load-note.path-retry-flash { animation: none; } }
 /* VS Code's host-round-trip image chip while the bytes are still on their way (render.ts fillPathImg) —
    pure-CSS pulse, the sandbox can't fetch the swirl asset */
@@ -2665,14 +2670,14 @@ body.picker-lifted > #picker.kb-tight { align-items: flex-start; padding: 12px 1
 .romp-lightbox-name { flex: 1 1 auto; font-size: 0.86em; color: var(--fg); opacity: 0.85;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .romp-lightbox-close { font: inherit; font-size: 0.86em; cursor: pointer; flex: 0 0 auto;
-  padding: 2px 9px; border-radius: 6px; background: rgba(255, 255, 255, 0.1); color: var(--fg);
+  padding: 2px 9px; border-radius: 6px; background: transparent; border: 1px solid var(--card-border); color: var(--fg);   /* T151: the one button rest */
   border: 1px solid rgba(255, 255, 255, 0.18); }
 .romp-lightbox-close:hover { border-color: var(--accent); }
 /* download: an anchor dressed exactly like the close button beside it (one control vocabulary —
    same chip, same hover cue), sitting between the filename and the ✕ */
 .romp-lightbox-dl { font: inherit; font-size: 0.86em; cursor: pointer; flex: 0 0 auto;
   display: inline-flex; align-items: center;   /* centers the inline tray SVG in the chip */
-  padding: 3px 9px; border-radius: 6px; background: rgba(255, 255, 255, 0.1); color: var(--fg);
+  padding: 3px 9px; border-radius: 6px; background: transparent; border: 1px solid var(--card-border); color: var(--fg);   /* T151: the one button rest */
   border: 1px solid rgba(255, 255, 255, 0.18); text-decoration: none; line-height: normal; }
 .romp-lightbox-dl:hover { border-color: var(--accent); }
 
@@ -3029,8 +3034,8 @@ body.fileview-open { overflow: hidden; }
 .fileview-base { flex: 0 0 auto; }
 .fileview-acts { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; }
 .fileview-btn { font: inherit; font-size: 0.82em; cursor: pointer; flex: 0 0 auto;
-  padding: 3px 9px; border-radius: 6px; background: rgba(255, 255, 255, 0.08); color: var(--fg);
-  border: 1px solid var(--box-border); }
+  padding: 3px 9px; border-radius: 6px; background: transparent; color: var(--fg);   /* T151: the one button rest */
+  border: 1px solid var(--card-border); }
 .fileview-btn:hover { border-color: var(--accent); }
 /* the GitHub link wears the button treatment but IS an anchor — the browser owns the new tab */
 a.fileview-btn { text-decoration: none; display: inline-flex; align-items: center; }
