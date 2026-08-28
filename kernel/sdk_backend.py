@@ -1046,6 +1046,29 @@ def find_session_cli(ps_lines: list[str], sids: list[str], parent_pid: int) -> i
     return None
 
 
+def wakeup_due_epoch(cron: str, armed_t: float) -> "float | None":
+    """The due moment of a ONE-SHOT wakeup cron ("<min> <hour> * * *", the shape ScheduleWakeup mints
+    from delaySeconds, local time) — the first occurrence of H:M at/after the arm record. Any other
+    shape returns None: romp only ever self-fires timers it can reason about exactly; everything else
+    stays the CLI scheduler's job. Pure for tests."""
+    try:
+        m, h, dom, mon, dow = str(cron).split()
+        if (dom, mon, dow) != ("*", "*", "*"):
+            return None
+        m, h = int(m), int(h)
+        if not (0 <= m <= 59 and 0 <= h <= 23):
+            return None
+    except (ValueError, AttributeError):
+        return None
+    from datetime import datetime, timedelta   # local, like the reg-timestamp reader's (this module
+    #                                            otherwise never needs datetime at import time)
+    base = datetime.fromtimestamp(float(armed_t))
+    due = base.replace(hour=h, minute=m, second=0, microsecond=0)
+    if due.timestamp() < armed_t - 60:            # H:M already passed at arm time → the wrap is tomorrow
+        due += timedelta(days=1)
+    return due.timestamp()
+
+
 def interrupt_action(level: int, channel_up: bool) -> tuple[str, int]:
     """The interrupt escalation ladder (terminal parity, the user 2026-07-10): what a stop press does,
     given how far the current episode has climbed. In a terminal ctrl+c is a SIGNAL the process cannot
@@ -1358,6 +1381,15 @@ class SdkSession:
         self.name = reg.get("name", self.sid)
         self.cwd = reg.get("cwd") or os.path.expanduser("~")
         self.mode = reg.get("mode") or "acceptEdits"
+        # The PROCESS GENERATION stamp: session-scoped timers live in THIS CLI process's memory, so
+        # every armed-timer record carries the generation that armed it (procGen). A recorded timer
+        # whose generation is still the live one WILL be fired by the CLI itself — the kernel must
+        # never race it; a timer whose generation is gone can never fire CLI-side — the kernel owns
+        # its delivery. Exact ownership, no grace-window guessing (review of #769, 2026-08-28).
+        # A uuid, never a clock: two objects born in the same millisecond aliased a rounded
+        # timestamp (CI caught it), and aliased generations would hand a live process's timer to
+        # the kernel. The time prefix is for humans reading regs, not for identity.
+        self.proc_gen = "%d.%s" % (int(time.time()), uuid.uuid4().hex[:10])
         self.resume_sid = reg.get("lastSid") or None  # resume target after a restart/crash
         # A FORK being born (backend.fork): lastSid points at the PARENT's transcript and forkOf marks the
         # resume as a fork, so _options adds fork_session (+ the resume-session-at cut) and the CLI copies
@@ -2786,7 +2818,125 @@ class SdkSession:
         ignores inp['background_tasks'] and just clears any stale awaiting:true — keeping the overlay
         channel available for signals that need durability across a backend restart."""
         append_awaiting(self.backend.state_dir, self.sid, False)
+        # Record the ARMED TIMER SET (the hook payload's session_crons: CronCreate crons, ScheduleWakeup
+        # wakeups, /loop ticks). Session-scoped timers live ONLY in the CLI process's memory — the tool
+        # result itself says "dies when Claude exits" — so a session romp leaves DORMANT has no process
+        # at the due moment and the timer silently never fires (the user 2026-08-28: wakeups armed for
+        # 26 minutes out missed across 21 hours; agents built crontab workarounds). This record is what
+        # lets the kernel keep timer-armed sessions CONNECTED (its scheduled-session sweep) so the CLI's
+        # own scheduler — which fires fine on a live idle process — does the firing. Written on every
+        # turn end, including [] when the last timer is cancelled, so the reg never pins a stale set.
+        try:
+            crons = inp.get("session_crons") if isinstance(inp, dict) else None
+            if isinstance(crons, list):
+                prev = (read_reg(self.backend.state_dir, self.sid) or {})
+                nw = time.time()
+                known = {c.get("id"): c for c in (prev.get("sessionCrons") or []) if isinstance(c, dict)}
+                # Adoption pool for the CALL-TIME records (_sched_tool_hook): a toolhook entry knows the
+                # EXACT dueEpoch but minted its own id; the payload entry carries the CLI's id but no
+                # date. Marry them by prompt + near-due so the reg ends with the CLI's id AND the exact
+                # date, and the toolhook duplicate drops.
+                toolhook = [c for c in (prev.get("sessionCrons") or [])
+                            if isinstance(c, dict) and c.get("src") == "toolhook"]
+
+                def adopt(c):
+                    p = str(c.get("prompt") or "")[:500]
+                    hint = wakeup_due_epoch(str(c.get("schedule") or c.get("cron") or ""),
+                                            float((known.get(str(c.get("id") or "")) or {}).get("armedAt") or nw))
+                    for t in toolhook:
+                        if t.get("prompt") == p and (hint is None or abs(float(t.get("dueEpoch") or 0) - hint) < 90):
+                            return t
+                    return None
+
+                slim = []
+                for c in crons:
+                    if not isinstance(c, dict):
+                        continue
+                    src = adopt(c) or known.get(str(c.get("id") or "")) or {}
+                    slim.append({"id": str(c.get("id") or ""), "cron": str(c.get("schedule") or c.get("cron") or ""),
+                                 "prompt": str(c.get("prompt") or "")[:500], "kind": str(c.get("kind") or ""),
+                                 "recurring": bool(c.get("recurring")),
+                                 # armedAt/dueEpoch/procGen ride each ENTRY from its first record (the
+                                 # call-time hook when it saw the arm; else first-seen here), so a
+                                 # one-shot's due moment never shifts when later turns rewrite the set
+                                 "armedAt": float(src.get("armedAt") or nw),
+                                 "dueEpoch": (float(src["dueEpoch"]) if src.get("dueEpoch") else None),
+                                 "procGen": str(src.get("procGen") or self.proc_gen)})
+                # MERGE, don't overwrite: a recycled process LOSES ScheduleWakeup one-shots (verified
+                # live 2026-08-28), so the fresh process's payload lacks them — and blindly writing the
+                # payload would erase the very record deliver_lost_wakeups needs. An absent one-shot
+                # survives while ITS PROCESS GENERATION is gone (the CLI that could have fired it no
+                # longer exists, so absence from a NEW process's payload is not evidence it fired) —
+                # ownership is exact, no due-time guessing. A one-shot recorded by the LIVE generation
+                # and absent from its own payload genuinely fired or was cancelled: it drops.
+                have = {c.get("id") for c in slim}
+                adopted = {id(t) for c in crons if isinstance(c, dict) for t in [adopt(c)] if t is not None}
+                for c in (prev.get("sessionCrons") or []):
+                    if (isinstance(c, dict) and not c.get("recurring") and c.get("id") not in have
+                            and id(c) not in adopted
+                            and str(c.get("procGen") or "") != self.proc_gen):
+                        slim.append(c)
+                if slim != prev.get("sessionCrons"):
+                    self.backend._update_reg(self.sid, sessionCrons=slim, sessionCronsAt=int(nw))
+        except Exception as e:
+            self.backend._log("stop hook (%s): session_crons record failed: %s" % (self.name, e))
         self.backend._poke()
+        return {}
+
+    async def _sched_tool_hook(self, inp, tool_use_id, context):
+        """PostToolUse on the scheduling tools (ScheduleWakeup / CronCreate / CronDelete): record the
+        arm at the CALL moment with an ABSOLUTE due time, instead of waiting for the turn's Stop hook.
+        End-of-turn-only recording had three holes (review of #769, 2026-08-28): armedAt stamped at
+        turn END wrapped a same-turn-past-due wakeup to TOMORROW (the cron string carries no date); a
+        restart mid-turn lost the arm entirely (the Stop hook never ran); and reconstruction from a
+        dateless "M H * * *" string is guesswork the tool INPUT makes unnecessary — delaySeconds is
+        right there, so dueEpoch = now + delaySeconds is exact. Entries minted here carry
+        src:"toolhook" and a synthetic id; the Stop hook's reconciler marries them to the CLI's own
+        ids (see adopt() above) and remains the safety net if this hook ever misses a shape.
+        Defensive throughout: an unrecognized payload records nothing and logs, never raises."""
+        try:
+            tname = str((inp or {}).get("tool_name") or "")
+            targs = (inp or {}).get("tool_input") or {}
+            if not isinstance(targs, dict):
+                return {}
+            nw = time.time()
+            prev = (read_reg(self.backend.state_dir, self.sid) or {})
+            cur = [c for c in (prev.get("sessionCrons") or []) if isinstance(c, dict)]
+            if tname == "ScheduleWakeup":
+                if targs.get("stop"):
+                    # a dynamic loop ending: drop this session's pending toolhook one-shots — the CLI
+                    # cancels its own pending wakeup on stop, and keeping ours would fabricate a wake
+                    cur = [c for c in cur if not (c.get("src") == "toolhook" and not c.get("recurring"))]
+                    self.backend._update_reg(self.sid, sessionCrons=cur, sessionCronsAt=int(nw))
+                    return {}
+                delay = targs.get("delaySeconds")
+                prompt = str(targs.get("prompt") or "")[:500]
+                if not isinstance(delay, (int, float)) or delay <= 0 or not prompt:
+                    return {}
+                due = nw + max(60.0, min(3600.0, float(delay)))   # the runtime clamps to [60, 3600]
+                # ONE pending wakeup per session, matching ScheduleWakeup's own semantics (arming
+                # replaces the previous pending wakeup): drop earlier toolhook one-shots first
+                cur = [c for c in cur if not (c.get("src") == "toolhook" and not c.get("recurring"))]
+                cur.append({"id": "toolhook-%d" % int(due), "cron": "", "prompt": prompt,
+                            "kind": str(targs.get("reason") or "")[:120], "recurring": False,
+                            "armedAt": nw, "dueEpoch": due, "procGen": self.proc_gen, "src": "toolhook"})
+            elif tname == "CronCreate":
+                nm = str(targs.get("name") or targs.get("id") or ("cron-%d" % int(nw)))
+                cur = [c for c in cur if c.get("id") != nm]
+                cur.append({"id": nm, "cron": str(targs.get("schedule") or ""),
+                            "prompt": str(targs.get("prompt") or "")[:500], "kind": "cron",
+                            "recurring": True, "armedAt": nw, "dueEpoch": None,
+                            "procGen": self.proc_gen, "src": "toolhook"})
+            elif tname == "CronDelete":
+                nm = str(targs.get("name") or targs.get("id") or "")
+                if not nm:
+                    return {}
+                cur = [c for c in cur if c.get("id") != nm]
+            else:
+                return {}
+            self.backend._update_reg(self.sid, sessionCrons=cur, sessionCronsAt=int(nw))
+        except Exception as e:
+            self.backend._log("sched tool hook (%s): %s" % (self.name, e))
         return {}
 
     # ---- subagent tracking (the transparency tmux never had) ----
@@ -4057,7 +4207,11 @@ class SdkBackend:
             can_use_tool=sess._can_use_tool,
             hooks={"Stop": [HookMatcher(matcher=None, hooks=[sess._stop_hook])],          # awaiting overlay producer
                    "SubagentStart": [HookMatcher(matcher=None, hooks=[sess._subagent_start_hook])],  # live subagent
-                   "SubagentStop": [HookMatcher(matcher=None, hooks=[sess._subagent_stop_hook])]},    #   count/types
+                   "SubagentStop": [HookMatcher(matcher=None, hooks=[sess._subagent_stop_hook])],    #   count/types
+                   # scheduling tools record their arm at the CALL moment, with the exact due time the
+                   # tool input carries — the Stop hook's set-record reconciles (see _sched_tool_hook)
+                   "PostToolUse": [HookMatcher(matcher="ScheduleWakeup|CronCreate|CronDelete",
+                                               hooks=[sess._sched_tool_hook])]},
             permission_mode=sess.mode,
             # File-checkpoint rewind (the user 2026-08-04): the CLI backs files up before modifying them,
             # so rewind_files() can put the workspace back to its state at any user message. The uuid a
@@ -5169,6 +5323,124 @@ class SdkBackend:
 
     def owns(self, sid: str) -> bool:
         return read_reg(self.state_dir, sid) is not None
+
+    def ensure_scheduled(self) -> int:
+        """Keep a CLI process ALIVE for every session with ARMED SESSION TIMERS (reg sessionCrons, the
+        Stop hook's record of CronCreate/ScheduleWakeup//loop arms). Session-scoped timers exist only in
+        the CLI process's memory and its scheduler fires fine on a live IDLE process — but a DORMANT
+        session has no process at the due moment and the timer silently never fires (the user
+        2026-08-28: a wakeup armed for 26 minutes out missed across 21 hours; a cron missed every tick
+        while parked, then fired reliably for days once its session stayed active). So the kernel's
+        producer calls this every pass: any alive, timer-armed session with no running thread is
+        reconnected — resume re-hydrates its timer set (verified live 2026-08-28: CronList shows the
+        same cron in a fresh process after a kill), and the CLI does ALL the firing natively; romp
+        never fires a timer itself. Residual, accepted: a timer due inside the ~minute a kernel
+        restart takes can still miss (the down window has no process to fire it and no catch-up
+        exists for session-scoped timers CLI-side).
+
+        A 120s per-sid retry floor bounds the failure mode where a timer-armed session's CLI dies
+        instantly on every spawn — without it this sweep would respawn it every producer pass
+        (~3s), a spawn storm. Returns how many sessions were revived this pass."""
+        now = time.time()
+        cool = getattr(self, "_sched_attempts", None)
+        if cool is None:
+            cool = self._sched_attempts = {}
+        n = 0
+        for reg in list_regs(self.state_dir):
+            if not reg.get("alive") or reg.get("threadOf"):
+                continue
+            if not reg.get("sessionCrons"):
+                continue
+            sid = reg["sid"]
+            with self._lock:
+                s = self.sessions.get(sid)
+                if s and s.thread.is_alive():
+                    continue
+            if now - cool.get(sid, 0) < 120:
+                continue
+            cool[sid] = now
+            # Spawns draw a slot on the ONE machine-wide _spawn_sem, like boot reconcile and the
+            # idle-queue drive: without it a kernel restart with N timer-armed sessions launched N
+            # claude processes in one pass — the exact CPU storm the stagger exists to prevent
+            # (review of #769, 2026-08-28). No slot this pass → the cooldown map retries later.
+            slot = self._spawn_sem.acquire(timeout=0.1)
+            if not slot:
+                cool[sid] = 0                       # don't burn the 120s floor on a full stagger
+                continue
+            try:
+                if self._ensure(sid, on_boot_settled=self._spawn_sem.release) is not None:
+                    n += 1
+                    self._log("scheduled-session sweep: reviving %s — %d armed timer(s) need a live process"
+                              % (reg.get("name") or sid[:13], len(reg.get("sessionCrons") or [])))
+                else:
+                    self._spawn_sem.release()       # nothing spawned — the parked release never attaches
+            except Exception:
+                self._spawn_sem.release()
+                raise
+        return n
+
+    def deliver_lost_wakeups(self) -> int:
+        """Fire ONE-SHOT wakeups the CLI can no longer fire. A process recycle LOSES ScheduleWakeup
+        wakeups (verified live 2026-08-28: after a kill + revive, CronList re-hydrates the recurring
+        cron but the pending wakeup is gone) — so a wakeup armed before a kernel restart, an orphan
+        reap, or a reconnect never fires, however alive the session is now. The reg's armed-set record
+        (the Stop hook's sessionCrons) survives the recycle; when a one-shot recorded there is PAST DUE
+        by a grace and still recorded, nobody fired it: a live process fires one-shots at their exact
+        minute, and the fired turn's Stop hook rewrites the record without it. Deliver the wakeup's own
+        prompt through the normal send path (revives a dormant session) and strip the record first, so
+        the next pass can never double-deliver.
+
+        OWNERSHIP IS BY PROCESS GENERATION, not by guessing from timing (review of #769, 2026-08-28:
+        the first cut used a 90s grace + an inflight check, and both were blind to turns the CLI's own
+        scheduler starts — a genuinely-fired wakeup whose turn outlasted the grace got delivered a
+        second time, mid-turn). Every recorded entry carries procGen, the stamp of the CLI process
+        that armed it. That generation still live → the CLI itself will fire it at due; the kernel
+        NEVER touches it, however late the record looks. That generation gone → no process can ever
+        fire it; the kernel owns it outright and delivers at due (a small 5s grace covers clock skew
+        between the stamp and this sweep, not any behavioral window)."""
+        now = time.time()
+        fired = 0
+        for reg in list_regs(self.state_dir):
+            if not reg.get("alive") or reg.get("threadOf"):
+                continue
+            crons = reg.get("sessionCrons") or []
+            shots = [c for c in crons if isinstance(c, dict) and not c.get("recurring")]
+            if not shots:
+                continue
+            sid = reg["sid"]
+            with self._lock:
+                s = self.sessions.get(sid)
+                live_gen = s.proc_gen if (s and s.thread.is_alive()) else None
+            due_shots = []
+            for c in shots:
+                if live_gen is not None and str(c.get("procGen") or "") == live_gen:
+                    continue                      # its arming process is alive — the CLI fires it, not us
+                due = c.get("dueEpoch")
+                if not due:                       # legacy entry without the exact date → reconstruct
+                    due = wakeup_due_epoch(c.get("cron"),
+                                           float(c.get("armedAt") or reg.get("sessionCronsAt") or (now - 3600)))
+                if due is not None and now >= float(due) + 5:
+                    due_shots.append(c)
+            if not due_shots:
+                continue
+            keep = [c for c in crons if c not in due_shots]
+            try:                                  # strip FIRST — a send failure must not re-fire forever;
+                self._update_reg(sid, sessionCrons=keep)   # the loss is logged loudly below instead
+            except Exception as e:
+                self._log("lost-wakeup (%s): reg strip failed, not delivering: %s" % (reg.get("name") or sid[:13], e))
+                continue
+            for c in due_shots:
+                ok = False
+                try:
+                    ok = bool(self.send(sid, c.get("prompt") or ""))
+                except Exception as e:
+                    self._log("lost-wakeup (%s): delivery raised: %s" % (reg.get("name") or sid[:13], e))
+                self._log("lost-wakeup (%s): one-shot %s was due %.0fs ago with no process to fire it — %s"
+                          % (reg.get("name") or sid[:13], c.get("id") or "?",
+                             now - (wakeup_due_epoch(c.get("cron"), float(c.get("armedAt") or now)) or now),
+                             "prompt delivered" if ok else "DELIVERY FAILED (prompt lost — see above)"))
+                fired += 1
+        return fired
 
     def live_sessions(self) -> dict[str, dict]:
         """{sid: state-dict} for every alive SDK session — merged by the kernel

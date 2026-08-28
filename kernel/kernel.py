@@ -24805,6 +24805,14 @@ def _producer():
                                    # transcript → bump the generation so the chat-build cache re-builds the
                                    # background tabs once, keeping their Fleet status/ledger fresh (≤ this cadence).
             _apply_pending_ops()      # FIFO-deliver everything parked during a compaction that has now ended
+            try:                      # sessions with ARMED TIMERS need a LIVE CLI (the user 2026-08-28:
+                _sbe = _sdk()         # crons/wakeups never fired on dormant sessions — the CLI's scheduler
+                if _sbe and _sdk_ready():   # is in-process; see SdkBackend.ensure_scheduled)
+                    _sbe.ensure_scheduled()
+                    _sbe.deliver_lost_wakeups()   # one-shots a process recycle orphaned (revival loses
+                    #                               ScheduleWakeup arms; the reg record outlives them)
+            except Exception:
+                sys.stderr.write("scheduled-sweep: %s\n" % traceback.format_exc())
         except Exception:
             sys.stderr.write("producer: %s\n" % traceback.format_exc())
         finally:
