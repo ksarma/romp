@@ -7380,8 +7380,8 @@ def _auth_avail():
 def _judge_limit_view():
     """The judge-limit latch, enriched for the banner (the user 2026-08-28, who asked WHICH sessions a
     full usage window actually touches): the judges bill ONE credential, so a full window pauses CARD
-    ANALYSIS board-wide — but the only SESSIONS the same window also rate-limits are the ones billing
-    the login account themselves. loginSessions = live sessions whose billing is the login, read from
+    ANALYSIS for the sessions billing that credential (their turns rate-limit too); every other
+    session's analysis rides its own billing (the judge bills the judged session, the 2026-08-12 rule). loginSessions = live sessions whose billing is the login, read from
     the authoritative per-session source (the CLI's own authLive report, falling back to the session's
     picked intent — the exact fields the Billing tooltip trusts); billingUnknown = live sessions whose
     billing romp cannot know (a tmux CLI: its env is not romp's), listed honestly rather than silently
@@ -7394,12 +7394,12 @@ def _judge_limit_view():
         if not isinstance(tm, dict):
             continue
         b = str(tm.get("authLive") or tm.get("auth") or "")
-        nm = _name_of(sid) or str(sid)[:8]
         if b == "login":
-            billed.append(nm)
-        elif not b:
-            unknown.append(nm)
-    return dict(row, loginSessions=sorted(billed), billingUnknown=sorted(unknown))
+            billed.append(_peer_identity(sid))    # {name, host, sid, color} — the one identity ladder,
+        elif not b:                               # so the banner wears the standard session chip
+            unknown.append(_peer_identity(sid))   # (the user 2026-08-28: bold name in its own colour)
+    key = lambda d: d["name"]
+    return dict(row, loginSessions=sorted(billed, key=key), billingUnknown=sorted(unknown, key=key))
 
 
 def _sdk_problem_count():
