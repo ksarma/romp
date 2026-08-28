@@ -72,8 +72,12 @@ class DrainLease(unittest.TestCase):
                       "/busy?drain=1 refreshes the lease in the same round-trip that reads the count")
         self.assertIn('json.dumps({"busy": n, "draining": draining})', ksrc,
                       "the payload says when the box is draining — glanceable, never mysterious")
-        self.assertIn("'http://127.0.0.1:%d/restart-all?when=quiet'", ksrc,
-                      "the self-update deploy rides the quiet gate instead of cutting immediately")
+        self.assertIn("'http://127.0.0.1:%d/restart-all'", ksrc,
+                      "the self-update deploy cuts IMMEDIATELY (T160, reversing the T121 quiet "
+                      "default: parked windows cost minutes per push) — the quiet gate stays for "
+                      "explicit `romp refresh --quiet`")
+        self.assertNotIn("/restart-all?when=quiet'", ksrc,
+                         "no kernel-side deploy path defaults to the quiet window any more")
         msrc = open(os.path.join(BIN, "romp-manager")).read()
         self.assertIn("fetchBusy(KERNEL_PORT, cb, '/busy?drain=1')", msrc,
                       "the manager's PARKED poll is the lease's refresher")

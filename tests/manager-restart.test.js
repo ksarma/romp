@@ -130,3 +130,15 @@ test('the parked quiet poll refreshes the kernel drain lease in the same probe',
   assert.ok(src.includes('path: path || \'/busy\''),
     'a plain /busy stays side-effect free — only the parked poll holds');
 });
+
+// ── T160 (the user 2026-08-28): deploys bounce IMMEDIATELY by default ─────────────────────────────
+// The quiet window is an explicit opt-in now (`restart-all --quiet`), never the implicit deploy
+// default: parked windows cost minutes per push (0–570s measured) and still cut turns at the
+// backstop. Source pins on the CLI dispatch, the one place the default lives.
+test('restart-all dispatches IMMEDIATE by default — --quiet is the explicit drain spelling', () => {
+  const src = require('node:fs').readFileSync(path.join(__dirname, '..', 'bin', 'romp-manager'), 'utf8');
+  assert.match(src, /process\.argv\[3\] === '--quiet' \? \{ when: 'quiet' \} : \{\}/,
+    'the dispatch default sends NO when param (immediate); --quiet opts into the drain');
+  assert.doesNotMatch(src, /'--now' \? \{\} : \{ when: 'quiet' \}/,
+    'the old quiet-by-default dispatch is gone');
+});

@@ -2465,11 +2465,18 @@ def _run_update(tag):
     q = shlex.quote
     log, rep = q(str(jd.STATE / "update.log")), q(str(jd.STATE / "update-report.json"))
     mport = os.environ.get("ROMP_MANAGER_PORT") or ""
-    # ?when=quiet (T121): the self-update is a DEPLOY — it rides the manager's quiet-window gate
-    # (drain first, backstop-capped) exactly like `romp refresh`, instead of cutting every in-flight
-    # turn immediately. The human Restart buttons (_restart_this_kernel) stay immediate on purpose:
-    # a person pressing Restart wants it now.
-    restart = ("  curl -s -X POST 'http://127.0.0.1:%d/restart-all?when=quiet' >/dev/null 2>&1\n" % int(mport)) if mport.isdigit() \
+    # IMMEDIATE (T160, the user 2026-08-28, reversing T121's quiet default from live experience):
+    # a deploy cuts in-flight turns NOW. The parked quiet window held every push for minutes
+    # (measured 0–570s waits, 15-min backstop) and still cut turns when the window never quieted,
+    # while boot reconcile resumes a cut turn with its history and a continuation nudge either way.
+    # The quiet gate is not gone — `romp refresh --quiet` invokes it explicitly. The audit line the
+    # script writes right before the curl is what names this restart in restart-cuts.jsonl: the
+    # detached script outlives this kernel, so the dying kernel's cut row can only join to a reason
+    # written at curl time (auto deploys used to leave the row anonymous).
+    aud = q(str(jd.STATE / "restart-audit.jsonl"))
+    restart = (("  printf '{\"t\": %%s, \"action\": \"self-update\", \"tag\": \"%s\"}\\n' \"$(date +%%s)\" >> %s\n"
+                % (tag, aud))
+               + "  curl -s -X POST 'http://127.0.0.1:%d/restart-all' >/dev/null 2>&1\n" % int(mport)) if mport.isdigit() \
         else "  : # no manager — the new code arms on the next romp start (the report says so)\n"
     ok_rep = {"ok": True, "tag": tag, "restarted": bool(mport.isdigit())}
     script = (
@@ -2763,11 +2770,13 @@ def _main_drift_check():
 _PORT_FROM_ENV = object()
 
 
-def _run_main_update(kind, immediate=False, manager_port=_PORT_FROM_ENV):
+def _run_main_update(kind, immediate=True, manager_port=_PORT_FROM_ENV):
     """Converge on newest main: advance the checkout (fast-forward only; a DIRTY shared tree refuses
     LOUDLY — peer sessions' uncommitted work is never discarded) and bounce every kernel through the
-    manager. `kind` "restart" skips the pull (the checkout is already ahead). Unattended (auto mode)
-    the bounce rides the quiet window; a banner CLICK is the user's own deliberate cut → immediate.
+    manager. `kind` "restart" skips the pull (the checkout is already ahead). The bounce is IMMEDIATE
+    for every caller (T160, the user 2026-08-28: deploys cut in-flight turns now; the parked quiet
+    window cost minutes per push and boot reconcile resumes cut turns either way) — pass
+    immediate=False to ride the manager's quiet-window gate explicitly.
     `manager_port` is the value the /update handler resolved before its ack (see _PORT_FROM_ENV)."""
     if kind == "pull":
         try:
@@ -2805,6 +2814,9 @@ def _run_main_update(kind, immediate=False, manager_port=_PORT_FROM_ENV):
         manager_port = os.environ.get("ROMP_MANAGER_PORT")
     try:
         import urllib.request
+        # the reason joins the dying kernel's restart-cuts.jsonl row to WHO restarted it (see
+        # _recent_restart_reason) — the auto converge used to leave the row anonymous
+        _audit_restart_request("main-converge", tag=kind, when=("now" if immediate else "quiet"))
         req = urllib.request.Request("http://127.0.0.1:%d/restart-all%s"
                                      % (int(manager_port or 7432),
                                         "" if immediate else "?when=quiet"), method="POST")
