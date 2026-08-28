@@ -2283,6 +2283,16 @@ def _auto_nudge_on():
 CONSERVE_FILE_NAME = "conserve-memory.json"
 CONSERVE_VIEWER_LEASE_S = 30
 CONSERVE_HIDE_GRACE_S = 60
+FADED_S = 3600   # ready + idle this long = the FADED look (timeline lanes + chat tabs)
+
+
+def _idle_faded(state, since, now):
+    """THE faded fact, stated once (T155): ready/idle for over an hour. Both payload renderers
+    (the chat chip, the timeline lane) and the conserve sweep read THIS — the user's design
+    instinct is that the faded look and the parked process should be one fact, and one function is
+    how the two can never drift. `state` accepts both spellings ('ready' is the chip vocabulary,
+    'waiting' the backend snapshot's)."""
+    return state in ("ready", "waiting", "idle") and bool(since) and now - float(since) > FADED_S
 _conserve_last_viewer = [time.time()]   # the last moment a chat viewer was connected (lease anchor)
 _conserve_hidden_at = {}                # sid -> first moment seen hidden+idle (the grace clock)
 
@@ -2317,11 +2327,19 @@ def _conserve_tick(now):
         return   # the lease: a reloading page is not a closed dashboard
     vc = _views_client()
     running = be.running_sids()
+    rows = be.live_sessions()
     closed = []
     for sid in running:
         open_tab = viewer and _view_visible(vc, sid, "chat")
         busy = not be.conserve_idle(sid)
-        if open_tab or busy:
+        # THE COMPOSITION (T155, weighed b->c): close only sessions BOTH faded (ready + idle > 1h —
+        # the same _idle_faded fact the UI renders, so the faded look on an unviewed session
+        # honestly means 'process parked') AND tab-open on no connected viewer (an open tab always
+        # protects — the tab-sync direction that started this). The hour is the churn hysteresis
+        # the user asked for: a worker idling minutes between dispatches never pays a respawn.
+        st = rows.get(sid) or {}
+        fresh = not _idle_faded(str(st.get("state") or ""), st.get("since") or 0, now)
+        if open_tab or busy or fresh:
             _conserve_hidden_at.pop(sid, None)
             continue
         first = _conserve_hidden_at.setdefault(sid, now)
@@ -18369,7 +18387,7 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
         if chip in ("working", "ready") and not path_override and not os.path.exists(sess["path"]) \
                 and spawn_inflight:
             chip = "opening"
-        faded = chip == "ready" and bool(tm["since"]) and now - tm["since"] > 3600
+        faded = chip == "ready" and _idle_faded(chip, tm["since"], now)
         # apiTooLong distinguishes a "prompt is too long" block (on YOU → red dashed tab) from a TRANSIENT API
         # error (auto-retrying → the tab renders amber/retrying, not alarm-red). chip stays "blocked" either way
         # so the client auto-retry still fires + recovers the transient ones (the user 2026-06-29).
@@ -22319,7 +22337,7 @@ def build_timeline(now, tmux=None, with_bars=True, live_only=False):
         # tmux's vocabulary and counted "waiting" as active — but "waiting" IS the post-turn idle state, so
         # every live lane stayed active forever and only DEAD lanes ever dimmed (the user 2026-07-22: idle
         # threads dim in the chat but never on the timeline). Dead lanes still fade via `not live`.
-        faded = (not live) or (state == "ready" and bool(tm and tm["since"]) and now - tm["since"] > 3600)
+        faded = (not live) or (state == "ready" and _idle_faded(state, tm and tm["since"], now))
         # AWAITING dispatched/background work — the SAME _session_awaiting the chat chip folds into its
         # yellow working dot, emitted per lane so the timeline shows the in-flight-elsewhere state instead
         # of a bare READY (the user 2026-07-01: the surfaces must share one working model; this was the

@@ -87,10 +87,15 @@ class Tick(unittest.TestCase):
 
     class _FakeBe:
         def __init__(self):
-            self.running = ["s-open", "s-hidden", "s-busy"]
-            self.idle = {"s-open": True, "s-hidden": True, "s-busy": False}
+            self.running = ["s-open", "s-hidden", "s-busy", "s-fresh"]
+            self.idle = {"s-open": True, "s-hidden": True, "s-busy": False, "s-fresh": True}
+            # the FADED fact rides the snapshot rows (T155): everyone idled since t=0 except
+            # s-fresh, which settled moments ago — inside the hour, never closed
+            self.since = {"s-open": "1", "s-hidden": "1", "s-busy": "1", "s-fresh": "999"}
             self.closed = []
         def running_sids(self): return list(self.running)
+        def live_sessions(self):
+            return {sid: {"state": "waiting", "since": self.since.get(sid, "1")} for sid in self.running}
         def conserve_idle(self, sid): return self.idle.get(sid, False)
         def conserve_close(self, sid):
             self.closed.append(sid); self.running.remove(sid); return True
@@ -115,12 +120,27 @@ class Tick(unittest.TestCase):
         km._set_conserve(False)
         km._conserve_hidden_at.clear()
 
-    def test_matrix_open_stays_hidden_idle_closes_after_grace_busy_stays(self):
-        km._conserve_tick(1000.0)
-        self.assertEqual(self.be.closed, [], "first sight of hidden+idle starts the grace, closes nothing")
-        km._conserve_tick(1000.0 + km.CONSERVE_HIDE_GRACE_S + 1)
+    def test_matrix_open_stays_hidden_faded_closes_after_grace_busy_and_fresh_stay(self):
+        # ticks run past the FADED hour (sessions idled since t~0) — s-fresh alone is inside it
+        t0 = 5000.0
+        self.be.since["s-fresh"] = str(t0 - 60)   # settled a minute before the tick — inside the hour
+        km._conserve_tick(t0)
+        self.assertEqual(self.be.closed, [], "first sight of hidden+faded starts the grace, closes nothing")
+        km._conserve_tick(t0 + km.CONSERVE_HIDE_GRACE_S + 1)
         self.assertEqual(self.be.closed, ["s-hidden"],
-                         "hidden+idle closes after the grace; the open tab and the busy one stay")
+                         "hidden+faded closes after the grace; the open tab, the busy one, and the "
+                         "fresh-idle one all stay (T155: the hour IS the churn hysteresis)")
+
+    def test_a_fresh_idle_session_never_closes_inside_the_hour(self):
+        self.be.since["s-hidden"] = "999999"                   # settled moments before the tick
+        self.be.since["s-fresh"] = "999999"
+        km._conserve_tick(1000000.0)
+        km._conserve_tick(1000000.0 + km.CONSERVE_HIDE_GRACE_S + 1)
+        self.assertEqual(self.be.closed, [], "inside the faded hour nothing closes — no churn, ever")
+        self.be.since["s-hidden"] = "1"                        # …and once faded, it goes
+        km._conserve_tick(1000000.0 + 2 * km.CONSERVE_HIDE_GRACE_S + 2)
+        km._conserve_tick(1000000.0 + 3 * km.CONSERVE_HIDE_GRACE_S + 3)
+        self.assertEqual(self.be.closed, ["s-hidden"])
 
     def test_a_reshow_cancels_the_grace(self):
         km._conserve_tick(1000.0)
@@ -129,16 +149,20 @@ class Tick(unittest.TestCase):
         self.assertEqual(self.be.closed, [], "the re-show event cancels the pending close")
 
     def test_viewer_disconnect_lease_holds_then_releases(self):
+        # tick times sit past the faded hour for the since="1" rows; s-fresh settled a minute before
+        t0 = 10000.0
+        self.be.since["s-fresh"] = str(t0 - 60)
         with km._clients_lock:
             km._clients[:] = []                                  # every viewer gone (a reload)
-        km._conserve_last_viewer[0] = 1000.0
-        km._conserve_tick(1000.0 + 5)
+        km._conserve_last_viewer[0] = t0
+        km._conserve_tick(t0 + 5)
         self.assertEqual(self.be.closed, [], "within the lease nothing moves — a reload never mass-closes")
-        km._conserve_tick(1000.0 + km.CONSERVE_VIEWER_LEASE_S + 1)
-        km._conserve_tick(1000.0 + km.CONSERVE_VIEWER_LEASE_S + km.CONSERVE_HIDE_GRACE_S + 2)
-        self.assertIn("s-hidden", self.be.closed, "past the lease, no viewer = no open tabs; idle closes after grace")
+        km._conserve_tick(t0 + km.CONSERVE_VIEWER_LEASE_S + 1)
+        km._conserve_tick(t0 + km.CONSERVE_VIEWER_LEASE_S + km.CONSERVE_HIDE_GRACE_S + 2)
+        self.assertIn("s-hidden", self.be.closed, "past the lease, no viewer = no open tabs; faded closes after grace")
         self.assertIn("s-open", self.be.closed, "…including the one that WAS on the strip (no viewer sees it)")
         self.assertNotIn("s-busy", self.be.closed, "work is never closed")
+        self.assertNotIn("s-fresh", self.be.closed, "…and fresh-idle stays even with no viewer (the hour holds)")
 
     def test_off_means_untouched(self):
         km._set_conserve(False)

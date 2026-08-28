@@ -63,7 +63,7 @@ var GEAR_HTML =
   '</span></label>' +
   "<label class='rs-row'><input type=checkbox id=rs-conserve>" +
   '<span><b>Conserve memory</b><span class=rs-mixed hidden></span>' +
-  '<span class=rs-sub>Close the claude process of a session that is idle and on no open tab (each averages ~340MB). Everything persists — the session revives on a tab click, a message, or a scheduled wake. Off = every session keeps its process for as long as it lives.</span>' +
+  '<span class=rs-sub>Close the claude process of a session that has FADED (idle over an hour) and is on no open tab (each averages ~340MB). Everything persists — it revives on a tab click, a message, or a scheduled wake. An open tab always keeps its process; off = every session keeps its process for as long as it lives.</span>' +
   '</span></label>' +
   "<label class='rs-row'><input type=checkbox id=rs-fileedit>" +
   '<span><b>File editing</b><span class=rs-mixed hidden></span>' +
