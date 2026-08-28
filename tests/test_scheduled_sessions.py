@@ -16,7 +16,11 @@ thing: never leave a timer-armed session without a process. Three pieces, pinned
    idempotent, with a 120s per-sid retry floor so a spawn-crashing session can't become a storm.
 3. The kernel's producer calls the sweep every pass.
 
-Romp never fires a timer itself (no double-fire risk). Synthetic fixtures only."""
+Plus the catch-up half: entries record the PROCESS GENERATION that armed them (procGen) and, for
+one-shots, an ABSOLUTE dueEpoch captured at the ScheduleWakeup call by a PostToolUse hook. A one-shot
+whose arming generation is still alive belongs to the CLI, always; one whose generation is gone can
+never fire CLI-side, so the kernel delivers its prompt at due. Ownership is exact — no grace windows,
+no inflight guessing (review of #769, 2026-08-28). Synthetic fixtures only."""
 import asyncio
 import os
 import tempfile
@@ -63,6 +67,8 @@ class StopHookRecordsTheArmedSet(_Backend):
         self.assertEqual(len(rec), 1)
         armed = rec[0].pop("armedAt")
         self.assertAlmostEqual(armed, time.time(), delta=30, msg="first-seen arm time rides the entry")
+        self.assertEqual(rec[0].pop("procGen"), s.proc_gen, "the arming process generation rides the entry")
+        self.assertIsNone(rec[0].pop("dueEpoch"), "a recurring cron has no one-shot due moment")
         self.assertEqual(rec, [{"id": "aaaa1111", "cron": "50 * * * *",
                                 "prompt": "Reply with exactly: tick", "kind": "cron", "recurring": True}])
 
@@ -74,22 +80,28 @@ class StopHookRecordsTheArmedSet(_Backend):
         shot = {"id": "dddd4444", "schedule": "%d %d * * *" % (due[4], due[3]),
                 "prompt": "Reply with exactly: wake", "kind": "loop", "recurring": False}
         asyncio.run(s._stop_hook({"session_crons": [shot]}, None, None))
-        asyncio.run(s._stop_hook({"session_crons": []}, None, None))   # the fresh process knows nothing
+        fresh = sb.SdkSession(self.be, sb.read_reg(self.d, SID))   # the recycle: a NEW generation
+        self.assertNotEqual(fresh.proc_gen, s.proc_gen)
+        asyncio.run(fresh._stop_hook({"session_crons": []}, None, None))   # knows nothing of the wakeup
         rec = (sb.read_reg(self.d, SID) or {}).get("sessionCrons")
         self.assertEqual([c["id"] for c in rec], ["dddd4444"],
-                         "erasing it here was how the fix's first draft lost the wakeup pre-due")
+                         "an absent one-shot from a GONE generation is an orphan, not a cancellation")
 
-    def test_a_fired_one_shot_still_drops(self):
-        # a genuinely FIRED one-shot is always past due at its own turn's Stop hook (armed 17:08,
-        # due 17:13, fired 17:13, hook ~17:13:30) — strict-future keep means it drops here, so the
-        # sweep can never double-fire it. Plant the record with its arm time BEFORE the (past) due.
-        past = time.localtime(time.time() - 120)
-        rec = {"id": "eeee5555", "cron": "%d %d * * *" % (past[4], past[3]),
-               "prompt": "p", "kind": "loop", "recurring": False, "armedAt": int(time.time() - 600)}
-        self._reg(sessionCrons=[rec], sessionCronsAt=int(time.time() - 600))
+    def test_a_fired_or_cancelled_one_shot_of_the_LIVE_generation_drops(self):
+        # a one-shot the LIVE process no longer reports genuinely fired or was cancelled — the CLI is
+        # the owner of record for its own generation, so absence from its payload is the deciding
+        # event (no due-time reasoning at all; the first draft's strict-future keep got this wrong
+        # for past-due orphans, which it silently dropped before delivery could act).
+        self._reg()
         s = sb.SdkSession(self.be, sb.read_reg(self.d, SID))
+        fut = time.localtime(time.time() + 600)
+        rec = {"id": "eeee5555", "cron": "%d %d * * *" % (fut[4], fut[3]),
+               "prompt": "p", "kind": "loop", "recurring": False,
+               "armedAt": time.time() - 600, "procGen": s.proc_gen}
+        self.be._update_reg(SID, sessionCrons=[rec], sessionCronsAt=int(time.time() - 600))
         asyncio.run(s._stop_hook({"session_crons": []}, None, None))
-        self.assertEqual((sb.read_reg(self.d, SID) or {}).get("sessionCrons"), [])
+        self.assertEqual((sb.read_reg(self.d, SID) or {}).get("sessionCrons"), [],
+                         "even a FUTURE one-shot drops when its own live process stops reporting it")
 
     def test_cancelling_the_last_timer_clears_the_record(self):
         s = self._sess()
@@ -204,21 +216,13 @@ class LostWakeupDelivery(_Backend):
         self.assertEqual(self.be.deliver_lost_wakeups(), 0)
         self.assertTrue((sb.read_reg(self.d, SID) or {}).get("sessionCrons"))
 
-    def test_the_grace_covers_a_genuine_fire_settling(self):
-        shot, armed = self._shot(due_offset=-30)       # due 30s ago — inside the 90s grace
-        self._reg(sessionCrons=[shot], sessionCronsAt=armed)
-        self.be.send = lambda sid, text: self.fail("a genuine fire's Stop hook gets time to erase the record")
-        self.assertEqual(self.be.deliver_lost_wakeups(), 0)
-
-    def test_recurring_crons_are_never_self_fired(self):
-        shot, armed = self._shot(due_offset=-300, recurring=True)
-        self._reg(sessionCrons=[shot], sessionCronsAt=armed)
-        self.be.send = lambda sid, text: self.fail("recurring = keep-alive only; the CLI fires those")
-        self.assertEqual(self.be.deliver_lost_wakeups(), 0)
-
-    def test_a_mid_turn_session_is_left_alone(self):
+    def test_a_live_generations_one_shot_is_the_CLIs_however_late_it_looks(self):
+        # THE double-fire fix (review of #769, 2026-08-28): the first draft guessed ownership from a
+        # 90s grace + an inflight counter that CLI-native turns never increment, so a fired wakeup
+        # whose turn ran long got delivered a second time mid-turn. Ownership is now the arming
+        # process generation: while that process lives, the kernel never touches its timers — five
+        # minutes past due, mid-turn, whenever.
         shot, armed = self._shot(due_offset=-300)
-        self._reg(sessionCrons=[shot], sessionCronsAt=armed)
 
         class T:
             def is_alive(self):
@@ -226,10 +230,79 @@ class LostWakeupDelivery(_Backend):
 
         class S:
             thread = T()
-            inflight = 1
+            proc_gen = "gen-live"
+        shot["procGen"] = S.proc_gen
+        self._reg(sessionCrons=[shot], sessionCronsAt=armed)
         self.be.sessions[SID] = S()
-        self.be.send = lambda sid, text: self.fail("mid-turn: a genuine fire may be settling")
+        self.be.send = lambda sid, text: self.fail("its arming process is alive — the CLI fires it, not us")
         self.assertEqual(self.be.deliver_lost_wakeups(), 0)
+        self.assertTrue((sb.read_reg(self.d, SID) or {}).get("sessionCrons"), "and the record stays")
+
+    def test_recurring_crons_are_never_self_fired(self):
+        shot, armed = self._shot(due_offset=-300, recurring=True)
+        self._reg(sessionCrons=[shot], sessionCronsAt=armed)
+        self.be.send = lambda sid, text: self.fail("recurring = keep-alive only; the CLI fires those")
+        self.assertEqual(self.be.deliver_lost_wakeups(), 0)
+
+    def test_a_dead_generations_one_shot_delivers_even_while_a_NEW_process_runs(self):
+        # ensure_scheduled revives the session, but the fresh CLI cannot fire a one-shot the dead
+        # process held — the recycle loses it (verified live 2026-08-28). Generation mismatch says
+        # exactly that, so the kernel delivers despite the live thread.
+        shot, armed = self._shot(due_offset=-300)
+        shot["procGen"] = "gen-dead"                    # armed by a long-gone process
+
+        class T:
+            def is_alive(self):
+                return True
+
+        class S:
+            thread = T()
+            proc_gen = "gen-new"                        # the NEW process
+        self._reg(sessionCrons=[shot], sessionCronsAt=armed)
+        self.be.sessions[SID] = S()
+        sent = []
+        self.be.send = lambda sid, text: sent.append((sid, text)) or True
+        self.assertEqual(self.be.deliver_lost_wakeups(), 1)
+        self.assertEqual(len(sent), 1)
+
+    def test_the_call_time_hook_records_an_exact_due(self):
+        # ScheduleWakeup's PostToolUse hook: dueEpoch = call time + delaySeconds, no cron-string
+        # reconstruction, no tomorrow-wrap (the armedAt-at-turn-end defect class dies here)
+        self._reg()
+        s = sb.SdkSession(self.be, sb.read_reg(self.d, SID))
+        asyncio.run(s._sched_tool_hook({"tool_name": "ScheduleWakeup",
+                                        "tool_input": {"delaySeconds": 120, "prompt": "loop tick",
+                                                       "reason": "watching CI"}}, None, None))
+        rec = (sb.read_reg(self.d, SID) or {}).get("sessionCrons")
+        self.assertEqual(len(rec), 1)
+        self.assertAlmostEqual(rec[0]["dueEpoch"], time.time() + 120, delta=30)
+        self.assertEqual(rec[0]["procGen"], s.proc_gen)
+        self.assertFalse(rec[0]["recurring"])
+        # arming again REPLACES the pending wakeup (the tool's own semantics)
+        asyncio.run(s._sched_tool_hook({"tool_name": "ScheduleWakeup",
+                                        "tool_input": {"delaySeconds": 600, "prompt": "later tick"}}, None, None))
+        rec = (sb.read_reg(self.d, SID) or {}).get("sessionCrons")
+        self.assertEqual([c["prompt"] for c in rec], ["later tick"])
+        # stop:true ends the loop: the pending toolhook one-shot drops
+        asyncio.run(s._sched_tool_hook({"tool_name": "ScheduleWakeup",
+                                        "tool_input": {"stop": True}}, None, None))
+        self.assertEqual((sb.read_reg(self.d, SID) or {}).get("sessionCrons"), [])
+
+    def test_the_stop_hook_marries_a_toolhook_record_to_the_CLIs_id(self):
+        # the toolhook entry knows the exact date; the Stop payload knows the CLI's id — the
+        # reconciler keeps both (one entry, CLI id, exact dueEpoch) and drops the duplicate
+        self._reg()
+        s = sb.SdkSession(self.be, sb.read_reg(self.d, SID))
+        asyncio.run(s._sched_tool_hook({"tool_name": "ScheduleWakeup",
+                                        "tool_input": {"delaySeconds": 300, "prompt": "the tick"}}, None, None))
+        due = time.localtime(time.time() + 300)
+        payload = [{"id": "cli-42", "schedule": "%d %d * * *" % (due[4], due[3]),
+                    "prompt": "the tick", "kind": "loop", "recurring": False}]
+        asyncio.run(s._stop_hook({"session_crons": payload}, None, None))
+        rec = (sb.read_reg(self.d, SID) or {}).get("sessionCrons")
+        self.assertEqual([c["id"] for c in rec], ["cli-42"], "one entry, the CLI's id")
+        self.assertAlmostEqual(rec[0]["dueEpoch"], time.time() + 300, delta=30,
+                               msg="…wearing the toolhook's exact due date")
 
 
 class ProducerRunsTheSweep(unittest.TestCase):
