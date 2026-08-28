@@ -8,6 +8,7 @@
 
 import { hostOf, bareId } from "./host-prefix";
 import { mediaSrc } from "./media";
+import * as pz from "./pinch";
 
 // Extensions the kernel's _PREVIEW_MIME serves — keep the two lists in step (tests pin both).
 const IMG_EXT = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"]);
@@ -113,6 +114,80 @@ export function fileUrl(path: string, sid?: string | null): string {
 // Full-view lightbox: dark backdrop, the image at natural-but-capped size or the PDF in the browser's
 // native viewer, filename caption. One singleton element; backdrop click / Esc / ✕ closes. Styles live
 // in BOTH styles.css and feed.css (each page loads only its own sheet — the .romp-acted precedent).
+// Pinch-zoom on the lightbox image (T162, the user 2026-08-28 on Android). Pointer events only —
+// no gesture library: two pointers pinch around the gesture midpoint (the content point under it
+// held fixed — pinch.ts owns the math, executable-tested), one pointer PANS while zoomed,
+// double-tap toggles home/2.5× around the tap. touch-action:none on the stage (CSS) keeps the
+// browser's own page-zoom out of it. The CLOSE gesture is untouched by construction: dismissal
+// stays tap-on-BACKDROP (target === wrap) and the ✕ — every pinch/pan pointer is CAPTURED by the
+// stage, so a drag that ends anywhere can never read as a backdrop tap.
+function wirePinchZoom(stage: HTMLElement, img: HTMLImageElement): void {
+  let view = pz.identity();
+  const ptrs = new Map<number, { x: number; y: number }>();
+  let start: { view: pz.PinchView; d: number } | null = null;   // two-pointer gesture snapshot
+  let rest: { left: number; top: number; w: number; h: number; vw: number; vh: number } | null = null;
+  let lastTap = 0, lastTapAt = { x: 0, y: 0 };
+  const apply = () => {
+    img.style.transform = view.s === 1 && !view.tx && !view.ty
+      ? "" : `translate(${view.tx}px, ${view.ty}px) scale(${view.s})`;
+  };
+  // the image's REST frame (its untransformed layout box, q-space origin) — measured at gesture
+  // start by removing the current transform's offset from the live rect; origin 0 0 keeps the
+  // top-left corner exactly translate() away from layout, so the inversion is exact
+  const measure = () => {
+    const r = img.getBoundingClientRect();
+    const box = stage.getBoundingClientRect();
+    rest = { left: r.left - view.tx, top: r.top - view.ty,
+             w: r.width / view.s, h: r.height / view.s,
+             vw: box.width, vh: box.height };
+  };
+  const q = (e: PointerEvent) => ({ x: e.clientX - rest!.left, y: e.clientY - rest!.top });
+  stage.addEventListener("pointerdown", (e) => {
+    if ((e.target as HTMLElement).closest(".romp-lightbox-bar")) return;   // the bar's buttons own their taps
+    ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    try { stage.setPointerCapture(e.pointerId); } catch { /* a pointer gone between event and capture — the move/up handlers still see bubbled events */ }
+    measure();
+    if (ptrs.size === 2) {
+      const [a, b] = [...ptrs.values()];
+      start = { view, d: pz.dist(a, b) };
+    } else if (ptrs.size === 1) {
+      // double-tap: a second down within the platform window and radius toggles the zoom. The
+      // 350ms is the GESTURE'S definition (like a double-click), not state logic.
+      const now = e.timeStamp;
+      const p = q(e);
+      if (now - lastTap < 350 && Math.hypot(p.x - lastTapAt.x, p.y - lastTapAt.y) < 30) {
+        view = pz.clampPan(pz.doubleTapToggle(view, p.x, p.y), rest!.w, rest!.h, rest!.vw, rest!.vh);
+        apply();
+        lastTap = 0;
+      } else { lastTap = now; lastTapAt = p; }
+    }
+    if (view.s > 1 || ptrs.size === 2) e.preventDefault();
+  });
+  stage.addEventListener("pointermove", (e) => {
+    const prev = ptrs.get(e.pointerId);
+    if (!prev || !rest) return;
+    ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (ptrs.size === 2 && start) {
+      const [a, b] = [...ptrs.values()];
+      const m = pz.midpoint(a, b);
+      view = pz.clampPan(
+        pz.zoomAt(start.view, m.x - rest.left, m.y - rest.top, pz.dist(a, b) / start.d),
+        rest.w, rest.h, rest.vw, rest.vh);
+      apply();
+    } else if (ptrs.size === 1 && view.s > 1) {
+      view = pz.clampPan(pz.pan(view, e.clientX - prev.x, e.clientY - prev.y), rest.w, rest.h, rest.vw, rest.vh);
+      apply();
+    }
+  });
+  const lift = (e: PointerEvent) => {
+    ptrs.delete(e.pointerId);
+    if (ptrs.size < 2) start = null;
+    if (ptrs.size === 0) { view = pz.settle(view); apply(); }
+  };
+  stage.addEventListener("pointerup", lift);
+  stage.addEventListener("pointercancel", lift);
+}
+
 export function openLightbox(path: string, sid?: string | null, pin?: string): void {
   document.getElementById("romp-lightbox")?.remove();
   const kind = previewKind(path);
@@ -133,6 +208,7 @@ export function openLightbox(path: string, sid?: string | null, pin?: string): v
     img.src = fileUrl(path, sid) + (pin ? "&pin=" + encodeURIComponent(pin) : "");
     img.alt = path;
     inner.appendChild(img);
+    wirePinchZoom(inner, img);
   }
   const bar = document.createElement("div");
   bar.className = "romp-lightbox-bar";
