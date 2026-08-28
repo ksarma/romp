@@ -60,9 +60,11 @@ test("the action buttons wear the chat's under-bubble family; Fork stays out by 
 
 test("a fresh thread boots on the romp loader, then renders its final format ONCE", () => {
   // the loader holds the list until the thread's REAL render (its events) is ready — the plain
-  // msgs projection no longer flashes as an intermediate format
-  assert.match(RENDER, /if \(!evs\.length && th\.status === "open" && !th\.error && cmtBootHolds\(th\.tid\)\) \{/);
-  assert.match(RENDER, /boot\.appendChild\(rompLoaderInner\("opening the thread…", \{ wordmark: false \}\)\);/);
+  // msgs projection no longer flashes as an intermediate format. Since T152 the guard requires
+  // BOTH projections empty and holds PAST the backstop with a slower label (never blank; a msgs-
+  // only old-kernel thread still falls through to the plain projection).
+  assert.match(RENDER, /if \(!evs\.length && !th\.msgs\.length && th\.status === "open" && !th\.error\) \{/);
+  assert.match(RENDER, /rompLoaderInner\(\s*\n?\s*slow \? "still opening — the thread's session is taking longer than usual…" : "opening the thread…",/);
   // logo-only in the POPOVER (the user 2026-08-25): the spinning swirl + dots stay, the R-o-m-p
   // letters drop — parameterized on the ONE shared builder, so the boot splash and the pane/revive
   // loaders keep the full treatment (their call sites pass no opts)
@@ -75,7 +77,7 @@ test("a fresh thread boots on the romp loader, then renders its final format ONC
   assert.match(RENDER, /window\.setTimeout\(\(\) => \{ if \(openCommentKey\?\.tid === tid\) refillOpenCommentPop\(\); \}, CMT_BOOT_BACKSTOP_MS \+ 50\);/);
   // the user's own pending sends still acknowledge under the loader — through the CHAT'S queued
   // idiom (T104: the one-off gray pill is gone; cmtPendingQueued IS renderQueued's bare group)
-  const gate = RENDER.split("cmtBootHolds(th.tid)) {")[1].split("return;")[0];
+  const gate = RENDER.split('!th.msgs.length && th.status === "open" && !th.error) {')[1].split("return;")[0];
   assert.ok(gate.includes("cmtPendingQueued(pend)"), "pending bubbles ride the boot view, chat-idiom");
 });
 

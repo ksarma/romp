@@ -11,7 +11,14 @@ const { chromium } = require2("playwright");
 
 const PORT = process.env.PORT, TOKEN = process.env.TOKEN, LAB = process.env.LAB_DIR, PROJ = process.env.PROJECT_DIR;
 const MODEL = process.env.LAB_MODEL || "Haiku";
-const PASSAGE = "the moon has no weather to speak of";
+// The anchor turn is RICH on purpose (T152, the user 2026-08-28: a comment on a long turn with
+// bold sections, links and an inline image rendered a floating quote over a blank thread): the
+// model echoes markdown — bold + inline code + a path + an image — so the passage's rendered text
+// SPANS ELEMENT BOUNDARIES and the exact-match re-find, the selection, and the quote all exercise
+// the hard case. PASSAGE is the RENDERED (plain) text the user would drag over.
+const PASSAGE_MD = "the **moon** has `no weather` to speak of (notes: /tmp/moon-notes.txt)";
+const PASSAGE = "the moon has no weather to speak of (notes: /tmp/moon-notes.txt)";
+const TURN_MD = PASSAGE_MD + "\n\n![plot](/tmp/moon-plot.png)";
 const shots = path.join(LAB, "shots");
 let phaseN = 0;
 const fails = [];
@@ -81,7 +88,7 @@ const moded = await page.evaluate(async () => {
 console.log("mode bypass:", moded);
 
 // ── a REAL turn: ask for a stable, selectable sentence ──
-await page.fill("#composer-input", `Reply with exactly this sentence and nothing else: ${PASSAGE}`);
+await page.fill("#composer-input", `Reply with exactly this markdown and nothing else (verbatim, keep all formatting characters): ${TURN_MD}`);
 await page.keyboard.press("Enter");
 await page.waitForFunction((p) => Array.from(document.querySelectorAll(".turn-assistant .md"))
   .some((e) => e.textContent.includes(p)), PASSAGE, { timeout: 180000 });
@@ -89,12 +96,27 @@ await shot("reply-landed");
 
 // ── the COMMENT flow: select the passage → context menu → Comment → send ──
 await page.evaluate((p) => {
+  // cross-node selection (T152): the rich turn splits the passage across <strong>/<code>/link text
+  // nodes — walk the text nodes accumulating rendered text, and set the range ends INSIDE the
+  // nodes where the passage starts and ends, exactly as a user's drag would land
   const el = Array.from(document.querySelectorAll(".turn-assistant .md")).find((e) => e.textContent.includes(p));
   const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
-  let tn; while ((tn = walker.nextNode())) if (tn.data.includes(p)) break;
+  const nodes = []; let all = "";
+  let tn; while ((tn = walker.nextNode())) { nodes.push({ n: tn, at: all.length }); all += tn.data; }
+  const start = all.indexOf(p);
+  const end = start + p.length;
+  const locate = (pos, isEnd) => {
+    for (let i = nodes.length - 1; i >= 0; i--) {
+      const { n, at } = nodes[i];
+      if (pos > at || (pos === at && (!isEnd || i === 0))) return [n, pos - at];
+      if (pos === at && isEnd) return [nodes[i - 1].n, nodes[i - 1] ? pos - nodes[i - 1].at : 0];
+    }
+    return [nodes[0].n, 0];
+  };
+  const [sn, so] = locate(start, false);
+  const [en, eo] = locate(end, true);
   const r = document.createRange();
-  const off = tn.data.indexOf(p);
-  r.setStart(tn, off); r.setEnd(tn, off + p.length);
+  r.setStart(sn, so); r.setEnd(en, eo);
   const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
   document.dispatchEvent(new Event("selectionchange"));
   el.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 420, clientY: 300 }));
@@ -113,6 +135,27 @@ check("1-latch-at-send", (await busy()) === true, `pre-send busy was ${preSend}`
 await shot("send-latched");
 sampleFlicker();
 
+// T152, permanent: the open popover NEVER renders a blank conversation area — at every sample it
+// shows the loader, pending sends, or content (the live specimen blanked for 200+s while a 40MB
+// fork booted across restarts). Sampled through the whole thread-open window below.
+const blankSamples = { blank: 0, total: 0 };
+const blankTimer = setInterval(async () => {
+  try {
+    blankSamples.total++;
+    const st = await page.evaluate(() => {
+      const msgs = document.querySelector(".cmt-pop .cmt-msgs");
+      return msgs ? msgs.children.length : -1;   // -1: popover closed (not a blank verdict)
+    });
+    if (st === 0) blankSamples.blank++;
+  } catch { /* page busy */ }
+}, 150);
+// …and the QUOTE must carry the WHOLE selected passage, rich rendering notwithstanding
+const quoteWhole = await page.evaluate((p) => {
+  const q = document.querySelector(".cmt-pop .cmt-quote");
+  return !!q && q.textContent.includes(p);
+}, PASSAGE);
+check("1b-whole-quote-on-rich-anchor", quoteWhole, "the quote block lost part of the cross-node passage");
+
 // PHASE 2+3: hold through thread-open, clear exactly when the reply text renders in the popover
 await page.waitForFunction(() => {
   const msgs = document.querySelector(".cmt-pop .cmt-msgs");
@@ -120,7 +163,10 @@ await page.waitForFunction(() => {
     .some((e) => e.textContent.trim().length > 0);
 }, undefined, { timeout: 240000 });
 const flick = flickerStop();
+clearInterval(blankTimer);
 check("2-no-flicker-through-thread-open", flick.falses === 0, `${flick.falses}/${flick.samples} false samples before the reply`);
+check("2b-thread-open-never-blanks", blankSamples.blank === 0,
+  `${blankSamples.blank}/${blankSamples.total} samples showed an EMPTY conversation area (T152's floating-quote blank)`);
 await shot("reply-in-thread");
 // the clear rides the same frame that rendered the reply — allow one push
 await page.waitForFunction(() => !document.querySelector("mark.cmt-hl.busy"), undefined, { timeout: 12000 })
