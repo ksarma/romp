@@ -7377,6 +7377,31 @@ def _auth_avail():
             "acct": _claude_account_label(), "default": default}
 
 
+def _judge_limit_view():
+    """The judge-limit latch, enriched for the banner (the user 2026-08-28, who asked WHICH sessions a
+    full usage window actually touches): the judges bill ONE credential, so a full window pauses CARD
+    ANALYSIS board-wide — but the only SESSIONS the same window also rate-limits are the ones billing
+    the login account themselves. loginSessions = live sessions whose billing is the login, read from
+    the authoritative per-session source (the CLI's own authLive report, falling back to the session's
+    picked intent — the exact fields the Billing tooltip trusts); billingUnknown = live sessions whose
+    billing romp cannot know (a tmux CLI: its env is not romp's), listed honestly rather than silently
+    omitted (the fail-loud rule). Names resolve at read time, so a rename never shows stale."""
+    row = jd._limit_down()
+    if not row:
+        return None
+    billed, unknown = [], []
+    for sid, tm in (_tmux_sessions() or {}).items():
+        if not isinstance(tm, dict):
+            continue
+        b = str(tm.get("authLive") or tm.get("auth") or "")
+        nm = _name_of(sid) or str(sid)[:8]
+        if b == "login":
+            billed.append(nm)
+        elif not b:
+            unknown.append(nm)
+    return dict(row, loginSessions=sorted(billed), billingUnknown=sorted(unknown))
+
+
 def _sdk_problem_count():
     """Total problems recorded so far (boot + backend). The view-cache key: it changes only when
     something actually failed, so a failure lands in the payload on its own event."""
@@ -20616,7 +20641,7 @@ def build_feed(now, tmux=None):
             # usage-limit-down latch (judge-limit.json): analysis is paused because the account
             # cannot bill judge calls — the dashboard must SAY so, never fail quietly into retries
             # (the user 2026-08-18); self-expires at the window reset, cleared by the next success
-            "judgeLimit": jd._limit_down(),
+            "judgeLimit": _judge_limit_view(),   # the latch + WHO it actually touches (the user 2026-08-28)
             "working": working, "awaiting": awaiting,   # awaiting = idle-but-waiting-on-bg-work names → await-green dot (the user 2026-07-13)
             # listed-but-unreadable names → an explicit gray ring, so a BLANK pip means "alive and
             # quiet" and nothing else (see _state_unknown_names)
