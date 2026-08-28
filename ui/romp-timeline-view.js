@@ -228,12 +228,16 @@ const FONT = '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-ser
 // this pane may live in a foreign document (Obsidian) that loads neither styles.css nor its vars, and
 // would otherwise hand the menus the host app's own font. Card #252526, hairline border, 6px radius,
 // 12px romp sans; the current-choice mark is the same ✓-in-circle the chat meta menus use.
-const MENU_STYLE = 'padding:4px;background:#252526;border:1px solid rgba(255,255,255,0.12);'
-  + 'border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.35);font:12px/1.4 ' + FONT + ';'
-  + 'color:#cccccc;user-select:none;';
-const MENU_CHECK_STYLE = 'position:absolute;right:6px;top:50%;transform:translateY(-50%);'
-  + 'background:#1EA1EB;color:#fff;border-radius:50%;width:13px;height:13px;font-size:9px;'
+// Composed from the palette at applyPal() time (see PAL below): dark stays the chat spec verbatim
+// (card #252526, hairline rgba(255,255,255,0.12), shadow rgba(0,0,0,0.35), text #cccccc, ✓ #1EA1EB);
+// the light theme re-skins the same card (white, black hairline, clay ✓).
+const menuStyleFor = (p) => 'padding:4px;background:' + p.menuBg + ';border:1px solid ' + p.hairline + ';'
+  + 'border-radius:6px;box-shadow:0 4px 12px ' + p.menuShadow + ';font:12px/1.4 ' + FONT + ';'
+  + 'color:' + p.menuFg + ';user-select:none;';
+const menuCheckStyleFor = (p) => 'position:absolute;right:6px;top:50%;transform:translateY(-50%);'
+  + 'background:' + p.accentSolid + ';color:#fff;border-radius:50%;width:13px;height:13px;font-size:9px;'
   + 'font-weight:900;display:inline-flex;align-items:center;justify-content:center;line-height:1;';
+let MENU_STYLE = null, MENU_CHECK_STYLE = null;   // set by applyPal() below (dark by default)
 // Judging band: a compact second timeline UNDER the session lanes, on the SAME axis — one row per
 // summarizer judge (docs/judges.md). Each mark is FILLED with the colour of the SESSION it acted on and
 // OUTLINED in the judge's OWN colour (so a bar reads as "judge X on session Y"). Fed by
@@ -476,6 +480,8 @@ function ctxInfo(s) {
   // usage bar. Fall back to the old traffic-light only if an older kernel didn't ship a color.
   // fallback thresholds/palette mirror ui/webview/ctx-color.ts (this file runs inside Obsidian
   // too, so it can't import it; a grep test pins the pair equal)
+  // TODO(toneReadableLight): s.ctxColor is a kernel-shipped RGB tuned for the dark canvas; when the
+  // toneReadableLight helper lands (light-theme batch), re-encode it here under body.theme-light.
   const color = (s.ctxColor && s.ctxColor.length === 3) ? 'rgb(' + s.ctxColor.join(',') + ')'
     : (p >= 88 ? '#c0392b' : (p >= 70 ? '#d7a23a' : '#5196B8'));
   return { label: p + '%', pct: p, color: color };
@@ -485,11 +491,82 @@ function ctxInfo(s) {
 // statusline.sh publishes @claude-model/@claude-effort to tmux; the data layer reads them onto the
 // session. Rendered as muted secondary text between the name and the state chip. '' when unknown
 // (historical/dead lanes never reported it, and some models carry no effort level).
-const MODEL_FG = '#9aa0a6';
-// The romp accent blue (same as the Fleet pill / focus accent). The lane toggles (feed checkbox, mailbox)
-// draw in this when ON, and fall back to the muted gray MODEL_FG + strike-through when OFF (the user
-// 2026-06-24): an ENABLED toggle reads as romp-blue, a disabled one as a faded, struck-out gray.
+// ---- theme palette (the opt-in LIGHT theme, 2026-08-28) ----------------------------------------
+// ONE indirection for every STRUCTURAL inline color this file draws (canvas chrome, menu cards,
+// grays, the accent) — consulted at DRAW time via PAL(): the SVG rebuilds on every draw, so a theme
+// flip repaints on the next draw. The host wiring puts body.theme-light on the pane document
+// (timeline-main.ts applyTheme / the kernel /timeline page); the OBSIDIAN host never sets the class,
+// so dark stays its default there. PAL_DARK holds the exact byte-identical values this file always
+// used. NOT routed through here, on purpose: session identity colors (kernel-shipped s.color), the
+// status BADGE colors + judge colors (semantic), and kernel-shipped modelColor/effortColor/ctxColor/
+// cmapGrad RGB (dark-tuned server ramps — TODO(toneReadableLight): re-encode those for light with the
+// toneReadableLight helper when it lands from its own batch; marked at their application sites).
+function isLight() { try { return document.body.classList.contains('theme-light'); } catch (e) { return false; } }
+// The romp accent blue (same as the Fleet pill / focus accent) — the DARK theme's accent; the light
+// theme swaps in clay via PAL().accent / the ACCENT binding below.
 const ROMP_BLUE = '#9cd2ff';
+const PAL_DARK = {
+  modelFg: '#9aa0a6',            // muted secondary text (MODEL_FG)
+  metaHoverFg: '#e6edf3',        // hover-brightened text (META_HOVER_FG)
+  accent: ROMP_BLUE,             // the romp accent
+  accentSolid: '#1EA1EB',        // the ✓-in-circle current mark (menu vocabulary)
+  faintFg: '#6e7681',            // faint gray (unlocked padlock)
+  menuBg: '#252526',             // menu/card surface (menu vocabulary)
+  menuFg: '#cccccc',             // menu/card body text
+  menuShadow: 'rgba(0,0,0,0.35)',
+  hairline: 'rgba(255,255,255,0.12)',   // card borders + dividers
+  outline: 'rgba(255,255,255,0.25)',    // ghost-button borders
+  hoverBg: 'rgba(255,255,255,0.09)',    // menu row hover wash
+  selBg: 'rgba(255,255,255,0.13)',      // selected pill wash
+  inputBg: '#1e1e1e', inputFg: '#ccc',  // text inputs on cards
+  grid: '#ffffff10', gridEdge: '#ffffff20', gridStrong: '#ffffff22',   // axis gridlines / gap + now edges
+  laneSelFill: '#d6dbe2',        // selected-lane wash (at 0.1 fill-opacity)
+  dotRing: '#e8eef5',            // the thin halo every event dot wears
+  stubBg: '#1b1d22', stubRing: '#ffffff',                    // hidden-lanes stub box
+  batFill: 'rgba(255,255,255,0.07)', batStroke: 'rgba(255,255,255,0.35)',   // context-battery frame
+};
+const PAL_LIGHT = {
+  modelFg: '#5D574E',
+  metaHoverFg: '#1F1E1D',
+  accent: '#C2410C',             // light accent is CLAY, replacing the blue
+  accentSolid: '#C2410C',
+  faintFg: '#8A8378',
+  menuBg: '#FFFFFF',
+  menuFg: '#1F1E1D',
+  menuShadow: 'rgba(0,0,0,0.15)',
+  hairline: 'rgba(0,0,0,0.12)',
+  outline: 'rgba(0,0,0,0.25)',
+  hoverBg: 'rgba(0,0,0,0.06)',
+  selBg: 'rgba(0,0,0,0.08)',
+  inputBg: '#FAF9F5', inputFg: '#1F1E1D',
+  grid: '#00000010', gridEdge: '#00000020', gridStrong: '#00000026',
+  laneSelFill: '#57534E',
+  dotRing: '#FFFFFF',            // the halo stays white — it separates overlapping glyphs, not the page
+  stubBg: '#F0EEE6', stubRing: '#1F1E1D',
+  batFill: 'rgba(0,0,0,0.05)', batStroke: 'rgba(0,0,0,0.30)',
+};
+function PAL() { return isLight() ? PAL_LIGHT : PAL_DARK; }
+// The widely-referenced named colors below are LET bindings refreshed from PAL() at the top of every
+// draw() (applyPal) — same values as ever in dark; the light set swaps in when the class is present.
+let MODEL_FG = PAL_DARK.modelFg;
+let ACCENT = PAL_DARK.accent;
+let META_HOVER_FG = PAL_DARK.metaHoverFg;
+let MENU_FG = PAL_DARK.menuFg, HAIRLINE = PAL_DARK.hairline, OUTLINE_FG = PAL_DARK.outline;
+let HOVER_BG = PAL_DARK.hoverBg, SEL_BG = PAL_DARK.selBg;
+let INPUT_BG = PAL_DARK.inputBg, INPUT_FG = PAL_DARK.inputFg;
+// The lane toggles (feed checkbox, mailbox) draw in ACCENT when ON, and fall back to the muted gray
+// MODEL_FG + strike-through when OFF (the user 2026-06-24): an ENABLED toggle reads as the accent, a
+// disabled one as a faded, struck-out gray.
+// Refresh every named palette binding from the current theme. Called once at load (dark defaults)
+// and at the top of every draw(), so a theme flip lands on the next repaint.
+function applyPal() {
+  const p = PAL();
+  MODEL_FG = p.modelFg; ACCENT = p.accent; META_HOVER_FG = p.metaHoverFg;
+  MENU_FG = p.menuFg; HAIRLINE = p.hairline; OUTLINE_FG = p.outline;
+  HOVER_BG = p.hoverBg; SEL_BG = p.selBg; INPUT_BG = p.inputBg; INPUT_FG = p.inputFg;
+  MENU_STYLE = menuStyleFor(p); MENU_CHECK_STYLE = menuCheckStyleFor(p);
+}
+applyPal();
 function modelLabel(s) {
   if (!s) return '';
   if (!s.model) return s.effort || '';   // effort is always known (registry) — show it even before the model connects
@@ -501,7 +578,8 @@ function modelLabel(s) {
 // /effort slash command into that session's pane (see _sendCommand → tmux, like _compactSession). The
 // label refreshes on the next poll when the TUI republishes @claude-model/@claude-effort; _metaPending
 // dims the word in the gap. Values mirror the extension's allowlist (extension.ts META_VALUES) verbatim.
-const META_HOVER_FG = '#e6edf3';   // brighten the word + reveal its caret on hover
+// (META_HOVER_FG — brighten the word + reveal its caret on hover — is a palette binding, declared
+// with its siblings next to PAL() above.)
 const META_CARET = ' ▾';           // appended (hair-spaced) after each clickable word
 // Per-lane feed show/hide TOGGLE (the user 2026-06-22; a circular CHECKBOX since 2026-06-23, was an eye):
 // sits between the name and the model. ON the feed (default) = a gray ring with a check inside, its prompts
@@ -805,9 +883,10 @@ class TimelinePanel {
       if (typeof document !== 'undefined' && document.head && !document.getElementById('tl-metadots-css')) {
         const dst = document.createElement('style'); dst.id = 'tl-metadots-css';
         dst.textContent = '.romp-tl-meta-dots{position:absolute;pointer-events:none;display:inline-flex;align-items:center;gap:3px;transform:translateY(-50%)}'
-          + '.romp-tl-meta-dots i{width:4px;height:4px;border-radius:50%;background:' + ROMP_BLUE + ';display:inline-block;animation:romp-tl-metadots 1s ease-in-out infinite}'
+          + '.romp-tl-meta-dots i{width:4px;height:4px;border-radius:50%;background:' + PAL_DARK.accent + ';display:inline-block;animation:romp-tl-metadots 1s ease-in-out infinite}'
           + '.romp-tl-meta-dots i:nth-child(2){animation-delay:0.16s}.romp-tl-meta-dots i:nth-child(3){animation-delay:0.32s}'
-          + '@keyframes romp-tl-metadots{0%,70%,100%{opacity:0.3}35%{opacity:1}}';
+          + '@keyframes romp-tl-metadots{0%,70%,100%{opacity:0.3}35%{opacity:1}}'
+          + 'body.theme-light .romp-tl-meta-dots i{background:' + PAL_LIGHT.accent + '}';
         document.head.appendChild(dst);
       }
     } catch (e) {}
@@ -843,7 +922,14 @@ class TimelinePanel {
           + '.romp-tl-chip{display:inline-flex;align-items:center;gap:5px;padding:2px 7px;border-radius:9px;'
           + 'font-size:0.82em;border:1px solid;background:transparent;white-space:nowrap}'
           + '.romp-tl-chipx{cursor:pointer;opacity:0.75;color:#9aa0a6;font-size:0.9em}'
-          + '.romp-tl-ctail{color:#9aa0a6;opacity:0.7;font-size:12px;cursor:pointer;user-select:none;white-space:nowrap}';
+          + '.romp-tl-ctail{color:#9aa0a6;opacity:0.7;font-size:12px;cursor:pointer;user-select:none;white-space:nowrap}'
+          // LIGHT theme re-skin, scoped so the sheet is theme-flip-safe without re-injection: muted ink,
+          // black hairlines, and the CLAY accent standing in for the blue.
+          + 'body.theme-light .romp-tl-cbtn{color:#5D574E;border-color:rgba(0,0,0,0.12)}'
+          + 'body.theme-light .romp-tl-cbtn:hover{border-color:#C2410C;color:#C2410C;background:rgba(194,65,12,0.10)}'
+          + 'body.theme-light .romp-tl-cbtn.on{color:#C2410C;border-color:#C2410C;background:rgba(194,65,12,0.10)}'
+          + 'body.theme-light .romp-tl-chipx{color:#5D574E}'
+          + 'body.theme-light .romp-tl-ctail{color:#5D574E}';
         document.head.appendChild(bst);
       }
     } catch (e) {}
@@ -968,7 +1054,9 @@ class TimelinePanel {
       let css = '';
       try {
         for (const sh of document.styleSheets) {
-          try { for (const r of sh.cssRules) if (r.selectorText && r.selectorText.indexOf('.romp-tl-tip') === 0) css += r.cssText + '\n'; } catch (e2) { /* foreign sheet */ }
+          // substring (not prefix) match: the light theme's scoped variants ('body.theme-light .romp-tl-tip…')
+          // must ride along, so a light-themed top document skins the adopted tip too.
+          try { for (const r of sh.cssRules) if (r.selectorText && r.selectorText.indexOf('.romp-tl-tip') !== -1) css += r.cssText + '\n'; } catch (e2) { /* foreign sheet */ }
         }
       } catch (e2) {}
       const st = tipDoc.createElement('style'); st.id = 'romp-tl-tip-css'; st.textContent = css;
@@ -1478,7 +1566,7 @@ class TimelinePanel {
     const axisY = g.H - this.M.bottom;
     const by = g.top + ((axisY - g.top) - bh) / 2;     // vertically centered in the plot band
     const grp = el('g', {}); grp.style.cursor = 'pointer';
-    grp.appendChild(el('rect', { x: bx, y: by, width: bw, height: bh, rx: 5, fill: '#1b1d22', 'fill-opacity': 0.82, stroke: '#ffffff', 'stroke-opacity': 0.45, 'stroke-width': 1 }));
+    grp.appendChild(el('rect', { x: bx, y: by, width: bw, height: bh, rx: 5, fill: PAL().stubBg, 'fill-opacity': 0.82, stroke: PAL().stubRing, 'stroke-opacity': 0.45, 'stroke-width': 1 }));
     const cx = bx + bw / 2, cy = by + bh / 2;
     const chev = (ox) => 'M ' + (cx - 3 + ox) + ' ' + (cy - 5) + ' L ' + (cx + 3 + ox) + ' ' + cy + ' L ' + (cx - 3 + ox) + ' ' + (cy + 5);
     grp.appendChild(el('path', { d: chev(-2.5) + ' ' + chev(2.5), fill: 'none', stroke: '#ffffff', 'stroke-opacity': 0.9, 'stroke-width': 2, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }));
@@ -1965,7 +2053,7 @@ class TimelinePanel {
     if (showLeft !== false) ends.push([x0, ra, 'end', -2]);
     if (showRight !== false) ends.push([x1, rb, 'start', 2]);
     for (const e of ends) {
-      svg.appendChild(el('line', { x1: e[0], y1: top, x2: e[0], y2: axisY, stroke: '#ffffff20', 'stroke-width': 1, 'pointer-events': 'none' }));
+      svg.appendChild(el('line', { x1: e[0], y1: top, x2: e[0], y2: axisY, stroke: PAL().gridEdge, 'stroke-width': 1, 'pointer-events': 'none' }));
       const s = clock(e[1]), lx = e[0] + e[3];
       this._mc.font = '9px ' + this._fontFace();
       const w = this._mc.measureText(s).width;
@@ -2298,6 +2386,8 @@ class TimelinePanel {
     // an in-progress bar; changing a custom prop referenced by the keyframes recolours WITHOUT restarting the
     // compositor animation, so the sweep stays smooth.
     const g = this._cmapGrad;
+    // TODO(toneReadableLight): cmapGrad is kernel-shipped dark-tuned RGB; re-encode for body.theme-light
+    // when the toneReadableLight helper lands (light-theme batch).
     if (g && g.length === 5) for (let k = 0; k < 5; k++) bar.style.setProperty('--cmp' + k, 'rgb(' + g[k][0] + ',' + g[k][1] + ',' + g[k][2] + ')');
     const m = this._ovScaleNow();
     bar.style.left = (m.ox + x * m.sx) + 'px'; bar.style.top = (m.oy + y * m.sy) + 'px';
@@ -2475,7 +2565,7 @@ class TimelinePanel {
           row.setAttribute('style', 'padding:4px 22px 4px 8px;border-radius:4px;cursor:pointer;position:relative;white-space:nowrap;');
           row.setAttribute('tabindex', '0');
           if (cv) { const ck = row.createSpan({ text: '✓' }); ck.setAttribute('style', MENU_CHECK_STYLE); }
-          row.addEventListener('mouseenter', () => { row.style.background = 'rgba(255,255,255,0.09)'; });
+          row.addEventListener('mouseenter', () => { row.style.background = HOVER_BG; });
           row.addEventListener('mouseleave', () => { row.style.background = 'transparent'; });
           row.addEventListener('click', (e) => { e.stopPropagation(); pick(v.value); });
           row.addEventListener('keydown', (e) => {
@@ -2496,9 +2586,9 @@ class TimelinePanel {
       if (openSub) {
         const caret = item.createSpan({ text: '\u25B8' });
         caret.setAttribute('style', 'margin-left:auto;padding-left:10px;opacity:0.55;');
-        item.addEventListener('mouseenter', () => { item.style.background = 'rgba(255,255,255,0.09)'; openSub(); });
+        item.addEventListener('mouseenter', () => { item.style.background = HOVER_BG; openSub(); });
       } else {
-        item.addEventListener('mouseenter', () => { item.style.background = 'rgba(255,255,255,0.09)'; closeSub(); });
+        item.addEventListener('mouseenter', () => { item.style.background = HOVER_BG; closeSub(); });
       }
       item.addEventListener('mouseleave', () => { item.style.background = 'transparent'; });
       item.addEventListener('click', (e) => {
@@ -2674,12 +2764,12 @@ class TimelinePanel {
   _tagChips(box, s, rebuild) {
     for (const g of viewTagUnion(this._curViews())) {
       if (g.members.indexOf(s.id) < 0) continue;
-      const tc = g.color || '#cccccc';
+      const tc = g.color || MENU_FG;
       const ch = box.createSpan();
       ch.setAttribute('style', 'display:inline-flex;align-items:center;gap:5px;'
         + 'padding:2px 7px;border-radius:9px;font-size:0.82em;cursor:pointer;white-space:nowrap;'
         + 'color:' + tc + ';border:1px solid ' + tc + ';background:transparent;');
-      ch.addEventListener('mouseenter', () => { ch.style.background = 'rgba(255,255,255,0.09)'; });
+      ch.addEventListener('mouseenter', () => { ch.style.background = HOVER_BG; });
       ch.addEventListener('mouseleave', () => { ch.style.background = 'transparent'; });
       ch.createSpan({ text: g.name });
       const chx = ch.createSpan({ text: '✕' });
@@ -2696,11 +2786,11 @@ class TimelinePanel {
   _tagJoinMenu(box, rowIds, rebuild) {
     for (const g of viewTagUnion(this._curViews())) {
       if (!rowIds.some((id) => g.members.indexOf(id) < 0)) continue;
-      const tc = g.color || '#cccccc';
+      const tc = g.color || MENU_FG;
       const opt = box.createSpan({ text: g.name });
       opt.setAttribute('style', 'padding:1px 8px;border-radius:9px;font-size:0.82em;cursor:pointer;'
         + 'color:' + tc + ';border:1px solid ' + tc + ';background:transparent;');
-      opt.addEventListener('mouseenter', () => { opt.style.background = 'rgba(255,255,255,0.09)'; });
+      opt.addEventListener('mouseenter', () => { opt.style.background = HOVER_BG; });
       opt.addEventListener('mouseleave', () => { opt.style.background = 'transparent'; });
       opt.addEventListener('click', () => {
         this._tagAddFor = null;
@@ -2709,7 +2799,7 @@ class TimelinePanel {
     }
     const ni = document.createElement('input');
     ni.placeholder = 'new tag…'; ni.maxLength = 40;
-    ni.setAttribute('style', 'width:90px;background:#1e1e1e;color:#ccc;border:1px solid rgba(255,255,255,0.12);'
+    ni.setAttribute('style', 'width:90px;background:' + INPUT_BG + ';color:' + INPUT_FG + ';border:1px solid ' + HAIRLINE + ';'
       + 'border-radius:9px;padding:1px 7px;font:inherit;font-size:0.82em;');
     ni.addEventListener('keydown', (e) => {
       if (e.key !== 'Enter' || !ni.value.trim()) return;
@@ -2828,9 +2918,9 @@ class TimelinePanel {
     btn('timeline display options',
       '<svg width="14" height="14" viewBox="0 0 14 14" fill="none">'
       + '<line x1="1" y1="4" x2="13" y2="4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>'
-      + '<circle cx="9" cy="4" r="2.4" fill="#1e1e1e" stroke="currentColor" stroke-width="1.4"/>'
+      + '<circle cx="9" cy="4" r="2.4" fill="var(--vscode-editor-background,#1e1e1e)" stroke="currentColor" stroke-width="1.4"/>'
       + '<line x1="1" y1="10" x2="13" y2="10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>'
-      + '<circle cx="4" cy="10" r="2.4" fill="#1e1e1e" stroke="currentColor" stroke-width="1.4"/></svg>',
+      + '<circle cx="4" cy="10" r="2.4" fill="var(--vscode-editor-background,#1e1e1e)" stroke="currentColor" stroke-width="1.4"/></svg>',
       (b) => this._openDisplayMenu(b), false);
     // tag: the ONE shared glyph — the exact markup every other mount renders (tag-menu.ts, the feed)
     btn('filter these lanes by tag',
@@ -2907,13 +2997,13 @@ class TimelinePanel {
         const c = row.createSpan({ text: '✓' });
         c.setAttribute('style', MENU_CHECK_STYLE);
       }
-      row.addEventListener('mouseenter', () => { row.style.background = 'rgba(255,255,255,0.09)'; });
+      row.addEventListener('mouseenter', () => { row.style.background = HOVER_BG; });
       row.addEventListener('mouseleave', () => { row.style.background = 'transparent'; });
       return row;
     };
     const sep = () => {
       const s = menu.createDiv();
-      s.setAttribute('style', 'height:1px;margin:4px 6px;background:rgba(255,255,255,0.12);');
+      s.setAttribute('style', 'height:1px;margin:4px 6px;background:' + HAIRLINE + ';');
     };
     // (the menu's scope caption retired 2026-08-25 — the user: the button's tooltip already says
     // which surface this governs, so the menu opens straight onto its rows. The captioned-divider
@@ -2976,7 +3066,7 @@ class TimelinePanel {
         const c = row.createSpan({ text: '✓' });
         c.setAttribute('style', MENU_CHECK_STYLE);
       }
-      row.addEventListener('mouseenter', () => { row.style.background = 'rgba(255,255,255,0.09)'; });
+      row.addEventListener('mouseenter', () => { row.style.background = HOVER_BG; });
       row.addEventListener('mouseleave', () => { row.style.background = 'transparent'; });
       return row;
     };
@@ -3076,16 +3166,16 @@ class TimelinePanel {
       {
         const capT = card.createDiv();
         capT.setAttribute('style', 'display:flex;align-items:center;gap:6px;margin:4px 0;');
-        capT.createDiv().setAttribute('style', 'height:1px;flex:0 0 8px;background:rgba(255,255,255,0.12);');
+        capT.createDiv().setAttribute('style', 'height:1px;flex:0 0 8px;background:' + HAIRLINE + ';');
         const ct = capT.createSpan({ text: 'the tags' });
         ct.setAttribute('style', 'font-size:0.82em;opacity:0.6;font-style:italic;white-space:nowrap;');
-        capT.createDiv().setAttribute('style', 'height:1px;flex:1;background:rgba(255,255,255,0.12);');
+        capT.createDiv().setAttribute('style', 'height:1px;flex:1;background:' + HAIRLINE + ';');
         const tgrid = card.createDiv();
         tgrid.setAttribute('style', 'display:grid;grid-template-columns:max-content max-content max-content 1fr;'
           + 'column-gap:14px;row-gap:4px;align-items:center;margin:2px 0 6px;');
         const action = (row, text, title) => {
           const a = row.createSpan({ text });
-          a.setAttribute('style', 'cursor:pointer;opacity:0.7;color:#cccccc;');
+          a.setAttribute('style', 'cursor:pointer;opacity:0.7;color:' + MENU_FG + ';');
           a.setAttribute('title', title);
           return a;
         };
@@ -3149,8 +3239,8 @@ class TimelinePanel {
           if (this._tagEditorFor === tg.name && editable) {
             const nameIn = document.createElement('input');
             nameIn.value = tg.name; nameIn.maxLength = 40;
-            nameIn.setAttribute('style', 'width:130px;background:#1e1e1e;color:#ccc;'
-              + 'border:1px solid rgba(255,255,255,0.12);border-radius:5px;padding:2px 6px;font:inherit;');
+            nameIn.setAttribute('style', 'width:130px;background:' + INPUT_BG + ';color:' + INPUT_FG + ';'
+              + 'border:1px solid ' + HAIRLINE + ';border-radius:5px;padding:2px 6px;font:inherit;');
             nameIn.addEventListener('change', () => {
               const nv2 = nameIn.value.slice(0, 40).trim();
               this._tagEditorFor = null;
@@ -3164,14 +3254,14 @@ class TimelinePanel {
             const pill = pillCell.createSpan({ text: tg.name });
             pill.setAttribute('style', 'display:inline-flex;align-items:center;padding:2px 9px;'
               + 'border-radius:10px;border:1px solid ' + tc + ';color:' + tc + ';background:transparent;font-weight:650;'
-              + (gid && tg.ids.indexOf(gid) >= 0 ? 'outline:1px solid rgba(255,255,255,0.25);outline-offset:2px;' : ''));
+              + (gid && tg.ids.indexOf(gid) >= 0 ? 'outline:1px solid ' + OUTLINE_FG + ';outline-offset:2px;' : ''));
           }
           // delete — the destructive convention: dim at rest, red on hover
           const del = tgrid.createDiv();
           if (editable) {
             const d = action(del, 'delete', 'DELETE the tag \u201c' + tg.name + '\u201d everywhere (members keep running, just untagged)');
             d.addEventListener('mouseenter', () => { d.style.color = '#F85B5A'; d.style.opacity = '1'; });
-            d.addEventListener('mouseleave', () => { d.style.color = '#cccccc'; d.style.opacity = '0.7'; });
+            d.addEventListener('mouseleave', () => { d.style.color = MENU_FG; d.style.opacity = '0.7'; });
             d.addEventListener('click', () => {
               if (this._tagEditorFor === tg.name) this._tagEditorFor = null;
               this._editTagUnion(tg, { delete: true });
@@ -3203,8 +3293,8 @@ class TimelinePanel {
         ntRow.setAttribute('style', 'grid-column:1 / -1;');
         const ntBtn = ntRow.createSpan({ text: '+ New tag' });
         ntBtn.setAttribute('style', 'display:inline-flex;align-items:center;justify-content:center;padding:1px 9px;'
-          + 'border-radius:5px;border:1px solid rgba(255,255,255,0.25);color:#cccccc;opacity:0.7;cursor:pointer;background:transparent;');
-        hover(ntBtn, 'background:rgba(255,255,255,0.09);opacity:1;', 'background:transparent;opacity:0.7;');
+          + 'border-radius:5px;border:1px solid ' + OUTLINE_FG + ';color:' + MENU_FG + ';opacity:0.7;cursor:pointer;background:transparent;');
+        hover(ntBtn, 'background:' + HOVER_BG + ';opacity:1;', 'background:transparent;opacity:0.7;');
         ntBtn.addEventListener('click', () => {
           const nv = JSON.parse(JSON.stringify(this._curViews()));
           const used = new Set(viewTags(nv).map((t) => t.color));
@@ -3226,10 +3316,10 @@ class TimelinePanel {
       {
         const capF = card.createDiv();
         capF.setAttribute('style', 'display:flex;align-items:center;gap:6px;margin:4px 0;');
-        capF.createDiv().setAttribute('style', 'height:1px;flex:0 0 8px;background:rgba(255,255,255,0.12);');
+        capF.createDiv().setAttribute('style', 'height:1px;flex:0 0 8px;background:' + HAIRLINE + ';');
         const cf = capF.createSpan({ text: 'pane filters — what each pane shows' });
         cf.setAttribute('style', 'font-size:0.82em;opacity:0.6;font-style:italic;white-space:nowrap;');
-        capF.createDiv().setAttribute('style', 'height:1px;flex:1;background:rgba(255,255,255,0.12);');
+        capF.createDiv().setAttribute('style', 'height:1px;flex:1;background:' + HAIRLINE + ';');
         const acts = v.actives || {};
         const feedEcho = () => {
           try { const e = JSON.parse(localStorage.getItem('romp:feedTags-set') || ''); return (e && e.lens) || { all: true }; } catch (e) { return { all: true }; }
@@ -3269,7 +3359,7 @@ class TimelinePanel {
             const s2 = row.createSpan({ text });
             s2.setAttribute('style', 'cursor:pointer;padding:1px 8px;border-radius:9px;font-size:0.82em;'
               + 'border:1px solid ' + c2 + ';color:' + c2 + ';'
-              + (selected ? 'background:rgba(255,255,255,0.13);opacity:1;font-weight:650;' : 'background:transparent;opacity:0.6;'));
+              + (selected ? 'background:' + SEL_BG + ';opacity:1;font-weight:650;' : 'background:transparent;opacity:0.6;'));
             s2.addEventListener('mouseenter', () => { s2.style.opacity = '1'; });
             s2.addEventListener('mouseleave', () => { if (!selected) s2.style.opacity = '0.6'; });
             s2.addEventListener('click', apply);
@@ -3292,27 +3382,27 @@ class TimelinePanel {
       {
         const capS = card.createDiv();
         capS.setAttribute('style', 'display:flex;align-items:center;gap:6px;margin:4px 0;');
-        capS.createDiv().setAttribute('style', 'height:1px;flex:0 0 8px;background:rgba(255,255,255,0.12);');
+        capS.createDiv().setAttribute('style', 'height:1px;flex:0 0 8px;background:' + HAIRLINE + ';');
         const cs = capS.createSpan({ text: 'the sessions — tag them below' });
         cs.setAttribute('style', 'font-size:0.82em;opacity:0.6;font-style:italic;white-space:nowrap;');
-        capS.createDiv().setAttribute('style', 'height:1px;flex:1;background:rgba(255,255,255,0.12);');
+        capS.createDiv().setAttribute('style', 'height:1px;flex:1;background:' + HAIRLINE + ';');
       }
       const bar = card.createDiv();
       bar.setAttribute('style', 'display:flex;align-items:center;gap:8px;margin:0 0 6px;');
       const q = document.createElement('input');
       q.placeholder = 'search name or host…'; q.value = query;
-      q.setAttribute('style', 'flex:1 1 auto;min-width:0;background:#1e1e1e;color:#ccc;'
-        + 'border:1px solid rgba(255,255,255,0.12);border-radius:5px;padding:3px 8px;font:inherit;');
+      q.setAttribute('style', 'flex:1 1 auto;min-width:0;background:' + INPUT_BG + ';color:' + INPUT_FG + ';'
+        + 'border:1px solid ' + HAIRLINE + ';border-radius:5px;padding:3px 8px;font:inherit;');
       q.addEventListener('input', () => { query = q.value; renderRows(); });
       bar.appendChild(q);
       const btnStyle = 'flex:0 0 auto;cursor:pointer;padding:2px 8px;border-radius:5px;'
-        + 'border:1px solid rgba(255,255,255,0.25);color:#cccccc;background:transparent;font-size:0.9em;';
+        + 'border:1px solid ' + OUTLINE_FG + ';color:' + MENU_FG + ';background:transparent;font-size:0.9em;';
       // 'tag all' on its OWN LINE, plain text (the user 2026-08-25: it surprised where it sat)
       const bulkLine = card.createDiv();
       bulkLine.setAttribute('style', 'margin:0 0 6px;');
       const tagAll = bulkLine.createSpan({ text: 'tag all' });
       tagAll.setAttribute('style', btnStyle);
-      hover(tagAll, 'background:rgba(255,255,255,0.09);', 'background:transparent;');
+      hover(tagAll, 'background:' + HOVER_BG + ';', 'background:transparent;');
       tagAll.setAttribute('title', 'add a tag to every session the search shows');
       tagAll.addEventListener('click', () => { this._tagAddFor = this._tagAddFor === '*' ? null : '*'; renderRows(); });
       // (the mute-feed-for-all control left with the feed column, the user 2026-08-25 — the
@@ -3392,14 +3482,14 @@ class TimelinePanel {
             hp.setAttribute('style', 'color:' + MODEL_FG + ';font-style:italic;font-size:0.86em;');
           }
           const nm = nameCell.createSpan({ text: bare });
-          nm.setAttribute('style', 'font-weight:650;color:' + (s.color || '#cccccc') + ';');   // rows are live-only now — no strike variant
+          nm.setAttribute('style', 'font-weight:650;color:' + (s.color || MENU_FG) + ';');   // rows are live-only now — no strike variant
           // [+] — its own column between the name and the tags (the user 2026-08-25), wearing the
           // standard button anatomy: a rounded RECTANGLE, not a circle
           const plusCell = grid.createDiv();
           const plus = plusCell.createSpan({ text: '+' });
           plus.setAttribute('style', 'display:inline-flex;align-items:center;justify-content:center;padding:1px 7px;'
-            + 'border-radius:5px;border:1px solid rgba(255,255,255,0.25);color:#cccccc;opacity:0.7;cursor:pointer;background:transparent;');
-          hover(plus, 'background:rgba(255,255,255,0.09);opacity:1;', 'background:transparent;opacity:0.7;');
+            + 'border-radius:5px;border:1px solid ' + OUTLINE_FG + ';color:' + MENU_FG + ';opacity:0.7;cursor:pointer;background:transparent;');
+          hover(plus, 'background:' + HOVER_BG + ';opacity:1;', 'background:transparent;opacity:0.7;');
           plus.setAttribute('title', 'add a tag');
           plus.addEventListener('click', () => { this._tagAddFor = this._tagAddFor === s.id ? null : s.id; renderRows(); });
           // TAGS — one solid chip per union tag holding this session (user ruling 2026-08-24:
@@ -3447,7 +3537,7 @@ class TimelinePanel {
         row.setAttribute('style', 'display:flex;gap:8px;align-items:flex-start;padding:4px 10px;border-radius:4px;cursor:pointer;');
         const ic = el('svg', { viewBox: '0 0 17 17', width: 15, height: 15 });
         ic.setAttribute('style', 'flex:0 0 auto;margin-top:1px;' + (on ? '' : 'opacity:0.55;'));
-        ic.appendChild(t.icon(!on, 8.5, 8.5, on ? ROMP_BLUE : MODEL_FG));
+        ic.appendChild(t.icon(!on, 8.5, 8.5, on ? ACCENT : MODEL_FG));
         row.appendChild(ic);
         const body = row.createDiv();
         body.setAttribute('style', 'display:flex;flex-direction:column;line-height:1.25;min-width:0;');
@@ -3455,7 +3545,7 @@ class TimelinePanel {
         lab.setAttribute('style', on ? '' : 'opacity:0.75;');
         const sub = body.createDiv({ text: t.desc });
         sub.setAttribute('style', 'opacity:0.6;font-size:0.82em;');
-        row.addEventListener('mouseenter', () => { row.style.background = 'rgba(255,255,255,0.1)'; });
+        row.addEventListener('mouseenter', () => { row.style.background = HOVER_BG; });
         row.addEventListener('mouseleave', () => { row.style.background = 'transparent'; });
         row.addEventListener('click', (e) => {
           e.stopPropagation();
@@ -3473,7 +3563,7 @@ class TimelinePanel {
       // one solid chip per tag holding this session (✕ = remove-everywhere), [+] to join an
       // existing tag or mint one. Compact: one section, mechanics inline under it.
       const div = menu.createDiv();
-      div.setAttribute('style', 'height:1px;margin:4px 6px;background:rgba(255,255,255,0.12);');
+      div.setAttribute('style', 'height:1px;margin:4px 6px;background:' + HAIRLINE + ';');
       const trow = menu.createDiv();
       trow.setAttribute('style', 'display:flex;gap:5px;flex-wrap:wrap;align-items:center;padding:4px 10px;');
       const tlab = trow.createSpan({ text: 'Tags' });
@@ -3481,8 +3571,8 @@ class TimelinePanel {
       this._tagChips(trow, s, build);
       const plus = trow.createSpan({ text: '+' });
       plus.setAttribute('style', 'display:inline-flex;align-items:center;justify-content:center;padding:1px 7px;'
-        + 'border-radius:5px;border:1px solid rgba(255,255,255,0.25);color:#cccccc;opacity:0.7;cursor:pointer;font-size:0.85em;background:transparent;');
-      plus.addEventListener('mouseenter', () => { plus.style.background = 'rgba(255,255,255,0.09)'; plus.style.opacity = '1'; });
+        + 'border-radius:5px;border:1px solid ' + OUTLINE_FG + ';color:' + MENU_FG + ';opacity:0.7;cursor:pointer;font-size:0.85em;background:transparent;');
+      plus.addEventListener('mouseenter', () => { plus.style.background = HOVER_BG; plus.style.opacity = '1'; });
       plus.addEventListener('mouseleave', () => { plus.style.background = 'transparent'; plus.style.opacity = '0.7'; });
       plus.setAttribute('title', 'add a tag');
       plus.addEventListener('click', (e) => {
@@ -3594,6 +3684,8 @@ class TimelinePanel {
 
   draw() {
     const data = this.data; if (!data || !data.sessions) return;
+    applyPal();   // refresh the theme palette bindings — a body.theme-light flip lands on this repaint
+    if (this.controls) this.controls.style.color = MODEL_FG;   // persistent controls row re-inks per theme (dark: the same #9aa0a6 it was built with)
     this._drawSeq = (this._drawSeq || 0) + 1;   // per-paint nonce: memoizes the overlay scale reflow (_ovScaleNow)
     // LOADING (the user 2026-06-26): until the heavy bars arrive, show ONLY the romp wordmark loader (R +
     // spinning swirl-o + m + p + dots) — NO lanes, NO gridlines. Partial data + empty gridlines read as
@@ -3808,13 +3900,13 @@ class TimelinePanel {
     placedLabels.push([lockCx - lockHalf, lockCx + lockHalf]);
     for (let tk = Math.ceil(t0 / step) * step; tk <= t1; tk += step) {
       if (inGap(tk)) continue;
-      svg.appendChild(el('line', { x1: x(tk), y1: M.top, x2: x(tk), y2: axisY, stroke: '#ffffff10', 'stroke-width': 1 }));
+      svg.appendChild(el('line', { x1: x(tk), y1: M.top, x2: x(tk), y2: axisY, stroke: PAL().grid, 'stroke-width': 1 }));
       this._mc.font = '10px ' + this._fontFace();
       const hw = this._mc.measureText(clock(tk)).width / 2;
       if (!placeLabel(x(tk) - hw, x(tk) + hw)) continue;
       const tx = el('text', { x: x(tk), y: axisY + 14, 'text-anchor': 'middle', fill: 'var(--text-muted)', 'font-size': 10 }); tx.textContent = clock(tk); svg.appendChild(tx);
     }
-    svg.appendChild(el('line', { x1: x(t1), y1: M.top, x2: x(t1), y2: axisY, stroke: '#ffffff22', 'stroke-width': 1 }));
+    svg.appendChild(el('line', { x1: x(t1), y1: M.top, x2: x(t1), y2: axisY, stroke: PAL().gridStrong, 'stroke-width': 1 }));
     // broken-axis squiggle(s): one per collapsed gap visible in the window (real edges → compressed x).
     // CLAMP to the plot [M.left, plotRight]: a gap straddling a window edge would otherwise map x(g.ra)
     // LEFT of M.left → the squiggle + its label render in the gutter, over the battery column (the bug).
@@ -3859,7 +3951,7 @@ class TimelinePanel {
       // Drawn first → bars/dots sit on top.
       if (this.selectedSid === s.id) {
         svg.appendChild(el('rect', { x: 2, y: y - LANE_GAP / 2 + 1, width: W - 4, height: LANE_GAP - 2, rx: 4,
-          fill: '#d6dbe2', 'fill-opacity': 0.1 }));
+          fill: PAL().laneSelFill, 'fill-opacity': 0.1 }));
       }
       // full-row click target (low z): clicking ANY empty part of the row selects the lane + previews
       // it at the bottom (latest) — same as a bar, just no anchor. Non-interactive lane elements below
@@ -4189,6 +4281,8 @@ class TimelinePanel {
             // effortColor, the user 2026-07-02); unknown → the default gray. The caret stays neutral gray, and
             // hover still brightens to META_HOVER_FG — mouseleave restores the TINT, not the gray.
             const tint = kind === 'model' ? s.modelColor : s.effortColor;
+            // TODO(toneReadableLight): the model/effort tint is kernel-shipped dark-tuned RGB; re-encode
+            // for body.theme-light when the toneReadableLight helper lands (light-theme batch).
             const base = (tint && tint.length === 3) ? ('rgb(' + tint[0] + ',' + tint[1] + ',' + tint[2] + ')') : MODEL_FG;
             const wt = el('text', { x: sx, y: y + 3.5, 'text-anchor': 'start', 'font-size': 11, 'font-weight': 600, fill: base, 'pointer-events': 'auto' });
             wt.textContent = word; wt.style.cursor = 'pointer';
@@ -4230,7 +4324,7 @@ class TimelinePanel {
       const cinfo = visC[i], isComp = compactingNow(s);
       if (cinfo || isComp) {
         const byTop = y - BAT_H / 2;
-        svg.appendChild(el('rect', { x: ctxColX, y: byTop, width: BAT_W, height: BAT_H, rx: 3, fill: 'rgba(255,255,255,0.07)', stroke: 'rgba(255,255,255,0.35)', 'stroke-width': 1, 'pointer-events': 'none' }));
+        svg.appendChild(el('rect', { x: ctxColX, y: byTop, width: BAT_W, height: BAT_H, rx: 3, fill: PAL().batFill, stroke: PAL().batStroke, 'stroke-width': 1, 'pointer-events': 'none' }));
         if (isComp) {
           // a solid TEAL rectangle fills the battery, then its RIGHT edge slides left (width shrinks via a
           // scaleX from a fixed left edge) — a "compression" cue, fading in full + out when compressed so the
@@ -4539,7 +4633,7 @@ class TimelinePanel {
     // lit = cross-hover focus (feed-card hover / DAG journey): drawn GROWN in its own color — the same
     // growth the native hover applies, no white ring (the user 2026-07-17) — and mouseleave restores it.
     const dot = (cx, cy, color, html, onClick, linkedHl, lit, msgI) => {
-      const c = el('circle', { cx, cy, r: lit ? DOT_R + 2 : DOT_R, fill: color, stroke: '#e8eef5', 'stroke-width': 0.75 }); c.style.cursor = onClick ? 'pointer' : 'default';   // thinner white border on EVERY dot — romp + user (the user 2026-06-23)
+      const c = el('circle', { cx, cy, r: lit ? DOT_R + 2 : DOT_R, fill: color, stroke: PAL().dotRing, 'stroke-width': 0.75 }); c.style.cursor = onClick ? 'pointer' : 'default';   // thinner white border on EVERY dot — romp + user (the user 2026-06-23)
       // a MESSAGE dot (msgI) hovers as its whole overlap set — stacked arrivals on one lane x are
       // the commonest pile-up of all; a non-message dot keeps the plain single tooltip
       const dEnter = (msgI != null)
@@ -4619,7 +4713,7 @@ class TimelinePanel {
         if (!c.t || !inWin(c.t)) return;
         const side = DOT_R * 2 - 1, cx = x(c.t);
         const sq = el('rect', { x: cx - side / 2, y: y - side / 2, width: side, height: side, rx: 1.5,
-          fill: s.color, stroke: '#e8eef5', 'stroke-width': 0.75,
+          fill: s.color, stroke: PAL().dotRing, 'stroke-width': 0.75,
           opacity: c.status === 'resolved' ? 0.45 : 0.95 });
         sq.style.cursor = 'pointer';
         const qHtml = () => '<div class="r"><span class="chip" style="background:' + s.color + '"></span><span class="who" style="color:' + s.color + '">' + esc(s.name) + '</span><span class="t">' + clock(c.t) + '</span></div>' + this.body(c.status === 'resolved' ? 'a resolved comment on this message' : 'a comment on this message — click to open it there');
@@ -4733,7 +4827,7 @@ class TimelinePanel {
   // while a pointer is pressed, so the click survives a rebuild (CLAUDE.md; same model as _drawNowButton).
   _drawLockToggle(svg, cx, axisY) {
     const on = this._lockNow;
-    const color = on ? ROMP_BLUE : '#6e7681';          // accent when locked, gray when unlocked
+    const color = on ? ACCENT : PAL().faintFg;          // accent when locked, gray when unlocked
     const x0 = cx - 7.5, y0 = axisY + 6;               // center the 15-wide glyph under the now-edge, in the bottom margin
     const g = el('g', { transform: 'translate(' + x0 + ' ' + y0 + ')' }); g.style.cursor = 'pointer';
     const hit = el('rect', { x: -2, y: -1, width: 19, height: 15, fill: 'transparent' });   // hit pad (whole glyph clickable)
@@ -4800,7 +4894,8 @@ class TimelinePanel {
         + ".tl-loader .rl-dots i{width:7px;height:7px;border-radius:50%;background:#9cd2ff;animation:tl-rl-bnc 1.1s ease-in-out infinite}"
         + ".tl-loader .rl-dots i:nth-child(2){animation-delay:.16s}.tl-loader .rl-dots i:nth-child(3){animation-delay:.32s}"
         + "@keyframes tl-rl-bnc{0%,75%,100%{opacity:.25;transform:translateY(0)}38%{opacity:1;transform:translateY(-5px)}}"
-        + "@keyframes tl-rl-spin{to{transform:rotate(-360deg)}}";
+        + "@keyframes tl-rl-spin{to{transform:rotate(-360deg)}}"
+        + "body.theme-light .tl-loader .rl-dots i{background:#C2410C}";
       document.head.appendChild(st);
     }
     const wrap = document.createElement('div'); wrap.className = 'tl-loader';

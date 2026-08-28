@@ -23,7 +23,7 @@ test("the branch connector is a thick perpendicular bar between the two lanes, c
 test("a comment is a SQUARE on the lane — session-colored, dot-sized, white-bordered, never a lane", () => {
   // the SHAPE alone says comment (the user 2026-08-15): same footprint + border as a message dot
   assert.match(SRC, /const side = DOT_R \* 2 - 1, cx = x\(c\.t\);/);
-  assert.match(SRC, /el\('rect', \{ x: cx - side \/ 2, y: y - side \/ 2, width: side, height: side, rx: 1\.5,\s*\n\s*fill: s\.color, stroke: '#e8eef5', 'stroke-width': 0\.75/);
+  assert.match(SRC, /el\('rect', \{ x: cx - side \/ 2, y: y - side \/ 2, width: side, height: side, rx: 1\.5,\s*\n\s*fill: s\.color, stroke: PAL\(\)\.dotRing, 'stroke-width': 0\.75/);
   assert.match(SRC, /opacity: c\.status === 'resolved' \? 0\.45 : 0\.95/);
   // click → the chat at the commented message, where the highlight opens the thread
   assert.match(SRC, /this\.openChat\(s\.id, c\.uuid, false, false, c\.t\)/);

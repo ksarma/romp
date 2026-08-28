@@ -12,11 +12,17 @@ import * as path from "node:path";
 const SRC = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "romp-timeline-view.js"), "utf8");
 
 test("MENU_STYLE is the chat menu spec, with the font stack DECLARED (never inherited)", () => {
-  assert.match(SRC, /const MENU_STYLE = 'padding:4px;background:#252526;border:1px solid rgba\(255,255,255,0\.12\);'/);
-  assert.match(SRC, /\+ 'border-radius:6px;box-shadow:0 4px 12px rgba\(0,0,0,0\.35\);font:12px\/1\.4 ' \+ FONT \+ ';'/);
+  // composed from the theme palette since the light theme landed; the DARK values stay the chat spec
+  // verbatim (card #252526, hairline rgba(255,255,255,0.12), shadow rgba(0,0,0,0.35), ✓ #1EA1EB)
+  assert.match(SRC, /menuStyleFor = \(p\) => 'padding:4px;background:' \+ p\.menuBg \+ ';border:1px solid ' \+ p\.hairline \+ ';'/);
+  assert.match(SRC, /\+ 'border-radius:6px;box-shadow:0 4px 12px ' \+ p\.menuShadow \+ ';font:12px\/1\.4 ' \+ FONT \+ ';'/);
+  assert.match(SRC, /menuBg: '#252526',/);
+  assert.match(SRC, /hairline: 'rgba\(255,255,255,0\.12\)',/);
+  assert.match(SRC, /menuShadow: 'rgba\(0,0,0,0\.35\)',/);
   // the ✓-in-circle current mark, same as the chat meta menus
-  assert.match(SRC, /const MENU_CHECK_STYLE = 'position:absolute;right:6px;top:50%;transform:translateY\(-50%\);'/);
-  assert.match(SRC, /\+ 'background:#1EA1EB;color:#fff;border-radius:50%;width:13px;height:13px;font-size:9px;'/);
+  assert.match(SRC, /menuCheckStyleFor = \(p\) => 'position:absolute;right:6px;top:50%;transform:translateY\(-50%\);'/);
+  assert.match(SRC, /\+ 'background:' \+ p\.accentSolid \+ ';color:#fff;border-radius:50%;width:13px;height:13px;font-size:9px;'/);
+  assert.match(SRC, /accentSolid: '#1EA1EB',/);
 });
 
 test("both dropdowns build on MENU_STYLE; no menu carries its own off-brand card", () => {

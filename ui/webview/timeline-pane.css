@@ -36,3 +36,27 @@ box-shadow:0 8px 24px #00000066;opacity:0;transform:translateY(4px);transition:o
 .romp-tl-tip .t{color:#8b949e;margin-left:2px;font-variant-numeric:tabular-nums;}
 .romp-tl-tip .k{color:var(--text-faint);font-size:10px;text-transform:uppercase;letter-spacing:.04em;}
 .romp-tl-tip .b{margin-top:4px;color:#cdd9e5;}
+/* LIGHT theme (opt-in): the settings toggle puts body.theme-light on every pane document
+   (timeline-main.ts applyTheme; the kernel /timeline page too). The Obsidian host never sets the
+   class, so dark stays its default there. Tokens re-point first; the raw-hex structural rules get
+   scoped overrides. Palette: page #FAF9F5, raised #F0EEE6, text #1F1E1D, muted #5D574E,
+   faint #8A8378, hairline rgba(0,0,0,0.12), accent clay #C2410C. */
+body.theme-light {
+  --text-muted: #5D574E;
+  --text-faint: #8A8378;
+  --tl-page: #FAF9F5;
+  --tl-ink: #1F1E1D;
+  --tl-card: #FFFFFF;
+  --tl-hairline: rgba(0,0,0,0.12);
+  background: var(--tl-page);
+  color: var(--tl-ink);
+}
+/* the root wears the page color too — a body shorter than the viewport otherwise shows the html
+   rule's dark fallback beneath it (seen in the fixture screenshot, 2026-08-28) */
+html:has(> body.theme-light){background:var(--tl-page,#FAF9F5);}
+body.theme-light .romp-tl-slider{background:var(--tl-hairline);}
+body.theme-light .romp-tl-slider::-webkit-slider-thumb{background:var(--text-muted);}
+body.theme-light .romp-tl-tip{background:var(--tl-card);border:1px solid var(--tl-hairline);
+color:var(--tl-ink);box-shadow:0 8px 24px rgba(0,0,0,0.15);}
+body.theme-light .romp-tl-tip .t{color:var(--text-muted);}
+body.theme-light .romp-tl-tip .b{color:var(--tl-ink);}
