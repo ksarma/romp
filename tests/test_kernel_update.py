@@ -287,9 +287,14 @@ class RunUpdate(Fresh):
         # the restart rides the SUCCESS branch only: everything after `if` up to `else` has it,
         # the failure branch does not
         ok_branch, fail_branch = script.split("else\n", 1)
-        self.assertIn("/restart-all?when=quiet", ok_branch,
-                      "the self-update is a DEPLOY: it rides the quiet-window gate (drain first, "
-                      "backstop-capped) instead of cutting every in-flight turn (T121)")
+        self.assertIn("/restart-all'", ok_branch,
+                      "the self-update deploy bounces IMMEDIATELY (T160, the user's call from live "
+                      "experience — the quiet window cost minutes per push; explicit "
+                      "`romp refresh --quiet` still drains)")
+        self.assertNotIn("when=quiet", ok_branch, "no drain default on the deploy path")
+        self.assertIn('"action": "self-update"', ok_branch,
+                      "the script stamps restart-audit.jsonl at curl time, so the dying kernel's "
+                      "restart-cuts row joins to a named reason instead of reading anonymous")
         self.assertNotIn("/restart-all", fail_branch)
         self.assertEqual(km._UPDATE_STATE[0], "running")
 
