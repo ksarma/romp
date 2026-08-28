@@ -4782,6 +4782,42 @@ class SdkBackend:
         self._poke()
         return True
 
+    def running_sids(self) -> list:
+        """Sids with a LIVE session thread — the conserve sweep's candidates (T148)."""
+        with self._lock:
+            return [s.sid for s in self.sessions.values()
+                    if s.thread is not None and s.thread.is_alive() and not s.ended]
+
+    def conserve_idle(self, sid: str) -> bool:
+        """Whether this session is safe to conserve-close: no in-flight turn, nothing queued,
+        no ask parked, not mid-compaction (T148 — never close work)."""
+        with self._lock:
+            s = self.sessions.get(sid)
+        if not s or s.ended:
+            return False
+        if s.inflight or s.pending() or s._cur_ask_fut is not None:
+            return False
+        return True
+
+    def conserve_close(self, sid: str) -> bool:
+        """Close ONE idle session's claude process, keeping it a tab-click from reviving (T148):
+        the reg stays alive=True and untouched (unlike kill), the queue/transcript persist, and the
+        dormant row keeps serving from the reg — the ordinary on-demand _ensure (a send, an open,
+        a scheduled wake) is the revive. Re-checks idleness under the lock; a turn that started
+        since the sweep's read stands the close down."""
+        if not self.conserve_idle(sid):
+            return False
+        with self._lock:
+            s = self.sessions.pop(sid, None)
+        if not s:
+            return False
+        try:
+            s.shutdown()
+        except Exception as e:
+            self._log("conserve close (%s): shutdown failed: %s" % (s.name, e))
+        self._poke()
+        return True
+
     def thread_sessions(self) -> dict[str, dict]:
         """{sid: {state, threadOf}} for every alive COMMENT-THREAD session — exactly the rows
         live_sessions deliberately hides (a thread's surface is the parent chat's comment UI, never a

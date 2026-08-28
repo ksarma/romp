@@ -61,6 +61,10 @@ var GEAR_HTML =
   '<span><b>Auto Nudge</b><span class=rs-mixed id=rs-autonudge-split hidden></span>' +
   '<span class=rs-sub id=rs-autonudge-sub>' + AUTONUDGE_SUB + '</span>' +
   '</span></label>' +
+  "<label class='rs-row'><input type=checkbox id=rs-conserve>" +
+  '<span><b>Conserve memory</b><span class=rs-mixed hidden></span>' +
+  '<span class=rs-sub>Close the claude process of a session that is idle and on no open tab (each averages ~340MB). Everything persists — the session revives on a tab click, a message, or a scheduled wake. Off = every session keeps its process for as long as it lives.</span>' +
+  '</span></label>' +
   "<label class='rs-row'><input type=checkbox id=rs-fileedit>" +
   '<span><b>File editing</b><span class=rs-mixed hidden></span>' +
   '<span class=rs-sub>Let the file viewer’s Edit save straight to disk on the file’s machine. Off by default; the viewer asks the first time. A session working in the edited folder is told, and a save always refuses when the file changed underneath you. Applies on every connected machine’s kernel.</span>' +
@@ -174,6 +178,7 @@ function initGear(post) {
     b = document.getElementById('rsver'), cc = document.getElementById('rs-compact'),
     jix = document.getElementById('rs-judges-index'), jtr = document.getElementById('rs-judges-triage'),
     an = document.getElementById('rs-autonudge'), bk = document.getElementById('rs-backend'),
+    cvm = document.getElementById('rs-conserve'),
     dd = document.getElementById('rs-defaultdir'), gb = document.getElementById('rs-branch'),
     tc = document.getElementById('rs-tabctx'),
     cs = document.getElementById('rs-chatscheme'),
@@ -390,6 +395,7 @@ function initGear(post) {
     post({ type: 'setAutoNudge', enabled: an.checked });
   });
   if (fe) fe.addEventListener('change', function () { post({ type: 'setFileEditing', enabled: fe.checked }); });
+  if (cvm) cvm.addEventListener('change', function () { post({ type: 'setConserve', enabled: cvm.checked }); });
   if (upm) upm.addEventListener('change', function () { post({ type: 'setUpdateMode', mode: upm.value }); });
   // The judge MODEL pickers mirror the session pickers (the user 2026-08-25): families top-level,
   // clicking a family sends its /models `default` (the user's remembered version), hover or
@@ -657,6 +663,7 @@ function initGear(post) {
       fillMixedMarks(v, rows);
     }).catch(function () { fillAutoNudge(v.autoNudge, []); fillMixedMarks(v, []); });
     if (fe) fe.checked = !!v.fileEditing;   // the kernel's persisted opt-in is authoritative (see the viewer's consent popup)
+    if (cvm) cvm.checked = !!v.conserveMemory;   // T148: the kernel's persisted conserve flag is authoritative
     if (upm && typeof v.updateMode === 'string') upm.value = v.updateMode;   // the kernel's persisted mode is authoritative
     if (jm && typeof v.judgeModel === 'string') jm.value = v.judgeModel;   // the judge's ACTUAL current model/effort per tier is authoritative
     if (im && typeof v.indexModel === 'string') im.value = v.indexModel;

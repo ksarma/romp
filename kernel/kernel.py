@@ -529,6 +529,7 @@ def _version_info():
             "boot": _BOOT_ID,   # lets a page retire update offers from a previous kernel life (2026-08-15)
             "uptime_s": int(time.time() - _STARTED), "dist_ver": _dist_ver(), "bundles": bundles,
             "autoNudge": _auto_nudge_on(),   # server-side toggle state → the gear checkbox reflects the kernel
+            "conserveMemory": _conserve_on(),   # the T148 toggle: close idle tab-less claude processes
             "fileEditing": _file_editing_on(),   # dashboard raw-mode editing opt-in → gates the viewer's Edit
             "updateMode": _update_mode(),    # ask|auto|off (the boot release check) → the gear dropdown
             "updateAvail": _UPDATE_AVAIL[0],   # newer release the boot check found ("" = none/unknown)
@@ -540,6 +541,7 @@ def _version_info():
             # /tunnels row so its gear can mark controls where machines disagree (the user 2026-08-14).
             # The top-level fields above stay: this tab's own gear and older kernels read those.
             "settings": {"autoNudge": _auto_nudge_on(), "updateMode": _update_mode(),
+                         "conserveMemory": _conserve_on(),
                          "fileEditing": _file_editing_on(),
                          "judgeModel": jd._triage_model(), "judgeEffort": jd._triage_effort(),
                          "indexModel": jd._index_model(), "indexEffort": jd._index_effort(),
@@ -2263,6 +2265,74 @@ def _auto_nudge_data():
 
 def _auto_nudge_on():
     return bool(_auto_nudge_data().get("enabled"))
+
+
+# ── conserve-memory (T148): close IDLE claude processes whose session has no open tab ────────────
+# The tab-sync process model, stated: a session with an OPEN TAB keeps its claude process alive for
+# as long as the tab is open — which is the DE-FACTO behavior already (nothing closes idle
+# processes; ~13 live CLIs averaged 338MB = 4.4GB on a 32GB box). This option is the CONSERVE side:
+# when ON, a session that is IDLE (no in-flight turn, no queued prompts) and tab-open on NO
+# connected viewer gets its process closed CLEANLY — reg/queue/transcript persist untouched, so it
+# stays one tab-click (or one send / one scheduled wake) from reviving through the ordinary resume
+# path. 'Open tab' = strip-visible under the CHAT lens to a connected viewer (the kernel's own
+# views state — hidden tabs retired 2026-08-11, so the lens IS tab presence). Keying is EVENT-first
+# (turn ends, views writes, viewer connect/disconnect drive the sweep) with two bounded windows
+# where no event exists: a 30s viewer-disconnect lease (a page reload must never mass-close) and a
+# 60s hide-grace (a lens flick must not churn close/reconnect cycles). Default OFF — keep-alive is
+# the user's stated intent; conserve is the option.
+CONSERVE_FILE_NAME = "conserve-memory.json"
+CONSERVE_VIEWER_LEASE_S = 30
+CONSERVE_HIDE_GRACE_S = 60
+_conserve_last_viewer = [time.time()]   # the last moment a chat viewer was connected (lease anchor)
+_conserve_hidden_at = {}                # sid -> first moment seen hidden+idle (the grace clock)
+
+
+def _conserve_on():
+    try:
+        d = json.loads((jd.STATE / CONSERVE_FILE_NAME).read_text())
+        return bool(isinstance(d, dict) and d.get("enabled"))
+    except Exception:
+        return False
+
+
+def _set_conserve(enabled):
+    _atomic_write(jd.STATE / CONSERVE_FILE_NAME, json.dumps({"enabled": bool(enabled)}))
+
+
+def _conserve_tick(now):
+    """One supervisor-pass sweep (event-driven consumers poke the supervisor; this just reads the
+    current truth). Closes at most what the grace allows; every close is logged with its names."""
+    if not _conserve_on():
+        _conserve_hidden_at.clear()
+        return
+    be = _sdk()
+    if not be or not hasattr(be, "conserve_close"):
+        return
+    with _clients_lock:
+        viewer = any(c.get("alive", True) and c.get("app") in ("chat", "fleet", "timeline", "feed")
+                     for c in _clients)
+    if viewer:
+        _conserve_last_viewer[0] = now
+    elif now - _conserve_last_viewer[0] < CONSERVE_VIEWER_LEASE_S:
+        return   # the lease: a reloading page is not a closed dashboard
+    vc = _views_client()
+    running = be.running_sids()
+    closed = []
+    for sid in running:
+        open_tab = viewer and _view_visible(vc, sid, "chat")
+        busy = not be.conserve_idle(sid)
+        if open_tab or busy:
+            _conserve_hidden_at.pop(sid, None)
+            continue
+        first = _conserve_hidden_at.setdefault(sid, now)
+        if now - first >= CONSERVE_HIDE_GRACE_S and be.conserve_close(sid):
+            closed.append(sid)
+            _conserve_hidden_at.pop(sid, None)
+    for sid in set(_conserve_hidden_at) - set(running):
+        _conserve_hidden_at.pop(sid, None)
+    if closed:
+        sys.stderr.write("romp-kernel: conserve-memory closed %d idle background session(s): %s\n"
+                         % (len(closed), ", ".join(s[:8] for s in closed)))
 
 
 def _write_auto_nudge(d):
@@ -12317,6 +12387,7 @@ def _tunnel_supervisor():
                 _push_origin_trust_rows()
             _pr_watch_tick(now)          # PR-landing watches (rate-gated per row; loud on gh failure)
             _watch_tick(now)             # generic predicate watches (T121 part 2) — same pump discipline
+            _conserve_tick(now)          # conserve-memory sweep (T148): close idle tab-less processes
             # Everything above is the supervisor's own state (status, fails, next_try, kernel_sha, detail).
             # None of it used to reach disk — only the act routes saved — so the file could sit frozen on a
             # failure long after the row recovered. Signature-gated: a steady fleet writes nothing.
@@ -29806,6 +29877,11 @@ class Handler(BaseHTTPRequestHandler):
             # registry); re-broadcast so every tab/lane/card repaints in the new color at once.
             if _set_session_color(str(msg["id"]), str(msg["bg"])):
                 _mark_views_dirty()
+        elif msg and msg.get("type") == "setConserve" and msg.get("enabled") is not None:
+            # the gear's conserve-memory toggle (T148) — kernel-side like autoNudge; the sweep
+            # reads the flag fresh each pass, so flipping it needs no restart
+            _set_conserve(bool(msg.get("enabled")))
+            _push_soon()
         elif msg and msg.get("type") == "setAutoNudge" and msg.get("enabled") is not None:
             _set_auto_nudge(bool(msg["enabled"]))   # feed gear → server-side Auto Nudge on/off
             # act immediately on turn-on (don't wait 4s) — but skip the dead-wait sweep: the
