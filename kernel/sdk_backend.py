@@ -4944,12 +4944,19 @@ class SdkBackend:
 
     def conserve_idle(self, sid: str) -> bool:
         """Whether this session is safe to conserve-close: no in-flight turn, nothing queued,
-        no ask parked, not mid-compaction (T148 — never close work)."""
+        no ask parked (T148 — never close work) — and NO ARMED SESSION TIMERS (the T148/769 seam:
+        a timer-armed session's CLI process IS its scheduler, and ensure_scheduled revives any
+        timer-armed session with no thread every producer pass — closing one here would be a
+        close/revive loop, one respawn per sweep, forever. The timer set living in the reg is the
+        same record ensure_scheduled reads, so the two sides can never disagree)."""
         with self._lock:
             s = self.sessions.get(sid)
         if not s or s.ended:
             return False
         if s.inflight or s.pending() or s._cur_ask_fut is not None:
+            return False
+        reg = read_reg(self.state_dir, sid) or {}
+        if reg.get("sessionCrons"):
             return False
         return True
 
