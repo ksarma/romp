@@ -3462,8 +3462,9 @@ def _log_nudge_event(sid, gid, t, count, verdict="fired", ev_t=None):
     """Append one auto-nudge event to STATE/nudge-events.jsonl — {sid, gid, t, count, verdict, evT} —
     for the timeline's DEBUG judging band (per-nudge ⚡ marker) AND the redundancy accounting (the
     user 2026-08-25): every decision the gate takes is a row — fired / skipped-redundant /
-    held-fresh-re-judged / fired-at-cap / skipped-redundant-at-cap / resolved-at-send /
-    blocked-on-user-at-send — carrying the evidence snapshot's timestamp, so redundant fires are
+    held-fresh-re-judged / fired-at-cap / skipped-redundant-at-cap / skipped-redundant-memo (the
+    T142 memo served a ruling already made on this exact evidence, no judge call) /
+    resolved-at-send / blocked-on-user-at-send — carrying the evidence snapshot's timestamp, so redundant fires are
     countable from the log alone. That accounting is what extended the freshness guard to the cap
     path (the user 2026-08-27, T120: the pre-T120 force-fired-at-cap rows measured the blind fire
     at 56% of deliveries; the cap now escalates to a fresh judgment instead). Additive fields;
@@ -5314,8 +5315,25 @@ def _auto_nudge_session(s, now, tmux, nudged, waitfor, alive_ids=None):
                         # optimizer can see a wedge this would hide. The held-pass re-judge applies to
                         # capped candidates exactly as to organic ones: the old early-keep was the
                         # second half of the blind fire.
+                        #
+                        # THE MEMO (the user 2026-08-28, T142): a (goal, evidence) pair ruled
+                        # redundant is NEVER re-judged — a skip consumes no arm, so a capped goal
+                        # came due again every pusher tick and re-judged CONSTANT evidence
+                        # (measured: 464 of 510 judgments in one storm window were redundant
+                        # re-skips, one goal 147 times in 68 minutes, and 3 of 10 at-cap fires
+                        # were the judge FLIPPING on a pair it had just ruled redundant, i.e.
+                        # nondeterminism delivering the very stale nudge T120 exists to stop).
+                        # The ruling persists on the record as the evT it was judged against and
+                        # dies the moment the transcript's newest report moves or a fire replaces
+                        # the record. Consulted before ANY call, so the flip class dies by
+                        # construction. Event-true: no time backoff, no counter.
+                        if report_ts and rec0.get("redundantEvT") == report_ts:
+                            _log_nudge_event(sid, f[0], now, f[1],
+                                             verdict="skipped-redundant-memo", ev_t=report_ts)
+                            continue
                         if gtxt and jd.nudge_redundant(gtxt, report):
-                            nudged[f[0]] = dict(rec0, answeredAt=int(now), redundantSkips=skips + 1)
+                            nudged[f[0]] = dict(rec0, answeredAt=int(now), redundantSkips=skips + 1,
+                                                redundantEvT=report_ts)
                             _put_nudged(f[0], nudged[f[0]])
                             _v = ("skipped-redundant-at-cap" if skips >= 2
                                   else "held-fresh-re-judged" if held_pass else "skipped-redundant")
