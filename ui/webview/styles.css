@@ -154,7 +154,15 @@ body.chat-theme-yatharth #winframe { display: block; position: fixed; inset: 0; 
    2026-08-08): the strip trades its empty inter-tab space for room for the per-tab context gauge —
    the active/hover fills and per-tab padding still separate neighbours visually. (The Yatharth
    theme reopens a 3px seam — its flat tints need one; see its block below.) */
-#tabs { display: flex; flex: 1 1 auto; flex-wrap: wrap; align-items: stretch; gap: 0; }
+#tabs { display: flex; flex: 1 1 auto; flex-wrap: wrap; align-items: stretch; gap: 0; position: relative; }   /* relative: the per-row hairlines (T134) anchor to it */
+/* T134 (the user 2026-08-27, overturning the T125 survey's one-outer-line call — theirs to make):
+   a full-bleed hairline under EVERY row of tabs, so a row above a short row never floats. Painted
+   by paintTabRowLines (render.ts — CSS cannot select wrap rows); the last row is closed by
+   #tabbar's own border-bottom. The negative bleed spans the bar's 8px side padding so each line
+   runs the strip's full width, like the outer close. Classic only; Yatharth keeps his merged look. */
+body:not(.chat-theme-yatharth) #tabs .tab-row-line {
+  position: absolute; left: -8px; right: -8px; height: 1px; background: var(--box-border); pointer-events: none; }
+body.chat-theme-yatharth #tabs .tab-row-line { display: none; }
 /* T125 (the user 2026-08-27, screenshot: with wrapped rows the tabs read as floating boxes): the
    strip is a BAND — its own background plane a hair above the page, containing every wrapped row,
    closed by the existing --box-border hairline at its bottom edge. This is how tab strips are
@@ -311,12 +319,20 @@ body.tabbar-resizing { cursor: ns-resize; user-select: none; }
 @keyframes tab-ph-swirl-spin { to { transform: rotate(-360deg); } }
 /* CLASSIC (the default; T113, tightened by T115, tuned by T118 — the user 2026-08-27): the tab
    strip is the PRE-720 strip — verified by pixel-diffing a real pre-720 build — modulo exactly
-   four sanctioned deltas: typography (the strip inherits the global Inter/type ladder), the 1px
+   five sanctioned deltas: typography (the strip inherits the global Inter/type ladder), the 1px
    hover-gray rest outline below (T123), the 0.9 faded-label scale (fadedColor, render.ts; T118),
-   and the strip band (T125, below). No identity tint at any state, the
+   the strip band (T125, below), and the per-row hairlines (T134, above at #tabs). No identity tint at any state, the
    thick 1.5px inset identity ring on the selected tab, the neutral line under the strip. The
    Yatharth theme below is the opt-in restoration of the contributor's merged strip aesthetic. */
 .tab.active { color: var(--fg); background: rgba(255, 255, 255, 0.14); }
+/* T136 (the user 2026-08-27: every tab body reads lighter than four days ago — "restore it to
+   what it was"; they were right): the T125 band paints BEHIND the strip, and a transparent
+   resting tab let it show THROUGH the body, lightening every tab — the sanctioned delta was the
+   strip PLANE, never the tab fill. Resting tabs now paint the baseline body explicitly (the very
+   color the strip's background was before the band), so the band reads only between/around tabs.
+   Same :not chain as the retired T118 wash (hover/active/blocked own their fills; + is not a
+   session tab); pixel-verified against the pre-720 baseline in the T136 harness run. */
+body:not(.chat-theme-yatharth) .tab:not(.tab-blocked):not(.active):not(:hover):not(.tab-add) { background: var(--vscode-sideBar-background, var(--bg)); }
 /* T123 (the user 2026-08-27, redirecting T118's resting-tab distinction — the merged 2% fill
    came out for this): resting tabs wear a SUPER-THIN outline at all times, no fill — the tab body
    stays the dark background, ringed by 1px in EXACTLY the gray the hover fill uses

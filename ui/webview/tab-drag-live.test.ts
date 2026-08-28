@@ -21,6 +21,18 @@ const between = (a: string, b: string) => {
   return RENDER.slice(at, RENDER.indexOf(b, at));
 };
 
+test("exactly ONE thing on screen looks like the dragged tab (T133)", () => {
+  // the user 2026-08-27: the native drag image following the pointer PLUS the dimmed in-flow tab
+  // read as a ghost duplicate. The native image is blanked at dragstart; the dimmed in-flow
+  // element — the one that live-reorders — is the single provisional visual, browser-style.
+  assert.match(RENDER, /e\.dataTransfer\.setDragImage\(dragImageBlank\(\), 0, 0\);/);
+  const at = RENDER.indexOf("function dragImageBlank(");
+  assert.ok(at > 0);
+  const body = RENDER.slice(at, RENDER.indexOf("\n}", at));
+  assert.match(body, /position:fixed;top:-10px;left:-10px;width:1px;height:1px;opacity:0/,
+    "a rendered but invisible node — Chromium snapshots the drag image at dragstart, so it must be in the DOM");
+});
+
 test("slot boundary is the event: midpoint compare moves the dragged element in DOM order", () => {
   const body = between('tabs.addEventListener("dragover"', "});");
   assert.match(body, /const ref = e\.clientX > r\.left \+ r\.width \/ 2 \? over\.nextElementSibling : over;/,
@@ -33,7 +45,7 @@ test("slot boundary is the event: midpoint compare moves the dragged element in 
 test("cross-row reflow is the wrap layout's own: DOM insertion, no per-row special case", () => {
   // the strip wraps (flex-wrap) — moving the element IS the cross-row mechanism, so there must be
   // no row math in the drag path
-  assert.match(CSS, /#tabs \{ display: flex; flex: 1 1 auto; flex-wrap: wrap; align-items: stretch; gap: 0; \}/);
+  assert.match(CSS, /#tabs \{ display: flex; flex: 1 1 auto; flex-wrap: wrap; align-items: stretch; gap: 0; position: relative; \}/);
   const body = between('tabs.addEventListener("dragover"', "});");
   assert.doesNotMatch(body, /row|clientY/i, "no row bookkeeping — insertion order + wrap does it");
 });
