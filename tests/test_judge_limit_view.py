@@ -44,12 +44,16 @@ class JudgeLimitView(unittest.TestCase):
 
     def test_login_billed_sessions_ride_the_latch_key_billed_do_not(self):
         v = km._judge_limit_view()
-        self.assertEqual(v["loginSessions"], ["tests", "web"],
+        self.assertEqual([d["name"] for d in v["loginSessions"]], ["tests", "web"],
                          "authLive wins where it exists; the intent covers a pre-init session; sorted")
-        self.assertNotIn("api", v["loginSessions"], "a key-billed session is untouched by this window")
+        self.assertEqual(v["loginSessions"][1],
+                         {"name": "web", "host": "", "sid": S_LOGIN, "color": None},
+                         "the ONE identity ladder (_peer_identity) — the banner wears the standard chip")
+        self.assertNotIn("api", [d["name"] for d in v["loginSessions"]],
+                         "a key-billed session is untouched by this window")
 
     def test_unreadable_billing_is_said_not_omitted(self):
-        self.assertEqual(km._judge_limit_view()["billingUnknown"], ["notes"],
+        self.assertEqual([d["name"] for d in km._judge_limit_view()["billingUnknown"]], ["notes"],
                          "a tmux CLI reports nothing — the fail-loud rule lists it as unknown")
 
     def test_the_latch_fields_pass_through_intact(self):

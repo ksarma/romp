@@ -4191,8 +4191,9 @@ function feedToast(text: string) {
 // payload (self-expiring at the window reset, cleared by the next successful call). Built ONCE and
 // updated in place — the button must survive re-renders (the click-safety rule), and it
 // acknowledges immediately, then the latch clearing hides the banner on a later payload.
+type JlIdent = { name: string; host?: string; sid?: string; color?: { bg: string; fg: string } | null };
 let judgeLimit: { bucket?: string; resets_at?: number; model?: string;
-                  loginSessions?: string[]; billingUnknown?: string[] } | null = null;
+                  loginSessions?: JlIdent[]; billingUnknown?: JlIdent[] } | null = null;
 // The dismiss latches to THIS episode's identity — a NEW episode (different bucket or reset time)
 // is new information and re-shows the banner; nothing else does (event-based, no timers). Stored
 // in localStorage so the dismissal survives re-renders and reloads for the episode's lifetime.
@@ -4248,23 +4249,32 @@ function paintJudgeLimit(): void {
     ? new Date(ra * 1000).toTimeString().slice(0, 5) : "";
   const fable = judgeLimit.bucket === "fable";
   const txt = b.querySelector(".jl-text")!;
-  // board-wide is the honest scope: the judges bill one credential, so card movement pauses for
-  // every session's cards — running sessions keep going on their own billing (the user 2026-08-28)
+  // the HONEST scope (the user 2026-08-28, correction round — the everything-is-paused framing was
+  // wrong: a judge call bills the JUDGED session's account, so key-billed analysis keeps flowing):
+  // the window is the login account's; only the sessions billing it pause.
   txt.textContent = fable
-    ? "Card analysis is paused board-wide — the Fable usage window is full" + (when ? " (resets " + when + ")." : ".")
-    : "Card analysis is paused board-wide — the account's usage window is full" + (when ? "; it resumes at " + when + "." : ".");
-  // …and WHO ELSE the window touches: only the sessions billing this account rate-limit on their
-  // own turns. Inline names when few; a keyed "+N more" expand when many (progressive disclosure);
-  // a session whose billing romp cannot read is listed as unknown, never silently omitted.
+    ? "The account's Fable usage window is full" + (when ? " (resets " + when + ")." : ".")
+    : "The account's usage window is full" + (when ? "; it resumes at " + when + "." : ".");
+  // WHO it touches: the sessions billing this account lose BOTH their turns (rate-limited) and
+  // their card analysis until the reset; everyone else's analysis continues on their own billing.
+  // Names wear the standard session chip — bold, identity colour, quiet host: prefix (the user's
+  // ask). Inline when few; a keyed "+N more" expand when many; unknown billing said, never omitted.
   const sessEl = b.querySelector(".jl-sess") as HTMLElement;
   sessEl.replaceChildren();
   const names = judgeLimit.loginSessions || [];
   const unk = judgeLimit.billingUnknown || [];
+  const chip = (p: JlIdent) => {
+    const c = el("b", "jl-chip");
+    c.replaceChildren(...hostPartsNodes(p.host, p.name));
+    if (p.color && p.color.bg) c.style.color = p.color.bg;
+    return c;
+  };
+  const appendChips = (list: JlIdent[]) => list.forEach((p, i) => { if (i) sessEl.append(", "); sessEl.appendChild(chip(p)); });
   if (names.length) {
     const many = names.length > 3;
     const shown = many && !jlSessOpen ? names.slice(0, 2) : names;
-    sessEl.append("These sessions bill this account, so their own turns are rate-limited too: "
-      + shown.join(", "));
+    sessEl.append("Analysis and turns pause for the sessions billing it: ");
+    appendChips(shown);
     if (many) {
       const more = el("span", "jl-more");
       more.dataset.act = "jl-more";
@@ -4272,12 +4282,18 @@ function paintJudgeLimit(): void {
       more.title = jlSessOpen ? "collapse the list" : "show every affected session";
       sessEl.appendChild(more);
     }
+    sessEl.append(". Other sessions' analysis continues on their own billing.");
+  } else {
+    sessEl.append("No live session bills this account — every session's analysis continues on its own billing.");
   }
   if (unk.length) {
     const u = el("span", "jl-unknown");
-    u.textContent = (names.length ? " · " : "") + "billing unknown for " + unk.join(", ")
-      + " (their CLI doesn't report it)";
+    u.textContent = " · billing unknown for ";
     sessEl.appendChild(u);
+    appendChips(unk);
+    const u2 = el("span", "jl-unknown");
+    u2.textContent = " (their CLI doesn't report it)";
+    sessEl.appendChild(u2);
   }
   const btn = b.querySelector(".jl-switch") as HTMLButtonElement;
   btn.style.display = fable ? "" : "none";

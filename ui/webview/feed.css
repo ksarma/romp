@@ -1511,6 +1511,9 @@ body.filebrowse-open { overflow: hidden; }
 /* who the window touches (2026-08-28): same text size as the line it extends (fonts: reuse), dimmer */
 .judge-limit-banner .jl-sess { opacity: 0.65; min-width: 0; }
 .judge-limit-banner .jl-more { color: var(--accent); cursor: pointer; white-space: nowrap; }
+/* the standard session reference (the user 2026-08-28): bold name in its identity colour; the
+   host: prefix keeps the shared .host-prefix treatment */
+.judge-limit-banner .jl-chip { font-weight: 700; font-style: normal; }
 .judge-limit-banner .jl-unknown { opacity: 0.8; font-style: italic; }
 .judge-limit-banner .jl-dismiss { flex: none; margin-left: auto; background: none; border: none;
   color: var(--dim); cursor: pointer; font-size: 1em; padding: 2px 6px; border-radius: 4px; }

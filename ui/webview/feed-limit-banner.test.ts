@@ -37,7 +37,7 @@ test("the banner is build-once, acknowledges, and offers Opus only for the Fable
     "acknowledges before the kernel round-trip");
   assert.match(FEED, /vscodeApi\?\.postMessage\(\{ type: "setJudgeModel", model: "opus" \}\)/);
   assert.match(FEED, /btn\.style\.display = fable \? "" : "none";/, "the switch offer is Fable-specific");
-  assert.match(FEED, /the account's usage window is full/, "general exhaustion states it plainly");
+  assert.match(FEED, /The account's usage window is full/, "general exhaustion states it plainly");
   assert.match(FEED, /paintJudgeLimit\(\);   \/\/ the usage-limit banner above the columns/,
     "painted on every feed render");
   assert.match(CSS, /\.judge-limit-banner \{/);
@@ -49,12 +49,29 @@ test("the banner names who the window actually touches — authoritative billing
   // authLive report first, the picked intent second — the Billing tooltip's exact sources — and a
   // session whose billing it cannot know is listed as unknown, never silently omitted.
   assert.match(KERNEL, /b = str\(tm\.get\("authLive"\) or tm\.get\("auth"\) or ""\)/);
-  assert.match(KERNEL, /loginSessions=sorted\(billed\), billingUnknown=sorted\(unknown\)/);
-  assert.match(FEED, /Card analysis is paused board-wide/, "the scope is stated in the reader's terms");
-  assert.match(FEED, /These sessions bill this account, so their own turns are rate-limited too: "/);
+  assert.match(KERNEL, /loginSessions=sorted\(billed, key=key\), billingUnknown=sorted\(unknown, key=key\)/);
+  assert.ok(!/board-wide/.test(FEED), "the corrected scope (2026-08-28): a judge bills the judged session — key-billed analysis never pauses");
+  assert.match(FEED, /"Analysis and turns pause for the sessions billing it: "/);
+  assert.match(FEED, /"\. Other sessions' analysis continues on their own billing\."/);
+  assert.match(FEED, /No live session bills this account/, "the empty list is stated, not blank");
   assert.match(FEED, /const many = names\.length > 3;/, "inline when few…");
   assert.match(FEED, /names\.slice\(0, 2\) : names;/, "…two named + a count when many");
-  assert.match(FEED, /billing unknown for " \+ unk\.join\(", "\)/, "the fail-loud row");
+  assert.match(FEED, /" · billing unknown for "/, "the fail-loud row");
+  // the standard session chip: bold, identity colour, the shared host-prefix treatment
+  assert.match(FEED, /const c = el\("b", "jl-chip"\);\s*\n\s*c\.replaceChildren\(\.\.\.hostPartsNodes\(p\.host, p\.name\)\);\s*\n\s*if \(p\.color && p\.color\.bg\) c\.style\.color = p\.color\.bg;/);
+  assert.match(KERNEL, /billed\.append\(_peer_identity\(sid\)\)/, "identities via the ONE ladder");
+});
+
+test("the gate, the clear, and the envelope mark all scope to LOGIN-billed calls (2026-08-28)", () => {
+  // usage.json's windows are the login account's; a judge call bills the JUDGED session's account
+  // (the 2026-08-12 rule) — so a key-billed call (pay-per-token, no windows) is never gated, its
+  // success never clears the login latch, and its limit-shaped 429 never mints one.
+  assert.match(JUDGE, /auth = _judge_auth\(fsid\) {10,}# this call bills what the judged session bills\n    try:/,
+    "billing resolves BEFORE the gate");
+  assert.match(JUDGE, /json\.loads\(\(STATE \/ "usage\.json"\)\.read_text\(\)\) if auth == "login" else \{\}/);
+  assert.match(JUDGE, /if auth == "login":\s*\n\s*# only a LOGIN-billed success is evidence/);
+  assert.match(JUDGE, /if auth == "login":\s*\n\s{24}_limit_mark\("account", None, None, model\)/,
+    "the envelope mark too (the manager's ruling: it carries no resets_at, so a false one sticks)");
 });
 
 test("the '+N more' expand is keyed and delegated — click-safe across the per-push repaints", () => {

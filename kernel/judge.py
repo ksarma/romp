@@ -1064,15 +1064,19 @@ def _judge_run(model, sys_prompt, user, effort=None, judge=None, tier="triage", 
             return ""                                 # from a real call failure — event-based, no time window
     except Exception:
         pass
+    fsid = getattr(_judge_ctx, "fsid", None)
+    auth = _judge_auth(fsid)                          # this call bills what the judged session bills
     try:
-        # RATE-LIMIT GATE (the user 2026-07-07): while the ACCOUNT is limit-exhausted, every judge call
-        # fleet-wide just burns a doomed API retry (the archiver postmortem: ~1160 wasted calls in one
-        # 90-min window). usage.json (the SDK backend's /usage poll) says so exactly; `resets_at` makes
-        # the gate self-expiring — a stale "limited" stops gating the moment the window resets, no age
-        # heuristics. Skips ride the SAME paused flag, so no give-up counter ever counts one as a
-        # failure. The `fable` bucket is deliberately ignored (judges run Sonnet). Unreadable/absent
-        # usage.json → never gate: the gate is an optimization, judging is the job.
-        u = json.loads((STATE / "usage.json").read_text())
+        # RATE-LIMIT GATE (the user 2026-07-07), scoped to the calls it can actually starve (the user
+        # 2026-08-28, who watched key-billed cards keep landing under a "paused" banner): usage.json is
+        # the LOGIN account's windows (the SDK backend's /usage poll), and every bucket in it —
+        # five_hour/seven_day/fable alike — is a login-account window. A judge call bills the JUDGED
+        # session's account (_judge_auth, the 2026-08-12 rule), so only LOGIN-billed calls are doomed
+        # while a window sits full; a key-billed call is pay-per-token (no windows, the 2026-08-13
+        # ruling) and always proceeds. The old fleet-wide gate predated the per-session billing rule
+        # and starved key-billed judging for nothing. `resets_at` keeps the gate self-expiring, skips
+        # ride the paused flag, unreadable usage.json never gates — all unchanged.
+        u = json.loads((STATE / "usage.json").read_text()) if auth == "login" else {}
         # The gated buckets FOLLOW THE CALL'S MODEL (2026-08-18, user-approved via the optimizer's
         # audit): the account-wide windows gate every model, and a model-scoped window gates exactly
         # the calls that would bill it. The old tuple hardcoded the account buckets and deliberately
@@ -1094,7 +1098,6 @@ def _judge_run(model, sys_prompt, user, effort=None, judge=None, tier="triage", 
                 return ""
     except Exception:
         pass
-    fsid = getattr(_judge_ctx, "fsid", None)
     sys_prompt = _with_user_notes(sys_prompt, judge)  # the user's standing style notes ride every prose call
     if mark:
         # AFTER the notes, deliberately: the notes block ends "where a note conflicts with the rules
@@ -1103,8 +1106,7 @@ def _judge_run(model, sys_prompt, user, effort=None, judge=None, tier="triage", 
         # win against. Nothing else about it changes — it still rides the SYSTEM prompt, never the
         # payload, and a call with no marked sections still gets no suffix at all.
         sys_prompt += UNTRUSTED_SYS % (mark, mark)
-    auth = _judge_auth(fsid)                          # this call bills what the judged session bills
-    env = _judge_env(tier, auth)
+    env = _judge_env(tier, auth)                      # auth resolved above, before the gate (2026-08-28)
     # Per-tier effort from the gear (STATE/judge-effort | index-effort | distill-effort) when the caller
     # didn't pass one — "" or None means NO --effort flag, the long-standing default. An explicit caller
     # effort (the plan A/B) still wins.
@@ -1172,8 +1174,14 @@ def _judge_run(model, sys_prompt, user, effort=None, judge=None, tier="triage", 
                 if _LIMIT_ENVELOPE_RE.search(msg):
                     # a limit-shaped envelope is the EVENT that says usage.json is stale (get_usage
                     # rides turn ends; an idle fleet refreshes nothing): latch the loud banner NOW
-                    # and poke one exact poll so the gate blocks the follow-on calls
-                    _limit_mark("account", None, None, model)
+                    # and poke one exact poll so the gate blocks the follow-on calls. LOGIN-billed
+                    # only (the manager's ruling 2026-08-28): this latch means "the login account's
+                    # window is full" and carries no resets_at, so it never self-expires — and a
+                    # KEY-billed limit envelope (a per-call 429 on pay-per-token, no window behind
+                    # it) would mint a false banner that only a later login success could clear.
+                    # The key call keeps the call-failed mark and error row; the poke is harmless.
+                    if auth == "login":
+                        _limit_mark("account", None, None, model)
                     if _USAGE_REFRESH_FN:
                         try:
                             _USAGE_REFRESH_FN()
@@ -1188,7 +1196,11 @@ def _judge_run(model, sys_prompt, user, effort=None, judge=None, tier="triage", 
                 _judge_ctx.last["reply"] = _mid_elide(wrap["result"])
                 _log_judge_usage(judge or tier, tier, model, fsid, wrap, sent, recv)
                 _auth_down_clear(fsid)                # billing works → unlatch (cheap no-op when unlatched)
-                _limit_clear()                        # ...and the usage-limit latch (a reset, or a model switch)
+                if auth == "login":
+                    # only a LOGIN-billed success is evidence the login window reset early — a
+                    # key-billed success says nothing about it (the user 2026-08-28; before this,
+                    # any key success wrongly cleared the latch and the banner flapped)
+                    _limit_clear()
                 _mark_call_served(model)              # THIS model serves again → the give-up re-arm edge
                 _judge_ctx.last_call_fail = None      # a served reply retires the stashed error evidence
                 return wrap["result"]
