@@ -15,7 +15,10 @@
   row-gap: 4px; flex-wrap: wrap;
   padding: 4px 10px; box-sizing: border-box; user-select: none;
   border-top: 1px solid var(--vscode-editorHoverWidget-border, rgba(255, 255, 255, 0.12));
-  background: var(--vscode-editorWidget-background, #252526); }
+  /* the page dark (T151): under the kernel's THEME_CSS the widget token resolves #252526 — the
+     exact lighter-bar shade the one-dark ruling removes; in VS Code editor-background follows the
+     user's theme, so the strip sits on the same plane as the pane in both hosts. */
+  background: var(--vscode-editor-background, #1e1e1e); }
 #strip-usage { flex: 0 1 auto; min-width: 0; display: flex; flex-direction: row; align-items: center; gap: 16px; }
 /* the actions cluster pins to the right edge of whatever row it wraps onto */
 .strip-acts { flex: 0 0 auto; display: flex; flex-direction: row; align-items: center; gap: 2px;
