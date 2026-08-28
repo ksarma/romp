@@ -93,6 +93,22 @@ body.scheme-solarized-dark {
   /* the true-pill radius (filter pills, the loading pill) — one name so new pills don't mint
      another magic number. Mirrored in feed.css (own :root). */
   --radius-pill: 999px;
+  /* the neutral chrome ladder (2026-08-28) — named so the light theme can re-skin the small
+     sheets (gear/strip/sessions-pane/timeline-pane reference these with their old literals as
+     fallbacks). Defining --overlay-05/10 unifies a few near-alpha washes (0.05/0.08 -> 0.06,
+     0.10 -> 0.12) — imperceptible at these alphas, screenshot-checked. */
+  --hairline: #3a3a3a;
+  --text-muted: #9aa0a6;
+  --text-faint: #6e7681;
+  --text-soft: #cdd3da;
+  --text-bright: #e8eaed;
+  --btn-bg: #2a2a2a;
+  --btn-hover-bg: #333333;
+  --input-bg: #1b1b1c;
+  --kbd-bg: #1c1c1f;
+  --kbd-border: #3d3d42;
+  --overlay-05: rgba(255, 255, 255, 0.06);
+  --overlay-10: rgba(255, 255, 255, 0.12);
   /* Comment-highlight yellow (the user 2026-08-13): the marked passage reads like a highlighter
      stroke, DISTINCT from both the accent blue (selection/chrome) and the working-status yellow
      chip. Text-highlight use only — comment chrome (badge, buttons, chips) stays var(--accent). */
