@@ -11537,7 +11537,7 @@ _postal_from_memo = {"key": None, "map": {}}   # messages.jsonl (mtime,size) -> 
 
 
 def _postal_row(mid):
-    """(from_name, from_host, tracked, body, userAsk) for a delivered postal message id, from the
+    """(from_name, from_host, tracked, body, userAsk, originMid) for a delivered postal message id, from the
     "sent" row — the AUTHORITATIVE record of who sent it and how (the row schema is the postal
     consumer contract). The sender may be a session of ANOTHER kernel (federated mail), so the local
     names registry cannot resolve it; the log row carries the name the sender wore, the origin host
@@ -11547,14 +11547,16 @@ def _postal_row(mid):
     2026-08-27 (T126) the origin kernel's WALKED root-ask record ({text, sid, host} or None): the
     sending kernel ran its local chain walk at relay time and the bus carried the proof, so a
     cross-host delegate reads user-anchored though the local walk rightly refuses foreign hops.
-    ("", "", False, "", None) for None/unknown mids. Memoized on the log file's (mtime, size)."""
+    originMid (2026-08-28, the dead-session round) is the SENDER-side id deliver() stamps on a
+    relayed row — the durable join key when the two sides mint different mids for one message.
+    ("", "", False, "", None, "") for None/unknown mids. Memoized on the log file's (mtime, size)."""
     if not mid:
-        return ("", "", False, "", None)
+        return ("", "", False, "", None, "")
     try:
         st = os.stat(MESSAGES)
         key = (st.st_mtime, st.st_size)
     except OSError:
-        return ("", "", False, "", None)
+        return ("", "", False, "", None, "")
     if _postal_from_memo["key"] != key:
         mp = {}
         try:
@@ -11567,11 +11569,12 @@ def _postal_row(mid):
                     ua = r.get("userAsk")
                     mp[r["id"]] = (r.get("from") or "", r.get("from_host") or "", bool(r.get("tracked")),
                                    str(r.get("body") or ""),
-                                   ua if isinstance(ua, dict) and str(ua.get("text") or "").strip() else None)
+                                   ua if isinstance(ua, dict) and str(ua.get("text") or "").strip() else None,
+                                   str(r.get("originMid") or ""))
         except OSError:
-            return ("", "", False, "", None)
+            return ("", "", False, "", None, "")
         _postal_from_memo["key"], _postal_from_memo["map"] = key, mp
-    return _postal_from_memo["map"].get(mid, ("", "", False, "", None))
+    return _postal_from_memo["map"].get(mid, ("", "", False, "", None, ""))
 
 
 def _frame_head(s):
@@ -11743,6 +11746,14 @@ def _plant_handoff_track(store, parent_id, text, peer_sid, peer_name, t, mid, tr
     nid = "%s:g%d" % (store["rompUuid"], store["seq"])
     label = "↪ delegated to %s: %s" % (peer_name or peer_sid[:8], _strip_title_ticket(text) or "(work)")
     handoff = {"peer": peer_sid, "msgId": mid}
+    for _xnid, _xnd in nodes.items():
+        _xh = _xnd.get("handoff") if isinstance(_xnd, dict) else None
+        if (isinstance(_xh, dict) and _xh.get("peer") == peer_sid and not _xnd.get("nodeComplete")
+                and not _xnd.get("cleared") and _xnd.get("text") == label[:120]
+                and _xnd.get("parentId") == parent_id):
+            return _xnid                               # byte-identical OPEN twin (2026-08-28: an ext
+            #                                            mailer double-minted the same delegation in one
+            #                                            minute under two mids) — reuse, never duplicate
     if tracked:
         handoff["tracked"] = True
     nodes[nid] = GuardedNode({"id": nid, "text": label[:120], "parentId": parent_id,
@@ -11896,6 +11907,40 @@ def _delegate_user_rooted(sender, link_id, paths, now, _depth=0, _seen=None):
     return None
 
 
+def _presumed_closed(sid, now):
+    """Deadness for a session no live parse can answer for (the user 2026-08-28, the dead-session
+    round: complete tops on dead sids read working forever because the settle gate derived
+    closed=False from mere registry absence). The ladder, most-evidence-first:
+      1. discovered in the recency window → the parse decides (_session_closed), exactly as before;
+      2. absent from the window but the transcript exists → windowless lookup + parse — a dead
+         LOCAL session's own record says it closed;
+      3. an ext: pseudo-sid → closed by construction (a one-shot mailer, no session behind it);
+      4. a sid the postal bus reports LIVE ON ANOTHER HOST (STATE/remote-sids, the federated
+         presence mirror) → NOT closed — a live remote session's local mirror store must never be
+         presumed settled (the premature-settle flicker the gate exists to prevent);
+      5. nothing anywhere knows it AND the bus has spoken (the mirror file exists) → a dead
+         determination, True; no mirror file at all → conservative False (cannot determine)."""
+    for f, p, _a, _n in discover(now):
+        if f == sid:
+            try:
+                return _session_closed(parsed_session(sid, [str(p)], now))
+            except Exception:
+                return False
+    for f, p, _a, _n in discover(now, window=now):
+        if f == sid:
+            try:
+                return _session_closed(parsed_session(sid, [str(p)], now))
+            except Exception:
+                return False
+    if str(sid).startswith("ext:"):
+        return True
+    try:
+        remote = set((STATE / "remote-sids").read_text().split())
+    except OSError:
+        return False                                   # the bus has not spoken → cannot determine
+    return sid not in remote
+
+
 def run_propagate(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, verbose=False):
     """DETERMINISTIC delegation completion link-back (the user 2026-06-22). When a courier-planted goal G
     (origin.peer + origin.goalId) is COMPLETE on the recipient B's tree, mark the SENDER's tracking node
@@ -11941,7 +11986,11 @@ def run_propagate(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY,
                     why += ": " + sub[:220]
                 record_verdict(a_store, a_store["nodes"][a_gid], "courier", "done", now, why=why)
                 _mark_node_done(a_store, a_gid, why, now, src="courier")
-                rollup_status(a_store, False)           # sender just had work close → recompute its columns
+                rollup_status(a_store, _presumed_closed(a_sid, now))   # sender just had work close →
+                #                                        recompute its columns, SETTLING them when the
+                #                                        sender is determined dead (2026-08-28: a live
+                #                                        sender's own pass settles as before; a dead one
+                #                                        has no pass, so this write is its only settler)
                 save_goals(a_sid, a_store)
                 n += 1
     # REMOTE recipients (the user 2026-08-24): their goal stores live on another kernel, so the
@@ -11970,11 +12019,32 @@ def run_propagate(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY,
             o = rd.get("origin")
             refs = ([o] if isinstance(o, dict) else []) + [l for l in (rd.get("links") or [])
                                                            if isinstance(l, dict)]
-            if any(r.get("msgId") == mid for r in refs):
+            if any(mid in (r.get("msgId"), r.get("originMid")) for r in refs):
                 return rd
         return None
 
-    for fsid, path, anchor, name in discover(now)[:sessions_cap]:
+    # SENDER COVERAGE (the user 2026-08-28, the dead-session round): this arm used to walk only
+    # DISCOVERED sessions as senders, so a dead session's — or an ext: mailer's, or a remote
+    # kernel's local mirror store's — quiet trackers were never swept again and sat Working
+    # forever (the audited board: 18 of 23 stale cards, all on exactly these sids). The recipient's
+    # reply is the event and this sweep is its only writer for such stores, so absent stores that
+    # still hold open trackers join the walk (the T110 straggler-drain shape; self-retiring — a
+    # closed tracker leaves the predicate).
+    _sw_fleet = discover(now)[:sessions_cap]
+    _sw_seen = {f for f, _p, _a, _n in _sw_fleet}
+    _sw_senders = [f for f, _p, _a, _n in _sw_fleet]
+    for _f in sorted(GOALDIR.glob("*.json")):
+        if _f.stem in _sw_seen:
+            continue
+        try:
+            _st0 = load_goals(_f.stem)
+        except Exception:
+            continue
+        if any(isinstance(v, dict) and isinstance(v.get("handoff"), dict)
+               and not v.get("nodeComplete") and not v.get("cleared")
+               for v in (_st0.get("nodes") or {}).values()):
+            _sw_senders.append(_f.stem)
+    for fsid in _sw_senders:
         store = load_goals(fsid)
         changed = False
         for nid, nd in list(store.get("nodes", {}).items()):
@@ -12018,7 +12088,7 @@ def run_propagate(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY,
                     changed = True
                     n += 1
         if changed:
-            rollup_status(store, False)
+            rollup_status(store, fsid not in _sw_seen and _presumed_closed(fsid, now))
             save_goals(fsid, store)
     if verbose:
         sys.stderr.write("romp-judge: propagated %d delegation completions\n" % n)
@@ -12287,6 +12357,12 @@ def run_courier(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, v
             # time: a cross-host sender's sid resolves to nothing in this kernel's names registry, and
             # without the snapshot the "from" chip degrades to a bare sid prefix (the user 2026-07-26).
             origin = {"peer": sender, "goalId": track_id, "msgId": mid}
+            _om = _postal_row(mid)[5]
+            if _om and _om != mid:
+                origin["originMid"] = _om              # the SENDER-side id for relayed mail (2026-08-28):
+                #                                        local delivery mints its own mid, so without this
+                #                                        the sender's tracker and the recipient's origin
+                #                                        held different ids and the link never formed
             if trk:
                 origin["tracked"] = True               # the satellite mark — the feed collapses on it
             frm_name, frm_host = _postal_from(mid)

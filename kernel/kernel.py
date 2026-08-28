@@ -18852,10 +18852,10 @@ def _delegation_linked_ids(item_ids):
             seen.add(x)
             stack.extend(kids.get(x, []))
             h = nodes[x].get("handoff")
-            if isinstance(h, dict) and h.get("peer") and h.get("msgId"):     # sender → recipient (match msgId)
-                for pnid, pnd in _nodes(h["peer"]).items():
-                    o = pnd.get("origin")
-                    if isinstance(o, dict) and o.get("msgId") == h["msgId"]:
+            if isinstance(h, dict) and h.get("peer") and h.get("msgId"):     # sender → recipient (match msgId,
+                for pnid, pnd in _nodes(h["peer"]).items():                  # or the relayed row's originMid —
+                    o = pnd.get("origin")                                    # the two sides mint different ids
+                    if isinstance(o, dict) and h["msgId"] in (o.get("msgId"), o.get("originMid")):
                         out.add(pnid)
             o = nodes[x].get("origin")
             if isinstance(o, dict) and o.get("peer") and o.get("goalId") in _nodes(o.get("peer")):
@@ -19082,7 +19082,13 @@ def _resolve_node(sid, node_id):
     nd["mt"] = now                                    # deep-link / recency land on the resolution moment
     try:                                              # session_closed gate for the rollup, same as run_plan
         path = next((s["path"] for s in _sessions(now) if s["sid"] == sid), None)
-        closed = jd._session_closed(_parse(path, sid, now)) if path else False
+        closed = (jd._session_closed(_parse(path, sid, now)) if path
+                  else jd._presumed_closed(sid, now))   # absent from the live registry is not an open
+        #                                                 turn: a dead local session's transcript, an
+        #                                                 ext: mailer, or a bus-confirmed-gone sid reads
+        #                                                 CLOSED so post-mortem completions settle; a
+        #                                                 live REMOTE session's mirror store never does
+        #                                                 (2026-08-28, the dead-session round)
     except Exception:
         closed = False
     jd.rollup_status(store, closed)

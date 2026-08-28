@@ -341,6 +341,13 @@ def deliver(to_id, from_name, from_id, body, park=False, kind="", from_host="",
         #                                              no header, no prose (the recipient reads nothing)
     if from_host:
         ev["from_host"] = from_host                  # additive (consumer contract above)
+    if relay_mid:
+        ev["originMid"] = relay_mid                  # the SENDER-side id for relayed mail (2026-08-28,
+        #                                              the dead-session round): local delivery mints its
+        #                                              own maildir mid, so sender and recipient held
+        #                                              DIFFERENT ids for one message and the delegation
+        #                                              mirror join never formed — this is the durable
+        #                                              join key the courier stamps into origin
     if isinstance(user_ask, dict) and str(user_ask.get("text") or "").strip():
         # the origin kernel's walked root-ask record (T126) — whitelisted copy, additive: the
         # receiving courier reads it off this row (_postal_row) as walk-proved provenance
@@ -679,6 +686,7 @@ def _record_heartbeat(sid, name):
     reaching us over an -R tunnel, is NOT in the local kernel — heartbeats are its only presence signal."""
     if sid and _safe_id(sid) and sid not in {a["id"] for a in local_agents()}:
         HEARTBEATS[sid] = (name or "?", time.time())
+    _write_remote_sids()                           # presence changed → refresh the deadness mirror
 
 def present_count():
     return len(all_agents())
@@ -1767,6 +1775,27 @@ def my_tier_of(host):
     return row.get("trust") or "directed"
 
 
+def _write_remote_sids():
+    """STATE/remote-sids — every session id this box knows to be LIVE on another host (federated
+    presence gossip + legacy heartbeats), one per line, atomically. A best-effort mirror for the
+    kernel/judge DEADNESS rule (2026-08-28, the dead-session round): a sid absent from the local
+    registry but present here is a live REMOTE session whose local mirror store must never be
+    presumed closed. The FILE's existence means the bus has spoken; readers treat a missing file
+    as "cannot determine" and stay conservative."""
+    try:
+        now = time.time()
+        ids = {sid for sid, (_nm, ts) in HEARTBEATS.items() if now - ts < HEARTBEAT_TTL}
+        for st in PEER_STATE.values():
+            for pa in st.get("presence") or []:
+                if pa.get("id"):
+                    ids.add(str(pa["id"]))
+        tmp = STATE / "remote-sids.tmp"
+        tmp.write_text("\n".join(sorted(ids)) + ("\n" if ids else ""))
+        os.replace(tmp, STATE / "remote-sids")
+    except Exception:
+        pass
+
+
 def peers_snapshot():
     peers = {}
     for h, p in PEERS.items():
@@ -2317,6 +2346,7 @@ def peer_exchange_handle(data):
                          "hostname (or set ROMP_POSTAL_HOST) and redial" % host}, 400
     PEER_STATE[host] = {"presence": data.get("presence") or [], "epoch": data.get("epoch"),
                         "holds": data.get("holds") or [], "seenAt": int(time.time())}
+    _write_remote_sids()                           # presence changed → refresh the deadness mirror
     if bus_id:
         PEER_STATE[host]["busId"] = bus_id
         _drop_peer_name_dupes(host, bus_id)
@@ -2387,6 +2417,7 @@ def peer_exchange_apply(host, req_sent, resp):
         readbox_del(host, r)
     PEER_STATE[host] = {"presence": resp.get("presence") or [], "epoch": resp.get("epoch"),
                         "holds": resp.get("holds") or [], "seenAt": int(time.time())}
+    _write_remote_sids()                           # presence changed → refresh the deadness mirror
     bus_id = str(resp.get("busId") or "")
     if bus_id:                                       # the dialed alias is canonical for this bus: fold any
         PEER_STATE[host]["busId"] = bus_id           # row it left under its self-declared hostname
