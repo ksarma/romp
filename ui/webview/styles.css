@@ -133,6 +133,89 @@ body.scheme-solarized-dark {
   --fs: var(--vscode-chat-font-size, 13px);
 }
 
+
+/* ══ the Yatharth LIGHT theme (the user 2026-08-27): one block, token names only ═════════════════
+   Claude-desktop-warm: ivory page, raised cream surfaces, near-black warm text, CLAY accent (the
+   light theme's accent is orange — the dark accent stays the romp blue). The block re-declares
+   (a) every :root token above and (b) the --vscode-* stand-ins inline rules fall back through —
+   body-scoped, so it beats both THEME_CSS (browser) and the editor's injected vars (VS Code;
+   winning over a dark editor is deliberate — the theme is opt-in). Components must NOT branch on
+   body.theme-light — a theme-conditional need is a NEW TOKEN in both blocks (CLAUDE.md; the
+   key-parity test enforces the set). Contrast: fg 15.9:1, muted 6.6:1, accent 4.9:1 on the page.
+*/
+body.theme-light {
+  --chat-col: 100%;
+  --bg: #FAF9F5;
+  --fg: #1F1E1D;
+  --dim: #5D574E;
+  --rail: rgba(0, 0, 0, 0.14);
+  --green: #3E7D0E;
+  --check-bg: #1EA1EB;   /* the session-identity default blue is BRAND, same in both themes */
+  --code-fg: #8C4A00;
+  --code-bg: rgba(180, 83, 9, 0.08);
+  --box-bg: rgba(0, 0, 0, 0.03);
+  --box-border: rgba(0, 0, 0, 0.12);
+  --err: #B02A1C;
+  --accent: #C2410C; --accent-fg: #FFF8F2;
+  --accent-wash: rgba(194, 65, 12, 0.10);
+  --cmt-hl: #FFDF70;
+  --fast: #D45500;
+  --warn: #9A6A00;
+  --st-working-bg: #e0b020; --st-working-fg: #332600;   /* status FILLS carry their own fg — same chips, both themes */
+  --st-ready-bg: #2b7fb8;   --st-ready-fg: #ffffff;
+  --st-awaiting-bg: #c0392b;--st-awaiting-fg: #ffffff;
+  --st-awaitbg-bg: #54B204; --st-awaitbg-fg: #0c1a00;
+  --st-compacting-bg: #14b8a6; --st-compacting-fg: #ffffff;
+  --st-blocked-bg: #e5484d; --st-blocked-fg: #ffffff;
+  --radius-menu: 6px;
+  --shadow-menu: 0 4px 12px rgba(31, 26, 20, 0.16);
+  --surface-raised: #F0EEE6;
+  --radius-toast: 8px;
+  --shadow-toast: 0 8px 28px rgba(31, 26, 20, 0.18);
+  --radius-modal: 10px;
+  --shadow-modal: 0 12px 36px rgba(31, 26, 20, 0.22);
+  --overlay-dim: rgba(58, 46, 36, 0.35);
+  --radius-pill: 999px;
+  --hairline: #E3DFD3;
+  --text-muted: #5D574E;
+  --text-faint: #8A8378;
+  --text-soft: #3E3A35;
+  --text-bright: #141312;
+  --btn-bg: #EDEAE0;
+  --btn-hover-bg: #E3DFD3;
+  --input-bg: #FFFFFF;
+  --kbd-bg: #F5F2EA;
+  --kbd-border: #D8D3C5;
+  --overlay-05: rgba(0, 0, 0, 0.045);
+  --overlay-10: rgba(0, 0, 0, 0.08);
+  --mono: var(--vscode-editor-font-family, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  --sans: "Inter", var(--vscode-chat-font-family, var(--vscode-font-family, system-ui, -apple-system, "Segoe UI", sans-serif));
+  --fs: var(--vscode-chat-font-size, 13px);
+  /* the --vscode-* stand-ins: inline rules fall back through these (menus, inputs, widget cards) */
+  --vscode-editor-background: #FAF9F5;
+  --vscode-foreground: #1F1E1D;
+  --vscode-descriptionForeground: #5D574E;
+  --vscode-errorForeground: #B02A1C;
+  --vscode-editorWidget-background: #F0EEE6;
+  --vscode-editorHoverWidget-border: rgba(0, 0, 0, 0.12);
+  --vscode-sideBar-background: #F0EEE6;
+  --vscode-widget-border: #E3DFD3;
+  --vscode-focusBorder: #C2410C;
+  --vscode-input-background: #FFFFFF;
+  --vscode-input-foreground: #1F1E1D;
+  --vscode-input-border: #D8D3C5;
+  --vscode-menu-background: #FFFFFF;
+  --vscode-menu-foreground: #1F1E1D;
+  --vscode-menu-selectionBackground: #F3E0D5;
+  --vscode-menu-selectionForeground: #1F1E1D;
+  --vscode-scrollbarSlider-background: rgba(90, 84, 74, 0.35);
+  --vscode-textLink-foreground: #B24A28;
+  --vscode-button-background: #C2410C;
+  --vscode-button-foreground: #FFF8F2;
+  --vscode-button-hoverBackground: #A93A0B;
+  --vscode-toolbar-hoverBackground: rgba(0, 0, 0, 0.06);
+}
+
 * { box-sizing: border-box; }
 
 html, body {
