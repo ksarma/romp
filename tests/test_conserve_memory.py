@@ -73,6 +73,20 @@ class BackendClose(unittest.TestCase):
         reg = sb.read_reg(Path(self.d), SID)
         self.assertTrue(reg.get("alive"), "the reg stays ALIVE — dormant, not killed; _ensure revives on demand")
 
+    def test_never_closes_a_timer_armed_session(self):
+        # the T148/769 seam, executed: ensure_scheduled revives any timer-armed threadless session
+        # every producer pass — if conserve closed one, the pair would loop close/revive forever
+        # (one respawn per sweep, the exact churn the user feared). The reg's sessionCrons is the
+        # SAME record ensure_scheduled reads, so conserve refusing on it can never drift from 769.
+        reg = sb.read_reg(Path(self.d), SID)
+        reg["sessionCrons"] = {"gen": 1, "crons": [{"id": "c1", "schedule": "0 * * * *"}]}
+        sb.write_reg(Path(self.d), SID, reg)
+        self.assertFalse(self.be.conserve_idle(SID), "armed timers pin the process — its CLI is the scheduler")
+        self.assertFalse(self.be.conserve_close(SID))
+        reg.pop("sessionCrons")
+        sb.write_reg(Path(self.d), SID, reg)
+        self.assertTrue(self.be.conserve_idle(SID), "…and disarming the timers frees it")
+
     def test_never_closes_work(self):
         self.s.inflight = 1
         self.assertFalse(self.be.conserve_idle(SID))
