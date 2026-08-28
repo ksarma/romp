@@ -17,7 +17,9 @@ const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kern
 const JUDGE = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "judge.py"), "utf8");
 
 test("the kernel ships the latch and the judge gate writes it model-aware", () => {
-  assert.match(KERNEL, /"judgeLimit": jd\._limit_down\(\),/);
+  assert.match(KERNEL, /"judgeLimit": _judge_limit_view\(\),/,
+    "the latch rides enriched — WHO the window touches joins it (2026-08-28)");
+  assert.match(KERNEL, /def _judge_limit_view\(\):/);
   assert.match(JUDGE, /_buckets = \["five_hour", "seven_day"\] \+ \(\["fable"\] if "fable" in str\(model\)\.lower\(\) else \[\]\)/,
     "the gated buckets follow the CALL'S model — a fable pin gates on the fable window");
   assert.match(JUDGE, /_limit_mark\(_b, _lim\.get\("pct"\), _lim\.get\("resets_at"\), model\)/);
@@ -39,4 +41,36 @@ test("the banner is build-once, acknowledges, and offers Opus only for the Fable
   assert.match(FEED, /paintJudgeLimit\(\);   \/\/ the usage-limit banner above the columns/,
     "painted on every feed render");
   assert.match(CSS, /\.judge-limit-banner \{/);
+});
+
+test("the banner names who the window actually touches — authoritative billing, fail-loud unknowns", () => {
+  // the judges bill ONE credential: card movement pauses board-wide, and ONLY the sessions billing
+  // this account rate-limit on their own turns (the user 2026-08-28). The kernel reads the CLI's own
+  // authLive report first, the picked intent second — the Billing tooltip's exact sources — and a
+  // session whose billing it cannot know is listed as unknown, never silently omitted.
+  assert.match(KERNEL, /b = str\(tm\.get\("authLive"\) or tm\.get\("auth"\) or ""\)/);
+  assert.match(KERNEL, /loginSessions=sorted\(billed\), billingUnknown=sorted\(unknown\)/);
+  assert.match(FEED, /Card analysis is paused board-wide/, "the scope is stated in the reader's terms");
+  assert.match(FEED, /These sessions bill this account, so their own turns are rate-limited too: "/);
+  assert.match(FEED, /const many = names\.length > 3;/, "inline when few…");
+  assert.match(FEED, /names\.slice\(0, 2\) : names;/, "…two named + a count when many");
+  assert.match(FEED, /billing unknown for " \+ unk\.join\(", "\)/, "the fail-loud row");
+});
+
+test("the '+N more' expand is keyed and delegated — click-safe across the per-push repaints", () => {
+  assert.match(FEED, /let jlSessOpen = false;/, "module state, survives re-renders");
+  assert.match(FEED, /if \(t && t\.dataset && t\.dataset\.act === "jl-more"\) \{ jlSessOpen = !jlSessOpen; paintJudgeLimit\(\); \}/,
+    "the toggle is rebuilt per paint, so its action rides the build-once banner root");
+});
+
+test("dismiss latches to THIS episode and re-arms only on a NEW one — no timers", () => {
+  assert.match(FEED, /const jlEpisodeKey = \(j: \{ bucket\?: string; resets_at\?: number \} \| null\) =>\s*\n\s*\(j\?\.bucket \|\| ""\) \+ ":" \+ \(j\?\.resets_at \|\| 0\);/,
+    "the episode's identity IS bucket + resets_at");
+  assert.match(FEED, /localStorage\.setItem\("romp:jlDismiss", jlEpisodeKey\(judgeLimit\)\)/,
+    "stored, so the dismissal survives re-renders and reloads for the episode's lifetime");
+  assert.match(FEED, /if \(dismissed === jlEpisodeKey\(judgeLimit\)\) \{ b\.style\.display = "none"; return; \}/,
+    "a NEW episode has a new key and shows again — the deciding event, never a timer");
+  assert.match(FEED, /paintJudgeLimit\(\);\s*\n\s*\};\s*\n\s*b\.appendChild\(x\);/,
+    "the hide is the immediate acknowledgment, on the build-once button");
+  assert.match(CSS, /\.judge-limit-banner \.jl-dismiss \{/);
 });

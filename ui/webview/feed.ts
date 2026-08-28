@@ -4191,7 +4191,14 @@ function feedToast(text: string) {
 // payload (self-expiring at the window reset, cleared by the next successful call). Built ONCE and
 // updated in place — the button must survive re-renders (the click-safety rule), and it
 // acknowledges immediately, then the latch clearing hides the banner on a later payload.
-let judgeLimit: { bucket?: string; resets_at?: number; model?: string } | null = null;
+let judgeLimit: { bucket?: string; resets_at?: number; model?: string;
+                  loginSessions?: string[]; billingUnknown?: string[] } | null = null;
+// The dismiss latches to THIS episode's identity — a NEW episode (different bucket or reset time)
+// is new information and re-shows the banner; nothing else does (event-based, no timers). Stored
+// in localStorage so the dismissal survives re-renders and reloads for the episode's lifetime.
+const jlEpisodeKey = (j: { bucket?: string; resets_at?: number } | null) =>
+  (j?.bucket || "") + ":" + (j?.resets_at || 0);
+let jlSessOpen = false;   // the session list's keyed expand — module state, survives re-renders
 function ensureJudgeLimit(): HTMLElement {
   let b = document.getElementById("judge-limit-banner");
   if (b) return b;
@@ -4208,6 +4215,24 @@ function ensureJudgeLimit(): HTMLElement {
     vscodeApi?.postMessage({ type: "setJudgeModel", model: "opus" });
   };
   b.appendChild(btn);
+  const sess = el("span", "jl-sess"); b.appendChild(sess);   // who the window actually touches (2026-08-28)
+  const x = el("button", "jl-dismiss") as HTMLButtonElement;
+  x.type = "button";
+  x.textContent = "✕";
+  x.title = "dismiss this notice — it returns only if a new limit episode starts";
+  x.onclick = () => {
+    // the hide IS the acknowledgment, immediate and local; the latch key makes it stick (build-once
+    // button — the listener survives every re-render, per the click-safety rule)
+    try { localStorage.setItem("romp:jlDismiss", jlEpisodeKey(judgeLimit)); } catch { /* storage blocked */ }
+    paintJudgeLimit();
+  };
+  b.appendChild(x);
+  // the "+N more" toggle is REBUILT per paint, so its action rides the build-once banner root
+  // (delegation to the stable ancestor — the same rule the tab strip follows)
+  b.addEventListener("click", (ev) => {
+    const t = ev.target as HTMLElement;
+    if (t && t.dataset && t.dataset.act === "jl-more") { jlSessOpen = !jlSessOpen; paintJudgeLimit(); }
+  });
   const list = document.getElementById("feed-list")!;
   list.parentElement!.insertBefore(b, list);
   return b;
@@ -4215,14 +4240,45 @@ function ensureJudgeLimit(): HTMLElement {
 function paintJudgeLimit(): void {
   const b = ensureJudgeLimit();
   if (!judgeLimit) { b.style.display = "none"; return; }
+  let dismissed = "";
+  try { dismissed = localStorage.getItem("romp:jlDismiss") || ""; } catch { /* storage blocked */ }
+  if (dismissed === jlEpisodeKey(judgeLimit)) { b.style.display = "none"; return; }
   const ra = judgeLimit.resets_at;
   const when = typeof ra === "number" && ra > 0
     ? new Date(ra * 1000).toTimeString().slice(0, 5) : "";
   const fable = judgeLimit.bucket === "fable";
   const txt = b.querySelector(".jl-text")!;
+  // board-wide is the honest scope: the judges bill one credential, so card movement pauses for
+  // every session's cards — running sessions keep going on their own billing (the user 2026-08-28)
   txt.textContent = fable
-    ? "Analysis is paused — the Fable usage window is full" + (when ? " (resets " + when + ")." : ".")
-    : "Analysis is paused — the account's usage window is full" + (when ? "; it resumes at " + when + "." : ".");
+    ? "Card analysis is paused board-wide — the Fable usage window is full" + (when ? " (resets " + when + ")." : ".")
+    : "Card analysis is paused board-wide — the account's usage window is full" + (when ? "; it resumes at " + when + "." : ".");
+  // …and WHO ELSE the window touches: only the sessions billing this account rate-limit on their
+  // own turns. Inline names when few; a keyed "+N more" expand when many (progressive disclosure);
+  // a session whose billing romp cannot read is listed as unknown, never silently omitted.
+  const sessEl = b.querySelector(".jl-sess") as HTMLElement;
+  sessEl.replaceChildren();
+  const names = judgeLimit.loginSessions || [];
+  const unk = judgeLimit.billingUnknown || [];
+  if (names.length) {
+    const many = names.length > 3;
+    const shown = many && !jlSessOpen ? names.slice(0, 2) : names;
+    sessEl.append("These sessions bill this account, so their own turns are rate-limited too: "
+      + shown.join(", "));
+    if (many) {
+      const more = el("span", "jl-more");
+      more.dataset.act = "jl-more";
+      more.textContent = jlSessOpen ? " · fewer" : " +" + (names.length - shown.length) + " more";
+      more.title = jlSessOpen ? "collapse the list" : "show every affected session";
+      sessEl.appendChild(more);
+    }
+  }
+  if (unk.length) {
+    const u = el("span", "jl-unknown");
+    u.textContent = (names.length ? " · " : "") + "billing unknown for " + unk.join(", ")
+      + " (their CLI doesn't report it)";
+    sessEl.appendChild(u);
+  }
   const btn = b.querySelector(".jl-switch") as HTMLButtonElement;
   btn.style.display = fable ? "" : "none";
   if (!judgeLimit || !fable) { btn.disabled = false; btn.textContent = "Run analysis on Opus until then"; }
