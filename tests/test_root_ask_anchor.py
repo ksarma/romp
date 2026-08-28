@@ -449,6 +449,22 @@ class PromptGates(unittest.TestCase):
                 self.assertIn("ticket", getattr(jd, name).lower(),
                               "a tracking id is jargon-gated like any coined name (T126)")
 
+    def test_delegation_mechanics_are_gated_in_every_mail_echo_surface(self):
+        for name in ("DISTILL_SYS", "BLOCK_BRIEF_SYS", "PLAN_SYS", "GIST_SYS", "COURIER_SYS"):
+            with self.subTest(prompt=name):
+                self.assertIn("parcel, lane, dispatch", getattr(jd, name),
+                              "the shipping ceremony is jargon like any coined name (T135)")
+
+    def test_the_prose_writers_fix_all_three_persons(self):
+        for name in ("DISTILL_SYS", "BLOCK_BRIEF_SYS"):
+            with self.subTest(prompt=name):
+                self.assertIn("'you' is the READER alone", getattr(jd, name),
+                              "the person contract, complete (T135 + its amendment)")
+                self.assertIn("including the one whose card this is", getattr(jd, name),
+                              "the card's own session is a third-person actor, never 'I'")
+                self.assertIn("is the SESSION speaking, never the reader", getattr(jd, name))
+                self.assertIn("survives only inside the reader's own quoted ask", getattr(jd, name))
+
     def test_the_prose_gates_key_on_the_user_ask_section(self):
         for name in ("DISTILL_SYS", "BLOCK_BRIEF_SYS"):
             with self.subTest(prompt=name):
