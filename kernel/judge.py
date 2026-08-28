@@ -1300,7 +1300,8 @@ GIST_SYS = (
     "settings'; 'the feed card recency tint'; 'why the parser drops compaction boundaries'; 'a regression "
     "test for the planner'.\n"
     "Keep the request's own vocabulary: never import a coined or internal name the request itself "
-    "does not use. A ticket-shaped lead token (T120, ABC-42) is an id, not the topic: name what "
+    "does not use. A ticket-shaped lead token (T120, ABC-42) is an id, not the topic, and "
+    "delegation mechanics (parcel, lane, dispatch) are process words, not the topic: name what "
     "the request is about instead.\n"
     "When the request rambles or bundles several things, name the single most salient topic. Output only "
     "the phrase.")
@@ -2017,7 +2018,8 @@ PLAN_SYS = (
     "guesses, say it once. Goal text speaks the requester's vocabulary: never a coined or internal "
     "name (an engine, a module, a codename, a team shorthand) unless the user's own message uses "
     "it; say what the work is in plain words. A ticket-shaped lead token in the message (T120, "
-    "ABC-42) is an id, not the ask: never open goal text with it. Most segments do one thing, but emit more ops when the segment actually did "
+    "ABC-42) is an id, not the ask, and delegation mechanics (parcel, lane, dispatch, handed off) "
+    "are process words, not the ask: goal text names the work itself. Most segments do one thing, but emit more ops when the segment actually did "
     "more (e.g. finished one goal and started another). Op kinds:\n"
     '- {\"why\",\"do\":\"mint\",\"text\":\"<outcome ≤10 words>\"}: a new top-level request from the '
     "user. Be selective: only a real new ask mints a top-level goal — but a **distinct deliverable** "
@@ -9764,7 +9766,15 @@ DISTILL_SYS = (
     "unless the <user-ask> itself uses it; gloss any internal noun you keep in plain words, and a "
     "noun you cannot explain from the material given stays out. A bare tracking id (T120, ABC-42: "
     "an opaque ticket token) is an internal name like any other: never open with one, and never "
-    "treat it as the work's proper name.\n\n"
+    "treat it as the work's proper name. So are the team's delegation mechanics: parcel, lane, "
+    "dispatch, claimed, handed off, report-back name the shipping ceremony, not the work; say "
+    "what happened to the work itself. And the persons are fixed: 'you' is the READER alone (the "
+    "person the work was ultimately for); every session or agent, including the one whose card "
+    "this is, appears as a named third-person actor or vanishes into an outcome-focused sentence; "
+    "and any 'you', 'your', 'I', 'my', or 'me' INSIDE the source material (a delegating request, "
+    "a session's own report, a note between sessions) is the SESSION speaking, never the reader "
+    "and never yourself. Recast such lines with explicit actors; source first or second person "
+    "survives only inside the reader's own quoted ask.\n\n"
     "When <work> contains a message the assistant wrote to the person as its finished report, a "
     "wrap-up addressed to them rather than to a teammate, condense that report as the takeaway's "
     "primary source: it was already written for their eyes, and it outranks your own reading of "
@@ -10052,7 +10062,15 @@ BLOCK_BRIEF_SYS = (
     "unless the <user-ask> itself uses it; gloss any internal noun you keep in plain words, and a "
     "noun you cannot explain from the material given stays out. A bare tracking id (T120, ABC-42: "
     "an opaque ticket token) is an internal name like any other: never open with one, and never "
-    "treat it as the work's proper name.\n\n"
+    "treat it as the work's proper name. So are the team's delegation mechanics: parcel, lane, "
+    "dispatch, claimed, handed off, report-back name the shipping ceremony, not the work; say "
+    "what happened to the work itself. And the persons are fixed: 'you' is the READER alone (the "
+    "person the work was ultimately for); every session or agent, including the one whose card "
+    "this is, appears as a named third-person actor or vanishes into an outcome-focused sentence; "
+    "and any 'you', 'your', 'I', 'my', or 'me' INSIDE the source material (a delegating request, "
+    "a session's own report, a note between sessions) is the SESSION speaking, never the reader "
+    "and never yourself. Recast such lines with explicit actors; source first or second person "
+    "survives only inside the reader's own quoted ask.\n\n"
     "When <work> contains a message the assistant wrote to the person about this decision, laid "
     "out for their eyes rather than a teammate's, condense it as the primary source; the owed "
     "decision still leads. Prefer sources in this order: that message, then the <user-ask>, then "
@@ -11055,7 +11073,8 @@ COURIER_SYS = (
     "(the outcome itself, no filler or stock AI phrasing, no em dashes). When the body names its "
     "subject by a coined or internal name, prefer the plain words around it: the outcome in words "
     "anyone can read. A ticket-shaped lead token in the body (T120, ABC-42) is an id, not the "
-    "outcome: never open text with it. Output only the JSON object.")
+    "outcome: never open text with it, and delegation mechanics (parcel, lane, dispatch, handed "
+    "off) are process words, not the outcome. Output only the JSON object.")
 
 
 def _seg_peer(seg):
