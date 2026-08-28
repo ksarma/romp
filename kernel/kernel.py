@@ -27880,9 +27880,16 @@ def _landing():
             "color:#9aa0a6;font:600 12px 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;"
             "padding:6px 0;display:flex;align-items:center;justify-content:center}"
             "#mtabs button.on{color:#4da4ff}"
+            # T158 (the user 2026-08-28, on their phone): the four pane switchers sat shoulder-to-shoulder
+            # while the action cluster had visibly more room — reallocate. Consecutive switchers gain an
+            # explicit gap (the freed width comes from the actions below), so their labels separate;
+            # attribute-selected so the divider/actions boundary stays untouched.
+            "#mtabs button[data-pane]+button[data-pane]{margin-left:8px}"
             # action buttons: dimmer + fixed-width so the four pane tabs keep the room; thin divider between
             "#mtabs .mtabs-div{flex:0 0 1px;background:#303031;margin:5px 0}"
-            "#mtabs button.mact{flex:0 0 auto;padding:6px 10px;color:#7d848b;font-size:17px;line-height:1}"
+            # 7px side padding (was 10 — the T158 smash): an 18px glyph still gives a 32px-wide target,
+            # horizontal-only so the bar's height and every tap height stay exactly as they were
+            "#mtabs button.mact{flex:0 0 auto;padding:6px 7px;color:#7d848b;font-size:17px;line-height:1}"
             "#mtabs button.mact svg{display:block}"
             # the push bell's states: on = the romp accent (a selected toggle, not a status); busy =
             # dimmed, the immediate tap acknowledgement while the subscribe round-trip runs. The
