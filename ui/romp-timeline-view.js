@@ -3186,7 +3186,12 @@ class TimelinePanel {
           }
           // the color — the identity-palette swatches inline in the row's last column
           const colCell = tgrid.createDiv();
-          colCell.setAttribute('style', 'display:flex;gap:6px;align-items:center;flex-wrap:wrap;');
+          // balanced swatch rows: ceil-split (T164) — width-driven flex wrap gave arbitrary 5/5/2
+          // runs; inline styles are this file's convention (it also runs inside Obsidian)
+          const swN = (this._palette && this._palette.length) || 1;
+          const swCols = Math.ceil(swN / Math.ceil(swN / 6));
+          colCell.setAttribute('style', 'display:grid;grid-template-columns:repeat(' + swCols
+            + ',14px);gap:6px;align-items:center;');
           if (editable) {
             for (const c of (this._palette && this._palette.length ? this._palette : [tc])) {
               const sw = colCell.createSpan();

@@ -657,7 +657,7 @@ EOF
     _romp_cmd "romp sessions [--json]"     -            "List the fleet with each session's state, colours and backend"
     _romp_cmd "romp fork <parent> <name>"  -            "Branch a session into a new parallel one (parent untouched; --at <uuid> picks the cut)"
     _romp_cmd "romp rename <session> <name>" -          "Rename a session (uuid-keyed: mailboxes, goals and history all follow)"
-    _romp_cmd "romp color <session> [<#hex|1-9>]" -     "Recolor a session's identity swatch (palette hex or slot 1-9; no color arg reads bg/fg)"
+    _romp_cmd "romp color <session> [<#hex|slot>]" -    "Recolor a session's identity swatch (palette hex or slot number; no color arg reads bg/fg)"
     _romp_cmd "romp tag [<name>] [--add ...]" -         "Session tags: bare lists them; <name> with --add/--remove/--color/--delete merges one (a tagged session leaves the no-tags view); --host <kernel> edits an attached kernel's tag; --rename renames"
     _romp_cmd "romp watch-pr <n> [--repo o/r]" -        "One mail here when the PR lands or fails — the kernel owns the watch, so it survives restarts (replaces the mortal shell loop)"
     _romp_cmd "romp watch --cmd '<pred>' [...]" -       "One mail when the command exits 0 (or the timeout passes) — kernel-owned like watch-pr, for ANY background wait (--every Ns --timeout Ns --note '...' | --list | --cancel <id>)"
@@ -871,7 +871,7 @@ fi
 # a manager keeps its worker roster as a session group, all one identity color): the kernel's
 # POST /color, the exact sibling of `romp rename` — a names-registry write, so a dormant session
 # recolors by sid. With no color argument it READS: the session's current bg and fg off
-# GET /sessions, tab-separated, for scripts. A slot digit 1-9 resolves HERE against the
+# GET /sessions, tab-separated, for scripts. A slot number resolves HERE against the
 # STATE/palette-colors mirror the kernel rewrites at boot — the same file the launcher assigns
 # from, so "slot 3" is the same hex at recolor time as at launch time; a missing mirror is a loud
 # error, never a silent fall-back to the hardcoded default set the gear may have switched away
@@ -880,7 +880,7 @@ fi
 # stored half-styled.
 if [[ "${1:-}" == "color" ]]; then
     shift
-    _cl_usage="usage: romp color <session> [<#hex|1-9>]"
+    _cl_usage="usage: romp color <session> [<#hex|slot>]"
     if [[ $# -lt 1 || $# -gt 2 || "$1" == -* || ( $# -eq 2 && -z "$2" ) ]]; then echo "$_cl_usage" >&2; exit 2; fi
     _tok="$(_romp_token)"
     _kport="${ROMP_KERNEL_PORT:-29855}"
@@ -908,7 +908,9 @@ for r in rows:
         exit 0
     fi
     _cl_bg="$2"
-    if [[ "$_cl_bg" =~ ^[1-9]$ ]]; then
+    if [[ "$_cl_bg" =~ ^[1-9][0-9]?$ ]]; then    # slots past 9 exist since the palette grew to 12
+        #                                            (T164); the awk read below stays the loud floor
+        #                                            for a slot the active set lacks
         _palfile="${ROMP_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/romp}/palette-colors"
         if [[ ! -r "$_palfile" ]]; then
             echo "romp color: no palette mirror at $_palfile — the kernel writes it at boot (is romp running?)" >&2

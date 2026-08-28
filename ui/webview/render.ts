@@ -4822,6 +4822,11 @@ function showTabMenu(e: MouseEvent, id: string) {
     const sNow = sessions.get(id);
     const cur = (sNow && sNow.color ? sNow.color.bg : "").toLowerCase();
     const row = el("div", "ctx-colors");
+    // balanced swatch rows (the user 2026-08-28, T164): for n swatches, the fewest rows that keep
+    // each row within the menu-friendly cap, split ceil-evenly — 12 reads 6+6, 9 reads 5+4, a
+    // future 13 reads 7+6; the CSS keeps repeat(5) as the no-JS fallback
+    const swRows = Math.ceil(paletteColors.length / 6);
+    row.style.gridTemplateColumns = "repeat(" + Math.ceil(paletteColors.length / swRows) + ", 18px)";
     for (const bg of paletteColors) {
       const sw = el("button", "ctx-swatch" + (bg.toLowerCase() === cur ? " sel" : ""));
       sw.style.background = bg;
