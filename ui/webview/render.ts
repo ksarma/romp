@@ -4972,10 +4972,22 @@ function showTabMenu(e: MouseEvent, id: string) {
       }
       if (dirty) postViews(nv);
     };
-    tagsItem.addEventListener("click", (ev) => {
-      ev.stopPropagation();
+    // HOVER-INTENT open (T163, the user 2026-08-28: hovering down to Tags should open the submenu
+    // without another click): the feed's 120ms intent debounce — enough to skip a graze, never a
+    // wait. Click still opens instantly (and focuses the input; a hover-open must NOT steal the
+    // keyboard). Leaving is tolerant the way native menus are: the same 120ms lets the pointer
+    // cross the gap into the submenu; entering either surface cancels the close, leaving BOTH
+    // closes. Timers here are gesture DEFINITIONS (hover intent), not state proxies.
+    const HOVER_INTENT_MS = 120;
+    let hoverOpenT: number | null = null;
+    let hoverCloseT: number | null = null;
+    const cancelHoverTimers = () => {
+      if (hoverOpenT != null) { clearTimeout(hoverOpenT); hoverOpenT = null; }
+      if (hoverCloseT != null) { clearTimeout(hoverCloseT); hoverCloseT = null; }
+    };
+    const openTagsFly = (focusInput: boolean) => {
       const openFly = menu.querySelector(".ctx-sub-tags");
-      if (openFly) { openFly.remove(); return; }                 // second click folds the flyout
+      if (openFly) return openFly as HTMLElement;
       menu.querySelector(".ctx-sub")?.remove();                  // one flyout at a time (Billing's rule)
       const sub = el("div", "ctx-menu ctx-sub ctx-sub-tags");
       const build = () => {
@@ -5027,12 +5039,51 @@ function showTabMenu(e: MouseEvent, id: string) {
         sub.appendChild(nrow);
       };
       build();
+      // Configure tags… at the foot, behind the divider (T163): the ONE route the tag-lens menus
+      // use — openTagsDialog — never a copy of the dialog wiring.
+      sub.appendChild(el("div", "ctx-sep"));
+      const cfg = el("div", "ctx-item ctx-item-configtags");
+      const cfgBody = el("span", "ctx-item-body");
+      const cfgL = el("span", "ctx-item-label"); cfgL.textContent = "Configure tags…"; cfgBody.appendChild(cfgL);
+      cfg.appendChild(cfgBody);
+      cfg.addEventListener("click", (e2) => {
+        e2.stopPropagation(); dismissTabMenu();
+        vscodeApi?.postMessage({ type: "openTagsDialog" });
+      });
+      sub.appendChild(cfg);
       menu.appendChild(sub);
       const ir = tagsItem.getBoundingClientRect();
       const sr = sub.getBoundingClientRect();
-      sub.style.left = Math.max(0, Math.min(ir.right + 2, window.innerWidth - sr.width - 4)) + "px";
+      // the side rule (the model-version submenus): PREFER right; fall LEFT only when the right
+      // edge would clip — never slide over the row
+      if (ir.right + 2 + sr.width <= window.innerWidth - 8) sub.style.left = Math.round(ir.right + 2) + "px";
+      else sub.style.left = Math.max(8, Math.round(ir.left) - sr.width - 2) + "px";
       sub.style.top = Math.max(0, Math.min(ir.top, window.innerHeight - sr.height - 4)) + "px";
-      (sub.querySelector(".ctx-tag-input") as HTMLInputElement | null)?.focus();
+      if (focusInput) (sub.querySelector(".ctx-tag-input") as HTMLInputElement | null)?.focus();
+      // leave-tolerance: entering either surface cancels the pending close; leaving both arms it
+      sub.addEventListener("pointerenter", cancelHoverTimers);
+      sub.addEventListener("pointerleave", armHoverClose);
+      return sub;
+    };
+    const armHoverClose = () => {
+      cancelHoverTimers();
+      hoverCloseT = window.setTimeout(() => {
+        hoverCloseT = null;
+        menu.querySelector(".ctx-sub-tags")?.remove();
+      }, HOVER_INTENT_MS);
+    };
+    tagsItem.addEventListener("pointerenter", () => {
+      cancelHoverTimers();
+      if (menu.querySelector(".ctx-sub-tags")) return;           // already open — nothing to intend
+      hoverOpenT = window.setTimeout(() => { hoverOpenT = null; openTagsFly(false); }, HOVER_INTENT_MS);
+    });
+    tagsItem.addEventListener("pointerleave", armHoverClose);
+    tagsItem.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      cancelHoverTimers();
+      const openFly = menu.querySelector(".ctx-sub-tags");
+      if (openFly) { openFly.remove(); return; }                 // second click folds the flyout
+      openTagsFly(true);
     });
     menu.appendChild(tagsItem);
   }
