@@ -1,7 +1,8 @@
 // The chat-tab appearance themes (T113, tightened by T115, tuned by T118 — the user 2026-08-27):
 // CLASSIC, the default, is the PRE-720 tab strip modulo exactly THREE sanctioned deltas —
 // typography (the strip inherits the global Inter/type ladder), T123's 1px hover-gray rest
-// outline, T118's 0.9 faded-label scale, T125's strip band, and T134's per-row hairlines. Everything else reads pre-720: NO identity tint at any state, the thick 1.5px
+// outline, T118's 0.9 faded-label scale, and T134's per-row hairlines (the T125 band was
+// ruled OUT by T141 — one dark background everywhere). Everything else reads pre-720: NO identity tint at any state, the thick 1.5px
 // selected ring, the neutral line under the strip, gap 0. T115 verified the baseline equality by
 // pixel-diffing a real pre-720 build: with fonts normalized, zero differing pixels outside the
 // (out-of-scope) tag-controls box — a re-run must subtract the two T118 washes the same way it
@@ -57,13 +58,15 @@ test("Classic: faded labels brighten 10% — one tunable knob, Yatharth keeps hi
   assert.match(RENDER, /const t = Math\.min\(0\.85, \(Lc - Lt\) \/ \(Lc - Lb\)\) \* scale;/);
 });
 
-test("Classic: resting tab bodies paint the BASELINE color — the band never lightens them (T136)", () => {
-  // The user (2026-08-27): every tab body read lighter than four days before — and the harness
-  // proved it: the T125 band showed through transparent bodies, rgb(41,41,41) vs the pre-720
-  // baseline's rgb(30,30,30). The explicit body restores byte-equality (verified) while the band
-  // keeps reading between/around tabs. Same :not chain as the retired wash: hover/active/blocked
-  // own their fills, + is not a session tab, Yatharth untouched via the body scope.
-  assert.match(CSS, /^body:not\(\.chat-theme-yatharth\) \.tab:not\(\.tab-blocked\):not\(\.active\):not\(:hover\):not\(\.tab-add\) \{ background: var\(--vscode-sideBar-background, var\(--bg\)\); \}$/m);
+test("Classic: ONE dark background — no band, no explicit body fill, baseline transparency (T141)", () => {
+  // The user (2026-08-28, explicit ruling): the lighter gray behind/around the tabs goes; the
+  // strip's plane is the page dark, same as the feed behind its cards. The T125/T128 band and the
+  // T136 body rule (which existed only to fight the band showing through) are both out — resting
+  // tabs read the dark plane through baseline transparency again. Grounding = row lines + outlines.
+  assert.doesNotMatch(CSS, /#tabbar \{ background: linear-gradient/, "no band plane on the strip");
+  assert.doesNotMatch(CSS, /\.tab:not\(\.tab-blocked\):not\(\.active\):not\(:hover\):not\(\.tab-add\) \{ background:/,
+    "no explicit rest-body fill either — baseline transparency over the dark plane");
+  assert.match(CSS, /^  background: var\(--vscode-sideBar-background, var\(--bg\)\);$/m, "the strip's one background");
 });
 
 test("Classic: the rest OUTLINE — 1px in the hover gray, no fill, states stand down (T123)", () => {
@@ -99,8 +102,7 @@ test("Classic: the strip is a BAND — a 3% plane over the page bg, closed by th
   // T128 triage (the user 2026-08-27: on their dark theme 3% read as nothing at a glance — the
   // 3/5/6% eyeball comparison sits in their drops, and the placement of the ONE hairline at the
   // strip's bottom edge stands per the precedent survey, the user's alone to overturn).
-  assert.match(CSS, /^body:not\(\.chat-theme-yatharth\) #tabbar \{ background: linear-gradient\(rgba\(255, 255, 255, 0\.05\), rgba\(255, 255, 255, 0\.05\)\), var\(--vscode-sideBar-background, var\(--bg\)\); \}$/m,
-    "the band: one Classic-scoped background line, tunable in place; Yatharth keeps his merged look");
+
   assert.match(CSS, /border-bottom: 1px solid var\(--box-border\);/, "…closed by the ONE existing hairline at the band's bottom edge");
 });
 
