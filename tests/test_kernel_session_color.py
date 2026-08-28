@@ -41,11 +41,22 @@ class SessionColor(unittest.TestCase):
         km.jd.STATE = self._state
         km._pal_cache.update({"name": km.pal.DEFAULT, "mt": None})
 
-    def test_active_palette_has_nine_colors_and_a_fg_word_each(self):
-        # the SAME set the tmux launcher / SDK backend assign from — romp_palette is the single source
-        self.assertEqual(len(km.pal.colors(km._palette_name())), 9)
-        self.assertEqual(len(km.pal.fgs(km._palette_name())), 9)
-        self.assertIn("#1EA1EB", km.pal.colors(km._palette_name()))
+    def test_active_palette_shape_and_the_rose_slot(self):
+        # the SAME set the tmux launcher / SDK backend assign from — romp_palette is the single
+        # source. The romp set grows APPEND-ONLY (slot 9 = rose #E0629C, the user 2026-08-28), so
+        # the pin is shape + the stable prefix, never a fixed nine.
+        bgs, fgs = km.pal.colors(km._palette_name()), km.pal.fgs(km._palette_name())
+        self.assertEqual(len(bgs), len(fgs))
+        self.assertGreaterEqual(len(bgs), 9)
+        self.assertTrue(all(f in ("black", "white") for f in fgs))
+        self.assertEqual(bgs[:2], ["#1EA1EB", "#54B204"], "existing assignments never shift")
+        self.assertEqual((bgs[9], fgs[9]), ("#E0629C", "white"))
+        # the fg contrast floor the set's whites all clear: WCAG relative-luminance contrast >= 3.0
+        r, g, b = (int("E0629C"[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
+        lin = lambda c: c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+        L = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
+        self.assertGreaterEqual((1.0 + 0.05) / (L + 0.05), 3.0, "white text clears the set's floor")
+        self.assertIn("#1EA1EB", bgs)
 
     def test_set_color_rewrites_bg_and_fg_preserving_name_and_cwd(self):
         (self.names / SID).write_text("mysess\t/proj/TESTHOST/app\t#1EA1EB\twhite\n")

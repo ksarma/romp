@@ -22,7 +22,7 @@ os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XD
 pal = SourceFileLoader("romp_palette", os.path.join(BIN, "romp_palette.py")).load_module()
 
 ROMP_BG = ["#1EA1EB", "#54B204", "#4EA8A9", "#DD42FF", "#E87221",
-           "#98998A", "#F85B5A", "#F9D849", "#9088F0"]
+           "#98998A", "#F85B5A", "#F9D849", "#9088F0", "#E0629C"]
 
 
 def _lum(h):
@@ -34,11 +34,13 @@ def _lum(h):
 
 
 class PaletteShapes(unittest.TestCase):
-    def test_every_palette_is_nine_unique_hex_colors_with_fg_words(self):
+    def test_every_palette_is_at_least_nine_unique_hex_colors_with_fg_words(self):
+        # the romp set grows APPEND-ONLY past nine (rose #E0629C, the user 2026-08-28; more
+        # additions expected) — the invariant is shape + uniqueness + the nine-slot floor
         for name, p in pal.PALETTES.items():
-            self.assertEqual(len(p["bg"]), 9, name)
-            self.assertEqual(len(p["fg"]), 9, name)
-            self.assertEqual(len(set(p["bg"])), 9, "%s: duplicate swatch" % name)
+            self.assertGreaterEqual(len(p["bg"]), 9, name)
+            self.assertEqual(len(p["fg"]), len(p["bg"]), name)
+            self.assertEqual(len(set(p["bg"])), len(p["bg"]), "%s: duplicate swatch" % name)
             self.assertTrue(p["label"], name)
             for bg in p["bg"]:
                 self.assertRegex(bg, r"^#[0-9A-F]{6}$", name)
@@ -85,7 +87,7 @@ class PaletteLookups(unittest.TestCase):
 
     def test_colors_and_fgs_fall_back_to_the_default_set(self):
         self.assertEqual(pal.colors("no-such-palette"), ROMP_BG)
-        self.assertEqual(len(pal.fgs("no-such-palette")), 9)
+        self.assertEqual(len(pal.fgs("no-such-palette")), len(ROMP_BG))
 
 
 class ActiveName(unittest.TestCase):

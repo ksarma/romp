@@ -17,7 +17,7 @@ Alongside romp's own set: the best categorical schemes from Fabio Crameri's
 Scientific colour maps and from cmocean (the user 2026-07-12). Crameri's "S"
 palettes order their samples for maximum adjacent distinction but include
 near-black / near-white entries (built for white paper figures), so each set
-here is CURATED to 9 mid-tone, mutually distinct colors that hold up as
+here is CURATED to at least 9 mid-tone, mutually distinct colors that hold up as
 identity chrome on the dark UI. batlowS — Crameri's flagship categorical — was
 auditioned and dropped: a sequential map's gamut collapses into look-alike
 olives and salmons at 9 swatches. cmocean has no categorical maps; "phase" is
@@ -35,10 +35,15 @@ DEFAULT = "romp"
 PALETTES = {
     "romp": {
         "label": "romp",
+        # slot 9 ROSE #E0629C (the user's explicit pick, 2026-08-28): lightness-matched to the
+        # band, zero new close pairs under normal/protan/deutan/tritan (validated before the ask);
+        # APPENDED so existing slot assignments never shift. White fg per the set's own convention
+        # for saturated warm mids (its neighbors #F85B5A and #DD42FF wear white at comparable
+        # contrast). Three more additions are expected here — append-only, same rule.
         "bg": ["#1EA1EB", "#54B204", "#4EA8A9", "#DD42FF", "#E87221",
-               "#98998A", "#F85B5A", "#F9D849", "#9088F0"],
+               "#98998A", "#F85B5A", "#F9D849", "#9088F0", "#E0629C"],
         "fg": ["white", "black", "white", "white", "black",
-               "black", "white", "black", "black"],
+               "black", "white", "black", "black", "white"],
     },
     "phase": {
         "label": "phase — cmocean",
