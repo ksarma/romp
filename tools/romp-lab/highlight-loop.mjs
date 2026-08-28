@@ -164,6 +164,45 @@ await page.waitForFunction(() => !document.querySelector("mark.cmt-hl.busy"), un
   .catch(async () => check("4b-follow-up-clears-on-its-reply", false, "still busy after the follow-up's reply"));
 await shot("followup-settled");
 
+// PHASE 4e (T138, permanent): a thread's running turn can be INTERRUPTED from the popover — the
+// stop square renders beside the working chip, targets the THREAD's own session, the turn ends
+// mid-stream, the pulse clears on the gesture (no reply record is coming), and the partial thread
+// renders honestly (whatever landed stays; nothing poses as a full answer).
+await page.fill(".cmt-pop .cmt-input",
+  "Count slowly: write one line per number from 1 to 40, each on its own line, no tools.");
+await page.keyboard.press("Enter");
+await page.waitForTimeout(250);
+check("4e-relatch-for-interrupt-run", (await busy()) === true);
+// the stop affordance must appear with the working chip in the popover statusline
+await page.waitForSelector('.cmt-pop .cmt-state .stop-btn[data-act="cmtinterrupt"]', { timeout: 60000 })
+  .then(() => check("4e-stop-affordance-renders", true))
+  .catch(() => check("4e-stop-affordance-renders", false, "no stop square in the popover's working state"));
+await shot("interrupt-affordance");
+// interrupt MID-STREAM: wait for streaming text to start, then click the popover's own stop
+await page.waitForFunction(() => {
+  const msgs = document.querySelector(".cmt-pop .cmt-msgs");
+  return msgs && /\b3\b/.test(msgs.textContent || "");
+}, undefined, { timeout: 120000 }).catch(() => null);
+const hadStop = await page.evaluate(() => {
+  const b = document.querySelector('.cmt-pop .cmt-state .stop-btn[data-act="cmtinterrupt"]');
+  if (!b) return false;
+  b.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  return true;
+});
+check("4e-stop-clicked", hadStop, "the stop square vanished before the click");
+// the ack is instant: the chip flips to Interrupting… without waiting on the kernel
+const acked = await page.evaluate(() => !!document.querySelector(".cmt-pop .cmt-state .chip-interrupting"));
+check("4e-instant-ack", acked, "no Interrupting… chip right after the click");
+// the pulse clears on the GESTURE — no reply record is coming; never hangs green
+await page.waitForFunction(() => !document.querySelector("mark.cmt-hl.busy"), undefined, { timeout: 12000 })
+  .then(() => check("4e-pulse-clears-on-interrupt", true))
+  .catch(() => check("4e-pulse-clears-on-interrupt", false, "pulse still green after the interrupt"));
+// the turn actually ENDS on the thread's CLI: the popover chip leaves working within a few pushes
+await page.waitForFunction(() => !document.querySelector(".cmt-pop .cmt-state .chip-working"), undefined, { timeout: 60000 })
+  .then(() => check("4e-turn-ends", true))
+  .catch(() => check("4e-turn-ends", false, "thread still working 60s after the interrupt"));
+await shot("interrupted-settled");
+
 // PHASE 5: nothing sticks — sample well past several pushes
 await page.waitForTimeout(10000);
 check("5-nothing-sticks", (await busy()) === false, "busy after 10s quiet");

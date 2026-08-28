@@ -513,7 +513,9 @@ test("busy latches at the SEND gesture and clears exactly on the reply-arrived r
     + "mid-turn interim (the specimen's 'checking…' text) must never clear the pulse early. "
     + "threadBusy on the CLEAR side only delays; the latch side never re-derives from state.");
   // the mark's predicate: the latch, or (post-reload) the records' own owed reading; never state
-  assert.match(UI, /return cmtAwaitBase\.has\(th\.tid\) \|\| replyOwed\(th\);/);
+  assert.match(UI, /if \(cmtAwaitBase\.has\(th\.tid\)\) return true;/);
+  assert.match(UI, /return replyOwed\(th\) && !cmtInterrupted\.has\(th\.tid\);/,
+    "the owed arm carries the T138 stop tombstone — an interrupted send owes nothing until the NEXT send");
   assert.match(UI, /if \(th\.status !== "open" \|\| !!th\.error \|\| threadStuck\(th\.state\)\) return false;/);
   // the push-count proxy is GONE root and branch
   assert.doesNotMatch(UI, /settledPushes|commentBusyLatch|latchBusy|SETTLE_CONFIRM_PUSHES/);
@@ -612,4 +614,38 @@ test("the parity bundle (2026-08-26): dividers, owner-scoped in-turn controls, t
   assert.match(UI, /function owningSidOf\(el0: HTMLElement \| null\): string \| null \{/);
   assert.match(UI, /\{ type: "cancelQueued", id: owningSidOf\(el\), md: qmd \}/);
   assert.match(UI, /\{ type: "dismissDialog", id: owningSidOf\(dismiss\) \}/);
+});
+
+test("the thread's running turn offers the chat's stop affordance, owner-scoped to the THREAD (T138)", () => {
+  // the user 2026-08-27: threads couldn't be interrupted from the UI at all — diagnosis (a), the
+  // affordance was simply absent from the popover statusline (the chat's stopButton never had a
+  // popover twin). The fix rides the stable body delegate (this statusline rebuilds per comments
+  // frame — press-safety) and pins the target to the thread's own session, never the active tab.
+  const at = UI.indexOf("function cmtStateChip(");
+  const chip = UI.slice(at, UI.indexOf("\n}", at));
+  assert.match(chip, /b\.dataset\.act = "cmtinterrupt";/);
+  assert.match(chip, /b\.dataset\.sid = th\.tid;/, "the thread's OWN sid rides the button");
+  assert.match(chip, /wrap\.append\(chip, timer, stopBtn\(\)\);/, "working offers it");
+  assert.match(chip, /wrap\.append\(chip, stopBtn\(\)\);/, "retrying offers it");
+});
+
+test("the popover interrupt posts the THREAD sid, clears the send-latch on the gesture, and acks instantly", () => {
+  const at = UI.indexOf("cmtinterrupt: (elx) => {");
+  assert.ok(at > 0, "the delegated handler exists (a direct listener would die in the per-frame rebuild)");
+  const body = UI.slice(at, UI.indexOf("},", at));
+  assert.match(body, /const sid = \(elx as HTMLElement\)\.dataset\.sid;/);
+  assert.match(body, /vscodeApi\.postMessage\(\{ type: "interrupt", id: sid \}\);/);
+  assert.ok(!body.includes("activeId"), "never the active tab — the owner-scoping class queued-x/Retry were fixed for");
+  // T102's latch contract at the interrupt edge: the exchange ends with NO reply record coming, so
+  // the pulse clears on the gesture itself — the deciding event — not on a reply that never lands.
+  assert.match(body, /cmtAwaitBase\.delete\(sid\);/);
+  // …and the OWED arm stands down too (lab phase 4e caught it: replyOwed's trailing-user shape held
+  // the mark green forever after a stop). The tombstone is record-count-keyed, never a clock, and a
+  // fresh send retires it (re-owed).
+  assert.match(body, /cmtInterrupted\.add\(sid\);/);
+  assert.match(UI, /return replyOwed\(th\) && !cmtInterrupted\.has\(th\.tid\);/,
+    "gesture-pair tombstone: stop sets it, ONLY the next send clears it — the CLI files the interrupt "
+    + "as a trailing user-kind record, so any record-shape re-derivation would re-fire (lab-caught)");
+  assert.match(UI, /cmtInterrupted\.delete\(cur\.th\.tid\);/);
+  assert.match(body, /chip chip-interrupting/, "instant acknowledgment: the chip flips before any kernel round-trip");
 });
