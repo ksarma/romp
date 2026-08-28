@@ -1938,7 +1938,7 @@ function eventUnitIndex(s: Session): Int32Array {
   const items = displayItems(s);
   for (let u = 0; u < items.length; u++) {
     const it = items[u];
-    if (it.kind === "toolgroup") { for (const i of it.indices) map[i] = u; }
+    if (it.kind === "toolgroup" || it.kind === "retrygroup") { for (const i of it.indices) map[i] = u; }
     else map[it.index] = u;
   }
   return map;
@@ -6714,20 +6714,22 @@ function fillCommentMsgs(list: HTMLElement, th: CommentThread, sid: string): voi
         const dv = dayDividerFor(dayOpen, prev);
         if (dv) list.appendChild(dv);
       }
-      if (it.kind === "toolgroup") {
-        const tools = it.indices.map((ix) => evs[ix]) as Extract<ChatEvent, { kind: "tool" }>[];
-        const key = toolGroupKey(tools[0]);
+      if (it.kind === "toolgroup" || it.kind === "retrygroup") {
+        const run = it.indices.map((ix) => evs[ix]);
+        const key = it.kind === "toolgroup" ? toolGroupKey(run[0]) : retryGroupKey(run[0]);
         const open = expandedGroups.has(key);
-        list.appendChild(renderToolGroup(tools, prev, key, open));
+        list.appendChild(it.kind === "toolgroup"
+          ? renderToolGroup(run as Extract<ChatEvent, { kind: "tool" }>[], prev, key, open)
+          : renderRetryGroup(run as Extract<ChatEvent, { kind: "retried" }>[], prev, key, open));
         if (open) {
-          it.indices.forEach((ix, j) => {   // the tools only — it.indices already excludes thinking
+          it.indices.forEach((ix, j) => {   // the run's own members — it.indices already excludes thinking
             const child = renderEvent(evs[ix], prev, turnWorkedSecs(evs, ix, thWorking));
             child.classList.add("tg-child"); if (j === it.indices.length - 1) child.classList.add("tg-last");
             list.appendChild(child);
             const ep = eventEpoch(evs[ix]); if (ep != null) prev = ep;
           });
         } else {
-          const ep = eventEpoch(tools[tools.length - 1]); if (ep != null) prev = ep;
+          const ep = eventEpoch(run[run.length - 1]); if (ep != null) prev = ep;
         }
         continue;
       }
@@ -7661,7 +7663,7 @@ function scrollToAnchor(uuid: string): boolean {
                                        || (((e as { settleUuids?: string[] }).settleUuids || []).includes(uuid))) : -1;
     if (s && idx >= 0) {
       const items = displayItems(s);
-      let u = items.findIndex((it) => it.kind === "toolgroup" ? it.indices.includes(idx) : it.index === idx);
+      let u = items.findIndex((it) => it.kind === "toolgroup" || it.kind === "retrygroup" ? it.indices.includes(idx) : it.index === idx);
       if (u < 0) u = Math.max(0, items.findIndex((it) => itemFirstEvent(it) >= idx));
       // The anchor can live INSIDE a collapsed tool run: the folded line carries only the run's FIRST
       // uuid, so the re-render below could never surface a mid-run member — the click honest-failed
@@ -7671,6 +7673,8 @@ function scrollToAnchor(uuid: string): boolean {
       const hit = items[u];
       if (hit && hit.kind === "toolgroup" && hit.indices.includes(idx))
         expandedGroups.add(toolGroupKey(s.events[hit.indices[0]]));
+      if (hit && hit.kind === "retrygroup" && hit.indices.includes(idx))
+        expandedGroups.add(retryGroupKey(s.events[hit.indices[0]]));
       const working = s.status.state === "working" || s.status.state === "compacting";
       renderWindowItems(v, s, items, Math.max(0, u - WINDOW_RADIUS), Math.min(items.length, u + WINDOW_RADIUS), working);
       // Re-query with the SAME three selectors the first lookup used. data-mids was missing here, so an
@@ -7752,7 +7756,7 @@ function landNearestMoment(t: number): boolean {
   if (best < 0) return false;
   const uuid = (s.events[best] as { uuid?: string }).uuid || "";
   const items = displayItems(s);
-  let u = items.findIndex((it) => it.kind === "toolgroup" ? it.indices.includes(best) : it.index === best);
+  let u = items.findIndex((it) => it.kind === "toolgroup" || it.kind === "retrygroup" ? it.indices.includes(best) : it.index === best);
   if (u < 0) u = Math.max(0, items.findIndex((it) => itemFirstEvent(it) >= best));
   const working = s.status.state === "working" || s.status.state === "compacting";
   renderWindowItems(v, s, items, Math.max(0, u - WINDOW_RADIUS), Math.min(items.length, u + WINDOW_RADIUS), working);
@@ -8037,7 +8041,7 @@ function displayItems(s: Session): DisplayItem[] {
   }
   return compactDisplay(s.events.map((e) => e.kind), s.events.map((e) => e.kind === "tool" ? e.name : undefined));
 }
-function itemFirstEvent(it: DisplayItem): number { return it.kind === "toolgroup" ? it.indices[0] : it.index; }
+function itemFirstEvent(it: DisplayItem): number { return it.kind === "toolgroup" || it.kind === "retrygroup" ? it.indices[0] : it.index; }
 
 // The display-unit index of the most recent compaction boundary in the loaded events, or 0 if none. The
 // default render window opens at (never below) this unit so pre-compaction history is scrubbed from the
@@ -8076,6 +8080,19 @@ function appendItem(v: View, s: Session, items: DisplayItem[], u: number, prevEp
       // everywhere, so the expansion must too: iterate it.indices (the tools only), NOT the contiguous
       // start..end span, which would surface the thinking that sat between the tools (the user 2026-06-29).
       // it.indices already excludes thinking — compactDisplay skipped it while building the run.
+      it.indices.forEach((i, j) => {
+        const child = renderEvent(s.events[i], prevEpoch, turnWorkedSecs(s.events, i, working));
+        child.classList.add("tg-child"); if (j === it.indices.length - 1) child.classList.add("tg-last");
+        v.el.appendChild(tag(child)); adv(i);
+      });
+    }
+  } else if (it.kind === "retrygroup") {
+    const notes = it.indices.map((i) => s.events[i]) as Extract<ChatEvent, { kind: "retried" }>[];
+    const key = retryGroupKey(notes[0]);
+    const open = expandedGroups.has(key);
+    v.el.appendChild(tag(renderRetryGroup(notes, prevEpoch, key, open)));
+    adv(it.indices[0]);
+    if (open) {
       it.indices.forEach((i, j) => {
         const child = renderEvent(s.events[i], prevEpoch, turnWorkedSecs(s.events, i, working));
         child.classList.add("tg-child"); if (j === it.indices.length - 1) child.classList.add("tg-last");
@@ -8183,6 +8200,34 @@ function renderToolGroup(tools: Extract<ChatEvent, { kind: "tool" }>[], prevEpoc
   if (epoch != null) turn.insertBefore(timeMarker(epoch, prevEpoch ?? null), turn.firstChild);
   const railDot = turn.querySelector(".dot") as HTMLElement | null;
   if (anchorUuid || epoch != null) wireTurnHover(turn, railDot, anchorUuid, epoch ?? 0, tools[0].tlId ?? null);
+  return turn;
+}
+
+// A collapsed run of consecutive retry-recovery notes (T131 follow-up; the user 2026-08-27,
+// seventeen consecutive rows) → one rail line in the same fold grammar as the tool runs: caret +
+// "Recovered after retries ×N", expanding to the individual notes. Key rides expandedGroups like
+// a toolgroup, so the same toggle, persistence-across-rebuilds, and popover-flip machinery apply.
+function retryGroupKey(first: ChatEvent): string { return "rg:" + (first.uuid || String(eventEpoch(first) ?? "")); }
+function renderRetryGroup(notes: Extract<ChatEvent, { kind: "retried" }>[], prevEpoch: number | null, key: string, open: boolean): HTMLElement {
+  const turn = el("div", "turn turn-toolgroup turn-retrygroup" + (open ? " expanded" : ""));
+  turn.appendChild(dot("ring"));
+  const line = el("div", "toolgroup-line");
+  line.title = open ? "click to collapse" : "click to expand";
+  const caret = el("span", "toolgroup-caret"); caret.textContent = open ? "▾" : "▸"; line.appendChild(caret);
+  if (!open) {
+    const w = el("span", "retried-text");
+    w.textContent = ` Recovered after retries ×${notes.length}`;
+    line.appendChild(w);
+  }
+  line.addEventListener("click", (e) => { e.stopPropagation(); toggleToolGroup(key); });
+  turn.appendChild(line);
+  const epoch = eventEpoch(notes[0]);
+  const anchorUuid = notes[0].uuid ?? null;
+  if (anchorUuid) turn.dataset.uuid = anchorUuid;
+  if (epoch != null) turn.dataset.t = String(epoch);
+  if (epoch != null) turn.insertBefore(timeMarker(epoch, prevEpoch ?? null), turn.firstChild);
+  const railDot = turn.querySelector(".dot") as HTMLElement | null;
+  if (anchorUuid || epoch != null) wireTurnHover(turn, railDot, anchorUuid, epoch ?? 0, notes[0].tlId ?? null);
   return turn;
 }
 

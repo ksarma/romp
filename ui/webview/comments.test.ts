@@ -542,8 +542,10 @@ test("the popover renders the chat's display units — thinking hidden, tool run
   const block = UI.slice(at, at + 2200);
   assert.ok(block.includes("? compactDisplay(evs.map((e) => e.kind), evs.map((e) => e.kind === \"tool\" ? e.name : undefined))"),
     "the SAME unit builder the chat uses, gated on the SAME settings.compact");
-  assert.ok(block.includes("const key = toolGroupKey(tools[0]);"), "the chat's group identity — expands survive refills");
-  assert.ok(block.includes("list.appendChild(renderToolGroup(tools, prev, key, open));"), "the chat's own folded line");
+  assert.ok(block.includes('const key = it.kind === "toolgroup" ? toolGroupKey(run[0]) : retryGroupKey(run[0]);'),
+    "the chat's group identities — tool runs AND retry runs (T131) — so expands survive refills");
+  assert.ok(block.includes("? renderToolGroup(run as Extract<ChatEvent, { kind: \"tool\" }>[], prev, key, open)"),
+    "the chat's own folded lines");
   assert.ok(block.includes('child.classList.add("tg-child");'), "expanded children wear the chat's classes");
 });
 
