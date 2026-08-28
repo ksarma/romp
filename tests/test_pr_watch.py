@@ -146,13 +146,66 @@ class Tick(unittest.TestCase):
         km._pr_watch_tick(200.0)
         self.assertEqual(len(self.mail), 1, "…and never mails twice")
 
-    def test_a_failed_check_is_just_as_terminal(self):
-        km.add_pr_watch(8, "TESTORG/testrepo", SID, now=0)
-        km._pr_watch_read = lambda pr, repo: ("failed", "Shell (bats)")
+    def test_a_failed_check_holds_mails_once_and_escalates_on_the_bound(self):
+        # T143 (the ~6h invisible-ask specimen): a failed check MAILS THE OWNER ONCE and HOLDS —
+        # never a silent retire the owner's death can orphan. Resolution is event-keyed; only the
+        # no-event gap (nobody acted) takes the bounded escalation to the NAMED target.
+        km.add_pr_watch(7, "TESTORG/testrepo", SID, now=0, escalate="mgr")
+        km._sid_of_saved = getattr(km, "_sid_of")
+        km._sid_of = lambda who: "22222222-2222-3333-4444-555555555555" if who == "mgr" else ""
+        try:
+            km._pr_watch_read = lambda pr, repo: ("failed", "Shell (bats)")
+            km._pr_watch_tick(100.0)
+            self.assertEqual(len(self.mail), 1, "the owner is mailed once")
+            self.assertIn("FAILED check", self.mail[0][1])
+            self.assertEqual(len(km._pr_watches), 1, "…and the watch HOLDS instead of retiring")
+            km._pr_watch_tick(200.0)
+            self.assertEqual(len(self.mail), 1, "no re-mail while held")
+            # the bound passes with the failure still standing → ONE escalation to the named target
+            km._pr_watch_tick(100.0 + km.PR_WATCH_ESCALATE_S + 61)
+            self.assertEqual(len(self.mail), 2)
+            self.assertEqual(self.mail[1][0], "22222222-2222-3333-4444-555555555555")
+            self.assertIn("sat with a FAILED check", self.mail[1][1])
+            km._pr_watch_tick(100.0 + km.PR_WATCH_ESCALATE_S + 200)
+            self.assertEqual(len(self.mail), 2, "the escalation is ONE mail, ever")
+            # the terminal event still ends the watch normally
+            km._pr_watch_read = lambda pr, repo: ("merged", "")
+            km._pr_watch_tick(100.0 + km.PR_WATCH_ESCALATE_S + 300)
+            self.assertEqual(len(self.mail), 3)
+            self.assertIn("has MERGED", self.mail[2][1])
+            self.assertEqual(km._pr_watches, [])
+        finally:
+            km._sid_of = km._sid_of_saved
+
+    def test_resolution_events_clear_the_held_failure_without_a_clock(self):
+        km.add_pr_watch(9, "TESTORG/testrepo", SID, now=0, escalate="mgr")
+        km._pr_watch_read = lambda pr, repo: ("failed", "x")
         km._pr_watch_tick(100.0)
-        self.assertEqual(len(self.mail), 1)
-        self.assertIn("FAILED check (Shell (bats))", self.mail[0][1])
-        self.assertEqual(km._pr_watches, [])
+        self.assertTrue(km._pr_watches[0].get("failedAt"))
+        km._pr_watch_read = lambda pr, repo: (None, "busy")   # checks re-running — the EVENT
+        km._pr_watch_tick(200.0)
+        self.assertFalse(km._pr_watches[0].get("failedAt"),
+                         "the held state clears on the resolution event, no bound involved")
+        self.assertEqual(len(self.mail), 1, "clearing is silent — the watch just continues")
+
+    def test_no_target_means_no_ping_ever(self):
+        km.add_pr_watch(11, "TESTORG/testrepo", SID, now=0)   # no escalate; no box default in this temp state
+        km._pr_watch_read = lambda pr, repo: ("failed", "x")
+        km._pr_watch_tick(100.0)
+        km._pr_watch_tick(100.0 + km.PR_WATCH_ESCALATE_S + 61)
+        self.assertEqual(len(self.mail), 1, "the kernel never guesses a manager — unset = no ping")
+
+    def test_failed_state_survives_the_save_load_cycle(self):
+        # the specimen window held ~21 restarts — a clock that reset each boot would never fire
+        km.add_pr_watch(13, "TESTORG/testrepo", SID, now=0, escalate="mgr")
+        km._pr_watch_read = lambda pr, repo: ("failed", "x")
+        km._pr_watch_tick(100.0)
+        km._pr_watches_save()
+        km._pr_watches[:] = []
+        km._pr_watches_load()
+        r = km._pr_watches[0]
+        self.assertEqual((r.get("failedAt"), r.get("escalate")), (100, "mgr"),
+                         "failedAt and the target persist across the restart")
 
     def test_gh_failure_retires_loudly_after_three_never_silently(self):
         km.add_pr_watch(9, "TESTORG/testrepo", SID, now=0)

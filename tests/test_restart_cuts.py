@@ -66,11 +66,29 @@ class CutRow(unittest.TestCase):
         audit.unlink()
         self.assertEqual(km._recent_restart_reason(now=1050), "", "no audit → anonymous, honestly")
 
+    def test_a_cutting_drain_counts_mid_shutdown_and_threadless_sessions(self):
+        # T143's two undercounts, executed: a session already flagged `ended` with a live in-flight
+        # turn IS a cut (its CLI is reaped all the same — the old `not s.ended` clause filtered it
+        # out of cutTurns: 10 transcript-verified cuts vs 7 rows), and a constructed-but-never-
+        # started session (thread=None) must not crash the whole drain recordless.
+        import types as _t
+        sbmod = km.sb if hasattr(km, "sb") else None
+        src = open(os.path.join(os.path.dirname(HERE), "kernel", "sdk_backend.py")).read()
+        self.assertIn("cut = [{\"sid\": s.sid, \"name\": s.name} for s in sessions if s.inflight]", src,
+                      "every in-flight session is a cut — ended included (the join, not a filter)")
+        self.assertIn("if s.thread is not None:", src,
+                      "a threadless session can no longer crash the drain")
+
     def test_sigterm_handler_writes_the_ledger(self):
         src = open(os.path.join(os.path.dirname(HERE), "kernel", "kernel.py")).read()
         block = src[src.index("def _graceful_term"):src.index("def main():")]
-        self.assertIn("_append_restart_cut(_restart_cut_row(res, watches_armed=len(_pr_watches),",
-                      block, "the SIGTERM drain writes one ledger row before exit")
+        self.assertIn("row = _restart_cut_row(res, watches_armed=len(_pr_watches) + len(_watches),",
+                      block, "the row counts BOTH persisted watch stores (T143) — and is built in the")
+        self.assertIn("finally:", block)
+        self.assertIn("_append_restart_cut(row)", block,
+                      "…FINALLY block, so a raising drain still writes what it knew (T143: 2 of 18 "
+                      "restarts died recordless)")
+        self.assertIn('row["drainError"]', block, "an errored drain's row names the error")
         self.assertIn("audit_reason=_recent_restart_reason()", block)
 
 

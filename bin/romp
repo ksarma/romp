@@ -1028,14 +1028,16 @@ fi
 
 if [[ "${1:-}" == "watch-pr" ]]; then
     shift
-    _wp_usage="usage: romp watch-pr <number> [--repo <owner/name>] [--session <name>]"
-    _wp_pr=""; _wp_repo=""; _wp_sess=""
+    _wp_usage="usage: romp watch-pr <number> [--repo <owner/name>] [--session <name>] [--escalate <session>]"
+    _wp_pr=""; _wp_repo=""; _wp_sess=""; _wp_esc=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --repo)    shift; [[ $# -eq 0 || -z "$1" || "$1" == -* ]] && { echo "$_wp_usage" >&2; exit 2; }
                        _wp_repo="$1"; shift ;;
             --session) shift; [[ $# -eq 0 || -z "$1" || "$1" == -* ]] && { echo "$_wp_usage" >&2; exit 2; }
                        _wp_sess="$1"; shift ;;
+            --escalate) shift; [[ $# -eq 0 || -z "$1" || "$1" == -* ]] && { echo "$_wp_usage" >&2; exit 2; }
+                       _wp_esc="$1"; shift ;;
             -*)        echo "$_wp_usage" >&2; exit 2 ;;
             *)         [[ -n "$_wp_pr" ]] && { echo "$_wp_usage" >&2; exit 2; }
                        _wp_pr="$1"; shift ;;
@@ -1064,8 +1066,11 @@ if [[ "${1:-}" == "watch-pr" ]]; then
         exit 1
     fi
     _wp_key="id"; [[ -n "$_wp_sess" ]] && _wp_key="name"
-    _payload="$(python3 -c 'import json,sys; print(json.dumps({"pr": int(sys.argv[1]), "repo": sys.argv[2], sys.argv[3]: sys.argv[4]}))' \
-        "$_wp_pr" "$_wp_repo" "$_wp_key" "$_wp_who")"
+    _payload="$(python3 -c 'import json,sys
+b = {"pr": int(sys.argv[1]), "repo": sys.argv[2], sys.argv[3]: sys.argv[4]}
+if len(sys.argv) > 5 and sys.argv[5]: b["escalate"] = sys.argv[5]
+print(json.dumps(b))' \
+        "$_wp_pr" "$_wp_repo" "$_wp_key" "$_wp_who" "$_wp_esc")"
     _resp="$(_romp_token_cfg | curl -sf -m 15 --config - -X POST "http://127.0.0.1:$_kport/watch-pr" \
                   -H 'Content-Type: application/json' -d "$_payload")" \
         || { echo "romp watch-pr: kernel not reachable on :$_kport (is romp running?)" >&2; exit 1; }
