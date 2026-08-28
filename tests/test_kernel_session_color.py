@@ -154,6 +154,83 @@ class SessionColor(unittest.TestCase):
                       "gear open re-reads the server-authoritative choice from /palette")
 
 
+class HighSlotSwitches(SessionColor):
+    """The T164 length-mismatch sweep, executed: sessions ON slots 9/10/11 survive palette switches
+    in both directions. All built-in sets are 12 now (equalized), so the equal-length path maps
+    slot-for-slot; the modulo wrap is exercised against a SYNTHETIC short set so the guard stays
+    proven for future drift (a 13th romp color reopens the gap silently otherwise)."""
+
+    def _seed(self, slot, sid):
+        bg = km.pal.PALETTES["romp"]["bg"][slot]
+        fg = km.pal.PALETTES["romp"]["fg"][slot]
+        (self.names / sid).write_text("s%d\t/proj/TESTHOST/app\t%s\t%s\n" % (slot, bg, fg))
+
+    def test_equal_length_switch_maps_high_slots_straight_across(self):
+        sids = ["%08d-2222-3333-4444-555555555555" % i for i in range(4)]
+        for slot, sid in zip((0, 9, 10, 11), sids):
+            self._seed(slot, sid)
+        self.assertTrue(km._set_palette("phase"))
+        for slot, sid in zip((0, 9, 10, 11), sids):
+            parts = (self.names / sid).read_text().rstrip("\n").split("\t")
+            self.assertEqual(parts[2], km.pal.PALETTES["phase"]["bg"][slot], "slot %d" % slot)
+            self.assertEqual(parts[3], km.pal.PALETTES["phase"]["fg"][slot])
+        self.assertTrue(km._set_palette("romp"))
+        for slot, sid in zip((0, 9, 10, 11), sids):
+            parts = (self.names / sid).read_text().rstrip("\n").split("\t")
+            self.assertEqual(parts[2], km.pal.PALETTES["romp"]["bg"][slot],
+                             "equal-length round trip restores every high slot")
+
+    def test_a_shorter_set_wraps_high_slots_modulo_without_crashing(self):
+        km.pal.PALETTES["tiny"] = {"label": "tiny", "bg": ["#101010", "#202020", "#303030"],
+                                   "fg": ["white", "white", "white"]}
+        try:
+            sids = ["%08d-2222-3333-4444-555555555555" % i for i in range(4)]
+            for slot, sid in zip((0, 9, 10, 11), sids):
+                self._seed(slot, sid)
+            self.assertTrue(km._set_palette("tiny"))
+            got = {}
+            for slot, sid in zip((0, 9, 10, 11), sids):
+                parts = (self.names / sid).read_text().rstrip("\n").split("\t")
+                got[slot] = parts[2]
+            self.assertEqual(got[9], "#101010", "slot 9 wraps to 0 — and COLLIDES with slot 0")
+            self.assertEqual(got[0], "#101010")
+            self.assertEqual(got[10], "#202020")
+            self.assertEqual(got[11], "#303030")
+            # the documented-lossy round trip: wrapped slots come back as their wrap targets
+            self.assertTrue(km._set_palette("romp"))
+            parts9 = (self.names / sids[1]).read_text().rstrip("\n").split("\t")
+            self.assertEqual(parts9[2], km.pal.PALETTES["romp"]["bg"][0],
+                             "a round trip through a shorter set is lossy for high slots, by design")
+        finally:
+            km.pal.PALETTES.pop("tiny", None)
+            km._set_palette("romp")
+
+    def test_the_mirror_writes_every_slot_with_both_fields(self):
+        km._set_palette("romp")
+        lines = (km.jd.STATE / "palette-colors").read_text().splitlines()
+        self.assertEqual(len(lines), len(km.pal.PALETTES["romp"]["bg"]),
+                         "the launcher mirror carries EVERY slot — zip truncation would drop tails")
+        for ln in lines:
+            self.assertEqual(len(ln.split("\t")), 2)
+
+    def test_identity_picks_pair_bg_and_fg_past_slot_nine(self):
+        # the SDK picker: find a sid hashing into 9..11 and assert the paired read holds
+        import zlib
+        bgs, fgs = km.pal.colors("romp"), km.pal.fgs("romp")
+        sid = next("%08x-2222-3333-4444-555555555555" % i
+                   for i in range(4096)
+                   if zlib.crc32(("%08x-2222-3333-4444-555555555555" % i).encode()) % len(bgs) >= 9)
+        import importlib
+        sdk = km.sdk_backend if hasattr(km, "sdk_backend") else None
+        if sdk is None:
+            from importlib.machinery import SourceFileLoader as _L
+            sdk = _L("romp_sdk_pal", os.path.join(os.path.dirname(HERE), "kernel", "sdk_backend.py")).load_module()
+        bg, fg = sdk.pick_identity_color(sid)
+        i = zlib.crc32(sid.encode()) % len(bgs)
+        self.assertGreaterEqual(i, 9)
+        self.assertEqual((bg, fg), (bgs[i], fgs[i]), "the paired index holds past the old nine")
+
+
 if __name__ == "__main__":
     unittest.main()
 

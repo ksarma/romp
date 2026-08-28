@@ -57,7 +57,8 @@ class PaletteShapes(unittest.TestCase):
         # the 2026-08-26 addition: a high-lightness identity set for anyone who finds the saturated
         # palettes loud across many tabs — soft by construction, so every fg must be black
         self.assertIn("pastel", pal.PALETTES)
-        self.assertEqual(pal.PALETTES["pastel"]["fg"], ["black"] * 9)
+        self.assertEqual(pal.PALETTES["pastel"]["fg"],
+                         ["black"] * len(pal.PALETTES["pastel"]["bg"]))
 
     def test_crameri_and_cmocean_sets_are_curated_mid_tone(self):
         # The raw Crameri "S" orderings include near-black (#011959) and near-white entries — built for
