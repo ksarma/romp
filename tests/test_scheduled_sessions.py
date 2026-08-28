@@ -119,7 +119,9 @@ class StopHookRecordsTheArmedSet(_Backend):
 
 
 class SweepKeepsTimerArmedSessionsAlive(_Backend):
-    CRONS = [{"id": "bbbb2222", "cron": "5 * * * *", "prompt": "p", "kind": "loop", "recurring": False}]
+    CRONS = [{"id": "bbbb2222", "cron": "5 * * * *", "prompt": "p", "kind": "cron", "recurring": True}]
+    SHOT = [{"id": "toolhook-9", "cron": "", "prompt": "wake", "kind": "loop", "recurring": False,
+             "armedAt": 0.0, "dueEpoch": None, "procGen": "gen-dead", "src": "toolhook"}]
 
     def test_a_dormant_timer_armed_session_is_revived(self):
         self._reg(sessionCrons=self.CRONS)
@@ -127,7 +129,19 @@ class SweepKeepsTimerArmedSessionsAlive(_Backend):
         self.be._ensure = lambda sid, on_boot_settled=None: ensured.append(sid) or True
         self.assertEqual(self.be.ensure_scheduled(), 1)
         self.assertEqual(ensured, [SID])
-        self.assertTrue(any("armed timer" in m for m in self.logs), "revivals are logged, never silent")
+        self.assertTrue(any("recurring timer" in m for m in self.logs), "revivals are logged, never silent")
+
+    def test_a_one_shot_only_session_stays_dormant(self):
+        # Refined 2026-08-28 with the 769 author: the sweep reads recurring_crons(reg), the same
+        # predicate conserve_idle refuses on — recurring-only BOTH sides, or conserve closes a
+        # one-shot session and this sweep revives it every 120s until due (the close/revive loop
+        # moved one door over). A threadless session's one-shot is dead-generation by construction:
+        # a fresh CLI cannot re-hydrate it, so a revival buys the wakeup nothing —
+        # deliver_lost_wakeups owns it and revives the session at due through the normal send path.
+        self._reg(sessionCrons=self.SHOT)
+        self.be._ensure = lambda sid, on_boot_settled=None: self.fail(
+            "a one-shot-only armed set must not pin a process")
+        self.assertEqual(self.be.ensure_scheduled(), 0)
 
     def test_sessions_without_timers_stay_lazy(self):
         self._reg()                                     # alive, no sessionCrons

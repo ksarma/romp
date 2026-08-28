@@ -73,19 +73,47 @@ class BackendClose(unittest.TestCase):
         reg = sb.read_reg(Path(self.d), SID)
         self.assertTrue(reg.get("alive"), "the reg stays ALIVE — dormant, not killed; _ensure revives on demand")
 
-    def test_never_closes_a_timer_armed_session(self):
-        # the T148/769 seam, executed: ensure_scheduled revives any timer-armed threadless session
-        # every producer pass — if conserve closed one, the pair would loop close/revive forever
-        # (one respawn per sweep, the exact churn the user feared). The reg's sessionCrons is the
-        # SAME record ensure_scheduled reads, so conserve refusing on it can never drift from 769.
+    def test_never_closes_a_recurring_armed_session(self):
+        # the T148/769 seam, refined 2026-08-28 with the 769 author: only RECURRING entries pin the
+        # process — their live CLI is the only scheduler and ensure_scheduled revives any
+        # recurring-armed threadless session every producer pass, so conserve closing one would
+        # loop close/revive forever. Both sides read recurring_crons(reg) over the same record
+        # (the as-merged 769 shape: a LIST of entries carrying the `recurring` boolean), so they
+        # can never drift.
         reg = sb.read_reg(Path(self.d), SID)
-        reg["sessionCrons"] = {"gen": 1, "crons": [{"id": "c1", "schedule": "0 * * * *"}]}
+        reg["sessionCrons"] = [{"id": "c1", "cron": "0 * * * *", "prompt": "tick", "kind": "cron",
+                                "recurring": True, "armedAt": time.time(), "dueEpoch": None,
+                                "procGen": "gen-dead"}]
         sb.write_reg(Path(self.d), SID, reg)
-        self.assertFalse(self.be.conserve_idle(SID), "armed timers pin the process — its CLI is the scheduler")
+        self.assertFalse(self.be.conserve_idle(SID), "a recurring cron pins the process — its CLI is the scheduler")
         self.assertFalse(self.be.conserve_close(SID))
         reg.pop("sessionCrons")
         sb.write_reg(Path(self.d), SID, reg)
         self.assertTrue(self.be.conserve_idle(SID), "…and disarming the timers frees it")
+
+    def test_a_one_shot_only_session_conserves_and_its_wake_delivers_at_due(self):
+        # The other half of the refinement, both directions in one flow: a ONE-SHOT wakeup does not
+        # hold the close — its absolute dueEpoch + dead arming generation hand it to
+        # deliver_lost_wakeups, which delivers the prompt at due through the normal send path (the
+        # revive). Toolhook-minted shape on purpose: empty cron string, so any predicate inferring
+        # from the cron's shape (instead of the `recurring` field) would misread it as recurring.
+        reg = sb.read_reg(Path(self.d), SID)
+        reg["sessionCrons"] = [{"id": "toolhook-1", "cron": "", "prompt": "the wake prompt",
+                                "kind": "loop", "recurring": False, "armedAt": time.time() - 120,
+                                "dueEpoch": time.time() - 30, "procGen": "gen-dead", "src": "toolhook"}]
+        sb.write_reg(Path(self.d), SID, reg)
+        self.assertTrue(self.be.conserve_idle(SID), "a one-shot never pins the process (769 catch-up owns it)")
+        self.assertTrue(self.be.conserve_close(SID))
+        self.assertEqual(self.be.ensure_scheduled(), 0,
+                         "the sweep must not revive a one-shot-only session — that would be the "
+                         "close/revive loop conserve's refusal exists to prevent, moved one door over")
+        sent = []
+        self.be.send = lambda sid, prompt: sent.append((sid, prompt)) or True
+        self.assertEqual(self.be.deliver_lost_wakeups(), 1)
+        self.assertEqual(sent, [(SID, "the wake prompt")],
+                         "the due wake is delivered through the normal send path — the revive")
+        self.assertEqual((sb.read_reg(Path(self.d), SID) or {}).get("sessionCrons"), [],
+                         "the record strips with delivery, so the next pass can never double-fire")
 
     def test_never_closes_work(self):
         self.s.inflight = 1
