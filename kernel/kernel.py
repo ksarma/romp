@@ -25322,6 +25322,7 @@ _CHAT_MOBILE_CSS = (
     "#mcur .wd{flex:0 0 auto;width:7px;height:7px;border-radius:50%;background:var(--st-working-bg,#e0b020)}"
     "#mcur .wd.await{background:var(--st-awaitbg-bg,#54B204)}"   # green when idle-waiting-on-bg-work
     "#mcur .cv{flex:0 0 auto;opacity:.6;font-size:11px}"
+    "#mtag-slot{flex:0 0 auto;display:flex;align-items:center;gap:5px}"   # T161: the tag control's slot, sized by the shared button's own inline metrics
     "#madd{flex:0 0 auto;width:36px;display:flex;align-items:center;justify-content:center;cursor:pointer;"
     "background:#2a2a2a;color:#bbbbbb;border:1px solid #3a3a3a;border-radius:6px;font-size:16px;line-height:1}"
     "#mlist{display:none;position:absolute;left:8px;right:8px;top:100%;margin-top:4px;z-index:200;"
@@ -25368,7 +25369,10 @@ var cur=document.createElement('button');cur.id='mcur';cur.type='button';
 cur.innerHTML='<span class="wd" style="display:none"></span><span class="nm"></span><span class="cv">▾</span>';
 var add=document.createElement('button');add.id='madd';add.type='button';add.textContent='+';add.title='Open / new session';
 var list=document.createElement('div');list.id='mlist';
-hdr.appendChild(cur);hdr.appendChild(add);
+// T161: an empty slot for the chat surface's TAG control — render.js mounts the shared button into
+// it (the real component, not a copy), so the phone gets the same lens/menu the desktop strip has
+var tslot=document.createElement('span');tslot.id='mtag-slot';
+hdr.appendChild(cur);hdr.appendChild(tslot);hdr.appendChild(add);
 tabbar.appendChild(hdr);tabbar.appendChild(list);
 function realTab(id){return tabs.querySelector('.tab[data-id="'+id+'"]');}
 function hide(){list.classList.remove('open');}

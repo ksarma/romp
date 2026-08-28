@@ -43,6 +43,23 @@ test("executed: revealIn is ADDITIVE on the chat lens — never a switch that hi
     "already visible → no move at all");
 });
 
+test("the phone gets the chat tag control too — the SHARED button mounted into the kernel header's slot (T161)", () => {
+  // the mobile chat page hides the whole #tabs strip (kernel _CHAT_MOBILE_CSS) — and the desktop
+  // mount with it (the user 2026-08-28, Android: 'there's no tag view control on mobile'). The
+  // kernel's mobile header builds an EMPTY #mtag-slot; render.ts mounts the real tagMenuButton into
+  // it once (kernel-built and never rebuilt → ensure-once is click-safe) and re-syncs per render.
+  assert.match(KERNEL, /tslot\.id='mtag-slot';/, "the slot rides the kernel's mobile header, left of +");
+  assert.match(KERNEL, /hdr\.appendChild\(cur\);hdr\.appendChild\(tslot\);hdr\.appendChild\(add\);/);
+  assert.match(RENDER, /const mslot = document\.getElementById\("mtag-slot"\);/);
+  assert.match(RENDER, /if \(!mslot\.firstChild\) \{/, "ensure-once — the slot never rebuilds");
+  const mnt = RENDER.slice(RENDER.indexOf('const mslot = document.getElementById("mtag-slot")'),
+                           RENDER.indexOf("paintTabRowLines(bar);"));
+  assert.match(mnt, /tagMenuButton\("filter sessions by tag"/, "the SHARED component, never a copy");
+  assert.match(mnt, /Object\.assign\(\{\}, mv\.actives, \{ chat: l \}\)/, "writes land on the chat lens — per-surface semantics");
+  assert.match(mnt, /syncTagFilter\(mslot\.children\[0\] as HTMLElement, mslot\.children\[1\] as HTMLElement,/,
+    "the mobile pair re-syncs every render like the desktop one");
+});
+
 test("the chat strip and the outline both mount the shared component (source pins)", () => {
   assert.match(RENDER, /function chatVisible\(id: string\): boolean/);
   assert.match(RENDER, /lensVisible\(surfaceLens\(v, "chat"\), viewTagUnion\(v\), id\)/,
