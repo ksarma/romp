@@ -194,6 +194,25 @@ class ThreadForkInvisibility(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.td, ignore_errors=True)
 
+    def test_fork_observability_stamps_the_source_size_for_the_spend_log(self):
+        # T156, measured no-build: the tail-copy optimization died on evidence (~5s of a ~70s wall
+        # was file size), so every fork records its resume-source size at mint; the spend site logs
+        # size + create-to-spend duration, and a recurrence of 200s-class boots reopens the case
+        # with data instead of speculation.
+        import os as _os
+        tp = sb.transcript_path(self.td, PARENT)
+        _os.makedirs(_os.path.dirname(tp), exist_ok=True)
+        with open(tp, "w") as f:
+            f.write('{"type":"user","uuid":"a1"}\n' * 100)
+        self.be.fork("thread-x", PARENT, "a1", sid=THREAD, thread_of=PARENT)
+        reg = json.loads((Path(self.td) / "sdk" / (THREAD + ".json")).read_text())
+        self.assertEqual(reg.get("forkSrcBytes"), _os.path.getsize(tp))
+        self.assertGreater(reg.get("forkedFrom", {}).get("t", 0), 0, "the duration base is the mint stamp")
+        # the spend site reads both back into one log line (source pin — the spend needs a live CLI)
+        import inspect
+        spend = inspect.getsource(sb.SdkSession._on_message)
+        self.assertIn('self.backend._log("fork spent (%s): src %.1fMB, create->spend %ds"', spend)
+
     def test_a_thread_fork_writes_no_names_entry_and_carries_threadOf(self):
         self.be.fork("thread-x", PARENT, "a1", sid=THREAD, thread_of=PARENT)
         self.assertFalse((Path(self.td) / "names" / THREAD).exists(),

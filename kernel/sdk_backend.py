@@ -2430,6 +2430,11 @@ class SdkSession:
                 # plainly — re-applying fork_session would copy it into yet another session.
                 self._fork_of = self._fork_at = ""
                 self.backend._update_reg(self.sid, forkOf="", forkAt="")
+                reg_now = read_reg(self.backend.state_dir, self.sid) or {}
+                _ff = reg_now.get("forkedFrom") or {}
+                self.backend._log("fork spent (%s): src %.1fMB, create->spend %ds"
+                          % (self.sid[:8], (reg_now.get("forkSrcBytes") or 0) / 1048576.0,
+                             max(0, int(time.time()) - int(_ff.get("t") or time.time()))))
             cli_cwd = d.get("cwd")
             if isinstance(cli_cwd, str) and cli_cwd and cli_cwd != self.cwd:
                 # The CLI's own cwd is the AUTHORITATIVE string: its projects-dir/transcript encoding
@@ -4374,6 +4379,23 @@ class SdkBackend:
             transcript_path(cwd, parent.get("lastSid") or parent_sid))
         reg["forkedFrom"] = {"sid": parent_sid, "name": parent.get("name", ""),
                              "cut": lineage_cut, "t": int(time.time())}
+        # Fork-boot OBSERVABILITY (T156, measured no-build): the tail-copy optimization died on
+        # evidence — a 46MB resume+fork cost ~5s more than a 4.4MB one; the wall is fixed costs —
+        # so instead every fork spend logs its source size + create-to-spend duration (the spend
+        # site in _on_message), and a recurrence of 200s-class boots reopens the case with data.
+        try:
+            reg["forkSrcBytes"] = os.path.getsize(
+                transcript_path(cwd, parent.get("lastSid") or parent_sid))
+        except OSError:
+            reg["forkSrcBytes"] = 0
+        # Two probe findings recorded where the fork lives (T156 step-0, 2026-08-28):
+        # - PRINT-MODE --resume-session-at refused every record uuid tried (user + assistant,
+        #   pre- and post-compaction) with "No message found with message.uuid of:" on CLI
+        #   2.1-era — the SDK connect path works (threads fork daily), so the print-mode flag
+        #   matches a DIFFERENT id; the first person to fork through `-p` will hit this.
+        # - The CLI refuses resume-at targets from before its last compaction boundary by design
+        #   (the rewind doc above) — a comment anchored to a pre-compaction turn is a WATCH ITEM
+        #   for the SDK path too: live forks work today, but nothing pins that.
         if thread_of:
             reg["threadOf"] = thread_of
         if parent.get("model") and parent["model"] != "default":
