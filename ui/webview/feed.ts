@@ -1011,6 +1011,11 @@ function makeAskCard(it: AskItem): HTMLElement {
   // auto-retry is already doing that.
   const retryBadge = el("span", "fask-retrying"); retryBadge.style.display = "none";
   const apiRetry = el("button", "fdismiss fretry"); apiRetry.textContent = "Retry"; apiRetry.title = "send “retry” into this session to resume"; apiRetry.style.display = "none";
+  // the auth-expired card offers THE FIX, not just the problem (T157, the user: watch it, log in,
+  // it works again): opens the gear's Billing login — the paste-code flow that works from the phone
+  const apiLogin = el("button", "fdismiss ffollow"); apiLogin.textContent = "Log in…";
+  apiLogin.title = "open Billing login — sign in from any browser (your phone works) and this session recovers on its next turn";
+  apiLogin.style.display = "none";
   const revive = el("button", "fdismiss frevive"); revive.textContent = "Revive"; revive.title = "bring this offline session back so the parked hand-off is delivered"; revive.style.display = "none";
   // RESUME-GATE buttons (the user 2026-07-21): a boot-deferred high-context session — Proceed reloads it now,
   // Compact on resume /compacts first so future turns shrink (still one reload now), Skip leaves it dormant.
@@ -1071,7 +1076,7 @@ function makeAskCard(it: AskItem): HTMLElement {
   // direct children they render in BOTH modes, count toward row2's grouped-mode liveness, and the
   // API badge stays immediately before its Retry button — one visual unit. idwrap keeps only the
   // name. Placement only; every badge's mint/retire semantics are untouched.
-  row2.append(idwrap, retryBadge, apiBadge, apiRetry, jauthBadge, blkBadge, origin, fupBadge, dcBadge, nfBadge, intingBadge, intBadge, warnChip, waitOnBadge);
+  row2.append(idwrap, retryBadge, apiBadge, apiRetry, apiLogin, jauthBadge, blkBadge, origin, fupBadge, dcBadge, nfBadge, intingBadge, intBadge, warnChip, waitOnBadge);
   // the bell BUTTON (the user 2026-07-28): INLINE in row1's metadata cluster, right after the
   // timestamp (the last line's tail), the one spot that never shoves the title — and in-flow, so it
   // cannot overlap the floated Clear. It hides with VISIBILITY, so its slot is reserved whether or
@@ -1282,7 +1287,7 @@ function makeAskCard(it: AskItem): HTMLElement {
   a._warnChip = warnChip;
   a._waitOn = waitOnBadge;
   a._blocked = blkBadge;
-  a._apiBadge = apiBadge; a._apiRetry = apiRetry; a._retryBadge = retryBadge; a._revive = revive; a._clr = clr;
+  a._apiBadge = apiBadge; a._apiRetry = apiRetry; a._apiLogin = apiLogin; a._retryBadge = retryBadge; a._revive = revive; a._clr = clr;
   a._jauthBadge = jauthBadge;
   a._cont = cont;
   a._qApprove = qApprove; a._qDeny = qDeny; a._qBody = qbody;
@@ -2032,6 +2037,7 @@ function updateAskCard(card: HTMLElement, it: AskItem) {
   const spendLimit = !!(it.blocked && it.blocked.spendLimit);
   const modelLimit = !!(it.blocked && it.blocked.modelLimit);
   const refusal = !!(it.blocked && it.blocked.refusal);
+  const authErr = !!(it.blocked && (it.blocked as { authErr?: boolean }).authErr);
   // …and the whole unit RETIRES the moment the session recovers (the user 2026-08-24, screenshot: a
   // GREEN awaiting dot beside a lone red Retry — the control read as arbitrary): visibility keys on
   // the session's LIVE state from this very payload — a session working again, or awaiting the
@@ -2048,6 +2054,13 @@ function updateAskCard(card: HTMLElement, it: AskItem) {
   // A safeguards REFUSAL is the same shape again (the user 2026-08-15): deterministic on the same input,
   // so Retry re-collects the same refusal — the badge names the real fix (rewrite it or drop the thread).
   a._apiRetry.style.display = (showApiErr && !spendLimit && !modelLimit && !refusal) ? "" : "none";
+  // a dead credential's card carries THE FIX (T157): the gear's Billing login — phone-workable
+  const loginBtn = a._apiLogin as HTMLButtonElement;
+  loginBtn.style.display = (showApiErr && authErr) ? "" : "none";
+  if (showApiErr && authErr) loginBtn.onclick = (ev: Event) => {
+    ev.stopPropagation();
+    window.postMessage({ romp: "openSettings" }, "*");   // the login flow lives in the gear's Billing block
+  };
   // "Continue" shows on a LIVE needs-you card with no live ask attached: the gesture claims "you're not
   // waiting on me", which means nothing in Working/Completed, can't answer a real permission prompt or
   // picker (it.blocked — text sent there would just queue behind the ask), and has no one to tell on a

@@ -530,6 +530,8 @@ def _version_info():
             "uptime_s": int(time.time() - _STARTED), "dist_ver": _dist_ver(), "bundles": bundles,
             "autoNudge": _auto_nudge_on(),   # server-side toggle state → the gear checkbox reflects the kernel
             "conserveMemory": _conserve_on(),   # the T148 toggle: close idle tab-less claude processes
+            "login": _login_state(),         # the in-dashboard login flow's state/url/err (T157) — never a secret
+            "acctLabel": _claude_account_label(),   # which login this box holds ("" = none) — the gear's Billing row
             "fileEditing": _file_editing_on(),   # dashboard raw-mode editing opt-in → gates the viewer's Edit
             "updateMode": _update_mode(),    # ask|auto|off (the boot release check) → the gear dropdown
             "updateAvail": _UPDATE_AVAIL[0],   # newer release the boot check found ("" = none/unknown)
@@ -7200,7 +7202,9 @@ _sdk_lock = threading.Lock()   # single-flight construction: the eager boot thre
 
 
 def _claude_bin():
-    return shutil.which("claude") or os.path.expanduser("~/.local/bin/claude")
+    # ROMP_CLAUDE_BIN is the resolution seam (main() exports it for judges/subprocesses; the lab
+    # and the login-flow tests point it at a mock) — reading it FIRST makes every spawn honor it
+    return os.environ.get("ROMP_CLAUDE_BIN") or shutil.which("claude") or os.path.expanduser("~/.local/bin/claude")
 
 
 def _ensure_sdk_on_path():
@@ -20679,6 +20683,191 @@ def _state_intervals(sid, want, now):
 _ACCT_CACHE = {"mtime": -1.0, "val": "", "label": ""}
 
 
+# ── in-dashboard LOGIN (T157, the user 2026-08-28: today an expired login means dropping to a
+# terminal for /login — unreachable from the phone over Tailscale, so everything stalls until they
+# are physically back. The dashboard IS on the phone, so it becomes the login surface.) ──────────
+# The CLI's login is PTY-driven: a spawned REPL + /login + the subscription option prints an OAuth
+# URL with code=true and platform.claude.com's OWN code-display callback (probed on 2.1.221 — no
+# localhost anywhere, so ANY device's browser completes it and shows a code), then waits at "Paste
+# code here". The kernel drives exactly that: spawn → gates (trust dialog, method picker) → parse
+# the URL out of its OSC-8 wrapping → stream it to the dashboard as a link → pass the user's code
+# STRAIGHT THROUGH to the PTY. The code and the resulting tokens exist nowhere but the PTY write
+# and the CLI's own credential store: never logged, never echoed into a transcript, never in a
+# payload. One flow at a time per kernel (each box logs in its own store); a stuck flow self-reaps.
+LOGIN_FLOW_TIMEOUT_S = 600
+_login_lock = threading.Lock()
+_login_flow = {"state": "", "url": "", "err": "", "t": 0.0, "pid": 0, "fd": -1}
+
+
+def _login_state():
+    """The payload-safe view: state/url/err only — nothing secret ever sits in the dict."""
+    with _login_lock:
+        if _login_flow["state"] and time.time() - _login_flow["t"] > LOGIN_FLOW_TIMEOUT_S:
+            _login_abort_locked("the login flow timed out — start it again when ready")
+        return {"state": _login_flow["state"], "url": _login_flow["url"], "err": _login_flow["err"]}
+
+
+def _login_abort_locked(err=""):
+    pid, fd = _login_flow["pid"], _login_flow["fd"]
+    _login_flow.update(state=("error" if err else ""), url="", err=err, pid=0, fd=-1)
+    if pid:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except Exception:
+            pass
+    if fd >= 0:
+        try:
+            os.close(fd)
+        except Exception:
+            pass
+
+
+def _login_cancel():
+    with _login_lock:
+        _login_abort_locked()
+    _push_soon()
+
+
+def _login_code(code):
+    """Pass the user's code STRAIGHT to the PTY — a pure pass-through (T157 house rule: the code is
+    never logged, stored, or echoed anywhere; this function's only trace is the write itself)."""
+    code = str(code or "").strip()
+    if not code:
+        return "empty code"
+    with _login_lock:
+        if _login_flow["state"] != "url" or _login_flow["fd"] < 0:
+            return "no login flow is waiting for a code"
+        try:
+            os.write(_login_flow["fd"], code.encode() + b"\r")
+            _login_flow["state"] = "verifying"
+            _login_flow["t"] = time.time()
+        except Exception as e:
+            _login_abort_locked("the code never reached the login flow (%s) — start again" % type(e).__name__)
+            return "the login flow died taking the code — start again"
+    _push_soon()
+    return ""
+
+
+def _login_start():
+    """Spawn the PTY login flow; the reader thread drives the gates and parses the URL."""
+    import pty as _pty
+    with _login_lock:
+        if _login_flow["state"] in ("starting", "url", "verifying"):
+            return "a login flow is already running — finish or cancel it first"
+        scratch = jd.STATE / "login-scratch"
+        try:
+            scratch.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+        env = dict(os.environ)
+        env.pop("ANTHROPIC_API_KEY", None)          # the login flow, never key auth
+        env.pop("CLAUDE_CODE_CHILD_SESSION", None)  # a plain top-level CLI
+        try:
+            m, s = _pty.openpty()
+            proc = subprocess.Popen([_claude_bin()], stdin=s, stdout=s, stderr=s,
+                                    env=env, cwd=str(scratch), close_fds=True)
+            os.close(s)
+        except Exception as e:
+            _login_flow.update(state="error", url="",
+                               err="could not start the login flow: %s" % e, pid=0, fd=-1)
+            return _login_flow["err"]
+        _login_flow.update(state="starting", url="", err="", t=time.time(), pid=proc.pid, fd=m)
+    threading.Thread(target=_login_reader, args=(m, proc), daemon=True).start()
+    _push_soon()
+    return ""
+
+
+_LOGIN_URL_RE = re.compile(r"https://claude\.com/[^\s\x1b\x07]*oauth[^\s\x1b\x07]*")
+
+
+def trust_gate_passed(low0):
+    """The REPL is up and past its gates (the composer hints render) — space-free matching, since
+    PTY cursor codes concatenate words (probed: 'Tipsforgetting')."""
+    return "tipsforgetting" in low0 or "try\"" in low0 or "welcomeback" in low0
+
+
+def _login_reader(fd, proc):
+    """Drive the spawned CLI to the URL and through the result. Output is parsed for STATES only —
+    nothing from this stream is ever logged verbatim (the paste prompt window can contain the code
+    echo), and the buffer dies with the thread."""
+    import select as _select
+    buf = ""
+    sent_login = sent_pick = trust_answered = False
+    t0 = time.time()
+    while time.time() - t0 < LOGIN_FLOW_TIMEOUT_S:
+        with _login_lock:
+            if _login_flow["pid"] != proc.pid:      # cancelled/superseded
+                break
+        r, _, _ = _select.select([fd], [], [], 0.5)
+        if r:
+            try:
+                chunk = os.read(fd, 8192).decode("utf-8", "replace")
+            except OSError:
+                break
+            buf = (buf + chunk)[-20000:]
+        plain = re.sub(r"\x1b\][^\x07\x1b]*(\x07|\x1b\\\\)", "", buf)
+        plain = re.sub(r"\x1b\[[0-9;?]*[a-zA-Z]", "", plain)
+        low0 = plain.lower().replace(" ", "")
+        if not trust_answered and "trustthisfolder" in low0:
+            os.write(fd, b"\r")                     # the kernel's own scratch dir — trusted
+            trust_answered = True
+            buf = ""
+            continue
+        if not sent_login and trust_gate_passed(low0):
+            time.sleep(0.8)                          # the REPL settles, then the command
+            os.write(fd, b"/login\r")
+            sent_login = True
+            buf = ""
+            continue
+        if sent_login and not sent_pick and "selectloginmethod" in plain.lower().replace(" ", ""):
+            # PTY cursor-move codes mangle spacing (probed: 'Selectloginmethod:') — match space-free
+            os.write(fd, b"\r")                     # option 1: Claude account with subscription
+            sent_pick = True
+            buf = ""
+            continue
+        murl = _LOGIN_URL_RE.search(plain)
+        if murl:
+            with _login_lock:
+                if _login_flow["pid"] == proc.pid and _login_flow["state"] in ("starting",):
+                    _login_flow.update(state="url", url=murl.group(0), t=time.time())
+            _push_soon()
+        low = plain.lower()
+        # the VERDICT WINDOW is anchored on the paste prompt itself, not a buffer clear (a clear
+        # raced an instant verdict and wiped it): verdict phrases count only AFTER the last
+        # "Paste code here", which by construction precedes any verdict and follows every REPL
+        # hint ('how do I log an error?' false-fired the old loose match)
+        low0all = low.replace(" ", "")
+        pidx = low0all.rfind("pastecodehere")
+        low0v = low0all[pidx:] if pidx >= 0 else ""
+        if "loggedinas" in low0v or "loginsuccessful" in low0v:
+            with _login_lock:
+                if _login_flow["pid"] == proc.pid:
+                    _login_abort_locked()            # done: reap the CLI; state clears to ""
+                    _login_flow["state"] = "done"
+            _ACCT_CACHE["mtime"] = -2.0   # bust the account cache: the Billing rows flip on the next read
+            _push_soon()
+            return
+        if "invalidcode" in low0v or "loginerror" in low0v or "loginfailed" in low0v:
+            # tight FAILURE phrases, and only in the post-code window — a loose error/login word
+            # match false-fired on the REPL's own hints (found by the mocked-PTY test)
+            # loud honest failure — the copy names the retry, never the code
+            with _login_lock:
+                if _login_flow["pid"] == proc.pid and _login_flow["state"] == "verifying":
+                    _login_abort_locked("the login code was not accepted — start the flow again")
+            _push_soon()
+            return
+        if proc.poll() is not None:
+            with _login_lock:
+                if _login_flow["pid"] == proc.pid and _login_flow["state"] not in ("done", "error"):
+                    _login_abort_locked("the login flow ended before completing — start it again")
+            _push_soon()
+            return
+    with _login_lock:
+        if _login_flow["pid"] == proc.pid and _login_flow["state"] not in ("done", ""):
+            _login_abort_locked("the login flow timed out — start it again when ready")
+    _push_soon()
+
+
 def _claude_account():
     """WHICH Claude login this machine's sessions run under, as an opaque 12-hex digest — or "" when
     there is no signed-in account to read (the user 2026-07-30, who switches between accounts and wanted
@@ -29931,6 +30120,19 @@ class Handler(BaseHTTPRequestHandler):
             # registry); re-broadcast so every tab/lane/card repaints in the new color at once.
             if _set_session_color(str(msg["id"]), str(msg["bg"])):
                 _mark_views_dirty()
+        elif msg and msg.get("type") == "loginStart":
+            # the in-dashboard login (T157): spawn the PTY flow; the gear polls /version for state
+            err = _login_start()
+            if err:
+                client["send"](json.dumps({"type": "warn", "text": err}))
+        elif msg and msg.get("type") == "loginCode":
+            # PASS-THROUGH ONLY (T157 house rule): the code goes straight to the PTY — this handler
+            # must never log, store, or echo it anywhere
+            err = _login_code(msg.get("code"))
+            if err:
+                client["send"](json.dumps({"type": "warn", "text": err}))
+        elif msg and msg.get("type") == "loginCancel":
+            _login_cancel()
         elif msg and msg.get("type") == "setConserve" and msg.get("enabled") is not None:
             # the gear's conserve-memory toggle (T148) — kernel-side like autoNudge; the sweep
             # reads the flag fresh each pass, so flipping it needs no restart
