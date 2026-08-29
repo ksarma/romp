@@ -14000,6 +14000,19 @@ def _bg_live_norm(sid, path):
         return [{"tid": t.get("toolUseId"), "desc": str(t.get("desc") or "").strip(),
                  "t": int(t.get("since") or 0), "type": str(t.get("type") or "")}
                 for t in live.get("bgTasks") or [] if isinstance(t, dict)]
+    # source 0.6 — the LAUNCH LEDGER (2026-08-29): hook-recorded launch facts in the reg, durable
+    # across backend restarts, with EXACT deadlines (Monitor's own timeout_ms) — so expiry here is
+    # the recorded moment plus clock skew, never the scrape's +120s guess. Present-but-empty is
+    # authoritative like the lifecycle set above; only its ABSENCE (tmux, a pre-ledger session)
+    # falls through to the transcript pairing below.
+    reg = _thread_reg(str(sid))   # the SDK registry entry, {} when unreadable — same read the threads use
+    led = reg.get("bgLedger")
+    if led is not None:
+        now = time.time()
+        return [{"tid": e.get("toolUseId") or e.get("tid"), "desc": str(e.get("desc") or "").strip(),
+                 "t": int(e.get("armedAt") or 0), "type": str(e.get("tool") or "")}
+                for e in led if isinstance(e, dict)
+                and not (e.get("deadlineEpoch") and now > float(e["deadlineEpoch"]) + 5)]
     if not path:
         return []
     sp = _sdk_spawned_at(sid)
