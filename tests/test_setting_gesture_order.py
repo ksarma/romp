@@ -266,8 +266,286 @@ class PropagationCarriesTheStamp(_Base):
         self.assertEqual(self.calls, [], "a receiver applies without re-propagating")
 
 
+class UpdateModeOrders(_Base):
+    """setUpdateMode is in federation's queued KERNEL_SETTING class, so a frozen tab's flush can
+    deliver it hours late — and it used to apply unconditionally: a stale flush silently reverted
+    how this machine self-updates at boot (ask/auto/off). Gated exactly like _set_file_editing:
+    the stamp persists in update-mode.json beside the mode, a file without the field reads as 0."""
+
+    def test_a_stale_update_mode_flush_stands_down_loudly(self):
+        self.assertEqual(km._set_update_mode("auto", gt=T_NEW), T_NEW)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertIsNone(km._set_update_mode("off", gt=T_OLD), "older stamp must not apply")
+        self.assertEqual(km._update_mode(), "auto", "the newer mode stands")
+        for needle in ("update-mode", str(T_OLD), str(T_NEW), "stood down"):
+            self.assertIn(needle, err.getvalue(), "the stand-down names the setting and both stamps")
+
+    def test_the_dispatch_branch_hands_the_stamp_over(self):
+        self.dispatch({"type": "setUpdateMode", "mode": "auto", "gt": T_NEW})
+        err = self.dispatch({"type": "setUpdateMode", "mode": "off", "gt": T_OLD})
+        self.assertEqual(km._update_mode(), "auto")
+        self.assertIn("stood down", err)
+
+    def test_the_stamp_persists_beside_the_mode(self):
+        km._set_update_mode("auto", gt=T_NEW)
+        d = json.loads((km.jd.STATE / "update-mode.json").read_text())
+        self.assertEqual((d["mode"], d["gt"]), ("auto", T_NEW))
+
+    def test_a_file_without_the_field_reads_as_zero(self):
+        # file-format compat: a mode written before the mechanism yields to any stamped gesture
+        (km.jd.STATE / "update-mode.json").write_text(json.dumps({"mode": "auto"}))
+        self.assertEqual(km._set_update_mode("off", gt=1), 1, "gt 1 beats the absent field's 0")
+        self.assertEqual(km._update_mode(), "off")
+
+    def test_an_unstamped_set_applies_and_arms_the_store(self):
+        before = int(time.time() * 1000)
+        applied = km._set_update_mode("off")
+        self.assertIsInstance(applied, int)
+        self.assertGreaterEqual(applied, before, "an unstamped apply records its arrival time")
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertIsNone(km._set_update_mode("auto", gt=T_OLD))
+        self.assertEqual(km._update_mode(), "off")
+
+    def test_an_invalid_mode_never_writes_a_stamp(self):
+        self.assertIsNone(km._set_update_mode("banana", gt=T_NEW))
+        self.assertFalse((km.jd.STATE / "update-mode.json").exists(),
+                         "a refused mode must not burn its stamp — the store never heard it")
+
+
+class TwoFlushRace(_Base):
+    """Check-then-write must be ATOMIC per setting: the stores read the stamp, check
+    _setting_stale, then write, on a ThreadingHTTPServer — so two near-simultaneous flushes
+    (two dashboards flushing one setting on a host's recovery) could both pass the check against
+    the same stored stamp and then land in SOCKET order, the exact inversion the mechanism
+    promises away. Deterministic, events only: the OLDER gesture is held between its check and
+    its write until the NEWER one has either fully landed (unserialized code — the bug) or
+    provably blocked on the settings lock (serialized code); no schedule depends on timing."""
+
+    def _race(self, older_call, newer_call):
+        old_checked = _real_threading.Event()
+        newer_progress = _real_threading.Event()
+        orig_check = km._setting_stale
+
+        def gated(name, gt, applied_gt):
+            r = orig_check(name, gt, applied_gt)
+            if _real_threading.current_thread().name == "older":
+                old_checked.set()          # the older gesture has read + checked the stored stamp…
+                newer_progress.wait(10)    # …and stalls before writing, until the newer one moves
+            return r
+
+        km._setting_stale = gated
+        real_lock = getattr(km, "_SETTINGS_LOCK", None)
+        if real_lock is not None:
+            class _Probe:                  # detect the newer flush BLOCKING on the held lock —
+                def __enter__(self):       # the event that releases the older one's stall
+                    if not real_lock.acquire(blocking=False):
+                        newer_progress.set()
+                        real_lock.acquire()
+                def __exit__(self, *a):
+                    real_lock.release()
+            km._SETTINGS_LOCK = _Probe()
+        try:
+            errs = []
+
+            def guarded(fn):
+                def run():
+                    try:
+                        fn()
+                    except Exception as e:   # base-shape signature errors must not hang the schedule
+                        errs.append(e)
+                    finally:
+                        old_checked.set()
+                        newer_progress.set()
+                return run
+
+            told = _real_threading.Thread(target=guarded(older_call), name="older")
+            told.start()
+            self.assertTrue(old_checked.wait(10), "the older gesture reached its ordering check")
+            tnew = _real_threading.Thread(
+                target=guarded(lambda: (newer_call(), newer_progress.set())), name="newer")
+            tnew.start()
+            told.join(10)
+            tnew.join(10)
+            self.assertFalse(told.is_alive() or tnew.is_alive(), "both flushes finished")
+        finally:
+            km._setting_stale = orig_check
+            if real_lock is not None:
+                km._SETTINGS_LOCK = real_lock
+
+    def test_judge_store_racing_flushes_land_in_gesture_order(self):
+        with contextlib.redirect_stderr(io.StringIO()):
+            self._race(lambda: km._set_judge_model("opus", gt=T_OLD),
+                       lambda: km._set_judge_model("fable", gt=T_NEW))
+        self.assertEqual((km.jd.STATE / "judge-model").read_text(), "fable",
+                         "socket order must never beat gesture order between two racing flushes")
+        self.assertEqual(km._judge_state_gt("judge-model"), T_NEW)
+
+    def test_file_editing_racing_flushes_land_in_gesture_order(self):
+        with contextlib.redirect_stderr(io.StringIO()):
+            self._race(lambda: km._set_file_editing(False, gt=T_OLD),
+                       lambda: km._set_file_editing(True, gt=T_NEW))
+        d = json.loads((km.jd.STATE / "file-editing.json").read_text())
+        self.assertEqual((d["enabled"], d["gt"]), (True, T_NEW))
+
+    def test_update_mode_racing_flushes_land_in_gesture_order(self):
+        with contextlib.redirect_stderr(io.StringIO()):
+            self._race(lambda: km._set_update_mode("off", gt=T_OLD),
+                       lambda: km._set_update_mode("auto", gt=T_NEW))
+        self.assertEqual(km._update_mode(), "auto")
+
+
+class SidecarCrashSafety(_Base):
+    """The judge value file and its .gt sidecar are two writes. They must publish atomically and
+    SIDECAR FIRST: a crash between them then leaves the new stamp guarding the old value — a
+    legitimate re-send stands down once and the next change heals — where value-first left the
+    new value guarded by the OLD stamp, so a later stale gesture could invert the ordering. And
+    any write failure must be LOUD: the old `except OSError: return None` was a mute third
+    meaning of None (the callers' no-propagation gates silently skip the fan-out on it)."""
+
+    def _crash_on_write(self, n):
+        """Patch Path.write_text to raise OSError on call number `n` from now (both the raw
+        write_text shape and _atomic_write's temp-file write funnel through it)."""
+        import pathlib
+        counter = {"n": 0}
+        orig = pathlib.Path.write_text
+
+        def failing(p, *a, **k):
+            counter["n"] += 1
+            if counter["n"] == n:
+                raise OSError("simulated crash between the store's two writes")
+            return orig(p, *a, **k)
+
+        pathlib.Path.write_text = failing
+        return lambda: setattr(pathlib.Path, "write_text", orig)
+
+    def test_a_crash_between_the_writes_cannot_let_a_stale_gesture_invert(self):
+        self.assertEqual(km._set_judge_model("opus", gt=T_OLD), T_OLD)
+        restore = self._crash_on_write(2)
+        try:
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertIsNone(km._set_judge_model("fable", gt=T_NEW),
+                                  "the interrupted pick reports not-applied")
+        finally:
+            restore()
+        # THE property: after the crash, a gesture older than the interrupted pick stands down
+        t_mid = (T_OLD + T_NEW) // 2
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertIsNone(km._set_judge_model("haiku", gt=t_mid),
+                              "a stale gesture must never apply, whatever a crash left behind")
+        self.assertNotEqual((km.jd.STATE / "judge-model").read_text(), "haiku")
+        # …and the next legitimate change heals both files
+        self.assertEqual(km._set_judge_model("fable", gt=T_NEW + 1), T_NEW + 1)
+        self.assertEqual((km.jd.STATE / "judge-model").read_text(), "fable")
+        self.assertEqual(km._judge_state_gt("judge-model"), T_NEW + 1)
+
+    def test_the_crash_errs_toward_stand_down_never_inversion(self):
+        # the state a crash may leave: the STAMP advanced, the VALUE kept — never the reverse
+        self.assertEqual(km._set_judge_model("opus", gt=T_OLD), T_OLD)
+        restore = self._crash_on_write(2)
+        try:
+            with contextlib.redirect_stderr(io.StringIO()):
+                km._set_judge_model("fable", gt=T_NEW)
+        finally:
+            restore()
+        self.assertEqual((km.jd.STATE / "judge-model").read_text(), "opus",
+                         "the value write never landed")
+        self.assertEqual(km._judge_state_gt("judge-model"), T_NEW,
+                         "the sidecar published FIRST — the safe direction")
+
+    def test_the_half_applied_state_is_loud(self):
+        km._set_judge_model("opus", gt=T_OLD)
+        restore = self._crash_on_write(2)
+        err = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(err):
+                self.assertIsNone(km._set_judge_model("fable", gt=T_NEW))
+        finally:
+            restore()
+        for needle in ("judge-model", "half-applied"):
+            self.assertIn(needle, err.getvalue().lower(),
+                          "the half-apply names itself on stderr — rollback is impossible, so be loud")
+
+    def test_a_failed_first_write_is_loud_and_applies_nothing(self):
+        restore = self._crash_on_write(1)
+        err = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(err):
+                self.assertIsNone(km._set_judge_model("fable", gt=T_NEW))
+        finally:
+            restore()
+        self.assertIn("judge-model", err.getvalue(), "an OSError refusal is never silent")
+        self.assertFalse((km.jd.STATE / "judge-model").exists())
+        self.assertFalse((km.jd.STATE / "judge-model.gt").exists())
+
+    def test_a_value_the_store_never_took_does_not_fan_out(self):
+        # KEPT behavior, now documented in the docstring: consistency over delivery — the mesh
+        # must never adopt a value the origin's own store refused.
+        restore = self._crash_on_write(2)
+        try:
+            err_txt = self.dispatch({"type": "setJudgeModel", "model": "fable", "gt": T_NEW})
+        finally:
+            restore()
+        self.assertEqual(self.propagated, [], "no propagation for a pick the store never took")
+        self.assertIn("judge-model", err_txt, "…and the refusal says so on stderr")
+
+
+class StaleGestureAnswersTheDeliveringSocket(_Base):
+    """A stood-down gesture used to be invisible to the dashboard that made it: one kernel stderr
+    line, while the open gear kept displaying the refused pick as applied — and with the mesh
+    AGREEING on the kept value, the mixed marks showed nothing. The WS branch that stands a
+    gesture down now answers the DELIVERING socket with a settingStale frame (the _reply idiom
+    the saveFile acks use); the gear toasts it and re-fills if open (ui/webview
+    setting-stale.test.ts pins that side). Event-keyed: the frame is the deciding event — no
+    polling, no timer."""
+
+    def dispatch_rec(self, msg):
+        sent = []
+        client = {"send": lambda s: sent.append(json.loads(s)), "alive": True}
+        with contextlib.redirect_stderr(io.StringIO()):
+            km.Handler._dispatch_ws(types.SimpleNamespace(), msg, client)
+        return sent
+
+    def test_a_stood_down_judge_pick_answers_settingStale(self):
+        self.dispatch_rec({"type": "setJudgeModel", "model": "fable", "gt": T_NEW})
+        sent = self.dispatch_rec({"type": "setJudgeModel", "model": "opus", "gt": T_OLD})
+        frames = [m for m in sent if m.get("type") == "settingStale"]
+        self.assertEqual(len(frames), 1, "the delivering socket hears exactly one stand-down frame")
+        self.assertEqual(frames[0]["setting"], "judge-model")
+        self.assertEqual(frames[0]["storedGt"], T_NEW)
+        self.assertEqual(frames[0]["kept"], "fable", "the kept value rides along (cheap: one store read)")
+
+    def test_every_gt_gated_setting_answers(self):
+        cases = [({"type": "setAutoNudge", "enabled": False}, {"type": "setAutoNudge", "enabled": True},
+                  "auto-nudge", False),
+                 ({"type": "setFileEditing", "enabled": True}, {"type": "setFileEditing", "enabled": False},
+                  "file-editing", True),
+                 ({"type": "setUpdateMode", "mode": "auto"}, {"type": "setUpdateMode", "mode": "off"},
+                  "update-mode", "auto"),
+                 ({"type": "setIndexEffort", "effort": "high"}, {"type": "setIndexEffort", "effort": "low"},
+                  "index-effort", "high"),
+                 ({"type": "setDistillModel", "model": "haiku"}, {"type": "setDistillModel", "model": "triage"},
+                  "distill-model", "haiku")]
+        for newer, older, store, kept in cases:
+            sent = self.dispatch_rec(dict(newer, gt=T_NEW))
+            self.assertEqual([m for m in sent if m.get("type") == "settingStale"], [],
+                             "an APPLIED gesture sends no frame (%s)" % store)
+            sent = self.dispatch_rec(dict(older, gt=T_OLD))
+            frames = [m for m in sent if m.get("type") == "settingStale"]
+            self.assertEqual(len(frames), 1, store)
+            self.assertEqual(frames[0]["setting"], store)
+            self.assertEqual(frames[0]["storedGt"], T_NEW)
+            self.assertEqual(frames[0]["kept"], kept, store)
+
+    def test_no_frame_for_invalid_or_unstamped(self):
+        sent = self.dispatch_rec({"type": "setJudgeModel", "model": "gpt-99", "gt": T_NEW})
+        self.assertEqual(sent, [], "a refused VALUE is not a stale gesture — no frame")
+        sent = self.dispatch_rec({"type": "setJudgeModel", "model": "haiku"})
+        self.assertEqual(sent, [], "the unstamped compat path applies — no frame")
+
+
 class WiringPins(unittest.TestCase):
-    """Source pins on the two non-judge WS branches (the judge branches' propagation args are
+    """Source pins on the non-judge WS branches (the judge branches' propagation args are
     pinned in test_judge_settings_sync.py): each must hand the message's stamp to its setter —
     a branch that drops it reopens the unconditional-apply hole for that setting."""
 
@@ -281,6 +559,28 @@ class WiringPins(unittest.TestCase):
 
     def test_file_editing_branch_passes_the_stamp(self):
         self.assertIn('_set_file_editing(bool(msg["enabled"]), gt=_gesture_ms(msg))', self.src)
+
+    def test_update_mode_branch_passes_the_stamp(self):
+        self.assertIn('_set_update_mode(str(msg["mode"]), gt=_gesture_ms(msg))', self.src)
+
+    def test_every_stood_down_branch_tells_the_delivering_socket(self):
+        self.assertGreaterEqual(self.src.count("_tell_stale_gesture(client)"), 9,
+                                "all nine queued-class branches answer the delivering socket on a stand-down")
+
+    def test_the_docstring_names_all_three_none_causes(self):
+        doc = km._set_judge_state.__doc__ or ""
+        for needle in ("invalid", "stale", "OSError"):
+            self.assertIn(needle, doc, "None has exactly three named causes")
+        self.assertIn("propagat", doc, "the no-propagate-on-OSError behavior is documented, with its why")
+
+    def test_both_judge_files_publish_atomically_sidecar_first(self):
+        import inspect
+        src = inspect.getsource(km._set_judge_state)
+        self.assertIn('_atomic_write(jd.STATE / (fname + ".gt")', src, "the sidecar publishes via _atomic_write")
+        self.assertIn("_atomic_write(jd.STATE / fname,", src, "the value publishes via _atomic_write")
+        self.assertNotIn(".write_text(", src, "no raw write_text — a torn write must not tear the store")
+        self.assertLess(src.index('fname + ".gt"'), src.index("_atomic_write(jd.STATE / fname,"),
+                        "the sidecar publishes FIRST — a crash between the two errs toward stand-down")
 
 
 if __name__ == "__main__":

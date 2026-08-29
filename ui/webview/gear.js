@@ -286,7 +286,7 @@ function initGear(post) {
     post({ type: 'setAutoNudge', enabled: an.checked, gt: Date.now() });
   });
   if (fe) fe.addEventListener('change', function () { post({ type: 'setFileEditing', enabled: fe.checked, gt: Date.now() }); });
-  if (upm) upm.addEventListener('change', function () { post({ type: 'setUpdateMode', mode: upm.value }); });
+  if (upm) upm.addEventListener('change', function () { post({ type: 'setUpdateMode', mode: upm.value, gt: Date.now() }); });
   // The judge MODEL pickers mirror the session pickers (the user 2026-08-25): families top-level,
   // clicking a family sends its /models `default` (the user's remembered version), hover or
   // ArrowRight reveals a side submenu of versions. The native select stays (hidden) as the VALUE
@@ -408,9 +408,9 @@ function initGear(post) {
   });
   if (jm) jm.addEventListener('change', function () { post({ type: 'setJudgeModel', model: jm.value, gt: Date.now() }); });
   if (im) im.addEventListener('change', function () { post({ type: 'setIndexModel', model: im.value, gt: Date.now() }); });
-  if (je) je.addEventListener('change', function () { post({ type: 'setJudgeEffort', effort: je.value }); });
+  if (je) je.addEventListener('change', function () { post({ type: 'setJudgeEffort', effort: je.value, gt: Date.now() }); });
   if (jf) jf.addEventListener('change', function () { post({ type: 'setJudgeFast', on: jf.checked }); });
-  if (ie) ie.addEventListener('change', function () { post({ type: 'setIndexEffort', effort: ie.value }); });
+  if (ie) ie.addEventListener('change', function () { post({ type: 'setIndexEffort', effort: ie.value, gt: Date.now() }); });
   if (dm) dm.addEventListener('change', function () { post({ type: 'setDistillModel', model: dm.value, gt: Date.now() }); });
   if (de) de.addEventListener('change', function () { post({ type: 'setDistillEffort', effort: de.value, gt: Date.now() }); });
   // feed-colormap preview bar: a horizontal gradient of the SELECTED map's stops (mirrors render.ts COLORMAPS).
@@ -462,6 +462,43 @@ function initGear(post) {
     if (m && m.type === 'browseResult' && m.target === 'gear' && typeof m.path === 'string' && dd) {
       dd.value = m.path; dd.dispatchEvent(new Event('change'));
     }
+  });
+  // A stood-down gesture must be visible to the dashboard that made it (2026-08-29). When a
+  // settings gesture loses the ordering race (a frozen tab's queued flush, or a click here that a
+  // newer pick elsewhere outranks), the kernel answers the DELIVERING socket with a settingStale
+  // frame — without it the refusal was one kernel stderr line: this modal kept displaying the
+  // refused pick as applied (fill() runs only on open), and with every kernel AGREEING on the
+  // kept value the mixed marks show nothing. Event-keyed: the frame IS the deciding event — toast
+  // it in plain words and re-read the kernel's actual values if the modal is up. No polling.
+  var STALE_LABELS = { 'auto-nudge': 'Auto Nudge', 'file-editing': 'File editing',
+    'update-mode': 'Automatic updates', 'judge-model': 'Triage model', 'judge-effort': 'Triage effort',
+    'index-model': 'Indexing model', 'index-effort': 'Indexing effort',
+    'distill-model': 'Distilling model', 'distill-effort': 'Distilling effort' };
+  function staleToast(text) {
+    var box = document.getElementById('rs-stale-toasts');
+    if (!box) {   // created once; dismissal delegated to the STABLE container (click-safe rule)
+      box = document.createElement('div'); box.id = 'rs-stale-toasts';
+      box.addEventListener('click', function (e2) {
+        var t = e2.target;
+        while (t && t !== box && !(t.classList && t.classList.contains('rs-stale-toast'))) t = t.parentNode;
+        if (t && t !== box) t.remove();
+      });
+      document.body.appendChild(box);
+    }
+    var t = document.createElement('div');
+    t.className = 'rs-stale-toast'; t.setAttribute('role', 'status'); t.textContent = text;
+    box.appendChild(t);
+    setTimeout(function () { t.remove(); }, 12000);   // self-clearing backstop; a click dismisses sooner
+  }
+  window.addEventListener('message', function (e) {
+    var m = e.data;
+    if (!m || m.type !== 'settingStale') return;
+    var label = STALE_LABELS[m.setting] || String(m.setting || 'A setting');
+    var kept = m.kept === true ? 'on' : m.kept === false ? 'off'
+      : (typeof m.kept === 'string' && m.kept ? m.kept : '');
+    staleToast(label + ' changed more recently somewhere else — keeping the newer choice'
+      + (kept ? ' (' + kept + ')' : '') + '.');
+    if (!p.hidden) fill();   // the open modal re-reads the kernel's values so it stops showing the refused pick
   });
   // The model/effort <option>s come from /models — the same single source the
   // chat + timeline pickers use. Cached after the first successful fetch.
