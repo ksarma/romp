@@ -474,6 +474,12 @@ function initGear(post) {
     'update-mode': 'Automatic updates', 'judge-model': 'Triage model', 'judge-effort': 'Triage effort',
     'index-model': 'Indexing model', 'index-effort': 'Indexing effort',
     'distill-model': 'Distilling model', 'distill-effort': 'Distilling effort' };
+  // Dismissal is the warn-toast FAMILY treatment (the user 2026-08-25: a notice with no visible
+  // way out "gets in the way" — worst on touch, and this toast's mint site is a frozen phone tab
+  // flushing on recovery): a visible ✕ in the chip-✕ dress, the whole toast still click-dismisses,
+  // Escape clears the stack, and the fade precedes the auto-remove. COPIED from the family home
+  // (render.ts warnToast + styles.css .warn-toast-x) because the gear is its own document, loaded
+  // by panes that ship only this sheet — keep the two in step (setting-stale.test.ts pins this copy).
   function staleToast(text) {
     var box = document.getElementById('rs-stale-toasts');
     if (!box) {   // created once; dismissal delegated to the STABLE container (click-safe rule)
@@ -483,12 +489,24 @@ function initGear(post) {
         while (t && t !== box && !(t.classList && t.classList.contains('rs-stale-toast'))) t = t.parentNode;
         if (t && t !== box) t.remove();
       });
+      // Escape clears the stack, additively — never stopPropagation: clearing a toast is
+      // noise-removal, not a key any other surface loses (family rule, render.ts warnToast)
+      document.addEventListener('keydown', function (e2) {
+        if (e2.key === 'Escape') Array.prototype.slice.call(box.children).forEach(function (w) { w.remove(); });
+      });
       document.body.appendChild(box);
     }
     var t = document.createElement('div');
-    t.className = 'rs-stale-toast'; t.setAttribute('role', 'status'); t.textContent = text;
+    t.className = 'rs-stale-toast'; t.setAttribute('role', 'status'); t.title = 'click to dismiss';
+    var txt = document.createElement('span');
+    txt.className = 'rs-stale-toast-msg'; txt.textContent = text;
+    var x = document.createElement('button');
+    x.className = 'rs-stale-toast-x'; x.setAttribute('aria-label', 'Dismiss'); x.title = 'dismiss (Esc)';
+    x.textContent = '✕';   // clicks bubble to the container's delegated dismiss, like the family's
+    t.appendChild(txt); t.appendChild(x);
     box.appendChild(t);
-    setTimeout(function () { t.remove(); }, 12000);   // self-clearing backstop; a click dismisses sooner
+    setTimeout(function () { t.classList.add('fade'); }, 11000);   // the family fade first…
+    setTimeout(function () { t.remove(); }, 12000);   // …then the self-clearing backstop; a click/Esc dismisses sooner
   }
   window.addEventListener('message', function (e) {
     var m = e.data;

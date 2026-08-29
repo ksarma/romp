@@ -3248,14 +3248,22 @@ def _write_auto_nudge(d):
 
 def _set_auto_nudge(enabled, gt=None):
     """Returns the applied gesture stamp (epoch ms), or None when a stale `gt` stood down —
-    see the gesture-time ordering block above _NUDGE_LOCK."""
+    see the gesture-time ordering block above _NUDGE_LOCK — or the store write failed (OSError:
+    loud on stderr, nothing applied, nothing ticked). The catch lives HERE, like _set_update_mode's
+    and _set_judge_state's: a raised OSError reaches the WS reader loop, which classifies it as a
+    socket failure and re-raises into a silent pass — a full-disk gear toggle tearing the whole
+    dashboard WebSocket down with zero log output."""
     with _NUDGE_LOCK:
         d = dict(_auto_nudge_data())
         if _setting_stale("auto-nudge", gt, _gt_int(d.get("gt"))):
             return None
         d["enabled"] = bool(enabled)
         d["gt"] = gt if gt is not None else int(time.time() * 1000)
-        _write_auto_nudge(d)
+        try:
+            _write_auto_nudge(d)
+        except OSError as e:
+            sys.stderr.write("setting auto-nudge: write failed (%s) — nothing applied\n" % e)
+            return None
         return d["gt"]
 
 
@@ -3276,10 +3284,13 @@ def _file_editing_on():
 
 def _set_file_editing(enabled, gt=None):
     """Returns the applied gesture stamp (epoch ms), or None when a stale `gt` stood down —
-    see the gesture-time ordering block above _NUDGE_LOCK. A file without the field (written
-    before the mechanism) reads as gt 0, so any stamped gesture applies over it. The whole
-    read-check-write span holds _SETTINGS_LOCK: without it, two racing flushes could both check
-    against the same stored stamp and land in socket order (see the lock's own comment)."""
+    see the gesture-time ordering block above _NUDGE_LOCK — or the store write failed (OSError:
+    loud on stderr, nothing applied; caught HERE like _set_update_mode's, because a raised OSError
+    reads as a socket failure to the WS reader loop and silently tears the connection down).
+    A file without the field (written before the mechanism) reads as gt 0, so any stamped gesture
+    applies over it. The whole read-check-write span holds _SETTINGS_LOCK: without it, two racing
+    flushes could both check against the same stored stamp and land in socket order (see the
+    lock's own comment)."""
     with _SETTINGS_LOCK:
         try:
             prev = json.loads((jd.STATE / "file-editing.json").read_text())
@@ -3288,7 +3299,11 @@ def _set_file_editing(enabled, gt=None):
         if _setting_stale("file-editing", gt, _gt_int(prev.get("gt")) if isinstance(prev, dict) else 0):
             return None
         stamp = gt if gt is not None else int(time.time() * 1000)
-        _atomic_write(jd.STATE / "file-editing.json", json.dumps({"enabled": bool(enabled), "gt": stamp}))
+        try:
+            _atomic_write(jd.STATE / "file-editing.json", json.dumps({"enabled": bool(enabled), "gt": stamp}))
+        except OSError as e:
+            sys.stderr.write("setting file-editing: write failed (%s) — nothing applied\n" % e)
+            return None
         return stamp
 
 

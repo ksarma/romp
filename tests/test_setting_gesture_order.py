@@ -490,6 +490,84 @@ class SidecarCrashSafety(_Base):
         self.assertIn("judge-model", err_txt, "…and the refusal says so on stderr")
 
 
+class StoreWriteFailureIsLoudAndContained(_Base):
+    """A store write that fails (ENOSPC, a read-only STATE) must die INSIDE the setter — one loud
+    stderr line naming the setting, None returned (stood-down semantics: no apply, no tick, no
+    propagation) — and never escape it: the WS reader loop classifies a raised OSError as a
+    presumed socket failure and re-raises it into an outer silent pass, so a full-disk gear
+    toggle used to tear the dashboard's entire WebSocket down with zero log output.
+    _set_judge_state and _set_update_mode already hold this contract; these tests pin
+    _set_auto_nudge and _set_file_editing onto the same one."""
+
+    def _fail_writes(self):
+        """Patch Path.write_text to raise OSError on every call from now (both stores publish
+        via _atomic_write, whose temp-file write funnels through it)."""
+        import pathlib
+        orig = pathlib.Path.write_text
+
+        def failing(p, *a, **k):
+            raise OSError("simulated full disk")
+
+        pathlib.Path.write_text = failing
+        return lambda: setattr(pathlib.Path, "write_text", orig)
+
+    def test_auto_nudge_write_failure_is_loud_none_and_applies_nothing(self):
+        self.assertEqual(km._set_auto_nudge(True, gt=T_OLD), T_OLD)
+        restore = self._fail_writes()
+        err = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(err):
+                self.assertIsNone(km._set_auto_nudge(False, gt=T_NEW),
+                                  "a failed write reports not-applied — it never raises")
+        finally:
+            restore()
+        self.assertIn("auto-nudge", err.getvalue(), "the refusal names the setting on stderr")
+        km._autonudge_cache.clear()
+        self.assertTrue(km._auto_nudge_on(), "nothing applied — the store keeps the old value")
+
+    def test_file_editing_write_failure_is_loud_none_and_applies_nothing(self):
+        self.assertEqual(km._set_file_editing(True, gt=T_OLD), T_OLD)
+        restore = self._fail_writes()
+        err = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(err):
+                self.assertIsNone(km._set_file_editing(False, gt=T_NEW),
+                                  "a failed write reports not-applied — it never raises")
+        finally:
+            restore()
+        self.assertIn("file-editing", err.getvalue(), "the refusal names the setting on stderr")
+        self.assertTrue(km._file_editing_on(), "the consent the store holds survives the failed revoke")
+
+    def test_a_full_disk_gear_toggle_does_not_tear_the_ws_down(self):
+        # the incident shape, through the REAL dispatch: an OSError escaping the setter reaches
+        # the reader loop's `except (BrokenPipeError, ConnectionResetError, OSError): raise`,
+        # which hands it to an outer silent `pass` — connection dead, nothing logged. The
+        # setter's own stderr line must be the loudest thing that happens.
+        ticks = []
+        km._auto_nudge_tick = lambda *a, **k: ticks.append(a)
+        sent = []
+        client = {"send": lambda s: sent.append(json.loads(s)), "alive": True}
+        restore = self._fail_writes()
+        try:
+            for msg, name in (({"type": "setFileEditing", "enabled": True, "gt": T_NEW}, "file-editing"),
+                              ({"type": "setAutoNudge", "enabled": False, "gt": T_NEW}, "auto-nudge")):
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err):
+                    try:
+                        km.Handler._dispatch_ws(types.SimpleNamespace(), msg, client)
+                    except OSError:
+                        self.fail("an OSError escaped _dispatch_ws (%s) — the reader loop "
+                                  "re-raises it as a socket failure and silently tears the "
+                                  "WebSocket down" % name)
+                self.assertIn(name, err.getvalue(), "the failure is loud and names the setting")
+        finally:
+            restore()
+        self.assertTrue(client["alive"], "the delivering client survives the failed write")
+        self.assertEqual(ticks, [], "a stood-down toggle fires no nudge tick — no new information")
+        self.assertEqual([m for m in sent if m.get("type") == "settingStale"], [],
+                         "a write failure is not a stale gesture — no settingStale frame")
+
+
 class StaleGestureAnswersTheDeliveringSocket(_Base):
     """A stood-down gesture used to be invisible to the dashboard that made it: one kernel stderr
     line, while the open gear kept displaying the refused pick as applied — and with the mesh
@@ -572,6 +650,13 @@ class WiringPins(unittest.TestCase):
         for needle in ("invalid", "stale", "OSError"):
             self.assertIn(needle, doc, "None has exactly three named causes")
         self.assertIn("propagat", doc, "the no-propagate-on-OSError behavior is documented, with its why")
+
+    def test_the_toggle_docstrings_name_the_write_failure_stand_down(self):
+        # the same contract _set_judge_state documents: None's write-failure cause is named, so a
+        # caller reading the docstring knows a full disk stands the gesture down rather than raising
+        for fn in (km._set_auto_nudge, km._set_file_editing):
+            self.assertIn("OSError", fn.__doc__ or "",
+                          "%s documents the write-failure cause of None" % fn.__name__)
 
     def test_both_judge_files_publish_atomically_sidecar_first(self):
         import inspect

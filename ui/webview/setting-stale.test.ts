@@ -50,6 +50,32 @@ test("the toast is click-safe and self-clearing, styled by the gear's own sheet 
     assert.ok(GEAR_CSS.includes(sel), `gear.css styles ${sel} — the chat pane loads gear.css, not feed.css`);
 });
 
+test("the toast wears the family dismissal: a visible ✕ in the chip-✕ dress, Escape clears, fade", () => {
+  // The family's dismissal standard (the user 2026-08-25, after a notice with no visible way out;
+  // warn-toast.test.ts pins the family home, render.ts warnToast + styles.css .warn-toast-x): a
+  // visible ✕, Escape clears the stack, and the fade before the auto-remove. This toast's mint
+  // site is a frozen tab flushing on recovery — touch devices, exactly where an invisible
+  // whole-toast click and hoverless ✕-less copy help least. gear.js is its own document (panes
+  // that load only this sheet), so the treatment is COPIED from the family home; these pins keep
+  // the copy in step with it.
+  assert.match(GEAR, /x\.className = 'rs-stale-toast-x'/, "a visible ✕ button rides every toast");
+  assert.match(GEAR, /x\.setAttribute\('aria-label', 'Dismiss'\)/, "the ✕ is named for assistive tech");
+  assert.match(GEAR, /x\.title = 'dismiss \(Esc\)'/, "the ✕ teaches the keyboard way out");
+  // Escape clears the stack, additively — no stopPropagation, so no other surface loses the key
+  assert.ok(GEAR.includes("e2.key === 'Escape'"), "Escape clears the stack");
+  const esc = GEAR.slice(GEAR.indexOf("e2.key === 'Escape'"), GEAR.indexOf("e2.key === 'Escape'") + 200);
+  assert.doesNotMatch(esc, /stopPropagation/, "clearing toasts is additive noise-removal");
+  // the fade precedes the auto-remove, on the family's timings
+  assert.match(GEAR, /t\.classList\.add\('fade'\); \}, 11000\)/, "the fade arms first");
+  assert.match(GEAR, /t\.remove\(\); \}, 12000\)/, "the self-clearing backstop stays");
+  // the ✕ wears the chip-✕ dress in gear.css's own literal palette (the gear's hosts don't load
+  // styles.css, so var(--dim)/var(--fg) don't resolve here)
+  assert.match(GEAR_CSS, /\.rs-stale-toast-x \{ flex: 0 0 auto; border: none; background: none; cursor: pointer; color: #9aa0a6;/);
+  assert.match(GEAR_CSS, /\.rs-stale-toast-x:hover \{ color: #fff; background: rgba\(255, 255, 255, 0\.08\); \}/);
+  assert.match(GEAR_CSS, /\.rs-stale-toast\.fade \{ opacity: 0; \}/, "the fade class actually fades");
+  assert.match(GEAR_CSS, /\.rs-stale-toast \{[^}]*transition: opacity/, "…through a real transition");
+});
+
 test("the kept value rides when cheap, and reads as words (booleans become on/off)", () => {
   assert.match(KERNEL, /def _setting_kept_value\(name\)/, "one cheap store read at reply time, never on the apply path");
   assert.ok(GEAR.includes("m.kept === true ? 'on'"), "a boolean setting's kept value reads as on/off in the toast");
