@@ -3163,6 +3163,16 @@ class TimelinePanel {
             pill.setAttribute('style', 'display:inline-flex;align-items:center;padding:2px 9px;'
               + 'border-radius:10px;border:1px solid ' + tc + ';color:' + tc + ';background:transparent;font-weight:650;'
               + (gid && tg.ids.indexOf(gid) >= 0 ? 'outline:1px solid rgba(255,255,255,0.25);outline-offset:2px;' : ''));
+            // tag federation v2: a queued edit for an unreachable home is VISIBLE, never
+            // gone-but-not-gone — the kernel stamps the cached remote entry with `pending`
+            // ("delete"/"rename"/"remove"; it applies when that host reattaches). Compact idiom:
+            // the dialog's sub-line size, muted, beside the pill.
+            const pend = (tg.remotes || []).filter((rt) => rt.pending);
+            if (pend.length) {
+              const note = pillCell.createSpan({
+                text: pend.map((rt) => 'pending ' + rt.pending + ' on ' + (rt.host || '?')).join(', ') });
+              note.setAttribute('style', 'margin-left:6px;font-size:0.82em;opacity:0.6;font-style:italic;white-space:nowrap;');
+            }
           }
           // delete — the destructive convention: dim at rest, red on hover
           const del = tgrid.createDiv();
