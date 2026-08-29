@@ -16023,8 +16023,9 @@ def _rewind_rollback(sid, user_uuid, now=None):
     be = Sessions.backend_for(sid)
     if not hasattr(be, "rollback"):
         return "deleting past messages needs the SDK backend — this session runs in tmux (use Esc Esc in its terminal)"
-    if _ops_gate(sid):
-        return "the session is busy — wait for the current turn to finish, then delete"
+    # NO busy gate here (delete-while-busy, the user 2026-08-29): the backend decides — a bare
+    # delete on an in-flight turn interrupts it and arms the rewind at the turn's actual end;
+    # compacting and queued-strangers keep their honest refusals inside _arm_rewind.
     now = now or time.time()
     sess = next((s for s in _sessions(now) if s["sid"] == sid), None)
     if not sess:
@@ -16036,7 +16037,11 @@ def _rewind_rollback(sid, user_uuid, now=None):
     # abandoned. Read its time NOW, before be.rollback arms the pending_cut that would hide it from _parse.
     # The gesture HIDES the affected cards; the archive waits for the branch-take (_on_rewind_resolved).
     cut_t = _atom_epoch(sess["path"], sid, str(user_uuid), now)
-    ok, berr = be.rollback(sid, target)
+    # the arm-time re-check for a mid-window delete: a compaction landing between the interrupt
+    # and the turn's end can move the boundary past the target — only this parse can see that
+    path = sess["path"]
+    ok, berr = be.rollback(sid, target,
+                           revalidate=lambda: _rewind_target(path, sid, str(user_uuid))[1])
     if ok:
         _arm_rewind_hold(be, sid, cut_t)
     return None if ok else (berr or "the rollback could not be applied")
