@@ -142,6 +142,13 @@ class StopReconciler(_Backend):
         self.assertEqual(adopted["src"], "stopReconcile", "the reconciler is the safety net, labeled")
         self.assertEqual([w["why"] for w in ended], [])
 
+    def test_every_stop_stamps_the_turn_end_event(self):
+        # lastStopAt is the settle event itself, durable in the reg — consumers (the nudge memo
+        # re-arm) read a fact, not a transcript-mtime inference (2026-08-29, romp_cards' seam)
+        asyncio.run(self.sess._stop_hook({}, None, None))
+        reg = sb.read_reg(self.d, SID) or {}
+        self.assertAlmostEqual(reg.get("lastStopAt"), time.time(), delta=30)
+
     def test_absence_of_the_field_reconciles_nothing(self):
         self._launch_bash()
         asyncio.run(self.sess._stop_hook({"transcript_path": "/tmp/x.jsonl"}, None, None))

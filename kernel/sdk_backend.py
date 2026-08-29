@@ -2936,6 +2936,13 @@ class SdkSession:
                     self._ledger_write(kept, ended)
         except Exception as e:
             self.backend._log("stop hook (%s): bg-ledger reconcile failed: %s" % (self.name, e))
+        # The turn-end EVENT itself, durable and kernel-readable (2026-08-29, for the nudge layer's
+        # memo re-arm and any consumer that needs "this session settled a turn at T" as a fact
+        # rather than an inference from transcript mtimes — romp_cards' round keys on it).
+        try:
+            self.backend._update_reg(self.sid, lastStopAt=int(time.time()))
+        except Exception:
+            pass
         self.backend._poke()
         return {}
 
