@@ -1559,6 +1559,15 @@ class SdkSession:
         self._rewind_leaf = reg.get("rewindLeaf") or ""
         self._rewind_bare = bool(reg.get("rewindBare"))   # a DELETE rollback: no replacement turn enqueued
         self._rewind_armed = False
+        # delete-while-busy (the user 2026-08-29): the gesture landed mid-turn — the interrupt is in
+        # flight and the arm completes at the turn's actual END (_complete_rewind_wait, keyed on the
+        # Stop hook / inflight settle, never a sleep). Reg-seeded so a kernel death mid-window is
+        # VISIBLE at the next connect (the leaf verification there reads the flag as spent and
+        # restores loudly — never a wrong-branch cut). The revalidate closure is the kernel's
+        # arm-time re-check (the compaction boundary lives in the kernel's parse); in-memory on
+        # purpose — it cannot survive a restart, and the spent path covers that honestly.
+        self._rewind_wait = bool(reg.get("rewindWait"))
+        self._rewind_revalidate = None
         # reconnect machinery: effort changes (a connect-time flag) reconnect the client; _wake breaks the
         # receive loop cleanly for shutdown OR reconnect even when idle (a bare async-for would block forever).
         self._wake: asyncio.Event | None = None
@@ -2294,8 +2303,10 @@ class SdkSession:
             with self._lock:
                 dropped = self._pending.pop(0) if self._pending else None
             self._persist_queue()
+        self._rewind_wait = False
         try:
-            self.backend._update_reg(self.sid, rewindTo="", rewindLeaf="", rewindBare=False)
+            self.backend._update_reg(self.sid, rewindTo="", rewindLeaf="", rewindBare=False,
+                                     rewindWait=False)
         except Exception as e:
             self.backend._log("rewind (%s): registry clear failed: %s" % (self.name, e))
         self.backend._log("rewind (%s): the CLI refused --resume-session-at (%s: %s) — flag dropped, "
@@ -2635,15 +2646,32 @@ class SdkSession:
             # the authoritative flag so parked ops proceed immediately, instead of waiting out a 180s cap.
             self._compacting = False
             self._clearing = False   # /clear backstop: the turn settled, whatever the init did or didn't flip
-            if self._rewind_to:
+            if self._rewind_to and getattr(self, "_rewind_wait", False):
+                # delete-while-busy: THIS settle is the interrupted turn ending — the flag is being
+                # ARMED here, not consumed. Second observer of the turn-end fact (the Stop hook is
+                # the first; _complete_rewind_wait is idempotent, first one wins) — it exists for
+                # the turn shapes where Stop never fires (an interrupt that dies straight to the
+                # ResultMessage).
+                try:
+                    self.backend._complete_rewind_wait(self)
+                except Exception as e:
+                    self.backend._log("rewind (%s): delete-while-busy completion failed at the "
+                                      "settle: %s" % (self.name, e))
+            elif self._rewind_to and self._rewind_armed:
                 # the rewind turn settled — the flag is CONSUMED (the leaf moved past the recorded one, so
                 # rewind_disposition would drop it on the next connect anyway; this just tidies the reg now).
                 # A bare rollback consumes here too: the settled turn IS the branch's first (leaf moved).
+                # ARMED is part of the guard (delete-while-busy): the interrupted turn's own settle
+                # lands moments after the Stop hook armed the flag, and an unguarded consume read
+                # that fresh arm as the branch-take — flags could never accompany an UNARMED
+                # running turn before, so armed-only is byte-identical for the idle paths.
                 self._rewind_to = self._rewind_leaf = ""
                 self._rewind_bare = False
                 self._rewind_armed = False
+                self._rewind_wait = False
                 try:
-                    self.backend._update_reg(self.sid, rewindTo="", rewindLeaf="", rewindBare=False)
+                    self.backend._update_reg(self.sid, rewindTo="", rewindLeaf="", rewindBare=False,
+                                             rewindWait=False)
                 except Exception as e:
                     self.backend._log("rewind (%s): registry clear failed after the turn landed: %s" % (self.name, e))
                 # the BRANCH-TAKE event: the settled turn is the new branch's first landed record —
@@ -2946,6 +2974,13 @@ class SdkSession:
             self.backend._update_reg(self.sid, lastStopAt=int(time.time()))
         except Exception:
             pass
+        # delete-while-busy: the turn this delete interrupted has ENDED — complete the arm here,
+        # on the same turn-end fact that stamps lastStopAt (never a sleep)
+        if getattr(self, "_rewind_wait", False):
+            try:
+                self.backend._complete_rewind_wait(self)
+            except Exception as e:
+                self.backend._log("rewind (%s): delete-while-busy completion failed: %s" % (self.name, e))
         self.backend._poke()
         return {}
 
@@ -4445,8 +4480,11 @@ class SdkBackend:
         elif disp == "spent":
             sess._rewind_to = sess._rewind_leaf = ""
             sess._rewind_bare = False
+            sess._rewind_wait = False       # a kernel death mid-delete-window lands here: loud spent
+            #                                 restore, never a wrong-branch cut — the wait dies with the flags
             try:
-                self._update_reg(sess.sid, rewindTo="", rewindLeaf="", rewindBare=False)
+                self._update_reg(sess.sid, rewindTo="", rewindLeaf="", rewindBare=False,
+                                 rewindWait=False)
             except Exception as e:
                 self._log("rewind (%s): registry clear failed: %s" % (sess.name, e))
             self._log("rewind (%s): conversation moved since the request — flag spent, resuming plainly"
@@ -4963,30 +5001,51 @@ class SdkBackend:
         turn is a data-loss hazard, and queued strangers would ride the new branch unasked."""
         return self._arm_rewind(sid, target_uuid, text)
 
-    def rollback(self, sid: str, target_uuid: str) -> "tuple[bool, str]":
+    def rollback(self, sid: str, target_uuid: str, revalidate=None) -> "tuple[bool, str]":
         """The chat's delete-message rollback: the edit rewind with NO replacement turn. The one-shot
         flag arms the same --resume-session-at reconnect, but nothing is enqueued — the conversation
         just stands at `target_uuid`, and the user's NEXT message (whenever it comes) takes the branch.
         Until then no record lands past the recorded leaf, so the flag stays pending (rewindBare) and
-        the kernel parse renders the cut (pending_cut) instead of the abandoned tail."""
-        return self._arm_rewind(sid, target_uuid, None)
+        the kernel parse renders the cut (pending_cut) instead of the abandoned tail. `revalidate`
+        (delete-while-busy) is the kernel's arm-time re-check, run at the interrupted turn's end —
+        None keeps the idle path exactly as before."""
+        return self._arm_rewind(sid, target_uuid, None, revalidate=revalidate)
 
-    def _arm_rewind(self, sid, target_uuid, text):
+    def _arm_rewind(self, sid, target_uuid, text, revalidate=None):
         reg = read_reg(self.state_dir, sid)
         if not reg or not reg.get("alive"):
             return False, "the session is not running — revive it first"
-        if self.busy(sid) or self.compacting(sid):
-            return False, "the session is busy — wait for the current turn to finish"
         if any(t for t in (reg.get("queue") or []) if isinstance(t, str) and t):
             return False, "messages are queued for this session — send or cancel them first"
+        if self.busy(sid) or self.compacting(sid):
+            # Delete-while-busy (the user 2026-08-29): at an explicit DELETE the old data-loss
+            # hazard inverts — the user is knowingly discarding the turn their deleted message
+            # started, and its partial output becomes the abandoned branch tail, the rewind
+            # family's normal shape. So a BARE rollback on a live in-flight session takes the
+            # interrupt-then-arm pipeline instead of refusing. Everything else keeps an honest
+            # refusal: a compaction is not the user's turn to discard (interrupting it is its own
+            # hazard); queued strangers would ride the new branch unasked (s._pending checked in
+            # the pipeline); an edit rewind (text) still needs the idle path — its replacement
+            # turn should not race a dying one.
+            if self.compacting(sid):
+                return False, ("the session is compacting its context — interrupting that is its "
+                               "own hazard; wait for it to finish, then delete")
+            s = self.sessions.get(sid)
+            if text is None and s is not None and not s.ended:
+                with s._lock:
+                    strangers = bool(s._pending)
+                if strangers:
+                    return False, "messages are queued for this session — send or cancel them first"
+                return self._arm_rollback_busy(s, sid, target_uuid, revalidate)
+            return False, "the session is busy — wait for the current turn to finish"
         leaf = last_record_uuid(transcript_path(reg.get("cwd") or "~", reg.get("lastSid") or sid))
         if not leaf:
             return False, "no conversation on disk to rewind"
         bare = text is None
-        self._update_reg(sid, rewindTo=target_uuid, rewindLeaf=leaf, rewindBare=bare)
+        self._update_reg(sid, rewindTo=target_uuid, rewindLeaf=leaf, rewindBare=bare, rewindWait=False)
         s = self._ensure(sid)
         if not s:
-            self._update_reg(sid, rewindTo="", rewindLeaf="", rewindBare=False)
+            self._update_reg(sid, rewindTo="", rewindLeaf="", rewindBare=False, rewindWait=False)
             return False, "the session could not start"
         s._rewind_leaf, s._rewind_to = leaf, target_uuid   # already-running thread: the reg seed didn't apply
         s._rewind_bare = bare
@@ -4995,6 +5054,66 @@ class SdkBackend:
         s.request_reconnect()   # idle → reconnects now; a fresh thread's FIRST connect applies the flag
         self._poke()
         return True, ""
+
+    def _arm_rollback_busy(self, s, sid, target_uuid, revalidate):
+        """Delete-while-busy, the GESTURE half: set the pending-rewind fields NOW — the existing
+        inputs() gate holds message intake on exactly these fields (rewind set, not armed), and
+        pending_cut renders the cut immediately via _rewind_wait, so the UI acknowledges at the
+        click like an idle delete — then interrupt the running turn through the owner-scoped
+        interrupt and let the turn's actual END complete the arm (_complete_rewind_wait). The leaf
+        is recorded THERE, after the dust settles: the interrupted turn's partial records are the
+        abandoned branch tail. rewindLeaf stays "" across the window on purpose — a kernel death
+        mid-window makes the next connect's leaf verification read the flag as SPENT, which
+        restores the cards loudly (never a wrong-branch cut)."""
+        self._update_reg(sid, rewindTo=target_uuid, rewindLeaf="", rewindBare=True, rewindWait=True)
+        s._rewind_to, s._rewind_leaf, s._rewind_bare = target_uuid, "", True
+        s._rewind_wait, s._rewind_revalidate = True, revalidate
+        self.interrupt(sid)
+        # the turn may have settled BETWEEN the busy() read and the fields landing — with intake
+        # held, no later turn-end event would ever complete the arm. Third observer, idempotent.
+        with s._lock:
+            settled = s.inflight == 0 and not s._pending
+        if settled:
+            self._complete_rewind_wait(s)
+        self._poke()
+        return True, ""
+
+    def _complete_rewind_wait(self, s):
+        """Delete-while-busy, the ARM half — run on the turn-end fact (the Stop hook, with the
+        inflight settle as a second observer; idempotent, first one wins under the lock). Re-check
+        through the kernel's closure — a mid-window auto-compaction lands a boundary record that
+        can put the target out of reach, and only the kernel's parse can see that — then record
+        the ACTUAL post-turn leaf and reconnect: from here it is the idle rollback path exactly.
+        Any failure restores loudly through _rewind_resolved("failed"), the same event the
+        two-phase card cleanup already keys its restore on."""
+        with s._lock:
+            if not s._rewind_wait:
+                return
+            s._rewind_wait = False
+        sid = s.sid
+        revalidate, s._rewind_revalidate = s._rewind_revalidate, None
+
+        def _restore(why):
+            self._update_reg(sid, rewindTo="", rewindLeaf="", rewindBare=False, rewindWait=False)
+            s._rewind_to, s._rewind_leaf, s._rewind_bare = "", "", False
+            self._log("rewind (%s): delete-while-busy restored — %s" % (s.name, why))
+            self._rewind_resolved(sid, "failed")
+            self._poke()
+
+        err = None
+        try:
+            err = revalidate() if revalidate else None
+        except Exception as e:
+            err = "the arm-time re-check raised: %s" % e
+        if err:
+            return _restore(err)
+        leaf = last_record_uuid(transcript_path(s.cwd, s.resume_sid or s.sid))
+        if not leaf:
+            return _restore("no conversation on disk at the turn's end")
+        self._update_reg(sid, rewindTo=s._rewind_to, rewindLeaf=leaf, rewindBare=True, rewindWait=False)
+        s._rewind_leaf = leaf
+        s.request_reconnect()
+        self._poke()
 
     def rewind_flags(self, sid: str) -> "tuple[str, str, bool]":
         """The session's armed rewind flags (rewindTo, rewindLeaf, rewindBare) — live session first,
@@ -5055,15 +5174,23 @@ class SdkBackend:
         s = self.sessions.get(sid)
         if s is not None and not s.ended:
             to, leaf, bare = s._rewind_to, s._rewind_leaf, getattr(s, "_rewind_bare", False)
+            wait = bool(getattr(s, "_rewind_wait", False))
             cwd, fsid = s.cwd, s.resume_sid or s.sid
         else:
             reg = read_reg(self.state_dir, sid)
             if not reg:
                 return ""
             to, leaf, bare = reg.get("rewindTo") or "", reg.get("rewindLeaf") or "", bool(reg.get("rewindBare"))
+            wait = bool(reg.get("rewindWait"))
             cwd, fsid = reg.get("cwd") or "~", reg.get("lastSid") or sid
         if not to or not bare:
             return ""
+        if wait:
+            # delete-while-busy window: the interrupted turn's records are STILL landing — on the
+            # abandoned tail, by design — so the leaf check below would expire the cut the user
+            # just made. The UI acknowledges at the click; verification resumes the moment the
+            # turn ends and the arm records the real leaf.
+            return to
         now_leaf = last_record_uuid(transcript_path(cwd, fsid))
         return to if rewind_disposition(to, leaf, now_leaf) == "apply" else ""
 

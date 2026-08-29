@@ -153,12 +153,19 @@ class DeleteRollback(unittest.TestCase):
         self.assertIn('client["send"](json.dumps({"type": "warn", "text": err}))', arm)
         self.assertNotIn("_send_or_park", arm)
 
-    def test_rollback_gates_match_the_edit_rewind(self):
+    def test_rollback_validates_like_the_edit_but_never_gates_on_busy(self):
+        # Delete-while-busy (the user 2026-08-29): the kernel-side busy gate is GONE from the
+        # delete path — the backend decides (a bare delete on an in-flight turn interrupts it and
+        # arms the rewind at the turn's end; compacting/queued keep honest refusals there). The
+        # edit rewind keeps its gate (test above): its replacement turn must not race a dying one.
         src = inspect.getsource(km._rewind_rollback)
         self.assertIn('if not hasattr(be, "rollback"):', src)    # SDK-only (tmux has Esc Esc natively)
-        self.assertIn("if _ops_gate(sid):", src)                 # busy/compacting/parked-queue → refuse
+        self.assertNotIn("if _ops_gate(sid):", src)              # busy is the BACKEND's decision now
         self.assertIn("target, err = _rewind_target(", src)      # the SAME cut point as an edit
-        self.assertIn("be.rollback(sid, target)", src)
+        # the arm-time re-check rides along: a mid-window compaction can move the boundary past
+        # the target, and only the kernel's parse can see that — so the closure re-runs it
+        self.assertIn("be.rollback(sid, target,", src)
+        self.assertIn('revalidate=lambda: _rewind_target(path, sid, str(user_uuid))[1]', src)
 
 
 class ParseCut(unittest.TestCase):
@@ -287,9 +294,9 @@ class RevertOnDelete(unittest.TestCase):
         # never happened).
         src = inspect.getsource(km._rewind_rollback)
         self.assertIn("cut_t = _atom_epoch(", src)                   # resolved before be.rollback
-        self.assertIn("ok, berr = be.rollback(sid, target)", src)
+        self.assertIn("ok, berr = be.rollback(sid, target,", src)   # + the arm-time revalidate closure
         self.assertIn("_arm_rewind_hold(be, sid, cut_t)", src)       # hide on success; archive at the take
-        self.assertLess(src.index("cut_t = _atom_epoch("), src.index("be.rollback(sid, target)"),
+        self.assertLess(src.index("cut_t = _atom_epoch("), src.index("be.rollback(sid, target,"),
                         "the deleted message's time is read BEFORE the cut is armed")
 
     def test_edit_hides_born_in_range_goals_too(self):
