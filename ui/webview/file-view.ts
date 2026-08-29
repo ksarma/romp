@@ -654,8 +654,10 @@ export function openFileView(path: string, sid?: string | null): boolean {
         // a popup the local flag keeps from ever re-showing. Re-offer the SAME consent here, where
         // the disagreeing machine is known by name; a yes re-broadcasts setFileEditing (KERNEL_SETTING
         // reaches every attached kernel, the late one included) and retries the save — the broadcast
-        // and the save ride the same ordered socket per host, so the flag lands first. A no falls
-        // through to the plain error bar, buffer intact.
+        // and the save ride the same ordered socket per host, so the flag lands first; on a host whose
+        // socket is down at that moment, federation queues the setting and flushes it on the open
+        // event ahead of any later traffic (federation.ts sendRemote/flushPending), so the flag still
+        // lands before a post-reconnect retry. A no falls through to the plain error bar, buffer intact.
         if (/file editing is off/.test(err)) {
           const host = sid ? hostOf(sid) : "";
           if (window.confirm(
