@@ -155,6 +155,26 @@ class MemoDeadlock(unittest.TestCase):
         self.assertEqual([r["verdict"] for r in self._rows()],
                          ["skipped-redundant", "skipped-redundant-memo"])
 
+    def test_a_pre_upgrade_record_missing_the_settle_key_rejudges_exactly_once(self):
+        # THE UPGRADE PATH: every record minted before this change carries redundantEvT but no
+        # redundantSettleT — the veto must FAIL for it (None never equals the always-int settle
+        # key, 0 included) so each deployed deadlock gets exactly one fresh judgment, whose
+        # re-memo then carries both keys. Pins the .get() default: rec0.get("redundantSettleT")
+        # must not grow a 0 fallback, or every pre-upgrade record on a settle-key-0 session
+        # regains the frozen veto this round exists to kill.
+        self._seed_rec({"lastTurnId": "t0", "count": 1, "answeredAt": NOW - 300,
+                        "redundantSkips": 1, "redundantEvT": ARM_T + 50})
+        self.judge_replies = [True]
+        self._tick()
+        self.assertEqual(self.sent, [], "still redundant — no fire")
+        self.assertEqual(len(self.judge_calls), 1, "the missing key bought exactly ONE re-judge")
+        self.assertEqual(self._rec().get("redundantSettleT"), 0,
+                         "…and the re-memo now carries the settle key")
+        self._tick()
+        self.assertEqual(len(self.judge_calls), 1, "second tick serves from the upgraded memo")
+        self.assertEqual([r["verdict"] for r in self._rows()],
+                         ["skipped-redundant", "skipped-redundant-memo"])
+
     # ── the parked dead-man: the quiet-session deadlock's exit ──
     def test_parked_past_the_deadman_fires_once_and_writes_a_fresh_record(self):
         self._seed_rec({"lastTurnId": "t0", "count": 1, "answeredAt": PARKED,
