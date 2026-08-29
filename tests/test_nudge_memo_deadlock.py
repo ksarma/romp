@@ -200,6 +200,17 @@ class MemoDeadlock(unittest.TestCase):
                          "moot + still Working + parked past the dead-man → the ladder proceeds")
         self.assertEqual([r["verdict"] for r in self._rows()], ["fired"])
 
+    def test_a_late_moot_ruling_gets_its_own_full_patience_window(self):
+        # the adversarial pass's last finding (its verifier died mid-run; verified by hand): the
+        # escape's anchor once read only answeredAt/at, so a moot ruling landing HOURS after the
+        # fire inherited a spent window and re-entered the very next tick. The moot ruling is new
+        # information — patience runs from ITS stamp (mootAt), not the fire's.
+        self._seed_rec({"lastTurnId": "t1", "count": 1, "moot": True,
+                        "at": PARKED, "answeredAt": PARKED, "mootAt": NOW - 300})
+        self._tick()
+        self.assertEqual(self.sent, [], "the fresh moot ruling restarts the stand — no instant re-entry")
+        self.assertEqual(self._rows(), [])
+
     def test_moot_within_patience_stays_silent(self):
         self._seed_rec({"lastTurnId": "t1", "count": 1, "moot": True, "answeredAt": NOW - 300})
         self._tick()
