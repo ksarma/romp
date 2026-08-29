@@ -35,7 +35,7 @@ import { mintProvisionalId, isProvisionalId, provisionalName, adoptsProvisional 
 import { onlyTag, matchesOnly } from "./only-filter";
 import { numberDiff, type DiffRow } from "./diff-lines";
 import { parseAgentNotif, type AgentNotif } from "./agent-notif";
-import { previewKind, previewFull, canPreview, fileUrl, retryFailedPreviews, refreshSettledPreviews, installMdImgHeal } from "./preview";
+import { previewKind, previewFull, canPreview, fileUrl, retryFailedPreviews, refreshSettledPreviews, installMdImgHeal, setLightboxNav, type LightboxNavEntry } from "./preview";
 import { openFileView } from "./file-view";
 // initFileView rides its OWN line: the import above is pinned verbatim by file-view.test.ts
 import { initFileView } from "./file-view";
@@ -1156,6 +1156,31 @@ installMdImgHeal();   // markdown-inline <img> failures register for the per-mes
 // pathInText: the path is ALREADY visible (linkified) in the message text — a
 // dropped/pasted screenshot inserts it there — so a caption would just repeat it
 // (the user 2026-07-15). Skip the caption then; the in-text link already opens it.
+// The lightbox's arrow-navigation sequence (2026-08-29): every image embed in this chat, oldest
+// to newest, from the session's EVENTS — the DOM misses virtualization-windowed turns. Each entry
+// carries the same (path, sid, pin) triple the embed's own click passes, so a step renders that
+// message's pinned bytes (never the live file — the history-rewrite guard extends to navigation).
+// One entry per (event, target): a message mentioning one image twice is one stop.
+function chatImagesFor(sid: string | null | undefined): LightboxNavEntry[] {
+  const s = sid ? sessions.get(sid) : null;
+  if (!s) return [];
+  const out: LightboxNavEntry[] = [];
+  for (const ev of s.events as (ChatEvent & { images?: { src: string; path?: string }[]; pathLinks?: Record<string, string>; spacePaths?: string[]; pathPins?: Record<string, string> })[]) {
+    const pins = ev.pathPins || {};
+    const seen = new Set<string>();
+    const add = (target: string) => {
+      if (!target || seen.has(target) || previewKind(target) !== "img") return;
+      seen.add(target);
+      out.push({ path: target, sid, pin: pins[target] });
+    };
+    for (const im of ev.images || []) if (im.path) add(im.path);
+    for (const tok of Object.keys(ev.pathLinks || {})) add((ev.pathLinks as Record<string, string>)[tok]);
+    for (const sp of ev.spacePaths || []) add(sp);
+  }
+  return out;
+}
+setLightboxNav(chatImagesFor);
+
 function userImage(im: { src: string; path?: string }, pathInText = false): HTMLElement {
   const fig = el("span", "user-img-wrap");
   if (im.src.startsWith("path:")) {
