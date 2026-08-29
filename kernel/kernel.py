@@ -539,6 +539,11 @@ def _version_info():
             "judgeEffort": jd._triage_effort(), "indexEffort": jd._index_effort(),  # current per-tier judge efforts ("" = default/none)
             "distillModel": jd._state_str("distill-model", "triage"),   # RAW ("triage" = follow the triage pick) — the gear shows the choice, not the resolution
             "distillEffort": jd._state_str("distill-effort", "triage"),
+            # the default-comment trio, RAW too ("session" = same as the session) — the gear shows
+            # the user's choice; _comment_launch_prefs resolves it at each create
+            "commentModel": jd._state_str("comment-model", "session"),
+            "commentEffort": jd._state_str("comment-effort", "session"),
+            "commentFast": jd._state_str("comment-fast", "session"),
             # One dict with every kernel-side setting, lifted by a PEER kernel's /version poll onto its
             # /tunnels row so its gear can mark controls where machines disagree (the user 2026-08-14).
             # The top-level fields above stay: this tab's own gear and older kernels read those.
@@ -548,7 +553,10 @@ def _version_info():
                          "judgeModel": jd._triage_model(), "judgeEffort": jd._triage_effort(),
                          "indexModel": jd._index_model(), "indexEffort": jd._index_effort(),
                          "distillModel": jd._state_str("distill-model", "triage"),
-                         "distillEffort": jd._state_str("distill-effort", "triage")},
+                         "distillEffort": jd._state_str("distill-effort", "triage"),
+                         "commentModel": jd._state_str("comment-model", "session"),
+                         "commentEffort": jd._state_str("comment-effort", "session"),
+                         "commentFast": jd._state_str("comment-fast", "session")},
             "defaultDir": _tilde(_default_create_dir()),   # the resolved default new-session dir → the gear "Default directory" field
             "nativeDialogs": _native_dialogs()}   # whether Browse… can draw a dialog HERE → the gear drops the button when it can't
 
@@ -7137,7 +7145,7 @@ def _comment_markers(sid):
 # alone starves; the client's frame-keyed re-post stays as the belt for a kernel restart that loses
 # this in-memory park). The typed transient nack keeps the client's optimistic mark alive meanwhile.
 ANCHOR_LAG_ERR = "that message isn't in the transcript yet; try again in a moment"
-_parked_creates = []                       # [{sid,uuid,exact,text,name,model,effort,color,tries}]
+_parked_creates = []                       # [{sid,uuid,exact,text,name,model,effort,fast,color,tries}]
 _PARK_MAX_TRIES = 30                       # pusher cycles (~15-90s) — past this the record isn't coming
 
 
@@ -7152,7 +7160,8 @@ def _retry_parked_creates():
     for pk in list(_parked_creates):
         pk["tries"] += 1
         err, tid = _comment_create(pk["sid"], pk["uuid"], pk["exact"], pk["text"], name=pk["name"],
-                                   model=pk["model"], effort=pk["effort"], color=pk["color"])
+                                   model=pk["model"], effort=pk["effort"], fast=pk.get("fast", ""),
+                                   color=pk["color"])
         if err == ANCHOR_LAG_ERR and pk["tries"] < _PARK_MAX_TRIES:
             continue
         _parked_creates.remove(pk)
@@ -7170,7 +7179,25 @@ def _retry_parked_creates():
                     pass
 
 
-def _comment_create(parent_sid, anchor_uuid, exact, text, name="", model="", effort="", color="", now=None):
+def _comment_launch_prefs(model="", effort="", fast=""):
+    """Resolve what a new comment thread launches on: the dialog's explicit pick wins; else the
+    kernel's default-comment setting (the user 2026-08-29, who wanted every new thread on one
+    model/effort/fast pick regardless of the session it branches from); else empty = inherit the
+    parent session. The shipped "session" sentinel resolves to the empty override — byte-identical
+    to the no-setting fork() always did. Values ride RAW into fork(): an unsupported fast ask is
+    the CLI's call to refuse, surfaced by _adopt_fast_state's toast — never silently pre-dropped
+    here (fail loudly; the thread keeps its model either way)."""
+    out = []
+    for arg, fname in ((model, "comment-model"), (effort, "comment-effort"), (fast, "comment-fast")):
+        v = str(arg or "")
+        if not v:
+            stored = jd._state_str(fname, "session")
+            v = "" if stored == "session" else stored
+        out.append(v)
+    return tuple(out)
+
+
+def _comment_create(parent_sid, anchor_uuid, exact, text, name="", model="", effort="", fast="", color="", now=None):
     """Anchor a new comment thread: fork the parent at the highlighted message (inclusive) as a
     threadOf fork — no names/ entry, so no judge seeding is needed until promotion — and send the
     opening message. Returns (error, tid): error is the warn-toast string (tid None), success is
@@ -7181,7 +7208,9 @@ def _comment_create(parent_sid, anchor_uuid, exact, text, name="", model="", eff
     had. It rides the reg (so a break-out inherits it) and the frame (the popover's title).
 
     `model`/`effort` (the user 2026-08-17): per-thread overrides picked in the same dialog — the
-    thread runs on them, the parent is untouched (fork() writes them into the thread's reg only)."""
+    thread runs on them, the parent is untouched (fork() writes them into the thread's reg only).
+    `fast` ("on"/"off"/"" — the user 2026-08-29) rides the same way; empty falls through
+    _comment_launch_prefs to the kernel's default-comment settings, then to inheriting the parent."""
     be = Sessions.backend_for(parent_sid)
     if not (hasattr(be, "fork") and _sdk_ready()):
         return "threads need the SDK backend; this session runs on tmux, so there is nothing to fork.", None
@@ -7214,9 +7243,10 @@ def _comment_create(parent_sid, anchor_uuid, exact, text, name="", model="", eff
             row["color"] = col                     # the comment's identity color (the dialog's name tint)
         data.setdefault("threads", []).append(row)
         _save_comments(parent_sid, data)
+    model, effort, fast = _comment_launch_prefs(model, effort, fast)
     try:
         be.fork(nm, parent_sid, cut, bg=col, fg=(pal.fg_for(col) if col else ""), sid=tsid, thread_of=parent_sid,
-                model=str(model or ""), effort=str(effort or ""))
+                model=model, effort=effort, fast=fast)
         be.connect(tsid)
         be.send(tsid, _comment_first_message(exact, text))
     except Exception as e:
@@ -8461,6 +8491,7 @@ def _drive(msg, client):
         err, tid = _comment_create(sid, str(msg["uuid"]), str(msg["exact"]), str(msg["text"]),
                                    name=str(msg.get("name") or ""),
                                    model=str(msg.get("model") or ""), effort=str(msg.get("effort") or ""),
+                                   fast=str(msg.get("fast") or ""),
                                    color=str(msg.get("color") or ""))
         if err:
             # a TRANSIENT refusal (the live-streamed reply's file flush lagging) PARKS the create —
@@ -8472,6 +8503,7 @@ def _drive(msg, client):
                                         "text": str(msg["text"]), "name": str(msg.get("name") or ""),
                                         "model": str(msg.get("model") or ""),
                                         "effort": str(msg.get("effort") or ""),
+                                        "fast": str(msg.get("fast") or ""),
                                         "color": str(msg.get("color") or ""), "tries": 0})
             else:
                 client["send"](json.dumps({"type": "warn", "text": err}))
@@ -23599,6 +23631,16 @@ def _set_index_effort(v): _set_judge_state("index-effort", v, _EFFORT_VALUES, al
 # read back as "follow" (caught by test_distill_tier before it shipped).
 def _set_distill_model(v):  _set_judge_state("distill-model", v, _JUDGE_MODEL_VALUES | {"triage"})
 def _set_distill_effort(v): _set_judge_state("distill-effort", v, _EFFORT_VALUES | {"triage", "none"})
+# The default-COMMENT-THREAD trio (the user 2026-08-29, who wanted every new comment thread on one
+# model/effort/fast pick regardless of the session it branches from). Sentinel "session" — the shipped
+# default — means SAME AS THE SESSION: resolved to the empty override at create time
+# (_comment_launch_prefs), the byte-identical no-op fork() always did. The model also takes "default"
+# (clear to the account default) so the setting speaks the create dialog's exact value space; fast is
+# "on" or the sentinel — a checkbox has no third state, and forcing a thread SLOW from a fast parent
+# stays a per-thread dialog pick, never a standing default.
+def _set_comment_model(v):  _set_judge_state("comment-model", v, _JUDGE_MODEL_VALUES | {"session", "default"})
+def _set_comment_effort(v): _set_judge_state("comment-effort", v, _EFFORT_VALUES | {"session"})
+def _set_comment_fast(v):   _set_judge_state("comment-fast", v, {"session", "on"})
 
 
 # The four judge-tier settings PROPAGATE: a pick made here follows to every linked kernel (the user
@@ -23613,7 +23655,12 @@ def _set_distill_effort(v): _set_judge_state("distill-effort", v, _EFFORT_VALUES
 
 _JUDGE_SETTING_FIELDS = (("judgeModel", _set_judge_model), ("indexModel", _set_index_model),
                          ("judgeEffort", _set_judge_effort), ("indexEffort", _set_index_effort),
-                         ("distillModel", _set_distill_model), ("distillEffort", _set_distill_effort))
+                         ("distillModel", _set_distill_model), ("distillEffort", _set_distill_effort),
+                         # the comment-thread defaults ride the same cross-kernel door: kernel-side
+                         # settings follow to every machine (the 2026-08-14 gear rule), and
+                         # /judge-settings is the tunnel-side propagation that already does it
+                         ("commentModel", _set_comment_model), ("commentEffort", _set_comment_effort),
+                         ("commentFast", _set_comment_fast))
 
 
 def _apply_judge_settings(body):
@@ -23646,7 +23693,10 @@ def _apply_judge_settings(body):
     return {"ok": True, "judgeModel": jd._triage_model(), "indexModel": jd._index_model(),
             "judgeEffort": jd._triage_effort(), "indexEffort": jd._index_effort(),
             "distillModel": jd._state_str("distill-model", "triage"),
-            "distillEffort": jd._state_str("distill-effort", "triage")}
+            "distillEffort": jd._state_str("distill-effort", "triage"),
+            "commentModel": jd._state_str("comment-model", "session"),
+            "commentEffort": jd._state_str("comment-effort", "session"),
+            "commentFast": jd._state_str("comment-fast", "session")}
 
 
 def _propagate_judge_settings(body):
@@ -29296,7 +29346,13 @@ class Handler(BaseHTTPRequestHandler):
                                          or ((MODEL_VERSIONS.get(c["value"]) or [{}])[0].get("value")
                                              or c["value"]))
                                 for c in MODEL_CHOICES],
-                     "efforts": [dict(c, color=_effort_color(c["value"], _stops)) for c in EFFORT_CHOICES]}),
+                     "efforts": [dict(c, color=_effort_color(c["value"], _stops)) for c in EFFORT_CHOICES],
+                     # the create dialog's pre-read (the user 2026-08-29): what a new comment thread
+                     # gets when the dialog is left untouched — RAW ("session" = same as the session),
+                     # so the dialog shows the effective default and a pick stays a deviation
+                     "commentDefaults": {"model": jd._state_str("comment-model", "session"),
+                                         "effort": jd._state_str("comment-effort", "session"),
+                                         "fast": jd._state_str("comment-fast", "session")}}),
                     "application/json", cache="no-cache")
             if p == "/usage":                                 # the /usage rate-limit bars, re-read on demand: the rail's
                 # usage widget is click-to-refresh (the user 2026-06-30). Returns the freshest on-disk snapshot
@@ -31049,6 +31105,18 @@ class Handler(BaseHTTPRequestHandler):
             _set_distill_effort(str(msg["effort"]))   # gear "Distilling effort" ("triage" = follow; "none" = pinned no-flag)
             threading.Thread(target=_propagate_judge_settings,
                              args=({"distillEffort": str(msg["effort"])},), daemon=True).start()
+        elif msg and msg.get("type") == "setCommentModel" and msg.get("model"):
+            _set_comment_model(str(msg["model"]))   # gear "Comment model" ("session" = same as the session)
+            threading.Thread(target=_propagate_judge_settings,
+                             args=({"commentModel": str(msg["model"])},), daemon=True).start()
+        elif msg and msg.get("type") == "setCommentEffort" and msg.get("effort"):
+            _set_comment_effort(str(msg["effort"]))   # gear "Comment effort"
+            threading.Thread(target=_propagate_judge_settings,
+                             args=({"commentEffort": str(msg["effort"])},), daemon=True).start()
+        elif msg and msg.get("type") == "setCommentFast" and msg.get("fast"):
+            _set_comment_fast(str(msg["fast"]))     # gear "Fast comment threads" ("on" / "session")
+            threading.Thread(target=_propagate_judge_settings,
+                             args=({"commentFast": str(msg["fast"])},), daemon=True).start()
 
     def _ws(self):
         key = self.headers.get("Sec-WebSocket-Key")

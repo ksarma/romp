@@ -98,6 +98,13 @@ var GEAR_HTML =
   "<div class='rs-row rs-jrow'><b>Distilling effort <span class=rs-mixed hidden></span></b><span class=rs-sub>Thinking effort for the distilling judges. Follow triage (the default) rides the triage effort; Default pins no effort flag. Follows to every connected machine's kernel.</span><select id=rs-distilleffort></select></div>" +
   "<div class='rs-row rs-jrow'><b>Indexing model <span class=rs-mixed hidden></span></b><span class=rs-sub>The model the indexing judges use — captioner + archiver (high-volume, low-stakes summarization). Haiku by default for cost. Follows to every connected machine's kernel.</span><select id=rs-indexmodel></select></div>" +
   "<div class='rs-row rs-jrow'><b>Indexing effort <span class=rs-mixed hidden></span></b><span class=rs-sub>Thinking effort for the indexing judges. Default = none (indexing runs with thinking disabled as a cost lever; leave Default unless you know you want it). Follows to every connected machine's kernel.</span><select id=rs-indexeffort></select></div>" +
+  '<div class=rs-sec>Comments</div>' +
+  "<div class='rs-row rs-jrow'><b>Comment model <span class=rs-mixed hidden></span></b><span class=rs-sub>The model NEW comment threads start on. Same as the session (the default) keeps each thread on the model of the conversation it branches from; pinning one here starts every new thread on it. The comment dialog shows this default and its own pick still wins. Follows to every connected machine's kernel.</span><select id=rs-cmtmodel></select></div>" +
+  "<div class='rs-row rs-jrow'><b>Comment effort <span class=rs-mixed hidden></span></b><span class=rs-sub>Thinking effort for new comment threads. Same as the session (the default) inherits the effort of the conversation the thread branches from. Follows to every connected machine's kernel.</span><select id=rs-cmteffort></select></div>" +
+  "<label class='rs-row'><input type=checkbox id=rs-cmtfast>" +
+  '<span><b>Fast comment threads</b><span class=rs-mixed hidden></span>' +
+  "<span class=rs-sub>Start new comment threads in fast mode (Opus-only research preview). If the thread's model can't run it, the thread still opens on that model at normal speed, with a notice. Off = same as the session. Follows to every connected machine's kernel.</span>" +
+  '</span></label>' +
   '<div class=rs-sec>Keyboard shortcuts</div>' + SHORTCUT_ROWS +
   '<div class=rs-sec>Chat</div>' +
   '<label class=rs-row><input type=checkbox id=rs-compact>' +
@@ -201,6 +208,8 @@ function initGear(post) {
     im = document.getElementById('rs-indexmodel'), je = document.getElementById('rs-judgeeffort'),
     ie = document.getElementById('rs-indexeffort'), upm = document.getElementById('rs-updates'),
     dm = document.getElementById('rs-distillmodel'), de = document.getElementById('rs-distilleffort'),
+    cmm = document.getElementById('rs-cmtmodel'), cme = document.getElementById('rs-cmteffort'),
+    cmf = document.getElementById('rs-cmtfast'),
     fe = document.getElementById('rs-fileedit'),
     ans = document.getElementById('rs-autonudge-split'), asub = document.getElementById('rs-autonudge-sub');
   function load() { try { return Object.assign({ compact: true, colormap: 'aurora', subgoals: true, debug: false, backend: 'sdk', defaultDir: '', showBranch: false, tabCtx: 'over50', collapseGaps: true, activeOnly: true }, JSON.parse(localStorage.getItem('romp:settings') || 'null')); } catch (e) { return { compact: true, colormap: 'aurora', subgoals: true, debug: false, backend: 'sdk', defaultDir: '', showBranch: false, tabCtx: 'over50', collapseGaps: true, activeOnly: true }; } }
@@ -392,6 +401,7 @@ function initGear(post) {
   selectPick(je, 'flex:0 0 auto;width:45%');
   selectPick(ie, 'flex:0 0 auto;width:45%');
   selectPick(de, 'flex:0 0 auto;width:45%');
+  selectPick(cme, 'flex:0 0 auto;width:45%');
   jix.addEventListener('change', function () { var s = load(); s.showIndexJudges = jix.checked; save(s); });
   jtr.addEventListener('change', function () { var s = load(); s.showTriageJudges = jtr.checked; save(s); });
   if (cg) cg.addEventListener('change', function () { var s = load(); s.collapseGaps = cg.checked; save(s); });
@@ -584,6 +594,8 @@ function initGear(post) {
     versionMenu(jm);
     versionMenu(im);
     versionMenu(dm, [{ value: 'triage', label: 'Follow triage', versions: [] }]);
+    versionMenu(cmm, [{ value: 'session', label: 'Same as the session', versions: [] },
+                      { value: 'default', label: 'Default', versions: [] }]);
   });
   if (jm) jm.addEventListener('change', function () { post({ type: 'setJudgeModel', model: jm.value }); });
   if (im) im.addEventListener('change', function () { post({ type: 'setIndexModel', model: im.value }); });
@@ -591,6 +603,24 @@ function initGear(post) {
   if (ie) ie.addEventListener('change', function () { post({ type: 'setIndexEffort', effort: ie.value }); });
   if (dm) dm.addEventListener('change', function () { post({ type: 'setDistillModel', model: dm.value }); });
   if (de) de.addEventListener('change', function () { post({ type: 'setDistillEffort', effort: de.value }); });
+  // Fast is an Opus-only research preview (render.ts fastAvailable, the same rule): a pinned
+  // non-Opus comment model makes the box a dead control, so it disables — and a model pick that
+  // strands a checked box also unchecks it, visibly, as part of the user's own gesture (never a
+  // silent per-fill flap; the kernel would otherwise ask fast on every create and toast every
+  // refusal). 'session'/'default' stay enabled: the session/account default may be Opus.
+  function cmtFastGate(fromModelPick) {
+    if (!cmf || !cmm) return;
+    var val = (cmm.value || '').toLowerCase();
+    var can = val === 'session' || val === 'default' || val.indexOf('opus') !== -1;
+    cmf.disabled = !can;
+    if (!can && cmf.checked && fromModelPick) {
+      cmf.checked = false;
+      post({ type: 'setCommentFast', fast: 'session' });
+    }
+  }
+  if (cmm) cmm.addEventListener('change', function () { post({ type: 'setCommentModel', model: cmm.value }); cmtFastGate(true); });
+  if (cme) cme.addEventListener('change', function () { post({ type: 'setCommentEffort', effort: cme.value }); });
+  if (cmf) cmf.addEventListener('change', function () { post({ type: 'setCommentFast', fast: cmf.checked ? 'on' : 'session' }); });
   // feed-colormap preview bar: a horizontal gradient of the SELECTED map's stops (mirrors render.ts COLORMAPS).
   var CMAPS = { aurora: [[84, 178, 4], [0, 180, 115], [35, 175, 156], [66, 169, 176], [25, 168, 201], [14, 164, 227], [74, 155, 241], [113, 145, 244], [144, 136, 240]],
     hawaii: [[140, 2, 115], [146, 46, 85], [151, 78, 62], [155, 111, 40], [156, 150, 28], [137, 189, 74], [107, 212, 142], [103, 233, 213], [179, 242, 253]],
@@ -661,6 +691,10 @@ function initGear(post) {
       // stored sentinel "none", never "" — an empty state file reads back as the default ("follow").
       if (dm) dm.innerHTML = '<option value="triage">Follow triage</option>' + mo;
       if (de) de.innerHTML = '<option value="triage">Follow triage</option><option value="none">Default</option>' + eff;
+      // the comment pair leads with the same-as-the-session sentinel — its default, so a fresh
+      // kernel shows the inherit behavior, not a model nobody picked; "default" = the account default
+      if (cmm) cmm.innerHTML = '<option value="session">Same as the session</option><option value="default">Default</option>' + mo;
+      if (cme) cme.innerHTML = '<option value="session">Same as the session</option>' + eff;
       return choices;
     }).catch(function () { return null; });
   }
@@ -706,7 +740,8 @@ function initGear(post) {
   function fillMixedMarks(v, rows) {
     var mine = (v && v.settings) || null;
     [['updateMode', upm], ['judgeModel', jm], ['judgeEffort', je], ['indexModel', im],
-     ['indexEffort', ie], ['distillModel', dm], ['distillEffort', de], ['fileEditing', fe]].forEach(function (pair) {
+     ['indexEffort', ie], ['distillModel', dm], ['distillEffort', de], ['fileEditing', fe],
+     ['commentModel', cmm], ['commentEffort', cme], ['commentFast', cmf]].forEach(function (pair) {
       var key = pair[0], el = pair[1];
       if (!el) return;
       var row = el.closest ? el.closest('.rs-row') : null;
@@ -742,6 +777,10 @@ function initGear(post) {
     if (ie && typeof v.indexEffort === 'string') ie.value = v.indexEffort;
     if (dm && typeof v.distillModel === 'string') dm.value = v.distillModel;   // RAW: "triage" selects the Follow-triage option
     if (de && typeof v.distillEffort === 'string') de.value = v.distillEffort;
+    if (cmm && typeof v.commentModel === 'string') cmm.value = v.commentModel;   // RAW: "session" selects Same as the session
+    if (cme && typeof v.commentEffort === 'string') cme.value = v.commentEffort;
+    if (cmf && typeof v.commentFast === 'string') cmf.checked = v.commentFast === 'on';
+    cmtFastGate(false);
     if (dd && typeof v.defaultDir === 'string') dd.value = v.defaultDir;   // the kernel's persisted default is authoritative
     // Browse… draws on the KERNEL's screen, and a kernel with no desktop has none — the click used to
     // vanish into a macOS-only dialog. Drop the button rather than offer one that cannot work; the
