@@ -3148,6 +3148,68 @@ class SdkSession:
             self.backend._log("bg-ledger fail hook (%s): %s" % (self.name, e))
         return {}
 
+    # ── session FACTS from the interaction tools (2026-08-29, hook round 2) ────────────────────
+    # Three fact families, all probe-verified shapes (CLI 2.1.221): the task STORE stays the
+    # authoritative snapshot per the repo rule — the TaskCreate/TaskUpdate hook is the POKE to
+    # re-read it now plus the attribution the store can never provide (which agent wrote, incl.
+    # subagent writes the transcript fold structurally misses); PushNotification's ack carries
+    # pushSent/localSent, so an agent's own "come look" judgment stops being invisible when the
+    # OS push was suppressed; Skill's ack names the role/command the session just took on.
+    _PUSH_NOTES_CAP = 10
+    _TASK_WRITES_CAP = 15
+
+    async def _facts_tool_hook(self, inp, tool_use_id, context):
+        try:
+            tname = str((inp or {}).get("tool_name") or "")
+            targs = (inp or {}).get("tool_input") or {}
+            tresp = (inp or {}).get("tool_response") or {}
+            if not isinstance(targs, dict):
+                targs = {}
+            if not isinstance(tresp, dict):
+                tresp = {}
+            nw = int(time.time())
+            aid = str((inp or {}).get("agent_id") or "") or None
+            if tname in ("TaskCreate", "TaskUpdate"):
+                # a capped TAIL, not a slot (review 2026-08-29): parallel subagents cluster task
+                # writes faster than any consumer's read cadence, and a last-write-wins slot loses
+                # every agentId but the newest — the attribution this field exists for
+                tid = str(tresp.get("taskId") or targs.get("taskId") or "") or None
+                reg = read_reg(self.backend.state_dir, self.sid) or {}   # sole writer; no await
+                #                                                          before the write below —
+                #                                                          the event loop IS the lock
+                writes = [w for w in (reg.get("taskWrites") or []) if isinstance(w, dict)]
+                writes.append({"at": nw, "tool": tname, "taskId": tid, "agentId": aid})
+                self.backend._update_reg(self.sid, taskWrites=writes[-self._TASK_WRITES_CAP:])
+                self.backend._poke()          # the store is authoritative — this says "re-read it NOW"
+            elif tname == "PushNotification":
+                reg = read_reg(self.backend.state_dir, self.sid) or {}   # sole writer of pushNotes;
+                #                              NO await between this read and the write below — the
+                #                              session's single event loop is what serializes this
+                #                              RMW, not _reg_lock. Inserting an await here reopens
+                #                              the lost-note race (review 2026-08-29).
+                notes = [n for n in (reg.get("pushNotes") or []) if isinstance(n, dict)]
+                notes.append({"at": nw, "message": str(targs.get("message") or "")[:200],
+                              "pushSent": bool(tresp.get("pushSent")),
+                              "localSent": bool(tresp.get("localSent")), "agentId": aid})
+                self.backend._update_reg(self.sid, pushNotes=notes[-self._PUSH_NOTES_CAP:])
+                self.backend._poke()          # a suppressed push is still the agent saying "come look"
+            elif tname == "Skill":
+                if aid:
+                    return {}                 # a SUBAGENT's skill is not the session's role — the
+                    #                           stamp answers "what is this session acting as", and a
+                    #                           drafting subagent invoking jld must not clobber it
+                nm = str(tresp.get("commandName") or "") or None
+                # commandName is the ONE authority (probe-verified on 2.1.221; failures route to
+                # PostToolUseFailure, unregistered here). No tool_input fallback: recording the
+                # REQUESTED alias when the resolved name vanished would be a silent degrade.
+                if nm:
+                    self.backend._update_reg(self.sid, lastSkill={"at": nw, "name": nm})
+                elif tresp:
+                    self.backend._log("facts hook (%s): Skill ack carried no commandName — not recording" % self.name)
+        except Exception as e:
+            self.backend._log("facts hook (%s): %s" % (self.name, e))
+        return {}
+
     async def _subagent_start_hook(self, inp, tool_use_id, context):
         """A Task-spawned subagent just STARTED. Record it live (agent_id -> type + start time) so the session
         reads 'working' while it runs and the lane can show how many are in flight. The SDK's SubagentStart
@@ -4421,7 +4483,10 @@ class SdkBackend:
                                                hooks=[sess._sched_tool_hook]),
                                    # launch ledger: exact launch facts at the call moment (2026-08-29)
                                    HookMatcher(matcher="Bash|Monitor|TaskStop",
-                                               hooks=[sess._ledger_tool_hook])],
+                                               hooks=[sess._ledger_tool_hook]),
+                                   # interaction facts: store-poke + attribution, push mirror, role
+                                   HookMatcher(matcher="TaskCreate|TaskUpdate|PushNotification|Skill",
+                                               hooks=[sess._facts_tool_hook])],
                    # a launch whose ack errored never started — drop it before it phantom-waits
                    "PostToolUseFailure": [HookMatcher(matcher="Bash|Monitor",
                                                       hooks=[sess._ledger_fail_hook])]},
