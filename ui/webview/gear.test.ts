@@ -45,7 +45,8 @@ test("every gear fetch routes through the kernel base + token (VS Code's webview
 test("the gear posts kernel ops through ONE shared channel (never re-acquires the VS Code API)", () => {
   assert.ok(!GEAR.includes("acquireVsCodeApi"), "a second acquire throws in a real webview");
   for (const op of ["setAutoNudge", "setJudgeModel", "setIndexModel", "setJudgeEffort", "setIndexEffort",
-    "setDistillModel", "setDistillEffort", "setFileEditing", "setColormap", "setPalette", "setDefaultDir", "browseDir"])
+    "setDistillModel", "setDistillEffort", "setCommentModel", "setCommentEffort", "setCommentFast",
+    "setFileEditing", "setColormap", "setPalette", "setDefaultDir", "browseDir"])
     assert.ok(GEAR.includes(`'${op}'`), `gear must post ${op}`);
 });
 
@@ -62,6 +63,23 @@ test("the distilling tier is its own gear pair, defaulting to follow-triage", ()
   assert.ok(GEAR.includes("v.distillEffort"), "fill() reads the RAW distill effort value");
 });
 
+test("the default-comment trio is its own gear group, defaulting to same-as-the-session", () => {
+  // The user 2026-08-29: every new comment thread on one model/effort/fast pick regardless of the
+  // session it branches from. The stored sentinel "session" means inherit the parent — today's
+  // behavior until the user pins — so the selects lead with it and fill from the RAW /version value.
+  for (const id of ["rs-cmtmodel", "rs-cmteffort", "rs-cmtfast"])
+    assert.ok(GEAR.includes(id), `the gear must render ${id}`);
+  assert.ok(GEAR.includes('"session">Same as the session'), "the sentinel option leads both selects");
+  assert.ok(GEAR.includes("v.commentModel"), "fill() reads the RAW comment model value");
+  assert.ok(GEAR.includes("v.commentEffort"), "fill() reads the RAW comment effort value");
+  assert.ok(GEAR.includes("v.commentFast === 'on'"), "the fast box reflects the stored ask");
+  // fast is an Opus-only research preview: a pinned non-Opus comment model disables the box, and a
+  // model pick that strands a checked box unchecks it as part of that gesture — never a silent flap
+  assert.ok(GEAR.includes("function cmtFastGate"), "the availability gate must exist");
+  assert.ok(GEAR.includes("cmtFastGate(true)"), "the model pick runs the gate as a user gesture");
+  assert.ok(GEAR.includes("cmtFastGate(false)"), "fill() re-checks availability without posting");
+});
+
 test("every kernel-side select says so when connected machines disagree (the autoNudge rule generalized)", () => {
   // The user 2026-08-14: everything stays in sync; on disagreement the gear ASKS by showing the local
   // value with a mixed mark beside it — hover names the hosts, one pick sets every machine — and a
@@ -71,7 +89,7 @@ test("every kernel-side select says so when connected machines disagree (the aut
     "non-reporting rows are excluded, not read as disagreeing");
   assert.ok(GEAR.includes("differs on: "), "the hover names the disagreeing hosts");
   const mixedSpans = GEAR.match(/class=rs-mixed hidden/g) || [];
-  assert.ok(mixedSpans.length >= 7, `every kernel-side select carries a marker span (got ${mixedSpans.length})`);
+  assert.ok(mixedSpans.length >= 10, `every kernel-side select carries a marker span (got ${mixedSpans.length})`);
 });
 
 test("the Auto Nudge box speaks for every attached machine, and says so when they disagree", () => {

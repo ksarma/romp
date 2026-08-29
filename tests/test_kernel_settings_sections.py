@@ -71,12 +71,13 @@ class SettingsSectionsTest(unittest.TestCase):
         self.assertNotIn("headless", h)
 
     def test_judge_rows_are_one_line_label_plus_picker(self):
-        # label + picker share the line (the user 2026-07-12): six .rs-jrow rows since the distilling
-        # tier split out of triage (the user 2026-08-14), the select right after the hover sub, no
-        # full-width select stacked under the label; the flex CSS carries the layout. Each label now
-        # carries the hidden mixed-state marker (the settings-sync work, same day).
+        # label + picker share the line (the user 2026-07-12): eight .rs-jrow rows — six judge rows
+        # since the distilling tier split out of triage (the user 2026-08-14), plus the default-comment
+        # model/effort pair (the user 2026-08-29), which reuses the same one-line layout — the select
+        # right after the hover sub, no full-width select stacked under the label; the flex CSS
+        # carries the layout. Each label carries the hidden mixed-state marker (the settings-sync work).
         h = _gear_src()
-        self.assertEqual(h.count("rs-jrow"), 6)
+        self.assertEqual(h.count("rs-jrow"), 8)
         for sel in ("rs-judgemodel", "rs-judgeeffort", "rs-distillmodel", "rs-distilleffort",
                     "rs-indexmodel", "rs-indexeffort"):
             self.assertRegex(h, r"rs-jrow'><b>[^<]+<span class=rs-mixed hidden></span></b>"

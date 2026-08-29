@@ -6372,7 +6372,7 @@ const cmtAwaitBase = new Map<string, number>();
 // next session frame for the sid arrives (frames are built from the kernel's parse — a new frame IS
 // the parse catching up). Bounded by attempts, not time; a real refusal or the ack drops the hold.
 const cmtCreateInFlight = new Map<string, { sid: string; uuid: string; exact: string; text: string;
-  name: string; model: string; effort: string; color: string; tries: number }>();
+  name: string; model: string; effort: string; fast: string; color: string; tries: number }>();
 const CMT_CREATE_MAX_TRIES = 12;
 
 function retryCmtCreates(sid: string): void {
@@ -6386,7 +6386,7 @@ function retryCmtCreates(sid: string): void {
     }
     c.tries++;
     vscodeApi?.postMessage({ type: "commentCreate", id: c.sid, uuid: c.uuid, exact: c.exact,
-      text: c.text, name: c.name, model: c.model, effort: c.effort, color: c.color });
+      text: c.text, name: c.name, model: c.model, effort: c.effort, fast: c.fast, color: c.color });
   }
 }
 
@@ -6431,7 +6431,7 @@ function cmtBootHolds(tid: string): boolean {
 }
 let openCommentKey: { sid: string; tid: string } | null = null;     // the open thread popover
 let pendingCommentAnchor: { sid: string; uuid: string; exact: string;
-  model?: string; effort?: string; color?: string } | null = null; // create mode (+ the thread's own picks)
+  model?: string; effort?: string; fast?: string; color?: string } | null = null; // create mode (+ the thread's own picks)
 let pendingAdoptTid: string | null = null;                          // commentCreated ack that beat its frame
 let commentPopPos: { x: number; y: number } | null = null;
 
@@ -7124,10 +7124,10 @@ function commentSendFromPop(pop: HTMLElement): void {
     applyCommentMarks(create.sid);
     vscodeApi.postMessage({ type: "commentCreate", id: create.sid, uuid: create.uuid, exact: create.exact,
       text, name: nm, model: create.model || "", effort: create.effort || "",
-      color: create.color || "" });
+      fast: create.fast || "", color: create.color || "" });
     cmtCreateInFlight.set(create.uuid, { sid: create.sid, uuid: create.uuid, exact: create.exact,
       text, name: nm, model: create.model || "", effort: create.effort || "",
-      color: create.color || "", tries: 0 });
+      fast: create.fast || "", color: create.color || "", tries: 0 });
     return;
   }
   const cur = openCommentThread();
@@ -7264,55 +7264,93 @@ function renderCommentPopover(): void {
   }
   let metaRowPending: HTMLElement | null = null;   // appended under the composer row — the statusline position
   if (create) {
-    // the thread's OWN model + effort (the user 2026-08-17): the same /models-fed choices the
-    // chat's statusline selectors use, defaulting to what this session runs now — picking one
-    // affects only the thread; the conversation it branches from is never touched
+    // the thread's OWN model + effort + fast (the user 2026-08-17; fast and the kernel-side
+    // defaults the user 2026-08-29): the same /models-fed choices the chat's statusline selectors
+    // use. Each chip shows the EFFECTIVE default — the dialog's own pick, else the kernel's
+    // default-comment setting (commentDefaults), else what this session runs now — so a pick is
+    // always a visible deviation; picking affects only the thread, never the conversation it
+    // branches from. The kernel re-resolves the same order at create (_comment_launch_prefs).
     const st = sessions.get(sid)?.status;
-    const metaRow = el("div", "statusline cmt-meta-row");
-    const mkSel = (kind: "model" | "effort") => {
-      // the statusline's own badge chrome (.meta-btn/.meta-label/.meta-caret) so the two stay in
-      // sync by construction (the user 2026-08-17), tinted from the /models list's shared colors
-      const btn = el("span", "meta-btn") as HTMLElement;
-      const chosen = kind === "model" ? create.model : create.effort;
-      const choice = chosen ? META_CHOICES[kind].find((c) => c.value === chosen) : null;
-      const label = el("span", "meta-label");
-      label.textContent = choice ? choice.label : (kind === "model" ? (st?.model || "Default") : (st?.effort || "default"));
-      const tint = choice?.color || (kind === "model" ? st?.modelColor : st?.effortColor);
-      if (tint && tint.length === 3) label.style.color = `rgb(${tint[0]},${tint[1]},${tint[2]})`;
-      const caret = el("span", "meta-caret");
-      caret.textContent = "▾";
-      btn.append(label, caret);
-      btn.title = chosen ? "the comment runs on its own " + kind + "; this session keeps its"
-        : "inherits this session's " + kind + " — click to pick another for the comment only";
-      btn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        closeMetaMenu();
-        const menu = el("div", "meta-menu");
-        for (const c of META_CHOICES[kind]) {
-          const cur = chosen ? c.value === chosen : (st ? isCurrentMeta(kind, st, c.value) : false);
-          const item = el("div", "meta-item" + (cur ? " current" : ""));
-          item.textContent = c.label;
-          item.addEventListener("click", (ev) => {
-            ev.stopPropagation();
-            if (pendingCommentAnchor) pendingCommentAnchor[kind] = c.value;
-            closeMetaMenu();
-            document.getElementById("cmt-pop")?.remove();   // full rebuild shows the pick
-            renderCommentPopover();
-          });
-          menu.appendChild(item);
-        }
-        document.body.appendChild(menu);
-        const r2 = btn.getBoundingClientRect();
-        menu.style.left = r2.left + "px";
-        menu.style.top = (r2.bottom + 4) + "px";
-        metaMenuEl = menu;
-      });
-      return btn;
+    // the kernel default for one chip, resolved ("session" → none → inherit this session)
+    const setDef = (kind: "model" | "effort" | "fast") => {
+      const v = kind === "model" ? commentDefaults.model : kind === "effort" ? commentDefaults.effort
+        : commentDefaults.fast;
+      return v === "session" ? "" : v;
     };
-    const metaRight = el("span", "sl-right");
-    metaRight.append(mkSel("model"), mkSel("effort"));
-    metaRow.appendChild(metaRight);
-    metaRowPending = metaRow;
+    // fast is offered only where the effective model could run it (fastAvailable's rule: unknown
+    // and opus stay offered; an explicit non-Opus pick drops the chip — no control that only toasts)
+    const canFast = (m: string) => {
+      const v = (m || "").toLowerCase();
+      return !v || v === "default" || v.includes("opus");
+    };
+    const buildMetaRow = (): HTMLElement => {
+      const metaRow = el("div", "statusline cmt-meta-row");
+      const mkSel = (kind: "model" | "effort" | "fast") => {
+        // the statusline's own badge chrome (.meta-btn/.meta-label/.meta-caret) so the two stay in
+        // sync by construction (the user 2026-08-17), tinted from the /models list's shared colors
+        const btn = el("span", "meta-btn") as HTMLElement;
+        const chosen = (kind === "model" ? create.model : kind === "effort" ? create.effort : create.fast) || "";
+        const effVal = chosen || setDef(kind);
+        const label = el("span", "meta-label");
+        if (kind === "fast") {
+          const on = (effVal || st?.fast || "off").toLowerCase() === "on";
+          label.textContent = prettyFast(on ? "on" : "off");
+          if (on) label.style.color = "var(--fast)";
+        } else {
+          const choice = kind === "model" ? (effVal ? modelChoiceLabel(effVal) : null)
+            : (effVal ? EFFORT_CHOICES.find((c) => c.value === effVal) : null);
+          label.textContent = choice ? choice.label : (kind === "model" ? (st?.model || "Default") : (st?.effort || "default"));
+          const tint = choice?.color || (kind === "model" ? st?.modelColor : st?.effortColor);
+          if (tint && tint.length === 3) label.style.color = `rgb(${tint[0]},${tint[1]},${tint[2]})`;
+        }
+        const caret = el("span", "meta-caret");
+        caret.textContent = "▾";
+        btn.append(label, caret);
+        btn.title = chosen ? "the comment runs on its own " + kind + "; this session keeps its"
+          : setDef(kind) ? "the default for new comments (set in Settings) — click to pick another for this one"
+          : "inherits this session's " + kind + " — click to pick another for the comment only";
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          closeMetaMenu();
+          const menu = el("div", "meta-menu");
+          for (const c of META_CHOICES[kind]) {
+            const cur = kind === "fast"
+              ? c.value === ((effVal || st?.fast || "off").toLowerCase() === "on" ? "on" : "off")
+              : effVal ? (c.value === effVal || !!c.versions?.some((v) => v.value === effVal))
+              : (st ? isCurrentMeta(kind, st, c.value) : false);
+            const item = el("div", "meta-item" + (cur ? " current" : ""));
+            item.textContent = c.label;
+            item.addEventListener("click", (ev) => {
+              ev.stopPropagation();
+              if (pendingCommentAnchor) pendingCommentAnchor[kind] = c.value;
+              closeMetaMenu();
+              document.getElementById("cmt-pop")?.remove();   // full rebuild shows the pick
+              renderCommentPopover();
+            });
+            menu.appendChild(item);
+          }
+          document.body.appendChild(menu);
+          const r2 = btn.getBoundingClientRect();
+          menu.style.left = r2.left + "px";
+          menu.style.top = (r2.bottom + 4) + "px";
+          metaMenuEl = menu;
+        });
+        return btn;
+      };
+      const metaRight = el("span", "sl-right");
+      metaRight.append(mkSel("model"), mkSel("effort"));
+      if (canFast(create.model || setDef("model") || st?.model || "")) metaRight.append(mkSel("fast"));
+      metaRow.appendChild(metaRight);
+      return metaRow;
+    };
+    metaRowPending = buildMetaRow();
+    // the gear may have moved the defaults since page load — re-read at open and repaint the row
+    // IN PLACE (never the whole popover: the composer holds focus and an unsent draft)
+    refreshCommentDefaults(() => {
+      if (pendingCommentAnchor !== create) return;   // the dialog already sent or closed
+      const live = pop.querySelector(".cmt-meta-row");
+      if (live) live.replaceWith(buildMetaRow());
+    });
   }
   if (create || th!.status !== "promoted") {
     const dk = create ? "new:" + create.uuid : th!.tid;
@@ -9850,7 +9888,34 @@ const EFFORT_CHOICES: { label: string; value: string; color?: number[] | null }[
 fetch(kernelUrl("/models"), { cache: "no-store" }).then((r) => r.json()).then((d) => {
   if (Array.isArray(d.models)) { MODEL_CHOICES.length = 0; MODEL_CHOICES.push(...d.models, { label: "Default", value: "default" }); }
   if (Array.isArray(d.efforts)) { EFFORT_CHOICES.length = 0; EFFORT_CHOICES.push(...d.efforts); }
+  if (d.commentDefaults) adoptCommentDefaults(d.commentDefaults);
 }).catch(() => { /* picker stays empty until it lands */ });
+// The kernel's default-comment settings, RAW ("session" = same as the session — the user 2026-08-29):
+// what a new comment thread launches on when the dialog is left untouched. Pre-read so the create
+// dialog SHOWS the effective default and a pick stays a deviation; the kernel re-resolves at create,
+// so a stale pre-read can mislabel a chip but never mislaunch a thread. Re-fetched at each dialog
+// open (the gear may have changed it since page load).
+let commentDefaults = { model: "session", effort: "session", fast: "session" };
+function adoptCommentDefaults(d: any): void {
+  commentDefaults = { model: String(d.model || "session"), effort: String(d.effort || "session"),
+                      fast: String(d.fast || "session") };
+}
+function refreshCommentDefaults(then: () => void): void {
+  fetch(kernelUrl("/models"), { cache: "no-store" }).then((r) => r.json()).then((d) => {
+    if (d && d.commentDefaults) { adoptCommentDefaults(d.commentDefaults); then(); }
+  }).catch(() => { /* keep the page-load pre-read — the kernel still resolves at create */ });
+}
+// A model VALUE's display label + family tint, version ids included ("claude-opus-5" → its version
+// label under the opus family) — the create dialog's default chip must name whatever the setting
+// holds, not just top-level families.
+function modelChoiceLabel(value: string): { label: string; color?: number[] | null } {
+  for (const c of MODEL_CHOICES as MetaChoice[]) {
+    if (c.value === value) return c;
+    const v = c.versions?.find((x) => x.value === value);
+    if (v) return { label: v.label, color: c.color };
+  }
+  return { label: value };
+}
 // Permission mode. A tmux session has no slash command for it — the host cycles shift+tab the right
 // number of times (the user 2026-06-16) — so the four CYCLE modes are all that backend can reach.
 // An SDK session sets it outright over the control channel (set_permission_mode), which is what makes

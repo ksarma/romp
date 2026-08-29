@@ -258,6 +258,34 @@ test("break out posts commentPromote and acks with a provisional tab", () => {
   assert.match(UI, /type: "commentPromote", id: sid, tid, name \}\);\s*\n\s*close\(\);\s*\n\s*closeCommentPop\(\);\s*\n\s*openProvisional\(\{ name, backend: "sdk", dir: "", host: hostOf\(sid\) \}\);/);
 });
 
+test("the create dialog pre-reads the kernel's default-comment trio and shows it", () => {
+  // The user 2026-08-29: the gear can pin a default model/effort/fast for every NEW thread. The
+  // dialog must SHOW the effective default (pick > setting > inherit) so a pick stays a visible
+  // deviation; the kernel re-resolves the same order at create, so a stale pre-read can mislabel
+  // a chip but never mislaunch a thread.
+  assert.match(UI, /let commentDefaults = \{ model: "session", effort: "session", fast: "session" \};/);
+  assert.match(UI, /if \(d\.commentDefaults\) adoptCommentDefaults\(d\.commentDefaults\);/);
+  assert.match(UI, /function refreshCommentDefaults/);
+  // re-read at dialog open, repainting the row IN PLACE (the composer holds focus and a draft)
+  assert.match(UI, /refreshCommentDefaults\(\(\) => \{\s*\n\s*if \(pendingCommentAnchor !== create\) return;/);
+  assert.match(UI, /const effVal = chosen \|\| setDef\(kind\);/);
+  // a version id stored in the setting still labels correctly (families hold their versions)
+  assert.match(UI, /function modelChoiceLabel\(value: string\)/);
+  assert.match(KERNEL, /"commentDefaults": \{"model": jd\._state_str\("comment-model", "session"\),/);
+});
+
+test("fast rides the create end to end, resolved dialog > setting > inherit at the kernel", () => {
+  // the chip is offered only where the effective model could run fast (no control that only toasts)
+  assert.match(UI, /if \(canFast\(create\.model \|\| setDef\("model"\) \|\| st\?\.model \|\| ""\)\) metaRight\.append\(mkSel\("fast"\)\);/);
+  assert.match(UI, /fast: create\.fast \|\| "", color: create\.color \|\| "" \}\);/);
+  assert.match(UI, /fast: c\.fast, color: c\.color \}\);/);   // the in-flight retry keeps the pick
+  assert.match(KERNEL, /def _comment_launch_prefs\(model="", effort="", fast=""\):/);
+  assert.match(KERNEL, /model, effort, fast = _comment_launch_prefs\(model, effort, fast\)/);
+  assert.match(KERNEL, /fast=str\(msg\.get\("fast"\) or ""\)/);       // the ws op hands it through…
+  assert.match(KERNEL, /"fast": str\(msg\.get\("fast"\) or ""\),/);   // …and a lag-parked create keeps it
+  assert.match(KERNEL, /fast=pk\.get\("fast", ""\)/);
+});
+
 test("kernel registers every comment drive op", () => {
   for (const op of ["commentCreate", "commentReply", "commentResolve", "commentDelete", "commentSeen", "commentPromote"]) {
     assert.ok(KERNEL.includes(`"${op}"`), `${op} missing from ID_OPS/handlers`);
@@ -324,7 +352,7 @@ test("the create dialog names the thread right there: prefilled <session>-commen
   assert.match(UI, /"New comment:"/);
   assert.match(UI, /if \(nameBox\) head\.append\(title, nameBox, closeBtn\);/);
   assert.match(UI, /send\.setAttribute\("aria-label", create \? "Comment" : "Send"\);/);   // the ➤ carries the word
-  assert.match(UI, /text, name: nm, model: create\.model \|\| "", effort: create\.effort \|\| "",\s*\n\s*color: create\.color \|\| ""/);
+  assert.match(UI, /text, name: nm, model: create\.model \|\| "", effort: create\.effort \|\| "",\s*\n\s*fast: create\.fast \|\| "", color: create\.color \|\| ""/);
   // the comment's own model/effort selectors reuse the statusline's /models-fed choices + menu skin
   assert.match(UI, /const metaRow = el\("div", "statusline cmt-meta-row"\);/);   // the chat statusline dress (2026-08-25 parity)
   assert.match(UI, /META_CHOICES\[kind\]/);

@@ -239,6 +239,34 @@ class ThreadForkInvisibility(unittest.TestCase):
         reg = json.loads((Path(self.td) / "sdk" / (THREAD + ".json")).read_text())
         self.assertNotIn("fast", reg, "no inherited fast key when the parent never asked for it")
 
+    def test_a_fork_fast_on_arms_the_ask_on_a_slow_parent(self):
+        # the user 2026-08-29: the default-comment setting (or a dialog pick) can arm fast for the
+        # thread regardless of the parent; the reg's `fast` is what fast_opt reads at connect
+        self.be.fork("thread-x", PARENT, "a1", sid=THREAD, thread_of=PARENT, fast="on")
+        reg = json.loads((Path(self.td) / "sdk" / (THREAD + ".json")).read_text())
+        self.assertTrue(reg.get("fast"), "an explicit on arms the ask on a slow parent")
+
+    def test_a_fork_fast_off_launches_plain_from_a_fast_parent(self):
+        preg_path = Path(self.td) / "sdk" / (PARENT + ".json")
+        preg = json.loads(preg_path.read_text())
+        preg["fast"] = True
+        preg_path.write_text(json.dumps(preg))
+        self.be.fork("thread-x", PARENT, "a1", sid=THREAD, thread_of=PARENT, fast="off")
+        reg = json.loads((Path(self.td) / "sdk" / (THREAD + ".json")).read_text())
+        self.assertNotIn("fast", reg, "off launches plain; the parent keeps its own ask untouched")
+
+    def test_the_fast_ask_reaches_the_clis_flag_settings(self):
+        # the chain the reg key rides (source pins — the flag file needs a live CLI connect):
+        # reg["fast"] → fast_opt at construct → _options hands it to flag_settings_path → the
+        # CLI's documented fastMode opt-in key. A refusal clears the ask + toasts, same model.
+        import inspect
+        self.assertIn('self.fast_opt = bool(reg.get("fast"))', inspect.getsource(sb.SdkSession.__init__))
+        self.assertIn("fast=sess.fast_opt", inspect.getsource(sb.SdkBackend._options))
+        self.assertIn('keys["fastMode"] = True', inspect.getsource(sb.flag_settings_path))
+        refusal = inspect.getsource(sb.SdkSession._adopt_fast_state)
+        self.assertIn('refused_ask = bool(reason) and self.fast_opt and fast != "on"', refusal)
+        self.assertIn('kw["fast"] = False', refusal, "a refused ask is cleared, never left armed")
+
     def test_a_plain_fork_still_writes_its_names_entry(self):
         self.be.fork("fork-x", PARENT, "a1", sid=THREAD)
         self.assertTrue((Path(self.td) / "names" / THREAD).exists())
@@ -436,9 +464,10 @@ class FakeBackend:
         self.sent = []
 
     def fork(self, name, parent_sid, cut_uuid="", bg="", fg="", sid=None, thread_of="",
-             model="", effort=""):
+             model="", effort="", fast=""):
         self.calls.append(("fork", name, parent_sid, cut_uuid, sid, thread_of))
         self.forked_meta = (model, effort)
+        self.forked_fast = fast
         self.forked_bg = bg
         return sid
 
@@ -492,7 +521,21 @@ class CommentOps(CommentBase):
         km._sessions = self._saved_sessions
         km._reveal_chat_for = self._saved_reveal
         km._push_session_now = self._saved_push_now
+        self._clear_defaults()   # the module shares one hermetic STATE — never leak across tests
         super().tearDown()
+
+    def _clear_defaults(self):
+        for f in ("comment-model", "comment-effort", "comment-fast"):
+            try:
+                (km.jd.STATE / f).unlink()
+            except OSError:
+                pass
+        km.jd._state_cache.clear()
+
+    def _put_default(self, name, value):
+        km.jd.STATE.mkdir(parents=True, exist_ok=True)
+        (km.jd.STATE / name).write_text(value)
+        km.jd._state_cache.clear()   # same-second writes share an mtime; the cache is not under test
 
     def test_create_forks_a_thread_and_sends_the_framed_opener(self):
         err, tid = km._comment_create(PARENT, "a1", "exponential backoff", "Why jitter at all?")
@@ -537,6 +580,49 @@ class CommentOps(CommentBase):
         _, tid2 = km._comment_create(PARENT, "a1", "the cap", "Junk color.", color="not-a-hex")
         self.assertEqual(self.be.forked_bg, "", "a non-hex color falls to the backend's own pick")
         self.assertNotIn("color", km._comment_thread(PARENT, tid2))
+
+    def test_settings_defaults_ride_every_new_thread(self):
+        # the user 2026-08-29, who wanted every new comment thread on one model/effort/fast pick
+        # regardless of the session it branches from: the kernel-side default applies when the
+        # dialog is left untouched
+        self._put_default("comment-model", "claude-opus-5")
+        self._put_default("comment-effort", "high")
+        self._put_default("comment-fast", "on")
+        err, _ = km._comment_create(PARENT, "a1", "exponential backoff", "Why?")
+        self.assertIsNone(err)
+        self.assertEqual(self.be.forked_meta, ("claude-opus-5", "high"))
+        self.assertEqual(self.be.forked_fast, "on")
+
+    def test_the_dialog_pick_beats_the_setting(self):
+        self._put_default("comment-model", "haiku")
+        self._put_default("comment-fast", "on")
+        km._comment_create(PARENT, "a1", "exponential backoff", "Why?", model="fable", fast="off")
+        self.assertEqual(self.be.forked_meta[0], "fable")
+        self.assertEqual(self.be.forked_fast, "off", "a per-thread pick deviates BOTH ways")
+
+    def test_the_session_sentinel_is_a_byte_identical_noop(self):
+        # "session" (the shipped default) resolves to the empty override — exactly the fork()
+        # arguments a create sent before the setting existed
+        for f in ("comment-model", "comment-effort", "comment-fast"):
+            self._put_default(f, "session")
+        km._comment_create(PARENT, "a1", "exponential backoff", "Why?")
+        self.assertEqual(self.be.forked_meta, ("", ""))
+        self.assertEqual(self.be.forked_fast, "")
+
+    def test_absent_files_resolve_the_same_as_the_sentinel(self):
+        self.assertEqual(km._comment_launch_prefs(), ("", "", ""))
+
+    def test_the_setters_validate_like_every_kernel_setting(self):
+        km._set_comment_model("gpt-99")
+        self.assertFalse((km.jd.STATE / "comment-model").exists(), "garbage never reaches the file")
+        km._set_comment_model("claude-opus-5")
+        self.assertEqual((km.jd.STATE / "comment-model").read_text(), "claude-opus-5")
+        km._set_comment_effort("bogus")
+        self.assertFalse((km.jd.STATE / "comment-effort").exists())
+        km._set_comment_fast("true")
+        self.assertFalse((km.jd.STATE / "comment-fast").exists(), '"on"/"session" only — never a bool word')
+        km._set_comment_fast("on")
+        self.assertEqual((km.jd.STATE / "comment-fast").read_text(), "on")
 
     def test_a_harness_task_notification_never_renders_as_the_users_words(self):
         recs = self._parent_records()

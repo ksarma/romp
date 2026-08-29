@@ -4512,7 +4512,8 @@ class SdkBackend:
         return sid
 
     def fork(self, name: str, parent_sid: str, cut_uuid: str = "", bg: str = "", fg: str = "",
-             sid: str | None = None, thread_of: str = "", model: str = "", effort: str = "") -> str:
+             sid: str | None = None, thread_of: str = "", model: str = "", effort: str = "",
+             fast: str = "") -> str:
         """Mint a NEW session that is a FORK of `parent_sid`'s conversation — up to `cut_uuid` when given
         (a transcript record uuid; empty = the whole conversation), the parent untouched either way (the
         user 2026-08-13). The new session gets its OWN sid, registry, name and identity colour — a fork
@@ -4573,10 +4574,14 @@ class SdkBackend:
             reg["threadOf"] = thread_of
         if parent.get("model") and parent["model"] != "default":
             reg["model"] = parent["model"]
-        if parent.get("fast"):
-            # fast rides the fork like model/effort do (the user 2026-08-25: a comment made from an
-            # Opus-high-FAST session came up slow) — the reg's `fast` is the persisted ask fast_opt
-            # reads at connect, so the thread's first frame already reports it
+        # fast rides the fork like model/effort do (the user 2026-08-25: a comment made from an
+        # Opus-high-FAST session came up slow) — the reg's `fast` is the persisted ask fast_opt
+        # reads at connect, so the thread's first frame already reports it. `fast` (the user
+        # 2026-08-29) is the per-fork override: "" inherits the parent's ask, "on" arms it
+        # regardless of the parent, "off" launches plain from a fast one. An arm the CLI refuses
+        # (a model /fast won't run) surfaces through _adopt_fast_state's refusal toast and clears
+        # the ask — same model, normal speed, never a silent substitute.
+        if fast == "on" or (not fast and parent.get("fast")):
             reg["fast"] = True
         # Per-fork model/effort OVERRIDES (the user 2026-08-17: a comment thread on a different model
         # or effort, without touching the parent). Applied HERE, in the reg the first connect reads —
