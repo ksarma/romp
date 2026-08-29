@@ -191,10 +191,45 @@ test("flush ordering: a queued setting lands before any message sent after the r
   });
 });
 
+// ── gesture stamps (2026-08-29): the queue's "latest per type" is latest per TAB only. A tab
+// frozen for hours (iOS always; Chrome tab-freeze) re-dials and flushes a pick the user has since
+// superseded from another device, and the kernel used to apply whatever arrived — so every
+// KERNEL_SETTING message now carries `gt`, epoch ms minted ONCE at the user's gesture, and the
+// kernel stands a stale stamp down at the store. That only works if this queue delivers the
+// ORIGINAL stamp: a re-stamp at send/flush time would forge freshness onto an hours-old pick.
+
+test("a queued setting's gesture stamp survives the queue and the flush unchanged", () => {
+  withFed((fm) => {
+    const sock = attach(fm, "TESTHOSTA");
+    fm.outbound({ type: "setJudgeModel", model: "m1", gt: 1111 });
+    sock.open();
+    assert.deepEqual(JSON.parse(sock.sent[0]), { type: "setJudgeModel", model: "m1", gt: 1111 },
+      "the flush delivers the message byte-identical — gt is the kernel's ordering key");
+  });
+});
+
+test("latest-wins keeps the newest gesture's OWN stamp — never a blend of two messages", () => {
+  withFed((fm) => {
+    const sock = attach(fm, "TESTHOSTA");
+    fm.outbound({ type: "setJudgeModel", model: "m1", gt: 1000 });
+    fm.outbound({ type: "setJudgeModel", model: "m2", gt: 2000 });
+    sock.open();
+    assert.deepEqual(sock.sent.map((s) => JSON.parse(s)),
+      [{ type: "setJudgeModel", model: "m2", gt: 2000 }]);
+  });
+});
+
 // Source pins, in the federation-remote-gate.test.ts style: the properties above hold only while
 // every remote send routes through the ONE queue-aware helper, and the flush hangs on the open
 // event itself — a raw `ws.send` site or a timer-based flush would reopen the hole quietly.
 const FED = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "federation.ts"), "utf8");
+
+test("the queue and the flush never mint a timestamp — gt is stamped at the gesture, upstream of here", () => {
+  const seg = FED.slice(FED.indexOf("private sendRemote"), FED.indexOf("private dropWarn"));
+  assert.ok(seg.length > 0, "sendRemote + flushPending located");
+  assert.doesNotMatch(seg, /Date\.now\(/,
+    "a queued message's gt must be the ORIGINAL gesture's time — no re-stamp in the send path");
+});
 
 test("both outbound remote send sites route through sendRemote — no raw inline drop path remains", () => {
   const outb = FED.slice(FED.indexOf("outbound(m: any): void {"), FED.indexOf("private dropWarn"));

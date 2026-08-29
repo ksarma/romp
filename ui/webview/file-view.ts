@@ -388,7 +388,9 @@ export function openFileView(path: string, sid?: string | null): boolean {
       "Saves write straight to disk on the file's machine — and this applies on every machine " +
       "connected here. A session working in that folder is told when you edit under it.\n\n" +
       "You can turn this off later in the settings gear.")) return false;
-    post({ type: "setFileEditing", enabled: true });
+    // gt = the consent's own click time: federation queues this per host across a down socket, and
+    // the kernel orders applies by the stamp — a flush hours later must not outrank a newer gesture
+    post({ type: "setFileEditing", enabled: true, gt: Date.now() });
     return true;
   }
   editBtn.addEventListener("click", () => {
@@ -667,7 +669,7 @@ export function openFileView(path: string, sid?: string | null): boolean {
             + "Saves write straight to disk on the file's machine — and this applies on every machine "
             + "connected here.\n\n"
             + "You can turn this off later in the settings gear.")) {
-            post({ type: "setFileEditing", enabled: true });
+            post({ type: "setFileEditing", enabled: true, gt: Date.now() });
             doSave();
             return;
           }

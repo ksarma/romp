@@ -789,7 +789,12 @@ export class FederationManager {
   // window used to drop with only a toast). When the socket isn't OPEN:
   // - a KERNEL_SETTING queues on the conn, LATEST per type — settings are latest-wins by nature, so
   //   the reconnect must never replay a stale older value over the one the user chose last — and
-  //   flushes on the socket's open event, before any post-reconnect traffic (flushPending);
+  //   flushes on the socket's open event, before any post-reconnect traffic (flushPending).
+  //   "Latest per type" is latest per TAB only: another dashboard may pick again while this one is
+  //   frozen, so every KERNEL_SETTING carries `gt` (epoch ms minted at the user's gesture, where
+  //   the message is built) and the KERNEL orders applies by it, standing stale flushes down. The
+  //   queue's contract here is to deliver the message UNCHANGED — never re-stamp at send or flush
+  //   time, which would forge freshness onto an hours-old pick;
   // - anything else keeps its behavior (replaying an arbitrary action minutes later can be worse
   //   than dropping it — a deliberate non-goal) but the drop lands a client-diag breadcrumb naming
   //   the type and host, beside the existing warn toast: a drop is never silent.

@@ -49,6 +49,21 @@ test("the gear posts kernel ops through ONE shared channel (never re-acquires th
     assert.ok(GEAR.includes(`'${op}'`), `gear must post ${op}`);
 });
 
+test("every queued-class kernel setting the gear posts carries its gesture time", () => {
+  // federation queues KERNEL_SETTING sends per host across a down socket and flushes them on
+  // reconnect (federation-send-queue.test.ts), and the kernel orders applies by `gt`, standing
+  // stale stamps down — so the stamp must be minted at the CLICK, inside the message literal
+  // itself, never at send or flush time (a late flush must carry the original gesture's time).
+  for (const frag of [
+    "post({ type: 'setAutoNudge', enabled: an.checked, gt: Date.now() })",
+    "post({ type: 'setFileEditing', enabled: fe.checked, gt: Date.now() })",
+    "post({ type: 'setJudgeModel', model: jm.value, gt: Date.now() })",
+    "post({ type: 'setIndexModel', model: im.value, gt: Date.now() })",
+    "post({ type: 'setDistillModel', model: dm.value, gt: Date.now() })",
+    "post({ type: 'setDistillEffort', effort: de.value, gt: Date.now() })",
+  ]) assert.ok(GEAR.includes(frag), `the gear must stamp the gesture: ${frag}`);
+});
+
 test("the distilling tier is its own gear pair, defaulting to follow-triage", () => {
   // The user 2026-08-14: the card-prose judges (distiller, briefer, staller) split out of triage so
   // what you READ can run a richer model than the placement judges. The stored sentinel "triage"
