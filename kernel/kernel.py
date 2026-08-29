@@ -1684,10 +1684,16 @@ def _norm_timeline_views(d):
             continue
         members = [m for m in (_member_pair(x) for x in _lst(g.get("members"))) if m]
         dedup = {(m["host"], m["sid"]): m for m in members}
-        tags.append({"id": g["id"][:64],
-                     "name": str(g.get("name") or "tag")[:_VIEWS_MAX_NAME],
-                     "color": str(g.get("color") or "")[:16],
-                     "members": [dedup[k] for k in sorted(dedup)]})
+        rec = {"id": g["id"][:64],
+               "name": str(g.get("name") or "tag")[:_VIEWS_MAX_NAME],
+               "color": str(g.get("color") or "")[:16],
+               "members": [dedup[k] for k in sorted(dedup)]}
+        if g.get("mtime"):                       # v2's edit stamp survives the rebuild (absent = 0 = legacy)
+            try:
+                rec["mtime"] = int(g["mtime"])
+            except (TypeError, ValueError):
+                pass
+        tags.append(rec)
     active = d.get("active") if isinstance(d.get("active"), str) else "all"
     if active not in ("all", "untagged") and ":" not in active \
             and not any(t["id"] == active for t in tags):
@@ -1755,7 +1761,27 @@ def _timeline_views():
 
 
 def _set_timeline_views(blob):
-    _atomic_write(_views_path(), json.dumps(_norm_timeline_views(blob), sort_keys=True))
+    # Per-tag mtime, stamped at the store's ONE write door by diffing against the previous blob
+    # (tag federation v2, the user 2026-08-29): a pending edit queued for an unreachable host must
+    # be able to tell, at late-apply time, whether the host's copy changed AFTER the user's ruling —
+    # a writer whose evidence predates newer information stands down (the cards-move corollary).
+    # The stamp rides /views to every peer for free. Only set when a tag actually changes, so
+    # untouched legacy stores round-trip byte-identical; a client echoing a blob without mtimes
+    # merely resets the field, which reads as "no newer information" — the safe direction.
+    v = _norm_timeline_views(blob)
+    try:
+        prev = {t["id"]: t for t in (_timeline_views().get("tags") or [])}
+    except Exception:
+        prev = {}
+    now = int(time.time())
+    for t in v["tags"]:
+        pt = prev.get(t["id"])
+        if pt is None or (pt.get("name"), pt.get("color"), pt.get("members")) != \
+                (t.get("name"), t.get("color"), t.get("members")):
+            t["mtime"] = now
+        elif pt.get("mtime"):
+            t["mtime"] = pt["mtime"]
+    _atomic_write(_views_path(), json.dumps(v, sort_keys=True))
 
 
 def _remote_tag_member_str(owner_host, m):
@@ -1804,6 +1830,176 @@ def _forward_tag_edit(host, body):
     return ans, None
 
 
+# ── tag federation v2: deletes reach hosts that were offline at the ruling (the user 2026-08-29:
+# "if I delete a tag, it should delete across all federated machines") ────────────────────────────
+# A tag DELETE / RENAME / member-REMOVE that could not land on an attached-but-unreachable host is
+# journaled here — durable, kernel-side, restart-proof — and applied ONCE when that host answers
+# again (the tunnel supervisor's pass calls _apply_pending_tag_edits for an "up" row with rows
+# pending). The immediate loud refusal STAYS (tagEditFailed, now saying "queued"); this journal is
+# the intent surviving it. ADD never queues: an add prefers a live home. The late apply moves state
+# only on evidence (the cards-move rule): the remote copy is fetched fresh at apply time, and a
+# same-named tag CREATED there after the ruling (tag ids encode their creation ms) — or the same
+# tag EDITED there after the ruling (the v2 mtime stamp) — is new information and survives, loudly.
+_PENDING_TAG_LOCK = threading.Lock()
+_PENDING_TAG_CACHE = {"rows": None}          # None = not loaded; kept in sync under the lock
+
+
+def _pending_tag_path():
+    return jd.STATE / "pending-tag-edits.json"
+
+
+def _pending_tag_rows():
+    """The journal, cached after one disk read (writes keep the cache in sync under the lock)."""
+    with _PENDING_TAG_LOCK:
+        if _PENDING_TAG_CACHE["rows"] is None:
+            try:
+                d = json.loads(_pending_tag_path().read_text())
+                _PENDING_TAG_CACHE["rows"] = [r for r in d if isinstance(r, dict)] if isinstance(d, list) else []
+            except Exception:
+                _PENDING_TAG_CACHE["rows"] = []
+        return list(_PENDING_TAG_CACHE["rows"])
+
+
+def _save_pending_tag_rows(rows):
+    with _PENDING_TAG_LOCK:
+        _PENDING_TAG_CACHE["rows"] = list(rows)
+        try:
+            _atomic_write(_pending_tag_path(), json.dumps(rows))
+        except OSError:
+            sys.stderr.write("pending-tag-edits: journal write failed (%s)\n" % traceback.format_exc())
+
+
+def _queue_pending_tag_edit(host, body):
+    """Journal one qualifying failed edit for `host` (delete / rename / member-remove; add and
+    color changes never queue). Returns True when a row was journaled. Captures the remote tag's
+    id from the host's CACHED views at the ruling moment, so the late apply can tell the tag the
+    user ruled on from a same-named successor. Coalescing: a delete supersedes every earlier row
+    for its (host, name) and refuses later ones (the delete already rules); removes merge; a
+    rename replaces a prior rename. Only ATTACHED hosts queue — a detached host has no reattach
+    event coming, and detach was its own intent."""
+    name = str(body.get("name") or "")
+    qual = bool(body.get("delete")) or isinstance(body.get("rename"), str) \
+        or (isinstance(body.get("remove"), list) and body.get("remove"))
+    if not (host and name and qual):
+        return False
+    with _remotes_lock:
+        r = next((x for x in _remotes.values() if x.get("host") == host), None)
+        cached = (r or {}).get("views") if isinstance((r or {}).get("views"), dict) else {}
+    if r is None:
+        return False
+    tid = next((str(t.get("id") or "") for t in (cached.get("tags") or [])
+                if isinstance(t, dict) and t.get("name") == name), "")
+    rows = _pending_tag_rows()
+    mine = [x for x in rows if x.get("host") == host and x.get("name") == name]
+    if any(x.get("delete") for x in mine):
+        return True                              # the delete already rules this name; nothing to add
+    row = {"host": host, "name": name, "tagId": tid, "ruledAt": int(time.time()), "at": int(time.time())}
+    if body.get("delete"):
+        rows = [x for x in rows if not (x.get("host") == host and x.get("name") == name)]
+        row["delete"] = True
+    else:
+        if isinstance(body.get("rename"), str) and body["rename"].strip():
+            row["rename"] = body["rename"]
+            rows = [x for x in rows if not (x.get("host") == host and x.get("name") == name
+                                            and x.get("rename"))]
+        if isinstance(body.get("remove"), list) and body.get("remove"):
+            merged = []
+            for x in mine:
+                if x.get("remove") and not x.get("rename"):
+                    merged += [m for m in x["remove"] if m not in merged]
+                    rows = [y for y in rows if y is not x]
+            row["remove"] = merged + [m for m in body["remove"] if m not in merged]
+            row["tagId"] = row["tagId"] or next((x.get("tagId") or "" for x in mine), "")
+    rows.append(row)
+    _save_pending_tag_rows(rows)
+    return True
+
+
+def _tag_id_ms(tid):
+    """The creation moment a store-minted tag id encodes ("g" + base36 of epoch-ms; _edit_tag and
+    the dialog both mint this shape), or None for a foreign/legacy id. A None reads as "created
+    before ids carried dates" — which predates any v2 ruling by construction."""
+    try:
+        return int(str(tid)[1:], 36) if str(tid)[:1] == "g" and len(str(tid)) > 1 else None
+    except ValueError:
+        return None
+
+
+def _apply_pending_tag_edits(r):
+    """The reattach half: apply `r["host"]`'s journaled rows now that it answers again. Fetches the
+    host's views FRESH first (ask the host, never the cache) and moves state only where the
+    evidence says the ruling still applies; every outcome logs to tunnel-dials.jsonl (the reattach
+    is a tunnel event). Terminal outcomes retire the row; a transport failure keeps it for the
+    next pass, so a link that drops mid-apply loses nothing."""
+    host = r.get("host") or ""
+    rows = [x for x in _pending_tag_rows() if x.get("host") == host]
+    if not rows:
+        return 0
+    r.pop("_views_at", None)                     # the poll gate must not serve the stale cache here
+    try:
+        rv = _poll_remote_views(r)
+    except Exception:
+        rv = None
+    if not isinstance(rv, dict):
+        _tunnel_log(host, "pending-tag-edits", note="views unreadable — retrying next pass",
+                    pending=len(rows))
+        return 0
+    r["views"] = rv
+    by_name = {}
+    for t in (rv.get("tags") or []):
+        if isinstance(t, dict):
+            by_name.setdefault(str(t.get("name") or ""), []).append(t)
+    retired, applied = [], 0
+    for row in rows:
+        cand = by_name.get(row.get("name") or "") or []
+        t = next((x for x in cand if row.get("tagId") and x.get("id") == row["tagId"]), None)
+        if t is None and cand:
+            # same name, different identity: NEW if its id says it was created after the ruling;
+            # an undecodable id predates dated ids, hence the ruling — the edit still applies.
+            ms = _tag_id_ms(cand[0].get("id") or "")
+            if ms is not None and ms / 1000.0 > float(row.get("ruledAt") or 0):
+                _tunnel_log(host, "pending-tag-edit", name=row.get("name"), op=_row_op(row),
+                            outcome="survives — a same-named tag was created there after the ruling")
+                retired.append(row)
+                continue
+            t = cand[0]
+        if t is None:
+            _tunnel_log(host, "pending-tag-edit", name=row.get("name"), op=_row_op(row),
+                        outcome="already gone there — nothing to apply")
+            retired.append(row)
+            continue
+        mt = t.get("mtime")
+        if mt and float(mt) > float(row.get("ruledAt") or 0):
+            _tunnel_log(host, "pending-tag-edit", name=row.get("name"), op=_row_op(row),
+                        outcome="yields — the tag changed on %s after the ruling" % host)
+            retired.append(row)
+            continue
+        body = {"name": str(t.get("name") or row.get("name") or "")}
+        for k in ("delete", "rename", "remove"):
+            if row.get(k):
+                body[k] = row[k]
+        ans = _remote_forward(r, "/tag", body)
+        if ans is None:
+            _tunnel_log(host, "pending-tag-edit", name=row.get("name"), op=_row_op(row),
+                        outcome="transport failed — retrying next pass")
+            continue
+        ok = bool(ans.get("ok"))
+        _tunnel_log(host, "pending-tag-edit", name=row.get("name"), op=_row_op(row),
+                    outcome=("applied" if ok else "refused by the host: %s" % (ans.get("error") or "?")))
+        retired.append(row)                      # a refusal is the host's own answer — terminal
+        applied += 1 if ok else 0
+    if retired:
+        keep = [x for x in _pending_tag_rows() if x not in retired]
+        _save_pending_tag_rows(keep)
+        r.pop("_views_at", None)                 # re-read the post-apply truth next pass
+        _mark_views_dirty()
+    return applied
+
+
+def _row_op(row):
+    return "delete" if row.get("delete") else ("rename" if row.get("rename") else "remove")
+
+
 def _views_client():
     """The views blob every client renders and matches against — the RENDERING of the canonical
     store (federation v0, the user 2026-08-24): local tags with members as viewer-relative strings
@@ -1835,6 +2031,19 @@ def _views_client():
                            "members": [_remote_tag_member_str(host, m) for m in members]})
     if remote:
         v["remoteTags"] = remote
+    # tag federation v2: a queued edit is VISIBLE, never gone-but-not-gone — the matching cached
+    # remote entry wears `pending` ("delete"/"rename"/"remove") for the dialog's compact idiom,
+    # and the raw rows ride as pendingTagEdits so an intent for a host with no cached tag entry
+    # still surfaces.
+    pend = _pending_tag_rows()
+    if pend:
+        v["pendingTagEdits"] = [{"host": x.get("host") or "", "name": x.get("name") or "",
+                                 "op": _row_op(x)} for x in pend]
+        by_hn = {(x.get("host"), x.get("name")): _row_op(x) for x in pend}
+        for t in (v.get("remoteTags") or []):
+            op = by_hn.get((t.get("host"), t.get("name")))
+            if op:
+                t["pending"] = op
     return v
 
 
@@ -12495,6 +12704,15 @@ def _tunnel_supervisor():
                     # row and may spawn a worker. Runs here, in the one supervisor, so an advance is pushed
                     # exactly once no matter how many dashboards are open.
                     _maybe_auto_push(r)
+                    # tag federation v2, the reattach half (also outside the lock — it round-trips the
+                    # tunnel): a host that answers this pass applies any journaled tag edits that
+                    # failed while it was unreachable. Steady state costs one cached-list scan.
+                    try:
+                        if any(x.get("host") == r.get("host") for x in _pending_tag_rows()):
+                            _apply_pending_tag_edits(r)
+                    except Exception:
+                        _tunnel_log(r.get("host") or "?", "pending-tag-edits",
+                                    note="apply pass raised: %s" % traceback.format_exc(limit=3))
                 if _postal_peers_on() and want != notified:
                     # Peer-bus mode: a change to (effective-up, trust) is the event the local bus keys its
                     # peer table on (reachable at 127.0.0.1:bus_port through the second -L). Keyed on trust
@@ -29761,9 +29979,14 @@ class Handler(BaseHTTPRequestHandler):
                 # refuses loudly: an unreachable kernel must never silently no-op an edit.
                 th = str((b or {}).get("host") or "").strip()
                 if th:
-                    ans, err = _forward_tag_edit(th, {k: v for k, v in b.items() if k != "host"})
+                    fbody = {k: v for k, v in b.items() if k != "host"}
+                    ans, err = _forward_tag_edit(th, fbody)
                     if err:
-                        return self._send(200, json.dumps({"ok": False, "error": err}),
+                        # v2: the loud refusal stands, and a delete/rename/remove now also persists —
+                        # applied once when the host reattaches (see _queue_pending_tag_edit)
+                        if _queue_pending_tag_edit(th, fbody):
+                            err += " — queued: it applies when %s reattaches" % th
+                        return self._send(200, json.dumps({"ok": False, "error": err, "queued": "queued" in err}),
                                           "application/json")
                     _mark_views_dirty()
                     return self._send(200, json.dumps(ans), "application/json")
@@ -30305,8 +30528,15 @@ class Handler(BaseHTTPRequestHandler):
                     body["delete"] = True
                 ans, err = _forward_tag_edit(host, body)
                 if err or not (ans or {}).get("ok", False):
+                    # v2: a TRANSPORT failure (err — down/unreachable/hiccup) journals the intent so
+                    # it applies at reattach; a host that ANSWERED and refused (ok=False) is the
+                    # host's own ruling and never queues. The refusal stays loud either way.
+                    msg_err = err or (ans or {}).get("error") or "refused"
+                    queued = bool(err) and _queue_pending_tag_edit(host, body)
+                    if queued:
+                        msg_err += " — queued: it applies when %s reattaches" % host
                     _send_to_view("timeline", {"type": "tagEditFailed", "host": host, "name": nm,
-                                               "error": err or (ans or {}).get("error") or "refused"},
+                                               "error": msg_err, "queued": queued},
                                   (client or {}).get("wid") or "")
                 _mark_views_dirty()
         elif msg and msg.get("type") == "cardNotify" and msg.get("itemId"):
