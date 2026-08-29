@@ -132,3 +132,23 @@ body.rs-lifted.rs-pane-gone::before { display: none; }
 .ra-li b { color: #e8eaed; font-weight: 600; }
 .ra-sw { width: 10px; height: 10px; border-radius: 2px; display: inline-block; flex: 0 0 auto; }
 .ra-note { color: #9aa0a6; font-size: 11.5px; border-top: 1px solid #3a3a3a; padding-top: 7px; }
+/* settingStale toasts (gear.js staleToast): the kernel stood a settings gesture down because a
+   newer one had already applied — the same top-right warn-toast treatment the chat uses, carried
+   HERE because the gear ships to panes that load only this sheet. Above the modal dim (z 60/70)
+   so the notice reads over an open gear. Dismissal is the family standard too (the user
+   2026-08-25): visible ✕, Escape, fade — copied from styles.css .warn-toast/.warn-toast-x in this
+   sheet's literal palette, since the gear's hosts don't load styles.css's vars. */
+#rs-stale-toasts { position: fixed; top: 44px; right: 14px; z-index: 80;
+  display: flex; flex-direction: column; gap: 8px; max-width: 340px; }
+.rs-stale-toast { display: flex; align-items: flex-start; gap: 8px;
+  padding: 8px 12px; border-radius: 6px; cursor: pointer; background: #252526;
+  border: 1px solid #f48771; color: #ccc; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+  font: 12px/1.5 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  transition: opacity 0.7s ease; }
+.rs-stale-toast-msg { min-width: 0; }
+/* the dismiss ✕ — the family's chip-✕ dress (dim at rest, separate, hover-brightens); the whole
+   toast still click-dismisses, this makes the way out VISIBLE (the user 2026-08-25) */
+.rs-stale-toast-x { flex: 0 0 auto; border: none; background: none; cursor: pointer; color: #9aa0a6;
+  font-size: 11px; line-height: 1.4; padding: 2px 4px; border-radius: 8px; }
+.rs-stale-toast-x:hover { color: #fff; background: rgba(255, 255, 255, 0.08); }
+.rs-stale-toast.fade { opacity: 0; }

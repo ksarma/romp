@@ -34,10 +34,11 @@ class ApplySettings(unittest.TestCase):
     def setUp(self):
         for f in ("judge-model", "index-model", "judge-effort", "index-effort",
                   "distill-model", "distill-effort"):
-            try:
-                (km.jd.STATE / f).unlink()
-            except OSError:
-                pass
+            for name in (f, f + ".gt"):   # the value and its gesture-stamp sidecar (gesture ordering)
+                try:
+                    (km.jd.STATE / name).unlink()
+                except OSError:
+                    pass
 
     def test_distill_pair_applies_pins_and_reports_raw(self):
         # the ack answers the RAW stored value ("triage" = following the triage pick), matching
@@ -145,11 +146,19 @@ class OneHopNeverALoop(unittest.TestCase):
                       "a forwarded body never carries the flag — one hop, never a mesh loop")
 
     def test_every_gear_op_propagates_its_own_field(self):
-        for frag in ('args=({"judgeModel": str(msg["model"])},)',
-                     'args=({"indexModel": str(msg["model"])},)',
-                     'args=({"judgeEffort": str(msg.get("effort") or "")},)',
-                     'args=({"indexEffort": str(msg.get("effort") or "")},)'):
+        # each fan-out body carries the APPLIED gesture stamp `_jgt` (gesture-time ordering,
+        # 2026-08-29: receivers order by it too — see test_setting_gesture_order.py), and only
+        # an applied pick fans out at all (`_jgt is not None`): a stood-down or invalid one
+        # propagates nothing, since re-propagation is how a stale flush once reverted the mesh
+        for frag in ('args=({"judgeModel": str(msg["model"]), "gt": _jgt},)',
+                     'args=({"indexModel": str(msg["model"]), "gt": _jgt},)',
+                     'args=({"judgeEffort": str(msg.get("effort") or ""), "gt": _jgt},)',
+                     'args=({"indexEffort": str(msg.get("effort") or ""), "gt": _jgt},)',
+                     'args=({"distillModel": str(msg["model"]), "gt": _jgt},)',
+                     'args=({"distillEffort": str(msg["effort"]), "gt": _jgt},)'):
             self.assertIn(frag, self.src, frag)
+        self.assertGreaterEqual(self.src.count("if _jgt is not None:"), 6,
+                                "every judge-tier fan-out is gated on the pick actually applying")
 
     def test_the_gear_copy_says_the_pick_follows(self):
         with open(os.path.join(os.path.dirname(HERE), "ui", "webview", "gear.js")) as f:

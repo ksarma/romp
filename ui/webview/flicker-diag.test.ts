@@ -27,9 +27,11 @@ test("feed: an item entering/leaving the model posts an itemset breadcrumb (ids 
 });
 
 test("federation: every remote socket open/close/detach posts a hostconn breadcrumb", () => {
-  assert.match(FED, /ws\.onopen = \(\) => this\.diag\("hostconn", \{ host: conn\.host, ev: "open" \}\);/);
+  // the open breadcrumb also names any queued settings it flushed, and the detach any it discarded
+  // (federation-send-queue.test.ts owns that queue's behavior) — the events themselves stay pinned here
+  assert.match(FED, /this\.diag\("hostconn", flushed\.length \? \{ host: conn\.host, ev: "open", flushed \}\s*\n\s*: \{ host: conn\.host, ev: "open" \}\);/);
   assert.match(FED, /this\.diag\("hostconn", \{ host: conn\.host, ev: "close", code: ev\.code, clean: ev\.wasClean, detached: conn\.closed \}\);/);
-  assert.match(FED, /this\.diag\("hostconn", \{ host, ev: "detach" \}\);/);
+  assert.match(FED, /this\.diag\("hostconn", c\.pending\.size \? \{ host, ev: "detach", pendingDropped: \[\.\.\.c\.pending\.keys\(\)\] \}\s*\n\s*: \{ host, ev: "detach" \}\);/);
   // breadcrumbs ride the LOCAL kernel socket into the same client-diag journal the feed writes
   assert.match(FED, /s\(\{ type: "clientDiag", surface: "federation", what, data \}\);/);
 });

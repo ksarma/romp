@@ -467,7 +467,9 @@ class Wiring(unittest.TestCase):
         self.assertIn("id=rs-updates", self.gear)
         for opt in ("value=ask", "value=auto", "value=off"):
             self.assertIn(opt, self.gear)
-        self.assertIn("post({ type: 'setUpdateMode', mode: upm.value })", self.gear)
+        # the post is gesture-stamped (2026-08-29): setUpdateMode rides federation's queued
+        # KERNEL_SETTING class, so the kernel orders applies by the click's own time
+        self.assertIn("post({ type: 'setUpdateMode', mode: upm.value, gt: Date.now() })", self.gear)
         self.assertIn("upm.value = v.updateMode", self.gear)
         self.assertIn('msg.get("type") == "setUpdateMode"', self.src)
 

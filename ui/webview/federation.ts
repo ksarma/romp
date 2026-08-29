@@ -564,6 +564,10 @@ interface Conn {
   url: string;
   closed: boolean;
   live: boolean; // kernel reports this tunnel "up" — the only state in which its port is dialed
+  // KERNEL_SETTING messages that arrived while this host's socket was down, newest per type only —
+  // flushed on the socket's open event (sendRemote/flushPending). Bounded by construction: at most
+  // one entry per setting type. Lives on the CONN, not the socket, so it survives the re-dial.
+  pending: Map<string, any>;
 }
 
 export class FederationManager {
@@ -764,9 +768,7 @@ export class FederationManager {
     // undoClear undoes the LAST clear, which may have gone to a remote kernel — follow it there.
     // (The kernel keeps its own cleared.jsonl; only the kernel that took the clear can undo it.)
     if (m && m.type === "undoClear" && this.lastClearHost !== LOCAL) {
-      const c = this.conns.get(this.lastClearHost);
-      if (c && c.ws && c.ws.readyState === 1) c.ws.send(JSON.stringify(m));
-      else this.dropWarn(this.lastClearHost, m);
+      this.sendRemote(this.lastClearHost, m);
       this.lastClearHost = LOCAL;
       return;
     }
@@ -777,11 +779,50 @@ export class FederationManager {
         const s = (window as any).__rompLocalSend;
         if (typeof s === "function") s(r.msg);
       } else {
-        const c = this.conns.get(r.host);
-        if (c && c.ws && c.ws.readyState === 1) c.ws.send(JSON.stringify(r.msg));
-        else this.dropWarn(r.host, r.msg);
+        this.sendRemote(r.host, r.msg);
       }
     }
+  }
+
+  // The ONE remote send path (the user 2026-08-28, whose mid-restart Edit consent never reached the
+  // file's kernel: during a kernel restart every socket churns for a few seconds, and a send in that
+  // window used to drop with only a toast). When the socket isn't OPEN:
+  // - a KERNEL_SETTING queues on the conn, LATEST per type — settings are latest-wins by nature, so
+  //   the reconnect must never replay a stale older value over the one the user chose last — and
+  //   flushes on the socket's open event, before any post-reconnect traffic (flushPending).
+  //   "Latest per type" is latest per TAB only: another dashboard may pick again while this one is
+  //   frozen, so every KERNEL_SETTING carries `gt` (epoch ms minted at the user's gesture, where
+  //   the message is built) and the KERNEL orders applies by it, standing stale flushes down. The
+  //   queue's contract here is to deliver the message UNCHANGED — never re-stamp at send or flush
+  //   time, which would forge freshness onto an hours-old pick;
+  // - anything else keeps its behavior (replaying an arbitrary action minutes later can be worse
+  //   than dropping it — a deliberate non-goal) but the drop lands a client-diag breadcrumb naming
+  //   the type and host, beside the existing warn toast: a drop is never silent.
+  private sendRemote(host: string, msg: any): void {
+    const c = this.conns.get(host);
+    if (c && c.ws && c.ws.readyState === 1) {
+      c.ws.send(JSON.stringify(msg));
+      return;
+    }
+    if (c && msg && typeof msg.type === "string" && KERNEL_SETTING.has(msg.type)) {
+      c.pending.set(msg.type, msg); // not dropped — it rides the next open, so no toast here
+      return;
+    }
+    this.diag("senddrop", { host, msgType: (msg && msg.type) || "" });
+    this.dropWarn(host, msg);
+  }
+
+  /** Deliver the settings that arrived while this host's socket was down, on the open event itself —
+   *  synchronously, so they precede ANY post-reconnect traffic. The file viewer's consent flow relies
+   *  on exactly that: its setFileEditing broadcast must land before the save it retries (the
+   *  "flag lands first" ordering in file-view.ts's re-offer), now across a down-socket window too.
+   *  Returns the flushed types for the open breadcrumb. */
+  private flushPending(conn: Conn): string[] {
+    if (!conn.pending.size || !conn.ws || conn.ws.readyState !== 1) return [];
+    const types = [...conn.pending.keys()];
+    for (const m of conn.pending.values()) conn.ws.send(JSON.stringify(m));
+    conn.pending.clear();
+    return types;
   }
 
   // A route to a host whose socket isn't open would otherwise VANISH — creating a session on an
@@ -853,7 +894,7 @@ export class FederationManager {
     const w = dashboardWid();
     const url = `${proto}${location.host}/remote/${encodeURIComponent(host)}/ws?app=${encodeURIComponent(this.app)}&token=${encodeURIComponent(token)}`
       + (w ? `&wid=${encodeURIComponent(w)}` : "");
-    const conn: Conn = { host, ws: null, url, closed: false, live };
+    const conn: Conn = { host, ws: null, url, closed: false, live, pending: new Map() };
     this.conns.set(host, conn);
     this.ensureHost(host);
     this.connect(conn);
@@ -879,7 +920,13 @@ export class FederationManager {
       return;
     }
     conn.ws = ws;
-    ws.onopen = () => this.diag("hostconn", { host: conn.host, ev: "open" });
+    ws.onopen = () => {
+      // settings queued while the socket was down go out FIRST — on the open event itself, never a
+      // timer — so nothing sent after the reconnect can overtake them (see flushPending)
+      const flushed = this.flushPending(conn);
+      this.diag("hostconn", flushed.length ? { host: conn.host, ev: "open", flushed }
+                                           : { host: conn.host, ev: "open" });
+    };
     ws.onmessage = (ev: MessageEvent) => {
       let msg: any;
       try {
@@ -904,7 +951,11 @@ export class FederationManager {
   private closeRemote(host: string): void {
     const c = this.conns.get(host);
     if (!c) return;
-    this.diag("hostconn", { host, ev: "detach" });   // /tunnels no longer lists it → its cards drop NOW
+    // /tunnels no longer lists it → its cards drop NOW. A detach also discards any settings still
+    // queued for the host (the user removed it from the mesh; a later reattach re-syncs through the
+    // gear's mixed marks) — named in the breadcrumb, because a drop is never silent.
+    this.diag("hostconn", c.pending.size ? { host, ev: "detach", pendingDropped: [...c.pending.keys()] }
+                                         : { host, ev: "detach" });
     c.closed = true;
     try {
       c.ws && c.ws.close();

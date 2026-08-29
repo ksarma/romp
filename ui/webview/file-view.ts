@@ -388,7 +388,9 @@ export function openFileView(path: string, sid?: string | null): boolean {
       "Saves write straight to disk on the file's machine — and this applies on every machine " +
       "connected here. A session working in that folder is told when you edit under it.\n\n" +
       "You can turn this off later in the settings gear.")) return false;
-    post({ type: "setFileEditing", enabled: true });
+    // gt = the consent's own click time: federation queues this per host across a down socket, and
+    // the kernel orders applies by the stamp — a flush hours later must not outrank a newer gesture
+    post({ type: "setFileEditing", enabled: true, gt: Date.now() });
     return true;
   }
   editBtn.addEventListener("click", () => {
@@ -654,8 +656,10 @@ export function openFileView(path: string, sid?: string | null): boolean {
         // a popup the local flag keeps from ever re-showing. Re-offer the SAME consent here, where
         // the disagreeing machine is known by name; a yes re-broadcasts setFileEditing (KERNEL_SETTING
         // reaches every attached kernel, the late one included) and retries the save — the broadcast
-        // and the save ride the same ordered socket per host, so the flag lands first. A no falls
-        // through to the plain error bar, buffer intact.
+        // and the save ride the same ordered socket per host, so the flag lands first; on a host whose
+        // socket is down at that moment, federation queues the setting and flushes it on the open
+        // event ahead of any later traffic (federation.ts sendRemote/flushPending), so the flag still
+        // lands before a post-reconnect retry. A no falls through to the plain error bar, buffer intact.
         if (/file editing is off/.test(err)) {
           const host = sid ? hostOf(sid) : "";
           if (window.confirm(
@@ -665,7 +669,7 @@ export function openFileView(path: string, sid?: string | null): boolean {
             + "Saves write straight to disk on the file's machine — and this applies on every machine "
             + "connected here.\n\n"
             + "You can turn this off later in the settings gear.")) {
-            post({ type: "setFileEditing", enabled: true });
+            post({ type: "setFileEditing", enabled: true, gt: Date.now() });
             doSave();
             return;
           }
