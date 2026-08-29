@@ -3565,12 +3565,15 @@ def _walk_root_record(sid):
         return None
 
 
-def _log_nudge_event(sid, gid, t, count, verdict="fired", ev_t=None):
+def _log_nudge_event(sid, gid, t, count, verdict="fired", ev_t=None, parked_s=None):
     """Append one auto-nudge event to STATE/nudge-events.jsonl — {sid, gid, t, count, verdict, evT} —
     for the timeline's DEBUG judging band (per-nudge ⚡ marker) AND the redundancy accounting (the
     user 2026-08-25): every decision the gate takes is a row — fired / skipped-redundant /
     held-fresh-re-judged / fired-at-cap / skipped-redundant-at-cap / skipped-redundant-memo (the
-    T142 memo served a ruling already made on this exact evidence, no judge call) /
+    T142 memo served a ruling already made on this exact evidence, no judge call; the row carries
+    parkedS — seconds the session has sat parked since the skip's answeredAt — so the quiet-session
+    deadlock fingerprint is countable from this log alone, 2026-08-29) / fired-parked-backstop (the
+    memo held but the session sat parked past the dead-man stand — the fire re-engages it) /
     resolved-at-send / blocked-on-user-at-send — carrying the evidence snapshot's timestamp, so redundant fires are
     countable from the log alone. That accounting is what extended the freshness guard to the cap
     path (the user 2026-08-27, T120: the pre-T120 force-fired-at-cap rows measured the blind fire
@@ -3582,7 +3585,8 @@ def _log_nudge_event(sid, gid, t, count, verdict="fired", ev_t=None):
         with p.open("a") as f:
             f.write(json.dumps({"sid": sid, "gid": gid, "t": int(t), "count": count,
                                 "verdict": verdict,
-                                **({"evT": int(ev_t)} if ev_t else {})}) + "\n")
+                                **({"evT": int(ev_t)} if ev_t else {}),
+                                **({"parkedS": int(parked_s)} if parked_s else {})}) + "\n")
     except Exception:
         pass
 
@@ -3714,6 +3718,24 @@ def _last_state(sid):
 def _last_state_value(sid):
     """Just the value of _last_state — the most-recent STATE transition; '' when none."""
     return _last_state(sid)[0]
+
+
+def _settle_event_key(sid):
+    """The session's newest recorded SETTLE (turn-end) event, as an opaque key — the redundancy
+    memo's second key half (the user 2026-08-29, the quiet-session deadlock; seam agreed with the
+    hook-ledger round). Primary: the SDK backend's hook ledger — the CLI's own Stop hook stamps
+    `lastStopAt` (int epoch seconds) on the session's registry entry (STATE/sdk/<sid>.json) on
+    EVERY turn end; that is the authoritative settle signal. Fallback when the field is absent
+    (tmux CLIs have no SDK hooks; a pre-ledger SDK session carries no field until its first
+    post-ledger turn): the newest states/ transition (_last_state), which the tmux Stop hook
+    writes. Absence reads as "no settle evidence" (key 0), never as "never settled". Both sources
+    stamp on every turn end including romp-fed ones — fine here: a settle re-arms at most ONE
+    re-judge, and the memo re-mints against the new key."""
+    try:
+        t = int((_thread_reg(sid) or {}).get("lastStopAt") or 0)
+    except Exception:
+        t = 0
+    return t or (_last_state(sid)[1] or 0)
 
 
 # Session states the authoritative log reports while a session is ACTIVELY PROGRESSING (not genuinely stopped).
@@ -5354,7 +5376,18 @@ def _auto_nudge_session(s, now, tmux, nudged, waitfor, alive_ids=None):
                     fired = True                           # push so the chip/floor reaches the feed now
                 elif _fate == "moot":
                     nudged[gid] = dict(rec, moot=True)     # the judges superseded the ask — no chip, no block
-            continue
+            _anch = max(rec.get("answeredAt") or 0, rec.get("at") or 0) if rec else 0
+            if not (arm_id is not None and rec.get("moot") and not rec.get("failed")
+                    and _anch and now - _anch > AWAITING_DEADMAN_SECS):
+                continue
+            # MOOT IS NOT TERMINAL ON A PARKED SESSION (the user 2026-08-29, the quiet-session
+            # deadlock): the moot retire's own justification is "a genuinely still-stalled goal
+            # re-arms on the next GENUINE ended turn" — a turn a parked session never produces
+            # (the audited node: moot, still Working, silent for 8 hours). Past the same dead-man
+            # stand the wake ladder uses for unobservable waits, the goal re-enters the due path
+            # below; the redundancy gate then owns it (fresh judge, memo, or the parked-backstop
+            # fire). A `failed` record stays terminal — its needs-you block already reached the
+            # user, whose reply is the pending event.
         count = rec.get("count", 0) + 1
         # (the nudge-fire forensics side-log was retired with the P3.4 sweep, 2026-07-07 — the goal's
         # verdict diary is the audit trail now)
@@ -5400,6 +5433,7 @@ def _auto_nudge_session(s, now, tmux, nudged, waitfor, alive_ids=None):
                 _nodes = jd.load_goals(sid).get("nodes", {})
             except Exception:
                 _nodes = {}
+            settle_t = _settle_event_key(sid)      # the memo's second key half — one read per tick
 
             def _judge_batch(cands, report, report_ts, held_pass):
                 keep = []
@@ -5434,13 +5468,42 @@ def _auto_nudge_session(s, now, tmux, nudged, waitfor, alive_ids=None):
                         # dies the moment the transcript's newest report moves or a fire replaces
                         # the record. Consulted before ANY call, so the flip class dies by
                         # construction. Event-true: no time backoff, no counter.
-                        if report_ts and rec0.get("redundantEvT") == report_ts:
+                        # THE MEMO IS TWO-KEYED NOW (the user 2026-08-29, the quiet-session
+                        # deadlock): same evidence AND same settle event = the world has provably
+                        # not moved, serve the ruling. Either key moving re-arms exactly ONE
+                        # re-judge, which re-memos against the new pair — no storm returns. The
+                        # settle key is the session's own turn-end event (_settle_event_key:
+                        # hook-ledger lastStopAt primary, idle-atom fallback). Keyed on evT alone,
+                        # a quiet session's one-time ruling was a PERMANENT veto — the audited
+                        # board: four Working cards skip-looped for 8 hours on one frozen evT.
+                        if report_ts and rec0.get("redundantEvT") == report_ts \
+                                and rec0.get("redundantSettleT") == settle_t:
+                            _anch = max(rec0.get("answeredAt") or 0, rec0.get("at") or 0)
+                            if _anch and now - _anch > AWAITING_DEADMAN_SECS:
+                                # PARKED DEAD-MAN: a fully-quiet session produces NO future event
+                                # — no report, no settle — so no key change can ever re-arm it;
+                                # the absence of events IS the condition. That is the wake
+                                # ladder's "unobservable wait", and it takes the SAME documented
+                                # stand (answeredAt + AWAITING_DEADMAN_SECS — never a new
+                                # window): the candidate stays in the fire list and the fire
+                                # re-engages the session, honoring the 2026-08-22 promise that
+                                # every Working card is nudged/woken until it lands. One fire per
+                                # memo epoch by construction — the fire writes a fresh record,
+                                # and its response either moves the evidence (a new judgment
+                                # world) or converts through the normal failed/needs-you leg.
+                                _verdicts[f[0]] = ("fired-parked-backstop", report_ts)
+                                if skips:
+                                    nudged[f[0]] = dict(rec0, redundantSkips=0)
+                                    _put_nudged(f[0], nudged[f[0]])
+                                keep.append(f)
+                                continue
                             _log_nudge_event(sid, f[0], now, f[1],
-                                             verdict="skipped-redundant-memo", ev_t=report_ts)
+                                             verdict="skipped-redundant-memo", ev_t=report_ts,
+                                             parked_s=(now - _anch) if _anch else None)
                             continue
                         if gtxt and jd.nudge_redundant(gtxt, report):
                             nudged[f[0]] = dict(rec0, answeredAt=int(now), redundantSkips=skips + 1,
-                                                redundantEvT=report_ts)
+                                                redundantEvT=report_ts, redundantSettleT=settle_t)
                             _put_nudged(f[0], nudged[f[0]])
                             _v = ("skipped-redundant-at-cap" if skips >= 2
                                   else "held-fresh-re-judged" if held_pass else "skipped-redundant")

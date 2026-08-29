@@ -211,7 +211,11 @@ class FreshGuard(unittest.TestCase):
         # consumes no arm, so a capped goal came due every tick and re-judged constant evidence
         # (147 re-judgments on one goal in 68 minutes; ~$1.92/day)
         self._seed_rec({"count": 1, "lastTurnId": "t0", "armAtoms": 1, "at": ARM_T - 500,
-                        "redundantSkips": 1, "redundantEvT": ARM_T + 50})
+                        "redundantSkips": 1, "redundantEvT": ARM_T + 50,
+                        "redundantSettleT": 0})       # both memo keys current (2026-08-29: the memo
+        #                                               is two-keyed; a record missing the settle key
+        #                                               re-judges ONCE by design — the upgrade path,
+        #                                               pinned in test_nudge_memo_deadlock.py)
         self.judge_replies = [True]                   # would be consulted only by a bug
         self._tick()
         self.assertEqual(self.sent, [])
@@ -224,7 +228,8 @@ class FreshGuard(unittest.TestCase):
         # ruled redundant — nondeterminism delivering the stale nudge T120 exists to stop. The
         # memo is consulted before the at-cap consult too, so the flip cannot happen.
         self._seed_rec({"count": 1, "lastTurnId": "t0", "armAtoms": 1, "at": ARM_T - 500,
-                        "redundantSkips": 2, "redundantEvT": ARM_T + 50})
+                        "redundantSkips": 2, "redundantEvT": ARM_T + 50,
+                        "redundantSettleT": 0})       # both memo keys current (see the memo test above)
         self.judge_replies = [False]                  # the flip verdict, never reachable
         self._tick()
         self.assertEqual(self.sent, [], "a pair ruled redundant can never fire on the same evidence")
