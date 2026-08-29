@@ -3322,7 +3322,11 @@ def _mark_nudge_failed(gid, ev_t=None, wake=False):
         try:
             _nd0 = jd.load_goals(gid.rsplit(":", 1)[0]).get("nodes", {}).get(gid)
             if _nd0 is not None and any(_supersedes(e) for e in _nd0.get("log") or []):
-                nudged[gid] = dict(rec, moot=True)
+                nudged[gid] = dict(rec, moot=True, mootAt=now)   # the ruling's own time — the parked
+                #                                        escape measures its patience from it, never
+                #                                        from the fire's `at` (a moot landing hours
+                #                                        after the fire otherwise inherits a spent
+                #                                        window and re-enters at once, 2026-08-29)
                 d["nudged"] = nudged
                 _write_auto_nudge(d)
                 return "moot"
@@ -4597,7 +4601,8 @@ def _wake_goal(sid, gid, stamp, nudged, turns, store, now, lt, tmux):
         _ev = max(rec.get("at") or 0, lt.get("end") or lt.get("t") or 0) or None
         _fate = _mark_nudge_failed(gid, ev_t=_ev, wake=True)
         if _fate:
-            nudged[gid] = dict(rec, **({"failed": True} if _fate == "failed" else {"moot": True}))
+            nudged[gid] = dict(rec, **({"failed": True} if _fate == "failed"
+                                       else {"moot": True, "mootAt": int(now)}))
         return _fate == "failed"
     if rec.get("failed") or rec.get("moot"):
         if (rec.get("anchor") or 0) >= at:
@@ -5375,8 +5380,13 @@ def _auto_nudge_session(s, now, tmux, nudged, waitfor, alive_ids=None):
                     nudged[gid] = dict(rec, failed=True)   # mirror in-memory for the rest of this tick
                     fired = True                           # push so the chip/floor reaches the feed now
                 elif _fate == "moot":
-                    nudged[gid] = dict(rec, moot=True)     # the judges superseded the ask — no chip, no block
-            _anch = max(rec.get("answeredAt") or 0, rec.get("at") or 0) if rec else 0
+                    nudged[gid] = dict(rec, moot=True, mootAt=int(now))   # the judges superseded the
+                    #                                        ask — no chip, no block; mootAt mirrors
+                    #                                        _mark_nudge_failed's durable stamp
+            _anch = (max(rec.get("answeredAt") or 0, rec.get("at") or 0,
+                         rec.get("mootAt") or 0) if rec else 0)   # the moot ruling is new information —
+            #                                            patience runs from IT (a legacy record without
+            #                                            the stamp keeps the old anchors)
             if not (arm_id is not None and rec.get("moot") and not rec.get("failed")
                     and _anch and now - _anch > AWAITING_DEADMAN_SECS):
                 continue
