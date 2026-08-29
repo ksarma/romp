@@ -55,6 +55,31 @@ class LaunchRecording(_Backend):
         self.assertEqual(e["procGen"], self.sess.proc_gen, "launches die with their process")
         self.assertEqual(ended, [])
 
+    def test_task_and_workflow_calls_are_not_journaled(self):
+        # subagents/workflows ride the lifecycle stream + Subagent hooks; journaling them here
+        # recorded every FOREGROUND subagent call as a phantom launch (review 2026-08-29)
+        for tname in ("Task", "Workflow"):
+            asyncio.run(self.sess._ledger_tool_hook(
+                {"tool_name": tname, "tool_input": {"prompt": "go"},
+                 "tool_response": {"id": "x-1"}}, "toolu_01XXX", None))
+        self.assertEqual(self._ledger(), ([], []))
+
+    def test_an_ack_with_no_key_at_all_is_not_recorded(self):
+        # an entry no event could ever clear must not be born (the immortal tid-None leak)
+        asyncio.run(self.sess._ledger_tool_hook(
+            {"tool_name": "Bash",
+             "tool_input": {"command": "sleep 9", "run_in_background": True},
+             "tool_response": "opaque string ack"}, None, None))
+        self.assertEqual(self._ledger(), ([], []))
+
+    def test_the_ledger_is_capped_and_evicts_oldest_loudly(self):
+        for i in range(45):
+            self._launch_bash(tid="task-%03d" % i, tuid="toolu_%03d" % i)
+        live, _ = self._ledger()
+        self.assertEqual(len(live), self.sess._LEDGER_CAP)
+        self.assertEqual(live[0]["tid"], "task-005", "oldest evicted")
+        self.assertTrue(any("cap" in m for m in self.logs))
+
     def test_foreground_bash_is_a_turn_not_a_launch(self):
         asyncio.run(self.sess._ledger_tool_hook(
             {"tool_name": "Bash", "tool_input": {"command": "ls"},
@@ -149,6 +174,18 @@ class StopReconciler(_Backend):
         reg = sb.read_reg(self.d, SID) or {}
         self.assertAlmostEqual(reg.get("lastStopAt"), time.time(), delta=30)
 
+    def test_a_monitor_absent_from_the_payload_is_NOT_tombstoned_gone(self):
+        # only shells are proven to ride background_tasks; a false "gone" would silently un-wait
+        # the session — monitors end by deadline, fail, stop, or processDied
+        asyncio.run(self.sess._ledger_tool_hook(
+            {"tool_name": "Monitor", "tool_use_id": "toolu_01MMM",
+             "tool_input": {"description": "watching CI", "timeout_ms": 600000, "persistent": False},
+             "tool_response": {"task_id": "mon-9"}}, "toolu_01MMM", None))
+        self._stop(self.sess, [])
+        live, ended = self._ledger()
+        self.assertEqual([e["tid"] for e in live], ["mon-9"])
+        self.assertEqual(ended, [])
+
     def test_absence_of_the_field_reconciles_nothing(self):
         self._launch_bash()
         asyncio.run(self.sess._stop_hook({"transcript_path": "/tmp/x.jsonl"}, None, None))
@@ -156,10 +193,11 @@ class StopReconciler(_Backend):
         self.assertEqual(len(live), 1, "no payload field, no verdict — never treat absence as empty")
 
 
-class KernelSeamPrefersTheLedger(unittest.TestCase):
-    """_bg_live_norm's source ladder: live lifecycle set (0.5) > launch ledger (0.6) > transcript
-    pairing (0.75). The ledger branch applies EXACT deadlines (recorded moment + 5s skew), never the
-    scrape's +120s grace."""
+class KernelSeamEnrichesTheStream(unittest.TestCase):
+    """_bg_live_norm: the lifecycle set stays the liveness authority; the ledger ENRICHES its rows by
+    toolUseId join (exact Monitor deadline -> em._bg_expired at +5s skew, not +120s; agent attribution).
+    The first cut placed the ledger as a ladder SOURCE below bgTasks — unreachable, because every SDK
+    row carries bgTasks unconditionally (review 2026-08-29); these tests use the production row shape."""
 
     @classmethod
     def setUpClass(cls):
@@ -176,38 +214,53 @@ class KernelSeamPrefersTheLedger(unittest.TestCase):
         except OSError:
             pass
 
-    def _write_reg(self, **kw):
+    def _wire(self, bg_tasks, ledger):
         (self.km.jd.STATE / "sdk" / (SID + ".json")).write_text(
-            json.dumps({"sid": SID, "name": "web", "alive": True, **kw}))
+            json.dumps({"sid": SID, "name": "web", "alive": True, "bgLedger": ledger}))
+        self.km._tmux_sessions = lambda: {SID: {"bgTasks": bg_tasks}}   # the PRODUCTION shape:
+        #                                    Sessions.live() sets bgTasks unconditionally on SDK rows
 
-    def test_ledger_present_beats_the_scrape_and_expires_exactly(self):
+    def test_a_streamed_monitor_expires_at_its_recorded_deadline_exactly(self):
         now = time.time()
-        self._write_reg(bgLedger=[
-            {"tid": "t-1", "toolUseId": "toolu_1", "tool": "bash", "desc": "campaign timer",
-             "armedAt": int(now) - 30, "deadlineEpoch": None, "persistent": False, "src": "hook"},
-            {"tid": "t-2", "toolUseId": "toolu_2", "tool": "monitor", "desc": "expired watcher",
-             "armedAt": int(now) - 400, "deadlineEpoch": now - 60, "persistent": False, "src": "hook"}])
-        self.km._tmux_sessions = lambda: {SID: {}}   # live session, NO lifecycle set (mid-reattach)
-        got = self.km._bg_live_norm(SID, path="/nonexistent-transcript")
-        self.assertEqual([g["tid"] for g in got], ["toolu_1"],
-                         "the timed-out watcher is gone AT its recorded deadline — no +120s grace; "
-                         "and the scrape was never consulted (the path does not exist)")
-        self.assertEqual(got[0]["desc"], "campaign timer")
-
-    def test_present_but_empty_ledger_is_authoritative(self):
-        self._write_reg(bgLedger=[])
-        self.km._tmux_sessions = lambda: {SID: {}}
-        self.assertEqual(self.km._bg_live_norm(SID, path="/nonexistent-transcript"), [],
-                         "an empty ledger says NO tasks — never fall through to the scrape")
-
-    def test_a_live_lifecycle_set_still_outranks_the_ledger(self):
-        self._write_reg(bgLedger=[{"tid": "stale", "toolUseId": "toolu_9", "tool": "bash",
-                                   "desc": "stale", "armedAt": 1, "deadlineEpoch": None,
-                                   "persistent": False, "src": "hook"}])
-        self.km._tmux_sessions = lambda: {SID: {"bgTasks": [
-            {"toolUseId": "toolu_live", "desc": "the stream's truth", "since": 100, "type": "shell"}]}}
+        self._wire(
+            bg_tasks=[{"toolUseId": "toolu_1", "desc": "watching CI", "since": int(now) - 400,
+                       "type": "monitor"},
+                      {"toolUseId": "toolu_2", "desc": "campaign timer", "since": int(now) - 30,
+                       "type": "shell"}],
+            ledger=[{"tid": "mon-1", "toolUseId": "toolu_1", "tool": "monitor", "desc": "watching CI",
+                     "armedAt": int(now) - 400, "deadlineEpoch": now - 60, "persistent": False,
+                     "src": "hook"}])
         got = self.km._bg_live_norm(SID, path=None)
-        self.assertEqual([g["tid"] for g in got], ["toolu_live"])
+        self.assertEqual([g["tid"] for g in got], ["toolu_2"],
+                         "the watcher died AT its recorded kill moment — 60s past deadline is out, "
+                         "where the scrape's +120s grace would still call it a live wait")
+
+    def test_within_the_skew_window_the_watcher_still_counts(self):
+        now = time.time()
+        self._wire(
+            bg_tasks=[{"toolUseId": "toolu_1", "desc": "watching CI", "since": int(now) - 100,
+                       "type": "monitor"}],
+            ledger=[{"tid": "mon-1", "toolUseId": "toolu_1", "tool": "monitor", "desc": "watching CI",
+                     "armedAt": int(now) - 100, "deadlineEpoch": now - 2, "persistent": False,
+                     "src": "hook"}])
+        self.assertEqual(len(self.km._bg_live_norm(SID, path=None)), 1)
+
+    def test_unledgered_rows_pass_through_untouched(self):
+        now = time.time()
+        self._wire(bg_tasks=[{"toolUseId": "toolu_9", "desc": "pre-ledger task", "since": int(now),
+                              "type": "shell"}], ledger=[])
+        got = self.km._bg_live_norm(SID, path=None)
+        self.assertEqual([g["tid"] for g in got], ["toolu_9"])
+        self.assertNotIn("deadline", got[0])
+
+    def test_agent_attribution_rides_the_join(self):
+        now = time.time()
+        self._wire(
+            bg_tasks=[{"toolUseId": "toolu_3", "desc": "sub launch", "since": int(now), "type": "shell"}],
+            ledger=[{"tid": "t-3", "toolUseId": "toolu_3", "tool": "bash", "desc": "sub launch",
+                     "armedAt": int(now), "deadlineEpoch": None, "persistent": False,
+                     "agentId": "agent-77", "src": "hook"}])
+        self.assertEqual(self.km._bg_live_norm(SID, path=None)[0].get("agentId"), "agent-77")
 
 
 if __name__ == "__main__":

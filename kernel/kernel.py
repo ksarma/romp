@@ -13997,22 +13997,29 @@ def _bg_live_norm(sid, path):
     if live is None:
         return []
     if "bgTasks" in live:
-        return [{"tid": t.get("toolUseId"), "desc": str(t.get("desc") or "").strip(),
-                 "t": int(t.get("since") or 0), "type": str(t.get("type") or "")}
-                for t in live.get("bgTasks") or [] if isinstance(t, dict)]
-    # source 0.6 — the LAUNCH LEDGER (2026-08-29): hook-recorded launch facts in the reg, durable
-    # across backend restarts, with EXACT deadlines (Monitor's own timeout_ms) — so expiry here is
-    # the recorded moment plus clock skew, never the scrape's +120s guess. Present-but-empty is
-    # authoritative like the lifecycle set above; only its ABSENCE (tmux, a pre-ledger session)
-    # falls through to the transcript pairing below.
-    reg = _thread_reg(str(sid))   # the SDK registry entry, {} when unreadable — same read the threads use
-    led = reg.get("bgLedger")
-    if led is not None:
-        now = time.time()
-        return [{"tid": e.get("toolUseId") or e.get("tid"), "desc": str(e.get("desc") or "").strip(),
-                 "t": int(e.get("armedAt") or 0), "type": str(e.get("tool") or "")}
-                for e in led if isinstance(e, dict)
-                and not (e.get("deadlineEpoch") and now > float(e["deadlineEpoch"]) + 5)]
+        # The launch LEDGER (2026-08-29) ENRICHES the stream's rows, never replaces them: the
+        # lifecycle set stays the liveness authority (SDK CLIs are kernel children, so a task
+        # cannot outlive the stream that watches it — the first cut's ladder rung here was
+        # unreachable dead code, caught in review). The join adds what only the launch hook
+        # knows: Monitor's EXACT deadline (expiry at the recorded moment + skew, not the
+        # scrape's +120s guess — em._bg_expired reads deadlineSrc) and the acting agent.
+        led = {str(e.get("toolUseId")): e
+               for e in (_thread_reg(str(sid)).get("bgLedger") or [])
+               if isinstance(e, dict) and e.get("toolUseId")}
+        out = []
+        for t in live.get("bgTasks") or []:
+            if not isinstance(t, dict):
+                continue
+            row = {"tid": t.get("toolUseId"), "desc": str(t.get("desc") or "").strip(),
+                   "t": int(t.get("since") or 0), "type": str(t.get("type") or "")}
+            e = led.get(str(t.get("toolUseId")))
+            if e and e.get("deadlineEpoch"):
+                row["deadline"] = float(e["deadlineEpoch"])
+                row["deadlineSrc"] = "hook"
+            if e and e.get("agentId"):
+                row["agentId"] = e["agentId"]
+            out.append(row)
+        return [r for r in out if not em._bg_expired(r, time.time())]
     if not path:
         return []
     sp = _sdk_spawned_at(sid)
