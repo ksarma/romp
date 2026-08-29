@@ -14060,9 +14060,29 @@ def _bg_live_norm(sid, path):
     if live is None:
         return []
     if "bgTasks" in live:
-        return [{"tid": t.get("toolUseId"), "desc": str(t.get("desc") or "").strip(),
-                 "t": int(t.get("since") or 0), "type": str(t.get("type") or "")}
-                for t in live.get("bgTasks") or [] if isinstance(t, dict)]
+        # The launch LEDGER (2026-08-29) ENRICHES the stream's rows, never replaces them: the
+        # lifecycle set stays the liveness authority (SDK CLIs are kernel children, so a task
+        # cannot outlive the stream that watches it — the first cut's ladder rung here was
+        # unreachable dead code, caught in review). The join adds what only the launch hook
+        # knows: Monitor's EXACT deadline (expiry at the recorded moment + skew, not the
+        # scrape's +120s guess — em._bg_expired reads deadlineSrc) and the acting agent.
+        led = {str(e.get("toolUseId")): e
+               for e in (_thread_reg(str(sid)).get("bgLedger") or [])
+               if isinstance(e, dict) and e.get("toolUseId")}
+        out = []
+        for t in live.get("bgTasks") or []:
+            if not isinstance(t, dict):
+                continue
+            row = {"tid": t.get("toolUseId"), "desc": str(t.get("desc") or "").strip(),
+                   "t": int(t.get("since") or 0), "type": str(t.get("type") or "")}
+            e = led.get(str(t.get("toolUseId")))
+            if e and e.get("deadlineEpoch"):
+                row["deadline"] = float(e["deadlineEpoch"])
+                row["deadlineSrc"] = "hook"
+            if e and e.get("agentId"):
+                row["agentId"] = e["agentId"]
+            out.append(row)
+        return [r for r in out if not em._bg_expired(r, time.time())]
     if not path:
         return []
     sp = _sdk_spawned_at(sid)

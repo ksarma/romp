@@ -2900,6 +2900,52 @@ class SdkSession:
                     self.backend._update_reg(self.sid, sessionCrons=slim, sessionCronsAt=int(nw))
         except Exception as e:
             self.backend._log("stop hook (%s): session_crons record failed: %s" % (self.name, e))
+        # Reconcile the LAUNCH LEDGER against the payload's background_tasks — the per-turn snapshot
+        # this hook used to discard (2026-08-29). The ledger is launch-authoritative; the payload is
+        # the CLI's own answer to "what is still running", so: a live-generation ledger entry absent
+        # from the payload ENDED (tombstone, why:"gone"); a DEAD-generation entry died with its
+        # process (background tasks are children of the CLI); a payload task the ledger never saw is
+        # adopted (src:"stopReconcile" — the hook missed a shape, or the entry predates the ledger).
+        try:
+            bg = inp.get("background_tasks") if isinstance(inp, dict) else None
+            if isinstance(bg, list):
+                nw = int(time.time())
+                live, ended = self._ledger_read()
+                running = {str(t.get("id")): t for t in bg
+                           if isinstance(t, dict) and t.get("status") == "running" and t.get("id")}
+                kept = []
+                for e in live:
+                    tid = str(e.get("tid") or "")
+                    if tid and tid in running:
+                        kept.append(e)
+                    elif str(e.get("procGen") or "") != self.proc_gen:
+                        ended.append({"tid": e.get("tid"), "why": "processDied", "at": nw})
+                    elif tid and e.get("tool") == "bash":
+                        # only SHELLS are proven to ride the payload (probe 2026-08-28) — a monitor
+                        # absent from it may simply be uncovered, and a false "gone" would silently
+                        # un-wait the session; monitors end by deadline, fail, stop, or processDied
+                        ended.append({"tid": e.get("tid"), "why": "gone", "at": nw})
+                    else:
+                        kept.append(e)   # no id / unproven coverage — the reconciler cannot rule on it
+                have = {str(e.get("tid")) for e in kept}
+                for tid, t in running.items():
+                    if tid not in have:
+                        kept.append({"tid": tid, "toolUseId": None, "tool": str(t.get("type") or "shell"),
+                                     "desc": str(t.get("description") or "")[:300], "armedAt": nw,
+                                     "deadlineEpoch": None, "persistent": False,
+                                     "procGen": self.proc_gen, "agentId": None, "src": "stopReconcile"})
+                l0, e0 = self._ledger_read()
+                if kept != l0 or ended != e0:
+                    self._ledger_write(kept, ended)
+        except Exception as e:
+            self.backend._log("stop hook (%s): bg-ledger reconcile failed: %s" % (self.name, e))
+        # The turn-end EVENT itself, durable and kernel-readable (2026-08-29, for the nudge layer's
+        # memo re-arm and any consumer that needs "this session settled a turn at T" as a fact
+        # rather than an inference from transcript mtimes — romp_cards' round keys on it).
+        try:
+            self.backend._update_reg(self.sid, lastStopAt=int(time.time()))
+        except Exception:
+            pass
         self.backend._poke()
         return {}
 
@@ -2960,6 +3006,112 @@ class SdkSession:
         return {}
 
     # ---- subagent tracking (the transparency tmux never had) ----
+
+    # ── the background-launch LEDGER (2026-08-29, the hookable-tools round) ────────────────────
+    # Launch facts recorded at the CALL moment from the tools' own inputs/acks, replacing the
+    # transcript scrape as the durable source for SDK sessions (the scrape stays for tmux and
+    # pre-ledger sessions — see kernel._bg_live_norm's source ladder). What the hook knows exactly
+    # that every other channel guesses: the launch's tool_use_id and task id pairing (the ack's
+    # backgroundTaskId, probe-verified 2026-08-28), Monitor's REQUIRED timeout_ms/persistent (an
+    # exact watcher deadline — retires the +120s grace for ledger entries), the arming process
+    # generation (launches die with their process), and the acting agent_id (subagent launches are
+    # invisible to the transcript fold). Live set in the reg (bounded: running entries only) plus a
+    # small tombstone tail (bgLedgerEnded) so "called off its own wait" and "died with its process"
+    # are events the kernel can say, not guesses.
+    # Bash-bg + Monitor ONLY (2026-08-29 review): their ack/input shapes are probe-verified
+    # (backgroundTaskId; required timeout_ms/persistent). Task/Workflow launches ride the
+    # lifecycle stream + the Subagent hooks — journaling them here recorded every FOREGROUND
+    # subagent call as a phantom launch and flooded the tombstone tail.
+    _LEDGER_TOOLS = ("Bash", "Monitor")
+    _LEDGER_TOMBSTONES = 20
+    _LEDGER_CAP = 40
+
+    def _ledger_read(self):
+        reg = read_reg(self.backend.state_dir, self.sid) or {}
+        live = [e for e in (reg.get("bgLedger") or []) if isinstance(e, dict)]
+        ended = [e for e in (reg.get("bgLedgerEnded") or []) if isinstance(e, dict)]
+        return live, ended
+
+    def _ledger_write(self, live, ended):
+        self.backend._update_reg(self.sid, bgLedger=live,
+                                 bgLedgerEnded=ended[-self._LEDGER_TOMBSTONES:])
+
+    async def _ledger_tool_hook(self, inp, tool_use_id, context):
+        """PostToolUse on the launch/stop tools. Defensive throughout: an unrecognized shape records
+        nothing and logs — the Stop-hook reconciler and the lifecycle stream remain the safety nets."""
+        try:
+            tname = str((inp or {}).get("tool_name") or "")
+            targs = (inp or {}).get("tool_input") or {}
+            tresp = (inp or {}).get("tool_response") or {}
+            if not isinstance(targs, dict):
+                return {}
+            if not isinstance(tresp, dict):
+                tresp = {}
+            nw = time.time()
+            live, ended = self._ledger_read()
+            if tname == "TaskStop":
+                tid = str(targs.get("task_id") or targs.get("taskId") or targs.get("id")
+                          or targs.get("shell_id") or "")   # shell_id: the deprecated param the CLI still accepts
+                if tid:
+                    kept = [e for e in live if str(e.get("tid")) != tid]
+                    if len(kept) != len(live):
+                        ended.append({"tid": tid, "why": "stopped", "at": int(nw)})
+                        self._ledger_write(kept, ended)   # the session called off its own wait — an
+                        self.backend._poke()              # event, not a crash (review map item 4)
+                return {}
+            if tname == "Bash" and not targs.get("run_in_background"):
+                return {}                                 # foreground Bash is a turn, not a launch
+            if tname not in self._LEDGER_TOOLS:
+                return {}
+            tid = str(tresp.get("backgroundTaskId") or tresp.get("task_id") or tresp.get("taskId")
+                      or tresp.get("id") or "")
+            deadline, persistent = None, False
+            if tname == "Monitor":
+                persistent = bool(targs.get("persistent"))
+                tmo = targs.get("timeout_ms")
+                if not persistent and isinstance(tmo, (int, float)) and tmo > 0:
+                    deadline = nw + float(tmo) / 1000.0   # the harness kills the watcher then — exact,
+                    #                                       not the job's ETA (research map item 2)
+            desc = str(targs.get("description") or targs.get("prompt") or targs.get("command") or "")[:300]
+            tuid = str(tool_use_id or (inp or {}).get("tool_use_id") or "") or None
+            if not tid and not tuid:
+                return {}   # nothing to key on — an entry no event could ever clear must not be born
+            entry = {"tid": tid or None, "toolUseId": tuid,
+                     "tool": tname.lower(), "desc": desc, "armedAt": int(nw),
+                     "deadlineEpoch": deadline, "persistent": persistent,
+                     "procGen": self.proc_gen,
+                     "agentId": str((inp or {}).get("agent_id") or "") or None, "src": "hook"}
+            live = [e for e in live
+                    if not (tid and str(e.get("tid")) == tid)
+                    and not (tuid and str(e.get("toolUseId")) == tuid)] + [entry]
+            if len(live) > self._LEDGER_CAP:   # bounded like every reg field — oldest launches evict, loudly
+                self.backend._log("bg-ledger (%s): cap %d hit, evicting oldest" % (self.name, self._LEDGER_CAP))
+                live = live[-self._LEDGER_CAP:]
+            self._ledger_write(live, ended)
+        except Exception as e:
+            self.backend._log("bg-ledger hook (%s): %s" % (self.name, e))
+        return {}
+
+    async def _ledger_fail_hook(self, inp, tool_use_id, context):
+        """PostToolUseFailure on the launch tools: a launch whose ack ERRORED never started — drop any
+        entry recorded for it so it cannot hold an awaiting gate open as a phantom wait (probe-verified
+        2026-08-28: the event emits with error + is_interrupt; a DENIED tool does not reach here)."""
+        try:
+            tuid = str((inp or {}).get("tool_use_id") or tool_use_id or "")
+            if not tuid:
+                return {}
+            live, ended = self._ledger_read()
+            kept = [e for e in live if str(e.get("toolUseId")) != tuid]
+            if len(kept) != len(live):
+                why = "interrupted" if (inp or {}).get("is_interrupt") else "launch-failed"
+                ended.append({"tid": next((e.get("tid") for e in live
+                                           if str(e.get("toolUseId")) == tuid), None),
+                              "why": why, "at": int(time.time())})
+                self._ledger_write(kept, ended)
+                self.backend._poke()
+        except Exception as e:
+            self.backend._log("bg-ledger fail hook (%s): %s" % (self.name, e))
+        return {}
 
     async def _subagent_start_hook(self, inp, tool_use_id, context):
         """A Task-spawned subagent just STARTED. Record it live (agent_id -> type + start time) so the session
@@ -4231,7 +4383,13 @@ class SdkBackend:
                    # scheduling tools record their arm at the CALL moment, with the exact due time the
                    # tool input carries — the Stop hook's set-record reconciles (see _sched_tool_hook)
                    "PostToolUse": [HookMatcher(matcher="ScheduleWakeup|CronCreate|CronDelete",
-                                               hooks=[sess._sched_tool_hook])]},
+                                               hooks=[sess._sched_tool_hook]),
+                                   # launch ledger: exact launch facts at the call moment (2026-08-29)
+                                   HookMatcher(matcher="Bash|Monitor|TaskStop",
+                                               hooks=[sess._ledger_tool_hook])],
+                   # a launch whose ack errored never started — drop it before it phantom-waits
+                   "PostToolUseFailure": [HookMatcher(matcher="Bash|Monitor",
+                                                      hooks=[sess._ledger_fail_hook])]},
             permission_mode=sess.mode,
             # File-checkpoint rewind (the user 2026-08-04): the CLI backs files up before modifying them,
             # so rewind_files() can put the workspace back to its state at any user message. The uuid a

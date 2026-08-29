@@ -221,6 +221,9 @@ def _parse_task_notification(txt):
 # which an idle transcript never busts. The grace absorbs kill/notify latency.
 def _bg_expired(task, now, grace=120.0):
     dl = (task or {}).get("deadline")
+    if (task or {}).get("deadlineSrc") == "hook":
+        grace = 5.0   # a hook-recorded deadline is the harness's own kill moment (Monitor's
+        #               required timeout_ms, journaled at launch) — exact, so only clock skew
     return bool(dl) and now > dl + grace
 
 
