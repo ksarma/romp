@@ -27,7 +27,7 @@ test("the embed and its lightbox request the pinned bytes; unpinned surfaces sta
   assert.match(PREVIEW, /previewFull\(path: string, sid\?: string \| null, verified = false, pin\?: string\)/);
   assert.match(PREVIEW, /const url = fileUrl\(path, sid\) \+ \(pin \? "&pin=" \+ encodeURIComponent\(pin\) : ""\);/);
   assert.match(PREVIEW, /openLightbox\(path, sid, pin\); \};/, "the big view shows the same pixels the embed did");
-  assert.match(PREVIEW, /img\.src = fileUrl\(path, sid\) \+ \(pin \? "&pin=" \+ encodeURIComponent\(pin\) : ""\);/);
+  assert.match(PREVIEW, /im\.src = fileUrl\(e\.path, e\.sid\) \+ \(e\.pin \? "&pin=" \+ encodeURIComponent\(e\.pin\) : ""\);/);
 });
 
 test("the kernel pins at the resolve latch and serves pins shape-gated with live fallback", () => {

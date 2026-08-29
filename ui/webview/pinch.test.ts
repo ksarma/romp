@@ -63,7 +63,7 @@ test("pointer-pair helpers", () => {
 test("the wiring: captured pointers, stage-owned gestures, and the close gesture untouched", () => {
   const PREVIEW = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "preview.ts"), "utf8");
   const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "styles.css"), "utf8");
-  assert.match(PREVIEW, /function wirePinchZoom\(stage: HTMLElement, img: HTMLImageElement\): void/);
+  assert.match(PREVIEW, /function wirePinchZoom\(stage: HTMLElement, img: HTMLImageElement\): \{ retarget: \(next: HTMLImageElement\) => void \}/);
   assert.match(PREVIEW, /stage\.setPointerCapture\(e\.pointerId\);/,
     "every gesture pointer is captured — a drag ending anywhere can never read as a backdrop tap");
   assert.match(PREVIEW, /wirePinchZoom\(inner, img\);/, "images only — the PDF branch is untouched");
