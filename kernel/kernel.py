@@ -11477,6 +11477,11 @@ _WATCH_KEYS = ("id", "cmd", "every", "timeoutS", "sid", "note", "at", "soft")
 
 def _watches_load():
     try:
+        for f in (jd.STATE / "watch-scratch").glob("*.sh"):
+            f.unlink()          # a crash mid-run strands its predicate script; boot sweeps the scratch
+    except Exception:
+        pass
+    try:
         rows = json.loads(WATCH_FILE.read_text())
     except Exception:
         return
