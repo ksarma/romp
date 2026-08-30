@@ -2766,7 +2766,7 @@ class DelegationPropagation(unittest.TestCase):
             saved = (jd.GOALDIR, jd.discover)
             jd.GOALDIR = Path(td) / "goals"
             jd.GOALDIR.mkdir(parents=True)
-            jd.discover = lambda now: [(self.B, "p", "a", "bee")]
+            jd.discover = lambda now, window=None, forks=True: [(self.B, "p", "a", "bee")]
             try:
                 jd.save_goals(self.A, a_store)
                 jd.save_goals(self.B, b_store)

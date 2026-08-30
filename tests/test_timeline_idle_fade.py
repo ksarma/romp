@@ -26,15 +26,18 @@ class TimelineIdleFade(unittest.TestCase):
         # the fade rides the derived chip `state` (from _session_chip), mirroring the chat tab's rule,
         # and `not live` keeps dead lanes dimmed as before
         self.assertIn(
-            'faded = (not live) or (state == "ready" and bool(tm and tm["since"]) and now - tm["since"] > 3600)',
+            'faded = (not live) or (state == "ready" and _idle_faded(state, tm and tm["since"], now))',
             src)
         # the old raw-tmux set — which listed "waiting", the IDLE state, as ACTIVE — is gone
         self.assertNotIn('tm["state"] in ("working", "permission", "picker", "compacting", "waiting")', src)
 
     def test_both_surfaces_share_one_idle_rule(self):
         # the chat tab's rule is the reference: ready chip + idle longer than an hour
-        self.assertIn('faded = chip == "ready" and bool(tm["since"]) and now - tm["since"] > 3600',
+        self.assertIn('faded = chip == "ready" and _idle_faded(chip, tm["since"], now)',
                       inspect.getsource(km))
+        # ONE shared rule since T155: both payload sites AND the conserve sweep read _idle_faded,
+        # so the faded look and the parked process can never drift apart
+        self.assertIn("def _idle_faded(state, since, now):", inspect.getsource(km))
 
     def test_the_derived_state_is_computed_before_the_fade_uses_it(self):
         # build_timeline already derives the chip into `state`; the fade must read THAT, not re-derive

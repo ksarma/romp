@@ -118,3 +118,27 @@ test('quietTick: a quiet fleet applies through the injected apply', () => {
               opts: QOPTS, log: () => {}, schedule: () => {}, apply: (g) => { applied = g; } });
   assert.equal(applied && applied.reason, 'quiet');
 });
+
+// T121: the PARKED quiet poll is also the kernel's drain-lease refresher — one probe reads the
+// count AND holds new turn starts, and the lease dies by itself when this manager stops polling
+// (no off-switch to forget; a fresh kernel boots clear by construction).
+test('the parked quiet poll refreshes the kernel drain lease in the same probe', () => {
+  const fs = require('node:fs');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'bin', 'romp-manager'), 'utf8');
+  assert.ok(src.includes("fetchBusy(KERNEL_PORT, cb, '/busy?drain=1')"),
+    'the quiet tick binds the drain-refresh spelling of the probe');
+  assert.ok(src.includes('path: path || \'/busy\''),
+    'a plain /busy stays side-effect free — only the parked poll holds');
+});
+
+// ── T160 (the user 2026-08-28): deploys bounce IMMEDIATELY by default ─────────────────────────────
+// The quiet window is an explicit opt-in now (`restart-all --quiet`), never the implicit deploy
+// default: parked windows cost minutes per push (0–570s measured) and still cut turns at the
+// backstop. Source pins on the CLI dispatch, the one place the default lives.
+test('restart-all dispatches IMMEDIATE by default — --quiet is the explicit drain spelling', () => {
+  const src = require('node:fs').readFileSync(path.join(__dirname, '..', 'bin', 'romp-manager'), 'utf8');
+  assert.match(src, /process\.argv\[3\] === '--quiet' \? \{ when: 'quiet' \} : \{\}/,
+    'the dispatch default sends NO when param (immediate); --quiet opts into the drain');
+  assert.doesNotMatch(src, /'--now' \? \{\} : \{ when: 'quiet' \}/,
+    'the old quiet-by-default dispatch is gone');
+});

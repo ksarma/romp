@@ -8,7 +8,8 @@
 
 export type DisplayItem =
   | { kind: "event"; index: number }            // a pass-through event, by its index in the source array
-  | { kind: "toolgroup"; indices: number[] };   // a collapsed run of ≥2 consecutive tool uses (a lone tool is an "event")
+  | { kind: "toolgroup"; indices: number[] }    // a collapsed run of ≥2 consecutive tool uses (a lone tool is an "event")
+  | { kind: "retrygroup"; indices: number[] };  // a collapsed run of ≥2 consecutive retry-recovery notes (T131 follow-up)
 
 // Tools that are an EXCEPTION to collapsing: they render FIRST-CLASS even in compact mode, never swept
 // into a toolgroup (the user 2026-06-17). AskUserQuestion is the "↳ You answered Claude's question" box —
@@ -21,6 +22,7 @@ export const STANDALONE_TOOLS = new Set<string>(["AskUserQuestion"]);
 export function compactDisplay(kinds: readonly string[], names?: readonly (string | undefined)[]): DisplayItem[] {
   const out: DisplayItem[] = [];
   let run: number[] | null = null;
+  let retryRun: number[] | null = null;           // consecutive "retried" recovery notes (T131 follow-up)
   // a LONE tool passes through as a normal event (its first-class inline tool line + fold); only a run of
   // TWO OR MORE collapses into a summary toolgroup (the user 2026-06-22)
   const flush = () => {
@@ -28,16 +30,26 @@ export function compactDisplay(kinds: readonly string[], names?: readonly (strin
     out.push(run.length === 1 ? { kind: "event", index: run[0] } : { kind: "toolgroup", indices: run });
     run = null;
   };
+  // same shape for retry-recovery runs (the user 2026-08-27, seventeen consecutive recovery rows):
+  // a lone recovery stays a first-class row; a storm of ≥2 collapses into one expandable line
+  const flushRetries = () => {
+    if (!retryRun) return;
+    out.push(retryRun.length === 1 ? { kind: "event", index: retryRun[0] } : { kind: "retrygroup", indices: retryRun });
+    retryRun = null;
+  };
   for (let i = 0; i < kinds.length; i++) {
     const k = kinds[i];
     if (k === "thinking") continue;                 // hidden — and does NOT break a tool run
     // A standalone tool (AskUserQuestion) is NOT collapsed: it breaks the run and passes through as its
     // own event, so renderTool → renderAsk draws the first-class box instead of "+1" inside a group.
-    if (k === "tool" && !STANDALONE_TOOLS.has(names?.[i] ?? "")) { (run ||= []).push(i); continue; }
+    if (k === "tool" && !STANDALONE_TOOLS.has(names?.[i] ?? "")) { flushRetries(); (run ||= []).push(i); continue; }
+    if (k === "retried") { flush(); (retryRun ||= []).push(i); continue; }
     flush();
+    flushRetries();
     out.push({ kind: "event", index: i });
   }
   flush();
+  flushRetries();
   return out;
 }
 

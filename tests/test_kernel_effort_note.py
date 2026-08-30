@@ -78,7 +78,7 @@ class EffortNoteSourcePins(unittest.TestCase):
 
     def test_build_session_interleaves_the_durable_note_by_time(self):
         src = inspect.getsource(km.build_session)
-        self.assertIn("efforts = _effort_changes(sid)", src)
+        self.assertIn("efforts = _past_floor(_effort_changes(sid))", src)   # floored at the episode boundary since T131
         self.assertIn('events.append({"kind": "effortApplied", "effort": _e["effort"], "ts": iso(_e["t"]),', src)
         # flushed by the SAME time-gate as the recovery notes, so both stay ordered against the atoms
         self.assertIn("while _ei < len(efforts) and (upto is None or efforts[_ei][\"t\"] <= upto):", src)

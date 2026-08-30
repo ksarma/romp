@@ -325,8 +325,12 @@ function quietGate(st, busy, now, opts) {
 
 let pendingQuiet = null;   // {since, count, mode:'all'|<kernel id>, timer}
 
-function fetchBusy(port, cb) {
-  const req = http.get({ host: HOST, port, path: '/busy', timeout: 2000 }, (res) => {
+function fetchBusy(port, cb, path) {
+  // the PARKED quiet poll passes '/busy?drain=1' (T121): the same probe that reads the count also
+  // refreshes the kernel's drain lease, so new turn starts hold while the restart is parked and
+  // the count falls on turn-end events. The lease dies by itself (~12s) when this manager stops
+  // polling — no off-switch to forget — and a fresh kernel boots clear by construction.
+  const req = http.get({ host: HOST, port, path: path || '/busy', timeout: 2000 }, (res) => {
     let b = ''; res.on('data', (d) => (b += d));
     res.on('end', () => { let n = null; try { const v = JSON.parse(b).busy; n = Number.isFinite(v) ? v : null; } catch { n = null; } cb(n); });
   });
@@ -379,7 +383,7 @@ function queueQuietRestart(mode) {
   log(`refresh queued — applying at the next quiet window (no SDK turn in flight; backstop ${Math.round(QUIET_MAX_DEFER_MS / 60000)} min)`);
   const tick = () => quietTick({
     pending: () => pendingQuiet,
-    fetchBusy: (cb) => fetchBusy(KERNEL_PORT, cb),
+    fetchBusy: (cb) => fetchBusy(KERNEL_PORT, cb, '/busy?drain=1'),   // parked → hold new turn starts (T121)
     now: Date.now,
     opts: { maxDeferMs: QUIET_MAX_DEFER_MS },
     log,
@@ -475,7 +479,7 @@ function startManager() {
         return json(202, { ok: true, deferred: true, coalesced: queueQuietRestart('all') });
       }
       clearPendingQuiet();                                       // this bounce delivers any pending deploy too
-      const r = restartAllOrSelf();                              // `romp refresh --now` — every kernel
+      const r = restartAllOrSelf();                              // `romp refresh` — every kernel
       return json(200, { ok: true, restarted: r.ids, managerRestart: r.self });
     }
     if (req.method === 'POST' && url.pathname === '/restart') {
@@ -545,14 +549,17 @@ function ensureUp() {
 module.exports = { restartGate, quietGate, quietTick, loadSpecs, specEnv, fileStamp };
 if (require.main === module) {
   const cmd = process.argv[2];
-  // `restart-all` (the `romp refresh` deploy path) defers to the next quiet window by default —
-  // `--now` keeps the old immediate bounce for emergencies/humans in a hurry.
+  // `restart-all` (the `romp refresh` deploy path) bounces IMMEDIATELY by default (T160, the user
+  // 2026-08-28, reversing the T121 quiet default: parked windows cost minutes per push and still cut
+  // turns at the backstop). `--quiet` defers to the next quiet window explicitly — the drain lease
+  // and the coalescing gate are invoked, not gone. `--now` stays accepted as the explicit spelling
+  // of the default, so scripts written against either era keep working.
   if (cmd === 'restart') control('POST', '/restart', process.argv[3]);
   else if (cmd === 'restart-all') control('POST', '/restart-all', null,
-    process.argv[3] === '--now' ? {} : { when: 'quiet' });
+    process.argv[3] === '--quiet' ? { when: 'quiet' } : {});
   else if (cmd === 'status') control('GET', '/status');
   else if (cmd === 'down') control('POST', '/stop');
   else if (cmd === 'ensure') ensureUp();
   else if (!cmd || cmd === 'up') runManager();
-  else { console.error('usage: romp-manager [up | ensure | restart-all [--now] | restart [kernel] | status | down]'); process.exit(2); }
+  else { console.error('usage: romp-manager [up | ensure | restart-all [--quiet] | restart [kernel] | status | down]'); process.exit(2); }
 }

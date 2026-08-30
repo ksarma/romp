@@ -31,7 +31,7 @@ test("kernel: summaryStale = followupAt postdates the read summary; self-clears 
 });
 
 test("kernel: reviewedEarlier keys on the SHARED review boundary, never a second derivation", () => {
-  assert.match(KERNEL, /"tree": flatten\(nid, \[\], boundary=jd\.review_boundary\(nodes\[nid\]\)\)\}\)/);
+  assert.match(KERNEL, /"tree": flatten\(nid, \[\], boundary=jd\.review_boundary\(nodes\[nid\]\)\)\}/);
   assert.match(KERNEL, /"reviewedEarlier": bool\(boundary and out and done\s*\n\s*and jd\._done_since\(nd\) <= boundary\) or None,/);
   // the shared helper: settle boundary advanced to the summary watermark on a reopen past it
   assert.match(JUDGE, /def review_boundary\(nd\):/);

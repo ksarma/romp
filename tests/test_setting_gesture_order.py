@@ -603,7 +603,15 @@ class StaleGestureAnswersTheDeliveringSocket(_Base):
                  ({"type": "setIndexEffort", "effort": "high"}, {"type": "setIndexEffort", "effort": "low"},
                   "index-effort", "high"),
                  ({"type": "setDistillModel", "model": "haiku"}, {"type": "setDistillModel", "model": "triage"},
-                  "distill-model", "haiku")]
+                  "distill-model", "haiku"),
+                 # the default-comment trio (upstream 2026-08-29) rides the same queued-class door,
+                 # so it gt-gates and answers the same way (the 2026-08-30 fold)
+                 ({"type": "setCommentModel", "model": "haiku"}, {"type": "setCommentModel", "model": "session"},
+                  "comment-model", "haiku"),
+                 ({"type": "setCommentEffort", "effort": "high"}, {"type": "setCommentEffort", "effort": "session"},
+                  "comment-effort", "high"),
+                 ({"type": "setCommentFast", "fast": "on"}, {"type": "setCommentFast", "fast": "session"},
+                  "comment-fast", "on")]
         for newer, older, store, kept in cases:
             sent = self.dispatch_rec(dict(newer, gt=T_NEW))
             self.assertEqual([m for m in sent if m.get("type") == "settingStale"], [],
@@ -642,8 +650,8 @@ class WiringPins(unittest.TestCase):
         self.assertIn('_set_update_mode(str(msg["mode"]), gt=_gesture_ms(msg))', self.src)
 
     def test_every_stood_down_branch_tells_the_delivering_socket(self):
-        self.assertGreaterEqual(self.src.count("_tell_stale_gesture(client)"), 9,
-                                "all nine queued-class branches answer the delivering socket on a stand-down")
+        self.assertGreaterEqual(self.src.count("_tell_stale_gesture(client)"), 12,
+                                "all twelve queued-class branches answer the delivering socket on a stand-down")
 
     def test_the_docstring_names_all_three_none_causes(self):
         doc = km._set_judge_state.__doc__ or ""

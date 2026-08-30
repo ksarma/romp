@@ -30,6 +30,10 @@ class RateLimitGate(unittest.TestCase):
         jd._RATE_GATE_LOGGED.clear()
         self.calls = []
         self._saved_run = jd.subprocess.run
+        # the gate scopes to LOGIN-billed calls (2026-08-28) — pin the billing deterministically:
+        # these tests always assumed login, which silently flipped to key on an env-keyed machine
+        self._saved_key = jd._work_key
+        jd._work_key = lambda: ""
 
         class _FakeDone:
             stdout = '{"result": "the-model-reply"}'
@@ -41,6 +45,7 @@ class RateLimitGate(unittest.TestCase):
 
     def tearDown(self):
         jd.subprocess.run = self._saved_run
+        jd._work_key = self._saved_key
         shutil.rmtree(self.td, ignore_errors=True)
 
     def _usage(self, pct, resets_in, bucket="five_hour"):
@@ -116,6 +121,43 @@ class RateLimitGate(unittest.TestCase):
         finally:
             jd._USAGE_REFRESH_FN = saved
 
+
+
+class GateScopedToLoginBilling(RateLimitGate):
+    """The correction round (the user 2026-08-28, who watched key-billed cards keep landing under a
+    'paused' banner): usage.json's windows are the LOGIN account's, a judge call bills the JUDGED
+    session's account, so the gate — and the latch's clear, and the envelope's mark — scope to
+    login-billed calls. A key-billed call is pay-per-token: no windows, never gated, and its
+    outcomes say nothing about the login window in either direction."""
+
+    def _key_billed(self):
+        jd._work_key = lambda: "sk-test-000"          # no per-session pick on file → the key default
+
+    def test_key_billed_calls_pass_a_full_window(self):
+        self._usage(100, 3600)
+        self._key_billed()
+        self.assertEqual(jd._judge_run("m", "sys", "user"), "the-model-reply")
+        self.assertEqual(len(self.calls), 1, "the call went out — pay-per-token has no window to burn")
+
+    def test_key_success_never_clears_the_login_latch_login_success_does(self):
+        jd._limit_mark("five_hour", 100, int(time.time()) + 3600, "m")
+        self._key_billed()
+        self.assertEqual(jd._judge_run("m", "sys", "user"), "the-model-reply")
+        self.assertEqual((jd._limit_down() or {}).get("bucket"), "five_hour",
+                         "a key-billed success says nothing about the login window")
+        jd._work_key = lambda: ""                     # back to login billing
+        self.assertEqual(jd._judge_run("m", "sys", "user"), "the-model-reply")
+        self.assertIsNone(jd._limit_down(), "a login-billed success IS the early-reset evidence")
+
+    def test_key_billed_limit_envelope_mints_no_latch(self):
+        # the manager's ruling: the account latch carries no resets_at (never self-expires), and with
+        # key successes no longer clearing it, a key 429 minting it would stick a false banner
+        class _FakeErr:
+            stdout = '{"is_error": true, "result": "rate limit reached, try again shortly"}'
+        jd.subprocess.run = lambda *a, **k: _FakeErr()
+        self._key_billed()
+        self.assertEqual(jd._judge_run("m", "sys", "user"), "")
+        self.assertIsNone(jd._limit_down(), "no account-window latch off a pay-per-token 429")
 
 class SegKeyUnified(unittest.TestCase):
     def test_kernel_delegates_to_the_judge_seg_key(self):

@@ -494,6 +494,9 @@ test("routeOutbound: the gear's kernel-side settings reach EVERY attached kernel
                      { type: "setUpdateMode", mode: "auto" },
                      { type: "setDistillModel", model: "haiku" },
                      { type: "setDistillEffort", effort: "triage" },
+                     { type: "setCommentModel", model: "claude-opus-5" },
+                     { type: "setCommentEffort", effort: "high" },
+                     { type: "setCommentFast", fast: "on" },
                      { type: "setFileEditing", enabled: true }]) {
     const routes = routeOutbound(msg, new Set(["TESTHOST", "gpu1"]));
     assert.deepEqual(routes.map((r) => r.host).sort(), ["", "TESTHOST", "gpu1"].sort(), msg.type);

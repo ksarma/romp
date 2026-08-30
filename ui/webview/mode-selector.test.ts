@@ -37,3 +37,28 @@ test("Bypass carries a sub-line saying what it costs", () => {
   assert.match(CSS, /\.meta-item-sub \{ font-size: 0\.82em; opacity: 0\.6; \}/,
     "one sub-line size across every romp menu — same as .ctx-item-sub");
 });
+
+test("every mode wears a tagline, and 'Accept edits' reads 'Accept' everywhere (T140)", () => {
+  // the user 2026-08-28: where taglines exist under some entries, add analogous ones — each line
+  // states what the mode ENFORCES (worded from the plumbing, per the task), in the one menu
+  // vocabulary (.meta-item-sub, pinned above). The mode ids stay the wire's.
+  assert.match(RENDER, /\{ label: "Normal", value: "default", sub: "asks before edits and commands" \}/);
+  assert.match(RENDER, /\{ label: "Accept", value: "acceptEdits", sub: "file edits apply without asking; commands still ask" \}/);
+  assert.match(RENDER, /\{ label: "Auto", value: "auto", sub: "safe actions run unasked; risky ones still ask" \}/);
+  assert.match(RENDER, /\{ label: "Plan", value: "plan", sub: "reads and proposes only — changes nothing" \}/);
+  // the rename holds everywhere the mode name renders: the chip/badge…
+  assert.match(RENDER, /case "acceptedits": return "Accept";/);
+  assert.ok(!RENDER.includes('"Accept edits"'), "no surface still says the two-word label");
+  // …and the kernel's tmux-cycle refusal names the same four modes with the same word
+  const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
+  assert.match(KERNEL, /shift\+tab cycle — Normal, Accept, Auto, Plan\./);
+});
+
+test("no width blowout: every new tagline is no longer than the accepted bypass line (T117 fit rule)", () => {
+  // the menu sizes to its longest line; the bypass sub shipped 2026-08-15 and set the accepted
+  // width — the new taglines must all fit inside it, so the menu gets no wider than it already was
+  const subs = [...RENDER.matchAll(/sub: "([^"]+)"/g)].map((m) => m[1]);
+  const bypass = "every tool runs unasked, and romp stops showing approvals";
+  assert.ok(subs.includes(bypass));
+  for (const sub of subs) assert.ok(sub.length <= bypass.length, `tagline wider than the accepted menu: ${sub}`);
+});

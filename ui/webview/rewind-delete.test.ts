@@ -96,7 +96,7 @@ test("kernel: rewindDelete sends nothing and the parse renders the pending cut",
   assert.match(KERNEL, /elif t == "rewindDelete" and msg\.get\("uuid"\):/);
   assert.match(KERNEL, /def _rewind_rollback\(sid, user_uuid, now=None\):/);
   assert.match(KERNEL, /leaf_override=cut or None/);
-  assert.match(BACKEND, /def rollback\(self, sid: str, target_uuid: str\)/);
+  assert.match(BACKEND, /def rollback\(self, sid: str, target_uuid: str, revalidate=None\)/);
   assert.match(BACKEND, /def pending_cut\(self, sid: str\) -> str:/);
   assert.match(EM, /if leaf_override and leaf_override in self\.by_uuid:/);
 });

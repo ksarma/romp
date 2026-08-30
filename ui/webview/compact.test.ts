@@ -88,7 +88,7 @@ test("every non-tool event owns exactly one display unit — the scroll-mark tra
   const items = compactDisplay(kinds, kinds.map((k) => (k === "tool" ? "Bash" : undefined)));
   const seen = new Map<number, number>();
   items.forEach((it, u) => {
-    if (it.kind === "toolgroup") for (const i of it.indices) seen.set(i, u);
+    if (it.kind === "toolgroup" || it.kind === "retrygroup") for (const i of it.indices) seen.set(i, u);
     else seen.set(it.index, u);
   });
   for (let i = 0; i < kinds.length; i++) {
@@ -99,4 +99,33 @@ test("every non-tool event owns exactly one display unit — the scroll-mark tra
       assert.equal(it.kind, "event", "a non-tool event is its OWN unit, never inside a fold");
     }
   }
+});
+
+test("consecutive retry-recovery notes fold like a tool run — a lone one stays first-class (T131)", () => {
+  // the user 2026-08-27: seventeen consecutive 'Recovered after N retries' rows are a flood; the
+  // collapsed-run idiom fits consecutive same-shape machine notices exactly.
+  const kinds = ["user", "retried", "retried", "retried", "assistant", "retried", "user"];
+  const items = compactDisplay(kinds);
+  assert.deepEqual(items, [
+    { kind: "event", index: 0 },
+    { kind: "retrygroup", indices: [1, 2, 3] },
+    { kind: "event", index: 4 },
+    { kind: "event", index: 5 },   // a lone recovery renders first-class, like a lone tool
+    { kind: "event", index: 6 },
+  ]);
+});
+
+test("retry runs and tool runs break each other — two folds, never one mixed group", () => {
+  const kinds = ["retried", "retried", "tool", "tool", "retried", "retried"];
+  const items = compactDisplay(kinds, kinds.map((k) => (k === "tool" ? "Bash" : undefined)));
+  assert.deepEqual(items, [
+    { kind: "retrygroup", indices: [0, 1] },
+    { kind: "toolgroup", indices: [2, 3] },
+    { kind: "retrygroup", indices: [4, 5] },
+  ]);
+});
+
+test("thinking hides without breaking a retry run, same as a tool run", () => {
+  const kinds = ["retried", "thinking", "retried"];
+  assert.deepEqual(compactDisplay(kinds), [{ kind: "retrygroup", indices: [0, 2] }]);
 });

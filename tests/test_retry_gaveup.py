@@ -159,7 +159,7 @@ class KernelReaderAndInterleave(unittest.TestCase):
 
     def test_build_session_interleaves_the_gave_up_note_and_the_error_card(self):
         src = inspect.getsource(km.build_session)
-        self.assertIn("gaveups = _retry_gaveups(sid)", src)
+        self.assertIn("gaveups = _past_floor(_retry_gaveups(sid))", src)   # floored at the episode boundary since T131
         self.assertIn('"kind": "retryGaveUp", "retries": _g["retries"]', src)
         # the transcript's isApiError record becomes durable error CHROME, not an agent bubble
         self.assertIn('events.append({"kind": "apiErrorNote", "md": txt,', src)

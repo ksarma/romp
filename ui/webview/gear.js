@@ -61,20 +61,34 @@ var GEAR_HTML =
   '<span><b>Auto Nudge</b><span class=rs-mixed id=rs-autonudge-split hidden></span>' +
   '<span class=rs-sub id=rs-autonudge-sub>' + AUTONUDGE_SUB + '</span>' +
   '</span></label>' +
+  "<div class='rs-row rs-sep' id=rs-billing>" +
+  '<span><b>Billing login</b>' +
+  '<span class=rs-sub id=rs-login-acct>…</span>' +
+  "<div id=rs-login-flow style='margin-top:6px'>" +
+  "<button id=rs-login-btn type=button style='cursor:pointer;background:#2a2a2a;color:#ccc;border:1px solid #3a3a3a;border-radius:5px;padding:3px 10px'>Log in…</button>" +
+  "<span id=rs-login-state class=rs-sub style='margin-left:8px'></span>" +
+  "<div id=rs-login-url hidden style='margin-top:6px'></div>" +
+  "<div id=rs-login-code hidden style='margin-top:6px;display:flex;gap:6px;align-items:center'>" +
+  "<input id=rs-login-input type=text autocomplete=off spellcheck=false placeholder='paste the code from the browser…' style='flex:1;background:#1e1e1e;color:#ccc;border:1px solid #3a3a3a;border-radius:5px;padding:4px 8px'>" +
+  "<button id=rs-login-send type=button style='cursor:pointer;background:#2a2a2a;color:#ccc;border:1px solid #3a3a3a;border-radius:5px;padding:3px 10px'>Submit</button>" +
+  "<button id=rs-login-cancel type=button style='cursor:pointer;background:transparent;color:#888;border:1px solid #3a3a3a;border-radius:5px;padding:3px 10px'>Cancel</button>" +
+  '</div></div></span></div>' +
+  "<label class='rs-row'><input type=checkbox id=rs-conserve>" +
+  '<span><b>Conserve memory</b><span class=rs-mixed hidden></span>' +
+  '<span class=rs-sub>Close the claude process of a session that has FADED (idle over an hour) and is on no open tab (each averages ~340MB). Everything persists — it revives on a tab click, a message, or a scheduled wake. An open tab always keeps its process; off = every session keeps its process for as long as it lives.</span>' +
+  '</span></label>' +
   "<label class='rs-row'><input type=checkbox id=rs-fileedit>" +
   '<span><b>File editing</b><span class=rs-mixed hidden></span>' +
   '<span class=rs-sub>Let the file viewer’s Edit save straight to disk on the file’s machine. Off by default; the viewer asks the first time. A session working in the edited folder is told, and a save always refuses when the file changed underneath you. Applies on every connected machine’s kernel.</span>' +
   '</span></label>' +
   "<div class='rs-row' style='cursor:default'><span style='flex:1 1 auto'><b>Automatic updates <span class=rs-mixed hidden></span></b>" +
   '<span class=rs-sub>romp watches for new tagged releases (every 6 hours) AND new commits on main (origin polled every few minutes, plus a restart offer when updated code sits on disk unbooted) — one banner covers both, and acting on it converges every attached machine. Check and ask (the default) offers the banner with an Update button; Install automatically converges by itself, restarting at the next quiet moment; Off never checks. Kernel-side setting.</span>' +
-  "<select id=rs-updates style='margin-top:5px;width:100%;background:#1e1e1e;color:#ccc;" +
-  "border:1px solid #3a3a3a;border-radius:5px;padding:3px 4px;cursor:pointer'>" +
+  "<select id=rs-updates style='display:none'>" +
   '<option value=ask>Check and ask</option><option value=auto>Install automatically</option><option value=off>Off</option>' +
   '</select></span></div>' +
   "<div class='rs-row rs-sep' style='cursor:default'><span style='flex:1 1 auto'><b>Default backend</b>" +
   '<span class=rs-sub>What the + button uses for a NEW session — tmux drives a terminal pane; SDK runs via the Agent SDK. Both kinds run side by side; this only sets the default.</span>' +
-  "<select id=rs-backend style='margin-top:5px;width:100%;background:#1e1e1e;color:#ccc;" +
-  "border:1px solid #3a3a3a;border-radius:5px;padding:3px 4px;cursor:pointer'>" +
+  "<select id=rs-backend style='display:none'>" +
   '<option value=sdk>SDK</option><option value=tmux>tmux (terminal)</option>' +
   '</select></span></div>' +
   '<div class=rs-sec>Judges</div>' +
@@ -85,6 +99,13 @@ var GEAR_HTML =
   "<div class='rs-row rs-jrow'><b>Distilling effort <span class=rs-mixed hidden></span></b><span class=rs-sub>Thinking effort for the distilling judges. Follow triage (the default) rides the triage effort; Default pins no effort flag. Follows to every connected machine's kernel.</span><select id=rs-distilleffort></select></div>" +
   "<div class='rs-row rs-jrow'><b>Indexing model <span class=rs-mixed hidden></span></b><span class=rs-sub>The model the indexing judges use — captioner + archiver (high-volume, low-stakes summarization). Haiku by default for cost. Follows to every connected machine's kernel.</span><select id=rs-indexmodel></select></div>" +
   "<div class='rs-row rs-jrow'><b>Indexing effort <span class=rs-mixed hidden></span></b><span class=rs-sub>Thinking effort for the indexing judges. Default = none (indexing runs with thinking disabled as a cost lever; leave Default unless you know you want it). Follows to every connected machine's kernel.</span><select id=rs-indexeffort></select></div>" +
+  '<div class=rs-sec>Comments</div>' +
+  "<div class='rs-row rs-jrow'><b>Comment model <span class=rs-mixed hidden></span></b><span class=rs-sub>The model NEW comment threads start on. Same as the session (the default) keeps each thread on the model of the conversation it branches from; pinning one here starts every new thread on it. The comment dialog shows this default and its own pick still wins. Follows to every connected machine's kernel.</span><select id=rs-cmtmodel></select></div>" +
+  "<div class='rs-row rs-jrow'><b>Comment effort <span class=rs-mixed hidden></span></b><span class=rs-sub>Thinking effort for new comment threads. Same as the session (the default) inherits the effort of the conversation the thread branches from. Follows to every connected machine's kernel.</span><select id=rs-cmteffort></select></div>" +
+  "<label class='rs-row'><input type=checkbox id=rs-cmtfast>" +
+  '<span><b>Fast comment threads</b><span class=rs-mixed hidden></span>' +
+  "<span class=rs-sub>Start new comment threads in fast mode (Opus-only research preview). If the thread's model can't run it, the thread still opens on that model at normal speed, with a notice. Off = same as the session. Follows to every connected machine's kernel.</span>" +
+  '</span></label>' +
   '<div class=rs-sec>Keyboard shortcuts</div>' + SHORTCUT_ROWS +
   '<div class=rs-sec>Chat</div>' +
   '<label class=rs-row><input type=checkbox id=rs-compact>' +
@@ -95,25 +116,27 @@ var GEAR_HTML =
   '<span><b>Show git branch</b>' +
   "<span class=rs-sub>Show the session's git branch (when it's in a repo) in the chat bottom bar, beside the directory.</span>" +
   '</span></label>' +
-  "<div class='rs-row' style='cursor:default'><span style='flex:1 1 auto'><b>Context gauge in tabs</b>" +
+  "<div class='rs-row' style='cursor:default'><span style='flex:1 1 auto;min-width:0'><b>Context gauge in tabs</b>" +
   "<span class=rs-sub>A slim vertical bar beside each session's name in the tab strip, filling as its context fills — the same colors as the context battery, no number. By default it appears only once a session is half full, so quiet tabs stay clean.</span>" +
-  "<select id=rs-tabctx style='margin-top:5px;width:100%;background:#1e1e1e;color:#ccc;" +
-  "border:1px solid #3a3a3a;border-radius:5px;padding:3px 4px;cursor:pointer'>" +
+  "<select id=rs-tabctx style='display:none'>" +
   '<option value=over50>When above 50%</option><option value=always>Always</option><option value=never>Never</option>' +
-  '</select></span></div>' +
+  '</select>' +
+  "<div id=rs-tabctx-pick style='position:relative;margin-top:5px'></div>" +
+  '</span></div>' +
   "<div class='rs-row' style='cursor:default'><span style='flex:1 1 auto'><b>File links open in</b>" +
   '<span class=rs-sub>Where a file clicked in the chat opens — over the chat itself, or in the Feed pane so the transcript stays readable while the file is up. Browser dashboard only: in VS Code file links open in the editor, and a chat tab opened on its own has no Feed pane to use.</span>' +
   "<select id=rs-filelink style='margin-top:5px;width:100%;background:#1e1e1e;color:#ccc;" +
   "border:1px solid #3a3a3a;border-radius:5px;padding:3px 4px;cursor:pointer'>" +
   '<option value=chat>The pane you clicked</option><option value=feed>The Feed pane</option>' +
-  '</select></span></div>' +
-  "<div class='rs-row' style='cursor:default'><span style='flex:1 1 auto'><b>Chat tabs</b>" +
-  "<span class=rs-sub>The tab strip's look. Classic keeps the thick outline on the selected tab with a faint per-session tint; Yatharth is the contributed flat-wash aesthetic with the tinted line under the strip.</span>" +
-  "<div id=rs-tabtheme style='margin-top:5px;display:flex;flex-direction:column;gap:4px'></div>" +
+  '</select>' +
   '</span></div>' +
-  "<div class='rs-row' style='cursor:default'><span style='flex:1 1 auto'><b>Text scheme</b>" +
-  "<span class=rs-sub>Chat text colors only. Each row previews its own tiers — prose, the dimmer tool text, code. (Solarized Light is omitted — its tiers are made for a light page and turn muddy here.)</span>" +
-  "<div id=rs-chatscheme style='margin-top:5px;display:flex;flex-direction:column;gap:4px'></div>" +
+  "<div class='rs-row' style='cursor:default'><span style='flex:1 1 auto;min-width:0'><b>Chat tabs</b>" +
+  "<span class=rs-sub>The tab strip's look. Classic is the original high-contrast strip; Yatharth is the contributed flat-wash aesthetic with the tinted line under the strip.</span>" +
+  "<div id=rs-tabtheme style='position:relative;margin-top:5px'></div>" +
+  '</span></div>' +
+  "<div class='rs-row' style='cursor:default'><span style='flex:1 1 auto;min-width:0'><b>Text scheme</b>" +
+  "<span class=rs-sub>Chat text colors only. Each option previews its own tiers — prose, the dimmer tool text, code. (Solarized Light is omitted — its tiers are made for a light page and turn muddy here.)</span>" +
+  "<div id=rs-chatscheme style='position:relative;margin-top:5px'></div>" +
   '</span></div>' +
   '<div class=rs-sec>Feed</div>' +
   '<label class=rs-row><input type=checkbox id=rs-feedcollapsed>' +
@@ -182,6 +205,7 @@ function initGear(post) {
     b = document.getElementById('rsver'), cc = document.getElementById('rs-compact'),
     jix = document.getElementById('rs-judges-index'), jtr = document.getElementById('rs-judges-triage'),
     an = document.getElementById('rs-autonudge'), bk = document.getElementById('rs-backend'),
+    cvm = document.getElementById('rs-conserve'),
     dd = document.getElementById('rs-defaultdir'), gb = document.getElementById('rs-branch'),
     tc = document.getElementById('rs-tabctx'), fl = document.getElementById('rs-filelink'),
     cs = document.getElementById('rs-chatscheme'),
@@ -193,6 +217,8 @@ function initGear(post) {
     jf = document.getElementById('rs-judgefast'),
     ie = document.getElementById('rs-indexeffort'), upm = document.getElementById('rs-updates'),
     dm = document.getElementById('rs-distillmodel'), de = document.getElementById('rs-distilleffort'),
+    cmm = document.getElementById('rs-cmtmodel'), cme = document.getElementById('rs-cmteffort'),
+    cmf = document.getElementById('rs-cmtfast'),
     fe = document.getElementById('rs-fileedit'),
     ans = document.getElementById('rs-autonudge-split'), asub = document.getElementById('rs-autonudge-sub');
   function load() { try { return Object.assign({ compact: true, colormap: 'aurora', subgoals: true, debug: false, backend: 'sdk', defaultDir: '', showBranch: false, tabCtx: 'over50', fileLinkPane: 'chat', collapseGaps: true, activeOnly: true }, JSON.parse(localStorage.getItem('romp:settings') || 'null')); } catch (e) { return { compact: true, colormap: 'aurora', subgoals: true, debug: false, backend: 'sdk', defaultDir: '', showBranch: false, tabCtx: 'over50', fileLinkPane: 'chat', collapseGaps: true, activeOnly: true }; } }
@@ -216,56 +242,176 @@ function initGear(post) {
   if (gb) gb.addEventListener('change', function () { var s = load(); s.showBranch = gb.checked; save(s); });
   if (tc) tc.addEventListener('change', function () { var s = load(); s.tabCtx = tc.value; save(s); });
   if (fl) fl.addEventListener('change', function () { var s = load(); s.fileLinkPane = fl.value; save(s); });   // webview-local pref read at click time (render.ts openPath)
-  // The scheme PREVIEW CARDS (the user 2026-08-24, on the live check: "I need to see a preview").
-  // Tier hexes MIRROR styles.css body.scheme-* (this file can't read the sheet across webviews);
-  // chat-scheme.test.ts pins the two byte-equal so they cannot drift. Default previews the stock
-  // tiers. Each card paints ITS OWN tiers on the chat's dark ground; the current pick wears the
-  // menu vocabulary's ✓-in-circle. Clicking applies live (save() dispatches romp:settings).
+  // ── the settings' value-picker DROPDOWNS (T117, the user 2026-08-27, screenshot: the Chat
+  // tabs and Text scheme pickers rendered every option always-expanded, and the description spans
+  // ran off the card's right edge). Progressive disclosure: the CLOSED state is ONE row — the
+  // current option's name + its description/preview, ellipsized so it can never overrun — and the
+  // options are one click away in the house menu vocabulary (the chat .ctx-menu spec; versionMenu
+  // below inlines the same values: #252526 card, hairline border, 6px radius, the 0 4px 12px
+  // shadow, 12px text, 0.82em sub-lines, the #1EA1EB \u2713-in-circle current mark). NOT a native
+  // <select> like the Context-gauge row above: these options carry rich row content — the scheme
+  // rows preview their own colored tiers (the user 2026-08-24: "I need to see a preview") — which
+  // <option> cannot render. The open menu is position:absolute inside the row's wrapper (the
+  // #rs-cmap/#rs-pal mechanic, proven inside this scrolling card): left:0;right:0 pins its width
+  // to the card's content width, so it can never overflow the panel sideways, and rows clamp
+  // their text with the same ellipsis as the closed state; opening scrolls it into view so the
+  // card's bottom edge never clips it either. Dismissal is event-based: any outside click in this
+  // document, Escape, a pick, opening the sibling dropdown — plus the cross-pane menu echo
+  // (romp:menu-echo): sibling panes' clicks never reach this document, so tag-menu.ts writes a
+  // pointerdown echo in every webview bundle (feed.ts and render.ts both load it) and this menu,
+  // like versionMenu, wires the LISTENER half via the storage event. Persistence and live-apply
+  // are the caller's pick() verbatim — the dropdown changes when the options are visible, never
+  // what a pick does.
+  var openHousePick = null;   // at most one of the card's dropdowns is open (a click that opens one closes the other)
+  function housePick(wrap, attr, rowHTML, pick) {
+    if (!wrap) return null;
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.style.cssText = 'display:flex;align-items:center;gap:8px;width:100%;min-width:0;text-align:left;' +
+      'background:#1e1e1e;border:1px solid #3a3a3a;border-radius:5px;padding:5px 8px;cursor:pointer;font:inherit;color:#ccc';
+    var menu = document.createElement('div');
+    menu.hidden = true;
+    menu.style.cssText = 'position:absolute;left:0;right:0;top:100%;margin-top:4px;z-index:30;padding:4px;' +
+      'background:#252526;border:1px solid rgba(255,255,255,0.12);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.35);' +
+      'font-size:12px;line-height:1.4;color:#cccccc;user-select:none';
+    wrap.appendChild(btn); wrap.appendChild(menu);
+    var close = function () { menu.hidden = true; if (openHousePick === menu) openHousePick = null; };
+    btn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      if (!menu.hidden) { close(); return; }
+      if (openHousePick && openHousePick !== menu) openHousePick.hidden = true;
+      menu.hidden = false; openHousePick = menu;
+      if (menu.scrollIntoView) menu.scrollIntoView({ block: 'nearest' });   // the card scrolls to reveal it — never clipped at the bottom
+    });
+    document.addEventListener('click', close);
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') close(); });
+    try { window.addEventListener('storage', function (e) { if (e.key === 'romp:menu-echo' && e.newValue) close(); }); } catch (e) {}
+    // paint(options, curId): the closed row shows the CURRENT option, the menu one row per option
+    return function (options, curId) {
+      // options can be EMPTY: the swept effort selects start blank until /models resolves
+      // (fillChoices) — paint a quiet placeholder row instead of dying on options[0].name,
+      // which would abort the whole initGear before anything else wired (caught in the
+      // Playwright harness pre-merge; kernel tests also pin this file clear of retired option
+      // words, so keep comments plain here).
+      var cur = null;
+      options.forEach(function (o) { if (o.id === curId) cur = o; });
+      if (!cur) cur = options.length ? options[0] : null;
+      btn.innerHTML = (cur ? rowHTML(cur) : '<span style="flex:1 1 auto;min-width:0;color:#8a8a8a">\u2026</span>') +
+        '<span style="flex:0 0 auto;margin-left:auto;opacity:0.55">\u25BE</span>';
+      menu.innerHTML = '';
+      options.forEach(function (o) {
+        var row = document.createElement('div');
+        row.setAttribute('data-' + attr, o.id);
+        row.style.cssText = 'display:flex;align-items:center;gap:8px;min-width:0;position:relative;' +
+          'padding:4px 22px 4px 8px;border-radius:4px;cursor:pointer';
+        row.innerHTML = rowHTML(o);
+        if (cur && o.id === cur.id) {
+          var ck = document.createElement('span'); ck.textContent = '\u2713';
+          ck.setAttribute('style', 'position:absolute;right:6px;top:50%;transform:translateY(-50%);background:#1EA1EB;color:#fff;border-radius:50%;width:13px;height:13px;font-size:9px;font-weight:900;display:inline-flex;align-items:center;justify-content:center;line-height:1;');
+          row.appendChild(ck);
+        }
+        row.addEventListener('mouseenter', function () { row.style.background = 'rgba(255,255,255,0.09)'; });
+        row.addEventListener('mouseleave', function () { row.style.background = 'transparent'; });
+        row.addEventListener('click', function (e) { e.stopPropagation(); close(); pick(o.id); });
+        menu.appendChild(row);
+      });
+    };
+  }
+  // The scheme options preview their own tiers (the user 2026-08-24, on the live check: "I need
+  // to see a preview"). Tier hexes MIRROR styles.css body.scheme-* (this file can't read the
+  // sheet across webviews); chat-scheme.test.ts pins the two byte-equal so they cannot drift.
+  // Default previews the stock tiers. Each row paints ITS OWN tiers on the chat's dark ground.
   var SCHEMES = [
     { id: 'default', name: 'Default', fg: '#cccccc', dim: '#9a9a9a', code: '#e1c08d' },
     { id: 'high-contrast', name: 'High contrast', fg: '#e8e8e8', dim: '#b8b8b8', code: '#ecd9ae' },
     { id: 'solarized-dark', name: 'Solarized Dark', fg: '#eee8d5', dim: '#93a1a1', code: '#d5b02d' }
   ];
+  function schemeRowHTML(sc) {
+    return '<span style="flex:0 0 auto;min-width:96px;color:#ccc">' + sc.name + '</span>' +
+      '<span style="flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' +
+      '<span style="color:' + sc.fg + '">Prose text</span> \u00b7 ' +
+      '<span style="color:' + sc.dim + '">tool / meta</span> \u00b7 ' +
+      '<span style="color:' + sc.code + ';font-family:monospace">code()</span></span>';
+  }
+  var csDrop = housePick(cs, 'scheme', schemeRowHTML, function (id) { var s = load(); s.chatScheme = id; save(s); csPaint(); });
   function csPaint() {
-    if (!cs) return;
+    if (!csDrop) return;
     var cur = load().chatScheme; cur = (cur === 'high-contrast' || cur === 'solarized-dark') ? cur : 'default';
-    cs.innerHTML = '';
-    SCHEMES.forEach(function (sc) {
-      var row = document.createElement('button');
-      row.type = 'button'; row.dataset.scheme = sc.id;
-      row.style.cssText = 'display:flex;align-items:center;gap:8px;text-align:left;background:#1e1e1e;' +
-        'border:1px solid ' + (sc.id === cur ? '#1EA1EB' : '#3a3a3a') + ';border-radius:5px;padding:5px 8px;cursor:pointer;font:inherit;color:#ccc';
-      row.innerHTML = '<span style="flex:0 0 auto;width:15px;color:#1EA1EB">' + (sc.id === cur ? '\u2713' : '') + '</span>' +
-        '<span style="flex:0 0 auto;min-width:96px;color:#ccc">' + sc.name + '</span>' +
-        '<span style="flex:1 1 auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' +
-        '<span style="color:' + sc.fg + '">Prose text</span> \u00b7 ' +
-        '<span style="color:' + sc.dim + '">tool / meta</span> \u00b7 ' +
-        '<span style="color:' + sc.code + ';font-family:monospace">code()</span></span>';
-      row.addEventListener('click', function () { var s = load(); s.chatScheme = sc.id; save(s); csPaint(); });
-      cs.appendChild(row);
-    });
+    csDrop(SCHEMES, cur);
   }
   var TABTHEMES = [
     { id: 'classic', name: 'Classic', sub: 'the original high-contrast strip \u00b7 thick selected outline \u00b7 no session tint' },
     { id: 'yatharth', name: 'Yatharth', sub: 'flat session wash \u00b7 soft selected border \u00b7 tinted line under the strip' }
   ];
+  function tabThemeRowHTML(th) {
+    return '<span style="flex:0 0 auto;min-width:96px;color:#ccc">' + th.name + '</span>' +
+      '<span style="flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:0.82em;color:#cccccc;opacity:0.6">' + th.sub + '</span>';
+  }
+  var ttDrop = housePick(tt, 'tabtheme', tabThemeRowHTML, function (id) { var s = load(); s.chatTabTheme = id; save(s); ttPaint(); });
   function ttPaint() {
-    if (!tt) return;
-    var cur = load().chatTabTheme === 'yatharth' ? 'yatharth' : 'classic';
-    tt.innerHTML = '';
-    TABTHEMES.forEach(function (th) {
-      var row = document.createElement('button');
-      row.type = 'button'; row.dataset.tabtheme = th.id;
-      row.style.cssText = 'display:flex;align-items:center;gap:8px;text-align:left;background:#1e1e1e;' +
-        'border:1px solid ' + (th.id === cur ? '#1EA1EB' : '#3a3a3a') + ';border-radius:5px;padding:5px 8px;cursor:pointer;font:inherit;color:#ccc';
-      row.innerHTML = '<span style="flex:0 0 auto;width:15px;color:#1EA1EB">' + (th.id === cur ? '\u2713' : '') + '</span>' +
-        '<span style="flex:0 0 auto;min-width:96px;color:#ccc">' + th.name + '</span>' +
-        '<span style="flex:1 1 auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#8a8a8a">' + th.sub + '</span>';
-      row.addEventListener('click', function () { var s = load(); s.chatTabTheme = th.id; save(s); ttPaint(); });
-      tt.appendChild(row);
-    });
+    if (!ttDrop) return;
+    ttDrop(TABTHEMES, load().chatTabTheme === 'yatharth' ? 'yatharth' : 'classic');
   }
   ttPaint();
+  // The Context-gauge picker joins the same builder (the user 2026-08-27, approving the flagged
+  // migration: one menu vocabulary across the whole panel — the native select stuck out beside
+  // the two house menus). Plain-text options, so the rows are just labels; the HIDDEN select
+  // stays the VALUE holder (the versionMenu pattern): fill()/openSettings keep writing tc.value,
+  // and the pick fires the select's own change event so persistence is the existing handler.
+  var TABCTX = [
+    { id: 'over50', name: 'When above 50%' },
+    { id: 'always', name: 'Always' },
+    { id: 'never', name: 'Never' }
+  ];
+  function tabCtxRowHTML(o) {
+    return '<span style="flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#ccc">' + o.name + '</span>';
+  }
+  var tcDrop = housePick(document.getElementById('rs-tabctx-pick'), 'tabctx', tabCtxRowHTML, function (id) {
+    if (tc) { tc.value = id; tc.dispatchEvent(new Event('change')); }
+    tcPaint();
+  });
+  function tcPaint() {
+    if (!tcDrop) return;
+    tcDrop(TABCTX, tc ? tc.value : 'over50');
+  }
+  tcPaint();
+  // The remaining native selects sweep onto the same builder (the user 2026-08-27, closing the
+  // 3-house/3-native split the gauge migration left): a generic adapter over ANY hidden select —
+  // options snapshot from sel.options (so the effort selects, whose options arrive from /models
+  // in fillChoices, stay correct), the pick writes sel.value and fires the select's own change
+  // event, so every existing persistence path (setUpdateMode / s.backend / setJudgeEffort / ...)
+  // and the fillMixedMarks row lookup keep working untouched. Repaints ride the same events the
+  // value rides: the change event, a childList mutation (fillChoices rewriting options), and the
+  // end of fill() (which sets values silently — repaintSelectPicks below). The model pickers keep
+  // versionMenu (they need family→version submenus); tabctx/scheme/theme have their own rows.
+  var selectPickPaints = [];
+  function repaintSelectPicks() { selectPickPaints.forEach(function (fn) { fn(); }); }
+  function selectPick(sel, wrapStyle) {
+    if (!sel) return;
+    sel.style.display = 'none';
+    var wrap = document.createElement('div');
+    wrap.setAttribute('style', 'position:relative;' + wrapStyle);
+    sel.parentNode.insertBefore(wrap, sel.nextSibling);
+    var rowHTML = function (o) {
+      return '<span style="flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#ccc">' + o.name + '</span>';
+    };
+    var drop = housePick(wrap, 'val', rowHTML, function (id) {
+      sel.value = id; sel.dispatchEvent(new Event('change')); paint();
+    });
+    function paint() {
+      drop(Array.prototype.map.call(sel.options, function (o) { return { id: o.value, name: o.textContent }; }), sel.value);
+    }
+    sel.addEventListener('change', paint);
+    new MutationObserver(paint).observe(sel, { childList: true });
+    selectPickPaints.push(paint);
+    paint();
+  }
+  selectPick(upm, 'margin-top:5px');
+  selectPick(bk, 'margin-top:5px');
+  selectPick(je, 'flex:0 0 auto;width:45%');
+  selectPick(ie, 'flex:0 0 auto;width:45%');
+  selectPick(de, 'flex:0 0 auto;width:45%');
+  selectPick(cme, 'flex:0 0 auto;width:45%');
   jix.addEventListener('change', function () { var s = load(); s.showIndexJudges = jix.checked; save(s); });
   jtr.addEventListener('change', function () { var s = load(); s.showTriageJudges = jtr.checked; save(s); });
   if (cg) cg.addEventListener('change', function () { var s = load(); s.collapseGaps = cg.checked; save(s); });
@@ -286,6 +432,64 @@ function initGear(post) {
     post({ type: 'setAutoNudge', enabled: an.checked, gt: Date.now() });
   });
   if (fe) fe.addEventListener('change', function () { post({ type: 'setFileEditing', enabled: fe.checked, gt: Date.now() }); });
+  if (cvm) cvm.addEventListener('change', function () { post({ type: 'setConserve', enabled: cvm.checked }); });
+  // ── the in-dashboard LOGIN flow (T157): the dashboard is already on the phone over Tailscale,
+  // so streaming the CLI's paste-code OAuth URL here IS the phone login. The code input is a pure
+  // pass-through to the kernel's PTY — nothing is stored or logged on any side.
+  var lgB = document.getElementById('rs-login-btn'), lgS = document.getElementById('rs-login-state'),
+      lgU = document.getElementById('rs-login-url'), lgC = document.getElementById('rs-login-code'),
+      lgI = document.getElementById('rs-login-input'), lgSend = document.getElementById('rs-login-send'),
+      lgX = document.getElementById('rs-login-cancel'), lgA = document.getElementById('rs-login-acct');
+  var lgTimer = null;
+  function lgRender(v) {
+    if (!lgB) return;
+    var f = (v && v.login) || { state: '' };
+    if (lgA) lgA.textContent = v && v.acctLabel ? 'Logged in as ' + v.acctLabel + '. Each machine logs in its own credential store.'
+                                                : 'No Claude login on this machine — sessions can only bill an API key. Log in from any browser (your phone works: the code flow needs no localhost).';
+    lgB.hidden = f.state === 'url' || f.state === 'starting' || f.state === 'verifying';
+    lgS.textContent = f.state === 'starting' ? 'starting the login flow…'
+      : f.state === 'verifying' ? 'checking the code…'
+      : f.state === 'error' ? (f.err || 'the login flow failed — try again') : '';
+    lgS.style.color = f.state === 'error' ? '#F85B5A' : '';
+    lgU.hidden = f.state !== 'url';
+    lgC.hidden = f.state !== 'url';
+    if (f.state === 'url' && f.url && lgU.getAttribute('data-url') !== f.url) {
+      lgU.setAttribute('data-url', f.url);
+      lgU.textContent = '';
+      var a = document.createElement('a');
+      a.href = f.url; a.target = '_blank'; a.rel = 'noreferrer';
+      a.textContent = '1. Open the sign-in page (any device) →';
+      a.style.color = '#9cd2ff';
+      lgU.appendChild(a);
+      var hint = document.createElement('div');
+      hint.className = 'rs-sub';
+      hint.textContent = '2. Finish signing in there; it shows a code. 3. Paste the code below.';
+      lgU.appendChild(hint);
+    }
+  }
+  function lgPoll() {
+    fetch(ku('/version'), { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (v) {
+      lgRender(v);
+      var st = (v.login || {}).state;
+      if (st === 'starting' || st === 'url' || st === 'verifying') lgTimer = setTimeout(lgPoll, 1500);
+      else lgTimer = null;
+    }).catch(function () { lgTimer = setTimeout(lgPoll, 3000); });
+  }
+  if (lgB) lgB.addEventListener('click', function () {
+    post({ type: 'loginStart' });
+    lgS.textContent = 'starting the login flow…';
+    if (!lgTimer) lgTimer = setTimeout(lgPoll, 800);
+  });
+  if (lgSend) lgSend.addEventListener('click', function () {
+    var code = lgI && lgI.value ? lgI.value.trim() : '';
+    if (!code) return;
+    post({ type: 'loginCode', code: code });   // pass-through; the kernel writes it to the PTY and nothing else
+    if (lgI) lgI.value = '';
+    lgS.textContent = 'checking the code…';
+    if (!lgTimer) lgTimer = setTimeout(lgPoll, 800);
+  });
+  if (lgI) lgI.addEventListener('keydown', function (e) { if (e.key === 'Enter' && lgSend) lgSend.click(); });
+  if (lgX) lgX.addEventListener('click', function () { post({ type: 'loginCancel' }); if (lgTimer) { clearTimeout(lgTimer); lgTimer = null; } lgRender({ login: { state: '' } }); });
   if (upm) upm.addEventListener('change', function () { post({ type: 'setUpdateMode', mode: upm.value, gt: Date.now() }); });
   // The judge MODEL pickers mirror the session pickers (the user 2026-08-25): families top-level,
   // clicking a family sends its /models `default` (the user's remembered version), hover or
@@ -405,6 +609,8 @@ function initGear(post) {
     versionMenu(jm);
     versionMenu(im);
     versionMenu(dm, [{ value: 'triage', label: 'Follow triage', versions: [] }]);
+    versionMenu(cmm, [{ value: 'session', label: 'Same as the session', versions: [] },
+                      { value: 'default', label: 'Default', versions: [] }]);
   });
   if (jm) jm.addEventListener('change', function () { post({ type: 'setJudgeModel', model: jm.value, gt: Date.now() }); });
   if (im) im.addEventListener('change', function () { post({ type: 'setIndexModel', model: im.value, gt: Date.now() }); });
@@ -413,6 +619,24 @@ function initGear(post) {
   if (ie) ie.addEventListener('change', function () { post({ type: 'setIndexEffort', effort: ie.value, gt: Date.now() }); });
   if (dm) dm.addEventListener('change', function () { post({ type: 'setDistillModel', model: dm.value, gt: Date.now() }); });
   if (de) de.addEventListener('change', function () { post({ type: 'setDistillEffort', effort: de.value, gt: Date.now() }); });
+  // Fast is an Opus-only research preview (render.ts fastAvailable, the same rule): a pinned
+  // non-Opus comment model makes the box a dead control, so it disables — and a model pick that
+  // strands a checked box also unchecks it, visibly, as part of the user's own gesture (never a
+  // silent per-fill flap; the kernel would otherwise ask fast on every create and toast every
+  // refusal). 'session'/'default' stay enabled: the session/account default may be Opus.
+  function cmtFastGate(fromModelPick) {
+    if (!cmf || !cmm) return;
+    var val = (cmm.value || '').toLowerCase();
+    var can = val === 'session' || val === 'default' || val.indexOf('opus') !== -1;
+    cmf.disabled = !can;
+    if (!can && cmf.checked && fromModelPick) {
+      cmf.checked = false;
+      post({ type: 'setCommentFast', fast: 'session', gt: Date.now() });
+    }
+  }
+  if (cmm) cmm.addEventListener('change', function () { post({ type: 'setCommentModel', model: cmm.value, gt: Date.now() }); cmtFastGate(true); });
+  if (cme) cme.addEventListener('change', function () { post({ type: 'setCommentEffort', effort: cme.value, gt: Date.now() }); });
+  if (cmf) cmf.addEventListener('change', function () { post({ type: 'setCommentFast', fast: cmf.checked ? 'on' : 'session', gt: Date.now() }); });
   // feed-colormap preview bar: a horizontal gradient of the SELECTED map's stops (mirrors render.ts COLORMAPS).
   var CMAPS = { aurora: [[84, 178, 4], [0, 180, 115], [35, 175, 156], [66, 169, 176], [25, 168, 201], [14, 164, 227], [74, 155, 241], [113, 145, 244], [144, 136, 240]],
     hawaii: [[140, 2, 115], [146, 46, 85], [151, 78, 62], [155, 111, 40], [156, 150, 28], [137, 189, 74], [107, 212, 142], [103, 233, 213], [179, 242, 253]],
@@ -473,7 +697,9 @@ function initGear(post) {
   var STALE_LABELS = { 'auto-nudge': 'Auto Nudge', 'file-editing': 'File editing',
     'update-mode': 'Automatic updates', 'judge-model': 'Triage model', 'judge-effort': 'Triage effort',
     'index-model': 'Indexing model', 'index-effort': 'Indexing effort',
-    'distill-model': 'Distilling model', 'distill-effort': 'Distilling effort' };
+    'distill-model': 'Distilling model', 'distill-effort': 'Distilling effort',
+    'comment-model': 'Comment model', 'comment-effort': 'Comment effort',
+    'comment-fast': 'Fast comment threads' };
   // Dismissal is the warn-toast FAMILY treatment (the user 2026-08-25: a notice with no visible
   // way out "gets in the way" — worst on touch, and this toast's mint site is a frozen phone tab
   // flushing on recovery): a visible ✕ in the chip-✕ dress, the whole toast still click-dismisses,
@@ -538,6 +764,10 @@ function initGear(post) {
       // stored sentinel "none", never "" — an empty state file reads back as the default ("follow").
       if (dm) dm.innerHTML = '<option value="triage">Follow triage</option>' + mo;
       if (de) de.innerHTML = '<option value="triage">Follow triage</option><option value="none">Default</option>' + eff;
+      // the comment pair leads with the same-as-the-session sentinel — its default, so a fresh
+      // kernel shows the inherit behavior, not a model nobody picked; "default" = the account default
+      if (cmm) cmm.innerHTML = '<option value="session">Same as the session</option><option value="default">Default</option>' + mo;
+      if (cme) cme.innerHTML = '<option value="session">Same as the session</option>' + eff;
       return choices;
     }).catch(function () { return null; });
   }
@@ -583,7 +813,8 @@ function initGear(post) {
   function fillMixedMarks(v, rows) {
     var mine = (v && v.settings) || null;
     [['updateMode', upm], ['judgeModel', jm], ['judgeEffort', je], ['indexModel', im],
-     ['indexEffort', ie], ['distillModel', dm], ['distillEffort', de], ['fileEditing', fe]].forEach(function (pair) {
+     ['indexEffort', ie], ['distillModel', dm], ['distillEffort', de], ['fileEditing', fe],
+     ['commentModel', cmm], ['commentEffort', cme], ['commentFast', cmf]].forEach(function (pair) {
       var key = pair[0], el = pair[1];
       if (!el) return;
       var row = el.closest ? el.closest('.rs-row') : null;
@@ -609,6 +840,9 @@ function initGear(post) {
       fillMixedMarks(v, rows);
     }).catch(function () { fillAutoNudge(v.autoNudge, []); fillMixedMarks(v, []); });
     if (fe) fe.checked = !!v.fileEditing;   // the kernel's persisted opt-in is authoritative (see the viewer's consent popup)
+    if (cvm) cvm.checked = !!v.conserveMemory;   // T148: the kernel's persisted conserve flag is authoritative
+    lgRender(v);   // the Billing login block (T157) rides the same /version read
+    if ((v.login || {}).state && !lgTimer) lgTimer = setTimeout(lgPoll, 1500);   // a flow mid-run resumes polling
     if (upm && typeof v.updateMode === 'string') upm.value = v.updateMode;   // the kernel's persisted mode is authoritative
     if (jm && typeof v.judgeModel === 'string') jm.value = v.judgeModel;   // the judge's ACTUAL current model/effort per tier is authoritative
     if (im && typeof v.indexModel === 'string') im.value = v.indexModel;
@@ -617,6 +851,10 @@ function initGear(post) {
     if (ie && typeof v.indexEffort === 'string') ie.value = v.indexEffort;
     if (dm && typeof v.distillModel === 'string') dm.value = v.distillModel;   // RAW: "triage" selects the Follow-triage option
     if (de && typeof v.distillEffort === 'string') de.value = v.distillEffort;
+    if (cmm && typeof v.commentModel === 'string') cmm.value = v.commentModel;   // RAW: "session" selects Same as the session
+    if (cme && typeof v.commentEffort === 'string') cme.value = v.commentEffort;
+    if (cmf && typeof v.commentFast === 'string') cmf.checked = v.commentFast === 'on';
+    cmtFastGate(false);
     // defaultDir moved OFF /version on 2026-08-05: that route is auth-exempt and must carry no
     // filesystem paths. It comes from the gated /defaults now — a separate fetch, so a kernel that
     // does not serve it yet leaves the field on its stored value rather than blanking it.
@@ -629,6 +867,7 @@ function initGear(post) {
         if (ddb && typeof d.nativeDialogs === 'boolean') ddb.style.display = d.nativeDialogs ? '' : 'none';
       })
       .catch(function () {});
+    repaintSelectPicks();   // fill() writes sel.value directly (no change event) — the closed rows follow
     var x = lv(); b.innerHTML = 'kernel ' + (v.kernel_sha || '?') + '\nserving v' + v.dist_ver + '\nthis tab v' + (x || '?');
   }).catch(function () { b.textContent = '(version unavailable)'; }); }
   // The settings modal is full-WINDOW in the web shell — ask it to expand the
@@ -668,7 +907,7 @@ function initGear(post) {
     // settings-open, which is what un-hides #feed-pane when the feed is toggled off — measuring first
     // burned the whole 5-frame retry against a display:none pane, latched rs-pane-gone, and the
     // full-viewport fallback box blacked out every pane behind the modal.
-    p.hidden = false; feedFull(true); setModalCls(true); var s = load(); cc.checked = !!s.compact; jix.checked = (s.showIndexJudges !== undefined ? !!s.showIndexJudges : !!s.debug); jtr.checked = (s.showTriageJudges !== undefined ? !!s.showTriageJudges : !!s.debug); if (gb) gb.checked = s.showBranch === true; if (tc) tc.value = tabCtxMode(s.tabCtx); if (fl) fl.value = s.fileLinkPane === 'feed' ? 'feed' : 'chat'; csPaint(); if (cg) cg.checked = s.collapseGaps !== false; if (ao) ao.checked = s.activeOnly !== false; if (fc) fc.checked = s.collapsed === true; cmBuild(); cmPaint(s.colormap || 'aurora'); if (bk) bk.value = s.backend || 'sdk'; if (dd) dd.value = s.defaultDir || ''; plFill(); fill(); }
+    p.hidden = false; feedFull(true); setModalCls(true); var s = load(); cc.checked = !!s.compact; jix.checked = (s.showIndexJudges !== undefined ? !!s.showIndexJudges : !!s.debug); jtr.checked = (s.showTriageJudges !== undefined ? !!s.showTriageJudges : !!s.debug); if (gb) gb.checked = s.showBranch === true; if (fl) fl.value = s.fileLinkPane === 'feed' ? 'feed' : 'chat'; if (tc) tc.value = tabCtxMode(s.tabCtx); tcPaint(); csPaint(); ttPaint(); if (cg) cg.checked = s.collapseGaps !== false; if (ao) ao.checked = s.activeOnly !== false; if (fc) fc.checked = s.collapsed === true; cmBuild(); cmPaint(s.colormap || 'aurora'); if (bk) bk.value = s.backend || 'sdk'; if (dd) dd.value = s.defaultDir || ''; plFill(); fill(); }
   if (g) g.onclick = function (e) { e.stopPropagation(); openSettings(); };   // hidden anchor; hosts open via the message below
   window.addEventListener('message', function (e) { if (e.data && e.data.romp === 'openSettings') openSettings(); });
   // The shortcuts row: the web shell (same-origin parent) gets the customize link — it opens the

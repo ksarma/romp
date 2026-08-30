@@ -92,12 +92,31 @@ test("the chat tab hover says Billing whenever the backend reports it, naming th
   // ungated on machine shape (the user 2026-08-09: one-auth machines included; only a tmux session,
   // whose CLI env romp does not control, reports nothing) — and 'Login (account)' when known
   assert.match(RENDER, /s\.status\.auth === "key" \? "API key"\s*\n\s*: \(s\.status\.authAcct \? `Login \(\$\{s\.status\.authAcct\}\)` : "Login"\)\]\);/);
-  // …and when the CLI's own init landed on the OTHER side (authLive — a key found via apiKeyHelper
-  // on a login launch), the row carries the live truth beside the intent instead of wearing the lie,
-  // and the account name yields its parenthetical — it is not the account being billed (2026-08-15).
+  // …and the row tells the TRUTH in every landing shape (T124, superseding the quiet-parenthetical
+  // form: after a switch the row showed the pick as applied fact through the whole reconnect
+  // window, and a wrong-side landing read as an aside). A PENDING pick says "applying — not
+  // confirmed yet"; a CONFIRMED contradiction (authLive on the other side — a key found via
+  // apiKeyHelper on a login launch) LEADS with the warning and names what is actually billed.
   // Anchored at the gate + label: a no-auth session (tmux — the exclusion above) must never grow a
   // fabricated Billing row, so the `if (s.status.auth)` guard is part of the pinned behavior.
-  assert.match(RENDER, /if \(s\.status\.auth\) rows\.push\(\["Billing",\s*\n\s*s\.status\.authLive && s\.status\.authLive !== s\.status\.auth\s*\n\s*\? \(s\.status\.auth === "key" \? "API key" : "Login"\)\s*\n\s*\+ ` \(CLI reports \$\{s\.status\.authLive === "key" \? "API key" : "login"\}\)`/);
+  assert.match(RENDER, /if \(s\.status\.auth\) rows\.push\(\["Billing",\s*\n\s*s\.status\.authPending\s*\n\s*\? \(s\.status\.auth === "key" \? "API key" : "Login"\) \+ " \(applying — not confirmed yet\)"/,
+    "the reconnect window renders as pending intent, never as applied fact");
+  assert.match(RENDER, /⚠ \$\{s\.status\.auth === "key" \? "API key" : "Login"\} picked, but the CLI reports `\s*\n\s*\+ `\$\{s\.status\.authLive === "key" \? "the API key" : "the login"\} — this session bills that`/,
+    "a confirmed contradiction leads with the warning");
+  // the SWITCH CONTROL (the Billing submenu) carries the same truth where the pick lives
+  assert.match(RENDER, /sb\.textContent = st\.authPending \? "applying…"\s*\n\s*: st\.authLive && st\.authLive !== st\.auth\s*\n\s*\? `⚠ CLI reports \$\{st\.authLive === "key" \? "API key" : "login"\}`/,
+    "the submenu sub-line shows the contradiction, not the unapplied pick");
+});
+
+test("set_auth refuses a login pick on a box with no login — the same bar the key side always had (T124)", () => {
+  const BACKEND = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "sdk_backend.py"), "utf8");
+  assert.ok(BACKEND.includes('if value == "login" and not self.login_ok():'),
+    "refuse loudly at pick time when the box demonstrably lacks the credential");
+  const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
+  assert.ok(KERNEL.includes("_sdk_backend.login_ok = lambda: bool(_claude_account())"),
+    "the probe is the credential store — the authority the usage bars trust");
+  assert.ok(KERNEL.includes("or this machine has no Claude login to switch to."),
+    "the warn toast names the login case");
 });
 
 test("setAuth is an intent op — held through a kernel-restart window, never dropped", () => {

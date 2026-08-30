@@ -1919,6 +1919,46 @@ class SpendRecord(unittest.TestCase):
         h = json.loads(self.p.read_text())["hours"][time.strftime("%Y-%m-%dT%H")]
         self.assertAlmostEqual(h["bySid"]["aaaa1111-spend-attr-1"]["usd"], 0.07, msg="the hour buckets attribute too")
 
+    def test_a_thread_turn_bills_the_owning_session(self):
+        # T144: highlight-reply comment threads minted phantom cheap sessions in spend.json and
+        # undercounted the owner (one session split $360.31 own + $3.11 + $5.36 fork sids). The
+        # settle passes threadOf when present — assert at the recorder level with the owner's sid.
+        OWNER = "aaaa1111-spend-own-1"
+        self.be._record_spend(0.02, keyed=True, sid=OWNER)                  # the owner's own turn
+        self.be._record_spend(0.03, keyed=True, sid=OWNER)                  # a thread turn, billed via threadOf
+        d = json.loads(self.p.read_text())["days"][self._today()]
+        self.assertAlmostEqual(d["bySid"][OWNER]["usd"], 0.05,
+                               msg="whole-session truth: the thread's spend lands under the owner")
+        self.assertEqual(len(d["bySid"]), 1, "no phantom fork sid appears")
+
+    def test_the_settle_seam_prefers_thread_of(self):
+        # the session-object seam, executed: thread_of set → the owner's sid reaches the recorder;
+        # promotion clears it → the session bills itself from that moment
+        sid = "aaaa1111-spend-own-2"
+        own = "aaaa1111-spend-own-3"
+        sb.write_reg(Path(self.d), sid, {"sid": sid, "name": "c1", "cwd": "/tmp", "threadOf": own})
+        s = sb.SdkSession(self.be, sb.read_reg(Path(self.d), sid))
+        self.assertEqual(s.thread_of, own, "the durable reg field seeds the object")
+        self.assertEqual(s.thread_of or s.sid, own, "the settle's sid expression bills the owner")
+        self.be.sessions[sid] = s
+        sb.write_name(Path(self.d), sid, "promoted", "/tmp", "#123456", "white")  # promote needs no name write order here
+        self.assertTrue(self.be.promote_thread(sid, "promoted"))
+        self.assertEqual(s.thread_of, "", "a promoted session bills ITSELF from this moment")
+        self.assertEqual(s.thread_of or s.sid, sid)
+
+    def test_fork_spend_spanning_days_stays_under_the_owner(self):
+        # the day-spanning fixture: a thread that worked before and after midnight accumulates
+        # under the OWNER in each day's bucket independently (buckets key on local date at fold
+        # time; the owner sid is constant, so both days read whole-session truth)
+        OWNER = "aaaa1111-spend-own-4"
+        yesterday = {"usd": 1.0, "turns": 2, "bySid": {OWNER: {"usd": 1.0, "turns": 2, "tok": 5}}}
+        self.p.write_text(json.dumps({"days": {"2020-01-01": yesterday}}))
+        self.be._record_spend(0.04, keyed=True, sid=OWNER)                  # after midnight, same owner
+        days = json.loads(self.p.read_text())["days"]
+        self.assertAlmostEqual(days["2020-01-01"]["bySid"][OWNER]["usd"], 1.0, msg="yesterday untouched")
+        self.assertAlmostEqual(days[self._today()]["bySid"][OWNER]["usd"], 0.04,
+                               msg="today's bucket bills the same owner — no phantom split at midnight")
+
     def test_legacy_rows_and_sidless_folds_stay_lossless(self):
         # a pre-T100 bucket (no bySid) folds cleanly, and a sid-less fold never drops attribution
         # already there (lossless legacy, the T18 discipline)
@@ -1956,9 +1996,11 @@ class SpendRecord(unittest.TestCase):
     def test_result_message_records_and_the_kernel_serves_it(self):
         src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))),
                                 "kernel", "sdk_backend.py")).read()
-        self.assertIn("self.backend._record_spend(delta, turn_u, keyed=self.api_key_auth, sid=self.sid)", src,
-                      "the settle folds THIS turn's DELTAS — cost AND tokens are cumulative per process — "
-                      "tagged with the session's own auth AND its sid (T100: per-session attribution)")
+        self.assertIn("self.backend._record_spend(delta, turn_u, keyed=self.api_key_auth,", src,
+                      "the settle folds THIS turn's DELTAS — cost AND tokens are cumulative per process")
+        self.assertIn("sid=self.thread_of or self.sid)   # the rail's spend", src,
+                      "a comment THREAD bills its OWNING session (T144); a plain session bills itself "
+                      "(T100's per-session attribution, completed)")
         self.assertIn("self._last_cost_total = 0.0   # a fresh CLI process starts its cumulative cost at zero",
                       src, "each connect resets the watermark with its new process")
         self.assertIn("self._last_usage_totals = {}  # …and its cumulative token counters", src,

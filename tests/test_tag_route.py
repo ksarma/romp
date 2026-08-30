@@ -200,12 +200,15 @@ class TagRoute(unittest.TestCase):
         km._set_timeline_views({"active": "gb", "tags": [
             {"id": "ga", "name": "alpha", "color": "", "members": ["s1"]}, GB]})
         km._flags_cache.clear()
+        seeded = next(g for g in km._timeline_views()["tags"] if g["id"] == "gb")
         st, r = self._post({"name": "alpha", "add": ["api"]})
         self.assertTrue(r.get("ok"), r)
         st, v = self._views()
         self.assertEqual(v["active"], "gb", "the active view survives the merge")
         self.assertNotIn("hidden", v, "the hidden key is retired (2026-08-24) — never re-minted by an edit")
-        want = dict(GB, members=[{"host": "", "sid": "s2"}])
+        # the seed write stamps mtime (creation IS an edit — tag federation v2); the pin is that
+        # the edit to alpha touched NOTHING on beta, stamp included
+        want = dict(GB, members=[{"host": "", "sid": "s2"}], mtime=seeded["mtime"])
         self.assertEqual([g for g in v["tags"] if g["id"] == "gb"], [want],
                          "the tag the edit never looked at is untouched (stored as pairs)")
         alpha = next(g for g in v["tags"] if g["id"] == "ga")

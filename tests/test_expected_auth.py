@@ -219,6 +219,42 @@ class GearPickMakesTheDeclarationInert(_Declared):
         self.assertEqual(sb._declared_auth(Path(self.d)), ("login", "pick"))
 
 
+class LoginPickNeedsALogin(_Declared):
+    """T124 (2026-08-27): set_auth accepted 'login' UNCONDITIONALLY while gating 'key' on work_key —
+    so on a box with no Claude login the pick sat in the UI as applied fact while the applying
+    reconnect errored or landed keyed through an apiKeyHelper (the silent-degrade class). The pick
+    now refuses at pick time via the kernel-wired credential probe; a bare backend stays
+    permissive (tests, no kernel), and a REFUSED pick writes nothing — no reg flip, no remembered
+    default, no pending window."""
+
+    def _reg(self, n):
+        sid = "11111111-2222-3333-4444-%012d" % n
+        sb.write_reg(Path(self.d), sid, {"sid": sid, "name": "s%d" % n, "cwd": "/tmp"})
+        return sid
+
+    def test_refused_when_the_probe_says_no_login(self):
+        self.be.login_ok = lambda: False
+        sid = self._reg(21)
+        self.assertFalse(self.be.set_auth(sid, "login"),
+                         "refuse loudly at pick time — the box demonstrably lacks the credential")
+        reg = sb.read_reg(Path(self.d), sid)
+        self.assertNotIn("auth", reg or {}, "a refused pick flips nothing")
+        self.assertFalse((reg or {}).get("authPending"), "…and opens no pending window")
+        self.assertNotEqual(sb._declared_auth(Path(self.d))[1], "pick",
+                            "…and leaves no remembered-default trace (the Q3 marker stays honest)")
+
+    def test_accepted_when_the_probe_says_yes(self):
+        self.be.login_ok = lambda: True
+        sid = self._reg(22)
+        self.assertTrue(self.be.set_auth(sid, "login"))
+        self.assertEqual((sb.read_reg(Path(self.d), sid) or {}).get("auth"), "login")
+
+    def test_unwired_backend_stays_permissive(self):
+        sid = self._reg(23)
+        self.assertTrue(self.be.set_auth(sid, "login"),
+                        "no kernel probe wired → the pre-T124 behavior stands (bare backends, old tests)")
+
+
 class PickOutranksTheDeclaration(_Declared):
     """An explicit per-session Billing pick (sess.auth) beats the box-wide declaration: the
     declaration describes the box's UNPICKED design, and set_auth's contract is that the next

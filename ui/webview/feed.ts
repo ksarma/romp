@@ -73,6 +73,7 @@ interface AskItem {
   trgb: [number, number, number];
   column: "working" | "needs_input" | "completed";   // RAW kernel value (build_feed): working/needs_input/completed. askColumn() maps it to the local Column. NOT "asks" — that was a stale lie that silently broke `it.column === "asks"` checks.
   followupPending?: boolean;                       // you followed up on a settled card → optimistically reopened, awaiting the judge's re-file (kernel)
+  followupAt?: number | null;                      // when that follow-up/continue went — the latched button's honest age (T150)
   doneConfirming?: boolean;                        // the done verdict is in, only the settle event is pending → steady "done, confirming" chip on the Working card; placement deliberately does NOT move early (no working↔done flicker) (kernel build_feed ← judge rollup confirming export; the user 2026-07-24)
   recheck?: boolean;                               // soft-block you answered with a TARGETED follow-up → de-urgented (dotted), moved to Working, dropped from the "need input" count, until the judge resolves or re-blocks it (kernel build_feed; the user 2026-06-27)
   rejudging?: boolean;                             // soft-block + a PLAIN thread reply after it → moves to WORKING while the reply is in flight (echo/open turn), with a "Re-judging…" swirl; returns to Needs-You on its own if the judge leaves it blocked (kernel build_feed; the user 2026-07-02, immediate)
@@ -779,6 +780,20 @@ function clockHM(t: number): string {
   return new Date(t * 1000).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 }
 
+// The latched Continue/Check-status button explains itself (T150, the user 2026-08-28: a card read
+// 'Sent' and clicking did nothing — the latch was honest, the silence was not). One title writer for
+// both states of both buttons: while held, it names WHAT was sent, WHEN, and the exact event that
+// re-arms it; enabled, it says what a click does. The hover title is the minimum honest surface for
+// a disabled control (the buttons rule) — the label itself stays one word.
+function contTitle(latched: boolean, verb: string, at?: number | null): string {
+  return latched
+    ? verb + " sent" + (at ? " " + relAge(hostNow - at) : "") +
+      " — waiting for the session's reply to be judged; this re-arms then, and the card moves on its own"
+    : verb === "a continue"
+      ? "nothing needed from you — asks the session to keep going"
+      : "asks the session where each open item stands";
+}
+
 function relAge(sec: number): string {
   const s = Math.max(0, sec);
   // Sub-minute ages all read "<1m ago" (the user 2026-07-20): a card the user just acted on stamps t=now,
@@ -1003,6 +1018,11 @@ function makeAskCard(it: AskItem): HTMLElement {
   // auto-retry is already doing that.
   const retryBadge = el("span", "fask-retrying"); retryBadge.style.display = "none";
   const apiRetry = el("button", "fdismiss fretry"); apiRetry.textContent = "Retry"; apiRetry.title = "send “retry” into this session to resume"; apiRetry.style.display = "none";
+  // the auth-expired card offers THE FIX, not just the problem (T157, the user: watch it, log in,
+  // it works again): opens the gear's Billing login — the paste-code flow that works from the phone
+  const apiLogin = el("button", "fdismiss ffollow"); apiLogin.textContent = "Log in…";
+  apiLogin.title = "open Billing login — sign in from any browser (your phone works) and this session recovers on its next turn";
+  apiLogin.style.display = "none";
   const revive = el("button", "fdismiss frevive"); revive.textContent = "Revive"; revive.title = "bring this offline session back so the parked hand-off is delivered"; revive.style.display = "none";
   // RESUME-GATE buttons (the user 2026-07-21): a boot-deferred high-context session — Proceed reloads it now,
   // Compact on resume /compacts first so future turns shrink (still one reload now), Skip leaves it dormant.
@@ -1067,7 +1087,7 @@ function makeAskCard(it: AskItem): HTMLElement {
   // direct children they render in BOTH modes, count toward row2's grouped-mode liveness, and the
   // API badge stays immediately before its Retry button — one visual unit. idwrap keeps only the
   // name. Placement only; every badge's mint/retire semantics are untouched.
-  row2.append(idwrap, retryBadge, apiBadge, apiRetry, jauthBadge, blkBadge, origin, fupBadge, dcBadge, nfBadge, intingBadge, intBadge, warnChip, waitOnBadge);
+  row2.append(idwrap, retryBadge, apiBadge, apiRetry, apiLogin, jauthBadge, blkBadge, origin, fupBadge, dcBadge, nfBadge, intingBadge, intBadge, warnChip, waitOnBadge);
   // …and the quiet user-todo marker joins those badges as a DIRECT row2 child for the same
   // grouped-mode reason (inside idwrap it would vanish on grouped cards, and as a direct child it
   // counts toward row2's liveness). Appended separately so the pinned list above stays exactly the
@@ -1211,6 +1231,7 @@ function makeAskCard(it: AskItem): HTMLElement {
     // same optimistic move a typed reply gets; updateAskCard re-arms the label once the judge has ruled.
     vscodeApi?.postMessage({ type: "askFollowUp", itemId: it.itemId, sid: it.sid, cont: true });
     cont.disabled = true; cont.textContent = "Sent";
+    cont.title = contTitle(true, "a continue", null);
     optimisticFollowMove(it.itemId);
     render();
   };
@@ -1283,7 +1304,7 @@ function makeAskCard(it: AskItem): HTMLElement {
   a._waitOn = waitOnBadge;
   a._blocked = blkBadge;
   a._utMark = utMark;
-  a._apiBadge = apiBadge; a._apiRetry = apiRetry; a._retryBadge = retryBadge; a._revive = revive; a._clr = clr;
+  a._apiBadge = apiBadge; a._apiRetry = apiRetry; a._apiLogin = apiLogin; a._retryBadge = retryBadge; a._revive = revive; a._clr = clr;
   a._jauthBadge = jauthBadge;
   a._cont = cont;
   a._qApprove = qApprove; a._qDeny = qDeny; a._qBody = qbody;
@@ -1981,6 +2002,22 @@ function updateAskCard(card: HTMLElement, it: AskItem) {
           const age = el("span", "fask-para-age");
           age.textContent = relAge(nowS - (bp[i].since || nowS));
           para.append(" ", age);
+          // Per-paragraph deep-link (the user 2026-08-28, T153): a split takeaway's paragraphs map
+          // 1:1 to <completed-items>, and each item's own tree row already carries its WORK anchor —
+          // so every paragraph can land on the stretch it is actually about, not just the card-level
+          // grounding. stopPropagation beats the whole-line summary link one level up.
+          const pid = bp[i].id;
+          const prow = pid ? (it.tree || []).find((r) => r.id === pid) : undefined;
+          if (prow && prow.anchorUuid) {
+            const au = prow.anchorUuid;
+            para.classList.add("fask-para-link");
+            para.title = "jump to where this piece resolved";
+            para.onclick = (ev: Event) => {
+              ev.stopPropagation(); focusEcho(it.sid);
+              vscodeApi?.postMessage({ type: "showOnTimeline", itemId: it.itemId, sid: it.sid,
+                                       t: it.t, anchor: "work", anchorUuid: au });
+            };
+          }
         }
         dle.append(para);
       });
@@ -2037,6 +2074,7 @@ function updateAskCard(card: HTMLElement, it: AskItem) {
   const spendLimit = !!(it.blocked && it.blocked.spendLimit);
   const modelLimit = !!(it.blocked && it.blocked.modelLimit);
   const refusal = !!(it.blocked && it.blocked.refusal);
+  const authErr = !!(it.blocked && (it.blocked as { authErr?: boolean }).authErr);
   // …and the whole unit RETIRES the moment the session recovers (the user 2026-08-24, screenshot: a
   // GREEN awaiting dot beside a lone red Retry — the control read as arbitrary): visibility keys on
   // the session's LIVE state from this very payload — a session working again, or awaiting the
@@ -2053,6 +2091,13 @@ function updateAskCard(card: HTMLElement, it: AskItem) {
   // A safeguards REFUSAL is the same shape again (the user 2026-08-15): deterministic on the same input,
   // so Retry re-collects the same refusal — the badge names the real fix (rewrite it or drop the thread).
   a._apiRetry.style.display = (showApiErr && !spendLimit && !modelLimit && !refusal) ? "" : "none";
+  // a dead credential's card carries THE FIX (T157): the gear's Billing login — phone-workable
+  const loginBtn = a._apiLogin as HTMLButtonElement;
+  loginBtn.style.display = (showApiErr && authErr) ? "" : "none";
+  if (showApiErr && authErr) loginBtn.onclick = (ev: Event) => {
+    ev.stopPropagation();
+    window.postMessage({ romp: "openSettings" }, "*");   // the login flow lives in the gear's Billing block
+  };
   // "Continue" shows on a LIVE needs-you card with no live ask attached: the gesture claims "you're not
   // waiting on me", which means nothing in Working/Completed, can't answer a real permission prompt or
   // picker (it.blocked — text sent there would just queue behind the ask), and has no one to tell on a
@@ -2064,6 +2109,7 @@ function updateAskCard(card: HTMLElement, it: AskItem) {
   if (contBtn.disabled && !it.followupPending && !it.recheck && !it.rejudging) {
     contBtn.disabled = false; contBtn.textContent = "Continue";
   }
+  contBtn.title = contTitle(contBtn.disabled, "a continue", it.followupAt);
   if (showApiErr && it.blocked) {
     // on-you errors name themselves: a spend cap (raise it), "prompt too long" (compact), or a spent model
     // allowance (switch model); other API errors are transient and auto-retrying (2026-06-29 / 07-14 / 08-01).
@@ -3189,11 +3235,13 @@ function renderModal() {
     if (csEl && it.live && statusSweepText(it).n > 0) {
       csEl.style.display = "";
       if (csEl.disabled && !it.followupPending && !it.recheck && !it.rejudging) { csEl.disabled = false; csEl.textContent = "Check status"; }
+      csEl.title = contTitle(csEl.disabled, "a status ask", it.followupAt);
       csEl.onclick = () => {
         const sweep = statusSweepText(it);
         if (!sweep.n) return;
         vscodeApi?.postMessage({ type: "askFollowUp", itemId: it.itemId, text: sweep.text, sid: it.sid });
         csEl.disabled = true; csEl.textContent = "Asked";
+        csEl.title = contTitle(true, "a status ask", null);
         optimisticFollowMove(it.itemId);
         render();
       };
@@ -3202,9 +3250,11 @@ function renderModal() {
     if (contEl && askColumn(it) === "needsInput" && it.live && !it.provisional && !it.blocked) {
       contEl.style.display = "";
       if (contEl.disabled && !it.followupPending && !it.recheck && !it.rejudging) { contEl.disabled = false; contEl.textContent = "Continue"; }
+      contEl.title = contTitle(contEl.disabled, "a continue", it.followupAt);
       contEl.onclick = () => {
         vscodeApi?.postMessage({ type: "askFollowUp", itemId: it.itemId, sid: it.sid, cont: true });
         contEl.disabled = true; contEl.textContent = "Sent";
+        contEl.title = contTitle(true, "a continue", null);
         optimisticFollowMove(it.itemId);
         render();
       };
@@ -4178,7 +4228,15 @@ function feedToast(text: string) {
 // payload (self-expiring at the window reset, cleared by the next successful call). Built ONCE and
 // updated in place — the button must survive re-renders (the click-safety rule), and it
 // acknowledges immediately, then the latch clearing hides the banner on a later payload.
-let judgeLimit: { bucket?: string; resets_at?: number; model?: string } | null = null;
+type JlIdent = { name: string; host?: string; sid?: string; color?: { bg: string; fg: string } | null };
+let judgeLimit: { bucket?: string; resets_at?: number; model?: string;
+                  loginSessions?: JlIdent[]; billingUnknown?: JlIdent[] } | null = null;
+// The dismiss latches to THIS episode's identity — a NEW episode (different bucket or reset time)
+// is new information and re-shows the banner; nothing else does (event-based, no timers). Stored
+// in localStorage so the dismissal survives re-renders and reloads for the episode's lifetime.
+const jlEpisodeKey = (j: { bucket?: string; resets_at?: number } | null) =>
+  (j?.bucket || "") + ":" + (j?.resets_at || 0);
+let jlSessOpen = false;   // the session list's keyed expand — module state, survives re-renders
 function ensureJudgeLimit(): HTMLElement {
   let b = document.getElementById("judge-limit-banner");
   if (b) return b;
@@ -4196,6 +4254,24 @@ function ensureJudgeLimit(): HTMLElement {
     vscodeApi?.postMessage({ type: "setJudgeModel", model: "opus", gt: Date.now() });
   };
   b.appendChild(btn);
+  const sess = el("span", "jl-sess"); b.appendChild(sess);   // who the window actually touches (2026-08-28)
+  const x = el("button", "jl-dismiss") as HTMLButtonElement;
+  x.type = "button";
+  x.textContent = "✕";
+  x.title = "dismiss this notice — it returns only if a new limit episode starts";
+  x.onclick = () => {
+    // the hide IS the acknowledgment, immediate and local; the latch key makes it stick (build-once
+    // button — the listener survives every re-render, per the click-safety rule)
+    try { localStorage.setItem("romp:jlDismiss", jlEpisodeKey(judgeLimit)); } catch { /* storage blocked */ }
+    paintJudgeLimit();
+  };
+  b.appendChild(x);
+  // the "+N more" toggle is REBUILT per paint, so its action rides the build-once banner root
+  // (delegation to the stable ancestor — the same rule the tab strip follows)
+  b.addEventListener("click", (ev) => {
+    const t = ev.target as HTMLElement;
+    if (t && t.dataset && t.dataset.act === "jl-more") { jlSessOpen = !jlSessOpen; paintJudgeLimit(); }
+  });
   const list = document.getElementById("feed-list")!;
   list.parentElement!.insertBefore(b, list);
   return b;
@@ -4203,14 +4279,60 @@ function ensureJudgeLimit(): HTMLElement {
 function paintJudgeLimit(): void {
   const b = ensureJudgeLimit();
   if (!judgeLimit) { b.style.display = "none"; return; }
+  let dismissed = "";
+  try { dismissed = localStorage.getItem("romp:jlDismiss") || ""; } catch { /* storage blocked */ }
+  if (dismissed === jlEpisodeKey(judgeLimit)) { b.style.display = "none"; return; }
   const ra = judgeLimit.resets_at;
   const when = typeof ra === "number" && ra > 0
     ? new Date(ra * 1000).toTimeString().slice(0, 5) : "";
   const fable = judgeLimit.bucket === "fable";
   const txt = b.querySelector(".jl-text")!;
+  // the HONEST scope (the user 2026-08-28, correction round — the everything-is-paused framing was
+  // wrong: a judge call bills the JUDGED session's account, so key-billed analysis keeps flowing):
+  // the window is the login account's; only the sessions billing it pause.
   txt.textContent = fable
-    ? "Analysis is paused — the Fable usage window is full" + (when ? " (resets " + when + ")." : ".")
-    : "Analysis is paused — the account's usage window is full" + (when ? "; it resumes at " + when + "." : ".");
+    ? "The account's Fable usage window is full" + (when ? " (resets " + when + ")." : ".")
+    : "The account's usage window is full" + (when ? "; it resumes at " + when + "." : ".");
+  // WHO it touches: the sessions billing this account lose BOTH their turns (rate-limited) and
+  // their card analysis until the reset; everyone else's analysis continues on their own billing.
+  // Names wear the standard session chip — bold, identity colour, quiet host: prefix (the user's
+  // ask). Inline when few; a keyed "+N more" expand when many; unknown billing said, never omitted.
+  const sessEl = b.querySelector(".jl-sess") as HTMLElement;
+  sessEl.replaceChildren();
+  const names = judgeLimit.loginSessions || [];
+  const unk = judgeLimit.billingUnknown || [];
+  const chip = (p: JlIdent) => {
+    const c = el("b", "jl-chip");
+    c.replaceChildren(...hostPartsNodes(p.host, p.name));
+    if (p.color && p.color.bg) c.style.color = p.color.bg;
+    return c;
+  };
+  const appendChips = (list: JlIdent[]) => list.forEach((p, i) => { if (i) sessEl.append(", "); sessEl.appendChild(chip(p)); });
+  if (names.length) {
+    const many = names.length > 3;
+    const shown = many && !jlSessOpen ? names.slice(0, 2) : names;
+    sessEl.append("Analysis and turns pause for the sessions billing it: ");
+    appendChips(shown);
+    if (many) {
+      const more = el("span", "jl-more");
+      more.dataset.act = "jl-more";
+      more.textContent = jlSessOpen ? " · fewer" : " +" + (names.length - shown.length) + " more";
+      more.title = jlSessOpen ? "collapse the list" : "show every affected session";
+      sessEl.appendChild(more);
+    }
+    sessEl.append(". Other sessions' analysis continues on their own billing.");
+  } else {
+    sessEl.append("No live session bills this account — every session's analysis continues on its own billing.");
+  }
+  if (unk.length) {
+    const u = el("span", "jl-unknown");
+    u.textContent = " · billing unknown for ";
+    sessEl.appendChild(u);
+    appendChips(unk);
+    const u2 = el("span", "jl-unknown");
+    u2.textContent = " (their CLI doesn't report it)";
+    sessEl.appendChild(u2);
+  }
   const btn = b.querySelector(".jl-switch") as HTMLButtonElement;
   btn.style.display = fable ? "" : "none";
   if (!judgeLimit || !fable) { btn.disabled = false; btn.textContent = "Run analysis on Opus until then"; }
