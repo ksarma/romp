@@ -10362,7 +10362,7 @@ def brief_llm(goal_text, work_text, owed, frame=None, user_ask=None, shortfall=N
         # gone missing (the user had to ask what the missing decision was).
         user += ("\n<note>Your previous draft covered %d of the %d owed items in <owed>. Even "
                  "when items come down to the same decision, write one numbered single-line "
-                 "question per owed item, in <owed>'s order — exactly %d numbered paragraphs, "
+                 "question per owed item, in <owed>'s order: exactly %d numbered paragraphs, "
                  "each answerable with a yes/no or a one-word pick.</note>"
                  % (shortfall[0], shortfall[1], shortfall[1]))
     return _judge_run(_distill_model(), BLOCK_BRIEF_SYS, user, judge="briefer", tier="distill",
@@ -10968,8 +10968,11 @@ def _distill_session(fsid, path, now):
                         raw, out, src = _r2, _o2, _s2
                         bg = _b2 or bg                 # keep the draft's orientation if the retry lost it
                     else:
-                        out = "\n\n".join("%s: %s" % ((t or "this sub-goal").strip().rstrip("."),
-                                                       (w or "").strip()) for t, w in owed)
+                        out = "\n\n".join(
+                            "%d. %s: %s" % (i + 1, (t or "this sub-goal").strip().rstrip("."),
+                                            (w or "").strip()) for i, (t, w) in enumerate(owed))
+                        #      ^ numbered like the rule's own list shape (the review's catch: an
+                        #        unnumbered fallback re-shipped the dense recap the rule kills)
                         src = None                     # verbatim recorded whys — no model citation
                         _fallback_brief = True         # …so the cite-miss check below stands down:
                         #                                romp authored this text; "no SOURCE line"

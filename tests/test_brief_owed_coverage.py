@@ -140,9 +140,10 @@ class OwedCoverage(unittest.TestCase):
         self._run()
         self.assertEqual(len(self.calls), 2, "one retry, never a loop")
         bs = self._stored()["blockSummary"]
-        for why in WHYS:
+        for i, why in enumerate(WHYS):
             self.assertIn(why, bs, "the fallback carries every owed why verbatim — complete "
                                    "by construction, an item can never silently vanish")
+            self.assertIn("%d. " % (i + 1), bs, "…in the numbered shape the standing rule renders")
         self.assertEqual(len([p for p in bs.split("\n\n") if p.strip()]), 4)
         rows = self._errors()
         self.assertIn("owed-shortfall", [r.get("err") for r in rows])
