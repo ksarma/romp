@@ -3791,10 +3791,12 @@ def _log_nudge_event(sid, gid, t, count, verdict="fired", ev_t=None, parked_s=No
     for the timeline's DEBUG judging band (per-nudge ⚡ marker) AND the redundancy accounting (the
     user 2026-08-25): every decision the gate takes is a row — fired / skipped-redundant /
     held-fresh-re-judged / fired-at-cap / skipped-redundant-at-cap / skipped-redundant-memo (the
-    T142 memo served a ruling already made on this exact evidence, no judge call; the row carries
-    parkedS — seconds the session has sat parked since the skip's answeredAt — so the quiet-session
-    deadlock fingerprint is countable from this log alone, 2026-08-29) / fired-parked-backstop (the
-    memo held but the session sat parked past the dead-man stand — the fire re-engages it) /
+    T142 memo served a ruling already made on this exact evidence, no judge call — since the
+    parked-tick round, 2026-08-30, a parked goal SLEEPS at the gate instead, so this row marks a
+    rare race, never a per-visit re-serve) / re-armed (the park lifted: a memo key moved — written
+    once per key-move, carrying parkedS, seconds since the skip's answeredAt) /
+    fired-parked-backstop (the memo held but the session sat parked past the dead-man stand — the
+    fire re-engages it; carries the final parkedS via its evidence row) /
     resolved-at-send / blocked-on-user-at-send — carrying the evidence snapshot's timestamp, so redundant fires are
     countable from the log alone. That accounting is what extended the freshness guard to the cap
     path (the user 2026-08-27, T120: the pre-T120 force-fired-at-cap rows measured the blind fire
@@ -5527,6 +5529,9 @@ def _auto_nudge_session(s, now, tmux, nudged, waitfor, alive_ids=None):
     # follow-ups (the user 2026-06-28). Due goals COLLECT into to_fire and go out ONCE after the loop —
     # several in the same tick bundle into one message (the user 2026-07-24) instead of N separate ones.
     to_fire = []                                     # [(gid, count, stalled)] due THIS tick
+    _pworld = {}                                     # the park gate's lazy world read (report + settle
+    #                                                  key), shared with the judge batch below so the
+    #                                                  tick's read count and sequencing don't change
     for gid in list(nodes):
         nd = nodes[gid]
         if nd.get("parentId") is not None or nd.get("cleared") or gid in cleared:
@@ -5550,6 +5555,43 @@ def _auto_nudge_session(s, now, tmux, nudged, waitfor, alive_ids=None):
             # same records, same response gates, same escalation, its own copy (see _wake_goal).
             fired = _wake_goal(sid, gid, _stamp, nudged, turns, store, now, lt, tmux) or fired
             continue
+        # PARK GATE (the user 2026-08-30, the parked-tick round): a goal whose record holds the full
+        # memo pair is PARKED — the ruling already said this exact world doesn't warrant a fire — so
+        # it must not be re-evaluated (or logged) at every pass: 98.5% of a day's nudge-events rows
+        # (8877 of 9010) were per-visit memo re-serves on parked goals, ~9k rows/day, the worst goal
+        # 2628 rows in 15h. Event-indexed instead: while BOTH keys still match the current world and
+        # the dead-man stand is unexpired, continue with no row and no machinery; the goal re-enters
+        # exactly on its own events — a key move lifts the park (one re-armed row, then the batch
+        # re-judges), dead-man expiry falls through to the batch's parked-backstop fire. One lazy
+        # world read per session-tick, SHARED with the judge batch below (reads and freshness-guard
+        # sequencing unchanged). An unreadable report read keeps the park — the memo's own semantics
+        # ("dies when the report MOVES"), never a blind re-arm. Sits BELOW the awaiting-stamp branch
+        # on purpose: a judge stamping a wait on a parked goal still takes the wake ladder (that
+        # verdict moves neither memo key), and ABOVE the reviver/deferral machinery, which exists to
+        # protect fires this goal isn't taking.
+        _prec = nudged.get(gid) or {}
+        if _prec.get("redundantEvT") and "redundantSettleT" in _prec and not _prec.get("failed"):
+            if "r" not in _pworld:
+                _pworld["r"] = _last_assistant_report(s["path"])
+                _pworld["s"] = _settle_event_key(sid)
+            _cur_ts, _cur_st = _pworld["r"][1], _pworld["s"]
+            _panch = max(_prec.get("answeredAt") or 0, _prec.get("at") or 0)
+            if not _cur_ts or (_prec["redundantEvT"] == _cur_ts
+                               and _prec["redundantSettleT"] == _cur_st):
+                if _panch and now - _panch <= AWAITING_DEADMAN_SECS:
+                    continue                         # PARKED: asleep until its own next event
+                #                                      (dead-man expired → fall through: the batch's
+                #                                       parked-backstop leg owns the fire)
+            elif (_cur_ts, _cur_st) != (_prec.get("rearmEvT"), _prec.get("rearmSettleT")):
+                # the park LIFTED — one row per state change. The stamp below is what makes it
+                # once: a downstream hold can defer the fire for many ticks with the memo keys
+                # still the old pair, and without the stamp this leg re-logged per visit (the
+                # adversarial pass's catch) — the very shape this round kills. A fire replaces
+                # the record (stamp drops); a re-memo re-parks it (this leg unreachable).
+                _log_nudge_event(sid, gid, now, _prec.get("count") or 0, verdict="re-armed",
+                                 ev_t=_cur_ts, parked_s=(now - _panch) if _panch else None)
+                nudged[gid] = dict(_prec, rearmEvT=_cur_ts, rearmSettleT=_cur_st)
+                _put_nudged(gid, nudged[gid])
         # LAST-RESORT GATE (the user 2026-07-22): every OTHER mechanism that could still move this card
         # off 'working' must be exhausted first. This is what the 2026-07-22 false interrupt needed: the
         # card's 'working' came from a STALE agent-to-do mirror, and the nudge fired before the sync that
@@ -5654,13 +5696,15 @@ def _auto_nudge_session(s, now, tmux, nudged, waitfor, alive_ids=None):
         # report as the ANSWER (answeredAt: the ladder measures its next patience window from it,
         # exactly as it would from a real reply) and skips the fire. Any failure fires as before —
         # the gate is an optimization, the ladder is the job.
-        recent, recent_ts = _last_assistant_report(s["path"])
+        recent, recent_ts = _pworld["r"] if "r" in _pworld else _last_assistant_report(s["path"])
         if recent:
             try:
                 _nodes = jd.load_goals(sid).get("nodes", {})
             except Exception:
                 _nodes = {}
-            settle_t = _settle_event_key(sid)      # the memo's second key half — one read per tick
+            settle_t = _pworld["s"] if "s" in _pworld else _settle_event_key(sid)
+            #                                      ^ the memo's second key half — the park gate's
+            #                                        read when it ran, one read per tick either way
 
             def _judge_batch(cands, report, report_ts, held_pass):
                 keep = []
