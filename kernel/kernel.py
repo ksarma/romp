@@ -7689,6 +7689,36 @@ def _auth_avail():
             "acct": _claude_account_label(), "default": default}
 
 
+def _cap_switch_offer(sid, aerr):
+    """The explicit billing-switch OFFER for a login-billed session dead on the account's usage cap —
+    or None. The user's BINDING ruling (2026-08-30, via the nightly optimizer): a session must NEVER
+    silently switch billing in either direction — so romp only OFFERS, and only the user's explicit
+    pick (the card button → the same setAuth route a gear billing pick takes) switches; the reverse
+    is equally manual. Minted only when every leg is true and readable: the error is the plain
+    retryable class (spend/model/auth/tooLong/refusal each carry their own remedy), a login-account
+    window actually sits at its cap with a readable reset ahead (usage.json — the authority the retry
+    pause reads; fable excluded, model-scoped), THIS session bills the login (the CLI's authLive
+    first, the picked intent second — the Billing tooltip's sources), and the machine holds a key to
+    offer. Self-expiring: resets_at passing ends the mint on the next build — the deciding event —
+    and the post-reset auto-retry is untouched either way (this offer sits beside it, never instead)."""
+    if not aerr or aerr.get("tooLong") or aerr.get("spendLimit") or aerr.get("modelLimit") \
+            or aerr.get("authErr") or aerr.get("refusal"):
+        return None
+    tm = (_tmux_sessions() or {}).get(str(sid)) or {}
+    if str(tm.get("authLive") or tm.get("auth") or "") != "login" or not _auth_key_present():
+        return None
+    try:
+        u = json.loads((jd.STATE / "usage.json").read_text())
+    except Exception:
+        return None
+    now = time.time()
+    for k in ("five_hour", "seven_day"):
+        w = u.get(k) or {}
+        if isinstance(w, dict) and (w.get("pct") or 0) >= 100 and (w.get("resets_at") or 0) > now:
+            return {"resetsAt": int(w["resets_at"]), "window": k}
+    return None
+
+
 def _judge_limit_view():
     """The judge-limit latch, enriched for the banner (the user 2026-08-28, who asked WHICH sessions a
     full usage window actually touches): the judges bill ONE credential, so a full window pauses CARD
@@ -20356,6 +20386,7 @@ def build_feed(now, tmux=None):
         # the truth. One formula, one truth: awaiting wins; the floor applies only to a session truly dead
         # in the water.
         aerr = _api_error(s["path"]) if (ps and not who_working and not sess_awaiting_why) else None   # cache-only: fills in after the warm
+        _cap_off = _cap_switch_offer(fsid, aerr) if aerr else None   # the billing-switch OFFER (never a silent switch, 2026-08-30)
         api_top = None
         if aerr:
             f = store.get("lastNode")
@@ -20841,6 +20872,10 @@ def build_feed(now, tmux=None):
                 "nudged": ({"count": int(nrec.get("count", 0)), "times": _nudge_times().get(nid, [])[-8:]}
                            if nrec.get("count") else None),   # auto-nudge HISTORY (fires + when) → the stalled chip's evidence, on the chip tooltip + modal (the user 2026-07-02)
                 "blocked": ({"state": "apiError",
+                             # the OFFER (2026-08-30): login-billed + capped window + a key on hand →
+                             # the card proposes switching THIS session's billing; the pick is the
+                             # user's alone, both directions (see _cap_switch_offer)
+                             **({"capOffer": _cap_off} if _cap_off else {}),
                              "status": aerr.get("status"),
                              "text": aerr.get("text"), "tooLong": bool(aerr.get("tooLong")),
                              "spendLimit": bool(aerr.get("spendLimit")),
