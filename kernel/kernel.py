@@ -11472,7 +11472,7 @@ WATCH_RUN_TIMEOUT = 45        # one predicate run's own bound
 WATCH_MAX = 200               # registration cap — a runaway loop's backstop, far above real use
 _watches = []                 # [{id, cmd, every, timeoutS, sid, note, at} + runtime {_next, _ran}]
 _watch_lock = threading.Lock()
-_WATCH_KEYS = ("id", "cmd", "every", "timeoutS", "sid", "note", "at")
+_WATCH_KEYS = ("id", "cmd", "every", "timeoutS", "sid", "note", "at", "soft")
 
 
 def _watches_load():
@@ -11523,7 +11523,7 @@ def add_watch(cmd, sid, every=None, timeout_s=None, note="", now=None):
         row = {"id": wid, "cmd": cmd, "every": every, "timeoutS": timeout_s,
                "sid": str(sid), "note": str(note or "")[:200],
                "at": int(now if now is not None else time.time()),
-               "_next": 0, "_ran": False}
+               "soft": False, "_next": 0, "_ran": False}
         _watches.append(row)
     _watches_save()
     return {k: row[k] for k in _WATCH_KEYS}, None
@@ -11558,7 +11558,13 @@ def _watch_notice(kind, row, detail=""):
     elif kind == "timeout":
         body = ("[romp] romp gave up watching after %s: %s never held (the check kept saying not-yet). "
                 "This watch is done — re-register with `romp watch` if you still need it."
-                % (_fmt_span_s(int(row.get("timeoutS") or 0)), what))
+                % (_fmt_span_s(int(row.get("hardS") or row.get("timeoutS") or 0)), what))
+    elif kind == "soft":
+        body = ("[romp] Still watching: %s has not held after %s (your requested bound). A short bound "
+                "no longer ends a watch silently — romp keeps checking through %s total, and will mail "
+                "the moment it holds. If it's moot, cancel with `romp watch --cancel %s`."
+                % (what, _fmt_span_s(int(row.get("timeoutS") or 0)),
+                   _fmt_span_s(WATCH_DEFAULT_TIMEOUT), row.get("id") or "?"))
     else:   # execfail — the first run could not even execute
         body = ("[romp] The watch command could not run at all (%s): %s. This watch was dropped — "
                 "fix the command and re-register with `romp watch`."
@@ -11575,11 +11581,35 @@ def _fmt_span_s(s):
     return "%ds" % s
 
 
+def _watch_reg_hint(cmd):
+    """The one self-match the script-file runner cannot fix, answered at registration: the kernel's
+    own wrapper no longer carries the predicate text (see _watch_run), but a wrapper the predicate
+    ITSELF spawns — an ssh far-side shell, a parent bash — still echoes the pattern in its own argv,
+    and that construction is the caller's. pgrep/pkill -f registrations get told loudly, up front."""
+    if re.search(r"\bp(?:grep|kill)\b[^|;&]*\s-\w*f", str(cmd or "")):
+        return ("pgrep/pkill -f match whole command lines: a wrapper your check spawns (an ssh "
+                "remote shell, a parent bash) carries the pattern in its own argv and self-matches. "
+                "Prefer pgrep -x, a pidfile, or an output-file check.")
+    return None
+
+
 def _watch_run(cmd):
     """One predicate run → (exitcode, output tail). Bounded; a timeout reads as not-yet (the
-    predicate gets another try — its own bound is the watch timeout)."""
+    predicate gets another try — its own bound is the watch timeout). The predicate text lives in a
+    SCRIPT FILE and the runner's argv carries only its path (the user 2026-08-29, structural
+    self-match-proofing): under `sh -c <text>` the wrapper's own command line CONTAINED the
+    predicate, so a `pgrep -f <pattern>` watch matched its own wrapper — the pattern rode the argv,
+    e.g. the watched job's ssh line — and reported still-running until the timeout flushed it, 35
+    minutes after the job actually finished. With the text on disk, no process the runner owns ever
+    carries the pattern; what the predicate itself spawns (a remote ssh shell echoing it) is the
+    caller's construction, hinted loudly at registration."""
+    sp = None
     try:
-        r = subprocess.run(["/bin/sh", "-c", cmd], capture_output=True, text=True,
+        sd = jd.STATE / "watch-scratch"
+        sd.mkdir(parents=True, exist_ok=True)
+        sp = sd / ("w-%s.sh" % os.urandom(4).hex())
+        sp.write_text(cmd + "\n")
+        r = subprocess.run(["/bin/sh", str(sp)], capture_output=True, text=True,
                            timeout=WATCH_RUN_TIMEOUT)
         out = ((r.stdout or "") + (("\n" + r.stderr) if r.stderr else "")).strip()
         return r.returncode, out[-1000:]
@@ -11587,34 +11617,72 @@ def _watch_run(cmd):
         return None, "the check ran past %ds" % WATCH_RUN_TIMEOUT
     except Exception as e:
         return 127, str(e)[:200]
+    finally:
+        try:
+            if sp is not None:
+                sp.unlink()
+        except OSError:
+            pass
 
 
 def _watch_tick(now):
-    """One supervisor-pass sweep (rate-gated per row) — the pr-watch pump's twin."""
+    """One supervisor-pass sweep (rate-gated per row) — the pr-watch pump's twin.
+
+    TIMEOUTS split soft/hard (the user 2026-08-29, after two overnight cluster watches died at
+    1h caller-habit bounds while their conditions held later): a caller bound SHORTER than the
+    kernel default no longer ends the watch — it sends one still-watching check-in (naming the
+    cancel id) and the watch re-arms through the DEFAULT cap, where the giving-up mail ends it as
+    ever (the standing never-a-silent-dead-loop rule). A caller bound at or past the default is an
+    explicit choice and ends there, as before. And every retiring NOTICE must actually DELIVER
+    before its row retires: delivery is best-effort transport, and retiring on a failed send lost
+    a met condition silently — the row now stays for the next cadence and retries, bounded an hour
+    past the hard cap (stderr, never a zombie)."""
     with _watch_lock:
         rows = list(_watches)
     done = []
+    changed = False
     for r in rows:
         if now < r.get("_next", 0):
             continue
-        if now - int(r.get("at") or 0) >= int(r.get("timeoutS") or WATCH_DEFAULT_TIMEOUT):
-            _pr_watch_deliver(r["sid"], _watch_notice("timeout", r))
+        every = int(r.get("every") or WATCH_DEFAULT_EVERY)
+        born = int(r.get("at") or 0)
+        t_o = int(r.get("timeoutS") or WATCH_DEFAULT_TIMEOUT)
+        hard = max(t_o, WATCH_DEFAULT_TIMEOUT)
+        r["hardS"] = hard                                # the timeout notice names the REAL span
+        if now - born >= hard + 3600:
+            sys.stderr.write("romp-kernel: watch %s dropped — its notices would not deliver\n"
+                             % r.get("id"))
             done.append(r)
+            continue
+        if now - born >= hard:
+            if _pr_watch_deliver(r["sid"], _watch_notice("timeout", r)):
+                done.append(r)
+            else:
+                r["_next"] = now + every                 # the notice failed — retry, never lose it
             continue
         code, out = _watch_run(r["cmd"])
         first = not r.get("_ran")
         r["_ran"] = True
         if code == 0:
-            _pr_watch_deliver(r["sid"], _watch_notice("met", r, out))
-            done.append(r)
+            if _pr_watch_deliver(r["sid"], _watch_notice("met", r, out)):
+                done.append(r)
+            else:
+                r["_next"] = now + every                 # met but unheard — the row retries the mail
             continue
         if first and code in (126, 127):
             # a command that cannot exec at all must not wait silently for its timeout
-            _pr_watch_deliver(r["sid"], _watch_notice("execfail", r, out or ("exit %s" % code)))
-            done.append(r)
+            if _pr_watch_deliver(r["sid"], _watch_notice("execfail", r, out or ("exit %s" % code))):
+                done.append(r)
+            else:
+                r["_next"] = now + every
             continue
-        r["_next"] = now + int(r.get("every") or WATCH_DEFAULT_EVERY)
-    if done:
+        if t_o < hard and now - born >= t_o and not r.get("soft"):
+            # the caller's short bound: one still-watching check-in, then the watch keeps going
+            if _pr_watch_deliver(r["sid"], _watch_notice("soft", r)):
+                r["soft"] = True                         # once, persisted — a restart must not repeat it
+                changed = True
+        r["_next"] = now + every
+    if done or changed:
         with _watch_lock:
             for r in done:
                 if r in _watches:
@@ -30027,7 +30095,11 @@ class Handler(BaseHTTPRequestHandler):
                                      timeout_s=b.get("timeoutS"), note=b.get("note"))
                 if err:
                     return self._send(200, json.dumps({"ok": False, "error": err}), "application/json")
-                return self._send(200, json.dumps({"ok": True, "watch": row}), "application/json")
+                resp = {"ok": True, "watch": row}
+                hint = _watch_reg_hint(b.get("cmd"))
+                if hint:
+                    resp["hint"] = hint
+                return self._send(200, json.dumps(resp), "application/json")
             if u.path in ("/tag", "/group"):
                 # Headless tag edit (`romp tag`, the user 2026-08-23, the manager/worker workflow:
                 # the worker roster IS a session tag, so an agent needs to keep one current — and can
