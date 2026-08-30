@@ -5350,7 +5350,7 @@ class ViewBuilder(unittest.TestCase):
         # mode has no event source to self-heal from — _cycle_mode must record the mode it just cycled to,
         # or the var stays frozen (and the next press count is computed from a stale `cur`).
         calls, saved_run, saved_sleep = [], km.subprocess.run, km.time.sleep
-        saved_tmux, saved_thread, saved_push = km._tmux_sessions, km.threading.Thread, km._push_all
+        saved_tmux, saved_thread, saved_push = km._tmux_sessions, km.threading.Thread, km._push_soon
         class _SyncThread:                                  # run go() inline so the test sees the result
             def __init__(self, target=None, daemon=None): self._t = target
             def start(self): self._t()
@@ -5358,17 +5358,17 @@ class ViewBuilder(unittest.TestCase):
         km.time.sleep = lambda *_a, **_k: None
         km._tmux_sessions = lambda: {SID: {"mode": "auto"}}   # current mode is auto
         km.threading.Thread = _SyncThread
-        km._push_all = lambda: calls.append(["__push_all__"])
+        km._push_soon = lambda: calls.append(["__push_soon__"])   # ack-fast poke, never an inline build (2026-08-30)
         try:
             km._cycle_mode("mysess", SID, "plan")
         finally:
             km.subprocess.run, km.time.sleep = saved_run, saved_sleep
-            km._tmux_sessions, km.threading.Thread, km._push_all = saved_tmux, saved_thread, saved_push
+            km._tmux_sessions, km.threading.Thread, km._push_soon = saved_tmux, saved_thread, saved_push
         btab = [c for c in calls if c[:2] == ["tmux", "send-keys"] and "BTab" in c]
         self.assertEqual(len(btab), 3, "auto → plan is 3 shift+tab presses")
         self.assertIn(["tmux", "set", "-t", "mysess", "@claude-permission-mode", "plan"], calls,
                       "after cycling, the kernel records the new mode so the chat label updates")
-        self.assertIn(["__push_all__"], calls, "and re-renders so the label flips immediately")
+        self.assertIn(["__push_soon__"], calls, "and pokes the pusher so the label flips on its next cycle")
 
     def test_tmux_set_mode_refuses_a_mode_the_cycle_cannot_reach(self):
         # The picker gained Bypass for SDK sessions (the user 2026-08-15). shift+tab is the only handle

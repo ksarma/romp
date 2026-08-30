@@ -4069,7 +4069,10 @@ def _auto_nudge_tick(now, tmux, run_dead_wait=True):
     except Exception:
         sys.stderr.write("awaiting-wake outcomes: %s\n" % traceback.format_exc())
     if fired:
-        _push_all()
+        # ack-fast, not inline: this tick usually runs on the pusher thread, but the WS setAutoNudge
+        # op calls it directly (act-now on turn-on) — a fleet build there is the 2026-08-30 POST-wedge
+        # class, so the fired nudges ride the woken pusher's next cycle instead
+        _push_soon()
 
 
 # The awaiting WAKE (the user 2026-07-22, reworked 2026-08-11): a durable ⏳ stamp can, in the worst case,
@@ -8834,7 +8837,7 @@ def _open_or_revive(sid, live=False, client=None):
                               # model / permission-mode publish from the init message right away AND the model
                               # is changeable BEFORE the first message — not only after one (the user 2026-06-24:
                               # opening an SDK session showed no model/effort until a message was sent).
-        _push_all()
+        _push_soon()   # ack-fast (the 2026-08-30 wedge: inline fleet builds piled 53 POST handlers; the pusher coalesces)
     focus = {"type": "focus", "id": sid}
     if live:
         focus["live"] = True
@@ -8880,7 +8883,7 @@ def _revive_session(sid, client=None):
                                "text": detail or "unknown error"}, (client or {}).get("wid") or "")
         return
     _kept_open.discard(sid)       # it's live again → no longer a read-only kept tab
-    _push_all()                   # surface it promptly (the 4s pusher would catch it anyway)
+    _push_soon()                  # surface it promptly — the woken pusher builds it off this thread
     if client is not None:        # the asker's revive loader clears on this focus; other windows stay put
         _reveal_chat_for(client, {"type": "focus", "id": sid})
 
@@ -13615,7 +13618,7 @@ def _cycle_mode(name, sid, target):
         # a stale `cur`. We caused the change, so we know the new mode is `target` — write it. (A switch made
         # directly in the terminal TUI still can't be observed; that's a CC-exposure gap, not ours.) (2026-06-18.)
         _TMUX.record_permission_mode(name, target)
-        _push_all()                                                 # re-render so the chat mode label flips now
+        _push_soon()                                                # re-render so the chat mode label flips now
     threading.Thread(target=go, daemon=True).start()
 
 
@@ -16697,7 +16700,7 @@ def _warm_fleet_bg(now):
                     break
                 _parse(s["path"], s["sid"], now)          # warm the kernel parse cache
             _built_feed[1] = None                         # force the next build to use the now-warm parses
-            _push_all()
+            _push_soon()   # ack-fast (the 2026-08-30 wedge: inline fleet builds piled 53 POST handlers; the pusher coalesces)
         except Exception:
             sys.stderr.write("warm: %s\n" % traceback.format_exc())
         finally:
@@ -23951,7 +23954,7 @@ def _apply_judge_settings(body):
         except Exception:
             sys.stderr.write("rearm-on-model-change: %s\n" % traceback.format_exc())
         _producer_wake.set()
-        _push_all()
+        _push_soon()   # ack-fast (the 2026-08-30 wedge: inline fleet builds piled 53 POST handlers; the pusher coalesces)
     return {"ok": True, "judgeModel": jd._triage_model(), "indexModel": jd._index_model(),
             "judgeEffort": jd._triage_effort(), "indexEffort": jd._index_effort(),
             "distillModel": jd._state_str("distill-model", "triage"),
@@ -30061,7 +30064,7 @@ class Handler(BaseHTTPRequestHandler):
                     _record_death(sid, int(time.time()), "kill")
                     _comment_kill_all(sid, be)   # its comment threads must not outlive it (the WS endSession twin)
                     _send_to_app("chat", {"type": "closed", "id": sid})
-                _push_all()
+                _push_soon()   # ack-fast (the 2026-08-30 wedge: inline fleet builds piled 53 POST handlers; the pusher coalesces)
                 return self._send(200, json.dumps({"ok": True}), "application/json")
             if u.path == "/new":
                 # Headless session creation (`romp new`, 2026-07-25): the WS createSession op as a
@@ -31147,7 +31150,7 @@ class Handler(BaseHTTPRequestHandler):
             # (and covers the endSession companion post, so an ended session never lingers as a tab).
             _kept_open.discard(msg["id"])
             _send_to_app("chat", {"type": "closed", "id": msg["id"]})
-            _push_all()
+            _push_soon()   # ack-fast (the 2026-08-30 wedge: inline fleet builds piled 53 POST handlers; the pusher coalesces)
         elif msg and msg.get("type") == "openSession" and msg.get("id"):
             # live → focus its (always-shown) tab; dead → the chat's confirmRevive modal. `live` lands on
             # the chat's LIVE TAIL (a blocked card's picker chip → right on the prompt, the user 2026-07-08).
@@ -31169,7 +31172,7 @@ class Handler(BaseHTTPRequestHandler):
         elif msg and msg.get("type") == "viewReadOnly" and msg.get("id"):
             _kept_open.add(msg["id"])            # confirmRevive → "View read-only": this dead session
             #                                      gets a (struck) read-only tab now, without resuming it
-            _push_all()
+            _push_soon()   # ack-fast (the 2026-08-30 wedge: inline fleet builds piled 53 POST handlers; the pusher coalesces)
             _reveal_chat_for(client, {"type": "focus", "id": msg["id"]})
         elif msg and msg.get("type") == "deepLink" and msg.get("session"):
             _reveal_or_confirm(msg["session"], {"type": "focus", "id": msg["session"], "anchor": msg.get("anchor"),
