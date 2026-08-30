@@ -59,10 +59,15 @@ class OwedCoverage(unittest.TestCase):
     def setUp(self):
         self.td = tempfile.TemporaryDirectory()
         self.path = Path(self.td.name) / (SID + ".jsonl")
-        self.path.write_text(json.dumps(
+        self.path.write_text("\n".join(json.dumps(r) for r in [
             {"type": "user", "timestamp": iso(T0), "uuid": "u1", "parentUuid": None,
              "promptSource": "typed",
-             "message": {"role": "user", "content": "please plan the capture rollout"}}) + "\n")
+             "message": {"role": "user", "content": "please plan the capture rollout"}},
+            {"type": "assistant", "timestamp": iso(T0 + 60), "uuid": "a1", "parentUuid": "u1",
+             "message": {"role": "assistant", "stop_reason": "end_turn",
+                         "content": [{"type": "text",
+                                      "text": "Four decisions are open on the rollout plan; "
+                                              "each is written up with its options."}]}}]) + "\n")
         self._brief = jd.brief_llm
         self.calls = []                                # [(owed, shortfall)]
         self.replies = []
@@ -105,6 +110,10 @@ class OwedCoverage(unittest.TestCase):
     def _stored(self):
         return jd.load_goals(SID)["nodes"]["g"]
 
+    def _errors(self):
+        p = jd.STATE / "judge-errors.jsonl"
+        return [json.loads(l) for l in p.read_text().splitlines()] if p.exists() else []
+
     def test_a_complete_brief_stores_in_one_call(self):
         self._world()
         self.replies = [P4]
@@ -135,6 +144,12 @@ class OwedCoverage(unittest.TestCase):
             self.assertIn(why, bs, "the fallback carries every owed why verbatim — complete "
                                    "by construction, an item can never silently vanish")
         self.assertEqual(len([p for p in bs.split("\n\n") if p.strip()]), 4)
+        rows = self._errors()
+        self.assertIn("owed-shortfall", [r.get("err") for r in rows])
+        self.assertNotIn("cite-miss", [r.get("err") for r in rows],
+                         "romp authored the fallback text — a 'no SOURCE line' row would report "
+                         "the stale first draft's tail (the adversarial pass's catch; the fixture "
+                         "carries a labeled assistant reply so this guard is genuinely exercised)")
 
     def test_a_pause_skipped_retry_leaves_the_brief_null_for_the_next_pass(self):
         # the adversarial pass's catch: a retry the pause SKIPPED is not a short reply — counting
