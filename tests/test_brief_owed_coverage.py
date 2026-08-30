@@ -136,6 +136,36 @@ class OwedCoverage(unittest.TestCase):
                                    "by construction, an item can never silently vanish")
         self.assertEqual(len([p for p in bs.split("\n\n") if p.strip()]), 4)
 
+    def test_a_pause_skipped_retry_leaves_the_brief_null_for_the_next_pass(self):
+        # the adversarial pass's catch: a retry the pause SKIPPED is not a short reply — counting
+        # it as one stored the fallback and logged a retry that never ran. The standing pause
+        # discipline holds: leave null, re-enter once the pause clears.
+        self._world()
+        test = self
+
+        def fake_paused(goal_text, work, owed, frame=None, user_ask=None, shortfall=None):
+            test.calls.append((owed, shortfall))
+            if shortfall:
+                jd._judge_ctx.paused = True
+                return ""
+            return P3
+        jd.brief_llm = fake_paused
+        try:
+            self._run()
+        finally:
+            jd._judge_ctx.paused = False
+        self.assertEqual(len(self.calls), 2)
+        self.assertIsNone(self._stored().get("blockSummary"),
+                          "nothing stored off a skipped call — next pass re-runs the whole brief")
+
+    def test_blankish_separators_count_as_the_feed_renders(self):
+        # the kernel counts with the feed's own split (\n\s*\n): a reply whose paragraphs are
+        # separated by a whitespace-bearing blank line is complete, not a shortfall
+        self._world()
+        self.replies = [P4.replace("\n\n", "\n \n")]
+        self._run()
+        self.assertEqual(len(self.calls), 1, "no spurious retry off a stricter split than the render")
+
     def test_a_single_item_owed_is_out_of_the_contract(self):
         self._world(k=1)
         self.replies = [P3]

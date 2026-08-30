@@ -10933,25 +10933,40 @@ def _distill_session(fsid, path, now):
             # built verbatim from the owed pairs — complete by construction, the stamps align, and
             # honest-plain beats polished-lossy. Countable only for a LIST; a single why that
             # names several decisions inside its own prose has no deterministic item count.
+            _fallback_brief = False
             if not proc_only and isinstance(owed, list) and len(owed) > 1:
-                _paras = [p for p in out.split("\n\n") if p.strip()]
+                # count with the FEED's own split (\n\s*\n, feed.ts paras) — a stricter literal
+                # \n\n read a blank-ish separator as one paragraph and manufactured a shortfall
+                # the render would never show (the adversarial pass's catch)
+                _paras = [p for p in re.split(r"\n\s*\n", out) if p.strip()]
                 if len(_paras) < len(owed):
                     _r2 = brief_llm(nodes[top].get("text", ""), work, owed,
                                     frame=_deleg_frame(store, top),
                                     user_ask=_user_ask_text(store, top, fsid, path, now),
                                     shortfall=(len(_paras), len(owed)))
+                    if not _r2 and getattr(_judge_ctx, "paused", False):
+                        # the retry was SKIPPED, not tried — the standing pause discipline: leave
+                        # the brief null and re-enter next pass once the pause clears; a pause-skip
+                        # never counts as a verdict (the 2026-07-03 rule, met again here)
+                        changed = True
+                        continue
                     _o2, _s2 = _split_source(_r2 or "")
                     _b2, _o2 = _split_sections(_o2)
-                    if len([p for p in _o2.split("\n\n") if p.strip()]) >= len(owed):
+                    if _r2 and len([p for p in re.split(r"\n\s*\n", _o2) if p.strip()]) >= len(owed):
                         raw, out, src = _r2, _o2, _s2
                         bg = _b2 or bg                 # keep the draft's orientation if the retry lost it
                     else:
                         out = "\n\n".join("%s: %s" % ((t or "this sub-goal").strip().rstrip("."),
                                                        (w or "").strip()) for t, w in owed)
                         src = None                     # verbatim recorded whys — no model citation
+                        _fallback_brief = True         # …so the cite-miss check below stands down:
+                        #                                romp authored this text; "no SOURCE line"
+                        #                                would report the stale first draft's tail
                         _log_judge_error("briefer", fsid, "owed-shortfall", goal=top,
-                                         note="draft covered %d of %d owed items; retry still short; "
-                                              "stored the verbatim owed list" % (len(_paras), len(owed)))
+                                         note="draft covered %d of %d owed items; %s; "
+                                              "stored the verbatim owed list"
+                                              % (len(_paras), len(owed),
+                                                 "retry still short" if _r2 else "retry call failed"))
             nodes[top]["blockSummary"] = out            # full text — NEVER truncate a brief mid-word (the user 2026-07-06)
             nodes[top]["background"] = bg if bg else None   # re-orientation for a reader who forgot the thread (2026-07-02)
             # PER-PARAGRAPH stamps (the user 2026-07-24): a MULTI-item brief writes one paragraph per
@@ -10965,8 +10980,11 @@ def _distill_session(fsid, path, now):
             # the brief's cited source, else the WRITE-TIME deterministic stamp: the newest labeled atom
             # the gather fed this very call (the user 2026-07-21) — every brief ships a stored anchor
             nodes[top]["summaryAnchor"] = marks.map.get(src) or marks.newest()
-            if marks.map and marks.map.get(src) is None:   # labels offered, no usable citation → log only:
-                # the stamp already grounded the anchor, so a card warn would be noise (the user 2026-07-21)
+            if marks.map and marks.map.get(src) is None and not _fallback_brief:
+                # labels offered, no usable citation → log only (the stamp already grounded the
+                # anchor, so a card warn would be noise, the user 2026-07-21). The verbatim
+                # fallback stands down: romp authored that text, and the row would report the
+                # STALE first draft's tail as the offender (the adversarial pass's catch).
                 _log_judge_error("staller" if proc_only else "briefer", fsid, "cite-miss", goal=top, note="%s; %d labels offered; reply tail: %r" % (
                     ("cited unoffered label %s" % src) if src else "no SOURCE line", len(marks.map), (raw or "")[-160:]))
             _node_warn_clear(nodes[top], "cite-miss")      # anchored either way → any older warn is over
