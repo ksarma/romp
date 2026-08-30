@@ -62,6 +62,79 @@ class LiveOnlyAddressing(unittest.TestCase):
         self.assertEqual(pm._recip_id_for("beta"), GHOST)
 
 
+class RecallReachesParkedMailForTheDead(unittest.TestCase):
+    """The ONE deliberate carve-out from live-only addressing (2026-08-29): RECALL is not
+    addressing. The sender is unsending their OWN bytes, which sit locally in the recipient's
+    new/ — no delivery, no resurrection. A handoff parked for a session that then died could not
+    be unsent by NAME (only the raw box id worked, which nobody has at hand); _recall now falls
+    back to the durable name map when the name no longer resolves live. Ambiguity still refuses:
+    two dead boxes wearing one name is not a guess the sender authorized."""
+
+    def setUp(self):
+        _set_live([{"id": ALPHA, "name": "alpha"}])
+
+    def tearDown(self):
+        os.environ.pop("ROMP_SESSIONS_FILE", None)
+        for rid in (GHOST, "99999999-8888-7777-6666-555555555556"):
+            box = pm.MAILROOT / rid / "new"
+            if box.is_dir():
+                for f in box.iterdir():
+                    f.unlink()
+
+    def _park(self, rid, name, mid="m1"):
+        box = pm.MAILROOT / rid / "new"
+        box.mkdir(parents=True, exist_ok=True)
+        (box / mid).write_text("From: alpha\nFrom-Id: %s\nX-Park: 1\n\nthe handoff body" % ALPHA)
+        pm.NAMES_DIR.mkdir(parents=True, exist_ok=True)
+        (pm.NAMES_DIR / rid).write_text("%s\thost" % name)
+
+    def test_recall_by_dead_name_finds_the_parked_box(self):
+        self._park(GHOST, "ghost")
+        removed = pm._recall(ALPHA, "ghost", None)
+        self.assertEqual([r["id"] for r in removed], ["m1"])
+        self.assertEqual(list((pm.MAILROOT / GHOST / "new").iterdir()), [])
+
+    def test_two_dead_boxes_one_name_refuses(self):
+        twin = "99999999-8888-7777-6666-555555555556"
+        self._park(GHOST, "ghost", mid="m1")
+        self._park(twin, "ghost", mid="m2")
+        self.assertEqual(pm._recall(ALPHA, "ghost", None), [])
+
+    def test_only_the_senders_own_mail_comes_back(self):
+        self._park(GHOST, "ghost")
+        self.assertEqual(pm._recall("00000000-0000-0000-0000-000000000001", "ghost", None), [])
+
+
+class KernelSilenceIsNotDeadness(unittest.TestCase):
+    """The liveness source not ANSWERING is different information from "nobody by that name is
+    live" (the authoritative-sources rule: fail loudly, never degrade silently). _kernel_sessions
+    collapsed both to [], so a send during a kernel restart was refused with a false deadness
+    claim about a demonstrably live peer (sighting 2026-08-29; the retry 101s later delivered).
+    resolve_recipient now probes the source once on the refusal path and answers 503-honestly."""
+
+    def setUp(self):
+        os.environ.pop("ROMP_SESSIONS_FILE", None)
+        self._base = pm.KERNEL_BASE
+        pm.KERNEL_BASE = "http://127.0.0.1:9"      # nothing listens: every fetch fails fast
+
+    def tearDown(self):
+        pm.KERNEL_BASE = self._base
+        os.environ.pop("ROMP_SESSIONS_FILE", None)
+        pm.HEARTBEATS.clear()
+
+    def test_unanswered_source_refuses_without_claiming_death(self):
+        res = pm.resolve_recipient("ghost")
+        self.assertEqual((res["kind"], res["status"]), ("error", 503))
+        self.assertIn("didn't answer", res["error"])
+        self.assertNotIn("no live romp session", res["error"], "the false deadness claim is the bug")
+
+    def test_an_answered_empty_listing_still_refuses_as_not_live(self):
+        _set_live([])
+        res = pm.resolve_recipient("ghost")
+        self.assertEqual((res["kind"], res["status"]), ("error", 404))
+        self.assertIn("no live romp session named 'ghost'", res["error"])
+
+
 class RemovedSurfacesAreGone(unittest.TestCase):
     def test_removed_mcp_tools_absent(self):
         names = _tool_names()

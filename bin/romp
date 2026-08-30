@@ -1021,6 +1021,8 @@ print(json.dumps(b))' "$_w_cmd" "$_w_key" "$_w_who" "$_w_every" "$_w_timeout" "$
     if [[ "$_resp" == *'"ok": true'* || "$_resp" == *'"ok":true'* ]]; then
         _wid="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["watch"]["id"])' "$_resp" 2>/dev/null || true)"
         echo "romp watch: registered${_wid:+ ($_wid)} — one mail here when the condition holds or the timeout passes"
+        _whint="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("hint") or "")' "$_resp" 2>/dev/null || true)"
+        [[ -n "$_whint" ]] && echo "romp watch: heads-up — $_whint" >&2
         exit 0
     fi
     _err="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("error") or sys.argv[1])' "$_resp" 2>/dev/null || printf '%s' "$_resp")"
