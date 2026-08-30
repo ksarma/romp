@@ -663,6 +663,7 @@ EOF
     _romp_cmd "romp watch --cmd '<pred>' [...]" -       "One mail when the command exits 0 (or the timeout passes) — kernel-owned like watch-pr, for ANY background wait (--every Ns --timeout Ns --note '...' | --list | --cancel <id>)"
     _romp_cmd "romp mail ..."              romp-postal-service  "Romp Postal Service: send <to> <text> | inbox | agents | remote"
     _romp_cmd "romp send <session> [--tag <label>] <text>" - "Hand a session a message; scripts/cron SHOULD pass --tag so it renders machine-sent, not as your typed words"
+    _romp_cmd "romp compact <session> [--wait]" -       "Compact a session's context in place (Claude's /compact) — queued safely if a turn is open; --wait blocks until it finishes (--timeout <s>, default 600)"
     _romp_cmd "romp interrupt <session>"   -            "Interrupt a session's current turn"
     _romp_cmd "romp end <session>"         -            "End a session"
     _romp_cmd "romp checkin <host>"        -            "Publish this machine to an attached hub (romp checkout withdraws)"
@@ -1323,6 +1324,99 @@ if [[ "${1:-}" =~ ^(checkin|checkout)$ ]]; then
     fi
     echo "romp $_verb: kernel refused: $_resp" >&2
     exit 1
+fi
+
+# `romp compact <session> [--wait] [--timeout <s>]` — compact a session's context IN PLACE (Claude's
+# /compact semantics: summarize, keep name/uuid/mailbox/watches) through the kernel's POST /compact —
+# the sanctioned alternative to end+new for a long-lived session, and the external hand a session
+# needs because it cannot /compact ITSELF mid-turn (the user 2026-08-30, via the dashboard team).
+# Rides the chat compact button's exact machinery: a turn open → queued, fires ALONE at turn end;
+# quiet → compacts now. --wait polls the kernel's own compacting signal (GET /sessions rows) until
+# the compaction has STARTED and CLEARED, honest exit 1 on timeout.
+if [[ "${1:-}" == "compact" ]]; then
+    shift
+    _c_usage="usage: romp compact <session> [--wait] [--timeout <s>]"
+    _c_who="${1:-}"
+    # only the verb's own flags are rejected as a name — send accepts dash-leading names, so compact
+    # does too (review find: the sibling convention), while a swapped-order mistake still gets usage
+    if [[ -z "$_c_who" || "$_c_who" == "--wait" || "$_c_who" == "--timeout" ]]; then echo "$_c_usage" >&2; exit 2; fi
+    shift
+    _c_wait=""; _c_to=600
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --wait)    _c_wait=1; shift ;;
+            --timeout) shift; [[ $# -eq 0 || ! "$1" =~ ^(0|[1-9][0-9]+|[1-9])$ ]] && { echo "$_c_usage" >&2; exit 2; }
+                       _c_to="$1"; shift ;;
+            *) echo "$_c_usage" >&2; exit 2 ;;
+        esac
+    done
+    _kport="${ROMP_KERNEL_PORT:-29855}"
+    _payload="$(python3 -c 'import json,sys; print(json.dumps({"name": sys.argv[1]}))' "$_c_who")"
+    _resp="$(_romp_token_cfg | curl -sf -m 10 --config - -X POST "http://127.0.0.1:$_kport/compact"                   -H 'Content-Type: application/json' -d "$_payload")"         || { echo "romp compact: kernel not reachable on :$_kport (is romp running?)" >&2; exit 1; }
+    if [[ "$_resp" != *'"ok": true'* && "$_resp" != *'"ok":true'* ]]; then
+        _c_err="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("error") or sys.argv[1])' "$_resp" 2>/dev/null || printf '%s' "$_resp")"
+        echo "romp compact: refused — $_c_err" >&2
+        exit 1
+    fi
+    if [[ "$_resp" == *'"queued": true'* || "$_resp" == *'"queued":true'* ]]; then
+        _c_queued=1
+        echo "romp compact: queued for $_c_who — the session isn't quiet; it fires the moment the current turn ends"
+    else
+        _c_queued=""
+        echo "romp compact: compacting $_c_who now"
+    fi
+    [[ -z "$_c_wait" ]] && exit 0
+    if [[ "$_resp" == *'"remote"'* ]]; then
+        # a remote session's compaction runs on ITS kernel; the local /sessions poll below would
+        # never see it and report the session dead — refuse the wait honestly instead
+        _c_host="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("remote") or "?")' "$_resp" 2>/dev/null || echo "?")"
+        echo "romp compact: --wait can't follow a remote session from here (it lives on $_c_host) — the compaction was still requested" >&2
+        exit 1
+    fi
+    # Wait for OUR compaction, not a coincidental one: when queued, arm only after a quiet sample
+    # (a compaction already running when we queued is the PRIOR one — ours fires after it).
+    # NB the arming is two statements, not a command-substitution assignment: under set -e an
+    # assignment adopts the substitution's failing status and kills the script (review find — the
+    # queued+--wait path died before its first poll).
+    _c_start="$(date +%s)"; _c_seen=""; _c_armed=""
+    [[ -n "$_c_queued" ]] || _c_armed=1
+    while :; do
+        _c_rows="$(_romp_token_cfg | curl -sf -m 5 --config - "http://127.0.0.1:$_kport/sessions")" || _c_rows=""
+        if [[ -z "$_c_rows" ]]; then
+            _c_state="unknown"                       # a transient kernel blip is not "session gone"
+        else
+            _c_state="$(python3 -c 'import json,sys
+who = sys.argv[2]
+try: rows = json.loads(sys.argv[1])
+except Exception: rows = None
+if rows is None: print("unknown")
+else:
+    for r in rows:
+        if r.get("name") == who or r.get("id") == who:
+            print("compacting" if r.get("compacting") else "quiet"); break
+    else: print("gone")' "$_c_rows" "$_c_who" 2>/dev/null || echo unknown)"
+        fi
+        if [[ "$_c_state" == "quiet" && -z "$_c_armed" ]]; then
+            _c_armed=1
+        elif [[ "$_c_state" == "compacting" && -n "$_c_armed" ]]; then
+            _c_seen=1
+        elif [[ "$_c_state" == "quiet" && -n "$_c_seen" ]]; then
+            echo "romp compact: done — $_c_who compacted ($(( $(date +%s) - _c_start ))s)"
+            exit 0
+        elif [[ "$_c_state" == "gone" ]]; then
+            echo "romp compact: $_c_who is no longer in the session list — it died or was renamed while waiting" >&2
+            exit 1
+        fi
+        if (( $(date +%s) - _c_start >= _c_to )); then
+            if [[ -n "$_c_seen" ]]; then
+                echo "romp compact: still compacting after ${_c_to}s — check the session" >&2
+            else
+                echo "romp compact: didn't see the compaction start within ${_c_to}s — it may be queued behind a long turn (a kernel watch on the /sessions compacting field can keep an eye on it)" >&2
+            fi
+            exit 1
+        fi
+        sleep 2
+    done
 fi
 
 # `romp send|interrupt|end <session> [text]` — headless session control through the kernel HTTP

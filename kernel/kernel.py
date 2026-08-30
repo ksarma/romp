@@ -8353,10 +8353,7 @@ def _drive(msg, client):
         # Mid-turn (or behind an existing queue) the click PARKS as a queued /compact chip and fires when
         # the turn ends (the user 2026-07-02, who saw the icon blink with nothing happening while working — now
         # the queued chip IS the acknowledgement, and later messages chain behind it in press order).
-        if _ops_gate(sid):
-            _park_op(sid, ("compact",))
-        else:
-            be.send(sid, "/compact"); _mark_compacting(sid)   # idle → /compact now + the instant 'compacting' cue
+        _compact_or_park(be, sid)                        # parked → queued chip; quiet → now + the instant cue
     elif t == "sendCommand" and msg.get("cmd"):
         cmd = str(msg["cmd"]).strip()                     # the timeline lane menu sends "/model X" / "/effort X"
         if cmd.startswith("/model "):
@@ -12997,6 +12994,10 @@ def _session_rows():
                     # so the postal bus resolves self-identity through it (the user 2026-07-27: a
                     # post-/clear session mailed as "unknown" and read an empty mailbox).
                     "lastSid": jd._sdk_last_sid(sid) or sid,
+                    # compacting: the corroborated signal the chat chip uses (_compacting_now, cached
+                    # parse), exposed so `romp compact --wait` and scripted recycling can watch a
+                    # compaction start and clear through the kernel's own read, never a scrape.
+                    "compacting": bool(_compacting_now(sid, tm=meta)),
                     "working": notes.get(sid, ""), "backend": meta.get("backend", "")})
     return out
 
@@ -17078,12 +17079,16 @@ def _save_pending_ops():
 _pending_ops = _load_pending_ops()   # sid -> [("send", text, echo) | ("model", v) | ("effort", v) | ("fast", v) | ("compact",), …] in park order
 
 
-def _compacting_now(sid):
+def _compacting_now(sid, tm=None):
     """Is this session compacting RIGHT NOW — the same corroborated signal the chip uses (_compacting:
     live/optimistic state, disproved by resumed work or a compact_boundary, 180s optimistic cap), read
-    from the CACHED parse only so it's cheap enough for the WS handler and the producer tick."""
+    from the CACHED parse only so it's cheap enough for the WS handler and the producer tick. `tm` lets
+    a caller already holding the session's live() meta pass it in — _session_rows exposes this per row,
+    and refetching would pay one full Sessions.live() merge PER ROW on a polled route (review find,
+    2026-08-30)."""
     sid = str(sid)
-    tm = _tmux_sessions().get(sid)
+    if tm is None:
+        tm = _tmux_sessions().get(sid)
     path = _path_of(sid)
     session = (_parse_cached(path) if path else None) or {"turns": []}
     return _compacting(sid, (tm or {}).get("state", ""), session, int(time.time()), (tm or {}).get("since"))
@@ -17348,6 +17353,52 @@ def _send_or_park(be, sid, text, echo=None):
     be.send(sid, text)
     if echo:
         _optimistic_echo(sid, text, author=echo)
+
+
+def _compact_or_park(be, sid):
+    """The ONE compaction entry — the chat's compact button (WS "compact") and POST /compact both land
+    here, so there is never a second compaction path. Not quiet (open turn / compacting / queue ahead /
+    account hold) → park as a ("compact",) op, which fires ALONE at turn end; quiet → /compact NOW with
+    the instant 'compacting' cue. Returns True when parked (queued), False when fired now — the route
+    tells its caller which ("compacting now" vs "queued")."""
+    if _ops_gate(sid):
+        _park_op(sid, ("compact",))
+        return True
+    be.send(sid, "/compact")
+    _mark_compacting(sid)
+    return False
+
+
+def _compact_request(who):
+    """POST /compact's brain, factored for tests: resolve (name or sid, the same _sid_of the /send route
+    uses), forward a remote session over its tunnel, refuse a dead one honestly (a dead session has no
+    context to compact — reviving is the caller's move), else hand to _compact_or_park. First-class
+    headless /compact (the user 2026-08-30, via the dashboard team): the sanctioned alternative to
+    end+new under the worker-recycling rule — a session cannot /compact ITSELF mid-turn, so recycling
+    needs an external hand. Strictly better than `romp send <s> /compact`, whose idle path misses the
+    instant compacting cue."""
+    who = str(who or "")
+    if not who:
+        return {"ok": False, "error": "id or name required", "_status": 400}
+    sid = _sid_of(who)
+    r = _host_for_sid(sid)
+    if r is not None:                                   # remote session → forward over its -L tunnel
+        res = _remote_forward(r, "/compact", {"id": sid})
+        if res is None:                                 # the far kernel didn't answer — say so, never
+            return {"ok": False, "error":               # pretend it compacted
+                    "the remote kernel for this session (%s) isn't answering — nothing was compacted"
+                    % r.get("host", "?")}
+        if not isinstance(res, dict):
+            res = {"ok": True}
+        # the caller's --wait polls the LOCAL /sessions, which never lists remote rows — name the
+        # host so the CLI can refuse the wait honestly instead of reporting the session dead
+        res.setdefault("remote", str(r.get("host") or "?"))
+        return res
+    if sid not in Sessions.live():
+        return {"ok": False, "error":
+                "no live session named '%s' — a dead session has no context to compact; revive it first"
+                % who}
+    return {"ok": True, "queued": _compact_or_park(Sessions.backend_for(sid), sid)}
 
 
 def _set_model_or_park(be, sid, value):
@@ -30027,6 +30078,17 @@ class Handler(BaseHTTPRequestHandler):
                 # isn't a human composer bubble.
                 _send_or_park(Sessions.backend_for(sid), sid, body["text"])
                 return self._send(200, json.dumps({"ok": True}), "application/json")
+            if u.path == "/compact":
+                # `romp compact <session>` — see _compact_request. Body: {"id"|"name": <session>};
+                # response {"ok", "queued"} so the CLI can say "compacting now" vs "queued".
+                try:
+                    b = json.loads(raw_body or b"{}")
+                    who = str(b.get("id") or b.get("name") or "") if isinstance(b, dict) else ""
+                except Exception:
+                    who = ""
+                res = _compact_request(who)
+                status = res.pop("_status", 200)
+                return self._send(status, json.dumps(res), "application/json")
             if u.path in ("/interrupt", "/end"):
                 # Headless session control (2026-07-05): interrupt/end existed ONLY as WS drive ops, so
                 # a session could be FED without a browser (POST /send, postal) but never STOPPED — a
