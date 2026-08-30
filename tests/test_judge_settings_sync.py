@@ -18,6 +18,7 @@ import contextlib
 import io
 import os
 import tempfile
+import time
 import unittest
 from importlib.machinery import SourceFileLoader
 
@@ -70,6 +71,38 @@ class ApplySettings(unittest.TestCase):
         res = km._apply_judge_settings({"commentModel": "gpt-99", "commentFast": "true"})
         self.assertEqual((res["commentModel"], res["commentFast"]), ("claude-opus-5", "on"),
                          "garbage never reaches the files or `claude --model`")
+
+    def test_an_older_propagated_value_never_overwrites_a_newer_pick(self):
+        # THE REPORTED STOMP (the user 2026-08-30): their Distilling pick kept resetting — any
+        # later-arriving propagation replaced a fresher local pick wholesale, because the apply had
+        # no notion of WHEN each value was picked. Now every propagated field carries its pick
+        # stamp, and older-or-equal never lands.
+        km._apply_judge_settings({"distillModel": "claude-opus-4-8"})   # the user's pick, mtime = now
+        res = km._apply_judge_settings({"distillModel": "triage",
+                                        "stamps": {"distillModel": time.time() - 3600}})
+        self.assertEqual(res["distillModel"], "claude-opus-4-8",
+                         "an hour-old peer value must not stomp the fresh pick")
+        newer = time.time() + 60
+        res = km._apply_judge_settings({"distillModel": "triage", "stamps": {"distillModel": newer}})
+        self.assertEqual(res["distillModel"], "triage", "a genuinely newer pick still lands")
+        self.assertAlmostEqual((km.jd.STATE / "distill-model").stat().st_mtime, newer, delta=1,
+                               msg="the ORIGIN's pick time rides the file, so recency survives re-fans")
+
+    def test_a_stampless_body_keeps_the_legacy_apply(self):
+        # an older kernel (or a manual curl) sends no stamps — it applies unconditionally, exactly
+        # as before; the stomp protection needs both ends on this code
+        km._apply_judge_settings({"distillModel": "claude-opus-4-8"})
+        res = km._apply_judge_settings({"distillModel": "haiku"})
+        self.assertEqual(res["distillModel"], "haiku")
+
+    def test_a_rejected_value_never_steals_the_stamp(self):
+        # garbage with a newer stamp: the setter refuses it, and the utime must NOT re-stamp the
+        # surviving old content with the new time (that would shadow-block the next honest pick)
+        km._apply_judge_settings({"judgeModel": "fable"})
+        t0 = (km.jd.STATE / "judge-model").stat().st_mtime
+        km._apply_judge_settings({"judgeModel": "gpt-99", "stamps": {"judgeModel": time.time() + 999}})
+        self.assertEqual((km.jd.STATE / "judge-model").read_text(), "fable")
+        self.assertEqual((km.jd.STATE / "judge-model").stat().st_mtime, t0)
 
     def test_distill_sentinel_returns_the_pair_to_follow_mode(self):
         km._apply_judge_settings({"distillModel": "haiku", "distillEffort": "high"})
@@ -136,9 +169,24 @@ class PropagateFansOut(unittest.TestCase):
     def test_every_up_kernel_with_an_admin_path_gets_the_pick(self):
         km._remote_kernel_call = lambda r, m, p, payload=None, timeout=8: (
             self.calls.append((r["host"], m, p, payload)) or (200, {"ok": True}, None))
+        try:
+            (km.jd.STATE / "judge-model").unlink()   # never picked here -> no stamp to carry
+        except OSError:
+            pass
         km._propagate_judge_settings({"judgeModel": "fable"})
-        self.assertEqual(self.calls, [("boxup", "POST", "/judge-settings", {"judgeModel": "fable"})],
+        self.assertEqual(self.calls,
+                         [("boxup", "POST", "/judge-settings", {"judgeModel": "fable", "stamps": {}})],
                          "up + token only; a down row or one with no token is not an admin path")
+
+    def test_the_fanned_body_stamps_each_field_with_its_pick_time(self):
+        # the user 2026-08-30 ("my Distilling pick continually gets reset"): authority is per field
+        # and per PICK TIME — the stamp is the STATE file's own mtime, the pick event itself
+        km._remote_kernel_call = lambda r, m, p, payload=None, timeout=8: (
+            self.calls.append(payload) or (200, {"ok": True}, None))
+        km._set_distill_model("claude-opus-4-8")
+        want = (km.jd.STATE / "distill-model").stat().st_mtime
+        km._propagate_judge_settings({"distillModel": "claude-opus-4-8"})
+        self.assertEqual(self.calls[0]["stamps"], {"distillModel": want})
 
     def test_a_miss_is_loud_and_names_the_machine(self):
         km._remote_kernel_call = lambda *a, **k: (None, None, "could not reach boxup's kernel: boom")
