@@ -179,6 +179,32 @@ class MemoDeadlock(unittest.TestCase):
         self.assertEqual([r["verdict"] for r in self._rows()], ["skipped-redundant"],
                          "…silently — the park is the state, the mint row was its record")
 
+    def test_a_held_rearm_logs_once_not_per_visit(self):
+        # the adversarial pass's catch: a downstream hold can defer the fire for many ticks with
+        # the memo keys still the old pair — without the rearm stamp, re-armed logged per visit,
+        # the very shape this round kills. Simulate the hold with a not-redundant verdict whose
+        # fire is deferred by a reviver: judge says fire, reviver defers, keys unchanged.
+        self._seed_rec({"lastTurnId": "t0", "count": 1, "answeredAt": NOW - 300,
+                        "redundantSkips": 1, "redundantEvT": ARM_T + 50, "redundantSettleT": 0})
+        km._last_state = lambda sid: ("idle", NOW - 30)   # a key moved → the park lifts
+        km._revivers_pending = lambda *a: "judge-pass"     # …but a reviver holds every fire
+        self._tick()
+        self._tick()
+        self.assertEqual(self.sent, [], "the hold defers the fire")
+        self.assertEqual([r["verdict"] for r in self._rows()], ["re-armed"],
+                         "…and the lift logged ONCE across both held visits")
+
+    def test_an_unreadable_report_keeps_the_park(self):
+        # the conservative leg: the memo dies when the report MOVES — a transient read failure is
+        # not a move, so the park stands (no re-arm row, no judge call, no fire).
+        self._seed_rec({"lastTurnId": "t0", "count": 1, "answeredAt": NOW - 300,
+                        "redundantSkips": 1, "redundantEvT": ARM_T + 50, "redundantSettleT": 0})
+        self.reports = [("", 0)]
+        self._tick()
+        self.assertEqual(self.sent, [], "no blind re-arm off a failed read")
+        self.assertEqual(self.judge_calls, [])
+        self.assertEqual(self._rows(), [])
+
     # ── the parked dead-man: the quiet-session deadlock's exit ──
     def test_parked_past_the_deadman_fires_once_and_writes_a_fresh_record(self):
         self._seed_rec({"lastTurnId": "t0", "count": 1, "answeredAt": PARKED,

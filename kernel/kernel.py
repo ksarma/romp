@@ -3791,10 +3791,12 @@ def _log_nudge_event(sid, gid, t, count, verdict="fired", ev_t=None, parked_s=No
     for the timeline's DEBUG judging band (per-nudge ⚡ marker) AND the redundancy accounting (the
     user 2026-08-25): every decision the gate takes is a row — fired / skipped-redundant /
     held-fresh-re-judged / fired-at-cap / skipped-redundant-at-cap / skipped-redundant-memo (the
-    T142 memo served a ruling already made on this exact evidence, no judge call; the row carries
-    parkedS — seconds the session has sat parked since the skip's answeredAt — so the quiet-session
-    deadlock fingerprint is countable from this log alone, 2026-08-29) / fired-parked-backstop (the
-    memo held but the session sat parked past the dead-man stand — the fire re-engages it) /
+    T142 memo served a ruling already made on this exact evidence, no judge call — since the
+    parked-tick round, 2026-08-30, a parked goal SLEEPS at the gate instead, so this row marks a
+    rare race, never a per-visit re-serve) / re-armed (the park lifted: a memo key moved — written
+    once per key-move, carrying parkedS, seconds since the skip's answeredAt) /
+    fired-parked-backstop (the memo held but the session sat parked past the dead-man stand — the
+    fire re-engages it; carries the final parkedS via its evidence row) /
     resolved-at-send / blocked-on-user-at-send — carrying the evidence snapshot's timestamp, so redundant fires are
     countable from the log alone. That accounting is what extended the freshness guard to the cap
     path (the user 2026-08-27, T120: the pre-T120 force-fired-at-cap rows measured the blind fire
@@ -5580,12 +5582,16 @@ def _auto_nudge_session(s, now, tmux, nudged, waitfor, alive_ids=None):
                     continue                         # PARKED: asleep until its own next event
                 #                                      (dead-man expired → fall through: the batch's
                 #                                       parked-backstop leg owns the fire)
-            else:
+            elif (_cur_ts, _cur_st) != (_prec.get("rearmEvT"), _prec.get("rearmSettleT")):
+                # the park LIFTED — one row per state change. The stamp below is what makes it
+                # once: a downstream hold can defer the fire for many ticks with the memo keys
+                # still the old pair, and without the stamp this leg re-logged per visit (the
+                # adversarial pass's catch) — the very shape this round kills. A fire replaces
+                # the record (stamp drops); a re-memo re-parks it (this leg unreachable).
                 _log_nudge_event(sid, gid, now, _prec.get("count") or 0, verdict="re-armed",
                                  ev_t=_cur_ts, parked_s=(now - _panch) if _panch else None)
-                #                                    ^ the park LIFTED — one row per state change,
-                #                                      visible even if a downstream hold then defers
-                #                                      the fire; the batch re-judges right after
+                nudged[gid] = dict(_prec, rearmEvT=_cur_ts, rearmSettleT=_cur_st)
+                _put_nudged(gid, nudged[gid])
         # LAST-RESORT GATE (the user 2026-07-22): every OTHER mechanism that could still move this card
         # off 'working' must be exhausted first. This is what the 2026-07-22 false interrupt needed: the
         # card's 'working' came from a STALE agent-to-do mirror, and the nudge fired before the sync that
