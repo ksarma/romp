@@ -31307,6 +31307,20 @@ class Handler(BaseHTTPRequestHandler):
             return False, None, "cross-site origin"
         return False, None, "token required (loopback included; token file: ~/.local/state/romp/serve-token)"
 
+    def _write_token_ok(self, q):
+        """An EXPLICITLY PRESENTED serve token — ?token= or the X-Romp-Token header — and nothing
+        else. STRICTER than _authorize on purpose: it does NOT accept the ambient romp_token cookie,
+        because the cookie is the one credential the browser attaches for you, so a drive-by
+        loopback subresource GET (an <img>/<script>/no-cors fetch to this route) rides it with no
+        Origin, and _authorize takes that pair as authorized. A state-changing GET must require
+        proof the caller is not a drive-by page — the reason _authorize's own docstring gives for
+        preferring the token — and only an explicit token clears BOTH the cross-origin-fetch and the
+        cookie-carrying-subresource vectors (a custom header forces a CORS preflight no-cors cannot
+        send, and no subresource load can set it or guess ?token=). Local daemons (the manager) read
+        the 0600 token file and send X-Romp-Token — exactly this."""
+        return bool(TOKEN) and (_ct_eq((q.get("token") or [""])[0], TOKEN)
+                                or _ct_eq(self.headers.get("X-Romp-Token") or "", TOKEN))
+
     def _file_preview(self, q, head=False):
         """GET/HEAD /file — the preview bytes behind a chat path-thumbnail (the
         user 2026-07-08). Same path resolution as click-to-open (~ expanded, relative → the session's
@@ -31531,16 +31545,22 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, json.dumps(_version_info()), "application/json", cache="no-cache")
             if p == "/busy":
                 # In-flight SDK turn count — the manager's quiet-window gate for deferred deploy
-                # refreshes (it polls this only while a refresh is pending). Auth-exempt like
-                # /healthz: the manager holds no token, and a bare count leaks nothing.
+                # refreshes (it polls this only while a refresh is pending). The READ is auth-exempt
+                # like /healthz: a bare count leaks nothing and healthz-style probes rely on it.
                 # ?drain=1 (T121): the PARKED poll also refreshes the kernel's drain lease — new
                 # turn starts hold so this count falls to 0 on turn-end events instead of only via
-                # the manager's backstop cut. One round-trip arms both; a plain /busy never holds.
+                # the manager's backstop cut. THE DRAIN ARM IS A WRITE — it holds EVERY session's
+                # new turn starts, refreshable forever — so it is GATED on an explicit token
+                # (_write_token_ok), unlike the exempt read. Upstream armed it in the exempt block:
+                # a drive-by loopback page's no-cors GET or a tailnet client could loop it and
+                # freeze all turn starts (the _authorize docstring's drive-by-loopback adversary).
+                # An unauthorized drain still returns the count (the read stays exempt) but arms
+                # nothing; the manager reads the serve-token file and sends X-Romp-Token.
                 be = _sdk()
                 n = be.busy_count() if be and hasattr(be, "busy_count") else 0
                 draining = False
                 if be is not None and hasattr(be, "refresh_drain_hold"):
-                    if parse_qs(urlparse(self.path).query).get("drain", [""])[0] == "1":
+                    if q.get("drain", [""])[0] == "1" and self._write_token_ok(q):
                         be.refresh_drain_hold()
                     draining = be.drain_holding()
                 return self._send(200, json.dumps({"busy": n, "draining": draining}),

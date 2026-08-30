@@ -325,12 +325,30 @@ function quietGate(st, busy, now, opts) {
 
 let pendingQuiet = null;   // {since, count, mode:'all'|<kernel id>, timer}
 
+// The primary kernel's serve token. The drain arm of '/busy?drain=1' is a WRITE — it holds every
+// session's new turn starts — so the kernel now requires the token for it (a drive-by loopback page
+// or a tailnet client, holding no token, can no longer freeze turns by looping the poll). We are the
+// same-user local daemon: read the 0600 token file (the kernel writes it under its state root on
+// startup), or the env a profile baked in. Absent/unreadable → the poll still reads the count (the
+// read stays auth-exempt), the drain hold just does not arm; the quiet-window gate still works off
+// the count. Read fresh each poll so a kernel that reminted its token is picked up.
+function kernelToken() {
+  const t = (process.env.ROMP_SERVE_TOKEN || '').trim();
+  if (t) return t;
+  try { return fs.readFileSync(path.join(STATE_ROOT, 'serve-token'), 'utf8').trim(); }
+  catch (e) { return ''; }
+}
+
 function fetchBusy(port, cb, path) {
   // the PARKED quiet poll passes '/busy?drain=1' (T121): the same probe that reads the count also
   // refreshes the kernel's drain lease, so new turn starts hold while the restart is parked and
   // the count falls on turn-end events. The lease dies by itself (~12s) when this manager stops
-  // polling — no off-switch to forget — and a fresh kernel boots clear by construction.
-  const req = http.get({ host: HOST, port, path: path || '/busy', timeout: 2000 }, (res) => {
+  // polling — no off-switch to forget — and a fresh kernel boots clear by construction. The drain
+  // arm is a gated WRITE, so present the token (X-Romp-Token, the fork's local-client idiom); a
+  // plain read needs none, but carrying it costs nothing.
+  const tok = kernelToken();
+  const headers = tok ? { 'X-Romp-Token': tok } : {};
+  const req = http.get({ host: HOST, port, path: path || '/busy', timeout: 2000, headers }, (res) => {
     let b = ''; res.on('data', (d) => (b += d));
     res.on('end', () => { let n = null; try { const v = JSON.parse(b).busy; n = Number.isFinite(v) ? v : null; } catch { n = null; } cb(n); });
   });
