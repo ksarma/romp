@@ -105,7 +105,9 @@ test("figures render AT their mention: after the block naming them; same-block f
   assert.match(RENDER, /const BLOCK_SEL = "p, li, h1, h2, h3, h4, h5, h6, blockquote, td, th";/);
   assert.match(RENDER, /anchor\.insertAdjacentElement\("afterend", strip\);/, "a paragraph's figure lands right after it");
   assert.match(RENDER, /\/\^\(LI\|TD\|TH\)\$\/\.test\(anchor\.tagName\)/, "a list item keeps its figure inside, under its bullet");
-  assert.match(RENDER, /previewable\.slice\(0, 4\)/, "the wallpaper cap stays");
+  // the wallpaper guard survives as the EAGER cap — the remainder folds behind the chip
+  // (the overflow test below) instead of dropping silently (the 2026-08-30 report)
+  assert.match(RENDER, /previewable\.slice\(0, expanded \? previewable\.length : FIG_EAGER\)/, "the eager cap stays");
 });
 
 test("VS Code's pending image chip pulses while the host round-trip is in flight; a failed one doesn't", () => {
@@ -125,6 +127,46 @@ test("full-size images wear the user-image scale — one size per information ty
   assert.match(CSS, /\.path-full-img \{[^}]*max-height: 320px/);
   assert.match(CSS, /\.user-img \{[^}]*max-height: 320px/);
   assert.match(CSS, /\.path-full-pdfcard \{/);
+});
+
+test("figure overflow folds behind '+N more figures' — nothing silently dropped", () => {
+  // The 2026-08-30 report: a message led with four absolute mentions and then listed six VERIFIED
+  // repo-relative ones; the old silent previewable.slice(0, 4) kept exactly the absolutes, which
+  // read as "relative paths don't preview" when the break was the cap all along (the live payload
+  // carried verdicts + pins for all ten). The first FIG_EAGER render eagerly — byte-identical to
+  // the old first-four behavior — the REST render on the chip click at their own mentions through
+  // the same renderFig path, and the expansion latches per event uuid (the openFolds pattern) so
+  // re-renders keep the message open.
+  assert.match(RENDER, /const FIG_EAGER = 4;/);
+  assert.ok(!/previewable\.slice\(0, 4\)/.test(RENDER), "the bare silent cap is gone");
+  assert.match(RENDER, /previewable\.slice\(0, expanded \? previewable\.length : FIG_EAGER\)/);
+  assert.match(RENDER, /const rest = expanded \? \[\] : previewable\.slice\(FIG_EAGER\);/);
+  assert.match(RENDER, /"\+" \+ rest\.length \+ " more figure"/);
+  assert.match(RENDER, /const figsExpanded = new Set<string>\(\);/);
+  assert.match(RENDER, /if \(foldKey\) figsExpanded\.add\(foldKey\);/);
+  // the click acknowledges by BECOMING the figures — chip out, remainder in, same code path
+  assert.match(RENDER, /chip\.remove\(\);\s*\n\s*for \(const p of rest\) renderFig\(p\);/);
+  const calls = RENDER.match(/linkifyFileUris\([^\n]*ev\.uuid\)/g) || [];
+  assert.equal(calls.length, 3, "every call site keys the latch on the event uuid");
+  assert.ok(CSS.includes(".path-more"), "the chip is styled");
+  assert.match(CSS, /\.path-more \{[^}]*background: transparent; border: 1px solid var\(--card-border\)/,
+    "the chip wears the one shared button rest (T151), never its own shade");
+});
+
+test("a verified relative path is previewable exactly like an absolute one — the cap was the only gate", () => {
+  // Parity, pinned where each hop lives: the walk's open target is the kernel's verdict (the token
+  // itself for a tier-1 relative hit, the fixed repo path for tiers 2/3 — so a backticked relative
+  // AND a bare filename both ride), previewKind is extension-only (relativity-blind), and both the
+  // eager and the expanded render hand previewFull the SAME entry previewable carries — pin lookup
+  // included, so a relative embed rides its own pin key ((pathPins || {})[p]).
+  assert.match(RENDER, /const open = isUri \? fileUriToPath\(tok\) : \(fixed \?\? tok\);/);
+  assert.match(RENDER, /previewable\.push\(open\);/);
+  assert.match(PREVIEW, /const ext = path\.slice\(path\.lastIndexOf\("\."\) \+ 1\)\.toLowerCase\(\);/);
+  assert.match(RENDER, /previewFull\(p, renderingOwnerSid \?\? activeId, kernelVerified\.has\(p\), \(pathPins \|\| \{\}\)\[p\]\)/);
+  // kernel side of the same claim: a tier-1 hit keys the verdict AND the pin on the token as
+  // written (relative stays relative; /file?path=<relative>&sid= serves it — verified live)
+  assert.ok(KERNEL.includes("return tok                                        # tier 1"), "tier 1 keeps the token as its own target");
+  assert.match(KERNEL, /pins\[r\] = pin/);
 });
 
 test("previewThumb is gone with the feed's artifact strips (2026-08-14) — the full render is the one preview", () => {

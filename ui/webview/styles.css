@@ -2640,6 +2640,12 @@ body.picker-lifted > #picker.kb-tight { align-items: flex-start; padding: 12px 1
   background: transparent; border: 1px solid var(--card-border);   /* T151: the one button rest */
   font-size: 0.86em; opacity: 0.85; cursor: pointer; }
 .path-full-retry:hover { border-color: var(--accent); }
+/* the figure-overflow chip ("+N more figures") — the retry chip's exact rest (T151: one button rest),
+   one click to expand the folded figures */
+.path-more { display: inline-flex; align-items: center; align-self: center; padding: 5px 10px;
+  border-radius: 8px; background: transparent; border: 1px solid var(--card-border);
+  color: inherit; font: inherit; font-size: 0.86em; opacity: 0.85; cursor: pointer; }
+.path-more:hover { border-color: var(--accent); }
 /* the fixed-footprint wait box shared by the retrying swirl AND the failure chip, so retry churn
    never shifts the chat's scroll (preview.ts mkWait; the user 2026-08-16 watched it thrash ~a line) */
 .path-full-wait { display: inline-flex; flex-direction: column; align-items: center; justify-content: center;
