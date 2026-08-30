@@ -173,6 +173,17 @@ class OwedCoverage(unittest.TestCase):
         self.assertIsNone(self._stored().get("blockSummary"),
                           "nothing stored off a skipped call — next pass re-runs the whole brief")
 
+    def test_a_numbered_question_list_passes_the_count(self):
+        # the decision-list rule and the shortfall guard reinforce each other: one numbered
+        # single-line question per paragraph IS the countable shape — no spurious retry
+        self._world()
+        self.replies = ["BACKGROUND: b.\n\nTAKEAWAY: 1. Confirm the order?\n\n"
+                        "2. Judge-score the labels?\n\n3. Download both now?\n\n"
+                        "4. Extend the check now?"]
+        self._run()
+        self.assertEqual(len(self.calls), 1, "four numbered lines, four paragraphs — complete")
+        self.assertEqual(len(self._stored().get("briefParts") or []), 4)
+
     def test_blankish_separators_count_as_the_feed_renders(self):
         # the kernel counts with the feed's own split (\n\s*\n): a reply whose paragraphs are
         # separated by a whitespace-bearing blank line is complete, not a shortfall
@@ -209,7 +220,9 @@ class ShortfallNote(unittest.TestCase):
     def test_the_note_names_the_count_and_overrides_the_merge_allowance(self):
         jd.brief_llm("g", "w", [("a", "why a"), ("b", "why b")], shortfall=(1, 2))
         self.assertIn("covered 1 of the 2 owed items", self.calls["user"])
-        self.assertIn("exactly 2 paragraphs", self.calls["user"])
+        self.assertIn("exactly 2 numbered paragraphs", self.calls["user"])
+        self.assertIn("yes/no", self.calls["user"],
+                      "the retry converges on the numbered-question shape the standing rule asks for")
         self.assertIn("Even when items come down to the same decision", self.calls["user"],
                       "the override is per-call: the standing spec keeps its measured merge clause")
 
