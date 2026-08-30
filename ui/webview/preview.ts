@@ -466,7 +466,8 @@ export function previewFull(path: string, sid?: string | null, verified = false,
       img.className = "path-full-img";
       img.src = src;
       img.alt = path;
-      img.loading = "lazy";
+      img.loading = "lazy";       // off-screen figures don't fetch until scrolled near (eager-all, 2026-08-30)
+      img.decoding = "async";     // and never decode on the main thread mid-scroll
       img.onclick = (ev) => { ev.stopPropagation(); openLightbox(path, sid, pin); };
       return img;
     };

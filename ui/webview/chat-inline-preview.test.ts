@@ -105,9 +105,8 @@ test("figures render AT their mention: after the block naming them; same-block f
   assert.match(RENDER, /const BLOCK_SEL = "p, li, h1, h2, h3, h4, h5, h6, blockquote, td, th";/);
   assert.match(RENDER, /anchor\.insertAdjacentElement\("afterend", strip\);/, "a paragraph's figure lands right after it");
   assert.match(RENDER, /\/\^\(LI\|TD\|TH\)\$\/\.test\(anchor\.tagName\)/, "a list item keeps its figure inside, under its bullet");
-  // the wallpaper guard survives as the EAGER cap — the remainder folds behind the chip
-  // (the overflow test below) instead of dropping silently (the 2026-08-30 report)
-  assert.match(RENDER, /previewable\.slice\(0, expanded \? previewable\.length : FIG_EAGER\)/, "the eager cap stays");
+  // no eager cap since the user's 2026-08-30 ruling: every mention renders, lazily loaded
+  assert.match(RENDER, /for \(const p of previewable\) renderFig\(p\);/);
 });
 
 test("VS Code's pending image chip pulses while the host round-trip is in flight; a failed one doesn't", () => {
@@ -129,28 +128,17 @@ test("full-size images wear the user-image scale — one size per information ty
   assert.match(CSS, /\.path-full-pdfcard \{/);
 });
 
-test("figure overflow folds behind '+N more figures' — nothing silently dropped", () => {
-  // The 2026-08-30 report: a message led with four absolute mentions and then listed six VERIFIED
-  // repo-relative ones; the old silent previewable.slice(0, 4) kept exactly the absolutes, which
-  // read as "relative paths don't preview" when the break was the cap all along (the live payload
-  // carried verdicts + pins for all ten). The first FIG_EAGER render eagerly — byte-identical to
-  // the old first-four behavior — the REST render on the chip click at their own mentions through
-  // the same renderFig path, and the expansion latches per event uuid (the openFolds pattern) so
-  // re-renders keep the message open.
-  assert.match(RENDER, /const FIG_EAGER = 4;/);
-  assert.ok(!/previewable\.slice\(0, 4\)/.test(RENDER), "the bare silent cap is gone");
-  assert.match(RENDER, /previewable\.slice\(0, expanded \? previewable\.length : FIG_EAGER\)/);
-  assert.match(RENDER, /const rest = expanded \? \[\] : previewable\.slice\(FIG_EAGER\);/);
-  assert.match(RENDER, /"\+" \+ rest\.length \+ " more figure"/);
-  assert.match(RENDER, /const figsExpanded = new Set<string>\(\);/);
-  assert.match(RENDER, /if \(foldKey\) figsExpanded\.add\(foldKey\);/);
-  // the click acknowledges by BECOMING the figures — chip out, remainder in, same code path
-  assert.match(RENDER, /chip\.remove\(\);\s*\n\s*for \(const p of rest\) renderFig\(p\);/);
-  const calls = RENDER.match(/linkifyFileUris\([^\n]*ev\.uuid\)/g) || [];
-  assert.equal(calls.length, 3, "every call site keys the latch on the event uuid");
-  assert.ok(CSS.includes(".path-more"), "the chip is styled");
-  assert.match(CSS, /\.path-more \{[^}]*background: transparent; border: 1px solid var\(--card-border\)/,
-    "the chip wears the one shared button rest (T151), never its own shade");
+test("EVERY figure mention renders eagerly — no cap, no chip (the user's 2026-08-30 ruling)", () => {
+  // Their ruling, paraphrased: they should be able to preview as many images as they want in the
+  // thread — overruling the 4-eager+chip fold shipped a day earlier. All verified mentions render
+  // at their anchors through the one renderFig path; off-screen cost is bounded by the browser's
+  // own lazy loading, never by a count.
+  assert.match(RENDER, /for \(const p of previewable\) renderFig\(p\);/);
+  assert.ok(!/FIG_EAGER|figsExpanded|path-more/.test(RENDER), "the cap/latch/chip machinery is gone, not dormant");
+  assert.ok(!/linkifyFileUris\([^)]*foldKey/.test(RENDER), "the latch's foldKey param retired with it");
+  assert.ok(!CSS.includes(".path-more"), "the chip's CSS retired with it");
+  assert.match(PREVIEW, /img\.loading = "lazy";/);
+  assert.match(PREVIEW, /img\.decoding = "async";/);
 });
 
 test("a verified relative path is previewable exactly like an absolute one — the cap was the only gate", () => {

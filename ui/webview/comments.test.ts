@@ -278,7 +278,7 @@ test("fast rides the create end to end, resolved dialog > setting > inherit at t
   // the chip is offered only where the effective model could run fast (no control that only toasts)
   assert.match(UI, /if \(canFast\(create\.model \|\| setDef\("model"\) \|\| st\?\.model \|\| ""\)\) metaRight\.append\(mkSel\("fast"\)\);/);
   assert.match(UI, /fast: create\.fast \|\| "", color: create\.color \|\| "" \}\);/);
-  assert.match(UI, /fast: c\.fast, color: c\.color \}\);/);   // the in-flight retry keeps the pick
+  assert.match(UI, /fast: c\.fast, color: c\.color \}\);/);   // the in-flight retry keeps the pick (unchanged by the 2026-08-30 eager-all round)
   assert.match(KERNEL, /def _comment_launch_prefs\(model="", effort="", fast=""\):/);
   assert.match(KERNEL, /model, effort, fast = _comment_launch_prefs\(model, effort, fast\)/);
   assert.match(KERNEL, /fast=str\(msg\.get\("fast"\) or ""\)/);       // the ws op hands it through…
