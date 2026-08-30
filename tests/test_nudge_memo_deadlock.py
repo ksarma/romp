@@ -127,18 +127,19 @@ class MemoDeadlock(unittest.TestCase):
     def _rec(self):
         return km._auto_nudge_data()["nudged"][G1]
 
-    # ── the memo veto: two keys, active-session behavior preserved ──
-    def test_same_evidence_same_settle_serves_the_memo_with_parked_s(self):
+    # ── the park gate: a parked goal sleeps — no rows, no work, per visit ──
+    def test_a_parked_goal_sleeps_silently(self):
+        # the parked-tick round (the user 2026-08-30): per-visit memo re-serves were 98.5% of a
+        # day's nudge-events rows (~9k/day). A goal whose memo pair still matches the world is
+        # PARKED: the gate continues before the fire list, the judge batch, and the log — the
+        # log gains rows only on state CHANGES (park mint / re-armed / fired), never per visit.
         self._seed_rec({"lastTurnId": "t0", "count": 1, "answeredAt": NOW - 300,
                         "redundantSkips": 1, "redundantEvT": ARM_T + 50, "redundantSettleT": 0})
         self._tick()
-        self.assertEqual(self.sent, [], "the memo veto stands — no fire")
-        self.assertEqual(self.judge_calls, [], "served from the memo, no judge call")
-        rows = self._rows()
-        self.assertEqual([r["verdict"] for r in rows], ["skipped-redundant-memo"])
-        self.assertEqual(rows[0]["parkedS"], 300,
-                         "the row carries the parked duration — the deadlock fingerprint is "
-                         "countable from the log alone")
+        self._tick()
+        self.assertEqual(self.sent, [], "the park stands — no fire")
+        self.assertEqual(self.judge_calls, [], "…no judge call")
+        self.assertEqual(self._rows(), [], "…and NO rows: two parked visits, zero log growth")
 
     def test_a_new_settle_event_rearms_exactly_one_rejudge_then_rememos(self):
         self._seed_rec({"lastTurnId": "t0", "count": 1, "answeredAt": NOW - 300,
@@ -150,10 +151,13 @@ class MemoDeadlock(unittest.TestCase):
         self.assertEqual(len(self.judge_calls), 1, "the new settle bought exactly ONE re-judge")
         self.assertEqual(self._rec().get("redundantSettleT"), NOW - 30,
                          "…which re-memos against the new settle key")
+        rows = self._rows()
+        self.assertEqual([r["verdict"] for r in rows], ["re-armed", "skipped-redundant"],
+                         "one row per state change: the park lifted, then the re-park")
+        self.assertEqual(rows[0]["parkedS"], 300, "the re-armed row says how long it sat")
         self._tick()
-        self.assertEqual(len(self.judge_calls), 1, "same pair again → served from the memo, no loop")
-        self.assertEqual([r["verdict"] for r in self._rows()],
-                         ["skipped-redundant", "skipped-redundant-memo"])
+        self.assertEqual(len(self.judge_calls), 1, "same pair again → parked, no loop")
+        self.assertEqual(len(self._rows()), 2, "…and the parked visit logs nothing")
 
     def test_a_pre_upgrade_record_missing_the_settle_key_rejudges_exactly_once(self):
         # THE UPGRADE PATH: every record minted before this change carries redundantEvT but no
@@ -171,9 +175,9 @@ class MemoDeadlock(unittest.TestCase):
         self.assertEqual(self._rec().get("redundantSettleT"), 0,
                          "…and the re-memo now carries the settle key")
         self._tick()
-        self.assertEqual(len(self.judge_calls), 1, "second tick serves from the upgraded memo")
-        self.assertEqual([r["verdict"] for r in self._rows()],
-                         ["skipped-redundant", "skipped-redundant-memo"])
+        self.assertEqual(len(self.judge_calls), 1, "second tick: parked on the upgraded memo")
+        self.assertEqual([r["verdict"] for r in self._rows()], ["skipped-redundant"],
+                         "…silently — the park is the state, the mint row was its record")
 
     # ── the parked dead-man: the quiet-session deadlock's exit ──
     def test_parked_past_the_deadman_fires_once_and_writes_a_fresh_record(self):
