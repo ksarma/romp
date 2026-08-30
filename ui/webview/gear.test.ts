@@ -50,6 +50,36 @@ test("the gear posts kernel ops through ONE shared channel (never re-acquires th
     assert.ok(GEAR.includes(`'${op}'`), `gear must post ${op}`);
 });
 
+test("model/effort options are written exactly once — the single-flight /models fetch (2026-08-30)", () => {
+  // The user's "my Distilling pick keeps resetting": fillChoices memoized its RESULT, so a settings
+  // open racing the page-load fetch fired a second /models fetch, and whichever resolved last
+  // REWROTE every select's options AFTER fill() had set their values — a rewritten select falls
+  // back to its first option ("Follow triage" for distill; invisible on Triage model, whose first
+  // option coincides with the stored value). The promise is the memo now; a failed fetch clears it.
+  assert.ok(GEAR.includes("var choicesP = null;"), "the promise is the memo");
+  assert.ok(GEAR.includes("if (choicesP) return choicesP;"), "second callers reuse the in-flight fetch");
+  assert.ok(GEAR.includes("choicesP = null; return null;"), "a failed fetch clears the memo for retry");
+  assert.ok(!GEAR.includes("if (choices) return Promise.resolve(choices);"), "the result-memo race is gone");
+});
+
+test("the login flow lives in a modal behind one button (the user 2026-08-30)", () => {
+  // "it would just be a login button… then it would pop up another modal that says paste the code
+  // so it doesn't always sit there taking up space" — the paste-code UI collapses behind the
+  // Account button; the modal wears the panel treatment (centered card over a dimmed backdrop).
+  assert.ok(GEAR.includes("id=rs-login-modal"), "the modal exists");
+  assert.ok(GEAR.includes("Log in to Claude Code"), "the button says what it does");
+  const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "gear.css"), "utf8");
+  assert.match(CSS, /#rs-login-modal \{ position: fixed; inset: 0; z-index: \d+; background: rgba\(0,0,0,0\.55\);/);
+  assert.match(CSS, /\.rs-login-card \{ background: #252526; border: 1px solid rgba\(255,255,255,0\.12\);/);
+  // mid-flow the button REOPENS the modal, never restarts the flow; terminal state closes it;
+  // Cancel + Escape + backdrop close; the code input stays a pure pass-through (T157)
+  assert.ok(GEAR.includes("if (lgLive === 'url' || lgLive === 'starting' || lgLive === 'verifying') return;"));
+  assert.ok(GEAR.includes("if (!f.state) lgModal(false);"));
+  assert.ok(GEAR.includes("if (e.key === 'Escape' && lgM && !lgM.hidden) lgModal(false);"));
+  assert.ok(GEAR.includes("if (e.target === lgM) lgModal(false);"));
+  assert.ok(GEAR.includes("post({ type: 'loginCode', code: code });"), "pass-through untouched");
+});
+
 test("the distilling tier is its own gear pair, defaulting to follow-triage", () => {
   // The user 2026-08-14: the card-prose judges (distiller, briefer, staller) split out of triage so
   // what you READ can run a richer model than the placement judges. The stored sentinel "triage"

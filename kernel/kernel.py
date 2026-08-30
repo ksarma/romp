@@ -23879,6 +23879,26 @@ _JUDGE_SETTING_FIELDS = (("judgeModel", _set_judge_model), ("indexModel", _set_i
                          ("commentModel", _set_comment_model), ("commentEffort", _set_comment_effort),
                          ("commentFast", _set_comment_fast))
 
+# field -> its STATE file, for the per-field PICK STAMPS below (the user 2026-08-30, whose distill
+# pick kept "resetting": authority between kernels must be per field and per pick time, never
+# whichever machine spoke last).
+_JUDGE_SETTING_FILES = {"judgeModel": "judge-model", "indexModel": "index-model",
+                        "judgeEffort": "judge-effort", "indexEffort": "index-effort",
+                        "distillModel": "distill-model", "distillEffort": "distill-effort",
+                        "commentModel": "comment-model", "commentEffort": "comment-effort",
+                        "commentFast": "comment-fast"}
+
+
+def _setting_stamp(field):
+    """WHEN a kernel-side setting was last picked = its STATE file's mtime. The write IS the pick
+    event (every setter writes the file at pick time), and a propagated apply preserves the ORIGIN's
+    stamp via utime below — so the stamp is the pick's own event time on every machine, and recency
+    comparisons stay honest across hops. None = never picked here."""
+    try:
+        return (jd.STATE / _JUDGE_SETTING_FILES[field]).stat().st_mtime
+    except (OSError, KeyError):
+        return None
+
 
 def _apply_judge_settings(body):
     """Apply any of the judge-tier fields in `body` through the validated setters (garbage
@@ -23887,9 +23907,34 @@ def _apply_judge_settings(body):
     distill pair answers RAW ("triage" = following the triage pick), matching /version: the
     gear shows the user's choice, not its resolution."""
     _dm_before = jd._distill_model()
+    # Per-field PICK AUTHORITY (the user 2026-08-30, whose Distilling pick "continually gets reset"):
+    # a propagated body stamps each field with its pick time, and an OLDER (or same-moment) value
+    # never overwrites a newer local pick — the stomp was any later-arriving propagation replacing a
+    # fresher pick wholesale. A stampless body (an older kernel, a manual curl) keeps the legacy
+    # apply-unconditionally behavior; the protection needs both ends on this code. An applied
+    # stamped field keeps the ORIGIN's pick time (utime) so recency survives re-fans, and the stamp
+    # is copied only when the value actually LANDED (a rejected/garbage value must not steal the
+    # newer time onto the old content).
+    stamps = body.get("stamps") if isinstance(body, dict) and isinstance(body.get("stamps"), dict) else {}
     for key, setter in _JUDGE_SETTING_FIELDS:
         if isinstance(body, dict) and key in body:
+            st = stamps.get(key)
+            try:
+                st = float(st) if st is not None else None
+            except (TypeError, ValueError):
+                st = None
+            if st is not None:
+                local = _setting_stamp(key)
+                if local is not None and local >= st:
+                    continue                          # older never overwrites newer (the fix's whole point)
             setter(str(body.get(key) or ""))
+            if st is not None:
+                try:
+                    p = jd.STATE / _JUDGE_SETTING_FILES[key]
+                    if p.exists() and p.read_text().strip() == str(body.get(key) or "").strip():
+                        os.utime(p, (st, st))
+                except OSError:
+                    pass
     if jd._distill_model() != _dm_before:
         # Switching the distill tier's EFFECTIVE model is a discrete recovery event (the user
         # 2026-08-18, who pointed the tier away from an outage-scoped model and expected the failed
@@ -23922,6 +23967,12 @@ def _propagate_judge_settings(body):
     itself never blocks on the machines. A miss is LOUD (a machine that missed the pick would
     silently run its judges on another model forever) but not retried — the next change re-fans,
     and /judge-settings with {"propagate": true} re-syncs on demand."""
+    # Every fanned field carries its PICK STAMP (the local STATE file's mtime — the pick event
+    # itself, or the origin's preserved time on a re-fan), so the receiving side can refuse an
+    # older value over a newer pick (the user 2026-08-30). Computed once, at fan time.
+    body = dict(body)
+    _st = {f: _setting_stamp(f) for f in body if f in _JUDGE_SETTING_FILES}
+    body["stamps"] = {f: t for f, t in _st.items() if t is not None}
     with _remotes_lock:
         rows = [dict(r) for r in _remotes.values()
                 if r.get("status") == "up" and r.get("local_port") and r.get("token")]
