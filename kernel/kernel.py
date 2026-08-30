@@ -8402,6 +8402,22 @@ def _drive(msg, client):
         client["send"](json.dumps({"type": "cancelResult", "ok": not err, "id": sid,
                                    "md": str(msg.get("md") or ""), "text": err or ""}))
         _push_soon()
+    elif t == "cancelQueued" and msg.get("md"):
+        # ✕ at the OPTIMISTIC stage (the user 2026-08-30, who pressed send mid-compaction and sat in
+        # an unlabeled, uncancellable beat): the client knows only the body — no park/idx has round-
+        # tripped yet — so locate the send wherever it landed. The ws is ordered, so the send op was
+        # processed before this cancel: the FIFO's md-relocate finds a parked one, a backend-queued
+        # one is found by body, and neither means it already forwarded into the CLI — the one honest
+        # refusal, loud (the same cancelResult contract as the park/idx arms).
+        md = str(msg["md"])
+        err = _cancel_parked(sid, -1, md)
+        if err and hasattr(be, "unqueue"):
+            err2 = _cancel_backend_queued(be, sid, -1, md)
+            if err2 is None:
+                err = None
+        client["send"](json.dumps({"type": "cancelResult", "ok": not err, "id": sid,
+                                   "md": md, "text": err or ""}))
+        _push_soon()
     elif t == "dismissEcho" and hasattr(be, "dismiss_echo"):
         # ✕ on a never-delivered bubble (a send whose CLI died holding it — the backend's dropped-echo
         # marking): the user has seen the loss, so retire the echo. Idempotent: a miss means it is

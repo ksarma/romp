@@ -352,7 +352,10 @@ function reconcileOptimistic(s: Session): void {
   if (keep.length) pendingSent.set(s.id, keep); else pendingSent.delete(s.id);
   const inject = keep.filter((p) => !shownProvisional(p.text));
   if (!inject.length) { settle([]); return; }
-  const mk = (p: { text: string; imgPaths?: string[] }) => ({ md: p.text, optimistic: true, cancelable: false, imgPaths: p.imgPaths });
+  // cancelable from the PRESS (the user 2026-08-30, who sent mid-compaction and sat in an unlabeled,
+  // uncancellable beat until the kernel's park round-tripped): the ✕ on an optimistic bubble drops our
+  // re-injection and asks the kernel to cancel by body wherever the send landed (see the qx handler).
+  const mk = (p: { text: string; imgPaths?: string[] }) => ({ md: p.text, optimistic: true, cancelable: true, imgPaths: p.imgPaths });
   const qj = tailQueuedIdx(s.events);
   if (qj >= 0) {
     // something IS queued here → ours queues behind it: show it in that group, under its header, counted
@@ -3397,17 +3400,33 @@ function reflowQueuedGroup(turn: HTMLElement): void {
   const bubbles = Array.from(turn.querySelectorAll(".queued-bubble"));
   if (!bubbles.length) { turn.remove(); return; }
   const label = turn.querySelector(".queued-count") as HTMLElement | null;
-  if (!label) return;                                     // a bare (optimistic) group has no header to fix
+  if (!label) return;
+  if (label.dataset.bare === "1") {                       // the pre-confirmation group recounts in its own words
+    label.textContent = bubbles.length === 1 ? "sending…" : `sending ${bubbles.length}…`;
+    return;
+  }
   const nCmd = bubbles.filter((b) => b.querySelector(".slash-cmd-chip")).length;
   label.textContent = queuedCountText(bubbles.length, nCmd) + (label.dataset.why || "");
 }
 
 function renderQueued(ev: Extract<ChatEvent, { kind: "queued" }>): HTMLElement {
   const turn = el("div", "turn turn-queued");
-  // A BARE group is romp's own optimistic echo with nothing else known-queued: it gets the dashed bubble but
-  // NO header, because "N queued messages" is a claim we can't back for a send the session hasn't confirmed
-  // (the user 2026-07-16). Merged into a real queued group, the header returns and counts ours in — there the
+  // A BARE group is romp's own optimistic echo with nothing else known-queued: "N queued messages" is a
+  // claim we can't back for a send the session hasn't confirmed (the user 2026-07-16) — so it wears its
+  // OWN honest label instead: "sending…" states exactly what is known, the press happened and nothing is
+  // confirmed yet (the user 2026-08-30, who sat in that stage with no state label and no way to cut the
+  // message). Merged into a real queued group, the standard header returns and counts ours in — there the
   // queueing IS established, so assuming this one joins it is honest.
+  if (ev.bare) {
+    const head = el("div", "queued-head");
+    head.appendChild(hourglassIcon());
+    const label = el("span", "queued-count");
+    label.dataset.bare = "1";     // reflow rewrites this label in its own vocabulary, never "N queued"
+    label.textContent = ev.texts.length === 1 ? "sending…" : `sending ${ev.texts.length}…`;
+    label.title = "on its way to the session — cancellable until the session takes it";
+    head.appendChild(label);
+    turn.appendChild(head);
+  }
   if (!ev.bare) {
     const n = ev.texts.length;
     const nCmd = ev.texts.filter((t) => SLASH_CMD_RE.test(t.md)).length;
@@ -3463,13 +3482,14 @@ function renderQueued(ev: Extract<ChatEvent, { kind: "queued" }>): HTMLElement {
     // a MESSAGE returns to the composer to re-edit, a slash COMMAND just cancels. Covers both queues:
     // the backend's own (idx; SDK only — tmux's queue lives inside Claude Code, no recall) and ops
     // PARKED during compaction/model switches (park; romp-owned on every backend).
-    if (t.cancelable && (t.idx !== undefined || t.park !== undefined)) {
+    if (t.cancelable && (t.idx !== undefined || t.park !== undefined || t.optimistic)) {
       const x = el("button", "queued-x");
       x.textContent = "✕";
       x.title = isCmd ? "cancel this queued command" : "cancel this queued message and move it back to the composer";
       x.dataset.act = "qx";
       if (t.idx !== undefined) x.dataset.qidx = String(t.idx);
       if (t.park !== undefined) x.dataset.qpark = String(t.park);
+      if (t.optimistic) x.dataset.qopt = "1";   // ✕ before confirmation → cancel-by-body (no park/idx yet)
       if (isCmd) x.dataset.qcmd = "1";
       (x as any)._qmd = t.md;   // the bubble's body — the kernel's drift guard + the composer restore read it
       bubble.appendChild(x);
@@ -12943,7 +12963,20 @@ setupSettings();
     qx: (el) => {
       if (!activeId || !vscodeApi) return;
       const qmd = (el as any)._qmd as string | undefined;
-      const msg: Record<string, unknown> = { type: "cancelQueued", id: owningSidOf(el), md: qmd };
+      const sidQ = owningSidOf(el) || activeId;
+      if (qmd) {
+        // EVERY ✕ drops our own optimistic entry for the text first (the user 2026-08-30). At the
+        // optimistic stage (qopt) that is the whole client half — the kernel may not have pushed its
+        // park yet, and the reconcile would otherwise repaint the bubble the user just cut. And on a
+        // PARKED/backend ✕ it is just as load-bearing: the kernel bubble had been SUPPRESSING our
+        // still-live entry (shownProvisional), so cancelling only the kernel op resurrected the
+        // cancelled message as a dashed bubble until the TTL (caught by this fix's served-page probe).
+        const list = pendingSent.get(sidQ) || [];
+        const i = list.findIndex((p) => p.text === qmd);
+        if (i >= 0) { list.splice(i, 1); if (list.length) pendingSent.set(sidQ, list); else pendingSent.delete(sidQ); }
+        echoShownSig.delete(sidQ);
+      }
+      const msg: Record<string, unknown> = { type: "cancelQueued", id: sidQ, md: qmd };
       if (el.dataset.qidx !== undefined) msg.idx = Number(el.dataset.qidx);
       if (el.dataset.qpark !== undefined) msg.park = Number(el.dataset.qpark);
       vscodeApi.postMessage(msg);

@@ -1097,6 +1097,48 @@ class ViewBuilder(unittest.TestCase):
         sent = [e for e in events if e["kind"] == "user" and e.get("md") == "and also fix the header"]
         self.assertEqual(sent, [], "it must NOT also show as a sent (solid) user bubble — that was the flip")
 
+    def test_a_mid_compaction_parked_send_renders_queued_and_cancelable_immediately(self):
+        # The user (2026-08-30) pressed send during compaction and sat in an unlabeled, uncancellable
+        # stage. The kernel half of the always-labeled rule, pinned behaviorally: the parked op is in
+        # the VERY NEXT build — the queued append has no compaction gate — carrying its park index and
+        # cancelable:true, so the ✕ exists the moment any push paints (and _park_op marks views dirty,
+        # so that push is immediate, never the backstop poll).
+        km._tmux_sessions = lambda: {SID: {"state": "compacting", "since": NOW - 5, "model": "",
+                                           "effort": "", "context": None, "compactPct": None, "color": None}}
+        km._parse_cache.clear()
+        km._park_op(SID, ("send", "wrap up the strip work", "human"))
+        try:
+            events = km.build_session(SID, NOW)["events"]
+        finally:
+            km._pending_ops.pop(SID, None)
+            km._save_pending_ops()
+        q = [e for e in events if e["kind"] == "queued"]
+        self.assertEqual(len(q), 1, "the parked send renders as a queued bubble DURING compaction")
+        m = q[0]["texts"][0]
+        self.assertEqual(m["md"], "wrap up the strip work")
+        self.assertEqual(m["park"], 0)
+        self.assertTrue(m["cancelable"], "a parked send is cancellable from its first paint")
+
+    def test_cancel_by_body_alone_removes_the_parked_op(self):
+        # The optimistic ✕'s kernel contract (the user 2026-08-30): the client knows only the BODY —
+        # no park index has round-tripped yet — so the md-relocate finds and drops the op; a repeat
+        # is the honest loud miss, never a silent fake-delete. The ws arm speaking this (md-only
+        # cancelQueued: FIFO first, then the backend queue, then the loud refusal) is source-pinned.
+        km._park_op(SID, ("send", "wrap up the strip work", "human"))
+        try:
+            self.assertIsNone(km._cancel_parked(SID, -1, "wrap up the strip work"))
+            self.assertNotIn(SID, km._pending_ops, "the FIFO op is gone")
+            miss = km._cancel_parked(SID, -1, "wrap up the strip work")
+            self.assertIn("too late", miss)
+        finally:
+            km._pending_ops.pop(SID, None)
+            km._save_pending_ops()
+        import inspect
+        src = inspect.getsource(km)
+        self.assertIn('elif t == "cancelQueued" and msg.get("md"):', src)
+        self.assertIn("err = _cancel_parked(sid, -1, md)", src)
+        self.assertIn("err2 = _cancel_backend_queued(be, sid, -1, md)", src)
+
     def test_tmux_echo_the_transcript_OVERTOOK_is_not_counted_as_queued(self):
         # The reported bug (the user 2026-08-26): a busy session's queued header counted sends from DAYS
         # earlier — echoes whose text never landed verbatim (one lost at the pane, two delivered under text
