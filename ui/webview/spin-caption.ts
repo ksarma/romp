@@ -219,12 +219,15 @@ export function spinFor(it: SpinItem, distillPending: boolean, dCompleted: boole
     }
     if (it.sessState === "quiet") {
       return {
-        // plain truth (the user 2026-08-24): the old line promised the session's NEXT turn, but the
-        // next turn may work another thread entirely — this goal resumes when its own wait ends
-        caption: "Paused — resumes when its wait ends",
-        tip: "Nothing is in motion right now: the session is between turns and this goal stays open. "
-           + "It picks back up when the session returns to this thread — not necessarily on its very "
-           + "next turn.",
+        // plain truth, round two (the user 2026-08-29, who went looking in the chat for the "wait"
+        // this line implied): there is no inspectable wait — the session is simply between turns
+        // with the goal open. The 2026-08-24 constraint stands too: never promise the session's
+        // NEXT turn (it may work another thread). Say only what is so.
+        caption: "Paused — nothing running right now; the session picks this back up",
+        tip: "Nothing is in motion: the session is between turns and this goal stays open. It picks "
+           + "back up when the session returns to this thread — not necessarily on its very next "
+           + "turn — and if it stays parked, romp nudges the session about it, so this card can't "
+           + "silently rot.",
         awaitingBg: false,
         still: true,
       };

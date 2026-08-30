@@ -230,9 +230,13 @@ test("THE FLOOR IS TOTAL — a working-column card can never be mute (the user 2
   assert.equal(open.caption, "Working…");
   assert.ok(!open.still, "an open turn spins — it IS in flight");
   const quiet = spinFor({ column: "working", sessState: "quiet" }, false, false, 100);
-  assert.match(quiet.caption || "", /^Paused — resumes when its wait ends$/);   // plain truth (the user
-  // 2026-08-24): never promise the session's NEXT turn — waits lift on their own ending events, and
-  // the next turn may work another thread entirely
+  assert.match(quiet.caption || "", /^Paused — nothing running right now; the session picks this back up$/);
+  // plain truth, both rounds pinned: no NEXT-turn promise (2026-08-24 — the next turn may work
+  // another thread) and no implied inspectable "wait" either (2026-08-29 — the user went looking
+  // in the chat for one). The tooltip may promise the chase: the memo re-arm + dead-man backstop
+  // landed 2026-08-27, so "romp nudges the session if this stays parked" is now simply true.
+  assert.ok(!/wait/.test(quiet.caption || ""), "no invented wait to go looking for");
+  assert.match(quiet.tip || "", /romp nudges the session about it/, "the chase promise — true since the dead-session round");
   assert.equal(quiet.still, true, "nothing in motion → the glyph stills (a spin would lie)");
   const unk = spinFor({ column: "working", sessState: "unknown" }, false, false, 100);
   assert.match(unk.caption || "", /unknown — this machine isn't reporting/);
