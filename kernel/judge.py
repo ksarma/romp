@@ -1006,6 +1006,16 @@ def _judge_env(tier, auth="login"):
     for k in ("TMUX", "TMUX_PANE"):
         env.pop(k, None)
     env["ROMP_SUMMARIZING"] = "1"                     # trips the Stop-hook recursion guard
+    # NO PROMPT CACHING for judge calls (user-approved via the nightly optimizer, 2026-08-30): a
+    # one-shot `claude -p` judge call pays the 1.25x cache-WRITE premium on nearly its whole prompt
+    # and never reads back — cache_r was 0 across every call in two 24h windows, because the per-call
+    # security mark (_mark: a fresh CSPRNG token in the SYSTEM prompt, re-rolled so a learned mark
+    # can't be replayed) makes every prefix unique BY DESIGN. Measured live: with this var the CLI
+    # sends no cache_control breakpoints, the same tokens bill as plain input, and an identical call
+    # costs 19.6% less ($0.0161 vs $0.0200 on a 5.1k-token sonnet probe); ~$12/day on this box's
+    # judge volume alone. If the marks are ever made prefix-stable (a security-semantics change,
+    # the user's call), flip this off so clustered calls READ instead — reads beat no-cache 10:1.
+    env["DISABLE_PROMPT_CACHING"] = "1"
     if tier == "index":
         env["MAX_THINKING_TOKENS"] = "0"              # no thinking for mechanical summarization (the cost lever)
     if auth == "key" and wk:

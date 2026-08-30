@@ -5919,6 +5919,16 @@ class JudgeEnv(unittest.TestCase):
         self.assertEqual(jd._judge_env("index").get("MAX_THINKING_TOKENS"), "0",
                          "captioner/archiver run with thinking off")
 
+    def test_every_tier_disables_prompt_caching(self):
+        # One-shot judge calls never read the cache back — the per-call security mark re-rolls the
+        # system prompt every call, so every prefix is unique and cache_r stayed 0 across full 24h
+        # windows while every call paid the 1.25x cache-write premium (user-approved fix via the
+        # nightly optimizer, 2026-08-30; measured 19.6% per-call saving live). Every tier: the mark
+        # rides triage, distill, and index calls alike.
+        for tier in ("triage", "distill", "index"):
+            self.assertEqual(jd._judge_env(tier).get("DISABLE_PROMPT_CACHING"), "1",
+                             "%s judge calls must not pay the cache-write premium" % tier)
+
     def test_triage_tier_does_not_force_thinking_off(self):
         had = os.environ.pop("MAX_THINKING_TOKENS", None)   # isolate from an inherited cap
         try:
