@@ -577,25 +577,36 @@ def _kernel_sessions(threads=False):
 
     ROMP_SESSIONS_FILE is a test seam (like ROMP_*_BIN): a JSON file of the same rows, read instead of the
     live kernel so the bus is testable without one."""
+    return _kernel_sessions_checked(threads=threads)[0]
+
+
+def _kernel_sessions_checked(threads=False):
+    """(rows, answered) — answered False means the liveness source DID NOT ANSWER (the kernel is
+    unreachable, typically mid-restart), which is different information from an empty listing.
+    Callers that are about to make a CLAIM about liveness (resolve_recipient's refusal) must
+    check `answered` — an unanswered fetch collapsed to [] read exactly like universal deadness,
+    and the refusal it produced blamed a demonstrably live peer (sighting 2026-08-29: a send was
+    refused as not-live mid-restart; the retry 101 seconds later delivered)."""
     seam = os.environ.get("ROMP_SESSIONS_FILE")
     if seam:
         try:
             data = json.loads(Path(seam).read_text())
             if not isinstance(data, list):
-                return []
+                return [], True
             # the seam mirrors the route: thread rows ride only when asked (the user 2026-08-22)
-            return data if threads else [r for r in data if not (isinstance(r, dict) and r.get("thread"))]
+            return (data if threads else
+                    [r for r in data if not (isinstance(r, dict) and r.get("thread"))]), True
         except Exception:
-            return []
+            return [], True
     import urllib.request
     try:
         req = urllib.request.Request(KERNEL_BASE + "/sessions" + ("?threads=1" if threads else ""),
                                      headers={"X-Romp-Token": SERVE_TOKEN})
         with urllib.request.urlopen(req, timeout=2) as r:
             data = json.loads(r.read().decode("utf-8"))
-        return data if isinstance(data, list) else []
+        return (data if isinstance(data, list) else []), True
     except Exception:
-        return []
+        return [], False
 
 
 def local_agents(threads=False):
@@ -767,9 +778,10 @@ def resolve_recipient(to, frm_id=""):
     # unique by construction, so the ambiguity arm below never fires for it; the self-send check
     # still does — mailing your own sid is the same loopback as mailing your own name.
     by_id = bool(re.fullmatch(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", bare))
+    pool = all_agents(threads=True)                                   # threads addressable for replies
     direct_all = ([] if (want_host and want_host != here)
-                  else [a for a in all_agents(threads=True)
-                        if (a.get("id") == bare if by_id else a["name"] == bare)])   # threads addressable for replies
+                  else [a for a in pool
+                        if (a.get("id") == bare if by_id else a["name"] == bare)])
     if not direct_all and not by_id and not want_host             and re.fullmatch(r"[0-9a-fA-F][0-9a-fA-F-]{7,35}", bare):
         # a SHORT id — the ` · <8-char>` form every list_agents row now carries (the user
         # 2026-08-24) — addresses by unambiguous id PREFIX, so the row is enough to act on. An
@@ -777,7 +789,7 @@ def resolve_recipient(to, frm_id=""):
         # a stray word can never catch a session by luck; a remote row's id ("host:uuid") matches
         # on its uuid part, the part the row shows. TWO prefix hits fall through to the standing
         # ambiguity refusal below, exactly like a duplicated name.
-        direct_all = [a for a in all_agents(threads=True)
+        direct_all = [a for a in pool
                       if str(a.get("id") or "").rsplit(":", 1)[-1].startswith(bare)]
 
     if frm_id and any(a["id"] == frm_id for a in direct_all):
@@ -818,7 +830,18 @@ def resolve_recipient(to, frm_id=""):
                          "postal isolation — its mailbox icon is toggled off), so it can't receive "
                          "mail right now. YOUR mailbox is fine; nothing was sent. It'll "
                          "be reachable once the user toggles ITS mailbox back on." % to}
-    # Addressing is LIVE-only: no dead-session resurrection, so anything left is a typo.
+    # Addressing is LIVE-only: no dead-session resurrection — but "not live" is a claim about the
+    # world, and the kernel is its authoritative source (fail loudly, never degrade silently, the
+    # user 2026-07-03). Before making the claim, ask whether the source ANSWERED: a mid-restart
+    # kernel yields an empty listing that reads exactly like universal deadness. One loopback GET,
+    # paid only on this refusal path.
+    if not any(not a.get("remote") for a in pool) and not _kernel_sessions_checked()[1]:
+        # only an EMPTY local world raises the question — a listing with live locals in it proves
+        # the source answered (and heartbeating remotes can't vouch for LOCAL liveness)
+        return {"kind": "error", "status": 503,
+                "error": "can't tell whether '%s' is live right now: the liveness source (the romp "
+                         "kernel) didn't answer — likely mid-restart. Nothing was sent, and this is "
+                         "NOT a claim that '%s' is dead. Retry shortly." % (bare, bare)}
     return {"kind": "error", "status": 404, "error": "no live romp session named '%s'" % to}
 
 
@@ -832,6 +855,15 @@ def _recall(from_id, to, mid):
         return []
     if to:
         rid = _recip_id_for(to)
+        if not rid and MAILROOT.is_dir():
+            # Addressing is live-only, but RECALL is not addressing: the sender is unsending their
+            # own bytes, not raising the dead. Mail parked for a session that has since died sits
+            # right here in its new/ — a name that no longer resolves live falls back to the
+            # durable name map so parked mail stays recallable (sighting 2026-08-29: a handoff
+            # parked for a dead session could not be unsent by name; only the raw id worked).
+            hits = [b.name for b in MAILROOT.iterdir()
+                    if b.is_dir() and _name_for_id(b.name) == to]
+            rid = hits[0] if len(hits) == 1 else None    # two dead boxes, one name: refuse, stay scoped
         boxes = [rid] if rid else []
     elif MAILROOT.is_dir():
         boxes = [b.name for b in MAILROOT.iterdir() if b.is_dir()]
