@@ -10308,7 +10308,7 @@ BLOCK_BRIEF_SYS = (
     "must be exactly SOURCE: mN. Do not stop at the takeaway; the SOURCE line always comes last.")
 
 
-def brief_llm(goal_text, work_text, owed, frame=None, user_ask=None):
+def brief_llm(goal_text, work_text, owed, frame=None, user_ask=None, shortfall=None):
     """The briefer's decision brief for one blocked goal from the TRIAGE-tier model (Sonnet). '' on
     failure. Logged as judge='briefer' — its own name, its own prompt (the user 2026-07-08). Its timeline
     mark still rides the distiller row: the kernel folds fine labels to role-family rows (_JUDGE_FAMILY),
@@ -10345,6 +10345,18 @@ def brief_llm(goal_text, work_text, owed, frame=None, user_ask=None):
         user += ("\n<note>The <delegating-request> is how this work was framed when it was handed "
                  "to this session — usually the requester's own words. State what is owed in those "
                  "terms; keep implementation nouns to the supporting detail.</note>")
+    if shortfall:
+        # THE OWED-COVERAGE RETRY (the user 2026-08-30, the dropped-4th-decision specimen): the
+        # standing TAKEAWAY spec is measured wording (see the note above BLOCK_BRIEF_SYS) and
+        # allows same-decision items to merge — which makes an OMITTED item indistinguishable
+        # from a merge in the reply. This per-call note fires only on a counted shortfall, so
+        # the green path's measured behavior is untouched; it overrides the merge allowance for
+        # this one reply because complete coverage outranks brevity once an item has provably
+        # gone missing (the user had to ask what the missing decision was).
+        user += ("\n<note>Your previous draft covered %d of the %d owed items in <owed>. Even "
+                 "when items come down to the same decision, write one short paragraph per owed "
+                 "item, in <owed>'s order — exactly %d paragraphs, each leading with its item's "
+                 "own decision.</note>" % (shortfall[0], shortfall[1], shortfall[1]))
     return _judge_run(_distill_model(), BLOCK_BRIEF_SYS, user, judge="briefer", tier="distill",
                       mark=mk).strip()   # caller splits SOURCE, then caps
 
@@ -10912,6 +10924,34 @@ def _distill_session(fsid, path, now):
             raw = out
             out, src = _split_source(out)
             bg, out = _split_sections(out)
+            # OWED COVERAGE IS COUNTABLE (the user 2026-08-30): a multi-item <owed> demands one
+            # paragraph per item, but the merge allowance made a dropped item look like a merge —
+            # the live specimen rendered decisions 1-3 whole and omitted the 4th entirely, and the
+            # user had to ask what was missing. Fewer paragraphs than owed items is the omission
+            # signal (more is fine — the trailing leftover paragraph): retry ONCE with the
+            # corrective note, and if the count still falls short, store the deterministic brief
+            # built verbatim from the owed pairs — complete by construction, the stamps align, and
+            # honest-plain beats polished-lossy. Countable only for a LIST; a single why that
+            # names several decisions inside its own prose has no deterministic item count.
+            if not proc_only and isinstance(owed, list) and len(owed) > 1:
+                _paras = [p for p in out.split("\n\n") if p.strip()]
+                if len(_paras) < len(owed):
+                    _r2 = brief_llm(nodes[top].get("text", ""), work, owed,
+                                    frame=_deleg_frame(store, top),
+                                    user_ask=_user_ask_text(store, top, fsid, path, now),
+                                    shortfall=(len(_paras), len(owed)))
+                    _o2, _s2 = _split_source(_r2 or "")
+                    _b2, _o2 = _split_sections(_o2)
+                    if len([p for p in _o2.split("\n\n") if p.strip()]) >= len(owed):
+                        raw, out, src = _r2, _o2, _s2
+                        bg = _b2 or bg                 # keep the draft's orientation if the retry lost it
+                    else:
+                        out = "\n\n".join("%s: %s" % ((t or "this sub-goal").strip().rstrip("."),
+                                                       (w or "").strip()) for t, w in owed)
+                        src = None                     # verbatim recorded whys — no model citation
+                        _log_judge_error("briefer", fsid, "owed-shortfall", goal=top,
+                                         note="draft covered %d of %d owed items; retry still short; "
+                                              "stored the verbatim owed list" % (len(_paras), len(owed)))
             nodes[top]["blockSummary"] = out            # full text — NEVER truncate a brief mid-word (the user 2026-07-06)
             nodes[top]["background"] = bg if bg else None   # re-orientation for a reader who forgot the thread (2026-07-02)
             # PER-PARAGRAPH stamps (the user 2026-07-24): a MULTI-item brief writes one paragraph per
