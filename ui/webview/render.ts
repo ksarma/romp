@@ -9317,10 +9317,12 @@ function renderBgTasks() {
   host.classList.remove("bg-awaited");   // re-derived below from THIS payload (renderAwaitWhy adds its own)
   if (!count || !tasks.length) { renderAwaitWhy(host, s || null); return; }
   host.style.display = "";
-  // the AWAITED rows (the user 2026-08-19): when the await-green chip waits on specific tasks, those
-  // rows — and the box holding them — wear a thin outline in the chip's green (awaitingTaskIds, the
-  // kernel's exact launch-id match); the status DOT keeps its meaning (yellow = the task is running)
-  const awaited = new Set<string>((s!.status.state === "awaitingBg" && s!.status.awaitingTaskIds) || []);
+  // the AWAITED rows (the user 2026-08-19): when the chip waits on specific tasks, those rows — and
+  // the box holding them — wear a thin outline in the chip's green (awaitingTaskIds, the kernel's
+  // exact launch-id match); the status DOT keeps its meaning (yellow = the task is running). Keyed on
+  // the ids' PRESENCE, never the chip state (the user 2026-08-30: awaited things show even while the
+  // session is working — the kernel only ships ids when something genuinely awaits them).
+  const awaited = new Set<string>(s!.status.awaitingTaskIds || []);
   host.classList.toggle("bg-awaited", tasks.some((t) => awaited.has(t.id)));
   const sid = activeId as string;
   const open = bgFoldOpen.has(sid);
@@ -9376,7 +9378,11 @@ function renderBgTasks() {
 // (a peer's PR, a build) has no process to kill; tracked run_in_background tasks take the list path
 // above, which carries one Stop per running row.
 function renderAwaitWhy(host: HTMLElement, s: Session | null) {
-  const why = (s && s.status.state === "awaitingBg" && (s.status.awaitingWhy || "").trim()) || "";
+  // Keyed on awaited CONTENT, never the chip state (the user 2026-08-30, their words paraphrased:
+  // even while working, anything the session awaits shows at the chat bottom in the green box). The
+  // kernel ships awaitingWhy whenever something is genuinely awaited — armed kernel watches included,
+  // mid-turn included — so the fields' presence IS the render condition; the chip keeps its meaning.
+  const why = (s && (s.status.awaitingWhy || "").trim()) || "";
   if (!why || !activeId) { host.style.display = "none"; return; }
   host.style.display = "";
   host.classList.add("bg-awaited");   // this whole box IS the awaited thing — the chip's green border
@@ -9417,7 +9423,9 @@ function renderAwaitWhy(host: HTMLElement, s: Session | null) {
     for (const t of items) { const r = el("div", "bg-await-task"); r.textContent = "· " + t; det.appendChild(r); }
   }
   const note = el("div", "bg-await-note");
-  note.textContent = "The session is idle until this finishes; it picks back up on its own when the result lands.";
+  note.textContent = s!.status.state === "awaitingBg"
+    ? "The session is idle until this finishes; it picks back up on its own when the result lands."
+    : "The session keeps working meanwhile; it's told when this lands.";
   det.appendChild(note);
   host.appendChild(det);
 }
