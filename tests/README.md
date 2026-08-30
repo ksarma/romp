@@ -14,7 +14,9 @@ Every bug fix or feature change lands with a test (repo rule). Four suites:
   `vscode-extension/src/*.test.ts`, run with `npm test` from
   `vscode-extension/`. Many pin lines of `kernel/kernel.py` as strings — run
   BOTH this and pytest on every kernel change.
-- **`manager-restart.test.js`** — the node supervisor (`bin/romp-manager`).
+- **`manager-*.test.js`** — the node supervisor (`bin/romp-manager`): restart
+  gating, the kernel registry, and the drain-poll handshake. Run:
+  `node --test tests/manager-*.test.js`.
 
 `fixtures/` must stay SYNTHETIC: invented prompts, placeholder UUIDs, hostname
 `TESTHOST` — never real session data.
