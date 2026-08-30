@@ -28,14 +28,21 @@ test("the plain send registers an optimistic bubble; follow-up/quote sends keep 
   assert.match(RENDER, /else \{ vscodeApi\.postMessage\(\{ type: "sendMessage", id: sid, text \}\); registerOptimistic\(sid, text, imgPaths\); \}/);
   // registerOptimistic shows it NOW (before any push) via reconcile + appendActive
   assert.match(RENDER, /function registerOptimistic\(id: string, text: string, imgPaths\?: string\[\]\): void/);   // + the dragged-image paths → echo thumbnails (2026-08-25)
-  assert.match(RENDER, /if \(v\) v\.stale = true;\s*\n\s*if \(id === activeId\) \{\s*\n\s*appendActive\(\);/);
+  // the active-tab arm still paints via appendActive (the snap gate moved ahead of it, 2026-08-30)
+  assert.match(RENDER, /if \(v\) v\.stale = true;\s*\n\s*if \(id === activeId\) \{/);
+  assert.match(RENDER, /const wasAtBottom = !!content && nearBottom\(content\);\s*\n\s*appendActive\(\);/);
 });
 
-test("your OWN send always reveals itself — the >80px stick rule never hides it below the fold", () => {
-  // appendActive keeps the viewport still when the reader is scrolled up; a send made from there
-  // painted below the fold and looked like it never appeared (the user 2026-08-09). Enter = intent
-  // to see the message, so registerOptimistic scrolls to the bottom, once, at send time.
-  assert.match(RENDER, /appendActive\(\);[\s\S]{0,500}if \(content\) content\.scrollTop = content\.scrollHeight;\s*\n\s*\}\s*\n\}/);
+test("your OWN send reveals itself from the TAIL only — scrolled up, the viewport stays put", () => {
+  // The 2026-08-09 always-reveal snap (Enter = intent to see the message) survives where it belongs:
+  // at — or within the stick rule's 80px of — the bottom. Scrolled UP reading history, the user's
+  // 2026-08-30 ruling overrules it: the send must not move the scroll position at all, so the snap
+  // is gated on a nearBottom read taken BEFORE appendActive lands the bubble (the append grows
+  // scrollHeight, which would misread a tail-sitter as scrolled-up). Behavioral scenarios live in
+  // send-scroll-preserve.test.ts.
+  assert.match(RENDER, /const wasAtBottom = !!content && nearBottom\(content\);\s*\n\s*appendActive\(\);\s*\n\s*if \(content && wasAtBottom\) content\.scrollTop = content\.scrollHeight;/);
+  // the unconditional form is retired everywhere — nothing snaps a scrolled-up reader on send
+  assert.doesNotMatch(RENDER, /if \(content\) content\.scrollTop = content\.scrollHeight;/);
 });
 
 // The reconcile's two IN-PLACE tail mutations — merging into an existing queued group (a busy session

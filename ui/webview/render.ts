@@ -385,13 +385,16 @@ function registerOptimistic(id: string, text: string, imgPaths?: string[]): void
   const v = views.get(id);
   if (v) v.stale = true;
   if (id === activeId) {
-    appendActive();
-    // Your OWN send always reveals itself: appendActive's stick rule keeps the viewport still when
-    // you're read up >80px from the bottom, so a send made while scrolled up painted below the fold
-    // and looked like it never appeared (the user 2026-08-09). Hitting Enter is the intent to see
-    // the message — scroll to it, exactly once, at send time.
+    // Your own send reveals itself only from the TAIL, measured BEFORE the bubble lands (the append
+    // grows scrollHeight, which would misread a tail-sitter as scrolled-up). At — or within the
+    // stick rule's 80px of — the bottom, hitting Enter scrolls to the new bubble, exactly once, at
+    // send time (the user 2026-08-09, whose send painted below the fold and looked lost). Scrolled
+    // UP reading history, the viewport stays exactly where it is and the bubble waits below (the
+    // user 2026-08-30, yanked mid-read by the unconditional snap that used to live here).
     const content = document.getElementById("content");
-    if (content) content.scrollTop = content.scrollHeight;
+    const wasAtBottom = !!content && nearBottom(content);
+    appendActive();
+    if (content && wasAtBottom) content.scrollTop = content.scrollHeight;
   }
 }
 
