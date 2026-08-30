@@ -12056,7 +12056,7 @@ def _node_carded(live, nid, confirming=()):
     return top in live and live[top].get("parentId") is None
 
 
-def _delegate_user_rooted(sender, link_id, paths, now, _depth=0, _seen=None):
+def _delegate_user_rooted(sender, link_id, paths, now, _depth=0, _seen=None, _fb=None):
     """MINT-TIME chain trace (the user 2026-08-25 ~19:4x, who wants team-internal cards not
     CREATED rather than foldable behind a lens): the ROOT HUMAN PROMPT RECORD ({"text","sid"},
     always truthy; record-not-boolean is T105) when the SENDER's linked goal traces
@@ -12091,9 +12091,22 @@ def _delegate_user_rooted(sender, link_id, paths, now, _depth=0, _seen=None):
     And the record carries `askRef`, the proof node's (sender sid, goal id) — the ask's stable
     identity across dispatches and hops — which apply_courier stamps on the minted top and dedupes
     on, so one ask fanned N times to one recipient stays ONE card there."""
+    # THE SHARED FALLBACK SLOT `fb` (the fold-review fix, 2026-08-30): the DEMOTED stored-proof arm
+    # below (carded:False, T126's userAsk-on-node record) is captured into a one-slot holder THREADED
+    # ACROSS THE RECURSION, never returned, so it wins only when the WHOLE climb — every origin hop
+    # and container-sibling included — exhausts, exactly the merge's own stated contract. Before
+    # this each origin-hop callsite did `rec = _delegate_user_rooted(...); if rec: return rec`, which
+    # took an INNER frame's demoted fallback as a final answer and preempted carded evidence the
+    # OUTER climb would still reach above the origin-hop node — minting a standalone recipient top
+    # for an ask that STILL renders on a visible card (the pre-T101 duplicate-card hole) and skewing
+    # askRef with the hop level the walk happened to stop at (_walk_root_record's dedupe key). The
+    # recursion now returns ONLY a DECISIVE record — a carded-hop stand-down or a human prompt
+    # record — or None; the demoted fallback lives in `fb`, first-seen across the whole climb (the
+    # SAME first-seen discipline `fallback` always had within one frame, extended past the boundary).
     if not link_id or _depth >= 8:
-        return None
+        return _fb[0] if (_depth == 0 and _fb) else None
     seen = _seen if _seen is not None else set()
+    fb = _fb if _fb is not None else []               # the top frame owns the slot; inner frames share it
     sstore = load_goals(sender)
     live = sstore.get("nodes") or {}
     conf = frozenset(sstore.get("confirming") or ())  # the rollup's done-confirming window (round 3
@@ -12101,12 +12114,12 @@ def _delegate_user_rooted(sender, link_id, paths, now, _depth=0, _seen=None):
     #                                                   in Working, so it still counts as carded
     nodes = dict(load_goal_archive(sender).get("nodes") or {})
     nodes.update(live)
-    x, last, fallback = link_id, None, None
+    x, last = link_id, None
     while x is not None and (sender, x) not in seen:
         seen.add((sender, x))
         nd = nodes.get(x)
         if not isinstance(nd, dict):
-            return fallback
+            return fb[0] if (_depth == 0 and fb) else None
         ua = nd.get("userAsk")
         if isinstance(ua, dict) and str(ua.get("text") or "").strip():
             if _node_carded(live, x, conf):
@@ -12117,7 +12130,7 @@ def _delegate_user_rooted(sender, link_id, paths, now, _depth=0, _seen=None):
                 if isinstance(nd.get("askRef"), dict):
                     rec["askRef"] = dict(nd["askRef"])
                 return rec
-            if fallback is None:
+            if not fb:
                 # KERNEL-PROVED ROOT ON THE NODE (the user 2026-08-27, T126): only apply_courier
                 # writes userAsk, from a record either walked locally at mint or walked at RELAY
                 # time by the kernel that held the evidence — so a chain reaching such a node is
@@ -12127,17 +12140,20 @@ def _delegate_user_rooted(sender, link_id, paths, now, _depth=0, _seen=None):
                 # foreign read); the stored proof is the surviving evidence. UNCARDED at this hop,
                 # so it yields to any deeper walkable evidence (the carded/askRef discipline
                 # above) and returns only when the climb exhausts — carded:False, exactly where
-                # T101's mint fallback fires.
-                fallback = {"text": str(ua["text"]), "sid": ua.get("sid"), "carded": False,
-                            **({"host": ua["host"]} if ua.get("host") else {})}
+                # T101's mint fallback fires. CAPTURED into the shared `fb` slot (first-seen across
+                # the whole climb), never returned inline: a carded hop or a human record ANYWHERE
+                # above — this frame or any OUTER one still to climb — must still win over it.
+                proof = {"text": str(ua["text"]), "sid": ua.get("sid"), "carded": False,
+                         **({"host": ua["host"]} if ua.get("host") else {})}
                 if isinstance(nd.get("askRef"), dict):
-                    fallback["askRef"] = dict(nd["askRef"])
+                    proof["askRef"] = dict(nd["askRef"])
+                fb.append(proof)
         o = nd.get("origin")
         if (isinstance(o, dict) and o.get("peer") and o.get("goalId")
                 and not o.get("peerHost") and o["peer"] in paths):
-            rec = _delegate_user_rooted(o["peer"], o["goalId"], paths, now, _depth + 1, seen)
-            if rec:
-                return rec
+            rec = _delegate_user_rooted(o["peer"], o["goalId"], paths, now, _depth + 1, seen, fb)
+            if rec:                                    # ONLY a decisive inner record short-circuits;
+                return rec                             # a demoted inner fallback now rides `fb` instead
         pu = nd.get("promptUuid")
         if pu and sender in paths:
             rec = _session_user_prompt_record(sender, paths[sender], pu, now)
@@ -12173,10 +12189,10 @@ def _delegate_user_rooted(sender, link_id, paths, now, _depth=0, _seen=None):
             o = cd.get("origin")
             if (isinstance(o, dict) and o.get("peer") and o.get("goalId")
                     and not o.get("peerHost") and o["peer"] in paths):
-                rec = _delegate_user_rooted(o["peer"], o["goalId"], paths, now, _depth + 1, seen)
-                if rec:
-                    return rec
-    return fallback
+                rec = _delegate_user_rooted(o["peer"], o["goalId"], paths, now, _depth + 1, seen, fb)
+                if rec:                                # container twin of the fix: same discipline —
+                    return rec                         # only a decisive record returns, the proof rides `fb`
+    return fb[0] if (_depth == 0 and fb) else None
 
 
 def _presumed_closed(sid, now):

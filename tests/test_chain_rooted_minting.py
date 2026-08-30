@@ -282,6 +282,82 @@ class TraceRule(unittest.TestCase):
         self.assertTrue(rec, "the chain still proves the root")
         self.assertFalse(rec.get("carded"), "a cleared intermediate is no card — the fallback mints")
 
+    def test_inner_uncarded_fallback_yields_to_outer_carded_top(self):
+        # THE MAIN-LOOP RECURSION FIX (the fold review, 2026-08-30): sender M holds a VISIBLE carded
+        # ask top `p` with a child `x` whose origin hops to a local grand-sender G whose ask node
+        # `ga` is CLEARED — an uncarded stored-proof (T126's demoted fallback). The merge's origin-
+        # hop callsite did `rec = _delegate_user_rooted(...); if rec: return rec`, so it took that
+        # INNER frame's carded:False fallback as a final answer and stopped the walk at G/ga —
+        # instead of climbing the one hop to `p`, the ask's own live card. A carded:False answer
+        # here would mint a standalone recipient top for an ask that STILL renders on a visible
+        # card (the pre-T101 duplicate-card hole). The climb must reach `p`.
+        self._store(MGR, {
+            "p": _node("p", "Ship the demo", None,
+                       userAsk={"text": "the user's ask", "sid": MGR},
+                       askRef={"peer": MGR, "goalId": "p"}),
+            "x": _node("x", "a fanned step", "p",
+                       origin={"peer": GRAND, "goalId": "ga", "msgId": "m0"})})
+        self._store(GRAND, {"ga": _node("ga", "the original ask", None, cleared=True,
+                                        userAsk={"text": "the user's ask", "sid": GRAND},
+                                        askRef={"peer": GRAND, "goalId": "ga"})})
+        rec = jd._delegate_user_rooted(MGR, "x", self.paths, NOW)
+        self.assertTrue(rec.get("carded"),
+                        "the outer climb reaches p, the ask's live card — no standalone re-mint below it")
+        self.assertEqual(rec.get("askRef"), {"peer": MGR, "goalId": "p"},
+                         "…and the dedupe key is the carded top, not the inner cleared proof")
+        self.assertEqual(rec.get("sid"), MGR)
+
+    def test_container_rescue_inner_fallback_yields_to_sibling_evidence(self):
+        # THE CONTAINER-RESCUE TWIN of that fix: the main climb dead-ends at an evidence-free
+        # umbrella, so the sibling rescue runs. childA's origin hop resolves only an uncarded
+        # stored-proof (the demoted fallback); childB carries a live human prompt record. The buggy
+        # rescue callsite (same `if rec: return rec`) returned childA's inner fallback and never
+        # reached childB. The rescue must pass over the demoted fallback and take childB's decisive
+        # record.
+        self._store(MGR, {
+            "U": _node("U", "the dictated round", None, umbrella=True),
+            "childA": _node("childA", "a fanned step", "U",
+                            origin={"peer": GRAND, "goalId": "ga", "msgId": "m0"}),
+            "childB": _node("childB", "the original ask", "U", promptUuid="hu")})
+        self._store(GRAND, {"ga": _node("ga", "an aside", None, cleared=True,
+                                        userAsk={"text": "an aside", "sid": GRAND},
+                                        askRef={"peer": GRAND, "goalId": "ga"})})
+        self._human(MGR)
+        rec = jd._delegate_user_rooted(MGR, "U", self.paths, NOW)
+        self.assertTrue(rec, "the sibling human record proves the round")
+        self.assertEqual(rec.get("askRef"), {"peer": MGR, "goalId": "childB"},
+                         "the rescue takes the sibling's decisive record, not childA's demoted proof")
+        self.assertTrue(rec.get("carded"), "childB renders under the live umbrella")
+
+    def test_askref_consistent_across_a_cross_host_fan(self):
+        # THE DEDUPE-KEY SKEW (_walk_root_record, kernel/kernel.py): one ask fanned to two workers
+        # plants two sibling children under the same carded top `p`, each hopping to a DIFFERENT
+        # local grand-sender's uncarded proof. The record's askRef is the ask's stable identity —
+        # apply_courier dedupes minted tops on it — so both walks must yield the SAME key (p's).
+        # The merge's short-circuit stopped each walk at its own grand-sender's node, so the two
+        # dispatches carried DIFFERENT askRefs and the dedupe minted a twin card where both parents
+        # reused one.
+        self._store(MGR, {
+            "p": _node("p", "Ship the demo", None,
+                       userAsk={"text": "the user's ask", "sid": MGR},
+                       askRef={"peer": MGR, "goalId": "p"}),
+            "x1": _node("x1", "fan to worker one", "p",
+                        origin={"peer": GRAND, "goalId": "ga", "msgId": "m1"}),
+            "x2": _node("x2", "fan to worker two", "p",
+                        origin={"peer": WKR, "goalId": "gb", "msgId": "m2"})})
+        self._store(GRAND, {"ga": _node("ga", "the original ask", None, cleared=True,
+                                        userAsk={"text": "the user's ask", "sid": GRAND},
+                                        askRef={"peer": GRAND, "goalId": "ga"})})
+        self._store(WKR, {"gb": _node("gb", "the original ask", None, cleared=True,
+                                      userAsk={"text": "the user's ask", "sid": WKR},
+                                      askRef={"peer": WKR, "goalId": "gb"})})
+        r1 = jd._delegate_user_rooted(MGR, "x1", self.paths, NOW)
+        r2 = jd._delegate_user_rooted(MGR, "x2", self.paths, NOW)
+        self.assertEqual(r1.get("askRef"), r2.get("askRef"),
+                         "one ask fanned twice must carry ONE dedupe key, not skew with the hop level")
+        self.assertEqual(r1.get("askRef"), {"peer": MGR, "goalId": "p"},
+                         "…the carded ask top, the identity apply_courier dedupes on")
+
 
 BODY = ("Verify the staged run references and report drift.\n"
         "<!-- romp-msg-id: %s -->\n<!-- romp-msg-kind: delegate -->" % MID)
