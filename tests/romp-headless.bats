@@ -144,3 +144,44 @@ PY
     [ "$status" -eq 2 ]
     [[ "$output" == *"usage: romp send"* ]]
 }
+
+# ── romp compact (2026-08-30, the user via the dashboard team) ──
+# First-class in-place compaction: POSTs /compact, tells the caller which arm ran (now vs queued),
+# refuses honestly. The one-shot fake kernel captures the request like the send/interrupt tests.
+
+@test "romp compact <name> POSTs /compact and says compacting now" {
+    start_fake_kernel '{"ok": true, "queued": false}'
+    run "$ROMP_SCRIPT" compact bigctx
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"compacting bigctx now"* ]]
+    grep -q "^/compact$" <(head -1 "$TEST_DIR/req")
+    grep -q '"name": "bigctx"' "$TEST_DIR/req"
+}
+
+@test "romp compact reports queued when a turn is open" {
+    start_fake_kernel '{"ok": true, "queued": true}'
+    run "$ROMP_SCRIPT" compact busy1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"queued for busy1"* ]]
+    [[ "$output" == *"fires the moment the current turn ends"* ]]
+}
+
+@test "romp compact refusals are loud: dead session, unreachable kernel, usage" {
+    start_fake_kernel '{"ok": false, "error": "no live session named '"'"'ghost'"'"' — a dead session has no context to compact; revive it first"}'
+    run "$ROMP_SCRIPT" compact ghost
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"revive it first"* ]]
+    ROMP_KERNEL_PORT=1 run "$ROMP_SCRIPT" compact anyone
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"kernel not reachable"* ]]
+    run "$ROMP_SCRIPT" compact
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"usage: romp compact"* ]]
+    run "$ROMP_SCRIPT" compact who --timeout notanumber
+    [ "$status" -eq 2 ]
+}
+
+@test "romp help lists compact beside the other session verbs" {
+    run "$ROMP_SCRIPT" help
+    [[ "$output" == *"romp compact <session>"* ]]
+}
