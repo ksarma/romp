@@ -11623,6 +11623,33 @@ def list_watches():
         return [{k: r.get(k) for k in _WATCH_KEYS} for r in _watches]
 
 
+def _watch_awaiting(sid):
+    """Armed kernel-owned watches REGISTERED BY this session — generic `romp watch --cmd` rows plus
+    `romp watch-pr` rows — as awaited CONTENT: {"kind","why","since","tasks"} or None. The user's rule
+    (2026-08-30, relayed from a session whose cluster-job watch showed only a chip tooltip): ANY awaited
+    thing — jobs, watches, pending externals — shows in the chat's green box, even mid-turn. A watch row
+    is event-true at both ends (armed at registration, removed when the predicate fires, times out, or
+    is cancelled), and it's kernel-owned, so this source survives restarts like the watches themselves.
+    `tasks` lists each watch in the registrant's own words (the --note, else an elided predicate), so a
+    plural wait can enumerate them in the box's fold."""
+    sid = str(sid)
+    with _watch_lock:
+        rows = [dict(r) for r in _watches if str(r.get("sid")) == sid]
+    prs = [dict(r) for r in _pr_watches if str(r.get("sid")) == sid]   # tick-thread idiom: copy, no lock
+    descs = []
+    for r in rows:
+        note = (r.get("note") or "").strip()
+        cmd = str(r.get("cmd") or "")
+        descs.append(note or "a kernel watch: %s" % (cmd if len(cmd) <= 80 else cmd[:77] + "…"))
+    for r in prs:
+        descs.append("PR #%s (%s) to land" % (r.get("pr"), r.get("repo")))
+    if not descs:
+        return None
+    since = min([r.get("at") for r in rows + prs if r.get("at")] or [None])
+    why = ("waiting on " + descs[0]) if len(descs) == 1 else         ("waiting on %d armed watches — %s, …" % (len(descs), descs[0]))
+    return {"kind": "job", "why": why, "since": since, "tasks": descs}
+
+
 def _watch_notice(kind, row, detail=""):
     """The one mail a generic watch sends — the [romp] mechanics-notice family (ABOUT romp's own
     watch service, like the pr-watch and restart notices). PURE for the voice test. The session's
@@ -14423,6 +14450,14 @@ def _session_awaiting(sid, path, idle, stamp=False):
             return {"kind": kind, "since": since,
                     "why": "waiting on %d background tasks%s"
                            % (len(pending), (" — " + d0 + ", …") if d0 else "")}
+    # Source 0.9 — ARMED KERNEL WATCHES this session registered (`romp watch --cmd` / `romp watch-pr`):
+    # kernel-owned and restart-proof like the rows themselves, event-true at both ends (armed at
+    # registration, cleared when the predicate fires or the watch cancels/times out). The user's rule
+    # (2026-08-30): ANY awaited thing shows — an idle session holding only a watch used to read plain
+    # ready, its wait visible nowhere but `romp watch --list`.
+    w = _watch_awaiting(sid)
+    if w:
+        return w
     ov = _states_awaiting_overlay(sid)
     if ov is not None and ov.get("awaiting"):         # a producer wrote a LIVE awaiting:true → trust its why
         ovk = ov.get("kind")
@@ -18723,6 +18758,14 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
     # (_session_awaiting returns None while open_now). Session-scoped chat-view chip → the durable stamp too,
     # so the composer's awaiting chip survives a kernel restart like the feed card.
     _aw = _session_awaiting(sid, sess["path"], not open_now, stamp=True)
+    # Armed kernel watches stay visible even MID-TURN (the user 2026-08-30, whose cluster-job watch
+    # showed only a chip tooltip while the box at the chat bottom stayed dark): _session_awaiting
+    # answers None while the turn is open BY DESIGN — the chip must keep reading "working" (the shared
+    # state formula is untouched) — but the awaited CONTENT still rides the payload, and the box keys
+    # on the fields' presence, never on the state. Idle sessions get watches through
+    # _session_awaiting's own source 0.9, which also stamps the awaitingBg chip.
+    if not _aw and open_now:
+        _aw = _watch_awaiting(sid)
     awaiting_why = _aw["why"] if _aw else None
     awaiting_kind = _aw["kind"] if _aw else None
     # API error → the session is BLOCKED until retried: a bottom card (renderApiError, a RED dot) AND the chip
@@ -18959,7 +19002,8 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
                   # WHO a peer-kind wait is on — [{name, host, sid, color}], the same identities the feed
                   # box wears, so the chat chip + awaiting box name the actual session (2026-08-26)
                   "awaitingPeers": ((_aw or {}).get("peers") or None),
-                  "awaitingTasks": (_awaiting_task_descs(sid, sess["path"]) if awaiting_why else []),
+                  "awaitingTasks": (((_awaiting_task_descs(sid, sess["path"]) or
+                                      (_aw or {}).get("tasks") or [])) if awaiting_why else []),
                   # …and the same tasks' launch ids, so the #bg-tasks box outlines exactly the awaited
                   # rows in the chip's await-green (the user 2026-08-19)
                   "awaitingTaskIds": (_awaiting_task_ids(sid, sess["path"]) if awaiting_why else []),

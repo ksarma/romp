@@ -1097,6 +1097,73 @@ class ViewBuilder(unittest.TestCase):
         sent = [e for e in events if e["kind"] == "user" and e.get("md") == "and also fix the header"]
         self.assertEqual(sent, [], "it must NOT also show as a sent (solid) user bubble — that was the flip")
 
+    def _clear_watches(self):
+        with km._watch_lock:
+            km._watches.clear()
+        km._pr_watches.clear()
+        km._watches_save()
+        km._pr_watches_save()
+
+    def test_a_working_session_still_lists_its_armed_kernel_watches(self):
+        # The user (2026-08-30, paraphrased): even while working, anything the session awaits shows
+        # at the chat bottom in the green box. Kernel half: the status payload carries the awaited
+        # content mid-turn while the chip formula stays untouched — state reads working, the box
+        # renders from the fields.
+        with self.tpath.open("a") as f:                  # an OPEN turn → the session reads working
+            f.write(json.dumps(uline(NOW, "keep working on the strip", "uOpen", parent="a2")) + "\n")
+        km._parse_cache.clear()
+        km.add_watch("test -f /tmp/synthetic-sentinel", SID, note="the cluster job's sentinel file")
+        try:
+            st = km.build_session(SID, NOW)["status"]
+            self.assertEqual(st["state"], "working", "the shared chip formula is untouched")
+            self.assertIn("the cluster job's sentinel file", st["awaitingWhy"] or "")
+            self.assertEqual(st["awaitingKind"], "job")
+            self.assertEqual(st["awaitingTasks"], ["the cluster job's sentinel file"],
+                             "the box's fold lists each watch in the registrant's own words")
+        finally:
+            self._clear_watches()
+
+    def test_an_idle_session_with_only_an_armed_watch_reads_awaitingBg(self):
+        # the second leg of the same report: an idle session holding only a kernel watch used to
+        # read plain ready — its wait visible nowhere but `romp watch --list`
+        km._parse_cache.clear()
+        km.add_watch("test -f /tmp/synthetic-sentinel", SID, note="the nightly export")
+        try:
+            st = km.build_session(SID, NOW)["status"]
+            self.assertEqual(st["state"], "awaitingBg", "an armed watch is a wait like any other")
+            self.assertIn("the nightly export", st["awaitingWhy"])
+        finally:
+            self._clear_watches()
+
+    def test_pr_watches_feed_the_awaited_content_too(self):
+        km._parse_cache.clear()
+        km.add_pr_watch(842, "example-org/notes-api", SID)
+        try:
+            st = km.build_session(SID, NOW)["status"]
+            self.assertIn("PR #842 (example-org/notes-api)", st["awaitingWhy"])
+        finally:
+            self._clear_watches()
+
+    def test_no_watch_no_wait_means_no_awaited_content(self):
+        km._parse_cache.clear()
+        st = km.build_session(SID, NOW)["status"]
+        self.assertIsNone(st["awaitingWhy"], "nothing awaited -> the box stays absent")
+        self.assertEqual(st["state"], "ready")
+
+    def test_watch_awaiting_shapes(self):
+        # note wins; a note-less watch elides its predicate; plural counts; foreign sids excluded
+        try:
+            km.add_watch("x" * 200, SID)
+            w = km._watch_awaiting(SID)
+            self.assertEqual(w["kind"], "job")
+            self.assertIn("a kernel watch:", w["why"])
+            self.assertLess(len(w["tasks"][0]), 120, "the predicate is elided, never dumped whole")
+            km.add_watch("true", SID, note="second wait")
+            self.assertIn("2 armed watches", km._watch_awaiting(SID)["why"])
+            self.assertIsNone(km._watch_awaiting("99999999-0000-0000-0000-000000000000"))
+        finally:
+            self._clear_watches()
+
     def test_a_mid_compaction_parked_send_renders_queued_and_cancelable_immediately(self):
         # The user (2026-08-30) pressed send during compaction and sat in an unlabeled, uncancellable
         # stage. The kernel half of the always-labeled rule, pinned behaviorally: the parked op is in
