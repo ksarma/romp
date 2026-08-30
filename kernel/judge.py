@@ -10276,6 +10276,13 @@ BLOCK_BRIEF_SYS = (
     "next by a blank line, so you can weigh and answer each on its own. When <owed> lists a single item, "
     "or several that come down to the SAME decision, write ONE paragraph, and never remark that the items "
     "repeat.\n\n"
+    "Those per-item paragraphs are a NUMBERED DECISION LIST (the user 2026-08-30: dense recaps stalled "
+    "their decisions for hours; a numbered yes/no list cleared them in one turn). Each owed item's "
+    "paragraph is one numbered single line - '1. <the question>' - phrased as a question the reader can "
+    "answer with a yes/no, or with a one-word pick when the choice is between named options. Numbers run "
+    "in <owed>'s order, one numbered line per paragraph, so the reader answers straight down the list. "
+    "Supporting context that a question truly needs stays inside that item's own line, in a clause, "
+    "never as a separate recap paragraph.\n\n"
     "If something apart from the decision is still open and worth knowing, it gets the last paragraph, "
     "alone, in one short sentence with no label. Never attach it to a paragraph about the decision.\n\n"
     "The reader is the person who asked, not the team that built it. When a <user-ask> section is "
@@ -10354,9 +10361,10 @@ def brief_llm(goal_text, work_text, owed, frame=None, user_ask=None, shortfall=N
         # this one reply because complete coverage outranks brevity once an item has provably
         # gone missing (the user had to ask what the missing decision was).
         user += ("\n<note>Your previous draft covered %d of the %d owed items in <owed>. Even "
-                 "when items come down to the same decision, write one short paragraph per owed "
-                 "item, in <owed>'s order — exactly %d paragraphs, each leading with its item's "
-                 "own decision.</note>" % (shortfall[0], shortfall[1], shortfall[1]))
+                 "when items come down to the same decision, write one numbered single-line "
+                 "question per owed item, in <owed>'s order: exactly %d numbered paragraphs, "
+                 "each answerable with a yes/no or a one-word pick.</note>"
+                 % (shortfall[0], shortfall[1], shortfall[1]))
     return _judge_run(_distill_model(), BLOCK_BRIEF_SYS, user, judge="briefer", tier="distill",
                       mark=mk).strip()   # caller splits SOURCE, then caps
 
@@ -10390,6 +10398,10 @@ STALL_BRIEF_SYS = (
     "to the takeaway.\n\n"
     "TAKEAWAY: lead with where the work actually stopped, in your terms: the last thing that was finished "
     "or in progress, not a play-by-play. One or two sentences.\n\n"
+    "When <work> holds several separate strands, open the takeaway with the split the reader scans "
+    "fastest instead (the user 2026-08-30): what is done, what was in motion, and what is left - one "
+    "short clause each, in that order, before anything else. A single-strand stall keeps the plain "
+    "where-it-stopped lead above.\n\n"
     "What is holding it then gets the last paragraph, alone, in one short sentence with no label, "
     "translating <holding> out of romp's vocabulary into plain language. Restate <holding> faithfully. "
     "Never substitute a cause you inferred from <work>, and never say the goal is waiting on you unless "
@@ -10956,8 +10968,11 @@ def _distill_session(fsid, path, now):
                         raw, out, src = _r2, _o2, _s2
                         bg = _b2 or bg                 # keep the draft's orientation if the retry lost it
                     else:
-                        out = "\n\n".join("%s: %s" % ((t or "this sub-goal").strip().rstrip("."),
-                                                       (w or "").strip()) for t, w in owed)
+                        out = "\n\n".join(
+                            "%d. %s: %s" % (i + 1, (t or "this sub-goal").strip().rstrip("."),
+                                            (w or "").strip()) for i, (t, w) in enumerate(owed))
+                        #      ^ numbered like the rule's own list shape (the review's catch: an
+                        #        unnumbered fallback re-shipped the dense recap the rule kills)
                         src = None                     # verbatim recorded whys — no model citation
                         _fallback_brief = True         # …so the cite-miss check below stands down:
                         #                                romp authored this text; "no SOURCE line"

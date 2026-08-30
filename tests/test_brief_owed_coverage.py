@@ -140,9 +140,10 @@ class OwedCoverage(unittest.TestCase):
         self._run()
         self.assertEqual(len(self.calls), 2, "one retry, never a loop")
         bs = self._stored()["blockSummary"]
-        for why in WHYS:
+        for i, why in enumerate(WHYS):
             self.assertIn(why, bs, "the fallback carries every owed why verbatim — complete "
                                    "by construction, an item can never silently vanish")
+            self.assertIn("%d. " % (i + 1), bs, "…in the numbered shape the standing rule renders")
         self.assertEqual(len([p for p in bs.split("\n\n") if p.strip()]), 4)
         rows = self._errors()
         self.assertIn("owed-shortfall", [r.get("err") for r in rows])
@@ -172,6 +173,17 @@ class OwedCoverage(unittest.TestCase):
         self.assertEqual(len(self.calls), 2)
         self.assertIsNone(self._stored().get("blockSummary"),
                           "nothing stored off a skipped call — next pass re-runs the whole brief")
+
+    def test_a_numbered_question_list_passes_the_count(self):
+        # the decision-list rule and the shortfall guard reinforce each other: one numbered
+        # single-line question per paragraph IS the countable shape — no spurious retry
+        self._world()
+        self.replies = ["BACKGROUND: b.\n\nTAKEAWAY: 1. Confirm the order?\n\n"
+                        "2. Judge-score the labels?\n\n3. Download both now?\n\n"
+                        "4. Extend the check now?"]
+        self._run()
+        self.assertEqual(len(self.calls), 1, "four numbered lines, four paragraphs — complete")
+        self.assertEqual(len(self._stored().get("briefParts") or []), 4)
 
     def test_blankish_separators_count_as_the_feed_renders(self):
         # the kernel counts with the feed's own split (\n\s*\n): a reply whose paragraphs are
@@ -209,7 +221,9 @@ class ShortfallNote(unittest.TestCase):
     def test_the_note_names_the_count_and_overrides_the_merge_allowance(self):
         jd.brief_llm("g", "w", [("a", "why a"), ("b", "why b")], shortfall=(1, 2))
         self.assertIn("covered 1 of the 2 owed items", self.calls["user"])
-        self.assertIn("exactly 2 paragraphs", self.calls["user"])
+        self.assertIn("exactly 2 numbered paragraphs", self.calls["user"])
+        self.assertIn("yes/no", self.calls["user"],
+                      "the retry converges on the numbered-question shape the standing rule asks for")
         self.assertIn("Even when items come down to the same decision", self.calls["user"],
                       "the override is per-call: the standing spec keeps its measured merge clause")
 
