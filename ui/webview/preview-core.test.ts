@@ -50,8 +50,8 @@ test("chat: a mentioned image/PDF grows a FULL render at its mention, deduped an
   assert.match(RENDER, /import \{ previewKind, previewFull, canPreview, fileUrl, retryFailedPreviews, refreshSettledPreviews, installMdImgHeal, setLightboxNav, type LightboxNavEntry \} from "\.\/preview";/);
   assert.match(RENDER, /if \(previewKind\(open\) && !previewable\.includes\(open\) && !\(skipThumbs && skipThumbs\.includes\(open\)\)\) \{/, "collected while linkifying — same detection, no second regex pass; an in-bubble image never re-renders");
   assert.match(RENDER, /if \(previewable\.length\) \{/, "both surfaces now — VS Code images ride the host data-URL flow");
-  assert.match(RENDER, /previewable\.slice\(0, expanded \? previewable\.length : FIG_EAGER\)/,
-    "the eager cap guards against wallpapering; the remainder folds behind the '+N more figures' chip (2026-08-30), never dropped silently");
+  assert.match(RENDER, /for \(const p of previewable\) renderFig\(p\);/,
+    "every mention renders eagerly (the user's 2026-08-30 ruling); the browser's lazy loading bounds the cost, not a count");
   assert.match(RENDER, /previewFull\(p, renderingOwnerSid \?\? activeId, kernelVerified\.has\(p\), \(pathPins \|\| \{\}\)\[p\]\)/, "URLs bake the OWNING session's id — a background build must never capture activeId; verified paths fail loudly");
 });
 

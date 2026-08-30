@@ -1320,14 +1320,8 @@ const CLICKABLE_PATH_RE = /file:\/\/\/?[^\s<>"'`)]+|[~.\w\-]*\/[~.\w\-/]*[\w\-]|
 // gate below still applies; the map only ever narrows. An event with NO pathLinks key at all (an old
 // kernel, a cached payload) keeps today's shape-only linking rather than unlinking history.
 // file:// URIs are explicit absolute paths — never gated on the map.
-// Messages whose "+N more figures" chip was clicked (keyed by event uuid) — the expansion LATCHES
-// so the constant re-renders keep it open (the openFolds pattern). Page-life only, like openFolds.
-const figsExpanded = new Set<string>();
-// How many figures render EAGERLY per message before the rest fold behind the chip: enough for the
-// common report shape, few enough that a directory enumeration never wallpapers the chat.
-const FIG_EAGER = 4;
 function linkifyFileUris(root: HTMLElement, skipThumbs?: string[], spacePaths?: string[],
-    pathLinks?: Record<string, string>, pathPins?: Record<string, string>, foldKey?: string): void {
+    pathLinks?: Record<string, string>, pathPins?: Record<string, string>): void {
   // A whole-backtick http(s) URL becomes a TAPPABLE link that still looks like code (the user
   // 2026-08-16, on mobile, wanting to tap through to a dashboard link a session sent). Bare URLs
   // and [text](url) already link via marked's gfm autolink + the global anchor click delegate;
@@ -1415,13 +1409,12 @@ function linkifyFileUris(root: HTMLElement, skipThumbs?: string[], spacePaths?: 
   //               the same host data-URL flow the user-message pictures use (buildPathImg, imgRequest
   //               now carrying the session id for relative resolution); a PDF keeps its click-to-open
   //               link (no inline viewer in the sandbox).
-  // The first FIG_EAGER figures render eagerly; the REST fold behind a "+N more figures" chip on the
-  // last strip — never silently dropped (the 2026-08-30 report: a message led with four absolute
-  // mentions and then listed six repo-relative ones; the old silent slice(0, 4) kept exactly the
-  // absolutes, which read as "relative paths don't preview" when the break was the cap all along).
-  // Clicking the chip renders the remainder at their mentions — the figures ARE the acknowledgment —
-  // and latches via figsExpanded so re-renders keep the message expanded. Every path stays clickable
-  // regardless.
+  // EVERY verified figure mention renders eagerly at its mention anchor (the user 2026-08-30,
+  // overruling the 4-eager+chip fold shipped a day earlier, paraphrased: they should be able to
+  // preview as many images as they want in the thread). No cap and no chip: previewFull's <img>s
+  // are browser-lazy (loading="lazy"), so an off-screen figure costs one DOM node until scrolled
+  // near — a many-figure message can't hurt scroll or startup — and the kernel's mention-pin store
+  // is already size-bounded with eviction. Every path stays clickable regardless.
   if (previewable.length) {
     const BLOCK_SEL = "p, li, h1, h2, h3, h4, h5, h6, blockquote, td, th";
     const strips = new Map<HTMLElement, HTMLElement>();   // figure anchor → its strip (same block shares one)
@@ -1442,24 +1435,7 @@ function linkifyFileUris(root: HTMLElement, skipThumbs?: string[], spacePaths?: 
       strip.appendChild(full);
       return strip;
     };
-    const expanded = !!foldKey && figsExpanded.has(foldKey);
-    let lastStrip: HTMLElement | null = null;
-    for (const p of previewable.slice(0, expanded ? previewable.length : FIG_EAGER))
-      lastStrip = renderFig(p) || lastStrip;
-    const rest = expanded ? [] : previewable.slice(FIG_EAGER);
-    if (rest.length) {
-      const chip = el("button", "path-more") as HTMLButtonElement;
-      chip.type = "button";
-      chip.textContent = "+" + rest.length + " more figure" + (rest.length === 1 ? "" : "s");
-      chip.title = "show the remaining figures at their mentions";
-      chip.addEventListener("click", (ev) => {
-        ev.stopPropagation();
-        if (foldKey) figsExpanded.add(foldKey);
-        chip.remove();
-        for (const p of rest) renderFig(p);
-      });
-      (lastStrip ?? root).appendChild(chip);
-    }
+    for (const p of previewable) renderFig(p);
   }
 }
 
@@ -2416,7 +2392,7 @@ function renderEventInner(ev: ChatEvent): HTMLElement {
         if (more) {
           const full = el("div", "nudge-full md");
           full.innerHTML = md(raw);
-          linkifyFileUris(full, imgPaths, ev.spacePaths, ev.pathLinks, ev.pathPins, ev.uuid);
+          linkifyFileUris(full, imgPaths, ev.spacePaths, ev.pathLinks, ev.pathPins);
           bubble.appendChild(full);
           bubble.classList.add("nudge-collapsible");
           // toggle rides the stable document.body delegate (data-act), NOT a per-render listener —
@@ -2429,7 +2405,7 @@ function renderEventInner(ev: ChatEvent): HTMLElement {
         }
       } else if (ev.md) {
         bubble.innerHTML = md(ev.md);
-        linkifyFileUris(bubble, imgPaths, ev.spacePaths, ev.pathLinks, ev.pathPins, ev.uuid);   // bare file:// URLs in a message → clickable (open in the host's default app)
+        linkifyFileUris(bubble, imgPaths, ev.spacePaths, ev.pathLinks, ev.pathPins);   // bare file:// URLs in a message → clickable (open in the host's default app)
       }
       // images, IN the bubble (part of his message): thumbnail + open/copy caption;
       // a literal path in the typed text becomes the same open-link inline.
@@ -2576,7 +2552,7 @@ function renderEventInner(ev: ChatEvent): HTMLElement {
     const body = el("div", "assistant md");
     body.innerHTML = md(ev.md);
     highlight(body);
-    linkifyFileUris(body, undefined, ev.spacePaths, ev.pathLinks, ev.pathPins, ev.uuid);   // bare file:// URLs + verified spaced filenames → clickable
+    linkifyFileUris(body, undefined, ev.spacePaths, ev.pathLinks, ev.pathPins);   // bare file:// URLs + verified spaced filenames → clickable
     turn.appendChild(body);
     return turn;
   }
