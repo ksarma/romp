@@ -4392,7 +4392,11 @@ function ensureHostLoad(list: HTMLElement): void {
     strip = el("div", "");
     strip.id = "feed-hostload";
   }
-  list.appendChild(strip);   // last child in either board state (cards or the empty wordmark)
+  // FIRST child in either board state (the user 2026-08-30: the reconnect strip sits at the TOP of
+  // the feed, above the first column chip — it announces what is COMING, so it leads). Re-inserted
+  // only when displaced (a fresh empty-state paint replaces children); non-interactive, so the move
+  // is click-safe by construction.
+  if (list.firstChild !== strip) list.insertBefore(strip, list.firstChild);
   strip.replaceChildren(...pendingHosts.map((h) => {
     const line = el("div", "hostload-line");
     const swirl = el("span", "fask-awaiting-swirl");   // the shared reverse-spin glyph, LEFT of the text
