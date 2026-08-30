@@ -1337,13 +1337,15 @@ if [[ "${1:-}" == "compact" ]]; then
     shift
     _c_usage="usage: romp compact <session> [--wait] [--timeout <s>]"
     _c_who="${1:-}"
-    if [[ -z "$_c_who" || "$_c_who" == -* ]]; then echo "$_c_usage" >&2; exit 2; fi
+    # only the verb's own flags are rejected as a name — send accepts dash-leading names, so compact
+    # does too (review find: the sibling convention), while a swapped-order mistake still gets usage
+    if [[ -z "$_c_who" || "$_c_who" == "--wait" || "$_c_who" == "--timeout" ]]; then echo "$_c_usage" >&2; exit 2; fi
     shift
     _c_wait=""; _c_to=600
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --wait)    _c_wait=1; shift ;;
-            --timeout) shift; [[ $# -eq 0 || ! "$1" =~ ^[0-9]+$ ]] && { echo "$_c_usage" >&2; exit 2; }
+            --timeout) shift; [[ $# -eq 0 || ! "$1" =~ ^(0|[1-9][0-9]+|[1-9])$ ]] && { echo "$_c_usage" >&2; exit 2; }
                        _c_to="$1"; shift ;;
             *) echo "$_c_usage" >&2; exit 2 ;;
         esac
@@ -1364,9 +1366,20 @@ if [[ "${1:-}" == "compact" ]]; then
         echo "romp compact: compacting $_c_who now"
     fi
     [[ -z "$_c_wait" ]] && exit 0
+    if [[ "$_resp" == *'"remote"'* ]]; then
+        # a remote session's compaction runs on ITS kernel; the local /sessions poll below would
+        # never see it and report the session dead — refuse the wait honestly instead
+        _c_host="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("remote") or "?")' "$_resp" 2>/dev/null || echo "?")"
+        echo "romp compact: --wait can't follow a remote session from here (it lives on $_c_host) — the compaction was still requested" >&2
+        exit 1
+    fi
     # Wait for OUR compaction, not a coincidental one: when queued, arm only after a quiet sample
     # (a compaction already running when we queued is the PRIOR one — ours fires after it).
-    _c_start="$(date +%s)"; _c_seen=""; _c_armed="$([[ -z "$_c_queued" ]] && echo 1)"
+    # NB the arming is two statements, not a command-substitution assignment: under set -e an
+    # assignment adopts the substitution's failing status and kills the script (review find — the
+    # queued+--wait path died before its first poll).
+    _c_start="$(date +%s)"; _c_seen=""; _c_armed=""
+    [[ -n "$_c_queued" ]] || _c_armed=1
     while :; do
         _c_rows="$(_romp_token_cfg | curl -sf -m 5 --config - "http://127.0.0.1:$_kport/sessions")" || _c_rows=""
         if [[ -z "$_c_rows" ]]; then

@@ -113,7 +113,10 @@ class CompactRequest(_Stubbed):
         km._host_for_sid = lambda sid: {"host": "TESTHOST-B"}
         km._remote_forward = lambda r, path, payload: seen.append((path, payload)) or {"ok": True, "queued": True}
         res = km._compact_request(SID)
-        self.assertEqual(res, {"ok": True, "queued": True}, "the far kernel's queued verdict rides back")
+        self.assertEqual(res, {"ok": True, "queued": True, "remote": "TESTHOST-B"},
+                         "the far kernel's queued verdict rides back, stamped with WHERE the session "
+                         "lives — the CLI's --wait polls the local /sessions, which never lists remote "
+                         "rows, so without the stamp it reported the session dead (review find)")
         self.assertEqual(seen, [("/compact", {"id": SID})])
 
     def test_a_silent_remote_kernel_is_a_loud_refusal(self):
@@ -131,12 +134,19 @@ class CompactRequest(_Stubbed):
 
 class SessionsRowCompacting(_Stubbed):
     def test_rows_expose_the_corroborated_compacting_signal(self):
-        km._compacting_now = lambda sid: sid == SID
+        km._compacting_now = lambda sid, tm=None: sid == SID
         rows = km._session_rows()
         self.assertEqual([r["id"] for r in rows], [SID])
         self.assertTrue(rows[0]["compacting"], "--wait and scripted recycling poll this field")
-        km._compacting_now = lambda sid: False
+        km._compacting_now = lambda sid, tm=None: False
         self.assertFalse(km._session_rows()[0]["compacting"])
+
+    def test_rows_pass_their_own_live_meta_so_the_route_never_pays_per_row_merges(self):
+        seen = []
+        km._compacting_now = lambda sid, tm=None: seen.append(tm) or False
+        km._session_rows()
+        self.assertEqual(seen, [{"state": "waiting", "backend": "sdk"}],
+                         "the row's live() meta rides in — refetching cost one full merge PER ROW")
 
 
 if __name__ == "__main__":

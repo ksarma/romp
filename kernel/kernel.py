@@ -12994,7 +12994,7 @@ def _session_rows():
                     # compacting: the corroborated signal the chat chip uses (_compacting_now, cached
                     # parse), exposed so `romp compact --wait` and scripted recycling can watch a
                     # compaction start and clear through the kernel's own read, never a scrape.
-                    "compacting": bool(_compacting_now(sid)),
+                    "compacting": bool(_compacting_now(sid, tm=meta)),
                     "working": notes.get(sid, ""), "backend": meta.get("backend", "")})
     return out
 
@@ -17076,12 +17076,16 @@ def _save_pending_ops():
 _pending_ops = _load_pending_ops()   # sid -> [("send", text, echo) | ("model", v) | ("effort", v) | ("fast", v) | ("compact",), …] in park order
 
 
-def _compacting_now(sid):
+def _compacting_now(sid, tm=None):
     """Is this session compacting RIGHT NOW — the same corroborated signal the chip uses (_compacting:
     live/optimistic state, disproved by resumed work or a compact_boundary, 180s optimistic cap), read
-    from the CACHED parse only so it's cheap enough for the WS handler and the producer tick."""
+    from the CACHED parse only so it's cheap enough for the WS handler and the producer tick. `tm` lets
+    a caller already holding the session's live() meta pass it in — _session_rows exposes this per row,
+    and refetching would pay one full Sessions.live() merge PER ROW on a polled route (review find,
+    2026-08-30)."""
     sid = str(sid)
-    tm = _tmux_sessions().get(sid)
+    if tm is None:
+        tm = _tmux_sessions().get(sid)
     path = _path_of(sid)
     session = (_parse_cached(path) if path else None) or {"turns": []}
     return _compacting(sid, (tm or {}).get("state", ""), session, int(time.time()), (tm or {}).get("since"))
@@ -17381,7 +17385,12 @@ def _compact_request(who):
             return {"ok": False, "error":               # pretend it compacted
                     "the remote kernel for this session (%s) isn't answering — nothing was compacted"
                     % r.get("host", "?")}
-        return res if isinstance(res, dict) else {"ok": True}
+        if not isinstance(res, dict):
+            res = {"ok": True}
+        # the caller's --wait polls the LOCAL /sessions, which never lists remote rows — name the
+        # host so the CLI can refuse the wait honestly instead of reporting the session dead
+        res.setdefault("remote", str(r.get("host") or "?"))
+        return res
     if sid not in Sessions.live():
         return {"ok": False, "error":
                 "no live session named '%s' — a dead session has no context to compact; revive it first"
