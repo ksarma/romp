@@ -12091,22 +12091,48 @@ def _delegate_user_rooted(sender, link_id, paths, now, _depth=0, _seen=None, _fb
     And the record carries `askRef`, the proof node's (sender sid, goal id) — the ask's stable
     identity across dispatches and hops — which apply_courier stamps on the minted top and dedupes
     on, so one ask fanned N times to one recipient stays ONE card there."""
-    # THE SHARED FALLBACK SLOT `fb` (the fold-review fix, 2026-08-30): the DEMOTED stored-proof arm
-    # below (carded:False, T126's userAsk-on-node record) is captured into a one-slot holder THREADED
-    # ACROSS THE RECURSION, never returned, so it wins only when the WHOLE climb — every origin hop
-    # and container-sibling included — exhausts, exactly the merge's own stated contract. Before
-    # this each origin-hop callsite did `rec = _delegate_user_rooted(...); if rec: return rec`, which
-    # took an INNER frame's demoted fallback as a final answer and preempted carded evidence the
-    # OUTER climb would still reach above the origin-hop node — minting a standalone recipient top
-    # for an ask that STILL renders on a visible card (the pre-T101 duplicate-card hole) and skewing
-    # askRef with the hop level the walk happened to stop at (_walk_root_record's dedupe key). The
-    # recursion now returns ONLY a DECISIVE record — a carded-hop stand-down or a human prompt
-    # record — or None; the demoted fallback lives in `fb`, first-seen across the whole climb (the
-    # SAME first-seen discipline `fallback` always had within one frame, extended past the boundary).
+    # THE SHARED FALLBACK SLOT `fb` (the fold-review fix, 2026-08-30; widened round 3 the same
+    # day): EVERY carded:False record — T126's stored userAsk-on-node proof AND an uncarded human
+    # prompt record — is captured into a one-slot holder THREADED ACROSS THE RECURSION, never
+    # returned mid-climb, so it wins only when the WHOLE climb — every origin hop and
+    # container-sibling included — exhausts. Before this each origin-hop callsite did
+    # `rec = _delegate_user_rooted(...); if rec: return rec`, which took an INNER frame's uncarded
+    # record as a final answer and preempted carded evidence the OUTER climb would still reach
+    # above the origin-hop node — minting a standalone recipient top for an ask that STILL renders
+    # on a visible card (the pre-T101 duplicate-card hole) and skewing askRef with the hop level
+    # the walk happened to stop at (_walk_root_record's dedupe key). Round 2 demoted only the
+    # stored-proof arm; the prompt-record arm still returned decisively, reopening the hole in the
+    # TRUE-ORIGIN shape (the origin kernel's own ask node carries promptUuid; stored userAsk lives
+    # only on courier-planted mid-chain nodes) — the MORE common flavor. That widening is a
+    # DELIBERATE contract change from the merge base, which called every prompt record decisive:
+    # now ONLY a CARDED record is decisive mid-climb — a carded-hop stand-down or a carded human
+    # record — everything carded:False rides `fb` and returns at exhaustion, so the exhausted-climb
+    # mint (T126) keeps firing with the same record it always returned.
+    #
+    # PRECEDENCE INSIDE THE SLOT (round 3, chosen deliberately): a two-rank ladder, not bare
+    # first-seen across arms — an UNCARDED HUMAN PROMPT RECORD (rank 1) REPLACES a held STORED
+    # PROOF (rank 0); within a rank the slot stays first-seen (the discipline `fallback` always
+    # had). Why: the prompt record is the chain's ROOT evidence read from the authoritative source
+    # (the session transcript), while a stored proof is the courier-written COPY of a walk — the
+    # copy must not shadow the original just because a hop visited it first. And the root node's
+    # identity is hop-invariant, so preferring it keeps askRef (apply_courier's dedupe key) stable
+    # across fan children whose climbs stop at different copies. RESIDUAL, documented not fixed
+    # (contested in review): an ALL-stored-proof climb (no prompt record, nothing carded — the ask
+    # cleared everywhere) can still hand two fan children different first-seen askRef keys when
+    # their hops traverse DIFFERENT proof nodes with divergent askRef stamps; no rank choice
+    # unifies that (the candidate keys live in different stores), and askRef propagation makes the
+    # shape rare — a courier-planted proof carries the root's own key.
     if not link_id or _depth >= 8:
-        return _fb[0] if (_depth == 0 and _fb) else None
+        return _fb[0][1] if (_depth == 0 and _fb) else None
     seen = _seen if _seen is not None else set()
     fb = _fb if _fb is not None else []               # the top frame owns the slot; inner frames share it
+
+    def _fb_offer(rank, rec):                         # the two-rank ladder above: replace weaker, keep first-seen peers
+        if not fb:
+            fb.append((rank, rec))
+        elif fb[0][0] < rank:
+            fb[0] = (rank, rec)
+
     sstore = load_goals(sender)
     live = sstore.get("nodes") or {}
     conf = frozenset(sstore.get("confirming") or ())  # the rollup's done-confirming window (round 3
@@ -12119,7 +12145,7 @@ def _delegate_user_rooted(sender, link_id, paths, now, _depth=0, _seen=None, _fb
         seen.add((sender, x))
         nd = nodes.get(x)
         if not isinstance(nd, dict):
-            return fb[0] if (_depth == 0 and fb) else None
+            return fb[0][1] if (_depth == 0 and fb) else None
         ua = nd.get("userAsk")
         if isinstance(ua, dict) and str(ua.get("text") or "").strip():
             if _node_carded(live, x, conf):
@@ -12140,14 +12166,15 @@ def _delegate_user_rooted(sender, link_id, paths, now, _depth=0, _seen=None, _fb
                 # foreign read); the stored proof is the surviving evidence. UNCARDED at this hop,
                 # so it yields to any deeper walkable evidence (the carded/askRef discipline
                 # above) and returns only when the climb exhausts — carded:False, exactly where
-                # T101's mint fallback fires. CAPTURED into the shared `fb` slot (first-seen across
-                # the whole climb), never returned inline: a carded hop or a human record ANYWHERE
-                # above — this frame or any OUTER one still to climb — must still win over it.
+                # T101's mint fallback fires. CAPTURED into the shared `fb` slot at STORED rank
+                # (rank 0 — a later prompt record replaces it, a later stored proof does not),
+                # never returned inline: a carded record ANYWHERE — this frame or any OUTER one
+                # still to climb — must still win over it.
                 proof = {"text": str(ua["text"]), "sid": ua.get("sid"), "carded": False,
                          **({"host": ua["host"]} if ua.get("host") else {})}
                 if isinstance(nd.get("askRef"), dict):
                     proof["askRef"] = dict(nd["askRef"])
-                fb.append(proof)
+                _fb_offer(0, proof)
         o = nd.get("origin")
         if (isinstance(o, dict) and o.get("peer") and o.get("goalId")
                 and not o.get("peerHost") and o["peer"] in paths):
@@ -12158,9 +12185,17 @@ def _delegate_user_rooted(sender, link_id, paths, now, _depth=0, _seen=None, _fb
         if pu and sender in paths:
             rec = _session_user_prompt_record(sender, paths[sender], pu, now)
             if rec:
-                rec["carded"] = _node_carded(live, x, conf)
                 rec["askRef"] = {"peer": sender, "goalId": x}
-                return rec
+                if _node_carded(live, x, conf):
+                    rec["carded"] = True                # a carded human record is decisive — the
+                    return rec                          # ask's own node still renders its card
+                # UNCARDED (round 3): the record is root evidence but its card is gone — the
+                # TRUE-ORIGIN twin of the stored-proof demotion above. Returning it here preempted
+                # carded evidence the OUTER climb would still reach (the duplicate-mint hole in
+                # its most common shape); it rides `fb` at PROMPT rank instead, replacing any
+                # stored copy, and the climb keeps walking toward a card that still renders.
+                rec["carded"] = False
+                _fb_offer(1, rec)
         last = nd
         x = nd.get("parentId")
     # CONTAINER-SIBLING RESCUE (the user 2026-08-26, T101): live umbrellas dissolve now, but
@@ -12183,16 +12218,19 @@ def _delegate_user_rooted(sender, link_id, paths, now, _depth=0, _seen=None, _fb
             if pu and sender in paths:
                 rec = _session_user_prompt_record(sender, paths[sender], pu, now)
                 if rec:
-                    rec["carded"] = _node_carded(live, cid, conf)   # the rescue reads archived history — almost never carded
                     rec["askRef"] = {"peer": sender, "goalId": cid}
-                    return rec
+                    if _node_carded(live, cid, conf):   # the rescue reads archived history — almost never carded
+                        rec["carded"] = True
+                        return rec
+                    rec["carded"] = False               # rescue twin of the prompt-record demotion:
+                    _fb_offer(1, rec)                   # uncarded rides fb, a later sibling may still be carded
             o = cd.get("origin")
             if (isinstance(o, dict) and o.get("peer") and o.get("goalId")
                     and not o.get("peerHost") and o["peer"] in paths):
                 rec = _delegate_user_rooted(o["peer"], o["goalId"], paths, now, _depth + 1, seen, fb)
                 if rec:                                # container twin of the fix: same discipline —
                     return rec                         # only a decisive record returns, the proof rides `fb`
-    return fb[0] if (_depth == 0 and fb) else None
+    return fb[0][1] if (_depth == 0 and fb) else None
 
 
 def _presumed_closed(sid, now):

@@ -358,6 +358,90 @@ class TraceRule(unittest.TestCase):
         self.assertEqual(r1.get("askRef"), {"peer": MGR, "goalId": "p"},
                          "…the carded ask top, the identity apply_courier dedupes on")
 
+    def test_inner_uncarded_prompt_record_yields_to_outer_carded_top(self):
+        # THE PROMPT-RECORD TWIN of the main-loop recursion fix (fixer round 3, 2026-08-30): round
+        # 2 threaded only the STORED-PROOF arm through the shared fallback slot — the HUMAN PROMPT
+        # RECORD arm still returned an uncarded record DECISIVELY from the inner frame. This is the
+        # TRUE-ORIGIN shape (the origin kernel's own ask node carries promptUuid; stored userAsk
+        # exists only on courier-planted mid-chain nodes), so it is the MORE common flavor of the
+        # same hole: sender M holds a VISIBLE carded ask top `p` with a fanned child `x` whose
+        # origin hops to local grand-sender G, whose CLEARED ask node `ga` resolves a live human
+        # record. A carded:False answer here re-mints below `p`, the ask's own live card.
+        self._store(MGR, {
+            "p": _node("p", "Ship the demo", None,
+                       userAsk={"text": "the user's ask", "sid": MGR},
+                       askRef={"peer": MGR, "goalId": "p"}),
+            "x": _node("x", "a fanned step", "p",
+                       origin={"peer": GRAND, "goalId": "ga", "msgId": "m0"})})
+        self._store(GRAND, {"ga": _node("ga", "the original ask", None, cleared=True,
+                                        promptUuid="hu")})
+        self._human(GRAND)
+        rec = jd._delegate_user_rooted(MGR, "x", self.paths, NOW)
+        self.assertTrue(rec.get("carded"),
+                        "the outer climb reaches p, the ask's live card — no standalone re-mint below it")
+        self.assertEqual(rec.get("askRef"), {"peer": MGR, "goalId": "p"},
+                         "…and the dedupe key is the carded top, not the inner cleared origin node")
+        self.assertEqual(rec.get("sid"), MGR)
+
+    def test_container_rescue_inner_prompt_record_yields_to_sibling_evidence(self):
+        # THE CONTAINER-RESCUE TWIN of that arm: the main climb dead-ends at an evidence-free
+        # umbrella, childA's origin hop resolves only an UNCARDED human record (the grand-sender's
+        # cleared origin node), childB renders live under the umbrella with its own record. The
+        # rescue's `if rec: return rec` took childA's inner uncarded record and never reached
+        # childB; it must ride the fallback slot instead and yield to childB's carded evidence.
+        self._store(MGR, {
+            "U": _node("U", "the dictated round", None, umbrella=True),
+            "childA": _node("childA", "a fanned step", "U",
+                            origin={"peer": GRAND, "goalId": "ga", "msgId": "m0"}),
+            "childB": _node("childB", "the original ask", "U", promptUuid="hu")})
+        self._store(GRAND, {"ga": _node("ga", "an aside", None, cleared=True, promptUuid="hu")})
+        self._human(GRAND)
+        self._human(MGR)
+        rec = jd._delegate_user_rooted(MGR, "U", self.paths, NOW)
+        self.assertTrue(rec, "the sibling human record proves the round")
+        self.assertEqual(rec.get("askRef"), {"peer": MGR, "goalId": "childB"},
+                         "the rescue takes the sibling's carded record, not childA's uncarded inner one")
+        self.assertTrue(rec.get("carded"), "childB renders under the live umbrella")
+
+    def test_an_exhausted_origin_hop_climb_still_mints_from_the_prompt_record(self):
+        # T126 PRESERVED (the guard the demotion must not break): when NOTHING anywhere is carded,
+        # the inner uncarded human record is still the climb's answer — promoted from the fallback
+        # slot at exhaustion, carded:False, exactly where the mint fallback fires. Green before and
+        # after the round-3 fix; pins that demoting the arm never lost the exhausted-climb mint.
+        self._store(MGR, {"x": _node("x", "a fanned step", None,
+                                     origin={"peer": GRAND, "goalId": "ga", "msgId": "m0"})})
+        self._store(GRAND, {"ga": _node("ga", "the original ask", None, cleared=True,
+                                        promptUuid="hu")})
+        self._human(GRAND)
+        rec = jd._delegate_user_rooted(MGR, "x", self.paths, NOW)
+        self.assertTrue(rec, "the human proof stands — the exhausted climb still mints")
+        self.assertFalse(rec.get("carded"))
+        self.assertEqual(rec.get("askRef"), {"peer": GRAND, "goalId": "ga"},
+                         "the record keeps the true origin's identity")
+
+    def test_a_prompt_record_outranks_a_stored_proof_when_both_ride_the_fallback(self):
+        # THE PRECEDENCE PIN (round 3): with BOTH demoted arms riding the shared fallback slot,
+        # bare first-seen across arms of DIFFERENT strength would let a courier-written stored
+        # proof (seen first, at the origin hop) shadow the human's own prompt record found later
+        # in the same climb. The rule is a two-rank ladder — a prompt record REPLACES a held
+        # stored proof; within a rank the slot stays first-seen. Green at the base commit (the
+        # record returned decisively there); red against a naive first-seen-across-arms demotion,
+        # which is the regression this pins out.
+        self._store(MGR, {
+            "q": _node("q", "the dictated ask", None, cleared=True, promptUuid="hu"),
+            "x": _node("x", "a fanned step", "q",
+                       origin={"peer": GRAND, "goalId": "ga", "msgId": "m0"})})
+        self._store(GRAND, {"ga": _node("ga", "the original ask", None, cleared=True,
+                                        userAsk={"text": "the user's ask", "sid": GRAND},
+                                        askRef={"peer": GRAND, "goalId": "ga"})})
+        self._human(MGR)
+        rec = jd._delegate_user_rooted(MGR, "x", self.paths, NOW)
+        self.assertTrue(rec)
+        self.assertFalse(rec.get("carded"), "nothing renders — still the mint shape")
+        self.assertEqual(rec.get("askRef"), {"peer": MGR, "goalId": "q"},
+                         "the human's own record outranks the courier-written copy seen first")
+        self.assertEqual(rec.get("sid"), MGR)
+
 
 BODY = ("Verify the staged run references and report drift.\n"
         "<!-- romp-msg-id: %s -->\n<!-- romp-msg-kind: delegate -->" % MID)
