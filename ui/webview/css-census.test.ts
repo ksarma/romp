@@ -17,7 +17,9 @@ const read = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "u
 const rawHexes = (css: string) => {
   // a body.theme-light block's hexes are the theme's token DEFINITIONS (its one sanctioned home),
   // not debt — strip those blocks before counting (2026-08-28, when the light theme landed)
-  css = css.replace(/body\.theme-light \{[\s\S]*?\n\}/g, "");
+  // strip the token BLOCK and any body.theme-light-scoped rule (single-line overrides included):
+  // theme definitions are the light theme's one sanctioned home for values, not debt
+  css = css.replace(/body\.theme-light \{[\s\S]*?\n\}/g, "").replace(/body\.theme-light [^{]*\{[^}]*\}/g, "");
   const stripped = css.replace(/\/\*[\s\S]*?\*\//g, "").replace(/var\([^)]*\)/g, "V");
   return stripped.match(/#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})\b(?!-)/g) || [];
 };
@@ -27,19 +29,21 @@ const rawDims = (css: string) => {
 };
 
 // remaining literals are deliberate: semantic one-offs (status colors, identity blues, #fff full-white
-// hovers, one-off shadow alphas) and the two rules css-vocab.test.ts pins as literals in gear.css
-const MAX: Record<string, number> = {
-  "gear.css": 19,
+// hovers, one-off shadow alphas) and the two rules css-vocab.test.ts pins as literals in gear.css.
+// EXACT counts, not ceilings (PR #763 item 7: a <= pin with slack lets new raw hexes arrive
+// unnoticed) — a count that moves in EITHER direction is a deliberate change to name here.
+const EXACT: Record<string, number> = {
+  "gear.css": 16,
   "strip.css": 8,
   "fleet-pane.css": 9,
   "timeline-pane.css": 10,
 };
 
-for (const [file, max] of Object.entries(MAX)) {
-  test(`${file}: raw hex count stays paid down (<= ${max}, may only go down)`, () => {
+for (const [file, exact] of Object.entries(EXACT)) {
+  test(`${file}: raw hex count is pinned EXACTLY (${exact})`, () => {
     const hexes = rawHexes(read(file));
-    assert.ok(hexes.length <= max,
-      `${file} has ${hexes.length} raw hexes (max ${max}): ${hexes.join(" ")} — resolve new colors through a token`);
+    assert.equal(hexes.length, exact,
+      `${file} has ${hexes.length} raw hexes (pinned ${exact}): ${hexes.join(" ")} — resolve new colors through a token, or re-pin deliberately`);
   });
 }
 

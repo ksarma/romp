@@ -14,7 +14,10 @@ const read = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "u
 function block(css: string, opener: string): string {
   const at = css.indexOf(opener);
   assert.ok(at >= 0, opener + " present");
-  return css.slice(at, css.indexOf("\n}", at));
+  // COMMENT-BLIND parsing swallowed tokens whose declarations follow a multi-line comment and
+  // corrupted values that carry one inline (PR #763 item 6: --accent/--card-border/--err skipped
+  // in silence and the suite stayed green) — strip comments FIRST, always
+  return css.slice(at, css.indexOf("\n}", at)).replace(/\/\*[\s\S]*?\*\//g, "");
 }
 function props(blockText: string): Map<string, string> {
   const out = new Map<string, string>();
@@ -70,20 +73,31 @@ for (const sheet of ["styles.css", "feed.css"]) {
   test(sheet + ": key parity — the light block re-declares every :root token", () => {
     const missing = [...dark.keys()].filter((k) => !light.has(k));
     assert.deepEqual(missing, [], sheet + " light block is missing tokens");
+    // a silent parse regression must fail LOUDLY (PR #763 item 6): both blocks hold dozens of
+    // tokens — a parser that suddenly sees fewer is broken, not a tidier sheet
+    assert.ok(dark.size >= 30, sheet + " parsed only " + dark.size + " dark tokens — parser broken?");
+    assert.ok(light.size >= dark.size, sheet + " parsed fewer light tokens than dark");
   });
 
-  test(sheet + ": the designated pairs clear WCAG in BOTH themes", () => {
+  test(sheet + ": the designated pairs clear WCAG in BOTH themes — and the evaluated COUNT is pinned", () => {
     for (const [name, theme] of [["dark", dark], ["light", light]] as const) {
       const bgv = theme.get("--bg"); assert.ok(bgv, name + " --bg");
       const page = rgbOf(bgv!, [30, 30, 30])!;
+      let evaluated = 0;
       for (const [fgTok, bgTok, floor] of PAIRS) {
         const f = theme.get(fgTok), g = theme.get(bgTok);
         if (!f || !g) continue;   // feed.css :root deliberately holds a SUBSET of tokens
         const ground = rgbOf(g, page); const fore = ground && rgbOf(f, ground);
         if (!ground || !fore) continue;
+        evaluated++;
         assert.ok(contrast(fore, ground) >= floor,
           `${sheet} ${name}: ${fgTok} on ${bgTok} = ${contrast(fore, ground).toFixed(2)} < ${floor}`);
       }
+      // a skip must be loud (PR #763 item 6): pin how many pairs actually ran per sheet/theme —
+      // grow these numbers when PAIRS grows, never let them silently shrink
+      const expected = sheet === "styles.css" ? PAIRS.length : 10;   // feed's :root holds a deliberate subset
+      assert.ok(evaluated >= expected,
+        `${sheet} ${name}: only ${evaluated}/${expected} contrast pairs evaluated — silent skip`);
     }
   });
 }

@@ -25974,6 +25974,20 @@ def _pusher():
 
 
 # ───────────────────────── HTTP / page serving ─────────────────────────
+# The theme reader for kernel-served pages that load NO webview bundle (the landing shell and the
+# /timeline pane): applies the two theme body classes before anything paints, re-applies on both
+# settings signals, and (when the page carries one) keeps the meta-theme OS chrome color honest.
+# Mirrors ui/webview/theme.ts + settings.ts loadSettings' migration — theme.test.ts greps them in step.
+_THEME_READER = (
+    "<script>(function(){function ap(){var t='classic';"
+    "try{var s=JSON.parse(localStorage.getItem('romp:settings')||'{}');"
+    "t=(s.theme==='yatharth'||s.theme==='yatharth-light')?s.theme:(s.theme==='classic'?'classic':(s.chatTabTheme==='yatharth'?'yatharth':'classic'));}catch(e){}"
+    "document.body.classList.toggle('chat-theme-yatharth',t!=='classic');"
+    "document.body.classList.toggle('theme-light',t==='yatharth-light');"
+    "var m=document.getElementById('meta-theme');if(m)m.setAttribute('content',t==='yatharth-light'?'#FAF9F5':'#1e1e1e');}"
+    "ap();window.addEventListener('storage',function(e){if(e.key==='romp:settings')ap();});"
+    "window.addEventListener('romp:settings',ap);})()</script>")
+
 THEME_CSS = """@font-face{font-family:'Inter';src:url(/media/InterVariable.woff2) format('woff2-variations');font-weight:100 900;font-style:normal;font-display:swap}@font-face{font-family:'Inter';src:url(/media/InterVariable-Italic.woff2) format('woff2-variations');font-weight:100 900;font-style:italic;font-display:swap}:root{--vscode-font-family:'Inter',system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
 --vscode-editor-font-family:ui-monospace,"SF Mono",Menlo,Consolas,"DejaVu Sans Mono",monospace;--vscode-chat-font-family:var(--vscode-font-family);
 --vscode-chat-font-size:13px;--vscode-foreground:#cccccc;--vscode-descriptionForeground:#9aa3ad;
@@ -26502,17 +26516,17 @@ def _timeline_page():
     # its first child — which is the .romp-tl-wrap on TimelinePanel construction, BEFORE any bars — so it
     # left an empty bar gap. The view now owns its own bars-area loader (draw()'s _drawBarsLoader, gated on
     # _barsLoaded) so the spinner stays until the deferred {type:"bars"} payload actually renders.
-    return ("<!DOCTYPE html><html lang=en><head><meta charset=UTF-8>"
+    return (("<!DOCTYPE html><html lang=en><head><meta charset=UTF-8>"
             "<meta name=viewport content='width=device-width,initial-scale=1'>"
             "<link rel=icon type=image/svg+xml href=/media/romp-swirl-glyph.svg>"
-            "<title>Romp · timeline</title><style>%s\n%s</style></head><body><div id=host></div>"
+            "<title>Romp · timeline</title><style>%s\n%s</style></head><body>" + _THEME_READER + "<div id=host></div>"
             "<script>%s</script>"                               # the shared WS shim (connect/queue/watchdog)
             "<script src=/dist/federation.js?v=%d></script>"    # multi-kernel manager: after the shim, before the boot
             "<script>%s</script>"
             "<script>var module={exports:{}};(function(module,exports){\n%s\n})(module,module.exports);"
             "var TimelinePanel=module.exports.TimelinePanel;"
             "window.__rompConnectTimeline(new TimelinePanel(document.getElementById('host')));"
-            "</script></body></html>" % (THEME_CSS, tl_css, _shim("timeline", v), v, _TIMELINE_BOOT, view_js))
+            "</script></body></html>") % (THEME_CSS, tl_css, _shim("timeline", v), v, _TIMELINE_BOOT, view_js))
 
 
 def _chat_body():
@@ -28632,14 +28646,14 @@ def _landing():
             ".rnet-top span{flex:1 1 auto}"
             "#rnet-x{background:none;border:none;color:#9aa0a6;font-size:16px;line-height:1;cursor:pointer;padding:0 2px}"
             "#rnet-x:hover{color:#fff}"
-            # One family of sizes, by information type (CLAUDE.md): 11.5px for the panel's own explanatory
+            # One family of sizes, by information type (CLAUDE.md): 11px for the panel's own explanatory
             # text (gist, expanded prose, add-form hint), 11px for per-row status and settings.
-            ".rnet-gist{color:#9aa0a6;font-size:11.5px;line-height:1.45;margin-bottom:11px}"
+            ".rnet-gist{color:#9aa0a6;font-size:11px;line-height:1.45;margin-bottom:11px}"
             ".rnet-more{background:none;border:none;color:var(--accent);font:inherit;cursor:pointer;padding:0;margin-left:6px}"
             ".rnet-more:hover{text-decoration:underline}"
-            ".rnet-sub{color:#9aa0a6;font-size:11.5px;line-height:1.45;margin:-6px 0 11px}"
+            ".rnet-sub{color:#9aa0a6;font-size:11px;line-height:1.45;margin:-6px 0 11px}"
             # The fold runs to a few short paragraphs and a list, so give them spacing of their own rather
-            # than the browser's 1em block margins, which are enormous next to 11.5px text. No new font
+            # than the browser's 1em block margins, which are enormous next to 11px text. No new font
             # size: the lead-ins are bold at the same size (CLAUDE.md's one-size-per-information-type).
             ".rnet-sub p{margin:0 0 7px}"
             ".rnet-sub ul{margin:0 0 7px;padding-left:15px}"
@@ -28659,7 +28673,7 @@ def _landing():
             "#rnet-from{flex:0 0 auto;max-width:44%;background:#121212;color:#ccc;border:1px solid #3a3a3a;border-radius:6px;padding:4px 6px;font:inherit}"
             "#rnet-attach{flex:0 0 auto;background:var(--accent);color:var(--accent-fg);border:none;border-radius:6px;padding:4px 12px;font-weight:600;cursor:pointer}"
             "#rnet-attach:disabled{opacity:0.5;cursor:default}"
-            ".rnet-hint{color:#6e7681;font-size:11.5px;line-height:1.45;margin-top:6px}"
+            ".rnet-hint{color:#6e7681;font-size:11px;line-height:1.45;margin-top:6px}"
             ".rnet-hint[hidden]{display:none}"
             # A host is one ITEM of two lines: what it is doing + the actions on line 1, the settings that
             # persist for it on line 2. They used to share one flat row, which put "Detach" at the same
@@ -28720,7 +28734,7 @@ def _landing():
             # THIS machine's release + commit, sitting above the host list at the same muted weight the
             # host rows' own build text wears — it is the baseline they are read against, not a heading.
             # Empty outside a git checkout, and it then costs no vertical room at all.
-            ".rnet-mybuild{color:#6e7681;font-size:11.5px;font-variant-numeric:tabular-nums;margin:-6px 0 10px}"
+            ".rnet-mybuild{color:#6e7681;font-size:11px;font-variant-numeric:tabular-nums;margin:-6px 0 10px}"
             ".rnet-mybuild:empty{display:none}"
             # the fleet-restart report (the user 2026-07-29): shown once when the page comes back, and
             # weighted toward the hosts it could NOT do — those are the ones needing a decision.
@@ -28979,7 +28993,7 @@ def _landing():
             # The panel wears the SAME modal vocabulary as the settings card / network panel (the user
             # 2026-07-27: the first cut's font shorthand leaned on --vscode-font-family, which the browser
             # shell never defines, so the whole shorthand was invalid and the text rendered oversized in
-            # the page default): #252526 card, 13px system-ui body, 14px/600 header, 11.5px rows + 11px
+            # the page default): #252526 card, 13px system-ui body, 14px/600 header, 11px rows + 11px
             # dim times (the network panel's information-type sizes), rnet-style action button + close.
             "#rerr-panel{width:min(700px,94vw);max-height:min(60vh,480px);"   # 60% wider (the user 2026-07-28); a flex child of the centered backdrop, no own positioning
             "display:flex;flex-direction:column;background:#252526;border:1px solid #3a3a3a;border-radius:10px;"
@@ -28996,7 +29010,7 @@ def _landing():
             # grid rows (the user 2026-07-28): a fixed 96px chip column — wider than the widest chip
             # ("follow-up failed") — so every message starts at the SAME x, left-aligned past the chips.
             ".rerr-row{display:grid;grid-template-columns:96px 1fr auto auto;align-items:baseline;"
-            "column-gap:8px;padding:6px 12px;color:#ccc;font-size:11.5px;line-height:1.45}"
+            "column-gap:8px;padding:6px 12px;color:#ccc;font-size:11px;line-height:1.45}"
             ".rerr-row .rerr-chip{justify-self:start}"
             ".rerr-row.link{cursor:pointer}"
             ".rerr-row.link:hover{background:rgba(255,255,255,0.05)}"
@@ -29005,7 +29019,7 @@ def _landing():
             ".rerr-t{flex:0 0 auto;color:#6e7681;font-size:11px;white-space:nowrap;font-variant-numeric:tabular-nums}"
             ".rerr-del{flex:0 0 auto;cursor:pointer;opacity:.5;font-weight:700}"
             ".rerr-del:hover{opacity:1}"
-            ".rerr-empty{padding:16px 12px;color:#6e7681;text-align:center;font-size:11.5px}"
+            ".rerr-empty{padding:16px 12px;color:#6e7681;text-align:center;font-size:11px}"
             # The per-kind filter bar (the user 2026-07-28): a vertical white "show" label on the left, then
             # the toggles in an even GRID — 8 kinds over the minimum 2 rows x 4 equal columns, every chip the
             # same cell width, instead of one ragged wrapping row. The toggles ARE the chips — lit means
@@ -29089,16 +29103,7 @@ def _landing():
             "body.theme-light #mtabs button.on{color:#C2410C}"
             "body.theme-light #mtabs .mtabs-div{background:#E3DFD3}"
             "</style></head><body class='po-chat po-feed po-timeline'>"
-            # the theme classes, applied before anything paints and re-applied on every settings
-            # write (storage = another tab, romp:settings = this document) — mirrors theme.ts
-            "<script>(function(){function ap(){var t='classic';"
-            "try{var s=JSON.parse(localStorage.getItem('romp:settings')||'{}');"
-            "t=(s.theme==='yatharth'||s.theme==='yatharth-light')?s.theme:(s.theme==='classic'?'classic':(s.chatTabTheme==='yatharth'?'yatharth':'classic'));}catch(e){}"
-            "document.body.classList.toggle('chat-theme-yatharth',t!=='classic');"
-            "document.body.classList.toggle('theme-light',t==='yatharth-light');"
-            "var m=document.getElementById('meta-theme');if(m)m.setAttribute('content',t==='yatharth-light'?'#FAF9F5':'#1e1e1e');}"
-            "ap();window.addEventListener('storage',function(e){if(e.key==='romp:settings')ap();});"
-            "window.addEventListener('romp:settings',ap);})()</script>"
+            + _THEME_READER +
             "<div id=romp-boot>" + _loader_inner() + "</div>"
             # the notification popover (hidden until the bell is clicked; backdrop click closes). No
             # Reload button (the user 2026-07-27: redundant next to the rail's own restart/refresh —

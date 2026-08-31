@@ -60,7 +60,7 @@ test("the open menu wears the house vocabulary and cannot overflow the panel", (
 test("the tab-theme sub-lines wear the menu vocabulary's sub scale", () => {
   const at = GEAR.indexOf("function themeRowHTML(");
   const body = GEAR.slice(at, GEAR.indexOf("\n  }", at));
-  assert.match(body, /font-size:0\.82em;color:#cccccc;opacity:0\.6/, "0.82em at 0.6 opacity — the house sub-line");
+  assert.match(body, /font-size:0\.82em;color:var\(--fg, #cccccc\);opacity:0\.6/, "0.82em at 0.6 opacity — the house sub-line (fg tokened for the light modal, PR #763 item 10)");
 });
 
 test("dismissal is event-based: outside click, Escape, the sibling dropdown, and the cross-pane echo", () => {

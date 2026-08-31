@@ -103,6 +103,9 @@ export function wireTip(anchor: HTMLElement, render: (el: HTMLElement) => void, 
   a._rompTipWired = true;
   anchor.addEventListener("mouseenter", () => showTip(anchor, a._rompTipRender, a._rompTipOpts));
   anchor.addEventListener("mouseleave", () => { if (tipAnchor === anchor) scheduleHide(); });
+  // keyboard parity (PR #763 item 10): focus shows, blur hides — a styled tip is never mouse-only
+  anchor.addEventListener("focus", () => showTip(anchor, a._rompTipRender, a._rompTipOpts));
+  anchor.addEventListener("blur", () => { if (tipAnchor === anchor) scheduleHide(); });
 }
 
 // One-line convenience for the title=-replacement spots: the tip text can be updated per push

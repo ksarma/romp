@@ -6,7 +6,7 @@
 // so the colours are IDENTICAL to the ledger box.
 import { delegate, flash } from "./actions";
 import { applyTheme } from "./theme";
-import { loadSettings } from "./settings";
+import { loadSettings, installSettingsSync, onExternalSettingsChange } from "./settings";
 import { SessionViews, viewTagUnion } from "./session-views";
 import { lensVisible, surfaceLens } from "./tag-lens";
 import { openTagMenu, tagMenuButton, syncTagFilter } from "./tag-menu";
@@ -654,6 +654,11 @@ window.addEventListener("message", (e: MessageEvent) => {
 });
 window.addEventListener("storage", (e: StorageEvent) => { if (e.key === "romp:settings") { applyTheme(document, loadSettings()); render(); } });   // theme/colormap change → reskin + recolour
 applyTheme(document, loadSettings());   // the persisted theme applies at boot (2026-08-28)
+// VS Code webviews have per-origin storage and never see another pane's `storage` events — gear
+// saves arrive as settingsSync host messages (PR #763 item 3; the raiser re-fires romp:settings,
+// which onExternalSettingsChange below already handles in the browser too)
+installSettingsSync();
+onExternalSettingsChange((s) => { applyTheme(document, s); render(); });
 
 // Fleet-list clicks are DELEGATED to the stable #fleet-list (installed once). render() does
 // `#fleet-list`.replaceChildren() on every feed push, so a handler hung on a rebuilt row/header/caret is
