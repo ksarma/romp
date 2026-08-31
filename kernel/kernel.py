@@ -696,14 +696,46 @@ def iso(t):
         return ""
 
 
-def _name_color(sid):
-    """Session display color {bg,fg} from the names registry (3rd tab field), or null."""
+def _names_snapshot():
+    """{sid: tab-fields list} for every names-registry entry, read once. The pusher cycle publishes
+    this as its names scope (_live_scope.names): build_session re-resolves every path token through
+    _cwd_of and every outgoing postal card through _name_color_by_name, so the ACTIVE tab's rebuild
+    re-read the same ~64 one-line files hundreds of times per 0.5s cycle — ~38% of the pusher's wall
+    time (py-spy 2026-08-31: _cwd_of 22%, _name_color_by_name 16%). Same one-snapshot-per-cycle idiom
+    as the tmux liveness hoist (2026-08-10); a mid-cycle rename/create lands next cycle, the exact
+    staleness the liveness snapshot already tolerates by construction."""
+    snap = {}
     try:
-        parts = (NAMES / sid).read_text().rstrip("\n").split("\t")
-        if len(parts) > 2 and parts[2].startswith("#"):
-            return {"bg": parts[2], "fg": "#ffffff"}
+        for f in NAMES.iterdir():
+            try:
+                snap[f.name] = f.read_text().rstrip("\n").split("\t")
+            except Exception:   # OSError, but ALSO UnicodeDecodeError on a torn/raw-bytes entry — the
+                continue        # per-call readers this replaces caught bare Exception, and this function
+        #                         runs on the pusher thread's bare loop, so it must NEVER raise (review
+        #                         find 2026-08-31: one non-UTF-8 entry would have killed the pusher for
+        #                         good, and again on every restart while the file persisted)
     except Exception:
         pass
+    return snap
+
+
+def _names_parts(sid):
+    """The names-registry tab fields for sid — from the cycle's names scope when one is set (one
+    registry read per PUSHER CYCLE instead of per token/card), else a direct read. None = no entry."""
+    snap = getattr(_live_scope, "names", None)
+    if snap is not None:
+        return snap.get(str(sid))
+    try:
+        return (NAMES / str(sid)).read_text().rstrip("\n").split("\t")
+    except Exception:
+        return None
+
+
+def _name_color(sid):
+    """Session display color {bg,fg} from the names registry (3rd tab field), or null."""
+    parts = _names_parts(sid)
+    if parts and len(parts) > 2 and parts[2].startswith("#"):
+        return {"bg": parts[2], "fg": "#ffffff"}
     return None
 
 
@@ -871,32 +903,26 @@ def _set_palette(name):
 def _name_of(sid):
     """Session display name from the names registry (1st tab field), or None. The event model gives a
     postal atom's peer as the sender's rompUuid (sid), so a postal card resolves it to a name + color."""
-    try:
-        return (NAMES / sid).read_text().rstrip("\n").split("\t")[0] or None
-    except Exception:
-        return None
+    parts = _names_parts(sid)
+    return (parts[0] or None) if parts else None
 
 
 def _cwd_of(sid):
     """The session's working directory from the names registry (2nd tab field: name\\tcwd\\tbg\\tfg), or "".
     Written at launch for BOTH backends (tmux romp launcher + SDK write_name), so it's available before any
     transcript exists. The directory is fixed at creation — there's no SDK call to relocate a session."""
-    try:
-        parts = (NAMES / sid).read_text().rstrip("\n").split("\t")
-        return parts[1] if len(parts) > 1 else ""
-    except Exception:
-        return ""
+    parts = _names_parts(sid)
+    return parts[1] if parts and len(parts) > 1 else ""
 
 
 def _identity_of(sid):
     """The session's identity colors (bg, fg) from the names registry (3rd/4th tab fields), or ("", ""). Written
     at launch for BOTH backends (tmux launcher + SDK write_name), so it's available without shelling tmux —
     the unified GET /sessions reads identity from here for either backend."""
-    try:
-        parts = (NAMES / sid).read_text().rstrip("\n").split("\t")
-        return (parts[2] if len(parts) > 2 else "", parts[3] if len(parts) > 3 else "")
-    except Exception:
+    parts = _names_parts(sid)
+    if not parts:
         return ("", "")
+    return (parts[2] if len(parts) > 2 else "", parts[3] if len(parts) > 3 else "")
 
 
 def _session_backend(sid, tm):
@@ -15771,12 +15797,28 @@ def _postal_intent(kind, body=""):
     return m.group(1) if m else ""
 
 
+_postal_index_memo = [None]   # ((mtime_ns, size), idx) — exact-change key of messages.jsonl
+
+
 def _postal_index():
     """messages.jsonl 'sent' rows keyed by msg id → {id, from, fromId, toId, body, kind, t, park}. The
-    clean body lives here, not in the delivered text. Mirrors postal-spec.ts loadPostalIndex."""
+    clean body lives here, not in the delivered text. Mirrors postal-spec.ts loadPostalIndex.
+    Memoized on the log's (mtime_ns, size): the log is append-only and every send appends, so the key
+    moves on exactly the events that change the answer — build_session hydrates every postal card
+    through this and re-parsed the whole log per push otherwise (~7% of the pusher's wall time,
+    py-spy 2026-08-31). Consumers only read the index (_hydrate_postal), so sharing one dict is safe."""
+    p = jd.STATE / "timeline" / "messages.jsonl"
+    try:
+        st = os.stat(p)
+        key = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return {}                                       # no log yet → nothing to memoize
+    hit = _postal_index_memo[0]
+    if hit is not None and hit[0] == key:
+        return hit[1]
     idx = {}
     try:
-        lines = (jd.STATE / "timeline" / "messages.jsonl").read_text(errors="replace").splitlines()
+        lines = p.read_text(errors="replace").splitlines()
     except OSError:
         return idx
     for ln in lines:
@@ -15789,12 +15831,21 @@ def _postal_index():
                             "fromHost": o.get("from_host", ""),
                             "toId": o.get("to_id", ""), "body": o.get("body", ""), "kind": o.get("kind", ""),
                             "t": o["t"] if isinstance(o.get("t"), (int, float)) else 0, "park": bool(o.get("park"))}
+    _postal_index_memo[0] = (key, idx)
     return idx
 
 
 def _name_color_by_name(name):
     """Identity color {bg,fg} for a session by NAME (outgoing postal carries the recipient name, not a
-    sid). Scans the names registry. None if not found."""
+    sid). Reads the cycle's names scope when one is set — build_session hydrates every outgoing postal
+    card through here, and the full-registry rescans were ~16% of the pusher's wall time (py-spy
+    2026-08-31) — else scans the registry. None if not found."""
+    snap = getattr(_live_scope, "names", None)
+    if snap is not None:
+        for parts in snap.values():
+            if parts and parts[0] == name and len(parts) > 2 and parts[2].startswith("#"):
+                return {"bg": parts[2], "fg": "#ffffff"}
+        return None
     try:
         for f in NAMES.iterdir():
             parts = f.read_text().rstrip("\n").split("\t")
@@ -26132,9 +26183,15 @@ def _pusher_cycle():
     #                                       however deep it hides (_bg_live_norm, _compacting_now,
     #                                       build_feed's per-session gates) — see _live_scope
     try:
+        _live_scope.names = _names_snapshot()   # …and the cycle's NAMES snapshot, same idiom: the name/
+        #                                       cwd/color helpers otherwise re-read the registry per path
+        #                                       token and per postal card (~38% of pusher wall, py-spy
+        #                                       2026-08-31). INSIDE the try: a raise here must still hit
+        #                                       the finally, or the liveness scope above leaks set
         _pusher_cycle_jobs(now, tmux, any_client)
     finally:
         _live_scope.snapshot = None
+        _live_scope.names = None
 
 
 def _pusher_cycle_jobs(now, tmux, any_client):
