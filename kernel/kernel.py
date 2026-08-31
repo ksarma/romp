@@ -13189,6 +13189,21 @@ def _session_rows():
     responds. NB: 0-arg, distinct from the picker's _session_list(now, tmux) — they once collided (the user
     2026-06-22); keep the names distinct."""
     notes = _working_notes()                                # {sid: working-note} (tmux @romp-working; P3 adds SDK)
+    # ONE transcript-path sweep for the WHOLE listing: _path_of per row re-ran discover()'s
+    # fingerprint validity check (3 stats × every names entry + a stat per discovered transcript)
+    # for every live session — ~30 rows × ~280 syscalls a request, measured at ~71% of this route's
+    # handler time on a loaded kernel (py-spy 2026-08-31, the /sessions p90-3.3s complaint). Same
+    # hoist idiom as the pusher cycle's _tmux_sessions() snapshot (2026-08-10) and the tm= param.
+    try:
+        paths = {s["sid"]: s["path"] for s in _sessions(time.time())}
+    except Exception:
+        # the hoist runs OUTSIDE the per-row guard below, so it needs its own containment (review
+        # find, 2026-08-31): a discover raise (a names-dir permission fault or remove race) must
+        # degrade to PATHLESS rows — an empty map is exactly _path_of's miss, so every row still
+        # serves complete with compacting=False — never a 500 for the whole route.
+        sys.stderr.write("session-list path sweep failed (rows serve pathless): %s\n"
+                         % traceback.format_exc())
+        paths = {}
     out = []
     for sid, meta in Sessions.live().items():
         try:
@@ -13203,7 +13218,7 @@ def _session_rows():
                         # compacting: the corroborated signal the chat chip uses (_compacting_now, cached
                         # parse), exposed so `romp compact --wait` and scripted recycling can watch a
                         # compaction start and clear through the kernel's own read, never a scrape.
-                        "compacting": bool(_compacting_now(sid, tm=meta)),
+                        "compacting": bool(_compacting_now(sid, tm=meta, path=paths.get(sid))),
                         "working": notes.get(sid, ""), "backend": meta.get("backend", "")})
         except Exception:
             # one row's helper blowing up must not hide the session — or the WHOLE listing (this
@@ -17294,17 +17309,27 @@ def _save_pending_ops():
 _pending_ops = _load_pending_ops()   # sid -> [("send", text, echo) | ("model", v) | ("effort", v) | ("fast", v) | ("compact",), …] in park order
 
 
-def _compacting_now(sid, tm=None):
+_PATH_UNRESOLVED = object()   # _compacting_now's "no path was passed" sentinel — None is a real value (no transcript)
+
+
+def _compacting_now(sid, tm=None, path=_PATH_UNRESOLVED):
     """Is this session compacting RIGHT NOW — the same corroborated signal the chip uses (_compacting:
     live/optimistic state, disproved by resumed work or a compact_boundary, 180s optimistic cap), read
     from the CACHED parse only so it's cheap enough for the WS handler and the producer tick. `tm` lets
     a caller already holding the session's live() meta pass it in — _session_rows exposes this per row,
     and refetching would pay one full Sessions.live() merge PER ROW on a polled route (review find,
-    2026-08-30)."""
+    2026-08-30). `path` is the same hoist for the transcript path: the default _path_of resolves
+    through a full _sessions() sweep — discover()'s fingerprint re-stats every names entry ×3 plus a
+    stat per discovered transcript, ON EVERY CALL, cache hit included — and paying that per row was
+    ~71% of GET /sessions' handler time on a loaded kernel (py-spy 2026-08-31; p90 3.3s, bimodal:
+    the syscalls are ~50ms quiet but each GIL re-acquire can lose a 5ms slice to the pusher/judge
+    threads). A caller holding a listing-wide sid→path map passes the row's path; None means "no
+    transcript", exactly _path_of's miss."""
     sid = str(sid)
     if tm is None:
         tm = _tmux_sessions().get(sid)
-    path = _path_of(sid)
+    if path is _PATH_UNRESOLVED:
+        path = _path_of(sid)
     session = (_parse_cached(path) if path else None) or {"turns": []}
     return _compacting(sid, (tm or {}).get("state", ""), session, int(time.time()), (tm or {}).get("since"))
 
