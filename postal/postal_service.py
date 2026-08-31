@@ -605,13 +605,15 @@ def _kernel_sessions_checked(threads=False):
     try:
         req = urllib.request.Request(KERNEL_BASE + "/sessions" + ("?threads=1" if threads else ""),
                                      headers={"X-Romp-Token": SERVE_TOKEN})
-        # 2s is a BUDGET, not a guess: a refusal-bound send makes two sequential fetches (the
-        # pool + the corroboration probe), and every same-box bus CLIENT talks to the bus with a
-        # 5s cap (_http) — 2+2 stays inside it, so the honest refusal always reaches the sender.
-        # Raising this to 5s (tried 2026-08-31) made the worst case 10s: the client aborted with
-        # a bare "bus timed out" and the carefully-worded refusal died on a closed socket. A slow
-        # /sessions is instead healed by the corroboration arms, which read files, not the kernel.
-        with urllib.request.urlopen(req, timeout=2) as r:
+        # 6s and _http's 15s are ONE BUDGET PAIR: a refusal-bound send makes two sequential
+        # fetches (the pool + the corroboration probe), and the honest refusal must reach the
+        # sender inside the client cap — 6+6=12 < 15. Raise them TOGETHER or not at all (the
+        # 2026-08-31 review reproduced the failure mode: a fetch cap raised past the client cap
+        # made the refusal die on a closed socket, blaming the bus). 6s is measured, not guessed:
+        # the live /sessions route on a loaded 30-session kernel sampled p50 0.6s / p90 3.5s /
+        # max 4.9s (2026-08-31) — the old 2s cap failed a fifth of fetches, and each failure
+        # started the refusal chain the blink specimens rode.
+        with urllib.request.urlopen(req, timeout=6) as r:
             data = json.loads(r.read().decode("utf-8"))
         return (data if isinstance(data, list) else []), True
     except Exception:
@@ -1698,7 +1700,7 @@ def _http(method, path, payload=None):
     headers["X-Romp-Token"] = SERVE_TOKEN            # same-machine client: the 0600 file is the credential
     req = urllib.request.Request(BASE + path, data=data, method=method, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=5) as r:
+        with urllib.request.urlopen(req, timeout=15) as r:   # the fetch-budget pair's client half — see _kernel_sessions_checked
             return json.loads(r.read().decode() or "{}")
     except urllib.error.HTTPError as e:
         try:

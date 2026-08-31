@@ -50,5 +50,91 @@ class LiveRowsGuard(unittest.TestCase):
         self.assertIn(SID_B, out)
 
 
+class ListingCompleteness(unittest.TestCase):
+    """The scan's completeness contract (2026-08-31, the listing-blink source class): a reg the scan
+    has ever seen drops out only by being GENUINELY GONE. A transiently unreadable file serves its
+    last good cached row (loudly); a failed RMW read never guts the reg; the alive flips hold the
+    same lock as the mirror RMWs, so a snapshot race can't undo them. Synthetic; hermetic."""
+
+    SID = "11111111-2222-3333-4444-cccccccccccc"
+
+    def setUp(self):
+        self.be = sb.SdkBackend(tempfile.mkdtemp(), "/bin/true", lambda *a, **k: None)
+        sb.write_reg(self.be.state_dir, self.SID,
+                     {"sid": self.SID, "name": "web", "alive": True})
+        self.path = sb._reg_path(self.be.state_dir, self.SID)
+
+    def test_a_transiently_unreadable_reg_serves_its_last_good_row(self):
+        warm = {r["sid"] for r in sb.list_regs(self.be.state_dir)}
+        self.assertIn(self.SID, warm, "cache warmed")
+        good = self.path.read_bytes()
+        self.path.write_bytes(b"{ torn")          # the class of transient the invariant covers
+        rows = {r["sid"]: r for r in sb.list_regs(self.be.state_dir)}
+        self.assertIn(self.SID, rows, "absence reads as death downstream — serve the last good row")
+        self.assertTrue(rows[self.SID].get("alive"))
+        self.path.write_bytes(good)               # healed → the fresh read replaces the cached row
+        self.assertIn(self.SID, {r["sid"] for r in sb.list_regs(self.be.state_dir)})
+
+    def test_an_unreadable_reg_never_seen_is_skipped_loudly_not_served(self):
+        p2 = sb._reg_path(self.be.state_dir, "dddddddd-2222-3333-4444-cccccccccccc")
+        p2.write_bytes(b"not json")
+        sids = {r["sid"] for r in sb.list_regs(self.be.state_dir)}
+        self.assertNotIn("dddddddd-2222-3333-4444-cccccccccccc", sids,
+                         "no prior good row exists — nothing honest to serve")
+
+    def test_a_failed_rmw_read_skips_the_write_rather_than_gutting(self):
+        saved = sb.read_reg
+        try:
+            sb.read_reg = lambda state_dir, sid: None      # the read fails; the FILE stands
+            self.be._update_reg(self.SID, queue=["x"])
+        finally:
+            sb.read_reg = saved
+        reg = sb.read_reg(self.be.state_dir, self.SID)
+        self.assertTrue(reg.get("alive"), "a gutted reg (no alive) vanishes from every listing")
+        self.assertNotIn("queue", reg, "the mirror update was skipped, not applied to a bare reg")
+
+    def test_a_missing_reg_still_mints_the_bare_mirror(self):
+        sid2 = "eeeeeeee-2222-3333-4444-cccccccccccc"
+        self.be._update_reg(sid2, queue=["x"])
+        reg = sb.read_reg(self.be.state_dir, sid2)
+        self.assertEqual(reg.get("queue"), ["x"], "no file at all = the pre-create mirror case, unchanged")
+
+    def test_a_flip_on_an_unreadable_reg_uses_the_last_good_row(self):
+        # kill on a transiently unreadable reg must still land alive=False (review find: the silent
+        # no-op left a killed session listed alive until an unrelated write healed it) — the scan's
+        # cached row is the RMW base, so the flip both lands AND repairs the file
+        self.assertIn(self.SID, {r["sid"] for r in sb.list_regs(self.be.state_dir)})  # cache warm
+        self.path.write_bytes(b"{ torn")
+        self.be.kill(self.SID)
+        reg = sb.read_reg(self.be.state_dir, self.SID)
+        self.assertIsNotNone(reg, "the flip rewrote a whole readable reg from the cached base")
+        self.assertFalse(reg.get("alive"))
+        self.assertEqual(reg.get("name"), "web", "the cached base carried the full row, not a gut")
+
+    def test_the_alive_flip_never_loses_to_an_rmw_snapshot(self):
+        import threading
+        stop = threading.Event()
+
+        def storm():
+            while not stop.is_set():
+                self.be._update_reg(self.SID, queue=[])
+
+        t = threading.Thread(target=storm)
+        t.start()
+        try:
+            for _ in range(25):
+                self.be.kill(self.SID)
+                reg = sb.read_reg(self.be.state_dir, self.SID)
+                self.assertFalse(reg.get("alive"),
+                                 "kill's alive=False must be immediately durable under RMW traffic")
+                self.be.resume("web", self.SID)
+                reg = sb.read_reg(self.be.state_dir, self.SID)
+                self.assertTrue(reg.get("alive"),
+                                "resume's alive=True must be immediately durable under RMW traffic")
+        finally:
+            stop.set()
+            t.join()
+
+
 if __name__ == "__main__":
     unittest.main()
