@@ -602,7 +602,12 @@ def _kernel_sessions_checked(threads=False):
     try:
         req = urllib.request.Request(KERNEL_BASE + "/sessions" + ("?threads=1" if threads else ""),
                                      headers={"X-Romp-Token": SERVE_TOKEN})
-        with urllib.request.urlopen(req, timeout=2) as r:
+        # 5s, not 2: on a loaded box a cold-cache /sessions can outrun a tight timeout, and a
+        # failed fetch here starts the exact refusal chain the 2026-08-31 specimens rode (the
+        # listing "fails" → the pool loses every local → the probe hits a now-warm kernel and
+        # answers → a live peer gets ruled dead). The corroboration arms make even a timeout
+        # honest now, but not paying the false-negative at all is better.
+        with urllib.request.urlopen(req, timeout=5) as r:
             data = json.loads(r.read().decode("utf-8"))
         return (data if isinstance(data, list) else []), True
     except Exception:
@@ -749,6 +754,38 @@ def _recip_id_for(to):
         return to
     return None
 
+def _durable_session(bare, by_id):
+    """Does `bare` name a session the DURABLE per-session registry knows as live-or-resumable?
+    The corroboration read behind the answered-but-absent refusal arm (2026-08-31): the kernel's
+    listing transiently omitted live sessions (a restart-settle blink), and the bus converted an
+    incomplete-but-200 listing into a hard "not live" for both address forms — one specimen
+    mis-routed a warning mail. A reg with alive=true is a session romp WILL list (running or
+    dormant-resumable), so its absence from one listing is a listing gap, never evidence of death.
+    tmux sessions have no reg — their liveness is tmux's own, and this read stays honestly silent
+    for them. Reads the registry file directly (same box, kernel-owned): the designed API is the
+    listing itself, which is exactly the thing being second-guessed here."""
+    root = STATE.parent
+    sids = [bare] if by_id else []
+    if not by_id:
+        try:
+            for f in NAMES_DIR.iterdir():
+                try:
+                    if f.read_text().split("\t")[0].strip() == bare:
+                        sids.append(f.name)
+                except OSError:
+                    continue
+        except OSError:
+            pass
+    for sid in sids:
+        try:
+            reg = json.loads((root / "sdk" / (sid + ".json")).read_text())
+        except (OSError, ValueError):
+            continue
+        if isinstance(reg, dict) and reg.get("alive"):
+            return True
+    return False
+
+
 def resolve_recipient(to, frm_id=""):
     """Resolve a recipient reference to exactly ONE destination, or explain why it can't.
 
@@ -834,14 +871,31 @@ def resolve_recipient(to, frm_id=""):
     # world, and the kernel is its authoritative source (fail loudly, never degrade silently, the
     # user 2026-07-03). Before making the claim, ask whether the source ANSWERED: a mid-restart
     # kernel yields an empty listing that reads exactly like universal deadness. One loopback GET,
-    # paid only on this refusal path.
-    if not any(not a.get("remote") for a in pool) and not _kernel_sessions_checked()[1]:
-        # only an EMPTY local world raises the question — a listing with live locals in it proves
-        # the source answered (and heartbeating remotes can't vouch for LOCAL liveness)
+    # paid only on this refusal path — and even an ANSWERED listing is interrogated before the
+    # death ruling (2026-08-31: two verified specimens of a 200 listing omitting a LIVE session,
+    # by id and by name — a restart-settle blink; the refusal mis-routed a warning mail). The
+    # fresh fetch's own rows and the answered bit travel together from ONE call, so a kernel
+    # coming back between two fetches can't convert unreachable into a false death ruling; the
+    # durable per-session registry (_durable_session) corroborates what one listing missed.
+    rows, answered = _kernel_sessions_checked(threads=True)
+    if not answered and not any(not a.get("remote") for a in pool):
+        # only an EMPTY local world raises the unreachable question — a pool with live locals in
+        # it proves the source was answering (and heartbeating remotes can't vouch for LOCALS)
         return {"kind": "error", "status": 503,
                 "error": "can't tell whether '%s' is live right now: the liveness source (the romp "
                          "kernel) didn't answer — likely mid-restart. Nothing was sent, and this is "
                          "NOT a claim that '%s' is dead. Retry shortly." % (bare, bare)}
+    fresh = set()
+    for r in rows:
+        if isinstance(r, dict):
+            fresh.add(str(r.get("id") or ""))
+            fresh.add(str(r.get("name") or ""))
+    if bare in fresh or _durable_session(bare, by_id):
+        return {"kind": "error", "status": 503,
+                "error": "'%s' looks live (its durable registry entry stands) but the session "
+                         "listing came back without it — likely a restart-settle blink. Nothing "
+                         "was sent, and this is NOT a claim that '%s' is dead. Retry shortly."
+                         % (bare, bare)}
     return {"kind": "error", "status": 404, "error": "no live romp session named '%s'" % to}
 
 
