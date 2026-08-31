@@ -54,16 +54,16 @@ var GEAR_HTML =
   '<span style="flex:1 1 auto"><b>Claude login</b>' +
   '<span class=rs-sub id=rs-login-acct>…</span>' +
   "<div id=rs-login-flow style='margin-top:6px'>" +
-  "<button id=rs-login-btn type=button style='cursor:pointer;background:#2a2a2a;color:#ccc;border:1px solid #3a3a3a;border-radius:5px;padding:3px 10px'>Log in to Claude Code</button>" +
+  "<button id=rs-login-btn type=button style='cursor:pointer;background:var(--btn-bg, #2a2a2a);color:var(--fg, #ccc);border:1px solid var(--hairline, #3a3a3a);border-radius:5px;padding:3px 10px'>Log in to Claude Code</button>" +
   "<span id=rs-login-state class=rs-sub style='margin-left:8px'></span>" +
   '</div></span></div>' +
   '<div class=rs-sec>Sessions</div>' +
   "<div class='rs-row' style='cursor:default'><span style='flex:1 1 auto'><b>Default directory</b>" +
   '<span class=rs-sub>The default directory for NEW sessions (still editable per session). Persisted kernel-side — also settable with <code>romp default-dir</code>. Falls back to the romp install dir until you set one; blank reverts to it. ~ and $VARs expand.</span>' +
   "<div style='display:flex;gap:6px;margin-top:5px'>" +
-  "<input id=rs-defaultdir type=text spellcheck=false placeholder='install/serve default' style='flex:1 1 auto;min-width:0;box-sizing:border-box;background:#1e1e1e;color:#ccc;" +
+  "<input id=rs-defaultdir type=text spellcheck=false placeholder='install/serve default' style='flex:1 1 auto;min-width:0;box-sizing:border-box;background:var(--input-bg, #1e1e1e);color:var(--fg, #ccc);" +
   "border:1px solid #3a3a3a;border-radius:5px;padding:3px 6px'>" +
-  "<button id=rs-defaultdir-browse type=button style='flex:0 0 auto;cursor:pointer;background:#2a2a2a;color:#ccc;border:1px solid #3a3a3a;border-radius:5px;padding:3px 8px'>Browse…</button>" +
+  "<button id=rs-defaultdir-browse type=button style='flex:0 0 auto;cursor:pointer;background:var(--btn-bg, #2a2a2a);color:var(--fg, #ccc);border:1px solid var(--hairline, #3a3a3a);border-radius:5px;padding:3px 8px'>Browse…</button>" +
   '</div></span></div>' +
   "<div class='rs-row rs-sep' style='cursor:default'><span style='flex:1 1 auto'><b>Default backend</b>" +
   '<span class=rs-sub>What the + button uses for a NEW session — tmux drives a terminal pane; SDK runs via the Agent SDK. Both kinds run side by side; this only sets the default.</span>' +
@@ -98,10 +98,6 @@ var GEAR_HTML =
   '</select>' +
   "<div id=rs-tabctx-pick style='position:relative;margin-top:5px'></div>" +
   '</span></div>' +
-  "<div class='rs-row' style='cursor:default'><span style='flex:1 1 auto;min-width:0'><b>Chat tabs</b>" +
-  "<span class=rs-sub>The tab strip's look. Classic is the original high-contrast strip; Yatharth is the contributed flat-wash aesthetic with the tinted line under the strip.</span>" +
-  "<div id=rs-tabtheme style='position:relative;margin-top:5px'></div>" +
-  '</span></div>' +
   "<div class='rs-row' style='cursor:default'><span style='flex:1 1 auto;min-width:0'><b>Text scheme</b>" +
   "<span class=rs-sub>Chat text colors only. Each option previews its own tiers — prose, the dimmer tool text, code. (Solarized Light is omitted — its tiers are made for a light page and turn muddy here.)</span>" +
   "<div id=rs-chatscheme style='position:relative;margin-top:5px'></div>" +
@@ -126,8 +122,12 @@ var GEAR_HTML =
   '<span><b>Collapse cards by default</b>' +
   '<span class=rs-sub>Every card arrives collapsed to its one-line gist; expanding one is a per-card override. Moved here from the feed footer — a set-and-forget default, not a per-glance action.</span>' +
   '</span></label>' +
-  '<div class=rs-sec>Colors</div>' +
-  "<div class=rs-row style='cursor:default'><span style='flex:1 1 auto'><b>Colormap</b>" +
+  '<div class=rs-sec>Appearance</div>' +   // renamed from Colors (2026-08-28): it owns the overall theme now, not just tints
+  "<div class='rs-row' style='cursor:default'><span style='flex:1 1 auto;min-width:0'><b>Theme</b>" +
+  "<span class=rs-sub>The dashboard's overall look, every pane. Classic and Yatharth are dark (they differ in the tab strip: original high-contrast vs the contributed flat-wash); Yatharth light is the warm light theme — inside VS Code it wins over the editor theme, deliberately.</span>" +
+  "<div id=rs-theme style='position:relative;margin-top:5px'></div>" +
+  '</span></div>' +
+  "<div class='rs-row rs-sep' style='cursor:default'><span style='flex:1 1 auto'><b>Colormap</b>" +
   '<span class=rs-sub>One ramp for the whole dashboard — feed recency, usage, and context bars. Brightest = newest / highest.</span>' +
   "<div id=rs-cmap><button id=rs-cmap-btn type=button title='Pick the recency colormap'></button>" +
   '<div id=rs-cmap-list hidden></div></div></span></div>' +
@@ -169,8 +169,8 @@ var GEAR_HTML =
   "<div class=rs-h style='margin-bottom:4px'>Log in to Claude Code</div>" +
   "<div id=rs-login-url hidden style='margin-top:6px'></div>" +
   "<div id=rs-login-code hidden style='margin-top:8px;display:flex;gap:6px;align-items:center'>" +
-  "<input id=rs-login-input type=text autocomplete=off spellcheck=false placeholder='paste the code from the browser…' style='flex:1;background:#1e1e1e;color:#ccc;border:1px solid #3a3a3a;border-radius:5px;padding:4px 8px'>" +
-  "<button id=rs-login-send type=button style='cursor:pointer;background:#2a2a2a;color:#ccc;border:1px solid #3a3a3a;border-radius:5px;padding:3px 10px'>Submit</button>" +
+  "<input id=rs-login-input type=text autocomplete=off spellcheck=false placeholder='paste the code from the browser…' style='flex:1;background:var(--input-bg, #1e1e1e);color:var(--fg, #ccc);border:1px solid #3a3a3a;border-radius:5px;padding:4px 8px'>" +
+  "<button id=rs-login-send type=button style='cursor:pointer;background:var(--btn-bg, #2a2a2a);color:var(--fg, #ccc);border:1px solid var(--hairline, #3a3a3a);border-radius:5px;padding:3px 10px'>Submit</button>" +
   '</div>' +
   "<div style='margin-top:10px;text-align:right'>" +
   "<button id=rs-login-cancel type=button style='cursor:pointer;background:transparent;color:#888;border:1px solid #3a3a3a;border-radius:5px;padding:3px 10px'>Cancel</button>" +
@@ -208,7 +208,7 @@ function initGear(post) {
     dd = document.getElementById('rs-defaultdir'), gb = document.getElementById('rs-branch'),
     tc = document.getElementById('rs-tabctx'),
     cs = document.getElementById('rs-chatscheme'),
-    tt = document.getElementById('rs-tabtheme'),
+    tt = document.getElementById('rs-theme'),
     cg = document.getElementById('rs-collapsegaps'), ao = document.getElementById('rs-activeonly'),
     fc = document.getElementById('rs-feedcollapsed'),
     jm = document.getElementById('rs-judgemodel'),
@@ -265,7 +265,7 @@ function initGear(post) {
     var btn = document.createElement('button');
     btn.type = 'button';
     btn.style.cssText = 'display:flex;align-items:center;gap:8px;width:100%;min-width:0;text-align:left;' +
-      'background:#1e1e1e;border:1px solid #3a3a3a;border-radius:5px;padding:5px 8px;cursor:pointer;font:inherit;color:#ccc';
+      'background:var(--input-bg, #1e1e1e);border:1px solid var(--hairline, #3a3a3a);border-radius:5px;padding:5px 8px;cursor:pointer;font:inherit;color:var(--fg, #ccc)';
     var menu = document.createElement('div');
     menu.hidden = true;
     menu.style.cssText = 'position:absolute;left:0;right:0;top:100%;margin-top:4px;z-index:30;padding:4px;' +
@@ -324,7 +324,7 @@ function initGear(post) {
     { id: 'solarized-dark', name: 'Solarized Dark', fg: '#eee8d5', dim: '#93a1a1', code: '#d5b02d' }
   ];
   function schemeRowHTML(sc) {
-    return '<span style="flex:0 0 auto;min-width:96px;color:#ccc">' + sc.name + '</span>' +
+    return '<span style="flex:0 0 auto;min-width:96px;color:var(--fg, #ccc)">' + sc.name + '</span>' +
       '<span style="flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' +
       '<span style="color:' + sc.fg + '">Prose text</span> \u00b7 ' +
       '<span style="color:' + sc.dim + '">tool / meta</span> \u00b7 ' +
@@ -336,18 +336,27 @@ function initGear(post) {
     var cur = load().chatScheme; cur = (cur === 'high-contrast' || cur === 'solarized-dark') ? cur : 'default';
     csDrop(SCHEMES, cur);
   }
-  var TABTHEMES = [
-    { id: 'classic', name: 'Classic', sub: 'the original high-contrast strip \u00b7 thick selected outline \u00b7 no session tint' },
-    { id: 'yatharth', name: 'Yatharth', sub: 'flat session wash \u00b7 soft selected border \u00b7 tinted line under the strip' }
+  var THEMES = [
+    { id: 'classic', name: 'Classic', sub: 'dark \u00b7 the original high-contrast strip' },
+    { id: 'yatharth', name: 'Yatharth', sub: 'dark \u00b7 flat session wash \u00b7 tinted line under the strip' },
+    { id: 'yatharth-light', name: 'Yatharth light', sub: 'warm light \u00b7 cream page, clay accents \u00b7 the yatharth strip' }
   ];
-  function tabThemeRowHTML(th) {
-    return '<span style="flex:0 0 auto;min-width:96px;color:#ccc">' + th.name + '</span>' +
-      '<span style="flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:0.82em;color:#cccccc;opacity:0.6">' + th.sub + '</span>';
+  function themeRowHTML(th) {
+    return '<span style="flex:0 0 auto;min-width:96px;color:var(--fg, #ccc)">' + th.name + '</span>' +
+      '<span style="flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:0.82em;color:var(--fg, #cccccc);opacity:0.6">' + th.sub + '</span>';
   }
-  var ttDrop = housePick(tt, 'tabtheme', tabThemeRowHTML, function (id) { var s = load(); s.chatTabTheme = id; save(s); ttPaint(); });
+  function themeOf(s) {   // migration mirror of settings.ts loadSettings: pre-`theme` stores read their strip pick
+    if (s.theme === 'yatharth' || s.theme === 'yatharth-light' || s.theme === 'classic') return s.theme;
+    return s.chatTabTheme === 'yatharth' ? 'yatharth' : 'classic';
+  }
+  var ttDrop = housePick(tt, 'theme', themeRowHTML, function (id) {
+    var s = load(); s.theme = id;
+    s.chatTabTheme = (id === 'classic' ? 'classic' : 'yatharth');   // the derived LEGACY alias, kept in step for older readers
+    save(s); ttPaint();
+  });
   function ttPaint() {
     if (!ttDrop) return;
-    ttDrop(TABTHEMES, load().chatTabTheme === 'yatharth' ? 'yatharth' : 'classic');
+    ttDrop(THEMES, themeOf(load()));
   }
   ttPaint();
   // The Context-gauge picker joins the same builder (the user 2026-08-27, approving the flagged
@@ -510,7 +519,7 @@ function initGear(post) {
     var btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'rs-vermenu-btn';
-    btn.setAttribute('style', 'background:#1e1e1e;color:#ccc;border:1px solid rgba(255,255,255,0.25);'
+    btn.setAttribute('style', 'background:var(--input-bg, #1e1e1e);color:var(--fg, #ccc);border:1px solid rgba(255,255,255,0.25);'
       + 'border-radius:5px;padding:2px 8px;cursor:pointer;font:inherit;');
     sel.parentNode.insertBefore(btn, sel.nextSibling);
     var labelOf = function (val) {

@@ -39,6 +39,13 @@ body.scheme-solarized-dark {
    2026-08-26, who wanted the dashboard genuinely nice to look at). A variable face, so every
    weight ships in one file; italic is its own optical design, not a slant. First in --sans, so
    it beats the host font on every surface; falls back to the modern system stack unloaded. */
+/* Space Grotesk (SIL OFL, license beside the file in media/): the light theme's display face for
+   UI chrome (the user 2026-08-28). Declared unconditionally (a face loads only when some rule
+   uses it, so dark pays nothing); selected via --sans in the light block only. (The serif prose
+   face tried beside it was dropped 2026-08-31 — assistant output reads in the mono there.) */
+@font-face { font-family: 'Space Grotesk'; src: url(../media/SpaceGroteskVariable.woff2) format('woff2-variations');
+  font-weight: 300 700; font-style: normal; font-display: swap; }
+
 @font-face { font-family: 'Inter'; src: url(../media/InterVariable.woff2) format('woff2-variations');
   font-weight: 100 900; font-style: normal; font-display: swap; }
 @font-face { font-family: 'Inter'; src: url(../media/InterVariable-Italic.woff2) format('woff2-variations');
@@ -49,6 +56,10 @@ body.scheme-solarized-dark {
      set a px value (e.g. 980px) to re-cap for prose readability. Shared by the transcript,
      ledger, statusline, composer, and live-ask picker so they stay aligned. */
   --chat-col: 100%;
+  /* the word-button vocabulary (2026-08-28): three boxes + two type sizes, same values in both
+     themes — a size is geometry, not a theme choice */
+  --btn-pad-sm: 1px 8px; --btn-pad-md: 3px 10px; --btn-pad-lg: 5px 13px;
+  --btn-fs-sm: 0.72em; --btn-fs-md: 0.82em;
   --bg: var(--vscode-editor-background, #1e1e1e);
   --fg: var(--vscode-foreground, #cccccc);
   --dim: var(--vscode-descriptionForeground, #9a9a9a);
@@ -96,6 +107,26 @@ body.scheme-solarized-dark {
   /* the true-pill radius (filter pills, the loading pill) — one name so new pills don't mint
      another magic number. Mirrored in feed.css (own :root). */
   --radius-pill: 999px;
+  /* the neutral chrome ladder (2026-08-28) — named so the light theme can re-skin the small
+     sheets (gear/strip/sessions-pane/timeline-pane reference these with their old literals as
+     fallbacks). Defining --overlay-05/10 unifies a few near-alpha washes (0.05/0.08 -> 0.06,
+     0.10 -> 0.12) — imperceptible at these alphas, screenshot-checked. */
+  --hairline: #3a3a3a;
+  --text-muted: #9aa0a6;
+  --text-faint: #6e7681;
+  --text-soft: #cdd3da;
+  --text-bright: #e8eaed;
+  --btn-bg: #2a2a2a;
+  --btn-hover-bg: #333333;
+  --input-bg: #1b1b1c;
+  --kbd-bg: #1c1c1f;
+  --kbd-border: #3d3d42;
+  --overlay-05: rgba(255, 255, 255, 0.06);
+  --overlay-10: rgba(255, 255, 255, 0.12);
+  /* the halo behind text that sits ON a colored fill (the ctx battery %): dark glow under
+     light text on dark; a LIGHT glow under the dark text on light — a dark halo around dark
+     glyphs read as blur (the user 2026-08-31, off the live preview) */
+  --text-halo: rgba(0, 0, 0, 0.75);
   /* Comment-highlight yellow (the user 2026-08-13): the marked passage reads like a highlighter
      stroke, DISTINCT from both the accent blue (selection/chrome) and the working-status yellow
      chip. Text-highlight use only — comment chrome (badge, buttons, chips) stays var(--accent). */
@@ -115,9 +146,100 @@ body.scheme-solarized-dark {
   --st-compacting-bg: #14b8a6; --st-compacting-fg: #ffffff;   /* teal — the compacting accent (text + compression bar) */
   --st-blocked-bg: #e5484d; --st-blocked-fg: #ffffff;   /* alarm red — session stopped on an API error */
 
+  /* the assistant's READING face (.assistant, .fileview-md): the UI face in dark; the light
+     theme swaps in the serif (Claude-desktop's reply-text feel) */
+  --font-prose: var(--sans);
   --mono: var(--vscode-editor-font-family, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
   --sans: "Inter", var(--vscode-chat-font-family, var(--vscode-font-family, system-ui, -apple-system, "Segoe UI", sans-serif));
   --fs: var(--vscode-chat-font-size, 13px);
+}
+
+
+/* ══ the Yatharth LIGHT theme (the user 2026-08-27): one block, token names only ═════════════════
+   Claude-desktop-warm: warm clay page (#F1EAE2, the user 2026-08-31 — #FAF9F5 read too bright), raised cream surfaces, near-black warm text, CLAY accent (the
+   light theme's accent is orange — the dark accent stays the romp blue). The block re-declares
+   (a) every :root token above and (b) the --vscode-* stand-ins inline rules fall back through —
+   body-scoped, so it beats both THEME_CSS (browser) and the editor's injected vars (VS Code;
+   winning over a dark editor is deliberate — the theme is opt-in). Components must NOT branch on
+   body.theme-light — a theme-conditional need is a NEW TOKEN in both blocks (CLAUDE.md; the
+   key-parity test enforces the set). Contrast: fg 13.96:1, muted 5.99:1, accent 4.34:1 on the page (accent is chrome-only at that ratio).
+*/
+body.theme-light {
+  --card-border: rgba(0, 0, 0, 0.10);   /* main's T141 hairline, inverted warm for light */
+  --chat-col: 100%;
+  --btn-pad-sm: 1px 8px; --btn-pad-md: 3px 10px; --btn-pad-lg: 5px 13px;   /* geometry, theme-invariant */
+  --btn-fs-sm: 0.72em; --btn-fs-md: 0.82em;
+  --bg: #F1EAE2;
+  --fg: #1F1E1D;
+  --dim: #5D574E;
+  --rail: rgba(0, 0, 0, 0.14);
+  --green: #3E7D0E;
+  --check-bg: #1EA1EB;   /* the session-identity default blue is BRAND, same in both themes */
+  --code-fg: #8C4A00;
+  --code-bg: rgba(180, 83, 9, 0.08);
+  --box-bg: rgba(0, 0, 0, 0.03);
+  --box-border: rgba(0, 0, 0, 0.12);
+  --err: #B02A1C;
+  --accent: #C2410C; --accent-fg: #FFF8F2;
+  --accent-wash: rgba(194, 65, 12, 0.10);
+  --cmt-hl: #FFDF70;
+  --fast: #D45500;
+  --warn: #9A6A00;
+  --st-working-bg: #e0b020; --st-working-fg: #332600;   /* status FILLS carry their own fg — same chips, both themes */
+  --st-ready-bg: #2b7fb8;   --st-ready-fg: #ffffff;
+  --st-awaiting-bg: #c0392b;--st-awaiting-fg: #ffffff;
+  --st-awaitbg-bg: #54B204; --st-awaitbg-fg: #0c1a00;
+  --st-compacting-bg: #14b8a6; --st-compacting-fg: #ffffff;
+  --st-blocked-bg: #e5484d; --st-blocked-fg: #ffffff;
+  --radius-menu: 6px;
+  --shadow-menu: 0 4px 12px rgba(31, 26, 20, 0.16);
+  --surface-raised: #FAF5EE;
+  --radius-toast: 8px;
+  --shadow-toast: 0 8px 28px rgba(31, 26, 20, 0.18);
+  --radius-modal: 10px;
+  --shadow-modal: 0 12px 36px rgba(31, 26, 20, 0.22);
+  --overlay-dim: rgba(58, 46, 36, 0.35);
+  --radius-pill: 999px;
+  --hairline: #DCD2C4;
+  --text-muted: #5D574E;
+  --text-faint: #8A8378;
+  --text-soft: #3E3A35;
+  --text-bright: #141312;
+  --btn-bg: #E7DED2;
+  --btn-hover-bg: #DED2C2;
+  --input-bg: #FCF9F4;
+  --kbd-bg: #EFE7DC;
+  --kbd-border: #D3C7B6;
+  --overlay-05: rgba(0, 0, 0, 0.045);
+  --overlay-10: rgba(0, 0, 0, 0.08);
+  --text-halo: rgba(252, 249, 244, 0.85);
+  --mono: var(--vscode-editor-font-family, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  --sans: "Space Grotesk", "Inter", var(--vscode-chat-font-family, var(--vscode-font-family, system-ui, -apple-system, "Segoe UI", sans-serif));
+  --font-prose: var(--mono);   /* the user 2026-08-31, off the live preview: the serif read awful — assistant output goes MONO in light */
+  --fs: var(--vscode-chat-font-size, 13px);
+  /* the --vscode-* stand-ins: inline rules fall back through these (menus, inputs, widget cards) */
+  --vscode-editor-background: #F1EAE2;
+  --vscode-foreground: #1F1E1D;
+  --vscode-descriptionForeground: #5D574E;
+  --vscode-errorForeground: #B02A1C;
+  --vscode-editorWidget-background: #FAF5EE;
+  --vscode-editorHoverWidget-border: rgba(0, 0, 0, 0.12);
+  --vscode-sideBar-background: #F1EAE2;
+  --vscode-widget-border: #DCD2C4;
+  --vscode-focusBorder: #C2410C;
+  --vscode-input-background: #FCF9F4;
+  --vscode-input-foreground: #1F1E1D;
+  --vscode-input-border: #D3C7B6;
+  --vscode-menu-background: #FBF6EF;
+  --vscode-menu-foreground: #1F1E1D;
+  --vscode-menu-selectionBackground: #F3E0D5;
+  --vscode-menu-selectionForeground: #1F1E1D;
+  --vscode-scrollbarSlider-background: rgba(90, 84, 74, 0.35);
+  --vscode-textLink-foreground: #B24A28;
+  --vscode-button-background: #C2410C;
+  --vscode-button-foreground: #FFF8F2;
+  --vscode-button-hoverBackground: #A93A0B;
+  --vscode-toolbar-hoverBackground: rgba(0, 0, 0, 0.06);
 }
 
 * { box-sizing: border-box; }
@@ -444,9 +566,11 @@ body.chat-theme-yatharth .tab.active.colored:not(.tab-blocked) {
    title can't colour/bold). */
 .tab-tip {
   position: fixed; z-index: 70; display: none; pointer-events: none;
-  background: var(--vscode-editorWidget-background, #252526);
-  border: 1px solid var(--box-border); border-radius: var(--radius-menu);
-  padding: 7px 10px; box-shadow: var(--shadow-menu);
+  /* the ONE tooltip dress's tokens (.romp-tip below) — every tip matches, only the mono body and the
+     pane-width cap stay this tip's own */
+  background: var(--vscode-editorWidget-background, var(--surface-raised));
+  border: 1px solid var(--box-border); border-radius: var(--radius-toast);
+  padding: 7px 10px; box-shadow: var(--shadow-toast);
   /* mono ON PURPOSE (unlike the menus' sans): the body is paths/branch/model, the statusline's own voice */
   font-family: var(--mono); font-size: 0.82em; line-height: 1.55;
   /* span the full chat pane width (the user 2026-06-25) so the recent-activity names don't get clipped — the
@@ -462,6 +586,17 @@ body.chat-theme-yatharth .tab.active.colored:not(.tab-blocked) {
    "(Xm ago)" time — the per-item colour comes from ageColorReadable, so no colour here. */
 .tab-tip-recent-list { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .tab-tip-recent-item { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* ── ONE tooltip dress (2026-08-28): the shared styled-tooltip node (ui/webview/tip.ts). Every styled
+   tip wears these tokens — the chat tab tip and the feed/sessions tips carry the same values — so all
+   tips match and theme for free. BYTE-MIRRORED in styles.css and feed.css (like .ctx-menu); tokens
+   only, no raw hex (tip.test.ts pins both). Behavior (show/hide/position) lives in tip.ts. */
+.romp-tip {
+  position: fixed; z-index: 210;
+  background: var(--vscode-editorWidget-background, var(--surface-raised)); color: var(--fg);
+  border: 1px solid var(--box-border); border-radius: var(--radius-toast); padding: 7px 10px;
+  box-shadow: var(--shadow-toast); font-size: 0.86em; line-height: 1.45;
+  max-width: min(440px, 92vw);
+}
 .tab-close:hover { opacity: 1; background: rgba(255, 255, 255, 0.12); }
 .tab-add { color: var(--dim); font-size: 1.1em; padding: 6px 10px; border-radius: 6px; line-height: 18px; }
 /* the tag controls reserve the + tab's EXACT vertical box — 18px line + 12px padding + 1px border
@@ -636,9 +771,11 @@ body.chat-theme-yatharth .tab.active.colored:not(.tab-blocked) {
   padding: 7px 11px; cursor: pointer; user-select: none; font-size: 12px; }
 .bg-fold-head.open { border-bottom: 1px solid var(--box-border); }
 .bg-fold-head:hover { background: rgba(255, 255, 255, 0.04); }
-.bg-stop { flex: 0 0 auto; font-size: 0.72em; padding: 1px 8px; border-radius: 9px; cursor: pointer;
-  border: 1px solid color-mix(in srgb, var(--fg) 25%, transparent); background: transparent; color: var(--fg); }
-.bg-stop:hover { border-color: var(--accent); color: var(--accent); }
+.bg-stop { flex: 0 0 auto; font-size: var(--btn-fs-sm); padding: var(--btn-pad-sm); border-radius: 9px; cursor: pointer;
+  border: 1px solid color-mix(in srgb, var(--fg) 25%, transparent); background: transparent; color: var(--fg);
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease, transform 0.08s ease; }
+.bg-stop:active { transform: scale(0.96); }
+.bg-stop:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-wash); }
 .bg-stop:disabled { opacity: 0.55; cursor: default; }
 .bg-fold-head.bg-failed { --bgt: var(--st-blocked-bg); }
 .bg-fold-head.bg-completed { --bgt: var(--st-ready-bg); }
@@ -780,7 +917,9 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
    hover/selected, never rest chrome */
 .composer-stage-btn { background: transparent;   /* T141: the feed word-buttons' rest — dark ground, hairline, no wash */
   border: 1px solid var(--card-border); color: var(--dim); border-radius: 5px; font-size: 0.82em;
-  padding: 1px 8px; cursor: pointer; }
+  padding: 1px 8px; cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease, transform 0.08s ease; }
+.composer-stage-btn:active { transform: scale(0.96); }
 /* hover = the FEED's word-button treatment exactly (the user 2026-08-25: text + outline light up
    blue, like Clear/Undo — never a background fill; the wash values are the feed's .ftree-act-btn
    family, referenced not re-derived) */
@@ -1077,6 +1216,10 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
   padding: 4px; box-shadow: var(--shadow-menu);
   font-family: var(--sans); font-size: 0.92em;
 }
+/* the permission glyph beside its text (mode badge + mode picker rows, 2026-08-28) */
+.meta-ico { display: inline-flex; align-items: center; margin-right: 4px; vertical-align: -2px; }
+.meta-ico svg { display: block; }
+
 .meta-item {
   padding: 4px 22px 4px 8px; border-radius: 4px; cursor: pointer;
   color: var(--fg); position: relative; white-space: nowrap;
@@ -1146,7 +1289,7 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
 .ctx-fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; transition: width 0.3s ease, background 0.3s ease; }
 .ctx-text {
   position: relative; z-index: 1; font-family: var(--mono); font-size: 0.72em; font-weight: 700;
-  font-variant-numeric: tabular-nums; color: var(--fg); text-shadow: 0 0 2px rgba(0, 0, 0, 0.75);
+  font-variant-numeric: tabular-nums; color: var(--fg); text-shadow: 0 0 2px var(--text-halo);
 }
 .statusline:empty { display: none; }
 
@@ -1770,8 +1913,11 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
 .ask-btn {
   padding: 4px 13px; border-radius: 6px; font: inherit; cursor: pointer;
   border: 1px solid var(--card-border); background: transparent; color: var(--fg);   /* T141: the one button rest */
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease, transform 0.08s ease;
 }
-.ask-btn:hover { background: rgba(255, 255, 255, 0.13); }
+.ask-btn:active { transform: scale(0.96); }
+/* the ONE action-button hover (accent triple); the primary keeps its awaiting fill + brightness lift */
+.ask-btn:not(.ask-btn-primary):hover { border-color: var(--accent); color: var(--accent); background: var(--accent-wash); }
 /* keyboard focus ring on the Submit/Cancel buttons — they're part of the multi-select arrow-key nav now
    (arrow down past the checkboxes to reach them; Enter activates the focused one) (the user 2026-06-27) */
 .ask-btn.focus { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -2100,6 +2246,9 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
 
 /* ---------- markdown ---------- */
 .md { overflow-wrap: anywhere; } /* wrap long unbreakable strings (tokens/base64/urls) */
+/* the assistant's replies read in the PROSE face (— the user's own bubbles stay in the UI face:
+   the claude.ai reading split). Dark: --font-prose = --sans, so nothing changes there. */
+.assistant { font-family: var(--font-prose); }
 .md > :first-child { margin-top: 0; }
 .md > :last-child { margin-bottom: 0; }
 .md p { margin: 0.5em 0; }
@@ -3059,8 +3208,11 @@ body.fileview-open { overflow: hidden; }
 .fileview-acts { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; }
 .fileview-btn { font: inherit; font-size: 0.82em; cursor: pointer; flex: 0 0 auto;
   padding: 3px 9px; border-radius: 6px; background: transparent; color: var(--fg);   /* T151: the one button rest */
-  border: 1px solid var(--card-border); }
-.fileview-btn:hover { border-color: var(--accent); }
+  border: 1px solid var(--card-border);
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease, transform 0.08s ease; }
+.fileview-btn:active { transform: scale(0.96); }
+/* the ONE action-button hover (accent triple, the feed convention) */
+.fileview-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-wash); }
 /* the GitHub link wears the button treatment but IS an anchor — the browser owns the new tab */
 a.fileview-btn { text-decoration: none; display: inline-flex; align-items: center; }
 /* an author `display` beats the UA's [hidden] rule — without this the anchor shows hrefless
@@ -3179,7 +3331,7 @@ body.filebrowse-open { overflow: hidden; }
    sheets — the .romp-acted precedent); font sizes reuse what this surface already wears (the page base,
    12px mono, the err-hint's 0.92em). Vars the feed sheet does not define carry the chat's literals as
    fallbacks (feed-css-vars.test.ts holds that line). */
-.fileview-md { padding: 14px 18px; max-width: 860px; overflow-wrap: anywhere; }
+.fileview-md { padding: 14px 18px; max-width: 860px; overflow-wrap: anywhere; font-family: var(--font-prose); }
 .fileview-md > :first-child { margin-top: 0; }
 .fileview-md > :last-child { margin-bottom: 0; }
 .fileview-md p { margin: 0.5em 0; }

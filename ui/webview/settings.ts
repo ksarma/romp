@@ -18,7 +18,8 @@ export interface RompSettings {
   showBranch: boolean;       // chat bottom-bar: show the session's git branch (if any) beside the dir (the user 2026-06-23). OFF by default (the user 2026-08-10, trimming the statusline for narrow panes; an explicit stored true keeps showing it).
   tabCtx: TabCtxMode;        // chat tabs: WHEN the context gauge shows beside each session name (the user 2026-08-08) — "over50" (default: only once half full, so quiet tabs stay clean), "always", or "never".
   chatScheme: ChatScheme;    // chat TEXT scheme (the user 2026-08-24): raises body-text contrast without collapsing the tool-dimmer-than-prose hierarchy. A scheme = a text-tier variable set (styles.css body.scheme-*); "default" applies nothing — today's values exactly.
-  chatTabTheme: ChatTabTheme;   // the chat TAB STRIP's appearance (T113, the user 2026-08-27): "classic" = the tuned default (no bottom line, the thick selected ring, a 5% identity wash, brighter faded labels); "yatharth" = PR 730's aesthetic as merged, named for its contributor at the user's ask. Tab strip only — never a global reskin.
+  chatTabTheme: ChatTabTheme;   // LEGACY, derived (2026-08-28): the chat TAB STRIP's appearance (T113). Now computed from `theme` on every load/save ("classic" -> classic strip, anything else -> the yatharth strip) so older panes/extension builds keep working; never set it directly.
+  theme: Theme;   // the OVERALL dashboard theme (the user 2026-08-27, promoting the tab-strip setting): "classic" = the pre-720 dark look; "yatharth" = dark + the contributed strip aesthetic (what chatTabTheme:"yatharth" was); "yatharth-light" = the warm light theme (body.theme-light + the yatharth strip). Migration: a store written before `theme` existed seeds it from chatTabTheme.
 }
 // Solarized LIGHT is deliberately absent (the user allowed skipping it): its text tiers are designed
 // for a paper-light ground and invert into mud on romp's dark canvas — an unreadable preset is worse
@@ -27,6 +28,10 @@ export type ChatScheme = "default" | "high-contrast" | "solarized-dark";
 export type ChatTabTheme = "classic" | "yatharth";
 export function chatTabTheme(v: unknown): ChatTabTheme {
   return v === "yatharth" ? "yatharth" : "classic";
+}
+export type Theme = "classic" | "yatharth" | "yatharth-light";
+export function theme(v: unknown): Theme {
+  return v === "yatharth" || v === "yatharth-light" ? v : "classic";
 }
 export function chatScheme(v: unknown): ChatScheme {
   return v === "high-contrast" || v === "solarized-dark" ? v : "default";
@@ -45,17 +50,22 @@ export function tabCtxMode(v: unknown): TabCtxMode {
 // hand-written "why" as their line; they show the distiller's summary instead (the why demotes to a hover).
 // compact defaults ON (the user 2026-07-14): a fresh install reads the tidy transcript
 // (thinking hidden, tool runs folded); the gear opts back into the full stream.
-export const DEFAULT_SETTINGS: RompSettings = { compact: true, colormap: "aurora", subgoals: true, showIndexJudges: false, showTriageJudges: false, backend: "sdk", defaultDir: "", showBranch: false, tabCtx: "over50", chatScheme: "default", chatTabTheme: "classic" };
+export const DEFAULT_SETTINGS: RompSettings = { compact: true, colormap: "aurora", subgoals: true, showIndexJudges: false, showTriageJudges: false, backend: "sdk", defaultDir: "", showBranch: false, tabCtx: "over50", chatScheme: "default", chatTabTheme: "classic", theme: "classic" };
 const KEY = "romp:settings";
 
 export function loadSettings(): RompSettings {
   try {
     const raw = localStorage.getItem(KEY);
     if (raw) {
-      const s = { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+      const parsed = JSON.parse(raw);
+      const s = { ...DEFAULT_SETTINGS, ...parsed };
       s.tabCtx = tabCtxMode(s.tabCtx);   // a store written by the boolean-era gear holds true/false
       s.chatScheme = chatScheme(s.chatScheme);   // unknown/legacy values normalize to "default"
-      s.chatTabTheme = chatTabTheme(s.chatTabTheme);   // unknown/legacy values normalize to "classic"
+      // theme migration (2026-08-28): a store from before `theme` existed seeds it from the old
+      // tab-strip pick, so a yatharth strip stays a yatharth strip. chatTabTheme itself is DERIVED
+      // from theme ever after (one axis of truth; older readers keep working off the alias).
+      s.theme = theme("theme" in parsed ? parsed.theme : chatTabTheme(parsed.chatTabTheme));
+      s.chatTabTheme = s.theme === "classic" ? "classic" : "yatharth";
       return s;
     }
   } catch { /* corrupt / unavailable → defaults */ }

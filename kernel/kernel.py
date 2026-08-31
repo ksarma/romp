@@ -7161,6 +7161,8 @@ def _comments_frame(sid, tmux=None):
                                                    cm.stops_for(_colormap())),
                         "effortColor": _effort_color((reg.get("effort") or "") if reg else "",
                                                      cm.stops_for(_colormap())),
+                        "modelTone": _model_tone((reg.get("liveModel") or reg.get("model") or "") if reg else ""),
+                        "effortTone": _effort_tone((reg.get("effort") or "") if reg else ""),
                         "msgs": msgs, "events": events})
     return {"type": "comments", "id": sid, "threads": threads}
 
@@ -19232,8 +19234,13 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
                   # 2026-07-02): the statusline meta buttons just apply these (mirrors ctxColor). None = default.
                   "modelColor": _model_color(tm["model"], cm.stops_for(_colormap())),
                   "effortColor": _effort_color(tm["effort"], cm.stops_for(_colormap())),
-                  # context% on the GLOBAL colormap (the user 2026-06-26): computed server-side so the chat
-                  # battery + tab tooltip just apply it (mirrors the usage bar + timeline lanes). bright = full.
+                  # the yatharth-theme tones, shipped beside the classic colors (client picks by theme)
+                  "modelTone": _model_tone(tm["model"]),
+                  "effortTone": _effort_tone(tm["effort"]),
+                  "ctxTone": (list(cm.context_rgb(tm["context"]))
+                              if tm["context"] is not None else None),
+                  # context% on the GLOBAL colormap — the CLASSIC palette, byte-identical to main
+                  # (the tone variant rides in ctxTone above)
                   "ctxColor": (list(cm.ramp(tm["context"] / 100.0, cm.stops_for(_colormap())))
                                if tm["context"] is not None else None)}
     elif tmux or _has_tmux():                          # tmux usable but this session isn't running → closed
@@ -21706,13 +21713,13 @@ def _usage():
         # 2026-08-13). An empty snapshot falls through instead; every read below tolerates absence.
         o = {}
 
-    stops = cm.stops_for(_colormap())                 # the GLOBAL colormap (the user 2026-06-26) colors the used bar
     def seg(s):
         if isinstance(s, dict) and isinstance(s.get("pct"), (int, float)):
             ra = s.get("resets_at")
             pct = max(0, min(100, round(s["pct"])))
             return {"pct": pct, "resetsAt": ra if isinstance(ra, (int, float)) else None,
-                    "color": list(cm.ramp(pct / 100.0, stops))}   # used-% on the selected colormap
+                    "color": list(cm.ramp(pct / 100.0, cm.stops_for(_colormap()))),   # CLASSIC colormap fill
+                    "tone": list(cm.context_rgb(pct))}   # the yatharth-theme tone (client picks by theme)
         return None
     five, seven, fable = seg(o.get("five_hour")), seg(o.get("seven_day")), seg(o.get("fable"))
     # THE LOGIN THAT PRODUCED THESE WINDOWS MUST STILL BE SIGNED IN (the user 2026-08-04, who logged
@@ -23330,9 +23337,13 @@ def build_timeline(now, tmux=None, with_bars=True, live_only=False):
             # the lane just applies these, like ctxColor. None → the lane keeps its default gray text.
             "modelColor": _model_color(tm["model"] if tm else "", ctx_stops),
             "effortColor": _effort_color(tm["effort"] if tm else "", ctx_stops),
+            "modelTone": _model_tone(tm["model"] if tm else ""),
+            "effortTone": _effort_tone(tm["effort"] if tm else ""),
+            "ctxTone": (list(cm.context_rgb(tm["context"] or 0))
+                        if tm and tm["context"] is not None else None),
             "context": (tm["context"] if tm else None),
             "ctxColor": (list(cm.ramp((tm["context"] or 0) / 100.0, ctx_stops))
-                         if tm and tm["context"] is not None else None),   # context% on the GLOBAL colormap (bright = full)
+                         if tm and tm["context"] is not None else None),   # the CLASSIC colormap fill (tone in ctxTone)
             "subagents": ((tm.get("subagents") if tm else None) or []),   # live Task subagents (SDK) → lane pill
             "awaiting": _state_intervals(sid, _NEEDS_INPUT_STATES, now),
             "compacting": _state_intervals(sid, "compacting", now),
@@ -23969,6 +23980,8 @@ _EFFORT_RANK = dict(_ramp_ranks(EFFORT_CHOICES, ascending=True))   # low 0.0 …
 
 
 def _model_color(model, stops):
+    # the CLASSIC palette: the recency-colormap sample, exactly as it has always been — the
+    # default theme's colors are the owner's call and must not move (PR #763 review, 2026-08-30).
     m = (model or "").lower()
     for word, v in _MODEL_RANK:
         if word in m:
@@ -23979,6 +23992,26 @@ def _model_color(model, stops):
 def _effort_color(effort, stops):
     v = _EFFORT_RANK.get((effort or "").strip().lower())
     return list(cm.ramp(v, stops)) if v is not None else None
+
+
+# The TONE variants ship ALONGSIDE the classic colors (modelTone/effortTone/ctxTone beside
+# modelColor/effortColor/ctxColor): the single-hue ramps (orange by capability, violet by effort,
+# teal context) belong to the yatharth themes, and the THEME lives client-side in localStorage —
+# the kernel cannot know a page's theme (one kernel serves browser + VS Code + Obsidian at once),
+# so it ships both palettes and the client picks (PR #763 review item 1, the shape the owner
+# offered). An older client simply ignores the extra fields; an older kernel ships no tones and
+# the client falls back to the classic colors.
+def _model_tone(model):
+    m = (model or "").lower()
+    for word, v in _MODEL_RANK:
+        if word in m:
+            return list(cm.tone_rgb("model", v))
+    return None
+
+
+def _effort_tone(effort):
+    v = _EFFORT_RANK.get((effort or "").strip().lower())
+    return list(cm.tone_rgb("effort", v)) if v is not None else None
 
 
 def _set_colormap(name):
@@ -26057,6 +26090,20 @@ def _pusher():
 
 
 # ───────────────────────── HTTP / page serving ─────────────────────────
+# The theme reader for kernel-served pages that load NO webview bundle (the landing shell and the
+# /timeline pane): applies the two theme body classes before anything paints, re-applies on both
+# settings signals, and (when the page carries one) keeps the meta-theme OS chrome color honest.
+# Mirrors ui/webview/theme.ts + settings.ts loadSettings' migration — theme.test.ts greps them in step.
+_THEME_READER = (
+    "<script>(function(){function ap(){var t='classic';"
+    "try{var s=JSON.parse(localStorage.getItem('romp:settings')||'{}');"
+    "t=(s.theme==='yatharth'||s.theme==='yatharth-light')?s.theme:(s.theme==='classic'?'classic':(s.chatTabTheme==='yatharth'?'yatharth':'classic'));}catch(e){}"
+    "document.body.classList.toggle('chat-theme-yatharth',t!=='classic');"
+    "document.body.classList.toggle('theme-light',t==='yatharth-light');"
+    "var m=document.getElementById('meta-theme');if(m)m.setAttribute('content',t==='yatharth-light'?'#F1EAE2':'#1e1e1e');}"
+    "ap();window.addEventListener('storage',function(e){if(e.key==='romp:settings')ap();});"
+    "window.addEventListener('romp:settings',ap);})()</script>")
+
 THEME_CSS = """@font-face{font-family:'Inter';src:url(/media/InterVariable.woff2) format('woff2-variations');font-weight:100 900;font-style:normal;font-display:swap}@font-face{font-family:'Inter';src:url(/media/InterVariable-Italic.woff2) format('woff2-variations');font-weight:100 900;font-style:italic;font-display:swap}:root{--vscode-font-family:'Inter',system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
 --vscode-editor-font-family:ui-monospace,"SF Mono",Menlo,Consolas,"DejaVu Sans Mono",monospace;--vscode-chat-font-family:var(--vscode-font-family);
 --vscode-chat-font-size:13px;--vscode-foreground:#cccccc;--vscode-descriptionForeground:#9aa3ad;
@@ -26387,7 +26434,9 @@ _LOADER_CSS = (
     ".rl-dots i{width:7px;height:7px;border-radius:50%;background:#9cd2ff;animation:rl-bnc 1.1s ease-in-out infinite}"
     ".rl-dots i:nth-child(2){animation-delay:.16s}.rl-dots i:nth-child(3){animation-delay:.32s}"
     "@keyframes rl-bnc{0%,75%,100%{opacity:.25;transform:translateY(0)}38%{opacity:1;transform:translateY(-5px)}}"
-    "@keyframes rl-spin{to{transform:rotate(-360deg)}}")
+    "@keyframes rl-spin{to{transform:rotate(-360deg)}}"
+    # light theme (body.theme-light): the pulsing dots wear the clay accent instead of the blue
+    "body.theme-light .rl-dots i{background:#C2410C}")
 
 
 def _loader_inner():
@@ -26435,7 +26484,9 @@ def _pane_spin(cid, ignore_id=""):
     chat (the regression: tab names pulsed, no loader). Counting children whose id != ignore_id fixes it."""
     return ("<style>#pane-spin{position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;"
             "background:var(--vscode-editor-background,#1e1e1e);transition:opacity .3s ease}"
-            "#pane-spin.gone{opacity:0;pointer-events:none}" + _LOADER_CSS + "</style>"
+            "#pane-spin.gone{opacity:0;pointer-events:none}"
+            # light theme: the loader backdrop goes warm-light with the page
+            "body.theme-light #pane-spin{background:#F1EAE2}" + _LOADER_CSS + "</style>"
             "<div id=pane-spin>" + _loader_inner() + "</div>"
             "<script>(function(){var o=document.getElementById('pane-spin'),c=document.getElementById('" + cid + "'),IGN='" + ignore_id + "';"
             "if(!o)return;var fail=0;"
@@ -26581,17 +26632,17 @@ def _timeline_page():
     # its first child — which is the .romp-tl-wrap on TimelinePanel construction, BEFORE any bars — so it
     # left an empty bar gap. The view now owns its own bars-area loader (draw()'s _drawBarsLoader, gated on
     # _barsLoaded) so the spinner stays until the deferred {type:"bars"} payload actually renders.
-    return ("<!DOCTYPE html><html lang=en><head><meta charset=UTF-8>"
+    return (("<!DOCTYPE html><html lang=en><head><meta charset=UTF-8>"
             "<meta name=viewport content='width=device-width,initial-scale=1'>"
             "<link rel=icon type=image/svg+xml href=/media/romp-swirl-glyph.svg>"
-            "<title>Romp · timeline</title><style>%s\n%s</style></head><body><div id=host></div>"
+            "<title>Romp · timeline</title><style>%s\n%s</style></head><body>" + _THEME_READER + "<div id=host></div>"
             "<script>%s</script>"                               # the shared WS shim (connect/queue/watchdog)
             "<script src=/dist/federation.js?v=%d></script>"    # multi-kernel manager: after the shim, before the boot
             "<script>%s</script>"
             "<script>var module={exports:{}};(function(module,exports){\n%s\n})(module,module.exports);"
             "var TimelinePanel=module.exports.TimelinePanel;"
             "window.__rompConnectTimeline(new TimelinePanel(document.getElementById('host')));"
-            "</script></body></html>" % (THEME_CSS, tl_css, _shim("timeline", v), v, _TIMELINE_BOOT, view_js))
+            "</script></body></html>") % (THEME_CSS, tl_css, _shim("timeline", v), v, _TIMELINE_BOOT, view_js))
 
 
 def _chat_body():
@@ -27034,7 +27085,9 @@ WINS.forEach(function(w){var seg=u[w[0]];if(!seg)return;
 // confident 0% beside a live account's real bars). The last-known number renders in the hover,
 // labelled as such; the rail's aggregate never counts an unknown as a value.
 var rolled=!!(seg.resetsAt&&nowS>seg.resetsAt),pct=Math.max(0,Math.min(100,seg.pct||0));
-var col=(seg.color&&seg.color.length===3)?('rgb('+seg.color.join(',')+')'):'#54B204';   // selected colormap (server-computed)
+var nc=document.body.classList.contains('chat-theme-yatharth');   // dual palette (PR #763): the yatharth themes take seg.tone, classic keeps seg.color verbatim
+var csrc=(nc&&seg.tone&&seg.tone.length===3)?seg.tone:seg.color;
+var col=(csrc&&csrc.length===3)?('rgb('+csrc.join(',')+')'):(nc?(pct>=88?'#c0392b':(pct>=70?'#d7a23a':'#5196B8')):'#54B204');   // classic fallback = main's flat green; yatharth = the unified pair (ctx-color.ts)
 var tp=(!rolled&&seg.resetsAt&&w[1])?Math.max(0,Math.min(100,Math.round((nowS-(seg.resetsAt-w[1]))/w[1]*100))):null;
 det[w[0]]={name:w[2],pct:pct,col:col,tp:tp,unk:rolled,ago:(rolled?fmtAgo(seg.resetsAt):null),reset:(!rolled&&seg.resetsAt)?fmtR(seg.resetsAt):null};});}
 // ONE aggregated set of bars for every account at once (the user 2026-08-08: never repeat the windows
@@ -28192,7 +28245,12 @@ _STALE_CSS = (
     # which is what cramped the old one-row layout — and off-centers this one
     "@media (max-width:640px){#rstale{flex-wrap:wrap;gap:10px 12px;width:92vw;box-sizing:border-box}"
     "#rstale .rs-msg{flex:1 1 100%}"
-    "#rstale button{flex:1 1 auto}}")
+    "#rstale button{flex:1 1 auto}}"
+    # light theme (body.theme-light): white card, hairline border, warm dark text
+    "body.theme-light #rstale{background:#FFFFFF;border-color:rgba(0,0,0,0.12);color:#1F1E1D;"
+    "box-shadow:0 8px 28px rgba(31,26,20,0.18)}"
+    "body.theme-light #rstale .rs-dismiss{color:#5D574E;border-color:rgba(0,0,0,0.18)}"
+    "body.theme-light #rstale .rs-dismiss:hover{color:#1F1E1D}")
 _STALE_HTML = (
     "<div id=rstale role=alert><span class=rs-msg>A newer romp build is available.</span>"
     "<button class=rs-reload id=rstale-reload>Reload</button>"
@@ -28312,7 +28370,12 @@ _UPD_CSS = (
     "#rupd .rup-go{background:#54B204;color:#0c1a00;font-weight:600;border-color:#3f8a00}"
     "#rupd .rup-go:hover:not(:disabled){background:#62c80a}"
     "#rupd .rup-dismiss{background:none;color:#9aa0a6;border-color:#4a4d51}"
-    "#rupd .rup-dismiss:hover{color:#e6e6e6}")
+    "#rupd .rup-dismiss:hover{color:#e6e6e6}"
+    # light theme (body.theme-light): white card, hairline border, warm dark text
+    "body.theme-light #rupd{background:#FFFFFF;border-color:rgba(0,0,0,0.12);color:#1F1E1D;"
+    "box-shadow:0 8px 28px rgba(31,26,20,0.18)}"
+    "body.theme-light #rupd .rup-dismiss{color:#5D574E;border-color:rgba(0,0,0,0.18)}"
+    "body.theme-light #rupd .rup-dismiss:hover{color:#1F1E1D}")
 _UPD_HTML = (
     "<div id=rupd role=alert><span class=rup-msg></span>"
     "<button class=rup-go id=rupd-go>Update</button>"
@@ -28407,7 +28470,12 @@ _RDRIFT_CSS = (
     "#rdrift .rd-upd{background:var(--accent,#9cd2ff);color:var(--accent-fg,#0c1a2e);font-weight:600}"
     "#rdrift .rd-upd:disabled{opacity:0.6;cursor:default}"
     "#rdrift .rd-dismiss{background:none;color:#9aa0a6;border-color:#4a4d51}"
-    "#rdrift .rd-dismiss:hover{color:#e6e6e6}")
+    "#rdrift .rd-dismiss:hover{color:#e6e6e6}"
+    # light theme (body.theme-light): white card, hairline border, warm dark text
+    "body.theme-light #rdrift{background:#FFFFFF;border-color:rgba(0,0,0,0.12);color:#1F1E1D;"
+    "box-shadow:0 8px 28px rgba(31,26,20,0.18)}"
+    "body.theme-light #rdrift .rd-dismiss{color:#5D574E;border-color:rgba(0,0,0,0.18)}"
+    "body.theme-light #rdrift .rd-dismiss:hover{color:#1F1E1D}")
 _RDRIFT_HTML = (
     "<div id=rdrift role=alert><span class=rd-spin aria-hidden=true></span><span class=rd-msg></span>"
     "<button class=rd-upd id=rdrift-upd>Update</button>"
@@ -28560,7 +28628,7 @@ def _landing():
             "<meta name=mobile-web-app-capable content=yes>"
             "<meta name=apple-mobile-web-app-status-bar-style content=black>"
             "<meta name=apple-mobile-web-app-title content=Romp>"
-            "<meta name=theme-color content='#1e1e1e'>"
+            "<meta name=theme-color id=meta-theme content='#1e1e1e'>"
             "<link rel=icon type=image/svg+xml href=/media/romp-swirl-glyph.svg><title>Romp</title><style>"
             ":root{--accent:#9cd2ff;--accent-fg:#0c1a2e}"
             # Inter loads PER DOCUMENT (2026-08-27, PR-730 review): the shell names 'Inter' in every
@@ -28696,14 +28764,14 @@ def _landing():
             ".rnet-top span{flex:1 1 auto}"
             "#rnet-x{background:none;border:none;color:#9aa0a6;font-size:16px;line-height:1;cursor:pointer;padding:0 2px}"
             "#rnet-x:hover{color:#fff}"
-            # One family of sizes, by information type (CLAUDE.md): 11.5px for the panel's own explanatory
+            # One family of sizes, by information type (CLAUDE.md): 11px for the panel's own explanatory
             # text (gist, expanded prose, add-form hint), 11px for per-row status and settings.
-            ".rnet-gist{color:#9aa0a6;font-size:11.5px;line-height:1.45;margin-bottom:11px}"
+            ".rnet-gist{color:#9aa0a6;font-size:11px;line-height:1.45;margin-bottom:11px}"
             ".rnet-more{background:none;border:none;color:var(--accent);font:inherit;cursor:pointer;padding:0;margin-left:6px}"
             ".rnet-more:hover{text-decoration:underline}"
-            ".rnet-sub{color:#9aa0a6;font-size:11.5px;line-height:1.45;margin:-6px 0 11px}"
+            ".rnet-sub{color:#9aa0a6;font-size:11px;line-height:1.45;margin:-6px 0 11px}"
             # The fold runs to a few short paragraphs and a list, so give them spacing of their own rather
-            # than the browser's 1em block margins, which are enormous next to 11.5px text. No new font
+            # than the browser's 1em block margins, which are enormous next to 11px text. No new font
             # size: the lead-ins are bold at the same size (CLAUDE.md's one-size-per-information-type).
             ".rnet-sub p{margin:0 0 7px}"
             ".rnet-sub ul{margin:0 0 7px;padding-left:15px}"
@@ -28723,7 +28791,7 @@ def _landing():
             "#rnet-from{flex:0 0 auto;max-width:44%;background:#121212;color:#ccc;border:1px solid #3a3a3a;border-radius:6px;padding:4px 6px;font:inherit}"
             "#rnet-attach{flex:0 0 auto;background:var(--accent);color:var(--accent-fg);border:none;border-radius:6px;padding:4px 12px;font-weight:600;cursor:pointer}"
             "#rnet-attach:disabled{opacity:0.5;cursor:default}"
-            ".rnet-hint{color:#6e7681;font-size:11.5px;line-height:1.45;margin-top:6px}"
+            ".rnet-hint{color:#6e7681;font-size:11px;line-height:1.45;margin-top:6px}"
             ".rnet-hint[hidden]{display:none}"
             # A host is one ITEM of two lines: what it is doing + the actions on line 1, the settings that
             # persist for it on line 2. They used to share one flat row, which put "Detach" at the same
@@ -28784,7 +28852,7 @@ def _landing():
             # THIS machine's release + commit, sitting above the host list at the same muted weight the
             # host rows' own build text wears — it is the baseline they are read against, not a heading.
             # Empty outside a git checkout, and it then costs no vertical room at all.
-            ".rnet-mybuild{color:#6e7681;font-size:11.5px;font-variant-numeric:tabular-nums;margin:-6px 0 10px}"
+            ".rnet-mybuild{color:#6e7681;font-size:11px;font-variant-numeric:tabular-nums;margin:-6px 0 10px}"
             ".rnet-mybuild:empty{display:none}"
             # the fleet-restart report (the user 2026-07-29): shown once when the page comes back, and
             # weighted toward the hosts it could NOT do — those are the ones needing a decision.
@@ -29043,7 +29111,7 @@ def _landing():
             # The panel wears the SAME modal vocabulary as the settings card / network panel (the user
             # 2026-07-27: the first cut's font shorthand leaned on --vscode-font-family, which the browser
             # shell never defines, so the whole shorthand was invalid and the text rendered oversized in
-            # the page default): #252526 card, 13px system-ui body, 14px/600 header, 11.5px rows + 11px
+            # the page default): #252526 card, 13px system-ui body, 14px/600 header, 11px rows + 11px
             # dim times (the network panel's information-type sizes), rnet-style action button + close.
             "#rerr-panel{width:min(700px,94vw);max-height:min(60vh,480px);"   # 60% wider (the user 2026-07-28); a flex child of the centered backdrop, no own positioning
             "display:flex;flex-direction:column;background:#252526;border:1px solid #3a3a3a;border-radius:10px;"
@@ -29060,7 +29128,7 @@ def _landing():
             # grid rows (the user 2026-07-28): a fixed 96px chip column — wider than the widest chip
             # ("follow-up failed") — so every message starts at the SAME x, left-aligned past the chips.
             ".rerr-row{display:grid;grid-template-columns:96px 1fr auto auto;align-items:baseline;"
-            "column-gap:8px;padding:6px 12px;color:#ccc;font-size:11.5px;line-height:1.45}"
+            "column-gap:8px;padding:6px 12px;color:#ccc;font-size:11px;line-height:1.45}"
             ".rerr-row .rerr-chip{justify-self:start}"
             ".rerr-row.link{cursor:pointer}"
             ".rerr-row.link:hover{background:rgba(255,255,255,0.05)}"
@@ -29069,7 +29137,7 @@ def _landing():
             ".rerr-t{flex:0 0 auto;color:#6e7681;font-size:11px;white-space:nowrap;font-variant-numeric:tabular-nums}"
             ".rerr-del{flex:0 0 auto;cursor:pointer;opacity:.5;font-weight:700}"
             ".rerr-del:hover{opacity:1}"
-            ".rerr-empty{padding:16px 12px;color:#6e7681;text-align:center;font-size:11.5px}"
+            ".rerr-empty{padding:16px 12px;color:#6e7681;text-align:center;font-size:11px}"
             # The per-kind filter bar (the user 2026-07-28): a vertical white "show" label on the left, then
             # the toggles in an even GRID — 8 kinds over the minimum 2 rows x 4 equal columns, every chip the
             # same cell width, instead of one ragged wrapping row. The toggles ARE the chips — lit means
@@ -29097,7 +29165,63 @@ def _landing():
             # other "romp is doing something" cue wears. A failed sync still wears the sync chip; its own
             # text says it could not, and the network panel keeps the red on the row itself.
             ".rerr-chip.k-sync{color:var(--accent);border-color:rgba(156,210,255,0.6)}"
+            # ── LIGHT THEME (opt-in, body.theme-light — set by the inline theme reader below): the shell
+            # chrome's warm-light skin. Pure additive overrides; with the class absent nothing here matches,
+            # so the dark rendering is byte-identical. Accent goes clay (#C2410C) via the same --accent var
+            # every accent consumer already reads.
+            "body.theme-light{--accent:#C2410C;--accent-fg:#FFF8F2;background:#F1EAE2}"
+            # the html element keeps its dark background otherwise (body.theme-light can't reach an
+            # ancestor without :has); body covers the viewport, but paint the canvas right too
+            "html:has(> body.theme-light){background:#F1EAE2}"
+            # light iframes: scoped to the class so a dark pane never flashes light — the LIFTED
+            # settings/picker iframes keep their id-scoped background:transparent (higher specificity),
+            # so the modal dim still composites over the real panes (the 2026-08-08 lesson).
+            "body.theme-light iframe{background:#F1EAE2}"
+            "body.theme-light .pane-rail{background:#E7DED2;border-top-color:#DCD2C4}"
+            "body.theme-light .rail-btn{color:#5D574E}"
+            "body.theme-light .rail-btn:hover{color:#C2410C;background:rgba(0,0,0,0.05)}"
+            "body.theme-light .rail-btn.on{background:rgba(194,65,12,0.10);border-color:rgba(194,65,12,0.35)}"
+            "body.theme-light .rail-act{color:#5D574E}"
+            "body.theme-light .rail-act:hover{color:#1F1E1D;background:rgba(0,0,0,0.06)}"
+            "body.theme-light .gv{background:linear-gradient(90deg,transparent 3px,rgba(0,0,0,0.14) 3px,rgba(0,0,0,0.14) 4px,transparent 4px)}"
+            "body.theme-light .gh{background:linear-gradient(180deg,transparent 3px,rgba(0,0,0,0.14) 3px,rgba(0,0,0,0.14) 4px,transparent 4px)}"
+            "body.theme-light .gv::after,body.theme-light .gh::after{background:rgba(0,0,0,0.22)}"
+            "body.theme-light .gv:hover{background:linear-gradient(90deg,transparent 3px,rgba(194,65,12,0.30) 3px,rgba(194,65,12,0.30) 4px,transparent 4px)}"
+            "body.theme-light .gh:hover{background:linear-gradient(180deg,transparent 3px,rgba(194,65,12,0.30) 3px,rgba(194,65,12,0.30) 4px,transparent 4px)}"
+            "body.theme-light .gv:hover::after,body.theme-light .gh:hover::after{background:var(--accent)}"
+            "body.theme-light .pane.pane-focused::after{box-shadow:inset 0 0 0 2px rgba(194,65,12,0.55)}"
+            "body.theme-light #romp-boot{background:#F1EAE2}"
+            # (the loader dots' light rule rides in _LOADER_CSS, included below)
+            # light cards: raised white over the warm page, dark warm text, hairline borders, soft shadows
+            "body.theme-light #rerr-panel{background:#FFFFFF;border-color:rgba(0,0,0,0.12);color:#1F1E1D;"
+            "box-shadow:0 12px 36px rgba(31,26,20,0.18)}"
+            "body.theme-light #rerr-panel .rerr-top{color:#1F1E1D;border-bottom-color:rgba(0,0,0,0.12)}"
+            "body.theme-light .rerr-row{color:#1F1E1D}"
+            "body.theme-light .rerr-row+.rerr-row{border-top-color:rgba(0,0,0,0.08)}"
+            "body.theme-light .rerr-row.link:hover{background:rgba(0,0,0,0.04)}"
+            "body.theme-light #rerr-clear{background:#E7DED2;color:#1F1E1D;border-color:rgba(0,0,0,0.12)}"
+            "body.theme-light #rerr-clear:hover{background:#DED2C2;color:#1F1E1D}"
+            "body.theme-light #rerr-x{color:#5D574E}body.theme-light #rerr-x:hover{color:#1F1E1D}"
+            "body.theme-light #rerr-filters{border-bottom-color:rgba(0,0,0,0.08)}"
+            "body.theme-light .rerr-flabel{color:#1F1E1D}"
+            "body.theme-light #rnet-panel{background:#FFFFFF;border-color:rgba(0,0,0,0.12);color:#1F1E1D;"
+            "box-shadow:0 12px 36px rgba(31,26,20,0.18)}"
+            "body.theme-light #rnet-panel .rnet-top{color:#1F1E1D;border-bottom-color:rgba(0,0,0,0.12)}"
+            "body.theme-light #rnet-x{color:#5D574E}body.theme-light #rnet-x:hover{color:#1F1E1D}"
+            "body.theme-light #rfleet-panel{background:#FFFFFF;border-color:rgba(0,0,0,0.12);color:#1F1E1D;"
+            "box-shadow:0 12px 36px rgba(31,26,20,0.18)}"
+            "body.theme-light #ru-tip{background:#FFFFFF;border-color:rgba(0,0,0,0.12);color:#1F1E1D;"
+            "box-shadow:0 5px 18px rgba(31,26,20,0.18)}"
+            "body.theme-light .ru-tip-name{color:#1F1E1D}"
+            "body.theme-light .ru-name{color:#5D574E}"
+            "body.theme-light .ru-pct{color:#1F1E1D}"
+            "body.theme-light .ru-track{background:rgba(0,0,0,0.10)}"
+            "body.theme-light #mtabs{background:#E7DED2;border-top-color:#DCD2C4}"
+            "body.theme-light #mtabs button{color:#5D574E}"
+            "body.theme-light #mtabs button.on{color:#C2410C}"
+            "body.theme-light #mtabs .mtabs-div{background:#DCD2C4}"
             "</style></head><body class='po-chat po-feed po-timeline'>"
+            + _THEME_READER +
             "<div id=romp-boot>" + _loader_inner() + "</div>"
             # the notification popover (hidden until the bell is clicked; backdrop click closes). No
             # Reload button (the user 2026-07-27: redundant next to the rail's own restart/refresh —
@@ -29798,12 +29922,14 @@ class Handler(BaseHTTPRequestHandler):
                 _picks = _model_picks()
                 return self._send(200, json.dumps(
                     {"models": [dict(c, color=_model_color(c["value"], _stops),
+                                     tone=_model_tone(c["value"]),
                                      versions=[dict(v) for v in MODEL_VERSIONS.get(c["value"]) or []],
                                      default=_picks.get(c["value"])
                                          or ((MODEL_VERSIONS.get(c["value"]) or [{}])[0].get("value")
                                              or c["value"]))
                                 for c in MODEL_CHOICES],
-                     "efforts": [dict(c, color=_effort_color(c["value"], _stops)) for c in EFFORT_CHOICES],
+                     "efforts": [dict(c, color=_effort_color(c["value"], _stops), tone=_effort_tone(c["value"]))
+                                 for c in EFFORT_CHOICES],
                      # the create dialog's pre-read (the user 2026-08-29): what a new comment thread
                      # gets when the dialog is left untouched — RAW ("session" = same as the session),
                      # so the dialog shows the effective default and a pick stays a deviation

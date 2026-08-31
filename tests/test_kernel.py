@@ -6599,7 +6599,7 @@ class ServeSecurity(unittest.TestCase):
         # vars) — so the dimmed dashboard shows through with the feed cards live and visible in place, not
         # a black hole where the pane was (the user 2026-08-08). Only an unmeasurable pane (hidden, or a
         # cross-origin parent like VS Code) hides the feed's content instead (rs-pane-gone).
-        self.assertIn("#rsettings { position: fixed; inset: 0; z-index: 60; background: rgba(0, 0, 0, 0.55);", _gear_css_src())   # the one modal dim (the user 2026-08-08)
+        self.assertIn("#rsettings { position: fixed; inset: 0; z-index: 60; background: var(--overlay-dim, rgba(0, 0, 0, 0.55));", _gear_css_src())   # the one modal dim (the user 2026-08-08; tokened with its literal fallback 2026-08-28)
         self.assertIn(".rs-card {", _gear_css_src())
         self.assertIn(".rs-modal-open { background: transparent; }", _gear_css_src())            # the page's html steps aside
         self.assertIn("body.rs-lifted { position: fixed; left: var(--pane-x, 0); top: var(--pane-y, 0);", _gear_css_src())

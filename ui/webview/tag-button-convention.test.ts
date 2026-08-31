@@ -45,7 +45,7 @@ test("cross-mount computed equality: one gray, one accent, everywhere", () => {
   // the timeline inlines the same values (it loads no modules — Obsidian host). Round three: the
   // corner buttons' rest gray is the FEED INSTANCE's own computed chain (var(--dim) resolves this),
   // narrowed is the .on accent — stated in the injected corner CSS, currentColor carries the glyph
-  assert.match(TL, /const MODEL_FG = '#9aa0a6';/, "the timeline's text gray (chip fallback) is the convention gray");
+  assert.match(TL, /modelFg: '#9aa0a6',/, "the timeline's dark text gray (chip fallback, PAL_DARK since the light theme) is the convention gray");
   assert.match(TL, /color:var\(--vscode-descriptionForeground,#9a9a9a\)/, "rest = the feed's exact color chain");
   assert.match(TL, /\.romp-tl-cbtn\.on\{color:var\(--accent,#9cd2ff\);/, "narrowed = the .on accent");
   // the feed's class mode resolves to the same accent (its own :root states the literal)

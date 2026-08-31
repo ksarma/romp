@@ -180,7 +180,7 @@ class LandingShell(unittest.TestCase):
         # ios-standalone viewport flip and the push bell 2026-08-07, plans/ios-app.md; + the shared
         # Escape-closes-the-topmost-modal block 2026-08-09; + the release-update banner 2026-08-09).
         html = km._landing()
-        self.assertEqual(html.count("<script>"), 16)
+        self.assertEqual(html.count("<script>"), 17)   # +1 2026-08-28: the theme reader right after <body>
 
     def test_bottom_bar_is_text_only_and_compact(self):
         html = km._landing()

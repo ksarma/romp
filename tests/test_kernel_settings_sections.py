@@ -28,11 +28,11 @@ class SettingsSectionsTest(unittest.TestCase):
         # judges low, updates + debug + version at the very bottom.
         h = _gear_src()
         self.assertIn("<div class='rs-sec rs-sec-first'>Account</div>", h)
-        for sec in ("Sessions", "Chat", "Sessions pane", "Feed", "Colors",
+        for sec in ("Sessions", "Chat", "Sessions pane", "Feed", "Appearance",   # Colors renamed 2026-08-28: it owns the overall Theme now
                     "Keyboard shortcuts", "Judges", "Updates & debug"):
             self.assertIn("<div class=rs-sec>%s</div>" % sec, h)
         order = [">Account<", ">Sessions<", ">Chat<", ">Sessions pane<", ">Feed<",
-                 ">Colors<", ">Keyboard shortcuts<", ">Judges<", ">Updates & debug<",
+                 ">Appearance<", ">Keyboard shortcuts<", ">Judges<", ">Updates & debug<",
                  ">romp · version<"]
         idx = [h.index(t) for t in order]
         self.assertEqual(idx, sorted(idx), "sections in the 2026-08-30 order, version last")
@@ -49,9 +49,9 @@ class SettingsSectionsTest(unittest.TestCase):
             self.assertTrue(h.index(">Chat<") < h.index(rid) < h.index(">Sessions pane<"), rid)
         # Sessions pane, then Feed, then Colors
         self.assertTrue(h.index(">Sessions pane<") < h.index("id=rs-collapsegaps") < h.index(">Feed<"))
-        self.assertTrue(h.index(">Feed<") < h.index("id=rs-feedcollapsed") < h.index(">Colors<"))
-        self.assertTrue(h.index(">Colors<") < h.index("id=rs-cmap") < h.index(">Keyboard shortcuts<"))
-        self.assertTrue(h.index(">Colors<") < h.index("id=rs-pal") < h.index(">Keyboard shortcuts<"))
+        self.assertTrue(h.index(">Feed<") < h.index("id=rs-feedcollapsed") < h.index(">Appearance<"))
+        self.assertTrue(h.index(">Appearance<") < h.index("id=rs-cmap") < h.index(">Keyboard shortcuts<"))
+        self.assertTrue(h.index(">Appearance<") < h.index("id=rs-pal") < h.index(">Keyboard shortcuts<"))
         # Judges sit low: the six dropdowns between Judges and the bottom group
         self.assertTrue(h.index(">Judges<") < h.index("id=rs-judgemodel") < h.index(">Updates & debug<"))
         self.assertTrue(h.index(">Judges<") < h.index("id=rs-indexeffort") < h.index(">Updates & debug<"))

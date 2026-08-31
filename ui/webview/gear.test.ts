@@ -69,8 +69,8 @@ test("the login flow lives in a modal behind one button (the user 2026-08-30)", 
   assert.ok(GEAR.includes("id=rs-login-modal"), "the modal exists");
   assert.ok(GEAR.includes("Log in to Claude Code"), "the button says what it does");
   const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "gear.css"), "utf8");
-  assert.match(CSS, /#rs-login-modal \{ position: fixed; inset: 0; z-index: \d+; background: rgba\(0,0,0,0\.55\);/);
-  assert.match(CSS, /\.rs-login-card \{ background: #252526; border: 1px solid rgba\(255,255,255,0\.12\);/);
+  assert.match(CSS, /#rs-login-modal \{ position: fixed; inset: 0; z-index: \d+; background: var\(--overlay-dim, rgba\(0, 0, 0, 0\.55\)\);/);   // tokened with its literal fallback (2026-08-30 merge)
+  assert.match(CSS, /\.rs-login-card \{ background: var\(--surface-raised, #252526\); border: 1px solid rgba\(255,255,255,0\.12\);/);
   // mid-flow the button REOPENS the modal, never restarts the flow; terminal state closes it;
   // Cancel + Escape + backdrop close; the code input stays a pure pass-through (T157)
   assert.ok(GEAR.includes("if (lgLive === 'url' || lgLive === 'starting' || lgLive === 'verifying') return;"));

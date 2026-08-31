@@ -22,7 +22,7 @@ test("renderTabs appends the gauge after the label, gated on the mode + a report
   assert.match(RENDER, /settings\.tabCtx !== "never" && s\.status\.ctx && st !== "compacting" && st !== "closed"/);
   // the 50% threshold: over50 (the default) shows the gauge only once it has news
   assert.match(RENDER, /settings\.tabCtx === "always" \|\| pct >= 50/);
-  assert.match(RENDER, /tab\.appendChild\(tabCtxGauge\(s\.status\.ctx, s\.status\.ctxColor\)\)/);
+  assert.match(RENDER, /tab\.appendChild\(tabCtxGauge\(s\.status\.ctx, pickTone\(s\.status\.ctxColor, s\.status\.ctxTone\)\)\)/);   // dual palette (PR #763): the caller picks by theme
   // DOM order: label first, then the gauge, then the ✕ — so the ✕ sits at the tab's right edge
   const label = RENDER.indexOf("tab.appendChild(label);");
   const gauge = RENDER.indexOf("tab.appendChild(tabCtxGauge(");
@@ -34,7 +34,7 @@ test("the gauge mirrors setCtxBar: clamped %, server ctxColor, the same traffic-
   assert.match(RENDER, /function tabCtxGauge\(ctxStr: string, ctxColor\?: number\[\]\)/);
   assert.match(RENDER, /Math\.max\(0, Math\.min\(100, parseInt\(ctxStr, 10\) \|\| 0\)\)[\s\S]{0,400}fill\.style\.height = pct \+ "%"/);
   // colormap colour when the kernel ships one; setCtxBar's exact fallback ramp when it doesn't
-  assert.match(RENDER, /tabCtxGauge[\s\S]{0,600}ctxColor && ctxColor\.length === 3\) \? `rgb\(\$\{ctxColor\.join\(","\)\}\)`\s*\n\s*: \(pct >= 85 \? "#c0392b" : pct >= 60 \? "#e0b020" : "#54B204"\)/);
+  assert.match(RENDER, /tabCtxGauge[\s\S]{0,700}ctxColor && ctxColor\.length === 3\) \? `rgb\(\$\{ctxColor\.join\(","\)\}\)`\s*\n\s*: ctxFallbackColor\(pct\)/);   // theme-aware fallback; the FILL wears the tone as-is (readableRgb is for text — 2026-08-31)
 });
 
 test("the gauge is a slim VERTICAL bar and the strip tightened to make room for it", () => {

@@ -13,6 +13,8 @@ import diff from "highlight.js/lib/languages/diff";
 import yaml from "highlight.js/lib/languages/yaml";
 import type { ParsedAsk } from "../ask-types";
 import { TABBAR_H_KEY, TABBAR_H_DEFAULT, clampTabbarH, parseTabbarH } from "./tabbar-resize";
+import { ctxFallbackColor, pickTone, readableRgb } from "./ctx-color";
+import { applyTheme } from "./theme";
 import { SessionViews, viewVisible, viewsKey, revealIn, viewTagUnion, viewTags, type TagUnion, type SessionTag } from "./session-views";
 import { lensVisible, surfaceLens } from "./tag-lens";
 import { openTagMenu, tagMenuButton, syncTagFilter } from "./tag-menu";
@@ -47,6 +49,7 @@ import { mediaSrc, kernelUrl } from "./media";
 import { initStrip, fmtReset } from "./strip";
 import { apiErrorReason } from "./api-error-reason";
 import { mathBlock, mathInline } from "./math";
+import { setTip, pruneTip } from "./tip";
 import { agentCount, replyOwed, threadsByAnchor, threadBusy, threadStuck, findAnchorRange, sliceRanges, prunePending, type CommentThread } from "./comments";
 import { dragSlotIndex } from "./dragslot";
 
@@ -226,7 +229,7 @@ interface TodoTask { id: string; subject: string; activeForm?: string; status: s
 
 type ChipState = "working" | "ready" | "needsInput" | "awaiting" | "awaitingBg" | "idle" | "closed" | "compacting" | "clearing" | "blocked" | "retrying" | "interrupting" | "opening";   // needsInput = a live permission/picker prompt (on YOU) — renamed from the legacy "awaiting" (2026-08-15), which stays accepted for OLDER REMOTE KERNELS across federation; awaitingBg = idle main thread waiting on background work it dispatched (the user 2026-07-13)
 type PeerIdent = { name: string; host?: string; sid?: string; color?: { bg: string; fg: string } | null };   // a named peer behind a peer-kind wait (kernel _peer_identity, 2026-08-26)
-interface Status { state: ChipState; sinceEpoch: number | null; awaitingWhy?: string | null; awaitingKind?: string | null; awaitingPeers?: PeerIdent[] | null; awaitingTasks?: string[]; awaitingTaskIds?: string[]; effort?: string; model?: string; modelPending?: boolean; effortPending?: boolean; mode?: string; fast?: string; auth?: string; authLive?: string; authPending?: boolean; authBoth?: boolean; authAcct?: string; ctx?: string; ctxColor?: number[]; modelColor?: number[]; effortColor?: number[]; faded?: boolean; backend?: string; apiTooLong?: boolean; apiSpendLimit?: boolean; apiModelLimit?: boolean; apiAuthErr?: boolean; apiRefusal?: boolean; retrySuppressed?: boolean; retryNextAt?: number | null; retryTries?: number | null; }   // awaitingWhy/awaitingTasks = what an awaitingBg session is waiting on (kernel _session_awaiting's phrasing + the live awaited task descriptions) — the #bg-tasks box renders it when no tracked tasks claim the box (renderAwaitWhy; the user 2026-08-13, who moved it out of the statusline the same day PR #350 put it there)   // retrySuppressed = the user interrupted this thread's API-error storm → romp's auto-retry stays OFF for it until a successful turn re-arms (the user 2026-07-06). backend = "tmux" | "sdk"; apiTooLong = the "blocked" is a "prompt is too long" error (on you → red tab) vs a transient API error (amber/retrying); apiSpendLimit = a monthly spend cap (on you → raise it; NEVER auto-retried — retrying can't fix it, the user 2026-07-14); apiModelLimit = this session's MODEL is out of allowance (on you → switch model or add credits; not auto-retried either, the user 2026-08-01); apiRefusal = the model's safeguards refused the prompt itself (on you → rewrite it or drop the thread; never auto-retried — a refusal is deterministic on the same input, so a retry just manufactures the same refusal, the user 2026-08-15); ctxColor = the GLOBAL colormap's RGB for the context%, computed server-side; modelColor/effortColor = the same map's RGB tint for the model name + effort (by capability/effort rank), server-computed; modelPending = a /model switch is resolving → the badge shows switching-dots until the new name lands (server-driven, event-based, the user 2026-07-03); fast = the CLI's fast-mode state ("on"/"off"/"cooldown", from the SDK init's fast_mode_state; absent = unknown/unavailable → no fast badge)
+interface Status { state: ChipState; sinceEpoch: number | null; awaitingWhy?: string | null; awaitingKind?: string | null; awaitingPeers?: PeerIdent[] | null; awaitingTasks?: string[]; awaitingTaskIds?: string[]; effort?: string; model?: string; modelPending?: boolean; effortPending?: boolean; mode?: string; fast?: string; auth?: string; authLive?: string; authPending?: boolean; authBoth?: boolean; authAcct?: string; ctx?: string; ctxColor?: number[]; modelColor?: number[]; effortColor?: number[]; modelTone?: number[]; effortTone?: number[]; ctxTone?: number[]; faded?: boolean; backend?: string; apiTooLong?: boolean; apiSpendLimit?: boolean; apiModelLimit?: boolean; apiAuthErr?: boolean; apiRefusal?: boolean; retrySuppressed?: boolean; retryNextAt?: number | null; retryTries?: number | null; }   // awaitingWhy/awaitingTasks = what an awaitingBg session is waiting on (kernel _session_awaiting's phrasing + the live awaited task descriptions) — the #bg-tasks box renders it when no tracked tasks claim the box (renderAwaitWhy; the user 2026-08-13, who moved it out of the statusline the same day PR #350 put it there)   // retrySuppressed = the user interrupted this thread's API-error storm → romp's auto-retry stays OFF for it until a successful turn re-arms (the user 2026-07-06). backend = "tmux" | "sdk"; apiTooLong = the "blocked" is a "prompt is too long" error (on you → red tab) vs a transient API error (amber/retrying); apiSpendLimit = a monthly spend cap (on you → raise it; NEVER auto-retried — retrying can't fix it, the user 2026-07-14); apiModelLimit = this session's MODEL is out of allowance (on you → switch model or add credits; not auto-retried either, the user 2026-08-01); apiRefusal = the model's safeguards refused the prompt itself (on you → rewrite it or drop the thread; never auto-retried — a refusal is deterministic on the same input, so a retry just manufactures the same refusal, the user 2026-08-15); ctxColor = the GLOBAL colormap's RGB for the context%, computed server-side; modelColor/effortColor = the same map's RGB tint for the model name + effort (by capability/effort rank), server-computed; modelPending = a /model switch is resolving → the badge shows switching-dots until the new name lands (server-driven, event-based, the user 2026-07-03); fast = the CLI's fast-mode state ("on"/"off"/"cooldown", from the SDK init's fast_mode_state; absent = unknown/unavailable → no fast badge)
 interface Color { bg: string; fg: string; }
 // A run_in_background task surfaced in the #bg-tasks box (the kernel's _bg_tasks): a one-line summary +
 // status, expandable to the command + its output. status = running | completed | failed. For a dispatched
@@ -4298,7 +4301,7 @@ function showTabTip(tab: HTMLElement, s: Session): void {
   if (s.status.ctx) {
     const cr = el("div", "tab-tip-row tab-tip-ctx");          // extra vertical room — the battery bar is tall
     const ck = el("span", "tab-tip-k"); ck.textContent = "Context"; cr.appendChild(ck);
-    const bar = ctxBar(); setCtxBar(bar, s.status.ctx, s.status.state === "compacting", s.status.ctxColor);
+    const bar = ctxBar(); setCtxBar(bar, s.status.ctx, s.status.state === "compacting", pickTone(s.status.ctxColor, s.status.ctxTone));
     cr.appendChild(bar); tip.appendChild(cr);
   }
   // ledger rows, LABELLED + aligned with the rows above (the user 2026-06-23 v3): the summary, then Recent.
@@ -4448,7 +4451,9 @@ function tabCtxGauge(ctxStr: string, ctxColor?: number[]): HTMLElement {
   const fill = el("span", "tab-ctx-fill");
   fill.style.height = pct + "%";
   fill.style.background = (ctxColor && ctxColor.length === 3) ? `rgb(${ctxColor.join(",")})`
-    : (pct >= 85 ? "#c0392b" : pct >= 60 ? "#e0b020" : "#54B204");
+    : ctxFallbackColor(pct);   // theme-aware pair (ctx-color.ts): classic keeps main's 60/85 verbatim.
+  // FILLS wear the tone as-is in every theme — readableRgb is for TEXT (re-encoding the warn amber
+  // fill made it a muddy brown on light; the user 2026-08-31, off the live preview)
   g.appendChild(fill);
   g.title = `context ${pct}% used`;
   return g;
@@ -4638,7 +4643,7 @@ function renderTabs() {
     // has news), always, or never (the user 2026-08-08 v2, replacing the on/off toggle).
     if (settings.tabCtx !== "never" && s.status.ctx && st !== "compacting" && st !== "closed") {
       const pct = Math.max(0, Math.min(100, parseInt(s.status.ctx, 10) || 0));
-      if (settings.tabCtx === "always" || pct >= 50) tab.appendChild(tabCtxGauge(s.status.ctx, s.status.ctxColor));
+      if (settings.tabCtx === "always" || pct >= 50) tab.appendChild(tabCtxGauge(s.status.ctx, pickTone(s.status.ctxColor, s.status.ctxTone)));
     }
     // Rich hover tooltip (custom DOM — a native title can't colour/bold): backend in its own colour, the
     // full dir path, and mode/model/effort/context each on a line (the user 2026-06-23). See showTabTip.
@@ -7000,7 +7005,8 @@ function threadMetaStatus(th: CommentThread): Status {
   return { state: stuck ? "needsInput" : (threadBusy(th.state) ? "working" : "ready"),
            sinceEpoch: th.sinceEpoch || null, mode: th.mode || "", model: th.model || "",
            effort: th.effort || "default", fast: th.fast || "", backend: "sdk",
-           modelColor: th.modelColor, effortColor: th.effortColor } as Status;
+           modelColor: th.modelColor, effortColor: th.effortColor,
+           modelTone: (th as any).modelTone, effortTone: (th as any).effortTone } as Status;
 }
 
 /** The popover statusline's LEFT half — the thread's state chip, wearing exactly the chat's chip
@@ -7329,7 +7335,8 @@ function renderCommentPopover(): void {
           const choice = kind === "model" ? (effVal ? modelChoiceLabel(effVal) : null)
             : (effVal ? EFFORT_CHOICES.find((c) => c.value === effVal) : null);
           label.textContent = choice ? choice.label : (kind === "model" ? (st?.model || "Default") : (st?.effort || "default"));
-          const tint = choice?.color || (kind === "model" ? st?.modelColor : st?.effortColor);
+          const tint0 = kind === "model" ? pickTone(st?.modelColor, st?.modelTone) : pickTone(st?.effortColor, st?.effortTone);
+          const tint = (nonClassicChoiceTone(choice) as number[] | undefined) || (tint0 && tint0.length === 3 ? readableRgb(tint0) : tint0);   // TEXT tint: light re-encodes on BOTH branches (the session-status fallback skipped it)
           if (tint && tint.length === 3) label.style.color = `rgb(${tint[0]},${tint[1]},${tint[2]})`;
         }
         const caret = el("span", "meta-caret");
@@ -10003,6 +10010,29 @@ function modelChoiceLabel(value: string): { label: string; color?: number[] | nu
 // An SDK session sets it outright over the control channel (set_permission_mode), which is what makes
 // Bypass offerable there and only there: on tmux the click would land on a mode the cycle cannot
 // express, and _cycle_mode would drop it. `sdkOnly` is the filter, applied in toggleMetaMenu.
+// Permission-mode GLYPHS (the user 2026-08-28): each mode gets a small line icon beside its text —
+// the statusline badge and the picker rows carry it, always WITH the label (an icon alone is a
+// riddle). House icon style (the tag-glyph convention): 16-unit viewBox, stroke currentColor 1.4,
+// round caps/joins. The vocabulary: the GATE is a shield — Normal is the shield as-is, Bypass is
+// the shield slashed (the gate removed); Accept edits is the pencil (edits pre-approved); Auto is
+// the bolt (it decides at speed); Plan is the route pin-to-pin (look before touching); Don't ask
+// (renderable, not offerable) is the crossed speech bubble (it will never raise a question).
+const MODE_ICONS: Record<string, string> = {
+  default: '<path d="M8 2 L13 4 V8 C13 11.4 10.8 13.2 8 14 C5.2 13.2 3 11.4 3 8 V4 Z"/>',
+  acceptedits: '<path d="M3.5 12.5 L4.1 10.1 L10.9 3.3 A1.35 1.35 0 0 1 12.8 5.2 L6 12 L3.5 12.5 Z"/><path d="M9.9 4.3 L11.8 6.2"/>',
+  auto: '<path d="M8.8 2 L4.2 9 H7.4 L6.9 14 L11.8 6.8 H8.3 Z"/>',
+  plan: '<circle cx="4" cy="12" r="1.5"/><circle cx="12" cy="4" r="1.5"/><path d="M5.2 10.8 C7.5 9.5 8.5 6.5 10.8 5.2" stroke-dasharray="2 1.6"/>',
+  bypasspermissions: '<path d="M8 2 L13 4 V8 C13 11.4 10.8 13.2 8 14 C5.2 13.2 3 11.4 3 8 V4 Z"/><path d="M3.2 13 L12.8 3"/>',
+  dontask: '<path d="M3 3.5 H13 V10 H8.5 L5.5 12.8 V10 H3 Z"/><path d="M3.2 12.6 L12.8 2.6"/>',
+};
+function modeIconSvg(mode: string | undefined): string {
+  // accepts wire values AND display labels (metaButton receives prettyMode's text)
+  const raw = (mode || "default").toLowerCase().replace(/[\u2019' -]/g, "");
+  const k = raw === "normal" || raw === "" ? "default" : raw;
+  const body = MODE_ICONS[k] ?? MODE_ICONS.default;
+  return '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">' + body + "</svg>";
+}
+
 // Every mode wears a one-phrase sub-line (T140, the user 2026-08-28: where taglines exist under
 // some entries, add analogous ones saying what the other modes are — and 'Accept edits' reads
 // just 'Accept'; the mode ids stay the wire's). Each line states what the mode ENFORCES, worded
@@ -10114,27 +10144,42 @@ function metaDots(): HTMLElement {
 function metaButton(kind: MetaKind, text: string, forSid?: string | null): HTMLElement {
   const btn = el("span", "meta-btn");
   btn.dataset.kind = kind;
+  if (kind === "mode") {   // the permission glyph, always beside its text (never instead of it)
+    const ico = el("span", "meta-ico mode-ico");
+    ico.innerHTML = modeIconSvg(text);   // refreshed by the sync loop below from st.mode
+    btn.appendChild(ico);
+  }
   const label = el("span", "meta-label");
   label.textContent = text;
   btn.appendChild(label);
   const caret = el("span", "meta-caret");
   caret.textContent = "▾";
   btn.appendChild(caret);
-  btn.title = kind === "model" ? "change model (sends /model)"
+  // the styled tip (tip.ts), not a native title — every tooltip wears the one .romp-tip dress
+  setTip(btn, kind === "model" ? "change model (sends /model)"
     : kind === "effort" ? "change thinking effort (sends /effort)"
     : kind === "fast" ? "toggle fast mode (sends /fast)"
-    : "change permission mode (shift+tab cycle)";
+    : "change permission mode (shift+tab cycle)");
   btn.addEventListener("click", (e) => { e.stopPropagation(); toggleMetaMenu(kind, btn, forSid ?? null); });
   return btn;
 }
 
 // The model/effort label tint, from the server-computed colormap RGB (by capability/effort rank, the user
 // 2026-07-02) — "" for mode (untinted) or an unknown model/effort, which resets to the default gray.
+// a /models-route choice carries classic `color` + yatharth `tone` — pick by theme like the badges
+function nonClassicChoiceTone(choice: { color?: number[] | null; tone?: number[] | null } | null | undefined): number[] | undefined {
+  if (!choice) return undefined;
+  const picked = pickTone(choice.color, choice.tone);
+  return picked && picked.length === 3 ? readableRgb(picked) : (picked as number[] | undefined);
+}
+
 function metaColor(kind: MetaKind, st: Status): string {
   // fast ON wears the CLI's own fast-mode orange (--fast, a status color) so the badge reads the same
   // here as in the Claude Code TUI; off/cooldown stay the default gray.
   if (kind === "fast") return (st.fast || "").toLowerCase() === "on" ? "var(--fast)" : "";
-  const c = kind === "model" ? st.modelColor : kind === "effort" ? st.effortColor : undefined;
+  const c0 = kind === "model" ? pickTone(st.modelColor, st.modelTone)
+    : kind === "effort" ? pickTone(st.effortColor, st.effortTone) : undefined;
+  const c = c0 && c0.length === 3 ? readableRgb(c0) : c0;
   return (c && c.length === 3) ? `rgb(${c[0]},${c[1]},${c[2]})` : "";
 }
 
@@ -10160,6 +10205,10 @@ function syncMetaControls(meta: HTMLElement, st: Status, forSid?: string | null)
     const disp = kind === "mode" ? prettyMode(st.mode) : kind === "fast" ? prettyFast(st.fast)
       : metaCurrent(kind, st);
     const label = b.querySelector(".meta-label") as HTMLElement | null;
+    if (kind === "mode") {
+      const ico = b.querySelector(".mode-ico") as HTMLElement | null;
+      if (ico) ico.innerHTML = modeIconSvg(st.mode);
+    }
     // A switching MODEL shows animated dots, not the stale/premature name (the user 2026-07-03): the
     // server drives it (st.modelPending) — event-based, cleared the instant the new model actually lands —
     // and the local click heuristic (isMetaPending) covers the sub-second before the first server push.
@@ -10223,13 +10272,25 @@ function toggleMetaMenu(kind: MetaKind, btn: HTMLElement, forSid?: string | null
   for (const c of META_CHOICES[kind].filter((c) => !c.sdkOnly || s.status.backend === "sdk")) {
     const item = el("div", "meta-item" + (isCurrentMeta(kind, s.status, c.value) ? " current" : ""));
     item.tabIndex = 0;
+    const rowIco = kind === "mode" ? el("span", "meta-ico mode-ico") : null;
+    if (rowIco) rowIco.innerHTML = modeIconSvg(c.value);
+    // model/effort rows wear THEIR OWN rank color (the user 2026-08-31: a picker whose rows are
+    // all default-gray codes nothing) — the same /models-fed color+tone the badges use
+    if (kind === "model" || kind === "effort") {
+      const rowTint = nonClassicChoiceTone(c as { color?: number[] | null; tone?: number[] | null });
+      if (rowTint) item.style.color = `rgb(${rowTint.join(",")})`;
+    }
     if (c.sub) {
       const head = el("div");
-      head.textContent = c.label;
+      if (rowIco) head.appendChild(rowIco);
+      head.appendChild(document.createTextNode(c.label));
       const sub = el("div", "meta-item-sub");
       sub.textContent = c.sub;
       item.appendChild(head);
       item.appendChild(sub);
+    } else if (rowIco) {
+      item.appendChild(rowIco);
+      item.appendChild(document.createTextNode(c.label));
     } else {
       item.textContent = c.label;
     }
@@ -10351,7 +10412,7 @@ function setCtxBar(bar: HTMLElement, ctxStr: string | undefined, compacting = fa
   // ramp(context%) on the selected map, bright = full) so the chat battery matches the timeline + usage bars.
   // Fall back to the old traffic-light if an older kernel didn't ship a color.
   const fillBg = (ctxColor && ctxColor.length === 3) ? `rgb(${ctxColor.join(",")})`
-    : (pct >= 85 ? "#c0392b" : pct >= 60 ? "#e0b020" : "#54B204");
+    : ctxFallbackColor(pct);   // theme-aware pair; fills stay un-re-encoded (see tabCtxGauge's note)
   if (fill) { fill.style.width = pct + "%"; fill.style.background = fillBg; }
   if (txt) txt.textContent = pct + "%";
   bar.title = `context ${pct}% used — click to /compact`;
@@ -10378,9 +10439,10 @@ function stopButton(state?: ChipState): HTMLElement {
   const btn = el("button", "stop-btn");
   (btn as HTMLButtonElement).type = "button";
   const stuck = state === "retrying" || state === "blocked";
-  btn.title = stuck
-    ? "Stop retrying — interrupt this thread and hold its auto-retry off until you send it a message"
-    : "Stop — interrupt this session (same as Ctrl+C)";
+  // styled tip (tip.ts): a label line + its explanation, so the icon-only square explains itself
+  setTip(btn, stuck
+    ? "Stop retrying\ninterrupt this thread and hold its auto-retry off until you send it a message"
+    : "Stop\ninterrupt this session (same as Ctrl+C)");
   btn.setAttribute("aria-label", stuck ? "Stop retrying this session" : "Interrupt session");
   btn.appendChild(el("span", "stop-icon"));   // a filled square (CSS), the universal stop glyph
   btn.addEventListener("click", (e) => {
@@ -10492,12 +10554,7 @@ function updateStatusline() {
     chip.textContent = CHIP_LABEL[s.status.state] ?? (s.status.state[0].toUpperCase() + s.status.state.slice(1).toLowerCase());
     sl.appendChild(chip);
   }
-  // stop/interrupt button, right beside the state badge — while busy (working/compacting) AND while stuck
-  // retrying / blocked on an API error, where it doubles as the per-thread auto-retry off-switch (the user
-  // 2026-07-06). Omitted in idle states (nothing to interrupt) — the user 2026-06-19 — and while
-  // INTERRUPTING (the stop is already in flight; re-pressing it is a lie — the user 2026-07-02).
-  if (s.status.state === "working" || s.status.state === "compacting"
-      || s.status.state === "retrying" || s.status.state === "blocked") sl.appendChild(stopButton(s.status.state));
+
   // The right-side cluster — dir · branch · mode/model/effort/fast badges · ctx battery — grouped in ONE
   // container (.sl-right) that carries the right-justify margin and wraps INTERNALLY with right-aligned
   // rows. Grouped, not flat: when a narrow pane wraps the statusline, flat children restart each extra row
@@ -10535,9 +10592,18 @@ function updateStatusline() {
   syncMetaControls(meta, s.status);
   right.appendChild(meta);
   const bar = ctxBar();
-  setCtxBar(bar, s.status.ctx, s.status.state === "compacting", s.status.ctxColor);
+  setCtxBar(bar, s.status.ctx, s.status.state === "compacting", pickTone(s.status.ctxColor, s.status.ctxTone));
   right.appendChild(bar);
+  // stop/interrupt button — at the FAR RIGHT of the statusline (the user 2026-08-28; it sat
+  // beside the state chip on the left before), riding inside the right cluster so a wrapped
+  // narrow statusline keeps it with the controls. Shown while busy (working/compacting) AND while
+  // stuck retrying / blocked, where it doubles as the per-thread auto-retry off-switch (the user
+  // 2026-07-06). Omitted in idle states (nothing to interrupt — the user 2026-06-19) and while
+  // INTERRUPTING (the stop is already in flight; re-pressing it is a lie — the user 2026-07-02).
+  if (s.status.state === "working" || s.status.state === "compacting"
+      || s.status.state === "retrying" || s.status.state === "blocked") right.appendChild(stopButton(s.status.state));
   sl.appendChild(right);
+  pruneTip();   // a rebuilt statusline tears tip anchors (the stop button) out mid-hover — drop the orphan (PR #763 item 8; the feed's render does the same)
 }
 
 // Unsent composer text, per session — a draft belongs to the tab it was typed
@@ -12115,7 +12181,7 @@ setInterval(() => {
   const meta = document.getElementById("spinner-meta");
   if (meta) syncMetaControls(meta, s.status);
   const bar = document.getElementById("ctx-bar");
-  if (bar) setCtxBar(bar, s.status.ctx, s.status.state === "compacting", s.status.ctxColor);
+  if (bar) setCtxBar(bar, s.status.ctx, s.status.state === "compacting", pickTone(s.status.ctxColor, s.status.ctxTone));
 }, 1000);
 
 // the last message we delivered per session — so a Ctrl+C interrupt can put it back
@@ -12337,6 +12403,7 @@ function setupComposer() {
   // On a phone, though, keeping focus keeps the on-screen keyboard up and the composer pinned above it;
   // blur instead so the keyboard collapses and the box drops back to the bottom (the user 2026-07-22).
   const sendBtn = document.getElementById("composer-send") as HTMLButtonElement | null;
+  if (sendBtn) setTip(sendBtn, "Send (Enter)");   // styled tip replaces the skeleton's native title (aria-label stays)
   sendBtn?.addEventListener("mousedown", (e) => { e.preventDefault(); sendComposer(); if (isCoarsePointer()) ta.blur(); else ta.focus(); });
   fireHeldSend = () => sendComposer();   // the ack handler's door into this closure (see sendOnShip)
   fireStage = () => stageComposer();     // the chips strip's Stage button's door (renderComposerChips)
@@ -12801,6 +12868,9 @@ function setupComposer() {
   // a desktop browser gets an unscoped, multi-select picker — attributes are set
   // per open, at the moment the pointer type is known.
   const attach = document.getElementById("composer-attach") as HTMLButtonElement | null;
+  // upgrade the skeleton's native title to the styled tip (tip.ts removes the title attribute);
+  // the icon-only button keeps an accessible name via aria-label
+  if (attach) { setTip(attach, "Attach a file"); attach.setAttribute("aria-label", "Attach a file"); }
   const isTouch = isCoarsePointer;
   const isWebPage = location.protocol === "http:" || location.protocol === "https:";
   const filePicker = document.createElement("input");
@@ -12871,9 +12941,9 @@ function shipFileToHost(f: File, sidAt: string | null = activeId) {
 function applyChatScheme(s: RompSettings): void {
   document.body.classList.toggle("scheme-high-contrast", s.chatScheme === "high-contrast");
   document.body.classList.toggle("scheme-solarized-dark", s.chatScheme === "solarized-dark");
-  // the chat-tab appearance theme (T113): Classic is the unscoped default; Yatharth scopes PR 730's
-  // strip aesthetic under this class. Applies live — onExternalSettingsChange re-runs this + renderTabs.
-  document.body.classList.toggle("chat-theme-yatharth", s.chatTabTheme === "yatharth");
+  // the overall theme (T113 promoted 2026-08-28): the shared applier toggles the strip-aesthetic
+  // and light-theme classes from s.theme. Applies live — onExternalSettingsChange re-runs this.
+  applyTheme(document, s);
 }
 function setupSettings(): void {
   applyChatScheme(settings);   // the persisted pick applies at startup — it survives reloads
