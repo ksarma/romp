@@ -7246,7 +7246,8 @@ def _comment_launch_prefs(model="", effort="", fast=""):
     return tuple(out)
 
 
-def _comment_create(parent_sid, anchor_uuid, exact, text, name="", model="", effort="", fast="", color="", now=None):
+def _comment_create(parent_sid, anchor_uuid, exact, text, name="", model="", effort="", fast="", color="",
+                    now=None, raw_opener=False, meta=None):
     """Anchor a new comment thread: fork the parent at the highlighted message (inclusive) as a
     threadOf fork — no names/ entry, so no judge seeding is needed until promotion — and send the
     opening message. Returns (error, tid): error is the warn-toast string (tid None), success is
@@ -7259,7 +7260,17 @@ def _comment_create(parent_sid, anchor_uuid, exact, text, name="", model="", eff
     `model`/`effort` (the user 2026-08-17): per-thread overrides picked in the same dialog — the
     thread runs on them, the parent is untouched (fork() writes them into the thread's reg only).
     `fast` ("on"/"off"/"" — the user 2026-08-29) rides the same way; empty falls through
-    _comment_launch_prefs to the kernel's default-comment settings, then to inheriting the parent."""
+    _comment_launch_prefs to the kernel's default-comment settings, then to inheriting the parent.
+
+    `anchor_uuid ""` = a TIP fork, no highlighted record: the restart-seam fallback
+    _comment_cut_target already produces (cut "" → the thread takes the whole conversation) made a
+    designed input for callers with no transcript anchor — the /fork-comment door (the user
+    2026-08-31, whose track-changes review comments dispatch onto parallel forks). cut_t is the
+    create moment, so the timeline square sits where the thread began. `raw_opener` sends `text`
+    VERBATIM as the opening message — the caller authored the whole prompt (the plugin's thread
+    instructions); the quote frame would bury it under a passage that doesn't exist. `meta`
+    ({thread, note} strings) rides the registry row for provenance — the popover shows the row's
+    exact/name as usual; nothing kernel-side consumes meta beyond storing it."""
     be = Sessions.backend_for(parent_sid)
     if not (hasattr(be, "fork") and _sdk_ready()):
         return "threads need the SDK backend; this session runs on tmux, so there is nothing to fork.", None
@@ -7269,9 +7280,12 @@ def _comment_create(parent_sid, anchor_uuid, exact, text, name="", model="", eff
     sess = next((s for s in _sessions(now) if s["sid"] == parent_sid), None)
     if not sess:
         return "no transcript for this session yet, so nothing to comment on.", None
-    cut, cut_t, err = _comment_cut_target(sess["path"], parent_sid, str(anchor_uuid))
-    if err:
-        return err, None
+    if str(anchor_uuid or ""):
+        cut, cut_t, err = _comment_cut_target(sess["path"], parent_sid, str(anchor_uuid))
+        if err:
+            return err, None
+    else:
+        cut, cut_t = "", int(now)   # tip fork by request (see docstring) — no record to cut at
     nm = str(name or "").strip()
     if nm and not NAME_RE.match(nm):
         return "thread names use letters, digits, . _ - only.", None
@@ -7279,10 +7293,12 @@ def _comment_create(parent_sid, anchor_uuid, exact, text, name="", model="", eff
     if col and not re.fullmatch(r"#[0-9a-fA-F]{6}", col):
         col = ""                                   # not a palette hex → let the backend hash one
     tsid = str(uuid.uuid4())
-    row = {"tid": tsid, "sid": tsid, "anchorUuid": str(anchor_uuid), "cutUuid": cut,
+    row = {"tid": tsid, "sid": tsid, "anchorUuid": str(anchor_uuid or ""), "cutUuid": cut,
            "anchorT": cut_t,   # the commented message's own time — the timeline square's x
            "exact": str(exact)[:2000], "status": "open",
            "createdT": int(now), "lastSeenT": int(now)}
+    if isinstance(meta, dict) and (meta.get("thread") or meta.get("note")):
+        row["meta"] = {k: str(meta.get(k) or "")[:500] for k in ("thread", "note") if meta.get(k)}
     with _comments_lock:
         data = _load_comments(parent_sid)
         if not nm:
@@ -7297,7 +7313,7 @@ def _comment_create(parent_sid, anchor_uuid, exact, text, name="", model="", eff
         be.fork(nm, parent_sid, cut, bg=col, fg=(pal.fg_for(col) if col else ""), sid=tsid, thread_of=parent_sid,
                 model=model, effort=effort, fast=fast)
         be.connect(tsid)
-        be.send(tsid, _comment_first_message(exact, text))
+        be.send(tsid, text if raw_opener else _comment_first_message(exact, text))
     except Exception as e:
         with _comments_lock:                       # loud + lossless: no half-born thread row
             data = _load_comments(parent_sid)
@@ -7554,6 +7570,96 @@ def _comment_promote(parent_sid, tid, new_name, now=None, client=None):
         # presenting a dead tab as a healthy one (fail loudly)
         return "the thread is now the session '%s', but its process didn't start — revive it from its tab." % nm
     return None
+
+
+def _comment_fork_owner(tid):
+    """(parent_sid, row) for the comment thread with this tid, scanning every parent's registry —
+    /fork-promote arrives with only the forkId, no parent (the caller got it from /fork-comment and
+    kept nothing else). The store is one small json per commented-on session; None when no parent
+    holds it (including an empty/absent comments dir)."""
+    try:
+        files = sorted((jd.STATE / "comments").glob("*.json"))
+    except OSError:
+        return None
+    for f in files:
+        for th in _load_comments(f.stem).get("threads") or []:
+            if th.get("tid") == tid:
+                return f.stem, th
+    return None
+
+
+def _fork_comment_request(body):
+    """POST /fork-comment's brain, factored for tests (the _compact_request precedent): create a
+    transcript-comment-STYLE fork of the target session — the threadOf idiom, anchored at the TIP
+    (no highlighted record exists on this door) — and send `text` VERBATIM as the opening message
+    (the caller authored the whole prompt; the user 2026-08-31, whose track-changes review comments
+    dispatch onto parallel forks instead of interleaving through the target's main lane). Response
+    {"ok", "forkId"} or {"ok": False, "error"} (+_status when not 200). model/effort/fast ride
+    empty, so _comment_launch_prefs applies the kernel's default-comment picks exactly as a
+    dialog-created thread. Remote targets forward like /send; the far kernel runs this same brain
+    and its forkId passes through."""
+    if not isinstance(body, dict):
+        return {"ok": False, "error": "bad json", "_status": 400}
+    who = str(body.get("id") or body.get("name") or "")
+    text = body.get("text")
+    if not who or not isinstance(text, str) or not text.strip():
+        return {"ok": False, "error": "id (or name) and text required", "_status": 400}
+    meta = body.get("meta") if isinstance(body.get("meta"), dict) else {}
+    sid = _sid_of(who)
+    # the /send postal-isolation gate, same wrong-door reasoning: a fork of the target carries the
+    # target's context, so postal-shaped content routed here is agent mail dodging the mailbox
+    if _postal_shaped(text) and _postal_isolated(sid):
+        return {"ok": False, "error":
+                "isolation: the target session's mailbox is OFF — agent mail is refused on every "
+                "route; the refusal is final (the user can toggle its mailbox back on)"}
+    r = _host_for_sid(sid)
+    if r is not None:                                   # remote session → forward over its -L tunnel
+        res = _remote_forward(r, "/fork-comment", {"id": sid, "text": text, "meta": meta})
+        if isinstance(res, dict) and res.get("forkId"):
+            return {"ok": True, "forkId": str(res["forkId"])}
+        err = res.get("error") if isinstance(res, dict) else None
+        return {"ok": False, "error": str(err) if err else
+                "the remote kernel for this session (%s) isn't answering — thread not created"
+                % r.get("host", "?")}
+    if not _name_of(sid) and sid not in Sessions.live():
+        return {"ok": False, "error": "no session named '%s' here" % who, "_status": 404}
+    # the popover title: the note under review beats the generic default (glanceable), and the
+    # exact slot carries the same string — the header's "about" line for a thread with no passage
+    gist = str(meta.get("note") or meta.get("thread") or "").strip()
+    err, tid = _comment_create(sid, "", gist or "a review thread", text,
+                               raw_opener=True, meta=meta)
+    if err:
+        return {"ok": False, "error": err}
+    return {"ok": True, "forkId": tid}
+
+
+def _fork_promote_request(body):
+    """POST /fork-promote's brain: materialize a /fork-comment thread as a first-class session —
+    the existing break-out path (_comment_promote), exposed over HTTP. The promoted name is the
+    thread's own registry name (the <parent>-comment-N default or whatever it was renamed to).
+    REFUSALS RIDE NON-2xx (_status 400/404/409): the shipped caller treats any 2xx JSON as
+    success (the plugin's promote call), so an ok:false 200 would read as promoted. An
+    already-promoted thread is idempotent success — the ask is already true."""
+    if not isinstance(body, dict) or not str(body.get("forkId") or "").strip():
+        return {"ok": False, "error": "forkId required", "_status": 400}
+    fid = str(body["forkId"]).strip()
+    hit = _comment_fork_owner(fid)
+    if hit is None:
+        with _remotes_lock:
+            rows = list(_remotes.values())
+        for r in rows:                                  # the fork may live on an attached remote —
+            res = _remote_forward(r, "/fork-promote", {"forkId": fid})   # its kernel owns the registry
+            if isinstance(res, dict) and res.get("ok"):
+                return {"ok": True, "name": str(res.get("name") or "")}
+        return {"ok": False, "error": "no comment thread with that forkId", "_status": 404}
+    parent_sid, row = hit
+    if (row.get("status") or "") == "promoted":
+        return {"ok": True, "name": str(row.get("promotedName") or "")}
+    nm = str(row.get("name") or "").strip() or ("thread-" + fid[:8])
+    err = _comment_promote(parent_sid, fid, nm)
+    if err:
+        return {"ok": False, "error": err, "_status": 409}
+    return {"ok": True, "name": nm}
 
 
 # --- optional SDK (non-tmux) session backend (docs/sdk-backend.md) --------------------
@@ -30221,6 +30327,19 @@ class Handler(BaseHTTPRequestHandler):
                 # isn't a human composer bubble.
                 _send_or_park(Sessions.backend_for(sid), sid, body["text"])
                 return self._send(200, json.dumps({"ok": True}), "application/json")
+            if u.path in ("/fork-comment", "/fork-promote"):
+                # Parallel review dispatch (the user 2026-08-31, via the Obsidian track-changes
+                # plugin): /fork-comment forks the target as a transcript-comment-style thread and
+                # opens it with the caller's text verbatim → {"forkId"}; /fork-promote breaks a
+                # thread out into a first-class session. Brains factored for tests; refusal
+                # statuses are part of the contract (see _fork_promote_request).
+                try:
+                    b = json.loads(raw_body or b"{}")
+                except Exception:
+                    b = None
+                res = (_fork_comment_request(b) if u.path == "/fork-comment"
+                       else _fork_promote_request(b))
+                return self._send(res.pop("_status", 200), json.dumps(res), "application/json")
             if u.path == "/compact":
                 # `romp compact <session>` — see _compact_request. Body: {"id"|"name": <session>};
                 # response {"ok", "queued"} so the CLI can say "compacting now" vs "queued".
