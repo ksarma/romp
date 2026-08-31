@@ -134,16 +134,16 @@ class CompactRequest(_Stubbed):
 
 class SessionsRowCompacting(_Stubbed):
     def test_rows_expose_the_corroborated_compacting_signal(self):
-        km._compacting_now = lambda sid, tm=None: sid == SID
+        km._compacting_now = lambda sid, tm=None, path=None: sid == SID
         rows = km._session_rows()
         self.assertEqual([r["id"] for r in rows], [SID])
         self.assertTrue(rows[0]["compacting"], "--wait and scripted recycling poll this field")
-        km._compacting_now = lambda sid, tm=None: False
+        km._compacting_now = lambda sid, tm=None, path=None: False
         self.assertFalse(km._session_rows()[0]["compacting"])
 
     def test_rows_pass_their_own_live_meta_so_the_route_never_pays_per_row_merges(self):
         seen = []
-        km._compacting_now = lambda sid, tm=None: seen.append(tm) or False
+        km._compacting_now = lambda sid, tm=None, path=None: seen.append(tm) or False
         km._session_rows()
         self.assertEqual(seen, [{"state": "waiting", "backend": "sdk"}],
                          "the row's live() meta rides in — refetching cost one full merge PER ROW")
