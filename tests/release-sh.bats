@@ -305,15 +305,97 @@ STUB
     [ "$output" = "0.1.0" ]
 }
 
-@test "release: a failing suite stops the release before any tag" {
-    _stub_gh
-    # a fixture 'suite' that fails collection, so the gate is exercised for real
-    mkdir -p "$REPO/tests"
-    echo "raise SystemExit(1)" > "$REPO/tests/conftest.py"
-    git -C "$REPO" add -A && git -C "$REPO" commit -qm suite
-    run "$REPO/scripts/release.sh"
+@test "release: a failing suite stops the release before any tag — and never reroutes" {
+    # The runner is PRESENT (the probe is presence-only: --version answers) and the SUITE fails —
+    # the safety semantics the resolver must never soften: this stops the release with the suite
+    # message, and it must NOT fall through to uv (a failing suite is not a missing runner). The
+    # old shape ran the real ambient python3 against a failing fixture conftest, which proved the
+    # same gate only on machines that HAPPENED to have pytest — on a pytest-less shell the die
+    # fired with the resolver's missing-runner wording instead and the message assertion broke
+    # (CI, 2026-08-31). Stubbed present-but-failing, the case is hermetic on every shell.
+    _stub_gh; _stub_python3 suite-fails; _stub_uvx
+    run env PATH="$(_env_path)" "$REPO/scripts/release.sh"
     [ "$status" -ne 0 ]
     [[ "$output" == *"Python suite failed"* ]]
+    [ ! -s "$UVX_LOG" ]                 # present ambient + failing suite → never rerouted to uv
     run git -C "$REPO" tag -l
     [ -z "$output" ]
+}
+
+# ── the suite-environment resolver (the v0.13.0 lesson) ───────────────
+# release.sh died mid-release on a bare ModuleNotFoundError on a box with only a repo venv.
+# It now resolves its own suite runner: a WORKING ambient `python3 -m pytest` first, else uv's
+# throwaway env with CI's exact dep set, else a LOUD failure naming both remedies — before any
+# release state is at stake. PATH is narrowed per test so the resolver sees exactly the world
+# each case describes; the stubbed runners record their argv so the invocation shape is pinned.
+
+_stub_python3() {                       # $1 = "with-pytest" | "no-pytest" | "suite-fails"
+    cat > "$TEST_DIR/python3" <<PYSTUB
+#!/bin/sh
+echo "python3 \$*" >> "$TEST_DIR/py.log"
+if [ "\$1" = "-m" ] && [ "\$2" = "pytest" ]; then
+    case "$1" in
+        with-pytest) exit 0 ;;                          # present, and every run succeeds
+        suite-fails) [ "\$3" = "--version" ] && exit 0; exit 1 ;;   # PRESENT (probe ok), the suite run fails
+        *) exit 1 ;;                                    # no pytest at all — probe and runs alike
+    esac
+fi
+exit 0
+PYSTUB
+    chmod +x "$TEST_DIR/python3"
+}
+
+_stub_uvx() {
+    cat > "$TEST_DIR/uvx" <<'UVSTUB'
+#!/bin/sh
+echo "uvx $*" >> "$UVX_LOG"
+exit 0
+UVSTUB
+    chmod +x "$TEST_DIR/uvx"
+    export UVX_LOG="$TEST_DIR/uvx.log"
+}
+
+_env_path() {                           # a narrowed PATH: the stubs + the bare essentials
+    echo "$TEST_DIR:/usr/bin:/bin"
+}
+
+@test "release: a working ambient pytest is preferred — no provisioning" {
+    _stub_gh; _stub_python3 with-pytest; _stub_uvx
+    run env PATH="$(_env_path)" "$REPO/scripts/release.sh"
+    [ "$status" -eq 0 ]
+    grep -q "python3 -m pytest tests/ -q" "$TEST_DIR/py.log"
+    [ ! -s "$UVX_LOG" ]
+}
+
+@test "release: no ambient pytest + uv present → the suite runs through uv's throwaway env" {
+    _stub_gh; _stub_python3 no-pytest; _stub_uvx
+    run env PATH="$(_env_path)" "$REPO/scripts/release.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"throwaway env"* ]]
+    grep -q -- "uvx --with pytest --with cryptography pytest tests/ -q" "$UVX_LOG"
+}
+
+@test "release: neither pytest nor uv → a LOUD refusal naming both remedies, before any release work" {
+    _stub_gh; _stub_python3 no-pytest
+    rm -f "$TEST_DIR/uvx"
+    run env PATH="$(_env_path)" "$REPO/scripts/release.sh"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"no way to run the Python suite"* ]]
+    [[ "$output" == *"astral.sh/uv/install.sh"* ]]
+    [[ "$output" == *"pip install --upgrade pytest cryptography"* ]]
+    run git -C "$REPO" tag -l
+    [ -z "$output" ]                    # nothing was tagged — the refusal came first
+}
+
+@test "release: ROMP_RELEASE_PYTEST overrides the resolver entirely (the test seam)" {
+    _stub_gh; _stub_python3 no-pytest
+    cat > "$TEST_DIR/myrunner" <<RSTUB
+#!/bin/sh
+echo "myrunner \$*" >> "$TEST_DIR/my.log"
+exit 0
+RSTUB
+    chmod +x "$TEST_DIR/myrunner"
+    run env PATH="$(_env_path)" ROMP_RELEASE_PYTEST="$TEST_DIR/myrunner" "$REPO/scripts/release.sh"
+    [ "$status" -eq 0 ]
+    grep -q "myrunner tests/ -q" "$TEST_DIR/my.log"
 }
