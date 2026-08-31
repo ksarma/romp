@@ -7161,6 +7161,8 @@ def _comments_frame(sid, tmux=None):
                                                    cm.stops_for(_colormap())),
                         "effortColor": _effort_color((reg.get("effort") or "") if reg else "",
                                                      cm.stops_for(_colormap())),
+                        "modelTone": _model_tone((reg.get("liveModel") or reg.get("model") or "") if reg else ""),
+                        "effortTone": _effort_tone((reg.get("effort") or "") if reg else ""),
                         "msgs": msgs, "events": events})
     return {"type": "comments", "id": sid, "threads": threads}
 
@@ -19116,11 +19118,14 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
                   # 2026-07-02): the statusline meta buttons just apply these (mirrors ctxColor). None = default.
                   "modelColor": _model_color(tm["model"], cm.stops_for(_colormap())),
                   "effortColor": _effort_color(tm["effort"], cm.stops_for(_colormap())),
-                  # context% on the shared context tone (the user 2026-08-27; was the global colormap):
-                  # computed server-side so the chat battery + tab tooltip just apply it (mirrors the
-                  # usage bars + timeline lanes). Calm teal filling up; amber past CTX_WARN, red past
-                  # CTX_DANGER — one threshold pair for every gauge.
-                  "ctxColor": (list(cm.context_rgb(tm["context"]))
+                  # the yatharth-theme tones, shipped beside the classic colors (client picks by theme)
+                  "modelTone": _model_tone(tm["model"]),
+                  "effortTone": _effort_tone(tm["effort"]),
+                  "ctxTone": (list(cm.context_rgb(tm["context"]))
+                              if tm["context"] is not None else None),
+                  # context% on the GLOBAL colormap — the CLASSIC palette, byte-identical to main
+                  # (the tone variant rides in ctxTone above)
+                  "ctxColor": (list(cm.ramp(tm["context"] / 100.0, cm.stops_for(_colormap())))
                                if tm["context"] is not None else None)}
     elif tmux or _has_tmux():                          # tmux usable but this session isn't running → closed
         status = {"state": "closed", "sinceEpoch": since_ms, "faded": True}
@@ -21597,7 +21602,8 @@ def _usage():
             ra = s.get("resets_at")
             pct = max(0, min(100, round(s["pct"])))
             return {"pct": pct, "resetsAt": ra if isinstance(ra, (int, float)) else None,
-                    "color": list(cm.context_rgb(pct))}   # used-% on the shared context tone (2026-08-27)
+                    "color": list(cm.ramp(pct / 100.0, cm.stops_for(_colormap()))),   # CLASSIC colormap fill
+                    "tone": list(cm.context_rgb(pct))}   # the yatharth-theme tone (client picks by theme)
         return None
     five, seven, fable = seg(o.get("five_hour")), seg(o.get("seven_day")), seg(o.get("fable"))
     # THE LOGIN THAT PRODUCED THESE WINDOWS MUST STILL BE SIGNED IN (the user 2026-08-04, who logged
@@ -23215,9 +23221,13 @@ def build_timeline(now, tmux=None, with_bars=True, live_only=False):
             # the lane just applies these, like ctxColor. None → the lane keeps its default gray text.
             "modelColor": _model_color(tm["model"] if tm else "", ctx_stops),
             "effortColor": _effort_color(tm["effort"] if tm else "", ctx_stops),
+            "modelTone": _model_tone(tm["model"] if tm else ""),
+            "effortTone": _effort_tone(tm["effort"] if tm else ""),
+            "ctxTone": (list(cm.context_rgb(tm["context"] or 0))
+                        if tm and tm["context"] is not None else None),
             "context": (tm["context"] if tm else None),
-            "ctxColor": (list(cm.context_rgb(tm["context"] or 0))
-                         if tm and tm["context"] is not None else None),   # context% on the shared tone (2026-08-27)
+            "ctxColor": (list(cm.ramp((tm["context"] or 0) / 100.0, ctx_stops))
+                         if tm and tm["context"] is not None else None),   # the CLASSIC colormap fill (tone in ctxTone)
             "subagents": ((tm.get("subagents") if tm else None) or []),   # live Task subagents (SDK) → lane pill
             "awaiting": _state_intervals(sid, _NEEDS_INPUT_STATES, now),
             "compacting": _state_intervals(sid, "compacting", now),
@@ -23854,9 +23864,28 @@ _EFFORT_RANK = dict(_ramp_ranks(EFFORT_CHOICES, ascending=True))   # low 0.0 …
 
 
 def _model_color(model, stops):
-    # `stops` is vestigial (kept so every call site + the /models route pin stay unchanged): since
-    # 2026-08-27 models wear their OWN orange tone ramp (cm.tone_rgb), not the recency colormap —
-    # the full-extent colormap made fable, ultracode and a 100%-full context the same purple.
+    # the CLASSIC palette: the recency-colormap sample, exactly as it has always been — the
+    # default theme's colors are the owner's call and must not move (PR #763 review, 2026-08-30).
+    m = (model or "").lower()
+    for word, v in _MODEL_RANK:
+        if word in m:
+            return list(cm.ramp(v, stops))
+    return None
+
+
+def _effort_color(effort, stops):
+    v = _EFFORT_RANK.get((effort or "").strip().lower())
+    return list(cm.ramp(v, stops)) if v is not None else None
+
+
+# The TONE variants ship ALONGSIDE the classic colors (modelTone/effortTone/ctxTone beside
+# modelColor/effortColor/ctxColor): the single-hue ramps (orange by capability, violet by effort,
+# teal context) belong to the yatharth themes, and the THEME lives client-side in localStorage —
+# the kernel cannot know a page's theme (one kernel serves browser + VS Code + Obsidian at once),
+# so it ships both palettes and the client picks (PR #763 review item 1, the shape the owner
+# offered). An older client simply ignores the extra fields; an older kernel ships no tones and
+# the client falls back to the classic colors.
+def _model_tone(model):
     m = (model or "").lower()
     for word, v in _MODEL_RANK:
         if word in m:
@@ -23864,8 +23893,7 @@ def _model_color(model, stops):
     return None
 
 
-def _effort_color(effort, stops):
-    # `stops` vestigial, as above — efforts wear the violet tone ramp.
+def _effort_tone(effort):
     v = _EFFORT_RANK.get((effort or "").strip().lower())
     return list(cm.tone_rgb("effort", v)) if v is not None else None
 
@@ -29771,12 +29799,14 @@ class Handler(BaseHTTPRequestHandler):
                 _picks = _model_picks()
                 return self._send(200, json.dumps(
                     {"models": [dict(c, color=_model_color(c["value"], _stops),
+                                     tone=_model_tone(c["value"]),
                                      versions=[dict(v) for v in MODEL_VERSIONS.get(c["value"]) or []],
                                      default=_picks.get(c["value"])
                                          or ((MODEL_VERSIONS.get(c["value"]) or [{}])[0].get("value")
                                              or c["value"]))
                                 for c in MODEL_CHOICES],
-                     "efforts": [dict(c, color=_effort_color(c["value"], _stops)) for c in EFFORT_CHOICES],
+                     "efforts": [dict(c, color=_effort_color(c["value"], _stops), tone=_effort_tone(c["value"]))
+                                 for c in EFFORT_CHOICES],
                      # the create dialog's pre-read (the user 2026-08-29): what a new comment thread
                      # gets when the dialog is left untouched — RAW ("session" = same as the session),
                      # so the dialog shows the effective default and a pick stays a deviation

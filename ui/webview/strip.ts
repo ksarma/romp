@@ -33,12 +33,12 @@ const WINS: Array<[string, number, string, string]> = [
   ["fable", 7 * 86400, "Fable 5", "F5"],
 ];
 
-import { ctxFallbackColor } from "./ctx-color";
+import { usageFallbackColor } from "./ctx-color";
 
-// The rail's usage color: the shared context-pressure palette + the ONE threshold pair
-// (ctx-color.ts, 2026-08-27 — the bars used to say 70/90 while the ctx gauges said 60/85).
+// The rail's usage color: theme-aware (ctx-color.ts) — classic keeps main's 70/90 palette
+// verbatim (the owner's call, PR #763); the yatharth themes use the unified warn/danger pair.
 export function usageColor(pct: number): string {
-  return ctxFallbackColor(pct);
+  return usageFallbackColor(pct);
 }
 
 export function fmtAgo(ep: number, nowS: number): string {

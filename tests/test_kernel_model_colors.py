@@ -66,14 +66,21 @@ class ModelColors(unittest.TestCase):
         self.assertIsNone(km._effort_color("turbo", self.stops))
         self.assertIsNone(km._effort_color("", self.stops))
 
-    def test_ranks_use_the_tone_ramp_ends(self):
-        # the most/least capable and the extreme efforts hit THEIR OWN tone ramp's endpoints exactly
-        # (2026-08-27: models wear the orange tone, efforts the violet — no longer the recency
-        # colormap, whose full extent made fable == ultracode == 100%-context one identical purple)
-        self.assertEqual(km._model_color("fable", self.stops), list(km.cm.tone_rgb("model", 1.0)))
-        self.assertEqual(km._model_color("haiku", self.stops), list(km.cm.tone_rgb("model", 0.0)))
-        self.assertEqual(km._effort_color("ultracode", self.stops), list(km.cm.tone_rgb("effort", 1.0)))   # the ladder's top (the user 2026-08-04)
-        self.assertEqual(km._effort_color("low", self.stops), list(km.cm.tone_rgb("effort", 0.0)))
+    def test_classic_colors_use_the_full_colormap_ends_and_tones_ride_beside(self):
+        # DUAL palette (PR #763 review item 1): the CLASSIC colors are the recency-colormap sample,
+        # byte-identical to what main always shipped — the default theme's colors are the owner's
+        # call. The single-hue TONES (orange model / violet effort) ship in parallel fields for the
+        # yatharth themes; the client picks.
+        self.assertEqual(km._model_color("fable", self.stops), list(km.cm.ramp(1.0, self.stops)))
+        self.assertEqual(km._model_color("haiku", self.stops), list(km.cm.ramp(0.0, self.stops)))
+        self.assertEqual(km._effort_color("ultracode", self.stops), list(km.cm.ramp(1.0, self.stops)))
+        self.assertEqual(km._effort_color("low", self.stops), list(km.cm.ramp(0.0, self.stops)))
+        self.assertEqual(km._model_tone("fable"), list(km.cm.tone_rgb("model", 1.0)))
+        self.assertEqual(km._model_tone("haiku"), list(km.cm.tone_rgb("model", 0.0)))
+        self.assertEqual(km._effort_tone("ultracode"), list(km.cm.tone_rgb("effort", 1.0)))
+        self.assertEqual(km._effort_tone("low"), list(km.cm.tone_rgb("effort", 0.0)))
+        self.assertIsNone(km._model_tone("mystery"))
+        self.assertIsNone(km._effort_tone("turbo"))
 
     def test_tone_families_are_distinct_and_legible_on_dark(self):
         # the three quantities may never collide again, and every sampled value must clear ~5:1

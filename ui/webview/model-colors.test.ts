@@ -15,14 +15,14 @@ test("Status carries the server-computed modelColor / effortColor", () => {
 
 test("the statusline meta buttons tint model/effort labels from those colors", () => {
   // metaColor picks modelColor for the model button, effortColor for the effort, "" (default) otherwise
-  assert.match(RENDER, /function metaColor\(kind: MetaKind, st: Status\): string \{[\s\S]*?kind === "model" \? st\.modelColor : kind === "effort" \? st\.effortColor/);
+  assert.match(RENDER, /function metaColor\(kind: MetaKind, st: Status\): string \{[\s\S]*?kind === "model" \? pickTone\(st\.modelColor, st\.modelTone\)/);   // dual palette (PR #763): classic color vs yatharth tone, picked by theme
   // applied to the label in the refresh loop (runs on create AND the 1s ticker); a switching model shows
   // dots instead, so the tint is skipped only then (the user 2026-07-03)
   assert.match(RENDER, /label\.style\.color = showDots \? "" : metaColor\(kind, st\);/);
 });
 
 test("the timeline lane tints the model/effort pieces by rank, keeping hover + restoring the tint", () => {
-  assert.match(TL, /const tint = kind === 'model' \? s\.modelColor : s\.effortColor;/);
+  assert.match(TL, /const tint0 = kind === 'model' \? pickTone\(s\.modelColor, s\.modelTone\) : pickTone\(s\.effortColor, s\.effortTone\);/);
   assert.match(TL, /const base = \(tint && tint\.length === 3\) \? \('rgb\(' \+ tint\[0\]/);
   // the drawn word starts at the tint, and mouseleave restores to `base` (the tint), not the flat gray
   assert.match(TL, /el\('text', \{ x: sx,[^}]*fill: base/);
