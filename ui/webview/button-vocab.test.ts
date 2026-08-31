@@ -69,15 +69,17 @@ test("migrated families hover in pattern A — the one accent triple", () => {
   assert.match(GEAR, /\.ra-periods button\.on, \.ra-group button\.on, \.ra-metric button\.on \{ background: #0e639c;/);
 });
 
-test("migrated families sit on the tokens", () => {
+test("migrated families sit on the tokens (where main's T141/T151 rest didn't reclaim them)", () => {
+  // the 2026-08-30 merge: main converged .composer-stage-btn / .ask-btn / .fileview-btn onto its
+  // OWN T141/T151 rest (transparent ground, --card-border hairline, literal paddings) — main's
+  // rest chrome wins there; our transition/:active/hover additions ride on top. The families main
+  // didn't touch keep the token metrics.
   assert.match(FEED, /\.ftree-act-btn \{[^}]*font-size: var\(--btn-fs-sm\);[^}]*padding: var\(--btn-pad-sm\);/s);
   assert.match(FEED, /\.fask-secbtn \{[^}]*padding: var\(--btn-pad-sm\);[^}]*font-size: var\(--btn-fs-sm\);/s);
   assert.match(FEED, /\.fconfirm-btn \{[^}]*padding: var\(--btn-pad-lg\);/s);
   assert.match(CHAT, /\.bg-stop \{[^}]*font-size: var\(--btn-fs-sm\); padding: var\(--btn-pad-sm\);/s);
-  assert.match(CHAT, /\.ask-btn \{[^}]*padding: var\(--btn-pad-lg\);/s);
-  assert.match(CHAT, /\.composer-stage-btn \{[^}]*font-size: var\(--btn-fs-md\);[^}]*padding: var\(--btn-pad-sm\);/s);
   for (const css of [CHAT, FEED]) {
-    assert.match(css, /\.fileview-btn \{[^}]*font-size: var\(--btn-fs-md\);[^}]*padding: var\(--btn-pad-md\);/s);
+    assert.match(css, /\.fileview-btn \{[^}]*T151: the one button rest/s);
   }
 });
 

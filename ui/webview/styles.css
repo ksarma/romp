@@ -77,6 +77,9 @@ body.scheme-solarized-dark {
   --code-bg: rgba(217, 119, 87, 0.10);
   --box-bg: rgba(255, 255, 255, 0.03);
   --box-border: var(--vscode-editorHoverWidget-border, rgba(255, 255, 255, 0.12));
+  /* the feed's button hairline, MIRRORED byte-equal from feed.css --card-border (T141: the chat's
+     button family wears the feed's exact rest treatment; the chat page cannot import feed.css) */
+  --card-border: rgba(255, 255, 255, 0.10);
   --err: #c0392b;   /* unified with the awaiting/blocked red (the user 2026-06-24): one "needs you" red. API-error (--st-blocked-bg #e5484d) stays distinct. */
   --warn: #d7a23a;  /* the heads-up amber — "attention, not an error". Was referenced with fallbacks but never
                        defined (a phantom token) until 2026-08-26; mirrored in feed.css (own :root). */
@@ -162,6 +165,7 @@ body.scheme-solarized-dark {
    key-parity test enforces the set). Contrast: fg 15.9:1, muted 6.6:1, accent 4.9:1 on the page.
 */
 body.theme-light {
+  --card-border: rgba(0, 0, 0, 0.10);   /* main's T141 hairline, inverted warm for light */
   --chat-col: 100%;
   --btn-pad-sm: 1px 8px; --btn-pad-md: 3px 10px; --btn-pad-lg: 5px 13px;   /* geometry, theme-invariant */
   --btn-fs-sm: 0.72em; --btn-fs-md: 0.82em;
@@ -268,26 +272,32 @@ body.chat-theme-yatharth #winframe { display: block; position: fixed; inset: 0; 
      (an inline max-height would override that media rule and clip the mobile header) */
   max-height: var(--tabbar-cap, 150px); overflow-y: auto; overflow-x: hidden;
   border-bottom: 1px solid var(--box-border);
-  background: var(--vscode-sideBar-background, var(--bg));
+  /* the EDITOR background token, not sideBar (T151): every kernel-served page inlines THEME_CSS,
+     which defines --vscode-sideBar-background:#252526 — so the var(--bg) fallback never fired in
+     the browser and the strip painted a lighter plane over the #1e1e1e page (the T141 harness
+     validated the fallback path only; see the served-theme test). editor-background IS the page
+     dark in both hosts — the same token #footer rides. */
+  background: var(--vscode-editor-background, var(--bg));
 }
 /* #tabs fills the bar width and wraps its tabs across multiple rows. gap 0 (was 4px, the user
    2026-08-08): the strip trades its empty inter-tab space for room for the per-tab context gauge —
    the active/hover fills and per-tab padding still separate neighbours visually. (The Yatharth
    theme reopens a 3px seam — its flat tints need one; see its block below.) */
-#tabs { display: flex; flex: 1 1 auto; flex-wrap: wrap; align-items: stretch; gap: 0; }
-/* T125 (the user 2026-08-27, screenshot: with wrapped rows the tabs read as floating boxes): the
-   strip is a BAND — its own background plane a hair above the page, containing every wrapped row,
-   closed by the existing --box-border hairline at its bottom edge. This is how tab strips are
-   grounded in the polished multi-tab precedents (browser frame bands, editor tab-group headers,
-   design-system "tabs on a surface + divider"): the plane says "one control", the hairline says
-   "it ends here" — per-row separator lines were rejected as clutter. 5% white over the page bg
-   (tunable one-liner; shipped at 3%, stepped up 2026-08-27 after the T128 triage: on the user's
-   dark theme 3% was an ~11-gray-level delta that read as nothing at a glance — the eyeball
-   comparison lives in their drops, and 3%/6% stay one edit away); background only, so zero
-   layout shift, and the selected ring / blocked
-   dashed / rest outline / hover fill all read as before, now against the band. Classic only:
-   Yatharth keeps his merged look via the body scope. */
-body:not(.chat-theme-yatharth) #tabbar { background: linear-gradient(rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.05)), var(--vscode-sideBar-background, var(--bg)); }
+#tabs { display: flex; flex: 1 1 auto; flex-wrap: wrap; align-items: stretch; gap: 0; position: relative; }   /* relative: the per-row hairlines (T134) anchor to it */
+/* T134 (the user 2026-08-27, overturning the T125 survey's one-outer-line call — theirs to make):
+   a full-bleed hairline under EVERY row of tabs, so a row above a short row never floats. Painted
+   by paintTabRowLines (render.ts — CSS cannot select wrap rows); the last row is closed by
+   #tabbar's own border-bottom. The negative bleed spans the bar's 8px side padding so each line
+   runs the strip's full width, like the outer close. Classic only; Yatharth keeps his merged look. */
+body:not(.chat-theme-yatharth) #tabs .tab-row-line {
+  position: absolute; left: -8px; right: -8px; height: 1px; background: var(--box-border); pointer-events: none; }
+body.chat-theme-yatharth #tabs .tab-row-line { display: none; }
+/* T141 (the user 2026-08-28, explicit ruling): the T125/T128 band is OUT — one dark background
+   everywhere; the strip's plane is the page dark again (#tabbar's own background above), the same
+   color as the feed behind its cards and its bottom control bar. The grounding that survives the
+   band: the T134 per-row hairlines and the T123 rest outlines. (History: the band shipped for the
+   floating-rows read, stepped 3%→5% after T128, then lightened every surface it sat behind — the
+   extra shade is exactly what the ruling removes.) */
 /* Drag handle straddling the tab strip's bottom border (the user 2026-08-18): the strip scrolls past
    its max-height cap, which clipped the fifth row of a many-session strip with no way to see more.
    Drag DOWN for more rows, UP for fewer; double-click resets; the strip stays a scroll pane at every
@@ -433,7 +443,8 @@ body.tabbar-resizing { cursor: ns-resize; user-select: none; }
    strip is the PRE-720 strip — verified by pixel-diffing a real pre-720 build — modulo exactly
    four sanctioned deltas: typography (the strip inherits the global Inter/type ladder), the 1px
    hover-gray rest outline below (T123), the 0.9 faded-label scale (fadedColor, render.ts; T118),
-   and the strip band (T125, below). No identity tint at any state, the
+   and the per-row hairlines (T134, above at #tabs; the T125 band was ruled OUT by T141 — one dark
+   background everywhere). No identity tint at any state, the
    thick 1.5px inset identity ring on the selected tab, the neutral line under the strip. The
    Yatharth theme below is the opt-in restoration of the contributor's merged strip aesthetic. */
 .tab.active { color: var(--fg); background: rgba(255, 255, 255, 0.14); }
@@ -903,9 +914,9 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
    and the strip hides with the chips). NEUTRAL at rest (the under-bubble button family's dress): an
    accent outline next to the accent-blue chips read as already-pressed — accent is for
    hover/selected, never rest chrome */
-.composer-stage-btn { background: rgba(255, 255, 255, 0.06);
-  border: 1px solid var(--box-border); color: var(--dim); border-radius: 5px; font-size: var(--btn-fs-md);
-  padding: var(--btn-pad-sm); cursor: pointer;
+.composer-stage-btn { background: transparent;   /* T141: the feed word-buttons' rest — dark ground, hairline, no wash */
+  border: 1px solid var(--card-border); color: var(--dim); border-radius: 5px; font-size: 0.82em;
+  padding: 1px 8px; cursor: pointer;
   transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease, transform 0.08s ease; }
 .composer-stage-btn:active { transform: scale(0.96); }
 /* hover = the FEED's word-button treatment exactly (the user 2026-08-25: text + outline light up
@@ -1557,7 +1568,7 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
   font-family: var(--sans); font-size: 11px; line-height: 1; padding: 3px 7px; border-radius: 4px;
   /* neutral ground, neutral chrome (the user 2026-08-23): these sit on the page, not on a code
      block, so the code tint .code-copy blends with read here as a faint red button */
-  border: 1px solid var(--box-border); background: rgba(255, 255, 255, 0.06); color: var(--dim);
+  border: 1px solid var(--card-border); background: transparent; color: var(--dim);   /* T141: the one button rest — dark ground, hairline */
   cursor: pointer; opacity: 0; user-select: none;
   transition: opacity 0.12s ease, color 0.12s ease, border-color 0.12s ease;
 }
@@ -1570,7 +1581,7 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
 .msg-del, .msg-restorefiles, .msg-fork {
   align-self: flex-end; margin-top: 3px;
   font-family: var(--sans); font-size: 11px; line-height: 1; padding: 3px 7px; border-radius: 4px;
-  border: 1px solid var(--box-border); background: rgba(255, 255, 255, 0.06); color: var(--dim);
+  border: 1px solid var(--card-border); background: transparent; color: var(--dim);   /* T141: the one button rest — dark ground, hairline */
   cursor: pointer; opacity: 0; user-select: none;
   transition: opacity 0.12s ease, color 0.12s ease, border-color 0.12s ease;
 }
@@ -1714,7 +1725,7 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
 }
 .undelivered-act {
   font-family: var(--sans); font-size: 11px; line-height: 1; padding: 3px 7px; border-radius: 4px;
-  border: 1px solid var(--box-border); background: rgba(255, 255, 255, 0.06); color: var(--dim);
+  border: 1px solid var(--card-border); background: transparent; color: var(--dim);   /* T141: the one button rest */
   cursor: pointer; user-select: none;
   transition: color 0.12s ease, border-color 0.12s ease;
 }
@@ -1899,8 +1910,8 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
 .ask-pair-a { color: var(--fg); opacity: 0.85; padding-left: 14px; }
 .ask-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
 .ask-btn {
-  padding: var(--btn-pad-lg); border-radius: 6px; font: inherit; cursor: pointer;
-  border: 1px solid var(--box-border); background: rgba(255, 255, 255, 0.06); color: var(--fg);
+  padding: 4px 13px; border-radius: 6px; font: inherit; cursor: pointer;
+  border: 1px solid var(--card-border); background: transparent; color: var(--fg);   /* T141: the one button rest */
   transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease, transform 0.08s ease;
 }
 .ask-btn:active { transform: scale(0.96); }
@@ -2449,8 +2460,8 @@ body.picker-lifted > #picker.kb-tight { align-items: flex-start; padding: 12px 1
 .picker-dir-input::placeholder { color: var(--dim); }
 .picker-browse {
   flex: 0 0 auto; cursor: pointer; white-space: nowrap;
-  background: rgba(255, 255, 255, 0.06); color: var(--fg);
-  border: 1px solid var(--box-border); border-radius: 5px; padding: 5px 9px; font-size: 0.82em;
+  background: transparent; color: var(--fg);   /* T141: the one button rest */
+  border: 1px solid var(--card-border); border-radius: 5px; padding: 5px 9px; font-size: 0.82em;
 }
 .picker-browse:hover { background: rgba(255, 255, 255, 0.12); }
 /* Disabled while a REMOTE host is selected — that machine's dialog can't open on this screen. It had no
@@ -2489,8 +2500,8 @@ body.picker-lifted > #picker.kb-tight { align-items: flex-start; padding: 12px 1
 .picker-backend { display: flex; align-items: center; gap: 6px; padding: 6px 14px 8px; }
 .picker-backend-label { flex: 0 0 auto; color: var(--dim); font-size: 0.82em; margin-right: 2px; }
 .picker-be-opt {
-  flex: 0 0 auto; cursor: pointer; background: rgba(255, 255, 255, 0.06); color: var(--dim);
-  border: 1px solid var(--box-border); border-radius: 5px; padding: 4px 12px; font-size: 0.82em; font-weight: 600;
+  flex: 0 0 auto; cursor: pointer; background: transparent; color: var(--dim);   /* T151: the one button rest */
+  border: 1px solid var(--card-border); border-radius: 5px; padding: 4px 12px; font-size: 0.82em; font-weight: 600;
 }
 .picker-be-opt:hover { background: rgba(255, 255, 255, 0.12); color: var(--fg); }
 .picker-be-opt.sel { background: var(--accent); color: var(--accent-fg); border-color: transparent; }   /* selected backend = accent, not working-yellow (the user 2026-06-24) */
@@ -2539,8 +2550,8 @@ body.picker-lifted > #picker.kb-tight { align-items: flex-start; padding: 12px 1
 .picker-actions { border-top: 1px solid var(--box-border); padding: 8px 10px; }
 .picker-action {
   width: 100%; padding: 7px 10px; cursor: pointer;
-  background: rgba(255, 255, 255, 0.05); color: var(--fg);
-  border: 1px solid var(--box-border); border-radius: 6px;
+  background: transparent; color: var(--fg);   /* T151: the one button rest */
+  border: 1px solid var(--card-border); border-radius: 6px;
   font-family: var(--sans); font-size: 0.92em;
 }
 .picker-action:hover { background: rgba(255, 255, 255, 0.1); }
@@ -2774,7 +2785,7 @@ body.picker-lifted > #picker.kb-tight { align-items: flex-start; padding: 12px 1
 /* a kernel-VERIFIED preview whose bytes failed to arrive (restart, tunnel blip) — visible, retryable,
    never silently removed (preview.ts previewFull) */
 .path-full-retry { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 8px;
-  background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.14);
+  background: transparent; border: 1px solid var(--card-border);   /* T151: the one button rest */
   font-size: 0.86em; opacity: 0.85; cursor: pointer; }
 .path-full-retry:hover { border-color: var(--accent); }
 /* the fixed-footprint wait box shared by the retrying swirl AND the failure chip, so retry churn
@@ -2785,7 +2796,7 @@ body.picker-lifted > #picker.kb-tight { align-items: flex-start; padding: 12px 1
 /* a repeat failure pulses once on swap-in so an identical-looking outcome still reads as a
    RESPONSE to the tap (preview.ts previewFull) — on the give-up chip and the retrying note alike */
 .path-full-retry.path-retry-flash, .path-load-note.path-retry-flash { animation: path-retry-flash 0.45s ease; }
-@keyframes path-retry-flash { 0% { background: rgba(255, 255, 255, 0.3); } 100% { background: rgba(255, 255, 255, 0.08); } }
+@keyframes path-retry-flash { 0% { background: rgba(255, 255, 255, 0.3); } 100% { background: transparent; } }
 @media (prefers-reduced-motion: reduce) { .path-full-retry.path-retry-flash, .path-load-note.path-retry-flash { animation: none; } }
 /* VS Code's host-round-trip image chip while the bytes are still on their way (render.ts fillPathImg) —
    pure-CSS pulse, the sandbox can't fetch the swirl asset */
@@ -2800,21 +2811,26 @@ body.picker-lifted > #picker.kb-tight { align-items: flex-start; padding: 12px 1
   display: flex; align-items: center; justify-content: center; }
 .romp-lightbox-inner { display: flex; flex-direction: column; gap: 8px; max-width: 92vw; max-height: 90vh; }
 .romp-lightbox-img { max-width: 92vw; max-height: 82vh; object-fit: contain; border-radius: 8px;
-  box-shadow: var(--shadow-modal); }
+  box-shadow: var(--shadow-modal);
+  transform-origin: 0 0; will-change: transform; }   /* pinch-zoom renders translate+scale from this corner (T162; pinch.ts) */
+/* the stage owns every touch gesture (T162): pinch must zoom the IMAGE, never the page — the bar's
+   buttons still tap fine (touch-action only disables the browser's own gestures) */
+.romp-lightbox-inner { touch-action: none; }
 .romp-lightbox-inner.pdf { width: 88vw; height: 88vh; }
 .romp-lightbox-frame { flex: 1 1 auto; width: 100%; border: 0; border-radius: 8px; background: #fff; }
 .romp-lightbox-bar { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .romp-lightbox-name { flex: 1 1 auto; font-size: 0.86em; color: var(--fg); opacity: 0.85;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .romp-lightbox-close { font: inherit; font-size: 0.86em; cursor: pointer; flex: 0 0 auto;
-  padding: 2px 9px; border-radius: 6px; background: rgba(255, 255, 255, 0.1); color: var(--fg);
+  padding: 2px 9px; border-radius: 6px; background: transparent; border: 1px solid var(--card-border); color: var(--fg);   /* T151: the one button rest */
   border: 1px solid rgba(255, 255, 255, 0.18); }
 .romp-lightbox-close:hover { border-color: var(--accent); }
 /* download: an anchor dressed exactly like the close button beside it (one control vocabulary —
    same chip, same hover cue), sitting between the filename and the ✕ */
+.romp-lightbox-cue { flex: 0 0 auto; font-size: 0.82em; color: var(--dim); font-variant-numeric: tabular-nums; }   /* the ←/→ position mark (house sub scale) */
 .romp-lightbox-dl { font: inherit; font-size: 0.86em; cursor: pointer; flex: 0 0 auto;
   display: inline-flex; align-items: center;   /* centers the inline tray SVG in the chip */
-  padding: 3px 9px; border-radius: 6px; background: rgba(255, 255, 255, 0.1); color: var(--fg);
+  padding: 3px 9px; border-radius: 6px; background: transparent; border: 1px solid var(--card-border); color: var(--fg);   /* T151: the one button rest */
   border: 1px solid rgba(255, 255, 255, 0.18); text-decoration: none; line-height: normal; }
 .romp-lightbox-dl:hover { border-color: var(--accent); }
 
@@ -3061,9 +3077,11 @@ mark.cmt-hl.hl-last { border-top-right-radius: 2px; border-bottom-right-radius: 
 /* the chat's under-bubble button family, exactly (the composer-stage-btn dress — the user
    2026-08-25: the popover's buttons should be the chat's, one vocabulary): neutral at rest,
    accent on hover, the 0.78em label tier */
+/* the sent-back marker (T145): a quiet centered line in the house sub scale — a fact, not a state */
+.cmt-relayed-note { text-align: center; font-size: 0.82em; color: var(--dim); opacity: 0.85; padding: 5px 0 3px; }
 .cmt-act {
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid var(--box-border); color: var(--dim); border-radius: 5px; font-size: 0.82em;
+  background: transparent;   /* T141: one dress with the stage button + the feed's word-buttons */
+  border: 1px solid var(--card-border); color: var(--dim); border-radius: 5px; font-size: 0.82em;
   padding: 1px 8px; cursor: pointer;
 }
 .cmt-act:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-wash); }   /* the feed word-button hover (2026-08-25): Break out / Merge / Delete light up like Clear/Undo */
@@ -3168,11 +3186,12 @@ body.fileview-open { overflow: hidden; }
   overflow: hidden; text-overflow: ellipsis; }
 .fileview-base { flex: 0 0 auto; }
 .fileview-acts { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; }
-.fileview-btn { font: inherit; font-size: var(--btn-fs-md); cursor: pointer; flex: 0 0 auto;
-  padding: var(--btn-pad-md); border-radius: 6px; background: rgba(255, 255, 255, 0.08); color: var(--fg);
-  border: 1px solid var(--box-border);
+.fileview-btn { font: inherit; font-size: 0.82em; cursor: pointer; flex: 0 0 auto;
+  padding: 3px 9px; border-radius: 6px; background: transparent; color: var(--fg);   /* T151: the one button rest */
+  border: 1px solid var(--card-border);
   transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease, transform 0.08s ease; }
 .fileview-btn:active { transform: scale(0.96); }
+/* the ONE action-button hover (accent triple, the feed convention) */
 .fileview-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-wash); }
 /* the GitHub link wears the button treatment but IS an anchor — the browser owns the new tab */
 a.fileview-btn { text-decoration: none; display: inline-flex; align-items: center; }

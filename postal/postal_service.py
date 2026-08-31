@@ -341,6 +341,13 @@ def deliver(to_id, from_name, from_id, body, park=False, kind="", from_host="",
         #                                              no header, no prose (the recipient reads nothing)
     if from_host:
         ev["from_host"] = from_host                  # additive (consumer contract above)
+    if relay_mid:
+        ev["originMid"] = relay_mid                  # the SENDER-side id for relayed mail (2026-08-28,
+        #                                              the dead-session round): local delivery mints its
+        #                                              own maildir mid, so sender and recipient held
+        #                                              DIFFERENT ids for one message and the delegation
+        #                                              mirror join never formed — this is the durable
+        #                                              join key the courier stamps into origin
     if isinstance(user_ask, dict) and str(user_ask.get("text") or "").strip():
         # the origin kernel's walked root-ask record (T126) — whitelisted copy, additive: the
         # receiving courier reads it off this row (_postal_row) as walk-proved provenance
@@ -563,32 +570,52 @@ _lock = threading.Lock()
 def _kernel_sessions(threads=False):
     """LIVE romp sessions (tmux + SDK) from the kernel's unified GET /sessions — the kernel owns the backend
     query (TmuxBackend for tmux liveness + the SDK registry), so the bus enumerates sessions WITHOUT shelling
-    tmux and WITHOUT reading the SDK registry directly: ONE source. Loopback, authorized with X-Romp-Token
+    tmux and, for ADDRESSING, without reading the SDK registry directly: ONE source. (One deliberate
+    exception since 2026-08-31: _durable_session reads a per-session reg file on the REFUSAL path only,
+    to corroborate a suspected listing blink before ruling a session dead — never to resolve delivery.)
+    Loopback, authorized with X-Romp-Token
     (the shared 0600 serve-token file — the kernel gates every request, loopback included). [] if the kernel
     is unreachable (rare — the manager supervises it); the bus then shows no local
     agents until it's back, rather than reaching past the abstraction to tmux.
 
     ROMP_SESSIONS_FILE is a test seam (like ROMP_*_BIN): a JSON file of the same rows, read instead of the
     live kernel so the bus is testable without one."""
+    return _kernel_sessions_checked(threads=threads)[0]
+
+
+def _kernel_sessions_checked(threads=False):
+    """(rows, answered) — answered False means the liveness source DID NOT ANSWER (the kernel is
+    unreachable, typically mid-restart), which is different information from an empty listing.
+    Callers that are about to make a CLAIM about liveness (resolve_recipient's refusal) must
+    check `answered` — an unanswered fetch collapsed to [] read exactly like universal deadness,
+    and the refusal it produced blamed a demonstrably live peer (sighting 2026-08-29: a send was
+    refused as not-live mid-restart; the retry 101 seconds later delivered)."""
     seam = os.environ.get("ROMP_SESSIONS_FILE")
     if seam:
         try:
             data = json.loads(Path(seam).read_text())
             if not isinstance(data, list):
-                return []
+                return [], True
             # the seam mirrors the route: thread rows ride only when asked (the user 2026-08-22)
-            return data if threads else [r for r in data if not (isinstance(r, dict) and r.get("thread"))]
+            return (data if threads else
+                    [r for r in data if not (isinstance(r, dict) and r.get("thread"))]), True
         except Exception:
-            return []
+            return [], True
     import urllib.request
     try:
         req = urllib.request.Request(KERNEL_BASE + "/sessions" + ("?threads=1" if threads else ""),
                                      headers={"X-Romp-Token": SERVE_TOKEN})
+        # 2s is a BUDGET, not a guess: a refusal-bound send makes two sequential fetches (the
+        # pool + the corroboration probe), and every same-box bus CLIENT talks to the bus with a
+        # 5s cap (_http) — 2+2 stays inside it, so the honest refusal always reaches the sender.
+        # Raising this to 5s (tried 2026-08-31) made the worst case 10s: the client aborted with
+        # a bare "bus timed out" and the carefully-worded refusal died on a closed socket. A slow
+        # /sessions is instead healed by the corroboration arms, which read files, not the kernel.
         with urllib.request.urlopen(req, timeout=2) as r:
             data = json.loads(r.read().decode("utf-8"))
-        return data if isinstance(data, list) else []
+        return (data if isinstance(data, list) else []), True
     except Exception:
-        return []
+        return [], False
 
 
 def local_agents(threads=False):
@@ -679,6 +706,7 @@ def _record_heartbeat(sid, name):
     reaching us over an -R tunnel, is NOT in the local kernel — heartbeats are its only presence signal."""
     if sid and _safe_id(sid) and sid not in {a["id"] for a in local_agents()}:
         HEARTBEATS[sid] = (name or "?", time.time())
+    _write_remote_sids()                           # presence changed → refresh the deadness mirror
 
 def present_count():
     return len(all_agents())
@@ -730,6 +758,50 @@ def _recip_id_for(to):
         return to
     return None
 
+def _durable_session(bare, by_id):
+    """Does `bare` name a session the DURABLE per-session registry knows as live-or-resumable?
+    The corroboration read behind the answered-but-absent refusal arm (2026-08-31): the kernel's
+    listing transiently omitted live sessions (a restart-settle blink), and the bus converted an
+    incomplete-but-200 listing into a hard "not live" for both address forms — one specimen
+    mis-routed a warning mail. A reg with alive=true is a session romp WILL list (running or
+    dormant-resumable), so its absence from one listing is a listing gap, never evidence of death.
+    tmux sessions have no reg — their liveness is tmux's own, and this read stays honestly silent
+    for them. Reads the registry file directly (same box, kernel-owned): the designed API is the
+    listing itself, which is exactly the thing being second-guessed here."""
+    root = STATE.parent
+    if by_id:
+        sids = [bare]
+    elif re.fullmatch(r"[0-9a-fA-F][0-9a-fA-F-]{7,35}", bare):
+        # the short-id form (the ` · <8-char>` every list_agents row shows) — the third address
+        # form, blink-protected like the other two: prefix-match the registry files themselves
+        try:
+            sids = [f.stem for f in (root / "sdk").glob("*.json") if f.stem.startswith(bare)]
+        except OSError:
+            sids = []
+        if len(sids) != 1:
+            sids = []          # ambiguity is the standing refusal's call, never a guess here
+    else:
+        sids = []
+    if not by_id and not sids:
+        try:
+            for f in NAMES_DIR.iterdir():
+                try:
+                    if f.read_text().split("\t")[0].strip() == bare:
+                        sids.append(f.name)
+                except OSError:
+                    continue
+        except OSError:
+            pass
+    for sid in sids:
+        try:
+            reg = json.loads((root / "sdk" / (sid + ".json")).read_text())
+        except (OSError, ValueError):
+            continue
+        if isinstance(reg, dict) and reg.get("alive"):
+            return True
+    return False
+
+
 def resolve_recipient(to, frm_id=""):
     """Resolve a recipient reference to exactly ONE destination, or explain why it can't.
 
@@ -759,9 +831,10 @@ def resolve_recipient(to, frm_id=""):
     # unique by construction, so the ambiguity arm below never fires for it; the self-send check
     # still does — mailing your own sid is the same loopback as mailing your own name.
     by_id = bool(re.fullmatch(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", bare))
+    pool = all_agents(threads=True)                                   # threads addressable for replies
     direct_all = ([] if (want_host and want_host != here)
-                  else [a for a in all_agents(threads=True)
-                        if (a.get("id") == bare if by_id else a["name"] == bare)])   # threads addressable for replies
+                  else [a for a in pool
+                        if (a.get("id") == bare if by_id else a["name"] == bare)])
     if not direct_all and not by_id and not want_host             and re.fullmatch(r"[0-9a-fA-F][0-9a-fA-F-]{7,35}", bare):
         # a SHORT id — the ` · <8-char>` form every list_agents row now carries (the user
         # 2026-08-24) — addresses by unambiguous id PREFIX, so the row is enough to act on. An
@@ -769,7 +842,7 @@ def resolve_recipient(to, frm_id=""):
         # a stray word can never catch a session by luck; a remote row's id ("host:uuid") matches
         # on its uuid part, the part the row shows. TWO prefix hits fall through to the standing
         # ambiguity refusal below, exactly like a duplicated name.
-        direct_all = [a for a in all_agents(threads=True)
+        direct_all = [a for a in pool
                       if str(a.get("id") or "").rsplit(":", 1)[-1].startswith(bare)]
 
     if frm_id and any(a["id"] == frm_id for a in direct_all):
@@ -810,7 +883,46 @@ def resolve_recipient(to, frm_id=""):
                          "postal isolation — its mailbox icon is toggled off), so it can't receive "
                          "mail right now. YOUR mailbox is fine; nothing was sent. It'll "
                          "be reachable once the user toggles ITS mailbox back on." % to}
-    # Addressing is LIVE-only: no dead-session resurrection, so anything left is a typo.
+    # Addressing is LIVE-only: no dead-session resurrection — but "not live" is a claim about the
+    # world, and the kernel is its authoritative source (fail loudly, never degrade silently, the
+    # user 2026-07-03). Before making the claim, ask whether the source ANSWERED: a mid-restart
+    # kernel yields an empty listing that reads exactly like universal deadness. One loopback GET,
+    # paid only on this refusal path — and even an ANSWERED listing is interrogated before the
+    # death ruling (2026-08-31: two verified specimens of a 200 listing omitting a LIVE session,
+    # by id and by name — a restart-settle blink; the refusal mis-routed a warning mail). The
+    # fresh fetch's own rows and the answered bit travel together from ONE call, so a kernel
+    # coming back between two fetches can't convert unreachable into a false death ruling; the
+    # durable per-session registry (_durable_session) corroborates what one listing missed.
+    if want_host and want_host != here:
+        # a host qualifier naming somebody ELSE took every local out of the running by DESIGN —
+        # the local listing and registry can say nothing about that host's sessions, and blink
+        # arms firing on a same-named LOCAL row turned a typo'd host into an endless retry-shortly
+        # (review find, 2026-08-31)
+        return {"kind": "error", "status": 404, "error": "no live romp session named '%s'" % to}
+    rows, answered = _kernel_sessions_checked(threads=True)
+    if not answered and not any(not a.get("remote") for a in pool):
+        # only an EMPTY local world raises the unreachable question — a pool with live locals in
+        # it proves the source was answering (and heartbeating remotes can't vouch for LOCALS)
+        return {"kind": "error", "status": 503,
+                "error": "can't tell whether '%s' is live right now: the liveness source (the romp "
+                         "kernel) didn't answer — likely mid-restart. Nothing was sent, and this is "
+                         "NOT a claim that '%s' is dead. Retry shortly." % (bare, bare)}
+    fresh = set()
+    for r in rows:
+        if isinstance(r, dict):
+            fresh.add(str(r.get("id") or ""))
+            fresh.add(str(r.get("name") or ""))
+    blinked = bare in fresh or _durable_session(bare, by_id)
+    if not blinked and not by_id and re.fullmatch(r"[0-9a-fA-F][0-9a-fA-F-]{7,35}", bare):
+        # the short-id form prefix-matches the fresh rows too, like the pool arm it mirrors
+        hits = {i for i in fresh if i.startswith(bare)}
+        blinked = len(hits) == 1
+    if blinked:
+        return {"kind": "error", "status": 503,
+                "error": "'%s' looks live (its durable registry entry stands) but the session "
+                         "listing came back without it — likely a restart-settle blink. Nothing "
+                         "was sent, and this is NOT a claim that '%s' is dead. Retry shortly."
+                         % (bare, bare)}
     return {"kind": "error", "status": 404, "error": "no live romp session named '%s'" % to}
 
 
@@ -824,6 +936,15 @@ def _recall(from_id, to, mid):
         return []
     if to:
         rid = _recip_id_for(to)
+        if not rid and MAILROOT.is_dir():
+            # Addressing is live-only, but RECALL is not addressing: the sender is unsending their
+            # own bytes, not raising the dead. Mail parked for a session that has since died sits
+            # right here in its new/ — a name that no longer resolves live falls back to the
+            # durable name map so parked mail stays recallable (sighting 2026-08-29: a handoff
+            # parked for a dead session could not be unsent by name; only the raw id worked).
+            hits = [b.name for b in MAILROOT.iterdir()
+                    if b.is_dir() and _name_for_id(b.name) == to]
+            rid = hits[0] if len(hits) == 1 else None    # two dead boxes, one name: refuse, stay scoped
         boxes = [rid] if rid else []
     elif MAILROOT.is_dir():
         boxes = [b.name for b in MAILROOT.iterdir() if b.is_dir()]
@@ -1767,6 +1888,27 @@ def my_tier_of(host):
     return row.get("trust") or "directed"
 
 
+def _write_remote_sids():
+    """STATE/remote-sids — every session id this box knows to be LIVE on another host (federated
+    presence gossip + legacy heartbeats), one per line, atomically. A best-effort mirror for the
+    kernel/judge DEADNESS rule (2026-08-28, the dead-session round): a sid absent from the local
+    registry but present here is a live REMOTE session whose local mirror store must never be
+    presumed closed. The FILE's existence means the bus has spoken; readers treat a missing file
+    as "cannot determine" and stay conservative."""
+    try:
+        now = time.time()
+        ids = {sid for sid, (_nm, ts) in HEARTBEATS.items() if now - ts < HEARTBEAT_TTL}
+        for st in PEER_STATE.values():
+            for pa in st.get("presence") or []:
+                if pa.get("id"):
+                    ids.add(str(pa["id"]))
+        tmp = STATE / "remote-sids.tmp"
+        tmp.write_text("\n".join(sorted(ids)) + ("\n" if ids else ""))
+        os.replace(tmp, STATE / "remote-sids")
+    except Exception:
+        pass
+
+
 def peers_snapshot():
     peers = {}
     for h, p in PEERS.items():
@@ -2317,6 +2459,7 @@ def peer_exchange_handle(data):
                          "hostname (or set ROMP_POSTAL_HOST) and redial" % host}, 400
     PEER_STATE[host] = {"presence": data.get("presence") or [], "epoch": data.get("epoch"),
                         "holds": data.get("holds") or [], "seenAt": int(time.time())}
+    _write_remote_sids()                           # presence changed → refresh the deadness mirror
     if bus_id:
         PEER_STATE[host]["busId"] = bus_id
         _drop_peer_name_dupes(host, bus_id)
@@ -2387,6 +2530,7 @@ def peer_exchange_apply(host, req_sent, resp):
         readbox_del(host, r)
     PEER_STATE[host] = {"presence": resp.get("presence") or [], "epoch": resp.get("epoch"),
                         "holds": resp.get("holds") or [], "seenAt": int(time.time())}
+    _write_remote_sids()                           # presence changed → refresh the deadness mirror
     bus_id = str(resp.get("busId") or "")
     if bus_id:                                       # the dialed alias is canonical for this bus: fold any
         PEER_STATE[host]["busId"] = bus_id           # row it left under its self-declared hostname

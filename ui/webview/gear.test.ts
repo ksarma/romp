@@ -45,8 +45,39 @@ test("every gear fetch routes through the kernel base + token (VS Code's webview
 test("the gear posts kernel ops through ONE shared channel (never re-acquires the VS Code API)", () => {
   assert.ok(!GEAR.includes("acquireVsCodeApi"), "a second acquire throws in a real webview");
   for (const op of ["setAutoNudge", "setJudgeModel", "setIndexModel", "setJudgeEffort", "setIndexEffort",
-    "setDistillModel", "setDistillEffort", "setFileEditing", "setColormap", "setPalette", "setDefaultDir", "browseDir"])
+    "setDistillModel", "setDistillEffort", "setCommentModel", "setCommentEffort", "setCommentFast",
+    "setFileEditing", "setColormap", "setPalette", "setDefaultDir", "browseDir"])
     assert.ok(GEAR.includes(`'${op}'`), `gear must post ${op}`);
+});
+
+test("model/effort options are written exactly once — the single-flight /models fetch (2026-08-30)", () => {
+  // The user's "my Distilling pick keeps resetting": fillChoices memoized its RESULT, so a settings
+  // open racing the page-load fetch fired a second /models fetch, and whichever resolved last
+  // REWROTE every select's options AFTER fill() had set their values — a rewritten select falls
+  // back to its first option ("Follow triage" for distill; invisible on Triage model, whose first
+  // option coincides with the stored value). The promise is the memo now; a failed fetch clears it.
+  assert.ok(GEAR.includes("var choicesP = null;"), "the promise is the memo");
+  assert.ok(GEAR.includes("if (choicesP) return choicesP;"), "second callers reuse the in-flight fetch");
+  assert.ok(GEAR.includes("choicesP = null; return null;"), "a failed fetch clears the memo for retry");
+  assert.ok(!GEAR.includes("if (choices) return Promise.resolve(choices);"), "the result-memo race is gone");
+});
+
+test("the login flow lives in a modal behind one button (the user 2026-08-30)", () => {
+  // "it would just be a login button… then it would pop up another modal that says paste the code
+  // so it doesn't always sit there taking up space" — the paste-code UI collapses behind the
+  // Account button; the modal wears the panel treatment (centered card over a dimmed backdrop).
+  assert.ok(GEAR.includes("id=rs-login-modal"), "the modal exists");
+  assert.ok(GEAR.includes("Log in to Claude Code"), "the button says what it does");
+  const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "gear.css"), "utf8");
+  assert.match(CSS, /#rs-login-modal \{ position: fixed; inset: 0; z-index: \d+; background: var\(--overlay-dim, rgba\(0, 0, 0, 0\.55\)\);/);   // tokened with its literal fallback (2026-08-30 merge)
+  assert.match(CSS, /\.rs-login-card \{ background: var\(--surface-raised, #252526\); border: 1px solid rgba\(255,255,255,0\.12\);/);
+  // mid-flow the button REOPENS the modal, never restarts the flow; terminal state closes it;
+  // Cancel + Escape + backdrop close; the code input stays a pure pass-through (T157)
+  assert.ok(GEAR.includes("if (lgLive === 'url' || lgLive === 'starting' || lgLive === 'verifying') return;"));
+  assert.ok(GEAR.includes("if (!f.state) lgModal(false);"));
+  assert.ok(GEAR.includes("if (e.key === 'Escape' && lgM && !lgM.hidden) lgModal(false);"));
+  assert.ok(GEAR.includes("if (e.target === lgM) lgModal(false);"));
+  assert.ok(GEAR.includes("post({ type: 'loginCode', code: code });"), "pass-through untouched");
 });
 
 test("the distilling tier is its own gear pair, defaulting to follow-triage", () => {
@@ -62,6 +93,23 @@ test("the distilling tier is its own gear pair, defaulting to follow-triage", ()
   assert.ok(GEAR.includes("v.distillEffort"), "fill() reads the RAW distill effort value");
 });
 
+test("the default-comment trio is its own gear group, defaulting to same-as-the-session", () => {
+  // The user 2026-08-29: every new comment thread on one model/effort/fast pick regardless of the
+  // session it branches from. The stored sentinel "session" means inherit the parent — today's
+  // behavior until the user pins — so the selects lead with it and fill from the RAW /version value.
+  for (const id of ["rs-cmtmodel", "rs-cmteffort", "rs-cmtfast"])
+    assert.ok(GEAR.includes(id), `the gear must render ${id}`);
+  assert.ok(GEAR.includes('"session">Same as the session'), "the sentinel option leads both selects");
+  assert.ok(GEAR.includes("v.commentModel"), "fill() reads the RAW comment model value");
+  assert.ok(GEAR.includes("v.commentEffort"), "fill() reads the RAW comment effort value");
+  assert.ok(GEAR.includes("v.commentFast === 'on'"), "the fast box reflects the stored ask");
+  // fast is an Opus-only research preview: a pinned non-Opus comment model disables the box, and a
+  // model pick that strands a checked box unchecks it as part of that gesture — never a silent flap
+  assert.ok(GEAR.includes("function cmtFastGate"), "the availability gate must exist");
+  assert.ok(GEAR.includes("cmtFastGate(true)"), "the model pick runs the gate as a user gesture");
+  assert.ok(GEAR.includes("cmtFastGate(false)"), "fill() re-checks availability without posting");
+});
+
 test("every kernel-side select says so when connected machines disagree (the autoNudge rule generalized)", () => {
   // The user 2026-08-14: everything stays in sync; on disagreement the gear ASKS by showing the local
   // value with a mixed mark beside it — hover names the hosts, one pick sets every machine — and a
@@ -71,7 +119,7 @@ test("every kernel-side select says so when connected machines disagree (the aut
     "non-reporting rows are excluded, not read as disagreeing");
   assert.ok(GEAR.includes("differs on: "), "the hover names the disagreeing hosts");
   const mixedSpans = GEAR.match(/class=rs-mixed hidden/g) || [];
-  assert.ok(mixedSpans.length >= 7, `every kernel-side select carries a marker span (got ${mixedSpans.length})`);
+  assert.ok(mixedSpans.length >= 10, `every kernel-side select carries a marker span (got ${mixedSpans.length})`);
 });
 
 test("the Auto Nudge box speaks for every attached machine, and says so when they disagree", () => {

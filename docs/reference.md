@@ -20,7 +20,7 @@ update` starts a session called "update".
 | `romp new -t <name>` | Start it as a terminal (tmux) session and attach; add `--detach` to leave it running |
 | `romp resume` | Resume a past conversation, chosen from a full-screen picker |
 | `romp status` | Manager and kernel status |
-| `romp refresh` | Restart the postal bus and every kernel, picking up new code |
+| `romp refresh` | Restart the postal bus and every kernel immediately, picking up new code (cut turns resume with their history) |
 | `romp update [host…]` | Push this machine's committed Romp to attached remotes and restart them |
 | `romp up` | Run the kernel manager in the foreground; rare, since the login service runs it |
 | `romp version` | Version report across the moving parts |
@@ -35,12 +35,13 @@ These are for scripting and for agents rather than daily use:
 | `romp mail …` | The postal service from the shell (below) |
 | `romp send <session> [--tag <label>] <text>` | Hand a session a message, on either backend. Anything a script, cron job, or launcher composes SHOULD carry a tag (one word, letters/digits/dashes, up to 24 chars): the chat then renders it as machine-sent under that label instead of as the user's typed words. Raw POST /send callers pass it as the JSON `tag` field (`{name, text, tag}` — a malformed tag fails the whole send, loudly); `--tag` is the CLI's equivalent. Both resolve to the `<!-- romp-tag: <label> -->` marker in the delivered text |
 | `romp interrupt <session>` | Interrupt whatever turn a session is taking |
+| `romp compact <session> [--wait] [--timeout <s>]` | Compact a session's context in place (Claude's `/compact`: summarize the history, keep the session's name, id, mailbox, and watches) — the alternative to ending and recreating a long-lived session, and the external hand a session needs since it cannot `/compact` itself mid-turn. Quiet session → compacts now; open turn → queued, fires alone the moment the turn ends (the same safe path the chat's compact button uses). `--wait` blocks until the compaction has started and cleared, polling the kernel's own `compacting` signal on the `/sessions` rows (also the field to point a `romp watch` predicate at for scripted recycling); exits 1 honestly on timeout. A remote session's compaction is requested on its own kernel — `--wait` can't follow it from here and says so |
 | `romp end <session>` | End a session |
 | `romp checkin <host>` / `romp checkout <host>` | Publish this machine to an attached hub, or withdraw it |
 | `romp default-dir [PATH]` | The default working directory for new sessions; no argument prints it, `""` clears it |
 | `romp debug [on\|off\|status]` | Judge debug mode, where rejection rows carry the full input and reply |
 | `romp resume <id> [--name <n>] [--detach]` | Resume one exact conversation by UUID |
-| `romp refresh --now` | Refresh without waiting for sessions to finish their turns |
+| `romp refresh --quiet` | Refresh at the next quiet window instead — waits for sessions to finish their turns (15-min backstop) |
 
 Two things to know before building on `romp sessions --json`. **`waiting` means
 at rest**, the ordinary state of a session that has finished its turn, so

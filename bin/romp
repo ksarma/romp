@@ -657,12 +657,13 @@ EOF
     _romp_cmd "romp sessions [--json]"     -            "List the fleet with each session's state, colours and backend"
     _romp_cmd "romp fork <parent> <name>"  -            "Branch a session into a new parallel one (parent untouched; --at <uuid> picks the cut)"
     _romp_cmd "romp rename <session> <name>" -          "Rename a session (uuid-keyed: mailboxes, goals and history all follow)"
-    _romp_cmd "romp color <session> [<#hex|1-9>]" -     "Recolor a session's identity swatch (palette hex or slot 1-9; no color arg reads bg/fg)"
+    _romp_cmd "romp color <session> [<#hex|slot>]" -    "Recolor a session's identity swatch (palette hex or slot number; no color arg reads bg/fg)"
     _romp_cmd "romp tag [<name>] [--add ...]" -         "Session tags: bare lists them; <name> with --add/--remove/--color/--delete merges one (a tagged session leaves the no-tags view); --host <kernel> edits an attached kernel's tag; --rename renames"
     _romp_cmd "romp watch-pr <n> [--repo o/r]" -        "One mail here when the PR lands or fails — the kernel owns the watch, so it survives restarts (replaces the mortal shell loop)"
     _romp_cmd "romp watch --cmd '<pred>' [...]" -       "One mail when the command exits 0 (or the timeout passes) — kernel-owned like watch-pr, for ANY background wait (--every Ns --timeout Ns --note '...' | --list | --cancel <id>)"
     _romp_cmd "romp mail ..."              romp-postal-service  "Romp Postal Service: send <to> <text> | inbox | agents | remote"
     _romp_cmd "romp send <session> [--tag <label>] <text>" - "Hand a session a message; scripts/cron SHOULD pass --tag so it renders machine-sent, not as your typed words"
+    _romp_cmd "romp compact <session> [--wait]" -       "Compact a session's context in place (Claude's /compact) — queued safely if a turn is open; --wait blocks until it finishes (--timeout <s>, default 600)"
     _romp_cmd "romp interrupt <session>"   -            "Interrupt a session's current turn"
     _romp_cmd "romp end <session>"         -            "End a session"
     _romp_cmd "romp checkin <host>"        -            "Publish this machine to an attached hub (romp checkout withdraws)"
@@ -871,7 +872,7 @@ fi
 # a manager keeps its worker roster as a session group, all one identity color): the kernel's
 # POST /color, the exact sibling of `romp rename` — a names-registry write, so a dormant session
 # recolors by sid. With no color argument it READS: the session's current bg and fg off
-# GET /sessions, tab-separated, for scripts. A slot digit 1-9 resolves HERE against the
+# GET /sessions, tab-separated, for scripts. A slot number resolves HERE against the
 # STATE/palette-colors mirror the kernel rewrites at boot — the same file the launcher assigns
 # from, so "slot 3" is the same hex at recolor time as at launch time; a missing mirror is a loud
 # error, never a silent fall-back to the hardcoded default set the gear may have switched away
@@ -880,7 +881,7 @@ fi
 # stored half-styled.
 if [[ "${1:-}" == "color" ]]; then
     shift
-    _cl_usage="usage: romp color <session> [<#hex|1-9>]"
+    _cl_usage="usage: romp color <session> [<#hex|slot>]"
     if [[ $# -lt 1 || $# -gt 2 || "$1" == -* || ( $# -eq 2 && -z "$2" ) ]]; then echo "$_cl_usage" >&2; exit 2; fi
     _tok="$(_romp_token)"
     _kport="${ROMP_KERNEL_PORT:-29855}"
@@ -908,7 +909,9 @@ for r in rows:
         exit 0
     fi
     _cl_bg="$2"
-    if [[ "$_cl_bg" =~ ^[1-9]$ ]]; then
+    if [[ "$_cl_bg" =~ ^[1-9][0-9]?$ ]]; then    # slots past 9 exist since the palette grew to 12
+        #                                            (T164); the awk read below stays the loud floor
+        #                                            for a slot the active set lacks
         _palfile="${ROMP_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/romp}/palette-colors"
         if [[ ! -r "$_palfile" ]]; then
             echo "romp color: no palette mirror at $_palfile — the kernel writes it at boot (is romp running?)" >&2
@@ -1019,6 +1022,8 @@ print(json.dumps(b))' "$_w_cmd" "$_w_key" "$_w_who" "$_w_every" "$_w_timeout" "$
     if [[ "$_resp" == *'"ok": true'* || "$_resp" == *'"ok":true'* ]]; then
         _wid="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["watch"]["id"])' "$_resp" 2>/dev/null || true)"
         echo "romp watch: registered${_wid:+ ($_wid)} — one mail here when the condition holds or the timeout passes"
+        _whint="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("hint") or "")' "$_resp" 2>/dev/null || true)"
+        [[ -n "$_whint" ]] && echo "romp watch: heads-up — $_whint" >&2
         exit 0
     fi
     _err="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("error") or sys.argv[1])' "$_resp" 2>/dev/null || printf '%s' "$_resp")"
@@ -1028,14 +1033,16 @@ fi
 
 if [[ "${1:-}" == "watch-pr" ]]; then
     shift
-    _wp_usage="usage: romp watch-pr <number> [--repo <owner/name>] [--session <name>]"
-    _wp_pr=""; _wp_repo=""; _wp_sess=""
+    _wp_usage="usage: romp watch-pr <number> [--repo <owner/name>] [--session <name>] [--escalate <session>]"
+    _wp_pr=""; _wp_repo=""; _wp_sess=""; _wp_esc=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --repo)    shift; [[ $# -eq 0 || -z "$1" || "$1" == -* ]] && { echo "$_wp_usage" >&2; exit 2; }
                        _wp_repo="$1"; shift ;;
             --session) shift; [[ $# -eq 0 || -z "$1" || "$1" == -* ]] && { echo "$_wp_usage" >&2; exit 2; }
                        _wp_sess="$1"; shift ;;
+            --escalate) shift; [[ $# -eq 0 || -z "$1" || "$1" == -* ]] && { echo "$_wp_usage" >&2; exit 2; }
+                       _wp_esc="$1"; shift ;;
             -*)        echo "$_wp_usage" >&2; exit 2 ;;
             *)         [[ -n "$_wp_pr" ]] && { echo "$_wp_usage" >&2; exit 2; }
                        _wp_pr="$1"; shift ;;
@@ -1064,8 +1071,11 @@ if [[ "${1:-}" == "watch-pr" ]]; then
         exit 1
     fi
     _wp_key="id"; [[ -n "$_wp_sess" ]] && _wp_key="name"
-    _payload="$(python3 -c 'import json,sys; print(json.dumps({"pr": int(sys.argv[1]), "repo": sys.argv[2], sys.argv[3]: sys.argv[4]}))' \
-        "$_wp_pr" "$_wp_repo" "$_wp_key" "$_wp_who")"
+    _payload="$(python3 -c 'import json,sys
+b = {"pr": int(sys.argv[1]), "repo": sys.argv[2], sys.argv[3]: sys.argv[4]}
+if len(sys.argv) > 5 and sys.argv[5]: b["escalate"] = sys.argv[5]
+print(json.dumps(b))' \
+        "$_wp_pr" "$_wp_repo" "$_wp_key" "$_wp_who" "$_wp_esc")"
     _resp="$(_romp_token_cfg | curl -sf -m 15 --config - -X POST "http://127.0.0.1:$_kport/watch-pr" \
                   -H 'Content-Type: application/json' -d "$_payload")" \
         || { echo "romp watch-pr: kernel not reachable on :$_kport (is romp running?)" >&2; exit 1; }
@@ -1316,6 +1326,99 @@ if [[ "${1:-}" =~ ^(checkin|checkout)$ ]]; then
     exit 1
 fi
 
+# `romp compact <session> [--wait] [--timeout <s>]` — compact a session's context IN PLACE (Claude's
+# /compact semantics: summarize, keep name/uuid/mailbox/watches) through the kernel's POST /compact —
+# the sanctioned alternative to end+new for a long-lived session, and the external hand a session
+# needs because it cannot /compact ITSELF mid-turn (the user 2026-08-30, via the dashboard team).
+# Rides the chat compact button's exact machinery: a turn open → queued, fires ALONE at turn end;
+# quiet → compacts now. --wait polls the kernel's own compacting signal (GET /sessions rows) until
+# the compaction has STARTED and CLEARED, honest exit 1 on timeout.
+if [[ "${1:-}" == "compact" ]]; then
+    shift
+    _c_usage="usage: romp compact <session> [--wait] [--timeout <s>]"
+    _c_who="${1:-}"
+    # only the verb's own flags are rejected as a name — send accepts dash-leading names, so compact
+    # does too (review find: the sibling convention), while a swapped-order mistake still gets usage
+    if [[ -z "$_c_who" || "$_c_who" == "--wait" || "$_c_who" == "--timeout" ]]; then echo "$_c_usage" >&2; exit 2; fi
+    shift
+    _c_wait=""; _c_to=600
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --wait)    _c_wait=1; shift ;;
+            --timeout) shift; [[ $# -eq 0 || ! "$1" =~ ^(0|[1-9][0-9]+|[1-9])$ ]] && { echo "$_c_usage" >&2; exit 2; }
+                       _c_to="$1"; shift ;;
+            *) echo "$_c_usage" >&2; exit 2 ;;
+        esac
+    done
+    _kport="${ROMP_KERNEL_PORT:-29855}"
+    _payload="$(python3 -c 'import json,sys; print(json.dumps({"name": sys.argv[1]}))' "$_c_who")"
+    _resp="$(_romp_token_cfg | curl -sf -m 10 --config - -X POST "http://127.0.0.1:$_kport/compact"                   -H 'Content-Type: application/json' -d "$_payload")"         || { echo "romp compact: kernel not reachable on :$_kport (is romp running?)" >&2; exit 1; }
+    if [[ "$_resp" != *'"ok": true'* && "$_resp" != *'"ok":true'* ]]; then
+        _c_err="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("error") or sys.argv[1])' "$_resp" 2>/dev/null || printf '%s' "$_resp")"
+        echo "romp compact: refused — $_c_err" >&2
+        exit 1
+    fi
+    if [[ "$_resp" == *'"queued": true'* || "$_resp" == *'"queued":true'* ]]; then
+        _c_queued=1
+        echo "romp compact: queued for $_c_who — the session isn't quiet; it fires the moment the current turn ends"
+    else
+        _c_queued=""
+        echo "romp compact: compacting $_c_who now"
+    fi
+    [[ -z "$_c_wait" ]] && exit 0
+    if [[ "$_resp" == *'"remote"'* ]]; then
+        # a remote session's compaction runs on ITS kernel; the local /sessions poll below would
+        # never see it and report the session dead — refuse the wait honestly instead
+        _c_host="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("remote") or "?")' "$_resp" 2>/dev/null || echo "?")"
+        echo "romp compact: --wait can't follow a remote session from here (it lives on $_c_host) — the compaction was still requested" >&2
+        exit 1
+    fi
+    # Wait for OUR compaction, not a coincidental one: when queued, arm only after a quiet sample
+    # (a compaction already running when we queued is the PRIOR one — ours fires after it).
+    # NB the arming is two statements, not a command-substitution assignment: under set -e an
+    # assignment adopts the substitution's failing status and kills the script (review find — the
+    # queued+--wait path died before its first poll).
+    _c_start="$(date +%s)"; _c_seen=""; _c_armed=""
+    [[ -n "$_c_queued" ]] || _c_armed=1
+    while :; do
+        _c_rows="$(_romp_token_cfg | curl -sf -m 5 --config - "http://127.0.0.1:$_kport/sessions")" || _c_rows=""
+        if [[ -z "$_c_rows" ]]; then
+            _c_state="unknown"                       # a transient kernel blip is not "session gone"
+        else
+            _c_state="$(python3 -c 'import json,sys
+who = sys.argv[2]
+try: rows = json.loads(sys.argv[1])
+except Exception: rows = None
+if rows is None: print("unknown")
+else:
+    for r in rows:
+        if r.get("name") == who or r.get("id") == who:
+            print("compacting" if r.get("compacting") else "quiet"); break
+    else: print("gone")' "$_c_rows" "$_c_who" 2>/dev/null || echo unknown)"
+        fi
+        if [[ "$_c_state" == "quiet" && -z "$_c_armed" ]]; then
+            _c_armed=1
+        elif [[ "$_c_state" == "compacting" && -n "$_c_armed" ]]; then
+            _c_seen=1
+        elif [[ "$_c_state" == "quiet" && -n "$_c_seen" ]]; then
+            echo "romp compact: done — $_c_who compacted ($(( $(date +%s) - _c_start ))s)"
+            exit 0
+        elif [[ "$_c_state" == "gone" ]]; then
+            echo "romp compact: $_c_who is no longer in the session list — it died or was renamed while waiting" >&2
+            exit 1
+        fi
+        if (( $(date +%s) - _c_start >= _c_to )); then
+            if [[ -n "$_c_seen" ]]; then
+                echo "romp compact: still compacting after ${_c_to}s — check the session" >&2
+            else
+                echo "romp compact: didn't see the compaction start within ${_c_to}s — it may be queued behind a long turn (a kernel watch on the /sessions compacting field can keep an eye on it)" >&2
+            fi
+            exit 1
+        fi
+        sleep 2
+    done
+fi
+
 # `romp send|interrupt|end <session> [text]` — headless session control through the kernel HTTP
 # API (the kernel owns the transport and routes to whichever backend drives the session, tmux or SDK).
 # Before this, interrupt/end existed only as browser WS ops: a session could be FED headlessly but
@@ -1485,9 +1588,10 @@ print(json.dumps({"t": int(time.time()), "ppid": int(os.environ.get("RA_PPID") o
 PYEOF
                } 2>/dev/null || true
                "${ROMP_POSTAL_BIN:-romp-postal-service}" restart >/dev/null 2>&1 || true
-               # Deploys defer to the next quiet window (no SDK turn in flight) so a peer's
-               # refresh never cuts another session's turn; `romp refresh --now` forces the
-               # old immediate bounce (the manager coalesces everything queued meanwhile).
+               # Deploys bounce IMMEDIATELY, cutting in-flight turns (T160 — the parked
+               # quiet window cost minutes per push; boot reconcile resumes cut turns with
+               # their history). `romp refresh --quiet` defers to the next quiet window
+               # explicitly (no SDK turn in flight, drain lease held, backstop-capped).
                exec "${ROMP_MANAGER_BIN:-romp-manager}" restart-all "${2:-}" ;;
     status)    exec "${ROMP_MANAGER_BIN:-romp-manager}" status ;;
 esac
@@ -2006,11 +2110,13 @@ else
         if (( ${#_palette[@]} == 0 )); then
         _palette=(
             "#1EA1EB"  "#54B204"  "#4EA8A9"  "#DD42FF"  "#E87221"
-            "#98998A"  "#F85B5A"  "#F9D849"  "#9088F0"
+            "#98998A"  "#F85B5A"  "#F9D849"  "#9088F0"  "#E0629C"
+            "#B585B6"  "#B69513"
         )
         _fg=(
             "white"    "black"    "white"    "white"    "black"
-            "black"    "white"    "black"    "black"
+            "black"    "white"    "black"    "black"    "white"
+            "black"    "black"
         )
         fi
         # Collect colors already in use by other romp sessions.

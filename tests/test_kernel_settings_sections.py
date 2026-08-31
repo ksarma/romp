@@ -23,40 +23,43 @@ km = SourceFileLoader("romp_kernel", os.path.join(BIN, "romp-kernel")).load_modu
 
 class SettingsSectionsTest(unittest.TestCase):
     def test_the_subsection_headers_are_present_in_order(self):
+        # The 2026-08-30 regrouping, the user's anchors fixed: login at the very top (Account),
+        # Comments folded into Chat, session lifecycle apart from the panes, colors together,
+        # judges low, updates + debug + version at the very bottom.
         h = _gear_src()
-        self.assertIn("<div class='rs-sec rs-sec-first'>Sessions</div>", h)
-        for sec in ("Judges", "Keyboard shortcuts", "Chat", "Feed", "Sessions pane", "Appearance", "Debug"):
+        self.assertIn("<div class='rs-sec rs-sec-first'>Account</div>", h)
+        for sec in ("Sessions", "Chat", "Sessions pane", "Feed", "Appearance",   # Colors renamed 2026-08-28: it owns the overall Theme now
+                    "Keyboard shortcuts", "Judges", "Updates & debug"):
             self.assertIn("<div class=rs-sec>%s</div>" % sec, h)
-        # (The 2026-07-12 "Feed dissolved into Colors" rule ended 2026-08-18: the Feed section is back,
-        # carrying the collapse-by-default checkbox moved off the feed footer.)
-        order = [">Sessions<", ">Judges<", ">Keyboard shortcuts<", ">Chat<",
-                 ">Feed<", ">Sessions pane<", ">Appearance<", ">Debug<", ">romp · version<"]
+        order = [">Account<", ">Sessions<", ">Chat<", ">Sessions pane<", ">Feed<",
+                 ">Appearance<", ">Keyboard shortcuts<", ">Judges<", ">Updates & debug<",
+                 ">romp · version<"]
         idx = [h.index(t) for t in order]
-        self.assertEqual(idx, sorted(idx), "sections in the 2026-07-12 order, version last")
+        self.assertEqual(idx, sorted(idx), "sections in the 2026-08-30 order, version last")
 
     def test_each_setting_sits_under_the_right_section(self):
         h = _gear_src()
-        # Sessions (top): default dir + auto nudge + backend before the Judges header
-        self.assertTrue(h.index(">Sessions<") < h.index("id=rs-defaultdir") < h.index(">Judges<"))
-        self.assertTrue(h.index(">Sessions<") < h.index("id=rs-autonudge") < h.index(">Judges<"))
-        self.assertTrue(h.index(">Sessions<") < h.index("id=rs-backend") < h.index(">Judges<"))
-        # Judges (top): the four model/effort dropdowns — the SHOW toggles are NOT here anymore
-        self.assertTrue(h.index(">Judges<") < h.index("id=rs-judgemodel") < h.index(">Keyboard shortcuts<"))
-        self.assertTrue(h.index(">Judges<") < h.index("id=rs-indexeffort") < h.index(">Keyboard shortcuts<"))
-        # Chat (middle): compact + branch between Chat and the Sessions-pane section
-        self.assertTrue(h.index(">Chat<") < h.index("id=rs-compact") < h.index(">Sessions pane<"))
-        self.assertTrue(h.index(">Chat<") < h.index("id=rs-branch") < h.index(">Sessions pane<"))
-        # Sessions pane (middle towards the bottom): collapse idle gaps before the Colors header
-        self.assertTrue(h.index(">Sessions pane<") < h.index("id=rs-collapsegaps") < h.index(">Appearance<"))
-        # Colors (bottom): the global colormap + the session palette between Colors and Debug
-        # Appearance (renamed from Colors 2026-08-28): the overall Theme leads, then the tints
-        self.assertTrue(h.index(">Appearance<") < h.index("id=rs-theme") < h.index("id=rs-cmap"))
-        self.assertTrue(h.index(">Appearance<") < h.index("id=rs-cmap") < h.index(">Debug<"))
-        self.assertTrue(h.index(">Appearance<") < h.index("id=rs-pal") < h.index(">Debug<"))
+        # Account (the very top, the user 2026-08-30): the login row leads the gear
+        self.assertTrue(h.index(">Account<") < h.index("id=rs-login-btn") < h.index(">Sessions<"))
+        # Sessions (lifecycle): dir, backend, nudge, conserve, file editing — before Chat
+        for rid in ("id=rs-defaultdir", "id=rs-backend", "id=rs-autonudge", "id=rs-conserve", "id=rs-fileedit"):
+            self.assertTrue(h.index(">Sessions<") < h.index(rid) < h.index(">Chat<"), rid)
+        # Chat: transcript prefs AND the comment defaults (comments are part of the chat)
+        for rid in ("id=rs-compact", "id=rs-branch", "id=rs-cmtmodel", "id=rs-cmtfast"):
+            self.assertTrue(h.index(">Chat<") < h.index(rid) < h.index(">Sessions pane<"), rid)
+        # Sessions pane, then Feed, then Colors
+        self.assertTrue(h.index(">Sessions pane<") < h.index("id=rs-collapsegaps") < h.index(">Feed<"))
+        self.assertTrue(h.index(">Feed<") < h.index("id=rs-feedcollapsed") < h.index(">Appearance<"))
+        self.assertTrue(h.index(">Appearance<") < h.index("id=rs-cmap") < h.index(">Keyboard shortcuts<"))
+        self.assertTrue(h.index(">Appearance<") < h.index("id=rs-pal") < h.index(">Keyboard shortcuts<"))
+        # Judges sit low: the six dropdowns between Judges and the bottom group
+        self.assertTrue(h.index(">Judges<") < h.index("id=rs-judgemodel") < h.index(">Updates & debug<"))
+        self.assertTrue(h.index(">Judges<") < h.index("id=rs-indexeffort") < h.index(">Updates & debug<"))
         self.assertNotIn("rs-oldest", h)
-        # Debug (bottom): the judge-set SHOW toggles after Debug; analytics + version after them
-        self.assertLess(h.index(">Debug<"), h.index("id=rs-judges-index"))
-        self.assertLess(h.index(">Debug<"), h.index("id=rs-judges-triage"))
+        # Updates & debug (the very bottom): auto-updates, the judge-SHOW toggles, analytics, version
+        self.assertLess(h.index(">Updates & debug<"), h.index("id=rs-updates"))
+        self.assertLess(h.index(">Updates & debug<"), h.index("id=rs-judges-index"))
+        self.assertLess(h.index(">Updates & debug<"), h.index("id=rs-judges-triage"))
         self.assertLess(h.index("id=rs-judges-triage"), h.index("id=ra-open"))
         self.assertLess(h.index("id=ra-open"), h.index("id=rsver"), "version is the very bottom")
         self.assertNotIn("id=rs-debug", h)   # the single Debug toggle is gone
@@ -73,12 +76,13 @@ class SettingsSectionsTest(unittest.TestCase):
         self.assertNotIn("headless", h)
 
     def test_judge_rows_are_one_line_label_plus_picker(self):
-        # label + picker share the line (the user 2026-07-12): six .rs-jrow rows since the distilling
-        # tier split out of triage (the user 2026-08-14), the select right after the hover sub, no
-        # full-width select stacked under the label; the flex CSS carries the layout. Each label now
-        # carries the hidden mixed-state marker (the settings-sync work, same day).
+        # label + picker share the line (the user 2026-07-12): eight .rs-jrow rows — six judge rows
+        # since the distilling tier split out of triage (the user 2026-08-14), plus the default-comment
+        # model/effort pair (the user 2026-08-29), which reuses the same one-line layout — the select
+        # right after the hover sub, no full-width select stacked under the label; the flex CSS
+        # carries the layout. Each label carries the hidden mixed-state marker (the settings-sync work).
         h = _gear_src()
-        self.assertEqual(h.count("rs-jrow"), 6)
+        self.assertEqual(h.count("rs-jrow"), 8)
         for sel in ("rs-judgemodel", "rs-judgeeffort", "rs-distillmodel", "rs-distilleffort",
                     "rs-indexmodel", "rs-indexeffort"):
             self.assertRegex(h, r"rs-jrow'><b>[^<]+<span class=rs-mixed hidden></span></b>"

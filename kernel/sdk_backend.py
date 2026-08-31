@@ -1046,6 +1046,44 @@ def find_session_cli(ps_lines: list[str], sids: list[str], parent_pid: int) -> i
     return None
 
 
+def recurring_crons(reg):
+    """The RECURRING entries of a reg's armed-timer set (sessionCrons) — THE shared predicate for
+    "this session needs a live CLI process", read by BOTH conserve_idle (refuses to close on it) and
+    ensure_scheduled (revives on it), so the two sides can never drift (the T148/769 seam, refined
+    2026-08-28 with the 769 author: recurring-only). One-shots are deliberately excluded on both
+    sides: a THREADLESS session's one-shot belongs to a dead process generation — a fresh CLI cannot
+    re-hydrate a lost wakeup (verified live 2026-08-28), so pinning or reviving a process buys the
+    wakeup nothing; deliver_lost_wakeups owns dead-generation one-shots outright and delivers the
+    prompt itself at due, which revives a dormant session through the normal send path. Recurring
+    entries have no such catch-up: their live CLI is the only scheduler, so they pin the process.
+    Reads the entry's `recurring` field, never the cron string's shape — toolhook-minted one-shots
+    carry an empty cron string."""
+    return [c for c in (reg.get("sessionCrons") or []) if isinstance(c, dict) and c.get("recurring")]
+
+
+def wakeup_due_epoch(cron: str, armed_t: float) -> "float | None":
+    """The due moment of a ONE-SHOT wakeup cron ("<min> <hour> * * *", the shape ScheduleWakeup mints
+    from delaySeconds, local time) — the first occurrence of H:M at/after the arm record. Any other
+    shape returns None: romp only ever self-fires timers it can reason about exactly; everything else
+    stays the CLI scheduler's job. Pure for tests."""
+    try:
+        m, h, dom, mon, dow = str(cron).split()
+        if (dom, mon, dow) != ("*", "*", "*"):
+            return None
+        m, h = int(m), int(h)
+        if not (0 <= m <= 59 and 0 <= h <= 23):
+            return None
+    except (ValueError, AttributeError):
+        return None
+    from datetime import datetime, timedelta   # local, like the reg-timestamp reader's (this module
+    #                                            otherwise never needs datetime at import time)
+    base = datetime.fromtimestamp(float(armed_t))
+    due = base.replace(hour=h, minute=m, second=0, microsecond=0)
+    if due.timestamp() < armed_t - 60:            # H:M already passed at arm time → the wrap is tomorrow
+        due += timedelta(days=1)
+    return due.timestamp()
+
+
 def interrupt_action(level: int, channel_up: bool) -> tuple[str, int]:
     """The interrupt escalation ladder (terminal parity, the user 2026-07-10): what a stop press does,
     given how far the current episode has climbed. In a terminal ctrl+c is a SIGNAL the process cannot
@@ -1358,12 +1396,26 @@ class SdkSession:
         self.name = reg.get("name", self.sid)
         self.cwd = reg.get("cwd") or os.path.expanduser("~")
         self.mode = reg.get("mode") or "acceptEdits"
+        # The PROCESS GENERATION stamp: session-scoped timers live in THIS CLI process's memory, so
+        # every armed-timer record carries the generation that armed it (procGen). A recorded timer
+        # whose generation is still the live one WILL be fired by the CLI itself — the kernel must
+        # never race it; a timer whose generation is gone can never fire CLI-side — the kernel owns
+        # its delivery. Exact ownership, no grace-window guessing (review of #769, 2026-08-28).
+        # A uuid, never a clock: two objects born in the same millisecond aliased a rounded
+        # timestamp (CI caught it), and aliased generations would hand a live process's timer to
+        # the kernel. The time prefix is for humans reading regs, not for identity.
+        self.proc_gen = "%d.%s" % (int(time.time()), uuid.uuid4().hex[:10])
         self.resume_sid = reg.get("lastSid") or None  # resume target after a restart/crash
         # A FORK being born (backend.fork): lastSid points at the PARENT's transcript and forkOf marks the
         # resume as a fork, so _options adds fork_session (+ the resume-session-at cut) and the CLI copies
         # the conversation into a NEW file pinned to THIS sid instead of continuing the parent's. One-shot:
         # cleared the moment the init's lastSid flip says the fork landed (see _on_message).
         self._fork_of = reg.get("forkOf") or ""
+        # the OWNING session for a highlight-reply comment thread (reg threadOf, durable): the
+        # thread's spend bills the OWNER's sid (T144 — fork sids minted phantom cheap sessions in
+        # spend.json and undercounted the owner: one session split $360.31 own + $3.11 + $5.36
+        # fork sids). A deliberate user fork has no threadOf and bills itself — it IS a session.
+        self.thread_of = reg.get("threadOf") or ""
         self._fork_at = reg.get("forkAt") or ""
         # Heal STRANDED pending-switch flags (the user 2026-07-11, who reported the three dots sitting there
         # forever): a /model or /effort switch that was mid-flight when the previous kernel/process
@@ -1507,6 +1559,15 @@ class SdkSession:
         self._rewind_leaf = reg.get("rewindLeaf") or ""
         self._rewind_bare = bool(reg.get("rewindBare"))   # a DELETE rollback: no replacement turn enqueued
         self._rewind_armed = False
+        # delete-while-busy (the user 2026-08-29): the gesture landed mid-turn — the interrupt is in
+        # flight and the arm completes at the turn's actual END (_complete_rewind_wait, keyed on the
+        # Stop hook / inflight settle, never a sleep). Reg-seeded so a kernel death mid-window is
+        # VISIBLE at the next connect (the leaf verification there reads the flag as spent and
+        # restores loudly — never a wrong-branch cut). The revalidate closure is the kernel's
+        # arm-time re-check (the compaction boundary lives in the kernel's parse); in-memory on
+        # purpose — it cannot survive a restart, and the spent path covers that honestly.
+        self._rewind_wait = bool(reg.get("rewindWait"))
+        self._rewind_revalidate = None
         # reconnect machinery: effort changes (a connect-time flag) reconnect the client; _wake breaks the
         # receive loop cleanly for shutdown OR reconnect even when idle (a bare async-for would block forever).
         self._wake: asyncio.Event | None = None
@@ -1662,11 +1723,13 @@ class SdkSession:
             self.loop.call_soon_threadsafe(
                 lambda: asyncio.ensure_future(self._do_set_model(model)))
 
-    def set_mode_live(self, mode):
-        """Change the permission mode on a CONNECTED session via the SDK control channel."""
+    def set_mode_live(self, mode, prev="default"):
+        """Change the permission mode on a CONNECTED session via the SDK control channel. `prev` is
+        the last CONFIRMED mode, captured by set_mode before its optimistic flip — the value every
+        layer reverts to if the CLI refuses the switch (T139)."""
         if self.loop and self.client:
             self.loop.call_soon_threadsafe(
-                lambda: asyncio.ensure_future(self._do_set_mode(mode)))
+                lambda: asyncio.ensure_future(self._do_set_mode(mode, prev)))
 
     def resolve_ask(self, kind: str, payload=None):
         """Deliver a picker/permission UI action (answer/toggle/submit/custom/
@@ -1808,11 +1871,22 @@ class SdkSession:
         await self._do_refresh_context()
         self.backend._poke()
 
-    async def _do_set_mode(self, mode):
+    async def _do_set_mode(self, mode, prev="default"):
         try:
             await self.client.set_permission_mode(mode)
         except Exception as e:
-            self.backend._log("set_permission_mode (%s -> %s) refused by the SDK: %s: %s" % (self.name, mode, type(e).__name__, e))
+            # the T124 rule, applied to modes (T139): set_mode flips the DISPLAYED mode
+            # optimistically — a refusal that only logged left the switcher asserting a mode the
+            # CLI never accepted, indefinitely. Revert every layer to the last confirmed mode
+            # (snapshot, session, registry — the next connect must not re-apply the refused pick
+            # either) and ring the problems so the failed switch is unmissable.
+            self.perm_mode = prev
+            self.mode = prev
+            self.backend._update_reg(self.sid, mode=prev)
+            self.backend._log("set_permission_mode (%s -> %s) refused by the SDK: %s: %s — the switch "
+                              "did NOT apply; the mode reverted to %s"
+                              % (self.name, mode, type(e).__name__, e, prev), problem=True)
+            self.backend._poke()
 
     async def _do_refresh_context(self):
         """Pull authoritative context-window usage from the SDK — the DESIGNED source. `get_context_usage()` is
@@ -2229,8 +2303,10 @@ class SdkSession:
             with self._lock:
                 dropped = self._pending.pop(0) if self._pending else None
             self._persist_queue()
+        self._rewind_wait = False
         try:
-            self.backend._update_reg(self.sid, rewindTo="", rewindLeaf="", rewindBare=False)
+            self.backend._update_reg(self.sid, rewindTo="", rewindLeaf="", rewindBare=False,
+                                     rewindWait=False)
         except Exception as e:
             self.backend._log("rewind (%s): registry clear failed: %s" % (self.name, e))
         self.backend._log("rewind (%s): the CLI refused --resume-session-at (%s: %s) — flag dropped, "
@@ -2380,6 +2456,11 @@ class SdkSession:
                 # plainly — re-applying fork_session would copy it into yet another session.
                 self._fork_of = self._fork_at = ""
                 self.backend._update_reg(self.sid, forkOf="", forkAt="")
+                reg_now = read_reg(self.backend.state_dir, self.sid) or {}
+                _ff = reg_now.get("forkedFrom") or {}
+                self.backend._log("fork spent (%s): src %.1fMB, create->spend %ds"
+                          % (self.sid[:8], (reg_now.get("forkSrcBytes") or 0) / 1048576.0,
+                             max(0, int(time.time()) - int(_ff.get("t") or time.time()))))
             cli_cwd = d.get("cwd")
             if isinstance(cli_cwd, str) and cli_cwd and cli_cwd != self.cwd:
                 # The CLI's own cwd is the AUTHORITATIVE string: its projects-dir/transcript encoding
@@ -2540,7 +2621,10 @@ class SdkSession:
                     last = self._last_usage_totals.get(k, 0)
                     turn_u[k] = v - last if v >= last else v
                     self._last_usage_totals[k] = v
-                self.backend._record_spend(delta, turn_u, keyed=self.api_key_auth, sid=self.sid)   # the rail's spend
+                self.backend._record_spend(delta, turn_u, keyed=self.api_key_auth,
+                                           sid=self.thread_of or self.sid)   # the rail's spend —
+                #   a comment THREAD bills its owning session (T144: whole-session truth for the
+                #   rail and the optimizer; a deliberate fork has no threadOf and bills itself)
                 #   + token readout; keyed = THIS session's init-reported auth, so the API sum stays
                 #   honest on a mixed host (see _record_spend)
             self.retrying = False
@@ -2562,15 +2646,32 @@ class SdkSession:
             # the authoritative flag so parked ops proceed immediately, instead of waiting out a 180s cap.
             self._compacting = False
             self._clearing = False   # /clear backstop: the turn settled, whatever the init did or didn't flip
-            if self._rewind_to:
+            if self._rewind_to and getattr(self, "_rewind_wait", False):
+                # delete-while-busy: THIS settle is the interrupted turn ending — the flag is being
+                # ARMED here, not consumed. Second observer of the turn-end fact (the Stop hook is
+                # the first; _complete_rewind_wait is idempotent, first one wins) — it exists for
+                # the turn shapes where Stop never fires (an interrupt that dies straight to the
+                # ResultMessage).
+                try:
+                    self.backend._complete_rewind_wait(self)
+                except Exception as e:
+                    self.backend._log("rewind (%s): delete-while-busy completion failed at the "
+                                      "settle: %s" % (self.name, e))
+            elif self._rewind_to and self._rewind_armed:
                 # the rewind turn settled — the flag is CONSUMED (the leaf moved past the recorded one, so
                 # rewind_disposition would drop it on the next connect anyway; this just tidies the reg now).
                 # A bare rollback consumes here too: the settled turn IS the branch's first (leaf moved).
+                # ARMED is part of the guard (delete-while-busy): the interrupted turn's own settle
+                # lands moments after the Stop hook armed the flag, and an unguarded consume read
+                # that fresh arm as the branch-take — flags could never accompany an UNARMED
+                # running turn before, so armed-only is byte-identical for the idle paths.
                 self._rewind_to = self._rewind_leaf = ""
                 self._rewind_bare = False
                 self._rewind_armed = False
+                self._rewind_wait = False
                 try:
-                    self.backend._update_reg(self.sid, rewindTo="", rewindLeaf="", rewindBare=False)
+                    self.backend._update_reg(self.sid, rewindTo="", rewindLeaf="", rewindBare=False,
+                                             rewindWait=False)
                 except Exception as e:
                     self.backend._log("rewind (%s): registry clear failed after the turn landed: %s" % (self.name, e))
                 # the BRANCH-TAKE event: the settled turn is the new branch's first landed record —
@@ -2621,7 +2722,22 @@ class SdkSession:
                 updated_input={"questions": tool_input.get("questions", []), "answers": answers})
         if tool_name == "ExitPlanMode":
             return await self._approve_plan(tool_input)
-        # Ordinary tool permission. Options are Allow (1), optionally Allow-&-don't-ask-again (2 when the
+        # Ordinary tool permission. FIRST, the declared-intent guard (T139, the exp specimen): the
+        # SDK's own contract says bypassPermissions auto-approves every call before this callback
+        # is consulted (explicit deny rules aside) — yet CLI 2.1.221 consulted it once for a plain
+        # main-thread Bash, 30s after an equivalent command sailed through, and the session sat
+        # BLOCKED eleven hours on an ask the user had declared they never wanted. romp is the
+        # registered permission authority, so it re-imposes the declared intent: under bypass,
+        # auto-allow and ring the problems (the CLI broke its contract — visible, never silent),
+        # and never block a bypass session on an ask. Other modes keep asking: when the CLI
+        # consults under default/plan/acceptEdits, an ask IS the honest behavior for whatever its
+        # own evaluation could not auto-decide.
+        if self.perm_mode == "bypassPermissions":
+            self.backend._log("permission consult under bypassPermissions (%s, tool %s) — the CLI's "
+                              "contract says this cannot happen; auto-allowed per the declared mode"
+                              % (self.name, tool_name), problem=True)
+            return PermissionResultAllow(behavior="allow")
+        # Options are Allow (1), optionally Allow-&-don't-ask-again (2 when the
         # SDK supplied permission suggestions), then Deny (last). _next_ask_action returns the chosen
         # ordinal so we map it back to the action here.
         ask = permission_to_live(tool_name, tool_input, context)
@@ -2750,10 +2866,349 @@ class SdkSession:
         ignores inp['background_tasks'] and just clears any stale awaiting:true — keeping the overlay
         channel available for signals that need durability across a backend restart."""
         append_awaiting(self.backend.state_dir, self.sid, False)
+        # Record the ARMED TIMER SET (the hook payload's session_crons: CronCreate crons, ScheduleWakeup
+        # wakeups, /loop ticks). Session-scoped timers live ONLY in the CLI process's memory — the tool
+        # result itself says "dies when Claude exits" — so a session romp leaves DORMANT has no process
+        # at the due moment and the timer silently never fires (the user 2026-08-28: wakeups armed for
+        # 26 minutes out missed across 21 hours; agents built crontab workarounds). This record is what
+        # lets the kernel keep timer-armed sessions CONNECTED (its scheduled-session sweep) so the CLI's
+        # own scheduler — which fires fine on a live idle process — does the firing. Written on every
+        # turn end, including [] when the last timer is cancelled, so the reg never pins a stale set.
+        try:
+            crons = inp.get("session_crons") if isinstance(inp, dict) else None
+            if isinstance(crons, list):
+                prev = (read_reg(self.backend.state_dir, self.sid) or {})
+                nw = time.time()
+                known = {c.get("id"): c for c in (prev.get("sessionCrons") or []) if isinstance(c, dict)}
+                # Adoption pool for the CALL-TIME records (_sched_tool_hook): a toolhook entry knows the
+                # EXACT dueEpoch but minted its own id; the payload entry carries the CLI's id but no
+                # date. Marry them by prompt + near-due so the reg ends with the CLI's id AND the exact
+                # date, and the toolhook duplicate drops.
+                toolhook = [c for c in (prev.get("sessionCrons") or [])
+                            if isinstance(c, dict) and c.get("src") == "toolhook"]
+
+                def adopt(c):
+                    p = str(c.get("prompt") or "")[:500]
+                    hint = wakeup_due_epoch(str(c.get("schedule") or c.get("cron") or ""),
+                                            float((known.get(str(c.get("id") or "")) or {}).get("armedAt") or nw))
+                    for t in toolhook:
+                        if t.get("prompt") == p and (hint is None or abs(float(t.get("dueEpoch") or 0) - hint) < 90):
+                            return t
+                    return None
+
+                slim = []
+                for c in crons:
+                    if not isinstance(c, dict):
+                        continue
+                    src = adopt(c) or known.get(str(c.get("id") or "")) or {}
+                    slim.append({"id": str(c.get("id") or ""), "cron": str(c.get("schedule") or c.get("cron") or ""),
+                                 "prompt": str(c.get("prompt") or "")[:500], "kind": str(c.get("kind") or ""),
+                                 "recurring": bool(c.get("recurring")),
+                                 # armedAt/dueEpoch/procGen ride each ENTRY from its first record (the
+                                 # call-time hook when it saw the arm; else first-seen here), so a
+                                 # one-shot's due moment never shifts when later turns rewrite the set
+                                 "armedAt": float(src.get("armedAt") or nw),
+                                 "dueEpoch": (float(src["dueEpoch"]) if src.get("dueEpoch") else None),
+                                 "procGen": str(src.get("procGen") or self.proc_gen)})
+                # MERGE, don't overwrite: a recycled process LOSES ScheduleWakeup one-shots (verified
+                # live 2026-08-28), so the fresh process's payload lacks them — and blindly writing the
+                # payload would erase the very record deliver_lost_wakeups needs. An absent one-shot
+                # survives while ITS PROCESS GENERATION is gone (the CLI that could have fired it no
+                # longer exists, so absence from a NEW process's payload is not evidence it fired) —
+                # ownership is exact, no due-time guessing. A one-shot recorded by the LIVE generation
+                # and absent from its own payload genuinely fired or was cancelled: it drops.
+                have = {c.get("id") for c in slim}
+                adopted = {id(t) for c in crons if isinstance(c, dict) for t in [adopt(c)] if t is not None}
+                for c in (prev.get("sessionCrons") or []):
+                    if (isinstance(c, dict) and not c.get("recurring") and c.get("id") not in have
+                            and id(c) not in adopted
+                            and str(c.get("procGen") or "") != self.proc_gen):
+                        slim.append(c)
+                if slim != prev.get("sessionCrons"):
+                    self.backend._update_reg(self.sid, sessionCrons=slim, sessionCronsAt=int(nw))
+        except Exception as e:
+            self.backend._log("stop hook (%s): session_crons record failed: %s" % (self.name, e))
+        # Reconcile the LAUNCH LEDGER against the payload's background_tasks — the per-turn snapshot
+        # this hook used to discard (2026-08-29). The ledger is launch-authoritative; the payload is
+        # the CLI's own answer to "what is still running", so: a live-generation ledger entry absent
+        # from the payload ENDED (tombstone, why:"gone"); a DEAD-generation entry died with its
+        # process (background tasks are children of the CLI); a payload task the ledger never saw is
+        # adopted (src:"stopReconcile" — the hook missed a shape, or the entry predates the ledger).
+        try:
+            bg = inp.get("background_tasks") if isinstance(inp, dict) else None
+            if isinstance(bg, list):
+                nw = int(time.time())
+                live, ended = self._ledger_read()
+                running = {str(t.get("id")): t for t in bg
+                           if isinstance(t, dict) and t.get("status") == "running" and t.get("id")}
+                kept = []
+                for e in live:
+                    tid = str(e.get("tid") or "")
+                    if tid and tid in running:
+                        kept.append(e)
+                    elif str(e.get("procGen") or "") != self.proc_gen:
+                        ended.append({"tid": e.get("tid"), "why": "processDied", "at": nw})
+                    elif tid and e.get("tool") == "bash":
+                        # only SHELLS are proven to ride the payload (probe 2026-08-28) — a monitor
+                        # absent from it may simply be uncovered, and a false "gone" would silently
+                        # un-wait the session; monitors end by deadline, fail, stop, or processDied
+                        ended.append({"tid": e.get("tid"), "why": "gone", "at": nw})
+                    else:
+                        kept.append(e)   # no id / unproven coverage — the reconciler cannot rule on it
+                have = {str(e.get("tid")) for e in kept}
+                for tid, t in running.items():
+                    if tid not in have:
+                        kept.append({"tid": tid, "toolUseId": None, "tool": str(t.get("type") or "shell"),
+                                     "desc": str(t.get("description") or "")[:300], "armedAt": nw,
+                                     "deadlineEpoch": None, "persistent": False,
+                                     "procGen": self.proc_gen, "agentId": None, "src": "stopReconcile"})
+                l0, e0 = self._ledger_read()
+                if kept != l0 or ended != e0:
+                    self._ledger_write(kept, ended)
+        except Exception as e:
+            self.backend._log("stop hook (%s): bg-ledger reconcile failed: %s" % (self.name, e))
+        # The turn-end EVENT itself, durable and kernel-readable (2026-08-29, for the nudge layer's
+        # memo re-arm and any consumer that needs "this session settled a turn at T" as a fact
+        # rather than an inference from transcript mtimes — romp_cards' round keys on it).
+        try:
+            self.backend._update_reg(self.sid, lastStopAt=int(time.time()))
+        except Exception:
+            pass
+        # delete-while-busy: the turn this delete interrupted has ENDED — complete the arm here,
+        # on the same turn-end fact that stamps lastStopAt (never a sleep)
+        if getattr(self, "_rewind_wait", False):
+            try:
+                self.backend._complete_rewind_wait(self)
+            except Exception as e:
+                self.backend._log("rewind (%s): delete-while-busy completion failed: %s" % (self.name, e))
         self.backend._poke()
         return {}
 
+    async def _sched_tool_hook(self, inp, tool_use_id, context):
+        """PostToolUse on the scheduling tools (ScheduleWakeup / CronCreate / CronDelete): record the
+        arm at the CALL moment with an ABSOLUTE due time, instead of waiting for the turn's Stop hook.
+        End-of-turn-only recording had three holes (review of #769, 2026-08-28): armedAt stamped at
+        turn END wrapped a same-turn-past-due wakeup to TOMORROW (the cron string carries no date); a
+        restart mid-turn lost the arm entirely (the Stop hook never ran); and reconstruction from a
+        dateless "M H * * *" string is guesswork the tool INPUT makes unnecessary — delaySeconds is
+        right there, so dueEpoch = now + delaySeconds is exact. Entries minted here carry
+        src:"toolhook" and a synthetic id; the Stop hook's reconciler marries them to the CLI's own
+        ids (see adopt() above) and remains the safety net if this hook ever misses a shape.
+        Defensive throughout: an unrecognized payload records nothing and logs, never raises."""
+        try:
+            tname = str((inp or {}).get("tool_name") or "")
+            targs = (inp or {}).get("tool_input") or {}
+            if not isinstance(targs, dict):
+                return {}
+            nw = time.time()
+            prev = (read_reg(self.backend.state_dir, self.sid) or {})
+            cur = [c for c in (prev.get("sessionCrons") or []) if isinstance(c, dict)]
+            if tname == "ScheduleWakeup":
+                if targs.get("stop"):
+                    # a dynamic loop ending: drop this session's pending toolhook one-shots — the CLI
+                    # cancels its own pending wakeup on stop, and keeping ours would fabricate a wake
+                    cur = [c for c in cur if not (c.get("src") == "toolhook" and not c.get("recurring"))]
+                    self.backend._update_reg(self.sid, sessionCrons=cur, sessionCronsAt=int(nw))
+                    return {}
+                delay = targs.get("delaySeconds")
+                prompt = str(targs.get("prompt") or "")[:500]
+                if not isinstance(delay, (int, float)) or delay <= 0 or not prompt:
+                    return {}
+                due = nw + max(60.0, min(3600.0, float(delay)))   # the runtime clamps to [60, 3600]
+                # ONE pending wakeup per session, matching ScheduleWakeup's own semantics (arming
+                # replaces the previous pending wakeup): drop earlier toolhook one-shots first
+                cur = [c for c in cur if not (c.get("src") == "toolhook" and not c.get("recurring"))]
+                cur.append({"id": "toolhook-%d" % int(due), "cron": "", "prompt": prompt,
+                            "kind": str(targs.get("reason") or "")[:120], "recurring": False,
+                            "armedAt": nw, "dueEpoch": due, "procGen": self.proc_gen, "src": "toolhook"})
+            elif tname == "CronCreate":
+                nm = str(targs.get("name") or targs.get("id") or ("cron-%d" % int(nw)))
+                cur = [c for c in cur if c.get("id") != nm]
+                cur.append({"id": nm, "cron": str(targs.get("schedule") or ""),
+                            "prompt": str(targs.get("prompt") or "")[:500], "kind": "cron",
+                            "recurring": True, "armedAt": nw, "dueEpoch": None,
+                            "procGen": self.proc_gen, "src": "toolhook"})
+            elif tname == "CronDelete":
+                nm = str(targs.get("name") or targs.get("id") or "")
+                if not nm:
+                    return {}
+                cur = [c for c in cur if c.get("id") != nm]
+            else:
+                return {}
+            self.backend._update_reg(self.sid, sessionCrons=cur, sessionCronsAt=int(nw))
+        except Exception as e:
+            self.backend._log("sched tool hook (%s): %s" % (self.name, e))
+        return {}
+
     # ---- subagent tracking (the transparency tmux never had) ----
+
+    # ── the background-launch LEDGER (2026-08-29, the hookable-tools round) ────────────────────
+    # Launch facts recorded at the CALL moment from the tools' own inputs/acks, replacing the
+    # transcript scrape as the durable source for SDK sessions (the scrape stays for tmux and
+    # pre-ledger sessions — see kernel._bg_live_norm's source ladder). What the hook knows exactly
+    # that every other channel guesses: the launch's tool_use_id and task id pairing (the ack's
+    # backgroundTaskId, probe-verified 2026-08-28), Monitor's REQUIRED timeout_ms/persistent (an
+    # exact watcher deadline — retires the +120s grace for ledger entries), the arming process
+    # generation (launches die with their process), and the acting agent_id (subagent launches are
+    # invisible to the transcript fold). Live set in the reg (bounded: running entries only) plus a
+    # small tombstone tail (bgLedgerEnded) so "called off its own wait" and "died with its process"
+    # are events the kernel can say, not guesses.
+    # Bash-bg + Monitor ONLY (2026-08-29 review): their ack/input shapes are probe-verified
+    # (backgroundTaskId; required timeout_ms/persistent). Task/Workflow launches ride the
+    # lifecycle stream + the Subagent hooks — journaling them here recorded every FOREGROUND
+    # subagent call as a phantom launch and flooded the tombstone tail.
+    _LEDGER_TOOLS = ("Bash", "Monitor")
+    _LEDGER_TOMBSTONES = 20
+    _LEDGER_CAP = 40
+
+    def _ledger_read(self):
+        reg = read_reg(self.backend.state_dir, self.sid) or {}
+        live = [e for e in (reg.get("bgLedger") or []) if isinstance(e, dict)]
+        ended = [e for e in (reg.get("bgLedgerEnded") or []) if isinstance(e, dict)]
+        return live, ended
+
+    def _ledger_write(self, live, ended):
+        self.backend._update_reg(self.sid, bgLedger=live,
+                                 bgLedgerEnded=ended[-self._LEDGER_TOMBSTONES:])
+
+    async def _ledger_tool_hook(self, inp, tool_use_id, context):
+        """PostToolUse on the launch/stop tools. Defensive throughout: an unrecognized shape records
+        nothing and logs — the Stop-hook reconciler and the lifecycle stream remain the safety nets."""
+        try:
+            tname = str((inp or {}).get("tool_name") or "")
+            targs = (inp or {}).get("tool_input") or {}
+            tresp = (inp or {}).get("tool_response") or {}
+            if not isinstance(targs, dict):
+                return {}
+            if not isinstance(tresp, dict):
+                tresp = {}
+            nw = time.time()
+            live, ended = self._ledger_read()
+            if tname == "TaskStop":
+                tid = str(targs.get("task_id") or targs.get("taskId") or targs.get("id")
+                          or targs.get("shell_id") or "")   # shell_id: the deprecated param the CLI still accepts
+                if tid:
+                    kept = [e for e in live if str(e.get("tid")) != tid]
+                    if len(kept) != len(live):
+                        ended.append({"tid": tid, "why": "stopped", "at": int(nw)})
+                        self._ledger_write(kept, ended)   # the session called off its own wait — an
+                        self.backend._poke()              # event, not a crash (review map item 4)
+                return {}
+            if tname == "Bash" and not targs.get("run_in_background"):
+                return {}                                 # foreground Bash is a turn, not a launch
+            if tname not in self._LEDGER_TOOLS:
+                return {}
+            tid = str(tresp.get("backgroundTaskId") or tresp.get("task_id") or tresp.get("taskId")
+                      or tresp.get("id") or "")
+            deadline, persistent = None, False
+            if tname == "Monitor":
+                persistent = bool(targs.get("persistent"))
+                tmo = targs.get("timeout_ms")
+                if not persistent and isinstance(tmo, (int, float)) and tmo > 0:
+                    deadline = nw + float(tmo) / 1000.0   # the harness kills the watcher then — exact,
+                    #                                       not the job's ETA (research map item 2)
+            desc = str(targs.get("description") or targs.get("prompt") or targs.get("command") or "")[:300]
+            tuid = str(tool_use_id or (inp or {}).get("tool_use_id") or "") or None
+            if not tid and not tuid:
+                return {}   # nothing to key on — an entry no event could ever clear must not be born
+            entry = {"tid": tid or None, "toolUseId": tuid,
+                     "tool": tname.lower(), "desc": desc, "armedAt": int(nw),
+                     "deadlineEpoch": deadline, "persistent": persistent,
+                     "procGen": self.proc_gen,
+                     "agentId": str((inp or {}).get("agent_id") or "") or None, "src": "hook"}
+            live = [e for e in live
+                    if not (tid and str(e.get("tid")) == tid)
+                    and not (tuid and str(e.get("toolUseId")) == tuid)] + [entry]
+            if len(live) > self._LEDGER_CAP:   # bounded like every reg field — oldest launches evict, loudly
+                self.backend._log("bg-ledger (%s): cap %d hit, evicting oldest" % (self.name, self._LEDGER_CAP))
+                live = live[-self._LEDGER_CAP:]
+            self._ledger_write(live, ended)
+        except Exception as e:
+            self.backend._log("bg-ledger hook (%s): %s" % (self.name, e))
+        return {}
+
+    async def _ledger_fail_hook(self, inp, tool_use_id, context):
+        """PostToolUseFailure on the launch tools: a launch whose ack ERRORED never started — drop any
+        entry recorded for it so it cannot hold an awaiting gate open as a phantom wait (probe-verified
+        2026-08-28: the event emits with error + is_interrupt; a DENIED tool does not reach here)."""
+        try:
+            tuid = str((inp or {}).get("tool_use_id") or tool_use_id or "")
+            if not tuid:
+                return {}
+            live, ended = self._ledger_read()
+            kept = [e for e in live if str(e.get("toolUseId")) != tuid]
+            if len(kept) != len(live):
+                why = "interrupted" if (inp or {}).get("is_interrupt") else "launch-failed"
+                ended.append({"tid": next((e.get("tid") for e in live
+                                           if str(e.get("toolUseId")) == tuid), None),
+                              "why": why, "at": int(time.time())})
+                self._ledger_write(kept, ended)
+                self.backend._poke()
+        except Exception as e:
+            self.backend._log("bg-ledger fail hook (%s): %s" % (self.name, e))
+        return {}
+
+    # ── session FACTS from the interaction tools (2026-08-29, hook round 2) ────────────────────
+    # Three fact families, all probe-verified shapes (CLI 2.1.221): the task STORE stays the
+    # authoritative snapshot per the repo rule — the TaskCreate/TaskUpdate hook is the POKE to
+    # re-read it now plus the attribution the store can never provide (which agent wrote, incl.
+    # subagent writes the transcript fold structurally misses); PushNotification's ack carries
+    # pushSent/localSent, so an agent's own "come look" judgment stops being invisible when the
+    # OS push was suppressed; Skill's ack names the role/command the session just took on.
+    _PUSH_NOTES_CAP = 10
+    _TASK_WRITES_CAP = 15
+
+    async def _facts_tool_hook(self, inp, tool_use_id, context):
+        try:
+            tname = str((inp or {}).get("tool_name") or "")
+            targs = (inp or {}).get("tool_input") or {}
+            tresp = (inp or {}).get("tool_response") or {}
+            if not isinstance(targs, dict):
+                targs = {}
+            if not isinstance(tresp, dict):
+                tresp = {}
+            nw = int(time.time())
+            aid = str((inp or {}).get("agent_id") or "") or None
+            if tname in ("TaskCreate", "TaskUpdate"):
+                # a capped TAIL, not a slot (review 2026-08-29): parallel subagents cluster task
+                # writes faster than any consumer's read cadence, and a last-write-wins slot loses
+                # every agentId but the newest — the attribution this field exists for
+                tid = str(tresp.get("taskId") or targs.get("taskId") or "") or None
+                reg = read_reg(self.backend.state_dir, self.sid) or {}   # sole writer; no await
+                #                                                          before the write below —
+                #                                                          the event loop IS the lock
+                writes = [w for w in (reg.get("taskWrites") or []) if isinstance(w, dict)]
+                writes.append({"at": nw, "tool": tname, "taskId": tid, "agentId": aid})
+                self.backend._update_reg(self.sid, taskWrites=writes[-self._TASK_WRITES_CAP:])
+                self.backend._poke()          # the store is authoritative — this says "re-read it NOW"
+            elif tname == "PushNotification":
+                reg = read_reg(self.backend.state_dir, self.sid) or {}   # sole writer of pushNotes;
+                #                              NO await between this read and the write below — the
+                #                              session's single event loop is what serializes this
+                #                              RMW, not _reg_lock. Inserting an await here reopens
+                #                              the lost-note race (review 2026-08-29).
+                notes = [n for n in (reg.get("pushNotes") or []) if isinstance(n, dict)]
+                notes.append({"at": nw, "message": str(targs.get("message") or "")[:200],
+                              "pushSent": bool(tresp.get("pushSent")),
+                              "localSent": bool(tresp.get("localSent")), "agentId": aid})
+                self.backend._update_reg(self.sid, pushNotes=notes[-self._PUSH_NOTES_CAP:])
+                self.backend._poke()          # a suppressed push is still the agent saying "come look"
+            elif tname == "Skill":
+                if aid:
+                    return {}                 # a SUBAGENT's skill is not the session's role — the
+                    #                           stamp answers "what is this session acting as", and a
+                    #                           drafting subagent invoking jld must not clobber it
+                nm = str(tresp.get("commandName") or "") or None
+                # commandName is the ONE authority (probe-verified on 2.1.221; failures route to
+                # PostToolUseFailure, unregistered here). No tool_input fallback: recording the
+                # REQUESTED alias when the resolved name vanished would be a silent degrade.
+                if nm:
+                    self.backend._update_reg(self.sid, lastSkill={"at": nw, "name": nm})
+                elif tresp:
+                    self.backend._log("facts hook (%s): Skill ack carried no commandName — not recording" % self.name)
+        except Exception as e:
+            self.backend._log("facts hook (%s): %s" % (self.name, e))
+        return {}
 
     async def _subagent_start_hook(self, inp, tool_use_id, context):
         """A Task-spawned subagent just STARTED. Record it live (agent_id -> type + start time) so the session
@@ -3449,7 +3904,11 @@ class SdkBackend:
             sessions = list(self.sessions.values())
         # the identities of the turns this drain is about to cut — the restart-cut ledger's rows
         # (T121: the drain's effect is measured by what still gets cut; sid-keyed like spend)
-        cut = [{"sid": s.sid, "name": s.name} for s in sessions if s.inflight and not s.ended]
+        # EVERY session with an in-flight turn is a cut — including one already flagged `ended`
+        # (mid-shutdown with a live turn: its CLI is reaped below all the same). The old
+        # `and not s.ended` clause was a FILTER where a join was meant (T143: romp_cards counted 10
+        # transcript-verified cuts against 7 ledger rows — the missing three were mid-shutdown).
+        cut = [{"sid": s.sid, "name": s.name} for s in sessions if s.inflight]
         inflight = len(cut)
         for s in sessions:
             try:
@@ -3458,8 +3917,11 @@ class SdkBackend:
                 self._log("drain: shutdown failed for %s: %s" % (s.name, e))
         deadline = time.time() + timeout
         for s in sessions:
-            s.thread.join(max(0.05, deadline - time.time()))
-        unjoined = [s for s in sessions if s.thread.is_alive()]
+            if s.thread is not None:   # a constructed-but-never-started session has no thread —
+                #   joining None raised here and the WHOLE drain died recordless (T143: 2 of 18
+                #   restarts lost their ledger rows to exactly this)
+                s.thread.join(max(0.05, deadline - time.time()))
+        unjoined = [s for s in sessions if s.thread is not None and s.thread.is_alive()]
         reaped = []
         for s in unjoined:
             try:
@@ -4014,7 +4476,20 @@ class SdkBackend:
             can_use_tool=sess._can_use_tool,
             hooks={"Stop": [HookMatcher(matcher=None, hooks=[sess._stop_hook])],          # awaiting overlay producer
                    "SubagentStart": [HookMatcher(matcher=None, hooks=[sess._subagent_start_hook])],  # live subagent
-                   "SubagentStop": [HookMatcher(matcher=None, hooks=[sess._subagent_stop_hook])]},    #   count/types
+                   "SubagentStop": [HookMatcher(matcher=None, hooks=[sess._subagent_stop_hook])],    #   count/types
+                   # scheduling tools record their arm at the CALL moment, with the exact due time the
+                   # tool input carries — the Stop hook's set-record reconciles (see _sched_tool_hook)
+                   "PostToolUse": [HookMatcher(matcher="ScheduleWakeup|CronCreate|CronDelete",
+                                               hooks=[sess._sched_tool_hook]),
+                                   # launch ledger: exact launch facts at the call moment (2026-08-29)
+                                   HookMatcher(matcher="Bash|Monitor|TaskStop",
+                                               hooks=[sess._ledger_tool_hook]),
+                                   # interaction facts: store-poke + attribution, push mirror, role
+                                   HookMatcher(matcher="TaskCreate|TaskUpdate|PushNotification|Skill",
+                                               hooks=[sess._facts_tool_hook])],
+                   # a launch whose ack errored never started — drop it before it phantom-waits
+                   "PostToolUseFailure": [HookMatcher(matcher="Bash|Monitor",
+                                                      hooks=[sess._ledger_fail_hook])]},
             permission_mode=sess.mode,
             # File-checkpoint rewind (the user 2026-08-04): the CLI backs files up before modifying them,
             # so rewind_files() can put the workspace back to its state at any user message. The uuid a
@@ -4070,8 +4545,11 @@ class SdkBackend:
         elif disp == "spent":
             sess._rewind_to = sess._rewind_leaf = ""
             sess._rewind_bare = False
+            sess._rewind_wait = False       # a kernel death mid-delete-window lands here: loud spent
+            #                                 restore, never a wrong-branch cut — the wait dies with the flags
             try:
-                self._update_reg(sess.sid, rewindTo="", rewindLeaf="", rewindBare=False)
+                self._update_reg(sess.sid, rewindTo="", rewindLeaf="", rewindBare=False,
+                                 rewindWait=False)
             except Exception as e:
                 self._log("rewind (%s): registry clear failed: %s" % (sess.name, e))
             self._log("rewind (%s): conversation moved since the request — flag spent, resuming plainly"
@@ -4137,7 +4615,8 @@ class SdkBackend:
         return sid
 
     def fork(self, name: str, parent_sid: str, cut_uuid: str = "", bg: str = "", fg: str = "",
-             sid: str | None = None, thread_of: str = "", model: str = "", effort: str = "") -> str:
+             sid: str | None = None, thread_of: str = "", model: str = "", effort: str = "",
+             fast: str = "") -> str:
         """Mint a NEW session that is a FORK of `parent_sid`'s conversation — up to `cut_uuid` when given
         (a transcript record uuid; empty = the whole conversation), the parent untouched either way (the
         user 2026-08-13). The new session gets its OWN sid, registry, name and identity colour — a fork
@@ -4177,14 +4656,35 @@ class SdkBackend:
             transcript_path(cwd, parent.get("lastSid") or parent_sid))
         reg["forkedFrom"] = {"sid": parent_sid, "name": parent.get("name", ""),
                              "cut": lineage_cut, "t": int(time.time())}
+        # Fork-boot OBSERVABILITY (T156, measured no-build): the tail-copy optimization died on
+        # evidence — a 46MB resume+fork cost ~5s more than a 4.4MB one; the wall is fixed costs —
+        # so instead every fork spend logs its source size + create-to-spend duration (the spend
+        # site in _on_message), and a recurrence of 200s-class boots reopens the case with data.
+        try:
+            reg["forkSrcBytes"] = os.path.getsize(
+                transcript_path(cwd, parent.get("lastSid") or parent_sid))
+        except OSError:
+            reg["forkSrcBytes"] = 0
+        # Two probe findings recorded where the fork lives (T156 step-0, 2026-08-28):
+        # - PRINT-MODE --resume-session-at refused every record uuid tried (user + assistant,
+        #   pre- and post-compaction) with "No message found with message.uuid of:" on CLI
+        #   2.1-era — the SDK connect path works (threads fork daily), so the print-mode flag
+        #   matches a DIFFERENT id; the first person to fork through `-p` will hit this.
+        # - The CLI refuses resume-at targets from before its last compaction boundary by design
+        #   (the rewind doc above) — a comment anchored to a pre-compaction turn is a WATCH ITEM
+        #   for the SDK path too: live forks work today, but nothing pins that.
         if thread_of:
             reg["threadOf"] = thread_of
         if parent.get("model") and parent["model"] != "default":
             reg["model"] = parent["model"]
-        if parent.get("fast"):
-            # fast rides the fork like model/effort do (the user 2026-08-25: a comment made from an
-            # Opus-high-FAST session came up slow) — the reg's `fast` is the persisted ask fast_opt
-            # reads at connect, so the thread's first frame already reports it
+        # fast rides the fork like model/effort do (the user 2026-08-25: a comment made from an
+        # Opus-high-FAST session came up slow) — the reg's `fast` is the persisted ask fast_opt
+        # reads at connect, so the thread's first frame already reports it. `fast` (the user
+        # 2026-08-29) is the per-fork override: "" inherits the parent's ask, "on" arms it
+        # regardless of the parent, "off" launches plain from a fast one. An arm the CLI refuses
+        # (a model /fast won't run) surfaces through _adopt_fast_state's refusal toast and clears
+        # the ask — same model, normal speed, never a silent substitute.
+        if fast == "on" or (not fast and parent.get("fast")):
             reg["fast"] = True
         # Per-fork model/effort OVERRIDES (the user 2026-08-17: a comment thread on a different model
         # or effort, without touching the parent). Applied HERE, in the reg the first connect reads —
@@ -4232,6 +4732,7 @@ class SdkBackend:
         s = self.sessions.get(sid)
         if s:
             s.name = name
+            s.thread_of = ""   # a promoted session bills ITSELF from this moment (T144's owner billing)
         self._poke()
         return True
 
@@ -4565,30 +5066,51 @@ class SdkBackend:
         turn is a data-loss hazard, and queued strangers would ride the new branch unasked."""
         return self._arm_rewind(sid, target_uuid, text)
 
-    def rollback(self, sid: str, target_uuid: str) -> "tuple[bool, str]":
+    def rollback(self, sid: str, target_uuid: str, revalidate=None) -> "tuple[bool, str]":
         """The chat's delete-message rollback: the edit rewind with NO replacement turn. The one-shot
         flag arms the same --resume-session-at reconnect, but nothing is enqueued — the conversation
         just stands at `target_uuid`, and the user's NEXT message (whenever it comes) takes the branch.
         Until then no record lands past the recorded leaf, so the flag stays pending (rewindBare) and
-        the kernel parse renders the cut (pending_cut) instead of the abandoned tail."""
-        return self._arm_rewind(sid, target_uuid, None)
+        the kernel parse renders the cut (pending_cut) instead of the abandoned tail. `revalidate`
+        (delete-while-busy) is the kernel's arm-time re-check, run at the interrupted turn's end —
+        None keeps the idle path exactly as before."""
+        return self._arm_rewind(sid, target_uuid, None, revalidate=revalidate)
 
-    def _arm_rewind(self, sid, target_uuid, text):
+    def _arm_rewind(self, sid, target_uuid, text, revalidate=None):
         reg = read_reg(self.state_dir, sid)
         if not reg or not reg.get("alive"):
             return False, "the session is not running — revive it first"
-        if self.busy(sid) or self.compacting(sid):
-            return False, "the session is busy — wait for the current turn to finish"
         if any(t for t in (reg.get("queue") or []) if isinstance(t, str) and t):
             return False, "messages are queued for this session — send or cancel them first"
+        if self.busy(sid) or self.compacting(sid):
+            # Delete-while-busy (the user 2026-08-29): at an explicit DELETE the old data-loss
+            # hazard inverts — the user is knowingly discarding the turn their deleted message
+            # started, and its partial output becomes the abandoned branch tail, the rewind
+            # family's normal shape. So a BARE rollback on a live in-flight session takes the
+            # interrupt-then-arm pipeline instead of refusing. Everything else keeps an honest
+            # refusal: a compaction is not the user's turn to discard (interrupting it is its own
+            # hazard); queued strangers would ride the new branch unasked (s._pending checked in
+            # the pipeline); an edit rewind (text) still needs the idle path — its replacement
+            # turn should not race a dying one.
+            if self.compacting(sid):
+                return False, ("the session is compacting its context — interrupting that is its "
+                               "own hazard; wait for it to finish, then delete")
+            s = self.sessions.get(sid)
+            if text is None and s is not None and not s.ended:
+                with s._lock:
+                    strangers = bool(s._pending)
+                if strangers:
+                    return False, "messages are queued for this session — send or cancel them first"
+                return self._arm_rollback_busy(s, sid, target_uuid, revalidate)
+            return False, "the session is busy — wait for the current turn to finish"
         leaf = last_record_uuid(transcript_path(reg.get("cwd") or "~", reg.get("lastSid") or sid))
         if not leaf:
             return False, "no conversation on disk to rewind"
         bare = text is None
-        self._update_reg(sid, rewindTo=target_uuid, rewindLeaf=leaf, rewindBare=bare)
+        self._update_reg(sid, rewindTo=target_uuid, rewindLeaf=leaf, rewindBare=bare, rewindWait=False)
         s = self._ensure(sid)
         if not s:
-            self._update_reg(sid, rewindTo="", rewindLeaf="", rewindBare=False)
+            self._update_reg(sid, rewindTo="", rewindLeaf="", rewindBare=False, rewindWait=False)
             return False, "the session could not start"
         s._rewind_leaf, s._rewind_to = leaf, target_uuid   # already-running thread: the reg seed didn't apply
         s._rewind_bare = bare
@@ -4597,6 +5119,66 @@ class SdkBackend:
         s.request_reconnect()   # idle → reconnects now; a fresh thread's FIRST connect applies the flag
         self._poke()
         return True, ""
+
+    def _arm_rollback_busy(self, s, sid, target_uuid, revalidate):
+        """Delete-while-busy, the GESTURE half: set the pending-rewind fields NOW — the existing
+        inputs() gate holds message intake on exactly these fields (rewind set, not armed), and
+        pending_cut renders the cut immediately via _rewind_wait, so the UI acknowledges at the
+        click like an idle delete — then interrupt the running turn through the owner-scoped
+        interrupt and let the turn's actual END complete the arm (_complete_rewind_wait). The leaf
+        is recorded THERE, after the dust settles: the interrupted turn's partial records are the
+        abandoned branch tail. rewindLeaf stays "" across the window on purpose — a kernel death
+        mid-window makes the next connect's leaf verification read the flag as SPENT, which
+        restores the cards loudly (never a wrong-branch cut)."""
+        self._update_reg(sid, rewindTo=target_uuid, rewindLeaf="", rewindBare=True, rewindWait=True)
+        s._rewind_to, s._rewind_leaf, s._rewind_bare = target_uuid, "", True
+        s._rewind_wait, s._rewind_revalidate = True, revalidate
+        self.interrupt(sid)
+        # the turn may have settled BETWEEN the busy() read and the fields landing — with intake
+        # held, no later turn-end event would ever complete the arm. Third observer, idempotent.
+        with s._lock:
+            settled = s.inflight == 0 and not s._pending
+        if settled:
+            self._complete_rewind_wait(s)
+        self._poke()
+        return True, ""
+
+    def _complete_rewind_wait(self, s):
+        """Delete-while-busy, the ARM half — run on the turn-end fact (the Stop hook, with the
+        inflight settle as a second observer; idempotent, first one wins under the lock). Re-check
+        through the kernel's closure — a mid-window auto-compaction lands a boundary record that
+        can put the target out of reach, and only the kernel's parse can see that — then record
+        the ACTUAL post-turn leaf and reconnect: from here it is the idle rollback path exactly.
+        Any failure restores loudly through _rewind_resolved("failed"), the same event the
+        two-phase card cleanup already keys its restore on."""
+        with s._lock:
+            if not s._rewind_wait:
+                return
+            s._rewind_wait = False
+        sid = s.sid
+        revalidate, s._rewind_revalidate = s._rewind_revalidate, None
+
+        def _restore(why):
+            self._update_reg(sid, rewindTo="", rewindLeaf="", rewindBare=False, rewindWait=False)
+            s._rewind_to, s._rewind_leaf, s._rewind_bare = "", "", False
+            self._log("rewind (%s): delete-while-busy restored — %s" % (s.name, why))
+            self._rewind_resolved(sid, "failed")
+            self._poke()
+
+        err = None
+        try:
+            err = revalidate() if revalidate else None
+        except Exception as e:
+            err = "the arm-time re-check raised: %s" % e
+        if err:
+            return _restore(err)
+        leaf = last_record_uuid(transcript_path(s.cwd, s.resume_sid or s.sid))
+        if not leaf:
+            return _restore("no conversation on disk at the turn's end")
+        self._update_reg(sid, rewindTo=s._rewind_to, rewindLeaf=leaf, rewindBare=True, rewindWait=False)
+        s._rewind_leaf = leaf
+        s.request_reconnect()
+        self._poke()
 
     def rewind_flags(self, sid: str) -> "tuple[str, str, bool]":
         """The session's armed rewind flags (rewindTo, rewindLeaf, rewindBare) — live session first,
@@ -4657,15 +5239,23 @@ class SdkBackend:
         s = self.sessions.get(sid)
         if s is not None and not s.ended:
             to, leaf, bare = s._rewind_to, s._rewind_leaf, getattr(s, "_rewind_bare", False)
+            wait = bool(getattr(s, "_rewind_wait", False))
             cwd, fsid = s.cwd, s.resume_sid or s.sid
         else:
             reg = read_reg(self.state_dir, sid)
             if not reg:
                 return ""
             to, leaf, bare = reg.get("rewindTo") or "", reg.get("rewindLeaf") or "", bool(reg.get("rewindBare"))
+            wait = bool(reg.get("rewindWait"))
             cwd, fsid = reg.get("cwd") or "~", reg.get("lastSid") or sid
         if not to or not bare:
             return ""
+        if wait:
+            # delete-while-busy window: the interrupted turn's records are STILL landing — on the
+            # abandoned tail, by design — so the leaf check below would expire the cut the user
+            # just made. The UI acknowledges at the click; verification resumes the moment the
+            # turn ends and the arm records the real leaf.
+            return to
         now_leaf = last_record_uuid(transcript_path(cwd, fsid))
         return to if rewind_disposition(to, leaf, now_leaf) == "apply" else ""
 
@@ -4735,6 +5325,53 @@ class SdkBackend:
         s = self.sessions.pop(sid, None)
         if s:
             s.shutdown()
+        self._poke()
+        return True
+
+    def running_sids(self) -> list:
+        """Sids with a LIVE session thread — the conserve sweep's candidates (T148)."""
+        with self._lock:
+            return [s.sid for s in self.sessions.values()
+                    if s.thread is not None and s.thread.is_alive() and not s.ended]
+
+    def conserve_idle(self, sid: str) -> bool:
+        """Whether this session is safe to conserve-close: no in-flight turn, nothing queued,
+        no ask parked (T148 — never close work) — and no armed RECURRING timers (the T148/769
+        seam: a recurring cron's CLI process is its only scheduler, no catch-up exists, and
+        ensure_scheduled revives any recurring-armed session with no thread every producer pass —
+        closing one here would be a close/revive loop, one respawn per sweep, forever). One-shot
+        wakeups do NOT hold the close (refined 2026-08-28 with the 769 author): the entry's
+        absolute dueEpoch + arming-generation stamp make the close safe — the dead generation
+        hands the wakeup to deliver_lost_wakeups, which delivers the prompt at due and revives
+        the session then. Both this guard and ensure_scheduled read recurring_crons(reg), the
+        same predicate over the same record, so the two sides can never disagree."""
+        with self._lock:
+            s = self.sessions.get(sid)
+        if not s or s.ended:
+            return False
+        if s.inflight or s.pending() or s._cur_ask_fut is not None:
+            return False
+        reg = read_reg(self.state_dir, sid) or {}
+        if recurring_crons(reg):
+            return False
+        return True
+
+    def conserve_close(self, sid: str) -> bool:
+        """Close ONE idle session's claude process, keeping it a tab-click from reviving (T148):
+        the reg stays alive=True and untouched (unlike kill), the queue/transcript persist, and the
+        dormant row keeps serving from the reg — the ordinary on-demand _ensure (a send, an open,
+        a scheduled wake) is the revive. Re-checks idleness under the lock; a turn that started
+        since the sweep's read stands the close down."""
+        if not self.conserve_idle(sid):
+            return False
+        with self._lock:
+            s = self.sessions.pop(sid, None)
+        if not s:
+            return False
+        try:
+            s.shutdown()
+        except Exception as e:
+            self._log("conserve close (%s): shutdown failed: %s" % (s.name, e))
         self._poke()
         return True
 
@@ -4954,9 +5591,19 @@ class SdkBackend:
             write_sdk_default(self.state_dir, mode=mode)   # remember as the seed for the NEXT new session, like model/effort (the user 2026-06-27)
         s = self.sessions.get(sid)
         if s:
+            prev = s.perm_mode      # the last CONFIRMED mode — the revert target if the CLI refuses (T139)
             s.mode = mode
             s.perm_mode = mode      # snapshot reflects it immediately (clears the picker's meta-pending)
-            s.set_mode_live(mode)
+            if mode == "bypassPermissions" and prev != "bypassPermissions":
+                # the CLI REFUSES a live switch INTO bypass unless the process was LAUNCHED with
+                # --dangerously-skip-permissions (probed on CLI 2.1.221, T139: 'Cannot set permission
+                # mode to bypassPermissions because the session was not launched with…'). The honest
+                # apply is the RECONNECT (effort's pattern): the relaunch carries
+                # permission_mode=bypassPermissions, which the SDK maps to the launch flag — resume
+                # continues the conversation and the next init confirms perm_mode.
+                s.request_reconnect()
+            else:
+                s.set_mode_live(mode, prev=prev)
         return True
 
     def stop_task(self, sid: str, task_id: str) -> bool:
@@ -5080,6 +5727,129 @@ class SdkBackend:
     def owns(self, sid: str) -> bool:
         return read_reg(self.state_dir, sid) is not None
 
+    def ensure_scheduled(self) -> int:
+        """Keep a CLI process ALIVE for every session with ARMED SESSION TIMERS (reg sessionCrons, the
+        Stop hook's record of CronCreate/ScheduleWakeup//loop arms). Session-scoped timers exist only in
+        the CLI process's memory and its scheduler fires fine on a live IDLE process — but a DORMANT
+        session has no process at the due moment and the timer silently never fires (the user
+        2026-08-28: a wakeup armed for 26 minutes out missed across 21 hours; a cron missed every tick
+        while parked, then fired reliably for days once its session stayed active). So the kernel's
+        producer calls this every pass: any alive, timer-armed session with no running thread is
+        reconnected — resume re-hydrates its timer set (verified live 2026-08-28: CronList shows the
+        same cron in a fresh process after a kill), and the CLI does ALL the firing natively; romp
+        never fires a timer itself. Residual, accepted: a timer due inside the ~minute a kernel
+        restart takes can still miss (the down window has no process to fire it and no catch-up
+        exists for session-scoped timers CLI-side).
+
+        A 120s per-sid retry floor bounds the failure mode where a timer-armed session's CLI dies
+        instantly on every spawn — without it this sweep would respawn it every producer pass
+        (~3s), a spawn storm. Returns how many sessions were revived this pass."""
+        now = time.time()
+        cool = getattr(self, "_sched_attempts", None)
+        if cool is None:
+            cool = self._sched_attempts = {}
+        n = 0
+        for reg in list_regs(self.state_dir):
+            if not reg.get("alive") or reg.get("threadOf"):
+                continue
+            rec = recurring_crons(reg)
+            if not rec:
+                # one-shot-only armed sets do NOT pin a process (refined 2026-08-28): a threadless
+                # session's one-shots are dead-generation — a fresh CLI cannot re-hydrate them, so a
+                # revival here buys nothing and would loop against conserve_close forever (close,
+                # revive, close…). deliver_lost_wakeups owns them and revives at due instead.
+                continue
+            sid = reg["sid"]
+            with self._lock:
+                s = self.sessions.get(sid)
+                if s and s.thread.is_alive():
+                    continue
+            if now - cool.get(sid, 0) < 120:
+                continue
+            cool[sid] = now
+            # Spawns draw a slot on the ONE machine-wide _spawn_sem, like boot reconcile and the
+            # idle-queue drive: without it a kernel restart with N timer-armed sessions launched N
+            # claude processes in one pass — the exact CPU storm the stagger exists to prevent
+            # (review of #769, 2026-08-28). No slot this pass → the cooldown map retries later.
+            slot = self._spawn_sem.acquire(timeout=0.1)
+            if not slot:
+                cool[sid] = 0                       # don't burn the 120s floor on a full stagger
+                continue
+            try:
+                if self._ensure(sid, on_boot_settled=self._spawn_sem.release) is not None:
+                    n += 1
+                    self._log("scheduled-session sweep: reviving %s — %d recurring timer(s) need a live process"
+                              % (reg.get("name") or sid[:13], len(rec)))
+                else:
+                    self._spawn_sem.release()       # nothing spawned — the parked release never attaches
+            except Exception:
+                self._spawn_sem.release()
+                raise
+        return n
+
+    def deliver_lost_wakeups(self) -> int:
+        """Fire ONE-SHOT wakeups the CLI can no longer fire. A process recycle LOSES ScheduleWakeup
+        wakeups (verified live 2026-08-28: after a kill + revive, CronList re-hydrates the recurring
+        cron but the pending wakeup is gone) — so a wakeup armed before a kernel restart, an orphan
+        reap, or a reconnect never fires, however alive the session is now. The reg's armed-set record
+        (the Stop hook's sessionCrons) survives the recycle; when a one-shot recorded there is PAST DUE
+        by a grace and still recorded, nobody fired it: a live process fires one-shots at their exact
+        minute, and the fired turn's Stop hook rewrites the record without it. Deliver the wakeup's own
+        prompt through the normal send path (revives a dormant session) and strip the record first, so
+        the next pass can never double-deliver.
+
+        OWNERSHIP IS BY PROCESS GENERATION, not by guessing from timing (review of #769, 2026-08-28:
+        the first cut used a 90s grace + an inflight check, and both were blind to turns the CLI's own
+        scheduler starts — a genuinely-fired wakeup whose turn outlasted the grace got delivered a
+        second time, mid-turn). Every recorded entry carries procGen, the stamp of the CLI process
+        that armed it. That generation still live → the CLI itself will fire it at due; the kernel
+        NEVER touches it, however late the record looks. That generation gone → no process can ever
+        fire it; the kernel owns it outright and delivers at due (a small 5s grace covers clock skew
+        between the stamp and this sweep, not any behavioral window)."""
+        now = time.time()
+        fired = 0
+        for reg in list_regs(self.state_dir):
+            if not reg.get("alive") or reg.get("threadOf"):
+                continue
+            crons = reg.get("sessionCrons") or []
+            shots = [c for c in crons if isinstance(c, dict) and not c.get("recurring")]
+            if not shots:
+                continue
+            sid = reg["sid"]
+            with self._lock:
+                s = self.sessions.get(sid)
+                live_gen = s.proc_gen if (s and s.thread.is_alive()) else None
+            due_shots = []
+            for c in shots:
+                if live_gen is not None and str(c.get("procGen") or "") == live_gen:
+                    continue                      # its arming process is alive — the CLI fires it, not us
+                due = c.get("dueEpoch")
+                if not due:                       # legacy entry without the exact date → reconstruct
+                    due = wakeup_due_epoch(c.get("cron"),
+                                           float(c.get("armedAt") or reg.get("sessionCronsAt") or (now - 3600)))
+                if due is not None and now >= float(due) + 5:
+                    due_shots.append(c)
+            if not due_shots:
+                continue
+            keep = [c for c in crons if c not in due_shots]
+            try:                                  # strip FIRST — a send failure must not re-fire forever;
+                self._update_reg(sid, sessionCrons=keep)   # the loss is logged loudly below instead
+            except Exception as e:
+                self._log("lost-wakeup (%s): reg strip failed, not delivering: %s" % (reg.get("name") or sid[:13], e))
+                continue
+            for c in due_shots:
+                ok = False
+                try:
+                    ok = bool(self.send(sid, c.get("prompt") or ""))
+                except Exception as e:
+                    self._log("lost-wakeup (%s): delivery raised: %s" % (reg.get("name") or sid[:13], e))
+                self._log("lost-wakeup (%s): one-shot %s was due %.0fs ago with no process to fire it — %s"
+                          % (reg.get("name") or sid[:13], c.get("id") or "?",
+                             now - (wakeup_due_epoch(c.get("cron"), float(c.get("armedAt") or now)) or now),
+                             "prompt delivered" if ok else "DELIVERY FAILED (prompt lost — see above)"))
+                fired += 1
+        return fired
+
     def live_sessions(self) -> dict[str, dict]:
         """{sid: state-dict} for every alive SDK session — merged by the kernel
         into its session enumeration so SDK sessions appear in the UI."""
@@ -5089,45 +5859,66 @@ class SdkBackend:
                 continue
             if reg.get("threadOf"):
                 continue   # a comment thread: its surface is the parent chat's comment UI, never a tab
-            sid = reg["sid"]
-            s = self.sessions.get(sid)
-            if s and s.thread.is_alive():
-                out[sid] = s.snapshot()
-            else:
-                ls = last_state(self.state_dir, sid)
-                st = ls.get("state") or "waiting"
-                # A NOT-running (dormant, resumable) SDK session can't actually be mid-turn: after a kernel
-                # restart its thread is gone, but the state log still reads its last in-flight state
-                # ("working"/"permission"/"picker"/…). Reporting that verbatim makes a dormant session look
-                # FALSELY blocked/working with NO live ask to resolve it — the prompt died with the thread (the
-                # user 2026-06-24: reorder_bug showed "blocked, needs approval" with no prompt after a refresh).
-                # Map any in-flight state → "waiting", the true state of a dormant session (it resumes on the
-                # next drive). A GENUINELY-blocked session is RUNNING → snapshot() above (with a real
-                # current_ask), so it's unaffected. Keyed on thread-not-running, not a time heuristic.
-                if st in ("working", "permission", "picker", "compacting", "retrying"):
-                    st = "waiting"
-                lc = reg.get("liveCtx")   # last persisted context fill → bar survives idle/restart
-                out[sid] = {"state": st,
-                            "since": str(ls.get("t") or ""),
-                            # not running (e.g. post-restart): prefer the last LIVE model we persisted
-                            # (liveModel), else the chosen alias — so the badge isn't blank while dormant.
-                            "model": model_label(reg.get("liveModel") or "", reg.get("model") or ""),
-                            "modelPending": bool(reg.get("modelPending")),
-                            "effortPending": bool(reg.get("effortPending")),
-                            "effort": reg.get("effort", ""),
-                            "auth": self.default_auth(reg),
-                            # the persisted CLI truth (apiKeyAuth, the liveModel pattern) so a dormant
-                            # session's Billing row keeps telling it; absent = no init ever landed
-                            "authLive": ("key" if reg.get("apiKeyAuth") else "login")
-                                        if isinstance(reg.get("apiKeyAuth"), bool) else "",
-                            "authPending": bool(reg.get("authPending")),
-                            "mode": reg.get("mode", ""),
-                            # last persisted fast state (liveFast, like liveCtx above) → the badge
-                            # survives idle/restart instead of vanishing until the next turn
-                            "fast": reg.get("liveFast", ""),
-                            "fastReason": reg.get("liveFastReason", ""),
-                            "ctx": lc if isinstance(lc, (int, float)) else "", "summary": ""}
+            sid = reg.get("sid")
+            if not sid:
+                continue
+            try:
+                out[sid] = self._live_row(reg, sid)
+            except Exception:
+                # One session's bad row must not hide the OTHERS — this loop used to run unguarded
+                # under the kernel merge's single try, so one snapshot() exception silently dropped
+                # EVERY SDK session from an otherwise-successful listing, and absence from a listing
+                # reads as death downstream (the postal bus refused sends to live peers, 2026-08-31).
+                # The failing session itself stays VISIBLE as a minimal waiting row: present beats
+                # perfect, and the loud line makes the real bug findable.
+                sys.stderr.write("live_sessions: row for %s failed (kept as minimal row): %s\n"
+                                 % (sid, traceback.format_exc()))
+                out[sid] = {"state": "waiting", "since": "", "model": "", "modelPending": False,
+                            "effortPending": False, "effort": "", "auth": "", "authLive": "",
+                            "authPending": False, "mode": "", "fast": "", "fastReason": "",
+                            "color": None, "connected": False, "spawning": False, "retryCount": 0,
+                            "retryInfo": None, "ctx": None, "subagents": [], "bgTasks": []}
         return out
+
+    def _live_row(self, reg, sid):
+        """One session's live_sessions row (running snapshot, else the dormant reg row) — factored
+        so live_sessions can guard it PER SESSION (one bad row must not hide the other sessions)."""
+        s = self.sessions.get(sid)
+        if s and s.thread.is_alive():
+            return s.snapshot()
+        ls = last_state(self.state_dir, sid)
+        st = ls.get("state") or "waiting"
+        # A NOT-running (dormant, resumable) SDK session can't actually be mid-turn: after a kernel
+        # restart its thread is gone, but the state log still reads its last in-flight state
+        # ("working"/"permission"/"picker"/…). Reporting that verbatim makes a dormant session look
+        # FALSELY blocked/working with NO live ask to resolve it — the prompt died with the thread (the
+        # user 2026-06-24: reorder_bug showed "blocked, needs approval" with no prompt after a refresh).
+        # Map any in-flight state → "waiting", the true state of a dormant session (it resumes on the
+        # next drive). A GENUINELY-blocked session is RUNNING → snapshot() above (with a real
+        # current_ask), so it's unaffected. Keyed on thread-not-running, not a time heuristic.
+        if st in ("working", "permission", "picker", "compacting", "retrying"):
+            st = "waiting"
+        lc = reg.get("liveCtx")   # last persisted context fill → bar survives idle/restart
+        return {"state": st,
+                    "since": str(ls.get("t") or ""),
+                    # not running (e.g. post-restart): prefer the last LIVE model we persisted
+                    # (liveModel), else the chosen alias — so the badge isn't blank while dormant.
+                    "model": model_label(reg.get("liveModel") or "", reg.get("model") or ""),
+                    "modelPending": bool(reg.get("modelPending")),
+                    "effortPending": bool(reg.get("effortPending")),
+                    "effort": reg.get("effort", ""),
+                    "auth": self.default_auth(reg),
+                    # the persisted CLI truth (apiKeyAuth, the liveModel pattern) so a dormant
+                    # session's Billing row keeps telling it; absent = no init ever landed
+                    "authLive": ("key" if reg.get("apiKeyAuth") else "login")
+                                if isinstance(reg.get("apiKeyAuth"), bool) else "",
+                    "authPending": bool(reg.get("authPending")),
+                    "mode": reg.get("mode", ""),
+                    # last persisted fast state (liveFast, like liveCtx above) → the badge
+                    # survives idle/restart instead of vanishing until the next turn
+                    "fast": reg.get("liveFast", ""),
+                    "fastReason": reg.get("liveFastReason", ""),
+                    "ctx": lc if isinstance(lc, (int, float)) else "", "summary": ""}
 
     # ---- picker/permission UI bridge (kernel-thread API) ----
     def on_ask(self, sid: str, kind: str, payload=None) -> bool:

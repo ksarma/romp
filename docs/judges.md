@@ -376,7 +376,14 @@ permission/API-error floors: one interrupt at a time, the present event first.
   holds the authoritative tier: an open item on the agent's own to-do list
   pins the card in Working over any judge verdict.
 - **plan-sync**: pure code. Mirrors the agent's own to-do list as flat top
-  cards ("declared in the agent's own to-do list"); the grouper nests them.
+  cards ("declared in the agent's own to-do list"). A step declared while
+  the session serves a linked dispatch is stamped `serving` ({peer, msgId,
+  goalId}, latched at mint on the newest delegate-kind segment at or before
+  the declaration) plus the dispatch's frame and root-ask, and the feed
+  folds it into the sender's ask card at render — fan-out inside the ask
+  card, with needs-you breaking through (T137). A dispatch-less step
+  threads the session's own prompt record instead. The grouper may still
+  merge a duplicate mirror.
   It reads the live task store (`~/.claude/tasks/<fsid>/`, the same source
   the chat TO-DO card reads) — never the transcript, whose record of a
   TaskUpdate can fall off the live chain when an api-error retry forks the

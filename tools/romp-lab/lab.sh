@@ -12,6 +12,8 @@ for a in "$@"; do case "$a" in
   --keep) KEEP=1 ;;
   --banner-only) MODE=banner ;;       # the T119 reload-banner phase alone (no model spend)
   --highlight-only) MODE=highlight ;; # the T102/T106 highlight loop alone
+  --modes-only) MODE=modes ;;         # the T139 permission-mode sweep alone
+  --login-only) MODE=login ;;         # the T157 in-dashboard login flow (mocked CLI, no model spend)
 esac; done
 
 LAB="$(mktemp -d /tmp/romp-lab-XXXXXX)"
@@ -57,6 +59,12 @@ export ROMP_DIST_DIR="$LAB/dist"
 # a fast heartbeat so the banner phase's one-heartbeat assertions run in seconds, not tens of them
 export ROMP_WS_KEEPALIVE=2
 
+if [ "$MODE" = "login" ]; then
+  # the T157 phase drives the LOGIN flow only (no sessions run): the kernel resolves claude through
+  # ROMP_CLAUDE_BIN, so pointing it at the mock makes the whole flow synthetic — never a real account
+  export ROMP_CLAUDE_BIN="$ROOT/tools/romp-lab/login-mock-claude.py"
+  export LOGIN_MOCK_MARKER="$LAB/login-code-sha.txt"
+fi
 "$ROOT/bin/romp-kernel" > "$LAB/kernel.log" 2>&1 &
 KPID=$!
 cleanup() {
@@ -77,14 +85,14 @@ curl -fsS "http://127.0.0.1:$PORT/healthz" >/dev/null || { echo "kernel never be
 echo "lab kernel up on :$PORT (state: $LAB/state)"
 
 RC=0
-if [ "$MODE" != "highlight" ]; then
+if [ "$MODE" != "highlight" ] && [ "$MODE" != "modes" ] && [ "$MODE" != "login" ]; then
   # the reload-banner contract (T119) — first, because it spends no model turns
   LAB_DIR="$LAB" PORT="$PORT" TOKEN="$ROMP_SERVE_TOKEN" KPID="$KPID" KERNEL_BIN="$ROOT/bin/romp-kernel" \
     node "$ROOT/tools/romp-lab/banner-loop.mjs" || RC=$?
   echo "banner loop exit: $RC (shots: $LAB/shots)"
   [ -f "$LAB/kernel.pid" ] && KPID="$(cat "$LAB/kernel.pid")"
 fi
-if [ "$MODE" != "banner" ] && [ "$RC" = 0 ]; then
+if [ "$MODE" != "banner" ] && [ "$MODE" != "modes" ] && [ "$MODE" != "login" ] && [ "$RC" = 0 ]; then
   # the kernel may have been bounced by the banner phase — wait for health before driving it
   for i in $(seq 1 60); do
     curl -fsS "http://127.0.0.1:$PORT/healthz" >/dev/null 2>&1 && break; sleep 0.5
@@ -92,6 +100,20 @@ if [ "$MODE" != "banner" ] && [ "$RC" = 0 ]; then
   LAB_DIR="$LAB" PORT="$PORT" TOKEN="$ROMP_SERVE_TOKEN" PROJECT_DIR="$LAB/project" \
     node "$ROOT/tools/romp-lab/highlight-loop.mjs" || RC=$?
   echo "highlight loop exit: $RC (shots: $LAB/shots)"
+fi
+if [ "$MODE" = "login" ] && [ "$RC" = 0 ]; then
+  LAB_DIR="$LAB" PORT="$PORT" TOKEN="$ROMP_SERVE_TOKEN" LOGIN_MOCK_MARKER="$LOGIN_MOCK_MARKER" \
+    node "$ROOT/tools/romp-lab/login-loop.mjs" || RC=$?
+  echo "login loop exit: $RC (shots: $LAB/shots)"
+fi
+if [ "$MODE" != "banner" ] && [ "$MODE" != "highlight" ] && [ "$MODE" != "login" ] && [ "$RC" = 0 ]; then
+  # the T139 permission-mode sweep: every mode's ask contract on the real stack
+  for i in $(seq 1 60); do
+    curl -fsS "http://127.0.0.1:$PORT/healthz" >/dev/null 2>&1 && break; sleep 0.5
+  done
+  LAB_DIR="$LAB" PORT="$PORT" TOKEN="$ROMP_SERVE_TOKEN" PROJECT_DIR="$LAB/project" \
+    node "$ROOT/tools/romp-lab/modes-loop.mjs" || RC=$?
+  echo "modes loop exit: $RC (shots: $LAB/shots)"
 fi
 [ "$RC" = 0 ] || KEEP=1
 exit "$RC"

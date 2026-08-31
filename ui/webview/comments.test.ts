@@ -258,6 +258,34 @@ test("break out posts commentPromote and acks with a provisional tab", () => {
   assert.match(UI, /type: "commentPromote", id: sid, tid, name \}\);\s*\n\s*close\(\);\s*\n\s*closeCommentPop\(\);\s*\n\s*openProvisional\(\{ name, backend: "sdk", dir: "", host: hostOf\(sid\) \}\);/);
 });
 
+test("the create dialog pre-reads the kernel's default-comment trio and shows it", () => {
+  // The user 2026-08-29: the gear can pin a default model/effort/fast for every NEW thread. The
+  // dialog must SHOW the effective default (pick > setting > inherit) so a pick stays a visible
+  // deviation; the kernel re-resolves the same order at create, so a stale pre-read can mislabel
+  // a chip but never mislaunch a thread.
+  assert.match(UI, /let commentDefaults = \{ model: "session", effort: "session", fast: "session" \};/);
+  assert.match(UI, /if \(d\.commentDefaults\) adoptCommentDefaults\(d\.commentDefaults\);/);
+  assert.match(UI, /function refreshCommentDefaults/);
+  // re-read at dialog open, repainting the row IN PLACE (the composer holds focus and a draft)
+  assert.match(UI, /refreshCommentDefaults\(\(\) => \{\s*\n\s*if \(pendingCommentAnchor !== create\) return;/);
+  assert.match(UI, /const effVal = chosen \|\| setDef\(kind\);/);
+  // a version id stored in the setting still labels correctly (families hold their versions)
+  assert.match(UI, /function modelChoiceLabel\(value: string\)/);
+  assert.match(KERNEL, /"commentDefaults": \{"model": jd\._state_str\("comment-model", "session"\),/);
+});
+
+test("fast rides the create end to end, resolved dialog > setting > inherit at the kernel", () => {
+  // the chip is offered only where the effective model could run fast (no control that only toasts)
+  assert.match(UI, /if \(canFast\(create\.model \|\| setDef\("model"\) \|\| st\?\.model \|\| ""\)\) metaRight\.append\(mkSel\("fast"\)\);/);
+  assert.match(UI, /fast: create\.fast \|\| "", color: create\.color \|\| "" \}\);/);
+  assert.match(UI, /fast: c\.fast, color: c\.color \}\);/);   // the in-flight retry keeps the pick (unchanged by the 2026-08-30 eager-all round)
+  assert.match(KERNEL, /def _comment_launch_prefs\(model="", effort="", fast=""\):/);
+  assert.match(KERNEL, /model, effort, fast = _comment_launch_prefs\(model, effort, fast\)/);
+  assert.match(KERNEL, /fast=str\(msg\.get\("fast"\) or ""\)/);       // the ws op hands it through…
+  assert.match(KERNEL, /"fast": str\(msg\.get\("fast"\) or ""\),/);   // …and a lag-parked create keeps it
+  assert.match(KERNEL, /fast=pk\.get\("fast", ""\)/);
+});
+
 test("kernel registers every comment drive op", () => {
   for (const op of ["commentCreate", "commentReply", "commentResolve", "commentDelete", "commentSeen", "commentPromote"]) {
     assert.ok(KERNEL.includes(`"${op}"`), `${op} missing from ID_OPS/handlers`);
@@ -324,7 +352,7 @@ test("the create dialog names the thread right there: prefilled <session>-commen
   assert.match(UI, /"New comment:"/);
   assert.match(UI, /if \(nameBox\) head\.append\(title, nameBox, closeBtn\);/);
   assert.match(UI, /send\.setAttribute\("aria-label", create \? "Comment" : "Send"\);/);   // the ➤ carries the word
-  assert.match(UI, /text, name: nm, model: create\.model \|\| "", effort: create\.effort \|\| "",\s*\n\s*color: create\.color \|\| ""/);
+  assert.match(UI, /text, name: nm, model: create\.model \|\| "", effort: create\.effort \|\| "",\s*\n\s*fast: create\.fast \|\| "", color: create\.color \|\| ""/);
   // the comment's own model/effort selectors reuse the statusline's /models-fed choices + menu skin
   assert.match(UI, /const metaRow = el\("div", "statusline cmt-meta-row"\);/);   // the chat statusline dress (2026-08-25 parity)
   assert.match(UI, /META_CHOICES\[kind\]/);
@@ -513,7 +541,9 @@ test("busy latches at the SEND gesture and clears exactly on the reply-arrived r
     + "mid-turn interim (the specimen's 'checking…' text) must never clear the pulse early. "
     + "threadBusy on the CLEAR side only delays; the latch side never re-derives from state.");
   // the mark's predicate: the latch, or (post-reload) the records' own owed reading; never state
-  assert.match(UI, /return cmtAwaitBase\.has\(th\.tid\) \|\| replyOwed\(th\);/);
+  assert.match(UI, /if \(cmtAwaitBase\.has\(th\.tid\)\) return true;/);
+  assert.match(UI, /return replyOwed\(th\) && !cmtInterrupted\.has\(th\.tid\);/,
+    "the owed arm carries the T138 stop tombstone — an interrupted send owes nothing until the NEXT send");
   assert.match(UI, /if \(th\.status !== "open" \|\| !!th\.error \|\| threadStuck\(th\.state\)\) return false;/);
   // the push-count proxy is GONE root and branch
   assert.doesNotMatch(UI, /settledPushes|commentBusyLatch|latchBusy|SETTLE_CONFIRM_PUSHES/);
@@ -539,11 +569,13 @@ test("stuck-green regression: a stalled or missing later frame can never park th
 // (tab strip) — not transcript-rendering settings, N/A both before and after. ───────────────────
 test("the popover renders the chat's display units — thinking hidden, tool runs folded, per the gear", () => {
   const at = UI.indexOf("renderingIntoThread = true;");
-  const block = UI.slice(at, at + 2200);
+  const block = UI.slice(at, at + 2800);   // widened past the T145 relay-note insert
   assert.ok(block.includes("? compactDisplay(evs.map((e) => e.kind), evs.map((e) => e.kind === \"tool\" ? e.name : undefined))"),
     "the SAME unit builder the chat uses, gated on the SAME settings.compact");
-  assert.ok(block.includes("const key = toolGroupKey(tools[0]);"), "the chat's group identity — expands survive refills");
-  assert.ok(block.includes("list.appendChild(renderToolGroup(tools, prev, key, open));"), "the chat's own folded line");
+  assert.ok(block.includes('const key = it.kind === "toolgroup" ? toolGroupKey(run[0]) : retryGroupKey(run[0]);'),
+    "the chat's group identities — tool runs AND retry runs (T131) — so expands survive refills");
+  assert.ok(block.includes("? renderToolGroup(run as Extract<ChatEvent, { kind: \"tool\" }>[], prev, key, open)"),
+    "the chat's own folded lines");
   assert.ok(block.includes('child.classList.add("tg-child");'), "expanded children wear the chat's classes");
 });
 
@@ -603,11 +635,59 @@ test("the pending echo prunes against EVENTS too — a landed user turn never do
 
 test("the parity bundle (2026-08-26): dividers, owner-scoped in-turn controls, the sid stamp", () => {
   // day dividers open new days in the popover exactly as in the chat (same helper, same idiom)
-  assert.match(UI, /const dayOpen = eventEpoch\(evs\[itemFirstEvent\(it\)\]\);\s*\n\s*if \(dayOpen != null\) \{\s*\n\s*const dv = dayDividerFor\(dayOpen, prev\);/);
+  assert.match(UI, /const dayOpen = eventEpoch\(evs\[itemFirstEvent\(it\)\]\);[\s\S]{0,300}?if \(dayOpen != null\) \{\s*\n\s*const dv = dayDividerFor\(dayOpen, prev\);/);   // the T145 relay-note insert sits between
   // the popover's list is stamped with the THREAD sid, and in-turn controls resolve their owner
   // from the DOM at click time — queued ✕ and the api-error card act on the thread, never the tab
   assert.match(UI, /list\.dataset\.session = th\.tid;/);
   assert.match(UI, /function owningSidOf\(el0: HTMLElement \| null\): string \| null \{/);
-  assert.match(UI, /\{ type: "cancelQueued", id: owningSidOf\(el\), md: qmd \}/);
+  assert.match(UI, /const sidQ = owningSidOf\(el\) \|\| activeId;/);   // resolved once — the optimistic arm reuses it
+  assert.match(UI, /\{ type: "cancelQueued", id: sidQ, md: qmd \}/);
   assert.match(UI, /\{ type: "dismissDialog", id: owningSidOf\(dismiss\) \}/);
+});
+
+test("the thread's running turn offers the chat's stop affordance, owner-scoped to the THREAD (T138)", () => {
+  // the user 2026-08-27: threads couldn't be interrupted from the UI at all — diagnosis (a), the
+  // affordance was simply absent from the popover statusline (the chat's stopButton never had a
+  // popover twin). The fix rides the stable body delegate (this statusline rebuilds per comments
+  // frame — press-safety) and pins the target to the thread's own session, never the active tab.
+  const at = UI.indexOf("function cmtStateChip(");
+  const chip = UI.slice(at, UI.indexOf("\n}", at));
+  assert.match(chip, /b\.dataset\.act = "cmtinterrupt";/);
+  assert.match(chip, /b\.dataset\.sid = th\.tid;/, "the thread's OWN sid rides the button");
+  assert.match(chip, /wrap\.append\(chip, timer, stopBtn\(\)\);/, "working offers it");
+  assert.match(chip, /wrap\.append\(chip, stopBtn\(\)\);/, "retrying offers it");
+});
+
+test("the popover interrupt posts the THREAD sid, clears the send-latch on the gesture, and acks instantly", () => {
+  const at = UI.indexOf("cmtinterrupt: (elx) => {");
+  assert.ok(at > 0, "the delegated handler exists (a direct listener would die in the per-frame rebuild)");
+  const body = UI.slice(at, UI.indexOf("},", at));
+  assert.match(body, /const sid = \(elx as HTMLElement\)\.dataset\.sid;/);
+  assert.match(body, /vscodeApi\.postMessage\(\{ type: "interrupt", id: sid \}\);/);
+  assert.ok(!body.includes("activeId"), "never the active tab — the owner-scoping class queued-x/Retry were fixed for");
+  // T102's latch contract at the interrupt edge: the exchange ends with NO reply record coming, so
+  // the pulse clears on the gesture itself — the deciding event — not on a reply that never lands.
+  assert.match(body, /cmtAwaitBase\.delete\(sid\);/);
+  // …and the OWED arm stands down too (lab phase 4e caught it: replyOwed's trailing-user shape held
+  // the mark green forever after a stop). The tombstone is record-count-keyed, never a clock, and a
+  // fresh send retires it (re-owed).
+  assert.match(body, /cmtInterrupted\.add\(sid\);/);
+  assert.match(UI, /return replyOwed\(th\) && !cmtInterrupted\.has\(th\.tid\);/,
+    "gesture-pair tombstone: stop sets it, ONLY the next send clears it — the CLI files the interrupt "
+    + "as a trailing user-kind record, so any record-shape re-derivation would re-fire (lab-caught)");
+  assert.match(UI, /cmtInterrupted\.delete\(cur\.th\.tid\);/);
+  assert.match(body, /chip chip-interrupting/, "instant acknowledgment: the chip flips before any kernel round-trip");
+});
+
+test("a contentless open thread NEVER renders blank — the loader stays past the backstop (T152)", () => {
+  // the live specimen: a fork of a 40MB parent took 200+s to spend across kernel restarts; the 8s
+  // boot backstop expired and the popover showed the quote floating over an empty list. The
+  // backstop now swaps the loader's LABEL (an honest 'taking longer'), never to blank; error and
+  // stuck branches still take over on the frame that says so.
+  const at = UI.indexOf('if (!evs.length && !th.msgs.length && th.status === "open" && !th.error) {');
+  assert.ok(at > 0, "the never-blank guard exists, gated on BOTH projections being empty");
+  const body = UI.slice(at, UI.indexOf("return;", at));
+  assert.match(body, /const slow = !cmtBootHolds\(th\.tid\);/);
+  assert.match(body, /still opening — the thread's session is taking longer than usual…/);
+  assert.match(body, /opening the thread…/);
 });

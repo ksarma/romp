@@ -142,3 +142,12 @@ body.rs-lifted.rs-pane-gone::before { display: none; }
 .ra-li b { color: var(--text-bright, #e8eaed); font-weight: 600; }
 .ra-sw { width: 10px; height: 10px; border-radius: 2px; display: inline-block; flex: 0 0 auto; }
 .ra-note { color: var(--text-muted, #9aa0a6); font-size: 11px; border-top: 1px solid var(--hairline, #3a3a3a); padding-top: 7px; }
+
+/* the login paste-code MODAL (the user 2026-08-30): the panel treatment — centered card over a
+   translucent backdrop, everything behind dimmed but visible; menus vocabulary card chrome. */
+#rs-login-modal { position: fixed; inset: 0; z-index: 1400; background: var(--overlay-dim, rgba(0, 0, 0, 0.55));
+  display: flex; align-items: center; justify-content: center; }
+#rs-login-modal[hidden] { display: none; }   /* the author display:flex would otherwise defeat [hidden] (the #rsettings[hidden] precedent) */
+#rs-login-modal .rs-login-card { background: var(--surface-raised, #252526); border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.35); padding: 14px 16px;
+  width: min(480px, calc(100vw - 48px)); }

@@ -84,9 +84,11 @@ class SessionList(unittest.TestCase):
         # with no diverged SDK registry it is the sid itself.
         self.assertEqual(rows["sid-t"], {"id": "sid-t", "name": "alpha", "state": "working", "dir": "/work/a",
                                          "bg": "#112233", "fg": "#ffffff", "lastSid": "sid-t",
+                                         "compacting": False,          # romp compact --wait polls this
                                          "working": "owns feed.ts", "backend": "tmux"})
         self.assertEqual(rows["sid-s"], {"id": "sid-s", "name": "beta", "state": "waiting", "dir": "/work/b",
                                          "bg": "blue", "fg": "white", "lastSid": "sid-s",
+                                         "compacting": False,
                                          "working": "", "backend": "sdk"})
 
     def test_empty_when_no_live_sessions(self):

@@ -79,7 +79,9 @@ class CmdGestureSourcePins(unittest.TestCase):
 
     def test_build_session_interleaves_and_dedups_against_the_live_chip(self):
         src = inspect.getsource(km.build_session)
-        self.assertIn("gestures = _cmd_gestures(sid)", src)
+        # the durable store is still the source; since T131 the live render floors it at the last
+        # episode boundary so a /clear's fresh thread doesn't inherit the old episode's gestures
+        self.assertIn("gestures = _past_floor(_cmd_gestures(sid))", src)
         self.assertIn('if (_cg["t"], _cg["cmd"]) in _live_cmd_keys:', src)
         self.assertIn('events.append({"kind": "cmdGesture", "cmd": _cg["cmd"], "ts": iso(_cg["t"]),', src)
         # flushed by the SAME time-gate as the other durable notes, and BEFORE the efforts loop, so a

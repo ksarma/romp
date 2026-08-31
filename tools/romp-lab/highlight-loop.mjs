@@ -11,7 +11,14 @@ const { chromium } = require2("playwright");
 
 const PORT = process.env.PORT, TOKEN = process.env.TOKEN, LAB = process.env.LAB_DIR, PROJ = process.env.PROJECT_DIR;
 const MODEL = process.env.LAB_MODEL || "Haiku";
-const PASSAGE = "the moon has no weather to speak of";
+// The anchor turn is RICH on purpose (T152, the user 2026-08-28: a comment on a long turn with
+// bold sections, links and an inline image rendered a floating quote over a blank thread): the
+// model echoes markdown — bold + inline code + a path + an image — so the passage's rendered text
+// SPANS ELEMENT BOUNDARIES and the exact-match re-find, the selection, and the quote all exercise
+// the hard case. PASSAGE is the RENDERED (plain) text the user would drag over.
+const PASSAGE_MD = "the **moon** has `no weather` to speak of (notes: /tmp/moon-notes.txt)";
+const PASSAGE = "the moon has no weather to speak of (notes: /tmp/moon-notes.txt)";
+const TURN_MD = PASSAGE_MD + "\n\n![plot](/tmp/moon-plot.png)";
 const shots = path.join(LAB, "shots");
 let phaseN = 0;
 const fails = [];
@@ -47,6 +54,15 @@ await page.fill("#picker-search", "lab-moon");
 await page.fill("#picker-dir", PROJ);
 await page.click("#picker-new-btn");
 await page.waitForSelector(".tab", { timeout: 30000 });
+// T151, permanent: the SERVED chat page (THEME_CSS vars defined — the exact context the T141
+// harness missed) paints the strip on the page dark; the tokens' fallbacks are dead code here.
+{
+  const t = await page.evaluate(() => ({
+    strip: getComputedStyle(document.getElementById("tabbar")).backgroundColor,
+    page: getComputedStyle(document.body).backgroundColor,
+  }));
+  check("0-strip-is-page-dark-when-served", t.strip === t.page, `strip ${t.strip} vs page ${t.page}`);
+}
 // wait until the session is REAL (composer live, statusline shows a state chip)
 await page.waitForSelector("#statusline .chip, #statusline .compacting-line", { timeout: 60000 });
 await shot("session-open");
@@ -81,7 +97,7 @@ const moded = await page.evaluate(async () => {
 console.log("mode bypass:", moded);
 
 // ── a REAL turn: ask for a stable, selectable sentence ──
-await page.fill("#composer-input", `Reply with exactly this sentence and nothing else: ${PASSAGE}`);
+await page.fill("#composer-input", `Reply with exactly this markdown and nothing else (verbatim, keep all formatting characters): ${TURN_MD}`);
 await page.keyboard.press("Enter");
 await page.waitForFunction((p) => Array.from(document.querySelectorAll(".turn-assistant .md"))
   .some((e) => e.textContent.includes(p)), PASSAGE, { timeout: 180000 });
@@ -89,12 +105,27 @@ await shot("reply-landed");
 
 // ── the COMMENT flow: select the passage → context menu → Comment → send ──
 await page.evaluate((p) => {
+  // cross-node selection (T152): the rich turn splits the passage across <strong>/<code>/link text
+  // nodes — walk the text nodes accumulating rendered text, and set the range ends INSIDE the
+  // nodes where the passage starts and ends, exactly as a user's drag would land
   const el = Array.from(document.querySelectorAll(".turn-assistant .md")).find((e) => e.textContent.includes(p));
   const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
-  let tn; while ((tn = walker.nextNode())) if (tn.data.includes(p)) break;
+  const nodes = []; let all = "";
+  let tn; while ((tn = walker.nextNode())) { nodes.push({ n: tn, at: all.length }); all += tn.data; }
+  const start = all.indexOf(p);
+  const end = start + p.length;
+  const locate = (pos, isEnd) => {
+    for (let i = nodes.length - 1; i >= 0; i--) {
+      const { n, at } = nodes[i];
+      if (pos > at || (pos === at && (!isEnd || i === 0))) return [n, pos - at];
+      if (pos === at && isEnd) return [nodes[i - 1].n, nodes[i - 1] ? pos - nodes[i - 1].at : 0];
+    }
+    return [nodes[0].n, 0];
+  };
+  const [sn, so] = locate(start, false);
+  const [en, eo] = locate(end, true);
   const r = document.createRange();
-  const off = tn.data.indexOf(p);
-  r.setStart(tn, off); r.setEnd(tn, off + p.length);
+  r.setStart(sn, so); r.setEnd(en, eo);
   const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
   document.dispatchEvent(new Event("selectionchange"));
   el.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 420, clientY: 300 }));
@@ -113,6 +144,27 @@ check("1-latch-at-send", (await busy()) === true, `pre-send busy was ${preSend}`
 await shot("send-latched");
 sampleFlicker();
 
+// T152, permanent: the open popover NEVER renders a blank conversation area — at every sample it
+// shows the loader, pending sends, or content (the live specimen blanked for 200+s while a 40MB
+// fork booted across restarts). Sampled through the whole thread-open window below.
+const blankSamples = { blank: 0, total: 0 };
+const blankTimer = setInterval(async () => {
+  try {
+    blankSamples.total++;
+    const st = await page.evaluate(() => {
+      const msgs = document.querySelector(".cmt-pop .cmt-msgs");
+      return msgs ? msgs.children.length : -1;   // -1: popover closed (not a blank verdict)
+    });
+    if (st === 0) blankSamples.blank++;
+  } catch { /* page busy */ }
+}, 150);
+// …and the QUOTE must carry the WHOLE selected passage, rich rendering notwithstanding
+const quoteWhole = await page.evaluate((p) => {
+  const q = document.querySelector(".cmt-pop .cmt-quote");
+  return !!q && q.textContent.includes(p);
+}, PASSAGE);
+check("1b-whole-quote-on-rich-anchor", quoteWhole, "the quote block lost part of the cross-node passage");
+
 // PHASE 2+3: hold through thread-open, clear exactly when the reply text renders in the popover
 await page.waitForFunction(() => {
   const msgs = document.querySelector(".cmt-pop .cmt-msgs");
@@ -120,7 +172,10 @@ await page.waitForFunction(() => {
     .some((e) => e.textContent.trim().length > 0);
 }, undefined, { timeout: 240000 });
 const flick = flickerStop();
+clearInterval(blankTimer);
 check("2-no-flicker-through-thread-open", flick.falses === 0, `${flick.falses}/${flick.samples} false samples before the reply`);
+check("2b-thread-open-never-blanks", blankSamples.blank === 0,
+  `${blankSamples.blank}/${blankSamples.total} samples showed an EMPTY conversation area (T152's floating-quote blank)`);
 await shot("reply-in-thread");
 // the clear rides the same frame that rendered the reply — allow one push
 await page.waitForFunction(() => !document.querySelector("mark.cmt-hl.busy"), undefined, { timeout: 12000 })
@@ -163,6 +218,79 @@ await page.waitForFunction(() => !document.querySelector("mark.cmt-hl.busy"), un
   .then(() => check("4b-follow-up-clears-on-its-reply", true))
   .catch(async () => check("4b-follow-up-clears-on-its-reply", false, "still busy after the follow-up's reply"));
 await shot("followup-settled");
+
+// PHASE 4e (T138, permanent): a thread's running turn can be INTERRUPTED from the popover — the
+// stop square renders beside the working chip, targets the THREAD's own session, the turn ends
+// mid-stream, the pulse clears on the gesture (no reply record is coming), and the partial thread
+// renders honestly (whatever landed stays; nothing poses as a full answer).
+await page.fill(".cmt-pop .cmt-input",
+  "Count slowly: write one line per number from 1 to 40, each on its own line, no tools.");
+await page.keyboard.press("Enter");
+await page.waitForTimeout(250);
+check("4e-relatch-for-interrupt-run", (await busy()) === true);
+// the stop affordance must appear with the working chip in the popover statusline
+await page.waitForSelector('.cmt-pop .cmt-state .stop-btn[data-act="cmtinterrupt"]', { timeout: 60000 })
+  .then(() => check("4e-stop-affordance-renders", true))
+  .catch(() => check("4e-stop-affordance-renders", false, "no stop square in the popover's working state"));
+await shot("interrupt-affordance");
+// interrupt MID-STREAM: wait for streaming text to start, then click the popover's own stop
+await page.waitForFunction(() => {
+  const msgs = document.querySelector(".cmt-pop .cmt-msgs");
+  return msgs && /\b3\b/.test(msgs.textContent || "");
+}, undefined, { timeout: 120000 }).catch(() => null);
+const hadStop = await page.evaluate(() => {
+  const b = document.querySelector('.cmt-pop .cmt-state .stop-btn[data-act="cmtinterrupt"]');
+  if (!b) return false;
+  b.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  return true;
+});
+check("4e-stop-clicked", hadStop, "the stop square vanished before the click");
+// the ack is instant: the chip flips to Interrupting… without waiting on the kernel
+const acked = await page.evaluate(() => !!document.querySelector(".cmt-pop .cmt-state .chip-interrupting"));
+check("4e-instant-ack", acked, "no Interrupting… chip right after the click");
+// the pulse clears on the GESTURE — no reply record is coming; never hangs green
+await page.waitForFunction(() => !document.querySelector("mark.cmt-hl.busy"), undefined, { timeout: 12000 })
+  .then(() => check("4e-pulse-clears-on-interrupt", true))
+  .catch(() => check("4e-pulse-clears-on-interrupt", false, "pulse still green after the interrupt"));
+// the turn actually ENDS on the thread's CLI: the popover chip leaves working within a few pushes
+await page.waitForFunction(() => !document.querySelector(".cmt-pop .cmt-state .chip-working"), undefined, { timeout: 60000 })
+  .then(() => check("4e-turn-ends", true))
+  .catch(() => check("4e-turn-ends", false, "thread still working 60s after the interrupt"));
+await shot("interrupted-settled");
+
+// PHASE 6 (T145, permanent): RELAY — the discussion goes back to the main conversation whole,
+// machine-dressed, with staged feedback and a persistent sent-back marker; the thread stays
+// talkable. Runs BEFORE phase 5's quiet sampling so its own settling is covered by it.
+{
+  const relayBtn = await page.evaluate(() => {
+    const b = Array.from(document.querySelectorAll('.cmt-pop .cmt-act')).find((x) => x.textContent === "Relay");
+    if (!b) return false;
+    b.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    return true;
+  });
+  check("6-relay-button-renders-and-clicks", relayBtn, "no Relay button in the open popover");
+  // instant ack: the button flips before any kernel round-trip
+  const ack = await page.evaluate(() => {
+    const b = Array.from(document.querySelectorAll('.cmt-pop .cmt-act')).find((x) => x.textContent === "Relaying…");
+    return !!b && b.disabled;
+  });
+  check("6-instant-ack", ack, "the button did not flip to Relaying…");
+  // the arrival: a machine-dressed (romp-attributed) turn in the MAIN thread carrying the WHOLE
+  // exchange — both the user's question and the final answer text
+  await page.waitForFunction((f) => Array.from(document.querySelectorAll("#content .turn.romp"))
+    .some((t) => t.textContent.includes("side discussion") && t.textContent.includes(f)
+              && t.textContent.includes("Why is that the case?")), FINAL, { timeout: 120000 })
+    .then(() => check("6-machine-dressed-whole-exchange-arrives", true))
+    .catch(() => check("6-machine-dressed-whole-exchange-arrives", false,
+      "no romp-attributed arrival carrying both sides of the exchange in the main thread"));
+  // the persistent sent-back marker in the thread, and the composer still invites more talk
+  await page.waitForFunction(() => !!document.querySelector(".cmt-pop .cmt-relayed-note"), undefined, { timeout: 30000 })
+    .then(() => check("6-sent-back-marker", true))
+    .catch(() => check("6-sent-back-marker", false, "no ↩ sent-back marker in the popover"));
+  const talkable = await page.evaluate(() => !!document.querySelector(".cmt-pop .cmt-input"));
+  check("6-thread-stays-talkable", talkable, "the composer vanished after the relay");
+  await shot("relayed");
+}
 
 // PHASE 5: nothing sticks — sample well past several pushes
 await page.waitForTimeout(10000);

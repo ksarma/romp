@@ -21,21 +21,47 @@ const between = (a: string, b: string) => {
   return RENDER.slice(at, RENDER.indexOf(b, at));
 };
 
-test("slot boundary is the event: midpoint compare moves the dragged element in DOM order", () => {
-  const body = between('tabs.addEventListener("dragover"', "});");
-  assert.match(body, /const ref = e\.clientX > r\.left \+ r\.width \/ 2 \? over\.nextElementSibling : over;/,
-    "crossing the midpoint of the tab under the pointer decides the slot — an event, not a timer");
-  assert.match(body, /if \(ref !== dragged && dragged\.nextElementSibling !== ref\) flipTabs\(\(\) => tabs\.insertBefore\(dragged, ref\)\);/,
-    "already-in-place is a no-op, so a pointer resting in one slot never churns the DOM");
-  assert.doesNotMatch(body, /setTimeout|debounce|Date\.now/, "no time-based logic in the reorder decision");
+test("exactly ONE thing on screen looks like the dragged tab (T133)", () => {
+  // the user 2026-08-27: the native drag image following the pointer PLUS the dimmed in-flow tab
+  // read as a ghost duplicate. The native image is blanked at dragstart; the dimmed in-flow
+  // element — the one that live-reorders — is the single provisional visual, browser-style.
+  assert.match(RENDER, /e\.dataTransfer\.setDragImage\(dragImageBlank\(\), 0, 0\);/);
+  const at = RENDER.indexOf("function dragImageBlank(");
+  assert.ok(at > 0);
+  const body = RENDER.slice(at, RENDER.indexOf("\n}", at));
+  assert.match(body, /position:fixed;top:-10px;left:-10px;width:1px;height:1px;opacity:0/,
+    "a rendered but invisible node — Chromium snapshots the drag image at dragstart, so it must be in the DOM");
 });
 
-test("cross-row reflow is the wrap layout's own: DOM insertion, no per-row special case", () => {
-  // the strip wraps (flex-wrap) — moving the element IS the cross-row mechanism, so there must be
-  // no row math in the drag path
-  assert.match(CSS, /#tabs \{ display: flex; flex: 1 1 auto; flex-wrap: wrap; align-items: stretch; gap: 0; \}/);
+test("the slot comes from the VIRTUAL layout — boundaries that cannot move under the insert", () => {
+  // the drag-flap fix (2026-08-28, the user's recording): hit-testing the LIVE rects fed back —
+  // the insert re-wrapped the row and the next hit-test landed on the other side. The pointer is
+  // now tested against dragslot.ts's simulated wrap of the NON-dragged tabs, widths snapshotted
+  // once at dragstart.
   const body = between('tabs.addEventListener("dragover"', "});");
-  assert.doesNotMatch(body, /row|clientY/i, "no row bookkeeping — insertion order + wrap does it");
+  assert.match(body, /const others = Array\.from\(tabs\.querySelectorAll<HTMLElement>\("\.tab\[data-id\]"\)\)\.filter\(\(t\) => t !== dragged\);/,
+    "the dragged tab never participates in its own hit geometry");
+  assert.match(body, /dragSlotIndex\(boxes, dragGeom\.containerW, dragGeom\.gapX, dragGeom\.rowH,/);
+  assert.match(body, /if \(ref !== dragged && dragged\.nextElementSibling !== ref\)/,
+    "already-in-place is a no-op, so a pointer resting in one slot never churns the DOM");
+  assert.doesNotMatch(body, /setTimeout|debounce|Date\.now/, "no time-based logic in the reorder decision");
+  // the stable inputs are captured once, at the gesture's own start — an event, not a poll
+  assert.match(RENDER, /snapshotDragGeometry\(tab\);/);
+  assert.match(RENDER, /widths\.set\(t\.dataset\.id, t\.getBoundingClientRect\(\)\.width\)/);
+});
+
+test("the DOM insertion still does the cross-row move; the simulation only decides WHERE", () => {
+  assert.match(CSS, /#tabs \{ display: flex; flex: 1 1 auto; flex-wrap: wrap; align-items: stretch; gap: 0; position: relative; \}/);
+  const body = between('tabs.addEventListener("dragover"', "});");
+  assert.match(body, /flipTabs\(\(\) => tabs\.insertBefore\(dragged, ref\)\);/,
+    "one insert per boundary crossing — the wrap layout itself performs the visual reflow");
+});
+
+test("the hover popover never survives a drag (defect 2, the user's recording)", () => {
+  const ds = between('tab.addEventListener("dragstart"', "});");
+  assert.match(ds, /hideTabTip\(\);/, "dismissed at dragstart");
+  const stt = between("function showTabTip(", "\n}");
+  assert.match(stt, /if \(draggedId\) return;/, "…and suppressed for the whole gesture");
 });
 
 test("drop commits through the SAME reorderTo — neighbor + side, hidden-view ids keep their places", () => {

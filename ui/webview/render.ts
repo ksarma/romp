@@ -37,7 +37,7 @@ import { mintProvisionalId, isProvisionalId, provisionalName, adoptsProvisional 
 import { onlyTag, matchesOnly } from "./only-filter";
 import { numberDiff, type DiffRow } from "./diff-lines";
 import { parseAgentNotif, type AgentNotif } from "./agent-notif";
-import { previewKind, previewFull, canPreview, fileUrl, retryFailedPreviews, refreshSettledPreviews, installMdImgHeal } from "./preview";
+import { previewKind, previewFull, canPreview, fileUrl, retryFailedPreviews, refreshSettledPreviews, installMdImgHeal, setLightboxNav, type LightboxNavEntry } from "./preview";
 import { openFileView } from "./file-view";
 // initFileView rides its OWN line: the import above is pinned verbatim by file-view.test.ts
 import { initFileView } from "./file-view";
@@ -51,6 +51,7 @@ import { apiErrorReason } from "./api-error-reason";
 import { mathBlock, mathInline } from "./math";
 import { setTip } from "./tip";
 import { agentCount, replyOwed, threadsByAnchor, threadBusy, threadStuck, findAnchorRange, sliceRanges, prunePending, type CommentThread } from "./comments";
+import { dragSlotIndex } from "./dragslot";
 
 for (const [name, lang] of Object.entries({
   bash, sh: bash, shell: bash, python, py: python, javascript, js: javascript,
@@ -354,7 +355,10 @@ function reconcileOptimistic(s: Session): void {
   if (keep.length) pendingSent.set(s.id, keep); else pendingSent.delete(s.id);
   const inject = keep.filter((p) => !shownProvisional(p.text));
   if (!inject.length) { settle([]); return; }
-  const mk = (p: { text: string; imgPaths?: string[] }) => ({ md: p.text, optimistic: true, cancelable: false, imgPaths: p.imgPaths });
+  // cancelable from the PRESS (the user 2026-08-30, who sent mid-compaction and sat in an unlabeled,
+  // uncancellable beat until the kernel's park round-tripped): the ✕ on an optimistic bubble drops our
+  // re-injection and asks the kernel to cancel by body wherever the send landed (see the qx handler).
+  const mk = (p: { text: string; imgPaths?: string[] }) => ({ md: p.text, optimistic: true, cancelable: true, imgPaths: p.imgPaths });
   const qj = tailQueuedIdx(s.events);
   if (qj >= 0) {
     // something IS queued here → ours queues behind it: show it in that group, under its header, counted
@@ -384,13 +388,16 @@ function registerOptimistic(id: string, text: string, imgPaths?: string[]): void
   const v = views.get(id);
   if (v) v.stale = true;
   if (id === activeId) {
-    appendActive();
-    // Your OWN send always reveals itself: appendActive's stick rule keeps the viewport still when
-    // you're read up >80px from the bottom, so a send made while scrolled up painted below the fold
-    // and looked like it never appeared (the user 2026-08-09). Hitting Enter is the intent to see
-    // the message — scroll to it, exactly once, at send time.
+    // Your own send reveals itself only from the TAIL, measured BEFORE the bubble lands (the append
+    // grows scrollHeight, which would misread a tail-sitter as scrolled-up). At — or within the
+    // stick rule's 80px of — the bottom, hitting Enter scrolls to the new bubble, exactly once, at
+    // send time (the user 2026-08-09, whose send painted below the fold and looked lost). Scrolled
+    // UP reading history, the viewport stays exactly where it is and the bubble waits below (the
+    // user 2026-08-30, yanked mid-read by the unconditional snap that used to live here).
     const content = document.getElementById("content");
-    if (content) content.scrollTop = content.scrollHeight;
+    const wasAtBottom = !!content && nearBottom(content);
+    appendActive();
+    if (content && wasAtBottom) content.scrollTop = content.scrollHeight;
   }
 }
 
@@ -1158,6 +1165,31 @@ installMdImgHeal();   // markdown-inline <img> failures register for the per-mes
 // pathInText: the path is ALREADY visible (linkified) in the message text — a
 // dropped/pasted screenshot inserts it there — so a caption would just repeat it
 // (the user 2026-07-15). Skip the caption then; the in-text link already opens it.
+// The lightbox's arrow-navigation sequence (2026-08-29): every image embed in this chat, oldest
+// to newest, from the session's EVENTS — the DOM misses virtualization-windowed turns. Each entry
+// carries the same (path, sid, pin) triple the embed's own click passes, so a step renders that
+// message's pinned bytes (never the live file — the history-rewrite guard extends to navigation).
+// One entry per (event, target): a message mentioning one image twice is one stop.
+function chatImagesFor(sid: string | null | undefined): LightboxNavEntry[] {
+  const s = sid ? sessions.get(sid) : null;
+  if (!s) return [];
+  const out: LightboxNavEntry[] = [];
+  for (const ev of s.events as (ChatEvent & { images?: { src: string; path?: string }[]; pathLinks?: Record<string, string>; spacePaths?: string[]; pathPins?: Record<string, string> })[]) {
+    const pins = ev.pathPins || {};
+    const seen = new Set<string>();
+    const add = (target: string) => {
+      if (!target || seen.has(target) || previewKind(target) !== "img") return;
+      seen.add(target);
+      out.push({ path: target, sid, pin: pins[target] });
+    };
+    for (const im of ev.images || []) if (im.path) add(im.path);
+    for (const tok of Object.keys(ev.pathLinks || {})) add((ev.pathLinks as Record<string, string>)[tok]);
+    for (const sp of ev.spacePaths || []) add(sp);
+  }
+  return out;
+}
+setLightboxNav(chatImagesFor);
+
 function userImage(im: { src: string; path?: string }, pathInText = false): HTMLElement {
   const fig = el("span", "user-img-wrap");
   if (im.src.startsWith("path:")) {
@@ -1383,15 +1415,19 @@ function linkifyFileUris(root: HTMLElement, skipThumbs?: string[], spacePaths?: 
   //               the same host data-URL flow the user-message pictures use (buildPathImg, imgRequest
   //               now carrying the session id for relative resolution); a PDF keeps its click-to-open
   //               link (no inline viewer in the sandbox).
-  // Capped so a message that enumerates a directory of images doesn't wallpaper the chat; every path
-  // stays clickable regardless.
+  // EVERY verified figure mention renders eagerly at its mention anchor (the user 2026-08-30,
+  // overruling the 4-eager+chip fold shipped a day earlier, paraphrased: they should be able to
+  // preview as many images as they want in the thread). No cap and no chip: previewFull's <img>s
+  // are browser-lazy (loading="lazy"), so an off-screen figure costs one DOM node until scrolled
+  // near — a many-figure message can't hurt scroll or startup — and the kernel's mention-pin store
+  // is already size-bounded with eviction. Every path stays clickable regardless.
   if (previewable.length) {
     const BLOCK_SEL = "p, li, h1, h2, h3, h4, h5, h6, blockquote, td, th";
     const strips = new Map<HTMLElement, HTMLElement>();   // figure anchor → its strip (same block shares one)
-    for (const p of previewable.slice(0, 4)) {
+    const renderFig = (p: string): HTMLElement | null => {
       const full = canPreview() ? previewFull(p, renderingOwnerSid ?? activeId, kernelVerified.has(p), (pathPins || {})[p])
         : previewKind(p) === "img" ? buildPathImg(p, renderingOwnerSid ?? activeId) : null;
-      if (!full) continue;
+      if (!full) return null;
       const block = mentionAt.get(p)?.closest(BLOCK_SEL) as HTMLElement | null;
       const anchor = block && root.contains(block) && block !== root ? block : root;
       let strip = strips.get(anchor);
@@ -1403,7 +1439,9 @@ function linkifyFileUris(root: HTMLElement, skipThumbs?: string[], spacePaths?: 
         strips.set(anchor, strip);
       }
       strip.appendChild(full);
-    }
+      return strip;
+    };
+    for (const p of previewable) renderFig(p);
   }
 }
 
@@ -1941,7 +1979,7 @@ function eventUnitIndex(s: Session): Int32Array {
   const items = displayItems(s);
   for (let u = 0; u < items.length; u++) {
     const it = items[u];
-    if (it.kind === "toolgroup") { for (const i of it.indices) map[i] = u; }
+    if (it.kind === "toolgroup" || it.kind === "retrygroup") { for (const i of it.indices) map[i] = u; }
     else map[it.index] = u;
   }
   return map;
@@ -3344,17 +3382,33 @@ function reflowQueuedGroup(turn: HTMLElement): void {
   const bubbles = Array.from(turn.querySelectorAll(".queued-bubble"));
   if (!bubbles.length) { turn.remove(); return; }
   const label = turn.querySelector(".queued-count") as HTMLElement | null;
-  if (!label) return;                                     // a bare (optimistic) group has no header to fix
+  if (!label) return;
+  if (label.dataset.bare === "1") {                       // the pre-confirmation group recounts in its own words
+    label.textContent = bubbles.length === 1 ? "sending…" : `sending ${bubbles.length}…`;
+    return;
+  }
   const nCmd = bubbles.filter((b) => b.querySelector(".slash-cmd-chip")).length;
   label.textContent = queuedCountText(bubbles.length, nCmd) + (label.dataset.why || "");
 }
 
 function renderQueued(ev: Extract<ChatEvent, { kind: "queued" }>): HTMLElement {
   const turn = el("div", "turn turn-queued");
-  // A BARE group is romp's own optimistic echo with nothing else known-queued: it gets the dashed bubble but
-  // NO header, because "N queued messages" is a claim we can't back for a send the session hasn't confirmed
-  // (the user 2026-07-16). Merged into a real queued group, the header returns and counts ours in — there the
+  // A BARE group is romp's own optimistic echo with nothing else known-queued: "N queued messages" is a
+  // claim we can't back for a send the session hasn't confirmed (the user 2026-07-16) — so it wears its
+  // OWN honest label instead: "sending…" states exactly what is known, the press happened and nothing is
+  // confirmed yet (the user 2026-08-30, who sat in that stage with no state label and no way to cut the
+  // message). Merged into a real queued group, the standard header returns and counts ours in — there the
   // queueing IS established, so assuming this one joins it is honest.
+  if (ev.bare) {
+    const head = el("div", "queued-head");
+    head.appendChild(hourglassIcon());
+    const label = el("span", "queued-count");
+    label.dataset.bare = "1";     // reflow rewrites this label in its own vocabulary, never "N queued"
+    label.textContent = ev.texts.length === 1 ? "sending…" : `sending ${ev.texts.length}…`;
+    label.title = "on its way to the session — cancellable until the session takes it";
+    head.appendChild(label);
+    turn.appendChild(head);
+  }
   if (!ev.bare) {
     const n = ev.texts.length;
     const nCmd = ev.texts.filter((t) => SLASH_CMD_RE.test(t.md)).length;
@@ -3410,13 +3464,14 @@ function renderQueued(ev: Extract<ChatEvent, { kind: "queued" }>): HTMLElement {
     // a MESSAGE returns to the composer to re-edit, a slash COMMAND just cancels. Covers both queues:
     // the backend's own (idx; SDK only — tmux's queue lives inside Claude Code, no recall) and ops
     // PARKED during compaction/model switches (park; romp-owned on every backend).
-    if (t.cancelable && (t.idx !== undefined || t.park !== undefined)) {
+    if (t.cancelable && (t.idx !== undefined || t.park !== undefined || t.optimistic)) {
       const x = el("button", "queued-x");
       x.textContent = "✕";
       x.title = isCmd ? "cancel this queued command" : "cancel this queued message and move it back to the composer";
       x.dataset.act = "qx";
       if (t.idx !== undefined) x.dataset.qidx = String(t.idx);
       if (t.park !== undefined) x.dataset.qpark = String(t.park);
+      if (t.optimistic) x.dataset.qopt = "1";   // ✕ before confirmation → cancel-by-body (no park/idx yet)
       if (isCmd) x.dataset.qcmd = "1";
       (x as any)._qmd = t.md;   // the bubble's body — the kernel's drift guard + the composer restore read it
       bubble.appendChild(x);
@@ -4122,6 +4177,31 @@ function auditTabOrder(ids: string[]) {
 }
 let draggedId: string | null = null;
 let tabDragCommitted = false;   // set by the strip's drop handler; dragend without it = a cancel (Escape / dropped outside)
+// The drag hit-test's stable inputs (the drag-flap fix, 2026-08-28): every tab's outer width and
+// the strip's geometry, measured ONCE at dragstart. The pointer is then hit-tested against a
+// VIRTUAL wrap layout of the non-dragged tabs (dragslot.ts) — the live rects shift when the
+// provisional tab inserts (wrap cascade included), which is exactly the feedback loop that made
+// the slot oscillate between distant positions in the user's recording.
+let dragGeom: { widths: Map<string, number>; containerW: number; gapX: number; rowH: number } | null = null;
+function snapshotDragGeometry(sample: HTMLElement): void {
+  const bar = document.getElementById("tabs");
+  if (!bar) { dragGeom = null; return; }
+  const widths = new Map<string, number>();
+  bar.querySelectorAll<HTMLElement>(".tab[data-id]").forEach((t) => { if (t.dataset.id) widths.set(t.dataset.id, t.getBoundingClientRect().width); });
+  const cs = getComputedStyle(bar);
+  dragGeom = { widths, containerW: bar.clientWidth,
+               gapX: parseFloat(cs.columnGap || "0") || 0,
+               rowH: sample.getBoundingClientRect().height || 1 };
+}
+let dragBlankEl: HTMLElement | null = null;
+function dragImageBlank(): HTMLElement {
+  if (!dragBlankEl || !dragBlankEl.isConnected) {
+    dragBlankEl = el("div", "");
+    dragBlankEl.style.cssText = "position:fixed;top:-10px;left:-10px;width:1px;height:1px;opacity:0;pointer-events:none";
+    document.body.appendChild(dragBlankEl);
+  }
+  return dragBlankEl;
+}
 // FLIP the strip around a DOM mutation (T127 live reorder): snapshot every tab's rect by id, run
 // the mutation, then play each moved tab from its old rect to its new one — an inverted transform
 // released a frame later. A row jump is just a bigger delta: the wrap layout reflows and the
@@ -4172,6 +4252,7 @@ function reorderTo(dragId: string, targetId: string, after: boolean) {
 let tabTipEl: HTMLElement | null = null;
 function hideTabTip(): void { if (tabTipEl) tabTipEl.style.display = "none"; }
 function showTabTip(tab: HTMLElement, s: Session): void {
+  if (draggedId) return;   // a drag owns the strip — the info popover pinned open through the whole gesture, occluding the row below (the user's recording, 2026-08-28)
   if (!tabTipEl) { tabTipEl = el("div", "tab-tip"); document.body.appendChild(tabTipEl); }
   const tip = tabTipEl;
   tip.replaceChildren();
@@ -4376,6 +4457,37 @@ function tabCtxGauge(ctxStr: string, ctxColor?: number[]): HTMLElement {
   return g;
 }
 
+// A hairline under EVERY row of tabs (T134, the user 2026-08-27, overturning the survey's
+// one-outer-line design — their call, flagged when it shipped: with three rows and a short third,
+// row 2's tabs "look like they're sitting there floating"). CSS cannot select flex-wrap rows, so
+// the painter groups the rendered tabs by offsetTop and lays one absolute full-bleed hairline
+// under each row but the last — the strip's existing bottom border already finishes the final row. Runs on
+// every strip rebuild and on wrap changes (a ResizeObserver on #tabs: width changes re-wrap rows
+// without a rebuild — event-keyed, no polling). Classic-scoped in CSS (the Yatharth theme hides
+// .tab-row-line), like every strip tuning.
+function paintTabRowLines(bar: HTMLElement): void {
+  for (const old of Array.from(bar.querySelectorAll(":scope > .tab-row-line"))) old.remove();
+  const rows = new Map<number, number>();   // rowTop → rowBottom (max tab bottom in that row)
+  for (const t of Array.from(bar.children) as HTMLElement[]) {
+    if (!t.classList.contains("tab")) continue;
+    const top = t.offsetTop, bot = t.offsetTop + t.offsetHeight;
+    rows.set(top, Math.max(rows.get(top) ?? 0, bot));
+  }
+  const bottoms = [...rows.values()].sort((a, b) => a - b);
+  bottoms.pop();   // the LAST row already has #tabbar's own border-bottom beneath it — no double line
+  for (const y of bottoms) {
+    const line = el("div", "tab-row-line");
+    line.style.top = y + "px";
+    bar.appendChild(line);
+  }
+}
+let tabRowObserver: ResizeObserver | null = null;
+function ensureTabRowObserver(bar: HTMLElement): void {
+  if (tabRowObserver) return;
+  tabRowObserver = new ResizeObserver(() => paintTabRowLines(bar));
+  tabRowObserver.observe(bar);
+}
+
 function renderTabs() {
   if (renameActive) { renderPendingAfterRename = true; return; }
   if (tabPointerHeld) { renderPendingWhilePressed = true; return; }   // don't destroy a tab mid-click (see tabPointerHeld)
@@ -4431,7 +4543,19 @@ function renderTabs() {
     tab.addEventListener("keydown", onTabKey);
     // drag-to-reorder (synced with the timeline via the shared session-order file)
     tab.draggable = true;
-    tab.addEventListener("dragstart", (e) => { draggedId = id; tabDragCommitted = false; if (e.dataTransfer) e.dataTransfer.effectAllowed = "move"; tab.classList.add("dragging"); });
+    // Exactly ONE thing on screen may look like the dragged tab (T133, the user 2026-08-27: the
+    // native drag image following the pointer PLUS the dimmed in-flow tab read as a ghost
+    // duplicate — "not how most softwares show it"). The native image is blanked, and the dimmed
+    // in-flow element — the one that live-reorders through the strip — is the single provisional
+    // visual, browser-style. dragImageBlank must be a rendered DOM node at dragstart (Chromium
+    // snapshots it), hence the fixed off-viewport 1px div installed once below.
+    tab.addEventListener("dragstart", (e) => {
+      draggedId = id; tabDragCommitted = false;
+      if (e.dataTransfer) { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setDragImage(dragImageBlank(), 0, 0); }
+      tab.classList.add("dragging");
+      hideTabTip();                        // defect 2 (2026-08-28): the hover popover pinned open through the gesture
+      snapshotDragGeometry(tab);           // widths once at dragstart — the virtual hit-test's stable input (dragslot.ts)
+    });
     // dragend closes EVERY drag (drop, Escape, released outside). The pointerdown that started the
     // drag latched tabPointerHeld, and the drag swallowed the matching pointerup — so the hold is
     // released here by hand, covering the whole gesture against pushes (the click-safe rule). A
@@ -4587,6 +4711,44 @@ function renderTabs() {
       postViews(nv);
     });
   }
+  // T161 (the user 2026-08-28, Android: no tag control on mobile): the phone chat page hides the whole
+  // #tabs strip — and the mount above with it. The kernel's mobile header carries an empty #mtag-slot
+  // (left of +); mount the SAME shared button + chips into it ONCE — the slot is kernel-built and never
+  // rebuilt, so the ensure-once mount is click-safe by construction — and re-sync it every render like
+  // the desktop pair. Same chat lens, same house menu, same echo dismissal: one vocabulary, no copy.
+  // Absent slot (VS Code webview, desktop-only pages) → no-op; on the desktop kernel page the slot
+  // hides with #mhdr. The touch padding is set inline because the shared button styles inline by design.
+  const mslot = document.getElementById("mtag-slot");
+  if (mslot) {
+    if (!mslot.firstChild) {
+      const mBtn = tagMenuButton("filter sessions by tag", (btn) => {
+        openTagMenu(btn, {
+          lens: () => surfaceLens(effViews(), "chat"),
+          unions: () => viewTagUnion(effViews()),
+          onApply: (l) => {
+            const mv = JSON.parse(JSON.stringify(effViews() || { active: "all", tags: [] }));
+            mv.actives = Object.assign({}, mv.actives, { chat: l });
+            postViews(mv);
+          },
+          onConfigure: () => { vscodeApi?.postMessage({ type: "openTagsDialog" }); },
+        });
+      });
+      mBtn.classList.add("tab-tagfilter");
+      mBtn.style.padding = "8px 9px";   // the coarse-pointer target: ~32px tall, the header row's own scale
+      const mChips = el("span", "tab-tagchips");
+      mChips.setAttribute("style", "display:inline-flex;gap:5px;align-items:center;margin-left:2px;");
+      mslot.append(mBtn, mChips);
+    }
+    const mv2 = effViews();
+    syncTagFilter(mslot.children[0] as HTMLElement, mslot.children[1] as HTMLElement,
+      surfaceLens(mv2, "chat"), viewTagUnion(mv2), (l) => {
+        const nv = JSON.parse(JSON.stringify(mv2 || { active: "all", tags: [] }));
+        nv.actives = Object.assign({}, nv.actives, { chat: l });
+        postViews(nv);
+      });
+  }
+  paintTabRowLines(bar);
+  ensureTabRowObserver(bar);
   // Restore tab-mode focus if a tab held it before this rebuild (see the top of renderTabs).
   if (refocusTab) focusActiveTab();
   syncNoSessionsPlaceholder(visibleIds.length, ids.length);
@@ -4737,6 +4899,11 @@ function showTabMenu(e: MouseEvent, id: string) {
     const sNow = sessions.get(id);
     const cur = (sNow && sNow.color ? sNow.color.bg : "").toLowerCase();
     const row = el("div", "ctx-colors");
+    // balanced swatch rows (the user 2026-08-28, T164): for n swatches, the fewest rows that keep
+    // each row within the menu-friendly cap, split ceil-evenly — 12 reads 6+6, 9 reads 5+4, a
+    // future 13 reads 7+6; the CSS keeps repeat(5) as the no-JS fallback
+    const swRows = Math.ceil(paletteColors.length / 6);
+    row.style.gridTemplateColumns = "repeat(" + Math.ceil(paletteColors.length / swRows) + ", 18px)";
     for (const bg of paletteColors) {
       const sw = el("button", "ctx-swatch" + (bg.toLowerCase() === cur ? " sel" : ""));
       sw.style.background = bg;
@@ -4887,10 +5054,22 @@ function showTabMenu(e: MouseEvent, id: string) {
       }
       if (dirty) postViews(nv);
     };
-    tagsItem.addEventListener("click", (ev) => {
-      ev.stopPropagation();
+    // HOVER-INTENT open (T163, the user 2026-08-28: hovering down to Tags should open the submenu
+    // without another click): the feed's 120ms intent debounce — enough to skip a graze, never a
+    // wait. Click still opens instantly (and focuses the input; a hover-open must NOT steal the
+    // keyboard). Leaving is tolerant the way native menus are: the same 120ms lets the pointer
+    // cross the gap into the submenu; entering either surface cancels the close, leaving BOTH
+    // closes. Timers here are gesture DEFINITIONS (hover intent), not state proxies.
+    const HOVER_INTENT_MS = 120;
+    let hoverOpenT: number | null = null;
+    let hoverCloseT: number | null = null;
+    const cancelHoverTimers = () => {
+      if (hoverOpenT != null) { clearTimeout(hoverOpenT); hoverOpenT = null; }
+      if (hoverCloseT != null) { clearTimeout(hoverCloseT); hoverCloseT = null; }
+    };
+    const openTagsFly = (focusInput: boolean) => {
       const openFly = menu.querySelector(".ctx-sub-tags");
-      if (openFly) { openFly.remove(); return; }                 // second click folds the flyout
+      if (openFly) return openFly as HTMLElement;
       menu.querySelector(".ctx-sub")?.remove();                  // one flyout at a time (Billing's rule)
       const sub = el("div", "ctx-menu ctx-sub ctx-sub-tags");
       const build = () => {
@@ -4942,12 +5121,51 @@ function showTabMenu(e: MouseEvent, id: string) {
         sub.appendChild(nrow);
       };
       build();
+      // Configure tags… at the foot, behind the divider (T163): the ONE route the tag-lens menus
+      // use — openTagsDialog — never a copy of the dialog wiring.
+      sub.appendChild(el("div", "ctx-sep"));
+      const cfg = el("div", "ctx-item ctx-item-configtags");
+      const cfgBody = el("span", "ctx-item-body");
+      const cfgL = el("span", "ctx-item-label"); cfgL.textContent = "Configure tags…"; cfgBody.appendChild(cfgL);
+      cfg.appendChild(cfgBody);
+      cfg.addEventListener("click", (e2) => {
+        e2.stopPropagation(); dismissTabMenu();
+        vscodeApi?.postMessage({ type: "openTagsDialog" });
+      });
+      sub.appendChild(cfg);
       menu.appendChild(sub);
       const ir = tagsItem.getBoundingClientRect();
       const sr = sub.getBoundingClientRect();
-      sub.style.left = Math.max(0, Math.min(ir.right + 2, window.innerWidth - sr.width - 4)) + "px";
+      // the side rule (the model-version submenus): PREFER right; fall LEFT only when the right
+      // edge would clip — never slide over the row
+      if (ir.right + 2 + sr.width <= window.innerWidth - 8) sub.style.left = Math.round(ir.right + 2) + "px";
+      else sub.style.left = Math.max(8, Math.round(ir.left) - sr.width - 2) + "px";
       sub.style.top = Math.max(0, Math.min(ir.top, window.innerHeight - sr.height - 4)) + "px";
-      (sub.querySelector(".ctx-tag-input") as HTMLInputElement | null)?.focus();
+      if (focusInput) (sub.querySelector(".ctx-tag-input") as HTMLInputElement | null)?.focus();
+      // leave-tolerance: entering either surface cancels the pending close; leaving both arms it
+      sub.addEventListener("pointerenter", cancelHoverTimers);
+      sub.addEventListener("pointerleave", armHoverClose);
+      return sub;
+    };
+    const armHoverClose = () => {
+      cancelHoverTimers();
+      hoverCloseT = window.setTimeout(() => {
+        hoverCloseT = null;
+        menu.querySelector(".ctx-sub-tags")?.remove();
+      }, HOVER_INTENT_MS);
+    };
+    tagsItem.addEventListener("pointerenter", () => {
+      cancelHoverTimers();
+      if (menu.querySelector(".ctx-sub-tags")) return;           // already open — nothing to intend
+      hoverOpenT = window.setTimeout(() => { hoverOpenT = null; openTagsFly(false); }, HOVER_INTENT_MS);
+    });
+    tagsItem.addEventListener("pointerleave", armHoverClose);
+    tagsItem.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      cancelHoverTimers();
+      const openFly = menu.querySelector(".ctx-sub-tags");
+      if (openFly) { openFly.remove(); return; }                 // second click folds the flyout
+      openTagsFly(true);
     });
     menu.appendChild(tagsItem);
   }
@@ -6186,7 +6404,7 @@ const cmtAwaitBase = new Map<string, number>();
 // next session frame for the sid arrives (frames are built from the kernel's parse — a new frame IS
 // the parse catching up). Bounded by attempts, not time; a real refusal or the ack drops the hold.
 const cmtCreateInFlight = new Map<string, { sid: string; uuid: string; exact: string; text: string;
-  name: string; model: string; effort: string; color: string; tries: number }>();
+  name: string; model: string; effort: string; fast: string; color: string; tries: number }>();
 const CMT_CREATE_MAX_TRIES = 12;
 
 function retryCmtCreates(sid: string): void {
@@ -6200,7 +6418,7 @@ function retryCmtCreates(sid: string): void {
     }
     c.tries++;
     vscodeApi?.postMessage({ type: "commentCreate", id: c.sid, uuid: c.uuid, exact: c.exact,
-      text: c.text, name: c.name, model: c.model, effort: c.effort, color: c.color });
+      text: c.text, name: c.name, model: c.model, effort: c.effort, fast: c.fast, color: c.color });
   }
 }
 
@@ -6215,9 +6433,19 @@ function dropSynthThread(sid: string, uuid: string): void {
 // the one busy answer for the mark + rail tick: an in-flight EXCHANGE (the gesture latch above), or
 // — after a reload lost the client latch — the exchange's own records still saying a reply is owed
 // (msgs ending with the user's message). A stuck/errored/closed thread never pulses: green would lie.
+// A thread whose trailing user message was ANSWERED BY A STOP (T138, found by lab phase 4e): the
+// user interrupted the turn, so no reply record is coming for that send — replyOwed's
+// trailing-user shape would otherwise hold the mark green forever. A plain until-the-next-send
+// tombstone: the only event that can OWE a new reply is the user's next send gesture, which
+// retires it (and latches the real base). A count-keyed first cut died in the lab: the CLI files
+// the interrupt itself as a trailing user-kind record, so any record-shape re-derivation re-fires
+// exactly like the flapping proxies the T102 rule bans — the gesture pair (stop sets, send
+// clears) is the event-true form.
+const cmtInterrupted = new Set<string>();
 const commentInFlight = (th: CommentThread): boolean => {
   if (th.status !== "open" || !!th.error || threadStuck(th.state)) return false;
-  return cmtAwaitBase.has(th.tid) || replyOwed(th);
+  if (cmtAwaitBase.has(th.tid)) return true;
+  return replyOwed(th) && !cmtInterrupted.has(th.tid);
 };
 const commentDrafts = new Map<string, string>();                    // draft key → unsent popover text
 // The popover-boot hold (fillCommentMsgs): tid → when the loader first held the list. Held until the
@@ -6235,7 +6463,7 @@ function cmtBootHolds(tid: string): boolean {
 }
 let openCommentKey: { sid: string; tid: string } | null = null;     // the open thread popover
 let pendingCommentAnchor: { sid: string; uuid: string; exact: string;
-  model?: string; effort?: string; color?: string } | null = null; // create mode (+ the thread's own picks)
+  model?: string; effort?: string; fast?: string; color?: string } | null = null; // create mode (+ the thread's own picks)
 let pendingAdoptTid: string | null = null;                          // commentCreated ack that beat its frame
 let commentPopPos: { x: number; y: number } | null = null;
 
@@ -6508,7 +6736,7 @@ function styleCommentMark(m: HTMLElement, th: CommentThread): void {
   m.classList.toggle("unread", !!th.unread && th.status === "open");
   m.classList.toggle("busy", commentInFlight(th));
   m.title = th.status === "promoted" ? "thread, now the session '" + th.promotedName + "'"
-    : th.status === "merged" ? "merged thread: its outcome was folded back into the session"
+    : th.status === "merged" ? "relayed thread: its discussion was sent back into the session"
     : th.status === "resolved" ? "resolved thread: click to read or reopen"
     : "thread: click to open";
 }
@@ -6603,6 +6831,17 @@ function owningSidOf(el0: HTMLElement | null): string | null {
   return (el0?.closest("[data-session]") as HTMLElement | null)?.dataset.session || activeId;
 }
 
+// The persistent sent-back marker (T145): where the last relay CUT the thread — everything above
+// it went back to the main conversation; everything below is the new tail a later relay would
+// send. From the store (relayedT rides the comments frame), so it survives reopens; evidence-time
+// stamp, rendered in the rail's own HH:MM.
+function cmtRelayedNote(t: number): HTMLElement {
+  const n = el("div", "cmt-relayed-note");
+  n.textContent = `↩ sent back to the main conversation · ${markerLabel(t, null, Date.now()).hm}`;
+  n.title = "the discussion above was relayed into the session; anything below goes with the next relay";
+  return n;
+}
+
 function fillCommentMsgs(list: HTMLElement, th: CommentThread, sid: string): void {
   list.dataset.session = th.tid;   // the THREAD owns its queue/errors — in-turn controls resolve to it
   const prevScroll = list.scrollTop;
@@ -6627,9 +6866,19 @@ function fillCommentMsgs(list: HTMLElement, th: CommentThread, sid: string): voi
   // render appears once. Event-based fade (the comments frame carrying events refills this list);
   // the backstop falls through to the msgs projection so a thread whose events never come (an old
   // kernel) can't trap the loader.
-  if (!evs.length && th.status === "open" && !th.error && cmtBootHolds(th.tid)) {
+  // A CONTENTLESS open thread NEVER renders blank (T152, the user 2026-08-28, live specimen: a
+  // fork of a 40MB parent took 200+ seconds to spend across kernel restarts, the 8s boot backstop
+  // expired, and the popover showed the quote floating over nothing — 'nothing shows up when I
+  // click on it'). While BOTH projections are empty on an open, error-free thread, the loader
+  // stays; past the backstop it swaps to an honest slower message (the backstop changes the LABEL,
+  // never to blank — the error and stuck branches below still take over the moment the frame says
+  // so, and any content arriving replaces this whole render, all event-keyed).
+  if (!evs.length && !th.msgs.length && th.status === "open" && !th.error) {
+    const slow = !cmtBootHolds(th.tid);
     const boot = el("div", "cmt-boot");
-    boot.appendChild(rompLoaderInner("opening the thread…", { wordmark: false }));
+    boot.appendChild(rompLoaderInner(
+      slow ? "still opening — the thread's session is taking longer than usual…" : "opening the thread…",
+      { wordmark: false }));
     list.appendChild(boot);
     if (pend.length) list.appendChild(cmtPendingQueued(pend));
     list.scrollTop = list.scrollHeight;
@@ -6657,28 +6906,35 @@ function fillCommentMsgs(list: HTMLElement, th: CommentThread, sid: string): voi
       ? compactDisplay(evs.map((e) => e.kind), evs.map((e) => e.kind === "tool" ? e.name : undefined))
       : evs.map((_, i) => ({ kind: "event", index: i } as DisplayItem));
     const thWorking = threadBusy(th.state);
+    let relayNoted = !th.relayedT;   // T145: drop the sent-back marker at its place in time, once
     for (const it of items) {
       // a new day opens with the chat's own divider (the parity bundle, 2026-08-26) — same helper,
       // same placement idiom as appendItem
       const dayOpen = eventEpoch(evs[itemFirstEvent(it)]);
+      if (!relayNoted && dayOpen != null && dayOpen > (th.relayedT || 0)) {
+        list.appendChild(cmtRelayedNote(th.relayedT || 0));
+        relayNoted = true;
+      }
       if (dayOpen != null) {
         const dv = dayDividerFor(dayOpen, prev);
         if (dv) list.appendChild(dv);
       }
-      if (it.kind === "toolgroup") {
-        const tools = it.indices.map((ix) => evs[ix]) as Extract<ChatEvent, { kind: "tool" }>[];
-        const key = toolGroupKey(tools[0]);
+      if (it.kind === "toolgroup" || it.kind === "retrygroup") {
+        const run = it.indices.map((ix) => evs[ix]);
+        const key = it.kind === "toolgroup" ? toolGroupKey(run[0]) : retryGroupKey(run[0]);
         const open = expandedGroups.has(key);
-        list.appendChild(renderToolGroup(tools, prev, key, open));
+        list.appendChild(it.kind === "toolgroup"
+          ? renderToolGroup(run as Extract<ChatEvent, { kind: "tool" }>[], prev, key, open)
+          : renderRetryGroup(run as Extract<ChatEvent, { kind: "retried" }>[], prev, key, open));
         if (open) {
-          it.indices.forEach((ix, j) => {   // the tools only — it.indices already excludes thinking
+          it.indices.forEach((ix, j) => {   // the run's own members — it.indices already excludes thinking
             const child = renderEvent(evs[ix], prev, turnWorkedSecs(evs, ix, thWorking));
             child.classList.add("tg-child"); if (j === it.indices.length - 1) child.classList.add("tg-last");
             list.appendChild(child);
             const ep = eventEpoch(evs[ix]); if (ep != null) prev = ep;
           });
         } else {
-          const ep = eventEpoch(tools[tools.length - 1]); if (ep != null) prev = ep;
+          const ep = eventEpoch(run[run.length - 1]); if (ep != null) prev = ep;
         }
         continue;
       }
@@ -6691,6 +6947,7 @@ function fillCommentMsgs(list: HTMLElement, th: CommentThread, sid: string): voi
       const ep = eventEpoch(ev);
       if (ep != null) prev = ep;
     }
+    if (!relayNoted) list.appendChild(cmtRelayedNote(th.relayedT || 0));   // relay at the tail — nothing new after it yet
     renderingIntoThread = false;
     renderingSid = saved;
     renderingOwnerSid = savedOwner;
@@ -6759,6 +7016,21 @@ function cmtStateChip(th: CommentThread): HTMLElement {
   wrap.id = "cmt-state";
   if (th.status !== "open") return wrap;                    // closed threads carry their status in the title
   const st = th.state || "";
+  // the stop square, exactly the chat statusline's affordance owner-scoped to the THREAD (T138,
+  // the user 2026-08-27: threads couldn't be interrupted from the UI at all — the popover chip
+  // rendered working/retrying with no stop). data-act rides the stable document.body delegate
+  // (this statusline rebuilds per comments frame — a direct listener would be press-unsafe), and
+  // data-sid pins the target to the thread's own session, never the active tab.
+  const stopBtn = () => {
+    const b = el("button", "stop-btn cmt-stop");
+    (b as HTMLButtonElement).type = "button";
+    b.title = "Stop — interrupt this thread's turn";
+    b.setAttribute("aria-label", "Interrupt this thread");
+    b.dataset.act = "cmtinterrupt";
+    b.dataset.sid = th.tid;
+    b.appendChild(el("span", "stop-icon"));
+    return b;
+  };
   if (st === "working") {
     const chip = el("span", "chip chip-working");
     const label = el("span", "chip-pulse");
@@ -6767,11 +7039,11 @@ function cmtStateChip(th: CommentThread): HTMLElement {
     const timer = el("span", "status-timer");
     timer.id = "cmt-work-timer";
     timer.textContent = elapsedMs(th.sinceEpoch || null);
-    wrap.append(chip, timer);
+    wrap.append(chip, timer, stopBtn());
   } else if (st === "retrying") {
     const chip = el("span", "chip chip-retrying");
     chip.textContent = CHIP_LABEL.retrying;
-    wrap.appendChild(chip);
+    wrap.append(chip, stopBtn());
   } else if (st === "compacting") {
     const c = el("span", "compacting-line");
     c.textContent = "⟳ Compacting context…";
@@ -6853,8 +7125,8 @@ function commentPopTitle(create: boolean, th: CommentThread | null | undefined):
   return create ? "New comment:"
     : th!.status === "promoted" ? "Now its own session: " + th!.promotedName
     : th!.status === "promoting" ? "Breaking out…"
-    : th!.status === "merging" ? "Merging back in…"
-    : th!.status === "merged" ? nm + " (merged into the session)"
+    : th!.status === "merging" ? "Relaying back to the session…"
+    : th!.status === "merged" ? nm + " (relayed to the session)"
     : th!.status === "resolved" ? nm + " (resolved)" : nm;
 }
 
@@ -6884,16 +7156,17 @@ function commentSendFromPop(pop: HTMLElement): void {
     applyCommentMarks(create.sid);
     vscodeApi.postMessage({ type: "commentCreate", id: create.sid, uuid: create.uuid, exact: create.exact,
       text, name: nm, model: create.model || "", effort: create.effort || "",
-      color: create.color || "" });
+      fast: create.fast || "", color: create.color || "" });
     cmtCreateInFlight.set(create.uuid, { sid: create.sid, uuid: create.uuid, exact: create.exact,
       text, name: nm, model: create.model || "", effort: create.effort || "",
-      color: create.color || "", tries: 0 });
+      fast: create.fast || "", color: create.color || "", tries: 0 });
     return;
   }
   const cur = openCommentThread();
   if (!cur) return;
   vscodeApi.postMessage({ type: "commentReply", id: cur.sid, tid: cur.th.tid, text });
   cmtAwaitBase.set(cur.th.tid, agentCount(cur.th));   // a follow-up RE-LATCHES at its own send, until ITS reply (T102)
+  cmtInterrupted.delete(cur.th.tid);                  // a fresh send re-owes a reply — the stop tombstone retires (T138)
   cur.th.state = "working";                     // optimistic: the pulse rides the SEND, not the
   applyCommentMarks(cur.sid);                   // round-trip (the kernel's next frame confirms)
   const pl = commentPending.get(cur.th.tid) || [];
@@ -7023,55 +7296,93 @@ function renderCommentPopover(): void {
   }
   let metaRowPending: HTMLElement | null = null;   // appended under the composer row — the statusline position
   if (create) {
-    // the thread's OWN model + effort (the user 2026-08-17): the same /models-fed choices the
-    // chat's statusline selectors use, defaulting to what this session runs now — picking one
-    // affects only the thread; the conversation it branches from is never touched
+    // the thread's OWN model + effort + fast (the user 2026-08-17; fast and the kernel-side
+    // defaults the user 2026-08-29): the same /models-fed choices the chat's statusline selectors
+    // use. Each chip shows the EFFECTIVE default — the dialog's own pick, else the kernel's
+    // default-comment setting (commentDefaults), else what this session runs now — so a pick is
+    // always a visible deviation; picking affects only the thread, never the conversation it
+    // branches from. The kernel re-resolves the same order at create (_comment_launch_prefs).
     const st = sessions.get(sid)?.status;
-    const metaRow = el("div", "statusline cmt-meta-row");
-    const mkSel = (kind: "model" | "effort") => {
-      // the statusline's own badge chrome (.meta-btn/.meta-label/.meta-caret) so the two stay in
-      // sync by construction (the user 2026-08-17), tinted from the /models list's shared colors
-      const btn = el("span", "meta-btn") as HTMLElement;
-      const chosen = kind === "model" ? create.model : create.effort;
-      const choice = chosen ? META_CHOICES[kind].find((c) => c.value === chosen) : null;
-      const label = el("span", "meta-label");
-      label.textContent = choice ? choice.label : (kind === "model" ? (st?.model || "Default") : (st?.effort || "default"));
-      const tint = choice?.color || (kind === "model" ? st?.modelColor : st?.effortColor);
-      if (tint && tint.length === 3) label.style.color = `rgb(${tint[0]},${tint[1]},${tint[2]})`;
-      const caret = el("span", "meta-caret");
-      caret.textContent = "▾";
-      btn.append(label, caret);
-      btn.title = chosen ? "the comment runs on its own " + kind + "; this session keeps its"
-        : "inherits this session's " + kind + " — click to pick another for the comment only";
-      btn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        closeMetaMenu();
-        const menu = el("div", "meta-menu");
-        for (const c of META_CHOICES[kind]) {
-          const cur = chosen ? c.value === chosen : (st ? isCurrentMeta(kind, st, c.value) : false);
-          const item = el("div", "meta-item" + (cur ? " current" : ""));
-          item.textContent = c.label;
-          item.addEventListener("click", (ev) => {
-            ev.stopPropagation();
-            if (pendingCommentAnchor) pendingCommentAnchor[kind] = c.value;
-            closeMetaMenu();
-            document.getElementById("cmt-pop")?.remove();   // full rebuild shows the pick
-            renderCommentPopover();
-          });
-          menu.appendChild(item);
-        }
-        document.body.appendChild(menu);
-        const r2 = btn.getBoundingClientRect();
-        menu.style.left = r2.left + "px";
-        menu.style.top = (r2.bottom + 4) + "px";
-        metaMenuEl = menu;
-      });
-      return btn;
+    // the kernel default for one chip, resolved ("session" → none → inherit this session)
+    const setDef = (kind: "model" | "effort" | "fast") => {
+      const v = kind === "model" ? commentDefaults.model : kind === "effort" ? commentDefaults.effort
+        : commentDefaults.fast;
+      return v === "session" ? "" : v;
     };
-    const metaRight = el("span", "sl-right");
-    metaRight.append(mkSel("model"), mkSel("effort"));
-    metaRow.appendChild(metaRight);
-    metaRowPending = metaRow;
+    // fast is offered only where the effective model could run it (fastAvailable's rule: unknown
+    // and opus stay offered; an explicit non-Opus pick drops the chip — no control that only toasts)
+    const canFast = (m: string) => {
+      const v = (m || "").toLowerCase();
+      return !v || v === "default" || v.includes("opus");
+    };
+    const buildMetaRow = (): HTMLElement => {
+      const metaRow = el("div", "statusline cmt-meta-row");
+      const mkSel = (kind: "model" | "effort" | "fast") => {
+        // the statusline's own badge chrome (.meta-btn/.meta-label/.meta-caret) so the two stay in
+        // sync by construction (the user 2026-08-17), tinted from the /models list's shared colors
+        const btn = el("span", "meta-btn") as HTMLElement;
+        const chosen = (kind === "model" ? create.model : kind === "effort" ? create.effort : create.fast) || "";
+        const effVal = chosen || setDef(kind);
+        const label = el("span", "meta-label");
+        if (kind === "fast") {
+          const on = (effVal || st?.fast || "off").toLowerCase() === "on";
+          label.textContent = prettyFast(on ? "on" : "off");
+          if (on) label.style.color = "var(--fast)";
+        } else {
+          const choice = kind === "model" ? (effVal ? modelChoiceLabel(effVal) : null)
+            : (effVal ? EFFORT_CHOICES.find((c) => c.value === effVal) : null);
+          label.textContent = choice ? choice.label : (kind === "model" ? (st?.model || "Default") : (st?.effort || "default"));
+          const tint = choice?.color || (kind === "model" ? st?.modelColor : st?.effortColor);
+          if (tint && tint.length === 3) label.style.color = `rgb(${tint[0]},${tint[1]},${tint[2]})`;
+        }
+        const caret = el("span", "meta-caret");
+        caret.textContent = "▾";
+        btn.append(label, caret);
+        btn.title = chosen ? "the comment runs on its own " + kind + "; this session keeps its"
+          : setDef(kind) ? "the default for new comments (set in Settings) — click to pick another for this one"
+          : "inherits this session's " + kind + " — click to pick another for the comment only";
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          closeMetaMenu();
+          const menu = el("div", "meta-menu");
+          for (const c of META_CHOICES[kind]) {
+            const cur = kind === "fast"
+              ? c.value === ((effVal || st?.fast || "off").toLowerCase() === "on" ? "on" : "off")
+              : effVal ? (c.value === effVal || !!c.versions?.some((v) => v.value === effVal))
+              : (st ? isCurrentMeta(kind, st, c.value) : false);
+            const item = el("div", "meta-item" + (cur ? " current" : ""));
+            item.textContent = c.label;
+            item.addEventListener("click", (ev) => {
+              ev.stopPropagation();
+              if (pendingCommentAnchor) pendingCommentAnchor[kind] = c.value;
+              closeMetaMenu();
+              document.getElementById("cmt-pop")?.remove();   // full rebuild shows the pick
+              renderCommentPopover();
+            });
+            menu.appendChild(item);
+          }
+          document.body.appendChild(menu);
+          const r2 = btn.getBoundingClientRect();
+          menu.style.left = r2.left + "px";
+          menu.style.top = (r2.bottom + 4) + "px";
+          metaMenuEl = menu;
+        });
+        return btn;
+      };
+      const metaRight = el("span", "sl-right");
+      metaRight.append(mkSel("model"), mkSel("effort"));
+      if (canFast(create.model || setDef("model") || st?.model || "")) metaRight.append(mkSel("fast"));
+      metaRow.appendChild(metaRight);
+      return metaRow;
+    };
+    metaRowPending = buildMetaRow();
+    // the gear may have moved the defaults since page load — re-read at open and repaint the row
+    // IN PLACE (never the whole popover: the composer holds focus and an unsent draft)
+    refreshCommentDefaults(() => {
+      if (pendingCommentAnchor !== create) return;   // the dialog already sent or closed
+      const live = pop.querySelector(".cmt-meta-row");
+      if (live) live.replaceWith(buildMetaRow());
+    });
   }
   if (create || th!.status !== "promoted") {
     const dk = create ? "new:" + create.uuid : th!.tid;
@@ -7079,7 +7390,7 @@ function renderCommentPopover(): void {
     box.className = "cmt-input";
     box.rows = 2;
     box.placeholder = create ? "Comment on this passage…"
-      : th!.status === "merged" ? "Merged — its outcome lives in the session now"
+      : th!.status === "merged" ? "Reply to continue — the discussion so far was relayed to the session…"
       : th!.status === "resolved" ? "Reply to reopen…" : "Reply…";
     box.value = commentDrafts.get(dk) || "";
     box.addEventListener("input", () => commentDrafts.set(dk, box.value));
@@ -7140,8 +7451,8 @@ function renderCommentPopover(): void {
       if (th.status === "open" || th.status === "resolved") {
         const mg = el("button", "cmt-act") as HTMLButtonElement;
         mg.type = "button";
-        mg.textContent = "Merge";
-        mg.title = "Send this discussion back into the session as direction going forward; the thread closes as merged";
+        mg.textContent = "Relay";   // T145: the verb is 'sending it back into the main thread with context' — Merge implied the thread closes, and it doesn't
+        mg.title = "Send this discussion back into the main conversation as context going forward; the thread stays open for more talk";
         mg.dataset.act = "cmtmerge";
         row.appendChild(mg);
       }
@@ -7612,7 +7923,7 @@ function scrollToAnchor(uuid: string): boolean {
                                        || (((e as { settleUuids?: string[] }).settleUuids || []).includes(uuid))) : -1;
     if (s && idx >= 0) {
       const items = displayItems(s);
-      let u = items.findIndex((it) => it.kind === "toolgroup" ? it.indices.includes(idx) : it.index === idx);
+      let u = items.findIndex((it) => it.kind === "toolgroup" || it.kind === "retrygroup" ? it.indices.includes(idx) : it.index === idx);
       if (u < 0) u = Math.max(0, items.findIndex((it) => itemFirstEvent(it) >= idx));
       // The anchor can live INSIDE a collapsed tool run: the folded line carries only the run's FIRST
       // uuid, so the re-render below could never surface a mid-run member — the click honest-failed
@@ -7622,6 +7933,8 @@ function scrollToAnchor(uuid: string): boolean {
       const hit = items[u];
       if (hit && hit.kind === "toolgroup" && hit.indices.includes(idx))
         expandedGroups.add(toolGroupKey(s.events[hit.indices[0]]));
+      if (hit && hit.kind === "retrygroup" && hit.indices.includes(idx))
+        expandedGroups.add(retryGroupKey(s.events[hit.indices[0]]));
       const working = s.status.state === "working" || s.status.state === "compacting";
       renderWindowItems(v, s, items, Math.max(0, u - WINDOW_RADIUS), Math.min(items.length, u + WINDOW_RADIUS), working);
       // Re-query with the SAME three selectors the first lookup used. data-mids was missing here, so an
@@ -7703,7 +8016,7 @@ function landNearestMoment(t: number): boolean {
   if (best < 0) return false;
   const uuid = (s.events[best] as { uuid?: string }).uuid || "";
   const items = displayItems(s);
-  let u = items.findIndex((it) => it.kind === "toolgroup" ? it.indices.includes(best) : it.index === best);
+  let u = items.findIndex((it) => it.kind === "toolgroup" || it.kind === "retrygroup" ? it.indices.includes(best) : it.index === best);
   if (u < 0) u = Math.max(0, items.findIndex((it) => itemFirstEvent(it) >= best));
   const working = s.status.state === "working" || s.status.state === "compacting";
   renderWindowItems(v, s, items, Math.max(0, u - WINDOW_RADIUS), Math.min(items.length, u + WINDOW_RADIUS), working);
@@ -7988,7 +8301,7 @@ function displayItems(s: Session): DisplayItem[] {
   }
   return compactDisplay(s.events.map((e) => e.kind), s.events.map((e) => e.kind === "tool" ? e.name : undefined));
 }
-function itemFirstEvent(it: DisplayItem): number { return it.kind === "toolgroup" ? it.indices[0] : it.index; }
+function itemFirstEvent(it: DisplayItem): number { return it.kind === "toolgroup" || it.kind === "retrygroup" ? it.indices[0] : it.index; }
 
 // The display-unit index of the most recent compaction boundary in the loaded events, or 0 if none. The
 // default render window opens at (never below) this unit so pre-compaction history is scrubbed from the
@@ -8027,6 +8340,19 @@ function appendItem(v: View, s: Session, items: DisplayItem[], u: number, prevEp
       // everywhere, so the expansion must too: iterate it.indices (the tools only), NOT the contiguous
       // start..end span, which would surface the thinking that sat between the tools (the user 2026-06-29).
       // it.indices already excludes thinking — compactDisplay skipped it while building the run.
+      it.indices.forEach((i, j) => {
+        const child = renderEvent(s.events[i], prevEpoch, turnWorkedSecs(s.events, i, working));
+        child.classList.add("tg-child"); if (j === it.indices.length - 1) child.classList.add("tg-last");
+        v.el.appendChild(tag(child)); adv(i);
+      });
+    }
+  } else if (it.kind === "retrygroup") {
+    const notes = it.indices.map((i) => s.events[i]) as Extract<ChatEvent, { kind: "retried" }>[];
+    const key = retryGroupKey(notes[0]);
+    const open = expandedGroups.has(key);
+    v.el.appendChild(tag(renderRetryGroup(notes, prevEpoch, key, open)));
+    adv(it.indices[0]);
+    if (open) {
       it.indices.forEach((i, j) => {
         const child = renderEvent(s.events[i], prevEpoch, turnWorkedSecs(s.events, i, working));
         child.classList.add("tg-child"); if (j === it.indices.length - 1) child.classList.add("tg-last");
@@ -8134,6 +8460,34 @@ function renderToolGroup(tools: Extract<ChatEvent, { kind: "tool" }>[], prevEpoc
   if (epoch != null) turn.insertBefore(timeMarker(epoch, prevEpoch ?? null), turn.firstChild);
   const railDot = turn.querySelector(".dot") as HTMLElement | null;
   if (anchorUuid || epoch != null) wireTurnHover(turn, railDot, anchorUuid, epoch ?? 0, tools[0].tlId ?? null);
+  return turn;
+}
+
+// A collapsed run of consecutive retry-recovery notes (T131 follow-up; the user 2026-08-27,
+// seventeen consecutive rows) → one rail line in the same fold grammar as the tool runs: caret +
+// "Recovered after retries ×N", expanding to the individual notes. Key rides expandedGroups like
+// a toolgroup, so the same toggle, persistence-across-rebuilds, and popover-flip machinery apply.
+function retryGroupKey(first: ChatEvent): string { return "rg:" + (first.uuid || String(eventEpoch(first) ?? "")); }
+function renderRetryGroup(notes: Extract<ChatEvent, { kind: "retried" }>[], prevEpoch: number | null, key: string, open: boolean): HTMLElement {
+  const turn = el("div", "turn turn-toolgroup turn-retrygroup" + (open ? " expanded" : ""));
+  turn.appendChild(dot("ring"));
+  const line = el("div", "toolgroup-line");
+  line.title = open ? "click to collapse" : "click to expand";
+  const caret = el("span", "toolgroup-caret"); caret.textContent = open ? "▾" : "▸"; line.appendChild(caret);
+  if (!open) {
+    const w = el("span", "retried-text");
+    w.textContent = ` Recovered after retries ×${notes.length}`;
+    line.appendChild(w);
+  }
+  line.addEventListener("click", (e) => { e.stopPropagation(); toggleToolGroup(key); });
+  turn.appendChild(line);
+  const epoch = eventEpoch(notes[0]);
+  const anchorUuid = notes[0].uuid ?? null;
+  if (anchorUuid) turn.dataset.uuid = anchorUuid;
+  if (epoch != null) turn.dataset.t = String(epoch);
+  if (epoch != null) turn.insertBefore(timeMarker(epoch, prevEpoch ?? null), turn.firstChild);
+  const railDot = turn.querySelector(".dot") as HTMLElement | null;
+  if (anchorUuid || epoch != null) wireTurnHover(turn, railDot, anchorUuid, epoch ?? 0, notes[0].tlId ?? null);
   return turn;
 }
 
@@ -8945,10 +9299,12 @@ function renderBgTasks() {
   host.classList.remove("bg-awaited");   // re-derived below from THIS payload (renderAwaitWhy adds its own)
   if (!count || !tasks.length) { renderAwaitWhy(host, s || null); return; }
   host.style.display = "";
-  // the AWAITED rows (the user 2026-08-19): when the await-green chip waits on specific tasks, those
-  // rows — and the box holding them — wear a thin outline in the chip's green (awaitingTaskIds, the
-  // kernel's exact launch-id match); the status DOT keeps its meaning (yellow = the task is running)
-  const awaited = new Set<string>((s!.status.state === "awaitingBg" && s!.status.awaitingTaskIds) || []);
+  // the AWAITED rows (the user 2026-08-19): when the chip waits on specific tasks, those rows — and
+  // the box holding them — wear a thin outline in the chip's green (awaitingTaskIds, the kernel's
+  // exact launch-id match); the status DOT keeps its meaning (yellow = the task is running). Keyed on
+  // the ids' PRESENCE, never the chip state (the user 2026-08-30: awaited things show even while the
+  // session is working — the kernel only ships ids when something genuinely awaits them).
+  const awaited = new Set<string>(s!.status.awaitingTaskIds || []);
   host.classList.toggle("bg-awaited", tasks.some((t) => awaited.has(t.id)));
   const sid = activeId as string;
   const open = bgFoldOpen.has(sid);
@@ -9004,7 +9360,11 @@ function renderBgTasks() {
 // (a peer's PR, a build) has no process to kill; tracked run_in_background tasks take the list path
 // above, which carries one Stop per running row.
 function renderAwaitWhy(host: HTMLElement, s: Session | null) {
-  const why = (s && s.status.state === "awaitingBg" && (s.status.awaitingWhy || "").trim()) || "";
+  // Keyed on awaited CONTENT, never the chip state (the user 2026-08-30, their words paraphrased:
+  // even while working, anything the session awaits shows at the chat bottom in the green box). The
+  // kernel ships awaitingWhy whenever something is genuinely awaited — armed kernel watches included,
+  // mid-turn included — so the fields' presence IS the render condition; the chip keeps its meaning.
+  const why = (s && (s.status.awaitingWhy || "").trim()) || "";
   if (!why || !activeId) { host.style.display = "none"; return; }
   host.style.display = "";
   host.classList.add("bg-awaited");   // this whole box IS the awaited thing — the chip's green border
@@ -9045,7 +9405,9 @@ function renderAwaitWhy(host: HTMLElement, s: Session | null) {
     for (const t of items) { const r = el("div", "bg-await-task"); r.textContent = "· " + t; det.appendChild(r); }
   }
   const note = el("div", "bg-await-note");
-  note.textContent = "The session is idle until this finishes; it picks back up on its own when the result lands.";
+  note.textContent = s!.status.state === "awaitingBg"
+    ? "The session is idle until this finishes; it picks back up on its own when the result lands."
+    : "The session keeps working meanwhile; it's told when this lands.";
   det.appendChild(note);
   host.appendChild(det);
 }
@@ -9566,7 +9928,34 @@ const EFFORT_CHOICES: { label: string; value: string; color?: number[] | null }[
 fetch(kernelUrl("/models"), { cache: "no-store" }).then((r) => r.json()).then((d) => {
   if (Array.isArray(d.models)) { MODEL_CHOICES.length = 0; MODEL_CHOICES.push(...d.models, { label: "Default", value: "default" }); }
   if (Array.isArray(d.efforts)) { EFFORT_CHOICES.length = 0; EFFORT_CHOICES.push(...d.efforts); }
+  if (d.commentDefaults) adoptCommentDefaults(d.commentDefaults);
 }).catch(() => { /* picker stays empty until it lands */ });
+// The kernel's default-comment settings, RAW ("session" = same as the session — the user 2026-08-29):
+// what a new comment thread launches on when the dialog is left untouched. Pre-read so the create
+// dialog SHOWS the effective default and a pick stays a deviation; the kernel re-resolves at create,
+// so a stale pre-read can mislabel a chip but never mislaunch a thread. Re-fetched at each dialog
+// open (the gear may have changed it since page load).
+let commentDefaults = { model: "session", effort: "session", fast: "session" };
+function adoptCommentDefaults(d: any): void {
+  commentDefaults = { model: String(d.model || "session"), effort: String(d.effort || "session"),
+                      fast: String(d.fast || "session") };
+}
+function refreshCommentDefaults(then: () => void): void {
+  fetch(kernelUrl("/models"), { cache: "no-store" }).then((r) => r.json()).then((d) => {
+    if (d && d.commentDefaults) { adoptCommentDefaults(d.commentDefaults); then(); }
+  }).catch(() => { /* keep the page-load pre-read — the kernel still resolves at create */ });
+}
+// A model VALUE's display label + family tint, version ids included ("claude-opus-5" → its version
+// label under the opus family) — the create dialog's default chip must name whatever the setting
+// holds, not just top-level families.
+function modelChoiceLabel(value: string): { label: string; color?: number[] | null } {
+  for (const c of MODEL_CHOICES as MetaChoice[]) {
+    if (c.value === value) return c;
+    const v = c.versions?.find((x) => x.value === value);
+    if (v) return { label: v.label, color: c.color };
+  }
+  return { label: value };
+}
 // Permission mode. A tmux session has no slash command for it — the host cycles shift+tab the right
 // number of times (the user 2026-06-16) — so the four CYCLE modes are all that backend can reach.
 // An SDK session sets it outright over the control channel (set_permission_mode), which is what makes
@@ -9595,15 +9984,18 @@ function modeIconSvg(mode: string | undefined): string {
   return '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">' + body + "</svg>";
 }
 
+// Every mode wears a one-phrase sub-line (T140, the user 2026-08-28: where taglines exist under
+// some entries, add analogous ones saying what the other modes are — and 'Accept edits' reads
+// just 'Accept'; the mode ids stay the wire's). Each line states what the mode ENFORCES, worded
+// from the plumbing, not folklore: the SDK's permission engine owns the gate (romp's can_use_tool
+// only renders the asks it fires), auto's gate is the safety classifier (observed enforcement:
+// its outage refuses with "cannot determine the safety of"), and bypass's line keeps its 2026-08-15
+// cost warning — it never fires can_use_tool, so the approval RECORD goes too, not just the asking.
 const MODE_CHOICES: MetaChoice[] = [
-  { label: "Normal", value: "default" },
-  { label: "Accept edits", value: "acceptEdits" },
-  { label: "Auto", value: "auto" },
-  { label: "Plan", value: "plan" },
-  // The one mode that removes the gate rather than moving it, so it says what that costs right in the
-  // menu (the user 2026-08-15). Two things are worth the sub-line: every tool runs unasked, and romp's
-  // own approve/deny cards go with them — they are rendered from the SDK's can_use_tool callback, which
-  // bypass never fires, so you lose the RECORD of what ran, not just the asking.
+  { label: "Normal", value: "default", sub: "asks before edits and commands" },
+  { label: "Accept", value: "acceptEdits", sub: "file edits apply without asking; commands still ask" },
+  { label: "Auto", value: "auto", sub: "safe actions run unasked; risky ones still ask" },
+  { label: "Plan", value: "plan", sub: "reads and proposes only — changes nothing" },
   { label: "Bypass permissions", value: "bypassPermissions", sdkOnly: true,
     sub: "every tool runs unasked, and romp stops showing approvals" },
 ];
@@ -9647,7 +10039,7 @@ function fastAvailable(st: Status): boolean {
 function prettyMode(m: string | undefined): string {
   switch ((m || "").toLowerCase()) {
     case "plan": return "Plan";
-    case "acceptedits": return "Accept edits";
+    case "acceptedits": return "Accept";   // one word everywhere the mode renders (T140)
     case "auto": return "Auto";
     case "dontask": return "Don’t ask";
     case "bypasspermissions": return "Bypass";
@@ -12608,7 +13000,20 @@ setupSettings();
     qx: (el) => {
       if (!activeId || !vscodeApi) return;
       const qmd = (el as any)._qmd as string | undefined;
-      const msg: Record<string, unknown> = { type: "cancelQueued", id: owningSidOf(el), md: qmd };
+      const sidQ = owningSidOf(el) || activeId;
+      if (qmd) {
+        // EVERY ✕ drops our own optimistic entry for the text first (the user 2026-08-30). At the
+        // optimistic stage (qopt) that is the whole client half — the kernel may not have pushed its
+        // park yet, and the reconcile would otherwise repaint the bubble the user just cut. And on a
+        // PARKED/backend ✕ it is just as load-bearing: the kernel bubble had been SUPPRESSING our
+        // still-live entry (shownProvisional), so cancelling only the kernel op resurrected the
+        // cancelled message as a dashed bubble until the TTL (caught by this fix's served-page probe).
+        const list = pendingSent.get(sidQ) || [];
+        const i = list.findIndex((p) => p.text === qmd);
+        if (i >= 0) { list.splice(i, 1); if (list.length) pendingSent.set(sidQ, list); else pendingSent.delete(sidQ); }
+        echoShownSig.delete(sidQ);
+      }
+      const msg: Record<string, unknown> = { type: "cancelQueued", id: sidQ, md: qmd };
       if (el.dataset.qidx !== undefined) msg.idx = Number(el.dataset.qidx);
       if (el.dataset.qpark !== undefined) msg.park = Number(el.dataset.qpark);
       vscodeApi.postMessage(msg);
@@ -12638,6 +13043,25 @@ setupSettings();
       openCommentPopover(activeId, tid, Math.min(r.left, window.innerWidth - 380), r.bottom + 6);
     },
     cmtclose: () => closeCommentPop(),
+    // Interrupt the THREAD's own turn (T138): the sid rides the button (the thread's session),
+    // never activeId — the exact owner-scoping class queued-x/Retry were fixed for. The gesture
+    // itself ENDS the exchange with no reply record coming, so the T102 send-latch clears on THIS
+    // event (a user gesture is a sanctioned mover; waiting for a reply-completed record would hang
+    // the pulse green forever). Acknowledge instantly per the buttons rule: the chip flips to
+    // Interrupting… and the timer + button go; the next comments frame rebuilds this statusline.
+    cmtinterrupt: (elx) => {
+      const sid = (elx as HTMLElement).dataset.sid;
+      if (!sid || !vscodeApi) return;
+      vscodeApi.postMessage({ type: "interrupt", id: sid });
+      cmtAwaitBase.delete(sid);
+      cmtInterrupted.add(sid);
+      const wrap = document.getElementById("cmt-state");
+      if (wrap) {
+        const chip = el("span", "chip chip-interrupting");
+        chip.textContent = CHIP_LABEL.interrupting;
+        wrap.replaceChildren(chip);
+      }
+    },
     // a scroll-rail tick: jump the chat to the commented message (fresh navigation → one flash)
     // and open its thread beside it
     cmtjump: (elx) => {
@@ -12660,7 +13084,7 @@ setupSettings();
       const cur = openCommentThread();
       if (!cur) return;
       (elx as HTMLButtonElement).disabled = true;   // acknowledge before the round-trip
-      elx.textContent = "Merging…";
+      elx.textContent = "Relaying…";
       vscodeApi?.postMessage({ type: "commentMerge", id: cur.sid, tid: cur.th.tid });
     },
     cmtresolve: (elx) => {
@@ -12785,15 +13209,26 @@ setupSettings();
   // (flipTabs). The no-op guard (already sitting immediately before the reference node) is what
   // keeps a pointer resting inside one slot from churning the DOM on every dragover tick.
   tabs.addEventListener("dragover", (e) => {
-    if (!draggedId) return;
+    if (!draggedId || !dragGeom) return;
     e.preventDefault();   // the whole strip is a valid drop target
     if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
-    const over = (e.target as HTMLElement).closest?.(".tab[data-id]") as HTMLElement | null;
     const dragged = tabs.querySelector<HTMLElement>(`.tab[data-id="${CSS.escape(draggedId)}"]`);
-    if (!over || !dragged || over === dragged) return;
-    const r = over.getBoundingClientRect();
-    const ref = e.clientX > r.left + r.width / 2 ? over.nextElementSibling : over;
-    if (ref !== dragged && dragged.nextElementSibling !== ref) flipTabs(() => tabs.insertBefore(dragged, ref));
+    if (!dragged) return;
+    // native feel: a pointer still inside the dragged tab's own box moves nothing (without this,
+    // the virtual mapping — which removes the dragged tab — can read the untouched start position
+    // as one slot over and hop the tab before the user has left it)
+    const dr = dragged.getBoundingClientRect();
+    if (e.clientX >= dr.left && e.clientX <= dr.right && e.clientY >= dr.top && e.clientY <= dr.bottom) return;
+    // the virtual layout: the OTHER tabs in current DOM order, widths from the dragstart snapshot —
+    // boundaries that cannot move in response to the insert they cause (dragslot.ts owns the math)
+    const others = Array.from(tabs.querySelectorAll<HTMLElement>(".tab[data-id]")).filter((t) => t !== dragged);
+    const boxes = others.map((t) => ({ id: t.dataset.id!, w: dragGeom!.widths.get(t.dataset.id!) ?? t.getBoundingClientRect().width }));
+    const br = tabs.getBoundingClientRect();
+    const idx = dragSlotIndex(boxes, dragGeom.containerW, dragGeom.gapX, dragGeom.rowH,
+                              e.clientX - br.left, e.clientY - br.top);
+    const ref = idx < others.length ? others[idx] : dragged.parentElement === tabs ? tabs.querySelector(".tab-add") : null;
+    if (ref !== dragged && dragged.nextElementSibling !== ref)
+      flipTabs(() => tabs.insertBefore(dragged, ref));
   });
   // Drop commits the LIVE DOM position through the same reorderTo the strip has always used —
   // neighbor id + side — so persistence and the kernel write are byte-identical, and ids that a

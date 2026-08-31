@@ -1,7 +1,8 @@
 // The chat-tab appearance themes (T113, tightened by T115, tuned by T118 — the user 2026-08-27):
 // CLASSIC, the default, is the PRE-720 tab strip modulo exactly THREE sanctioned deltas —
 // typography (the strip inherits the global Inter/type ladder), T123's 1px hover-gray rest
-// outline, T118's 0.9 faded-label scale, and T125's strip band (the multi-row grounding). Everything else reads pre-720: NO identity tint at any state, the thick 1.5px
+// outline, T118's 0.9 faded-label scale, and T134's per-row hairlines (the T125 band was
+// ruled OUT by T141 — one dark background everywhere). Everything else reads pre-720: NO identity tint at any state, the thick 1.5px
 // selected ring, the neutral line under the strip, gap 0. T115 verified the baseline equality by
 // pixel-diffing a real pre-720 build: with fonts normalized, zero differing pixels outside the
 // (out-of-scope) tag-controls box — a re-run must subtract the two T118 washes the same way it
@@ -39,7 +40,7 @@ test("the theme applies LIVE through the scheme plumbing — a body class, no re
 
 test("Classic: the pre-720 strip verbatim — line, gap 0, gray active fill, ring, stand-down", () => {
   assert.match(CSS, /border-bottom: 1px solid var\(--box-border\);/);
-  assert.match(CSS, /#tabs \{ display: flex; flex: 1 1 auto; flex-wrap: wrap; align-items: stretch; gap: 0; \}/);
+  assert.match(CSS, /#tabs \{ display: flex; flex: 1 1 auto; flex-wrap: wrap; align-items: stretch; gap: 0; position: relative; \}/);
   assert.match(CSS, /\.tab\.active \{ color: var\(--fg\); background: rgba\(255, 255, 255, 0\.14\); \}/);
   assert.match(CSS, /\.tab\.active\.colored \{ box-shadow: inset 0 0 0 1\.5px var\(--chip-bg\); \}/);
   assert.match(CSS, /\.tab\.tab-blocked\.active\.colored \{ box-shadow: none; \}/, "blocked outranks the ring (2026-07-24)");
@@ -61,6 +62,18 @@ test("Classic: faded labels brighten 10% — one tunable knob, Yatharth keeps hi
   assert.match(RENDER, /const t = Math\.min\(0\.85, \(Lc - Lt\) \/ \(Lc - Lb\)\) \* scale;/);
 });
 
+test("Classic: ONE dark background — no band, no explicit body fill, baseline transparency (T141)", () => {
+  // The user (2026-08-28, explicit ruling): the lighter gray behind/around the tabs goes; the
+  // strip's plane is the page dark, same as the feed behind its cards. The T125/T128 band and the
+  // T136 body rule (which existed only to fight the band showing through) are both out — resting
+  // tabs read the dark plane through baseline transparency again. Grounding = row lines + outlines.
+  assert.doesNotMatch(CSS, /#tabbar \{ background: linear-gradient/, "no band plane on the strip");
+  assert.doesNotMatch(CSS, /\.tab:not\(\.tab-blocked\):not\(\.active\):not\(:hover\):not\(\.tab-add\) \{ background:/,
+    "no explicit rest-body fill either — baseline transparency over the dark plane");
+  assert.match(CSS, /^  background: var\(--vscode-editor-background, var\(--bg\)\);$/m,
+    "the strip's one background — the EDITOR token: sideBar resolves #252526 under the served THEME_CSS (T151; served-theme.test.ts owns the resolution proof)");
+});
+
 test("Classic: the rest OUTLINE — 1px in the hover gray, no fill, states stand down (T123)", () => {
   const rule = CSS.match(/^body:not\(\.chat-theme-yatharth\) \.tab([^ ]*) \{ border-color: (rgba\([^)]*\)); \}$/m);
   assert.ok(rule, "the rest-outline rule exists, body-scoped OUT of the Yatharth theme");
@@ -72,7 +85,8 @@ test("Classic: the rest OUTLINE — 1px in the hover gray, no fill, states stand
   // border-color is a different property from the state FILLS, so hover needs no exclusion — the
   // outline stays under hover's fill (same color, one object filling in) and the fill itself…
   assert.match(CSS, /\.tab:hover \{ color: var\(--fg\); background: rgba\(255, 255, 255, 0\.06\); \}/);
-  // …and no resting FILL remains: the T118 2% wash was replaced by this outline (T123).
+  // …and no resting WASH remains: the T118 2% white lift was replaced by this outline (T123).
+  // (T136's explicit baseline-color body is not a wash — it restores the pre-720 pixel exactly.)
   assert.doesNotMatch(CSS, /\.tab[^{]*\{ background: rgba\(255, 255, 255, 0\.0[24]\); \}/);
 });
 
@@ -93,8 +107,7 @@ test("Classic: the strip is a BAND — a 3% plane over the page bg, closed by th
   // T128 triage (the user 2026-08-27: on their dark theme 3% read as nothing at a glance — the
   // 3/5/6% eyeball comparison sits in their drops, and the placement of the ONE hairline at the
   // strip's bottom edge stands per the precedent survey, the user's alone to overturn).
-  assert.match(CSS, /^body:not\(\.chat-theme-yatharth\) #tabbar \{ background: linear-gradient\(rgba\(255, 255, 255, 0\.05\), rgba\(255, 255, 255, 0\.05\)\), var\(--vscode-sideBar-background, var\(--bg\)\); \}$/m,
-    "the band: one Classic-scoped background line, tunable in place; Yatharth keeps his merged look");
+
   assert.match(CSS, /border-bottom: 1px solid var\(--box-border\);/, "…closed by the ONE existing hairline at the band's bottom edge");
 });
 
