@@ -2696,11 +2696,32 @@ def _run_update(tag):
                + "  curl -s -X POST 'http://127.0.0.1:%d/restart-all' >/dev/null 2>&1\n" % int(mport)) if mport.isdigit() \
         else "  : # no manager — the new code arms on the next romp start (the report says so)\n"
     ok_rep = {"ok": True, "tag": tag, "restarted": bool(mport.isdigit())}
+    # advance() — the tree lands EXACTLY on the release commit. The fast-forward is the normal
+    # release-to-release move, EXCEPT for an install sitting DETACHED off every tag: the
+    # pre-2026-08-31 drift banner's Update ran `git checkout --detach origin/main` on plain
+    # installs, and from a main sha AHEAD of the next tag `git merge --ff-only <tag>` does not
+    # fail — it silently no-ops ("Already up to date"), stranding the install off the release
+    # channel forever with an ok report. So: detached AND not exactly on a tag → check the tag out
+    # directly, LOUDLY in the update log (never a silent history jump). A BRANCH checkout (the
+    # maintainer's main-tracking clones) never takes the fallback — for it the no-op ff stays the
+    # harmless behavior it always was; and a diverged install exactly ON a tag still fails
+    # visibly through the ff.
+    advance = (
+        "advance(){\n"
+        + "  if ! git symbolic-ref -q HEAD >/dev/null 2>&1 "
+          "&& ! git describe --exact-match --tags >/dev/null 2>&1; then\n"
+        + "    echo 'HEAD is detached off every release tag (an older update walked this install "
+          "onto a main-branch commit) - checking out %s directly to return to the release "
+          "channel' >> %s;\n" % (tag, log)
+        + "    git checkout --detach refs/tags/%s >> %s 2>&1; return $?;\n" % (tag, log)
+        + "  fi\n"
+        + "  git merge --ff-only %s >> %s 2>&1; }\n" % (tag, log))
     script = (
         "cd %s || exit 1\n" % q(str(ROOT))
         + "{ echo; echo \"== romp self-update to %s ==\"; date; } >> %s 2>&1\n" % (tag, log)
-        + "if git fetch origin refs/tags/%s:refs/tags/%s >> %s 2>&1 && git merge --ff-only %s >> %s 2>&1 "
-          "&& ./install.sh >> %s 2>&1; then\n" % (tag, tag, log, tag, log, log)
+        + advance
+        + "if git fetch origin refs/tags/%s:refs/tags/%s >> %s 2>&1 && advance "
+          "&& ./install.sh >> %s 2>&1; then\n" % (tag, tag, log, log)
         + "  printf '%%s' %s > %s\n" % (q(json.dumps(ok_rep)), rep)
         + restart
         + "else\n"
@@ -2775,12 +2796,15 @@ def _update_check():
             _sync_notice("a newer romp (%s) is available, but the automatic update to it already ran "
                          "once without landing — update.log under ~/.local/state/romp has the story; "
                          "the banner still offers it" % latest, ok=False)
-            _send_to_app("shell", {"type": "updateAvail", "cur": _kernel_ver() or "", "tag": latest,
-                                   "boot": _BOOT_ID})
+            if latest not in _dismissed_updates():
+                _send_to_app("shell", {"type": "updateAvail", "cur": _kernel_ver() or "", "tag": latest,
+                                       "boot": _BOOT_ID})
             return
         _atomic_write(jd.STATE / "update-attempted.json", json.dumps({"tag": latest, "t": int(time.time())}))
         _run_update(latest)
     else:
+        if latest in _dismissed_updates():
+            return                    # Not-now'd THIS release, durably — a newer one offers again
         _send_to_app("shell", {"type": "updateAvail", "cur": _kernel_ver() or "", "tag": latest,
                                "boot": _BOOT_ID})
 
@@ -2829,6 +2853,72 @@ def _checkout_sha():
         return out.stdout.strip()[:8]
     except Exception:
         return ""
+
+
+def _checkout_branch():
+    """The shared checkout's current branch name, '' when detached (a bootstrap install sits
+    detached at a release tag — and the maintainer's auto-converged boxes sit detached at main
+    shas, which is why the branch alone is not the whole channel verdict) or unreadable."""
+    try:
+        out = subprocess.run(["git", "symbolic-ref", "-q", "--short", "HEAD"],
+                             cwd=str(ROOT), capture_output=True, text=True, timeout=10)
+        return out.stdout.strip()
+    except Exception:
+        return ""
+
+
+def _main_channel_verdict(branch, mode, attached):
+    """The pure audience decision for the main-drift watcher (the user 2026-08-31, after two
+    independent "constant update notices" reports from plain installs): dev commits must never
+    notify a plain install — their channel is release TAGS, one notice each, owned by
+    _update_check. The watcher's audience was always the maintainer's own mesh (its 2026-08-14
+    design comment says so), and that mesh is recognizable by its own signals:
+      * the checkout is ON branch main — a deliberate main-tracking clone;
+      * update mode "auto" — the unattended-converge machines;
+      * attached remotes — the federated dashboard's mesh (live rows or remembered hosts).
+    Everything else — a bootstrap install detached at a release tag, and the installs an old
+    banner already walked onto a DETACHED main sha (at-or-behind origin/main with no mesh
+    signals = the release channel, not drift) — stays silent here."""
+    return branch == "main" or mode == "auto" or bool(attached)
+
+
+def _main_tracking():
+    """_main_channel_verdict over the live inputs."""
+    with _remotes_lock:
+        attached = bool(_remotes)
+    if not attached:
+        try:
+            attached = bool(json.loads(KNOWN_FILE.read_text()))
+        except Exception:
+            attached = False
+    return _main_channel_verdict(_checkout_branch(), _update_mode(), attached)
+
+
+# ── Not-now, PERSISTED (the user 2026-08-31): a dismissal used to live in one page's JS var, so
+# every page load re-derived the offer and every kernel restart re-offered the same sha — the
+# re-nag half of the notice-spam reports. The store is a small capped list of dismissed
+# identifiers (release tags and drift shas, one mechanism); event-keyed: a NEW sha/tag is not in
+# the list and offers normally. Auto mode never consults it — dismissal is a banner concept.
+_DISMISSED_UPDATES_FILE_NAME = "update-dismissed.json"
+
+
+def _dismissed_updates():
+    try:
+        d = json.loads((jd.STATE / _DISMISSED_UPDATES_FILE_NAME).read_text())
+        return [str(x) for x in d if isinstance(x, str)][-20:] if isinstance(d, list) else []
+    except Exception:
+        return []
+
+
+def _dismiss_update(ident):
+    ident = str(ident or "").strip()[:80]
+    if not ident:
+        return
+    cur = [x for x in _dismissed_updates() if x != ident] + [ident]
+    try:
+        _atomic_write(jd.STATE / _DISMISSED_UPDATES_FILE_NAME, json.dumps(cur[-20:]))
+    except OSError:
+        sys.stderr.write("update-dismiss: store write failed\n")
 
 
 def _main_drift_verdict(origin, checkout, running):
@@ -2937,6 +3027,11 @@ def _main_drift_check():
     CHANGES — new information, never a re-nag of the sha already offered or dismissed."""
     if _update_mode() == "off":
         return
+    if not _main_tracking():
+        # the audience gate (the user 2026-08-31): plain installs live on the release channel —
+        # one notice per new TAG, from _update_check — and must never hear about dev commits.
+        # The maintainer's mesh keeps this watcher through its own signals (_main_channel_verdict).
+        return
     kind, target = _main_drift_verdict(_origin_main_sha(), _checkout_sha(), _kernel_sha())
     if kind == "restart" and target == _REBUILT_FOR[0]:
         return                                        # already converged in place (UI-only rebuild)
@@ -2973,6 +3068,8 @@ def _main_drift_check():
         _LAST_AUTO_CONVERGE[0] = time.time()
         _run_main_update(kind)
     else:
+        if target in _dismissed_updates():
+            return                    # Not-now'd THIS sha, durably — a NEW sha offers again
         _send_to_app("shell", {"type": "updateAvail", "kind": "main", "drift": kind,
                                "cur": _kernel_sha() or "", "tag": target, "boot": _BOOT_ID})
 
@@ -28401,8 +28498,8 @@ _UPD_JS = (
     "show('romp is updating \\u2014 the dashboard reloads when it restarts\\u2026');poll();return;}"
     "if(boot&&bootNow&&boot!==bootNow)return;"
     "if(waiting||!tag||tag===dismissedTag)return;curTag=tag;go.hidden=false;go.disabled=false;dm.hidden=false;"
-    "if(drift==='pull')show('new romp commits are on main ('+tag+') \\u2014 Update pulls them and restarts every kernel.');"
-    "else if(drift==='restart')show('romp '+tag+' is ready on disk \\u2014 Update restarts every kernel onto it.');"
+    "if(drift==='pull')show('new romp commits are on main ('+tag+') \\u2014 Update pulls them and restarts romp.');"
+    "else if(drift==='restart')show('romp '+tag+' is ready on disk \\u2014 Update restarts romp onto it.');"
     "else show('romp '+tag+' is available'+(cur?' \\u2014 you are on '+cur:'')+'.');}"
     "window.__rompUpdateOffer=offer;"   # the shell WS relays the kernel's boot-check push here
     # the kernel restarted under a SHOWING offer → the offer's evidence predates the new life: retire
@@ -28429,7 +28526,10 @@ _UPD_JS = (
     "if(window.__rompNotify)window.__rompNotify('sync','the update this prompt offered already ran \\u2014 nothing left to do');return;}"
     "go.disabled=false;dm.hidden=false;"
     "show('Could not start the update: '+em);});};"
-    "dm.onclick=function(){dismissedTag=curTag;box.classList.remove('show');};"
+    "dm.onclick=function(){dismissedTag=curTag;box.classList.remove('show');"
+    # persist the Not-now (the user 2026-08-31): page loads and kernel restarts stop re-offering
+    "try{fetch('/update-dismiss',{method:'POST',headers:{'Content-Type':'application/json'},"
+    "body:JSON.stringify({tag:curTag})}).catch(function(){});}catch(e){}};"
     "fetch('/update-check',{cache:'no-store'}).then(function(r){return r.json();}).then(function(d){"
     "bootNow=(d&&d.boot)||'';"
     "if(d&&d.state==='running'){waiting=true;go.hidden=true;dm.hidden=true;"
@@ -30060,13 +30160,21 @@ class Handler(BaseHTTPRequestHandler):
                             failed = str(rep.get("why") or "the pull or install failed")
                         elif rep is not None:
                             updated = str(rep.get("tag") or "")
+                # a DISMISSED identifier never re-derives an offer on a page load (the user
+                # 2026-08-31: the per-page-load re-offer was a notice-spam compounder)
+                dis = _dismissed_updates()
+                dsha = _MAIN_DRIFT[0] or _MAIN_DRIFT[1]
+                if dsha in dis:
+                    dsha = ""
                 return self._send(200, json.dumps({
-                    "cur": _kernel_ver() or "", "tag": _UPDATE_AVAIL[0], "mode": _update_mode(),
+                    "cur": _kernel_ver() or "",
+                    "tag": ("" if _UPDATE_AVAIL[0] in dis else _UPDATE_AVAIL[0]),
+                    "mode": _update_mode(),
                     "state": _UPDATE_STATE[0], "failed": failed, "updated": updated,
                     # the pending MAIN-DRIFT offer (2026-08-15): a page loaded after the push can
                     # re-derive it, and a stale page can revalidate before acting
-                    "drift": ("pull" if _MAIN_DRIFT[0] else ("restart" if _MAIN_DRIFT[1] else "")),
-                    "driftSha": _MAIN_DRIFT[0] or _MAIN_DRIFT[1],
+                    "drift": (("pull" if _MAIN_DRIFT[0] else "restart") if dsha else ""),
+                    "driftSha": dsha,
                     "boot": _BOOT_ID}), "application/json", cache="no-cache")
             if p == "/notify-all":
                 # the master bell's state (the user 2026-08-09): on = every task notifies when it
@@ -30168,6 +30276,15 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(200, FLEET_REPORT.read_text(), "application/json")
                 except OSError:
                     return self._send(200, json.dumps({"rows": []}), "application/json")
+            if u.path == "/update-dismiss":
+                # the banner's Not-now, PERSISTED (the user 2026-08-31): the dismissal outlives the
+                # page and the kernel — event-keyed, a NEW sha/tag offers again. Body: {"tag": id}.
+                try:
+                    b = json.loads(raw_body or b"{}")
+                except Exception:
+                    b = {}
+                _dismiss_update((b or {}).get("tag"))
+                return self._send(200, json.dumps({"ok": True}), "application/json")
             if u.path == "/update":
                 # the banner's Update button (the user 2026-08-09). Only what the kernel's own checks
                 # found is ever acted on — the route takes no version from the client. A pending
