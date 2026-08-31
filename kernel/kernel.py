@@ -13092,19 +13092,29 @@ def _session_rows():
     notes = _working_notes()                                # {sid: working-note} (tmux @romp-working; P3 adds SDK)
     out = []
     for sid, meta in Sessions.live().items():
-        bg, fg = _identity_of(sid)
-        out.append({"id": sid, "name": _name_of(sid) or sid[:8], "state": meta.get("state", ""),
-                    "dir": _cwd_of(sid), "bg": bg, "fg": fg,
-                    # lastSid: the session's CURRENT transcript fsid (SDK registry join, mtime-memoized).
-                    # CLAUDE_CODE_SESSION_ID inside a forked session carries THIS id, not the stable sid,
-                    # so the postal bus resolves self-identity through it (the user 2026-07-27: a
-                    # post-/clear session mailed as "unknown" and read an empty mailbox).
-                    "lastSid": jd._sdk_last_sid(sid) or sid,
-                    # compacting: the corroborated signal the chat chip uses (_compacting_now, cached
-                    # parse), exposed so `romp compact --wait` and scripted recycling can watch a
-                    # compaction start and clear through the kernel's own read, never a scrape.
-                    "compacting": bool(_compacting_now(sid, tm=meta)),
-                    "working": notes.get(sid, ""), "backend": meta.get("backend", "")})
+        try:
+            bg, fg = _identity_of(sid)
+            out.append({"id": sid, "name": _name_of(sid) or sid[:8], "state": meta.get("state", ""),
+                        "dir": _cwd_of(sid), "bg": bg, "fg": fg,
+                        # lastSid: the session's CURRENT transcript fsid (SDK registry join, mtime-memoized).
+                        # CLAUDE_CODE_SESSION_ID inside a forked session carries THIS id, not the stable sid,
+                        # so the postal bus resolves self-identity through it (the user 2026-07-27: a
+                        # post-/clear session mailed as "unknown" and read an empty mailbox).
+                        "lastSid": jd._sdk_last_sid(sid) or sid,
+                        # compacting: the corroborated signal the chat chip uses (_compacting_now, cached
+                        # parse), exposed so `romp compact --wait` and scripted recycling can watch a
+                        # compaction start and clear through the kernel's own read, never a scrape.
+                        "compacting": bool(_compacting_now(sid, tm=meta)),
+                        "working": notes.get(sid, ""), "backend": meta.get("backend", "")})
+        except Exception:
+            # one row's helper blowing up must not hide the session — or the WHOLE listing (this
+            # loop is what GET /sessions serves, and absence reads as death downstream: the postal
+            # bus refuses sends on it). Same per-row contract as the SDK merge's guard (2026-08-31).
+            sys.stderr.write("session row for %s failed (kept minimal): %s\n"
+                             % (sid, traceback.format_exc()))
+            out.append({"id": sid, "name": sid[:8], "state": meta.get("state", ""), "dir": "",
+                        "bg": "", "fg": "", "lastSid": sid, "compacting": False,
+                        "working": "", "backend": meta.get("backend", "")})
     return out
 
 

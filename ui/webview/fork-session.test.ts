@@ -97,7 +97,7 @@ test("kernel: forkSession is a session op; seeding precedes discoverability; the
   assert.match(BACKEND, /if self\._fork_of and fsid == self\.sid:/);
   assert.match(BACKEND, /self\.backend\._update_reg\(self\.sid, forkOf="", forkAt=""\)/);
   // …and the names/ entry is written LAST (it is the discoverability trigger)
-  assert.match(BACKEND, /write_reg\(self\.state_dir, sid, reg\)[\s\S]{0,400}write_name\(self\.state_dir, sid, name, cwd, bg, fg\)[\s\S]{0,200}append_state\(self\.state_dir, sid, "waiting"\)/);
+  assert.match(BACKEND, /self\._write_reg_locked\(sid, reg\)[\s\S]{0,400}write_name\(self\.state_dir, sid, name, cwd, bg, fg\)[\s\S]{0,200}append_state\(self\.state_dir, sid, "waiting"\)/);
 });
 
 // ── branch lineage (the user 2026-08-13: branching must SHOW) ───────────────────────────────────

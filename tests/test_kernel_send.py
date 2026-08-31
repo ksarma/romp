@@ -91,6 +91,26 @@ class SessionList(unittest.TestCase):
                                          "compacting": False,
                                          "working": "", "backend": "sdk"})
 
+    def test_one_rows_helper_exception_never_hides_the_session(self):
+        # the per-row guard (2026-08-31, the listing-blink source class): absence from GET /sessions
+        # reads as death downstream, so one sid's helper blowing up keeps the session listed as a
+        # minimal honest row — and never takes the WHOLE listing down with it
+        self._stub(
+            live={"sid-t": {"state": "working", "backend": "tmux"},
+                  "sid-s": {"state": "waiting", "backend": "sdk"}},
+            notes={}, names={"sid-s": ("beta", "/work/b", "blue", "white")})
+        saved = km._identity_of
+        km._identity_of = lambda sid: (_ for _ in ()).throw(RuntimeError("mid-cycle")) \
+            if sid == "sid-t" else saved(sid)
+        try:
+            rows = {r["id"]: r for r in km._session_rows()}
+        finally:
+            km._identity_of = saved
+        self.assertEqual(set(rows), {"sid-t", "sid-s"}, "the failing row stays PRESENT")
+        self.assertEqual((rows["sid-t"]["state"], rows["sid-t"]["backend"]), ("working", "tmux"),
+                         "the minimal row keeps what the live() meta already knew")
+        self.assertEqual(rows["sid-s"]["name"], "beta", "the healthy sibling is untouched")
+
     def test_empty_when_no_live_sessions(self):
         self._stub(live={}, notes={}, names={})
         self.assertEqual(km._session_rows(), [])

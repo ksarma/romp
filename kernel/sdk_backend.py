@@ -1112,7 +1112,16 @@ def interrupt_action(level: int, channel_up: bool) -> tuple[str, int]:
 _REG_CACHE = {}   # path -> ((mtime_ns, size, ino), parsed reg)
 
 
+_REG_SERVE_WARNED = set()      # paths currently being served from cache — one loud line per incident
+
+
 def list_regs(state_dir: Path) -> list[dict]:
+    """COMPLETENESS is this scan's contract (the user 2026-08-31, closing the listing-blink class):
+    absence from the returned rows reads as SESSION DEATH downstream — the postal bus refuses sends
+    on it — so a reg this scan has ever seen may drop out only by being GENUINELY GONE (unlinked).
+    A transient stat/read/parse failure serves the reg's LAST GOOD row from the cache instead,
+    loudly; silence was how a live 'working' session got ruled dead while eight sibling sends in
+    the same tick succeeded (specimens 2026-08-31 01:01 and 18:30)."""
     d = Path(state_dir) / "sdk"
     out = []
     try:
@@ -1123,21 +1132,40 @@ def list_regs(state_dir: Path) -> list[dict]:
     for de in entries:
         if not de.name.endswith(".json"):
             continue
+        seen.add(de.path)
+        hit = _REG_CACHE.get(de.path)
         try:
             st = de.stat()
         except OSError:
+            # an exists() corroboration here defeats itself — it stats the same path the same way
+            # (review find). A genuinely unlinked reg stops being LISTED by the next scandir, so
+            # serving the cached row costs at most one stale scan; a transient stat error costs
+            # a dropped live session, the very failure this contract closes.
+            if hit is not None:
+                if de.path not in _REG_SERVE_WARNED:
+                    _REG_SERVE_WARNED.add(de.path)
+                    sys.stderr.write("list_regs: stat failed for %s — serving the last good row\n" % de.name)
+                out.append(dict(hit[1]))
             continue
         key = (st.st_mtime_ns, st.st_size, st.st_ino)
-        seen.add(de.path)
-        hit = _REG_CACHE.get(de.path)
         if hit is not None and hit[0] == key:
             out.append(dict(hit[1]))
             continue
         try:
             r = json.loads(Path(de.path).read_text())
-        except (OSError, ValueError):
-            _REG_CACHE.pop(de.path, None)
+        except (OSError, ValueError) as e:
+            if de.path not in _REG_SERVE_WARNED:   # once per incident, not per scan (scans run
+                _REG_SERVE_WARNED.add(de.path)     # several times a second — review find)
+                sys.stderr.write("list_regs: read failed for %s (%s) — %s\n"
+                                 % (de.name, e.__class__.__name__,
+                                    "serving the last good row" if hit is not None
+                                    else "no prior row to serve"))
+            if hit is not None:
+                # a reg we KNOW, briefly unreadable: the last good row beats a silent drop (the
+                # cache keys by content-stat, so the next healthy read replaces this at once)
+                out.append(dict(hit[1]))
             continue
+        _REG_SERVE_WARNED.discard(de.path)         # healed → the next incident logs afresh
         r.setdefault("sid", de.name[: -len(".json")])
         _REG_CACHE[de.path] = (key, r)
         out.append(dict(r))
@@ -4609,7 +4637,7 @@ class SdkBackend:
         a = auth if auth in ("login", "key") else (d.get("auth") if d.get("auth") in ("login", "key") else "")
         if a:
             reg["auth"] = a
-        write_reg(self.state_dir, sid, reg)
+        self._write_reg_locked(sid, reg)
         append_state(self.state_dir, sid, "waiting")
         self._poke()
         return sid
@@ -4699,7 +4727,7 @@ class SdkBackend:
             reg["effort"] = effort
         if parent.get("auth") in ("login", "key"):
             reg["auth"] = parent["auth"]
-        write_reg(self.state_dir, sid, reg)
+        self._write_reg_locked(sid, reg)
         # the names/ entry LAST — it is the discoverability trigger (discover() iterates names/), and
         # everything above must exist before any judge pass can see the session. A comment thread never
         # writes it: promote_thread() does, after the kernel seeds the judge stores.
@@ -4720,12 +4748,13 @@ class SdkBackend:
         judge stores FIRST — the names/ write below is the discoverability trigger, same ordering
         contract as fork(). Clears threadOf (the reg becomes an ordinary session's) and registers the
         identity; the running CLI, transcript and queue carry over untouched."""
-        reg = read_reg(self.state_dir, sid)
-        if not reg or not reg.get("threadOf"):
-            return False
-        reg.pop("threadOf", None)
-        reg["name"] = name
-        write_reg(self.state_dir, sid, reg)
+        with self._reg_lock:                       # the threadOf pop is a listing-visibility flip
+            reg = self._reg_for_flip(sid)
+            if not reg or not reg.get("threadOf"):
+                return False
+            reg.pop("threadOf", None)
+            reg["name"] = name
+            write_reg(self.state_dir, sid, reg)
         if not bg:
             bg, fg = pick_identity_color(sid, self.state_dir)
         write_name(self.state_dir, sid, name, reg.get("cwd", ""), bg, fg)
@@ -4752,16 +4781,17 @@ class SdkBackend:
         The caller's name is only ever ADOPTED when the reg has none — the create-from-nothing revive
         of a session this backend has never seen, which is also logged, because a sid with no reg is
         usually a transcript fsid that leaked out of a discovery row rather than a real romp sid."""
-        reg = read_reg(self.state_dir, sid) or {}
-        kept = str(reg.get("name") or "").strip()
-        if not reg:
-            self._log("resume minting a reg for unknown sid %s as %r — a sid with no reg is usually "
-                      "a transcript fsid, not a romp session" % (sid[:13], name))
-        cwd = cwd or reg.get("cwd") or os.path.expanduser("~")
-        write_reg(self.state_dir, sid, {**reg, "sid": sid, "name": kept or name, "cwd": cwd,
-                                        "mode": reg.get("mode", "acceptEdits"),
-                                        "effort": reg.get("effort", DEFAULT_EFFORT),
-                                        "lastSid": reg.get("lastSid") or sid, "alive": True})
+        with self._reg_lock:                       # the alive=True flip must not lose to an RMW snapshot
+            reg = self._reg_for_flip(sid) or {}
+            kept = str(reg.get("name") or "").strip()
+            if not reg:
+                self._log("resume minting a reg for unknown sid %s as %r — a sid with no reg is usually "
+                          "a transcript fsid, not a romp session" % (sid[:13], name))
+            cwd = cwd or reg.get("cwd") or os.path.expanduser("~")
+            write_reg(self.state_dir, sid, {**reg, "sid": sid, "name": kept or name, "cwd": cwd,
+                                            "mode": reg.get("mode", "acceptEdits"),
+                                            "effort": reg.get("effort", DEFAULT_EFFORT),
+                                            "lastSid": reg.get("lastSid") or sid, "alive": True})
         append_state(self.state_dir, sid, "waiting")
         self._poke()
         return True
@@ -5318,10 +5348,11 @@ class SdkBackend:
         return s._clearing
 
     def kill(self, sid: str) -> bool:
-        reg = read_reg(self.state_dir, sid)
-        if reg:
-            reg["alive"] = False
-            write_reg(self.state_dir, sid, reg)
+        with self._reg_lock:                       # the alive flip must not lose to an RMW snapshot
+            reg = self._reg_for_flip(sid)
+            if reg:
+                reg["alive"] = False
+                write_reg(self.state_dir, sid, reg)
         s = self.sessions.pop(sid, None)
         if s:
             s.shutdown()
@@ -6166,8 +6197,42 @@ class SdkBackend:
 
     def _update_reg(self, sid: str, **fields):
         with self._reg_lock:                       # kernel + loop threads both write (queue mirror);
-            reg = read_reg(self.state_dir, sid) or {"sid": sid}   # unserialized RMWs would drop fields
+            reg = read_reg(self.state_dir, sid)    # unserialized RMWs would drop fields
+            if reg is None:
+                if _reg_path(self.state_dir, sid).exists():
+                    # the reg EXISTS but would not read: writing {sid}+fields here GUTS it — no
+                    # alive, no name — and a gutted reg vanishes from every listing until a full
+                    # rewrite (the 2026-08-31 blink class). Losing one mirror update is the far
+                    # smaller harm: the next update lands on the healed read.
+                    sys.stderr.write("update_reg: %s unreadable — skipping a %s write rather than "
+                                     "gutting the reg\n" % (sid[:8], "/".join(sorted(fields))))
+                    return
+                reg = {"sid": sid}
             reg.update(fields)
+            write_reg(self.state_dir, sid, reg)
+
+    def _reg_for_flip(self, sid: str):
+        """The RMW base for a VISIBILITY FLIP (kill/resume/promote) when the disk read fails but
+        the reg exists: the scan's last good cached row. A flip that silently no-ops on a bad read
+        leaves a killed session listed alive — or a revived one dead — until an unrelated write
+        heals it (review find, 2026-08-31); flips are exactly the writes that must never be lost."""
+        reg = read_reg(self.state_dir, sid)
+        if reg is not None:
+            return reg
+        p = str(_reg_path(self.state_dir, sid))
+        hit = _REG_CACHE.get(p)
+        if hit is not None and os.path.exists(p):
+            sys.stderr.write("reg flip for %s: disk read failed — using the scan's last good row\n"
+                             % sid[:8])
+            return dict(hit[1])
+        return None
+
+    def _write_reg_locked(self, sid: str, reg: dict) -> None:
+        """Full-reg writes from backend methods take the SAME lock the RMW mirror holds — a raw
+        write racing _update_reg's read-modify-write could get its fields overwritten by the RMW's
+        pre-write snapshot (kill's alive=False undone = a dead session resurrected in the listing;
+        resume's alive=True undone = a live one blinked out of it)."""
+        with self._reg_lock:
             write_reg(self.state_dir, sid, reg)
 
     def _record_launch_error(self, sess: SdkSession, exc: BaseException) -> None:

@@ -12,6 +12,7 @@ create-from-nothing revive (no reg at all — usually a leaked transcript fsid, 
 SYNTHETIC fixtures only."""
 import os
 import tempfile
+import threading
 import unittest
 from importlib.machinery import SourceFileLoader
 
@@ -29,6 +30,7 @@ class ReviveIdentity(unittest.TestCase):
         be = sb.SdkBackend.__new__(sb.SdkBackend)   # no threads/venv — resume touches only the reg store
         be.state_dir = td
         be.sessions = {}
+        be._reg_lock = threading.Lock()             # resume's alive flip holds the RMW lock (2026-08-31)
         be._poke = lambda: None
         be._log = lambda *a, **k: (be.__dict__.setdefault("_logged", []).append(a))
         return be
