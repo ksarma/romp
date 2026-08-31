@@ -1755,6 +1755,14 @@ def _norm_timeline_views(d):
             order.append(n[:_VIEWS_MAX_NAME])
     if order:
         out["tagOrder"] = order
+    # `at` — the store's write stamp, served to every client and echoed back with its blob: the
+    # WRITER'S EVIDENCE TIME the stale-writer guard in _set_timeline_views compares tag mtimes
+    # against. Preserved through the rebuild like mtime; absent stays absent (a legacy blob).
+    try:
+        if d.get("at"):
+            out["at"] = int(d["at"])
+    except (TypeError, ValueError):
+        pass
     return out
 
 
@@ -1808,6 +1816,50 @@ def _set_timeline_views(blob):
     except Exception:
         prev = {}
     now = int(time.time())
+    # ── the stale-writer guard (the user 2026-08-31: a tag silently lost all 7 of its members) ──
+    # The full-blob path (setTimelineViews) is last-writer-wins by design, so a dashboard whose
+    # in-memory copy predates newer edits — a page that slept through a kernel restart, a second
+    # dashboard, a long-lived Obsidian panel — posts the whole STALE world back, and every member
+    # or tag added since vanishes silently. The v2 mtimes are forge-proof at this very door, so
+    # the door enforces the cards-move rule on itself: a writer whose evidence predates a tag's
+    # newer store state stands down FOR THAT TAG — the rest of its write lands — and the refusal
+    # is LOUD (a dashboard notice + stderr), never a silent divergence.
+    #   ev — the writer's evidence time: the `at` stamp the store put on the blob it served
+    #   (every client echoes the whole blob back; RMW writers like _edit_tag deep-copy the store,
+    #   so they always carry the newest), else the newest tag mtime the blob carries, else 0 —
+    #   an mtime-less legacy blob can never de-member or delete a stamped tag.
+    ev = 0
+    if isinstance(blob, dict):
+        try:
+            ev = int(blob.get("at") or 0)
+        except (TypeError, ValueError):
+            ev = 0
+    ev = max([ev] + [int(t.get("mtime") or 0) for t in v["tags"]])
+    incoming = {t["id"] for t in v["tags"]}
+    refused, kept = [], []
+    for t in v["tags"]:
+        pt = prev.get(t["id"])
+        if pt and pt.get("mtime") and int(pt["mtime"]) > ev and \
+                (pt.get("name"), pt.get("color"), pt.get("members")) != \
+                (t.get("name"), t.get("color"), t.get("members")):
+            refused.append('"%s"' % pt.get("name"))
+            kept.append(json.loads(json.dumps(pt)))       # the store's newer truth stands
+        else:
+            kept.append(t)
+    for tid, pt in prev.items():
+        if tid not in incoming and pt.get("mtime") and int(pt["mtime"]) > ev:
+            refused.append('"%s" (deletion)' % pt.get("name"))
+            kept.append(json.loads(json.dumps(pt)))       # a stale writer cannot delete newer state
+    v["tags"] = kept[:_VIEWS_MAX_TAGS]
+    if refused:
+        why = ("a stale dashboard write was partially refused: its copy of %s predates newer "
+               "edits (the newer state was kept — reload that dashboard to resync)"
+               % ", ".join(sorted(set(refused))))
+        sys.stderr.write("romp-kernel: %s\n" % why)
+        try:
+            _sync_notice(why, ok=False)
+        except Exception:
+            pass
     for t in v["tags"]:
         pt = prev.get(t["id"])
         if pt is None or (pt.get("name"), pt.get("color"), pt.get("members")) != \
@@ -1815,6 +1867,7 @@ def _set_timeline_views(blob):
             t["mtime"] = now
         elif pt.get("mtime"):
             t["mtime"] = pt["mtime"]
+    v["at"] = now
     _atomic_write(_views_path(), json.dumps(v, sort_keys=True))
 
 
