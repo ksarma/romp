@@ -8949,13 +8949,13 @@ jumpBtn.setAttribute("aria-label", "jump to newest");
 jumpBtn.hidden = true;
 jumpBtn.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"'
   + ' stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
-  + '<line x1="12" y1="5" x2="12" y2="19"/><polyline points="5 12 12 19 19 12"/></svg>';
+  + '<polyline points="6 9.5 12 15.5 18 9.5"/></svg>';   // stemless chevron — the full arrow fought the short pill (the user 2026-08-31)
 function updateJumpBtn(): void {
   const c = document.getElementById("content");
   if (!c || c.clientHeight <= 0) { jumpBtn.hidden = true; return; }   // hidden pane measures 0 — no chip
   const off = c.scrollHeight > c.clientHeight + 2 && !nearBottom(c);
   jumpBtn.hidden = !off;
-  if (off) jumpBtn.style.bottom = (Math.max(0, window.innerHeight - c.getBoundingClientRect().bottom) + 12) + "px";
+  if (off) jumpBtn.style.bottom = (Math.max(0, window.innerHeight - c.getBoundingClientRect().bottom) + 8) + "px";
 }
 jumpBtn.onclick = () => {
   const c = document.getElementById("content");
