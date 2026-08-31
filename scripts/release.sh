@@ -40,6 +40,7 @@
 set -euo pipefail
 
 GH="${ROMP_GH:-gh}"                       # overridable so tests can stub the GitHub CLI
+PYTEST="${ROMP_RELEASE_PYTEST:-}"         # overridable suite runner (tests); empty → resolve below
 POLL="${ROMP_RELEASE_POLL:-5}"            # seconds between checks while the run starts
 REF="${ROMP_RELEASE_REF:-main}"
 UPSTREAM="${ROMP_RELEASE_UPSTREAM:-romp-on/romp}"
@@ -193,7 +194,25 @@ if [ "$skip_tests" -eq 1 ]; then
     echo "release: !! skipping the local suites at your explicit request (--skip-tests)."
 else
     say "running the Python suite..."
-    step python3 -m pytest tests/ -q || die "the Python suite failed — NOT releasing."
+    # Resolve a suite environment instead of assuming a system-wide pytest (the v0.13.0 run died
+    # on a bare ModuleNotFoundError mid-release on a box with only a repo venv). Prefer a WORKING
+    # ambient `python3 -m pytest`; else run through uv's throwaway env with CI's exact dep set
+    # (pytest + cryptography — .github/workflows/ci.yml's install step: cryptography is the Web
+    # Push soft dependency, without it the webpush tests silently skip); neither → die LOUDLY
+    # naming both remedies BEFORE any release state is at stake.
+    if [ -z "$PYTEST" ]; then
+        if python3 -m pytest --version >/dev/null 2>&1; then
+            PYTEST="python3 -m pytest"
+        elif command -v uvx >/dev/null 2>&1; then
+            say "no ambient pytest — running the suite through uv's throwaway env (pytest + cryptography, CI's dep set)"
+            PYTEST="uvx --with pytest --with cryptography pytest"
+        else
+            die "no way to run the Python suite: python3 has no pytest and uv is not installed.
+  Either:  curl -LsSf https://astral.sh/uv/install.sh | sh     (then re-run — the script provisions itself)
+      or:  python3 -m pip install --upgrade pytest cryptography"
+        fi
+    fi
+    step $PYTEST tests/ -q || die "the Python suite failed — NOT releasing."
     if [ -d vscode-extension/node_modules ]; then
         say "running the webview suite..."
         step sh -c 'cd vscode-extension && npm test' || die "the webview suite failed — NOT releasing."
