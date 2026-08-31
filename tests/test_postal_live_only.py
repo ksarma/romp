@@ -135,6 +135,102 @@ class KernelSilenceIsNotDeadness(unittest.TestCase):
         self.assertIn("no live romp session named 'ghost'", res["error"])
 
 
+class AnsweredButAbsentIsNotDeadness(unittest.TestCase):
+    """The OTHER false-refusal arm (2026-08-31): the kernel ANSWERED but its listing transiently
+    omitted a live session (a restart-settle blink), and the bus converted that into a hard "not
+    live" — two verified specimens, one by id and one by name, one of which mis-routed a warning
+    mail. A pool miss now corroborates against the DURABLE per-session registry (and the probe
+    fetch's own rows) before ruling death: reg alive=true → soft retry-shortly, never a death
+    claim. A name with no reg anywhere keeps the hard 404 — a typo stays a typo."""
+
+    GHOST_SID = "99999999-8888-7777-6666-000000000001"
+
+    def setUp(self):
+        _set_live([{"id": ALPHA, "name": "alpha"}])     # answered listing, target absent
+        self._sdk = pm.STATE.parent / "sdk"
+        self._sdk.mkdir(parents=True, exist_ok=True)
+        pm.NAMES_DIR.mkdir(parents=True, exist_ok=True)
+
+    def tearDown(self):
+        os.environ.pop("ROMP_SESSIONS_FILE", None)
+        pm.HEARTBEATS.clear()
+        for f in list(self._sdk.iterdir()) + list(pm.NAMES_DIR.iterdir()):
+            f.unlink()
+
+    def _reg(self, sid, name, alive=True):
+        (self._sdk / (sid + ".json")).write_text(json.dumps({"sid": sid, "name": name, "alive": alive}))
+        (pm.NAMES_DIR / sid).write_text("%s\t/tmp" % name)
+
+    def test_id_addressed_with_a_live_reg_refuses_soft(self):
+        self._reg(self.GHOST_SID, "blinky")
+        res = pm.resolve_recipient(self.GHOST_SID)
+        self.assertEqual((res["kind"], res["status"]), ("error", 503))
+        self.assertIn("restart-settle blink", res["error"])
+        self.assertIn("NOT a claim", res["error"])
+
+    def test_name_addressed_with_a_live_reg_refuses_soft(self):
+        self._reg(self.GHOST_SID, "blinky")
+        res = pm.resolve_recipient("blinky")
+        self.assertEqual((res["kind"], res["status"]), ("error", 503))
+        self.assertIn("restart-settle blink", res["error"])
+
+    def test_a_dead_reg_keeps_the_hard_404_both_forms(self):
+        self._reg(self.GHOST_SID, "gone4good", alive=False)
+        for who in (self.GHOST_SID, "gone4good"):
+            res = pm.resolve_recipient(who)
+            self.assertEqual((res["kind"], res["status"]), ("error", 404), who)
+            self.assertIn("no live romp session", res["error"])
+
+    def test_no_reg_anywhere_keeps_the_hard_404(self):
+        res = pm.resolve_recipient("typo-name")
+        self.assertEqual((res["kind"], res["status"]), ("error", 404))
+
+    def test_the_probe_fetchs_own_rows_count_as_presence(self):
+        # the pool (all_agents) missed the target but the probe's fresh listing has it — the
+        # kernel came back between the two reads; that is a blink, never a death ruling
+        saved = pm.all_agents
+        pm.all_agents = lambda threads=False: [{"id": ALPHA, "name": "alpha", "remote": False}]
+        try:
+            _set_live([{"id": ALPHA, "name": "alpha"}, {"id": self.GHOST_SID, "name": "blinky"}])
+            res = pm.resolve_recipient("blinky")
+        finally:
+            pm.all_agents = saved
+        self.assertEqual((res["kind"], res["status"]), ("error", 503))
+        self.assertIn("restart-settle blink", res["error"])
+
+    def test_a_host_qualified_miss_keeps_the_hard_404(self):
+        # a host qualifier naming somebody ELSE takes every local out of the running by design —
+        # the local listing/registry can say nothing about that host, so the blink arms must not
+        # fire on a same-named LOCAL row (review find: a typo'd host became an endless retry-shortly)
+        self._reg(self.GHOST_SID, "blinky")
+        _set_live([{"id": self.GHOST_SID, "name": "blinky"}])
+        res = pm.resolve_recipient("otherhost:blinky")
+        self.assertEqual((res["kind"], res["status"]), ("error", 404))
+
+    def test_short_id_blink_refuses_soft(self):
+        # the third address form (the 8-char id prefix every list_agents row shows) is
+        # blink-protected like the other two
+        self._reg(self.GHOST_SID, "blinky")
+        res = pm.resolve_recipient(self.GHOST_SID[:8])
+        self.assertEqual((res["kind"], res["status"]), ("error", 503))
+        self.assertIn("restart-settle blink", res["error"])
+
+    def test_short_id_with_two_matching_regs_keeps_the_404(self):
+        twin = self.GHOST_SID[:-1] + "f"
+        self._reg(self.GHOST_SID, "blinky")
+        self._reg(twin, "blinky2")
+        res = pm.resolve_recipient(self.GHOST_SID[:8])
+        self.assertEqual((res["kind"], res["status"]), ("error", 404),
+                         "two registry hits on one prefix is the ambiguity family: refuse, never guess")
+
+    def test_durable_session_reads(self):
+        self._reg(self.GHOST_SID, "blinky")
+        self.assertTrue(pm._durable_session(self.GHOST_SID, by_id=True))
+        self.assertTrue(pm._durable_session("blinky", by_id=False))
+        self.assertFalse(pm._durable_session("nobody", by_id=False))
+        self.assertFalse(pm._durable_session("99999999-8888-7777-6666-000000000002", by_id=True))
+
+
 class RemovedSurfacesAreGone(unittest.TestCase):
     def test_removed_mcp_tools_absent(self):
         names = _tool_names()

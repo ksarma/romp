@@ -5859,45 +5859,66 @@ class SdkBackend:
                 continue
             if reg.get("threadOf"):
                 continue   # a comment thread: its surface is the parent chat's comment UI, never a tab
-            sid = reg["sid"]
-            s = self.sessions.get(sid)
-            if s and s.thread.is_alive():
-                out[sid] = s.snapshot()
-            else:
-                ls = last_state(self.state_dir, sid)
-                st = ls.get("state") or "waiting"
-                # A NOT-running (dormant, resumable) SDK session can't actually be mid-turn: after a kernel
-                # restart its thread is gone, but the state log still reads its last in-flight state
-                # ("working"/"permission"/"picker"/…). Reporting that verbatim makes a dormant session look
-                # FALSELY blocked/working with NO live ask to resolve it — the prompt died with the thread (the
-                # user 2026-06-24: reorder_bug showed "blocked, needs approval" with no prompt after a refresh).
-                # Map any in-flight state → "waiting", the true state of a dormant session (it resumes on the
-                # next drive). A GENUINELY-blocked session is RUNNING → snapshot() above (with a real
-                # current_ask), so it's unaffected. Keyed on thread-not-running, not a time heuristic.
-                if st in ("working", "permission", "picker", "compacting", "retrying"):
-                    st = "waiting"
-                lc = reg.get("liveCtx")   # last persisted context fill → bar survives idle/restart
-                out[sid] = {"state": st,
-                            "since": str(ls.get("t") or ""),
-                            # not running (e.g. post-restart): prefer the last LIVE model we persisted
-                            # (liveModel), else the chosen alias — so the badge isn't blank while dormant.
-                            "model": model_label(reg.get("liveModel") or "", reg.get("model") or ""),
-                            "modelPending": bool(reg.get("modelPending")),
-                            "effortPending": bool(reg.get("effortPending")),
-                            "effort": reg.get("effort", ""),
-                            "auth": self.default_auth(reg),
-                            # the persisted CLI truth (apiKeyAuth, the liveModel pattern) so a dormant
-                            # session's Billing row keeps telling it; absent = no init ever landed
-                            "authLive": ("key" if reg.get("apiKeyAuth") else "login")
-                                        if isinstance(reg.get("apiKeyAuth"), bool) else "",
-                            "authPending": bool(reg.get("authPending")),
-                            "mode": reg.get("mode", ""),
-                            # last persisted fast state (liveFast, like liveCtx above) → the badge
-                            # survives idle/restart instead of vanishing until the next turn
-                            "fast": reg.get("liveFast", ""),
-                            "fastReason": reg.get("liveFastReason", ""),
-                            "ctx": lc if isinstance(lc, (int, float)) else "", "summary": ""}
+            sid = reg.get("sid")
+            if not sid:
+                continue
+            try:
+                out[sid] = self._live_row(reg, sid)
+            except Exception:
+                # One session's bad row must not hide the OTHERS — this loop used to run unguarded
+                # under the kernel merge's single try, so one snapshot() exception silently dropped
+                # EVERY SDK session from an otherwise-successful listing, and absence from a listing
+                # reads as death downstream (the postal bus refused sends to live peers, 2026-08-31).
+                # The failing session itself stays VISIBLE as a minimal waiting row: present beats
+                # perfect, and the loud line makes the real bug findable.
+                sys.stderr.write("live_sessions: row for %s failed (kept as minimal row): %s\n"
+                                 % (sid, traceback.format_exc()))
+                out[sid] = {"state": "waiting", "since": "", "model": "", "modelPending": False,
+                            "effortPending": False, "effort": "", "auth": "", "authLive": "",
+                            "authPending": False, "mode": "", "fast": "", "fastReason": "",
+                            "color": None, "connected": False, "spawning": False, "retryCount": 0,
+                            "retryInfo": None, "ctx": None, "subagents": [], "bgTasks": []}
         return out
+
+    def _live_row(self, reg, sid):
+        """One session's live_sessions row (running snapshot, else the dormant reg row) — factored
+        so live_sessions can guard it PER SESSION (one bad row must not hide the other sessions)."""
+        s = self.sessions.get(sid)
+        if s and s.thread.is_alive():
+            return s.snapshot()
+        ls = last_state(self.state_dir, sid)
+        st = ls.get("state") or "waiting"
+        # A NOT-running (dormant, resumable) SDK session can't actually be mid-turn: after a kernel
+        # restart its thread is gone, but the state log still reads its last in-flight state
+        # ("working"/"permission"/"picker"/…). Reporting that verbatim makes a dormant session look
+        # FALSELY blocked/working with NO live ask to resolve it — the prompt died with the thread (the
+        # user 2026-06-24: reorder_bug showed "blocked, needs approval" with no prompt after a refresh).
+        # Map any in-flight state → "waiting", the true state of a dormant session (it resumes on the
+        # next drive). A GENUINELY-blocked session is RUNNING → snapshot() above (with a real
+        # current_ask), so it's unaffected. Keyed on thread-not-running, not a time heuristic.
+        if st in ("working", "permission", "picker", "compacting", "retrying"):
+            st = "waiting"
+        lc = reg.get("liveCtx")   # last persisted context fill → bar survives idle/restart
+        return {"state": st,
+                    "since": str(ls.get("t") or ""),
+                    # not running (e.g. post-restart): prefer the last LIVE model we persisted
+                    # (liveModel), else the chosen alias — so the badge isn't blank while dormant.
+                    "model": model_label(reg.get("liveModel") or "", reg.get("model") or ""),
+                    "modelPending": bool(reg.get("modelPending")),
+                    "effortPending": bool(reg.get("effortPending")),
+                    "effort": reg.get("effort", ""),
+                    "auth": self.default_auth(reg),
+                    # the persisted CLI truth (apiKeyAuth, the liveModel pattern) so a dormant
+                    # session's Billing row keeps telling it; absent = no init ever landed
+                    "authLive": ("key" if reg.get("apiKeyAuth") else "login")
+                                if isinstance(reg.get("apiKeyAuth"), bool) else "",
+                    "authPending": bool(reg.get("authPending")),
+                    "mode": reg.get("mode", ""),
+                    # last persisted fast state (liveFast, like liveCtx above) → the badge
+                    # survives idle/restart instead of vanishing until the next turn
+                    "fast": reg.get("liveFast", ""),
+                    "fastReason": reg.get("liveFastReason", ""),
+                    "ctx": lc if isinstance(lc, (int, float)) else "", "summary": ""}
 
     # ---- picker/permission UI bridge (kernel-thread API) ----
     def on_ask(self, sid: str, kind: str, payload=None) -> bool:
