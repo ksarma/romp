@@ -2448,6 +2448,22 @@ body.picker-lifted > #picker.kb-tight { align-items: flex-start; padding: 12px 1
   box-shadow: var(--shadow-toast); font-size: 12px; color: var(--fg);
 }
 #seek-note .seek-note-label { color: var(--dim); }
+
+/* jump to newest (the user 2026-08-31): the deliberate way back into follow mode once scrolled-up
+   reading (and the send gate that respects it) has left it. The seek-note's menu-card vocabulary in
+   a circular chip: dim at rest, accent on hover; body-level and fixed, so re-renders never rebuild
+   it; render.ts measures its bottom against #content's edge (the composer growing moves it). Below
+   toasts/seek (60), above the transcript. */
+#jump-bottom {
+  position: fixed; left: 50%; transform: translateX(-50%); z-index: 40;
+  width: 34px; height: 34px; border-radius: 50%; cursor: pointer; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--vscode-menu-background, var(--surface-raised)); color: var(--dim);
+  border: 1px solid rgba(255, 255, 255, 0.12); box-shadow: var(--shadow-toast);
+}
+#jump-bottom:hover { border-color: var(--accent); color: var(--accent); }
+#jump-bottom[hidden] { display: none; }   /* author display:flex defeats [hidden] — the login-modal lesson */
+@media (pointer: coarse) { #jump-bottom { width: 44px; height: 44px; } }   /* the shared pane's phone half */
 #seek-note .seek-note-x {
   flex: 0 0 auto; border: none; background: none; cursor: pointer; color: var(--dim);
   font-size: 11px; line-height: 1.4; padding: 2px 4px; border-radius: 8px;
