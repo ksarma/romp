@@ -39,16 +39,12 @@ body.scheme-solarized-dark {
    2026-08-26, who wanted the dashboard genuinely nice to look at). A variable face, so every
    weight ships in one file; italic is its own optical design, not a slant. First in --sans, so
    it beats the host font on every surface; falls back to the modern system stack unloaded. */
-/* Space Grotesk + Source Serif 4 (both SIL OFL, licenses beside the files in media/): the light
-   theme's Claude-desktop-like pairing (the user 2026-08-28) — a grotesque for UI chrome, a serif
-   READING face for the assistant's replies. Declared unconditionally (a face loads only when some
-   rule uses it, so dark pays nothing); selected via --sans/--font-prose in the light block only. */
+/* Space Grotesk (SIL OFL, license beside the file in media/): the light theme's display face for
+   UI chrome (the user 2026-08-28). Declared unconditionally (a face loads only when some rule
+   uses it, so dark pays nothing); selected via --sans in the light block only. (The serif prose
+   face tried beside it was dropped 2026-08-31 — assistant output reads in the mono there.) */
 @font-face { font-family: 'Space Grotesk'; src: url(../media/SpaceGroteskVariable.woff2) format('woff2-variations');
   font-weight: 300 700; font-style: normal; font-display: swap; }
-@font-face { font-family: 'Source Serif 4'; src: url(../media/SourceSerif4Variable.woff2) format('woff2-variations');
-  font-weight: 200 900; font-style: normal; font-display: swap; }
-@font-face { font-family: 'Source Serif 4'; src: url(../media/SourceSerif4Variable-Italic.woff2) format('woff2-variations');
-  font-weight: 200 900; font-style: italic; font-display: swap; }
 
 @font-face { font-family: 'Inter'; src: url(../media/InterVariable.woff2) format('woff2-variations');
   font-weight: 100 900; font-style: normal; font-display: swap; }
@@ -166,7 +162,7 @@ body.scheme-solarized-dark {
    body-scoped, so it beats both THEME_CSS (browser) and the editor's injected vars (VS Code;
    winning over a dark editor is deliberate — the theme is opt-in). Components must NOT branch on
    body.theme-light — a theme-conditional need is a NEW TOKEN in both blocks (CLAUDE.md; the
-   key-parity test enforces the set). Contrast: fg 15.9:1, muted 6.6:1, accent 4.9:1 on the page.
+   key-parity test enforces the set). Contrast: fg 13.96:1, muted 5.99:1, accent 4.34:1 on the page (accent is chrome-only at that ratio).
 */
 body.theme-light {
   --card-border: rgba(0, 0, 0, 0.10);   /* main's T141 hairline, inverted warm for light */

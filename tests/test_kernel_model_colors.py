@@ -90,7 +90,6 @@ class ModelColors(unittest.TestCase):
                 c = c / 255.0
                 return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
             return 0.2126 * ch(rgb[0]) + 0.7152 * ch(rgb[1]) + 0.0722 * ch(rgb[2])
-        dark = (30 / 255,) * 3  # (unused placeholder to keep the helper local and obvious)
         dark_l = lum((30, 30, 30))
         for fam in ("model", "effort", "context"):
             for v in (0.0, 0.5, 1.0):

@@ -44,6 +44,12 @@ class LightShell(unittest.TestCase):
     def test_pane_rail_goes_light(self):
         self.assertIn("body.theme-light .pane-rail{background:#E7DED2;border-top-color:#DCD2C4}", self.html)
 
+    def test_log_clear_hover_and_mtabs_divider_wear_the_warm_set(self):
+        # the 2026-08-31 warm resweep missed these two: the old #E3DFD3 sat on the swept #E7DED2
+        # ground at 1.001:1 — an invisible hover and a vanished divider
+        self.assertIn("body.theme-light #rerr-clear:hover{background:#DED2C2;color:#1F1E1D}", self.html)
+        self.assertIn("body.theme-light #mtabs .mtabs-div{background:#DCD2C4}", self.html)
+
     def test_gutters_go_light(self):
         self.assertIn("body.theme-light .gv{", self.html)
         self.assertIn("body.theme-light .gh{", self.html)

@@ -26,14 +26,18 @@ class ContextColormap(unittest.TestCase):
         src = inspect.getsource(km.build_timeline)
         self.assertIn("ctx_stops = cm.stops_for(_colormap())", src, "the global colormap still drives the compaction sweep")
         self.assertIn('"ctxColor"', src, "each lane carries a server-computed context color")
+        self.assertIn('cm.ramp((tm["context"] or 0) / 100.0, ctx_stops)', src,
+                      "classic ctxColor stays the recency-colormap sample, byte-identical to main (PR #763 item 1)")
         self.assertIn("cm.context_rgb(tm[\"context\"] or 0)", src,
-                      "context% maps onto the shared context tone (2026-08-27; was the global colormap)")
+                      "the yatharth tone (ctxTone) rides beside the classic color")
 
     def test_build_session_status_carries_a_context_color(self):
         src = inspect.getsource(km.build_session)
         self.assertIn('"ctxColor"', src, "the chat status carries a server-computed context color")
+        self.assertIn('cm.ramp(tm["context"] / 100.0, cm.stops_for(_colormap()))', src,
+                      "classic ctxColor stays the recency-colormap sample, byte-identical to main (PR #763 item 1)")
         self.assertIn("cm.context_rgb(tm[\"context\"])", src,
-                      "context% maps onto the shared context tone")
+                      "the yatharth tone (ctxTone) rides beside the classic color")
 
     def test_context_tone_thresholds_are_the_one_pair(self):
         # ONE warn/danger pair for every gauge (was 60/85 on ctx gauges, 70/90 on usage bars)

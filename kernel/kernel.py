@@ -27075,7 +27075,9 @@ WINS.forEach(function(w){var seg=u[w[0]];if(!seg)return;
 // confident 0% beside a live account's real bars). The last-known number renders in the hover,
 // labelled as such; the rail's aggregate never counts an unknown as a value.
 var rolled=!!(seg.resetsAt&&nowS>seg.resetsAt),pct=Math.max(0,Math.min(100,seg.pct||0));
-var col=(seg.color&&seg.color.length===3)?('rgb('+seg.color.join(',')+')'):'#54B204';   // selected colormap (server-computed)
+var nc=document.body.classList.contains('chat-theme-yatharth');   // dual palette (PR #763): the yatharth themes take seg.tone, classic keeps seg.color verbatim
+var csrc=(nc&&seg.tone&&seg.tone.length===3)?seg.tone:seg.color;
+var col=(csrc&&csrc.length===3)?('rgb('+csrc.join(',')+')'):(nc?(pct>=88?'#c0392b':(pct>=70?'#d7a23a':'#5196B8')):'#54B204');   // classic fallback = main's flat green; yatharth = the unified pair (ctx-color.ts)
 var tp=(!rolled&&seg.resetsAt&&w[1])?Math.max(0,Math.min(100,Math.round((nowS-(seg.resetsAt-w[1]))/w[1]*100))):null;
 det[w[0]]={name:w[2],pct:pct,col:col,tp:tp,unk:rolled,ago:(rolled?fmtAgo(seg.resetsAt):null),reset:(!rolled&&seg.resetsAt)?fmtR(seg.resetsAt):null};});}
 // ONE aggregated set of bars for every account at once (the user 2026-08-08: never repeat the windows
@@ -29188,7 +29190,7 @@ def _landing():
             "body.theme-light .rerr-row+.rerr-row{border-top-color:rgba(0,0,0,0.08)}"
             "body.theme-light .rerr-row.link:hover{background:rgba(0,0,0,0.04)}"
             "body.theme-light #rerr-clear{background:#E7DED2;color:#1F1E1D;border-color:rgba(0,0,0,0.12)}"
-            "body.theme-light #rerr-clear:hover{background:#E3DFD3;color:#1F1E1D}"
+            "body.theme-light #rerr-clear:hover{background:#DED2C2;color:#1F1E1D}"
             "body.theme-light #rerr-x{color:#5D574E}body.theme-light #rerr-x:hover{color:#1F1E1D}"
             "body.theme-light #rerr-filters{border-bottom-color:rgba(0,0,0,0.08)}"
             "body.theme-light .rerr-flabel{color:#1F1E1D}"
@@ -29207,7 +29209,7 @@ def _landing():
             "body.theme-light #mtabs{background:#E7DED2;border-top-color:#DCD2C4}"
             "body.theme-light #mtabs button{color:#5D574E}"
             "body.theme-light #mtabs button.on{color:#C2410C}"
-            "body.theme-light #mtabs .mtabs-div{background:#E3DFD3}"
+            "body.theme-light #mtabs .mtabs-div{background:#DCD2C4}"
             "</style></head><body class='po-chat po-feed po-timeline'>"
             + _THEME_READER +
             "<div id=romp-boot>" + _loader_inner() + "</div>"

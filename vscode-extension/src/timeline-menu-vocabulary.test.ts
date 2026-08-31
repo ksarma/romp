@@ -17,6 +17,7 @@ test("MENU_STYLE is the chat menu spec, with the font stack DECLARED (never inhe
   assert.match(SRC, /menuStyleFor = \(p\) => 'padding:4px;background:' \+ p\.menuBg \+ ';border:1px solid ' \+ p\.hairline \+ ';'/);
   assert.match(SRC, /\+ 'border-radius:6px;box-shadow:0 4px 12px ' \+ p\.menuShadow \+ ';font:12px\/1\.4 ' \+ FONT \+ ';'/);
   assert.match(SRC, /menuBg: '#252526',/);
+  assert.match(SRC, /menuBg: '#FBF6EF',/);   // PAL_LIGHT mirrors the sheets' --vscode-menu-background (swept 2026-08-31)
   assert.match(SRC, /hairline: 'rgba\(255,255,255,0\.12\)',/);
   assert.match(SRC, /menuShadow: 'rgba\(0,0,0,0\.35\)',/);
   // the ✓-in-circle current mark, same as the chat meta menus

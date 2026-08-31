@@ -74,3 +74,16 @@ test("the shell's inline mirror states the same classes and the same migration (
   const G = read("ui", "webview", "gear.js");
   assert.match(G, /return s\.chatTabTheme === 'yatharth' \? 'yatharth' : 'classic';/);
 });
+
+test("adopted .romp-tl-tip rules are self-contained: every var() carries its literal fallback", () => {
+  // the timeline ADOPTS every rule mentioning .romp-tl-tip into the topmost document (which
+  // defines none of this sheet's tokens) — a fallback-less var() resolves to nothing there
+  // (the classic browser dashboard lost the tip's faint ink exactly this way)
+  const css = read("ui", "webview", "timeline-pane.css");
+  const rules = css.match(/[^{}]*\.romp-tl-tip[^{}]*\{[^}]*\}/g) || [];
+  assert.ok(rules.length >= 8, `found only ${rules.length} tip rules — selector drifted?`);
+  for (const r of rules) {
+    const bare = r.slice(r.indexOf("{")).match(/var\(--[a-z-]+\)/g) || [];
+    assert.deepEqual(bare, [], `fallback-less var() in an adopted tip rule: ${r.trim().slice(0, 70)}`);
+  }
+});

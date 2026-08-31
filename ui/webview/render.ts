@@ -7335,7 +7335,8 @@ function renderCommentPopover(): void {
           const choice = kind === "model" ? (effVal ? modelChoiceLabel(effVal) : null)
             : (effVal ? EFFORT_CHOICES.find((c) => c.value === effVal) : null);
           label.textContent = choice ? choice.label : (kind === "model" ? (st?.model || "Default") : (st?.effort || "default"));
-          const tint = (nonClassicChoiceTone(choice) as number[] | undefined) || (kind === "model" ? pickTone(st?.modelColor, st?.modelTone) : pickTone(st?.effortColor, st?.effortTone));
+          const tint0 = kind === "model" ? pickTone(st?.modelColor, st?.modelTone) : pickTone(st?.effortColor, st?.effortTone);
+          const tint = (nonClassicChoiceTone(choice) as number[] | undefined) || (tint0 && tint0.length === 3 ? readableRgb(tint0) : tint0);   // TEXT tint: light re-encodes on BOTH branches (the session-status fallback skipped it)
           if (tint && tint.length === 3) label.style.color = `rgb(${tint[0]},${tint[1]},${tint[2]})`;
         }
         const caret = el("span", "meta-caret");

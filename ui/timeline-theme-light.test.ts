@@ -21,7 +21,7 @@ test("timeline-pane.css: body.theme-light re-defines every :root token (muted/fa
   assert.match(CSS, /body\.theme-light \{\n  --text-muted: #5D574E;\n  --text-faint: #8A8378;/, "the light block re-points both tokens");
 });
 test("timeline-pane.css: the tip card gets a scoped light re-skin (white card, black hairline, dark ink)", () => {
-  assert.match(CSS, /body\.theme-light \.romp-tl-tip\{background:var\(--tl-card\);border:1px solid var\(--tl-hairline\);/);
+  assert.match(CSS, /body\.theme-light \.romp-tl-tip\{background:var\(--tl-card, #FFFFFF\);border:1px solid var\(--tl-hairline, rgba\(0,0,0,0\.12\)\);/);   // literal fallbacks: tip rules are adopted into a host that defines none of the tokens
   // and the dark tip rule is byte-identical (the Obsidian default)
   assert.match(CSS, /\.romp-tl-tip\{position:fixed;pointer-events:none;z-index:1000;max-width:320px;background:#1c2430;/);
 });

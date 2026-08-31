@@ -479,7 +479,7 @@ function ctxInfo(s) {
   // ramp(context%) on the selected map, bright = full) so the client just applies it — same pattern as the
   // usage bar. Fall back to the old traffic-light only if an older kernel didn't ship a color.
   // DUAL palette (PR #763 item 1): classic keeps the colormap fill exactly; yatharth takes the
-  // tone; light re-encodes for the ivory ground (readableRgb — item 4's TODO paid). The fallback
+  // tone (as-is, in every theme — readableRgb re-encodes only TEXT tints on light). The fallback
   // mirrors ctx-color.ts: classic = main's historical 60/85, yatharth = the unified 70/88 pair.
   const picked = pickTone(s.ctxColor, s.ctxTone);
   // the battery FILL wears the tone as-is (readableRgb is for TEXT — the re-encoded warn amber
@@ -502,8 +502,8 @@ function ctxInfo(s) {
 // so dark stays its default there. PAL_DARK holds the exact byte-identical values this file always
 // used. NOT routed through here, on purpose: session identity colors (kernel-shipped s.color), the
 // status BADGE colors + judge colors (semantic), and kernel-shipped modelColor/effortColor/ctxColor/
-// cmapGrad RGB (dark-tuned server ramps — TODO(toneReadableLight): re-encode those for light with the
-// toneReadableLight helper when it lands from its own batch; marked at their application sites).
+// cmapGrad RGB (dark-tuned server ramps — model/effort TEXT tints re-encode via readableRgb below;
+// ctxColor/cmapGrad are FILLS and wear the picked tone as-is: the 2026-08-31 ruling).
 function isLight() { try { return document.body.classList.contains('theme-light'); } catch (e) { return false; } }
 // non-classic = any yatharth theme (the one class both wear); the Obsidian host sets no classes,
 // so it is classic by construction and keeps the kernel's classic palette untouched.
@@ -555,7 +555,7 @@ const PAL_LIGHT = {
   accent: '#C2410C',             // light accent is CLAY, replacing the blue
   accentSolid: '#C2410C',
   faintFg: '#8A8378',
-  menuBg: '#FFFFFF',
+  menuBg: '#FBF6EF',               // mirrors the sheets' --vscode-menu-background (one menu vocabulary; swept 2026-08-31)
   menuFg: '#1F1E1D',
   menuShadow: 'rgba(0,0,0,0.15)',
   hairline: 'rgba(0,0,0,0.12)',
@@ -2413,8 +2413,8 @@ class TimelinePanel {
     // an in-progress bar; changing a custom prop referenced by the keyframes recolours WITHOUT restarting the
     // compositor animation, so the sweep stays smooth.
     const g = this._cmapGrad;
-    // TODO(toneReadableLight): cmapGrad is kernel-shipped dark-tuned RGB; re-encode for body.theme-light
-    // when the toneReadableLight helper lands (light-theme batch).
+    // cmapGrad is a FILL: it wears the kernel RGB as-is in every theme (readableRgb re-encodes only
+    // TEXT tints on light — the 2026-08-31 ruling; see ctxInfo above).
     if (g && g.length === 5) for (let k = 0; k < 5; k++) bar.style.setProperty('--cmp' + k, 'rgb(' + g[k][0] + ',' + g[k][1] + ',' + g[k][2] + ')');
     const m = this._ovScaleNow();
     bar.style.left = (m.ox + x * m.sx) + 'px'; bar.style.top = (m.oy + y * m.sy) + 'px';
@@ -4324,8 +4324,6 @@ class TimelinePanel {
             // hover still brightens to META_HOVER_FG — mouseleave restores the TINT, not the gray.
             const tint0 = kind === 'model' ? pickTone(s.modelColor, s.modelTone) : pickTone(s.effortColor, s.effortTone);
             const tint = (tint0 && tint0.length === 3) ? readableRgb(tint0) : tint0;
-            // TODO(toneReadableLight): the model/effort tint is kernel-shipped dark-tuned RGB; re-encode
-            // for body.theme-light when the toneReadableLight helper lands (light-theme batch).
             const base = (tint && tint.length === 3) ? ('rgb(' + tint[0] + ',' + tint[1] + ',' + tint[2] + ')') : MODEL_FG;
             const wt = el('text', { x: sx, y: y + 3.5, 'text-anchor': 'start', 'font-size': 11, 'font-weight': 600, fill: base, 'pointer-events': 'auto' });
             wt.textContent = word; wt.style.cursor = 'pointer';

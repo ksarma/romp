@@ -28,3 +28,13 @@ test("the timeline lane tints the model/effort pieces by rank, keeping hover + r
   assert.match(TL, /el\('text', \{ x: sx,[^}]*fill: base/);
   assert.match(TL, /mouseleave', \(\) => \{ if \(dots\) return; wt\.setAttribute\('fill', base\)/);
 });
+
+test("the model/effort picker ROWS wear their own rank color, and the popover badge fallback re-encodes (the user 2026-08-31)", () => {
+  // every /models-fed row is tinted (a picker whose rows are all default-gray codes nothing)…
+  assert.match(RENDER, /if \(kind === "model" \|\| kind === "effort"\) \{\s*\n\s*const rowTint = nonClassicChoiceTone\(c as \{ color\?: number\[\] \| null; tone\?: number\[\] \| null \}\);/);
+  assert.match(RENDER, /if \(rowTint\) item\.style\.color = `rgb\(\$\{rowTint\.join\(","\)\}\)`;/);
+  // …through nonClassicChoiceTone, which re-encodes for light (a TEXT tint, not a fill)
+  assert.match(RENDER, /function nonClassicChoiceTone\([\s\S]{0,300}?readableRgb\(picked\)/);
+  // and the comment-popover badge's session-status FALLBACK re-encodes too, like its /models branch
+  assert.match(RENDER, /const tint = \(nonClassicChoiceTone\(choice\) as number\[\] \| undefined\) \|\| \(tint0 && tint0\.length === 3 \? readableRgb\(tint0\) : tint0\);/);
+});
