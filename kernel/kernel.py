@@ -26090,7 +26090,7 @@ _THEME_READER = (
     "t=(s.theme==='yatharth'||s.theme==='yatharth-light')?s.theme:(s.theme==='classic'?'classic':(s.chatTabTheme==='yatharth'?'yatharth':'classic'));}catch(e){}"
     "document.body.classList.toggle('chat-theme-yatharth',t!=='classic');"
     "document.body.classList.toggle('theme-light',t==='yatharth-light');"
-    "var m=document.getElementById('meta-theme');if(m)m.setAttribute('content',t==='yatharth-light'?'#FAF9F5':'#1e1e1e');}"
+    "var m=document.getElementById('meta-theme');if(m)m.setAttribute('content',t==='yatharth-light'?'#F1EAE2':'#1e1e1e');}"
     "ap();window.addEventListener('storage',function(e){if(e.key==='romp:settings')ap();});"
     "window.addEventListener('romp:settings',ap);})()</script>")
 
@@ -26476,7 +26476,7 @@ def _pane_spin(cid, ignore_id=""):
             "background:var(--vscode-editor-background,#1e1e1e);transition:opacity .3s ease}"
             "#pane-spin.gone{opacity:0;pointer-events:none}"
             # light theme: the loader backdrop goes warm-light with the page
-            "body.theme-light #pane-spin{background:#FAF9F5}" + _LOADER_CSS + "</style>"
+            "body.theme-light #pane-spin{background:#F1EAE2}" + _LOADER_CSS + "</style>"
             "<div id=pane-spin>" + _loader_inner() + "</div>"
             "<script>(function(){var o=document.getElementById('pane-spin'),c=document.getElementById('" + cid + "'),IGN='" + ignore_id + "';"
             "if(!o)return;var fail=0;"
@@ -29157,15 +29157,15 @@ def _landing():
             # chrome's warm-light skin. Pure additive overrides; with the class absent nothing here matches,
             # so the dark rendering is byte-identical. Accent goes clay (#C2410C) via the same --accent var
             # every accent consumer already reads.
-            "body.theme-light{--accent:#C2410C;--accent-fg:#FFF8F2;background:#FAF9F5}"
+            "body.theme-light{--accent:#C2410C;--accent-fg:#FFF8F2;background:#F1EAE2}"
             # the html element keeps its dark background otherwise (body.theme-light can't reach an
             # ancestor without :has); body covers the viewport, but paint the canvas right too
-            "html:has(> body.theme-light){background:#FAF9F5}"
+            "html:has(> body.theme-light){background:#F1EAE2}"
             # light iframes: scoped to the class so a dark pane never flashes light — the LIFTED
             # settings/picker iframes keep their id-scoped background:transparent (higher specificity),
             # so the modal dim still composites over the real panes (the 2026-08-08 lesson).
-            "body.theme-light iframe{background:#FAF9F5}"
-            "body.theme-light .pane-rail{background:#F0EEE6;border-top-color:#E3DFD3}"
+            "body.theme-light iframe{background:#F1EAE2}"
+            "body.theme-light .pane-rail{background:#E7DED2;border-top-color:#DCD2C4}"
             "body.theme-light .rail-btn{color:#5D574E}"
             "body.theme-light .rail-btn:hover{color:#C2410C;background:rgba(0,0,0,0.05)}"
             "body.theme-light .rail-btn.on{background:rgba(194,65,12,0.10);border-color:rgba(194,65,12,0.35)}"
@@ -29178,7 +29178,7 @@ def _landing():
             "body.theme-light .gh:hover{background:linear-gradient(180deg,transparent 3px,rgba(194,65,12,0.30) 3px,rgba(194,65,12,0.30) 4px,transparent 4px)}"
             "body.theme-light .gv:hover::after,body.theme-light .gh:hover::after{background:var(--accent)}"
             "body.theme-light .pane.pane-focused::after{box-shadow:inset 0 0 0 2px rgba(194,65,12,0.55)}"
-            "body.theme-light #romp-boot{background:#FAF9F5}"
+            "body.theme-light #romp-boot{background:#F1EAE2}"
             # (the loader dots' light rule rides in _LOADER_CSS, included below)
             # light cards: raised white over the warm page, dark warm text, hairline borders, soft shadows
             "body.theme-light #rerr-panel{background:#FFFFFF;border-color:rgba(0,0,0,0.12);color:#1F1E1D;"
@@ -29187,7 +29187,7 @@ def _landing():
             "body.theme-light .rerr-row{color:#1F1E1D}"
             "body.theme-light .rerr-row+.rerr-row{border-top-color:rgba(0,0,0,0.08)}"
             "body.theme-light .rerr-row.link:hover{background:rgba(0,0,0,0.04)}"
-            "body.theme-light #rerr-clear{background:#F0EEE6;color:#1F1E1D;border-color:rgba(0,0,0,0.12)}"
+            "body.theme-light #rerr-clear{background:#E7DED2;color:#1F1E1D;border-color:rgba(0,0,0,0.12)}"
             "body.theme-light #rerr-clear:hover{background:#E3DFD3;color:#1F1E1D}"
             "body.theme-light #rerr-x{color:#5D574E}body.theme-light #rerr-x:hover{color:#1F1E1D}"
             "body.theme-light #rerr-filters{border-bottom-color:rgba(0,0,0,0.08)}"
@@ -29204,7 +29204,7 @@ def _landing():
             "body.theme-light .ru-name{color:#5D574E}"
             "body.theme-light .ru-pct{color:#1F1E1D}"
             "body.theme-light .ru-track{background:rgba(0,0,0,0.10)}"
-            "body.theme-light #mtabs{background:#F0EEE6;border-top-color:#E3DFD3}"
+            "body.theme-light #mtabs{background:#E7DED2;border-top-color:#DCD2C4}"
             "body.theme-light #mtabs button{color:#5D574E}"
             "body.theme-light #mtabs button.on{color:#C2410C}"
             "body.theme-light #mtabs .mtabs-div{background:#E3DFD3}"

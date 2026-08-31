@@ -34,15 +34,15 @@ class LightShell(unittest.TestCase):
 
     def test_page_background_goes_light(self):
         # the body override + the :has canvas rule for the html element
-        self.assertIn("body.theme-light{--accent:#C2410C;--accent-fg:#FFF8F2;background:#FAF9F5}", self.html)
-        self.assertIn("html:has(> body.theme-light){background:#FAF9F5}", self.html)
+        self.assertIn("body.theme-light{--accent:#C2410C;--accent-fg:#FFF8F2;background:#F1EAE2}", self.html)
+        self.assertIn("html:has(> body.theme-light){background:#F1EAE2}", self.html)
 
     def test_iframe_background_goes_light_scoped(self):
         # scoped to the class — the lifted modal iframes keep their id-scoped transparency
-        self.assertIn("body.theme-light iframe{background:#FAF9F5}", self.html)
+        self.assertIn("body.theme-light iframe{background:#F1EAE2}", self.html)
 
     def test_pane_rail_goes_light(self):
-        self.assertIn("body.theme-light .pane-rail{background:#F0EEE6;border-top-color:#E3DFD3}", self.html)
+        self.assertIn("body.theme-light .pane-rail{background:#E7DED2;border-top-color:#DCD2C4}", self.html)
 
     def test_gutters_go_light(self):
         self.assertIn("body.theme-light .gv{", self.html)

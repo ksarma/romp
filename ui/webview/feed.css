@@ -66,6 +66,10 @@
   --kbd-border: #3d3d42;
   --overlay-05: rgba(255, 255, 255, 0.06);
   --overlay-10: rgba(255, 255, 255, 0.12);
+  /* the halo behind text that sits ON a colored fill (the ctx battery %): dark glow under
+     light text on dark; a LIGHT glow under the dark text on light — a dark halo around dark
+     glyphs read as blur (the user 2026-08-31, off the live preview) */
+  --text-halo: rgba(0, 0, 0, 0.75);
   --st-working-bg: #e0b020; --st-working-fg: #332600;  /* the WORKING yellow — mirrors styles.css, same trap
                        as --err: .fask-stallbtn and .fask-interrupting referenced these while they lived only
                        in styles.css, so the "filled yellow so the stall is noticed" chip rendered as a quiet
@@ -96,7 +100,7 @@
 }
 
 /* ══ the Yatharth LIGHT theme (the user 2026-08-27): one block, token names only ═════════════════
-   Claude-desktop-warm: ivory page, raised cream surfaces, near-black warm text, CLAY accent (the
+   Claude-desktop-warm: warm clay page (#F1EAE2, the user 2026-08-31 — #FAF9F5 read too bright), raised cream surfaces, near-black warm text, CLAY accent (the
    light theme's accent is orange — the dark accent stays the romp blue). The block re-declares
    (a) every :root token above and (b) the --vscode-* stand-ins inline rules fall back through —
    body-scoped, so it beats both THEME_CSS (browser) and the editor's injected vars (VS Code;
@@ -115,7 +119,7 @@ body.theme-light {
   --rel-action: #9A6A00;     /* the light warn amber (matches --warn) */
   --rel-details: var(--dim);
   --chat-col: 100%;
-  --bg: #FAF9F5;
+  --bg: #F1EAE2;
   --fg: #1F1E1D;
   --dim: #5D574E;
   --rail: rgba(0, 0, 0, 0.14);
@@ -139,46 +143,47 @@ body.theme-light {
   --st-blocked-bg: #e5484d; --st-blocked-fg: #ffffff;
   --radius-menu: 6px;
   --shadow-menu: 0 4px 12px rgba(31, 26, 20, 0.16);
-  --surface-raised: #F0EEE6;
+  --surface-raised: #FAF5EE;
   --radius-toast: 8px;
   --shadow-toast: 0 8px 28px rgba(31, 26, 20, 0.18);
   --radius-modal: 10px;
   --shadow-modal: 0 12px 36px rgba(31, 26, 20, 0.22);
   --overlay-dim: rgba(58, 46, 36, 0.35);
   --radius-pill: 999px;
-  --hairline: #E3DFD3;
+  --hairline: #DCD2C4;
   --text-muted: #5D574E;
   --text-faint: #8A8378;
   --text-soft: #3E3A35;
   --text-bright: #141312;
-  --btn-bg: #EDEAE0;
-  --btn-hover-bg: #E3DFD3;
-  --input-bg: #FFFFFF;
-  --kbd-bg: #F5F2EA;
-  --kbd-border: #D8D3C5;
+  --btn-bg: #E7DED2;
+  --btn-hover-bg: #DED2C2;
+  --input-bg: #FCF9F4;
+  --kbd-bg: #EFE7DC;
+  --kbd-border: #D3C7B6;
   --overlay-05: rgba(0, 0, 0, 0.045);
   --overlay-10: rgba(0, 0, 0, 0.08);
+  --text-halo: rgba(252, 249, 244, 0.85);
   /* the assistant's READING face (.assistant, .fileview-md): the UI face in dark; the light
      theme swaps in the serif (Claude-desktop's reply-text feel) */
   --font-prose: var(--sans);
   --mono: var(--vscode-editor-font-family, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
   --sans: "Space Grotesk", "Inter", var(--vscode-chat-font-family, var(--vscode-font-family, system-ui, -apple-system, "Segoe UI", sans-serif));
-  --font-prose: "Source Serif 4", Georgia, "Times New Roman", serif;
+  --font-prose: var(--mono);   /* the user 2026-08-31, off the live preview: the serif read awful — assistant output goes MONO in light */
   --fs: var(--vscode-chat-font-size, 13px);
   /* the --vscode-* stand-ins: inline rules fall back through these (menus, inputs, widget cards) */
-  --vscode-editor-background: #FAF9F5;
+  --vscode-editor-background: #F1EAE2;
   --vscode-foreground: #1F1E1D;
   --vscode-descriptionForeground: #5D574E;
   --vscode-errorForeground: #B02A1C;
-  --vscode-editorWidget-background: #F0EEE6;
+  --vscode-editorWidget-background: #FAF5EE;
   --vscode-editorHoverWidget-border: rgba(0, 0, 0, 0.12);
-  --vscode-sideBar-background: #F0EEE6;
-  --vscode-widget-border: #E3DFD3;
+  --vscode-sideBar-background: #F1EAE2;
+  --vscode-widget-border: #DCD2C4;
   --vscode-focusBorder: #C2410C;
-  --vscode-input-background: #FFFFFF;
+  --vscode-input-background: #FCF9F4;
   --vscode-input-foreground: #1F1E1D;
-  --vscode-input-border: #D8D3C5;
-  --vscode-menu-background: #FFFFFF;
+  --vscode-input-border: #D3C7B6;
+  --vscode-menu-background: #FBF6EF;
   --vscode-menu-foreground: #1F1E1D;
   --vscode-menu-selectionBackground: #F3E0D5;
   --vscode-menu-selectionForeground: #1F1E1D;

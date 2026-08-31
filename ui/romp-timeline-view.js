@@ -482,7 +482,9 @@ function ctxInfo(s) {
   // tone; light re-encodes for the ivory ground (readableRgb — item 4's TODO paid). The fallback
   // mirrors ctx-color.ts: classic = main's historical 60/85, yatharth = the unified 70/88 pair.
   const picked = pickTone(s.ctxColor, s.ctxTone);
-  const color = (picked && picked.length === 3) ? 'rgb(' + readableRgb(picked).join(',') + ')'
+  // the battery FILL wears the tone as-is (readableRgb is for TEXT — the re-encoded warn amber
+  // read muddy brown on light, the user 2026-08-31)
+  const color = (picked && picked.length === 3) ? 'rgb(' + picked.join(',') + ')'
     : nonClassic() ? (p >= 88 ? '#c0392b' : (p >= 70 ? '#d7a23a' : '#5196B8'))
     : (p >= 85 ? '#c0392b' : (p >= 60 ? '#e0b020' : '#54B204'));
   return { label: p + '%', pct: p, color: color };
@@ -560,11 +562,11 @@ const PAL_LIGHT = {
   outline: 'rgba(0,0,0,0.25)',
   hoverBg: 'rgba(0,0,0,0.06)',
   selBg: 'rgba(0,0,0,0.08)',
-  inputBg: '#FAF9F5', inputFg: '#1F1E1D',
+  inputBg: '#FCF9F4', inputFg: '#1F1E1D',
   grid: '#00000010', gridEdge: '#00000020', gridStrong: '#00000026',
   laneSelFill: '#57534E',
   dotRing: '#FFFFFF',            // the halo stays white — it separates overlapping glyphs, not the page
-  stubBg: '#F0EEE6', stubRing: '#1F1E1D',
+  stubBg: '#E7DED2', stubRing: '#1F1E1D',
   batFill: 'rgba(0,0,0,0.05)', batStroke: 'rgba(0,0,0,0.30)',
 };
 function PAL() { return isLight() ? PAL_LIGHT : PAL_DARK; }
@@ -1636,7 +1638,7 @@ class TimelinePanel {
       if (track) track.style.display = rolled ? 'none' : '';
       b.usage.fill.style.width = pct + '%';
       var useg = (nonClassic() && seg.tone && seg.tone.length === 3) ? seg.tone : null;
-      b.usage.fill.style.background = useg ? 'rgb(' + readableRgb(useg).join(',') + ')'
+      b.usage.fill.style.background = useg ? 'rgb(' + useg.join(',') + ')'
         : nonClassic() ? (pct >= 88 ? '#c0392b' : (pct >= 70 ? '#d7a23a' : '#5196B8'))
         : (pct >= 90 ? '#c0392b' : (pct >= 70 ? '#e0b020' : '#54B204'));   // classic = main verbatim; mirrors ctx-color.ts
       b.usage.txt.textContent = rolled ? '?' : pct + '%';

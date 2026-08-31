@@ -69,7 +69,7 @@ test("the shell's inline mirror states the same classes and the same migration (
   assert.ok(K.includes("classList.toggle('chat-theme-yatharth',t!=='classic')"), "shell strip class mirrors theme.ts");
   assert.ok(K.includes("classList.toggle('theme-light',t==='yatharth-light')"), "shell light class mirrors theme.ts");
   assert.ok(K.includes("s.chatTabTheme==='yatharth'?'yatharth':'classic'"), "shell migration mirrors loadSettings");
-  assert.ok(K.includes("t==='yatharth-light'?'#FAF9F5':'#1e1e1e'"), "the OS chrome color follows the theme");
+  assert.ok(K.includes("t==='yatharth-light'?'#F1EAE2':'#1e1e1e'"), "the OS chrome color follows the theme");
   // gear.js carries the same migration mirror (its load() reads the raw store)
   const G = read("ui", "webview", "gear.js");
   assert.match(G, /return s\.chatTabTheme === 'yatharth' \? 'yatharth' : 'classic';/);

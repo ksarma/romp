@@ -4450,8 +4450,10 @@ function tabCtxGauge(ctxStr: string, ctxColor?: number[]): HTMLElement {
   const g = el("span", "tab-ctx");
   const fill = el("span", "tab-ctx-fill");
   fill.style.height = pct + "%";
-  fill.style.background = (ctxColor && ctxColor.length === 3) ? `rgb(${readableRgb(ctxColor).join(",")})`
-    : ctxFallbackColor(pct);   // theme-aware pair (ctx-color.ts): classic keeps main's 60/85 verbatim
+  fill.style.background = (ctxColor && ctxColor.length === 3) ? `rgb(${ctxColor.join(",")})`
+    : ctxFallbackColor(pct);   // theme-aware pair (ctx-color.ts): classic keeps main's 60/85 verbatim.
+  // FILLS wear the tone as-is in every theme — readableRgb is for TEXT (re-encoding the warn amber
+  // fill made it a muddy brown on light; the user 2026-08-31, off the live preview)
   g.appendChild(fill);
   g.title = `context ${pct}% used`;
   return g;
@@ -10226,6 +10228,12 @@ function toggleMetaMenu(kind: MetaKind, btn: HTMLElement, forSid?: string | null
     item.tabIndex = 0;
     const rowIco = kind === "mode" ? el("span", "meta-ico mode-ico") : null;
     if (rowIco) rowIco.innerHTML = modeIconSvg(c.value);
+    // model/effort rows wear THEIR OWN rank color (the user 2026-08-31: a picker whose rows are
+    // all default-gray codes nothing) — the same /models-fed color+tone the badges use
+    if (kind === "model" || kind === "effort") {
+      const rowTint = nonClassicChoiceTone(c as { color?: number[] | null; tone?: number[] | null });
+      if (rowTint) item.style.color = `rgb(${rowTint.join(",")})`;
+    }
     if (c.sub) {
       const head = el("div");
       if (rowIco) head.appendChild(rowIco);
@@ -10357,8 +10365,8 @@ function setCtxBar(bar: HTMLElement, ctxStr: string | undefined, compacting = fa
   // The GLOBAL colormap (the user 2026-06-26): the kernel computes the fill color server-side (ctxColor =
   // ramp(context%) on the selected map, bright = full) so the chat battery matches the timeline + usage bars.
   // Fall back to the old traffic-light if an older kernel didn't ship a color.
-  const fillBg = (ctxColor && ctxColor.length === 3) ? `rgb(${readableRgb(ctxColor).join(",")})`
-    : ctxFallbackColor(pct);   // theme-aware pair (ctx-color.ts): classic keeps main's 60/85 verbatim
+  const fillBg = (ctxColor && ctxColor.length === 3) ? `rgb(${ctxColor.join(",")})`
+    : ctxFallbackColor(pct);   // theme-aware pair; fills stay un-re-encoded (see tabCtxGauge's note)
   if (fill) { fill.style.width = pct + "%"; fill.style.background = fillBg; }
   if (txt) txt.textContent = pct + "%";
   bar.title = `context ${pct}% used — click to /compact`;
