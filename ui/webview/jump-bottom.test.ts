@@ -43,7 +43,15 @@ test("the chip wears the menu-card vocabulary and survives [hidden] against its 
   assert.match(CSS, /#jump-bottom \{\s*\n\s*position: fixed; left: 50%; transform: translateX\(-50%\);/);
   assert.match(CSS, /#jump-bottom\[hidden\] \{ display: none; \}/);
   assert.match(CSS, /#jump-bottom:hover \{ border-color: var\(--accent\); color: var\(--accent\); \}/);
-  assert.match(CSS, /@media \(pointer: coarse\) \{ #jump-bottom \{ width: 44px; height: 44px; \} \}/);
+  // the phone target WIDENS, never heightens — the compact pill is the ask (the user 2026-08-31)
+  assert.match(CSS, /@media \(pointer: coarse\) \{ #jump-bottom \{ width: 64px; height: 32px; \} \}/);
+});
+
+test("a short PILL with a stemless chevron — the circle + full arrow were the user's revision (2026-08-31)", () => {
+  assert.match(CSS, /width: 40px; height: 22px; border-radius: var\(--radius-pill\);/);
+  // the glyph is the chevron alone: one polyline, no <line> stem
+  assert.match(RENDER, /jumpBtn\.innerHTML = [^;]*<polyline points="6 9\.5 12 15\.5 18 9\.5"\/><\/svg>/);
+  assert.doesNotMatch(RENDER, /jumpBtn\.innerHTML = [^;]*<line /);
 });
 
 // ── executed replica: visibility + click + follow ─────────────────────────────────────────────────
