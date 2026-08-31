@@ -5882,7 +5882,7 @@ class SdkBackend:
 
     def _live_row(self, reg, sid):
         """One session's live_sessions row (running snapshot, else the dormant reg row) — factored
-        so live_sessions can guard it PER SESSION (one bad row must not hide the fleet-mates)."""
+        so live_sessions can guard it PER SESSION (one bad row must not hide the other sessions)."""
         s = self.sessions.get(sid)
         if s and s.thread.is_alive():
             return s.snapshot()
@@ -5919,7 +5919,6 @@ class SdkBackend:
                     "fast": reg.get("liveFast", ""),
                     "fastReason": reg.get("liveFastReason", ""),
                     "ctx": lc if isinstance(lc, (int, float)) else "", "summary": ""}
-        return out
 
     # ---- picker/permission UI bridge (kernel-thread API) ----
     def on_ask(self, sid: str, kind: str, payload=None) -> bool:

@@ -3,7 +3,7 @@
 kernel merge's single try, so ONE session's snapshot() exception silently dropped EVERY SDK session
 from an otherwise-successful listing — and absence from a listing reads as death downstream (the
 postal bus refused sends to live peers over exactly this class of gap). One bad row now keeps its
-fleet-mates listed, and the failing session itself stays visible as a minimal waiting row.
+other sessions listed, and the failing session itself stays visible as a minimal waiting row.
 Synthetic; hermetic state."""
 import os
 import tempfile
@@ -35,10 +35,10 @@ class LiveRowsGuard(unittest.TestCase):
         self.be.sessions[SID_A] = broken
         out = self.be.live_sessions()
         self.assertEqual(set(out), {SID_A, SID_B},
-                         "the whole point: a bad row keeps its fleet-mates LISTED")
+                         "the whole point: a bad row keeps the OTHER sessions listed")
         self.assertEqual(out[SID_A]["state"], "waiting",
                          "the failing session stays visible as a minimal row — absent reads as dead")
-        self.assertEqual(out[SID_B]["state"], "waiting", "the dormant fleet-mate's real row")
+        self.assertEqual(out[SID_B]["state"], "waiting", "the dormant sibling's real row")
         self.assertEqual(out[SID_B]["model"], "Opus")
 
     def test_a_sidless_reg_dict_is_not_fatal(self):

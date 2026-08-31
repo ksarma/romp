@@ -198,6 +198,31 @@ class AnsweredButAbsentIsNotDeadness(unittest.TestCase):
         self.assertEqual((res["kind"], res["status"]), ("error", 503))
         self.assertIn("restart-settle blink", res["error"])
 
+    def test_a_host_qualified_miss_keeps_the_hard_404(self):
+        # a host qualifier naming somebody ELSE takes every local out of the running by design —
+        # the local listing/registry can say nothing about that host, so the blink arms must not
+        # fire on a same-named LOCAL row (review find: a typo'd host became an endless retry-shortly)
+        self._reg(self.GHOST_SID, "blinky")
+        _set_live([{"id": self.GHOST_SID, "name": "blinky"}])
+        res = pm.resolve_recipient("otherhost:blinky")
+        self.assertEqual((res["kind"], res["status"]), ("error", 404))
+
+    def test_short_id_blink_refuses_soft(self):
+        # the third address form (the 8-char id prefix every list_agents row shows) is
+        # blink-protected like the other two
+        self._reg(self.GHOST_SID, "blinky")
+        res = pm.resolve_recipient(self.GHOST_SID[:8])
+        self.assertEqual((res["kind"], res["status"]), ("error", 503))
+        self.assertIn("restart-settle blink", res["error"])
+
+    def test_short_id_with_two_matching_regs_keeps_the_404(self):
+        twin = self.GHOST_SID[:-1] + "f"
+        self._reg(self.GHOST_SID, "blinky")
+        self._reg(twin, "blinky2")
+        res = pm.resolve_recipient(self.GHOST_SID[:8])
+        self.assertEqual((res["kind"], res["status"]), ("error", 404),
+                         "two registry hits on one prefix is the ambiguity family: refuse, never guess")
+
     def test_durable_session_reads(self):
         self._reg(self.GHOST_SID, "blinky")
         self.assertTrue(pm._durable_session(self.GHOST_SID, by_id=True))

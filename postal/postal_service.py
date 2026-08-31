@@ -570,7 +570,10 @@ _lock = threading.Lock()
 def _kernel_sessions(threads=False):
     """LIVE romp sessions (tmux + SDK) from the kernel's unified GET /sessions — the kernel owns the backend
     query (TmuxBackend for tmux liveness + the SDK registry), so the bus enumerates sessions WITHOUT shelling
-    tmux and WITHOUT reading the SDK registry directly: ONE source. Loopback, authorized with X-Romp-Token
+    tmux and, for ADDRESSING, without reading the SDK registry directly: ONE source. (One deliberate
+    exception since 2026-08-31: _durable_session reads a per-session reg file on the REFUSAL path only,
+    to corroborate a suspected listing blink before ruling a session dead — never to resolve delivery.)
+    Loopback, authorized with X-Romp-Token
     (the shared 0600 serve-token file — the kernel gates every request, loopback included). [] if the kernel
     is unreachable (rare — the manager supervises it); the bus then shows no local
     agents until it's back, rather than reaching past the abstraction to tmux.
@@ -602,12 +605,13 @@ def _kernel_sessions_checked(threads=False):
     try:
         req = urllib.request.Request(KERNEL_BASE + "/sessions" + ("?threads=1" if threads else ""),
                                      headers={"X-Romp-Token": SERVE_TOKEN})
-        # 5s, not 2: on a loaded box a cold-cache /sessions can outrun a tight timeout, and a
-        # failed fetch here starts the exact refusal chain the 2026-08-31 specimens rode (the
-        # listing "fails" → the pool loses every local → the probe hits a now-warm kernel and
-        # answers → a live peer gets ruled dead). The corroboration arms make even a timeout
-        # honest now, but not paying the false-negative at all is better.
-        with urllib.request.urlopen(req, timeout=5) as r:
+        # 2s is a BUDGET, not a guess: a refusal-bound send makes two sequential fetches (the
+        # pool + the corroboration probe), and every same-box bus CLIENT talks to the bus with a
+        # 5s cap (_http) — 2+2 stays inside it, so the honest refusal always reaches the sender.
+        # Raising this to 5s (tried 2026-08-31) made the worst case 10s: the client aborted with
+        # a bare "bus timed out" and the carefully-worded refusal died on a closed socket. A slow
+        # /sessions is instead healed by the corroboration arms, which read files, not the kernel.
+        with urllib.request.urlopen(req, timeout=2) as r:
             data = json.loads(r.read().decode("utf-8"))
         return (data if isinstance(data, list) else []), True
     except Exception:
@@ -765,8 +769,20 @@ def _durable_session(bare, by_id):
     for them. Reads the registry file directly (same box, kernel-owned): the designed API is the
     listing itself, which is exactly the thing being second-guessed here."""
     root = STATE.parent
-    sids = [bare] if by_id else []
-    if not by_id:
+    if by_id:
+        sids = [bare]
+    elif re.fullmatch(r"[0-9a-fA-F][0-9a-fA-F-]{7,35}", bare):
+        # the short-id form (the ` · <8-char>` every list_agents row shows) — the third address
+        # form, blink-protected like the other two: prefix-match the registry files themselves
+        try:
+            sids = [f.stem for f in (root / "sdk").glob("*.json") if f.stem.startswith(bare)]
+        except OSError:
+            sids = []
+        if len(sids) != 1:
+            sids = []          # ambiguity is the standing refusal's call, never a guess here
+    else:
+        sids = []
+    if not by_id and not sids:
         try:
             for f in NAMES_DIR.iterdir():
                 try:
@@ -877,6 +893,12 @@ def resolve_recipient(to, frm_id=""):
     # fresh fetch's own rows and the answered bit travel together from ONE call, so a kernel
     # coming back between two fetches can't convert unreachable into a false death ruling; the
     # durable per-session registry (_durable_session) corroborates what one listing missed.
+    if want_host and want_host != here:
+        # a host qualifier naming somebody ELSE took every local out of the running by DESIGN —
+        # the local listing and registry can say nothing about that host's sessions, and blink
+        # arms firing on a same-named LOCAL row turned a typo'd host into an endless retry-shortly
+        # (review find, 2026-08-31)
+        return {"kind": "error", "status": 404, "error": "no live romp session named '%s'" % to}
     rows, answered = _kernel_sessions_checked(threads=True)
     if not answered and not any(not a.get("remote") for a in pool):
         # only an EMPTY local world raises the unreachable question — a pool with live locals in
@@ -890,7 +912,12 @@ def resolve_recipient(to, frm_id=""):
         if isinstance(r, dict):
             fresh.add(str(r.get("id") or ""))
             fresh.add(str(r.get("name") or ""))
-    if bare in fresh or _durable_session(bare, by_id):
+    blinked = bare in fresh or _durable_session(bare, by_id)
+    if not blinked and not by_id and re.fullmatch(r"[0-9a-fA-F][0-9a-fA-F-]{7,35}", bare):
+        # the short-id form prefix-matches the fresh rows too, like the pool arm it mirrors
+        hits = {i for i in fresh if i.startswith(bare)}
+        blinked = len(hits) == 1
+    if blinked:
         return {"kind": "error", "status": 503,
                 "error": "'%s' looks live (its durable registry entry stands) but the session "
                          "listing came back without it — likely a restart-settle blink. Nothing "
