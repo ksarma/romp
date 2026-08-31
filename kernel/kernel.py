@@ -28384,6 +28384,28 @@ _REFRESH_SVG = (
     "<path d='M9.5 5.4 L11.7 1.6 L13.5 5.2 Z' fill='currentColor'/></svg>")
 
 
+# THE pane presentation order (the user 2026-08-30: mobile must list the panes in the desktop
+# order — "mobile is a re-layout of the desktop, never a re-ordering"). This list is the desktop
+# rail strip's left-to-right order, which is the user's own choice (2026-07-05) and the desktop's
+# actual visible LIST of the named panes (the column layout cannot express it: Sessions/timeline
+# is a band, not a column). BOTH the desktop rail buttons and the mobile #mtabs buttons render
+# from this one constant — reorder here and both surfaces move together; a second hardcoded list
+# is the bug this replaces. Keys stay internal (timeline/fleet); labels are the user-facing names.
+_PANE_ORDER = (("chat", "Chat"), ("timeline", "Sessions"), ("fleet", "Outline"), ("feed", "Feed"))
+
+
+def _rail_buttons_html():
+    """The desktop rail's pane toggles, in _PANE_ORDER."""
+    return "".join("<div class=rail-btn data-pane=%s>%s</div>" % kv for kv in _PANE_ORDER)
+
+
+def _mtab_buttons_html():
+    """The mobile bottom bar's pane tabs — the SAME order as the desktop rail, by construction.
+    class=on keys on the chat KEY (the initially shown pane), never on position."""
+    return "".join("<button data-pane=%s%s>%s</button>"
+                   % (k, " class=on" if k == "chat" else "", lbl) for k, lbl in _PANE_ORDER)
+
+
 def _landing():
     # one flex row of up to FOUR independently-toggled panes (chat | fleet | feed | timeline) behind a far-left
     # rail; draggable gutters between visible panes; the rail also pins the ⛭ settings + ↻ refresh actions at
@@ -28990,10 +29012,8 @@ def _landing():
             # (.rail-acts, pinned RIGHT via margin-left:auto) with the ↻ refresh + network + ⛭ gear, always visible.
             "<div class=pane-rail>"
             "<div class=rail-scroll>"
-            "<div class=rail-btn data-pane=chat>Chat</div>"
-            "<div class=rail-btn data-pane=timeline>Sessions</div>"   # data-pane key stays 'timeline' (internal); the pane outgrew the label (the user 2026-08-24)
-            "<div class=rail-btn data-pane=fleet>Outline</div>"   # data-pane key stays 'fleet' (internal); the user-facing label is Outline
-            "<div class=rail-btn data-pane=feed>Feed</div>"
+            # the pane toggles, from _PANE_ORDER — the ONE ordering the mobile tabs share
+            + _rail_buttons_html() +
             # the Claude /usage rate-limit bars (Pro/Max): three compact vertical bar-pairs (used % colored +
             # elapsed % slate), %-label, full detail on hover — side-by-side in the bottom bar.
             "<div id=rail-usage data-keycmd=usage.open></div>"
@@ -29041,10 +29061,9 @@ def _landing():
             "</div>"   # /.pane-rail (bottom bar)
             "</div>"
             "<nav id=mtabs>"
-            "<button data-pane=chat class=on>Chat</button>"
-            "<button data-pane=fleet>Outline</button>"   # data-pane key stays 'fleet' (internal), label Outline
-            "<button data-pane=feed>Feed</button>"
-            "<button data-pane=timeline>Sessions</button>"   # same rename on the phone tabs
+            # the pane tabs, from _PANE_ORDER — the desktop rail's exact order (the user 2026-08-30:
+            # mobile is a re-layout, never a re-ordering)
+            + _mtab_buttons_html() +
             # the rail's ACTIONS, reachable on mobile too (the user 2026-07-11): settings + the network
             # panel + a usage panel showing the desktop tooltip's window bars. data-act (not data-pane) —
             # they fire, they don't switch the shown pane.
