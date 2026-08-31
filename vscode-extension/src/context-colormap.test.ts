@@ -13,7 +13,7 @@ const TL = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "romp-timelin
 test("the chat battery applies the server ctxColor, falling back to the traffic-light", () => {
   assert.match(RENDER, /ctxColor\?: number\[\];/);   // on the Status interface
   assert.match(RENDER, /function setCtxBar\(bar: HTMLElement, ctxStr: string \| undefined, compacting = false, ctxColor\?: number\[\]\)/);
-  assert.match(RENDER, /\(ctxColor && ctxColor\.length === 3\) \? `rgb\(\$\{readableRgb\(ctxColor\)\.join\(","\)\}\)`/);   // light re-encodes (PR #763 item 4)
+  assert.match(RENDER, /\(ctxColor && ctxColor\.length === 3\) \? `rgb\(\$\{ctxColor\.join\(","\)\}\)`/);   // the fill wears the tone as-is (readableRgb is for TEXT — 2026-08-31)
   assert.match(RENDER, /: ctxFallbackColor\(pct\)/);  // fallback intact, via the ONE shared pair (ctx-color.ts)
 });
 
@@ -23,6 +23,6 @@ test("every setCtxBar caller threads s.status.ctxColor (statusline, tick, tab to
 });
 
 test("the timeline lane battery applies the server ctxColor with the same fallback", () => {
-  assert.match(TL, /\(picked && picked\.length === 3\) \? 'rgb\(' \+ readableRgb\(picked\)\.join\(','\) \+ '\)'/);   // dual palette pick + light re-encode
+  assert.match(TL, /\(picked && picked\.length === 3\) \? 'rgb\(' \+ picked\.join\(','\) \+ '\)'/);   // dual palette pick; fill un-re-encoded
   assert.match(TL, /p >= 88 \? '#c0392b' : \(p >= 70 \? '#d7a23a' : '#5196B8'\)/);   // fallback intact — mirrors ctx-color.ts (grep parity below)
 });
