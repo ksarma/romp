@@ -8830,6 +8830,7 @@ function landActive(content: HTMLElement | null, v: View): void {
   }
   v.shown = true;
   scheduleRailSticky();
+  updateJumpBtn();   // per-tab truth: the entering tab's restored position decides the chip, not the left one's
 }
 
 // Scroll ANCHORING for scrolled-up re-renders (the user 2026-07-05). "Appended content is below the
@@ -8909,6 +8910,7 @@ function appendActive() {
   if (stick) content.scrollTop = content.scrollHeight;
   else if (!(v && restoreScrollAnchor(content, v, anchor))) content.scrollTop = before;
   scheduleRailSticky();
+  updateJumpBtn();   // appends can cross the overflow boundary either way — re-read the chip's truth
 }
 
 // Row heights change when the pane is resized (text re-wraps), so the spacing-based
@@ -8929,6 +8931,49 @@ if (typeof ResizeObserver === "function") {
   const c = document.getElementById("content");
   if (c) c.addEventListener("scroll", scheduleRailSticky, { passive: true });
 }
+// ── jump to newest (the user 2026-08-31) ─────────────────────────────────────────────────────────
+// Scrolled-up reading leaves follow mode, and the send gate keeps it that way — this chip is the
+// deliberate way BACK. Visible only while the transcript overflows AND the view is off the bottom,
+// read through the SAME nearBottom threshold appendActive's stick and the send gate use (one
+// definition, never a second). Click = snap to the bottom + set the view's stick: follow mode
+// re-engaged exactly as today's at-bottom behavior — every subsequent append recomputes stick from
+// the at-bottom position and keeps descending until the user scrolls up, which re-shows the chip
+// from the same listener. It lives on BODY, never inside #content, so window re-renders cannot
+// rebuild it mid-click (the click-safety rule satisfied structurally); the snap itself is the
+// acknowledgment. Anchored to #content's bottom edge by measurement, re-run by the content
+// ResizeObserver below (the composer growing moves that edge) — event-based, no polling.
+const jumpBtn = document.createElement("button");
+jumpBtn.id = "jump-bottom";
+jumpBtn.title = "jump to newest — then follow new content";
+jumpBtn.setAttribute("aria-label", "jump to newest");
+jumpBtn.hidden = true;
+jumpBtn.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"'
+  + ' stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+  + '<line x1="12" y1="5" x2="12" y2="19"/><polyline points="5 12 12 19 19 12"/></svg>';
+function updateJumpBtn(): void {
+  const c = document.getElementById("content");
+  if (!c || c.clientHeight <= 0) { jumpBtn.hidden = true; return; }   // hidden pane measures 0 — no chip
+  const off = c.scrollHeight > c.clientHeight + 2 && !nearBottom(c);
+  jumpBtn.hidden = !off;
+  if (off) jumpBtn.style.bottom = (Math.max(0, window.innerHeight - c.getBoundingClientRect().bottom) + 12) + "px";
+}
+jumpBtn.onclick = () => {
+  const c = document.getElementById("content");
+  if (!c) return;
+  c.scrollTop = c.scrollHeight;                       // the snap IS the acknowledgment
+  const v = activeId ? views.get(activeId) : undefined;
+  if (v) { v.stick = true; v.scrollTop = c.scrollTop; }   // the explicit re-entry into follow mode
+  updateJumpBtn();                                    // at the bottom now — the chip hides itself
+};
+{
+  const c = document.getElementById("content");
+  if (c) {
+    document.body.appendChild(jumpBtn);
+    c.addEventListener("scroll", updateJumpBtn, { passive: true });   // it only measures
+    if (typeof ResizeObserver === "function") new ResizeObserver(updateJumpBtn).observe(c);
+  }
+}
+window.addEventListener("resize", updateJumpBtn);
 // Boxes ABOVE the transcript grow/shrink → keep the chat text visually anchored (the user 2026-06-30 for
 // #tabbar; extended to #ledger 2026-07-05). Both are `flex: 0 0 auto` directly above the `flex: 1 1 auto`
 // #content scroll area, so when one grows — a working dot wraps the tab strip to a second row, a ledger
