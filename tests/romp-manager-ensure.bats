@@ -65,8 +65,12 @@ teardown() {
     chmod +x "$BIN/tmux"
 
     # Run `up` directly on a UNIQUE port (so it doesn't no-op against the other test's manager); the
-    # manager calls startTmuxServer() at startup, before it ever binds the control port.
-    env PATH="$BIN:$PATH" ROMP_MANAGER_PORT=7571 ROMP_SERVE_PORT=7572 ROMP_SERVE_BIN="$FAKE" node "$MGR" up >/dev/null 2>&1 &
+    # manager calls startTmuxServer() at startup, before it ever binds the control port. Unique
+    # across FILES too, not just this one: this test sat on 7571 — romp-manager-origin.bats's
+    # control port — and a manager SIGTERM'd there outlives the kill by ~800ms (shutdownAll's
+    # exit grace), so a combined bats run could find it still holding the port, and `up` then
+    # exited "already running" without ever calling tmux.
+    env PATH="$BIN:$PATH" ROMP_MANAGER_PORT=7573 ROMP_SERVE_PORT=7574 ROMP_SERVE_BIN="$FAKE" node "$MGR" up >/dev/null 2>&1 &
     MGR_PID=$!
     local i
     for i in $(seq 1 50); do [ -f "$CALLS" ] && break; sleep 0.1; done

@@ -3187,6 +3187,16 @@ class TimelinePanel {
             pill.setAttribute('style', 'display:inline-flex;align-items:center;padding:2px 9px;'
               + 'border-radius:10px;border:1px solid ' + tc + ';color:' + tc + ';background:transparent;font-weight:650;'
               + (gid && tg.ids.indexOf(gid) >= 0 ? 'outline:1px solid rgba(255,255,255,0.25);outline-offset:2px;' : ''));
+            // tag federation v2: a queued edit for an unreachable home is VISIBLE, never
+            // gone-but-not-gone — the kernel stamps the cached remote entry with `pending`
+            // ("delete"/"rename"/"remove"; it applies when that host reattaches). Compact idiom:
+            // the dialog's sub-line size, muted, beside the pill.
+            const pend = (tg.remotes || []).filter((rt) => rt.pending);
+            if (pend.length) {
+              const note = pillCell.createSpan({
+                text: pend.map((rt) => 'pending ' + rt.pending + ' on ' + (rt.host || '?')).join(', ') });
+              note.setAttribute('style', 'margin-left:6px;font-size:0.82em;opacity:0.6;font-style:italic;white-space:nowrap;');
+            }
           }
           // delete — the destructive convention: dim at rest, red on hover
           const del = tgrid.createDiv();
@@ -3210,7 +3220,12 @@ class TimelinePanel {
           }
           // the color — the identity-palette swatches inline in the row's last column
           const colCell = tgrid.createDiv();
-          colCell.setAttribute('style', 'display:flex;gap:6px;align-items:center;flex-wrap:wrap;');
+          // balanced swatch rows: ceil-split (T164) — width-driven flex wrap gave arbitrary 5/5/2
+          // runs; inline styles are this file's convention (it also runs inside Obsidian)
+          const swN = (this._palette && this._palette.length) || 1;
+          const swCols = Math.ceil(swN / Math.ceil(swN / 6));
+          colCell.setAttribute('style', 'display:grid;grid-template-columns:repeat(' + swCols
+            + ',14px);gap:6px;align-items:center;');
           if (editable) {
             for (const c of (this._palette && this._palette.length ? this._palette : [tc])) {
               const sw = colCell.createSpan();

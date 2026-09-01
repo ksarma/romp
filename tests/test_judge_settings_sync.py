@@ -33,7 +33,8 @@ km = SourceFileLoader("romp_kernel_judgesync", os.path.join(BIN, "romp-kernel"))
 class ApplySettings(unittest.TestCase):
     def setUp(self):
         for f in ("judge-model", "index-model", "judge-effort", "index-effort",
-                  "distill-model", "distill-effort"):
+                  "distill-model", "distill-effort",
+                  "comment-model", "comment-effort", "comment-fast"):
             for name in (f, f + ".gt"):   # the value and its gesture-stamp sidecar (gesture ordering)
                 try:
                     (km.jd.STATE / name).unlink()
@@ -52,6 +53,24 @@ class ApplySettings(unittest.TestCase):
         self.assertEqual((res["distillModel"], res["distillEffort"]), ("haiku", "none"))
         res = km._apply_judge_settings({"distillEffort": ""})
         self.assertEqual(res["distillEffort"], "none", "an empty distill effort is invalid, not a clear")
+
+    def test_comment_defaults_apply_and_report_raw(self):
+        # the default-comment trio (the user 2026-08-29) rides the same cross-kernel door as the
+        # judge tiers: applied through the validated setters, answered RAW ("session" = same as
+        # the session), garbage ignored and visible in the ack
+        res = km._apply_judge_settings({})
+        self.assertEqual((res["commentModel"], res["commentEffort"], res["commentFast"]),
+                         ("session", "session", "session"))
+        res = km._apply_judge_settings({"commentModel": "claude-opus-5", "commentEffort": "high",
+                                        "commentFast": "on"})
+        self.assertEqual((km.jd.STATE / "comment-model").read_text(), "claude-opus-5")
+        self.assertEqual((km.jd.STATE / "comment-effort").read_text(), "high")
+        self.assertEqual((km.jd.STATE / "comment-fast").read_text(), "on")
+        self.assertEqual((res["commentModel"], res["commentEffort"], res["commentFast"]),
+                         ("claude-opus-5", "high", "on"))
+        res = km._apply_judge_settings({"commentModel": "gpt-99", "commentFast": "true"})
+        self.assertEqual((res["commentModel"], res["commentFast"]), ("claude-opus-5", "on"),
+                         "garbage never reaches the files or `claude --model`")
 
     def test_distill_sentinel_returns_the_pair_to_follow_mode(self):
         km._apply_judge_settings({"distillModel": "haiku", "distillEffort": "high"})
@@ -155,9 +174,12 @@ class OneHopNeverALoop(unittest.TestCase):
                      'args=({"judgeEffort": str(msg.get("effort") or ""), "gt": _jgt},)',
                      'args=({"indexEffort": str(msg.get("effort") or ""), "gt": _jgt},)',
                      'args=({"distillModel": str(msg["model"]), "gt": _jgt},)',
-                     'args=({"distillEffort": str(msg["effort"]), "gt": _jgt},)'):
+                     'args=({"distillEffort": str(msg["effort"]), "gt": _jgt},)',
+                     'args=({"commentModel": str(msg["model"]), "gt": _jgt},)',
+                     'args=({"commentEffort": str(msg["effort"]), "gt": _jgt},)',
+                     'args=({"commentFast": str(msg["fast"]), "gt": _jgt},)'):
             self.assertIn(frag, self.src, frag)
-        self.assertGreaterEqual(self.src.count("if _jgt is not None:"), 6,
+        self.assertGreaterEqual(self.src.count("if _jgt is not None:"), 9,
                                 "every judge-tier fan-out is gated on the pick actually applying")
 
     def test_the_gear_copy_says_the_pick_follows(self):

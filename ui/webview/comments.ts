@@ -24,6 +24,7 @@ export type CommentThread = {
   modelColor?: number[];      // the chat statusline's rank tints, so metaColor paints the popover
   effortColor?: number[];     //   badges exactly as the chat's (the 2026-08-25 color rider)
   promotedName: string;       // the board session it became, when status === "promoted"
+  relayedT?: number;          // when the discussion was last sent back to the session (T145) — 0/absent = never
   model?: string;             // the thread's live/chosen model (the popover's switchable chip)
   effort?: string;            // the thread's effort level (ditto)
   msgs: CommentMsg[];

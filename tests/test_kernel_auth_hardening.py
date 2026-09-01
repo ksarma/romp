@@ -353,5 +353,88 @@ class ResponseHardeningHeaders(unittest.TestCase):
         self.assertNotIn('resp.status, resp.getheader("Content-Type")', src)
 
 
+class _DrainSpy:
+    """A stand-in SDK backend: reports a busy count and records every drain-hold arm, like the
+    real SdkBackend's busy_count / refresh_drain_hold / drain_holding."""
+
+    def __init__(self):
+        self.refreshed = 0
+        self.holding = False
+
+    def busy_count(self):
+        return 3
+
+    def refresh_drain_hold(self):
+        self.refreshed += 1
+        self.holding = True
+
+    def drain_holding(self):
+        return self.holding
+
+
+class BusyDrainWriteGate(unittest.TestCase):
+    """The /busy READ stays auth-EXEMPT (a bare count leaks nothing and healthz-style probes rely
+    on it), but the ?drain=1 arm is a WRITE — it arms a lease that holds EVERY session's new turn
+    starts (T121) — so it is gated on an EXPLICITLY PRESENTED serve token (?token= or the manager's
+    X-Romp-Token), never the ambient romp_token cookie. Upstream (44239c05) served the arm
+    unconditionally in the exempt block: a drive-by loopback page's no-cors GET, or any tailnet
+    client, could loop /busy?drain=1 and freeze all turn starts — the exact drive-by-loopback
+    adversary _authorize's docstring names. The cookie is NOT sufficient here because a cross-origin
+    subresource GET (an <img>/<script> to this route) carries it with no Origin, and _authorize
+    accepts that pair for a READ; a state-changing GET must demand a token no such load can attach.
+    Synthetic only — the gate touches no session state."""
+
+    def setUp(self):
+        self._saved_sdk = km._sdk
+        self.spy = _DrainSpy()
+        km._sdk = lambda: self.spy
+
+    def tearDown(self):
+        km._sdk = self._saved_sdk
+
+    def test_a_tokenless_drain_reads_the_count_but_arms_nothing(self):
+        status, body = _serve_get("/busy?drain=1")
+        self.assertEqual(status, 200, "the READ stays auth-exempt")
+        self.assertEqual(json.loads(body).get("busy"), 3, "…and still returns the count")
+        self.assertEqual(self.spy.refreshed, 0,
+                         "a token-less drive-by GET must not arm the turn-start hold")
+
+    def test_the_cookie_alone_does_not_arm_the_drain(self):
+        # the <img>/subresource drive-by: cookies are host- not port-scoped, so a page served by
+        # anything else on loopback rides the dashboard's romp_token cookie with NO Origin header.
+        status, body = _serve_get("/busy?drain=1", headers={"Cookie": "romp_token=" + TOK})
+        self.assertEqual(status, 200)
+        self.assertEqual(self.spy.refreshed, 0,
+                         "the ambient cookie is not proof the caller is not a drive-by page")
+
+    def test_a_cross_origin_fetch_does_not_arm_the_drain(self):
+        # the no-cors fetch() form: it DOES carry a cross-site Origin (and cannot set X-Romp-Token —
+        # no-cors forbids custom headers), so even with the cookie it must not arm.
+        status, _ = _serve_get("/busy?drain=1",
+                               headers={"Cookie": "romp_token=" + TOK,
+                                        "Origin": "http://127.0.0.1:5173",
+                                        "Host": "127.0.0.1:%d" % km.PORT})
+        self.assertEqual(status, 200, "the read still answers")
+        self.assertEqual(self.spy.refreshed, 0, "a cross-site drive-by GET arms nothing")
+
+    def test_an_explicit_header_token_arms_the_drain(self):
+        # the LEGITIMATE caller: the manager reads the 0600 serve-token and sends X-Romp-Token.
+        status, body = _serve_get("/busy?drain=1", headers={"X-Romp-Token": TOK})
+        self.assertEqual(status, 200)
+        self.assertEqual(self.spy.refreshed, 1, "the manager's X-Romp-Token authorizes the write")
+        self.assertTrue(json.loads(body).get("draining"), "…and the arm shows in the read")
+
+    def test_a_query_token_also_arms_the_drain(self):
+        status, _ = _serve_get("/busy?drain=1&token=" + TOK)
+        self.assertEqual(status, 200)
+        self.assertEqual(self.spy.refreshed, 1, "an explicit ?token= arms it too")
+
+    def test_the_bare_busy_read_stays_exempt_and_never_arms(self):
+        status, body = _serve_get("/busy")
+        self.assertEqual(status, 200, "the count is a healthz-style probe — no token needed")
+        self.assertEqual(json.loads(body).get("busy"), 3)
+        self.assertEqual(self.spy.refreshed, 0, "a plain /busy never holds")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

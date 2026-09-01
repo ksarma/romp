@@ -8,6 +8,7 @@
 
 import { hostOf, bareId } from "./host-prefix";
 import { mediaSrc } from "./media";
+import * as pz from "./pinch";
 
 // Extensions the kernel's _PREVIEW_MIME serves — keep the two lists in step (tests pin both).
 const IMG_EXT = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"]);
@@ -113,6 +114,96 @@ export function fileUrl(path: string, sid?: string | null): string {
 // Full-view lightbox: dark backdrop, the image at natural-but-capped size or the PDF in the browser's
 // native viewer, filename caption. One singleton element; backdrop click / Esc / ✕ closes. Styles live
 // in BOTH styles.css and feed.css (each page loads only its own sheet — the .romp-acted precedent).
+// Pinch-zoom on the lightbox image (T162, the user 2026-08-28 on Android). Pointer events only —
+// no gesture library: two pointers pinch around the gesture midpoint (the content point under it
+// held fixed — pinch.ts owns the math, executable-tested), one pointer PANS while zoomed,
+// double-tap toggles home/2.5× around the tap. touch-action:none on the stage (CSS) keeps the
+// browser's own page-zoom out of it. The CLOSE gesture is untouched by construction: dismissal
+// stays tap-on-BACKDROP (target === wrap) and the ✕ — every pinch/pan pointer is CAPTURED by the
+// stage, so a drag that ends anywhere can never read as a backdrop tap.
+function wirePinchZoom(stage: HTMLElement, img: HTMLImageElement): { retarget: (next: HTMLImageElement) => void } {
+  let view = pz.identity();
+  const ptrs = new Map<number, { x: number; y: number }>();
+  let start: { view: pz.PinchView; d: number } | null = null;   // two-pointer gesture snapshot
+  let rest: { left: number; top: number; w: number; h: number; vw: number; vh: number } | null = null;
+  let lastTap = 0, lastTapAt = { x: 0, y: 0 };
+  const apply = () => {
+    img.style.transform = view.s === 1 && !view.tx && !view.ty
+      ? "" : `translate(${view.tx}px, ${view.ty}px) scale(${view.s})`;
+  };
+  // the image's REST frame (its untransformed layout box, q-space origin) — measured at gesture
+  // start by removing the current transform's offset from the live rect; origin 0 0 keeps the
+  // top-left corner exactly translate() away from layout, so the inversion is exact
+  const measure = () => {
+    const r = img.getBoundingClientRect();
+    const box = stage.getBoundingClientRect();
+    rest = { left: r.left - view.tx, top: r.top - view.ty,
+             w: r.width / view.s, h: r.height / view.s,
+             vw: box.width, vh: box.height };
+  };
+  const q = (e: PointerEvent) => ({ x: e.clientX - rest!.left, y: e.clientY - rest!.top });
+  stage.addEventListener("pointerdown", (e) => {
+    if ((e.target as HTMLElement).closest(".romp-lightbox-bar")) return;   // the bar's buttons own their taps
+    ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    try { stage.setPointerCapture(e.pointerId); } catch { /* a pointer gone between event and capture — the move/up handlers still see bubbled events */ }
+    measure();
+    if (ptrs.size === 2) {
+      const [a, b] = [...ptrs.values()];
+      start = { view, d: pz.dist(a, b) };
+    } else if (ptrs.size === 1) {
+      // double-tap: a second down within the platform window and radius toggles the zoom. The
+      // 350ms is the GESTURE'S definition (like a double-click), not state logic.
+      const now = e.timeStamp;
+      const p = q(e);
+      if (now - lastTap < 350 && Math.hypot(p.x - lastTapAt.x, p.y - lastTapAt.y) < 30) {
+        view = pz.clampPan(pz.doubleTapToggle(view, p.x, p.y), rest!.w, rest!.h, rest!.vw, rest!.vh);
+        apply();
+        lastTap = 0;
+      } else { lastTap = now; lastTapAt = p; }
+    }
+    if (view.s > 1 || ptrs.size === 2) e.preventDefault();
+  });
+  stage.addEventListener("pointermove", (e) => {
+    const prev = ptrs.get(e.pointerId);
+    if (!prev || !rest) return;
+    ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (ptrs.size === 2 && start) {
+      const [a, b] = [...ptrs.values()];
+      const m = pz.midpoint(a, b);
+      view = pz.clampPan(
+        pz.zoomAt(start.view, m.x - rest.left, m.y - rest.top, pz.dist(a, b) / start.d),
+        rest.w, rest.h, rest.vw, rest.vh);
+      apply();
+    } else if (ptrs.size === 1 && view.s > 1) {
+      view = pz.clampPan(pz.pan(view, e.clientX - prev.x, e.clientY - prev.y), rest.w, rest.h, rest.vw, rest.vh);
+      apply();
+    }
+  });
+  const lift = (e: PointerEvent) => {
+    ptrs.delete(e.pointerId);
+    if (ptrs.size < 2) start = null;
+    if (ptrs.size === 0) { view = pz.settle(view); apply(); }
+  };
+  stage.addEventListener("pointerup", lift);
+  stage.addEventListener("pointercancel", lift);
+  // stepping the lightbox swaps the img element: re-identity the view for the fresh element —
+  // the stage's listeners are wired ONCE (steps must never stack handlers), only the target moves
+  return { retarget: (next: HTMLImageElement) => { img = next; view = pz.identity(); ptrs.clear(); start = null; apply(); } };
+}
+
+// ── lightbox arrow navigation (the user 2026-08-29: arrow keys step to the previous/next picture
+// in the chat, like a messaging app) ────────────────────────────────────────────────────────────
+// The image sequence comes from a PROVIDER the chat registers (render.ts walks the session's
+// EVENTS oldest→newest — the DOM misses virtualization-windowed images), each entry the same
+// (path, sid, pin) triple the click path passes, so a step shows THAT message's pinned bytes and
+// can never resurrect the history-rewrite the pin store prevents. Surfaces that register no
+// provider (the feed) keep inert arrows.
+export interface LightboxNavEntry { path: string; sid?: string | null; pin?: string; }
+let lightboxNav: ((sid: string | null | undefined) => LightboxNavEntry[]) | null = null;
+export function setLightboxNav(fn: (sid: string | null | undefined) => LightboxNavEntry[]): void {
+  lightboxNav = fn;
+}
+
 export function openLightbox(path: string, sid?: string | null, pin?: string): void {
   document.getElementById("romp-lightbox")?.remove();
   const kind = previewKind(path);
@@ -121,6 +212,10 @@ export function openLightbox(path: string, sid?: string | null, pin?: string): v
   wrap.id = "romp-lightbox";
   const inner = document.createElement("div");
   inner.className = "romp-lightbox-inner" + (kind === "pdf" ? " pdf" : "");
+  let nav: LightboxNavEntry[] = [];
+  let at = -1;
+  let step: ((delta: number) => void) | null = null;     // arrows step the chat's image sequence (img kind only)
+  let cue: HTMLElement | null = null;                    // the compact position mark ("3/17") in the bar
   if (kind === "pdf") {
     const frame = document.createElement("iframe");
     frame.className = "romp-lightbox-frame";
@@ -128,11 +223,37 @@ export function openLightbox(path: string, sid?: string | null, pin?: string): v
     frame.title = path;
     inner.appendChild(frame);
   } else {
-    const img = document.createElement("img");
-    img.className = "romp-lightbox-img";
-    img.src = fileUrl(path, sid) + (pin ? "&pin=" + encodeURIComponent(pin) : "");
-    img.alt = path;
+    const mkImg = (e: LightboxNavEntry) => {
+      const im = document.createElement("img");
+      im.className = "romp-lightbox-img";
+      im.src = fileUrl(e.path, e.sid) + (e.pin ? "&pin=" + encodeURIComponent(e.pin) : "");
+      im.alt = e.path;
+      return im;
+    };
+    let img = mkImg({ path, sid, pin });
     inner.appendChild(img);
+    const pzc = wirePinchZoom(inner, img);
+    // the chat's image sequence, oldest→newest (empty on surfaces with no provider): the current
+    // position matches by (path, pin) — two messages embedding different VERSIONS of one path are
+    // different entries — falling back to the path alone for pre-pin history
+    nav = (lightboxNav ? lightboxNav(sid) : []).filter((e) => previewKind(e.path) === "img");
+    at = nav.findIndex((e) => e.path === path && (e.pin || "") === (pin || ""));
+    if (at < 0) at = nav.findIndex((e) => e.path === path);
+    step = (delta: number) => {
+      if (at < 0 || nav.length < 2) return;
+      const n = at + delta;
+      if (n < 0 || n >= nav.length) return;              // the ends END (messaging-app feel) — no wrap
+      at = n;
+      const e = nav[at];
+      const next = mkImg(e);
+      img.replaceWith(next);
+      img = next;
+      pzc.retarget(next);                                // a step lands on the fit view, zoom reset
+      name.textContent = e.path; name.title = e.path;
+      dl.href = fileUrl(e.path, e.sid) + (e.pin ? "&pin=" + encodeURIComponent(e.pin) : "");
+      dl.download = e.path.slice(e.path.lastIndexOf("/") + 1) || "image";
+      if (cue) cue.textContent = (at + 1) + "/" + nav.length;
+    };
   }
   const bar = document.createElement("div");
   bar.className = "romp-lightbox-bar";
@@ -143,6 +264,12 @@ export function openLightbox(path: string, sid?: string | null, pin?: string): v
   // download rides an ANCHOR with the download attribute (the user 2026-08-19): the browser saves
   // the same bytes the lightbox is showing — the pinned URL when a pin rode in, so a re-generated
   // file can't swap the image between viewing and saving. The filename is the path's basename.
+  if (nav.length > 1 && at >= 0) {
+    cue = document.createElement("span");
+    cue.className = "romp-lightbox-cue";
+    cue.textContent = (at + 1) + "/" + nav.length;
+    cue.title = "picture " + (at + 1) + " of " + nav.length + " in this chat — ←/→ to step";
+  }
   const dl = document.createElement("a");
   dl.className = "romp-lightbox-dl";
   dl.href = fileUrl(path, sid) + (pin ? "&pin=" + encodeURIComponent(pin) : "");
@@ -161,11 +288,17 @@ export function openLightbox(path: string, sid?: string | null, pin?: string): v
   close.className = "romp-lightbox-close";
   close.textContent = "✕";
   close.title = "close (Esc)";
-  bar.append(name, dl, close);
+  if (cue) bar.append(name, cue, dl, close); else bar.append(name, dl, close);
   inner.appendChild(bar);
   wrap.appendChild(inner);
   const dismiss = () => { wrap.remove(); document.removeEventListener("keydown", onKey, true); };
-  const onKey = (ev: KeyboardEvent) => { if (ev.key === "Escape") { ev.stopPropagation(); dismiss(); } };
+  const onKey = (ev: KeyboardEvent) => {
+    if (ev.key === "Escape") { ev.stopPropagation(); dismiss(); return; }
+    if ((ev.key === "ArrowLeft" || ev.key === "ArrowRight") && step) {
+      ev.stopPropagation(); ev.preventDefault();         // the chat must not scroll under the lightbox
+      step(ev.key === "ArrowLeft" ? -1 : 1);             // ← older, → newer — the transcript's own order
+    }
+  };
   close.onclick = (ev) => { ev.stopPropagation(); dismiss(); };
   wrap.onclick = (ev) => { if (ev.target === wrap) dismiss(); };   // backdrop closes; content clicks don't
   document.addEventListener("keydown", onKey, true);

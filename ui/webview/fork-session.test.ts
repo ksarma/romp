@@ -47,12 +47,14 @@ test("the fork button sits INLINE, right of the worked-seconds label — never i
   assert.match(CSS, /\.turn-assistant:hover \.msg-fork, \.msg-fork:focus-visible \{ opacity: 0\.9; \}/);
   assert.match(CSS, /\.msg-fork:hover \{ color: var\(--fg\); border-color: var\(--accent\); \}/);
   assert.doesNotMatch(CSS, /\.msg-fork\.armed/);
-  // the under-bubble button family wears NEUTRAL chrome (the user 2026-08-23): it sits on the page
-  // ground, where the terracotta code tint (--code-bg) read as a faint red button. Only .code-copy
-  // keeps the tint — it sits ON the tinted code block and blends there.
+  // the under-bubble button family wears the ONE button rest (the user 2026-08-23 made it neutral,
+  // never the terracotta code tint; T141 2026-08-28 unified all button rests to the feed's — dark
+  // ground, the mirrored --card-border hairline). Only .code-copy keeps the tint — it sits ON the
+  // tinted code block and blends there.
   for (const block of [".msg-edit {", ".msg-del, .msg-restorefiles, .msg-fork {", ".undelivered-act {"]) {
     const body = CSS.slice(CSS.indexOf(block), CSS.indexOf("}", CSS.indexOf(block)));
-    assert.ok(body.includes("background: rgba(255, 255, 255, 0.06)"), block + " wears the neutral ground");
+    assert.ok(body.includes("background: transparent"), block + " wears the one button rest");
+    assert.ok(body.includes("var(--card-border)"), block + " wears the feed hairline");
     assert.ok(!body.includes("--code-bg"), block + " must not borrow the code tint");
   }
   const copy = CSS.slice(CSS.indexOf(".code-copy {"), CSS.indexOf("}", CSS.indexOf(".code-copy {")));

@@ -41,3 +41,14 @@ test("setSessionColor optimistically repaints and posts setSessionColor to the k
   // then tell the kernel (it persists + re-broadcasts)
   assert.match(RENDER, /postMessage\(\{ type: "setSessionColor", id, bg \}\)/);
 });
+
+test("swatch grids balance their rows: ceil-split over a six-per-row cap (T164)", () => {
+  // 12 -> 6+6, 9 -> 5+4, 13 -> 7+6 — computed per render, CSS repeat(5) stays the no-JS fallback
+  assert.match(RENDER, /const swRows = Math\.ceil\(paletteColors\.length \/ 6\)/);
+  assert.match(RENDER, /repeat\(" \+ Math\.ceil\(paletteColors\.length \/ swRows\) \+ ", 18px\)"/);
+  const TIMELINE = fs.readFileSync(
+    path.resolve(process.cwd(), "..", "ui", "romp-timeline-view.js"), "utf8");
+  assert.match(TIMELINE, /Math\.ceil\(swN \/ Math\.ceil\(swN \/ 6\)\)/);
+  assert.match(TIMELINE, /grid-template-columns:repeat\(' \+ swCols/);
+});
+

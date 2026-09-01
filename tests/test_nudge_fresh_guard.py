@@ -7,8 +7,15 @@ session stopped its own loop 11:18:32, the nudge fired 11:18:33 asking where the
 guard is the writer-yields family at the fire moment: the transcript's newest assistant timestamp
 moving past the snapshot's IS the world outrunning the evidence — hold, re-judge ONCE against the
 fresh report (never a loop), fire only what survives. Every gate decision is now a nudge-events row
-(fired / skipped-redundant / held-fresh-re-judged / force-fired-at-cap, each carrying the evidence
-timestamp), so redundant fires are countable from the log alone. SYNTHETIC fixtures only."""
+(fired / skipped-redundant / held-fresh-re-judged / fired-at-cap / skipped-redundant-at-cap /
+skipped-redundant-memo / resolved-at-send / blocked-on-user-at-send, each carrying the evidence
+timestamp), so redundant
+fires are countable from the log alone. That accounting is what re-shaped the cap (the user
+2026-08-27, T120): the blind third fire measured at 56% of deliveries, re-asking answered
+questions — the cap now ESCALATES to one more judgment on the freshest evidence, never past it.
+And the send moment re-reads the store: an item the fresh rollup no longer calls working leaves
+the card (resolved-at-send / blocked-on-user-at-send) — the redundancy judge deliberates for
+seconds, and verdicts land in that gap. SYNTHETIC fixtures only."""
 import json
 import os
 import tempfile
@@ -152,18 +159,123 @@ class FreshGuard(unittest.TestCase):
         self.assertEqual(self.sent, [])
         self.assertEqual([r["verdict"] for r in self._rows()], ["skipped-redundant"])
 
-    def test_the_cap_path_is_unchanged_and_now_distinguishable(self):
-        # two consecutive skips already recorded → the fire goes out with NO judging at all —
-        # even when the world moved mid-tick, the held pass never re-judges a cap-fire
+    def test_the_cap_consults_the_judge_and_a_fresh_answer_skips(self):
+        # T120 (the user 2026-08-27): past two consecutive skips the judge is CONSULTED once more
+        # instead of short-circuited — a still-redundant verdict skips, because the report IS the
+        # answer (the measured blind fire delivered 38 of 68 nudges, two of them AFTER the report
+        # they asked about).
+        self._seed_rec({"count": 1, "lastTurnId": "t0", "armAtoms": 1, "at": ARM_T - 500,
+                        "redundantSkips": 2})
+        self.reports = [("all done — merged and reported", ARM_T + 50)]
+        self.judge_replies = [True]
+        self._tick()
+        self.assertEqual(self.sent, [], "the judge ruled the ask answered — no fire at the cap")
+        self.assertEqual(len(self.judge_calls), 1, "the cap consulted the judge, never bypassed it")
+        self.assertEqual([r["verdict"] for r in self._rows()], ["skipped-redundant-at-cap"])
+        rec = km._auto_nudge_data()["nudged"][G1]
+        self.assertEqual(rec.get("answeredAt"), NOW, "the report is recorded as the answer")
+
+    def test_the_cap_fires_when_the_judge_says_the_ask_is_live(self):
+        # the forever-pause the cap was built against still ends: a not-redundant verdict at the
+        # cap fires — now as a JUDGED fire, and its row says how
+        self._seed_rec({"count": 1, "lastTurnId": "t0", "armAtoms": 1, "at": ARM_T - 500,
+                        "redundantSkips": 2})
+        self.judge_replies = [False]
+        self.assertTrue(self._tick())
+        self.assertEqual(len(self.sent), 1)
+        self.assertEqual(len(self.judge_calls), 1)
+        self.assertEqual([r["verdict"] for r in self._rows()], ["fired-at-cap"])
+        self.assertEqual(km._auto_nudge_data()["nudged"][G1].get("redundantSkips", 0), 0,
+                         "a real fire resets the count")
+
+    def test_a_capped_candidate_rides_the_held_pass_re_judge(self):
+        # the old early-keep was the second half of the blind fire: a report landing DURING
+        # deliberation now re-judges a capped candidate exactly like an organic one
         self._seed_rec({"count": 1, "lastTurnId": "t0", "armAtoms": 1, "at": ARM_T - 500,
                         "redundantSkips": 2})
         self.reports = [("working through the queue", ARM_T + 50),
                         ("all done — merged and reported", ARM_T + 590)]
-        self.judge_replies = [False]                 # would be consulted only by a bug
+        self.judge_replies = [False, True]           # live on the snapshot; answered by the fresh report
+        self._tick()
+        self.assertEqual(self.sent, [], "the fresh report answered the ask mid-tick")
+        self.assertEqual(len(self.judge_calls), 2, "snapshot consult + held-pass re-judge")
+        # the verdict is the ORDINARY freshness hold, deliberately: the cap's escalated consult
+        # ruled the ask live (resetting the consecutive count), so the held-pass yield is exactly
+        # an organic writer-yields — the at-cap names mark only decisions taken AT the cap
+        self.assertEqual([r["verdict"] for r in self._rows()], ["held-fresh-re-judged"])
+        self.assertEqual(self._rows()[0]["evT"], ARM_T + 590,
+                         "the row carries the fresh evidence it yielded to")
+
+    def test_a_memoed_pair_serves_without_a_judge_call(self):
+        # THE MEMO (T142): a (goal, evidence) pair ruled redundant is never re-judged — a skip
+        # consumes no arm, so a capped goal came due every tick and re-judged constant evidence
+        # (147 re-judgments on one goal in 68 minutes; ~$1.92/day)
+        self._seed_rec({"count": 1, "lastTurnId": "t0", "armAtoms": 1, "at": ARM_T - 500,
+                        "redundantSkips": 1, "redundantEvT": ARM_T + 50,
+                        "redundantSettleT": 0})       # both memo keys current (2026-08-29: the memo
+        #                                               is two-keyed; a record missing the settle key
+        #                                               re-judges ONCE by design — the upgrade path,
+        #                                               pinned in test_nudge_memo_deadlock.py)
+        self.judge_replies = [True]                   # would be consulted only by a bug
+        self._tick()
+        self.assertEqual(self.sent, [])
+        self.assertEqual(self.judge_calls, [], "the memo serves the ruling — no call")
+        self.assertEqual([r["verdict"] for r in self._rows()], ["skipped-redundant-memo"])
+        self.assertEqual(self._rows()[0]["evT"], ARM_T + 50)
+
+    def test_the_at_cap_flip_class_dies_by_construction(self):
+        # 3 of 10 measured fired-at-cap rows were the judge FLIPPING on a (gid, evT) it had just
+        # ruled redundant — nondeterminism delivering the stale nudge T120 exists to stop. The
+        # memo is consulted before the at-cap consult too, so the flip cannot happen.
+        self._seed_rec({"count": 1, "lastTurnId": "t0", "armAtoms": 1, "at": ARM_T - 500,
+                        "redundantSkips": 2, "redundantEvT": ARM_T + 50,
+                        "redundantSettleT": 0})       # both memo keys current (see the memo test above)
+        self.judge_replies = [False]                  # the flip verdict, never reachable
+        self._tick()
+        self.assertEqual(self.sent, [], "a pair ruled redundant can never fire on the same evidence")
+        self.assertEqual(self.judge_calls, [])
+        self.assertEqual([r["verdict"] for r in self._rows()], ["skipped-redundant-memo"])
+
+    def test_a_judged_redundancy_stamps_the_memo(self):
+        self.judge_replies = [True]
+        self._tick()
+        rec = km._auto_nudge_data()["nudged"][G1]
+        self.assertEqual(rec.get("redundantEvT"), ARM_T + 50,
+                         "the ruling persists keyed on the evidence it judged")
+
+    def test_a_moved_report_kills_the_memo_and_re_enters_the_judge(self):
+        self._seed_rec({"count": 1, "lastTurnId": "t0", "armAtoms": 1, "at": ARM_T - 500,
+                        "redundantSkips": 1, "redundantEvT": ARM_T + 50})
+        self.reports = [("fresh words about new work", ARM_T + 800)]
+        self.judge_replies = [False]
         self.assertTrue(self._tick())
-        self.assertEqual(len(self.sent), 1, "past the cap the nudge fires regardless")
-        self.assertEqual(self.judge_calls, [], "…without asking the judge")
-        self.assertEqual([r["verdict"] for r in self._rows()], ["force-fired-at-cap"])
+        self.assertEqual(len(self.sent), 1, "new evidence → a real judgment → a real fire")
+        self.assertEqual(len(self.judge_calls), 1)
+        self.assertEqual([r["verdict"] for r in self._rows()], ["fired"])
+
+    def test_an_item_resolved_mid_deliberation_leaves_at_the_send_moment(self):
+        # SEND-MOMENT FRESHNESS (T120): the fire list read the store before the redundancy judge
+        # deliberated — a verdict landing in that gap used to leave a resolved item on the card
+        test = self
+        working, resolved = self.store, _store()
+        resolved["status"][G1] = "completed"
+        jd.load_goals = lambda sid: resolved if test.judge_calls else working
+        self.judge_replies = [False]
+        self._tick()
+        self.assertEqual(self.sent, [], "nothing survives → nothing sends")
+        self.assertEqual([r["verdict"] for r in self._rows()], ["resolved-at-send"])
+
+    def test_a_block_landing_mid_deliberation_suppresses_the_send(self):
+        # blocked-on-user (T120): the user IS the pending event — nudging the session re-asks a
+        # question already parked on the human; the unblocker's verdict is what re-enables
+        test = self
+        working, blocked = self.store, _store()
+        blocked["status"][G1] = "blocked"
+        jd.load_goals = lambda sid: blocked if test.judge_calls else working
+        self.judge_replies = [False]
+        self._tick()
+        self.assertEqual(self.sent, [])
+        self.assertEqual([r["verdict"] for r in self._rows()], ["blocked-on-user-at-send"])
 
 
 if __name__ == "__main__":

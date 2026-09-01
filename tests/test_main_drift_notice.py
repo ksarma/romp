@@ -61,12 +61,21 @@ class DriftWiring(unittest.TestCase):
         self.assertIn('_MAIN_DRIFT[0] = ""', src, "the notice re-fires once the tree is clean")
         self.assertIn('"checkout", "--detach", "origin/main"', src, "advance is the repo's own convention")
 
-    def test_the_click_converges_immediately_and_auto_rides_the_quiet_window(self):
+    def test_every_converge_is_immediate_by_default_and_quiet_stays_expressible(self):
+        # T160 (the user 2026-08-28): deploys cut in-flight turns NOW — auto converge included.
+        # The quiet spelling survives as an explicit opt-in, so the drain machinery stays testable
+        # and reachable, it just stopped being the default.
+        sig = inspect.signature(km._run_main_update)
+        self.assertIs(sig.parameters["immediate"].default, True,
+                      "auto converge is a deploy: immediate by default")
         src = inspect.getsource(km._run_main_update)
-        self.assertIn('"" if immediate else "?when=quiet"', src)
+        self.assertIn('"" if immediate else "?when=quiet"', src,
+                      "immediate=False still rides the quiet window explicitly")
+        self.assertIn('_audit_restart_request("main-converge"', src,
+                      "the converge names itself in restart-audit.jsonl so the cut row joins to it")
         route = inspect.getsource(km)
         self.assertIn('threading.Thread(target=_run_main_update, args=(kind, True),', route,
-                      "the banner click is the user's own deliberate cut")
+                      "the banner click stays explicitly immediate")
 
     def test_auto_converges_batch_behind_the_cool_down(self):
         # the user 2026-08-15, after flipping auto: main took a merge every few minutes and auto mode

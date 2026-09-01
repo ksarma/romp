@@ -116,7 +116,7 @@ class OrphanReplyReader(unittest.TestCase):
 class OrphanInterleaveAndDedup(unittest.TestCase):
     def test_build_session_interleaves_the_orphan_as_an_assistant_bubble(self):
         src = inspect.getsource(km.build_session)
-        self.assertIn("orphans = _orphan_replies(sid)", src)
+        self.assertIn("orphans = _past_floor(_orphan_replies(sid))", src)   # floored at the episode boundary since T131
         # interleaved by timestamp in the same flush as the recovery note, as a normal assistant bubble
         self.assertIn('events.append({"kind": "assistant", "md": _o["text"], "orphaned": True,', src)
         self.assertIn('"uuid": "orphan:%s" % (_o["uuid"] or _o["t"]), "ts": iso(_o["t"])})', src)

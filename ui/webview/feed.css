@@ -344,7 +344,7 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
 /* action (to-do) card: amber accent instead of decision-blue; ☐ glyph on the task
    line; the "✓ Done — I did it" button greens on hover (it's a check-off). */
 .fq-send { flex: 0 0 auto; font: inherit; font-size: 0.86em; cursor: pointer; color: var(--fg);
-  background: rgba(255, 255, 255, 0.08); border: 1px solid var(--card-border); border-radius: 6px; padding: 5px 12px; }
+  background: transparent; border: 1px solid var(--card-border); border-radius: 6px; padding: 5px 12px; }   /* T151: the one button rest */
 .fq-send:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-wash); }
 /* "didn't need me" — the false-awaiting teaching dismissal */
 
@@ -374,6 +374,8 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
 .fask-para { margin: 0 0 6px; }
 .fask-para:last-child { margin-bottom: 0; }
 .fask-para-age { color: var(--dim); white-space: nowrap; }
+.fask-para-link { cursor: pointer; }
+.fask-para-link:hover { text-decoration: underline; text-decoration-color: var(--dim); }
 /* the card's distiller sections (the user 2026-07-07, compactness): the Background/Summary TOGGLES now ride
    the time row (row3) and are MUTUALLY EXCLUSIVE — one body shows at a time, or neither — so .fask-secs is
    just the body container (a plain block; whichever body is open runs the full card width). The toggles are
@@ -918,7 +920,11 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
   display: flex; align-items: center; gap: 8px; padding: 6px 12px;
   flex-wrap: wrap; row-gap: 5px;   /* a narrow pane folds buttons onto another row — never a horizontal scrollbar */
   border-top: 1px solid var(--card-border);
-  background: var(--vscode-editorWidget-background, #252526); }   /* opaque panel so it reads as a dedicated bar */
+  /* the page dark (T151, superseding 2026-06-29's dedicated-panel look — the user's 2026-08-28
+     one-dark-background ruling names this bar as the reference surface tabs must match, so the
+     bar itself must sit on the same dark): the border-top hairline is the separator now. The old
+     editorWidget token resolved to #252526 under the kernel's THEME_CSS. */
+  background: var(--bg); }
 #feed-clearall { order: 10; margin-left: auto; }   /* accent hover like every action button */
 #feed-undoclear { order: 11; }                     /* restorative — far right */
 #feed-foot .fdismiss { font-size: 10.5px; padding: 1px 9px; opacity: 0.95; }
@@ -946,7 +952,7 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
 #feed-taglens svg { display: block; }
 #feed-lensmore { padding: 4px 14px 10px; color: var(--dim); font-size: 0.82em; cursor: pointer; }
 #feed-lensmore:hover { color: var(--accent); text-decoration: underline; }
-#feed-lensmore.prominent { margin: 6px 8px 2px; padding: 10px 14px; background: #252526;
+#feed-lensmore.prominent { margin: 6px 8px 2px; padding: 10px 14px; background: var(--vscode-editorWidget-background, #252526);   /* tokenized (T151) — the notice-card chrome, host-aware */
   border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 6px;
   color: var(--fg); font-size: 0.92em; }
 #feed-lensmore.prominent:hover { color: var(--fg); text-decoration: none; border-color: var(--accent); }
@@ -1220,8 +1226,8 @@ body.fileview-open { overflow: hidden; }
 .fileview-base { flex: 0 0 auto; }
 .fileview-acts { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; }
 .fileview-btn { font: inherit; font-size: 0.82em; cursor: pointer; flex: 0 0 auto;
-  padding: 3px 9px; border-radius: 6px; background: rgba(255, 255, 255, 0.08); color: var(--fg);
-  border: 1px solid var(--box-border); }
+  padding: 3px 9px; border-radius: 6px; background: transparent; color: var(--fg);   /* T151: the one button rest */
+  border: 1px solid var(--card-border); }
 .fileview-btn:hover { border-color: var(--accent); }
 /* the GitHub link wears the button treatment but IS an anchor — the browser owns the new tab */
 a.fileview-btn { text-decoration: none; display: inline-flex; align-items: center; }
@@ -1507,13 +1513,23 @@ a.fileview-btn[hidden] { display: none; }
    the accent (this is status, not highlight); red would overstate it — the pause is expected and
    self-resolving at the window reset. */
 .judge-limit-banner { display: flex; align-items: center; gap: 10px; margin: 6px 8px 2px;
-  padding: 7px 12px; background: #252526; border: 1px solid rgba(255, 255, 255, 0.12);
+  padding: 7px 12px; background: var(--vscode-editorWidget-background, #252526); border: 1px solid rgba(255, 255, 255, 0.12);   /* tokenized (T151) */
   border-radius: 6px; font-size: 0.92em; }
 .judge-limit-banner .jl-text { opacity: 0.85; }
 .judge-limit-banner .jl-switch { flex: none; padding: 3px 10px; border-radius: 4px; border: 1px solid
-  rgba(255, 255, 255, 0.18); background: #333; color: inherit; cursor: pointer; font-size: 0.92em; }
+  rgba(255, 255, 255, 0.18); background: var(--vscode-input-background, #3c3c3c); color: inherit; cursor: pointer; font-size: 0.92em; }   /* tokenized (T151; was a bare #333) */
 .judge-limit-banner .jl-switch:hover { background: #3c3c3c; }
 .judge-limit-banner .jl-switch:disabled { opacity: 0.6; cursor: default; }
+/* who the window touches (2026-08-28): same text size as the line it extends (fonts: reuse), dimmer */
+.judge-limit-banner .jl-sess { opacity: 0.65; min-width: 0; }
+.judge-limit-banner .jl-more { color: var(--accent); cursor: pointer; white-space: nowrap; }
+/* the standard session reference (the user 2026-08-28): bold name in its identity colour; the
+   host: prefix keeps the shared .host-prefix treatment */
+.judge-limit-banner .jl-chip { font-weight: 700; font-style: normal; }
+.judge-limit-banner .jl-unknown { opacity: 0.8; font-style: italic; }
+.judge-limit-banner .jl-dismiss { flex: none; margin-left: auto; background: none; border: none;
+  color: var(--dim); cursor: pointer; font-size: 1em; padding: 2px 6px; border-radius: 4px; }
+.judge-limit-banner .jl-dismiss:hover { color: var(--fg); background: rgba(255, 255, 255, 0.07); }
 
 /* The footer SEARCH box (the user 2026-08-23; restyled 2026-08-24): a "Search" word-button expanding
    to an inline input that live-filters the board by session name, host prefix included. The expanded

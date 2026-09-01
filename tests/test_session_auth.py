@@ -489,6 +489,60 @@ class Availability(unittest.TestCase):
         self.assertIn('"authAvail": _auth_avail()', src)
 
 
+class SwitchCycleTruthTable(_Keyed):
+    """T124 (2026-08-27, the user's key->login switch where 'the UI is not what is happening'):
+    the full switch cycle, every landing shape, asserted at the session state dict — the exact
+    fields the Billing row renders from (auth/authLive/authPending; the render mapping is pinned
+    in ui/webview/auth-selector.test.ts). The contract: intent shows AS PENDING intent through the
+    reconnect window (never as applied fact), a confirmed contradiction is visible, and a pick the
+    box cannot apply refuses at pick time."""
+
+    def _state(self, s):
+        d = s.snapshot()
+        return (d["auth"], d["authLive"], d["authPending"])
+
+    def test_the_cycle_on_a_logged_in_box(self):
+        self.be.login_ok = lambda: True                      # the simulated logged-in box
+        sid = "11111111-2222-3333-4444-00000000t124"
+        sb.write_reg(Path(self.d), sid, {"sid": sid, "name": "misc", "cwd": "/tmp"})
+        s = self._sess(41, sid=sid)
+        self.be.sessions[sid] = s
+        # rest: keyed (the env key), confirmed by an init
+        self.be._note_auth_source(s, "ANTHROPIC_API_KEY")
+        self.assertEqual(self._state(s), ("key", "key", False), "rest: confirmed key, row says API key")
+        # SWITCH key->login: the pending window renders as pending — never applied fact
+        self.assertTrue(self.be.set_auth(sid, "login"))
+        self.assertEqual(self._state(s), ("login", "", True),
+                         "the pick shows as PENDING intent (authLive cleared, authPending up) until an init confirms")
+        # landing shape 1: the CLI confirms the login → truth within one init
+        s._auth_pending = ""                                  # the connect clears the dots (event-based)
+        self.be._note_auth_source(s, "none")
+        self.assertEqual(self._state(s), ("login", "login", False), "confirmed login — plain Login")
+        # SWITCH login->key, landing shape 2: the CLI lands on the WRONG side (an apiKeyHelper world:
+        # picked login again later, but a helper re-injects the key) — the contradiction is VISIBLE
+        self.assertTrue(self.be.set_auth(sid, "key"))
+        s._launched_keyed = True                              # the applying reconnect injected the key (_options)
+        s._auth_pending = ""
+        self.be._note_auth_source(s, "none")                  # picked key; the CLI reports login
+        auth, live, pending = self._state(s)
+        self.assertEqual((auth, pending), ("key", False))
+        self.assertEqual(live, "login", "the wrong-side landing rides authLive → the row's ⚠ shape")
+        self.assertTrue(any("billing the login" in p["text"] for p in self.be.problems(20)),
+                        "…and the problems ring names it")
+
+    def test_the_cycle_on_a_login_less_box(self):
+        self.be.login_ok = lambda: False                     # THIS devbox's real shape (env-key-only)
+        sid = "11111111-2222-3333-4444-00000000t125"
+        sb.write_reg(Path(self.d), sid, {"sid": sid, "name": "misc2", "cwd": "/tmp"})
+        s = self._sess(42, sid=sid)
+        self.be.sessions[sid] = s
+        self.be._note_auth_source(s, "ANTHROPIC_API_KEY")
+        self.assertFalse(self.be.set_auth(sid, "login"),
+                         "the pick the box cannot apply refuses AT PICK TIME — never accept-then-fail")
+        self.assertEqual(self._state(s), ("key", "key", False),
+                         "nothing moved: no pending window, no intent shown, the row keeps the truth")
+
+
 class DrivePlumbing(unittest.TestCase):
     """setAuth rides the same drive/park path as the other per-session switches (source pins)."""
 

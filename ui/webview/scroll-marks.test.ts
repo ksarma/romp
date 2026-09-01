@@ -13,25 +13,33 @@ const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "
 
 test("one notch per real user message across the WHOLE loaded conversation", () => {
   // the user 2026-08-17: the chat virtualizes (a rendered window between two estimated-height
-  // spacers), and window-only notches "forgot" the newer messages when scrolled back. Notches now
-  // come from the full resident events array: true pixels for rendered turns, a proportional slot
-  // inside the MEASURED spacer for the rest — the same estimate the scrollbar itself stands on.
+  // spacers), and window-only notches "forgot" the newer messages when scrolled back. Notches
+  // come from the full resident events array, placed by the one virtual frame (pinned below).
   assert.match(RENDER, /for \(let i = 0; i < s\.events\.length; i\+\+\) \{/);
   // the filter reads the ONE senderKind verdict (2026-08-18): user → blue, romp/tagged → the gray
   // machine notch, harness noise → none — the same classifier the bubble and rail dot wear
   assert.match(RENDER, /const kind = senderKind\(ev\);\s*\n\s*if \(kind === "injected"\) continue;/);
   assert.match(RENDER, /ev\.canned === "continue" \|\| SLASH_CMD_RE\.test\(md\)/,
     "a /command or Continue gesture is a doing, not words — no notch");
-  assert.match(RENDER, /'\.turn\[data-unit="' \+ i \+ '"\]'/, "rendered events use their true pixel offset");
-  // spacer slots feed on CACHED measured heights (the user 2026-08-17, video: uniform-average
-  // slots made notches wiggle as messages crossed the render-window boundary and corrected to
-  // truth) — cumulative cached heights, normalized to the spacer's actual height, one prefix-sum
-  // pass per spacer, O(1) per notch
+});
+
+test("the frame is VIRTUAL: one cached-height prefix over ALL units, independent of scroll and window", () => {
+  // T129 (the user 2026-08-27, filming marks moving RELATIVE TO EACH OTHER while scrolling —
+  // geometrically impossible for a linear map): the old frame was piecewise — live rect offsets
+  // inside the render window, cache sums normalized to each spacer's height outside — so pure
+  // scrolling changed the map every frame the window slid. The frame now depends on NOTHING the
+  // scroll moves: a mark's position changes only when information arrives (a height measured, an
+  // event appended). Lab proof: tools/romp-lab/rail-drift.mjs — learned-regime drift is 0.0px
+  // across a full scroll round trip (was 5.7px, endlessly, before).
   assert.match(RENDER, /const unitHeights = new Map<string, Map<number, number>>\(\);/);
   assert.match(RENDER, /if \(Number\.isFinite\(u\) && h > 0\) uh\.set\(u, h\);/, "every rendered unit's height is remembered");
-  assert.match(RENDER, /off = slotIn\(topPre, i, topH\);/, "top-spacer events slot by cumulative cached heights");
-  assert.match(RENDER, /off = \(sh - botH\) \+ slotIn\(botPre, i - winEnd, botH\);/,
-    "bottom-spacer events too — normalized to the spacer the scrollbar stands on");
+  assert.match(RENDER, /for \(let u = 0; u < unitTotal; u\+\+\) \{ t \+= uh\.get\(u\) \?\? avg; pre\.push\(t\); \}/,
+    "ONE prefix-sum over every unit — cached truth where seen, the renderer's average else");
+  assert.match(RENDER, /\(i >= 0 && i < unitTotal\) \? pre\[i\] \+ \(pre\[i \+ 1\] - pre\[i\]\) \/ 2 : null/,
+    "every unit slots at its virtual middle — uniform semantics, no per-basis seams");
+  const frameBody = RENDER.slice(RENDER.indexOf("function contentOffsetFrame("), RENDER.indexOf("function ensureScrollMarks("));
+  assert.ok(!/scrollTop|tx-spacer|winStart|slotIn/.test(frameBody),
+    "nothing scroll-coupled inside the frame — no live offsets, no spacer reads, no window bounds");
 });
 
 test("a history load rescales the map smoothly — moved notches are carried, never teleported", () => {
@@ -45,7 +53,6 @@ test("a history load rescales the map smoothly — moved notches are carried, ne
 });
 
 test("positions are proportional and pure scrolls do no DOM work", () => {
-  assert.match(RENDER, /node\.getBoundingClientRect\(\)\.top - cRect\.top \+ scrollTop/);
   assert.match(RENDER, /if \(sig !== scrollMarksSig\) \{/, "signature skip: rebuild only on real change");
   assert.match(RENDER, /paintRailSticky\(\); paintScrollMarks\(\);/, "rides the existing rAF scheduler");
 });
@@ -62,7 +69,7 @@ test("marks translate EVENT indices to DISPLAY UNITS before asking the frame", (
   // one) and the mark silently vanished — worst exactly beside big tool runs, where replies to a
   // working session land. Both painters now translate through eventUnitIndex.
   assert.match(RENDER, /function eventUnitIndex\(s: Session\): Int32Array/);
-  assert.match(RENDER, /if \(it\.kind === "toolgroup"\) \{ for \(const i of it\.indices\) map\[i\] = u; \}/);
+  assert.match(RENDER, /if \(it\.kind === "toolgroup" \|\| it\.kind === "retrygroup"\) \{ for \(const i of it\.indices\) map\[i\] = u; \}/);
   assert.match(RENDER, /const evUnit = eventUnitIndex\(s\);/);
   assert.match(RENDER, /const u = evUnit\[i\];/);
   assert.match(RENDER, /const off = frame\.offsetOf\(u\);/, "notches ask the frame in unit space");
