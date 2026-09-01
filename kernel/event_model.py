@@ -685,8 +685,7 @@ def _emit_state():
 def _chrono(ad, uuids):
     """`uuids` in the emit layer's canonical order — ascending (timestamp, read order), exactly
     the key the replay pre-pass has always walked in."""
-    return sorted(uuids, key=lambda x: (parse_z((ad.by_uuid.get(x) or {}).get("timestamp")) or 0,
-                                        ad.seq_of.get(x, 0)))
+    return sorted(uuids, key=lambda x: (ad.ts_of.get(x) or 0, ad.seq_of.get(x, 0)))
 
 
 class FileAdapter:
@@ -709,6 +708,15 @@ class FileAdapter:
                                  #   text (full prompt, markers intact), seq}
         self.leaf_uuid = None
         self._seq = 0            # global read-order counter — continued by assembly folds
+        self.ts_of = {}          # uuid -> repaired epoch seconds — THE timestamp every consumer
+        #                          reads (_chrono, the emit, the boundary splice). A record whose
+        #                          stamp does not parse borrows the last good stamp seen in file
+        #                          order (its real neighbor): the atom stays VISIBLE at a truthful
+        #                          adjacent time instead of t=None TypeError-ing segment_turns'
+        #                          sort and taking the whole session view down (T210). Fold-safe
+        #                          with no carry: _ingest is the one shared path and re-ingestion
+        #                          replays the same order, so fold and full repair identically.
+        self._last_ts = 0        # the borrow source — last parseable stamp ingested
         # Graph-level facts the assembly fast-path gates read, collected at INGEST so they cover
         # the whole graph (kept or not): every user record's promptId (a delta record repeating
         # one forces a full parse — command twins/episodes key on it), every assistant Skill
@@ -757,6 +765,18 @@ class FileAdapter:
                 self.by_uuid[u] = r
                 self.fsid_of[u] = fsid
                 self.seq_of[u] = seq
+                ts = parse_z(r.get("timestamp"))
+                if ts is None:
+                    ts = self._last_ts
+                    _ASM_STATS["ts-repair"] = _ASM_STATS.get("ts-repair", 0) + 1
+                    if fsid not in _TS_REPAIR_NOTED and len(_TS_REPAIR_NOTED) < 64:
+                        _TS_REPAIR_NOTED.add(fsid)
+                        print("romp event-model: unparseable timestamp on record %s in %s.jsonl — "
+                              "shown at the previous record's time (ts-repair in parse stats)"
+                              % (u, fsid), file=sys.stderr)
+                else:
+                    self._last_ts = ts
+                self.ts_of[u] = ts
                 # parentUuid normally; compact_boundary carries parentUuid:null +
                 # logicalParentUuid:<pre-compaction leaf> — follow that so the active
                 # path survives compaction instead of orphaning every pre-compaction turn.
@@ -1360,7 +1380,7 @@ class FileAdapter:
             if not r:
                 continue
             t = r.get("type")
-            ts = parse_z(r.get("timestamp"))
+            ts = self.ts_of.get(u, 0)   # repaired at ingest — never None (T210)
             fsid = self.fsid_of.get(u)
             seq = self.seq_of.get(u, 0)
             if t == "assistant":
@@ -1493,7 +1513,7 @@ class FileAdapter:
                     # and the stdout atom would then fold into the boundary's fresh turn as
                     # "assistant work", minting a phantom WORK unit (2026-08-19). Sort it right
                     # after the stdout instead: the moment the compaction visibly completed.
-                    spt = parse_z((self.by_uuid.get(sp) or {}).get("timestamp"))
+                    spt = self.ts_of.get(sp)
                     if spt is not None and (ts is None or spt > ts):
                         ts = spt
                     seq = self.seq_of.get(sp, seq) + 0.5
@@ -2003,6 +2023,7 @@ _ASM_KEYLOCKS = {}                 # key -> Lock; never pruned (a Lock is tiny, 
 #                                    key's lock mid-flight would let two folds interleave)
 _ASM_STATS = {"full": 0, "fold": 0, "serve": 0, "bypass": 0, "fallback": 0}   # observability + tests
 _ASM_WARNED = [False]
+_TS_REPAIR_NOTED = set()   # file stems already warned about a garbled stamp — once per file, capped
 
 
 def _asm_demote(reason):
