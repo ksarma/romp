@@ -41,6 +41,10 @@ SID, NOW, T0 = G.SID, G.NOW, G.T0
 iso = G.iso
 
 
+def _text_of(blocks):
+    return " ".join(b.get("text", "") for b in blocks if isinstance(b, dict))
+
+
 def _tree(x):
     return json.loads(json.dumps(x, sort_keys=True))
 
@@ -108,6 +112,228 @@ class Replay(unittest.TestCase):
                 self.assertEqual(_tree(ref), _tree(inc), "diverged at fileB record %d" % (i + 1))
             self.assertGreater(emi._ASM_STATS["fold"] - folds0, 0,
                                "multi-file sessions silently demote to permanent full parses")
+
+
+class GarbledTimestamps(unittest.TestCase):
+    """A malformed record must never eclipse the rest of the session (T210): a kept record whose
+    timestamp does not parse used to reach segment_turns' (t, _seq) sort as t=None and TypeError
+    the WHOLE parse — one corrupt line took down the session view for chat and judges alike. The
+    fix fails toward SHOWING: ingest borrows the last good stamp seen in file order (the record's
+    real neighbor), so the atom stays visible at a truthful adjacent time, counted and noted
+    loudly. Skipping it instead would silently drop a possibly-real ask — the one fatal error."""
+    maxDiff = None
+
+    def _parse_both(self, path, kw):
+        inc = emi.parse_session(str(path), rompuuid=SID, name="impl", dir="/TESTDIR", **kw)
+        emr._ASM_CACHE.clear()
+        ref = emr.parse_session(str(path), rompuuid=SID, name="impl", dir="/TESTDIR", **kw)
+        self.assertEqual(_tree(ref), _tree(inc))
+        return inc
+
+    def _write(self, path, records):
+        with open(path, "a") as fh:
+            for r in records:
+                fh.write(json.dumps(r) + "\n")
+
+    def test_garbled_timestamp_never_takes_the_session_down(self):
+        # the dispatch's two-record repro: second record's stamp is garbage — parse_session used
+        # to TypeError in segment_turns' sort and the whole session view went down with it
+        bad = G.aline(T0 + 10, "the reply the user must still see", "a1", "u1")
+        bad["timestamp"] = "not-a-timestamp"
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / (SID + ".jsonl")
+            path.write_text("")
+            self._write(path, [G.uline(T0, "hello", "u1"), bad])
+            kw = {"candidate_files": [str(path)], "states": None, "postal_log": [], "now": NOW}
+            ses = self._parse_both(path, kw)
+            atoms = [a for t in ses["turns"] for a in t["atoms"]]
+            self.assertIn("a1", [a.get("uuid") for a in atoms],
+                          "the garbled-stamp record was dropped — it must stay visible")
+            a1 = next(a for a in atoms if a.get("uuid") == "a1")
+            self.assertEqual(a1["t"], T0, "the borrow is the last good stamp in file order")
+
+    def test_garbled_first_record_still_shows(self):
+        bad = G.uline(T0, "opening ask", "u1")
+        bad["timestamp"] = "garbage"
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / (SID + ".jsonl")
+            path.write_text("")
+            self._write(path, [bad, G.aline(T0 + 10, "answer", "a1", "u1")])
+            kw = {"candidate_files": [str(path)], "states": None, "postal_log": [], "now": NOW}
+            ses = self._parse_both(path, kw)
+            atoms = [a for t in ses["turns"] for a in t["atoms"]]
+            self.assertIn("u1", [a.get("uuid") for a in atoms])
+            u1 = next(a for a in atoms if a.get("uuid") == "u1")
+            self.assertEqual(u1["t"], 0, "no good stamp yet -> epoch zero, deterministically")
+
+    def test_garbled_assistant_append_demotes_and_survives(self):
+        # a garbled user/assistant stamp in the DELTA trips the existing ts gate (fold refuses,
+        # full parse serves) — and the full parse must now survive it
+        bad = G.aline(T0 + 20, "late reply", "a2", "a1")
+        bad["timestamp"] = "###"
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / (SID + ".jsonl")
+            path.write_text("")
+            kw = {"candidate_files": [str(path)], "states": None, "postal_log": [], "now": NOW}
+            self._write(path, [G.uline(T0, "hi", "u1"), G.aline(T0 + 10, "ok", "a1", "u1")])
+            self._parse_both(path, kw)
+            g0 = emi._ASM_STATS.get("g:ts", 0)
+            self._write(path, [bad])
+            ses = self._parse_both(path, kw)
+            self.assertEqual(emi._ASM_STATS.get("g:ts", 0), g0 + 1,
+                             "a garbled delta stamp folds only the full emit can place — demote")
+            atoms = [a for t in ses["turns"] for a in t["atoms"]]
+            self.assertIn("a2", [a.get("uuid") for a in atoms])
+
+    def test_garbled_system_record_folds_equivalently(self):
+        # a system record (no ts gate) with a garbled stamp FOLDS — the ingest repair must give
+        # fold and full parse the same borrowed time, or they diverge
+        refusal = {"type": "system", "subtype": "model_refusal_fallback", "uuid": "s1",
+                   "parentUuid": "a1", "timestamp": "junk", "content": "swapped models",
+                   "originalModel": "m-one", "fallbackModel": "m-two"}
+        tail = G.aline(T0 + 30, "from the fallback model", "a2", "s1")
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / (SID + ".jsonl")
+            path.write_text("")
+            kw = {"candidate_files": [str(path)], "states": None, "postal_log": [], "now": NOW}
+            self._write(path, [G.uline(T0, "hi", "u1"), G.aline(T0 + 10, "ok", "a1", "u1")])
+            self._parse_both(path, kw)
+            f0 = emi._ASM_STATS["fold"]
+            self._write(path, [refusal, tail])
+            ses = self._parse_both(path, kw)
+            self.assertEqual(emi._ASM_STATS["fold"], f0 + 1,
+                             "the garbled system record must fold, not silently demote")
+            atoms = [a for t in ses["turns"] for a in t["atoms"]]
+            s1 = next(a for a in atoms if a.get("uuid") == "s1")
+            self.assertEqual(s1["t"], T0 + 10, "borrowed from its file neighbor, both paths")
+
+    def test_garbled_tail_never_zeroes_the_watermark(self):
+        # review-reproduced divergence (T210): the prepass watermark read the RAW stamp of the
+        # chronologically-last record — a garbled tail (which borrows the max stamp and sorts
+        # last) zeroed max_ppt, disarmed the g:ts gate, and a timestamp-regressed append FOLDED
+        # into carried state a fresh full parse disagrees with. The watermark must read ts_of.
+        bad = G.aline(T0 + 20, "tail with a rotten stamp", "aX", "a1")
+        bad["timestamp"] = "rotten"
+        regressed = G.uline(T0 + 5, "arrives stamped BEFORE the fold watermark", "u2", "aX")
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / (SID + ".jsonl")
+            path.write_text("")
+            kw = {"candidate_files": [str(path)], "states": None, "postal_log": [], "now": NOW}
+            self._write(path, [G.uline(T0, "hi", "u1"), G.aline(T0 + 10, "ok", "a1", "u1"), bad])
+            self._parse_both(path, kw)
+            g0 = emi._ASM_STATS.get("g:ts", 0)
+            self._write(path, [regressed])
+            self._parse_both(path, kw)
+            self.assertEqual(emi._ASM_STATS.get("g:ts", 0), g0 + 1,
+                             "a regressed append after a garbled tail must DEMOTE — folding it "
+                             "diverges (the watermark was zeroed by the raw-stamp read)")
+
+    def test_garbled_spliced_prompt_still_shows(self):
+        # a queued_command attachment is the WITNESS for a prompt the user actually typed
+        # mid-turn: dropping it on a garbled stamp is the exact silent loss this repo calls
+        # fatal — it must ride the repaired stamp like every other record (T210 review)
+        att = G.attline(T0 + 15, "the mid-turn ask that must not vanish", "q1", "a1")
+        att["timestamp"] = "mangled"
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / (SID + ".jsonl")
+            path.write_text("")
+            kw = {"candidate_files": [str(path)], "states": None, "postal_log": [], "now": NOW}
+            self._write(path, [G.uline(T0, "start", "u1"),
+                               G.aline(T0 + 10, "working", "a1", "u1", tools=("Bash",), stop="tool_use"),
+                               att,
+                               G.trline(T0 + 20, "tu_a1_0", "u2", "q1"),
+                               G.aline(T0 + 30, "done", "a2", "u2")])
+            ses = self._parse_both(path, kw)
+            texts = [(_text_of(a["message"]["content"]) if a.get("message") else "")
+                     for t in ses["turns"] for a in t["atoms"]]
+            self.assertTrue(any("must not vanish" in x for x in texts),
+                            "the spliced prompt was dropped on its garbled stamp")
+            atoms = [a for t in ses["turns"] for a in t["atoms"]]
+            spliced = next(a for a in atoms if a.get("absorbed"))
+            self.assertEqual(spliced["t"], T0 + 10, "borrowed from its file neighbor")
+
+    def test_garbled_cut_record_still_trims_orphans(self):
+        # the pending-cut orphan filter read the cut record's RAW stamp: garbled -> None ->
+        # filter skipped -> the deleted prompt's salvaged reply stood alone in the chat (the
+        # half-worked-delete shape). The filter must read the repaired stamp (T210 review).
+        cut = G.aline(T0 + 10, "the reply being rolled back", "a1", "u1")
+        cut["timestamp"] = "shredded"
+        rows = [{"t": T0 + 30, "orphanReply": {"uuid": "zz9", "text": "landed after the cut",
+                                               "ts": iso(T0 + 30)}}]
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / (SID + ".jsonl")
+            path.write_text("")
+            self._write(path, [G.uline(T0, "hello", "u1"), cut,
+                               G.uline(T0 + 20, "next", "u2", "a1")])
+            kw = {"candidate_files": [str(path)], "states": rows, "postal_log": [], "now": NOW,
+                  "leaf_override": "a1"}
+            ses = self._parse_both(path, kw)
+            atoms = [a for t in ses["turns"] for a in t["atoms"]]
+            self.assertNotIn("zz9", [a.get("uuid") for a in atoms],
+                             "an orphan landing AFTER the cut must be trimmed — the garbled cut "
+                             "stamp disarmed the filter")
+
+    def test_ts_repair_counts_distinct_records_not_parses(self):
+        # a stable corrupt line must not inflate the counter on every full parse — it counts
+        # CORRUPTION, not parse volume (T210 review)
+        bad = G.aline(T0 + 10, "reply", "a1", "u1")
+        bad["timestamp"] = "xxx"
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / (SID + ".jsonl")
+            path.write_text("")
+            self._write(path, [G.uline(T0, "hello", "u1"), bad])
+            kw = {"candidate_files": [str(path)], "states": None, "postal_log": [], "now": NOW}
+            emr._ASM_CACHE.clear()
+            emr.parse_session(str(path), rompuuid=SID, name="impl", dir="/TESTDIR", **kw)
+            c1 = emr._ASM_STATS.get("ts-repair", 0)
+            emr._ASM_CACHE.clear()
+            emr.parse_session(str(path), rompuuid=SID, name="impl", dir="/TESTDIR", **kw)
+            self.assertEqual(emr._ASM_STATS.get("ts-repair", 0), c1,
+                             "the second full parse re-ingested the same corrupt line and "
+                             "counted it again")
+
+    def test_note_cap_rearms_instead_of_going_silent(self):
+        import io, contextlib
+        bad = G.uline(T0, "ask", "u1")
+        bad["timestamp"] = "bad"
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / (SID + ".jsonl")
+            path.write_text("")
+            self._write(path, [bad, G.aline(T0 + 10, "answer", "a1", "u1")])
+            kw = {"candidate_files": [str(path)], "states": None, "postal_log": [], "now": NOW}
+            emr._TS_REPAIR_NOTED.clear()
+            emr._TS_REPAIR_NOTED.update("stem%d" % i for i in range(64))   # cap reached
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                emr._ASM_CACHE.clear()
+                emr.parse_session(str(path), rompuuid=SID, name="impl", dir="/TESTDIR", **kw)
+            self.assertIn("timestamp", err.getvalue(),
+                          "a full cap silenced every NEW file forever — it must re-arm")
+            emr._TS_REPAIR_NOTED.clear()
+
+    def test_ts_repair_is_counted_and_noted_loudly(self):
+        import io, contextlib
+        bad = G.aline(T0 + 10, "reply", "a1", "u1")
+        bad["timestamp"] = "zzz"
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / (SID + ".jsonl")
+            path.write_text("")
+            self._write(path, [G.uline(T0, "hello", "u1"), bad, G.uline(T0 + 20, "more", "u2", "a1")])
+            kw = {"candidate_files": [str(path)], "states": None, "postal_log": [], "now": NOW}
+            c0 = emr._ASM_STATS.get("ts-repair", 0)
+            emr._TS_REPAIR_NOTED.clear()
+            emr._TS_REPAIRED_SEEN.clear()   # distinct-record counting — this file's uuids again
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                emr._ASM_CACHE.clear()
+                emr.parse_session(str(path), rompuuid=SID, name="impl", dir="/TESTDIR", **kw)
+            self.assertGreater(emr._ASM_STATS.get("ts-repair", 0), c0, "repairs ride the stats")
+            self.assertIn("timestamp", err.getvalue(), "the repair is loud, never silent")
+            err2 = io.StringIO()
+            with contextlib.redirect_stderr(err2):
+                emr._ASM_CACHE.clear()
+                emr.parse_session(str(path), rompuuid=SID, name="impl", dir="/TESTDIR", **kw)
+            self.assertEqual(err2.getvalue(), "", "the note fires once per file, not per parse")
 
 
 class GateDemotions(unittest.TestCase):

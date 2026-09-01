@@ -528,6 +528,13 @@ def _version_info():
     return {"kernel_sha": _kernel_sha(), "kernel_ver": _kernel_ver(), "pid": os.getpid(), "started": int(_STARTED),
             "boot": _BOOT_ID,   # lets a page retire update offers from a previous kernel life (2026-08-15)
             "uptime_s": int(time.time() - _STARTED), "dist_ver": _dist_ver(), "bundles": bundles,
+            # THIS kernel process's transcript-assembly counters (event_model._ASM_STATS: full/fold/
+            # serve/bypass/fallback + per-gate g:<reason> demotes + ts-repair) — the designed home for
+            # runtime observability: /healthz's body is a frozen liveness contract ("ok"), while this
+            # route already reports process runtime (pid/uptime) and `romp version` reads it. Bare
+            # counters, no paths — safe for the auth-exempt route. Deploy verification reads the live
+            # fold rate here instead of trusting an offline replay number (T210).
+            "parse": dict(em._ASM_STATS),
             "autoNudge": _auto_nudge_on(),   # server-side toggle state → the gear checkbox reflects the kernel
             "conserveMemory": _conserve_on(),   # the T148 toggle: close idle tab-less claude processes
             "login": _login_state(),         # the in-dashboard login flow's state/url/err (T157) — never a secret
