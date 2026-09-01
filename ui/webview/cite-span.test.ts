@@ -46,3 +46,23 @@ test("substantive non-prose atoms are citable — the study's convicted classes"
   assert.match(JUDGE, /out\.append\("RESULTS: " \+ " \| "\.join\(results\[:4\]\)\)/);
   assert.match(JUDGE, /def _store_cited_span\(nd, marks, src, quote\):/, "the span stores only with a RESOLVED citation");
 });
+
+test("per-paragraph landings (T220): the user's ruling, wired end to end with honest fallbacks", () => {
+  // payload: aligned entries gated on the cited tier holding authority; absent on old stores forever
+  assert.match(KERNEL, /"summaryAnchorsPara": \(\[\(\{"u": e\["a"\], \*\*\(\{"q": e\["q"\]\} if e\.get\("q"\) else \{\}\)\} if e else None\)/);
+  assert.match(KERNEL, /if \(nodes\[nid\]\.get\("summaryAnchors"\)\s*\n\s*and _sa_u and _sa_u == nodes\[nid\]\.get\("summaryAnchor"\)\) else None\)/,
+    "the T153 outrun gate covers the whole per-paragraph list");
+  // renderer: the model's own citation beats the T153 tree-row mapping; count drift drops, never mis-maps
+  assert.match(FEED, /const cited = anchOk \? pAnchors!\[i\] : null;/);
+  assert.match(FEED, /const anchOk = !!\(pAnchors && paras\.length === pAnchors\.length\);/,
+    "a re-split that disagrees with the stored alignment drops the anchors — never a mis-mapped click");
+  assert.match(FEED, /anchorUuid: u, quote: aq/, "the paragraph's click carries ITS span — the T218 landing highlights it");
+  // the hover affordance: exactly the hovered paragraph highlights
+  const FEEDCSS = fs.readFileSync(path.join(UI, "feed.css"), "utf8");
+  assert.match(FEEDCSS, /\.fask-para-link:hover \{ background: rgba\(255, 255, 255, 0\.07\);/);
+  // judge: the parser + store helpers exist with the honest-gap discipline
+  assert.match(JUDGE, /def _split_sources\(text\):/);
+  assert.match(JUDGE, /def _store_para_cites\(nd, marks, body, para_cites\):/);
+  assert.match(JUDGE, /nd\["summaryAnchors"\] = anchors if any_set else None/,
+    "nothing valid stores None — old single-anchor stores read identically forever, no migration");
+});

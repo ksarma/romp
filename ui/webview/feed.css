@@ -499,8 +499,10 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
 .fask-para { margin: 0 0 6px; }
 .fask-para:last-child { margin-bottom: 0; }
 .fask-para-age { color: var(--dim); white-space: nowrap; }
-.fask-para-link { cursor: pointer; }
-.fask-para-link:hover { text-decoration: underline; text-decoration-color: var(--dim); }
+.fask-para-link { cursor: pointer; border-radius: 5px; margin-left: -4px; padding-left: 4px; margin-right: -4px; padding-right: 4px; }
+/* the per-paragraph affordance (T220, the user's ruling): hovering highlights exactly the paragraph
+   under the pointer — each clickable piece reads as its own target as the pointer moves */
+.fask-para-link:hover { background: rgba(255, 255, 255, 0.07); text-decoration: underline; text-decoration-color: var(--dim); }
 /* the card's distiller sections (the user 2026-07-07, compactness): the Background/Summary TOGGLES now ride
    the time row (row3) and are MUTUALLY EXCLUSIVE — one body shows at a time, or neither — so .fask-secs is
    just the body container (a plain block; whichever body is open runs the full card width). The toggles are

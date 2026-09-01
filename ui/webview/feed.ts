@@ -107,6 +107,7 @@ interface AskItem {
   background?: string | null;                      // distiller's BACKGROUND section: re-orientation for a reader who forgot the thread → the card's collapsed-by-default section above the takeaway (the user 2026-07-02)
   summaryAnchorUuid?: string | null;               // click the summary line → the completion turn's wrap-up block (kernel build_feed completed pin; cited/latest-prose fallbacks — the user 2026-07-14)
   summaryAnchorQuote?: string | null;              // the distiller's verbatim supporting sentence, pre-located in the cited atom (T218) — the landing scrolls to and highlights it; null keeps the whole-message landing
+  summaryAnchorsPara?: ({ u: string; q?: string } | null)[] | null;   // per-paragraph landings (T220, the user's ruling): aligned to the takeaway's paragraphs; null entry = that paragraph falls back to the whole-summary landing
   warns?: { kind: string; t: number; msg: string; detail: string }[] | null;   // judge-stamped anomalies (judge _node_warn → kernel build_feed): yellow "warning" chip; click opens the detail modal (the user 2026-07-02)
   failLog?: { t: number; line: string; model: string; note: string }[] | null;   // the summarizer's failed ATTEMPTS on this card (judge _fail_log): when, which line, which MODEL, the literal error — the chip's hover history + the modal's "What was tried" (the user 2026-08-18, who needed to SEE "tried opus — 529" ×3 to know switching the model would fix it)
   nudged?: { count: number; times: number[] } | null;   // auto-nudge HISTORY (kernel _nudge_times): how many times romp followed up + when — the stalled chip's evidence (tooltip + modal line, the user 2026-07-02)
@@ -1972,35 +1973,47 @@ function updateAskCard(card: HTMLElement, it: AskItem) {
   // last: a bigger surplus means the model split some other way and the mapping can no longer be trusted,
   // so the gate falls through to the plain text as before.
   const bp = dCompleted ? it.summaryParts : dBlocked ? it.briefParts : null;
-  if (distillShown && bp && bp.length > 1) {
+  // Paragraph SPLIT fires for a stamped parts-takeaway (T153) OR for per-paragraph citations (T220,
+  // the user's ruling: each paragraph of a multi-topic summary is independently clickable, hover
+  // highlighting exactly the paragraph under the pointer). Anchor precedence per paragraph: the
+  // model's OWN citation (it names what the paragraph was written from) beats the T153 tree-row
+  // mapping; a paragraph with neither keeps the whole-summary landing via the card-level link.
+  const pAnchors = (distillShown && it.summaryAnchorsPara) || null;
+  if (distillShown && ((bp && bp.length > 1) || (pAnchors && pAnchors.some(Boolean)))) {
     const paras = distillShown.split(/\n\s*\n/).map((s) => s.trim()).filter(Boolean);
-    if (paras.length === bp.length || paras.length === bp.length + 1) {
+    const stampOk = !!(bp && bp.length > 1 && (paras.length === bp.length || paras.length === bp.length + 1));
+    const anchOk = !!(pAnchors && paras.length === pAnchors.length);   // count drift → drop, never mis-map
+    if (stampOk || anchOk) {
       const dle = a._distill as HTMLElement;
       dle.textContent = "";
       const nowS = Date.now() / 1000;
       paras.forEach((p, i) => {
         const para = el("div", "fask-para");
         para.textContent = p;
-        if (i < bp.length) {
+        if (stampOk && i < bp!.length) {
           const age = el("span", "fask-para-age");
-          age.textContent = relAge(nowS - (bp[i].since || nowS));
+          age.textContent = relAge(nowS - (bp![i].since || nowS));
           para.append(" ", age);
-          // Per-paragraph deep-link (the user 2026-08-28, T153): a split takeaway's paragraphs map
-          // 1:1 to <completed-items>, and each item's own tree row already carries its WORK anchor —
-          // so every paragraph can land on the stretch it is actually about, not just the card-level
-          // grounding. stopPropagation beats the whole-line summary link one level up.
-          const pid = bp[i].id;
+        }
+        // T220 first: the paragraph's own citation, with its located span riding the landing
+        const cited = anchOk ? pAnchors![i] : null;
+        let au: string | null = null, aq: string | undefined;
+        if (cited && cited.u) { au = cited.u; aq = cited.q; }
+        else if (stampOk && i < bp!.length) {
+          // T153: the item's tree row carries its WORK anchor
+          const pid = bp![i].id;
           const prow = pid ? (it.tree || []).find((r) => r.id === pid) : undefined;
-          if (prow && prow.anchorUuid) {
-            const au = prow.anchorUuid;
-            para.classList.add("fask-para-link");
-            para.title = "jump to where this piece resolved";
-            para.onclick = (ev: Event) => {
-              ev.stopPropagation(); focusEcho(it.sid);
-              vscodeApi?.postMessage({ type: "showOnTimeline", itemId: it.itemId, sid: it.sid,
-                                       t: it.t, anchor: "work", anchorUuid: au });
-            };
-          }
+          if (prow && prow.anchorUuid) au = prow.anchorUuid;
+        }
+        if (au) {
+          const u = au;
+          para.classList.add("fask-para-link");
+          para.title = "jump to where this piece resolved";
+          para.onclick = (ev: Event) => {
+            ev.stopPropagation(); focusEcho(it.sid);
+            vscodeApi?.postMessage({ type: "showOnTimeline", itemId: it.itemId, sid: it.sid,
+                                     t: it.t, anchor: "work", anchorUuid: u, quote: aq });
+          };
         }
         dle.append(para);
       });
