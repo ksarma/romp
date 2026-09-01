@@ -72,7 +72,7 @@ class CompactSuggest(unittest.TestCase):
     def test_a_crossing_fires_once_and_latches(self):
         self.assertTrue(self._tick(450_000))
         self.assertEqual(len(self.sent), 1)
-        self.assertIn("/compact", self.sent[0])
+        self.assertIn("`romp compact ", self.sent[0])
         # T207 (the user 2026-08-31, who saw the bare send render as their own blue bubble): the
         # send carries the sibling injectors' marker tail so the chat classifies it "romp" (gray
         # bubble), romp-auto = background kernel injection; the PROSE stays the bare constant the
@@ -85,7 +85,13 @@ class CompactSuggest(unittest.TestCase):
         self.assertNotIn("<!-- romp-system -->", self.sent[0],
                          "person-voiced, not the machine-voiced notice family")
         self.assertNotIn("romp-goal-id", self.sent[0], "the suggestion tracks nothing")
-        self.assertEqual(self.sent[0].split("<!--")[0].strip(), km.COMPACT_SUGGEST_TEXT.strip())
+        _prose = self.sent[0].split("<!--")[0].strip()
+        self.assertEqual(_prose, km._compact_suggest_body(km._name_of(SID) or SID[:8]).strip())
+        self.assertIn("`romp compact ", _prose,
+                      "the named command WORKS from the recipient's own shell (T212: /compact is a "
+                      "terminal affordance no SDK session can type, and only SDK sessions get this)")
+        self.assertNotIn("/compact", _prose.replace("romp compact", ""),
+                         "…and the untypeable slash form is gone")
         self.assertEqual(self._latched(), [400_000], "latched on the durable record")
         self.assertFalse(self._tick(460_000), "same episode → never a second fire")
         self.assertEqual(len(self.sent), 1)

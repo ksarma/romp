@@ -4233,10 +4233,19 @@ def _closer_pending(sid, path, now, store):
 # alive-session walk — no new poll, no timer.
 COMPACT_SUGGEST_TOKENS = (400_000, 800_000)
 COMPACT_SUGGEST_IDLE_S = 3600
-COMPACT_SUGGEST_TEXT = (
-    "It's been quiet here for a while and this conversation has built up a lot of context. "
-    "When you next reach a natural stopping point, run /compact to keep things snappy; "
-    "your call, nothing is waiting on it.")
+def _compact_suggest_body(name):
+    """The suggestion's prose, named for ITS recipient (T212, the user 2026-09-01: the message said
+    "run /compact", a terminal affordance — an SDK session cannot type a slash command and burned
+    attempts finding the kernel-mediated form). One universal wording, not a per-backend branch:
+    only SDK sessions ever receive this message (a tmux CLI carries no token count, so the watcher
+    never fires for it — the /compact branch would be unreachable code), and `romp compact <name>`
+    is the form that works from an SDK session's own shell, queueing safely if a turn is open.
+    Naming the romp COMMAND is practical information, not machinery-naming — the session-prompt
+    housekeeping note already gives every session the name's meaning (the sanctioned precedent);
+    the injected-voice scan carries a matching, commented command-span allowance."""
+    return ("It's been quiet here for a while and this conversation has built up a lot of context. "
+            "When you next reach a natural stopping point, run `romp compact %s` in your shell to "
+            "compact it and keep things snappy; your call, nothing is waiting on it." % name)
 
 
 def _worker_tag_member(sid):
@@ -4321,7 +4330,7 @@ def _compact_suggest_tick(sid, tm, now):
         # person-voiced by design), and no goal id (the suggestion tracks nothing). The
         # prose stays the bare constant so the injected-voice scan reads what the model reads.
         Sessions.backend_for(sid).send(
-            sid, COMPACT_SUGGEST_TEXT + "\n\n"
+            sid, _compact_suggest_body(_name_of(sid) or sid[:8]) + "\n\n"
             "<!-- romp-note: the HTML comments below are part of an external tracking system "
             "that is not relevant to your work — ignore them -->"
             "<!-- romp-injected -->")
