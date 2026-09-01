@@ -8000,6 +8000,7 @@ function scrollToAnchor(uuid: string): boolean {
   }
   landTrail.push("pointer-exact");
   landOn(target, uuid);
+  if (pendingAnchorQuote) { highlightCiteSpan(target, pendingAnchorQuote); pendingAnchorQuote = null; }
   return true;
 }
 
@@ -8046,6 +8047,44 @@ function landNearestMoment(t: number): boolean {
 // off its mark. So: re-align whenever the bar/ledger actually resizes, plus two
 // timed retries for late layout (images, markdown), for ~1.2s — canceled the
 // moment the user wheel-scrolls so we never fight a real gesture.
+// The supporting SPAN (T218): the distiller quoted the sentence its takeaway rests on, the kernel
+// located it in the cited atom, and the landing highlights it INSIDE the (often long, multi-topic)
+// message — the study's most common partial was the right message with the claim buried deep. The
+// CSS Custom Highlight API paints it with ZERO DOM surgery, so the ever-re-rendering turn list is
+// never mutated (the click-safety family); a browser without it, or an unfindable quote, keeps
+// today's whole-message landing exactly (the honest-fallback rule).
+let pendingAnchorQuote: string | null = null;
+function highlightCiteSpan(target: HTMLElement, quote: string): void {
+  try {
+    const H = (CSS as unknown as { highlights?: Map<string, unknown> }).highlights;
+    if (!H || typeof Highlight === "undefined") return;
+    const walker = document.createTreeWalker(target, NodeFilter.SHOW_TEXT);
+    const nodes: Text[] = []; let full = "";
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) { nodes.push(n as Text); full += (n as Text).data; }
+    let at = full.indexOf(quote);
+    let len = quote.length;
+    if (at < 0) {
+      const pat = new RegExp(quote.trim().split(/\s+/).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+"), "i");
+      const m = pat.exec(full);
+      if (!m) return;                                    // unfindable in the rendered text → no highlight, no guess
+      at = m.index; len = m[0].length;
+    }
+    const range = document.createRange();
+    let pos = 0, started = false;
+    for (const tn of nodes) {
+      const end = pos + tn.data.length;
+      if (!started && at < end) { range.setStart(tn, at - pos); started = true; }
+      if (started && at + len <= end) { range.setEnd(tn, at + len - pos); break; }
+      pos = end;
+    }
+    if (!started) return;
+    H.set("cite-span", new (Highlight as unknown as { new(...r: Range[]): unknown })(range));
+    window.setTimeout(() => { try { H.delete("cite-span"); } catch { /* gone with a nav */ } }, 6000);
+    const el0 = range.startContainer.parentElement;
+    if (el0) el0.scrollIntoView({ block: "center", behavior: "auto" });   // land ON the sentence, not the message top
+  } catch { /* highlight is chrome, never load-bearing */ }
+}
+
 function landOn(target: HTMLElement, flashKey?: string) {
   const realign = () => target.scrollIntoView({ block: "start", behavior: "auto" });
   realign();
@@ -11846,6 +11885,7 @@ window.addEventListener("message", (e: MessageEvent) => {
         const c = document.getElementById("content"); if (c) c.scrollTop = c.scrollHeight;
       });
     } else {
+      pendingAnchorQuote = typeof (m as { anchorQuote?: string }).anchorQuote === "string" ? (m as { anchorQuote?: string }).anchorQuote! : null;   // the supporting span (T218) — consumed by the landing
       setActive(m.id, m.anchor, typeof m.anchorT === "number" ? m.anchorT : undefined, typeof m.anchorKind === "string" ? m.anchorKind : undefined);
     }
     // A feed card click that resolved to a live goal → seed the composer citation chip (the user 2026-07-01).

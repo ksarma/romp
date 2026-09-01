@@ -21598,6 +21598,12 @@ def build_feed(now, tmux=None):
                                      and (nodes[nid].get("summary") or "").strip()) or None,   # the DONE twin: [{id, since}] per takeaway paragraph when the distiller split by <completed-items>; done-event times (the user 2026-07-24)
                 "background": nodes[nid].get("background"),    # the distiller's BACKGROUND section: re-orientation for a reader who forgot the thread — collapsed by default on the card (the user 2026-07-02)
                 "summaryAnchorUuid": _sa_u,    # click the summary line → the completion turn's wrap-up (completed pin), else the cited/latest prose (the user 2026-07-14)
+                # the supporting SPAN (T218): the distiller's verbatim quote, located in the cited atom at
+                # write time — shipped ONLY while the resolved anchor IS the cited atom (the fallback tiers
+                # land elsewhere, where the span would highlight the wrong text); the landing scrolls to
+                # and highlights it, and a null keeps today's whole-message behavior
+                "summaryAnchorQuote": (nodes[nid].get("summaryQuote")
+                                       if _sa_u and _sa_u == nodes[nid].get("summaryAnchor") else None),
                 "warns": nodes[nid].get("warns") or None,   # judge-stamped anomalies (judge _node_warn) → yellow "warning" chip; click shows each warn's what/why detail (the user 2026-07-02)
                 "failLog": nodes[nid].get("failLog") or None,   # the summarizer's failed attempts (judge _fail_log): model + literal error per try → the chip's hover history + modal "What was tried" (the user 2026-08-18)
                 "nudged": ({"count": int(nrec.get("count", 0)), "times": _nudge_times().get(nid, [])[-8:]}
@@ -24112,6 +24118,8 @@ def _show_on_timeline_focus(msg):
     chip in the composer (see _cite_for) → a follow-up without the explicit Follow-up button."""
     f = {"type": "focus", "id": msg["sid"], "anchor": msg.get("anchorUuid"),
          "anchorT": msg.get("t"), "anchorKind": _focus_kind(msg.get("anchor"))}
+    if msg.get("quote"):
+        f["anchorQuote"] = str(msg["quote"])[:300]   # the supporting span (T218) — the chat highlights it on landing
     cite = _cite_for(msg.get("itemId"))
     if cite:
         f["cite"] = cite
