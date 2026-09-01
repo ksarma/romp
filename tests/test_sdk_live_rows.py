@@ -93,6 +93,31 @@ class ListingCompleteness(unittest.TestCase):
         self.assertTrue(reg.get("alive"), "a gutted reg (no alive) vanishes from every listing")
         self.assertNotIn("queue", reg, "the mirror update was skipped, not applied to a bare reg")
 
+    def test_a_failed_enumeration_serves_every_last_good_row(self):
+        # the WHOLE-LISTING twin (review find 2026-09-01): the scandir arm returned [] on a
+        # transient OSError — every session ruled dead at once, under the very contract above
+        warm = {r["sid"] for r in sb.list_regs(self.be.state_dir)}
+        self.assertIn(self.SID, warm, "cache warmed")
+        saved = sb.os.scandir
+        sb.os.scandir = lambda d: (_ for _ in ()).throw(OSError("transient scan fault"))
+        try:
+            rows = {r["sid"] for r in sb.list_regs(self.be.state_dir)}
+        finally:
+            sb.os.scandir = saved
+            sb._REG_SERVE_WARNED.discard("\x00scan")
+        self.assertIn(self.SID, rows, "a transient enumeration failure must not blank the listing")
+        self.assertIn(self.SID, {r["sid"] for r in sb.list_regs(self.be.state_dir)}, "healed scan is live")
+
+    def test_a_healed_stat_blip_unlatches_the_incident_log(self):
+        # review find 2026-09-01: the once-per-incident latch only cleared on the re-READ path, but
+        # a healed stat blip takes the cache-hit path (unchanged file) — the latch stuck and every
+        # later incident for that reg logged nothing
+        sb.list_regs(self.be.state_dir)                    # warm + healthy
+        sb._REG_SERVE_WARNED.add(str(self.path))           # as if a stat blip just logged
+        sb.list_regs(self.be.state_dir)                    # healthy CACHE-HIT scan (file untouched)
+        self.assertNotIn(str(self.path), sb._REG_SERVE_WARNED,
+                         "the cache-hit path must clear the latch too")
+
     def test_a_missing_reg_still_mints_the_bare_mirror(self):
         sid2 = "eeeeeeee-2222-3333-4444-cccccccccccc"
         self.be._update_reg(sid2, queue=["x"])

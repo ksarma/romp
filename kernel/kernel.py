@@ -10428,7 +10428,11 @@ def _bus_quarantine_act(body):
     delivery and the held-message store. On approve the bus re-runs the peer's deliver(), so an approved
     message lands as normal postal mail. Returns (ok, error)."""
     try:
-        conn = http.client.HTTPConnection("127.0.0.1", BUS_PORT, timeout=6)
+        # 20s: the client half of the approve path's budget pair (2026-09-01). The bus-side approve
+        # pays one checked kernel fetch (≤6s) plus the recipient's deliver push (≤12s), so a 6s cap
+        # here gave up mid-approve — the delivery landed while the kernel reported the bus
+        # unreachable. The halves move together (the 830 budget-pair discipline).
+        conn = http.client.HTTPConnection("127.0.0.1", BUS_PORT, timeout=20)
         conn.request("POST", "/quarantine/act", json.dumps(body),
                      {"Content-Type": "application/json", "X-Romp-Token": TOKEN})
         resp = conn.getresponse()

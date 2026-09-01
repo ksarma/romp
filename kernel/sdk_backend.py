@@ -1127,7 +1127,18 @@ def list_regs(state_dir: Path) -> list[dict]:
     try:
         entries = list(os.scandir(d))
     except OSError:
+        # the WHOLE-LISTING twin of the per-entry contract (review find 2026-09-01): a transient
+        # enumeration failure blanked every row at once — the loudest possible false-death signal
+        # under this very docstring. Serve every reg's last good row instead; a genuinely empty or
+        # missing dir enumerates FINE (scandir yields []/raises only on real faults), so truth is
+        # untouched. A fresh process with an empty cache still returns [] — it has nothing to claim.
+        if _REG_CACHE:
+            if "\x00scan" not in _REG_SERVE_WARNED:   # sentinel key: incidents log once, not per scan
+                _REG_SERVE_WARNED.add("\x00scan")
+                sys.stderr.write("list_regs: scan of %s failed — serving every last good row\n" % d)
+            return [dict(v[1]) for v in _REG_CACHE.values()]
         return out
+    _REG_SERVE_WARNED.discard("\x00scan")             # healed → the next scan incident logs afresh
     seen = set()
     for de in entries:
         if not de.name.endswith(".json"):
@@ -1149,8 +1160,10 @@ def list_regs(state_dir: Path) -> list[dict]:
             continue
         key = (st.st_mtime_ns, st.st_size, st.st_ino)
         if hit is not None and hit[0] == key:
-            out.append(dict(hit[1]))
-            continue
+            _REG_SERVE_WARNED.discard(de.path)         # a healed STAT blip lands here (cache hit, no
+            out.append(dict(hit[1]))                   # re-read) — without this the once-per-incident
+            continue                                   # latch never cleared and later blips logged
+        #                                                nothing (review find 2026-09-01)
         try:
             r = json.loads(Path(de.path).read_text())
         except (OSError, ValueError) as e:

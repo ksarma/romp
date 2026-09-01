@@ -630,8 +630,12 @@ def local_agents(threads=False):
     every other reader stay exactly as they were: self-identity, recipient resolution, and the agents
     listing pass True (a thread mails its parent under its OWN name and is addressable for replies);
     everything else never sees them."""
+    return _agent_rows(_kernel_sessions(threads=threads))
+
+
+def _agent_rows(sessions):
     res = []
-    for s in _kernel_sessions(threads=threads):
+    for s in sessions:
         sid = s.get("id")
         if not sid:
             continue
@@ -644,6 +648,15 @@ def local_agents(threads=False):
             row["parent"] = s.get("parent") or ""
         res.append(row)
     return res
+
+
+def local_agents_checked(threads=False):
+    """(local_agents rows, answered) — the honesty-arm variant for consumers whose REFUSALS ride the
+    listing (the inbound relay's bounces, the presence producer): 'answered' distinguishes a kernel
+    that said "no sessions" from one that couldn't answer at all (mid-restart), the same bit the
+    sending resolver has carried since the answered-but-absent round (2026-08-31)."""
+    rows, answered = _kernel_sessions_checked(threads=threads)
+    return _agent_rows(rows), answered
 
 
 def _kernel_post(path, body, timeout=2):
@@ -1463,7 +1476,14 @@ class Handler(BaseHTTPRequestHandler):
                 tnote = (" — report-back tracking does not cross hosts yet; sent as a plain handoff"
                          if tracked else "")
                 mid = "px-" + _unique()
-                relay_msg = {"mid": mid, "to": hit.get("name") or to, "frm": frm,
+                # `to` carries the display name (an old-code far side matches names only), and
+                # `toId` carries the resolved row's SID (review find 2026-09-01): parking the name
+                # ALONE discarded exactly what an id-addressed send chose the sid for — a rename
+                # during the park window bounced a rename-proof address as no-live, and two
+                # same-named far sessions could silently swap deliveries. A new far side matches
+                # toId exactly first; an old one ignores the extra key. Compatible both ways.
+                relay_msg = {"mid": mid, "to": hit.get("name") or to,
+                             "toId": str(hit.get("id") or ""), "frm": frm,
                              "frm_id": frm_id, "body": body, "kind": kind,
                              "t": int(time.time())}
                 if kind == "delegate":
@@ -2188,6 +2208,57 @@ def _bounce_apply(host, b):
                                   "to": msg.get("to") or "?", "host": host,
                                   "why": (b or {}).get("why") or "refused"})
 
+_LOCAL_PRESENCE_GOOD = [[], False]   # [rows, ever_answered] — the last ANSWERED local listing
+_PRESENCE_SERVE_WARNED = [False]     # transition-only logging, the _REG_SERVE_WARNED idiom
+_PRESENCE_GOOD_FILE = STATE / "local-presence-good.json"   # …and its DISK twin: a bus restart
+#   overlapping a kernel restart (the normal self-update path — both restart on code staleness)
+#   would otherwise boot with an empty cache and gossip the blink as authoritative emptiness
+#   (review find 2026-09-01); persisting rides the cache across bus restarts, like remote-sids.
+
+
+def _presence_good_load():
+    """Prime the in-memory last-answered cache from its disk twin, once, at first need."""
+    if _LOCAL_PRESENCE_GOOD[1]:
+        return
+    try:
+        rows = json.loads(_PRESENCE_GOOD_FILE.read_text())
+        if isinstance(rows, list):
+            _LOCAL_PRESENCE_GOOD[0], _LOCAL_PRESENCE_GOOD[1] = rows, True
+    except Exception:
+        pass                                         # no twin yet (fresh box) → nothing to prime
+
+
+def _local_presence():
+    """Local agent rows for an exchange payload, blink-honest: an UNANSWERED kernel listing (a
+    mid-restart blink) must never gossip as "nobody lives here" — the far boxes' PEER_STATE flaps
+    empty and their resolvers mint hard no-live refusals for sessions that never died (specimen
+    2026-08-31: three sends refused across a far restart while the target stayed live throughout).
+    Serve the last ANSWERED rows instead (the registry's serve-last-good idiom, 2026-08-31); an
+    ANSWERED-empty listing is the truth — it serves and caches as such. This protects every peer,
+    including ones running older code, because the honesty lands in the payload itself."""
+    rows, answered = local_agents_checked()
+    if answered:
+        _LOCAL_PRESENCE_GOOD[0], _LOCAL_PRESENCE_GOOD[1] = rows, True
+        try:
+            tmp = _PRESENCE_GOOD_FILE.with_suffix(".tmp")
+            tmp.write_text(json.dumps(rows))
+            os.replace(tmp, _PRESENCE_GOOD_FILE)     # the disk twin follows every answered read
+        except Exception:
+            pass
+        if _PRESENCE_SERVE_WARNED[0]:
+            _PRESENCE_SERVE_WARNED[0] = False
+            sys.stderr.write("postal: the local listing answers again — presence serves live rows\n")
+        return rows
+    _presence_good_load()                            # a fresh bus process primes from the disk twin
+    if _LOCAL_PRESENCE_GOOD[1]:
+        if not _PRESENCE_SERVE_WARNED[0]:
+            _PRESENCE_SERVE_WARNED[0] = True
+            sys.stderr.write("postal: the local listing didn't answer — presence serves the last "
+                             "answered rows until it does\n")
+        return list(_LOCAL_PRESENCE_GOOD[0])
+    return rows                                     # never answered ANYWHERE yet → claim nothing either way
+
+
 def fleet_presence(exclude_host):
     """Presence for an exchange payload: local agents + ONE hop of gossip from our other peers, each
     labeled `via` (plans/postal-peer-buses.md 3b) — so a spoke can address the far spoke through the
@@ -2196,7 +2267,7 @@ def fleet_presence(exclude_host):
     (`viaBus`): the receiver folds gossip about a box it ALREADY peers with directly, and the id is
     the identity that survives nickname drift — the same machine wears different ssh aliases on
     different hosts, so a name can't say "same box" (the user 2026-08-12; see _via_duplicate)."""
-    out = list(local_agents())
+    out = list(_local_presence())
     for h, st in PEER_STATE.items():
         if h == exclude_host:
             continue
@@ -2296,9 +2367,18 @@ def quarantine_decide(mid, action, text=None, feedback=None):
     if action == "approve":
         body = str(text) if (text is not None and str(text).strip()) else (rec.get("body") or "")
         to_id = rec.get("toId") or ""
-        live = {a["id"] for a in local_agents()}
+        # ONE checked snapshot (2026-09-01): this arm paid TWO kernel fetches — its own fetch-pair
+        # TOCTOU, and the pair alone (2×6s) could outlast the kernel's client cap on /quarantine/act
+        # (the 830 budget-pair discipline: the halves move together — see _bus_quarantine_act). And
+        # an approve clicked during a kernel restart read the blink as "no longer live": unanswered
+        # is not absence, so it refuses retryably instead (the held message stays put).
+        agents, answered = local_agents_checked()
+        if not answered:
+            return False, ("the liveness source (the romp kernel) didn't answer — likely "
+                           "mid-restart. The held message is untouched; retry the approve shortly.")
+        live = {a["id"] for a in agents}
         if to_id not in live:                         # session renamed/revived since it was held → re-match by name
-            match = [a for a in local_agents() if a["name"] == rec.get("to") and not _postal_off(a["id"])]
+            match = [a for a in agents if a["name"] == rec.get("to") and not _postal_off(a["id"])]
             if not match:
                 return False, "recipient '%s' is no longer a live local session" % (rec.get("to") or "?")
             to_id = match[0]["id"]
@@ -2334,7 +2414,24 @@ def _relay_in(host, m, token_proven=False):
     if peer_seen_check(mid):
         return "ack", None                           # duplicate → re-ack, deliver nothing
     to = m.get("to") or ""
-    match = [a for a in local_agents() if a["name"] == to and not _postal_off(a["id"])]
+    # ONE listing snapshot for every ruling below. The isolation bounce used to re-fetch the
+    # listing after the match filtered it — and a blink between the two fetches (agent absent,
+    # then healed) minted a FALSE isolation, final by norm, with no flag involved (specimen
+    # 2026-08-30: a delegate bounced "isolation" with no flag set on either kernel and the
+    # maildir delivering minutes either side). Same fetch-pair race the sending resolver's
+    # one-fetch fix killed (2026-08-31); `answered` feeds the death-ruling gate at the tail.
+    agents, listing_answered = local_agents_checked()
+    to_id = str(m.get("toId") or "")
+    if to_id and _ID_FORM_RE.fullmatch(to_id) is None:
+        to_id = ""            # a malformed wire toId degrades to name matching — it must NEVER reach
+        #                       the durable-registry read below (a crafted "../" would turn that stat
+        #                       into a path-traversal alive-oracle; skeptic find 2026-09-01)
+    # toId (a sender-resolved SID) matches EXACTLY when present — never a name fallback, which
+    # could hand the mail to a same-named sibling, the ambiguity the sid exists to bypass. Mail
+    # from an older sender has no toId and matches by name/id-shape as before.
+    named = ([a for a in agents if str(a.get("id") or "") == to_id] if to_id
+             else [a for a in agents if _addr_matches(a, to)])
+    match = [a for a in named if not _postal_off(a["id"])]
     if match:
         # Trust key = the true ORIGIN (the forwarding host stamps m["origin"]; else the direct peer).
         # Unknown host (a race before the kernel's notify lands) defaults to directed — never auto-inject.
@@ -2367,14 +2464,37 @@ def _relay_in(host, m, token_proven=False):
         # defensive backstop for the checkin-peer path where the mobile dials our /peer-exchange.
         peer_seen_add(mid)
         return "ack", None
-    if any(a["name"] == to for a in local_agents()):
+    if named:
+        # every live candidate's mailbox flag read TRUE in THIS snapshot — a genuine flag ruling,
+        # the only thing allowed to mint an isolation bounce (finality makes this arm zero-tolerance)
         return "bounce", {"mid": mid, "why": "recipient '%s' has its mailbox off (postal isolation)" % to}
     if not m.get("origin"):                          # one hop MAX: a message that already hopped never re-forwards
-        fh, hit = peer_route(to)
+        # route by the SID when the mail carries one, by name otherwise (skeptic finds
+        # 2026-09-01, both rounds): the hub's name-only forward final-bounced a sid-addressed
+        # message whose session renamed during the park window — gossip rows carry ids, and
+        # _addr_matches routes them. Pinned mail routes by sid OR NOT AT ALL: a name fallback
+        # here forwarded the same mid to a NAMESAKE's host when gossip blinked the sid out
+        # (per-host hold dedupe let both parks stand), and the wrong host's final bounce could
+        # beat the right host's delivery ack back to the sender.
+        fh, hit = (peer_route(to_id) if to_id else peer_route(to))
         if fh and fh != host and not (hit or {}).get("via"):
             if outbox_get(fh, mid) is None:          # a resend while we hold it forwards nothing twice
                 outbox_put(fh, dict(m, origin=host))
             return "hold", None
+    # death-ruling gate — the relay leg's honesty arms (2026-08-31; the sending resolver got these
+    # in the answered-but-absent round, this inbound leg never did): an UNANSWERED listing proves
+    # nothing (a mid-restart kernel yields exactly this), and an answered listing that omits a name
+    # whose durable registry entry stands is a blink, never a death. Both read as 'retry' — a
+    # verdict neither ack'd nor bounced crosses the wire as SILENCE, so the sender's outbox keeps
+    # the mail parked and re-relays it next exchange: the honest retry-shortly, where a bounce is
+    # final. The mid stays out of peer_seen, so the re-relay is processed in full.
+    # …and when the mail PINS a sid, the corroboration is by that id ALONE: the name arm read a
+    # same-named REPLACEMENT session's standing reg as evidence and held a genuinely-gone sid in
+    # never-healing silent retry — the sender parked forever, never told (skeptic repro
+    # 2026-09-01). A pinned sid whose reg is gone everywhere bounces FINAL and honestly: the
+    # session it named no longer exists, however many namesakes live on.
+    if not listing_answered or (_durable_session(to_id, True) if to_id else _durable_session(to, False)):
+        return "retry", None
     return "bounce", {"mid": mid, "why": "no live session named '%s' on %s" % (to, self_host())}
 
 def _ack_arrived(host, mid):
@@ -2481,7 +2601,8 @@ def peer_exchange_handle(data):
         if verdict == "ack":
             acks.append(m.get("mid"))
         elif verdict == "bounce" and bounce:
-            bounces.append(bounce)                   # 'hold': forwarded — its ack comes back later
+            bounces.append(bounce)                   # 'hold': forwarded — its ack comes back later;
+        #                                              'retry': silence on purpose — the sender re-relays
 
     def _drain_backflow():                           # acks/bounces relayed BACK through us for this host
         p = _pending(host)
@@ -2553,7 +2674,28 @@ def peer_exchange_apply(host, req_sent, resp):
             if verdict == "ack":
                 p["acks"].append(m.get("mid"))
             elif verdict == "bounce" and bounce:
-                p["bounces"].append(bounce)          # 'hold': forwarded — its ack comes back later
+                p["bounces"].append(bounce)          # 'hold': forwarded — its ack comes back later;
+            #                                          'retry': silence on purpose — the sender re-relays
+
+_ID_FORM_RE = re.compile(r"[0-9a-fA-F][0-9a-fA-F-]{7,35}")   # uuid / short-id address shapes
+
+
+def _addr_matches(a, to):
+    """Does agent row `a` answer to address `to` — by name, by full session id, or by the short-id
+    prefix form every list_agents row prints (`· <8-char>`)? Review find 2026-09-01: presence rows
+    have always CARRIED ids, but the route matched names only, so a uuid send to a live far-host
+    session had no route at all — it fell through to the refusal tail and read as deadness (and a
+    first-cut mirror arm here turned that into a never-healing retry; routing is the honest cure).
+    Prefix collisions surface as multiple candidates: peer_route's standing ambiguity machinery
+    refuses multi-hits; _relay_in prefers the exact toId a new-code sender parks (see the relay
+    message), so its name matching is the old-sender compatibility path only."""
+    if a.get("name") == to:
+        return True
+    sid = str(a.get("id") or "")
+    if not sid:
+        return False
+    return sid == to or (_ID_FORM_RE.fullmatch(to) is not None and sid.startswith(to))
+
 
 def peer_route(to):
     """Where a non-local name lives: (host, agent) for exactly ONE peer match; (None, candidates) on
@@ -2572,7 +2714,7 @@ def peer_route(to):
         if want_host and host != want_host:
             continue
         for a in st.get("presence") or []:
-            if a.get("name") != to or _via_duplicate(a, direct_bus):
+            if not _addr_matches(a, to) or _via_duplicate(a, direct_bus):
                 continue
             sid = a.get("id") or ""
             if sid and sid in seen_ids:                # one session, two gossip paths → one candidate;
@@ -2892,6 +3034,11 @@ def _mcp_call(name, args):
     if name == "set_working":
         if not mid:
             return "Not inside a romp session.", True
+        if "text" not in args or args.get("text") is None:
+            # a MISSING param is never a clear command (fold-in 2026-08-31: a malformed call
+            # silently wiped the published note); the documented clear stays text=''
+            return ("set_working needs its `text` argument — nothing was changed. "
+                    "Pass text='' if you mean to clear your published note."), True
         text = args.get("text", "")
         _publish_working(mid, text)        # backend-agnostic kernel store (POST /working), not the @romp-working var
         return ("Cleared your 'working on' note." if not text.strip()
