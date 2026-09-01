@@ -3096,13 +3096,18 @@ def _converge_classes(a, b):
     if not a or not b:
         return None
     try:
-        r = subprocess.run(["git", "diff", "--name-only", "%s..%s" % (a, b)], cwd=str(ROOT),
+        # -z: NUL-separated RAW paths — git's default core.quotePath C-quotes any non-ASCII path
+        # ("kernel/m\303\263dulo.py", leading double-quote), which defeated the prefix match and
+        # WRONG-SKIPPED a real kernel change (T216 review, reproduced). --no-renames: rename
+        # detection collapses a move to its DESTINATION only, so a kernel file moved OUT of the
+        # tree vanished from the listing and skipped — as delete+add the old path stays visible.
+        r = subprocess.run(["git", "diff", "--name-only", "-z", "--no-renames",
+                            "%s..%s" % (a, b)], cwd=str(ROOT),
                            capture_output=True, text=True, timeout=20)
         if r.returncode != 0:
             return None
         out = {"kernel": [], "bus": [], "skip": [], "ast_equal": []}
-        for f in r.stdout.splitlines():
-            f = f.strip()
+        for f in r.stdout.split("\0"):
             if not f:
                 continue
             c = _restart_class(f)
@@ -3199,20 +3204,29 @@ def _dist_converge_check():
                      ok=False)
 
 
-_BUS_CONVERGED_FOR = [""]   # the target sha the bus already bounced for — the drift pass re-enters
-#                             this arm until the dist rebuild latches, and a broken esbuild must not
-#                             become a bus restart storm (one bounce per target, like _REBUILT_FOR)
+_INPLACE_TRIED = [""]   # the target sha the in-place converge already attempted — ONE full attempt
+#                         (bus bounce + dist build) per target, the _dist_converge_check precedent:
+#                         a broken esbuild must not become a per-pass rebuild/bounce/notice storm;
+#                         a transient failure retries on the NEXT target, never a 300s loop
 
 
 def _in_place_converge(target):
     """The no-kernel-code converge (T216): bounce the bus if bus-class files changed (its own
     process — see _bus_converge), rebuild dist, latch, and AUDIT the skip verdict with its per-class
     file lists so a wrong skip is diagnosable from disk. True = converged (caller returns); False =
-    the dist build failed — fall through to the restart path, which is always the safe converge."""
-    cc = _converge_classes(_kernel_sha(), target) or \
-        {"kernel": [], "bus": [], "skip": [], "ast_equal": []}
-    if cc["bus"] and _BUS_CONVERGED_FOR[0] != target:
-        _BUS_CONVERGED_FOR[0] = target
+    fall through to the restart path, which is always the safe converge."""
+    if _INPLACE_TRIED[0] == target:
+        return False                       # already attempted this target — no storms
+    _INPLACE_TRIED[0] = target
+    cc = _converge_classes(_kernel_sha(), target)
+    if cc is None:
+        # the verdict's own classification succeeded moments ago, but THIS one failed (git flake,
+        # lock contention) — an empty mask here would silently drop the bus bounce and write a
+        # lying audit row; unprovable falls to the restart path, per the standing rule
+        _sync_notice("in-place converge could not re-read the diff — taking the restart path",
+                     ok=False)
+        return False
+    if cc["bus"]:
         ok, err = _bus_converge()
         _audit_restart_request("bus-converge", tag=target, ok=("yes" if ok else "no"),
                                files=",".join(cc["bus"][:20]), err=("" if ok else err))
@@ -3326,20 +3340,23 @@ def _run_main_update(kind, immediate=True, manager_port=_PORT_FROM_ENV):
             _sync_notice("main moved at origin, but the pull step failed: %s" % e, ok=False)
             _MAIN_DRIFT[0] = ""
             return
-    if kind == "pull" and not _kernel_code_changed(_kernel_sha(), _checkout_sha()):
-        # the pull moved nothing the running process executes — same in-place converge as the
-        # restart-kind branch (bus bounce + dist rebuild + audit; T216)
-        if _in_place_converge(_checkout_sha()):
+    if kind == "pull":
+        pulled = _checkout_sha()   # ONE read: verdict input and converge target must be the same
+        #                            sha — two reads raced a moving checkout and latched a target
+        #                            the verdict never examined (T216 review)
+        if not _kernel_code_changed(_kernel_sha(), pulled) and _in_place_converge(pulled):
             return
     # Pay the bundle rebuild BEFORE the old kernel dies (T216): the checkout is already at the
     # target here, so this builds the NEW code's bundles while the old kernel still serves — the
     # fresh kernel's pre-bind _ensure_bundles then finds them current instead of paying esbuild
     # inside the outage. Failure must never block the restart: proceed loudly, _ensure_bundles
-    # stays the backstop.
-    ok, err = _rebuild_dist()
-    if not ok:
-        _sync_notice("pre-restart bundle rebuild failed (%s) — restarting anyway; the new kernel "
-                     "rebuilds at boot" % err, ok=False)
+    # stays the backstop. Skipped when an in-place attempt for this very sha just paid (and
+    # failed) the identical build — a doomed 180s re-run would only stretch the outage.
+    if _INPLACE_TRIED[0] != _checkout_sha():
+        ok, err = _rebuild_dist()
+        if not ok:
+            _sync_notice("pre-restart bundle rebuild failed (%s) — restarting anyway; the new "
+                         "kernel rebuilds at boot" % err, ok=False)
     if manager_port is _PORT_FROM_ENV:
         manager_port = os.environ.get("ROMP_MANAGER_PORT")
     try:

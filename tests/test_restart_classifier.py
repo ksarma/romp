@@ -169,6 +169,30 @@ class RealDiffShapes(unittest.TestCase):
         changed, _ = self._verdict(self.base, sha)
         self.assertTrue(changed, "a rename is never provably equal — restart")
 
+    def test_non_ascii_kernel_path_still_restarts(self):
+        # git's default core.quotePath C-quotes non-ASCII paths ('"kernel/m\303\263dulo.py"') —
+        # the quoted form defeated the prefix match and a REAL kernel change wrong-skipped
+        # (T216 review, reproduced). The -z listing carries raw paths.
+        self._reset()
+        (self.repo / "kernel/módulo.py").write_text("X = 1\n")
+        base2 = self._commit("non-ascii module lands")
+        (self.repo / "kernel/módulo.py").write_text("X = 2\n")
+        sha = self._commit("non-ascii module changes")
+        changed, cc = self._verdict(base2, sha)
+        self.assertTrue(changed, "a quoted path must never fall through to skip")
+        self.assertEqual(cc["kernel"], ["kernel/módulo.py"])
+
+    def test_kernel_file_moved_out_of_tree_still_restarts(self):
+        # rename detection collapses a move to its DESTINATION path — a kernel file moved out
+        # of kernel/ vanished from the listing and the diff wrong-skipped (T216 review,
+        # reproduced). --no-renames keeps the old path visible as a delete.
+        self._reset()
+        _git(self.repo, "mv", "kernel/mod.py", "ui/webview/mod.py")
+        sha = self._commit("moved out")
+        changed, cc = self._verdict(self.base, sha)
+        self.assertTrue(changed, "the running kernel LOSES a module it loaded — restart")
+        self.assertIn("kernel/mod.py", cc["kernel"])
+
     def test_unknown_shas_and_git_failure_restart(self):
         self.assertTrue(km._kernel_code_changed("", "abc"), "unknown shas: restart")
         changed, cc = self._verdict("0" * 40, "1" * 40)
@@ -183,16 +207,19 @@ class ConvergeArms(unittest.TestCase):
         self._saved = {n: getattr(km, n) for n in
                        ("_main_drift_verdict", "_kernel_code_changed", "_converge_classes",
                         "_rebuild_dist", "_bus_converge", "_sync_notice", "_update_mode",
-                        "_send_to_app", "_kernel_sha", "_main_tracking", "_audit_restart_request")}
+                        "_send_to_app", "_kernel_sha", "_main_tracking", "_audit_restart_request",
+                        "_origin_main_sha", "_checkout_sha")}
         km._MAIN_DRIFT[0] = km._MAIN_DRIFT[1] = ""
         km._REBUILT_FOR[0] = ""
-        km._BUS_CONVERGED_FOR[0] = ""
+        km._INPLACE_TRIED[0] = ""
         self.notices, self.banners, self.audits, self.bus = [], [], [], []
         km._sync_notice = lambda msg, ok=True: self.notices.append((msg, ok))
         km._send_to_app = lambda app, payload: self.banners.append(payload)
         km._audit_restart_request = lambda action, **kw: self.audits.append((action, kw))
         km._update_mode = lambda: "ask"
         km._kernel_sha = lambda: "cur-sha"
+        km._origin_main_sha = lambda: "tgt"     # stubbed: the real one runs `git ls-remote` —
+        km._checkout_sha = lambda: "tgt"        # a NETWORK call per test (T216 review)
         km._main_tracking = lambda: True
 
     def tearDown(self):
@@ -200,6 +227,7 @@ class ConvergeArms(unittest.TestCase):
             setattr(km, n, f)
         km._MAIN_DRIFT[0] = km._MAIN_DRIFT[1] = ""
         km._REBUILT_FOR[0] = ""
+        km._INPLACE_TRIED[0] = ""
 
     def test_bus_only_drift_bounces_the_bus_not_the_kernel(self):
         km._main_drift_verdict = lambda o, c, k: ("restart", "tgt-bus")
@@ -215,19 +243,34 @@ class ConvergeArms(unittest.TestCase):
         self.assertIn("bus-converge", [a for a, _ in self.audits])
         self.assertTrue(any("bus" in m for m, _ in self.notices))
 
-    def test_a_broken_dist_build_never_becomes_a_bus_restart_storm(self):
-        # the skip arm re-enters on every drift pass until the dist rebuild latches — the bus
-        # bounce must latch on its own target, or a broken esbuild bounces the bus per pass
+    def test_a_broken_dist_build_never_becomes_a_converge_storm(self):
+        # ONE full in-place attempt per target (the _dist_converge_check precedent): a broken
+        # esbuild must not re-bounce the bus, re-classify, and re-build on every 300s pass
         km._main_drift_verdict = lambda o, c, k: ("restart", "tgt-storm")
         km._kernel_code_changed = lambda a, b: False
         km._converge_classes = lambda a, b: {"kernel": [], "bus": ["postal/postal_service.py"],
                                              "skip": [], "ast_equal": []}
         km._bus_converge = lambda: (self.bus.append(1), (True, ""))[1]
-        km._rebuild_dist = lambda: (False, "esbuild broken")
+        self.builds = []
+        km._rebuild_dist = lambda: (self.builds.append(1), (False, "esbuild broken"))[1]
         km._main_drift_check()
         km._MAIN_DRIFT[1] = ""          # let the next pass re-enter the arm (banner already sent)
         km._main_drift_check()
         self.assertEqual(len(self.bus), 1, "one bounce per target, however many passes")
+        self.assertEqual(len(self.builds), 1, "one build attempt per target, however many passes")
+
+    def test_an_unreadable_second_classification_falls_to_the_restart_path(self):
+        # the verdict's classify succeeded; the converge's re-read flaked — an empty mask would
+        # silently drop the bus bounce and write a lying audit row. Unprovable restarts.
+        km._main_drift_verdict = lambda o, c, k: ("restart", "tgt-flake")
+        km._kernel_code_changed = lambda a, b: False
+        km._converge_classes = lambda a, b: None
+        km._bus_converge = lambda: self.fail("no classes — nothing may act")
+        km._rebuild_dist = lambda: self.fail("no classes — nothing may act")
+        km._main_drift_check()
+        self.assertEqual(km._REBUILT_FOR[0], "", "never latched")
+        self.assertEqual([b.get("drift") for b in self.banners], ["restart"],
+                         "the restart offer is the safe converge")
 
     def test_a_failed_bus_bounce_is_loud_but_never_forces_a_kernel_restart(self):
         km._main_drift_verdict = lambda o, c, k: ("restart", "tgt-bus2")
@@ -263,7 +306,8 @@ class PreDeathRebuild(unittest.TestCase):
     def setUp(self):
         self._saved = {n: getattr(km, n) for n in
                        ("_rebuild_dist", "_sync_notice", "_audit_restart_request",
-                        "_kernel_code_changed")}
+                        "_kernel_code_changed", "_checkout_sha")}
+        km._checkout_sha = lambda: "other-sha"
         self.order, self.notices = [], []
         km._sync_notice = lambda msg, ok=True: self.notices.append((msg, ok))
         km._audit_restart_request = lambda action, **kw: None
@@ -295,6 +339,17 @@ class PreDeathRebuild(unittest.TestCase):
         self._run(rebuild_ok=False)
         self.assertEqual(self.order, ["rebuild", "post"], "proceed — _ensure_bundles is the backstop")
         self.assertTrue(any(not ok and "boom" in m for m, ok in self.notices), "loudly")
+
+    def test_a_just_failed_in_place_build_is_not_paid_twice(self):
+        # the in-place converge already paid (and failed) this exact esbuild — a doomed 180s
+        # re-run before the POST would only stretch the outage
+        km._INPLACE_TRIED[0] = "cur-checkout"
+        km._checkout_sha = lambda: "cur-checkout"
+        try:
+            self._run(rebuild_ok=True)
+            self.assertEqual(self.order, ["post"], "straight to the restart — no second build")
+        finally:
+            km._INPLACE_TRIED[0] = ""
 
 
 if __name__ == "__main__":
