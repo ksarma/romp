@@ -6739,7 +6739,7 @@ function styleCommentMark(m: HTMLElement, th: CommentThread): void {
   m.classList.toggle("busy", commentInFlight(th));
   m.title = th.status === "promoted" ? "thread, now the session '" + th.promotedName + "'"
     : th.status === "merged" ? "relayed thread: its discussion was sent back into the session"
-    : th.status === "resolved" ? "resolved thread: click to read or reopen"
+    : th.status === "resolved" ? "resolved thread: closed — click to read; a new comment continues the conversation"
     : "thread: click to open";
 }
 

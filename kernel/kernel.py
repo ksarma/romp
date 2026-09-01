@@ -939,6 +939,25 @@ def _apply_model_catalog(merged, source):
     return added
 
 
+def _family_newest_model(mid):
+    """The family's newest FULL id when `mid` is a superseded full id of that family (claude-fable-5 →
+    claude-fable-5-1), else None: a bare alias (fable) has no family here and auto-tracks on its own;
+    the newest id itself, an unknown id, or a non-version id (dated snapshot) remaps to nothing. The
+    thread WAKE path uses this (T223 rider, the user 2026-09-01): a dormant comment thread registered
+    on a superseded full id comes up on family-newest at its next EXPLICIT open — nothing may wake it
+    just to fix the id, so the remap happens only when it is being woken anyway."""
+    fam = _catalog_family(mid)
+    if not fam:
+        return None
+    with _catalog_lock:
+        rows = list(MODEL_VERSIONS.get(fam) or [])
+    full = [v["value"] for v in rows if _catalog_family(v.get("value"))]   # versioned ids only
+    if not full or mid not in full:
+        return None                          # an id the catalog does not list is not ours to remap
+    newest = max(full, key=_version_key)
+    return newest if _version_key(newest) > _version_key(mid) else None
+
+
 def _catalog_cache_path():
     return jd.STATE / MODEL_CATALOG_FILE_NAME
 
@@ -7569,6 +7588,8 @@ def _comment_status_refusal(prior):
         return "this thread is being relayed back to the session; give it a moment."
     if prior == "merged":
         return "this discussion was already relayed; reply in the thread to continue it."
+    if prior == "resolved":
+        return "this thread was closed; start a new comment to continue the conversation."
     return "that thread is gone."
 
 
@@ -8090,12 +8111,16 @@ def _comment_create(parent_sid, anchor_uuid, exact, text, name="", model="", eff
 
 
 def _comment_reply(parent_sid, tid, text):
-    """Send the user's next message into an existing thread. A resolved thread reopens — replying IS
-    the reopen gesture (event-based; no separate arm). Returns an error string or None."""
+    """Send the user's next message into a thread. A thread the user CLOSED (resolved) never reopens
+    (the user 2026-09-01, standing rule: closed threads stay on disk, never revived) — the reply is
+    refused with the reason, and a new comment starts a new thread; this retires the 2026-08-22
+    "replying reopens a resolved thread" arm. A RELAYED (merged) thread is not closed: T145 (the user
+    2026-08-28) keeps it talkable — a reply is the explicit gesture that continues it, and the next
+    relay carries only the new tail. Returns an error string or None."""
     be = Sessions.backend_for(parent_sid)
     if not hasattr(be, "fork"):
         return "threads need the SDK backend."
-    prior, th = _comment_update_if(parent_sid, tid, ("open", "resolved", "merged"),
+    prior, th = _comment_update_if(parent_sid, tid, ("open", "merged"),
                                    status="open", lastSeenT=int(time.time()))
     if th is None:
         if prior == "promoted":
@@ -8103,9 +8128,9 @@ def _comment_reply(parent_sid, tid, text):
             return "this thread is now the session '%s'; continue there." % (row.get("promotedName") or "")
         return _comment_status_refusal(prior)
     tsid = th["sid"]
-    if prior in ("resolved", "merged"):
-        # a RELAYED thread stays talkable (T145): replying reopens it exactly like a resolved one —
-        # the conversation continues, and a later relay sends only the new tail past relayedT
+    if prior == "merged":
+        # a RELAYED thread stays talkable (T145): the explicit reply continues it — the CLI comes
+        # back for exactly this gesture, and a later relay sends only the new tail past relayedT
         reg = _thread_reg(tsid)
         be.resume(reg.get("name") or ("thread-" + tsid[:8]), tsid)   # alive again; names/ untouched
     if not be.send(tsid, str(text)):
@@ -8187,7 +8212,11 @@ def _comment_merge(parent_sid, tid):
         be.send(parent_sid, body)
     except Exception as e:
         return _revert("the merge message could not be delivered: %s" % e)
-    _comment_update(parent_sid, tid, status="merged",
+    _comment_update(parent_sid, tid,
+                    # a thread the user CLOSED stays closed after its content is sent back (the user
+                    # 2026-09-01) — "merged" is the talkable status, and resolved→relay→reply must
+                    # not become the reopen door the direct reply refuses
+                    status=("resolved" if prior == "resolved" else "merged"),
                     relayedT=max((m.get("t") or 0) for m in msgs))
     if hasattr(be, "kill"):
         try:
@@ -8533,6 +8562,10 @@ def _sdk_locked():
             # store names no signed-in account — the same authority the usage bars trust, so the
             # pick can never sit in the UI as applied fact on a box that demonstrably cannot apply it
             _sdk_backend.login_ok = lambda: bool(_claude_account())
+            # a dormant comment thread registered on a superseded full model id comes up on its
+            # family's newest at its next EXPLICIT wake (T223 rider) — the catalog is the kernel's,
+            # so the backend consults this hook instead of importing it
+            _sdk_backend.thread_wake_model = _family_newest_model
             # silent mid-turn model swaps mint a completed card (the user 2026-08-23) — the backend
             # observes the transition; the judge store owns the card; the kernel wires the two
             type(_sdk_backend).on_model_fallback = staticmethod(
@@ -9475,7 +9508,8 @@ def _drive(msg, client):
         # Fork this conversation into a NEW parallel session (the user 2026-08-13). uuid (optional) is the
         # user message the fork cuts just BEFORE — absent means the whole conversation. LOUD on refusal;
         # on success the new tab arrives focused via _fork_session's own push.
-        err = _fork_session(sid, str(msg.get("uuid") or ""), str(msg["name"]), client=client)
+        err = _thread_name_refusal(str(msg["name"]).strip(), _thread_names()) \
+            or _fork_session(sid, str(msg.get("uuid") or ""), str(msg["name"]), client=client)
         if err:
             client["send"](json.dumps({"type": "warn", "text": err}))
     elif t == "commentCreate" and msg.get("uuid") and msg.get("exact") and msg.get("text"):
@@ -9551,6 +9585,8 @@ def _drive(msg, client):
         new = str(msg["name"]).strip()
         if not NAME_RE.match(new):
             client["send"](json.dumps({"type": "warn", "text": "session names use letters, digits, . _ - only."}))
+        elif _thread_name_refusal(new, _thread_names()):     # a thread's name — never relabel onto it (T223)
+            client["send"](json.dumps({"type": "warn", "text": _thread_name_refusal(new, _thread_names())}))
         elif be.rename(sid, new):                         # live → tmux rename hook / SDK reg; dead → names file
             client["send"](json.dumps({"type": "renamed", "id": sid, "name": new}))
     else:
@@ -14019,6 +14055,52 @@ def _thread_rows():
     return out
 
 
+def _thread_names():
+    """name -> (tsid, parent) for every comment thread that is NOT promoted — every name it answers
+    to (the comments-store name AND the registry name; a pre-naming thread's reg says
+    "thread-<hash>" while its row has no name), dormant or alive (a thread whose parent was ended
+    is alive=False with its row still open, and a revived parent finds it again). The CREATE doors
+    (POST /new, WS createSession) and the RELABEL doors (/fork, /rename and their WS twins) must
+    consult this: a thread's name is taken, and minting or renaming a top-level session onto it
+    makes a NAMESAKE — a real session with its own CLI process, listed as a tab, poisoning every
+    by-name surface (T223, 2026-09-01: a model-set sweep drove `romp new --model … <name>` over
+    every reg incl. 20 dormant threads and minted 18 such namesakes). Returns None when the stores
+    cannot be read: callers REFUSE on None — an unverifiable name must never mint (fail toward
+    refusing, the standing rule; the first cut returned {} and silently reopened the door)."""
+    out = {}
+    try:
+        cdir = jd.STATE / "comments"
+        files = sorted(cdir.glob("*.json")) if cdir.is_dir() else []
+        for f in files:
+            parent = f.stem
+            for t in (_load_comments(parent).get("threads") or []):
+                if (t.get("status") or "open") == "promoted":
+                    continue
+                tsid = str(t.get("sid") or t.get("tid") or "")
+                if not tsid:
+                    continue
+                for nm in (str(t.get("name") or tsid[:8]),        # the row's name, or the bare hash
+                           str(_thread_reg(tsid).get("name") or "")):   # _thread_rows shows for a nameless row
+                    if nm:
+                        out.setdefault(nm, (tsid, parent))
+    except Exception:
+        sys.stderr.write("thread names: cannot read the comments stores — create/rename doors "
+                         "refuse until they can: %s\n" % traceback.format_exc())
+        return None
+    return out
+
+
+def _thread_name_refusal(nm, names):
+    """The refusal text for a create/relabel door hitting a thread's name (None names = unverifiable)."""
+    if names is None:
+        return "couldn't verify \"%s\" against the comment threads — try again in a moment" % nm
+    hit = names.get(nm)
+    if not hit:
+        return ""
+    return ("\"%s\" is a comment thread of %s — open it from that session's comments, or pick another "
+            "name" % (nm, _name_of(hit[1]) or hit[1][:8]))
+
+
 # ── inbox-socket delivery (Claude Code ≥ 2.1.224) ──
 # The CLI binds a per-session Unix inbox socket and registers it — with its own session id and pid —
 # in ~/.claude/sessions/<pid>.json. One JSON line {"type":"user","message":{"role":"user","content":…}}
@@ -14557,7 +14639,13 @@ def _sid_of(who):
     if _name_of(who):
         return who
     live = Sessions.live()
-    return who if who in live else _live_names(live).get(who, who)
+    if who in live:
+        return who
+    hit = _live_names(live).get(who)
+    if hit:
+        return hit
+    th = (_thread_names() or {}).get(who)     # a comment thread's name: the explicit send reaches
+    return th[0] if th else who               # the THREAD (T223) — not a phantom sid spelled like a name
 
 
 def _optimistic_echo(sid, text, author="human"):
@@ -31438,6 +31526,18 @@ class Handler(BaseHTTPRequestHandler):
                     extra = _apply_new_session_prefs(live[nm], b)
                     return self._send(200, json.dumps({"ok": True, "id": live[nm], "existing": True, **extra}),
                                       "application/json")
+                names = _thread_names()
+                if names is None:
+                    return self._send(503, json.dumps({"ok": False, "error": _thread_name_refusal(nm, None)}),
+                                      "application/json")
+                th = names.get(nm)
+                if th:
+                    # a comment THREAD owns this name: the idempotent open lands on the thread (prefs
+                    # applied to it — the sweep's intent) and no namesake is ever minted (T223)
+                    extra = _apply_new_session_prefs(th[0], b)
+                    return self._send(200, json.dumps({"ok": True, "id": th[0], "existing": True,
+                                                       "thread": True, "parent": th[1], **extra}),
+                                      "application/json")
                 if (b.get("backend") or "sdk") == "sdk":
                     if not _sdk_ready():          # see _sdk_ready — a built backend is not a working one
                         return self._send(200, json.dumps({"ok": False, "error": SDK_SETUP_HINT}),
@@ -31475,6 +31575,9 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(200, json.dumps({"ok": False, "error":
                         'a session named "%s" is already running — pick another name' % nm}),
                                       "application/json")
+                tref = _thread_name_refusal(nm, _thread_names())
+                if tref:                             # a comment thread's name — the same poisoning (T223)
+                    return self._send(200, json.dumps({"ok": False, "error": tref}), "application/json")
                 psid = live.get(parent) or ""
                 if not psid and re.fullmatch(r"[0-9a-fA-F-]{32,36}", parent):
                     psid = parent                 # a sid: _fork_session validates it owns a transcript
@@ -31514,6 +31617,9 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(200, json.dumps({"ok": False, "error":
                         'a session named "%s" is already running — pick another name' % nm}),
                                       "application/json")
+                tref = _thread_name_refusal(nm, _thread_names())
+                if tref:                             # a comment thread's name — never relabel onto it (T223)
+                    return self._send(200, json.dumps({"ok": False, "error": tref}), "application/json")
                 tsid = live.get(target) or ""
                 if not tsid and re.fullmatch(r"[0-9a-fA-F-]{32,36}", target):
                     tsid = target
@@ -32435,6 +32541,8 @@ class Handler(BaseHTTPRequestHandler):
                 elif nm in live:                 # already running → its tab is already up; just focus it
                     _reveal_chat_for(client, {"type": "focus", "id": live[nm]})
                     _mark_views_dirty()          # pusher ships the tab; never a synchronous fleet build here
+                elif _thread_name_refusal(nm, _thread_names()):   # a thread's name (or unverifiable): never mint a namesake tab (T223)
+                    client["send"](json.dumps({"type": "warn", "text": _thread_name_refusal(nm, _thread_names())}))
                 elif msg.get("backend") == "sdk":   # non-tmux: drive via the Agent SDK
                     # _sdk_ready(), not _sdk(): the backend object exists even with the dependency
                     # missing, so the old check took it as a yes and created a session that could never

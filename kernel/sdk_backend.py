@@ -3811,6 +3811,9 @@ class SdkBackend:
                  log=None, reconcile: bool = False):
         self.state_dir = Path(state_dir)
         self.claude_bin = claude_bin
+        self.thread_wake_model = None      # kernel-installed: model_id -> replacement or None, consulted
+        #                                    ONLY when a comment THREAD is explicitly woken (T223 rider) —
+        #                                    the catalog lives in the kernel; the backend never imports it
         self._notify = notify              # notify(app, msg) -> push to clients (kernel._send_to_app)
         self._poke_cb = poke               # wake the kernel's producer/judges (optional)
         self._push_cb = push               # wake the kernel's PUSHER → immediate chat push (live tail)
@@ -3968,6 +3971,14 @@ class SdkBackend:
                     if r.get("effortPending") or r.get("modelPending"):
                         self._update_reg(sid, effortPending=False, modelPending=False)
                     queued = [t for t in (r.get("queue") or []) if isinstance(t, str) and t]
+                    if r.get("threadOf") and not queued:
+                        # a comment THREAD is never auto-resumed at boot (the user 2026-09-01: threads
+                        # persist on disk and come alive only on an explicit reply/branch; a deploy
+                        # boot resuming a cut thread turn put dormant threads back in RAM). Its
+                        # orphaned CLI was reaped above and its pending flags healed just now; only a
+                        # PERSISTED QUEUE — the user's own typed reply the CLI never started — earns
+                        # the resume, because delivering it IS honoring an explicit gesture.
+                        continue
                     # A cut turn is any MACHINE-ACTIVE last state, not just "working" (the user
                     # 2026-08-19, whose figure session sat blocked-on-you after every restart that
                     # landed mid-API-retry): "retrying" is a long-lived open-turn state — the CLI is
@@ -5131,6 +5142,23 @@ class SdkBackend:
                 _settled_now()
                 return None
             reg["sid"] = sid
+            if reg.get("threadOf") and reg.get("spawnedAt") and self.thread_wake_model is not None:
+                # A DORMANT comment thread (spawnedAt: it has run before — a fresh fork's FIRST connect
+                # keeps the model the dialog explicitly chose) registered on a SUPERSEDED full model
+                # id comes up on its family's newest at this explicit wake (T223 rider, the user
+                # 2026-09-01) — the one moment a dormant thread may be touched. Persisted with the
+                # label the popover reads, so the next wake needs no remap; no chat note (the model
+                # badge already shows what it runs on).
+                try:
+                    nm = self.thread_wake_model(reg.get("model") or "")
+                except Exception:
+                    nm = None
+                if nm and nm != reg.get("model"):
+                    self._log("thread %s wakes on %s (registered on superseded %s)"
+                              % (sid[:8], nm, reg.get("model")))
+                    reg["model"] = nm
+                    reg["liveModel"] = _alias_label(nm)
+                    self._update_reg(sid, model=nm, liveModel=_alias_label(nm))   # _reg_lock, not self._lock
             s = SdkSession(self, reg)
             s.on_boot_settled = on_boot_settled
             self.sessions[sid] = s
