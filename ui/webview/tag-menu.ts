@@ -34,7 +34,18 @@ let echoInstalled = false;
 export function installMenuEcho(): void {
   if (echoInstalled) return;
   echoInstalled = true;
-  document.addEventListener("pointerdown", () => {
+  document.addEventListener("pointerdown", (e) => {
+    // A press INSIDE a romp menu is interaction WITH that menu, never a click-away — broadcasting
+    // it closes the very menu being used. The case that found this (T213, 2026-09-01): the
+    // timeline lifts its menus into the SHELL document (same-origin top), so a tag-row press
+    // landed there, the shell's copy of this writer echoed it, and the storage event bounced into
+    // the timeline iframe, whose listener detached the row between its pointerdown and its click.
+    // A human-length press (~100ms) always lost that race — the sessions pane's tag filter read
+    // as dead — while an instant synthetic click still won it. The echo exists for presses on
+    // pane CONTENT; menus mark themselves (data-tag-menu here, data-romp-menu in the timeline's
+    // inlined mirror) and are skipped.
+    const t = e.target as Element | null;
+    if (t && typeof t.closest === "function" && t.closest("[data-tag-menu],[data-romp-menu]")) return;
     try { localStorage.setItem("romp:menu-echo", JSON.stringify({ t: Date.now() })); } catch { /* storage blocked */ }
   }, true);
 }
