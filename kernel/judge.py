@@ -215,7 +215,7 @@ JUDGE_FAIL_CAP = 3                       # the same rule for every other retryin
 #                                          model actually wrote. Closer / grouper / consolidator / courier; the
 #                                          planner (PLAN_PARSE_RETRIES) and distiller/briefer (DISTILL_FAIL_CAP)
 #                                          already had their own.
-PLACEMENTS_V = 9                         # placements-identity schema version (plan P2, the user 2026-07-06).
+PLACEMENTS_V = 10                        # placements-identity schema version (plan P2, the user 2026-07-06).
 #                                          v2 (2026-07-09): a 07-07/07-08 change to segment-text derivation
 #                                          stepped the text hash without this bump — dormant segments' old-hash
 #                                          placements stopped matching, and every restart/touch replayed them as
@@ -269,6 +269,10 @@ PLACEMENTS_V = 9                         # placements-identity schema version (p
 #                                          finding). v3's shape: a GROWN atom set for every forked session
 #                                          (865 such files in one live corpus), so the seal is what keeps
 #                                          months of restored history from replaying as fresh cards.
+#                                          v10 (2026-09-01): eclipsed-branch keep (T209) — a turn whose output
+#                                          the CLI's buffered api_error flush knocked off the spine parses out
+#                                          again. Existing transcripts with that geometry GROW their atom set
+#                                          (v3/v7's shape), so the same seal applies.
 PLAN_SESSIONS = None                     # per-pass session cap — REMOVED (the user 2026-06-30): the fairness
                                          # caps were a recurring source of confusing starvation bugs (a goal/
                                          # nudge stuck behind a full per-pass window), never clearly needed.
@@ -1657,7 +1661,8 @@ def _rewound_away(fsid, path, uuid):
     Only "rewind" answers non-False. None/unknown uuids (umbrellas, legacy nodes, synthetic
     orphan:<t> salvage ids, cross-file uuids outside the lineage) answer False — abandonment can't
     be proven, and a false stand-down silently drops a real ask. "clear" is /clear jurisdiction;
-    "broken" is kept by design. A check that itself fails logs loudly and answers False (the
+    "broken" is kept by design; "eclipsed" is LIVE content a machine api_error spur abandoned
+    (T209) — its mints proceed. A check that itself fails logs loudly and answers False (the
     pre-fix behavior), never silently blocks a mint.
 
     The verdict is TWO-VALUED because the evidence comes in two strengths (2026-08-17):
@@ -3227,8 +3232,8 @@ def reconcile_rewound_goals(fsid, path, now):
     changes AND the transcript's abandoned-branch set actually CHANGED, archive live goals whose
     anchor lies on a dead branch. The predicate is em.chain_membership's "rewind" UNIONED with the
     per-file discriminator (_per_file_rewound, minus the current graph's kept set — a resume-stitched
-    survivor is never swept): "rewind" is the only sweepable verdict, "clear" is /clear jurisdiction
-    and "broken"/unknown prove nothing — and a dead branch INSIDE a pre-/clear episode file, which
+    survivor is never swept): "rewind" is the only sweepable verdict, "clear" is /clear jurisdiction,
+    "eclipsed" is kept content (a machine spur's abandonment, T209) and "broken"/unknown prove nothing — and a dead branch INSIDE a pre-/clear episode file, which
     the whole-graph walk can only ever call "clear", is caught by its own file's walk, exactly the
     incident scan's dead-episode-vs-dead-branch discriminator. This is the only cover for the
     rewinds romp never sees: CLI-native Esc-Esc in a tmux terminal, the SDK forkAt resume, a cut the

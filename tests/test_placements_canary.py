@@ -200,7 +200,11 @@ class PlacementIdentityCanary(unittest.TestCase):
         # every pinned id is UNCHANGED — the bump seals sessions whose machine-cut resumes forked
         # fresh-headed transcripts, whose previously-dropped pre-cut atoms rejoin the set
         # (tests/test_kernel_resume_fork_lineage.py covers the stitch itself).
-        self.assertEqual(jd.PLACEMENTS_V, 9, "EXPECTED_SEG_IDS was pinned under PLACEMENTS_V=9 — "
+        # v10 (2026-09-01, the eclipsed-branch keep, T209): this fixture carries no api_error spur,
+        # so every pinned id is UNCHANGED — the bump seals transcripts whose retry-storm flush
+        # knocked a turn's output off the spine; those atoms rejoin the set
+        # (tests/test_romp_events_golden.py's eclipsed fixture covers the keep itself).
+        self.assertEqual(jd.PLACEMENTS_V, 10, "EXPECTED_SEG_IDS was pinned under PLACEMENTS_V=10 — "
                          "re-pin the ids and this version together, in the same commit")
 
 
