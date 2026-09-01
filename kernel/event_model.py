@@ -716,6 +716,7 @@ class FileAdapter:
         # and every parent target that dangled at ingest time (a delta record RESURRECTING one
         # would rebind repaired stitches, so it forces full).
         self.prompt_ids = set()
+        self.boundary_pids = set()
         self.skill_use_ids = set()
         self.src_tool_links = set()
         self.dangling = set()
@@ -770,6 +771,10 @@ class FileAdapter:
                 if t == "user":
                     if r.get("promptId"):
                         self.prompt_ids.add(r["promptId"])
+                        if r.get("isCompactSummary") is True:
+                            # a compaction summary's promptId is the designed link the boundary
+                            # ADOPTION keys on — episode records wearing it can re-seat a card
+                            self.boundary_pids.add(r["promptId"])
                     if r.get("sourceToolUseID"):
                         self.src_tool_links.add(r["sourceToolUseID"])
                 elif t == "assistant":
@@ -2097,8 +2102,17 @@ def _asm_gates(entry, leaf_path, candidate_files, links):
         if r.get("isCompactSummary") is True:
             return _asm_demote("summary")    # attaches to boundaries in the chronological pre-pass
         if t == "user" and r.get("promptId") and r["promptId"] in ad.prompt_ids:
-            return _asm_demote("promptid")   # a twin/wrapper/stdout split across appends
-            #                                  re-classifies old atoms
+            # A repeated promptId is ROUTINE — every record of a turn wears its prompt's id, so
+            # tool results repeat it on nearly every append (measured: this gate, unshaped,
+            # demoted 1863 of 1869 bursts on a live 46MB replay). Only two shapes can
+            # re-classify OLD atoms: a command-wrapper-family record (it grows the twins map
+            # retroactively) and any record wearing an adoptable boundary's episode pid (it can
+            # re-seat the adopted card's splice without changing kept — invisible to the
+            # invariance check). Everything else folds: the carried twins map serves the DELTA
+            # record's own classification record-locally.
+            if r["promptId"] in ad.boundary_pids or \
+                    CMD_WRAP_RE.match(_text_of(_content(r.get("message"))) or ""):
+                return _asm_demote("promptid")
         if t == "assistant":
             for b in _content(r.get("message")) or []:
                 if isinstance(b, dict) and b.get("type") == "tool_use" and \

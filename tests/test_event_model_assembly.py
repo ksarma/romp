@@ -181,6 +181,19 @@ class GateDemotions(unittest.TestCase):
         so["promptId"] = "p77"
         self._stream_then(self._base() + [w1], [so])
 
+    def test_repeated_promptid_on_plain_records_folds(self):
+        # the ROUTINE shape: every record of a turn wears its prompt's id, so tool results
+        # repeat it on nearly every real append — those must fold (unshaped, this gate
+        # demoted 1863/1869 bursts on a live replay); only wrapper-family shapes and
+        # adoptable-boundary episode pids can re-classify old atoms
+        opener = G.uline(T0 + 60, "run the checks", "u2", "a1")
+        opener["promptId"] = "p42"
+        work = G.aline(T0 + 70, "running", "a2", "u2", tools=("Bash",), stop="tool_use")
+        tr = G.trline(T0 + 80, "tu_a2_0", "u3", "a2")
+        tr["promptId"] = "p42"
+        done = G.aline(T0 + 90, "all green", "a3", "u3")
+        self._stream_then(self._base() + [opener, work], [tr, done], expect_full=False)
+
     def test_skill_link_to_new_invocation_demotes(self):
         # the payload record references tu_skill_9 BEFORE any such invocation exists; when the
         # invocation appends, a full parse reclassifies the OLD record — the gate must fire
