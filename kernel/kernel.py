@@ -279,12 +279,29 @@ def _machine_cut_cause(users, i, cut_t=0.0, cut_cause=""):
     IS that cut. Ordering alone makes this exact (the cut always precedes its resume), so a genuine stop
     made later is always past the stamp and still reads as the user's; no window, no expiry. A scan that
     reaches a terminator never consults the stamp: there the transcript already answered."""
+    passed_romp = False
     for nxt in users[i + 1:]:
         if nxt.get("author") == "romp":
             cause = _interrupt_cause(nxt)
             if cause:
                 return cause
-        elif em.is_interrupt_record(nxt) or nxt.get("author") == "human":
+            passed_romp = True                           # a cause-less romp atom is a RE-ENGAGE (a
+            #                                              nudge, a notice for some other cut): past
+            #                                              it, a later stop record is a SEPARATE
+            #                                              episode, never this record's twin
+        elif em.is_interrupt_record(nxt):
+            if passed_romp:
+                return None                              # romp re-engaged between the records → the
+            #                                              earlier stop stands on its own (the
+            #                                              notice-past-the-next-stop case)
+            # else: BACK-TO-BACK stop records are ONE cut event (T219, the user 2026-09-01: a
+            # restart cutting a turn mid-tool-use writes TWO records — 'for tool use' then plain —
+            # and the old terminator here made the first read as the user's stop without ever
+            # consulting the notice just past it or the backend's stamp; the card then claimed
+            # 'you stopped this session mid-turn' for a deploy the user never touched, twice on
+            # the live specimen). Read past the twin: the notice ahead, a real terminator, or the
+            # stamp below decides for BOTH.
+        elif nxt.get("author") == "human":
             return None                                  # the transcript settled it — the stamp says nothing new
     if cut_cause and (users[i].get("t") or 0) <= cut_t:   # notice not on disk yet → the backend's own record
         return cut_cause
@@ -299,8 +316,16 @@ def _interrupt_marks(turns, sid=""):
     it, or — before that notice reaches disk — the backend's machineCut stamp). The interrupt record
     itself authors 'human', so it's classified FIRST. `sid` is optional only so the pure-atom callers in
     the tests stay pure: pass it wherever it is known, or a cut still on its way to disk reads as a stop."""
-    users = [a for turn in turns for a in (turn.get("atoms") or []) if a.get("type") == "user"]
+    atoms = [a for turn in turns for a in (turn.get("atoms") or [])]
     cut_t, cut_cause = _last_machine_cut(sid) if sid else (0.0, "")
+    return _interrupt_marks_atoms(atoms, cut_t, cut_cause)
+
+
+def _interrupt_marks_atoms(atoms, cut_t=0.0, cut_cause=""):
+    """The pure-atom core of _interrupt_marks — `atoms` plus the backend's machineCut stamp as
+    plain arguments, so the classifier is testable without a states/ file (T219's repro rides
+    this surface)."""
+    users = [a for a in atoms if a.get("type") == "user"]
     last_intr = last_human = 0
     for i, a in enumerate(users):
         t = a.get("t", 0)
