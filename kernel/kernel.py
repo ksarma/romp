@@ -1252,21 +1252,29 @@ def _debt_reminder_body(asks):
 def _fire_debt_reminder(sid, now, alive_ids):
     """Send the reminder for every not-yet-reminded ask this session owes; True when one went out. The
     per-ask dedup key (asker>debtor:ts) makes this once-per-ask-EVER — escalation past an ignored
-    reminder belongs to the sender's card (the nudge-failed ladder), not to repeat reminders."""
+    reminder belongs to the sender's card (the nudge-failed ladder), not to repeat reminders.
+    Records AFTER the send, so a failed send retries (_mark_auto_nudged's direction) — and the record
+    write RE-READS the blob fresh under _NUDGE_LOCK and mutates only debtNudged, the key this writer
+    owns. The old shape held a pre-send snapshot across the live send and wrote the whole blob back:
+    last-writer-wins over every key, so it erased whatever a concurrent writer landed in the gap —
+    including _compact_suggest_tick's claim-before-send latch, which re-opened the double send the
+    claim exists to close (2026-09-01, refuter-confirmed)."""
     asks = _debt_asks(sid, alive_ids)
     if not asks:
         return False
-    d = _auto_nudge_data()
-    dn = dict(d.get("debtNudged") or {})
+    dn0 = _auto_nudge_data().get("debtNudged") or {}
     due = [(asker, name, ts, kind, head) for asker, name, ts, kind, head in asks
-           if ("%s>%s:%d" % (asker, sid, ts)) not in dn]
+           if ("%s>%s:%d" % (asker, sid, ts)) not in dn0]
     if not due:
         return False
     Sessions.backend_for(sid).send(sid, _debt_reminder_body([(n, t, k, h) for _a, n, t, k, h in due]))
-    for asker, _n, ts, _k, _h in due:
-        dn["%s>%s:%d" % (asker, sid, ts)] = int(now)
-    d["debtNudged"] = dn
-    _write_auto_nudge(d)
+    with _NUDGE_LOCK:
+        d = dict(_auto_nudge_data())
+        dn = dict(d.get("debtNudged") or {})
+        for asker, _n, ts, _k, _h in due:
+            dn["%s>%s:%d" % (asker, sid, ts)] = int(now)
+        d["debtNudged"] = dn
+        _write_auto_nudge(d)
     return True
 
 
@@ -1318,27 +1326,31 @@ def _debt_reminder_outcomes(sid, lt, now):
     its chance and moved on without replying (the reminder's own response turn included: both honest
     exits it offered were postal replies, so a reply-less end IS the failure). A debtor that never turns
     again is the backstop's case (_debt_backstop_tick)."""
-    d = _auto_nudge_data()
-    dn = dict(d.get("debtNudged") or {})
-    if not dn:
+    dn0 = _auto_nudge_data().get("debtNudged") or {}
+    if not dn0:
         return
     last_any, _ask = _postal_wait_maps()
     lt_end = (lt.get("end", lt.get("t", 0)) or 0) if lt else 0
-    changed = False
-    for key, fire_t in list(dn.items()):
+    drop = []
+    for key, fire_t in dn0.items():
         parsed = _debt_key_parse(key)
         if not parsed or parsed[1] != sid:
             continue
         asker, _debtor, ts = parsed
         if last_any.get((sid, asker), 0) >= ts:        # answered → the reminder worked
-            dn.pop(key); changed = True
+            drop.append(key)
             continue
         if isinstance(fire_t, (int, float)) and lt_end > fire_t:
             _debt_escalate(asker, sid, ts, now)        # moved on without replying → the user's turn
-            dn.pop(key); changed = True
-    if changed:
-        d["debtNudged"] = dn
-        _write_auto_nudge(d)
+            drop.append(key)
+    if drop:
+        with _NUDGE_LOCK:                              # retire-only, key-scoped: the goal-store IO
+            d = dict(_auto_nudge_data())               # above stays outside the lock; the fresh
+            dn = dict(d.get("debtNudged") or {})       # re-read means every key another writer
+            for key in drop:                           # landed meanwhile (a compact-suggest claim)
+                dn.pop(key, None)                      # survives this write (2026-09-01)
+            d["debtNudged"] = dn
+            _write_auto_nudge(d)
 
 
 def _debt_backstop_tick(now):
@@ -1346,27 +1358,31 @@ def _debt_backstop_tick(now):
     idling forever on its reminder: past the same backstop the awaiting/deferral machinery uses, an
     unanswered reminder escalates (or, if answered meanwhile, retires) regardless. Mirrors
     AWAITING_DEADMAN_SECS' rationale: a missing event, surfaced rather than waited on forever."""
-    d = _auto_nudge_data()
-    dn = dict(d.get("debtNudged") or {})
-    if not dn:
+    dn0 = _auto_nudge_data().get("debtNudged") or {}
+    if not dn0:
         return
     last_any, _ask = _postal_wait_maps()
-    changed = False
-    for key, fire_t in list(dn.items()):
+    drop = []
+    for key, fire_t in dn0.items():
         parsed = _debt_key_parse(key)
         if not parsed:
-            dn.pop(key); changed = True                # malformed → drop rather than loop on it forever
+            drop.append(key)                           # malformed → drop rather than loop on it forever
             continue
         asker, debtor, ts = parsed
         if last_any.get((debtor, asker), 0) >= ts:
-            dn.pop(key); changed = True
+            drop.append(key)
             continue
         if isinstance(fire_t, (int, float)) and now - fire_t > NUDGE_DEFER_BACKSTOP_SECS:
             _debt_escalate(asker, debtor, ts, now)
-            dn.pop(key); changed = True
-    if changed:
-        d["debtNudged"] = dn
-        _write_auto_nudge(d)
+            drop.append(key)
+    if drop:
+        with _NUDGE_LOCK:                              # _debt_reminder_outcomes' write shape exactly:
+            d = dict(_auto_nudge_data())               # escalation IO outside the lock, then a fresh
+            dn = dict(d.get("debtNudged") or {})       # re-read popping only this writer's own keys,
+            for key in drop:                           # so a concurrent claim on any other key
+                dn.pop(key, None)                      # survives (2026-09-01)
+            d["debtNudged"] = dn
+            _write_auto_nudge(d)
 
 
 def _rgb(color):
@@ -3527,8 +3543,14 @@ _SETTINGS_LOCK = threading.RLock()
 # ONE lock for the nudge ledger's read-modify-write spans (2026-08-19 audit: a live episode
 # record vanished with no state-visible writer — the ledger's writers run on the producer tick,
 # judge callbacks, and WS handlers concurrently, and two overlapping dict(read)…write() spans
-# silently drop whichever landed first). The four EPISODE-record writers hold it across their
-# span; remaining writers (debt, settings) migrate as touched.
+# silently drop whichever landed first). EVERY writer holds it now (the last unlocked ones —
+# debt, deferrals, the interrupt-block marker — migrated 2026-09-01, when a debt writer's
+# pre-send snapshot erased a concurrent compact-suggest claim and re-opened the double send the
+# claim closes), in one of two shapes: a writer whose whole span is cheap dict ops holds the
+# lock across it (_set_auto_nudge's idiom), and a writer with IO between evidence and write (a
+# live send, the goal-store escalations, the sweep's transcript reads) does that IO OUTSIDE the
+# lock, then RE-READS the blob fresh under it and mutates only the keys it owns — never a held
+# snapshot, whose whole-blob write is last-writer-wins over every other key.
 _NUDGE_LOCK = threading.RLock()
 
 
@@ -4933,14 +4955,15 @@ def _intr_blocked(sid=None):
 
 
 def _set_intr_blocked(sid, gid):
-    d = dict(_auto_nudge_data())
-    m = dict(d.get("intrBlocked") or {})
-    if gid:
-        m[str(sid)] = gid
-    else:
-        m.pop(str(sid), None)
-    d["intrBlocked"] = m
-    _write_auto_nudge(d)
+    with _NUDGE_LOCK:                    # every ledger writer serializes here (2026-09-01) — an
+        d = dict(_auto_nudge_data())     # unlocked read→write span, however small, can erase a
+        m = dict(d.get("intrBlocked") or {})   # concurrent writer's keys (whole-blob last-writer-wins)
+        if gid:
+            m[str(sid)] = gid
+        else:
+            m.pop(str(sid), None)
+        d["intrBlocked"] = m
+        _write_auto_nudge(d)
 
 
 def _intr_block_stands(sid, gid):
@@ -5450,7 +5473,12 @@ def _compact_suggest_tick(sid, tm, now):
         # (_mark_auto_nudged records only after its send, so a failed send retries), inverted at
         # this seam because the send must be single-shot — and the failure arm below rolls the
         # claim back under the lock, so "never latch a fire that never went out" still holds
-        # durably: the next tick retries the same crossing.
+        # durably: the next tick retries the same crossing. The claim (and the rollback) is
+        # durable against every OTHER ledger writer too: all of them hold _NUDGE_LOCK across
+        # their read-modify-write, and the ones with IO mid-span re-read fresh under the lock
+        # and mutate only their own keys — before that migration (2026-09-01), a debt reminder's
+        # pre-send snapshot written whole erased a concurrent claim (or resurrected a rolled-back
+        # one) and re-opened the double send through the side door.
         d = dict(_auto_nudge_data())                   # fresh read — a concurrent writer's blob is
         cs = dict(d.get("compactSuggested") or {})     # not clobbered
         held = [t for t in [int(x) for x in cs.get(sid, [])] if tokens >= t]
@@ -6616,27 +6644,30 @@ def _nudge_deferred_ok(gid, reason, now, sid=None, ev_t=None):
     a seen counter or a screen (both retired; a frozen record can no longer hide a stale claim,
     because nothing freezes). `ev_t` rides WHY_TURN_IN_FLIGHT records: the newest diary evidence the
     hold is waiting to see END, which is exactly the event the sweep retires it on."""
-    d = _auto_nudge_data()
-    dd = dict(d.get("deferred") or {})
-    if not reason:
-        if gid in dd:                                    # the reviver ran → forget the deferral
-            dd.pop(gid, None)
+    with _NUDGE_LOCK:                                    # the ledger's one write discipline (2026-09-01):
+        # every read→write span holds the lock — the decisions between are pure dict ops, and an
+        # unlocked span here could erase whatever another writer landed in the gap
+        d = dict(_auto_nudge_data())
+        dd = dict(d.get("deferred") or {})
+        if not reason:
+            if gid in dd:                                # the reviver ran → forget the deferral
+                dd.pop(gid, None)
+                d["deferred"] = dd
+                _write_auto_nudge(d)
+            return True
+        rec = dd.get(gid)
+        first = _deferral_at(rec)
+        if first is None:
+            dd[gid] = {"at": int(now), "why": reason, "sid": sid,
+                       **({"evT": int(ev_t)} if ev_t else {})}
             d["deferred"] = dd
             _write_auto_nudge(d)
-        return True
-    rec = dd.get(gid)
-    first = _deferral_at(rec)
-    if first is None:
-        dd[gid] = {"at": int(now), "why": reason, "sid": sid,
-                   **({"evT": int(ev_t)} if ev_t else {})}
-        d["deferred"] = dd
-        _write_auto_nudge(d)
-        return False
-    if _deferral_why(rec) != reason:                     # the wait moved to a DIFFERENT reviver: keep the clock
-        dd[gid] = {"at": first, "why": reason, "sid": sid,
-                   **({"evT": int(ev_t)} if ev_t else {})}
-        d["deferred"] = dd
-        _write_auto_nudge(d)
+            return False
+        if _deferral_why(rec) != reason:                 # the wait moved to a DIFFERENT reviver: keep the clock
+            dd[gid] = {"at": first, "why": reason, "sid": sid,
+                       **({"evT": int(ev_t)} if ev_t else {})}
+            d["deferred"] = dd
+            _write_auto_nudge(d)
     # WEDGED-REVIVER BOUND ON THE PASS EVENT, not a clock (W2c, the user 2026-08-24): the named
     # reviver is wedged exactly when its OWNING TIER has completed a per-session pass over this fsid
     # SINCE the deferral was minted and the reason still stands — the pass ran and did not retire it.
@@ -6700,8 +6731,7 @@ def _deferral_sweep_tick(now):
     An unknown/future why stands (and presents) until the walk re-runs it — the honest default. The
     sweep only POPS; it never rewrites a why (one writer per duty: rewriting here raced the walk and
     could re-dress a durable hold as in-flight whenever any judge call happened to be running)."""
-    d = _auto_nudge_data()
-    dd = dict(d.get("deferred") or {})
+    dd = dict(_auto_nudge_data().get("deferred") or {})
     if not dd:
         return
     by_sid = {}
@@ -6709,7 +6739,7 @@ def _deferral_sweep_tick(now):
         sid = (rec.get("sid") if isinstance(rec, dict) else None) or str(gid).rsplit(":", 1)[0]
         by_sid.setdefault(sid, []).append((gid, rec))
     active = {r.get("fsid") for r in jd.active_runs()}
-    changed = False
+    drop = []
     for sid, recs in by_sid.items():
         try:
             store = jd.load_goals(sid)
@@ -6758,11 +6788,15 @@ def _deferral_sweep_tick(now):
                 except Exception:
                     pop = False
             if pop:
-                dd.pop(gid, None)
-                changed = True
-    if changed:
-        d["deferred"] = dd
-        _write_auto_nudge(d)
+                drop.append(gid)
+    if drop:
+        with _NUDGE_LOCK:                              # the sweep's evidence-gathering above is heavy
+            d = dict(_auto_nudge_data())               # IO held across a long span — so it writes the
+            dd = dict(d.get("deferred") or {})         # debt writers' way (2026-09-01): a fresh
+            for gid in drop:                           # re-read under the lock, popping only the gids
+                dd.pop(gid, None)                      # it decided, so a concurrent writer's keys
+            d["deferred"] = dd                         # (a compact-suggest claim, a fresh mint)
+            _write_auto_nudge(d)                       # survive the write
 
 
 def _last_assistant_text(path, cap=4000):
