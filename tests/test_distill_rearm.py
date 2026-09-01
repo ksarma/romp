@@ -456,7 +456,9 @@ class KernelRearmWiring(unittest.TestCase):
                       "the EFFECTIVE model is compared — a triage change while following counts too")
         self.assertIn("rearm_failed_summaries", src, "the switch is a discrete recovery event")
         self.assertIn("_producer_wake.set()", src, "the retry pass starts now, not at the next tick")
-        self.assertIn("_push_all()", src, "the swirl replaces the chip immediately")
+        self.assertIn("_push_soon()", src,
+                      "the swirl replaces the chip via the woken pusher — never an inline fleet build "
+                      "on the request thread (the 2026-08-30 POST wedge)")
 
 
 if __name__ == "__main__":

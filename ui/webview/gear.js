@@ -49,30 +49,35 @@ var GEAR_HTML =
   '<button id=rgear hidden aria-hidden=true></button>' +
   '<div id=rsettings hidden><div class=rs-card>' +
   '<div class=rs-h>Settings</div>' +
-  "<div class='rs-sec rs-sec-first'>Sessions</div>" +
+  "<div class='rs-sec rs-sec-first'>Account</div>" +
+  "<div class='rs-row' id=rs-billing style='cursor:default'>" +
+  '<span style="flex:1 1 auto"><b>Claude login</b>' +
+  '<span class=rs-sub id=rs-login-acct>…</span>' +
+  "<div id=rs-login-flow style='margin-top:6px'>" +
+  "<button id=rs-login-btn type=button style='cursor:pointer;background:var(--btn-bg, #2a2a2a);color:var(--fg, #ccc);border:1px solid var(--hairline, #3a3a3a);border-radius:5px;padding:3px 10px'>Log in to Claude Code</button>" +
+  "<span id=rs-login-state class=rs-sub style='margin-left:8px'></span>" +
+  '</div></span></div>' +
+  '<div class=rs-sec>Sessions</div>' +
   "<div class='rs-row' style='cursor:default'><span style='flex:1 1 auto'><b>Default directory</b>" +
   '<span class=rs-sub>The default directory for NEW sessions (still editable per session). Persisted kernel-side — also settable with <code>romp default-dir</code>. Falls back to the romp install dir until you set one; blank reverts to it. ~ and $VARs expand.</span>' +
   "<div style='display:flex;gap:6px;margin-top:5px'>" +
-  "<input id=rs-defaultdir type=text spellcheck=false placeholder='install/serve default' style='flex:1 1 auto;min-width:0;box-sizing:border-box;background:#1e1e1e;color:#ccc;" +
+  "<input id=rs-defaultdir type=text spellcheck=false placeholder='install/serve default' style='flex:1 1 auto;min-width:0;box-sizing:border-box;background:var(--input-bg, #1e1e1e);color:var(--fg, #ccc);" +
   "border:1px solid #3a3a3a;border-radius:5px;padding:3px 6px'>" +
-  "<button id=rs-defaultdir-browse type=button style='flex:0 0 auto;cursor:pointer;background:#2a2a2a;color:#ccc;border:1px solid #3a3a3a;border-radius:5px;padding:3px 8px'>Browse…</button>" +
+  "<button id=rs-defaultdir-browse type=button style='flex:0 0 auto;cursor:pointer;background:var(--btn-bg, #2a2a2a);color:var(--fg, #ccc);border:1px solid var(--hairline, #3a3a3a);border-radius:5px;padding:3px 8px'>Browse…</button>" +
   '</div></span></div>' +
+  "<div class='rs-row rs-sep' style='cursor:default'><span style='flex:1 1 auto'><b>Default backend</b>" +
+  '<span class=rs-sub>What the + button uses for a NEW session — tmux drives a terminal pane; SDK runs via the Agent SDK. Both kinds run side by side; this only sets the default.</span>' +
+  "<select id=rs-backend style='display:none'>" +
+  '<option value=sdk>SDK</option><option value=tmux>tmux (terminal)</option>' +
+  '</select></span></div>' +
   "<label class='rs-row rs-sep'><input type=checkbox id=rs-autonudge>" +
   '<span><b>Auto Nudge</b><span class=rs-mixed id=rs-autonudge-split hidden></span>' +
   '<span class=rs-sub id=rs-autonudge-sub>' + AUTONUDGE_SUB + '</span>' +
   '</span></label>' +
-  "<div class='rs-row rs-sep' id=rs-billing>" +
-  '<span><b>Billing login</b>' +
-  '<span class=rs-sub id=rs-login-acct>…</span>' +
-  "<div id=rs-login-flow style='margin-top:6px'>" +
-  "<button id=rs-login-btn type=button style='cursor:pointer;background:#2a2a2a;color:#ccc;border:1px solid #3a3a3a;border-radius:5px;padding:3px 10px'>Log in…</button>" +
-  "<span id=rs-login-state class=rs-sub style='margin-left:8px'></span>" +
-  "<div id=rs-login-url hidden style='margin-top:6px'></div>" +
-  "<div id=rs-login-code hidden style='margin-top:6px;display:flex;gap:6px;align-items:center'>" +
-  "<input id=rs-login-input type=text autocomplete=off spellcheck=false placeholder='paste the code from the browser…' style='flex:1;background:#1e1e1e;color:#ccc;border:1px solid #3a3a3a;border-radius:5px;padding:4px 8px'>" +
-  "<button id=rs-login-send type=button style='cursor:pointer;background:#2a2a2a;color:#ccc;border:1px solid #3a3a3a;border-radius:5px;padding:3px 10px'>Submit</button>" +
-  "<button id=rs-login-cancel type=button style='cursor:pointer;background:transparent;color:#888;border:1px solid #3a3a3a;border-radius:5px;padding:3px 10px'>Cancel</button>" +
-  '</div></div></span></div>' +
+  "<label class='rs-row'><input type=checkbox id=rs-suggestcompact>" +
+  '<span><b>Suggest /compact</b><span class=rs-mixed hidden></span>' +
+  '<span class=rs-sub>When a session has been idle over an hour with a lot of context built up (first past 400k tokens, again past 800k), send it ONE suggestion to /compact at a natural boundary — its call, once per fill-up. Never sent to workers, muted sessions, or anything mid-turn. Off by default for a fresh install; this kernel keeps its own copy.</span>' +
+  '</span></label>' +
   "<label class='rs-row'><input type=checkbox id=rs-conserve>" +
   '<span><b>Conserve memory</b><span class=rs-mixed hidden></span>' +
   '<span class=rs-sub>Close the claude process of a session that has FADED (idle over an hour) and is on no open tab (each averages ~340MB). Everything persists — it revives on a tab click, a message, or a scheduled wake. An open tab always keeps its process; off = every session keeps its process for as long as it lives.</span>' +
@@ -81,32 +86,6 @@ var GEAR_HTML =
   '<span><b>File editing</b><span class=rs-mixed hidden></span>' +
   '<span class=rs-sub>Let the file viewer’s Edit save straight to disk on the file’s machine. Off by default; the viewer asks the first time. A session working in the edited folder is told, and a save always refuses when the file changed underneath you. Applies on every connected machine’s kernel.</span>' +
   '</span></label>' +
-  "<div class='rs-row' style='cursor:default'><span style='flex:1 1 auto'><b>Automatic updates <span class=rs-mixed hidden></span></b>" +
-  '<span class=rs-sub>romp watches for new tagged releases (every 6 hours) AND new commits on main (origin polled every few minutes, plus a restart offer when updated code sits on disk unbooted) — one banner covers both, and acting on it converges every attached machine. Check and ask (the default) offers the banner with an Update button; Install automatically converges by itself, restarting at the next quiet moment; Off never checks. Kernel-side setting.</span>' +
-  "<select id=rs-updates style='display:none'>" +
-  '<option value=ask>Check and ask</option><option value=auto>Install automatically</option><option value=off>Off</option>' +
-  '</select></span></div>' +
-  "<div class='rs-row rs-sep' style='cursor:default'><span style='flex:1 1 auto'><b>Default backend</b>" +
-  '<span class=rs-sub>What the + button uses for a NEW session — tmux drives a terminal pane; SDK runs via the Agent SDK. Both kinds run side by side; this only sets the default.</span>' +
-  "<select id=rs-backend style='display:none'>" +
-  '<option value=sdk>SDK</option><option value=tmux>tmux (terminal)</option>' +
-  '</select></span></div>' +
-  '<div class=rs-sec>Judges</div>' +
-  "<div class='rs-row rs-jrow'><b>Triage model <span class=rs-mixed hidden></span></b><span class=rs-sub>The model the triage judges use — planner, grouper, closer, courier (the judgment-heavy tier). Applies on the judges' next pass; no restart. A pick here follows to every connected machine's kernel.</span><select id=rs-judgemodel></select></div>" +
-  "<div class='rs-row rs-jrow'><b>Triage effort <span class=rs-mixed hidden></span></b><span class=rs-sub>Thinking effort for the triage judges. Default = no effort flag (the judges' standard behavior). Not every model accepts every level. Follows to every connected machine's kernel.</span><select id=rs-judgeeffort></select></div>" +
-  "<div class='rs-row rs-jrow'><b>Fast judging</b><span class=rs-sub>Run judge calls in fast mode (an Opus-only research preview). Only engages when the judge model is Opus; costs 2x Opus rates and draws on fast mode's own rate limits — the same pool your sessions' fast toggles use. Applies on the judges' next pass.</span><input type=checkbox id=rs-judgefast></div>" +
-  "<div class='rs-row rs-jrow'><b>Distilling model <span class=rs-mixed hidden></span></b><span class=rs-sub>The model for the judges that write the prose you read on cards — distiller, briefer, staller. Follow triage (the default) keeps them on the triage pick; pinning a model here lets the copy you read run richer than the placement judges. Follows to every connected machine's kernel.</span><select id=rs-distillmodel></select></div>" +
-  "<div class='rs-row rs-jrow'><b>Distilling effort <span class=rs-mixed hidden></span></b><span class=rs-sub>Thinking effort for the distilling judges. Follow triage (the default) rides the triage effort; Default pins no effort flag. Follows to every connected machine's kernel.</span><select id=rs-distilleffort></select></div>" +
-  "<div class='rs-row rs-jrow'><b>Indexing model <span class=rs-mixed hidden></span></b><span class=rs-sub>The model the indexing judges use — captioner + archiver (high-volume, low-stakes summarization). Haiku by default for cost. Follows to every connected machine's kernel.</span><select id=rs-indexmodel></select></div>" +
-  "<div class='rs-row rs-jrow'><b>Indexing effort <span class=rs-mixed hidden></span></b><span class=rs-sub>Thinking effort for the indexing judges. Default = none (indexing runs with thinking disabled as a cost lever; leave Default unless you know you want it). Follows to every connected machine's kernel.</span><select id=rs-indexeffort></select></div>" +
-  '<div class=rs-sec>Comments</div>' +
-  "<div class='rs-row rs-jrow'><b>Comment model <span class=rs-mixed hidden></span></b><span class=rs-sub>The model NEW comment threads start on. Same as the session (the default) keeps each thread on the model of the conversation it branches from; pinning one here starts every new thread on it. The comment dialog shows this default and its own pick still wins. Follows to every connected machine's kernel.</span><select id=rs-cmtmodel></select></div>" +
-  "<div class='rs-row rs-jrow'><b>Comment effort <span class=rs-mixed hidden></span></b><span class=rs-sub>Thinking effort for new comment threads. Same as the session (the default) inherits the effort of the conversation the thread branches from. Follows to every connected machine's kernel.</span><select id=rs-cmteffort></select></div>" +
-  "<label class='rs-row'><input type=checkbox id=rs-cmtfast>" +
-  '<span><b>Fast comment threads</b><span class=rs-mixed hidden></span>' +
-  "<span class=rs-sub>Start new comment threads in fast mode (Opus-only research preview). If the thread's model can't run it, the thread still opens on that model at normal speed, with a notice. Off = same as the session. Follows to every connected machine's kernel.</span>" +
-  '</span></label>' +
-  '<div class=rs-sec>Keyboard shortcuts</div>' + SHORTCUT_ROWS +
   '<div class=rs-sec>Chat</div>' +
   '<label class=rs-row><input type=checkbox id=rs-compact>' +
   '<span><b>Compact transcript</b>' +
@@ -125,26 +104,23 @@ var GEAR_HTML =
   '</span></div>' +
   "<div class='rs-row' style='cursor:default'><span style='flex:1 1 auto'><b>File links open in</b>" +
   '<span class=rs-sub>Where a file clicked in the chat opens — over the chat itself, or in the Feed pane so the transcript stays readable while the file is up. Browser dashboard only: in VS Code file links open in the editor, and a chat tab opened on its own has no Feed pane to use.</span>' +
-  "<select id=rs-filelink style='margin-top:5px;width:100%;background:#1e1e1e;color:#ccc;" +
-  "border:1px solid #3a3a3a;border-radius:5px;padding:3px 4px;cursor:pointer'>" +
+  "<select id=rs-filelink style='margin-top:5px;width:100%;background:var(--input-bg, #1e1e1e);color:var(--fg, #ccc);" +
+  "border:1px solid var(--hairline, #3a3a3a);border-radius:5px;padding:3px 4px;cursor:pointer'>" +
   '<option value=chat>The pane you clicked</option><option value=feed>The Feed pane</option>' +
   '</select>' +
-  '</span></div>' +
-  "<div class='rs-row' style='cursor:default'><span style='flex:1 1 auto;min-width:0'><b>Chat tabs</b>" +
-  "<span class=rs-sub>The tab strip's look. Classic is the original high-contrast strip; Yatharth is the contributed flat-wash aesthetic with the tinted line under the strip.</span>" +
-  "<div id=rs-tabtheme style='position:relative;margin-top:5px'></div>" +
   '</span></div>' +
   "<div class='rs-row' style='cursor:default'><span style='flex:1 1 auto;min-width:0'><b>Text scheme</b>" +
   "<span class=rs-sub>Chat text colors only. Each option previews its own tiers — prose, the dimmer tool text, code. (Solarized Light is omitted — its tiers are made for a light page and turn muddy here.)</span>" +
   "<div id=rs-chatscheme style='position:relative;margin-top:5px'></div>" +
   '</span></div>' +
-  '<div class=rs-sec>Feed</div>' +
-  '<label class=rs-row><input type=checkbox id=rs-feedcollapsed>' +
-  '<span><b>Collapse cards by default</b>' +
-  '<span class=rs-sub>Every card arrives collapsed to its one-line gist; expanding one is a per-card override. Moved here from the feed footer — a set-and-forget default, not a per-glance action.</span>' +
+  
+  "<div class='rs-row rs-jrow'><b>Comment model <span class=rs-mixed hidden></span></b><span class=rs-sub>The model NEW comment threads start on. Same as the session (the default) keeps each thread on the model of the conversation it branches from; pinning one here starts every new thread on it. The comment dialog shows this default and its own pick still wins. Follows to every connected machine's kernel.</span><select id=rs-cmtmodel></select></div>" +
+  "<div class='rs-row rs-jrow'><b>Comment effort <span class=rs-mixed hidden></span></b><span class=rs-sub>Thinking effort for new comment threads. Same as the session (the default) inherits the effort of the conversation the thread branches from. Follows to every connected machine's kernel.</span><select id=rs-cmteffort></select></div>" +
+  "<label class='rs-row'><input type=checkbox id=rs-cmtfast>" +
+  '<span><b>Fast comment threads</b><span class=rs-mixed hidden></span>' +
+  "<span class=rs-sub>Start new comment threads in fast mode (Opus-only research preview). If the thread's model can't run it, the thread still opens on that model at normal speed, with a notice. Off = same as the session. Follows to every connected machine's kernel.</span>" +
   '</span></label>' +
-  '<div class=rs-sec>Sessions pane</div>' +   // the pane's label (renamed from Timeline, the user 2026-08-24); "pane" disambiguates from the session-defaults section above
-  '<label class=rs-row><input type=checkbox id=rs-activeonly checked>' +
+  '<div class=rs-sec>Sessions pane</div>' +  '<label class=rs-row><input type=checkbox id=rs-activeonly checked>' +
   '<span><b>Show active sessions only</b>' +
   '<span class=rs-sub>Only draw lanes for sessions with work in the visible time range, so idle sessions do not take up room. They stay in the chat, and a lane reappears the moment you zoom or pan to a stretch where it did something.</span>' +
   '</span></label>' +
@@ -152,8 +128,17 @@ var GEAR_HTML =
   '<span><b>Collapse idle gaps</b>' +
   '<span class=rs-sub>Squish long idle stretches (no work on any lane — e.g. overnight) into a thin break on the timeline, so the active periods get the width.</span>' +
   '</span></label>' +
-  '<div class=rs-sec>Colors</div>' +
-  "<div class=rs-row style='cursor:default'><span style='flex:1 1 auto'><b>Colormap</b>" +
+  '<div class=rs-sec>Feed</div>' +
+  '<label class=rs-row><input type=checkbox id=rs-feedcollapsed>' +
+  '<span><b>Collapse cards by default</b>' +
+  '<span class=rs-sub>Every card arrives collapsed to its one-line gist; expanding one is a per-card override. Moved here from the feed footer — a set-and-forget default, not a per-glance action.</span>' +
+  '</span></label>' +
+  '<div class=rs-sec>Appearance</div>' +   // renamed from Colors (2026-08-28): it owns the overall theme now, not just tints
+  "<div class='rs-row' style='cursor:default'><span style='flex:1 1 auto;min-width:0'><b>Theme</b>" +
+  "<span class=rs-sub>The dashboard's overall look, every pane. Classic and Yatharth are dark (they differ in the tab strip: original high-contrast vs the contributed flat-wash); Yatharth light is the warm light theme — inside VS Code it wins over the editor theme, deliberately.</span>" +
+  "<div id=rs-theme style='position:relative;margin-top:5px'></div>" +
+  '</span></div>' +
+  "<div class='rs-row rs-sep' style='cursor:default'><span style='flex:1 1 auto'><b>Colormap</b>" +
   '<span class=rs-sub>One ramp for the whole dashboard — feed recency, usage, and context bars. Brightest = newest / highest.</span>' +
   "<div id=rs-cmap><button id=rs-cmap-btn type=button title='Pick the recency colormap'></button>" +
   '<div id=rs-cmap-list hidden></div></div></span></div>' +
@@ -161,7 +146,22 @@ var GEAR_HTML =
   '<span class=rs-sub>The palette sessions draw their identity color from — tabs, cards, lanes. Switching recolors every session to the same slot in the new set.</span>' +
   "<div id=rs-pal><button id=rs-pal-btn type=button title='Pick the session palette'></button>" +
   '<div id=rs-pal-list hidden></div></div></span></div>' +
-  '<div class=rs-sec>Debug</div>' +
+  '<div class=rs-sec>Keyboard shortcuts</div>' + SHORTCUT_ROWS +
+  '<div class=rs-sec>Judges</div>' +
+  "<div class='rs-row rs-jrow'><b>Triage model <span class=rs-mixed hidden></span></b><span class=rs-sub>The model the triage judges use — planner, grouper, closer, courier (the judgment-heavy tier). Applies on the judges' next pass; no restart. A pick here follows to every connected machine's kernel.</span><select id=rs-judgemodel></select></div>" +
+  "<div class='rs-row rs-jrow'><b>Triage effort <span class=rs-mixed hidden></span></b><span class=rs-sub>Thinking effort for the triage judges. Default = no effort flag (the judges' standard behavior). Not every model accepts every level. Follows to every connected machine's kernel.</span><select id=rs-judgeeffort></select></div>" +
+  "<div class='rs-row rs-jrow'><b>Fast judging</b><span class=rs-sub>Run judge calls in fast mode (an Opus-only research preview). Only engages when the judge model is Opus; costs 2x Opus rates and draws on fast mode's own rate limits — the same pool your sessions' fast toggles use. Applies on the judges' next pass.</span><input type=checkbox id=rs-judgefast></div>" +
+  "<div class='rs-row rs-jrow'><b>Distilling model <span class=rs-mixed hidden></span></b><span class=rs-sub>The model for the judges that write the prose you read on cards — distiller, briefer, staller. Follow triage (the default) keeps them on the triage pick; pinning a model here lets the copy you read run richer than the placement judges. Follows to every connected machine's kernel.</span><select id=rs-distillmodel></select></div>" +
+  "<div class='rs-row rs-jrow'><b>Distilling effort <span class=rs-mixed hidden></span></b><span class=rs-sub>Thinking effort for the distilling judges. Follow triage (the default) rides the triage effort; Default pins no effort flag. Follows to every connected machine's kernel.</span><select id=rs-distilleffort></select></div>" +
+  "<div class='rs-row rs-jrow'><b>Indexing model <span class=rs-mixed hidden></span></b><span class=rs-sub>The model the indexing judges use — captioner + archiver (high-volume, low-stakes summarization). Haiku by default for cost. Follows to every connected machine's kernel.</span><select id=rs-indexmodel></select></div>" +
+  "<div class='rs-row rs-jrow'><b>Indexing effort <span class=rs-mixed hidden></span></b><span class=rs-sub>Thinking effort for the indexing judges. Default = none (indexing runs with thinking disabled as a cost lever; leave Default unless you know you want it). Follows to every connected machine's kernel.</span><select id=rs-indexeffort></select></div>" +
+  '<div class=rs-sec>Updates & debug</div>' +
+  "<div class='rs-row' style='cursor:default'><span style='flex:1 1 auto'><b>Automatic updates <span class=rs-mixed hidden></span></b>" +
+  '<span class=rs-sub>romp watches for new tagged releases (every 6 hours) AND new commits on main (origin polled every few minutes, plus a restart offer when updated code sits on disk unbooted) — one banner covers both, and acting on it converges every attached machine. Check and ask (the default) offers the banner with an Update button; Install automatically converges by itself, restarting at the next quiet moment; Off never checks. Kernel-side setting.</span>' +
+  "<select id=rs-updates style='display:none'>" +
+  '<option value=ask>Check and ask</option><option value=auto>Install automatically</option><option value=off>Off</option>' +
+  '</select></span></div>' +
+  
   '<div class=rs-judges>' +
   '<label class=rs-row rs-half><input type=checkbox id=rs-judges-index>' +
   '<span><b>Show indexing judges</b>' +
@@ -176,6 +176,17 @@ var GEAR_HTML =
   '<button id=ra-open class=ra-openbtn>Token usage analytics</button></div>' +
   "<div class='rs-h rs-sep'>romp · version</div>" +
   '<div id=rsver>…</div></div></div>' +
+  '<div id=rs-login-modal hidden>' +
+  '<div class=rs-login-card>' +
+  "<div class=rs-h style='margin-bottom:4px'>Log in to Claude Code</div>" +
+  "<div id=rs-login-url hidden style='margin-top:6px'></div>" +
+  "<div id=rs-login-code hidden style='margin-top:8px;display:flex;gap:6px;align-items:center'>" +
+  "<input id=rs-login-input type=text autocomplete=off spellcheck=false placeholder='paste the code from the browser…' style='flex:1;background:var(--input-bg, #1e1e1e);color:var(--fg, #ccc);border:1px solid #3a3a3a;border-radius:5px;padding:4px 8px'>" +
+  "<button id=rs-login-send type=button style='cursor:pointer;background:var(--btn-bg, #2a2a2a);color:var(--fg, #ccc);border:1px solid var(--hairline, #3a3a3a);border-radius:5px;padding:3px 10px'>Submit</button>" +
+  '</div>' +
+  "<div style='margin-top:10px;text-align:right'>" +
+  "<button id=rs-login-cancel type=button style='cursor:pointer;background:transparent;color:#888;border:1px solid #3a3a3a;border-radius:5px;padding:3px 10px'>Cancel</button>" +
+  '</div></div></div>' +
   '<div id=ranalytics-back hidden><div id=ranalytics>' +
   '<div class=ra-top><div class=ra-title>Token usage</div>' +
   '<button id=ra-close aria-label=Close>✕</button></div>' +
@@ -206,10 +217,11 @@ function initGear(post) {
     jix = document.getElementById('rs-judges-index'), jtr = document.getElementById('rs-judges-triage'),
     an = document.getElementById('rs-autonudge'), bk = document.getElementById('rs-backend'),
     cvm = document.getElementById('rs-conserve'),
+    csg = document.getElementById('rs-suggestcompact'),
     dd = document.getElementById('rs-defaultdir'), gb = document.getElementById('rs-branch'),
     tc = document.getElementById('rs-tabctx'), fl = document.getElementById('rs-filelink'),
     cs = document.getElementById('rs-chatscheme'),
-    tt = document.getElementById('rs-tabtheme'),
+    tt = document.getElementById('rs-theme'),
     cg = document.getElementById('rs-collapsegaps'), ao = document.getElementById('rs-activeonly'),
     fc = document.getElementById('rs-feedcollapsed'),
     jm = document.getElementById('rs-judgemodel'),
@@ -268,7 +280,7 @@ function initGear(post) {
     var btn = document.createElement('button');
     btn.type = 'button';
     btn.style.cssText = 'display:flex;align-items:center;gap:8px;width:100%;min-width:0;text-align:left;' +
-      'background:#1e1e1e;border:1px solid #3a3a3a;border-radius:5px;padding:5px 8px;cursor:pointer;font:inherit;color:#ccc';
+      'background:var(--input-bg, #1e1e1e);border:1px solid var(--hairline, #3a3a3a);border-radius:5px;padding:5px 8px;cursor:pointer;font:inherit;color:var(--fg, #ccc)';
     var menu = document.createElement('div');
     menu.hidden = true;
     menu.style.cssText = 'position:absolute;left:0;right:0;top:100%;margin-top:4px;z-index:30;padding:4px;' +
@@ -327,7 +339,7 @@ function initGear(post) {
     { id: 'solarized-dark', name: 'Solarized Dark', fg: '#eee8d5', dim: '#93a1a1', code: '#d5b02d' }
   ];
   function schemeRowHTML(sc) {
-    return '<span style="flex:0 0 auto;min-width:96px;color:#ccc">' + sc.name + '</span>' +
+    return '<span style="flex:0 0 auto;min-width:96px;color:var(--fg, #ccc)">' + sc.name + '</span>' +
       '<span style="flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' +
       '<span style="color:' + sc.fg + '">Prose text</span> \u00b7 ' +
       '<span style="color:' + sc.dim + '">tool / meta</span> \u00b7 ' +
@@ -339,18 +351,27 @@ function initGear(post) {
     var cur = load().chatScheme; cur = (cur === 'high-contrast' || cur === 'solarized-dark') ? cur : 'default';
     csDrop(SCHEMES, cur);
   }
-  var TABTHEMES = [
-    { id: 'classic', name: 'Classic', sub: 'the original high-contrast strip \u00b7 thick selected outline \u00b7 no session tint' },
-    { id: 'yatharth', name: 'Yatharth', sub: 'flat session wash \u00b7 soft selected border \u00b7 tinted line under the strip' }
+  var THEMES = [
+    { id: 'classic', name: 'Classic', sub: 'dark \u00b7 the original high-contrast strip' },
+    { id: 'yatharth', name: 'Yatharth', sub: 'dark \u00b7 flat session wash \u00b7 tinted line under the strip' },
+    { id: 'yatharth-light', name: 'Yatharth light', sub: 'warm light \u00b7 cream page, clay accents \u00b7 the yatharth strip' }
   ];
-  function tabThemeRowHTML(th) {
-    return '<span style="flex:0 0 auto;min-width:96px;color:#ccc">' + th.name + '</span>' +
-      '<span style="flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:0.82em;color:#cccccc;opacity:0.6">' + th.sub + '</span>';
+  function themeRowHTML(th) {
+    return '<span style="flex:0 0 auto;min-width:96px;color:var(--fg, #ccc)">' + th.name + '</span>' +
+      '<span style="flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:0.82em;color:var(--fg, #cccccc);opacity:0.6">' + th.sub + '</span>';
   }
-  var ttDrop = housePick(tt, 'tabtheme', tabThemeRowHTML, function (id) { var s = load(); s.chatTabTheme = id; save(s); ttPaint(); });
+  function themeOf(s) {   // migration mirror of settings.ts loadSettings: pre-`theme` stores read their strip pick
+    if (s.theme === 'yatharth' || s.theme === 'yatharth-light' || s.theme === 'classic') return s.theme;
+    return s.chatTabTheme === 'yatharth' ? 'yatharth' : 'classic';
+  }
+  var ttDrop = housePick(tt, 'theme', themeRowHTML, function (id) {
+    var s = load(); s.theme = id;
+    s.chatTabTheme = (id === 'classic' ? 'classic' : 'yatharth');   // the derived LEGACY alias, kept in step for older readers
+    save(s); ttPaint();
+  });
   function ttPaint() {
     if (!ttDrop) return;
-    ttDrop(TABTHEMES, load().chatTabTheme === 'yatharth' ? 'yatharth' : 'classic');
+    ttDrop(THEMES, themeOf(load()));
   }
   ttPaint();
   // The Context-gauge picker joins the same builder (the user 2026-08-27, approving the flagged
@@ -433,6 +454,7 @@ function initGear(post) {
   });
   if (fe) fe.addEventListener('change', function () { post({ type: 'setFileEditing', enabled: fe.checked, gt: Date.now() }); });
   if (cvm) cvm.addEventListener('change', function () { post({ type: 'setConserve', enabled: cvm.checked }); });
+  if (csg) csg.addEventListener('change', function () { post({ type: 'setCompactSuggest', enabled: csg.checked, gt: Date.now() }); });   // T208 rides the same stamped class
   // ── the in-dashboard LOGIN flow (T157): the dashboard is already on the phone over Tailscale,
   // so streaming the CLI's paste-code OAuth URL here IS the phone login. The code input is a pure
   // pass-through to the kernel's PTY — nothing is stored or logged on any side.
@@ -440,13 +462,26 @@ function initGear(post) {
       lgU = document.getElementById('rs-login-url'), lgC = document.getElementById('rs-login-code'),
       lgI = document.getElementById('rs-login-input'), lgSend = document.getElementById('rs-login-send'),
       lgX = document.getElementById('rs-login-cancel'), lgA = document.getElementById('rs-login-acct');
-  var lgTimer = null;
+  var lgTimer = null, lgLive = '';   // lgLive = the flow state lgRender last saw (drives the button's two jobs)
+  // The paste-code UI lives in a MODAL (the user 2026-08-30: "it would just be a login button…
+  // then it would pop up another modal that says paste the code so it doesn't always sit there
+  // taking up space") — centered card over a translucent backdrop, the panel rule's treatment.
+  // Closing the modal never cancels the flow (Cancel does); the row's state span keeps narrating,
+  // and the button reopens the modal mid-flow instead of restarting the login.
+  var lgM = document.getElementById('rs-login-modal');
+  function lgModal(on) { if (lgM) lgM.hidden = !on; }
+  if (lgM) lgM.addEventListener('click', function (e) { if (e.target === lgM) lgModal(false); });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && lgM && !lgM.hidden) lgModal(false); });
   function lgRender(v) {
     if (!lgB) return;
     var f = (v && v.login) || { state: '' };
     if (lgA) lgA.textContent = v && v.acctLabel ? 'Logged in as ' + v.acctLabel + '. Each machine logs in its own credential store.'
                                                 : 'No Claude login on this machine — sessions can only bill an API key. Log in from any browser (your phone works: the code flow needs no localhost).';
-    lgB.hidden = f.state === 'url' || f.state === 'starting' || f.state === 'verifying';
+    lgLive = f.state || '';
+    var mid = f.state === 'url' || f.state === 'starting' || f.state === 'verifying';
+    lgB.hidden = false;
+    lgB.textContent = mid ? 'Show login code…' : 'Log in to Claude Code';
+    if (!f.state) lgModal(false);   // the flow ended (logged in / cancelled) — the modal's job is done
     lgS.textContent = f.state === 'starting' ? 'starting the login flow…'
       : f.state === 'verifying' ? 'checking the code…'
       : f.state === 'error' ? (f.err || 'the login flow failed — try again') : '';
@@ -476,6 +511,8 @@ function initGear(post) {
     }).catch(function () { lgTimer = setTimeout(lgPoll, 3000); });
   }
   if (lgB) lgB.addEventListener('click', function () {
+    lgModal(true);
+    if (lgLive === 'url' || lgLive === 'starting' || lgLive === 'verifying') return;   // reopen only — never restart a live flow
     post({ type: 'loginStart' });
     lgS.textContent = 'starting the login flow…';
     if (!lgTimer) lgTimer = setTimeout(lgPoll, 800);
@@ -489,7 +526,7 @@ function initGear(post) {
     if (!lgTimer) lgTimer = setTimeout(lgPoll, 800);
   });
   if (lgI) lgI.addEventListener('keydown', function (e) { if (e.key === 'Enter' && lgSend) lgSend.click(); });
-  if (lgX) lgX.addEventListener('click', function () { post({ type: 'loginCancel' }); if (lgTimer) { clearTimeout(lgTimer); lgTimer = null; } lgRender({ login: { state: '' } }); });
+  if (lgX) lgX.addEventListener('click', function () { lgModal(false); post({ type: 'loginCancel' }); if (lgTimer) { clearTimeout(lgTimer); lgTimer = null; } lgRender({ login: { state: '' } }); });
   if (upm) upm.addEventListener('change', function () { post({ type: 'setUpdateMode', mode: upm.value, gt: Date.now() }); });
   // The judge MODEL pickers mirror the session pickers (the user 2026-08-25): families top-level,
   // clicking a family sends its /models `default` (the user's remembered version), hover or
@@ -503,7 +540,7 @@ function initGear(post) {
     var btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'rs-vermenu-btn';
-    btn.setAttribute('style', 'background:#1e1e1e;color:#ccc;border:1px solid rgba(255,255,255,0.25);'
+    btn.setAttribute('style', 'background:var(--input-bg, #1e1e1e);color:var(--fg, #ccc);border:1px solid rgba(255,255,255,0.25);'
       + 'border-radius:5px;padding:2px 8px;cursor:pointer;font:inherit;');
     sel.parentNode.insertBefore(btn, sel.nextSibling);
     var labelOf = function (val) {
@@ -514,6 +551,11 @@ function initGear(post) {
     var mo = new MutationObserver(syncBtn);
     mo.observe(sel, { childList: true });
     sel.addEventListener('change', syncBtn);
+    // fill() writes sel.value SILENTLY on every open (a change event here would POST the setting
+    // back), so the button must join the ONE repaint registry fill() flushes — without this it
+    // showed its install-tick label (the first option) while the select and the STATE file held
+    // the user's pick (the user 2026-09-01, whose Opus distill pick displayed as Follow triage).
+    selectPickPaints.push(syncBtn);
     setTimeout(syncBtn, 0);
     var menu = null, sub = null;
     var closeAll = function () { if (sub) { sub.remove(); sub = null; } if (menu) { menu.remove(); menu = null; } };
@@ -694,7 +736,8 @@ function initGear(post) {
   // refused pick as applied (fill() runs only on open), and with every kernel AGREEING on the
   // kept value the mixed marks show nothing. Event-keyed: the frame IS the deciding event — toast
   // it in plain words and re-read the kernel's actual values if the modal is up. No polling.
-  var STALE_LABELS = { 'auto-nudge': 'Auto Nudge', 'file-editing': 'File editing',
+  var STALE_LABELS = { 'auto-nudge': 'Auto Nudge', 'compact-suggest': 'Suggest /compact',
+    'file-editing': 'File editing',
     'update-mode': 'Automatic updates', 'judge-model': 'Triage model', 'judge-effort': 'Triage effort',
     'index-model': 'Indexing model', 'index-effort': 'Indexing effort',
     'distill-model': 'Distilling model', 'distill-effort': 'Distilling effort',
@@ -747,9 +790,10 @@ function initGear(post) {
   // The model/effort <option>s come from /models — the same single source the
   // chat + timeline pickers use. Cached after the first successful fetch.
   var choices = null;
+  var choicesP = null;   // the single-flight promise — options are written exactly once per page
   function fillChoices() {
-    if (choices) return Promise.resolve(choices);
-    return fetch(ku('/models'), { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (d) {
+    if (choicesP) return choicesP;
+    choicesP = fetch(ku('/models'), { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (d) {
       choices = d || { models: [], efforts: [] };
       var mo = (choices.models || []).map(function (m) {
         var vs = (m.versions || []).map(function (v) { return '<option value="' + v.value + '">' + v.label + '</option>'; }).join('');
@@ -769,7 +813,8 @@ function initGear(post) {
       if (cmm) cmm.innerHTML = '<option value="session">Same as the session</option><option value="default">Default</option>' + mo;
       if (cme) cme.innerHTML = '<option value="session">Same as the session</option>' + eff;
       return choices;
-    }).catch(function () { return null; });
+    }).catch(function () { choicesP = null; return null; });   // retry on the next open, never a second live fetch
+    return choicesP;
   }
   function lv() { var t = document.querySelector('script[src*="feed.js"]');
     var m = t && t.getAttribute('src').match(/[?&]v=(\d+)/); return m ? +m[1] : 0; }
@@ -814,6 +859,7 @@ function initGear(post) {
     var mine = (v && v.settings) || null;
     [['updateMode', upm], ['judgeModel', jm], ['judgeEffort', je], ['indexModel', im],
      ['indexEffort', ie], ['distillModel', dm], ['distillEffort', de], ['fileEditing', fe],
+     ['compactSuggest', csg],
      ['commentModel', cmm], ['commentEffort', cme], ['commentFast', cmf]].forEach(function (pair) {
       var key = pair[0], el = pair[1];
       if (!el) return;
@@ -831,6 +877,21 @@ function initGear(post) {
       mark.hidden = false;
     });
   }
+  // fill()'s ONE write path for kernel-backed selects (the user 2026-09-01, whose stored distill
+  // pick displayed as the default): a stored value the option list doesn't carry is INJECTED as a
+  // marked option and selected — the row shows the truth (an off-list value, named) rather than
+  // silently falling to its first option. Values are validated at write time by the kernel, so an
+  // injection here means THIS page's list is behind the store — worth seeing, never worth hiding.
+  function setShow(sel, val) {
+    if (!sel) return;
+    if (val && !Array.prototype.some.call(sel.options, function (o) { return o.value === val; })) {
+      var o = document.createElement('option');
+      o.value = val;
+      o.textContent = val + " — not in this kernel's list";
+      sel.appendChild(o);
+    }
+    sel.value = val;
+  }
   function fill() { fillChoices().then(function () { return fetch(ku('/version'), { cache: 'no-store' }); }).then(function (r) { return r.json(); }).then(function (v) {
     // ONE /tunnels fetch feeds every cross-machine comparison: the autoNudge box and the select marks.
     // A failed /tunnels leaves the local answers standing, unmarked — same fallback as before.
@@ -841,18 +902,19 @@ function initGear(post) {
     }).catch(function () { fillAutoNudge(v.autoNudge, []); fillMixedMarks(v, []); });
     if (fe) fe.checked = !!v.fileEditing;   // the kernel's persisted opt-in is authoritative (see the viewer's consent popup)
     if (cvm) cvm.checked = !!v.conserveMemory;   // T148: the kernel's persisted conserve flag is authoritative
+    if (csg) csg.checked = !!v.compactSuggest;   // T208+: the kernel's persisted opt-in is authoritative
     lgRender(v);   // the Billing login block (T157) rides the same /version read
     if ((v.login || {}).state && !lgTimer) lgTimer = setTimeout(lgPoll, 1500);   // a flow mid-run resumes polling
-    if (upm && typeof v.updateMode === 'string') upm.value = v.updateMode;   // the kernel's persisted mode is authoritative
-    if (jm && typeof v.judgeModel === 'string') jm.value = v.judgeModel;   // the judge's ACTUAL current model/effort per tier is authoritative
-    if (im && typeof v.indexModel === 'string') im.value = v.indexModel;
-    if (je && typeof v.judgeEffort === 'string') je.value = v.judgeEffort;
+    if (typeof v.updateMode === 'string') setShow(upm, v.updateMode);   // the kernel's persisted mode is authoritative
+    if (typeof v.judgeModel === 'string') setShow(jm, v.judgeModel);   // the judge's ACTUAL current model/effort per tier is authoritative
+    if (typeof v.indexModel === 'string') setShow(im, v.indexModel);
+    if (typeof v.judgeEffort === 'string') setShow(je, v.judgeEffort);
     if (jf) jf.checked = !!v.judgeFast;   // server-side toggle: the kernel's state is authoritative
-    if (ie && typeof v.indexEffort === 'string') ie.value = v.indexEffort;
-    if (dm && typeof v.distillModel === 'string') dm.value = v.distillModel;   // RAW: "triage" selects the Follow-triage option
-    if (de && typeof v.distillEffort === 'string') de.value = v.distillEffort;
-    if (cmm && typeof v.commentModel === 'string') cmm.value = v.commentModel;   // RAW: "session" selects Same as the session
-    if (cme && typeof v.commentEffort === 'string') cme.value = v.commentEffort;
+    if (typeof v.indexEffort === 'string') setShow(ie, v.indexEffort);
+    if (typeof v.distillModel === 'string') setShow(dm, v.distillModel);   // RAW: "triage" selects the Follow-triage option
+    if (typeof v.distillEffort === 'string') setShow(de, v.distillEffort);
+    if (typeof v.commentModel === 'string') setShow(cmm, v.commentModel);   // RAW: "session" selects Same as the session
+    if (typeof v.commentEffort === 'string') setShow(cme, v.commentEffort);
     if (cmf && typeof v.commentFast === 'string') cmf.checked = v.commentFast === 'on';
     cmtFastGate(false);
     // defaultDir moved OFF /version on 2026-08-05: that route is auth-exempt and must carry no

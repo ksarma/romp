@@ -117,7 +117,7 @@ class InstallMetas(unittest.TestCase):
         # black (opaque), NOT black-translucent: opaque keeps the webview below the status bar,
         # so the standalone app needs no top safe-area handling
         self.assertIn("<meta name=apple-mobile-web-app-status-bar-style content=black>", html)
-        self.assertIn("<meta name=theme-color content='#1e1e1e'>", html)
+        self.assertIn("<meta name=theme-color id=meta-theme content='#1e1e1e'>", html)   # id: the shell's theme script swaps it for the light theme (2026-08-28)
 
     def test_panes_are_not_install_targets(self):
         # the iframes live INSIDE the installed shell; a manifest on any of them would offer

@@ -13,6 +13,8 @@ import diff from "highlight.js/lib/languages/diff";
 import yaml from "highlight.js/lib/languages/yaml";
 import type { ParsedAsk } from "../ask-types";
 import { TABBAR_H_KEY, TABBAR_H_DEFAULT, clampTabbarH, parseTabbarH } from "./tabbar-resize";
+import { ctxFallbackColor, pickTone, readableRgb } from "./ctx-color";
+import { applyTheme } from "./theme";
 import { SessionViews, viewVisible, viewsKey, revealIn, viewTagUnion, viewTags, type TagUnion, type SessionTag } from "./session-views";
 import { lensVisible, surfaceLens } from "./tag-lens";
 import { openTagMenu, tagMenuButton, syncTagFilter } from "./tag-menu";
@@ -47,6 +49,7 @@ import { mediaSrc, kernelUrl } from "./media";
 import { initStrip, fmtReset } from "./strip";
 import { apiErrorReason } from "./api-error-reason";
 import { mathBlock, mathInline } from "./math";
+import { setTip, pruneTip } from "./tip";
 import { agentCount, replyOwed, threadsByAnchor, threadBusy, threadStuck, findAnchorRange, sliceRanges, prunePending, type CommentThread } from "./comments";
 import { dragSlotIndex } from "./dragslot";
 
@@ -233,7 +236,7 @@ interface UserTodo { id: string; text: string; detail?: string; createdT?: numbe
 
 type ChipState = "working" | "ready" | "needsInput" | "awaiting" | "awaitingBg" | "idle" | "closed" | "compacting" | "clearing" | "blocked" | "retrying" | "interrupting" | "opening";   // needsInput = a live permission/picker prompt (on YOU) — renamed from the legacy "awaiting" (2026-08-15), which stays accepted for OLDER REMOTE KERNELS across federation; awaitingBg = idle main thread waiting on background work it dispatched (the user 2026-07-13)
 type PeerIdent = { name: string; host?: string; sid?: string; color?: { bg: string; fg: string } | null };   // a named peer behind a peer-kind wait (kernel _peer_identity, 2026-08-26)
-interface Status { state: ChipState; sinceEpoch: number | null; awaitingWhy?: string | null; awaitingKind?: string | null; awaitingPeers?: PeerIdent[] | null; awaitingTasks?: string[]; awaitingTaskIds?: string[]; effort?: string; model?: string; modelPending?: boolean; effortPending?: boolean; mode?: string; fast?: string; auth?: string; authLive?: string; authPending?: boolean; authBoth?: boolean; authAcct?: string; ctx?: string; ctxColor?: number[]; modelColor?: number[]; effortColor?: number[]; faded?: boolean; backend?: string; apiTooLong?: boolean; apiSpendLimit?: boolean; apiModelLimit?: boolean; apiAuthErr?: boolean; apiRefusal?: boolean; retrySuppressed?: boolean; retryNextAt?: number | null; retryTries?: number | null; }   // awaitingWhy/awaitingTasks = what an awaitingBg session is waiting on (kernel _session_awaiting's phrasing + the live awaited task descriptions) — the #bg-tasks box renders it when no tracked tasks claim the box (renderAwaitWhy; the user 2026-08-13, who moved it out of the statusline the same day PR #350 put it there)   // retrySuppressed = the user interrupted this thread's API-error storm → romp's auto-retry stays OFF for it until a successful turn re-arms (the user 2026-07-06). backend = "tmux" | "sdk"; apiTooLong = the "blocked" is a "prompt is too long" error (on you → red tab) vs a transient API error (amber/retrying); apiSpendLimit = a monthly spend cap (on you → raise it; NEVER auto-retried — retrying can't fix it, the user 2026-07-14); apiModelLimit = this session's MODEL is out of allowance (on you → switch model or add credits; not auto-retried either, the user 2026-08-01); apiRefusal = the model's safeguards refused the prompt itself (on you → rewrite it or drop the thread; never auto-retried — a refusal is deterministic on the same input, so a retry just manufactures the same refusal, the user 2026-08-15); ctxColor = the GLOBAL colormap's RGB for the context%, computed server-side; modelColor/effortColor = the same map's RGB tint for the model name + effort (by capability/effort rank), server-computed; modelPending = a /model switch is resolving → the badge shows switching-dots until the new name lands (server-driven, event-based, the user 2026-07-03); fast = the CLI's fast-mode state ("on"/"off"/"cooldown", from the SDK init's fast_mode_state; absent = unknown/unavailable → no fast badge)
+interface Status { state: ChipState; sinceEpoch: number | null; awaitingWhy?: string | null; awaitingKind?: string | null; awaitingPeers?: PeerIdent[] | null; awaitingTasks?: string[]; awaitingTaskIds?: string[]; effort?: string; model?: string; modelPending?: boolean; effortPending?: boolean; mode?: string; fast?: string; auth?: string; authLive?: string; authPending?: boolean; authBoth?: boolean; authAcct?: string; ctx?: string; ctxColor?: number[]; modelColor?: number[]; effortColor?: number[]; modelTone?: number[]; effortTone?: number[]; ctxTone?: number[]; faded?: boolean; backend?: string; apiTooLong?: boolean; apiSpendLimit?: boolean; apiModelLimit?: boolean; apiAuthErr?: boolean; apiRefusal?: boolean; retrySuppressed?: boolean; retryNextAt?: number | null; retryTries?: number | null; }   // awaitingWhy/awaitingTasks = what an awaitingBg session is waiting on (kernel _session_awaiting's phrasing + the live awaited task descriptions) — the #bg-tasks box renders it when no tracked tasks claim the box (renderAwaitWhy; the user 2026-08-13, who moved it out of the statusline the same day PR #350 put it there)   // retrySuppressed = the user interrupted this thread's API-error storm → romp's auto-retry stays OFF for it until a successful turn re-arms (the user 2026-07-06). backend = "tmux" | "sdk"; apiTooLong = the "blocked" is a "prompt is too long" error (on you → red tab) vs a transient API error (amber/retrying); apiSpendLimit = a monthly spend cap (on you → raise it; NEVER auto-retried — retrying can't fix it, the user 2026-07-14); apiModelLimit = this session's MODEL is out of allowance (on you → switch model or add credits; not auto-retried either, the user 2026-08-01); apiRefusal = the model's safeguards refused the prompt itself (on you → rewrite it or drop the thread; never auto-retried — a refusal is deterministic on the same input, so a retry just manufactures the same refusal, the user 2026-08-15); ctxColor = the GLOBAL colormap's RGB for the context%, computed server-side; modelColor/effortColor = the same map's RGB tint for the model name + effort (by capability/effort rank), server-computed; modelPending = a /model switch is resolving → the badge shows switching-dots until the new name lands (server-driven, event-based, the user 2026-07-03); fast = the CLI's fast-mode state ("on"/"off"/"cooldown", from the SDK init's fast_mode_state; absent = unknown/unavailable → no fast badge)
 interface Color { bg: string; fg: string; }
 // A run_in_background task surfaced in the #bg-tasks box (the kernel's _bg_tasks): a one-line summary +
 // status, expandable to the command + its output. status = running | completed | failed. For a dispatched
@@ -359,7 +362,10 @@ function reconcileOptimistic(s: Session): void {
   if (keep.length) pendingSent.set(s.id, keep); else pendingSent.delete(s.id);
   const inject = keep.filter((p) => !shownProvisional(p.text));
   if (!inject.length) { settle([]); return; }
-  const mk = (p: { text: string; imgPaths?: string[] }) => ({ md: p.text, optimistic: true, cancelable: false, imgPaths: p.imgPaths });
+  // cancelable from the PRESS (the user 2026-08-30, who sent mid-compaction and sat in an unlabeled,
+  // uncancellable beat until the kernel's park round-tripped): the ✕ on an optimistic bubble drops our
+  // re-injection and asks the kernel to cancel by body wherever the send landed (see the qx handler).
+  const mk = (p: { text: string; imgPaths?: string[] }) => ({ md: p.text, optimistic: true, cancelable: true, imgPaths: p.imgPaths });
   const qj = tailQueuedIdx(s.events);
   if (qj >= 0) {
     // something IS queued here → ours queues behind it: show it in that group, under its header, counted
@@ -389,13 +395,16 @@ function registerOptimistic(id: string, text: string, imgPaths?: string[]): void
   const v = views.get(id);
   if (v) v.stale = true;
   if (id === activeId) {
-    appendActive();
-    // Your OWN send always reveals itself: appendActive's stick rule keeps the viewport still when
-    // you're read up >80px from the bottom, so a send made while scrolled up painted below the fold
-    // and looked like it never appeared (the user 2026-08-09). Hitting Enter is the intent to see
-    // the message — scroll to it, exactly once, at send time.
+    // Your own send reveals itself only from the TAIL, measured BEFORE the bubble lands (the append
+    // grows scrollHeight, which would misread a tail-sitter as scrolled-up). At — or within the
+    // stick rule's 80px of — the bottom, hitting Enter scrolls to the new bubble, exactly once, at
+    // send time (the user 2026-08-09, whose send painted below the fold and looked lost). Scrolled
+    // UP reading history, the viewport stays exactly where it is and the bubble waits below (the
+    // user 2026-08-30, yanked mid-read by the unconditional snap that used to live here).
     const content = document.getElementById("content");
-    if (content) content.scrollTop = content.scrollHeight;
+    const wasAtBottom = !!content && nearBottom(content);
+    appendActive();
+    if (content && wasAtBottom) content.scrollTop = content.scrollHeight;
   }
 }
 
@@ -1436,15 +1445,19 @@ function linkifyFileUris(root: HTMLElement, skipThumbs?: string[], spacePaths?: 
   //               the same host data-URL flow the user-message pictures use (buildPathImg, imgRequest
   //               now carrying the session id for relative resolution); a PDF keeps its click-to-open
   //               link (no inline viewer in the sandbox).
-  // Capped so a message that enumerates a directory of images doesn't wallpaper the chat; every path
-  // stays clickable regardless.
+  // EVERY verified figure mention renders eagerly at its mention anchor (the user 2026-08-30,
+  // overruling the 4-eager+chip fold shipped a day earlier, paraphrased: they should be able to
+  // preview as many images as they want in the thread). No cap and no chip: previewFull's <img>s
+  // are browser-lazy (loading="lazy"), so an off-screen figure costs one DOM node until scrolled
+  // near — a many-figure message can't hurt scroll or startup — and the kernel's mention-pin store
+  // is already size-bounded with eviction. Every path stays clickable regardless.
   if (previewable.length) {
     const BLOCK_SEL = "p, li, h1, h2, h3, h4, h5, h6, blockquote, td, th";
     const strips = new Map<HTMLElement, HTMLElement>();   // figure anchor → its strip (same block shares one)
-    for (const p of previewable.slice(0, 4)) {
+    const renderFig = (p: string): HTMLElement | null => {
       const full = canPreview() ? previewFull(p, renderingOwnerSid ?? activeId, kernelVerified.has(p), (pathPins || {})[p])
         : previewKind(p) === "img" ? buildPathImg(p, renderingOwnerSid ?? activeId) : null;
-      if (!full) continue;
+      if (!full) return null;
       const block = mentionAt.get(p)?.closest(BLOCK_SEL) as HTMLElement | null;
       const anchor = block && root.contains(block) && block !== root ? block : root;
       let strip = strips.get(anchor);
@@ -1456,7 +1469,9 @@ function linkifyFileUris(root: HTMLElement, skipThumbs?: string[], spacePaths?: 
         strips.set(anchor, strip);
       }
       strip.appendChild(full);
-    }
+      return strip;
+    };
+    for (const p of previewable) renderFig(p);
   }
 }
 
@@ -3449,17 +3464,33 @@ function reflowQueuedGroup(turn: HTMLElement): void {
   const bubbles = Array.from(turn.querySelectorAll(".queued-bubble"));
   if (!bubbles.length) { turn.remove(); return; }
   const label = turn.querySelector(".queued-count") as HTMLElement | null;
-  if (!label) return;                                     // a bare (optimistic) group has no header to fix
+  if (!label) return;
+  if (label.dataset.bare === "1") {                       // the pre-confirmation group recounts in its own words
+    label.textContent = bubbles.length === 1 ? "sending…" : `sending ${bubbles.length}…`;
+    return;
+  }
   const nCmd = bubbles.filter((b) => b.querySelector(".slash-cmd-chip")).length;
   label.textContent = queuedCountText(bubbles.length, nCmd) + (label.dataset.why || "");
 }
 
 function renderQueued(ev: Extract<ChatEvent, { kind: "queued" }>): HTMLElement {
   const turn = el("div", "turn turn-queued");
-  // A BARE group is romp's own optimistic echo with nothing else known-queued: it gets the dashed bubble but
-  // NO header, because "N queued messages" is a claim we can't back for a send the session hasn't confirmed
-  // (the user 2026-07-16). Merged into a real queued group, the header returns and counts ours in — there the
+  // A BARE group is romp's own optimistic echo with nothing else known-queued: "N queued messages" is a
+  // claim we can't back for a send the session hasn't confirmed (the user 2026-07-16) — so it wears its
+  // OWN honest label instead: "sending…" states exactly what is known, the press happened and nothing is
+  // confirmed yet (the user 2026-08-30, who sat in that stage with no state label and no way to cut the
+  // message). Merged into a real queued group, the standard header returns and counts ours in — there the
   // queueing IS established, so assuming this one joins it is honest.
+  if (ev.bare) {
+    const head = el("div", "queued-head");
+    head.appendChild(hourglassIcon());
+    const label = el("span", "queued-count");
+    label.dataset.bare = "1";     // reflow rewrites this label in its own vocabulary, never "N queued"
+    label.textContent = ev.texts.length === 1 ? "sending…" : `sending ${ev.texts.length}…`;
+    label.title = "on its way to the session — cancellable until the session takes it";
+    head.appendChild(label);
+    turn.appendChild(head);
+  }
   if (!ev.bare) {
     const n = ev.texts.length;
     const nCmd = ev.texts.filter((t) => SLASH_CMD_RE.test(t.md)).length;
@@ -3515,13 +3546,14 @@ function renderQueued(ev: Extract<ChatEvent, { kind: "queued" }>): HTMLElement {
     // a MESSAGE returns to the composer to re-edit, a slash COMMAND just cancels. Covers both queues:
     // the backend's own (idx; SDK only — tmux's queue lives inside Claude Code, no recall) and ops
     // PARKED during compaction/model switches (park; romp-owned on every backend).
-    if (t.cancelable && (t.idx !== undefined || t.park !== undefined)) {
+    if (t.cancelable && (t.idx !== undefined || t.park !== undefined || t.optimistic)) {
       const x = el("button", "queued-x");
       x.textContent = "✕";
       x.title = isCmd ? "cancel this queued command" : "cancel this queued message and move it back to the composer";
       x.dataset.act = "qx";
       if (t.idx !== undefined) x.dataset.qidx = String(t.idx);
       if (t.park !== undefined) x.dataset.qpark = String(t.park);
+      if (t.optimistic) x.dataset.qopt = "1";   // ✕ before confirmation → cancel-by-body (no park/idx yet)
       if (isCmd) x.dataset.qcmd = "1";
       (x as any)._qmd = t.md;   // the bubble's body — the kernel's drift guard + the composer restore read it
       bubble.appendChild(x);
@@ -4373,7 +4405,7 @@ function showTabTip(tab: HTMLElement, s: Session): void {
   if (s.status.ctx) {
     const cr = el("div", "tab-tip-row tab-tip-ctx");          // extra vertical room — the battery bar is tall
     const ck = el("span", "tab-tip-k"); ck.textContent = "Context"; cr.appendChild(ck);
-    const bar = ctxBar(); setCtxBar(bar, s.status.ctx, s.status.state === "compacting", s.status.ctxColor);
+    const bar = ctxBar(); setCtxBar(bar, s.status.ctx, s.status.state === "compacting", pickTone(s.status.ctxColor, s.status.ctxTone));
     cr.appendChild(bar); tip.appendChild(cr);
   }
   // ledger rows, LABELLED + aligned with the rows above (the user 2026-06-23 v3): the summary, then Recent.
@@ -4547,7 +4579,9 @@ function tabCtxGauge(ctxStr: string, ctxColor?: number[]): HTMLElement {
   const fill = el("span", "tab-ctx-fill");
   fill.style.height = pct + "%";
   fill.style.background = (ctxColor && ctxColor.length === 3) ? `rgb(${ctxColor.join(",")})`
-    : (pct >= 85 ? "#c0392b" : pct >= 60 ? "#e0b020" : "#54B204");
+    : ctxFallbackColor(pct);   // theme-aware pair (ctx-color.ts): classic keeps main's 60/85 verbatim.
+  // FILLS wear the tone as-is in every theme — readableRgb is for TEXT (re-encoding the warn amber
+  // fill made it a muddy brown on light; the user 2026-08-31, off the live preview)
   g.appendChild(fill);
   g.title = `context ${pct}% used`;
   return g;
@@ -4760,7 +4794,7 @@ function renderTabs() {
     // has news), always, or never (the user 2026-08-08 v2, replacing the on/off toggle).
     if (settings.tabCtx !== "never" && s.status.ctx && st !== "compacting" && st !== "closed") {
       const pct = Math.max(0, Math.min(100, parseInt(s.status.ctx, 10) || 0));
-      if (settings.tabCtx === "always" || pct >= 50) tab.appendChild(tabCtxGauge(s.status.ctx, s.status.ctxColor));
+      if (settings.tabCtx === "always" || pct >= 50) tab.appendChild(tabCtxGauge(s.status.ctx, pickTone(s.status.ctxColor, s.status.ctxTone)));
     }
     // Rich hover tooltip (custom DOM — a native title can't colour/bold): backend in its own colour, the
     // full dir path, and mode/model/effort/context each on a line (the user 2026-06-23). See showTabTip.
@@ -7168,7 +7202,8 @@ function threadMetaStatus(th: CommentThread): Status {
   return { state: stuck ? "needsInput" : (threadBusy(th.state) ? "working" : "ready"),
            sinceEpoch: th.sinceEpoch || null, mode: th.mode || "", model: th.model || "",
            effort: th.effort || "default", fast: th.fast || "", backend: "sdk",
-           modelColor: th.modelColor, effortColor: th.effortColor } as Status;
+           modelColor: th.modelColor, effortColor: th.effortColor,
+           modelTone: (th as any).modelTone, effortTone: (th as any).effortTone } as Status;
 }
 
 /** The popover statusline's LEFT half — the thread's state chip, wearing exactly the chat's chip
@@ -7497,7 +7532,8 @@ function renderCommentPopover(): void {
           const choice = kind === "model" ? (effVal ? modelChoiceLabel(effVal) : null)
             : (effVal ? EFFORT_CHOICES.find((c) => c.value === effVal) : null);
           label.textContent = choice ? choice.label : (kind === "model" ? (st?.model || "Default") : (st?.effort || "default"));
-          const tint = choice?.color || (kind === "model" ? st?.modelColor : st?.effortColor);
+          const tint0 = kind === "model" ? pickTone(st?.modelColor, st?.modelTone) : pickTone(st?.effortColor, st?.effortTone);
+          const tint = (nonClassicChoiceTone(choice) as number[] | undefined) || (tint0 && tint0.length === 3 ? readableRgb(tint0) : tint0);   // TEXT tint: light re-encodes on BOTH branches (the session-status fallback skipped it)
           if (tint && tint.length === 3) label.style.color = `rgb(${tint[0]},${tint[1]},${tint[2]})`;
         }
         const caret = el("span", "meta-caret");
@@ -8998,6 +9034,7 @@ function landActive(content: HTMLElement | null, v: View): void {
   }
   v.shown = true;
   scheduleRailSticky();
+  updateJumpBtn();   // per-tab truth: the entering tab's restored position decides the chip, not the left one's
 }
 
 // Scroll ANCHORING for scrolled-up re-renders (the user 2026-07-05). "Appended content is below the
@@ -9077,6 +9114,7 @@ function appendActive() {
   if (stick) content.scrollTop = content.scrollHeight;
   else if (!(v && restoreScrollAnchor(content, v, anchor))) content.scrollTop = before;
   scheduleRailSticky();
+  updateJumpBtn();   // appends can cross the overflow boundary either way — re-read the chip's truth
 }
 
 // Row heights change when the pane is resized (text re-wraps), so the spacing-based
@@ -9097,6 +9135,49 @@ if (typeof ResizeObserver === "function") {
   const c = document.getElementById("content");
   if (c) c.addEventListener("scroll", scheduleRailSticky, { passive: true });
 }
+// ── jump to newest (the user 2026-08-31) ─────────────────────────────────────────────────────────
+// Scrolled-up reading leaves follow mode, and the send gate keeps it that way — this chip is the
+// deliberate way BACK. Visible only while the transcript overflows AND the view is off the bottom,
+// read through the SAME nearBottom threshold appendActive's stick and the send gate use (one
+// definition, never a second). Click = snap to the bottom + set the view's stick: follow mode
+// re-engaged exactly as today's at-bottom behavior — every subsequent append recomputes stick from
+// the at-bottom position and keeps descending until the user scrolls up, which re-shows the chip
+// from the same listener. It lives on BODY, never inside #content, so window re-renders cannot
+// rebuild it mid-click (the click-safety rule satisfied structurally); the snap itself is the
+// acknowledgment. Anchored to #content's bottom edge by measurement, re-run by the content
+// ResizeObserver below (the composer growing moves that edge) — event-based, no polling.
+const jumpBtn = document.createElement("button");
+jumpBtn.id = "jump-bottom";
+jumpBtn.title = "jump to newest — then follow new content";
+jumpBtn.setAttribute("aria-label", "jump to newest");
+jumpBtn.hidden = true;
+jumpBtn.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"'
+  + ' stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+  + '<polyline points="6 9.5 12 15.5 18 9.5"/></svg>';   // stemless chevron — the full arrow fought the short pill (the user 2026-08-31)
+function updateJumpBtn(): void {
+  const c = document.getElementById("content");
+  if (!c || c.clientHeight <= 0) { jumpBtn.hidden = true; return; }   // hidden pane measures 0 — no chip
+  const off = c.scrollHeight > c.clientHeight + 2 && !nearBottom(c);
+  jumpBtn.hidden = !off;
+  if (off) jumpBtn.style.bottom = (Math.max(0, window.innerHeight - c.getBoundingClientRect().bottom) + 8) + "px";
+}
+jumpBtn.onclick = () => {
+  const c = document.getElementById("content");
+  if (!c) return;
+  c.scrollTop = c.scrollHeight;                       // the snap IS the acknowledgment
+  const v = activeId ? views.get(activeId) : undefined;
+  if (v) { v.stick = true; v.scrollTop = c.scrollTop; }   // the explicit re-entry into follow mode
+  updateJumpBtn();                                    // at the bottom now — the chip hides itself
+};
+{
+  const c = document.getElementById("content");
+  if (c) {
+    document.body.appendChild(jumpBtn);
+    c.addEventListener("scroll", updateJumpBtn, { passive: true });   // it only measures
+    if (typeof ResizeObserver === "function") new ResizeObserver(updateJumpBtn).observe(c);
+  }
+}
+window.addEventListener("resize", updateJumpBtn);
 // Boxes ABOVE the transcript grow/shrink → keep the chat text visually anchored (the user 2026-06-30 for
 // #tabbar; extended to #ledger 2026-07-05). Both are `flex: 0 0 auto` directly above the `flex: 1 1 auto`
 // #content scroll area, so when one grows — a working dot wraps the tab strip to a second row, a ledger
@@ -9464,10 +9545,12 @@ function renderBgTasks() {
   host.classList.remove("bg-awaited");   // re-derived below from THIS payload (renderAwaitWhy adds its own)
   if (!count || !tasks.length) { renderAwaitWhy(host, s || null); return; }
   host.style.display = "";
-  // the AWAITED rows (the user 2026-08-19): when the await-green chip waits on specific tasks, those
-  // rows — and the box holding them — wear a thin outline in the chip's green (awaitingTaskIds, the
-  // kernel's exact launch-id match); the status DOT keeps its meaning (yellow = the task is running)
-  const awaited = new Set<string>((s!.status.state === "awaitingBg" && s!.status.awaitingTaskIds) || []);
+  // the AWAITED rows (the user 2026-08-19): when the chip waits on specific tasks, those rows — and
+  // the box holding them — wear a thin outline in the chip's green (awaitingTaskIds, the kernel's
+  // exact launch-id match); the status DOT keeps its meaning (yellow = the task is running). Keyed on
+  // the ids' PRESENCE, never the chip state (the user 2026-08-30: awaited things show even while the
+  // session is working — the kernel only ships ids when something genuinely awaits them).
+  const awaited = new Set<string>(s!.status.awaitingTaskIds || []);
   host.classList.toggle("bg-awaited", tasks.some((t) => awaited.has(t.id)));
   const sid = activeId as string;
   const open = bgFoldOpen.has(sid);
@@ -9523,7 +9606,11 @@ function renderBgTasks() {
 // (a peer's PR, a build) has no process to kill; tracked run_in_background tasks take the list path
 // above, which carries one Stop per running row.
 function renderAwaitWhy(host: HTMLElement, s: Session | null) {
-  const why = (s && s.status.state === "awaitingBg" && (s.status.awaitingWhy || "").trim()) || "";
+  // Keyed on awaited CONTENT, never the chip state (the user 2026-08-30, their words paraphrased:
+  // even while working, anything the session awaits shows at the chat bottom in the green box). The
+  // kernel ships awaitingWhy whenever something is genuinely awaited — armed kernel watches included,
+  // mid-turn included — so the fields' presence IS the render condition; the chip keeps its meaning.
+  const why = (s && (s.status.awaitingWhy || "").trim()) || "";
   if (!why || !activeId) { host.style.display = "none"; return; }
   host.style.display = "";
   host.classList.add("bg-awaited");   // this whole box IS the awaited thing — the chip's green border
@@ -9564,7 +9651,9 @@ function renderAwaitWhy(host: HTMLElement, s: Session | null) {
     for (const t of items) { const r = el("div", "bg-await-task"); r.textContent = "· " + t; det.appendChild(r); }
   }
   const note = el("div", "bg-await-note");
-  note.textContent = "The session is idle until this finishes; it picks back up on its own when the result lands.";
+  note.textContent = s!.status.state === "awaitingBg"
+    ? "The session is idle until this finishes; it picks back up on its own when the result lands."
+    : "The session keeps working meanwhile; it's told when this lands.";
   det.appendChild(note);
   host.appendChild(det);
 }
@@ -10118,6 +10207,29 @@ function modelChoiceLabel(value: string): { label: string; color?: number[] | nu
 // An SDK session sets it outright over the control channel (set_permission_mode), which is what makes
 // Bypass offerable there and only there: on tmux the click would land on a mode the cycle cannot
 // express, and _cycle_mode would drop it. `sdkOnly` is the filter, applied in toggleMetaMenu.
+// Permission-mode GLYPHS (the user 2026-08-28): each mode gets a small line icon beside its text —
+// the statusline badge and the picker rows carry it, always WITH the label (an icon alone is a
+// riddle). House icon style (the tag-glyph convention): 16-unit viewBox, stroke currentColor 1.4,
+// round caps/joins. The vocabulary: the GATE is a shield — Normal is the shield as-is, Bypass is
+// the shield slashed (the gate removed); Accept edits is the pencil (edits pre-approved); Auto is
+// the bolt (it decides at speed); Plan is the route pin-to-pin (look before touching); Don't ask
+// (renderable, not offerable) is the crossed speech bubble (it will never raise a question).
+const MODE_ICONS: Record<string, string> = {
+  default: '<path d="M8 2 L13 4 V8 C13 11.4 10.8 13.2 8 14 C5.2 13.2 3 11.4 3 8 V4 Z"/>',
+  acceptedits: '<path d="M3.5 12.5 L4.1 10.1 L10.9 3.3 A1.35 1.35 0 0 1 12.8 5.2 L6 12 L3.5 12.5 Z"/><path d="M9.9 4.3 L11.8 6.2"/>',
+  auto: '<path d="M8.8 2 L4.2 9 H7.4 L6.9 14 L11.8 6.8 H8.3 Z"/>',
+  plan: '<circle cx="4" cy="12" r="1.5"/><circle cx="12" cy="4" r="1.5"/><path d="M5.2 10.8 C7.5 9.5 8.5 6.5 10.8 5.2" stroke-dasharray="2 1.6"/>',
+  bypasspermissions: '<path d="M8 2 L13 4 V8 C13 11.4 10.8 13.2 8 14 C5.2 13.2 3 11.4 3 8 V4 Z"/><path d="M3.2 13 L12.8 3"/>',
+  dontask: '<path d="M3 3.5 H13 V10 H8.5 L5.5 12.8 V10 H3 Z"/><path d="M3.2 12.6 L12.8 2.6"/>',
+};
+function modeIconSvg(mode: string | undefined): string {
+  // accepts wire values AND display labels (metaButton receives prettyMode's text)
+  const raw = (mode || "default").toLowerCase().replace(/[\u2019' -]/g, "");
+  const k = raw === "normal" || raw === "" ? "default" : raw;
+  const body = MODE_ICONS[k] ?? MODE_ICONS.default;
+  return '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">' + body + "</svg>";
+}
+
 // Every mode wears a one-phrase sub-line (T140, the user 2026-08-28: where taglines exist under
 // some entries, add analogous ones saying what the other modes are — and 'Accept edits' reads
 // just 'Accept'; the mode ids stay the wire's). Each line states what the mode ENFORCES, worded
@@ -10229,27 +10341,42 @@ function metaDots(): HTMLElement {
 function metaButton(kind: MetaKind, text: string, forSid?: string | null): HTMLElement {
   const btn = el("span", "meta-btn");
   btn.dataset.kind = kind;
+  if (kind === "mode") {   // the permission glyph, always beside its text (never instead of it)
+    const ico = el("span", "meta-ico mode-ico");
+    ico.innerHTML = modeIconSvg(text);   // refreshed by the sync loop below from st.mode
+    btn.appendChild(ico);
+  }
   const label = el("span", "meta-label");
   label.textContent = text;
   btn.appendChild(label);
   const caret = el("span", "meta-caret");
   caret.textContent = "▾";
   btn.appendChild(caret);
-  btn.title = kind === "model" ? "change model (sends /model)"
+  // the styled tip (tip.ts), not a native title — every tooltip wears the one .romp-tip dress
+  setTip(btn, kind === "model" ? "change model (sends /model)"
     : kind === "effort" ? "change thinking effort (sends /effort)"
     : kind === "fast" ? "toggle fast mode (sends /fast)"
-    : "change permission mode (shift+tab cycle)";
+    : "change permission mode (shift+tab cycle)");
   btn.addEventListener("click", (e) => { e.stopPropagation(); toggleMetaMenu(kind, btn, forSid ?? null); });
   return btn;
 }
 
 // The model/effort label tint, from the server-computed colormap RGB (by capability/effort rank, the user
 // 2026-07-02) — "" for mode (untinted) or an unknown model/effort, which resets to the default gray.
+// a /models-route choice carries classic `color` + yatharth `tone` — pick by theme like the badges
+function nonClassicChoiceTone(choice: { color?: number[] | null; tone?: number[] | null } | null | undefined): number[] | undefined {
+  if (!choice) return undefined;
+  const picked = pickTone(choice.color, choice.tone);
+  return picked && picked.length === 3 ? readableRgb(picked) : (picked as number[] | undefined);
+}
+
 function metaColor(kind: MetaKind, st: Status): string {
   // fast ON wears the CLI's own fast-mode orange (--fast, a status color) so the badge reads the same
   // here as in the Claude Code TUI; off/cooldown stay the default gray.
   if (kind === "fast") return (st.fast || "").toLowerCase() === "on" ? "var(--fast)" : "";
-  const c = kind === "model" ? st.modelColor : kind === "effort" ? st.effortColor : undefined;
+  const c0 = kind === "model" ? pickTone(st.modelColor, st.modelTone)
+    : kind === "effort" ? pickTone(st.effortColor, st.effortTone) : undefined;
+  const c = c0 && c0.length === 3 ? readableRgb(c0) : c0;
   return (c && c.length === 3) ? `rgb(${c[0]},${c[1]},${c[2]})` : "";
 }
 
@@ -10275,6 +10402,10 @@ function syncMetaControls(meta: HTMLElement, st: Status, forSid?: string | null)
     const disp = kind === "mode" ? prettyMode(st.mode) : kind === "fast" ? prettyFast(st.fast)
       : metaCurrent(kind, st);
     const label = b.querySelector(".meta-label") as HTMLElement | null;
+    if (kind === "mode") {
+      const ico = b.querySelector(".mode-ico") as HTMLElement | null;
+      if (ico) ico.innerHTML = modeIconSvg(st.mode);
+    }
     // A switching MODEL shows animated dots, not the stale/premature name (the user 2026-07-03): the
     // server drives it (st.modelPending) — event-based, cleared the instant the new model actually lands —
     // and the local click heuristic (isMetaPending) covers the sub-second before the first server push.
@@ -10338,13 +10469,25 @@ function toggleMetaMenu(kind: MetaKind, btn: HTMLElement, forSid?: string | null
   for (const c of META_CHOICES[kind].filter((c) => !c.sdkOnly || s.status.backend === "sdk")) {
     const item = el("div", "meta-item" + (isCurrentMeta(kind, s.status, c.value) ? " current" : ""));
     item.tabIndex = 0;
+    const rowIco = kind === "mode" ? el("span", "meta-ico mode-ico") : null;
+    if (rowIco) rowIco.innerHTML = modeIconSvg(c.value);
+    // model/effort rows wear THEIR OWN rank color (the user 2026-08-31: a picker whose rows are
+    // all default-gray codes nothing) — the same /models-fed color+tone the badges use
+    if (kind === "model" || kind === "effort") {
+      const rowTint = nonClassicChoiceTone(c as { color?: number[] | null; tone?: number[] | null });
+      if (rowTint) item.style.color = `rgb(${rowTint.join(",")})`;
+    }
     if (c.sub) {
       const head = el("div");
-      head.textContent = c.label;
+      if (rowIco) head.appendChild(rowIco);
+      head.appendChild(document.createTextNode(c.label));
       const sub = el("div", "meta-item-sub");
       sub.textContent = c.sub;
       item.appendChild(head);
       item.appendChild(sub);
+    } else if (rowIco) {
+      item.appendChild(rowIco);
+      item.appendChild(document.createTextNode(c.label));
     } else {
       item.textContent = c.label;
     }
@@ -10470,7 +10613,7 @@ function setCtxBar(bar: HTMLElement, ctxStr: string | undefined, compacting = fa
   // ramp(context%) on the selected map, bright = full) so the chat battery matches the timeline + usage bars.
   // Fall back to the old traffic-light if an older kernel didn't ship a color.
   const fillBg = (ctxColor && ctxColor.length === 3) ? `rgb(${ctxColor.join(",")})`
-    : (pct >= 85 ? "#c0392b" : pct >= 60 ? "#e0b020" : "#54B204");
+    : ctxFallbackColor(pct);   // theme-aware pair; fills stay un-re-encoded (see tabCtxGauge's note)
   if (fill) { fill.style.width = pct + "%"; fill.style.background = fillBg; }
   if (txt) txt.textContent = pct + "%";
   bar.title = `context ${pct}% used — click to /compact`;
@@ -10497,9 +10640,10 @@ function stopButton(state?: ChipState): HTMLElement {
   const btn = el("button", "stop-btn");
   (btn as HTMLButtonElement).type = "button";
   const stuck = state === "retrying" || state === "blocked";
-  btn.title = stuck
-    ? "Stop retrying — interrupt this thread and hold its auto-retry off until you send it a message"
-    : "Stop — interrupt this session (same as Ctrl+C)";
+  // styled tip (tip.ts): a label line + its explanation, so the icon-only square explains itself
+  setTip(btn, stuck
+    ? "Stop retrying\ninterrupt this thread and hold its auto-retry off until you send it a message"
+    : "Stop\ninterrupt this session (same as Ctrl+C)");
   btn.setAttribute("aria-label", stuck ? "Stop retrying this session" : "Interrupt session");
   btn.appendChild(el("span", "stop-icon"));   // a filled square (CSS), the universal stop glyph
   btn.addEventListener("click", (e) => {
@@ -10611,12 +10755,7 @@ function updateStatusline() {
     chip.textContent = CHIP_LABEL[s.status.state] ?? (s.status.state[0].toUpperCase() + s.status.state.slice(1).toLowerCase());
     sl.appendChild(chip);
   }
-  // stop/interrupt button, right beside the state badge — while busy (working/compacting) AND while stuck
-  // retrying / blocked on an API error, where it doubles as the per-thread auto-retry off-switch (the user
-  // 2026-07-06). Omitted in idle states (nothing to interrupt) — the user 2026-06-19 — and while
-  // INTERRUPTING (the stop is already in flight; re-pressing it is a lie — the user 2026-07-02).
-  if (s.status.state === "working" || s.status.state === "compacting"
-      || s.status.state === "retrying" || s.status.state === "blocked") sl.appendChild(stopButton(s.status.state));
+
   // The right-side cluster — dir · branch · mode/model/effort/fast badges · ctx battery — grouped in ONE
   // container (.sl-right) that carries the right-justify margin and wraps INTERNALLY with right-aligned
   // rows. Grouped, not flat: when a narrow pane wraps the statusline, flat children restart each extra row
@@ -10655,9 +10794,18 @@ function updateStatusline() {
   right.appendChild(meta);
   const bar = ctxBar();
   bar.id = "ctx-bar";   // the statusline slot's id — the 1s ticker refreshes THIS copy in place (the tab tip's carries none)
-  setCtxBar(bar, s.status.ctx, s.status.state === "compacting", s.status.ctxColor);
+  setCtxBar(bar, s.status.ctx, s.status.state === "compacting", pickTone(s.status.ctxColor, s.status.ctxTone));
   right.appendChild(bar);
+  // stop/interrupt button — at the FAR RIGHT of the statusline (the user 2026-08-28; it sat
+  // beside the state chip on the left before), riding inside the right cluster so a wrapped
+  // narrow statusline keeps it with the controls. Shown while busy (working/compacting) AND while
+  // stuck retrying / blocked, where it doubles as the per-thread auto-retry off-switch (the user
+  // 2026-07-06). Omitted in idle states (nothing to interrupt — the user 2026-06-19) and while
+  // INTERRUPTING (the stop is already in flight; re-pressing it is a lie — the user 2026-07-02).
+  if (s.status.state === "working" || s.status.state === "compacting"
+      || s.status.state === "retrying" || s.status.state === "blocked") right.appendChild(stopButton(s.status.state));
   sl.appendChild(right);
+  pruneTip();   // a rebuilt statusline tears tip anchors (the stop button) out mid-hover — drop the orphan (PR #763 item 8; the feed's render does the same)
 }
 
 // Unsent composer text, per session — a draft belongs to the tab it was typed
@@ -12007,6 +12155,10 @@ window.addEventListener("message", (e: MessageEvent) => {
   // had already left romp's queue (handed to the CLI — no recall exists): toast the kernel's 'too late'
   // and UNDO the optimistic composer restore if the draft is untouched — leaving the copy there invited
   // re-sending a message that is already being answered. ok:true just drops the stash (restore stands).
+  // T214: an answer that found no waiting question (the ask died with a kernel restart) — the
+  // kernel flipped nothing and says so; the toast carries the whole story, including that the
+  // session was already asked to raise its question again.
+  else if (m.type === "askLost" && typeof m.text === "string") warnToast(m.text);
   else if (m.type === "cancelResult" && typeof m.id === "string") {
     const key = m.id + " " + (typeof m.md === "string" ? m.md : "");
     const stash = pendingCancelRestores.get(key);
@@ -12318,7 +12470,7 @@ setInterval(() => {
   const meta = document.getElementById("spinner-meta");
   if (meta) syncMetaControls(meta, s.status);
   const bar = document.getElementById("ctx-bar");
-  if (bar) setCtxBar(bar, s.status.ctx, s.status.state === "compacting", s.status.ctxColor);
+  if (bar) setCtxBar(bar, s.status.ctx, s.status.state === "compacting", pickTone(s.status.ctxColor, s.status.ctxTone));
 }, 1000);
 
 // the last message we delivered per session — so a Ctrl+C interrupt can put it back
@@ -12540,6 +12692,7 @@ function setupComposer() {
   // On a phone, though, keeping focus keeps the on-screen keyboard up and the composer pinned above it;
   // blur instead so the keyboard collapses and the box drops back to the bottom (the user 2026-07-22).
   const sendBtn = document.getElementById("composer-send") as HTMLButtonElement | null;
+  if (sendBtn) setTip(sendBtn, "Send (Enter)");   // styled tip replaces the skeleton's native title (aria-label stays)
   sendBtn?.addEventListener("mousedown", (e) => { e.preventDefault(); sendComposer(); if (isCoarsePointer()) ta.blur(); else ta.focus(); });
   fireHeldSend = () => sendComposer();   // the ack handler's door into this closure (see sendOnShip)
   fireStage = () => stageComposer();     // the chips strip's Stage button's door (renderComposerChips)
@@ -13004,6 +13157,9 @@ function setupComposer() {
   // a desktop browser gets an unscoped, multi-select picker — attributes are set
   // per open, at the moment the pointer type is known.
   const attach = document.getElementById("composer-attach") as HTMLButtonElement | null;
+  // upgrade the skeleton's native title to the styled tip (tip.ts removes the title attribute);
+  // the icon-only button keeps an accessible name via aria-label
+  if (attach) { setTip(attach, "Attach a file"); attach.setAttribute("aria-label", "Attach a file"); }
   const isTouch = isCoarsePointer;
   const isWebPage = location.protocol === "http:" || location.protocol === "https:";
   const filePicker = document.createElement("input");
@@ -13074,9 +13230,9 @@ function shipFileToHost(f: File, sidAt: string | null = activeId) {
 function applyChatScheme(s: RompSettings): void {
   document.body.classList.toggle("scheme-high-contrast", s.chatScheme === "high-contrast");
   document.body.classList.toggle("scheme-solarized-dark", s.chatScheme === "solarized-dark");
-  // the chat-tab appearance theme (T113): Classic is the unscoped default; Yatharth scopes PR 730's
-  // strip aesthetic under this class. Applies live — onExternalSettingsChange re-runs this + renderTabs.
-  document.body.classList.toggle("chat-theme-yatharth", s.chatTabTheme === "yatharth");
+  // the overall theme (T113 promoted 2026-08-28): the shared applier toggles the strip-aesthetic
+  // and light-theme classes from s.theme. Applies live — onExternalSettingsChange re-runs this.
+  applyTheme(document, s);
 }
 function setupSettings(): void {
   applyChatScheme(settings);   // the persisted pick applies at startup — it survives reloads
@@ -13198,7 +13354,20 @@ setupSettings();
     qx: (el) => {
       if (!activeId || !vscodeApi) return;
       const qmd = (el as any)._qmd as string | undefined;
-      const msg: Record<string, unknown> = { type: "cancelQueued", id: owningSidOf(el), md: qmd };
+      const sidQ = owningSidOf(el) || activeId;
+      if (qmd) {
+        // EVERY ✕ drops our own optimistic entry for the text first (the user 2026-08-30). At the
+        // optimistic stage (qopt) that is the whole client half — the kernel may not have pushed its
+        // park yet, and the reconcile would otherwise repaint the bubble the user just cut. And on a
+        // PARKED/backend ✕ it is just as load-bearing: the kernel bubble had been SUPPRESSING our
+        // still-live entry (shownProvisional), so cancelling only the kernel op resurrected the
+        // cancelled message as a dashed bubble until the TTL (caught by this fix's served-page probe).
+        const list = pendingSent.get(sidQ) || [];
+        const i = list.findIndex((p) => p.text === qmd);
+        if (i >= 0) { list.splice(i, 1); if (list.length) pendingSent.set(sidQ, list); else pendingSent.delete(sidQ); }
+        echoShownSig.delete(sidQ);
+      }
+      const msg: Record<string, unknown> = { type: "cancelQueued", id: sidQ, md: qmd };
       if (el.dataset.qidx !== undefined) msg.idx = Number(el.dataset.qidx);
       if (el.dataset.qpark !== undefined) msg.park = Number(el.dataset.qpark);
       vscodeApi.postMessage(msg);

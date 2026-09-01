@@ -172,5 +172,5 @@ test("the fold stays folded: the panel still opens on one gist line", () => {
   // Progressive disclosure (CLAUDE.md) — the explanation got longer, so this matters more, not less.
   assert.match(KERNEL, /<div class=rnet-sub id=rnet-sub hidden>/, "hidden until asked for");
   assert.match(KERNEL, /<div class=rnet-gist>Another machine's romp sessions, in your tabs and timeline\./);
-  assert.match(KERNEL, /\.rnet-sub p\{margin:0 0 7px\}/, "and its paragraphs are spaced for 11.5px text");
+  assert.match(KERNEL, /\.rnet-sub p\{margin:0 0 7px\}/, "and its paragraphs are spaced for 11px text");
 });

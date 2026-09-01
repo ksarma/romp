@@ -18,6 +18,7 @@ import contextlib
 import io
 import os
 import tempfile
+import time
 import unittest
 from importlib.machinery import SourceFileLoader
 
@@ -71,6 +72,41 @@ class ApplySettings(unittest.TestCase):
         res = km._apply_judge_settings({"commentModel": "gpt-99", "commentFast": "true"})
         self.assertEqual((res["commentModel"], res["commentFast"]), ("claude-opus-5", "on"),
                          "garbage never reaches the files or `claude --model`")
+
+    def test_an_older_propagated_value_never_overwrites_a_newer_pick(self):
+        # THE REPORTED STOMP (upstream's user 2026-08-30): their Distilling pick kept resetting —
+        # any later-arriving propagation replaced a fresher local pick wholesale, because the apply
+        # had no notion of WHEN each value was picked. This fork orders every apply by the ORIGIN
+        # GESTURE's stamp (the body-level `gt` every propagation leg forwards); older-or-equal
+        # stands down at the store (upstream solves the same stomp with per-field mtime "stamps" —
+        # the 2026-09-01 fold kept the fork's one gt clock rather than shipping two).
+        now_ms = int(time.time() * 1000)
+        km._apply_judge_settings({"distillModel": "claude-opus-4-8", "gt": now_ms})
+        res = km._apply_judge_settings({"distillModel": "triage", "gt": now_ms - 3600 * 1000})
+        self.assertEqual(res["distillModel"], "claude-opus-4-8",
+                         "an hour-old peer value must not stomp the fresh pick")
+        res = km._apply_judge_settings({"distillModel": "triage", "gt": now_ms + 60000})
+        self.assertEqual(res["distillModel"], "triage", "a genuinely newer pick still lands")
+        self.assertEqual(km._judge_state_gt("distill-model"), now_ms + 60000,
+                         "the ORIGIN's gesture stamp rides the sidecar, so recency survives re-fans")
+
+    def test_a_stampless_body_keeps_the_legacy_apply(self):
+        # an older kernel (or a manual curl) sends no gt — it applies unconditionally, exactly
+        # as before; the stomp protection needs both ends on this code
+        km._apply_judge_settings({"distillModel": "claude-opus-4-8"})
+        res = km._apply_judge_settings({"distillModel": "haiku"})
+        self.assertEqual(res["distillModel"], "haiku")
+
+    def test_a_rejected_value_never_steals_the_stamp(self):
+        # garbage with a newer stamp: the setter refuses it BEFORE the ordering check
+        # (_set_judge_state validates first), so the sidecar must NOT advance — a burned stamp
+        # would shadow-block the next honest pick
+        now_ms = int(time.time() * 1000)
+        km._apply_judge_settings({"judgeModel": "fable", "gt": now_ms})
+        km._apply_judge_settings({"judgeModel": "gpt-99", "gt": now_ms + 999000})
+        self.assertEqual((km.jd.STATE / "judge-model").read_text(), "fable")
+        self.assertEqual(km._judge_state_gt("judge-model"), now_ms,
+                         "a refused value never burns its gesture stamp")
 
     def test_distill_sentinel_returns_the_pair_to_follow_mode(self):
         km._apply_judge_settings({"distillModel": "haiku", "distillEffort": "high"})
@@ -138,8 +174,19 @@ class PropagateFansOut(unittest.TestCase):
         km._remote_kernel_call = lambda r, m, p, payload=None, timeout=8: (
             self.calls.append((r["host"], m, p, payload)) or (200, {"ok": True}, None))
         km._propagate_judge_settings({"judgeModel": "fable"})
-        self.assertEqual(self.calls, [("boxup", "POST", "/judge-settings", {"judgeModel": "fable"})],
+        self.assertEqual(self.calls,
+                         [("boxup", "POST", "/judge-settings", {"judgeModel": "fable"})],
                          "up + token only; a down row or one with no token is not an admin path")
+
+    def test_the_fanned_body_carries_the_origin_gesture_stamp(self):
+        # upstream's user 2026-08-30 ("my Distilling pick continually gets reset"): authority is
+        # per PICK TIME. In this fork the fan forwards the BODY unchanged — including the origin
+        # gesture's `gt`, the same stamp the local store just applied — so every receiver orders
+        # by the one clock (test_setting_gesture_order.py pins the receiver side).
+        km._remote_kernel_call = lambda r, m, p, payload=None, timeout=8: (
+            self.calls.append(payload) or (200, {"ok": True}, None))
+        km._propagate_judge_settings({"distillModel": "claude-opus-4-8", "gt": 1725000000000})
+        self.assertEqual(self.calls[0], {"distillModel": "claude-opus-4-8", "gt": 1725000000000})
 
     def test_a_miss_is_loud_and_names_the_machine(self):
         km._remote_kernel_call = lambda *a, **k: (None, None, "could not reach boxup's kernel: boom")

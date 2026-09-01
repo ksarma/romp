@@ -216,6 +216,7 @@ export function openLightbox(path: string, sid?: string | null, pin?: string): v
   let at = -1;
   let step: ((delta: number) => void) | null = null;     // arrows step the chat's image sequence (img kind only)
   let cue: HTMLElement | null = null;                    // the compact position mark ("3/17") in the bar
+  let curImg: (() => HTMLImageElement) | null = null;    // the img on screen NOW (step rebinds it) — the copy source
   if (kind === "pdf") {
     const frame = document.createElement("iframe");
     frame.className = "romp-lightbox-frame";
@@ -231,6 +232,7 @@ export function openLightbox(path: string, sid?: string | null, pin?: string): v
       return im;
     };
     let img = mkImg({ path, sid, pin });
+    curImg = () => img;
     inner.appendChild(img);
     const pzc = wirePinchZoom(inner, img);
     // the chat's image sequence, oldest→newest (empty on surfaces with no provider): the current
@@ -284,11 +286,58 @@ export function openLightbox(path: string, sid?: string | null, pin?: string): v
   dl.title = "download";
   dl.setAttribute("aria-label", "download");
   dl.onclick = (ev) => ev.stopPropagation();               // saving must not also dismiss
+  // copy beside download (the user 2026-08-31): the image ITSELF onto the clipboard. It reads the
+  // CURRENT img's src at CLICK time — mkImg bakes the pin param into src and an arrow step rebinds
+  // `img`, so a pinned historical version copies as exactly what is on screen, and stepping needs no
+  // retarget bookkeeping. Rendered only where the clipboard API exists (an insecure-context http
+  // origin drops navigator.clipboard entirely — canPreview's honest-absence precedent: no dead
+  // control). Clipboards take image/png; any other source re-encodes through a canvas. The
+  // ClipboardItem takes the PROMISE form so write() runs synchronously inside the click gesture
+  // (Safari refuses a write that awaits first — the tailnet phone case). Success and failure both
+  // speak in place: the icon flips to a check, or to an × whose title names the reason, and the
+  // button restores itself either way.
+  const COPY_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor"'
+    + ' stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    + '<rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>'
+    + '<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+  let cp: HTMLButtonElement | null = null;
+  if (curImg && typeof ClipboardItem !== "undefined" && navigator.clipboard && navigator.clipboard.write) {
+    const btn = document.createElement("button");
+    cp = btn;
+    btn.className = "romp-lightbox-copy";
+    btn.innerHTML = COPY_SVG;
+    btn.title = "copy image";
+    btn.setAttribute("aria-label", "copy image");
+    const restore = () => { btn.innerHTML = COPY_SVG; btn.title = "copy image"; btn.classList.remove("ok", "err"); };
+    btn.onclick = (ev) => {
+      ev.stopPropagation();                                // copying must not also dismiss
+      const src = curImg!().src;
+      const png = (async () => {
+        const blob = await (await fetch(src)).blob();
+        if (blob.type === "image/png") return blob;
+        const bmp = await createImageBitmap(blob);         // jpeg/webp → decode → png, the one type
+        const cv = document.createElement("canvas");       // every clipboard accepts
+        cv.width = bmp.width; cv.height = bmp.height;
+        cv.getContext("2d")!.drawImage(bmp, 0, 0);
+        return await new Promise<Blob>((res, rej) =>
+          cv.toBlob((b) => (b ? res(b) : rej(new Error("png encode failed"))), "image/png"));
+      })();
+      navigator.clipboard.write([new ClipboardItem({ "image/png": png })]).then(() => {
+        btn.textContent = "✓"; btn.classList.add("ok"); btn.title = "copied";
+        window.setTimeout(restore, 1400);                  // the ack pulse, then back to a button
+      }, (e) => {
+        btn.textContent = "✕"; btn.classList.add("err");   // loud: the reason, never a silent no-op
+        btn.title = "copy failed: " + ((e && (e as Error).message) || String(e));
+        window.setTimeout(restore, 3000);
+      });
+    };
+  }
   const close = document.createElement("button");
   close.className = "romp-lightbox-close";
   close.textContent = "✕";
   close.title = "close (Esc)";
-  if (cue) bar.append(name, cue, dl, close); else bar.append(name, dl, close);
+  const controls = [dl, ...(cp ? [cp] : []), close];
+  if (cue) bar.append(name, cue, ...controls); else bar.append(name, ...controls);
   inner.appendChild(bar);
   wrap.appendChild(inner);
   const dismiss = () => { wrap.remove(); document.removeEventListener("keydown", onKey, true); };
@@ -466,7 +515,8 @@ export function previewFull(path: string, sid?: string | null, verified = false,
       img.className = "path-full-img";
       img.src = src;
       img.alt = path;
-      img.loading = "lazy";
+      img.loading = "lazy";       // off-screen figures don't fetch until scrolled near (eager-all, 2026-08-30)
+      img.decoding = "async";     // and never decode on the main thread mid-scroll
       img.onclick = (ev) => { ev.stopPropagation(); openLightbox(path, sid, pin); };
       return img;
     };

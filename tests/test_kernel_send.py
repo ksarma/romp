@@ -84,10 +84,68 @@ class SessionList(unittest.TestCase):
         # with no diverged SDK registry it is the sid itself.
         self.assertEqual(rows["sid-t"], {"id": "sid-t", "name": "alpha", "state": "working", "dir": "/work/a",
                                          "bg": "#112233", "fg": "#ffffff", "lastSid": "sid-t",
+                                         "compacting": False,          # romp compact --wait polls this
                                          "working": "owns feed.ts", "backend": "tmux"})
         self.assertEqual(rows["sid-s"], {"id": "sid-s", "name": "beta", "state": "waiting", "dir": "/work/b",
                                          "bg": "blue", "fg": "white", "lastSid": "sid-s",
+                                         "compacting": False,
                                          "working": "", "backend": "sdk"})
+
+    def test_one_rows_helper_exception_never_hides_the_session(self):
+        # the per-row guard (2026-08-31, the listing-blink source class): absence from GET /sessions
+        # reads as death downstream, so one sid's helper blowing up keeps the session listed as a
+        # minimal honest row — and never takes the WHOLE listing down with it
+        self._stub(
+            live={"sid-t": {"state": "working", "backend": "tmux"},
+                  "sid-s": {"state": "waiting", "backend": "sdk"}},
+            notes={}, names={"sid-s": ("beta", "/work/b", "blue", "white")})
+        saved = km._identity_of
+        km._identity_of = lambda sid: (_ for _ in ()).throw(RuntimeError("mid-cycle")) \
+            if sid == "sid-t" else saved(sid)
+        try:
+            rows = {r["id"]: r for r in km._session_rows()}
+        finally:
+            km._identity_of = saved
+        self.assertEqual(set(rows), {"sid-t", "sid-s"}, "the failing row stays PRESENT")
+        self.assertEqual((rows["sid-t"]["state"], rows["sid-t"]["backend"]), ("working", "tmux"),
+                         "the minimal row keeps what the live() meta already knew")
+        self.assertEqual(rows["sid-s"]["name"], "beta", "the healthy sibling is untouched")
+
+    def test_listing_pays_one_transcript_sweep_not_one_per_row(self):
+        # the /sessions latency root (py-spy 2026-08-31): _path_of per row re-ran discover()'s
+        # fingerprint validity stats for EVERY live session — ~71% of the route's handler time on a
+        # loaded kernel (the p90-3.3s complaint). The listing resolves transcript paths through ONE
+        # _sessions() sweep and hands each row its path; a regression to per-row resolution makes
+        # the sweep count scale with the row count, which this pins at exactly 1.
+        live = {"sid-%d" % i: {"state": "waiting", "backend": "sdk"} for i in range(12)}
+        names = {sid: (sid, "/w", "blue", "white") for sid in live}
+        self._stub(live=live, notes={}, names=names)
+        calls = []
+        saved = km._sessions
+        km._sessions = lambda now, window=None, forks=True: (calls.append(1), [])[1]
+        try:
+            rows = km._session_rows()
+        finally:
+            km._sessions = saved
+        self.assertEqual(len(rows), 12)
+        self.assertEqual(len(calls), 1, "one transcript-path sweep for the whole listing, not one per row")
+
+    def test_sweep_failure_never_takes_the_listing_down(self):
+        # the hoisted path sweep runs OUTSIDE the per-row guard, so its failure needs its own
+        # containment (review find, 2026-08-31): a discover raise (names-dir permission fault,
+        # remove race) degrades to pathless FULL rows — compacting reads False that build — and
+        # never turns GET /sessions into a 500 (absence reads as death downstream).
+        self._stub(live={"sid-t": {"state": "working", "backend": "tmux"}},
+                   notes={}, names={"sid-t": ("alpha", "/w", "#112233", "#ffffff")})
+        saved = km._sessions
+        km._sessions = lambda now, window=None, forks=True: (_ for _ in ()).throw(OSError("names dir EACCES"))
+        try:
+            rows = km._session_rows()
+        finally:
+            km._sessions = saved
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["name"], "alpha", "a FULL row, not the minimal fallback")
+        self.assertFalse(rows[0]["compacting"])
 
     def test_empty_when_no_live_sessions(self):
         self._stub(live={}, notes={}, names={})

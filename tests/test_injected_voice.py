@@ -159,6 +159,10 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
             # the dashboard-edit trace (the user 2026-08-22): the file viewer saved over a file in this
             # session's tree, and the session is told in the person's voice — never edited under silently
             "edit trace": km._edit_trace_body("/TESTDIR/notes-api/README.md"),
+            # the compaction suggestion (the user 2026-08-30): idle + a lot of context → the person
+            # suggests a /compact at a natural boundary; /compact is a CLI feature the session
+            # already knows, and the thresholds behind the timing are never mentioned
+            "compaction suggestion": km._compact_suggest_body("web"),
         }
         # every repeat-nudge variant wears the same voice as the first fire (the user 2026-08-11): the
         # rotation exists so a re-ask doesn't read canned, so a variant that broke the voice rule would
@@ -171,13 +175,26 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
 
     def test_no_romp_vocabulary_reaches_the_session(self):
         for name, body in self._bodies().items():
-            text = prose(body).lower()
+            # THE ONE ALLOWANCE, deliberate and ruling-backed (T212, the user 2026-09-01): a
+            # backtick-quoted `romp compact …` COMMAND is practical information the recipient
+            # must literally type — an SDK session cannot run /compact, and the session-prompt
+            # housekeeping note already gives the name its meaning (the sanctioned precedent).
+            # Scoped to the exact command span, never the word: "romp" in PROSE still fails.
+            text = re.sub(r"`romp compact[^`]*`", "", prose(body)).lower()
             for word, why in ROMP_WORDS:
                 with self.subTest(message=name, word=word):
                     self.assertNotIn(word, text,
                                      "%r speaks romp at the session (%r: %s). Write it as the person "
                                      "it works for asking — see CLAUDE.md, 'Messages we inject into a "
                                      "session'." % (name, word, why))
+
+    def test_the_command_allowance_is_the_span_not_the_word(self):
+        # the T212 allowance must never become a whitelist: bare "romp" in prose, or any other
+        # romp command, still speaks romp at the session and still fails the scan
+        self.assertIn("romp", re.sub(r"`romp compact[^`]*`", "", "romp says hi").lower())
+        self.assertIn("romp", re.sub(r"`romp compact[^`]*`", "", "`romp status`").lower())
+        self.assertNotIn("romp", re.sub(r"`romp compact[^`]*`", "",
+                                        "run `romp compact web` in your shell").lower())
 
     def test_the_rename_ping_stays_one_clean_mechanics_line(self):
         # the [romp] prefix is the sanctioned mechanics family (the restart notices' shape); past
@@ -235,7 +252,8 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
                         "debt reminder (question)", "debt reminder (handoff)",
                         "debt reminder (several)", "comment thread opener", "user-todo answer",
                         "user-todo context block", "edit trace",
-                        "comment-thread merge"):
+                        "comment-thread merge", "compaction suggestion"):
+                #        ^ a housekeeping suggestion, not a progress ask — it elicits nothing
                 continue
             text = prose(body).lower()
             with self.subTest(message=name):

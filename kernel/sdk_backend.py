@@ -814,6 +814,20 @@ def read_reg(state_dir: Path, sid: str) -> dict | None:
         return None
 
 
+def read_reg_for_rmw(state_dir: Path, sid: str) -> "dict | None":
+    """read_reg for a READ-MODIFY-WRITE on one reg FIELD: {} when the reg genuinely does not
+    exist (a fresh session — an empty base is correct), None when the reg EXISTS but would not
+    read (a transient failure). A None caller MUST skip its write: rebuilding a list field from
+    an empty base and persisting it silently wipes the field — bgLedger/bgLedgerEnded, pushNotes,
+    taskWrites, sessionCrons all carried this shape (the 2026-09-01 field-level gutting class,
+    the field-sized sibling of _update_reg's whole-reg guard). Losing one update is the far
+    smaller harm: the next lands on the healed read."""
+    reg = read_reg(state_dir, sid)
+    if reg is not None:
+        return reg
+    return None if _reg_path(state_dir, sid).exists() else {}
+
+
 def write_reg(state_dir: Path, sid: str, reg: dict) -> None:
     p = _reg_path(state_dir, sid)
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -849,6 +863,15 @@ BOOT_RESUME_NUDGE = (
     "asked you to stop. Re-read the tail of the conversation and pick the work back up where it "
     "stopped, without asking whether to continue. Any messages queued before the restart follow "
     "this one.")
+
+# T214: the restart also killed a QUESTION the session had up — the ask future lived only in the
+# old process, so the user's answer (often flushed by the reconnecting page) had nowhere to land,
+# and the resume nudge alone told the session to continue WITHOUT asking. Same sanctioned [romp]
+# mechanics family as the restart notice above; queued right after it, before the restored backlog.
+ASK_DIED_NOTICE = (
+    "<!-- romp-injected --><!-- romp-system -->[romp] The restart also killed a question this "
+    "session had up awaiting the user's answer — it was never delivered, and any answer they sent "
+    "could not land. Ask the question again so they can answer it.")
 
 # Staggered boot-resume (the user 2026-07-20): spawning every reconciled session's CLI at once
 # detonated a fleet-wide CPU storm — each resumed claude burns ~a full core catching up on its
@@ -1055,7 +1078,10 @@ def recurring_crons(reg):
     re-hydrate a lost wakeup (verified live 2026-08-28), so pinning or reviving a process buys the
     wakeup nothing; deliver_lost_wakeups owns dead-generation one-shots outright and delivers the
     prompt itself at due, which revives a dormant session through the normal send path. Recurring
-    entries have no such catch-up: their live CLI is the only scheduler, so they pin the process.
+    entries pin the process for TIMELINESS: their live CLI is the only ON-TIME scheduler. (A resumed
+    CLI does catch-up-fire a recurring slot that passed while its previous process was dead —
+    verified live 2026-09-01, T211 — but that is a replay hazard as much as a recovery: every kernel
+    restart re-fired already-delivered slots until _prompt_submit_hook's delivered-slot gate.)
     Reads the entry's `recurring` field, never the cron string's shape — toolhook-minted one-shots
     carry an empty cron string."""
     return [c for c in (reg.get("sessionCrons") or []) if isinstance(c, dict) and c.get("recurring")]
@@ -1082,6 +1108,83 @@ def wakeup_due_epoch(cron: str, armed_t: float) -> "float | None":
     if due.timestamp() < armed_t - 60:            # H:M already passed at arm time → the wrap is tomorrow
         due += timedelta(days=1)
     return due.timestamp()
+
+
+def _cron_field(spec: str, lo: int, hi: int) -> "set[int] | None":
+    """One 5-field cron field as the set of ints it names (vixie shapes: *, steps, ranges, lists),
+    or None for anything outside that grammar — the caller stands down rather than guessing."""
+    out: set[int] = set()
+    for part in str(spec).split(","):
+        part, step = part.strip(), 1
+        if "/" in part:
+            part, s = part.split("/", 1)
+            if not s.isdigit() or int(s) < 1:
+                return None
+            step = int(s)
+        if part == "*":
+            a, b = lo, hi
+        elif "-" in part:
+            aa, _, bb = part.partition("-")
+            if not (aa.isdigit() and bb.isdigit()):
+                return None
+            a, b = int(aa), int(bb)
+        elif part.isdigit():
+            a = b = int(part)
+        else:
+            return None
+        if a < lo or b > hi or a > b:
+            return None
+        out.update(range(a, b + 1, step))
+    return out or None
+
+
+def cron_prev_due(cron: str, now: float) -> "float | None":
+    """The most recent moment at/before `now` a 5-field RECURRING cron names — the SLOT identity the
+    replay gate keys on (_prompt_submit_hook): a delivered fire is recorded against this epoch, and a
+    later fire computing the SAME slot is a replay by definition, however long its process was down
+    in between — exact event identity, never an age window. Vixie semantics: lists/ranges/steps,
+    day-of-month OR day-of-week when both are restricted, dow 0/7 = Sunday. Local time, matching the
+    CLI's own scheduler. Anything unparseable returns None and the gate stands down — romp only
+    reasons about schedules it understands exactly (wakeup_due_epoch's rule). Lookback bounded at
+    ~400 days so a never-matching string (a Feb 30) terminates. Pure for tests."""
+    try:
+        m, h, dom, mon, dow = str(cron).split()
+    except (ValueError, AttributeError):
+        return None
+    mins, hrs = _cron_field(m, 0, 59), _cron_field(h, 0, 23)
+    doms, mons, dows = _cron_field(dom, 1, 31), _cron_field(mon, 1, 12), _cron_field(dow, 0, 7)
+    if None in (mins, hrs, doms, mons, dows):
+        return None
+    dows = {d % 7 for d in dows}                       # 7 is Sunday too
+    from datetime import date, timedelta               # local, like wakeup_due_epoch
+    lt = time.localtime(now)
+    day0 = date(lt.tm_year, lt.tm_mon, lt.tm_mday)
+    for back in range(400):
+        day = day0 - timedelta(days=back)
+        if day.month not in mons:
+            continue
+        dom_ok, dow_ok = day.day in doms, ((day.weekday() + 1) % 7) in dows
+        if not ((dom_ok or dow_ok) if (dom != "*" and dow != "*")
+                else (dow_ok if dom == "*" and dow != "*" else dom_ok)):
+            continue
+        if back == 0:
+            cand = [(H, M) for H in hrs for M in mins if (H, M) <= (lt.tm_hour, lt.tm_min)]
+            if not cand:
+                continue                                # today matches but only later than now
+            H, M = max(cand)
+        else:
+            H, M = max(hrs), max(mins)
+        return time.mktime((day.year, day.month, day.day, H, M, 0, -1, -1, -1))
+    return None
+
+
+def cron_slot_key(cron: str, prompt: str) -> str:
+    """The SCHEDULE IDENTITY half of the replay gate's key. Deliberately NOT the CLI's cron id: a
+    resume re-hydration or a delete/re-create mints fresh ids for the same nightly job (observed
+    live — the same schedule wore two ids across two process generations), and an id-keyed record
+    would greet every re-mint as a brand-new schedule and wave its replay through. The (cron string,
+    prompt) pair is what makes two fires "the same scheduled work", so it IS the identity."""
+    return hashlib.sha1(("%s\n%s" % (cron, prompt)).encode("utf-8", "replace")).hexdigest()[:16]
 
 
 def interrupt_action(level: int, channel_up: bool) -> tuple[str, int]:
@@ -1112,32 +1215,87 @@ def interrupt_action(level: int, channel_up: bool) -> tuple[str, int]:
 _REG_CACHE = {}   # path -> ((mtime_ns, size, ino), parsed reg)
 
 
+_REG_SERVE_WARNED = set()      # paths currently being served from cache — one loud line per incident
+
+
 def list_regs(state_dir: Path) -> list[dict]:
+    """COMPLETENESS is this scan's contract (the user 2026-08-31, closing the listing-blink class):
+    absence from the returned rows reads as SESSION DEATH downstream — the postal bus refuses sends
+    on it — so a reg this scan has ever seen may drop out only by being GENUINELY GONE (unlinked).
+    A transient stat/read/parse failure serves the reg's LAST GOOD row from the cache instead,
+    loudly; silence was how a live 'working' session got ruled dead while eight sibling sends in
+    the same tick succeeded (specimens 2026-08-31 01:01 and 18:30)."""
     d = Path(state_dir) / "sdk"
     out = []
     try:
         entries = list(os.scandir(d))
-    except OSError:
+    except FileNotFoundError:
+        # a MISSING sdk/ dir is genuine emptiness (a fresh state root the first write hasn't
+        # created yet), not a transient fault — scandir RAISES on it, it does not yield [] (the
+        # 2026-09-01 fold's catch: the OSError arm below misread this as a failed scan and served
+        # the module cache's rows, which in a process holding backends over SEVERAL state roots —
+        # the test suite — resurrected another root's sessions into this one). The unlink rule
+        # holds: a dir that is gone took its regs with it, so the honest answer is [].
         return out
+    except OSError:
+        # the WHOLE-LISTING twin of the per-entry contract (review find 2026-09-01): a transient
+        # enumeration failure blanked every row at once — the loudest possible false-death signal
+        # under this very docstring. Serve every reg's last good row instead — of THIS ROOT ONLY
+        # (the fold's second cross-root catch, 2026-09-01): _REG_CACHE is module-global across
+        # every backend in the process, so the unfiltered serve handed a PermissionError/EMFILE-
+        # class fault on one root the rows cached from OTHER state roots — the same cross-root
+        # session resurrection the arm above closes for the missing-dir case. A genuinely empty
+        # dir enumerates FINE (scandir yields []; a missing one is the arm above), so truth is
+        # untouched, and a fresh process with an empty cache still returns [] — nothing to claim.
+        mine = [dict(v[1]) for p, v in _REG_CACHE.items() if p.startswith(str(d) + os.sep)]
+        if mine:
+            skey = "\x00scan:%s" % d                  # sentinel key, PER ROOT: incidents log once
+            if skey not in _REG_SERVE_WARNED:         # per root, not per scan
+                _REG_SERVE_WARNED.add(skey)
+                sys.stderr.write("list_regs: scan of %s failed — serving this root's last good rows\n" % d)
+            return mine
+        return out
+    _REG_SERVE_WARNED.discard("\x00scan:%s" % d)      # healed → the next scan incident logs afresh
     seen = set()
     for de in entries:
         if not de.name.endswith(".json"):
             continue
+        seen.add(de.path)
+        hit = _REG_CACHE.get(de.path)
         try:
             st = de.stat()
         except OSError:
+            # an exists() corroboration here defeats itself — it stats the same path the same way
+            # (review find). A genuinely unlinked reg stops being LISTED by the next scandir, so
+            # serving the cached row costs at most one stale scan; a transient stat error costs
+            # a dropped live session, the very failure this contract closes.
+            if hit is not None:
+                if de.path not in _REG_SERVE_WARNED:
+                    _REG_SERVE_WARNED.add(de.path)
+                    sys.stderr.write("list_regs: stat failed for %s — serving the last good row\n" % de.name)
+                out.append(dict(hit[1]))
             continue
         key = (st.st_mtime_ns, st.st_size, st.st_ino)
-        seen.add(de.path)
-        hit = _REG_CACHE.get(de.path)
         if hit is not None and hit[0] == key:
-            out.append(dict(hit[1]))
-            continue
+            _REG_SERVE_WARNED.discard(de.path)         # a healed STAT blip lands here (cache hit, no
+            out.append(dict(hit[1]))                   # re-read) — without this the once-per-incident
+            continue                                   # latch never cleared and later blips logged
+        #                                                nothing (review find 2026-09-01)
         try:
             r = json.loads(Path(de.path).read_text())
-        except (OSError, ValueError):
-            _REG_CACHE.pop(de.path, None)
+        except (OSError, ValueError) as e:
+            if de.path not in _REG_SERVE_WARNED:   # once per incident, not per scan (scans run
+                _REG_SERVE_WARNED.add(de.path)     # several times a second — review find)
+                sys.stderr.write("list_regs: read failed for %s (%s) — %s\n"
+                                 % (de.name, e.__class__.__name__,
+                                    "serving the last good row" if hit is not None
+                                    else "no prior row to serve"))
+            if hit is not None:
+                # a reg we KNOW, briefly unreadable: the last good row beats a silent drop (the
+                # cache keys by content-stat, so the next healthy read replaces this at once)
+                out.append(dict(hit[1]))
             continue
+        _REG_SERVE_WARNED.discard(de.path)         # healed → the next incident logs afresh
         r.setdefault("sid", de.name[: -len(".json")])
         _REG_CACHE[de.path] = (key, r)
         out.append(dict(r))
@@ -1573,6 +1731,9 @@ class SdkSession:
         _lc0 = reg.get("liveCtx")                 # context-window fill %, as the SDK reports it (see _ctx_pct).
         self._ctx: int | None = _lc0 if isinstance(_lc0, (int, float)) else None  # seeded from the last persisted
         #   value so the bar survives idle/restart; refreshed live from get_context_usage() on connect + each turn.
+        _lt0 = reg.get("liveCtxTokens")           # raw totalTokens from the same get_context_usage payload —
+        self._ctx_tokens: int | None = (int(_lt0) if isinstance(_lt0, (int, float)) else None)   # the kernel's
+        #   compaction-suggestion thresholds key on true tokens, window-independent (2026-08-30)
         self._ctx_refreshing = False             # one get_context_usage control request in flight at a time
         self._usage_refreshing = False           # one get_usage control request in flight at a time
         self.retrying = False                        # an api_retry storm (API rate-limit/overload) is stalling the turn → 'retrying', not 'working'
@@ -1870,16 +2031,27 @@ class SdkSession:
             self.loop.call_soon_threadsafe(
                 lambda: asyncio.ensure_future(self._do_set_mode(mode, prev)))
 
-    def resolve_ask(self, kind: str, payload=None):
+    def resolve_ask(self, kind: str, payload=None) -> bool:
         """Deliver a picker/permission UI action (answer/toggle/submit/custom/
-        cancel/text) into the waiting can_use_tool coroutine."""
+        cancel/text) into the waiting can_use_tool coroutine. Returns whether a live
+        ask was actually WAITING (T214, verified live 2026-09-01: an answer flushed
+        across a kernel restart found _cur_ask_fut None — the ask died with the old
+        process — and this silently no-opped while the caller reported success and
+        the board flipped to Working; the delivery outcome must be the truth). The
+        synchronous check races a concurrently-presenting ask by microseconds
+        against human-scale answers — the guarded _set below keeps the delivery
+        itself safe either way."""
         if not self.loop:
-            return
+            return False
+        fut = self._cur_ask_fut
+        if fut is None or fut.done():
+            return False                       # nothing is waiting — the ask died (a restart) or is already resolved
         def _set():
-            fut = self._cur_ask_fut
-            if fut and not fut.done():
-                fut.set_result((kind, payload))
+            f = self._cur_ask_fut
+            if f and not f.done():
+                f.set_result((kind, payload))
         self.loop.call_soon_threadsafe(_set)
+        return True
 
     def shutdown(self):
         self.ended = True
@@ -2056,6 +2228,9 @@ class SdkSession:
             v = max(0, min(100, round(pct)))
             if v != self._ctx:
                 self._ctx, changed = v, True
+        tt = cu.get("totalTokens")
+        if isinstance(tt, (int, float)) and int(tt) != self._ctx_tokens:
+            self._ctx_tokens, changed = int(tt), True
         pm = pretty_model(cu.get("model"))
         if pm and self._resolve_model_pending(pm):
             changed = True
@@ -2067,6 +2242,8 @@ class SdkSession:
         upd["modelPending"] = bool(self._model_pending)
         if self._ctx is not None:
             upd["liveCtx"] = self._ctx
+        if self._ctx_tokens is not None:
+            upd["liveCtxTokens"] = self._ctx_tokens
         if upd:
             try:
                 self.backend._update_reg(self.sid, **upd)
@@ -3025,7 +3202,10 @@ class SdkSession:
         try:
             crons = inp.get("session_crons") if isinstance(inp, dict) else None
             if isinstance(crons, list):
-                prev = (read_reg(self.backend.state_dir, self.sid) or {})
+                prev = read_reg_for_rmw(self.backend.state_dir, self.sid)
+                if prev is None:
+                    # the except below logs it — skip, never wipe the armed set (field-gutting class)
+                    raise OSError("reg unreadable — session_crons record skipped rather than wiping the armed set")
                 nw = time.time()
                 known = {c.get("id"): c for c in (prev.get("sessionCrons") or []) if isinstance(c, dict)}
                 # Adoption pool for the CALL-TIME records (_sched_tool_hook): a toolhook entry knows the
@@ -3086,7 +3266,10 @@ class SdkSession:
             bg = inp.get("background_tasks") if isinstance(inp, dict) else None
             if isinstance(bg, list):
                 nw = int(time.time())
-                live, ended = self._ledger_read()
+                lr = self._ledger_read()
+                if lr is None:
+                    raise OSError("reg unreadable — reconcile skipped")   # the except below logs it
+                live, ended = lr
                 running = {str(t.get("id")): t for t in bg
                            if isinstance(t, dict) and t.get("status") == "running" and t.get("id")}
                 kept = []
@@ -3110,8 +3293,8 @@ class SdkSession:
                                      "desc": str(t.get("description") or "")[:300], "armedAt": nw,
                                      "deadlineEpoch": None, "persistent": False,
                                      "procGen": self.proc_gen, "agentId": None, "src": "stopReconcile"})
-                l0, e0 = self._ledger_read()
-                if kept != l0 or ended != e0:
+                lr0 = self._ledger_read()
+                if lr0 is not None and (kept != lr0[0] or ended != lr0[1]):
                     self._ledger_write(kept, ended)
         except Exception as e:
             self.backend._log("stop hook (%s): bg-ledger reconcile failed: %s" % (self.name, e))
@@ -3149,7 +3332,11 @@ class SdkSession:
             if not isinstance(targs, dict):
                 return {}
             nw = time.time()
-            prev = (read_reg(self.backend.state_dir, self.sid) or {})
+            prev = read_reg_for_rmw(self.backend.state_dir, self.sid)
+            if prev is None:
+                self.backend._log("sched tool hook (%s): reg unreadable — skipping this record "
+                                  "rather than wiping the armed set" % self.name)
+                return {}
             cur = [c for c in (prev.get("sessionCrons") or []) if isinstance(c, dict)]
             if tname == "ScheduleWakeup":
                 if targs.get("stop"):
@@ -3188,6 +3375,68 @@ class SdkSession:
             self.backend._log("sched tool hook (%s): %s" % (self.name, e))
         return {}
 
+    async def _prompt_submit_hook(self, inp, tool_use_id, context):
+        """UserPromptSubmit: the RECURRING-CRON REPLAY GATE (T211, 2026-09-01). A resumed CLI
+        catch-up-fires a recurring cron whose slot passed while its previous process was dead, so
+        under immediate deploy restarts every kernel restart bought one spurious fire per recurring
+        cron: revive (ensure_scheduled) → --resume → sub-second re-fire of an already-delivered
+        slot. Field damage: one nightly fired ~21x on 2026-08-31, each extra fire within ~1s of a
+        "reviving …" log line and preceded by the fresh process's own startup records — the CLI's
+        last-fired memory dies with its process, and nothing durable said the slot already ran. This
+        hook is that durable memory, at the only moment that counts — DELIVERY, never arm time: a
+        prompt matching an armed recurring cron computes its slot (cron_prev_due) and consults the
+        reg's cronDelivered map, keyed (cron_slot_key, slot epoch). Recorded → the fire is a replay:
+        blocked before the model runs, loudly. Not recorded → record, then let it through — so a
+        slot the dead process genuinely never delivered still fires exactly once after a restart
+        (the CLI's own catch-up becomes the recovery instead of the bug). Every uncertain path fails
+        OPEN (unreadable reg, unparseable schedule, hook error → the prompt runs): a duplicate fire
+        costs a turn, a swallowed slot costs the schedule itself."""
+        try:
+            prompt = str((inp or {}).get("prompt") or "")
+            if not prompt:
+                return {}
+            reg = read_reg_for_rmw(self.backend.state_dir, self.sid)
+            if reg is None:
+                self.backend._log("cron dedupe (%s): reg unreadable — prompt allowed rather than "
+                                  "risking a swallowed schedule slot" % self.name, problem=True)
+                return {}
+            hits = [c for c in recurring_crons(reg)
+                    if str(c.get("prompt") or "") == prompt[:500] and str(c.get("cron") or "").strip()]
+            if not hits:
+                return {}
+            delivered = reg.get("cronDelivered")
+            delivered = dict(delivered) if isinstance(delivered, dict) else {}
+            now = time.time()
+            record, replay_of = {}, None
+            for c in hits:
+                slot = cron_prev_due(str(c.get("cron")), now)
+                if slot is None:
+                    return {}                  # a shape we can't reason about exactly → stand down
+                k = cron_slot_key(str(c.get("cron")), prompt[:500])
+                if float(delivered.get(k) or 0) >= slot:
+                    replay_of = slot           # this schedule's current slot already delivered
+                else:
+                    record[k] = slot
+            if record:
+                # Record AT the delivery moment; keys whose schedule left the armed set drop here
+                # (natural GC — the map can never outgrow the armed set + this delivery).
+                live = {cron_slot_key(str(c.get("cron")), str(c.get("prompt") or ""))
+                        for c in recurring_crons(reg)}
+                delivered = {k: v for k, v in delivered.items() if k in live}
+                delivered.update(record)
+                self.backend._update_reg(self.sid, cronDelivered=delivered)
+                return {}
+            when = time.strftime("%Y-%m-%d %H:%M", time.localtime(replay_of))
+            self.backend._log("cron dedupe (%s): blocked a replayed schedule fire — its %s slot was "
+                              "already delivered (a fresh process re-fires passed slots on resume)"
+                              % (self.name, when), problem=False)
+            return {"decision": "block",
+                    "reason": "This scheduled prompt already ran for its %s slot — skipping the "
+                              "duplicate." % when}
+        except Exception as e:
+            self.backend._log("cron dedupe (%s): %s — prompt allowed" % (self.name, e))
+            return {}
+
     # ---- subagent tracking (the transparency tmux never had) ----
 
     # ── the background-launch LEDGER (2026-08-29, the hookable-tools round) ────────────────────
@@ -3210,7 +3459,14 @@ class SdkSession:
     _LEDGER_CAP = 40
 
     def _ledger_read(self):
-        reg = read_reg(self.backend.state_dir, self.sid) or {}
+        """(live, ended) — or None when the reg exists but would not read this instant: the
+        caller must SKIP its write (writing rebuilt empties back wipes the ledger — the
+        field-gutting class; see read_reg_for_rmw)."""
+        reg = read_reg_for_rmw(self.backend.state_dir, self.sid)
+        if reg is None:
+            self.backend._log("bg ledger (%s): reg unreadable — skipping this pass rather than "
+                              "wiping the ledger" % self.name)
+            return None
         live = [e for e in (reg.get("bgLedger") or []) if isinstance(e, dict)]
         ended = [e for e in (reg.get("bgLedgerEnded") or []) if isinstance(e, dict)]
         return live, ended
@@ -3231,7 +3487,10 @@ class SdkSession:
             if not isinstance(tresp, dict):
                 tresp = {}
             nw = time.time()
-            live, ended = self._ledger_read()
+            lr = self._ledger_read()
+            if lr is None:
+                return {}                             # skip, never wipe — the next event re-records
+            live, ended = lr
             if tname == "TaskStop":
                 tid = str(targs.get("task_id") or targs.get("taskId") or targs.get("id")
                           or targs.get("shell_id") or "")   # shell_id: the deprecated param the CLI still accepts
@@ -3283,7 +3542,10 @@ class SdkSession:
             tuid = str((inp or {}).get("tool_use_id") or tool_use_id or "")
             if not tuid:
                 return {}
-            live, ended = self._ledger_read()
+            lr = self._ledger_read()
+            if lr is None:
+                return {}                             # skip, never wipe
+            live, ended = lr
             kept = [e for e in live if str(e.get("toolUseId")) != tuid]
             if len(kept) != len(live):
                 why = "interrupted" if (inp or {}).get("is_interrupt") else "launch-failed"
@@ -3322,7 +3584,11 @@ class SdkSession:
                 # writes faster than any consumer's read cadence, and a last-write-wins slot loses
                 # every agentId but the newest — the attribution this field exists for
                 tid = str(tresp.get("taskId") or targs.get("taskId") or "") or None
-                reg = read_reg(self.backend.state_dir, self.sid) or {}   # sole writer; no await
+                reg = read_reg_for_rmw(self.backend.state_dir, self.sid)   # sole writer; no await
+                if reg is None:
+                    self.backend._log("facts hook (%s): reg unreadable — skipping the taskWrites "
+                                      "record rather than wiping it" % self.name)
+                    return {}
                 #                                                          before the write below —
                 #                                                          the event loop IS the lock
                 writes = [w for w in (reg.get("taskWrites") or []) if isinstance(w, dict)]
@@ -3330,7 +3596,11 @@ class SdkSession:
                 self.backend._update_reg(self.sid, taskWrites=writes[-self._TASK_WRITES_CAP:])
                 self.backend._poke()          # the store is authoritative — this says "re-read it NOW"
             elif tname == "PushNotification":
-                reg = read_reg(self.backend.state_dir, self.sid) or {}   # sole writer of pushNotes;
+                reg = read_reg_for_rmw(self.backend.state_dir, self.sid)   # sole writer of pushNotes;
+                if reg is None:
+                    self.backend._log("facts hook (%s): reg unreadable — skipping the pushNotes "
+                                      "record rather than wiping it" % self.name)
+                    return {}
                 #                              NO await between this read and the write below — the
                 #                              session's single event loop is what serializes this
                 #                              RMW, not _reg_lock. Inserting an await here reopens
@@ -3543,7 +3813,8 @@ class SdkSession:
                 #   lands) — the Billing row says so when it disagrees with the launch intent above
                 #   (a key found via apiKeyHelper bills the key while `auth` still reads login)
                 "authPending": bool(self._auth_pending),   # an /auth switch reconnecting → badge dots
-                "mode": self.perm_mode, "ctx": self._ctx_pct(), "summary": "",
+                "mode": self.perm_mode, "ctx": self._ctx_pct(), "ctxTokens": self._ctx_tokens,
+                "summary": "",
                 "connected": bool(self.client),   # the SDK handshake is up (set at connect, cleared at
                 #   teardown) — the "this session is OPEN" event for a transcript-less fresh session:
                 #   the kernel's opening-chip override stands down on it, so a new SDK session reads
@@ -3796,12 +4067,14 @@ class SdkBackend:
                     # bg tasks the dead kernel's CLI took with it (the reg mirror, _on_task_event):
                     # the session must HEAR about them or it waits forever on a dead timer/watcher.
                     dead_tasks = [t for t in (r.get("bgTasks") or []) if isinstance(t, dict)]
-                    if not (cut or queued or dead_tasks):
+                    ask_died = bool(r.get("pendingAsk"))   # a question was up when the old kernel died (T214)
+                    if not (cut or queued or dead_tasks or ask_died):
                         continue                   # idle, empty-queued, nothing died → stays lazy
                     # Prepend to the PERSISTED queue (not enqueue()) so it is fed FIRST, before the
                     # restored backlog, and survives even a death mid-reconcile. Order: the resume
                     # nudge (continuation context), then the task-death notice.
                     prepend = ([BOOT_RESUME_NUDGE] if cut else []) \
+                            + ([ASK_DIED_NOTICE] if ask_died else []) \
                             + ([task_death_notice(dead_tasks)] if dead_tasks else [])
                     if prepend or dead_tasks:
                         with self._reg_lock:
@@ -3813,6 +4086,8 @@ class SdkBackend:
                                                       if (qt := _queue_text(e)) and qt not in prepend]
                             if dead_tasks:
                                 reg["bgTasks"] = []   # reported — never re-notify for the same deaths
+                            if ask_died:
+                                reg["pendingAsk"] = False   # asked once per death — the re-raise mints a fresh flag
                             write_reg(self.state_dir, sid, reg)
                     if cut:
                         # Durable "romp cut this, romp is continuing it" stamp, written with the resume
@@ -4630,6 +4905,8 @@ class SdkBackend:
             stderr=sess._on_cli_stderr,
             can_use_tool=sess._can_use_tool,
             hooks={"Stop": [HookMatcher(matcher=None, hooks=[sess._stop_hook])],          # awaiting overlay producer
+                   # recurring-cron replay gate: a resumed CLI re-fires passed slots (T211)
+                   "UserPromptSubmit": [HookMatcher(matcher=None, hooks=[sess._prompt_submit_hook])],
                    "SubagentStart": [HookMatcher(matcher=None, hooks=[sess._subagent_start_hook])],  # live subagent
                    "SubagentStop": [HookMatcher(matcher=None, hooks=[sess._subagent_stop_hook])],    #   count/types
                    # scheduling tools record their arm at the CALL moment, with the exact due time the
@@ -4794,7 +5071,7 @@ class SdkBackend:
         # the common env-less session carries no key and _options writes no settings file for it.
         if env:
             reg["env"] = dict(env)
-        write_reg(self.state_dir, sid, reg)
+        self._write_reg_locked(sid, reg)
         append_state(self.state_dir, sid, "waiting")
         self._poke()
         return sid
@@ -4897,7 +5174,7 @@ class SdkBackend:
             if env:
                 reg["env"] = env   # per-session env inherits like model/auth — it is that
                 #   conversation, continued elsewhere (a copy: the two regs diverge independently)
-        write_reg(self.state_dir, sid, reg)
+        self._write_reg_locked(sid, reg)
         # the names/ entry LAST — it is the discoverability trigger (discover() iterates names/), and
         # everything above must exist before any judge pass can see the session. A comment thread never
         # writes it: promote_thread() does, after the kernel seeds the judge stores.
@@ -4918,12 +5195,13 @@ class SdkBackend:
         judge stores FIRST — the names/ write below is the discoverability trigger, same ordering
         contract as fork(). Clears threadOf (the reg becomes an ordinary session's) and registers the
         identity; the running CLI, transcript and queue carry over untouched."""
-        reg = read_reg(self.state_dir, sid)
-        if not reg or not reg.get("threadOf"):
-            return False
-        reg.pop("threadOf", None)
-        reg["name"] = name
-        write_reg(self.state_dir, sid, reg)
+        with self._reg_lock:                       # the threadOf pop is a listing-visibility flip
+            reg = self._reg_for_flip(sid)
+            if not reg or not reg.get("threadOf"):
+                return False
+            reg.pop("threadOf", None)
+            reg["name"] = name
+            write_reg(self.state_dir, sid, reg)
         if not bg:
             bg, fg = pick_identity_color(sid, self.state_dir)
         write_name(self.state_dir, sid, name, reg.get("cwd", ""), bg, fg)
@@ -4950,16 +5228,17 @@ class SdkBackend:
         The caller's name is only ever ADOPTED when the reg has none — the create-from-nothing revive
         of a session this backend has never seen, which is also logged, because a sid with no reg is
         usually a transcript fsid that leaked out of a discovery row rather than a real romp sid."""
-        reg = read_reg(self.state_dir, sid) or {}
-        kept = str(reg.get("name") or "").strip()
-        if not reg:
-            self._log("resume minting a reg for unknown sid %s as %r — a sid with no reg is usually "
-                      "a transcript fsid, not a romp session" % (sid[:13], name))
-        cwd = cwd or reg.get("cwd") or os.path.expanduser("~")
-        write_reg(self.state_dir, sid, {**reg, "sid": sid, "name": kept or name, "cwd": cwd,
-                                        "mode": reg.get("mode", "acceptEdits"),
-                                        "effort": reg.get("effort", DEFAULT_EFFORT),
-                                        "lastSid": reg.get("lastSid") or sid, "alive": True})
+        with self._reg_lock:                       # the alive=True flip must not lose to an RMW snapshot
+            reg = self._reg_for_flip(sid) or {}
+            kept = str(reg.get("name") or "").strip()
+            if not reg:
+                self._log("resume minting a reg for unknown sid %s as %r — a sid with no reg is usually "
+                          "a transcript fsid, not a romp session" % (sid[:13], name))
+            cwd = cwd or reg.get("cwd") or os.path.expanduser("~")
+            write_reg(self.state_dir, sid, {**reg, "sid": sid, "name": kept or name, "cwd": cwd,
+                                            "mode": reg.get("mode", "acceptEdits"),
+                                            "effort": reg.get("effort", DEFAULT_EFFORT),
+                                            "lastSid": reg.get("lastSid") or sid, "alive": True})
         append_state(self.state_dir, sid, "waiting")
         self._poke()
         return True
@@ -5608,10 +5887,11 @@ class SdkBackend:
         return s._clearing
 
     def kill(self, sid: str) -> bool:
-        reg = read_reg(self.state_dir, sid)
-        if reg:
-            reg["alive"] = False
-            write_reg(self.state_dir, sid, reg)
+        with self._reg_lock:                       # the alive flip must not lose to an RMW snapshot
+            reg = self._reg_for_flip(sid)
+            if reg:
+                reg["alive"] = False
+                write_reg(self.state_dir, sid, reg)
         s = self.sessions.pop(sid, None)
         if s:
             s.shutdown()
@@ -6061,9 +6341,12 @@ class SdkBackend:
         producer calls this every pass: any alive, timer-armed session with no running thread is
         reconnected — resume re-hydrates its timer set (verified live 2026-08-28: CronList shows the
         same cron in a fresh process after a kill), and the CLI does ALL the firing natively; romp
-        never fires a timer itself. Residual, accepted: a timer due inside the ~minute a kernel
-        restart takes can still miss (the down window has no process to fire it and no catch-up
-        exists for session-scoped timers CLI-side).
+        never fires a timer itself. A recurring slot due inside a down window is CAUGHT UP by the
+        resumed CLI itself (it re-fires passed slots on --resume, verified live 2026-09-01) — and
+        the same behavior re-fires slots that already ran, once per restart, so the catch-up is
+        only safe because _prompt_submit_hook's delivered-slot gate blocks the replays (T211).
+        Residual, accepted: a ONE-SHOT due inside the down window still misses CLI-side
+        (deliver_lost_wakeups owns those).
 
         A 120s per-sid retry floor bounds the failure mode where a timer-armed session's CLI dies
         instantly on every spawn — without it this sweep would respawn it every producer pass
@@ -6183,45 +6466,69 @@ class SdkBackend:
                 continue
             if reg.get("threadOf"):
                 continue   # a comment thread: its surface is the parent chat's comment UI, never a tab
-            sid = reg["sid"]
-            s = self.sessions.get(sid)
-            if s and s.thread.is_alive():
-                out[sid] = s.snapshot()
-            else:
-                ls = last_state(self.state_dir, sid)
-                st = ls.get("state") or "waiting"
-                # A NOT-running (dormant, resumable) SDK session can't actually be mid-turn: after a kernel
-                # restart its thread is gone, but the state log still reads its last in-flight state
-                # ("working"/"permission"/"picker"/…). Reporting that verbatim makes a dormant session look
-                # FALSELY blocked/working with NO live ask to resolve it — the prompt died with the thread (the
-                # user 2026-06-24: reorder_bug showed "blocked, needs approval" with no prompt after a refresh).
-                # Map any in-flight state → "waiting", the true state of a dormant session (it resumes on the
-                # next drive). A GENUINELY-blocked session is RUNNING → snapshot() above (with a real
-                # current_ask), so it's unaffected. Keyed on thread-not-running, not a time heuristic.
-                if st in ("working", "permission", "picker", "compacting", "retrying"):
-                    st = "waiting"
-                lc = reg.get("liveCtx")   # last persisted context fill → bar survives idle/restart
-                out[sid] = {"state": st,
-                            "since": str(ls.get("t") or ""),
-                            # not running (e.g. post-restart): prefer the last LIVE model we persisted
-                            # (liveModel), else the chosen alias — so the badge isn't blank while dormant.
-                            "model": model_label(reg.get("liveModel") or "", reg.get("model") or ""),
-                            "modelPending": bool(reg.get("modelPending")),
-                            "effortPending": bool(reg.get("effortPending")),
-                            "effort": reg.get("effort", ""),
-                            "auth": self.default_auth(reg),
-                            # the persisted CLI truth (apiKeyAuth, the liveModel pattern) so a dormant
-                            # session's Billing row keeps telling it; absent = no init ever landed
-                            "authLive": ("key" if reg.get("apiKeyAuth") else "login")
-                                        if isinstance(reg.get("apiKeyAuth"), bool) else "",
-                            "authPending": bool(reg.get("authPending")),
-                            "mode": reg.get("mode", ""),
-                            # last persisted fast state (liveFast, like liveCtx above) → the badge
-                            # survives idle/restart instead of vanishing until the next turn
-                            "fast": reg.get("liveFast", ""),
-                            "fastReason": reg.get("liveFastReason", ""),
-                            "ctx": lc if isinstance(lc, (int, float)) else "", "summary": ""}
+            sid = reg.get("sid")
+            if not sid:
+                continue
+            try:
+                out[sid] = self._live_row(reg, sid)
+            except Exception:
+                # One session's bad row must not hide the OTHERS — this loop used to run unguarded
+                # under the kernel merge's single try, so one snapshot() exception silently dropped
+                # EVERY SDK session from an otherwise-successful listing, and absence from a listing
+                # reads as death downstream (the postal bus refused sends to live peers, 2026-08-31).
+                # The failing session itself stays VISIBLE as a minimal waiting row: present beats
+                # perfect, and the loud line makes the real bug findable.
+                sys.stderr.write("live_sessions: row for %s failed (kept as minimal row): %s\n"
+                                 % (sid, traceback.format_exc()))
+                out[sid] = {"state": "waiting", "since": "", "model": "", "modelPending": False,
+                            "effortPending": False, "effort": "", "auth": "", "authLive": "",
+                            "authPending": False, "mode": "", "fast": "", "fastReason": "",
+                            "color": None, "connected": False, "spawning": False, "retryCount": 0,
+                            "retryInfo": None, "ctx": None, "subagents": [], "bgTasks": []}
         return out
+
+    def _live_row(self, reg, sid):
+        """One session's live_sessions row (running snapshot, else the dormant reg row) — factored
+        so live_sessions can guard it PER SESSION (one bad row must not hide the other sessions)."""
+        s = self.sessions.get(sid)
+        if s and s.thread.is_alive():
+            return s.snapshot()
+        ls = last_state(self.state_dir, sid)
+        st = ls.get("state") or "waiting"
+        # A NOT-running (dormant, resumable) SDK session can't actually be mid-turn: after a kernel
+        # restart its thread is gone, but the state log still reads its last in-flight state
+        # ("working"/"permission"/"picker"/…). Reporting that verbatim makes a dormant session look
+        # FALSELY blocked/working with NO live ask to resolve it — the prompt died with the thread (the
+        # user 2026-06-24: reorder_bug showed "blocked, needs approval" with no prompt after a refresh).
+        # Map any in-flight state → "waiting", the true state of a dormant session (it resumes on the
+        # next drive). A GENUINELY-blocked session is RUNNING → snapshot() above (with a real
+        # current_ask), so it's unaffected. Keyed on thread-not-running, not a time heuristic.
+        if st in ("working", "permission", "picker", "compacting", "retrying"):
+            st = "waiting"
+        lc = reg.get("liveCtx")   # last persisted context fill → bar survives idle/restart
+        return {"state": st,
+                    "since": str(ls.get("t") or ""),
+                    # not running (e.g. post-restart): prefer the last LIVE model we persisted
+                    # (liveModel), else the chosen alias — so the badge isn't blank while dormant.
+                    "model": model_label(reg.get("liveModel") or "", reg.get("model") or ""),
+                    "modelPending": bool(reg.get("modelPending")),
+                    "effortPending": bool(reg.get("effortPending")),
+                    "effort": reg.get("effort", ""),
+                    "auth": self.default_auth(reg),
+                    # the persisted CLI truth (apiKeyAuth, the liveModel pattern) so a dormant
+                    # session's Billing row keeps telling it; absent = no init ever landed
+                    "authLive": ("key" if reg.get("apiKeyAuth") else "login")
+                                if isinstance(reg.get("apiKeyAuth"), bool) else "",
+                    "authPending": bool(reg.get("authPending")),
+                    "mode": reg.get("mode", ""),
+                    # last persisted fast state (liveFast, like liveCtx above) → the badge
+                    # survives idle/restart instead of vanishing until the next turn
+                    "fast": reg.get("liveFast", ""),
+                    "fastReason": reg.get("liveFastReason", ""),
+                    "ctx": lc if isinstance(lc, (int, float)) else "",
+                    "ctxTokens": (int(reg["liveCtxTokens"])
+                                  if isinstance(reg.get("liveCtxTokens"), (int, float)) else None),
+                    "summary": ""}
 
     # ---- picker/permission UI bridge (kernel-thread API) ----
     def on_ask(self, sid: str, kind: str, payload=None) -> bool:
@@ -6233,8 +6540,7 @@ class SdkBackend:
         if kind == "focus":
             return True   # ↑/↓ preview-step: SDK options carry their OWN preview, so the webview swaps it
                           # locally — there's no TUI cursor to drive, and it must NOT resolve the ask.
-        s.resolve_ask(kind, payload)
-        return True
+        return s.resolve_ask(kind, payload)    # the DELIVERY outcome, not mere routing (T214)
 
     # ---- callbacks used by sessions ----
     def _emit_ask(self, sess: SdkSession, ask: dict):
@@ -6243,11 +6549,17 @@ class SdkBackend:
         # was raised — the durable replay tmux gets from pane-scraping. The immediate push below is just for
         # snappiness (no 1.2s wait); the poll is the source of truth. (the user 2026-06-24: blocked-no-prompt.)
         self._pending_ask[sess.sid] = ask
+        # …and a DURABLE marker (T214): the in-memory ask dies with the kernel, and a restart-cut
+        # question was never re-presented — the boot reconcile reads this flag off the reg and asks
+        # the resumed session to raise its question again (ASK_DIED_NOTICE), so the user's answer
+        # has somewhere real to land. Cleared on resolve below and by the reconcile after it notices.
+        self._update_reg(sess.sid, pendingAsk=True)
         self._notify("chat", {"type": "askLive", "id": sess.sid, "ask": ask})
         self._poke()
 
     def _clear_ask(self, sess: SdkSession):
         self._pending_ask.pop(sess.sid, None)
+        self._update_reg(sess.sid, pendingAsk=False)   # resolved in THIS life — nothing owed at the next boot (T214)
         self._notify("chat", {"type": "askLiveClear", "id": sess.sid})
 
     def current_ask(self, sid: str):
@@ -6473,8 +6785,42 @@ class SdkBackend:
 
     def _update_reg(self, sid: str, **fields):
         with self._reg_lock:                       # kernel + loop threads both write (queue mirror);
-            reg = read_reg(self.state_dir, sid) or {"sid": sid}   # unserialized RMWs would drop fields
+            reg = read_reg(self.state_dir, sid)    # unserialized RMWs would drop fields
+            if reg is None:
+                if _reg_path(self.state_dir, sid).exists():
+                    # the reg EXISTS but would not read: writing {sid}+fields here GUTS it — no
+                    # alive, no name — and a gutted reg vanishes from every listing until a full
+                    # rewrite (the 2026-08-31 blink class). Losing one mirror update is the far
+                    # smaller harm: the next update lands on the healed read.
+                    sys.stderr.write("update_reg: %s unreadable — skipping a %s write rather than "
+                                     "gutting the reg\n" % (sid[:8], "/".join(sorted(fields))))
+                    return
+                reg = {"sid": sid}
             reg.update(fields)
+            write_reg(self.state_dir, sid, reg)
+
+    def _reg_for_flip(self, sid: str):
+        """The RMW base for a VISIBILITY FLIP (kill/resume/promote) when the disk read fails but
+        the reg exists: the scan's last good cached row. A flip that silently no-ops on a bad read
+        leaves a killed session listed alive — or a revived one dead — until an unrelated write
+        heals it (review find, 2026-08-31); flips are exactly the writes that must never be lost."""
+        reg = read_reg(self.state_dir, sid)
+        if reg is not None:
+            return reg
+        p = str(_reg_path(self.state_dir, sid))
+        hit = _REG_CACHE.get(p)
+        if hit is not None and os.path.exists(p):
+            sys.stderr.write("reg flip for %s: disk read failed — using the scan's last good row\n"
+                             % sid[:8])
+            return dict(hit[1])
+        return None
+
+    def _write_reg_locked(self, sid: str, reg: dict) -> None:
+        """Full-reg writes from backend methods take the SAME lock the RMW mirror holds — a raw
+        write racing _update_reg's read-modify-write could get its fields overwritten by the RMW's
+        pre-write snapshot (kill's alive=False undone = a dead session resurrected in the listing;
+        resume's alive=True undone = a live one blinked out of it)."""
+        with self._reg_lock:
             write_reg(self.state_dir, sid, reg)
 
     def _record_launch_error(self, sess: SdkSession, exc: BaseException) -> None:

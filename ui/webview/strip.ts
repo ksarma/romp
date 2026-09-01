@@ -33,9 +33,12 @@ const WINS: Array<[string, number, string, string]> = [
   ["fable", 7 * 86400, "Fable 5", "F5"],
 ];
 
-// The rail's usage color ramp: green under 70%, amber under 90%, red at 90+.
+import { usageFallbackColor } from "./ctx-color";
+
+// The rail's usage color: theme-aware (ctx-color.ts) — classic keeps main's 70/90 palette
+// verbatim (the owner's call, PR #763); the yatharth themes use the unified warn/danger pair.
 export function usageColor(pct: number): string {
-  return pct >= 90 ? "#c0392b" : pct >= 70 ? "#e0b020" : "#54B204";
+  return usageFallbackColor(pct);
 }
 
 export function fmtAgo(ep: number, nowS: number): string {

@@ -87,6 +87,36 @@ test("EVERY queued-class kernel setting is emitted with its gesture time (comple
   }
 });
 
+test("model/effort options are written exactly once — the single-flight /models fetch (2026-08-30)", () => {
+  // The user's "my Distilling pick keeps resetting": fillChoices memoized its RESULT, so a settings
+  // open racing the page-load fetch fired a second /models fetch, and whichever resolved last
+  // REWROTE every select's options AFTER fill() had set their values — a rewritten select falls
+  // back to its first option ("Follow triage" for distill; invisible on Triage model, whose first
+  // option coincides with the stored value). The promise is the memo now; a failed fetch clears it.
+  assert.ok(GEAR.includes("var choicesP = null;"), "the promise is the memo");
+  assert.ok(GEAR.includes("if (choicesP) return choicesP;"), "second callers reuse the in-flight fetch");
+  assert.ok(GEAR.includes("choicesP = null; return null;"), "a failed fetch clears the memo for retry");
+  assert.ok(!GEAR.includes("if (choices) return Promise.resolve(choices);"), "the result-memo race is gone");
+});
+
+test("the login flow lives in a modal behind one button (the user 2026-08-30)", () => {
+  // "it would just be a login button… then it would pop up another modal that says paste the code
+  // so it doesn't always sit there taking up space" — the paste-code UI collapses behind the
+  // Account button; the modal wears the panel treatment (centered card over a dimmed backdrop).
+  assert.ok(GEAR.includes("id=rs-login-modal"), "the modal exists");
+  assert.ok(GEAR.includes("Log in to Claude Code"), "the button says what it does");
+  const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "gear.css"), "utf8");
+  assert.match(CSS, /#rs-login-modal \{ position: fixed; inset: 0; z-index: \d+; background: var\(--overlay-dim, rgba\(0, 0, 0, 0\.55\)\);/);   // tokened with its literal fallback (2026-08-30 merge)
+  assert.match(CSS, /\.rs-login-card \{ background: var\(--surface-raised, #252526\); border: 1px solid rgba\(255,255,255,0\.12\);/);
+  // mid-flow the button REOPENS the modal, never restarts the flow; terminal state closes it;
+  // Cancel + Escape + backdrop close; the code input stays a pure pass-through (T157)
+  assert.ok(GEAR.includes("if (lgLive === 'url' || lgLive === 'starting' || lgLive === 'verifying') return;"));
+  assert.ok(GEAR.includes("if (!f.state) lgModal(false);"));
+  assert.ok(GEAR.includes("if (e.key === 'Escape' && lgM && !lgM.hidden) lgModal(false);"));
+  assert.ok(GEAR.includes("if (e.target === lgM) lgModal(false);"));
+  assert.ok(GEAR.includes("post({ type: 'loginCode', code: code });"), "pass-through untouched");
+});
+
 test("the distilling tier is its own gear pair, defaulting to follow-triage", () => {
   // The user 2026-08-14: the card-prose judges (distiller, briefer, staller) split out of triage so
   // what you READ can run a richer model than the placement judges. The stored sentinel "triage"
@@ -142,6 +172,25 @@ test("the Auto Nudge box speaks for every attached machine, and says so when the
   // The description is the one level down: it names the machines, so it cannot be a frozen literal.
   assert.ok(/asub\.textContent = AUTONUDGE_SUB\s*\n?\s*\+/.test(GEAR) && GEAR.includes("split.join("),
     "the hover line must name who differs");
+});
+
+test("the /compact suggestion is a real settings checkbox beside Auto Nudge (the user 2026-09-01)", () => {
+  // T208 shipped the kernel toggle with no UI; the user ruled it must be an ordinary settings
+  // checkbox next to Auto Nudge — off by default for new installs, one click to turn on.
+  assert.ok(GEAR.includes("id=rs-suggestcompact"), "the checkbox exists in the gear markup");
+  const sessions = GEAR.indexOf(">Sessions<"), chat = GEAR.indexOf(">Chat<");
+  const at = GEAR.indexOf("id=rs-suggestcompact");
+  assert.ok(sessions < at && at < chat, "…in the Sessions section, with its siblings");
+  assert.ok(GEAR.indexOf("id=rs-autonudge") < at && at < GEAR.indexOf("id=rs-conserve"),
+    "…directly after Auto Nudge, where the user asked for it");
+  assert.ok(/csg\.addEventListener\('change'/.test(GEAR)
+    && GEAR.includes("post({ type: 'setCompactSuggest', enabled: csg.checked, gt: Date.now() })"),
+    "the click posts the kernel's designed setCompactSuggest message — gesture-stamped, like "
+    + "every kernel-side setting this fork emits (the 2026-09-01 fold)");
+  assert.ok(GEAR.includes("csg.checked = !!v.compactSuggest"),
+    "…and the box always shows the kernel's persisted answer, never a page default");
+  assert.ok(GEAR.includes("['compactSuggest', csg]"),
+    "attached machines that disagree get the same mixed mark as every kernel-side setting");
 });
 
 test("the gear owns its browseResult (the reply lands in the FEED document, not the chat's)", () => {

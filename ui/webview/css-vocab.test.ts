@@ -46,7 +46,9 @@ test("menus wear ONE vocabulary (CLAUDE.md): --radius-menu 6px + --shadow-menu o
   assert.match(CHAT, /--radius-menu: 6px;\n  --shadow-menu: 0 4px 12px rgba\(0, 0, 0, 0\.35\);/);
   assert.match(FEED, /--radius-menu: 6px;/);
   assert.match(FEED, /--shadow-menu: 0 4px 12px rgba\(0, 0, 0, 0\.35\);/);
-  for (const sel of [".ctx-menu", ".meta-menu", ".tab-tip", ".slash-pop"]) {
+  // .tab-tip left this list 2026-08-28: it is a TOOLTIP, not a dropdown, and wears the ONE tooltip
+  // dress's tokens (--radius-toast/--shadow-toast) now — tip.test.ts pins that.
+  for (const sel of [".ctx-menu", ".meta-menu", ".slash-pop"]) {
     const at = CHAT.indexOf(sel + " {");
     const rule = CHAT.slice(at, CHAT.indexOf("}", at));
     assert.ok(rule.includes("var(--radius-menu)"), sel + " radius through the token");
@@ -193,5 +195,17 @@ test("ONE accent wash: every selected/hovered accent chrome resolves through --a
   for (const [name, css] of [["styles.css", CHAT], ["feed.css", FEED]] as const) {
     assert.match(css, /\.fileview-btn\.on:hover \{ background: var\(--accent\); color: var\(--accent-fg\); border-color: var\(--accent\); \}/,
       name + " reverse-highlights the selected viewer toggle");
+  }
+});
+
+test("the px type set is CLOSED: chrome sizes come from the pinned set, like the em ladder", () => {
+  // the 2026-08-28 collapse retired 11.5px and 12.5px (the last strays); a new px size is a new
+  // rung — justify it here in the same commit or reuse a neighbour. (em sizes have their own
+  // ladder pin; px is chrome-only: kbd chips, micro-labels, statusline hardware.)
+  const ALLOWED = new Set(["8", "9", "10", "10.5", "11", "12", "13", "14", "15", "16", "19", "21", "38"]);   // 15 = the gear/strip icon glyphs
+  for (const [name, css] of [["styles.css", CHAT], ["feed.css", FEED], ["gear.css", GEAR], ["strip.css", STRIP]] as const) {
+    const sizes = [...css.matchAll(/font-size:\s*(\d+(?:\.\d+)?)px/g)].map((m) => m[1]);
+    const strays = sizes.filter((v) => !ALLOWED.has(v));
+    assert.deepEqual(strays, [], name + " px sizes outside the set");
   }
 });

@@ -220,8 +220,8 @@ class FreshGuard(unittest.TestCase):
         self._tick()
         self.assertEqual(self.sent, [])
         self.assertEqual(self.judge_calls, [], "the memo serves the ruling — no call")
-        self.assertEqual([r["verdict"] for r in self._rows()], ["skipped-redundant-memo"])
-        self.assertEqual(self._rows()[0]["evT"], ARM_T + 50)
+        self.assertEqual(self._rows(), [], "a parked visit logs nothing (the parked-tick round: "
+                                           "rows mark state changes, never visits)")
 
     def test_the_at_cap_flip_class_dies_by_construction(self):
         # 3 of 10 measured fired-at-cap rows were the judge FLIPPING on a (gid, evT) it had just
@@ -233,8 +233,8 @@ class FreshGuard(unittest.TestCase):
         self.judge_replies = [False]                  # the flip verdict, never reachable
         self._tick()
         self.assertEqual(self.sent, [], "a pair ruled redundant can never fire on the same evidence")
+        self.assertEqual(self._rows(), [], "…and the parked visit logs nothing")
         self.assertEqual(self.judge_calls, [])
-        self.assertEqual([r["verdict"] for r in self._rows()], ["skipped-redundant-memo"])
 
     def test_a_judged_redundancy_stamps_the_memo(self):
         self.judge_replies = [True]

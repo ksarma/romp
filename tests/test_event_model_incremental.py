@@ -273,12 +273,12 @@ def _flush_orphan_recs():
     return prefix, growth
 
 
-class FlushOrphanReattachEquivalence(unittest.TestCase):
+class FlushOrphanEclipseEquivalence(unittest.TestCase):
     """Growth THROUGH an api_error-flush orphaning parses identically warm and cold: before the
     flush lands the reply is simply the leaf (active); the flush append bypasses it, and the
-    re-attach (em._reattach_flush_orphans) must reach the same verdict from the incremental
+    eclipse (fork probe + em._select_eclipsed_chains) must reach the same verdict from the incremental
     cache's grew-branch reuse as from a byte-zero read — the compactcard precedent
-    (ManualCompactAdoptionEquivalence) extended to the re-attach."""
+    (ManualCompactAdoptionEquivalence) extended to the eclipse."""
 
     def setUp(self):
         em._JSONL_CACHE.clear()
@@ -293,7 +293,7 @@ class FlushOrphanReattachEquivalence(unittest.TestCase):
         return [a.get("uuid") for t in out["turns"] for a in t["atoms"]
                 if a.get("type") == "assistant"]
 
-    def test_growth_through_the_flush_reattaches_identically_warm_and_cold(self):
+    def test_growth_through_the_flush_eclipses_identically_warm_and_cold(self):
         reply = "11111111-2222-3333-4444-%012d" % 2
         prefix, growth = _flush_orphan_recs()
         _write(self.p, prefix)
@@ -302,14 +302,14 @@ class FlushOrphanReattachEquivalence(unittest.TestCase):
         _append(self.p, growth)
         warm = em.parse_session(self.p)                   # rides the grew-branch reuse
         self.assertEqual(em.parse_session(self.p), warm,
-                         "a re-parse from the warm cache is stable — the re-attach mutated no cached record")
+                         "a re-parse from the warm cache is stable — the eclipse mutated no cached record")
         em._JSONL_CACHE.clear()
         cold = em.parse_session(self.p)
-        self.assertEqual(warm, cold, "grown through the flush: warm == cold, re-attach included")
+        self.assertEqual(warm, cold, "grown through the flush: warm == cold, eclipse included")
         self.assertIn(reply, self._reply_uuids(cold),
                       "the bypassed reply survives the flush append")
 
-    def test_late_stub_pair_append_reattaches_identically_warm_and_cold(self):
+    def test_late_stub_pair_append_eclipses_identically_warm_and_cold(self):
         # the write-order-drift append: a parallel tool-stub pair parented at the PRE-reply fork
         # arrives AFTER the flush growth, so the stub records outrank every reply record in file
         # order. Selection is by property, not byte order — warm and cold must both splice back
@@ -338,7 +338,7 @@ class FlushOrphanReattachEquivalence(unittest.TestCase):
         cold = em.parse_session(self.p)
         self.assertEqual(warm, cold, "grown through the late-stub append: warm == cold")
         self.assertIn(reply, self._reply_uuids(cold),
-                      "the reply re-attaches even when the stub chain is the newest write")
+                      "the reply stays kept even when the stub chain is the newest write")
         atom_uuids = {a.get("uuid") for t in cold["turns"] for a in t["atoms"]}
         self.assertFalse({b(8), b(9)} & atom_uuids, "the stub chain stays dropped")
 
