@@ -76,6 +76,16 @@ def report():
         lines.append("kernel   sha=%s pid=%s up=%dm%02ds dist_ver=%s  (%s)"
                      % (k.get("kernel_sha") or "?", k.get("pid"), up // 60, up % 60,
                         k.get("dist_ver"), k.get("url")))
+        pa = k.get("parse") or {}
+        if pa.get("fold", 0) + pa.get("full", 0) > 0:
+            # the assembly cache's live hit rate — the deploy-verification number (T210)
+            rate = 100.0 * pa["fold"] / (pa["fold"] + pa["full"])
+            gates = ", ".join("%s %d" % (g[2:], n) for g, n in sorted(pa.items())
+                              if g.startswith("g:") and n)
+            lines.append("parse    fold %.0f%% (%d fold / %d full / %d served)%s%s"
+                         % (rate, pa["fold"], pa["full"], pa.get("serve", 0),
+                            "  fallbacks=%d" % pa["fallback"] if pa.get("fallback") else "",
+                            ("  demotes: " + gates) if gates else ""))
     elif kind == "stale":
         lines.append("kernel   running at %s but predates /version — `romp refresh` to populate" % k)
     else:
