@@ -139,6 +139,19 @@ class GestureOrderAtTheStore(_Base):
             self.assertIsNone(km._set_file_editing(False, gt=T_OLD))
         self.assertTrue(km._file_editing_on(), "the newer consent survives the stale revoke")
 
+    def test_compact_suggest_orders_the_same_way_on_its_own_clock(self):
+        # T208 (upstream 2026-09-01, gt-gated at the fold): it shares auto-nudge.json but wears its
+        # OWN stamp key (compactSuggestGt) — ordering is per SETTING, so a compact-suggest gesture
+        # never outranks an auto-nudge one, or vice versa, just because they share a file.
+        self.assertEqual(km._set_compact_suggest(True, gt=T_NEW), T_NEW)
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertIsNone(km._set_compact_suggest(False, gt=T_OLD))
+        km._autonudge_cache.clear()
+        self.assertTrue(km._compact_suggest_on(), "the newer ON survives the stale OFF")
+        # the sibling setting's clock is untouched: an older-stamped auto-nudge gesture still
+        # applies, because the compact-suggest stamps above never landed on ITS key
+        self.assertEqual(km._set_auto_nudge(True, gt=T_OLD), T_OLD)
+
     def test_an_unstamped_apply_still_arms_the_store_against_stale_flushes(self):
         # compat is one-way on purpose: no gt applies as today (arrival-stamped), and that arrival
         # stamp then outranks any hours-old stamped flush that shows up later
@@ -596,6 +609,9 @@ class StaleGestureAnswersTheDeliveringSocket(_Base):
     def test_every_gt_gated_setting_answers(self):
         cases = [({"type": "setAutoNudge", "enabled": False}, {"type": "setAutoNudge", "enabled": True},
                   "auto-nudge", False),
+                 # T208 rides the same door beside Auto Nudge (the 2026-09-01 fold)
+                 ({"type": "setCompactSuggest", "enabled": True}, {"type": "setCompactSuggest", "enabled": False},
+                  "compact-suggest", True),
                  ({"type": "setFileEditing", "enabled": True}, {"type": "setFileEditing", "enabled": False},
                   "file-editing", True),
                  ({"type": "setUpdateMode", "mode": "auto"}, {"type": "setUpdateMode", "mode": "off"},
@@ -650,12 +666,17 @@ class WiringPins(unittest.TestCase):
     def test_file_editing_branch_passes_the_stamp(self):
         self.assertIn('_set_file_editing(bool(msg["enabled"]), gt=_gesture_ms(msg))', self.src)
 
+    def test_compact_suggest_branch_gates_on_the_stamp_and_skips_the_tick_on_stand_down(self):
+        # T208's WS branch mirrors setAutoNudge's: gt-gated, immediate tick only on a real apply
+        self.assertIn('_set_compact_suggest(bool(msg["enabled"]), gt=_gesture_ms(msg)) is not None', self.src)
+
     def test_update_mode_branch_passes_the_stamp(self):
         self.assertIn('_set_update_mode(str(msg["mode"]), gt=_gesture_ms(msg))', self.src)
 
     def test_every_stood_down_branch_tells_the_delivering_socket(self):
-        self.assertGreaterEqual(self.src.count("_tell_stale_gesture(client)"), 12,
-                                "all twelve queued-class branches answer the delivering socket on a stand-down")
+        self.assertGreaterEqual(self.src.count("_tell_stale_gesture(client)"), 13,
+                                "all thirteen queued-class branches (compact-suggest joined at the "
+                                "2026-09-01 fold) answer the delivering socket on a stand-down")
 
     def test_the_docstring_names_all_three_none_causes(self):
         doc = km._set_judge_state.__doc__ or ""
@@ -666,7 +687,7 @@ class WiringPins(unittest.TestCase):
     def test_the_toggle_docstrings_name_the_write_failure_stand_down(self):
         # the same contract _set_judge_state documents: None's write-failure cause is named, so a
         # caller reading the docstring knows a full disk stands the gesture down rather than raising
-        for fn in (km._set_auto_nudge, km._set_file_editing):
+        for fn in (km._set_auto_nudge, km._set_compact_suggest, km._set_file_editing):
             self.assertIn("OSError", fn.__doc__ or "",
                           "%s documents the write-failure cause of None" % fn.__name__)
 

@@ -31,7 +31,7 @@ test("closed state is ONE row: a full-width button with the current option + car
 
 test("the descriptions ellipsize in BOTH states, and the row chain can actually shrink", () => {
   // every description/preview span: nowrap + hidden overflow + ellipsis + min-width:0
-  for (const fn of ["schemeRowHTML", "tabThemeRowHTML"]) {
+  for (const fn of ["schemeRowHTML", "themeRowHTML"]) {
     const at = GEAR.indexOf("function " + fn + "(");
     assert.ok(at > 0, fn + " exists");
     const body = GEAR.slice(at, GEAR.indexOf("\n  }", at));
@@ -40,7 +40,7 @@ test("the descriptions ellipsize in BOTH states, and the row chain can actually 
   }
   // ...and the picker ROWS' outer spans gained min-width:0 (without it the nowrap min-content
   // pushed the whole row past the card edge — the screenshot's overrun)
-  assert.match(GEAR, /<span style='flex:1 1 auto;min-width:0'><b>Chat tabs<\/b>/, "Chat tabs row outer span shrinks");
+  assert.match(GEAR, /<span style='flex:1 1 auto;min-width:0'><b>Theme<\/b>/, "Theme row outer span shrinks");
   assert.match(GEAR, /<span style='flex:1 1 auto;min-width:0'><b>Text scheme<\/b>/, "Text scheme row outer span shrinks");
 });
 
@@ -58,9 +58,9 @@ test("the open menu wears the house vocabulary and cannot overflow the panel", (
 });
 
 test("the tab-theme sub-lines wear the menu vocabulary's sub scale", () => {
-  const at = GEAR.indexOf("function tabThemeRowHTML(");
+  const at = GEAR.indexOf("function themeRowHTML(");
   const body = GEAR.slice(at, GEAR.indexOf("\n  }", at));
-  assert.match(body, /font-size:0\.82em;color:#cccccc;opacity:0\.6/, "0.82em at 0.6 opacity — the house sub-line");
+  assert.match(body, /font-size:0\.82em;color:var\(--fg, #cccccc\);opacity:0\.6/, "0.82em at 0.6 opacity — the house sub-line (fg tokened for the light modal, PR #763 item 10)");
 });
 
 test("dismissal is event-based: outside click, Escape, the sibling dropdown, and the cross-pane echo", () => {
@@ -74,7 +74,7 @@ test("dismissal is event-based: outside click, Escape, the sibling dropdown, and
 
 test("both pickers build on the ONE dropdown, and repaint on every settings open", () => {
   assert.match(GEAR, /var csDrop = housePick\(cs, 'scheme', schemeRowHTML,/);
-  assert.match(GEAR, /var ttDrop = housePick\(tt, 'tabtheme', tabThemeRowHTML,/);
+  assert.match(GEAR, /var ttDrop = housePick\(tt, 'theme', themeRowHTML,/);
   assert.match(GEAR, /tcPaint\(\); csPaint\(\); ttPaint\(\); if \(cg\)/,
     "openSettings repaints ALL closed rows — a pick made in another pane shows current on open");
 });

@@ -43,8 +43,11 @@ test("a queued slash command renders as a command chip, not a plain 'message' (t
 });
 
 test("a cancelable queued bubble carries an explicit ✕ — messages AND parked commands (the user 2026-07-08)", () => {
-  // both queues cancel: the backend's own (idx) and ops parked during compaction/model switches (park)
-  assert.match(RENDER, /if \(t\.cancelable && \(t\.idx !== undefined \|\| t\.park !== undefined\)\)/);
+  // every stage cancels: the backend's own queue (idx), ops parked during compaction/model switches
+  // (park), and the pre-confirmation optimistic echo (qopt — the 2026-08-30 rule: labeled and
+  // cancellable from the instant send is pressed)
+  assert.match(RENDER, /if \(t\.cancelable && \(t\.idx !== undefined \|\| t\.park !== undefined \|\| t\.optimistic\)\)/);
+  assert.match(RENDER, /if \(t\.optimistic\) x\.dataset\.qopt = "1";/);
   assert.match(RENDER, /el\("button", "queued-x"\)/);
   assert.match(RENDER, /x\.dataset\.act = "qx";/, "the ✕ routes through the stable document.body delegate");
   assert.match(RENDER, /if \(t\.idx !== undefined\) x\.dataset\.qidx = String\(t\.idx\);/);
@@ -60,7 +63,7 @@ test("a cancelable queued bubble carries an explicit ✕ — messages AND parked
 test("the delegated qx handler cancels click-safely: kernel op + composer restore for messages only", () => {
   // one handler on document.body (stable across every per-push rebuild) — never a per-render listener
   assert.match(RENDER, /qx: \(el\) => \{/);
-  assert.match(RENDER, /\{ type: "cancelQueued", id: owningSidOf\(el\), md: qmd \}/, "the body rides along as the kernel's drift guard; owner-scoped for the popover (2026-08-26)");
+  assert.match(RENDER, /\{ type: "cancelQueued", id: sidQ, md: qmd \}/, "the body rides along as the kernel's drift guard; owner-scoped for the popover (2026-08-26, sidQ = owningSidOf ?? activeId)");
   assert.match(RENDER, /if \(el\.dataset\.qidx !== undefined\) msg\.idx = Number\(el\.dataset\.qidx\);/);
   assert.match(RENDER, /if \(el\.dataset\.qpark !== undefined\) msg\.park = Number\(el\.dataset\.qpark\);/);
   // a MESSAGE returns to the composer to re-edit; a slash COMMAND (qcmd) just cancels
@@ -83,7 +86,7 @@ const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kern
 const SDKBE = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "sdk_backend.py"), "utf8");
 
 test("the kernel answers every cancelQueued with an authoritative cancelResult frame", () => {
-  assert.equal(KERNEL.split('"type": "cancelResult"').length - 1, 2, "one reply per cancel arm (park + idx)");
+  assert.equal(KERNEL.split('"type": "cancelResult"').length - 1, 3, "one reply per cancel arm (park + idx + the 2026-08-30 md-only optimistic arm)");
   assert.match(KERNEL, /"ok": not err/);
   assert.match(KERNEL, /def _cancel_miss_text\(md\):/, "the 'too late' wording is built kernel-side");
   assert.match(KERNEL, /too late to cancel — the message already reached the session/);

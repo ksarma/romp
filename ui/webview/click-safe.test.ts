@@ -59,7 +59,7 @@ test("chat tab bar: select + ✕ (Close / End session) are DELEGATED to the stab
 });
 
 test("Fleet: header / row open + caret fold are DELEGATED to the stable #fleet-list, not per-node", () => {
-  assert.match(FLEET, /import \{ delegate \} from "\.\/actions";/);
+  assert.match(FLEET, /import \{ delegate, flash \} from "\.\/actions";/);   // flash: the fold-mode buttons' press pulse rides the shared helper (2026-08-28)
   assert.match(FLEET, /head\.dataset\.act = "open"; head\.dataset\.sid = s\.sid;/);
   assert.match(FLEET, /row\.dataset\.act = "open"; row\.dataset\.sid = s\.sid;/);
   assert.match(FLEET, /tri\.dataset\.act = "fold"; tri\.dataset\.sid = s\.sid; tri\.dataset\.nid = n\.id; tri\.dataset\.folded =/);

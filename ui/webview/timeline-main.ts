@@ -4,6 +4,8 @@
 // webview view. The extension host holds the kernel WebSocket (app=timeline)
 // and relays frames via postMessage, exactly like chat/feed.
 import { installDomHelpers, dispatchFrame, bridgeFunctions } from "./timeline-boot";
+import { installSettingsSync, loadSettings, onExternalSettingsChange } from "./settings";
+import { applyTheme } from "./theme";
 
 // CJS view module — esbuild inlines it into this bundle at build time.
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -21,6 +23,11 @@ Object.assign(window, bridgeFunctions(post));
 
 let panel: any = null;
 window.addEventListener("message", (ev: MessageEvent) => { dispatchFrame(panel, ev.data); });
+
+// the overall theme (2026-08-28): body classes at boot + on settings writes, like every pane
+installSettingsSync();
+applyTheme(document, loadSettings());
+onExternalSettingsChange((s) => applyTheme(document, s));
 
 panel = new TimelinePanel(document.getElementById("host"));
 post({ type: "ready" }); // ask the kernel to push the initial lanes (like chat/feed/fleet)

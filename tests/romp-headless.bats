@@ -144,3 +144,112 @@ PY
     [ "$status" -eq 2 ]
     [[ "$output" == *"usage: romp send"* ]]
 }
+
+# ── romp compact (2026-08-30, the user via the dashboard team) ──
+# First-class in-place compaction: POSTs /compact, tells the caller which arm ran (now vs queued),
+# refuses honestly. The one-shot fake kernel captures the request like the send/interrupt tests.
+
+@test "romp compact <name> POSTs /compact and says compacting now" {
+    start_fake_kernel '{"ok": true, "queued": false}'
+    run "$ROMP_SCRIPT" compact bigctx
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"compacting bigctx now"* ]]
+    grep -q "^/compact$" <(head -1 "$TEST_DIR/req")
+    grep -q '"name": "bigctx"' "$TEST_DIR/req"
+}
+
+@test "romp compact reports queued when a turn is open" {
+    start_fake_kernel '{"ok": true, "queued": true}'
+    run "$ROMP_SCRIPT" compact busy1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"queued for busy1"* ]]
+    [[ "$output" == *"fires the moment the current turn ends"* ]]
+}
+
+@test "romp compact refusals are loud: dead session, unreachable kernel, usage" {
+    start_fake_kernel '{"ok": false, "error": "no live session named '"'"'ghost'"'"' — a dead session has no context to compact; revive it first"}'
+    run "$ROMP_SCRIPT" compact ghost
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"revive it first"* ]]
+    ROMP_KERNEL_PORT=1 run "$ROMP_SCRIPT" compact anyone
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"kernel not reachable"* ]]
+    run "$ROMP_SCRIPT" compact
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"usage: romp compact"* ]]
+    run "$ROMP_SCRIPT" compact who --timeout notanumber
+    [ "$status" -eq 2 ]
+}
+
+@test "romp help lists compact beside the other session verbs" {
+    run "$ROMP_SCRIPT" help
+    [[ "$output" == *"romp compact <session>"* ]]
+}
+
+# The queued+--wait path died before its first poll (set -e killed the arming assignment — review
+# find, 2026-08-30) and the --wait fake below is MULTI-request: POST answers queued, then GET
+# /sessions walks quiet → compacting → quiet, the armed-only-after-quiet sequence. A leading-zero
+# --timeout was octal to (( )) and the timeout never fired; a remote response refuses --wait
+# honestly (the local /sessions never lists remote rows).
+
+start_wait_kernel() {   # $1 = POST response body; GETs serve quiet,compacting,compacting,quiet…
+    python3 - "$1" "$TEST_DIR" <<'PY' &
+import http.server, json, sys
+body, tdir = sys.argv[1].encode(), sys.argv[2]
+hits = {"n": 0}
+class H(http.server.BaseHTTPRequestHandler):
+    def do_POST(self):
+        n = int(self.headers.get("Content-Length") or 0); self.rfile.read(n)
+        self.send_response(200); self.send_header("Content-Length", str(len(body))); self.end_headers()
+        self.wfile.write(body)
+    def do_GET(self):
+        hits["n"] += 1
+        rows = [{"id": "11111111-2222-3333-4444-555555555555", "name": "busy1",
+                 "compacting": hits["n"] in (2, 3)}]
+        b = json.dumps(rows).encode()
+        self.send_response(200); self.send_header("Content-Length", str(len(b))); self.end_headers()
+        self.wfile.write(b)
+    def log_message(self, *a):
+        pass
+s = http.server.HTTPServer(("127.0.0.1", 0), H)
+with open(tdir + "/port", "w") as f:
+    f.write(str(s.server_address[1]))
+for _ in range(12):
+    s.handle_request()
+PY
+    SERVER_PID=$!
+    until [ -s "$TEST_DIR/port" ]; do sleep 0.05; done
+    export ROMP_KERNEL_PORT="$(cat "$TEST_DIR/port")"
+}
+
+@test "romp compact --wait on a QUEUED compaction survives set -e, arms after quiet, and completes" {
+    start_wait_kernel '{"ok": true, "queued": true}'
+    run "$ROMP_SCRIPT" compact busy1 --wait --timeout 30
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"queued for busy1"* ]]
+    [[ "$output" == *"done — busy1 compacted"* ]]
+}
+
+@test "romp compact --wait refuses a leading-zero timeout (octal to the poll arithmetic)" {
+    run "$ROMP_SCRIPT" compact who --timeout 08
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"usage: romp compact"* ]]
+}
+
+@test "romp compact --wait on a remote session refuses honestly instead of reporting it dead" {
+    start_fake_kernel '{"ok": true, "queued": false, "remote": "TESTHOST-B"}'
+    run "$ROMP_SCRIPT" compact farswitch --wait --timeout 10
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"compacting farswitch now"* ]]
+    [[ "$output" == *"can't follow a remote session from here (it lives on TESTHOST-B)"* ]]
+    [[ "$output" == *"still requested"* ]]
+}
+
+@test "a dash-leading session name reaches the kernel like send does; the verb's own flags still get usage" {
+    start_fake_kernel '{"ok": true, "queued": false}'
+    run "$ROMP_SCRIPT" compact -oddname
+    [ "$status" -eq 0 ]
+    grep -q '"name": "-oddname"' "$TEST_DIR/req"
+    run "$ROMP_SCRIPT" compact --wait
+    [ "$status" -eq 2 ]
+}

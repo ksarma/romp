@@ -1097,6 +1097,115 @@ class ViewBuilder(unittest.TestCase):
         sent = [e for e in events if e["kind"] == "user" and e.get("md") == "and also fix the header"]
         self.assertEqual(sent, [], "it must NOT also show as a sent (solid) user bubble — that was the flip")
 
+    def _clear_watches(self):
+        with km._watch_lock:
+            km._watches.clear()
+        km._pr_watches.clear()
+        km._watches_save()
+        km._pr_watches_save()
+
+    def test_a_working_session_still_lists_its_armed_kernel_watches(self):
+        # The user (2026-08-30, paraphrased): even while working, anything the session awaits shows
+        # at the chat bottom in the green box. Kernel half: the status payload carries the awaited
+        # content mid-turn while the chip formula stays untouched — state reads working, the box
+        # renders from the fields.
+        with self.tpath.open("a") as f:                  # an OPEN turn → the session reads working
+            f.write(json.dumps(uline(NOW, "keep working on the strip", "uOpen", parent="a2")) + "\n")
+        km._parse_cache.clear()
+        km.add_watch("test -f /tmp/synthetic-sentinel", SID, note="the cluster job's sentinel file")
+        try:
+            st = km.build_session(SID, NOW)["status"]
+            self.assertEqual(st["state"], "working", "the shared chip formula is untouched")
+            self.assertIn("the cluster job's sentinel file", st["awaitingWhy"] or "")
+            self.assertEqual(st["awaitingKind"], "job")
+            self.assertEqual(st["awaitingTasks"], ["the cluster job's sentinel file"],
+                             "the box's fold lists each watch in the registrant's own words")
+        finally:
+            self._clear_watches()
+
+    def test_an_idle_session_with_only_an_armed_watch_reads_awaitingBg(self):
+        # the second leg of the same report: an idle session holding only a kernel watch used to
+        # read plain ready — its wait visible nowhere but `romp watch --list`
+        km._parse_cache.clear()
+        km.add_watch("test -f /tmp/synthetic-sentinel", SID, note="the nightly export")
+        try:
+            st = km.build_session(SID, NOW)["status"]
+            self.assertEqual(st["state"], "awaitingBg", "an armed watch is a wait like any other")
+            self.assertIn("the nightly export", st["awaitingWhy"])
+        finally:
+            self._clear_watches()
+
+    def test_pr_watches_feed_the_awaited_content_too(self):
+        km._parse_cache.clear()
+        km.add_pr_watch(842, "example-org/notes-api", SID)
+        try:
+            st = km.build_session(SID, NOW)["status"]
+            self.assertIn("PR #842 (example-org/notes-api)", st["awaitingWhy"])
+        finally:
+            self._clear_watches()
+
+    def test_no_watch_no_wait_means_no_awaited_content(self):
+        km._parse_cache.clear()
+        st = km.build_session(SID, NOW)["status"]
+        self.assertIsNone(st["awaitingWhy"], "nothing awaited -> the box stays absent")
+        self.assertEqual(st["state"], "ready")
+
+    def test_watch_awaiting_shapes(self):
+        # note wins; a note-less watch elides its predicate; plural counts; foreign sids excluded
+        try:
+            km.add_watch("x" * 200, SID)
+            w = km._watch_awaiting(SID)
+            self.assertEqual(w["kind"], "job")
+            self.assertIn("a kernel watch:", w["why"])
+            self.assertLess(len(w["tasks"][0]), 120, "the predicate is elided, never dumped whole")
+            km.add_watch("true", SID, note="second wait")
+            self.assertIn("2 armed watches", km._watch_awaiting(SID)["why"])
+            self.assertIsNone(km._watch_awaiting("99999999-0000-0000-0000-000000000000"))
+        finally:
+            self._clear_watches()
+
+    def test_a_mid_compaction_parked_send_renders_queued_and_cancelable_immediately(self):
+        # The user (2026-08-30) pressed send during compaction and sat in an unlabeled, uncancellable
+        # stage. The kernel half of the always-labeled rule, pinned behaviorally: the parked op is in
+        # the VERY NEXT build — the queued append has no compaction gate — carrying its park index and
+        # cancelable:true, so the ✕ exists the moment any push paints (and _park_op marks views dirty,
+        # so that push is immediate, never the backstop poll).
+        km._tmux_sessions = lambda: {SID: {"state": "compacting", "since": NOW - 5, "model": "",
+                                           "effort": "", "context": None, "compactPct": None, "color": None}}
+        km._parse_cache.clear()
+        km._park_op(SID, ("send", "wrap up the strip work", "human"))
+        try:
+            events = km.build_session(SID, NOW)["events"]
+        finally:
+            km._pending_ops.pop(SID, None)
+            km._save_pending_ops()
+        q = [e for e in events if e["kind"] == "queued"]
+        self.assertEqual(len(q), 1, "the parked send renders as a queued bubble DURING compaction")
+        m = q[0]["texts"][0]
+        self.assertEqual(m["md"], "wrap up the strip work")
+        self.assertEqual(m["park"], 0)
+        self.assertTrue(m["cancelable"], "a parked send is cancellable from its first paint")
+
+    def test_cancel_by_body_alone_removes_the_parked_op(self):
+        # The optimistic ✕'s kernel contract (the user 2026-08-30): the client knows only the BODY —
+        # no park index has round-tripped yet — so the md-relocate finds and drops the op; a repeat
+        # is the honest loud miss, never a silent fake-delete. The ws arm speaking this (md-only
+        # cancelQueued: FIFO first, then the backend queue, then the loud refusal) is source-pinned.
+        km._park_op(SID, ("send", "wrap up the strip work", "human"))
+        try:
+            self.assertIsNone(km._cancel_parked(SID, -1, "wrap up the strip work"))
+            self.assertNotIn(SID, km._pending_ops, "the FIFO op is gone")
+            miss = km._cancel_parked(SID, -1, "wrap up the strip work")
+            self.assertIn("too late", miss)
+        finally:
+            km._pending_ops.pop(SID, None)
+            km._save_pending_ops()
+        import inspect
+        src = inspect.getsource(km)
+        self.assertIn('elif t == "cancelQueued" and msg.get("md"):', src)
+        self.assertIn("err = _cancel_parked(sid, -1, md)", src)
+        self.assertIn("err2 = _cancel_backend_queued(be, sid, -1, md)", src)
+
     def test_tmux_echo_the_transcript_OVERTOOK_is_not_counted_as_queued(self):
         # The reported bug (the user 2026-08-26): a busy session's queued header counted sends from DAYS
         # earlier — echoes whose text never landed verbatim (one lost at the pane, two delivered under text
@@ -5241,7 +5350,7 @@ class ViewBuilder(unittest.TestCase):
         # mode has no event source to self-heal from — _cycle_mode must record the mode it just cycled to,
         # or the var stays frozen (and the next press count is computed from a stale `cur`).
         calls, saved_run, saved_sleep = [], km.subprocess.run, km.time.sleep
-        saved_tmux, saved_thread, saved_push = km._tmux_sessions, km.threading.Thread, km._push_all
+        saved_tmux, saved_thread, saved_push = km._tmux_sessions, km.threading.Thread, km._push_soon
         class _SyncThread:                                  # run go() inline so the test sees the result
             def __init__(self, target=None, daemon=None): self._t = target
             def start(self): self._t()
@@ -5249,17 +5358,17 @@ class ViewBuilder(unittest.TestCase):
         km.time.sleep = lambda *_a, **_k: None
         km._tmux_sessions = lambda: {SID: {"mode": "auto"}}   # current mode is auto
         km.threading.Thread = _SyncThread
-        km._push_all = lambda: calls.append(["__push_all__"])
+        km._push_soon = lambda: calls.append(["__push_soon__"])   # ack-fast poke, never an inline build (2026-08-30)
         try:
             km._cycle_mode("mysess", SID, "plan")
         finally:
             km.subprocess.run, km.time.sleep = saved_run, saved_sleep
-            km._tmux_sessions, km.threading.Thread, km._push_all = saved_tmux, saved_thread, saved_push
+            km._tmux_sessions, km.threading.Thread, km._push_soon = saved_tmux, saved_thread, saved_push
         btab = [c for c in calls if c[:2] == ["tmux", "send-keys"] and "BTab" in c]
         self.assertEqual(len(btab), 3, "auto → plan is 3 shift+tab presses")
         self.assertIn(["tmux", "set", "-t", "mysess", "@claude-permission-mode", "plan"], calls,
                       "after cycling, the kernel records the new mode so the chat label updates")
-        self.assertIn(["__push_all__"], calls, "and re-renders so the label flips immediately")
+        self.assertIn(["__push_soon__"], calls, "and pokes the pusher so the label flips on its next cycle")
 
     def test_tmux_set_mode_refuses_a_mode_the_cycle_cannot_reach(self):
         # The picker gained Bypass for SDK sessions (the user 2026-08-15). shift+tab is the only handle
@@ -6490,7 +6599,7 @@ class ServeSecurity(unittest.TestCase):
         # vars) — so the dimmed dashboard shows through with the feed cards live and visible in place, not
         # a black hole where the pane was (the user 2026-08-08). Only an unmeasurable pane (hidden, or a
         # cross-origin parent like VS Code) hides the feed's content instead (rs-pane-gone).
-        self.assertIn("#rsettings { position: fixed; inset: 0; z-index: 60; background: rgba(0, 0, 0, 0.55);", _gear_css_src())   # the one modal dim (the user 2026-08-08)
+        self.assertIn("#rsettings { position: fixed; inset: 0; z-index: 60; background: var(--overlay-dim, rgba(0, 0, 0, 0.55));", _gear_css_src())   # the one modal dim (the user 2026-08-08; tokened with its literal fallback 2026-08-28)
         self.assertIn(".rs-card {", _gear_css_src())
         self.assertIn(".rs-modal-open { background: transparent; }", _gear_css_src())            # the page's html steps aside
         self.assertIn("body.rs-lifted { position: fixed; left: var(--pane-x, 0); top: var(--pane-y, 0);", _gear_css_src())

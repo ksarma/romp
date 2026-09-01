@@ -116,6 +116,47 @@ class ParagraphContract(unittest.TestCase):
             self.assertEqual(p.count("—"), 0, "%s: the prompt must not model what it forbids" % name)
 
 
+class DecisionListContract(unittest.TestCase):
+    """The user-approved communication rule (2026-08-30, via the optimizer): pending user decisions
+    render as a short numbered list of one-line yes/no questions, never buried inside status
+    recaps; and a status-shaped report opens with a done / in-motion / left-to-do split. Additive
+    paragraphs only — the takeaway specs' measured wording (the regression note above
+    BLOCK_BRIEF_SYS) is untouched, and the numbered list is exactly the countable per-paragraph
+    shape the owed-coverage guard verifies (tests/test_brief_owed_coverage.py)."""
+
+    def test_the_briefer_renders_owed_items_as_a_numbered_question_list(self):
+        p = jd.BLOCK_BRIEF_SYS
+        self.assertIn("NUMBERED DECISION LIST", p)
+        self.assertIn("one numbered single line", p)
+        self.assertIn("answer with a yes/no", p)
+        self.assertIn("one-word pick when the choice is between named options", p)
+        self.assertIn("one numbered line per paragraph", p,
+                      "each numbered item is its own paragraph — the render's per-paragraph "
+                      "stamps and the owed-coverage count both key on it")
+
+    def test_decisions_are_never_buried_in_recaps(self):
+        self.assertIn("never as a separate recap paragraph", jd.BLOCK_BRIEF_SYS,
+                      "context rides inside the question's own line — the buried-recap shape "
+                      "stalled the user's decisions for hours")
+
+    def test_the_merge_clause_and_the_single_item_lead_survive_untouched(self):
+        p = jd.BLOCK_BRIEF_SYS
+        self.assertIn("come down to the SAME decision, write ONE paragraph", p,
+                      "the measured merge clause is not reworded by the addition")
+        self.assertIn("Lead with exactly what you must decide or provide", p)
+
+    def test_the_staller_opens_status_with_the_three_way_split(self):
+        p = jd.STALL_BRIEF_SYS
+        self.assertIn("what is done, what was in motion, and what is left", p)
+        self.assertIn("before anything else", p)
+        self.assertIn("single-strand stall keeps the plain", p,
+                      "conditional: a one-strand stall keeps its terse where-it-stopped lead")
+
+    def test_the_split_stays_off_the_outcome_writer(self):
+        self.assertNotIn("what is done, what was in motion", jd.DISTILL_SYS,
+                         "a finished goal's takeaway is an outcome, not a status story")
+
+
 class ParserKeepsTheParagraphs(unittest.TestCase):
     """The reply parser is what has to survive the new shape: a takeaway is now MULTI-paragraph, the
     trailing SOURCE line still peels off around it, and a decorated label still parses."""

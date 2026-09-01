@@ -28,14 +28,21 @@ test("the plain send registers an optimistic bubble; follow-up/quote sends keep 
   assert.match(RENDER, /else \{ vscodeApi\.postMessage\(\{ type: "sendMessage", id: sid, text \}\); registerOptimistic\(sid, text, imgPaths\); \}/);
   // registerOptimistic shows it NOW (before any push) via reconcile + appendActive
   assert.match(RENDER, /function registerOptimistic\(id: string, text: string, imgPaths\?: string\[\]\): void/);   // + the dragged-image paths → echo thumbnails (2026-08-25)
-  assert.match(RENDER, /if \(v\) v\.stale = true;\s*\n\s*if \(id === activeId\) \{\s*\n\s*appendActive\(\);/);
+  // the active-tab arm still paints via appendActive (the snap gate moved ahead of it, 2026-08-30)
+  assert.match(RENDER, /if \(v\) v\.stale = true;\s*\n\s*if \(id === activeId\) \{/);
+  assert.match(RENDER, /const wasAtBottom = !!content && nearBottom\(content\);\s*\n\s*appendActive\(\);/);
 });
 
-test("your OWN send always reveals itself — the >80px stick rule never hides it below the fold", () => {
-  // appendActive keeps the viewport still when the reader is scrolled up; a send made from there
-  // painted below the fold and looked like it never appeared (the user 2026-08-09). Enter = intent
-  // to see the message, so registerOptimistic scrolls to the bottom, once, at send time.
-  assert.match(RENDER, /appendActive\(\);[\s\S]{0,500}if \(content\) content\.scrollTop = content\.scrollHeight;\s*\n\s*\}\s*\n\}/);
+test("your OWN send reveals itself from the TAIL only — scrolled up, the viewport stays put", () => {
+  // The 2026-08-09 always-reveal snap (Enter = intent to see the message) survives where it belongs:
+  // at — or within the stick rule's 80px of — the bottom. Scrolled UP reading history, the user's
+  // 2026-08-30 ruling overrules it: the send must not move the scroll position at all, so the snap
+  // is gated on a nearBottom read taken BEFORE appendActive lands the bubble (the append grows
+  // scrollHeight, which would misread a tail-sitter as scrolled-up). Behavioral scenarios live in
+  // send-scroll-preserve.test.ts.
+  assert.match(RENDER, /const wasAtBottom = !!content && nearBottom\(content\);\s*\n\s*appendActive\(\);\s*\n\s*if \(content && wasAtBottom\) content\.scrollTop = content\.scrollHeight;/);
+  // the unconditional form is retired everywhere — nothing snaps a scrolled-up reader on send
+  assert.doesNotMatch(RENDER, /if \(content\) content\.scrollTop = content\.scrollHeight;/);
 });
 
 // The reconcile's two IN-PLACE tail mutations — merging into an existing queued group (a busy session
@@ -81,7 +88,7 @@ test("retire needs a NEW landed atom (base count); kernel provisionals only supp
 test("an optimistic echo is a tail-appended, kernel-invisible QUEUED event — never a solid user bubble", () => {
   const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "styles.css"), "utf8");
   assert.match(RENDER, /const OPT_PREFIX = "optimistic:";/);
-  assert.match(RENDER, /const mk = \(p: \{ text: string; imgPaths\?: string\[\] \}\) => \(\{ md: p\.text, optimistic: true, cancelable: false, imgPaths: p\.imgPaths \}\);/);   // the echo carries its dragged-image paths (2026-08-25)
+  assert.match(RENDER, /const mk = \(p: \{ text: string; imgPaths\?: string\[\] \}\) => \(\{ md: p\.text, optimistic: true, cancelable: true, imgPaths: p\.imgPaths \}\);/);   // the echo carries its dragged-image paths (2026-08-25); cancelable from the press (2026-08-30)
   // stale ones pop cheaply off the end (always tail-appended)
   assert.match(RENDER, /while \(s\.events\.length && isOptimistic\(s\.events\[s\.events\.length - 1\]\)\) s\.events\.pop\(\);/);
   // the abandoned dim/pending idiom is FULLY gone: render, guard fields, and stylesheet — the last
@@ -95,9 +102,15 @@ test("an optimistic echo is a tail-appended, kernel-invisible QUEUED event — n
   assert.match(CSS, /\.queued-bubble \{[\s\S]*?border: 1px dashed/);
 });
 
-test("nothing known-queued → a BARE dashed bubble (no 'N queued' header we can't back)", () => {
+test("nothing known-queued → a bare group wearing the honest 'sending…' header", () => {
   assert.match(RENDER, /s\.events\.push\(\{ kind: "queued", bare: true, texts: inject\.map\(mk\), uuid: OPT_PREFIX \+ inject\[0\]\.ts \}\);/);
-  assert.match(RENDER, /if \(!ev\.bare\) \{/, "renderQueued skips the header for a bare group");
+  // "N queued messages" stays unclaimable pre-confirmation — but NO label was the user's 2026-08-30
+  // bug (a mid-compaction send sat unlabeled and uncuttable): the bare group now states exactly what
+  // is known, and the reflow recounts it in the same vocabulary after a ✕
+  assert.match(RENDER, /label\.dataset\.bare = "1";/);
+  assert.match(RENDER, /ev\.texts\.length === 1 \? "sending…" : `sending \$\{ev\.texts\.length\}…`/);
+  assert.match(RENDER, /if \(label\.dataset\.bare === "1"\) \{/, "reflow keeps the bare vocabulary");
+  assert.match(RENDER, /if \(!ev\.bare\) \{/, "the standard 'N queued' header still needs confirmation");
 });
 
 test("something IS queued → ours merges into that group, counted under its header", () => {
@@ -106,10 +119,28 @@ test("something IS queued → ours merges into that group, counted under its hea
   assert.match(RENDER, /if \(q\.texts\.some\(\(t\) => t\.optimistic\)\) s\.events\[qi\] = \{ \.\.\.q, texts: q\.texts\.filter\(\(t\) => !t\.optimistic\) \};/);
 });
 
-test("an unconfirmed echo gets its own tooltip and never an ✕ (nothing confirmed to cancel)", () => {
+test("an unconfirmed echo keeps its tooltip AND carries a ✕ from the press (the 2026-08-30 rule)", () => {
+  // The retargeted contract: from the instant send is pressed the message is labeled and cancellable —
+  // the old cancelable:false stage was exactly where the user sat during a mid-compaction send. The
+  // optimistic ✕ rides the same qx delegate with data-qopt (no idx/park exists yet).
   assert.match(RENDER, /if \(t\.optimistic\) bubble\.title = "sent just now — romp hasn't confirmed the session has it yet";/);
-  // cancelable:false → the ✕ branch (which needs cancelable AND an idx/park handle) can't fire for ours
-  assert.match(RENDER, /if \(t\.cancelable && \(t\.idx !== undefined \|\| t\.park !== undefined\)\) \{/);
+  assert.match(RENDER, /optimistic: true, cancelable: true/);
+  assert.match(RENDER, /if \(t\.cancelable && \(t\.idx !== undefined \|\| t\.park !== undefined \|\| t\.optimistic\)\) \{/);
+  assert.match(RENDER, /if \(t\.optimistic\) x\.dataset\.qopt = "1";/);
+});
+
+test("EVERY ✕ stops our re-injection first; the optimistic one cancels by body at the kernel", () => {
+  // Order matters: the pendingSent entry goes FIRST — at the optimistic stage the kernel may not
+  // have pushed its park yet (the reconcile would repaint the bubble the user just cut), and on a
+  // parked/backend ✕ the kernel bubble had been SUPPRESSING our still-live entry, so a kernel-only
+  // cancel resurrected the cancelled message as a dashed bubble until the TTL (served-probe find,
+  // 2026-08-30). Then the same cancelQueued the ✕ always posted — the optimistic one with only the
+  // body (ws ordering puts it after the send it names); a miss comes back through the same loud
+  // cancelResult, and the composer restore reverts (pendingCancelRestores).
+  assert.match(RENDER, /if \(qmd\) \{/);
+  assert.match(RENDER, /const i = list\.findIndex\(\(p\) => p\.text === qmd\);/);
+  assert.match(RENDER, /echoShownSig\.delete\(sidQ\);/);
+  assert.match(RENDER, /const msg: Record<string, unknown> = \{ type: "cancelQueued", id: sidQ, md: qmd \};/);
 });
 
 test("chatTail speaks the KERNEL's coordinates — the injected tail is not part of its space", () => {

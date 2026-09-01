@@ -25,8 +25,9 @@ test("exactly ONE #ctx-bar minter in the file: the statusline call site", () => 
 });
 
 test("the statusline ticker's in-place refresh still resolves the statusline battery by that id", () => {
-  // byte-for-byte the ticker lookup that shipped: same id, same setCtxBar refresh (unchanged behavior)
-  assert.match(RENDER, /const bar = document\.getElementById\("ctx-bar"\);\n\s*if \(bar\) setCtxBar\(bar, s\.status\.ctx, s\.status\.state === "compacting", s\.status\.ctxColor\);/);
+  // byte-for-byte the ticker lookup that shipped: same id, same setCtxBar refresh (the fill goes
+  // through pickTone since the 2026-09-01 dual-palette fold — the lookup contract is unchanged)
+  assert.match(RENDER, /const bar = document\.getElementById\("ctx-bar"\);\n\s*if \(bar\) setCtxBar\(bar, s\.status\.ctx, s\.status\.state === "compacting", pickTone\(s\.status\.ctxColor, s\.status\.ctxTone\)\);/);
 });
 
 test("the tab tip's battery comes from the bare builder — no id rides into the tip", () => {

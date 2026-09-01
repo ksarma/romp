@@ -287,7 +287,7 @@ JUDGE_FAIL_CAP = 3                       # the same rule for every other retryin
 #                                          model actually wrote. Closer / grouper / consolidator / courier; the
 #                                          planner (PLAN_PARSE_RETRIES) and distiller/briefer (DISTILL_FAIL_CAP)
 #                                          already had their own.
-PLACEMENTS_V = 10                        # placements-identity schema version (plan P2, the user 2026-07-06).
+PLACEMENTS_V = 11                        # placements-identity schema version (plan P2, the user 2026-07-06).
 #                                          v2 (2026-07-09): a 07-07/07-08 change to segment-text derivation
 #                                          stepped the text hash without this bump — dormant segments' old-hash
 #                                          placements stopped matching, and every restart/touch replayed them as
@@ -341,12 +341,18 @@ PLACEMENTS_V = 10                        # placements-identity schema version (p
 #                                          finding). v3's shape: a GROWN atom set for every forked session
 #                                          (865 such files in one live corpus), so the seal is what keeps
 #                                          months of restored history from replaying as fresh cards.
-#                                          v10 (2026-09-01): the api_error-flush re-attach
-#                                          (em._reattach_flush_orphans) splices back reply branches the CLI's
-#                                          buffered-error flush bypassed — previously dropped as rewinds, so
-#                                          the turn's real reply vanished from chat and judges alike. v3's/v9's
-#                                          shape again: a GROWN atom set for every stormed session (49 such
-#                                          forks in one live corpus), same seal.
+#                                          v10 (2026-09-01): eclipsed-branch keep (T209) — a turn whose output
+#                                          the CLI's buffered api_error flush knocked off the spine parses out
+#                                          again. Existing transcripts with that geometry GROW their atom set
+#                                          (v3/v7's shape), so the same seal applies.
+#                                          v11 (2026-09-01): the eclipse keeps ONE chain, not the whole fork
+#                                          component (em._select_eclipsed_chains) — parallel tool-stub twins,
+#                                          sibling error bursts, older attempts and user-headed branches at an
+#                                          eclipsed fork drop again exactly as their on-spine twins do (v10
+#                                          rendered them beside the kept originals; a user-headed branch could
+#                                          even re-show a prompt deleted mid-storm). v8's shape: a SMALLER
+#                                          atom set for transcripts whose eclipsed fork carried siblings,
+#                                          same seal.
 PLAN_SESSIONS = None                     # per-pass session cap — REMOVED (the user 2026-06-30): the fairness
                                          # caps were a recurring source of confusing starvation bugs (a goal/
                                          # nudge stuck behind a full per-pass window), never clearly needed.
@@ -1120,6 +1126,16 @@ def _judge_env(tier, auth="login", model=None):
     for k in ("TMUX", "TMUX_PANE"):
         env.pop(k, None)
     env["ROMP_SUMMARIZING"] = "1"                     # trips the Stop-hook recursion guard
+    # NO PROMPT CACHING for judge calls (user-approved via the nightly optimizer, 2026-08-30): a
+    # one-shot `claude -p` judge call pays the 1.25x cache-WRITE premium on nearly its whole prompt
+    # and never reads back — cache_r was 0 across every call in two 24h windows, because the per-call
+    # security mark (_mark: a fresh CSPRNG token in the SYSTEM prompt, re-rolled so a learned mark
+    # can't be replayed) makes every prefix unique BY DESIGN. Measured live: with this var the CLI
+    # sends no cache_control breakpoints, the same tokens bill as plain input, and an identical call
+    # costs 19.6% less ($0.0161 vs $0.0200 on a 5.1k-token sonnet probe); ~$12/day on this box's
+    # judge volume alone. If the marks are ever made prefix-stable (a security-semantics change,
+    # the user's call), flip this off so clustered calls READ instead — reads beat no-cache 10:1.
+    env["DISABLE_PROMPT_CACHING"] = "1"
     if tier == "index":
         # The lever for a model without adaptive thinking (2026-09-01): no thinking for mechanical
         # summarization. A model with it takes `--effort` in _judge_run instead — never this var,
@@ -1782,7 +1798,8 @@ def _rewound_away(fsid, path, uuid):
     Only "rewind" answers non-False. None/unknown uuids (umbrellas, legacy nodes, synthetic
     orphan:<t> salvage ids, cross-file uuids outside the lineage) answer False — abandonment can't
     be proven, and a false stand-down silently drops a real ask. "clear" is /clear jurisdiction;
-    "broken" is kept by design. A check that itself fails logs loudly and answers False (the
+    "broken" is kept by design; "eclipsed" is LIVE content a machine api_error spur abandoned
+    (T209) — its mints proceed. A check that itself fails logs loudly and answers False (the
     pre-fix behavior), never silently blocks a mint.
 
     The verdict is TWO-VALUED because the evidence comes in two strengths (2026-08-17):
@@ -3352,8 +3369,8 @@ def reconcile_rewound_goals(fsid, path, now):
     changes AND the transcript's abandoned-branch set actually CHANGED, archive live goals whose
     anchor lies on a dead branch. The predicate is em.chain_membership's "rewind" UNIONED with the
     per-file discriminator (_per_file_rewound, minus the current graph's kept set — a resume-stitched
-    survivor is never swept): "rewind" is the only sweepable verdict, "clear" is /clear jurisdiction
-    and "broken"/unknown prove nothing — and a dead branch INSIDE a pre-/clear episode file, which
+    survivor is never swept): "rewind" is the only sweepable verdict, "clear" is /clear jurisdiction,
+    "eclipsed" is kept content (a machine spur's abandonment, T209) and "broken"/unknown prove nothing — and a dead branch INSIDE a pre-/clear episode file, which
     the whole-graph walk can only ever call "clear", is caught by its own file's walk, exactly the
     incident scan's dead-episode-vs-dead-branch discriminator. This is the only cover for the
     rewinds romp never sees: CLI-native Esc-Esc in a tmux terminal, the SDK forkAt resume, a cut the
@@ -10494,6 +10511,13 @@ BLOCK_BRIEF_SYS = (
     "next by a blank line, so you can weigh and answer each on its own. When <owed> lists a single item, "
     "or several that come down to the SAME decision, write ONE paragraph, and never remark that the items "
     "repeat.\n\n"
+    "Those per-item paragraphs are a NUMBERED DECISION LIST (the user 2026-08-30: dense recaps stalled "
+    "their decisions for hours; a numbered yes/no list cleared them in one turn). Each owed item's "
+    "paragraph is one numbered single line - '1. <the question>' - phrased as a question the reader can "
+    "answer with a yes/no, or with a one-word pick when the choice is between named options. Numbers run "
+    "in <owed>'s order, one numbered line per paragraph, so the reader answers straight down the list. "
+    "Supporting context that a question truly needs stays inside that item's own line, in a clause, "
+    "never as a separate recap paragraph.\n\n"
     "If something apart from the decision is still open and worth knowing, it gets the last paragraph, "
     "alone, in one short sentence with no label. Never attach it to a paragraph about the decision.\n\n"
     "The reader is the person who asked, not the team that built it. When a <user-ask> section is "
@@ -10526,7 +10550,7 @@ BLOCK_BRIEF_SYS = (
     "must be exactly SOURCE: mN. Do not stop at the takeaway; the SOURCE line always comes last.")
 
 
-def brief_llm(goal_text, work_text, owed, frame=None, user_ask=None):
+def brief_llm(goal_text, work_text, owed, frame=None, user_ask=None, shortfall=None):
     """The briefer's decision brief for one blocked goal from the TRIAGE-tier model (Sonnet). '' on
     failure. Logged as judge='briefer' — its own name, its own prompt (the user 2026-07-08). Its timeline
     mark still rides the distiller row: the kernel folds fine labels to role-family rows (_JUDGE_FAMILY),
@@ -10563,6 +10587,19 @@ def brief_llm(goal_text, work_text, owed, frame=None, user_ask=None):
         user += ("\n<note>The <delegating-request> is how this work was framed when it was handed "
                  "to this session — usually the requester's own words. State what is owed in those "
                  "terms; keep implementation nouns to the supporting detail.</note>")
+    if shortfall:
+        # THE OWED-COVERAGE RETRY (the user 2026-08-30, the dropped-4th-decision specimen): the
+        # standing TAKEAWAY spec is measured wording (see the note above BLOCK_BRIEF_SYS) and
+        # allows same-decision items to merge — which makes an OMITTED item indistinguishable
+        # from a merge in the reply. This per-call note fires only on a counted shortfall, so
+        # the green path's measured behavior is untouched; it overrides the merge allowance for
+        # this one reply because complete coverage outranks brevity once an item has provably
+        # gone missing (the user had to ask what the missing decision was).
+        user += ("\n<note>Your previous draft covered %d of the %d owed items in <owed>. Even "
+                 "when items come down to the same decision, write one numbered single-line "
+                 "question per owed item, in <owed>'s order: exactly %d numbered paragraphs, "
+                 "each answerable with a yes/no or a one-word pick.</note>"
+                 % (shortfall[0], shortfall[1], shortfall[1]))
     return _judge_run(_distill_model(), BLOCK_BRIEF_SYS, user, judge="briefer", tier="distill",
                       mark=mk).strip()   # caller splits SOURCE, then caps
 
@@ -10596,6 +10633,10 @@ STALL_BRIEF_SYS = (
     "to the takeaway.\n\n"
     "TAKEAWAY: lead with where the work actually stopped, in your terms: the last thing that was finished "
     "or in progress, not a play-by-play. One or two sentences.\n\n"
+    "When <work> holds several separate strands, open the takeaway with the split the reader scans "
+    "fastest instead (the user 2026-08-30): what is done, what was in motion, and what is left - one "
+    "short clause each, in that order, before anything else. A single-strand stall keeps the plain "
+    "where-it-stopped lead above.\n\n"
     "What is holding it then gets the last paragraph, alone, in one short sentence with no label, "
     "translating <holding> out of romp's vocabulary into plain language. Restate <holding> faithfully. "
     "Never substitute a cause you inferred from <work>, and never say the goal is waiting on you unless "
@@ -11130,6 +11171,52 @@ def _distill_session(fsid, path, now):
             raw = out
             out, src = _split_source(out)
             bg, out = _split_sections(out)
+            # OWED COVERAGE IS COUNTABLE (the user 2026-08-30): a multi-item <owed> demands one
+            # paragraph per item, but the merge allowance made a dropped item look like a merge —
+            # the live specimen rendered decisions 1-3 whole and omitted the 4th entirely, and the
+            # user had to ask what was missing. Fewer paragraphs than owed items is the omission
+            # signal (more is fine — the trailing leftover paragraph): retry ONCE with the
+            # corrective note, and if the count still falls short, store the deterministic brief
+            # built verbatim from the owed pairs — complete by construction, the stamps align, and
+            # honest-plain beats polished-lossy. Countable only for a LIST; a single why that
+            # names several decisions inside its own prose has no deterministic item count.
+            _fallback_brief = False
+            if not proc_only and isinstance(owed, list) and len(owed) > 1:
+                # count with the FEED's own split (\n\s*\n, feed.ts paras) — a stricter literal
+                # \n\n read a blank-ish separator as one paragraph and manufactured a shortfall
+                # the render would never show (the adversarial pass's catch)
+                _paras = [p for p in re.split(r"\n\s*\n", out) if p.strip()]
+                if len(_paras) < len(owed):
+                    _r2 = brief_llm(nodes[top].get("text", ""), work, owed,
+                                    frame=_deleg_frame(store, top),
+                                    user_ask=_user_ask_text(store, top, fsid, path, now),
+                                    shortfall=(len(_paras), len(owed)))
+                    if not _r2 and getattr(_judge_ctx, "paused", False):
+                        # the retry was SKIPPED, not tried — the standing pause discipline: leave
+                        # the brief null and re-enter next pass once the pause clears; a pause-skip
+                        # never counts as a verdict (the 2026-07-03 rule, met again here)
+                        changed = True
+                        continue
+                    _o2, _s2 = _split_source(_r2 or "")
+                    _b2, _o2 = _split_sections(_o2)
+                    if _r2 and len([p for p in re.split(r"\n\s*\n", _o2) if p.strip()]) >= len(owed):
+                        raw, out, src = _r2, _o2, _s2
+                        bg = _b2 or bg                 # keep the draft's orientation if the retry lost it
+                    else:
+                        out = "\n\n".join(
+                            "%d. %s: %s" % (i + 1, (t or "this sub-goal").strip().rstrip("."),
+                                            (w or "").strip()) for i, (t, w) in enumerate(owed))
+                        #      ^ numbered like the rule's own list shape (the review's catch: an
+                        #        unnumbered fallback re-shipped the dense recap the rule kills)
+                        src = None                     # verbatim recorded whys — no model citation
+                        _fallback_brief = True         # …so the cite-miss check below stands down:
+                        #                                romp authored this text; "no SOURCE line"
+                        #                                would report the stale first draft's tail
+                        _log_judge_error("briefer", fsid, "owed-shortfall", goal=top,
+                                         note="draft covered %d of %d owed items; %s; "
+                                              "stored the verbatim owed list"
+                                              % (len(_paras), len(owed),
+                                                 "retry still short" if _r2 else "retry call failed"))
             nodes[top]["blockSummary"] = out            # full text — NEVER truncate a brief mid-word (the user 2026-07-06)
             nodes[top]["background"] = bg if bg else None   # re-orientation for a reader who forgot the thread (2026-07-02)
             # PER-PARAGRAPH stamps (the user 2026-07-24): a MULTI-item brief writes one paragraph per
@@ -11143,8 +11230,11 @@ def _distill_session(fsid, path, now):
             # the brief's cited source, else the WRITE-TIME deterministic stamp: the newest labeled atom
             # the gather fed this very call (the user 2026-07-21) — every brief ships a stored anchor
             nodes[top]["summaryAnchor"] = marks.map.get(src) or marks.newest()
-            if marks.map and marks.map.get(src) is None:   # labels offered, no usable citation → log only:
-                # the stamp already grounded the anchor, so a card warn would be noise (the user 2026-07-21)
+            if marks.map and marks.map.get(src) is None and not _fallback_brief:
+                # labels offered, no usable citation → log only (the stamp already grounded the
+                # anchor, so a card warn would be noise, the user 2026-07-21). The verbatim
+                # fallback stands down: romp authored that text, and the row would report the
+                # STALE first draft's tail as the offender (the adversarial pass's catch).
                 _log_judge_error("staller" if proc_only else "briefer", fsid, "cite-miss", goal=top, note="%s; %d labels offered; reply tail: %r" % (
                     ("cited unoffered label %s" % src) if src else "no SOURCE line", len(marks.map), (raw or "")[-160:]))
             _node_warn_clear(nodes[top], "cite-miss")      # anchored either way → any older warn is over

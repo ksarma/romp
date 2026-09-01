@@ -8,6 +8,7 @@ at once. Persisted (watches.json), boot re-armed, the pr-watch pump's discipline
 Synthetic only; hermetic state; predicates are stubbed at _watch_run."""
 import json
 import os
+import shutil
 import tempfile
 import unittest
 from importlib.machinery import SourceFileLoader
@@ -97,16 +98,71 @@ class Tick(_Watches):
         self.assertIn("<!-- romp-injected --><!-- romp-system -->", text)
         self.assertEqual(km.list_watches(), [], "one mail, then the watch retires")
 
-    def test_timeout_mails_the_giving_up_notice(self):
-        km.add_watch("never", SID, every=15, timeout_s=60, now=0)
+    def test_a_short_caller_bound_softens_and_the_default_cap_gives_up(self):
+        """The 2026-08-29 hardening: two overnight cluster watches died at 1h caller-habit bounds
+        while their conditions held later. A bound SHORTER than the kernel default is now a
+        CHECK-IN, not an end: one still-watching mail (naming the cancel id), then the watch keeps
+        going through the default cap, where the giving-up notice ends it as ever."""
+        row, _ = km.add_watch("never", SID, every=15, timeout_s=60, now=0)
         km._watch_run = lambda cmd: (1, "")
         km._watch_tick(30.0)
         self.assertEqual(self.mails, [])
         km._watch_tick(61.0)
         self.assertEqual(len(self.mails), 1)
-        self.assertIn("gave up watching", self.mails[0][1])
-        self.assertIn("never held", self.mails[0][1])
+        self.assertIn("Still watching", self.mails[0][1])
+        self.assertIn("--cancel %s" % row["id"], self.mails[0][1], "the check-in hands over the off switch")
+        self.assertEqual(len(km.list_watches()), 1, "the caller's short bound no longer ends the watch")
+        km._watch_tick(200.0)
+        self.assertEqual(len(self.mails), 1, "the check-in mails ONCE, not per cadence")
+        km._watch_tick(km.WATCH_DEFAULT_TIMEOUT + 1.0)
+        self.assertEqual(len(self.mails), 2)
+        self.assertIn("gave up watching", self.mails[1][1])
+        self.assertIn("never held", self.mails[1][1])
+        self.assertIn(km._fmt_span_s(km.WATCH_DEFAULT_TIMEOUT), self.mails[1][1],
+                      "the giving-up notice names the REAL span watched, not the softened bound")
         self.assertEqual(km.list_watches(), [], "the standing watcher rule: never a silent dead loop")
+
+    def test_the_soft_checkin_mark_survives_a_restart(self):
+        km.add_watch("never", SID, every=15, timeout_s=60, now=0)
+        km._watch_run = lambda cmd: (1, "")
+        km._watch_tick(61.0)
+        self.assertEqual(len(self.mails), 1)
+        with km._watch_lock:
+            km._watches[:] = []
+        km._watches_load()
+        km._watch_run = lambda cmd: (1, "")
+        km._watch_tick(200.0)
+        self.assertEqual(len(self.mails), 1, "a reboot must not repeat the check-in — soft is persisted")
+
+    def test_an_explicit_long_bound_ends_where_the_caller_said(self):
+        km.add_watch("never", SID, every=15, timeout_s=2 * km.WATCH_DEFAULT_TIMEOUT, now=0)
+        km._watch_run = lambda cmd: (1, "")
+        km._watch_tick(km.WATCH_DEFAULT_TIMEOUT + 10.0)
+        self.assertEqual(self.mails, [], "a bound past the default is an explicit choice — no check-in")
+        km._watch_tick(2 * km.WATCH_DEFAULT_TIMEOUT + 1.0)
+        self.assertEqual(len(self.mails), 1)
+        self.assertIn("gave up watching", self.mails[0][1])
+
+    def test_a_met_condition_survives_a_failed_delivery(self):
+        """Delivery is best-effort transport; retiring on a failed send silently LOST the met mail
+        (2026-08-29 audit find). The row now stays and retries next cadence."""
+        km.add_watch("check", SID, every=15, note="the job finished", now=0)
+        km._watch_run = lambda cmd: (0, "held")
+        km._pr_watch_deliver = lambda sid, text: False
+        km._watch_tick(1.0)
+        self.assertEqual(len(km.list_watches()), 1, "met but unheard — the watch must not vanish")
+        km._pr_watch_deliver = lambda sid, text: self.mails.append((sid, text)) or True
+        km._watch_tick(20.0)
+        self.assertEqual(len(self.mails), 1)
+        self.assertIn("now HOLDS", self.mails[0][1])
+        self.assertEqual(km.list_watches(), [])
+
+    def test_an_undeliverable_watch_is_bounded_not_a_zombie(self):
+        km.add_watch("never", SID, every=15, timeout_s=60, now=0)
+        km._watch_run = lambda cmd: (1, "")
+        km._pr_watch_deliver = lambda sid, text: False
+        km._watch_tick(km.WATCH_DEFAULT_TIMEOUT + 3601.0)
+        self.assertEqual(km.list_watches(), [], "an hour past the cap with no ear to mail, the row drops")
 
     def test_first_run_exec_failure_retires_loudly_at_once(self):
         km.add_watch("nosuchbinary --flag", SID, now=0)
@@ -150,6 +206,26 @@ class Wiring(_Watches):
         self.assertEqual(code, 3)
         code, out = km._watch_run("echo held; exit 0")
         self.assertEqual((code, out), (0, "held"))
+        scratch = km.jd.STATE / "watch-scratch"
+        self.assertEqual(list(scratch.glob("*.sh")), [], "each run cleans its script file")
+
+    @unittest.skipUnless(shutil.which("pgrep"), "pgrep not installed")
+    def test_the_runner_never_matches_its_own_argv(self):
+        """The self-match bug: under `sh -c <text>` the wrapper's argv CONTAINED the predicate, so a
+        `pgrep -f <pattern>` watch matched its own wrapper and said still-running forever (35 min
+        past actual completion, 2026-08-28 overnight). Script-file execution: no process the runner
+        owns carries the pattern, so a token nothing else runs must come back not-found."""
+        code, _ = km._watch_run("pgrep -f romptest_selfmatch_e5c1a9")
+        self.assertNotEqual(code, 0, "the runner's own argv must never satisfy the predicate")
+
+    def test_pgrep_f_registration_answers_with_the_remote_wrapper_hint(self):
+        self.assertIn("pgrep -x", km._watch_reg_hint("pgrep -f 'train.py'") or "")
+        self.assertIn("self-match", km._watch_reg_hint("ssh box pkill -0 -f job") or "")
+        self.assertIsNone(km._watch_reg_hint("test -f /tmp/done"))
+        self.assertIsNone(km._watch_reg_hint("pgrep -x trainer"), "-x is the fix, not the footgun")
+        src = open(os.path.join(os.path.dirname(HERE), "kernel", "kernel.py")).read()
+        self.assertIn('hint = _watch_reg_hint(b.get("cmd"))', src,
+                      "the /watch route surfaces the hint to the registering CLI")
 
 
 if __name__ == "__main__":

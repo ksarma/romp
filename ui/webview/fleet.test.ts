@@ -192,10 +192,14 @@ test("the mark's WHY rule (markReason) survives — as the hover card's state li
 
 test("hovering a row shows the modal's story: state, background, takeaway/brief, sub-goals (the user 2026-07-13)", () => {
   // one persistent panel on document.body — render() wipes #fleet-list every push, so the card must live
-  // outside the wipe; wiring is delegated to the stable list, 120ms intent, keyed per (sid, nid)
+  // outside the wipe; wiring is delegated to the stable list, INSTANT show (the one tooltip
+  // treatment, 2026-08-28 — the 120ms intent debounce is gone), keyed per (sid, nid)
   assert.match(SRC, /row\.dataset\.nid = n\.id;/);
   assert.match(SRC, /document\.body\.appendChild\(card\);/);
-  assert.match(SRC, /hoverShowT = window\.setTimeout\(\(\) => \{ hoverShowT = undefined; showHoverCard\(row, sid, nid\); \}, 120\);/);
+  assert.match(SRC, /showHoverCard\(row, sid, nid\);/);
+  assert.doesNotMatch(SRC, /hoverShowT/, "no show-intent timer — the hover card is instant-in");
+  // the hide grace is the SHARED tip constant, so the fleet card and every styled tip agree
+  assert.match(SRC, /window\.setTimeout\(hideHoverCard, TIP_GRACE_MS\);/);
   // the modal's sections, from data the pane already holds (ledger node + the matching feed card)
   assert.match(SRC, /state\.textContent = markReason\(n, byId\)/);
   assert.match(SRC, /if \(ask\?\.background && ask\.background\.trim\(\)\) section\("Background", ask\.background\);/);

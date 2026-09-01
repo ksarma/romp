@@ -9,6 +9,7 @@ pretending it worked. Synthetic fixtures only."""
 import os
 import subprocess
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from importlib.machinery import SourceFileLoader
@@ -133,6 +134,8 @@ class SdkResumePreservesLastSid(unittest.TestCase):
 
         class FakeBackend:
             state_dir = state
+            _reg_lock = threading.Lock()   # resume's alive flip holds the RMW lock (2026-08-31)
+            _reg_for_flip = sb.SdkBackend._reg_for_flip   # …and reads through the flip base
             def _poke(self):
                 pass
         sb.SdkBackend.resume(FakeBackend(), "testsess", SID)
