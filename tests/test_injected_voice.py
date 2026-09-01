@@ -142,6 +142,10 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
             # the dashboard-edit trace (the user 2026-08-22): the file viewer saved over a file in this
             # session's tree, and the session is told in the person's voice — never edited under silently
             "edit trace": km._edit_trace_body("/TESTDIR/notes-api/README.md"),
+            # the compaction suggestion (the user 2026-08-30): idle + a lot of context → the person
+            # suggests a /compact at a natural boundary; /compact is a CLI feature the session
+            # already knows, and the thresholds behind the timing are never mentioned
+            "compaction suggestion": km.COMPACT_SUGGEST_TEXT,
         }
         # every repeat-nudge variant wears the same voice as the first fire (the user 2026-08-11): the
         # rotation exists so a re-ask doesn't read canned, so a variant that broke the voice rule would
@@ -214,7 +218,8 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
             if name in ("typed follow-up on a summary",
                         "debt reminder (question)", "debt reminder (handoff)",
                         "debt reminder (several)", "comment thread opener", "edit trace",
-                        "comment-thread merge"):
+                        "comment-thread merge", "compaction suggestion"):
+                #        ^ a housekeeping suggestion, not a progress ask — it elicits nothing
                 continue
             text = prose(body).lower()
             with self.subTest(message=name):

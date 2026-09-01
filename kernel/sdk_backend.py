@@ -1495,6 +1495,9 @@ class SdkSession:
         _lc0 = reg.get("liveCtx")                 # context-window fill %, as the SDK reports it (see _ctx_pct).
         self._ctx: int | None = _lc0 if isinstance(_lc0, (int, float)) else None  # seeded from the last persisted
         #   value so the bar survives idle/restart; refreshed live from get_context_usage() on connect + each turn.
+        _lt0 = reg.get("liveCtxTokens")           # raw totalTokens from the same get_context_usage payload —
+        self._ctx_tokens: int | None = (int(_lt0) if isinstance(_lt0, (int, float)) else None)   # the kernel's
+        #   compaction-suggestion thresholds key on true tokens, window-independent (2026-08-30)
         self._ctx_refreshing = False             # one get_context_usage control request in flight at a time
         self._usage_refreshing = False           # one get_usage control request in flight at a time
         self.retrying = False                        # an api_retry storm (API rate-limit/overload) is stalling the turn → 'retrying', not 'working'
@@ -1940,6 +1943,9 @@ class SdkSession:
             v = max(0, min(100, round(pct)))
             if v != self._ctx:
                 self._ctx, changed = v, True
+        tt = cu.get("totalTokens")
+        if isinstance(tt, (int, float)) and int(tt) != self._ctx_tokens:
+            self._ctx_tokens, changed = int(tt), True
         pm = pretty_model(cu.get("model"))
         if pm and self._resolve_model_pending(pm):
             changed = True
@@ -1951,6 +1957,8 @@ class SdkSession:
         upd["modelPending"] = bool(self._model_pending)
         if self._ctx is not None:
             upd["liveCtx"] = self._ctx
+        if self._ctx_tokens is not None:
+            upd["liveCtxTokens"] = self._ctx_tokens
         if upd:
             try:
                 self.backend._update_reg(self.sid, **upd)
@@ -3423,7 +3431,8 @@ class SdkSession:
                 #   lands) — the Billing row says so when it disagrees with the launch intent above
                 #   (a key found via apiKeyHelper bills the key while `auth` still reads login)
                 "authPending": bool(self._auth_pending),   # an /auth switch reconnecting → badge dots
-                "mode": self.perm_mode, "ctx": self._ctx_pct(), "summary": "",
+                "mode": self.perm_mode, "ctx": self._ctx_pct(), "ctxTokens": self._ctx_tokens,
+                "summary": "",
                 "connected": bool(self.client),   # the SDK handshake is up (set at connect, cleared at
                 #   teardown) — the "this session is OPEN" event for a transcript-less fresh session:
                 #   the kernel's opening-chip override stands down on it, so a new SDK session reads
@@ -5949,7 +5958,10 @@ class SdkBackend:
                     # survives idle/restart instead of vanishing until the next turn
                     "fast": reg.get("liveFast", ""),
                     "fastReason": reg.get("liveFastReason", ""),
-                    "ctx": lc if isinstance(lc, (int, float)) else "", "summary": ""}
+                    "ctx": lc if isinstance(lc, (int, float)) else "",
+                    "ctxTokens": (int(reg["liveCtxTokens"])
+                                  if isinstance(reg.get("liveCtxTokens"), (int, float)) else None),
+                    "summary": ""}
 
     # ---- picker/permission UI bridge (kernel-thread API) ----
     def on_ask(self, sid: str, kind: str, payload=None) -> bool:

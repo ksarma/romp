@@ -3973,6 +3973,8 @@ def _log_nudge_event(sid, gid, t, count, verdict="fired", ev_t=None, parked_s=No
     once per key-move, carrying parkedS, seconds since the skip's answeredAt) /
     fired-parked-backstop (the memo held but the session sat parked past the dead-man stand — the
     fire re-engages it; carries the final parkedS via its evidence row) /
+    compact-suggested (the idle+context watcher's suggestion went out; evT carries the token count
+    it fired on, 2026-08-30) /
     resolved-at-send / blocked-on-user-at-send — carrying the evidence snapshot's timestamp, so redundant fires are
     countable from the log alone. That accounting is what extended the freshness guard to the cap
     path (the user 2026-08-27, T120: the pre-T120 force-fired-at-cap rows measured the blind fire
@@ -4192,6 +4194,96 @@ def _closer_pending(sid, path, now, store):
     return not _closer_settled(store, lt.get("id"), len(lt.get("atoms") or []))
 
 
+# ── the compaction SUGGESTION (the user 2026-08-30, via the nightly optimizer) ──────────────────
+# The ~300k RECYCLE rule stays workers-only; every OTHER session gets a suggestion it decides on
+# itself: once its context crosses each threshold below AND it has been idle at least an hour, it
+# is told — in the person's voice, marker-free (the rename-ping precedent) — that a /compact at a
+# natural boundary would keep it snappy. Event-keyed end to end: the CROSSING arms it, a per-
+# threshold latch on the auto-nudge blob makes each fire once per episode, the idle gate reads the
+# settle event's age at fire time (_settle_event_key — the hook-ledger seam), and the latch re-arms
+# only on the session's own CONTEXT RESET (compact//clear/rewind), observed as the authoritative
+# token counter falling back below the latched threshold — a session that ignores the suggestion
+# is never re-asked (its counter never falls, the latch stands), one that acts hears nothing until
+# it has genuinely filled up again (the manager's amendment, 2026-08-30). Workers are excluded by
+# their roster tags (*_workers in the session-tag store), comment-thread forks by their registry
+# marker, and anything mid-turn by the progressing-state gate. Rides the auto-nudge tick's
+# alive-session walk — no new poll, no timer.
+COMPACT_SUGGEST_TOKENS = (400_000, 800_000)
+COMPACT_SUGGEST_IDLE_S = 3600
+COMPACT_SUGGEST_TEXT = (
+    "It's been quiet here for a while and this conversation has built up a lot of context. "
+    "When you next reach a natural stopping point, run /compact to keep things snappy; "
+    "your call, nothing is waiting on it.")
+
+
+def _worker_tag_member(sid):
+    """True when any *_workers tag in the session-tag store holds this sid — the worker rosters ARE
+    session tags (the `romp tag` headless-edit workflow), and the recycle rule owns those sessions."""
+    try:
+        d = json.loads(_views_path().read_text())
+    except (OSError, ValueError):
+        return False
+    for t in (d.get("tags") or []):
+        if not str(t.get("name") or "").lower().endswith("workers"):
+            continue
+        for m in (t.get("members") or []):
+            ms = m.get("sid") if isinstance(m, dict) else str(m or "")
+            if ms == sid or (isinstance(ms, str) and ms.split(":", 1)[-1] == sid):
+                return True
+    return False
+
+
+def _compact_suggest_tick(sid, tm, now):
+    """One session's slice of the compaction-suggestion watcher (contract in the block comment
+    above). Returns True when the suggestion went out (the caller pushes once at tick end)."""
+    tokens = (tm or {}).get("ctxTokens")
+    if not isinstance(tokens, (int, float)) or tokens <= 0:
+        return False                                   # tmux CLIs / pre-plumbing sessions carry no
+    #                                                    count → never suggested (conservative)
+    tokens = int(tokens)
+    with _NUDGE_LOCK:                                  # blob read-modify-write only — the send happens
+        d = dict(_auto_nudge_data())                   # OUTSIDE the lock (never hold it across IO)
+        latched = [int(x) for x in (d.get("compactSuggested") or {}).get(sid, [])]
+        live = [t for t in latched if tokens >= t]     # the RE-ARM: a latch whose threshold the
+        #                                                counter has fallen back below was reset by
+        #                                                the session's own compact//clear — that
+        #                                                episode is over (the amendment's middle path)
+        due = [t for t in COMPACT_SUGGEST_TOKENS if tokens >= t and t not in live]
+        if not due:
+            if live != latched:                        # nothing to fire, but persist the pruning so
+                cs = dict(d.get("compactSuggested") or {})   # a restart can't resurrect a spent latch
+                cs[sid] = live
+                d["compactSuggested"] = cs
+                _write_auto_nudge(d)
+            return False
+    # exclusions + the idle gate, all AT FIRE TIME (never latch a fire that never went out):
+    if _worker_tag_member(sid):
+        return False                                   # the recycle rule owns workers
+    if _thread_reg(sid).get("threadOf"):
+        return False                                   # a comment-thread fork is not first-class
+    if (tm or {}).get("state", "") in _PROGRESSING_STATES:
+        return False                                   # mid-turn — not idle, and never interrupt
+    _st = _settle_event_key(sid)
+    if not _st or now - _st < COMPACT_SUGGEST_IDLE_S:
+        return False                                   # not settled long enough — the crossing stays
+    #                                                    armed; a later tick re-checks the same gate
+    try:
+        Sessions.backend_for(sid).send(sid, COMPACT_SUGGEST_TEXT)
+    except Exception:
+        sys.stderr.write("compact-suggest send (%s): %s\n" % (sid, traceback.format_exc()))
+        return False
+    with _NUDGE_LOCK:                                  # latch AFTER the send went out, fresh read —
+        d = dict(_auto_nudge_data())                   # a concurrent writer's blob is not clobbered
+        cs = dict(d.get("compactSuggested") or {})
+        cs[sid] = [t for t in [int(x) for x in cs.get(sid, [])] if tokens >= t] + due
+        #                                                BOTH thresholds latch when found past both —
+        #                                                one message, never two in a tick
+        d["compactSuggested"] = cs
+        _write_auto_nudge(d)
+    _log_nudge_event(sid, sid, now, 0, verdict="compact-suggested", ev_t=tokens)
+    return True
+
+
 def _auto_nudge_tick(now, tmux, run_dead_wait=True):
     """One Auto-Nudge pass (from the periodic pusher). For each ALIVE, IDLE session (its turn ended) that
     isn't awaiting/compacting/api-error, isn't WAITING ON A LIVE PEER (a wait isn't a stall — the human's
@@ -4223,6 +4315,10 @@ def _auto_nudge_tick(now, tmux, run_dead_wait=True):
                 _put_walk_gate(s["sid"], r, now)
             else:
                 _pop_walk_gate(s["sid"])
+            # the compaction suggestion rides the same walk (contract at _compact_suggest_tick).
+            # Deliberately INSIDE the auto-nudge toggle: a user who turned injected follow-ups
+            # off has said no unprompted messages, and this is exactly that class.
+            fired = _compact_suggest_tick(s["sid"], tmux.get(s["sid"]), now) or fired
         except Exception:
             sys.stderr.write("auto-nudge (session %s): %s\n"
                              % (s.get("sid") or "?", traceback.format_exc()))
@@ -9734,6 +9830,8 @@ class Sessions:
                                 "connected": bool(st.get("connected")),   # SDK handshake up → the opening-chip override stands down (fresh sessions have no transcript yet)
                                 "spawning": bool(st.get("spawning")),   # spawn/handshake in flight NOW — the ONLY window the opening chip covers (a dormant created session must read ready, the user 2026-08-13)
                                 "context": ctx if isinstance(ctx, (int, float)) else None, "compactPct": None,
+                                "ctxTokens": st.get("ctxTokens"),   # raw totalTokens (SDK only) — the
+                                #   compaction-suggestion thresholds key on true tokens (2026-08-30)
                                 "fast": st.get("fast", ""),   # fast-mode state from the CLI's init ("on"/"off"/"cooldown"; "" = unknown → no badge)
                                 "fastReason": st.get("fastReason", ""),   # init's disabled_reason — non-empty hides the chat toggle
                                 "auth": st.get("auth", ""),   # which account this session bills ('login'|'key') → gear badge
