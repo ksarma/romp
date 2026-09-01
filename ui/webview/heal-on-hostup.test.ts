@@ -43,8 +43,7 @@ test("render.ts's message listener heals previews unconditionally at the top, so
 
 // ── RECONNECT-class heals go further than the per-message retry (the user 2026-08-24) ───────────
 test("hostUp also drains the settled chips and un-parks the path-image chips", () => {
-  // block form since T215's review round: the recovered hosts' pending uploads re-ship here too
-  assert.match(RENDER, /if \(m\.type === "hostUp"\) \{\s*\n\s*refreshSettledPreviews\(\); healPathImgs\(\);/,
+  assert.match(RENDER, /if \(m\.type === "hostUp"\) \{ refreshSettledPreviews\(\); healPathImgs\(\); \}/,
     "a tunnel recovery re-attempts spent budgets and imgFailed paths — bounded by the event's rarity");
 });
 
