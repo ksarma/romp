@@ -226,9 +226,14 @@ test("the pickers re-read /models on the kernel's models frame — the pick memo
   assert.ok(loader.includes("MODEL_CHOICES.length = 0; MODEL_CHOICES.push(...d.models"), "refilled in place — the shared reference holds");
   assert.match(RENDER, /^loadModelChoices\(\);$/m, "…and page load is just the first call");
   assert.match(RENDER, /else if \(m\.type === "models"\) loadModelChoices\(\);/, "the frame arm");
-  // the kernel side: one emitter, fired by every writer of the pick memory, to the chat AND timeline apps
+  // the kernel side: one emitter, fired by every writer of the pick memory, to EVERY app that hosts a
+  // picker — chat, timeline, and the feed, where the settings gear's judge-tier pickers live (fixer
+  // round 5: round 4 left the feed out, so the gear never heard the frame where it actually opens)
   assert.match(KERNEL, /frame = \{"type": "models", "rev": _models_rev\[0\]\}/);
-  assert.match(KERNEL, /for app in \("chat", "timeline"\):\s*\n\s*_send_to_app\(app, frame\)/);
+  assert.match(KERNEL, /for app in \("chat", "timeline", "feed"\):\s*\n\s*_send_to_app\(app, frame\)/);
+  // …and the payload carries the same counter, so a consumer can drop a response older than one applied
+  assert.match(KERNEL, /\{"rev": _rev,\s*\n\s*"models": \[/);
+  assert.match(KERNEL, /_rev = _models_rev\[0\]\s*\n\s*_learned = _learned_versions\(\)/, "read before the list, never after it");
   const note = KERNEL.split("def _note_model_pick(")[1].split("\ndef ")[0];
   const forget = KERNEL.split("def _forget_model_pick(")[1].split("\ndef ")[0];
   assert.ok(note.includes("_models_changed()"), "a pin emits");

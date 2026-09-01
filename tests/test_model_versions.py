@@ -150,9 +150,10 @@ class PickMemory(unittest.TestCase):
         self.assertEqual(km._model_picks().get("opus"), "claude-opus-4-8")
 
     def _clients(self):
-        """Two fake connected pickers — a chat and a timeline client — on the kernel's live roster; the
-        frames they receive, decoded. Removed again in tearDown-order by the returned callable."""
-        got = {"chat": [], "timeline": []}
+        """Three fake connected clients — a chat, a timeline and a FEED client (the feed bundle is where the
+        settings gear's pickers live) — on the kernel's live roster; the frames they receive, decoded.
+        Removed again in tearDown-order by the returned callable."""
+        got = {"chat": [], "timeline": [], "feed": []}
         fakes = [{"app": app, "wid": "w1", "alive": True,
                   "send": (lambda s, _a=app: got[_a].append(json.loads(s)))} for app in got]
         with km._clients_lock:
@@ -173,7 +174,7 @@ class PickMemory(unittest.TestCase):
         # event-keyed, never a poll — and every picker re-fetches on it.
         got = self._clients()
         km._note_model_pick("claude-opus-4-8")
-        for app in ("chat", "timeline"):
+        for app in ("chat", "timeline", "feed"):
             self.assertEqual([f["type"] for f in got[app]], ["models"], app)
             self.assertIsInstance(got[app][0]["rev"], int)
         rev = got["chat"][0]["rev"]
@@ -185,6 +186,21 @@ class PickMemory(unittest.TestCase):
         self.assertEqual([f["type"] for f in got["chat"]], ["models", "models"])
         self.assertEqual(got["chat"][1]["rev"], rev + 1, "a moving counter — a client can tell frames apart")
         self.assertEqual(len(got["timeline"]), 2)
+        self.assertEqual(len(got["feed"]), 2)
+
+    def test_the_frame_reaches_the_feed_bundle_where_the_settings_gear_lives(self):
+        # (fixer round 5, 2026-09-01) the round-4 frame went to the chat and timeline apps only — but the
+        # settings gear, whose judge-tier family rows send the cached list's `default`, is part of the
+        # FEED bundle (feed.ts requires gear.js; the web shell's rail gear and VS Code's settings command
+        # both post openSettings into the feed pane). So the gear's listener never fired where the gear
+        # actually opens, and its first-open cache kept sending a stale pinned default after another
+        # picker un-pinned. The frame goes to every app that hosts a picker: chat, timeline AND feed.
+        got = self._clients()
+        km._note_model_pick("claude-sonnet-4-6")
+        self.assertEqual([f["type"] for f in got["feed"]], ["models"], "the feed client hears the pin")
+        self.assertEqual(got["feed"][0], got["chat"][0], "the same frame every picker host gets")
+        km._forget_model_pick("sonnet")
+        self.assertEqual([f["type"] for f in got["feed"]], ["models", "models"], "…and the un-pin")
 
     def test_a_refused_version_is_forgotten_only_while_it_is_still_the_pin(self):
         # (fixer round 4, 2026-09-01) the CLI's refusal reaches the kernel through the backend's
@@ -249,6 +265,33 @@ class ModelsRoute(_ModelsServer):
         self.assertIn("color", rows["opus"], "the colormap tint still rides every family row")
         for v in rows["opus"]["versions"]:
             self.assertFalse(v.get("learned"), "seed-table entries are not marked as learned")
+
+    def test_the_payload_carries_the_pick_memorys_revision_the_frame_announces(self):
+        # (fixer round 5, 2026-09-01) every picker answers a models frame with a fresh GET /models and
+        # applied whatever landed — so two overlapping fetches (a frame during the page-load fetch; two
+        # quick frames) could resolve out of order and the STALE list won until the next change. The
+        # payload now carries the same `rev` the frame does, so a consumer can keep the newest it has
+        # applied and drop an older response that lands late.
+        got = self._clients()
+        d = self._models()
+        self.assertIsInstance(d.get("rev"), int, "the payload is stamped")
+        self.assertEqual(d["rev"], km._models_rev[0])
+        km._note_model_pick("claude-opus-4-8")
+        self.assertEqual(self._models()["rev"], got["chat"][0]["rev"],
+                         "after a change the payload's rev IS the frame's — one counter, two carriers")
+        self.assertGreater(self._models()["rev"], d["rev"])
+
+    def _clients(self):
+        got = {"chat": []}
+        fakes = [{"app": "chat", "wid": "w1", "alive": True, "send": lambda s: got["chat"].append(json.loads(s))}]
+        with km._clients_lock:
+            km._clients.extend(fakes)
+
+        def drop():
+            with km._clients_lock:
+                km._clients[:] = [c for c in km._clients if c not in fakes]
+        self.addCleanup(drop)
+        return got
 
     def test_a_family_with_no_pick_defaults_to_its_alias_not_the_seed_head(self):
         # THE BUG (2026-09-01): the default fell to MODEL_VERSIONS[fam][0], so a bare "Fable" click
@@ -490,14 +533,22 @@ class AliasMigration(unittest.TestCase):
         # TRANSIENT failure — the file is there, this boot could not open it (fixer round 4: a garbled
         # file is the other kind, see the next test).
         self._reg("locked", model="claude-fable-5")
-        real = Path.read_text
+        real_text, real_bytes = Path.read_text, Path.read_bytes
 
-        def read_text(p, *a, **k):
+        def refuse(p):
             if p.name == "locked.json":
                 raise PermissionError(13, "Permission denied", str(p))
-            return real(p, *a, **k)
+
+        def read_text(p, *a, **k):
+            refuse(p)
+            return real_text(p, *a, **k)
+
+        def read_bytes(p, *a, **k):        # the pass reads bytes (round 5) — the OS refuses either way
+            refuse(p)
+            return real_bytes(p, *a, **k)
         err = io.StringIO()
-        with mock.patch.object(Path, "read_text", read_text), contextlib.redirect_stderr(err):
+        with mock.patch.object(Path, "read_text", read_text), mock.patch.object(Path, "read_bytes", read_bytes), \
+                contextlib.redirect_stderr(err):
             n = km._model_alias_boot_pass()
         self.assertEqual(n, 4, "everything readable still migrates")
         self.assertFalse((jd.STATE / km.MODEL_ALIAS_MIGRATION_MARKER).exists())
@@ -537,6 +588,32 @@ class AliasMigration(unittest.TestCase):
             self.assertEqual(km._model_alias_boot_pass(), 1)
         self.assertIn("sdk-defaults.json", err.getvalue())
         self.assertTrue((jd.STATE / km.MODEL_ALIAS_MIGRATION_MARKER).exists())
+
+    def test_a_store_that_is_not_utf8_is_garbage_named_loudly_and_the_rest_still_migrates(self):
+        # (fixer round 5, 2026-09-01) round 4 split reading (catching OSError) from parsing (catching
+        # ValueError) — but a file holding non-UTF-8 bytes fails in the READ: Path.read_text raises
+        # UnicodeDecodeError, a ValueError and not an OSError, which escaped both arms, aborted the whole
+        # pass at that file (every later reg unmigrated), printed a traceback, and re-armed at every boot
+        # since the marker never stamped. No reader can see a pin in such a file (read_reg,
+        # read_sdk_defaults and the picks loader all return None/{} over it), so it is garbage like any
+        # other: named by path, nothing to migrate, and the pass runs to completion and stamps.
+        (jd.STATE / "sdk-defaults.json").write_bytes(b'{"model": "claude-fable-5", "note": "caf\xe9"}')   # Latin-1 byte
+        (jd.STATE / "sdk" / "latin.json").write_bytes(b'{"sid": "latin", "model": "claude-fable-5\xe9"}')
+        self._reg("z", model="claude-opus-5")     # sorts after latin.json — must still migrate
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            n = km._model_alias_boot_pass()
+        self.assertEqual(n, 4, "the fable pick + regs a, d and z — everything readable migrates")
+        self.assertEqual(self._read("z")["model"], "opus", "a reg sorted AFTER the garbled one still migrates")
+        self.assertEqual(self._read("a")["model"], "fable")
+        self.assertTrue((jd.STATE / km.MODEL_ALIAS_MIGRATION_MARKER).exists(), "stamped — the pass is done")
+        out = err.getvalue()
+        self.assertNotIn("Traceback", out, "a garbled file is a named line, never a crash")
+        self.assertIn("latin.json", out, "the garbled reg is NAMED")
+        self.assertIn("sdk-defaults.json", out, "so is the garbled defaults store")
+        self.assertNotIn("no marker written", out)
+        self.assertEqual((jd.STATE / "sdk" / "latin.json").read_bytes(), b'{"sid": "latin", "model": "claude-fable-5\xe9"}',
+                         "never rewritten by the pass")
 
     def test_the_pass_is_wired_into_main_before_the_backend_constructs(self):
         # the ordering IS the correctness (review 2026-09-01, unpinned before): the pass rewrites reg

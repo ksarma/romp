@@ -10120,8 +10120,14 @@ const EFFORT_CHOICES: { label: string; value: string; color?: number[] | null }[
 // the moment anything changed it: after Latest un-pinned a family, this tab's next family click sent
 // the old pinned id and silently re-pinned (fixer round 4, 2026-09-01). Refilled IN PLACE so META_CHOICES
 // keeps its reference; event-keyed on the frame, never a poll.
+// A response is applied only if it is not OLDER than one already applied (fixer round 5, 2026-09-01): its
+// `rev` is the pick memory's revision — the same counter the models frame carries — and two fetches can
+// overlap (a frame during the page-load fetch; two quick frames) and resolve out of order, so without the
+// check the STALE list won until the next change. A payload without a rev (an older kernel) always applies.
+let modelChoicesRev = -1;
 function loadModelChoices(): void {
   fetch(kernelUrl("/models"), { cache: "no-store" }).then((r) => r.json()).then((d) => {
+    if (typeof d.rev === "number") { if (d.rev < modelChoicesRev) return; modelChoicesRev = d.rev; }
     if (Array.isArray(d.models)) { MODEL_CHOICES.length = 0; MODEL_CHOICES.push(...d.models, { label: "Default", value: "default" }); }
     if (Array.isArray(d.efforts)) { EFFORT_CHOICES.length = 0; EFFORT_CHOICES.push(...d.efforts); }
     if (d.commentDefaults) adoptCommentDefaults(d.commentDefaults);

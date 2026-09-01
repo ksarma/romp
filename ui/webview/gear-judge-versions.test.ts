@@ -73,6 +73,7 @@ test("the gear's cached /models list re-reads on the kernel's models frame (fixe
   const at = GEAR.indexOf("m.type !== 'models'");
   const seg = GEAR.slice(at, at + 400);
   assert.ok(seg.includes("fetch(ku('/models'), { cache: 'no-store' })"), "the same endpoint fillChoices reads");
-  assert.ok(seg.includes("if (d && Array.isArray(d.models)) choices = d;"), "replaces the cache the rows read at click time");
+  assert.ok(seg.includes("if (d && Array.isArray(d.models)) adoptChoices(d);"),
+    "replaces the cache the rows read at click time — through the rev gate (gear-models-frame.test.ts runs it)");
   assert.ok(!seg.includes("innerHTML"), "the option sets are left alone");
 });

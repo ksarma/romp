@@ -828,7 +828,12 @@ MODEL_VERSIONS = {
 _VERSION_FAMILY = {v["value"]: fam for fam, vs in MODEL_VERSIONS.items() for v in vs}   # the SEED's reverse map
 MODEL_PICKS_FILE_NAME = "model-picks.json"   # {family: full-id} — a viewer pref all surfaces read, like colormap
 _model_picks_lock = threading.Lock()   # its read-modify-writes run on the WS-handler, producer AND SDK-loop threads
-_models_rev = [0]                      # bumps on every pick-memory change; rides the models frame (_models_changed)
+# Bumps on every pick-memory change; rides the models frame (_models_changed) AND the /models payload, so a
+# picker can drop a response older than one it has applied (fixer round 5, 2026-09-01). Seeded from the clock
+# rather than 0: the counter is per process, and a kernel restart (frequent — romp hosts itself) must never
+# hand a page that kept its high-water mark a LOWER rev, or that page would ignore every re-read until the
+# count caught up — a silent stale list. Milliseconds leave room for one bump per ms across a restart.
+_models_rev = [int(time.time() * 1000)]
 # A first-party model id as the CLI reports it: family, major, optional minor. A -YYYYMMDD snapshot
 # date or a [1m] context tag may trail and is ignored (claude-fable-5-1, claude-opus-4-5-20251101).
 _MODEL_ID_RE = re.compile(r"^claude-([a-z]+)-(\d+)(?:-(\d+))?(?:-\d{8})?$")
@@ -939,15 +944,20 @@ def _model_picks(learned=None):
 
 def _models_changed():
     """The pick memory MOVED — a version pinned, a family un-pinned (Latest), a refused pin dropped — so every
-    open picker's cached /models list is stale, and its `default` is what a family click SENDS. Tell the chat
-    and timeline clients now with a models frame (the palette frame's idiom; both re-fetch /models on it) —
-    event-keyed on the change itself, never a poll. A counter rides it so a client can tell frames apart.
+    open picker's cached /models list is stale, and its `default` is what a family click SENDS. Tell every
+    client that hosts a picker now with a models frame (the palette frame's idiom; each re-fetches /models on
+    it) — event-keyed on the change itself, never a poll. A counter rides it so a client can tell frames
+    apart, and the same counter stamps the /models payload so a late response never overwrites a newer one.
     (Fixer round 4, 2026-09-01: after Latest un-pinned a family on the kernel, the same tab's next family
     click sent the STALE pinned id and silently re-pinned; a second dashboard's pick moved the default
-    without the first tab knowing.)"""
+    without the first tab knowing.) The FEED app is on the list because the settings gear lives in the feed
+    bundle (feed.ts requires gear.js; the shell's rail gear and VS Code's settings command both open it in
+    the feed pane) — round 4 sent the frame to chat and timeline only, so the gear's listener never fired
+    where the gear actually opens (fixer round 5). The feed shim and the VS Code pipe hand every non-keepalive
+    frame to the window as a message; feed.ts's own listener ignores a type it does not know."""
     _models_rev[0] += 1
     frame = {"type": "models", "rev": _models_rev[0]}
-    for app in ("chat", "timeline"):
+    for app in ("chat", "timeline", "feed"):
         _send_to_app(app, frame)
 
 
@@ -1070,10 +1080,15 @@ def _model_alias_boot_pass():
     def _load(p):
         # a dict (or whatever the file holds) — None for an ABSENT file (nothing to migrate), for one the
         # OS would not let us READ (transient: counted, named, withholds the marker so the next boot
-        # retries) and for one that is not JSON (permanent: named, nothing to migrate, never counted)
+        # retries) and for one that is not JSON (permanent: named, nothing to migrate, never counted).
+        # Read as BYTES and let json.loads decode (fixer round 5, 2026-09-01): read_text() decodes, and a
+        # file holding non-UTF-8 bytes raises UnicodeDecodeError there — a ValueError, not an OSError — which
+        # escaped both arms, aborted the whole pass at that file and re-armed it every boot. Decoding belongs
+        # to the parse arm: a file no reader can decode holds no pin any reader can see, exactly like one
+        # that is not JSON.
         nonlocal fails
         try:
-            text = p.read_text()
+            data = p.read_bytes()
         except FileNotFoundError:
             return None
         except OSError as e:
@@ -1082,8 +1097,8 @@ def _model_alias_boot_pass():
                              "boot\n" % (p, e))
             return None
         try:
-            return json.loads(text)
-        except ValueError as e:
+            return json.loads(data)
+        except ValueError as e:              # json's own errors and UnicodeDecodeError alike
             sys.stderr.write("romp-kernel: model-alias migration: %s is not JSON (%s) — no reader can see a "
                              "pin in it, so there is nothing there to migrate; left as is\n" % (p, e))
             return None
@@ -32057,11 +32072,17 @@ class Handler(BaseHTTPRequestHandler):
                 # (the user 2026-08-25: family click = remembered pick; the submenu holds the rest.
                 # 2026-09-01: the alias, never the seed head — the CLI resolves an alias live, and the
                 # head pinned every picker-set session to claude-fable-5 while `fable` moved on).
+                _rev = _models_rev[0]
                 _learned = _learned_versions()
                 _picks = _model_picks(_learned)
                 _cat = _versions_catalog(_learned)
                 return self._send(200, json.dumps(
-                    {"models": [dict(c, color=_model_color(c["value"], _stops),
+                    # `rev` is the pick memory's revision — the models frame's counter (_models_changed),
+                    # read here BEFORE the picks so a payload never carries a rev newer than its list: a
+                    # picker keeps the highest rev it applied and drops a response that lands late with a
+                    # lower one (two overlapping fetches can resolve out of order; fixer round 5, 2026-09-01)
+                    {"rev": _rev,
+                     "models": [dict(c, color=_model_color(c["value"], _stops),
                                      versions=_cat.get(c["value"]) or [],
                                      default=_picks.get(c["value"]) or c["value"])
                                 for c in MODEL_CHOICES],

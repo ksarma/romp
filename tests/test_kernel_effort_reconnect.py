@@ -78,9 +78,14 @@ class EffortReconnect(unittest.TestCase):
                     'self._update_reg(sid, mode=mode)',
                     'self._update_reg(sid, fast=(value == "on"), liveFast=value)',
                     'self._update_reg(sid, name=new_name,',   # + the rename ping rides the same locked RMW when owed (2026-08-24/25)
-                    'self._update_reg(sid, model=value, modelPending=bool(s._model_pending))',
+                    # the live model write is _update_reg's swap twin — the same _reg_lock hold, handing back
+                    # the value it replaced for the accepted-state bookkeeping (fixer round 5, 2026-09-01)
+                    'cur_model = self._swap_reg_model(sid, value, pending)',
                     'self._update_reg(sid, model=value, liveModel=_alias_label(value), modelPending=False)'):
             self.assertIn(pin, BACKEND_SRC)
+        swap = BACKEND_SRC.split("def _swap_reg_model(")[1].split("\n    def ")[0]
+        self.assertIn("with self._reg_lock:", swap, "the swap is the same locked RMW")
+        self.assertLess(swap.index("with self._reg_lock:"), swap.index("read_reg("), "…and the read is inside the hold")
 
     def test_backend_clears_the_pending_flag_when_the_reconnect_lands(self):
         # cleared the instant the new client connects (reconnect loop) — event-based, mirrors _model_pending

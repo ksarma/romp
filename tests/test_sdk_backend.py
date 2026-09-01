@@ -11,6 +11,7 @@ Two layers:
     PermissionResultAllow(updated_input={questions, answers}) goes back.
 """
 import asyncio
+import inspect
 import os
 import json
 import threading
@@ -19,6 +20,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from importlib.machinery import SourceFileLoader
+from unittest import mock
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
@@ -1517,6 +1519,168 @@ class SetModelModePure(unittest.TestCase):
             self.assertEqual(len(calls), 1, "a superseded refusal stands down from the memory too")
         finally:
             del type(self.be).on_model_refused
+
+    # ── the revert target is the last ACCEPTED state (fixer round 5, 2026-09-01) ─────────────────────
+    class _RefusesAll:
+        """A CLI that answers every set_model with an error and keeps running Opus 4.8."""
+        async def set_model(self, model=None):
+            raise Exception("Unknown model: %s" % model)
+
+        async def get_context_usage(self):
+            return {"percentage": 3, "model": "claude-opus-4-8"}
+
+    def test_two_refusals_in_a_row_restore_the_accepted_model_never_the_first_refused_pick(self):
+        # (fixer round 5, 2026-09-01) A then B, BOTH refused. A's answer lands after B's optimistic writes
+        # and stands down (superseded) — right. But B's snapshot was captured AFTER A's writes, so it held
+        # A, and B's own refusal then compare-and-swapped A — a REFUSED id — back into chosen_model, the
+        # reg and the shared defaults: the poison the revert exists to remove, embedded by the revert. The
+        # revert restores the last state the CLI ACCEPTED (opus, before either pick), never the last state
+        # WRITTEN. First with NO accepted pick anywhere (a fresh store, a session on the account default):
+        # every layer returns to ABSENCE, never to A.
+        sid0, sess0, sched0 = self._live(prior="")
+        self.assertNotIn("model", sb.read_reg(self.d, sid0))
+        sess0.client = self._RefusesAll()
+        self.assertTrue(self.be.set_model(sid0, "claude-fable-9-9"))        # A
+        self.assertTrue(self.be.set_model(sid0, "claude-sonnet-9-9"))       # B, written over A
+
+        async def drive0():
+            await asyncio.gather(sess0._do_set_model(*sched0[0]), sess0._do_set_model(*sched0[1]))
+        asyncio.run(drive0())
+        self.assertEqual(sess0.chosen_model, "")
+        self.assertNotIn("model", sb.read_reg(self.d, sid0), "no accepted pick before → none after")
+        self.assertNotIn("model", sb.read_sdk_defaults(self.d))
+        self.assertEqual(len(self.be.problems()), 1, "B's refusal rings once; A's stood down")
+        # then with an accepted pick before A (opus, set while the session was dormant — the connect asserts
+        # it): every layer returns to opus
+        sid, sess, scheduled = self._live()                                 # accepted: opus
+        sess.client = self._RefusesAll()
+        self.assertTrue(self.be.set_model(sid, "claude-fable-9-9"))         # A
+        self.assertTrue(self.be.set_model(sid, "claude-sonnet-9-9"))        # B, written over A
+        self.assertEqual(sb.read_reg(self.d, sid)["model"], "claude-sonnet-9-9")
+
+        async def drive():
+            await asyncio.gather(sess._do_set_model(*scheduled[0]), sess._do_set_model(*scheduled[1]))
+        asyncio.run(drive())
+        self.assertEqual(sess.chosen_model, "opus", "not A — a refused id is never a revert target")
+        self.assertEqual(sb.read_reg(self.d, sid)["model"], "opus")
+        self.assertEqual(sb.read_sdk_defaults(self.d).get("model"), "opus")
+        self.assertFalse(sb.read_reg(self.d, sid).get("modelPending"))
+        probs = [p["text"] for p in self.be.problems()]
+        self.assertEqual(len(probs), 2, "one ring per session — B's refusal; A's stood down")
+        self.assertIn("opus", probs[1].rsplit("reverted", 1)[-1], "and names the ACCEPTED model it went back to")
+
+    def test_a_late_acceptance_becomes_the_revert_target_of_the_pick_after_it(self):
+        # the accepted state moves on ACCEPTANCE, whenever it lands: A accepted after B was already
+        # written, then B refused → B reverts to A (the CLI runs A), not to the pre-A model
+        sid, sess, scheduled = self._live()                                 # accepted: opus
+
+        class _Client:
+            async def set_model(self, model=None):
+                if model != "claude-fable-5-1":
+                    raise Exception("Unknown model: %s" % model)         # B refused; A accepted
+
+            async def get_context_usage(self):
+                return {"percentage": 3, "model": "claude-fable-5-1"}
+        sess.client = _Client()
+        self.assertTrue(self.be.set_model(sid, "claude-fable-5-1"))         # A
+        self.assertTrue(self.be.set_model(sid, "claude-sonnet-9-9"))        # B
+
+        async def drive():
+            await asyncio.gather(sess._do_set_model(*scheduled[0]), sess._do_set_model(*scheduled[1]))
+        asyncio.run(drive())
+        self.assertEqual(sess.chosen_model, "claude-fable-5-1")
+        self.assertEqual(sb.read_reg(self.d, sid)["model"], "claude-fable-5-1")
+        self.assertEqual(sb.read_sdk_defaults(self.d).get("model"), "claude-fable-5-1")
+
+    def test_a_connect_asserts_the_pick_whose_answer_died_with_its_thread(self):
+        # a pick written optimistically whose control request never resolved (the thread died) is what
+        # the NEXT connect launches with (--model rides _options); the CLI's init reporting it is the
+        # acceptance — so a later refused pick reverts to IT, not to the model accepted before it
+        sid, sess, scheduled = self._live()                                 # accepted: opus
+        self.assertTrue(self.be.set_model(sid, "claude-fable-5-1"))         # A — never driven: its task died
+
+        class _Sys:
+            def __init__(self, data): self.subtype = "init"; self.data = data
+
+        async def _noop(): pass
+        sess._do_refresh_context = _noop
+
+        async def connect():
+            sess._on_message(_Sys({"model": "claude-fable-5-1"}), _AssistantMessage, _ResultMessage, _Sys)
+            await asyncio.sleep(0)
+        asyncio.run(connect())
+        sess.client = self._RefusesAll()
+        self.assertTrue(self.be.set_model(sid, "claude-sonnet-9-9"))        # B, refused
+        asyncio.run(sess._do_set_model(*scheduled[1]))
+        self.assertEqual(sess.chosen_model, "claude-fable-5-1", "the connect made A the accepted model")
+        self.assertEqual(sb.read_reg(self.d, sid)["model"], "claude-fable-5-1")
+        self.assertEqual(sb.read_sdk_defaults(self.d).get("model"), "claude-fable-5-1")
+
+    # ── snapshot and write in ONE lock hold; chosen_model compare-and-assign under the session lock ──
+    def test_a_defaults_or_reg_read_taken_outside_the_store_lock_never_feeds_the_revert(self):
+        # (fixer round 5, 2026-09-01) set_model captured its snapshots (read_reg, read_sdk_defaults)
+        # OUTSIDE _reg_lock / _defaults_lock and only then took the locks to write — so a writer on the
+        # other thread (a revert, another session's pick) could land between the read and the write, and
+        # the snapshot described a world the write never replaced. Deterministic stand-in for that
+        # interleave: a read made WITHOUT the store lock held reports a phantom value. If any such read
+        # feeds the revert, the phantom lands in the store; a read-modify-write under one hold never sees it.
+        sid, sess, scheduled = self._live()                                 # accepted: opus
+        sess.client = self._RefusesAll()
+        real_defaults, real_reg = sb.read_sdk_defaults, sb.read_reg
+        be = self.be
+
+        def phantom_defaults(state_dir):
+            d = real_defaults(state_dir)
+            return d if sb._defaults_lock.locked() else {**d, "model": "phantom-unlocked-read"}
+
+        def phantom_reg(state_dir, s):
+            r = real_reg(state_dir, s)
+            return r if (r is None or be._reg_lock.locked()) else {**r, "model": "phantom-unlocked-read"}
+        with mock.patch.object(sb, "read_sdk_defaults", phantom_defaults), mock.patch.object(sb, "read_reg", phantom_reg):
+            self.assertTrue(self.be.set_model(sid, "claude-fable-9-9"))
+        self.assertEqual(sb.read_reg(self.d, sid)["model"], "claude-fable-9-9", "the optimistic write landed")
+        asyncio.run(sess._do_set_model(*scheduled[0]))
+        self.assertEqual(sb.read_sdk_defaults(self.d).get("model"), "opus", "the defaults snapshot was read under the lock")
+        self.assertEqual(sb.read_reg(self.d, sid)["model"], "opus", "so was the reg snapshot")
+        self.assertEqual(sess.chosen_model, "opus")
+
+    def test_chosen_model_is_written_only_under_the_session_lock(self):
+        # (fixer round 5, 2026-09-01) _revert_model compared and assigned sess.chosen_model with no lock
+        # while the kernel thread's set_model assigned it — a torn compare-and-swap. Both writers now hold
+        # the session's lock around the compare-and-assign; a property stand-in records any write made
+        # without it.
+        sid = self.be.spawn("m", self.d)
+        self.assertTrue(self.be.set_model(sid, "opus"))
+        unlocked = []
+
+        class _Guarded(sb.SdkSession):
+            @property
+            def chosen_model(self):
+                return self.__dict__.get("_chosen", "")
+
+            @chosen_model.setter
+            def chosen_model(self, v):
+                lk = self.__dict__.get("_lock")           # absent during __init__'s own seed (before the lock exists)
+                if lk is not None and not lk.locked():
+                    unlocked.append(v)
+                self.__dict__["_chosen"] = v
+        sess = _Guarded(self.be, sb.read_reg(self.d, sid))
+        sess.model = "Opus 4.8"
+        self.be.sessions[sid] = sess
+        scheduled = []
+        sess.set_model_live = lambda model, prev=None: scheduled.append((model, prev))
+        sess.client = self._RefusesAll()
+        self.assertTrue(self.be.set_model(sid, "claude-fable-9-9"))
+        self.assertEqual(sess.chosen_model, "claude-fable-9-9")
+        asyncio.run(sess._do_set_model(*scheduled[0]))
+        self.assertEqual(sess.chosen_model, "opus")
+        self.assertEqual(unlocked, [], "every write — the optimistic one and the revert — held the lock")
+        # the compare half of the revert's compare-and-swap sits in the SAME hold as its assign
+        src = inspect.getsource(sb.SdkBackend._revert_model)
+        hold = src.index("with sess._lock:")
+        self.assertLess(hold, src.index("sess.chosen_model == picked"), "the compare is inside the hold")
+        self.assertLess(src.index("sess.chosen_model == picked"), src.index("with self._reg_lock:"),
+                        "…and the hold is released before the reg lock (no nesting)")
 
     def test_set_model_and_effort_on_a_dormant_session_leave_an_acknowledgment_chip(self):
         # (review, 2026-09-01) a composer "/model X" on a LIVE session lands the synthesized command

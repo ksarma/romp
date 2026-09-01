@@ -775,11 +775,21 @@ function initGear(post) {
   });
   // The model/effort <option>s come from /models — the same single source the
   // chat + timeline pickers use. Cached after the first successful fetch.
-  var choices = null;
+  var choices = null, choicesRev = -1;   // the list, and the highest /models `rev` applied to it
+  // A /models response is applied only if it is not OLDER than one already applied (fixer round 5,
+  // 2026-09-01): its `rev` is the pick memory's revision — the models frame's counter — and the frame's
+  // re-read can overlap the first fill, or two quick frames each other, with the responses landing out
+  // of order; without the check the STALE list won until the next change. A payload without a rev (an
+  // older kernel) always applies. Returns whether `choices` moved.
+  function adoptChoices(d) {
+    if (d && typeof d.rev === 'number') { if (d.rev < choicesRev) return false; choicesRev = d.rev; }
+    choices = d || { models: [], efforts: [] };
+    return true;
+  }
   function fillChoices() {
     if (choices) return Promise.resolve(choices);
     return fetch(ku('/models'), { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (d) {
-      choices = d || { models: [], efforts: [] };
+      if (!adoptChoices(d)) return choices;   // a re-read applied a newer list while this one was in flight
       var mo = (choices.models || []).map(function (m) {
         var vs = (m.versions || []).map(function (v) { return '<option value="' + v.value + '">' + v.label + '</option>'; }).join('');
         return '<option value="' + m.value + '">' + m.label + '</option>' + vs;   // versions ride as options too — the hidden select stays the value holder for any pick
@@ -804,12 +814,13 @@ function initGear(post) {
   // family un-pinned by Latest, a refused pin dropped, from any surface or dashboard — so the cached
   // list's `default` (what a family row SENDS, read from `choices` at click time) is stale. Re-read on
   // the event, like the settingStale listener below; never a poll. Only the cache moves: re-filling the
-  // <option> sets would reset the selects' values while the modal is up.
+  // <option> sets would reset the selects' values while the modal is up. The frame reaches this document
+  // because the kernel sends it to the FEED app too (the gear lives in the feed bundle; fixer round 5).
   window.addEventListener('message', function (e) {
     var m = e.data;
     if (!m || m.type !== 'models') return;
     fetch(ku('/models'), { cache: 'no-store' }).then(function (r) { return r.json(); })
-      .then(function (d) { if (d && Array.isArray(d.models)) choices = d; }).catch(function () {});
+      .then(function (d) { if (d && Array.isArray(d.models)) adoptChoices(d); }).catch(function () {});
   });
   function lv() { var t = document.querySelector('script[src*="feed.js"]');
     var m = t && t.getAttribute('src').match(/[?&]v=(\d+)/); return m ? +m[1] : 0; }

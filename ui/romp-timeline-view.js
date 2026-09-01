@@ -639,10 +639,16 @@ const EFFORT_CHOICES = [];
 // refused pin dropped, from any surface or dashboard — and a family's `default` is what its row SENDS, so
 // a list fetched once went stale the moment anything changed it (fixer round 4, 2026-09-01: after Latest
 // un-pinned a family, the lane's next family click sent the old pinned id and silently re-pinned). Refilled
-// IN PLACE so _openMetaMenu's reference holds. Event-keyed on the frame, never a poll.
+// IN PLACE so _openMetaMenu's reference holds. Event-keyed on the frame, never a poll. A response is applied
+// only if it is not OLDER than one already applied (fixer round 5, 2026-09-01): its `rev` is the pick memory's
+// revision — the frame's counter — and two overlapping fetches (a frame during the page-load fetch; two quick
+// frames) can resolve out of order, so without the check the STALE list won until the next change. A payload
+// without a rev (an older kernel) always applies.
+let modelChoicesRev = -1;
 function loadModelChoices() {
   try {
     if (typeof fetch !== 'undefined') return fetch('/models', { cache: 'no-store' }).then((r) => r.json()).then((d) => {
+      if (typeof d.rev === 'number') { if (d.rev < modelChoicesRev) return; modelChoicesRev = d.rev; }
       if (Array.isArray(d.models)) { MODEL_CHOICES.length = 0; for (const m of d.models) MODEL_CHOICES.push(m); MODEL_CHOICES.push({ label: 'Default', value: 'default' }); }
       if (Array.isArray(d.efforts)) { EFFORT_CHOICES.length = 0; for (const e of d.efforts) EFFORT_CHOICES.push(e); }
     }).catch(() => {});

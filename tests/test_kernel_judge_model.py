@@ -68,7 +68,10 @@ class JudgeSettings(unittest.TestCase):
         # since the version submenus (the user 2026-08-25), each family's versions + default too:
         # the versions from the seed table ∪ what running sessions report, the default the family's
         # remembered pin else its ALIAS (2026-09-01 — never the seed head, which pinned sessions)
-        self.assertIn('{"models": [dict(c, color=_model_color(c["value"], _stops),', ksrc)
+        # (fixer round 5, 2026-09-01: the payload leads with `rev`, the pick memory's revision, so a
+        # picker can drop a /models response older than one it applied — the models frame's counter)
+        self.assertIn('{"rev": _rev,', ksrc)
+        self.assertIn('"models": [dict(c, color=_model_color(c["value"], _stops),', ksrc)
         self.assertIn('versions=_cat.get(c["value"]) or [],', ksrc)
         self.assertIn('default=_picks.get(c["value"]) or c["value"])', ksrc)
 
