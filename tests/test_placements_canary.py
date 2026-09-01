@@ -204,7 +204,11 @@ class PlacementIdentityCanary(unittest.TestCase):
         # so every pinned id is UNCHANGED — the bump seals transcripts whose retry-storm flush
         # knocked a turn's output off the spine; those atoms rejoin the set
         # (tests/test_romp_events_golden.py's eclipsed fixture covers the keep itself).
-        self.assertEqual(jd.PLACEMENTS_V, 10, "EXPECTED_SEG_IDS was pinned under PLACEMENTS_V=10 — "
+        # v11 (2026-09-01, the eclipsed-chain selection): this fixture still carries no api_error
+        # spur, so every pinned id is UNCHANGED — the bump seals transcripts whose eclipsed fork
+        # held SIBLING chains (stub twins, error bursts, older attempts), whose atoms leave the
+        # set again (tests/test_event_model_golden.py EclipsedChainSelection covers the pick).
+        self.assertEqual(jd.PLACEMENTS_V, 11, "EXPECTED_SEG_IDS was pinned under PLACEMENTS_V=11 — "
                          "re-pin the ids and this version together, in the same commit")
 
 
