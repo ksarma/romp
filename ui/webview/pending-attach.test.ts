@@ -70,8 +70,15 @@ test("chips are never revived from a reload — names persist only to say what w
   assert.match(RENDER, /shipsInFlight: \[\.\.\.pendingShips\.values\(\)\]\.flat\(\)\.map\(\(p\) => p\.name\)/);
   assert.doesNotMatch(RENDER, /pendingShips\.set\([^)]*shipsInFlight/, "never rebuild chips from the persisted names");
   assert.match(RENDER, /still uploading when this page reloaded, so it was NOT attached — attach it again\./);
-  assert.match(RENDER, /persistDrafts\(\);   \/\/ pendingShips is empty at startup → the persisted names clear here/,
-    "the loss toast fires once — the record clears with the same write path that made it");
+  // the clear is a DIRECT setState with no dependency on later declarations: v1 rode persistDrafts,
+  // whose stagedMsgs read sits below this block — the TDZ throw died in its own catch and the clear
+  // never ran, so the toast re-fired on every reload (review finding 2026-09-01)
+  assert.match(RENDER, /vscodeApi\?\.setState\?\.\(\{ \.\.\.\(vscodeApi\.getState\?\.\(\) \|\| \{\}\), shipsInFlight: \[\] \}\);/,
+    "the loss toast fires once — the record clears directly, immune to module-eval order");
+  // …reached from the toast WITHOUT crossing a persistDrafts call: the clear must never ride it
+  // (stagedMsgs is not initialized yet at module-eval; its TDZ throw dies in persistDrafts' catch)
+  assert.match(RENDER, /attach (?:it|them) again\."\)\);(?:(?!persistDrafts\(\);)[\s\S]){0,600}?setState\?\.\(\{ \.\.\.\(vscodeApi\.getState\?\.\(\) \|\| \{\}\), shipsInFlight: \[\] \}\)/,
+    "the startup clear must be the direct setState, not a persistDrafts ride");
 });
 
 test("a kernel restart between ship and ack RE-SHIPS the retained bytes on reconnect (T215)", () => {
@@ -80,8 +87,8 @@ test("a kernel restart between ship and ack RE-SHIPS the retained bytes on recon
   // the entry and re-shipped on romp:wsup — the exact kernel-is-back event, never a timer.
   assert.match(RENDER, /interface PendingShip \{ name: string; shipId: string; b64\?: string \}/);
   assert.match(RENDER, /if \(entry\) entry\.b64 = b64;/);
-  assert.match(RENDER, /function reshipPendingUploads\(\): void \{/);
-  assert.match(RENDER, /window\.addEventListener\("romp:wsup", reshipPendingUploads\);/);
+  assert.match(RENDER, /function reshipPendingUploads\(hosts\?: readonly string\[\]\): void \{/);
+  assert.match(RENDER, /window\.addEventListener\("romp:wsup", \(\) => reshipPendingUploads\(\)\);/);
   // an entry still ENCODING has no payload — its own onload ships on the fresh socket, never doubled
   assert.match(RENDER, /if \(!p\.b64\) continue;/);
   // the re-ship rides the same dropFile shape, same shipId, routed to the owning session
@@ -106,4 +113,23 @@ test("the chip wears the accent loader-dots motif from styles.css", () => {
   assert.match(CSS, /@keyframes ship-bnc/);
   // staggered like the romp loader's dots
   assert.match(CSS, /\.composer-ship-dots i:nth-child\(3\) \{ animation-delay: 0\.32s; \}/);
+});
+
+test("federated sessions heal too: every ack socket's comeback re-ships ITS entries (T215 review)", () => {
+  const FED = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "federation.ts"), "utf8");
+  // a remote session's ack rides that host's relay, so the re-ship is SCOPED to the socket that
+  // reconnected: no scope = the local kernel's own entries; a hosts list = exactly those relays'
+  assert.match(RENDER, /if \(hosts \? hosts\.indexOf\(h\) < 0 : h\) continue;/);
+  // the relay's own redial is the one event a remote kernel restart fires — federation dispatches
+  // it, the chat re-ships on it (v1 listened to romp:wsup alone and never healed federated wedges)
+  assert.match(FED, /window\.dispatchEvent\(new CustomEvent\("romp:hostRelayUp", \{ detail: \{ host: conn\.host \} \}\)\);/);
+  assert.match(RENDER, /window\.addEventListener\("romp:hostRelayUp", \(e\) => \{/);
+  // and the kernel-reported tunnel recovery re-ships the recovered hosts' entries alongside
+  assert.match(RENDER, /if \(Array\.isArray\(m\.hosts\)\) reshipPendingUploads\(m\.hosts\.map\(String\)\);/);
+});
+
+test("dismissing the LAST pending chip settles an armed hold loudly — never a forever-wait (T215 review)", () => {
+  // the ✕ removed the very entry whose ack the hold was waiting for; same contract as the nack:
+  // cancelled loudly, never auto-sent
+  assert.match(RENDER, /const held = sendOnShip\.delete\(id\);\s*\n\s*const gateWasOpen = shipGateSid === id;\s*\n\s*if \(gateWasOpen\) \{ shipGateSid = null; closeConfirm\(null\); \}\s*\n\s*if \(held \|\| gateWasOpen\) warnToast\("The pending upload was dismissed — your held message was NOT sent\."\);/);
 });

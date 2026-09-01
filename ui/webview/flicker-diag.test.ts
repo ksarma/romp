@@ -27,7 +27,7 @@ test("feed: an item entering/leaving the model posts an itemset breadcrumb (ids 
 });
 
 test("federation: every remote socket open/close/detach posts a hostconn breadcrumb", () => {
-  assert.match(FED, /ws\.onopen = \(\) => this\.diag\("hostconn", \{ host: conn\.host, ev: "open" \}\);/);
+  assert.match(FED, /ws\.onopen = \(\) => \{\s*\n\s*this\.diag\("hostconn", \{ host: conn\.host, ev: "open" \}\);/);   // block body since the T215 relay-up dispatch joined it
   assert.match(FED, /this\.diag\("hostconn", \{ host: conn\.host, ev: "close", code: ev\.code, clean: ev\.wasClean, detached: conn\.closed \}\);/);
   assert.match(FED, /this\.diag\("hostconn", \{ host, ev: "detach" \}\);/);
   // breadcrumbs ride the LOCAL kernel socket into the same client-diag journal the feed writes

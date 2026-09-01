@@ -10745,16 +10745,22 @@ function retirePendingShip(key: string, shipId?: string): string | null {
   return null;
 }
 
-// Re-ship every retained payload on the kernel-is-back event (romp:wsup — the page shim fires it when
-// this pane's socket reconnects). The old socket died with the acks still owed, so re-sending the
-// bytes is the ONLY way the chip's retiring event can still arrive; the kernel just saves a fresh
-// copy (a duplicate file in drops/ is an orphan, never attached — the shipId-matched ack retires this
-// chip and any stray twin ack is dropped by shipOwner's gate). An entry with no payload yet is one
-// whose FileReader is still encoding — its own onload ships through the fresh socket, so it is
-// deliberately skipped here, never doubled.
-function reshipPendingUploads(): void {
+// Re-ship the retained payloads whose ack socket just came back. That socket died with the acks
+// still owed, so re-sending the bytes is the ONLY way the chip's retiring event can still arrive;
+// the kernel just saves a fresh copy (a duplicate file in drops/ is an orphan, never attached — the
+// shipId-matched ack retires this chip and any stray twin ack is dropped by shipOwner's gate). An
+// entry with no payload yet is one whose FileReader is still encoding — its own onload ships through
+// the fresh socket, so it is deliberately skipped here, never doubled.
+// SCOPED to the socket that reconnected: a remote session's ack rides that host's RELAY, not the
+// pane socket, so romp:wsup re-ships local entries only, and the host-back events below carry their
+// hosts (review finding 2026-09-01: v1 listened to romp:wsup alone, whose entries-of-every-host
+// re-ship both missed the remote relay's own redial — which fires neither romp:wsup nor hostUp — and
+// re-sent remote payloads into a relay that was still down).
+function reshipPendingUploads(hosts?: readonly string[]): void {
   if (!vscodeApi) return;
   for (const [id, list] of pendingShips) {
+    const h = hostOf(id);
+    if (hosts ? hosts.indexOf(h) < 0 : h) continue;   // no scope → the local kernel's own entries
     for (const p of list) {
       if (!p.b64) continue;
       const msg: { type: string; name: string; b64: string; shipId: string; id?: string } =
@@ -10764,7 +10770,13 @@ function reshipPendingUploads(): void {
     }
   }
 }
-window.addEventListener("romp:wsup", reshipPendingUploads);
+window.addEventListener("romp:wsup", () => reshipPendingUploads());
+// federation dispatches this on a host relay socket (re)connect — the exact event that makes that
+// host's owed acks reachable again; the detail names the host, so only its entries re-ship
+window.addEventListener("romp:hostRelayUp", (e) => {
+  const h = String((((e as CustomEvent).detail || {}) as any).host || "");
+  if (h) reshipPendingUploads([h]);
+});
 
 // Sids whose SEND is HELD until every pending ship acks (the user 2026-08-16: sending mid-upload
 // silently dropped the attachment — the send read only the acked list). Armed by the confirm's
@@ -10832,7 +10844,11 @@ try {
       warnToast(names.join(", ") + (names.length === 1
                 ? " was still uploading when this page reloaded, so it was NOT attached — attach it again."
                 : " were still uploading when this page reloaded, so they were NOT attached — attach them again."));
-      persistDrafts();   // pendingShips is empty at startup → the persisted names clear here
+      // clear the record DIRECTLY — v1 called persistDrafts() here, which reads stagedMsgs, declared
+      // BELOW this block: the TDZ throw landed in persistDrafts' own catch and the clear silently
+      // never ran, so this toast re-fired on every reload until an unrelated composer gesture
+      // (review finding 2026-09-01, verified on the emitted bundle). No eval-order dependency now.
+      vscodeApi?.setState?.({ ...(vscodeApi.getState?.() || {}), shipsInFlight: [] });
     }
   }
 } catch { /* ignore */ }
@@ -11138,6 +11154,15 @@ function renderComposerFiles(id: string | null): void {
       list.splice(i, 1);
       if (!list.length && id) pendingShips.delete(id);
       persistDrafts();   // the dismissed chip's name must not resurface as a reload-loss toast
+      // dismissing the LAST chip settles an armed hold the same way a nack does — cancelled
+      // LOUDLY, never auto-sent: the ✕ removed the very entry whose ack the hold was waiting
+      // for, so left armed it would wait forever (review finding 2026-09-01)
+      if (id && !(pendingShips.get(id) || []).length) {
+        const held = sendOnShip.delete(id);
+        const gateWasOpen = shipGateSid === id;
+        if (gateWasOpen) { shipGateSid = null; closeConfirm(null); }
+        if (held || gateWasOpen) warnToast("The pending upload was dismissed — your held message was NOT sent.");
+      }
       renderComposerFiles(id);
     });
     box.appendChild(x);
@@ -11908,7 +11933,12 @@ window.addEventListener("message", (e: MessageEvent) => {
   // a RECONNECT-class event goes further: settled chips (budget spent) re-attempt regardless of
   // their error text, and the path-image chips parked in imgFailed get one fresh host round-trip
   // (bounded: reconnects are rare events, never a per-push loop)
-  if (m.type === "hostUp") { refreshSettledPreviews(); healPathImgs(); }
+  if (m.type === "hostUp") {
+    refreshSettledPreviews(); healPathImgs();
+    // the recovered hosts' owed acks are reachable again — re-ship their retained uploads too
+    // (the relay's own redial also heals via romp:hostRelayUp; both are idempotent by shipId)
+    if (Array.isArray(m.hosts)) reshipPendingUploads(m.hosts.map(String));
+  }
   if (m.type === "session") upsert(m);
   else if (m.type === "globalRetryPaused") {
     globalRetryPaused = !!m.value;
