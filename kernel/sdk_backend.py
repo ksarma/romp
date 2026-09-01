@@ -1078,7 +1078,10 @@ def recurring_crons(reg):
     re-hydrate a lost wakeup (verified live 2026-08-28), so pinning or reviving a process buys the
     wakeup nothing; deliver_lost_wakeups owns dead-generation one-shots outright and delivers the
     prompt itself at due, which revives a dormant session through the normal send path. Recurring
-    entries have no such catch-up: their live CLI is the only scheduler, so they pin the process.
+    entries pin the process for TIMELINESS: their live CLI is the only ON-TIME scheduler. (A resumed
+    CLI does catch-up-fire a recurring slot that passed while its previous process was dead —
+    verified live 2026-09-01, T211 — but that is a replay hazard as much as a recovery: every kernel
+    restart re-fired already-delivered slots until _prompt_submit_hook's delivered-slot gate.)
     Reads the entry's `recurring` field, never the cron string's shape — toolhook-minted one-shots
     carry an empty cron string."""
     return [c for c in (reg.get("sessionCrons") or []) if isinstance(c, dict) and c.get("recurring")]
@@ -1105,6 +1108,83 @@ def wakeup_due_epoch(cron: str, armed_t: float) -> "float | None":
     if due.timestamp() < armed_t - 60:            # H:M already passed at arm time → the wrap is tomorrow
         due += timedelta(days=1)
     return due.timestamp()
+
+
+def _cron_field(spec: str, lo: int, hi: int) -> "set[int] | None":
+    """One 5-field cron field as the set of ints it names (vixie shapes: *, steps, ranges, lists),
+    or None for anything outside that grammar — the caller stands down rather than guessing."""
+    out: set[int] = set()
+    for part in str(spec).split(","):
+        part, step = part.strip(), 1
+        if "/" in part:
+            part, s = part.split("/", 1)
+            if not s.isdigit() or int(s) < 1:
+                return None
+            step = int(s)
+        if part == "*":
+            a, b = lo, hi
+        elif "-" in part:
+            aa, _, bb = part.partition("-")
+            if not (aa.isdigit() and bb.isdigit()):
+                return None
+            a, b = int(aa), int(bb)
+        elif part.isdigit():
+            a = b = int(part)
+        else:
+            return None
+        if a < lo or b > hi or a > b:
+            return None
+        out.update(range(a, b + 1, step))
+    return out or None
+
+
+def cron_prev_due(cron: str, now: float) -> "float | None":
+    """The most recent moment at/before `now` a 5-field RECURRING cron names — the SLOT identity the
+    replay gate keys on (_prompt_submit_hook): a delivered fire is recorded against this epoch, and a
+    later fire computing the SAME slot is a replay by definition, however long its process was down
+    in between — exact event identity, never an age window. Vixie semantics: lists/ranges/steps,
+    day-of-month OR day-of-week when both are restricted, dow 0/7 = Sunday. Local time, matching the
+    CLI's own scheduler. Anything unparseable returns None and the gate stands down — romp only
+    reasons about schedules it understands exactly (wakeup_due_epoch's rule). Lookback bounded at
+    ~400 days so a never-matching string (a Feb 30) terminates. Pure for tests."""
+    try:
+        m, h, dom, mon, dow = str(cron).split()
+    except (ValueError, AttributeError):
+        return None
+    mins, hrs = _cron_field(m, 0, 59), _cron_field(h, 0, 23)
+    doms, mons, dows = _cron_field(dom, 1, 31), _cron_field(mon, 1, 12), _cron_field(dow, 0, 7)
+    if None in (mins, hrs, doms, mons, dows):
+        return None
+    dows = {d % 7 for d in dows}                       # 7 is Sunday too
+    from datetime import date, timedelta               # local, like wakeup_due_epoch
+    lt = time.localtime(now)
+    day0 = date(lt.tm_year, lt.tm_mon, lt.tm_mday)
+    for back in range(400):
+        day = day0 - timedelta(days=back)
+        if day.month not in mons:
+            continue
+        dom_ok, dow_ok = day.day in doms, ((day.weekday() + 1) % 7) in dows
+        if not ((dom_ok or dow_ok) if (dom != "*" and dow != "*")
+                else (dow_ok if dom == "*" and dow != "*" else dom_ok)):
+            continue
+        if back == 0:
+            cand = [(H, M) for H in hrs for M in mins if (H, M) <= (lt.tm_hour, lt.tm_min)]
+            if not cand:
+                continue                                # today matches but only later than now
+            H, M = max(cand)
+        else:
+            H, M = max(hrs), max(mins)
+        return time.mktime((day.year, day.month, day.day, H, M, 0, -1, -1, -1))
+    return None
+
+
+def cron_slot_key(cron: str, prompt: str) -> str:
+    """The SCHEDULE IDENTITY half of the replay gate's key. Deliberately NOT the CLI's cron id: a
+    resume re-hydration or a delete/re-create mints fresh ids for the same nightly job (observed
+    live — the same schedule wore two ids across two process generations), and an id-keyed record
+    would greet every re-mint as a brand-new schedule and wave its replay through. The (cron string,
+    prompt) pair is what makes two fires "the same scheduled work", so it IS the identity."""
+    return hashlib.sha1(("%s\n%s" % (cron, prompt)).encode("utf-8", "replace")).hexdigest()[:16]
 
 
 def interrupt_action(level: int, channel_up: bool) -> tuple[str, int]:
@@ -3133,6 +3213,68 @@ class SdkSession:
             self.backend._log("sched tool hook (%s): %s" % (self.name, e))
         return {}
 
+    async def _prompt_submit_hook(self, inp, tool_use_id, context):
+        """UserPromptSubmit: the RECURRING-CRON REPLAY GATE (T211, 2026-09-01). A resumed CLI
+        catch-up-fires a recurring cron whose slot passed while its previous process was dead, so
+        under immediate deploy restarts every kernel restart bought one spurious fire per recurring
+        cron: revive (ensure_scheduled) → --resume → sub-second re-fire of an already-delivered
+        slot. Field damage: one nightly fired ~21x on 2026-08-31, each extra fire within ~1s of a
+        "reviving …" log line and preceded by the fresh process's own startup records — the CLI's
+        last-fired memory dies with its process, and nothing durable said the slot already ran. This
+        hook is that durable memory, at the only moment that counts — DELIVERY, never arm time: a
+        prompt matching an armed recurring cron computes its slot (cron_prev_due) and consults the
+        reg's cronDelivered map, keyed (cron_slot_key, slot epoch). Recorded → the fire is a replay:
+        blocked before the model runs, loudly. Not recorded → record, then let it through — so a
+        slot the dead process genuinely never delivered still fires exactly once after a restart
+        (the CLI's own catch-up becomes the recovery instead of the bug). Every uncertain path fails
+        OPEN (unreadable reg, unparseable schedule, hook error → the prompt runs): a duplicate fire
+        costs a turn, a swallowed slot costs the schedule itself."""
+        try:
+            prompt = str((inp or {}).get("prompt") or "")
+            if not prompt:
+                return {}
+            reg = read_reg_for_rmw(self.backend.state_dir, self.sid)
+            if reg is None:
+                self.backend._log("cron dedupe (%s): reg unreadable — prompt allowed rather than "
+                                  "risking a swallowed schedule slot" % self.name, problem=True)
+                return {}
+            hits = [c for c in recurring_crons(reg)
+                    if str(c.get("prompt") or "") == prompt[:500] and str(c.get("cron") or "").strip()]
+            if not hits:
+                return {}
+            delivered = reg.get("cronDelivered")
+            delivered = dict(delivered) if isinstance(delivered, dict) else {}
+            now = time.time()
+            record, replay_of = {}, None
+            for c in hits:
+                slot = cron_prev_due(str(c.get("cron")), now)
+                if slot is None:
+                    return {}                  # a shape we can't reason about exactly → stand down
+                k = cron_slot_key(str(c.get("cron")), prompt[:500])
+                if float(delivered.get(k) or 0) >= slot:
+                    replay_of = slot           # this schedule's current slot already delivered
+                else:
+                    record[k] = slot
+            if record:
+                # Record AT the delivery moment; keys whose schedule left the armed set drop here
+                # (natural GC — the map can never outgrow the armed set + this delivery).
+                live = {cron_slot_key(str(c.get("cron")), str(c.get("prompt") or ""))
+                        for c in recurring_crons(reg)}
+                delivered = {k: v for k, v in delivered.items() if k in live}
+                delivered.update(record)
+                self.backend._update_reg(self.sid, cronDelivered=delivered)
+                return {}
+            when = time.strftime("%Y-%m-%d %H:%M", time.localtime(replay_of))
+            self.backend._log("cron dedupe (%s): blocked a replayed schedule fire — its %s slot was "
+                              "already delivered (a fresh process re-fires passed slots on resume)"
+                              % (self.name, when), problem=False)
+            return {"decision": "block",
+                    "reason": "This scheduled prompt already ran for its %s slot — skipping the "
+                              "duplicate." % when}
+        except Exception as e:
+            self.backend._log("cron dedupe (%s): %s — prompt allowed" % (self.name, e))
+            return {}
+
     # ---- subagent tracking (the transparency tmux never had) ----
 
     # ── the background-launch LEDGER (2026-08-29, the hookable-tools round) ────────────────────
@@ -4594,6 +4736,8 @@ class SdkBackend:
             stderr=sess._on_cli_stderr,
             can_use_tool=sess._can_use_tool,
             hooks={"Stop": [HookMatcher(matcher=None, hooks=[sess._stop_hook])],          # awaiting overlay producer
+                   # recurring-cron replay gate: a resumed CLI re-fires passed slots (T211)
+                   "UserPromptSubmit": [HookMatcher(matcher=None, hooks=[sess._prompt_submit_hook])],
                    "SubagentStart": [HookMatcher(matcher=None, hooks=[sess._subagent_start_hook])],  # live subagent
                    "SubagentStop": [HookMatcher(matcher=None, hooks=[sess._subagent_stop_hook])],    #   count/types
                    # scheduling tools record their arm at the CALL moment, with the exact due time the
@@ -5859,9 +6003,12 @@ class SdkBackend:
         producer calls this every pass: any alive, timer-armed session with no running thread is
         reconnected — resume re-hydrates its timer set (verified live 2026-08-28: CronList shows the
         same cron in a fresh process after a kill), and the CLI does ALL the firing natively; romp
-        never fires a timer itself. Residual, accepted: a timer due inside the ~minute a kernel
-        restart takes can still miss (the down window has no process to fire it and no catch-up
-        exists for session-scoped timers CLI-side).
+        never fires a timer itself. A recurring slot due inside a down window is CAUGHT UP by the
+        resumed CLI itself (it re-fires passed slots on --resume, verified live 2026-09-01) — and
+        the same behavior re-fires slots that already ran, once per restart, so the catch-up is
+        only safe because _prompt_submit_hook's delivered-slot gate blocks the replays (T211).
+        Residual, accepted: a ONE-SHOT due inside the down window still misses CLI-side
+        (deliver_lost_wakeups owns those).
 
         A 120s per-sid retry floor bounds the failure mode where a timer-armed session's CLI dies
         instantly on every spawn — without it this sweep would respawn it every producer pass
