@@ -9,7 +9,13 @@ POSTAL="$(cd "$(dirname "$BATS_TEST_FILENAME")/../bin" && pwd)/romp-postal-servi
 setup() {
     TEST_DIR="$(mktemp -d)"
     export XDG_STATE_HOME="$TEST_DIR/state"
-    export ROMP_POSTAL_PORT=$((47200 + ${BATS_TEST_NUMBER:-0}))
+    # Port base BELOW the ephemeral floor (Linux default range is 32768-60999): the old 47200+N
+    # sat inside it, so on a loaded runner any outgoing connection could transiently hold the
+    # exact port as its SOURCE port — the bus's bind failed, the process died, and with stderr
+    # discarded the death read as a mystery ("never came up, alive=no", shifting test identity
+    # per run; three misdiagnosed CI runs on 2026-08-31). Same lesson the kernel's own port
+    # comment records. postal_spawn_bus below retries past a genuine collision anyway.
+    export ROMP_POSTAL_PORT=$((27200 + ${BATS_TEST_NUMBER:-0}))
     export ROMP_POSTAL_POLL=1
     export ROMP_POSTAL_IDLE_GRACE=2
     export ROMP_POSTAL_HEARTBEAT_TTL=2
@@ -34,23 +40,46 @@ setup() {
     chmod +x "$MOCK/tmux"
     export PATH="$MOCK:$PATH"
 
-    "$POSTAL" serve >/dev/null 2>&1 &
-    BUS_PID=$!
     # Readiness is load-bearing: every test assumes the bus is up, and proceeding without it surfaces as a
     # confusing DOWNSTREAM failure (a 2026-08-14 CI runner lost this race: "remote --force" probed a port
     # the bus hadn't bound yet and failed three asserts later, reading like a tunnel bug). Fail HERE,
-    # naming the real problem. A dead bus process is the early exit; the doubled bound is only a backstop.
-    local up=0 _
-    for _ in $(seq 1 100); do
-        curl -s "127.0.0.1:$ROMP_POSTAL_PORT/ping" >/dev/null 2>&1 && { up=1; break; }
-        kill -0 "$BUS_PID" 2>/dev/null || break
-        sleep 0.1
-    done
-    if [ "$up" != 1 ]; then
-        local alive=no; kill -0 "$BUS_PID" 2>/dev/null && alive=yes
-        echo "# setup: postal bus never came up on 127.0.0.1:$ROMP_POSTAL_PORT (pid $BUS_PID, alive=$alive)" >&2
+    # naming the real problem — and UNMISSABLY (the BUS-SPAWN-FAILURE marker + the bus's own stderr,
+    # 2026-08-31): the next person greps for the signature instead of chasing test numbers, and the
+    # actual bind error is in the output instead of /dev/null.
+    if ! postal_spawn_bus "$ROMP_POSTAL_PORT" 3; then
+        echo "# BUS-SPAWN-FAILURE: postal bus never came up (last try 127.0.0.1:$ROMP_POSTAL_PORT, pid $BUS_PID, alive=$BUS_ALIVE)" >&2
+        sed 's/^/#   bus.log: /' "$TEST_DIR/bus.log" 2>/dev/null | tail -n 8 >&2
         return 1
     fi
+}
+
+# Spawn the bus on $1, retrying on up to $2 candidate ports (each stepped +500, clear of every
+# per-test number). A dead bus process moves to the next candidate — a transient source-port
+# collision is survivable, and each attempt's stderr lands in $TEST_DIR/bus.log for the failure
+# message. Exports the port that actually bound in ROMP_POSTAL_PORT; sets BUS_PID/BUS_ALIVE.
+postal_spawn_bus() {
+    local port=$1 tries=${2:-1} try=0 _
+    BUS_ALIVE=no
+    while [ "$try" -lt "$tries" ]; do
+        export ROMP_POSTAL_PORT=$((port + try * 500))
+        "$POSTAL" serve >>"$TEST_DIR/bus.log" 2>&1 &
+        BUS_PID=$!
+        for _ in $(seq 1 100); do
+            # --max-time 1: a foreign holder of the port can ACCEPT and answer nothing — an
+            # uncapped curl would hang the whole readiness poll on it instead of moving on
+            curl -s --max-time 1 "127.0.0.1:$ROMP_POSTAL_PORT/ping" >/dev/null 2>&1 && { BUS_ALIVE=yes; return 0; }
+            kill -0 "$BUS_PID" 2>/dev/null || break
+            sleep 0.1
+        done
+        if kill -0 "$BUS_PID" 2>/dev/null; then
+            BUS_ALIVE=yes            # alive but never answered: a wedge, not a collision — retrying
+            kill "$BUS_PID" 2>/dev/null   #   the same state helps nobody; fail with the log
+            return 1
+        fi
+        echo "# spawn attempt $((try + 1)) on :$ROMP_POSTAL_PORT died — retrying on the next candidate" >>"$TEST_DIR/bus.log"
+        try=$((try + 1))
+    done
+    return 1
 }
 
 teardown() {
@@ -76,6 +105,25 @@ mksessions() {
 }
 # toggle POSTAL ISOLATION on for a session uuid (writes the kernel's session-flags.json that the bus reads)
 iso() { mkdir -p "$XDG_STATE_HOME/romp"; printf '{"%s":{"postalServiceOff":true}}' "$1" > "$XDG_STATE_HOME/romp/session-flags.json"; }
+
+@test "setup: the bus spawn survives a taken port by retrying the next candidate" {
+    # the 2026-08-31 CI class, reproduced: a transient holder of the exact test port (source-port
+    # roulette on a loaded runner) killed the bind, the bus died, and the whole test failed in
+    # setup with a shifting identity. postal_spawn_bus must step past the squatter — and say so.
+    kill "$BUS_PID" 2>/dev/null; wait "$BUS_PID" 2>/dev/null || true   # this test drives its own spawn
+    local squat=$((ROMP_POSTAL_PORT + 7000))
+    python3 -c "import socket,sys,time
+s=socket.socket(); s.bind(('127.0.0.1',$squat)); s.listen(1)
+print('bound', flush=True); time.sleep(30)" > "$TEST_DIR/squat.log" &
+    local SQUAT_PID=$! _
+    for _ in $(seq 1 50); do grep -q bound "$TEST_DIR/squat.log" 2>/dev/null && break; sleep 0.1; done
+    grep -q bound "$TEST_DIR/squat.log"                                # the squatter really holds it
+    postal_spawn_bus "$squat" 3                                        # not via `run`: exports must land
+    [ "$ROMP_POSTAL_PORT" -eq $((squat + 500)) ]                       # landed on the SECOND candidate
+    curl -s "127.0.0.1:$ROMP_POSTAL_PORT/ping" >/dev/null              # …and it answers
+    grep -q "retrying on the next candidate" "$TEST_DIR/bus.log"       # the collision is on the record
+    kill "$SQUAT_PID" 2>/dev/null || true                               # may have self-expired already
+}
 
 @test "agents lists live sessions and marks you" {
     run "$POSTAL" agents
