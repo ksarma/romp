@@ -61,10 +61,12 @@ test("the visible source prefix strips for DISPLAY only, in the romp render bran
 
 test("the watch notices carry the marker at the injection site — no prose pattern-matching anywhere", () => {
   assert.match(KERNEL, /return body \+ "\\n\\n<!-- romp-injected --><!-- romp-system --><!-- romp-tag: pr-watch -->"/);
-  // T207: the compaction suggestion's send appends the injector tail (romp-note + injected + auto)
-  // right after the bare prose constant — the source pin that keeps it out of the blue-bubble class
-  assert.match(KERNEL, /COMPACT_SUGGEST_TEXT \+ "\\n\\n"\n\s+"<!-- romp-note:/);
-  const sugSend = KERNEL.slice(KERNEL.indexOf("COMPACT_SUGGEST_TEXT + "), KERNEL.indexOf("COMPACT_SUGGEST_TEXT + ") + 600);
+  // T207: the compaction suggestion's send appends the injector tail (romp-note + injected)
+  // right after the prose — the source pin that keeps it out of the blue-bubble class. T212
+  // templated the prose per recipient (_compact_suggest_body names the runnable command), so
+  // the pin follows the call, same tail.
+  assert.match(KERNEL, /_compact_suggest_body\(_name_of\(sid\) or sid\[:8\]\) \+ "\\n\\n"\n\s+"<!-- romp-note:/);
+  const sugSend = KERNEL.slice(KERNEL.indexOf("_compact_suggest_body(_name_of(sid)"), KERNEL.indexOf("_compact_suggest_body(_name_of(sid)") + 600);
   assert.match(sugSend, /<!-- romp-injected -->/);
   assert.ok(!sugSend.includes("<!-- romp-auto -->"),
     "NOT romp-auto: that marker means auto-NUDGES and its gist says 'nudged for a status update' — " +
