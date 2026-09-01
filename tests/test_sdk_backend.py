@@ -2217,6 +2217,49 @@ class OptionsAssembly(unittest.TestCase):
         self.assertGreaterEqual(opts.max_buffer_size, 32 * 1024 * 1024,
                                 "well past any realistic single message, so a picker never dies on overflow")
 
+    # Thinking summaries (2026-09-01): CLI 2.1.257 forces thinking display "omitted" for every
+    # non-interactive session unless --thinking-display is passed explicitly (its settings.json
+    # showThinkingSummaries key is read in interactive mode only), so every SDK session returned
+    # signature-only thinking blocks. The kernel's per-install gear toggle writes
+    # STATE/thinking-summaries.json; _options reads it at every connect and, when on, passes the SDK's
+    # TYPED ThinkingConfigAdaptive field (types.py: display "summarized" | "omitted") — never the
+    # extra_args escape hatch, which this option has a field for.
+    def test_thinking_summaries_off_by_default_requests_no_display(self):
+        be = sb.SdkBackend(self.d, "/bin/true", lambda *a, **k: None)
+        self.assertFalse(sb.thinking_summaries_on(be.state_dir), "absent file reads OFF")
+        opts = be._options(self._sess(be), _sdk.ClaudeAgentOptions)
+        self.assertIsNone(opts.thinking, "off → no thinking option at all (the CLI's own default stands)")
+        self.assertNotIn("thinking-display", opts.extra_args or {})
+
+    def test_thinking_summaries_on_passes_the_typed_adaptive_summarized_field(self):
+        with open(os.path.join(self.d, sb.THINKING_SUMMARIES_FILE), "w") as f:
+            json.dump({"enabled": True, "gt": 1}, f)
+        be = sb.SdkBackend(self.d, "/bin/true", lambda *a, **k: None)
+        self.assertTrue(sb.thinking_summaries_on(be.state_dir))
+        opts = be._options(self._sess(be), _sdk.ClaudeAgentOptions)
+        self.assertEqual(opts.thinking, {"type": "adaptive", "display": "summarized"},
+                         "the designed field, in the shape the guide names")
+        self.assertNotIn("thinking-display", opts.extra_args or {},
+                         "must NOT route the display through the extra_args CLI-flag escape hatch")
+        # …and the installed SDK's transport turns that field into the CLI flags the 2.1.257 binary
+        # honors (--thinking adaptive --thinking-display summarized) — verified against the SDK romp runs,
+        # not assumed from its docs.
+        from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
+        cmd = SubprocessCLITransport("", opts)._build_command()
+        self.assertIn("--thinking-display", cmd)
+        self.assertEqual(cmd[cmd.index("--thinking-display") + 1], "summarized")
+        self.assertEqual(cmd[cmd.index("--thinking") + 1], "adaptive")
+
+    def test_thinking_summaries_explicit_off_requests_no_display(self):
+        # OFF written as a value (the user turned it on, then off again) is the same as absent
+        with open(os.path.join(self.d, sb.THINKING_SUMMARIES_FILE), "w") as f:
+            json.dump({"enabled": False, "gt": 2}, f)
+        be = sb.SdkBackend(self.d, "/bin/true", lambda *a, **k: None)
+        self.assertIsNone(be._options(self._sess(be), _sdk.ClaudeAgentOptions).thinking)
+        with open(os.path.join(self.d, sb.THINKING_SUMMARIES_FILE), "w") as f:
+            f.write("not json")
+        self.assertFalse(sb.thinking_summaries_on(be.state_dir), "an unreadable file refuses — the opt-in must be provable")
+
 
 @unittest.skipUnless(_HAVE_SDK, "claude_agent_sdk not installed")
 class FastModeReportedState(unittest.TestCase):

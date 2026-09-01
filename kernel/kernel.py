@@ -532,6 +532,7 @@ def _version_info():
             "login": _login_state(),         # the in-dashboard login flow's state/url/err (T157) — never a secret
             "acctLabel": _claude_account_label(),   # which login this box holds ("" = none) — the gear's Billing row
             "fileEditing": _file_editing_on(),   # dashboard raw-mode editing opt-in → gates the viewer's Edit
+            "thinkingSummaries": _thinking_summaries_on(),   # per-install: SDK sessions ask for reasoning summaries (gear checkbox)
             "updateMode": _update_mode(),    # ask|auto|off (the boot release check) → the gear dropdown
             "updateAvail": _UPDATE_AVAIL[0],   # newer release the boot check found ("" = none/unknown)
             "judgeModel": jd._triage_model(), "indexModel": jd._index_model(),      # current per-tier judge models → the gear dropdowns
@@ -3618,6 +3619,53 @@ def _set_file_editing(enabled, gt=None):
             _atomic_write(jd.STATE / "file-editing.json", json.dumps({"enabled": bool(enabled), "gt": stamp}))
         except OSError as e:
             sys.stderr.write("setting file-editing: write failed (%s) — nothing applied\n" % e)
+            return None
+        return stamp
+
+
+# ── thinking summaries for SDK sessions (2026-09-01) ──────────────────────────────────────────────
+# CLI 2.1.257 forces thinking display "omitted" for every non-interactive session unless
+# --thinking-display is passed explicitly (its settings.json showThinkingSummaries key is read in
+# interactive mode only), so every SDK session returned signature-only thinking blocks and the chat
+# showed "Thinking…" for each. This toggle asks for summaries: the SDK backend reads the same file at
+# every connect (sdk_backend.thinking_summaries_on → _options passes the SDK's typed
+# thinking={"type": "adaptive", "display": "summarized"}). PER-INSTALL and off by default: it is not
+# in federation's KERNEL_SETTING set, so it never propagates — the maintainer who wants summaries
+# for auditing turns it on where they read them. A running session is NOT switched live (the python
+# SDK exposes no runtime thinking-display control; the CLI's set_max_thinking_tokens control does
+# carry one, unwrapped) — it picks the setting up at its next reconnect, which a model or effort
+# switch triggers; the gear's sub-copy says so.
+THINKING_SUMMARIES_FILE = "thinking-summaries.json"   # same name sdk_backend.THINKING_SUMMARIES_FILE reads
+
+
+def _thinking_summaries_on():
+    """OFF unless this install's file says yes: absent, unreadable or malformed all read False — the
+    opt-in must be provable, and reading never creates the file (shipping never turns it on)."""
+    try:
+        return bool(json.loads((jd.STATE / THINKING_SUMMARIES_FILE).read_text()).get("enabled"))
+    except Exception:
+        return False
+
+
+def _set_thinking_summaries(enabled, gt=None):
+    """Returns the applied gesture stamp (epoch ms), or None when a stale `gt` stood down — the
+    gesture-time ordering block above _NUDGE_LOCK; per-install or not, two dashboards on ONE kernel
+    still race — or the store write failed (OSError: loud on stderr, nothing applied; caught HERE
+    like _set_file_editing's, because a raised OSError reads as a socket failure to the WS reader
+    loop and silently tears the connection down). A file without the field reads as gt 0, so any
+    stamped gesture applies over it. Read-check-write under _SETTINGS_LOCK, like its siblings."""
+    with _SETTINGS_LOCK:
+        try:
+            prev = json.loads((jd.STATE / THINKING_SUMMARIES_FILE).read_text())
+        except Exception:
+            prev = None
+        if _setting_stale("thinking-summaries", gt, _gt_int(prev.get("gt")) if isinstance(prev, dict) else 0):
+            return None
+        stamp = gt if gt is not None else int(time.time() * 1000)
+        try:
+            _atomic_write(jd.STATE / THINKING_SUMMARIES_FILE, json.dumps({"enabled": bool(enabled), "gt": stamp}))
+        except OSError as e:
+            sys.stderr.write("setting thinking-summaries: write failed (%s) — nothing applied\n" % e)
             return None
         return stamp
 
@@ -20130,8 +20178,13 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
                     if not isinstance(b, dict):
                         continue
                     if b.get("type") == "thinking":
+                        # `encrypted` means OPAQUE — nothing to show but the placeholder: a signature and
+                        # no text. A block with a signature AND text is a summary (the SDK's display
+                        # "summarized", requested when the thinking-summaries toggle is on) and renders
+                        # its text; the old signature-only rule hid every summary (2026-09-01).
                         events.append({"kind": "thinking", "text": b.get("thinking", ""),
-                                       "encrypted": bool(b.get("signature")), "uuid": a.get("uuid"), "ts": ts})
+                                       "encrypted": bool(b.get("signature")) and not (b.get("thinking") or "").strip(),
+                                       "uuid": a.get("uuid"), "ts": ts})
                     elif b.get("type") == "text" and b.get("text", "").strip():
                         txt = b["text"]
                         if a.get("command"):             # a slash command's OUTPUT (command:True on the synthetic
@@ -25783,6 +25836,8 @@ def _setting_kept_value(name):
         return _file_editing_on()
     if name == "update-mode":
         return _update_mode()
+    if name == "thinking-summaries":
+        return _thinking_summaries_on()
     return jd._state_str(name, "")   # the judge-tier stores are bare value files
 
 
@@ -33144,6 +33199,12 @@ class Handler(BaseHTTPRequestHandler):
             # setAutoNudge, broadcast by federation.ts KERNEL_SETTING so one yes answers the mesh.
             # A stale gesture stamp stands down (a queued flush must not undo a newer choice).
             if _set_file_editing(bool(msg["enabled"]), gt=_gesture_ms(msg)) is None:
+                _tell_stale_gesture(client)
+        elif msg and msg.get("type") == "setThinkingSummaries" and msg.get("enabled") is not None:
+            # The gear's Thinking summaries checkbox (2026-09-01) — kernel-side like setFileEditing but
+            # PER-INSTALL (not a KERNEL_SETTING: nothing to propagate), gt-gated all the same; the SDK
+            # backend reads the store at each session's next connect, so nothing else to do here.
+            if _set_thinking_summaries(bool(msg["enabled"]), gt=_gesture_ms(msg)) is None:
                 _tell_stale_gesture(client)
         elif msg and msg.get("type") == "askClear" and msg.get("itemId"):
             # a cleared card drops any composer citation chip pointing INTO it (the user 2026-07-01) — the

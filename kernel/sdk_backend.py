@@ -1263,6 +1263,21 @@ def flag_settings_path(state_dir, sid: str, *, ultracode: bool = False, fast: bo
     return p
 
 
+THINKING_SUMMARIES_FILE = "thinking-summaries.json"   # written by the kernel's gear toggle (_set_thinking_summaries)
+
+
+def thinking_summaries_on(state_dir: Path) -> bool:
+    """The kernel's per-install thinking-summaries toggle (2026-09-01), read at every connect by _options
+    — a connect-time knob like flag_settings_path's above. Absent, unreadable or malformed all read False:
+    OFF is the shipped default and the opt-in must be provable. Same file the kernel writes
+    ({"enabled": bool, "gt": ms}); reading never creates it."""
+    try:
+        d = json.loads((Path(state_dir) / THINKING_SUMMARIES_FILE).read_text())
+        return bool(isinstance(d, dict) and d.get("enabled"))
+    except (OSError, ValueError):
+        return False
+
+
 def _defaults_path(state_dir: Path) -> Path:
     return Path(state_dir) / "sdk-defaults.json"
 
@@ -4657,6 +4672,19 @@ class SdkBackend:
             effort=("xhigh" if (sess.effort or DEFAULT_EFFORT) == "ultracode" else (sess.effort or DEFAULT_EFFORT)),
             max_buffer_size=SDK_MAX_BUFFER,   # a >1MB stdout message would crash the receive loop → kill any live picker
         )
+        # Thinking summaries (the kernel's per-install gear toggle, 2026-09-01). CLI 2.1.257 forces
+        # thinking display "omitted" for every non-interactive session unless --thinking-display is passed
+        # explicitly (its showThinkingSummaries settings key is consulted in interactive mode only), so
+        # every SDK session returned signature-only thinking blocks. When the toggle is on, pass the SDK's
+        # TYPED field — types.py ThinkingConfigAdaptive, display "summarized" | "omitted"; the transport
+        # turns it into `--thinking adaptive --thinking-display summarized` — never extra_args, which is
+        # for flags with no field. Adaptive is what the CLI runs by default anyway (converted to
+        # enabled-with-budget on the legacy picks), so the only change is the display. Connect-time like
+        # effort: re-read here on EVERY connect, so a reconnect re-asserts the current answer, and a
+        # running session picks a flip up at its next reconnect (a model or effort switch). Off → no
+        # `thinking` at all: the CLI's own default stands, exactly as before.
+        if thinking_summaries_on(self.state_dir):
+            kw["thinking"] = {"type": "adaptive", "display": "summarized"}
         # romp's harness prompt is APPENDED via the SDK's DESIGNED system_prompt field — the Claude Code preset
         # plus an `append` (types.py SystemPromptPreset) — NOT extra_args={"append-system-prompt"}. Same effect
         # (append to the default Claude Code system prompt) but it's the typed, documented option; extra_args is
