@@ -768,8 +768,17 @@ class FileAdapter:
                 ts = parse_z(r.get("timestamp"))
                 if ts is None:
                     ts = self._last_ts
-                    _ASM_STATS["ts-repair"] = _ASM_STATS.get("ts-repair", 0) + 1
-                    if fsid not in _TS_REPAIR_NOTED and len(_TS_REPAIR_NOTED) < 64:
+                    if u not in _TS_REPAIRED_SEEN:   # count DISTINCT corrupt records — a full
+                        #                              parse re-ingests every line, and a stable
+                        #                              corrupt one must not inflate per parse
+                        if len(_TS_REPAIRED_SEEN) >= 4096:
+                            _TS_REPAIRED_SEEN.clear()
+                        _TS_REPAIRED_SEEN.add(u)
+                        _ASM_STATS["ts-repair"] = _ASM_STATS.get("ts-repair", 0) + 1
+                    if fsid not in _TS_REPAIR_NOTED:
+                        if len(_TS_REPAIR_NOTED) >= 64:
+                            _TS_REPAIR_NOTED.clear()   # re-arm — capped silence must not become
+                            #                            permanent silence for every NEW file
                         _TS_REPAIR_NOTED.add(fsid)
                         print("romp event-model: unparseable timestamp on record %s in %s.jsonl — "
                               "shown at the previous record's time (ts-repair in parse stats)"
@@ -809,7 +818,9 @@ class FileAdapter:
                     # path) — extract the TEXT either way; str() of a list keyed the Python repr,
                     # which no enqueue content ever matches (the user 2026-07-06)
                     ptext = a["prompt"] if isinstance(a["prompt"], str) else _text_of(a["prompt"])
-                    self.qatts.append({"uuid": u, "ts": parse_z(r.get("timestamp")),
+                    # the repaired stamp when the record is uuid-bearing (real CLI splices are):
+                    # raw-None dropped the user's typed prompt from the chat (T210 review)
+                    self.qatts.append({"uuid": u, "ts": self.ts_of.get(u, parse_z(r.get("timestamp"))),
                                        "text": ptext, "seq": seq})
         self._seq = seq
         self.dangling -= self.by_uuid.keys()   # a target that landed later in the read is not dangling
@@ -1312,7 +1323,7 @@ class FileAdapter:
                     # timestamp, so this chronological walk meets it right beside the original — before
                     # the boundary that produced it — and gating on _compacted would never fire. It is
                     # the same record either way. Only the restore-burst case is compaction-scoped.
-                    key = (int(parse_z(r.get("timestamp")) or 0), txt)
+                    key = (int(self.ts_of.get(u) or 0), txt)
                     if key in _seen_exact or (_compacted and _restoring and txt in _seen_text):
                         replay_uuids.add(u)
                     else:
@@ -1322,13 +1333,16 @@ class FileAdapter:
         # The chronological watermark the assembly fold's monotonic gate compares appended records
         # against: a delta that sorts at-or-after everything already folded is the invariant that
         # makes carrying the sets above across folds valid at all. `order` is ascending by
-        # (parse_z or 0, seq), so the LAST pre-pass-relevant record carries the max — one lookup,
-        # not a second parse_z sweep of the whole session (that re-walk measured 33ms at 30k).
+        # (ts_of, seq), so the LAST pre-pass-relevant record carries the max — one lookup, not a
+        # second sweep of the whole session (that re-walk measured 33ms at 30k). MUST read the
+        # repaired ts_of, the exact key the sort used: reading the raw stamp here let a garbled
+        # TAIL record (which borrows the max stamp and sorts last) zero the watermark and disarm
+        # the g:ts gate — a reproduced fold!=full divergence (T210 review).
         for u in reversed(order):
             r = self.by_uuid.get(u) or {}
             if r.get("type") in ("user", "assistant") or (
                     r.get("type") == "system" and r.get("subtype") == "compact_boundary"):
-                ts = parse_z(r.get("timestamp"))
+                ts = self.ts_of.get(u)
                 if ts and ts > st["max_ppt"]:
                     st["max_ppt"] = ts
                 break
@@ -2023,7 +2037,10 @@ _ASM_KEYLOCKS = {}                 # key -> Lock; never pruned (a Lock is tiny, 
 #                                    key's lock mid-flight would let two folds interleave)
 _ASM_STATS = {"full": 0, "fold": 0, "serve": 0, "bypass": 0, "fallback": 0}   # observability + tests
 _ASM_WARNED = [False]
-_TS_REPAIR_NOTED = set()   # file stems already warned about a garbled stamp — once per file, capped
+_TS_REPAIR_NOTED = set()     # file stems already warned about a garbled stamp — once per file;
+#                              the cap CLEARS and re-arms (an occasional repeat note beats silence)
+_TS_REPAIRED_SEEN = set()    # record uuids already counted in ts-repair — distinct corruption,
+#                              not parse volume; races only overcount by one, acceptable
 
 
 def _asm_demote(reason):
@@ -2251,7 +2268,7 @@ def _assemble(leaf_path, candidate_files, links, rompuuid, postal_index, sdk_hum
         ad.sdk_human = sdk_human
         cut_t = None
         if leaf_override in ad.by_uuid:
-            cut_t = parse_z(ad.by_uuid[leaf_override].get("timestamp"))
+            cut_t = ad.ts_of.get(leaf_override)
         return ad.atoms(rompuuid, postal_index), ad.landed_text_uuids(), cut_t
     key = (os.path.realpath(str(leaf_path)), str(rompuuid), bool(sdk_human))
     try:

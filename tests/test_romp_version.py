@@ -43,6 +43,34 @@ def test_report_shows_the_live_fold_rate():
     assert "fallbacks" not in out                 # zero fallbacks stay quiet
 
 
+def test_report_shows_an_all_fallback_kernel():
+    # _asm_full counts "full" as its LAST act — a kernel whose every parse errors into the
+    # fallback has fold+full == 0 but the loudest possible story; it must render (T210 review)
+    ver._git_sha = lambda: "abc1234"
+    ver._disk_bundles = lambda: {}
+    ver._probe_kernel = lambda: ("version", {"kernel_sha": "abc1234", "pid": 9, "uptime_s": 65,
+                                             "dist_ver": 100, "url": "http://127.0.0.1:29855",
+                                             "bundles": {},
+                                             "parse": {"full": 0, "fold": 0, "serve": 0,
+                                                       "bypass": 0, "fallback": 3}})
+    out = ver.report()
+    assert "fallbacks=3" in out
+
+
+def test_report_shows_ts_repair_when_present():
+    # the stderr repair note points at "parse stats" — the stats line must actually show it
+    ver._git_sha = lambda: "abc1234"
+    ver._disk_bundles = lambda: {}
+    ver._probe_kernel = lambda: ("version", {"kernel_sha": "abc1234", "pid": 9, "uptime_s": 65,
+                                             "dist_ver": 100, "url": "http://127.0.0.1:29855",
+                                             "bundles": {},
+                                             "parse": {"full": 4, "fold": 96, "serve": 10,
+                                                       "bypass": 0, "fallback": 0,
+                                                       "ts-repair": 2}})
+    out = ver.report()
+    assert "ts-repair=2" in out
+
+
 def test_report_stays_quiet_before_any_parse():
     ver._git_sha = lambda: "abc1234"
     ver._disk_bundles = lambda: {}
