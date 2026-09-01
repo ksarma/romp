@@ -3920,6 +3920,8 @@ def _log_nudge_event(sid, gid, t, count, verdict="fired", ev_t=None, parked_s=No
     once per key-move, carrying parkedS, seconds since the skip's answeredAt) /
     fired-parked-backstop (the memo held but the session sat parked past the dead-man stand — the
     fire re-engages it; carries the final parkedS via its evidence row) /
+    compact-suggested (the idle+context watcher's suggestion went out; evT carries the token count
+    it fired on, 2026-08-30) /
     resolved-at-send / blocked-on-user-at-send — carrying the evidence snapshot's timestamp, so redundant fires are
     countable from the log alone. That accounting is what extended the freshness guard to the cap
     path (the user 2026-08-27, T120: the pre-T120 force-fired-at-cap rows measured the blind fire
@@ -4186,40 +4188,42 @@ def _compact_suggest_tick(sid, tm, now):
         return False                                   # tmux CLIs / pre-plumbing sessions carry no
     #                                                    count → never suggested (conservative)
     tokens = int(tokens)
-    with _NUDGE_LOCK:
-        d = dict(_auto_nudge_data())
+    with _NUDGE_LOCK:                                  # blob read-modify-write only — the send happens
+        d = dict(_auto_nudge_data())                   # OUTSIDE the lock (never hold it across IO)
         latched = [int(x) for x in (d.get("compactSuggested") or {}).get(sid, [])]
         live = [t for t in latched if tokens >= t]     # the RE-ARM: a latch whose threshold the
         #                                                counter has fallen back below was reset by
         #                                                the session's own compact//clear — that
         #                                                episode is over (the amendment's middle path)
         due = [t for t in COMPACT_SUGGEST_TOKENS if tokens >= t and t not in live]
-        if not due and live == latched:
+        if not due:
+            if live != latched:                        # nothing to fire, but persist the pruning so
+                cs = dict(d.get("compactSuggested") or {})   # a restart can't resurrect a spent latch
+                cs[sid] = live
+                d["compactSuggested"] = cs
+                _write_auto_nudge(d)
             return False
-        if not due:                                    # nothing to fire, but persist the pruning so
-            cs = dict(d.get("compactSuggested") or {})  # a restart can't resurrect a spent latch
-            cs[sid] = live
-            d["compactSuggested"] = cs
-            _write_auto_nudge(d)
-            return False
-        # exclusions + the idle gate, all AT FIRE TIME (never latch a fire that never went out):
-        if _worker_tag_member(sid):
-            return False                               # the recycle rule owns workers
-        if _thread_reg(sid).get("threadOf"):
-            return False                               # a comment-thread fork is not first-class
-        if (tm or {}).get("state", "") in _PROGRESSING_STATES:
-            return False                               # mid-turn — not idle, and never interrupt
-        _st = _settle_event_key(sid)
-        if not _st or now - _st < COMPACT_SUGGEST_IDLE_S:
-            return False                               # not settled long enough — the crossing stays
-        #                                                armed; a later tick re-checks the same gate
-        try:
-            Sessions.backend_for(sid).send(sid, COMPACT_SUGGEST_TEXT)
-        except Exception:
-            sys.stderr.write("compact-suggest send (%s): %s\n" % (sid, traceback.format_exc()))
-            return False
+    # exclusions + the idle gate, all AT FIRE TIME (never latch a fire that never went out):
+    if _worker_tag_member(sid):
+        return False                                   # the recycle rule owns workers
+    if _thread_reg(sid).get("threadOf"):
+        return False                                   # a comment-thread fork is not first-class
+    if (tm or {}).get("state", "") in _PROGRESSING_STATES:
+        return False                                   # mid-turn — not idle, and never interrupt
+    _st = _settle_event_key(sid)
+    if not _st or now - _st < COMPACT_SUGGEST_IDLE_S:
+        return False                                   # not settled long enough — the crossing stays
+    #                                                    armed; a later tick re-checks the same gate
+    try:
+        Sessions.backend_for(sid).send(sid, COMPACT_SUGGEST_TEXT)
+    except Exception:
+        sys.stderr.write("compact-suggest send (%s): %s\n" % (sid, traceback.format_exc()))
+        return False
+    with _NUDGE_LOCK:                                  # latch AFTER the send went out, fresh read —
+        d = dict(_auto_nudge_data())                   # a concurrent writer's blob is not clobbered
         cs = dict(d.get("compactSuggested") or {})
-        cs[sid] = live + due                           # BOTH thresholds latch when found past both —
+        cs[sid] = [t for t in [int(x) for x in cs.get(sid, [])] if tokens >= t] + due
+        #                                                BOTH thresholds latch when found past both —
         #                                                one message, never two in a tick
         d["compactSuggested"] = cs
         _write_auto_nudge(d)
