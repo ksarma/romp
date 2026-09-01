@@ -1397,6 +1397,49 @@ class LiveAskReplay(unittest.TestCase):
         self.assertIsNone(self.backend.current_ask(sess.sid))       # answered/cancelled → gone
 
 
+class ThinkingKw(unittest.TestCase):
+    """The thinking-summaries decision WITHOUT the SDK (2026-09-01, round 2): `thinking_kw` is what
+    _options hands ClaudeAgentOptions as `thinking=`, and `thinking_override_note` the one log line owed
+    when that flag will override a thinking cap. Both are pure, so the standard runner — which has no
+    claude_agent_sdk and therefore SKIPS every OptionsAssembly pin — still exercises the rule.
+    OptionsAssembly keeps the composition and the transport's `--thinking adaptive --thinking-display
+    summarized` pin; run it with the SDK venv on PYTHONPATH (tests/README.md)."""
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+
+    def _write(self, obj):
+        with open(os.path.join(self.d, sb.THINKING_SUMMARIES_FILE), "w") as f:
+            f.write(obj if isinstance(obj, str) else json.dumps(obj))
+
+    def test_off_is_none_whether_absent_explicit_or_unreadable(self):
+        self.assertIsNone(sb.thinking_kw(self.d), "absent file → pass nothing; the CLI's own default stands")
+        self._write({"enabled": False, "gt": 2})
+        self.assertIsNone(sb.thinking_kw(self.d), "an explicit off is the same as absent")
+        self._write("not json")
+        self.assertIsNone(sb.thinking_kw(self.d), "unreadable refuses — the opt-in must be provable")
+
+    def test_on_is_the_typed_adaptive_summarized_field(self):
+        self._write({"enabled": True, "gt": 1})
+        self.assertEqual(sb.thinking_kw(self.d), {"type": "adaptive", "display": "summarized"},
+                         "the SDK's ThinkingConfigAdaptive shape, display summarized")
+        self.assertIsNot(sb.thinking_kw(self.d), sb.THINKING_SUMMARIES_KW, "a copy per call, never the shared literal")
+
+    def test_the_override_note_fires_only_for_a_cap_in_the_cli_environment(self):
+        # The CLI resolves --thinking adaptive ahead of MAX_THINKING_TOKENS (verified in the 2.1.257
+        # binary): with a cap in the environment the toggle turns thinking ON where the cap had it off.
+        # Real, so never silent — but only when it is real.
+        on = {"type": "adaptive", "display": "summarized"}
+        self.assertEqual(sb.thinking_override_note(None, {"MAX_THINKING_TOKENS": "0"}), "",
+                         "toggle off → the flag is not sent, so nothing is overridden")
+        self.assertEqual(sb.thinking_override_note(on, {"PATH": "/bin"}), "",
+                         "no cap in the environment → the flag changes only the display; nothing to say")
+        note = sb.thinking_override_note(on, {"MAX_THINKING_TOKENS": "0", "PATH": "/bin"})
+        self.assertIn("MAX_THINKING_TOKENS=0", note, "names the cap it overrides, with its value")
+        self.assertIn("--thinking adaptive", note, "…and the flag that wins")
+        self.assertIn("adaptive thinking", note, "…and what the sessions will actually run")
+
+
 # --- Runner + can_use_tool bridge (needs the SDK message classes) ---
 try:
     import claude_agent_sdk as _sdk
@@ -2259,6 +2302,44 @@ class OptionsAssembly(unittest.TestCase):
         with open(os.path.join(self.d, sb.THINKING_SUMMARIES_FILE), "w") as f:
             f.write("not json")
         self.assertFalse(sb.thinking_summaries_on(be.state_dir), "an unreadable file refuses — the opt-in must be provable")
+
+    def test_thinking_summaries_on_over_a_thinking_cap_logs_the_override_once(self):
+        # The CLI resolves --thinking adaptive ahead of MAX_THINKING_TOKENS (verified in the 2.1.257
+        # binary), so with a cap in the manager's environment the toggle turns thinking ON where the cap
+        # had it off — real, and never silent: one kernel-log line per backend (the environment is fixed
+        # for the process's lifetime), not one per connect.
+        with open(os.path.join(self.d, sb.THINKING_SUMMARIES_FILE), "w") as f:
+            json.dump({"enabled": True, "gt": 1}, f)
+        lines = []
+        had = os.environ.get("MAX_THINKING_TOKENS")
+        os.environ["MAX_THINKING_TOKENS"] = "0"
+        try:
+            be = sb.SdkBackend(self.d, "/bin/true", lambda *a, **k: None, log=lines.append)
+            opts = be._options(self._sess(be), _sdk.ClaudeAgentOptions)
+            self.assertEqual(opts.thinking, {"type": "adaptive", "display": "summarized"}, "the flag still goes")
+            be._options(self._sess(be), _sdk.ClaudeAgentOptions)   # a second connect: no second line
+        finally:
+            if had is None:
+                os.environ.pop("MAX_THINKING_TOKENS", None)
+            else:
+                os.environ["MAX_THINKING_TOKENS"] = had
+        hits = [l for l in lines if "MAX_THINKING_TOKENS=0" in l]
+        self.assertEqual(len(hits), 1, "one line though two sessions connected: %r" % lines)
+        self.assertIn("--thinking adaptive", hits[0], "names the flag that wins")
+
+    def test_thinking_summaries_on_without_a_cap_logs_nothing(self):
+        with open(os.path.join(self.d, sb.THINKING_SUMMARIES_FILE), "w") as f:
+            json.dump({"enabled": True, "gt": 1}, f)
+        lines = []
+        had = os.environ.pop("MAX_THINKING_TOKENS", None)
+        try:
+            be = sb.SdkBackend(self.d, "/bin/true", lambda *a, **k: None, log=lines.append)
+            be._options(self._sess(be), _sdk.ClaudeAgentOptions)
+        finally:
+            if had is not None:
+                os.environ["MAX_THINKING_TOKENS"] = had
+        self.assertEqual([l for l in lines if "thinking" in l.lower()], [],
+                         "no cap → the flag changes only the display; nothing to announce")
 
 
 @unittest.skipUnless(_HAVE_SDK, "claude_agent_sdk not installed")

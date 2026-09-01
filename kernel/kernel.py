@@ -3633,8 +3633,15 @@ def _set_file_editing(enabled, gt=None):
 # in federation's KERNEL_SETTING set, so it never propagates — the maintainer who wants summaries
 # for auditing turns it on where they read them. A running session is NOT switched live (the python
 # SDK exposes no runtime thinking-display control; the CLI's set_max_thinking_tokens control does
-# carry one, unwrapped) — it picks the setting up at its next reconnect, which a model or effort
-# switch triggers; the gear's sub-copy says so.
+# carry one, unwrapped) — it picks the setting up at its next reconnect. What reconnects a session:
+# an effort, billing, per-session-env or bypass-mode switch, the first fast-mode opt-in, a file
+# rewind, a kernel restart (sdk_backend: every request_reconnect caller). A MODEL switch does NOT —
+# set_model applies live over the SDK control channel — so the gear's sub-copy names the real
+# triggers and says a model switch is not one (round-2 correction, 2026-09-01: the first copy sent
+# the user to switch models and wait). And the CLI resolves `--thinking adaptive` ahead of a
+# MAX_THINKING_TOKENS in its environment and of `alwaysThinkingEnabled: false` in settings, so on an
+# install that had thinking OFF this toggle also turns adaptive thinking on (the SDK has no
+# display-only field); the sub-copy says that too, and sdk_backend logs it when a cap is present.
 THINKING_SUMMARIES_FILE = "thinking-summaries.json"   # same name sdk_backend.THINKING_SUMMARIES_FILE reads
 
 

@@ -79,7 +79,7 @@ var GEAR_HTML =
   '</span></label>' +
   "<label class='rs-row'><input type=checkbox id=rs-thinksum>" +
   '<span><b>Thinking summaries</b>' +
-  '<span class=rs-sub>For every new SDK session, ask the API for reasoning summaries and show them in the chat, folded to two lines (click to expand). Compact transcript still hides them. A running session picks the change up at its next reconnect; switching its model or effort triggers one. Off by default; this kernel keeps its own copy.</span>' +
+  '<span class=rs-sub>For every new SDK session, ask the API for reasoning summaries and show them in the chat, folded to two lines (click to expand). Compact transcript still hides them. If thinking was turned off for this install, this turns adaptive thinking on as well. A running session picks the change up at its next reconnect: an effort or billing switch, the first fast-mode opt-in, or a kernel restart. Switching the model applies live and does not reconnect. Off by default; this kernel keeps its own copy.</span>' +
   '</span></label>' +
   "<label class='rs-row'><input type=checkbox id=rs-fileedit>" +
   '<span><b>File editing</b><span class=rs-mixed hidden></span>' +

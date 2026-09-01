@@ -1278,6 +1278,33 @@ def thinking_summaries_on(state_dir: Path) -> bool:
         return False
 
 
+THINKING_SUMMARIES_KW = {"type": "adaptive", "display": "summarized"}   # the SDK's typed ThinkingConfigAdaptive
+
+
+def thinking_kw(state_dir: Path):
+    """What _options hands ClaudeAgentOptions as `thinking=`: the SDK's typed ThinkingConfigAdaptive with
+    display "summarized" when the per-install toggle is on, None when it is off (nothing passed, so the
+    CLI's own default stands). Pure and SDK-free on purpose (2026-09-01, round 2): the standard test
+    runner has no claude_agent_sdk and skips every _options pin, so the decision lives where it runs."""
+    return dict(THINKING_SUMMARIES_KW) if thinking_summaries_on(state_dir) else None
+
+
+def thinking_override_note(thinking, cli_env) -> str:
+    """The one log line owed when `thinking` (thinking_kw's answer) will override a thinking cap the CLI
+    would otherwise honor. CLI 2.1.257 resolves `--thinking adaptive` FIRST — ahead of a MAX_THINKING_TOKENS
+    in its environment and of `alwaysThinkingEnabled: false` in settings (verified in the binary) — so on
+    an install that had thinking off, asking for summaries turns adaptive thinking ON, at full thinking
+    cost. The SDK has no display-only field, so the override is inherent; what romp owes is to say so.
+    `cli_env` is the environment the CLI child will see (the SDK transport merges options.env over the
+    process's). "" when there is nothing to say: toggle off, or no cap present — the settings layer is
+    not readable from here, so that half is carried by the gear's sub-copy alone."""
+    if not thinking or "MAX_THINKING_TOKENS" not in cli_env:
+        return ""
+    return ("thinking summaries: MAX_THINKING_TOKENS=%s is set in the CLI's environment, but the toggle's "
+            "--thinking adaptive takes precedence: sessions run adaptive thinking (billed as such) where the "
+            "cap had it off" % cli_env["MAX_THINKING_TOKENS"])
+
+
 def _defaults_path(state_dir: Path) -> Path:
     return Path(state_dir) / "sdk-defaults.json"
 
@@ -3650,6 +3677,7 @@ class SdkBackend:
         self.mcp_config = mcp_config
         self.append_prompt_path = append_prompt_path
         self._log_cb = log
+        self._thinking_override_logged = False   # thinking_override_note said once per backend (see _options)
         self.sessions: dict[str, SdkSession] = {}
         self._lock = threading.Lock()
         self._reg_lock = threading.Lock()         # serializes _update_reg read-modify-writes (queue mirror
@@ -4678,13 +4706,24 @@ class SdkBackend:
         # every SDK session returned signature-only thinking blocks. When the toggle is on, pass the SDK's
         # TYPED field — types.py ThinkingConfigAdaptive, display "summarized" | "omitted"; the transport
         # turns it into `--thinking adaptive --thinking-display summarized` — never extra_args, which is
-        # for flags with no field. Adaptive is what the CLI runs by default anyway (converted to
-        # enabled-with-budget on the legacy picks), so the only change is the display. Connect-time like
-        # effort: re-read here on EVERY connect, so a reconnect re-asserts the current answer, and a
-        # running session picks a flip up at its next reconnect (a model or effort switch). Off → no
-        # `thinking` at all: the CLI's own default stands, exactly as before.
-        if thinking_summaries_on(self.state_dir):
-            kw["thinking"] = {"type": "adaptive", "display": "summarized"}
+        # for flags with no field. The flag is NOT display-only: the CLI resolves `--thinking adaptive`
+        # FIRST, ahead of a MAX_THINKING_TOKENS in its environment and of `alwaysThinkingEnabled: false`
+        # in settings (verified in the 2.1.257 binary), so on an install that had thinking OFF this turns
+        # adaptive thinking ON, at full thinking cost. The SDK has no display-only field, so the override
+        # is inherent to asking for summaries; what romp owes is to say so — the gear's sub-copy does,
+        # and thinking_override_note logs the one case visible from here (a cap in the CLI's environment,
+        # fixed for this process's lifetime, hence once per backend). Connect-time like effort: re-read
+        # on EVERY connect, so a reconnect re-asserts the current answer, and a running session picks a
+        # flip up at its next reconnect — an effort/billing/env/bypass switch, the first fast-mode opt-in,
+        # a rewind, a kernel restart; NOT a model switch, which set_model applies live over the control
+        # channel. Off → no `thinking` at all: the CLI's own default stands, exactly as before.
+        tk = thinking_kw(self.state_dir)
+        if tk:
+            kw["thinking"] = tk
+            note = thinking_override_note(tk, {**os.environ, **kw["env"]})
+            if note and not self._thinking_override_logged:
+                self._thinking_override_logged = True
+                self._log(note)
         # romp's harness prompt is APPENDED via the SDK's DESIGNED system_prompt field — the Claude Code preset
         # plus an `append` (types.py SystemPromptPreset) — NOT extra_args={"append-system-prompt"}. Same effect
         # (append to the default Claude Code system prompt) but it's the typed, documented option; extra_args is

@@ -46,11 +46,23 @@ test("the gear has a Thinking summaries checkbox among the kernel-side toggles, 
   const at = GEAR.indexOf("id=rs-thinksum");
   assert.ok(GEAR.indexOf("id=rs-conserve") < at && at < GEAR.indexOf("id=rs-fileedit"),
     "…between Conserve memory and File editing, with the other kernel-side toggles");
-  const row = GEAR.slice(at, at + 900);
+  const row = GEAR.slice(at, at + 1200);
   assert.match(row, /<b>Thinking summaries<\/b>/);
   assert.ok(!/fleet/i.test(row), "no 'fleet' in the copy (repo vocabulary rule)");
   assert.ok(/new SDK session/.test(row) && /running session picks the change up at its next reconnect/.test(row),
     "the sub-copy is honest that a running session is not switched live");
+  // …and names the events that actually reconnect one (sdk_backend's request_reconnect callers), never a
+  // model switch: set_model applies live over the SDK control channel and reconnects nothing, so the first
+  // copy ("switching its model or effort triggers one") sent the user to switch models and wait forever.
+  assert.ok(/reconnect: an effort or billing switch, the first fast-mode opt-in, or a kernel restart/.test(row),
+    "the real reconnect triggers are named");
+  assert.ok(/Switching the model applies live and does not reconnect/.test(row),
+    "a model switch is called out as NOT one");
+  assert.ok(!/model or effort triggers one/.test(row), "the false trigger clause is gone");
+  // The CLI resolves --thinking adaptive ahead of MAX_THINKING_TOKENS and alwaysThinkingEnabled:false, so
+  // on an install with thinking off the toggle turns adaptive thinking on; the copy owns that.
+  assert.ok(/turns adaptive thinking on/.test(row),
+    "the copy says the toggle also turns adaptive thinking on where it was off");
   assert.ok(/Compact transcript still hides them/.test(row),
     "…and that the compact view (default on) keeps hiding thinking, summaries included");
   assert.ok(GEAR.includes("post({ type: 'setThinkingSummaries', enabled: ths.checked, gt: Date.now() })"),
