@@ -9,9 +9,12 @@ observed as the authoritative token counter falling back below the latched thres
 silent forever, acted+regrown+idle = one fresh suggestion per threshold (the manager's amendment).
 Workers (their roster tags), comment-thread forks, and mid-turn sessions are excluded at fire
 time. The voice render is pinned in test_injected_voice.py. SYNTHETIC fixtures only."""
+import contextlib
+import io
 import json
 import os
 import tempfile
+import threading
 import unittest
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
@@ -33,7 +36,9 @@ IDLE = NOW - 7200          # settled two hours ago — past the hour gate
 FRESH = NOW - 120          # settled two minutes ago — inside it
 
 
-class CompactSuggest(unittest.TestCase):
+class _Fixture(unittest.TestCase):
+    """The shared hermetic world: opted-in install, idle-settled session, captured sends."""
+
     def setUp(self):
         self.td = tempfile.TemporaryDirectory()
         self.saved_state = jd.STATE
@@ -68,6 +73,8 @@ class CompactSuggest(unittest.TestCase):
         km._autonudge_cache.clear()
         return (km._auto_nudge_data().get("compactSuggested") or {}).get(SID, [])
 
+
+class CompactSuggest(_Fixture):
     # ── the crossing latch ──
     def test_a_crossing_fires_once_and_latches(self):
         self.assertTrue(self._tick(450_000))
@@ -223,6 +230,68 @@ class CompactSuggest(unittest.TestCase):
         rows = [json.loads(l) for l in p.read_text().splitlines()]
         self.assertEqual([r["verdict"] for r in rows], ["compact-suggested"])
         self.assertEqual(rows[0]["evT"], 450_000, "the row carries the token count it fired on")
+
+
+class ConcurrentSendRace(_Fixture):
+    """The double-send race (2026-09-01, refuter-confirmed): the tick checked the compactSuggested
+    latch under _NUDGE_LOCK, released it, sent, and latched only after — so two concurrent entries
+    (the pusher's periodic pass racing a settings-WS re-tick) both passed the same unlatched check
+    and injected the suggestion twice into one session. The fire is now CLAIMED under the lock
+    before the send (a fresh re-read re-derives what is still due, so the loser stands down), and
+    a failed send rolls the claim back for the next tick's retry. Deterministic, events only — the
+    first entry is held between its check and its send until the second has fully landed (the
+    TwoFlushRace idiom, test_setting_gesture_order.py)."""
+
+    def test_two_concurrent_entries_inject_once(self):
+        first_at_gate = threading.Event()
+        second_done = threading.Event()
+
+        def gated(sid):
+            # _settle_event_key sits between the latch check and the send on every entry path;
+            # stalling the first entry here holds it in exactly the window the race needs
+            if threading.current_thread().name == "first":
+                first_at_gate.set()
+                second_done.wait(10)
+            return IDLE
+
+        km._settle_event_key = gated
+        got = {}
+        t = threading.Thread(target=lambda: got.__setitem__("first", self._tick(450_000)),
+                             name="first")
+        t.start()
+        try:
+            self.assertTrue(first_at_gate.wait(10), "the first entry passed its latch check")
+            got["second"] = self._tick(450_000)     # the concurrent entry runs to completion
+        finally:
+            second_done.set()
+            t.join(10)
+        self.assertFalse(t.is_alive(), "both entries finished")
+        self.assertEqual(len(self.sent), 1,
+                         "two entries past the same unlatched check must still inject exactly once")
+        self.assertEqual(sorted((got["first"], got["second"])), [False, True],
+                         "exactly one entry claims the fire; the other stands down")
+        self.assertEqual(self._latched(), [400_000], "one claim, latched once")
+
+    def test_a_failed_send_unlatches_so_the_next_tick_retries(self):
+        test = self
+        attempts = []
+
+        class BlinkingBackend:
+            def send(self, sid, body):
+                attempts.append(body)
+                if len(attempts) == 1:
+                    raise RuntimeError("stream blink")
+                test.sent.append(body)
+
+        be = BlinkingBackend()
+        km.Sessions.backend_for = staticmethod(lambda sid: be)
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertFalse(self._tick(450_000), "a failed send reports no fire")
+        self.assertEqual(self._latched(), [],
+                         "the claim rolls back — no durable latch for a send that never went out")
+        self.assertTrue(self._tick(450_000), "the next tick retries the same crossing")
+        self.assertEqual(len(self.sent), 1)
+        self.assertEqual(len(attempts), 2)
 
 
 if __name__ == "__main__":
