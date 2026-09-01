@@ -6,6 +6,8 @@ single-segment-turn caption reuse, the unit-text builder, the caption store + de
 and the engine pass (discovery / budget / fairness / write) — is tested deterministically.
 All fixtures are SYNTHETIC (invented text, placeholder UUIDs, hostname TESTHOST).
 """
+import contextlib
+import io
 import json
 import os
 import shutil
@@ -14,6 +16,7 @@ import unittest
 from datetime import datetime, timezone
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
+from unittest import mock
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
@@ -5912,12 +5915,29 @@ class JudgeUsageLog(unittest.TestCase):
 
 
 class JudgeEnv(unittest.TestCase):
-    """The INDEX tier (captioner + archiver) disables extended thinking; TRIAGE keeps it.
-    Haiku otherwise emits a long thinking block before the trivial caption — pure output waste."""
+    """The INDEX tier (captioner + archiver) keeps its cost lever, but the lever follows the MODEL
+    (2026-09-01): Haiku has no adaptive thinking and otherwise emits a long thinking block before the
+    trivial caption — pure output waste — so it still runs with MAX_THINKING_TOKENS=0. Every other
+    family (Fable, Opus, Sonnet) has adaptive thinking; there the lever is `--effort low`
+    (IndexTierLever below), and the env var is NOT set — Fable rejects thinking:disabled outright and
+    Sonnet/Opus degrade under it. TRIAGE keeps thinking on every model."""
 
-    def test_index_tier_disables_thinking(self):
-        self.assertEqual(jd._judge_env("index").get("MAX_THINKING_TOKENS"), "0",
-                         "captioner/archiver run with thinking off")
+    def test_index_tier_disables_thinking_for_haiku_only(self):
+        self.assertEqual(jd._judge_env("index", model="haiku").get("MAX_THINKING_TOKENS"), "0",
+                         "captioner/archiver on Haiku run with thinking off")
+        self.assertEqual(jd._judge_env("index", model="claude-haiku-4-5").get("MAX_THINKING_TOKENS"), "0",
+                         "a full Haiku id is the same family")
+        for m in ("fable", "opus", "sonnet", "claude-opus-4-8", "claude-sonnet-5"):
+            self.assertNotIn("MAX_THINKING_TOKENS", jd._judge_env("index", model=m),
+                             "%s has adaptive thinking — effort is the lever, never thinking-off" % m)
+
+    def test_index_tier_with_no_model_resolves_the_tier_pick(self):
+        # the tier's configured model decides (INDEX_MODEL is haiku out of the box); a bare
+        # _judge_env("index") answers about that pick rather than assuming Haiku
+        jd._state_cache.clear()
+        self.assertEqual(jd._index_model(), jd.INDEX_MODEL)
+        self.assertEqual(jd._judge_env("index").get("MAX_THINKING_TOKENS"),
+                         "0" if "haiku" in jd.INDEX_MODEL else None)
 
     def test_triage_tier_does_not_force_thinking_off(self):
         had = os.environ.pop("MAX_THINKING_TOKENS", None)   # isolate from an inherited cap
@@ -5936,6 +5956,112 @@ class JudgeEnv(unittest.TestCase):
             os.environ.pop("TMUX", None)
         self.assertEqual(env.get("ROMP_SUMMARIZING"), "1")
         self.assertNotIn("TMUX", env)
+
+
+class IndexTierLever(unittest.TestCase):
+    """The index tier's cost lever is EFFORT on adaptive-thinking models (2026-09-01, the Fable 5.1
+    guide: thinking:disabled is rejected by Fable and degrades Sonnet/Opus). _judge_run resolves the
+    tier's model first, then: Haiku → MAX_THINKING_TOKENS=0 and no --effort flag; anything else →
+    `--effort <index-effort setting, default low>` and NO env var. The gear's existing Indexing effort
+    pick (STATE/index-effort) is the configurability; the tier logs which lever applied, once per
+    model. The subprocess is stubbed and its argv + env captured — nothing runs."""
+
+    def setUp(self):
+        self.calls = []
+        self._saved_usage = jd.USAGE
+        self._td = Path(tempfile.mkdtemp())
+        jd.USAGE = self._td / "judge-usage.jsonl"
+        (jd.STATE / "index-effort").unlink(missing_ok=True)
+        jd._state_cache.clear()
+        jd._LEVER_LOGGED.clear()
+        os.environ.pop("MAX_THINKING_TOKENS", None)
+
+        class _P:
+            stdout = '{"result": "a caption", "usage": {}}'
+
+        def fake_run(cmd, **kw):
+            self.calls.append((cmd, kw.get("env") or {}))
+            return _P()
+
+        self._patch = mock.patch.object(jd.subprocess, "run", side_effect=fake_run)
+        self._patch.start()
+
+    def tearDown(self):
+        self._patch.stop()
+        (jd.STATE / "index-effort").unlink(missing_ok=True)
+        jd._state_cache.clear()
+        jd.USAGE = self._saved_usage
+        shutil.rmtree(self._td, ignore_errors=True)
+
+    def _run(self, model):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            jd._judge_run(model, "SYS", "payload", judge="captioner", tier="index")
+        self.assertEqual(len(self.calls), 1, "exactly one subprocess call")
+        cmd, env = self.calls[0]
+        return cmd, env, err.getvalue()
+
+    def _effort_of(self, cmd):
+        return cmd[cmd.index("--effort") + 1] if "--effort" in cmd else None
+
+    def test_fable_index_model_gets_effort_low_and_no_env_var(self):
+        cmd, env, _ = self._run("fable")
+        self.assertEqual(self._effort_of(cmd), "low", "the default lever on an adaptive-thinking model")
+        self.assertNotIn("MAX_THINKING_TOKENS", env, "Fable rejects thinking:disabled — never send it")
+
+    def test_opus_and_sonnet_index_models_take_the_same_lever(self):
+        for m in ("opus", "sonnet", "claude-opus-4-8"):
+            self.calls.clear()
+            cmd, env, _ = self._run(m)
+            self.assertEqual(self._effort_of(cmd), "low", m)
+            self.assertNotIn("MAX_THINKING_TOKENS", env, m)
+
+    def test_haiku_index_model_keeps_thinking_off_and_passes_no_effort_flag(self):
+        cmd, env, _ = self._run("haiku")
+        self.assertEqual(env.get("MAX_THINKING_TOKENS"), "0", "Haiku has no adaptive thinking: the old lever stays")
+        self.assertNotIn("--effort", cmd, "no effort flag by default on Haiku (the long-standing shape)")
+
+    def test_the_index_effort_setting_flows_through_on_adaptive_models(self):
+        (jd.STATE / "index-effort").write_text("medium")
+        jd._state_cache.clear()
+        cmd, env, _ = self._run("fable")
+        self.assertEqual(self._effort_of(cmd), "medium", "the gear's Indexing effort pick is the configurability")
+        self.assertNotIn("MAX_THINKING_TOKENS", env)
+
+    def test_an_explicit_index_effort_also_reaches_haiku_but_the_env_var_stays(self):
+        # the gear pick has always been passed regardless of model ("not every model accepts every
+        # level" is the row's own caveat); what Haiku never loses is the thinking-off env var
+        (jd.STATE / "index-effort").write_text("low")
+        jd._state_cache.clear()
+        cmd, env, _ = self._run("haiku")
+        self.assertEqual(self._effort_of(cmd), "low")
+        self.assertEqual(env.get("MAX_THINKING_TOKENS"), "0")
+
+    def test_a_caller_effort_still_wins_over_the_default(self):
+        # the plan A/B harness passes effort explicitly; the tier default must not override it
+        with contextlib.redirect_stderr(io.StringIO()):
+            jd._judge_run("fable", "SYS", "payload", effort="high", judge="captioner", tier="index")
+        cmd, _env = self.calls[0]
+        self.assertEqual(self._effort_of(cmd), "high")
+
+    def test_the_lever_is_logged_once_per_model(self):
+        _cmd, _env, err = self._run("fable")
+        self.assertIn("index tier", err)
+        self.assertIn("fable", err)
+        self.assertIn("--effort low", err, "the line names the lever that applied")
+        self.calls.clear()
+        _cmd, _env, err2 = self._run("fable")
+        self.assertEqual(err2, "", "same model again → no second line (one line per lever change)")
+        self.calls.clear()
+        _cmd, _env, err3 = self._run("haiku")
+        self.assertIn("MAX_THINKING_TOKENS=0", err3, "a model change re-logs, naming the other lever")
+
+    def test_triage_tier_is_untouched(self):
+        with contextlib.redirect_stderr(io.StringIO()):
+            jd._judge_run("fable", "SYS", "payload", judge="planner", tier="triage")
+        cmd, env = self.calls[0]
+        self.assertNotIn("--effort", cmd, "triage keeps its own default (no flag unless the gear says so)")
+        self.assertNotIn("MAX_THINKING_TOKENS", env)
 
 
 class GistLlm(unittest.TestCase):

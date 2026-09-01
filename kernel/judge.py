@@ -166,6 +166,17 @@ def _index_model():   return _state_str("index-model", INDEX_MODEL)    # gear "I
 def _triage_effort(): return _state_str("judge-effort", "")   # "" → pass NO --effort (the long-standing default)
 def _index_effort():  return _state_str("index-effort", "")
 def _judge_fast():    return _state_str("judge-fast", "") == "on"   # gear "Fast judging" → STATE/judge-fast
+INDEX_EFFORT_DEFAULT = "low"   # the index tier's cost lever on adaptive-thinking models (2026-09-01; see _judge_env)
+
+
+def _adaptive_thinking(model):
+    """True for model families with adaptive thinking — every current family but Haiku. Derived from the
+    id or alias by FAMILY name, not a hardcoded id list: `haiku`, `claude-haiku-4-5` and any dated Haiku
+    id read as Haiku; fable/opus/sonnet aliases and their full ids read adaptive. Haiku is the one family
+    whose cost lever differs (thinking off), so it is the one the discriminator names."""
+    return "haiku" not in str(model or "").lower()
+
+
 _FAST_MODELS = ("opus",)   # fast mode is an Opus-only research preview; the flag on any other model is
 #                            accepted by the CLI but fast never engages, so gate here and skip the argv noise
 
@@ -1019,15 +1030,22 @@ def _limit_clear():
         pass
 
 
-def _judge_env(tier, auth="login"):
+def _judge_env(tier, auth="login", model=None):
     """The subprocess env for ONE judge call. Drops the TMUX vars (so the child isn't taken for a live
-    pane) and trips the Stop-hook recursion guard. For the INDEX tier it also disables extended thinking
-    (MAX_THINKING_TOKENS=0): the captioner + archiver do mechanical one-shot summarization, where Haiku's
-    default thinking is pure waste — a probe showed a ~385-token thinking block emitted before a ~15-token
-    caption (722 -> 24 output tokens, 7.1s -> 0.9s per call, ~92% cheaper, identical caption). TRIAGE keeps
-    thinking: the planner / closer / grouper / distiller make real placement + closure judgments. Output is
-    the expensive half (Haiku $5/Mtok out) AND the latency driver (~58 tok/s, serial), so this is the
-    captioner's biggest single lever — and it's what makes any future batching latency-safe.
+    pane) and trips the Stop-hook recursion guard. For the INDEX tier it also applies the cost lever the
+    MODEL can take (2026-09-01, the Fable 5.1 guide): on HAIKU — no adaptive thinking — it disables
+    extended thinking (MAX_THINKING_TOKENS=0): the captioner + archiver do mechanical one-shot
+    summarization, where Haiku's default thinking is pure waste — a probe showed a ~385-token thinking
+    block emitted before a ~15-token caption (722 -> 24 output tokens, 7.1s -> 0.9s per call, ~92% cheaper,
+    identical caption). On every other family (Fable, Opus, Sonnet — adaptive thinking) the env var is
+    NOT set: Fable rejects thinking:disabled outright and Sonnet/Opus degrade under it, so their lever is
+    `--effort low` instead (_judge_run, INDEX_EFFORT_DEFAULT, the gear's Indexing effort pick overriding).
+    `model` is the call's model; None resolves the tier's configured pick (_index_model), so a bare
+    _judge_env("index") answers about the tier as configured rather than assuming Haiku. TRIAGE keeps
+    thinking on every model: the planner / closer / grouper / distiller make real placement + closure
+    judgments. Output is the expensive half (Haiku $5/Mtok out) AND the latency driver (~58 tok/s,
+    serial), so this is the captioner's biggest single lever — and it's what makes any future batching
+    latency-safe.
 
     `auth` is the call's resolved billing (_judge_auth). The ambient ANTHROPIC_API_KEY is stripped
     unconditionally — in the kernel process the SDK backend already claimed it out of os.environ, and
@@ -1042,13 +1060,17 @@ def _judge_env(tier, auth="login"):
         env.pop(k, None)
     env["ROMP_SUMMARIZING"] = "1"                     # trips the Stop-hook recursion guard
     if tier == "index":
-        env["MAX_THINKING_TOKENS"] = "0"              # no thinking for mechanical summarization (the cost lever)
+        # Haiku's lever only (2026-09-01): no thinking for mechanical summarization. Every other
+        # family has adaptive thinking and takes `--effort` in _judge_run instead — never this var.
+        if not _adaptive_thinking(model if model is not None else _index_model()):
+            env["MAX_THINKING_TOKENS"] = "0"
     if auth == "key" and wk:
         env["ANTHROPIC_API_KEY"] = wk
     return env
 
 
 _RATE_GATE_LOGGED = {}                   # bucket -> resets_at already announced (one line per window)
+_LEVER_LOGGED = {}                       # index model -> the cost lever last announced for it (one line per change)
 _SCRATCH_FAIL_LOGGED = {}                # last judge-scratch refusal announced (one line per distinct reason)
 
 
@@ -1141,13 +1163,27 @@ def _judge_run(model, sys_prompt, user, effort=None, judge=None, tier="triage", 
         # win against. Nothing else about it changes — it still rides the SYSTEM prompt, never the
         # payload, and a call with no marked sections still gets no suffix at all.
         sys_prompt += UNTRUSTED_SYS % (mark, mark)
-    env = _judge_env(tier, auth)                      # auth resolved above, before the gate (2026-08-28)
+    env = _judge_env(tier, auth, model)               # auth resolved above, before the gate (2026-08-28);
+    #                                                   the MODEL decides the index tier's lever (below)
     # Per-tier effort from the gear (STATE/judge-effort | index-effort | distill-effort) when the caller
     # didn't pass one — "" or None means NO --effort flag, the long-standing default. An explicit caller
-    # effort (the plan A/B) still wins.
+    # effort (the plan A/B) still wins. The INDEX tier is the exception (2026-09-01): on an
+    # adaptive-thinking model its cost lever IS effort — INDEX_EFFORT_DEFAULT unless the gear's Indexing
+    # effort pick says otherwise — because thinking-off is rejected (Fable) or degrades (Sonnet/Opus)
+    # there; Haiku's lever is the env var _judge_env set, and it keeps the no-flag default.
     if effort is None:
-        effort = ((_index_effort() if tier == "index" else
-                   _distill_effort() if tier == "distill" else _triage_effort()) or None)
+        if tier == "index":
+            effort = _index_effort() or (INDEX_EFFORT_DEFAULT if _adaptive_thinking(model) else "")
+        else:
+            effort = _distill_effort() if tier == "distill" else _triage_effort()
+        effort = effort or None
+    if tier == "index":
+        # one stderr line per model (re-announced only when the lever changes): which lever this
+        # tier's calls are running under, so a cost or quality question has its answer in the log
+        _lever = ("--effort %s" % effort) if _adaptive_thinking(model) else "MAX_THINKING_TOKENS=0"
+        if _LEVER_LOGGED.get(model) != _lever:
+            _LEVER_LOGGED[model] = _lever
+            sys.stderr.write("romp-judge: index tier on %s — cost lever %s\n" % (model, _lever))
     # Stash this call for the debug view: if the CALLER later rejects the reply, _log_judge_error attaches
     # this input+reply pair to the failure row (debug mode only), so a rejection is inspectable from the
     # card modal. Per-thread and overwritten per call: only the failing call's pair can ever be attached.
