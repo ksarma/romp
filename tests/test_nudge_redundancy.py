@@ -75,7 +75,8 @@ class NudgeRedundancy(unittest.TestCase):
         # the snapshot read carries its timestamp so a report landing mid-deliberation holds the
         # fire and re-judges once — the anchors below moved with it
         self.assertIn("jd.nudge_redundant(gtxt, report)", src)
-        self.assertIn('recent, recent_ts = _last_assistant_report(s["path"])', src)
+        self.assertIn('recent, recent_ts = _pworld["r"] if "r" in _pworld '
+                      'else _last_assistant_report(s["path"])', src)
         self.assertIn("redundantSkips=skips + 1", src)
         self.assertIn("if gtxt and jd.nudge_redundant", src,
                       "the judge is consulted on EVERY due fire — past two consecutive skips the "

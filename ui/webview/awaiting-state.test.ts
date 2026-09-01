@@ -68,7 +68,7 @@ test("the kernel split happens in the ONE shared derivation (_session_chip), not
 test("the awaiting WHY lives in the background box, not the statusline (the user 2026-08-13, twice)", () => {
   // the kernel ships the why + the live awaited task descriptions in the chat status payload…
   assert.match(KERNEL, /"awaitingWhy": awaiting_why or None,/);
-  assert.match(KERNEL, /"awaitingTasks": \(_awaiting_task_descs\(sid, sess\["path"\]\) if awaiting_why else \[\]\),/);
+  assert.match(KERNEL, /"awaitingTasks": \(\(\(_awaiting_task_descs\(sid, sess\["path"\]\) or[\s\S]{0,80}?\.get\("tasks"\) or \[\]\)\) if awaiting_why else \[\]\),/);   // watch descs ride when no bg-task descs exist (2026-08-30)
   // …plus WHAT the wait is on, as data (jd.AWAIT_KINDS; the user 2026-08-15) — on the chat status,
   // the timeline lane, and the feed card's awaiting object alike, so every surface words one fact
   assert.match(KERNEL, /"awaitingKind": awaiting_kind,/);
@@ -101,7 +101,7 @@ test("the awaited tasks wear the chip's green outline — exact launch-id match;
   assert.match(KERNEL, /return \[t\["tid"\] for t in awaited if t\.get\("tid"\)\]/);
   // client: rows are marked from awaitingTaskIds only while the chip is awaitingBg…
   assert.match(RENDER, /awaitingTaskIds\?: string\[\];/);
-  assert.match(RENDER, /const awaited = new Set<string>\(\(s!\.status\.state === "awaitingBg" && s!\.status\.awaitingTaskIds\) \|\| \[\]\);/);
+  assert.match(RENDER, /const awaited = new Set<string>\(s!\.status\.awaitingTaskIds \|\| \[\]\);/);   // ids' presence, never the chip state (2026-08-30: awaited things show even while working)
   assert.match(RENDER, /host\.classList\.toggle\("bg-awaited", tasks\.some\(\(t\) => awaited\.has\(t\.id\)\)\);/);
   assert.match(RENDER, /\(awaited\.has\(t\.id\) \? " bg-awaited" : ""\)/);
   // …the untracked-wait box (renderAwaitWhy) IS the awaited thing, so it wears the border whole
@@ -110,6 +110,27 @@ test("the awaited tasks wear the chip's green outline — exact launch-id match;
   assert.match(STYLES, /#bg-tasks\.bg-awaited \{ border-color: var\(--st-awaitbg-bg\); \}/);
   assert.match(STYLES, /\.bg-task\.bg-awaited \{ box-shadow: inset 0 0 0 1px var\(--st-awaitbg-bg\); border-radius: 5px; \}/);
   assert.match(STYLES, /\.bg-task \{ --bgt: var\(--st-working-bg\); \}/);
+});
+
+test("awaited things show even while WORKING, and kernel watches feed the box (the user 2026-08-30)", () => {
+  // Their requirement, paraphrased: even mid-turn, anything the session awaits — jobs, watches,
+  // pending externals — shows at the chat bottom in the green box. Three legs, pinned where they live:
+  // 1. the box keys on awaited CONTENT, never the chip state (the old state gate was the defect)
+  assert.match(RENDER, /const why = \(s && \(s\.status\.awaitingWhy \|\| ""\)\.trim\(\)\) \|\| "";/);
+  assert.doesNotMatch(RENDER.split("function renderAwaitWhy")[1].split("\n}")[0],
+    /state === "awaitingBg" &&/);
+  // …with the fold's plain-words note adapting to the chip: idle keeps the historic sentence,
+  // working says the session keeps going and is told when the wait lands
+  assert.match(RENDER, /s!\.status\.state === "awaitingBg"\s*\n\s*\? "The session is idle until this finishes/);
+  assert.match(RENDER, /: "The session keeps working meanwhile; it's told when this lands\."/);
+  // 2. kernel watches are an awaiting SOURCE (idle: flips the chip like any wait; the rows are
+  // kernel-owned and event-true at both ends — armed at registration, cleared on fire/cancel)
+  assert.match(KERNEL, /def _watch_awaiting\(sid\):/);
+  assert.match(KERNEL, /w = _watch_awaiting\(sid\)\s*\n\s*if w:\s*\n\s*return w/);
+  // 3. mid-turn, the CONTENT rides the payload while the shared state formula stays untouched —
+  // the chip keeps reading working, the box renders from the fields
+  assert.match(KERNEL, /if not _aw and open_now:\s*\n\s*_aw = _watch_awaiting\(sid\)/);
+  assert.match(KERNEL, /"working" if open_now else\n/);   // the state formula's ordering is intact
 });
 
 test("the timeline lane's awaitingBg why reads the SAME working signal as its badge (same input, 2026-07-03 rule)", () => {

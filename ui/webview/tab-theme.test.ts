@@ -29,7 +29,11 @@ test("the setting round-trips: classic default, yatharth opt-in, junk normalizes
 });
 
 test("the theme applies LIVE through the scheme plumbing — a body class, no reload", () => {
-  assert.match(RENDER, /document\.body\.classList\.toggle\("chat-theme-yatharth", s\.chatTabTheme === "yatharth"\);/);
+  // promoted 2026-08-28: the strip class flows from the OVERALL theme through the shared applier
+  assert.match(RENDER, /applyTheme\(document, s\);/);
+  const THEME = ui("webview", "theme.ts");
+  assert.match(THEME, /toggle\("chat-theme-yatharth", s\.theme !== "classic"\)/);
+  assert.match(THEME, /toggle\("theme-light", s\.theme === "yatharth-light"\)/);
   // onExternalSettingsChange already re-runs applyChatScheme + renderTabs on every settings write
   assert.match(RENDER, /onExternalSettingsChange\(\(s\) => \{ settings = s; applyChatScheme\(s\); renderTabs\(\);/);
 });
@@ -110,5 +114,6 @@ test("Classic: the strip is a BAND — a 3% plane over the page bg, closed by th
 test("the gear offers the picker in the one menu vocabulary, Classic first", () => {
   assert.match(GEAR, /\{ id: 'classic', name: 'Classic',/);
   assert.match(GEAR, /\{ id: 'yatharth', name: 'Yatharth',/);
-  assert.match(GEAR, /housePick\(tt, 'tabtheme', tabThemeRowHTML, function \(id\) \{ var s = load\(\); s\.chatTabTheme = id; save\(s\); ttPaint\(\); \}\);/);
+  assert.match(GEAR, /var s = load\(\); s\.theme = id;\n\s*s\.chatTabTheme = \(id === 'classic' \? 'classic' : 'yatharth'\);/,
+    "the gear writes the theme + keeps the derived legacy alias in step");
 });

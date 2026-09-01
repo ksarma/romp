@@ -364,6 +364,55 @@ def scenario_resume_lineage_fileB():
     ]
 
 
+def sysline(t, subtype, uuid, parent, **extra):
+    r = {"type": "system", "subtype": subtype, "timestamp": iso(t), "uuid": uuid,
+         "parentUuid": parent}
+    r.update(extra)
+    return r
+
+
+def scenario_eclipsed_branch_kept():
+    """T209 (the user 2026-09-01): during a rate-limit storm the CLI buffers its api_error
+    records and flushes them at the NEXT enqueue — chained off the turn's OPENING prompt —
+    then hangs the stop hook and the next prompt on that spur. The turn's real output
+    (thinking, tool work, the final reply the user watched render) falls off the
+    leaf->root spine with no user gesture, and no orphanReply marker exists because the
+    disk DID keep the text. The eclipsed verdict keeps the branch: >=1 api_error record
+    sits STRICTLY BETWEEN the fork and the next conversational record, an exact machine
+    event no genuine rollback produces (a rollback re-parents the user's next prompt
+    directly at the cut)."""
+    return [
+        uline(T0, "please chart the throughput numbers", "u1", parent=None, ps="typed"),
+        aline(T0 + 30, "Charting the throughput numbers now.", "a1", "u1",
+              tools=("Bash",), stop=None),
+        trline(T0 + 40, "tu_a1_0", "tr1", "a1"),
+        aline(T0 + 60, "Throughput rises linearly until the cache saturates.", "a2", "tr1",
+              stop="end_turn"),
+        # the buffered spur, flushed later in FILE order but parent-chained off u1
+        sysline(T0 + 31, "api_error", "e1", "u1", level="error",
+                error={"message": "429 rate_limit_error (synthetic)"}),
+        sysline(T0 + 45, "api_error", "e2", "e1", level="error",
+                error={"message": "429 rate_limit_error (synthetic)"}),
+        sysline(T0 + 61, "stop_hook_summary", "sh1", "e2", hookCount=1),
+        uline(T0 + 120, "thanks - now label the axes", "u2", parent="sh1", ps="typed"),
+        aline(T0 + 150, "Labeled both axes.", "a3", "u2", stop="end_turn"),
+    ]
+
+
+def scenario_retry_superseded():
+    """The other side of the eclipse discriminator: when the spine RE-REPLIED after the
+    api_error records (an assistant record ends the fork probe before any user prompt),
+    the off-path partial is a superseded attempt — kept OFF, exactly as before, so a
+    retry that re-replied never doubles (the orphan salvage's own dedup rule)."""
+    return [
+        uline(T0, "summarize the log file", "u1", parent=None, ps="typed"),
+        aline(T0 + 30, "Half an answer that a retry replaced.", "a_old", "u1", stop=None),
+        sysline(T0 + 31, "api_error", "e1", "u1", level="error",
+                error={"message": "429 rate_limit_error (synthetic)"}),
+        aline(T0 + 90, "The full answer after the retry.", "a_new", "e1", stop="end_turn"),
+    ]
+
+
 SINGLE_FILE = {
     "multi_input_absorbed": (scenario_multi_input_absorbed, None),
     "author_kinds": (scenario_author_kinds, SENT_LOG),
@@ -377,6 +426,8 @@ SINGLE_FILE = {
     "rewind_off_path": (scenario_rewind_off_path, None),
     "broken_chain_kept": (scenario_broken_chain_kept, None),
     "slash_command_turn": (scenario_slash_command_turn, None),
+    "eclipsed_branch_kept": (scenario_eclipsed_branch_kept, None),
+    "retry_superseded": (scenario_retry_superseded, None),
 }
 
 # fsid stems for the resume scenario (placeholder UUIDs)
@@ -1121,19 +1172,58 @@ class BrokenChainFloor(unittest.TestCase):
         self.assertIn("second main ask", texts)
 
 
-class OrphanFlushReattach(unittest.TestCase):
-    """The api_error-flush orphaning (2026-09-01, two incidents verified at transcript level):
-    the CLI recovers from an API-error storm internally, streams AND persists the reply — then
-    flushes its buffered api_error records at the NEXT turn's start, parent-chained from the
-    leaf as it stood at ERROR time. The flushed chain (api_error+ then a stop_hook_summary,
-    then the next user record) hijacks the leaf, so the persisted reply branch is bypassed on
-    disk: the parse called it a rewind and dropped it, while the ghost-reply gates rightly
-    refused the orphanReply salvage (the text landed on SOME branch). The reply vanished from
-    the chat, the judges, and the model's own next reload. The fix
-    (em._reattach_flush_orphans): a rewound branch whose bypass at the fork STARTS with a
-    system/api_error record is machine-orphaned by construction — a real user rewind forks at
-    a USER gesture, never through an error chain — and its own leaf chain re-attaches as kept.
-    All fixtures here are synthetic; the shapes mirror the two incident transcripts."""
+class EclipsedBranch(unittest.TestCase):
+    """T209 (the user 2026-09-01): a rendered five-minute turn vanished behind the
+    "Recovered after retries" note the moment the user sent their next message — the CLI's
+    buffered api_error flush had re-rooted the conversation spine through its error spur,
+    abandoning the turn's kept output with no user gesture and no orphanReply marker to
+    salvage it (the disk kept the text; only the spine left it). Both directions pinned:
+    the machine-abandoned branch is KEPT, while a superseded retry and a genuine rollback
+    (test_rewind_branch_is_dropped above) stay dropped."""
+
+    def test_eclipsed_turn_output_is_kept(self):
+        out = run_scenario("eclipsed_branch_kept")
+        uuids = [a.get("uuid") for t in out["turns"] for a in t["atoms"]]
+        for u in ("u1", "a1", "tr1", "a2", "u2", "a3"):
+            self.assertIn(u, uuids, "eclipsed turn output must stay visible")
+        texts = [_text(a) for t in out["turns"] for a in t["atoms"]]
+        self.assertIn("Throughput rises linearly until the cache saturates.", texts,
+                      "the only visible copy of the reply must never be eaten")
+
+    def test_superseded_retry_stays_dropped(self):
+        out = run_scenario("retry_superseded")
+        texts = [_text(a) for t in out["turns"] for a in t["atoms"]]
+        self.assertIn("The full answer after the retry.", texts)
+        self.assertNotIn("Half an answer that a retry replaced.", texts,
+                         "a retry that re-replied must not double")
+
+    def test_chain_membership_reports_eclipsed_kept(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / (SID + ".jsonl")
+            path.write_text("\n".join(json.dumps(r) for r in scenario_eclipsed_branch_kept()) + "\n")
+            mem = em.chain_membership(str(path))
+        self.assertIn("eclipsed", mem)
+        self.assertEqual(mem["eclipsed"], {"a1", "tr1", "a2"})
+        self.assertTrue(mem["eclipsed"] <= mem["kept"], "eclipsed chains are kept")
+        self.assertEqual(mem["rewind"], set(),
+                         "an eclipse is not a rewind — nothing here may be swept")
+
+class EclipsedChainSelection(unittest.TestCase):
+    """WHICH uuids an eclipsed fork keeps (2026-09-01, two incidents verified at transcript
+    level): the CLI recovers from an API-error storm internally, streams AND persists the
+    reply — then flushes its buffered api_error records at the NEXT turn's start,
+    parent-chained from the leaf as it stood at ERROR time. The flushed chain (api_error+
+    then a stop_hook_summary, then the next user record) hijacks the leaf, so the persisted
+    reply branch is bypassed on disk: pre-eclipse the parse called it a rewind and dropped it,
+    while the ghost-reply gates rightly refused the orphanReply salvage (the text landed on
+    SOME branch). The reply vanished from the chat, the judges, and the model's own next
+    reload. The eclipsed fork probe (EclipsedBranch above) detects the machine bypass; this
+    class pins the SELECTION layered on it (em._select_eclipsed_chains): the eclipse keeps
+    exactly one chain — max-seq, assistant-headed, carrying reply text — so sibling stub
+    pairs, error bursts and older attempts drop as their on-spine twins do, and a user-headed
+    branch behind a COMPLETED flush stands the fork down (a rollback typed mid-storm forks
+    exactly there, and re-showing deleted content is the one direction the eclipse must never
+    take). All fixtures here are synthetic; the shapes mirror the two incident transcripts."""
 
     def _run(self, records, states=None):
         with tempfile.TemporaryDirectory() as td:
@@ -1167,24 +1257,24 @@ class OrphanFlushReattach(unittest.TestCase):
     def base(self):
         return [uline(T0, "storm-turn ask", "u1", parent=None, ps="typed")]
 
-    def test_flush_orphaned_reply_reattaches(self):
+    def test_flush_orphaned_reply_is_kept(self):
         ep, (rem, th, rp) = self._episode(T0 + 10, "A", "u1", "the reply the user watched stream")
         out, mem = self._run(self.base() + ep + [aline(T0 + 140, "reply on the next turn", "a2", "uA")])
         texts = [_text(a) for a in self._atoms(out) if a["type"] == "assistant"]
         self.assertIn("the reply the user watched stream", texts,
                       "the persisted reply the flush bypassed must render")
-        self.assertIn(rp, mem["reattached"])
+        self.assertIn(rp, mem["eclipsed"])
         self.assertIn(rp, mem["kept"])
         self.assertNotIn(rp, mem["rewind"], "a machine-orphaned reply is never a rewind")
         # the reply closes ITS OWN turn: same turn as the ask, ended, before the next opener
         turn0 = out["turns"][0]
         self.assertEqual([a.get("uuid") for a in turn0["atoms"]], ["u1", th, rp])
-        self.assertTrue(turn0["ended"], "the re-attached end_turn reply ends the stormed turn")
+        self.assertTrue(turn0["ended"], "the eclipsed end_turn reply ends the stormed turn")
         self.assertEqual(out["turns"][1]["trigger"], {"uuid": "uA"})
         # the flushed bookkeeping never becomes atoms
         self.assertFalse({"e0A", "e1A", "shA", rem} & {a.get("uuid") for a in self._atoms(out)})
 
-    def test_consecutive_storm_episodes_each_reattach(self):
+    def test_consecutive_storm_episodes_each_keep_their_reply(self):
         # case 1's shape: five back-to-back stormed turns; two suffice to pin the chaining —
         # each episode forks where the PREVIOUS episode's flushed spine left the leaf
         epA, (_, _, rpA) = self._episode(T0 + 10, "A", "u1", "first stormed reply")
@@ -1194,10 +1284,10 @@ class OrphanFlushReattach(unittest.TestCase):
         texts = [_text(a) for a in self._atoms(out) if a["type"] == "assistant"]
         self.assertIn("first stormed reply", texts)
         self.assertIn("second stormed reply", texts)
-        self.assertTrue({rpA, rpB} <= mem["reattached"])
+        self.assertTrue({rpA, rpB} <= mem["eclipsed"])
         self.assertEqual(mem["rewind"], set())
 
-    def test_mid_turn_storm_with_tool_cycles_reattaches_the_whole_turn(self):
+    def test_mid_turn_storm_with_tool_cycles_keeps_the_whole_turn(self):
         # the mid-turn variant (case 1 episodes C/D): the storm hits INSIDE the turn, the CLI
         # recovers and the turn runs on — tool cycles, a second reminder attachment — before the
         # final text; the flush then buffers SEVERAL bursts (retryAttempt resets between them)
@@ -1220,8 +1310,8 @@ class OrphanFlushReattach(unittest.TestCase):
         out, mem = self._run(recs)
         uuids = [a.get("uuid") for a in self._atoms(out)]
         for u in ("tuC1", "trC1", "tuC2", "trC2", "rpC"):
-            self.assertIn(u, uuids, "the whole bypassed turn re-attaches, tools included (%s)" % u)
-        self.assertTrue({"tuC1", "trC1", "remC2", "tuC2", "trC2", "rpC"} <= mem["reattached"])
+            self.assertIn(u, uuids, "the whole bypassed turn stays kept, tools included (%s)" % u)
+        self.assertTrue({"tuC1", "trC1", "remC2", "tuC2", "trC2", "rpC"} <= mem["eclipsed"])
         self.assertEqual(len(out["turns"]), 2, "one stormed turn, one clean turn")
         self.assertTrue(out["turns"][0]["ended"])
 
@@ -1244,11 +1334,11 @@ class OrphanFlushReattach(unittest.TestCase):
                          "a user-gesture rollback's branch stays dropped")
         self.assertFalse(any(a.get("orphaned") for a in atoms), "and its marker stays suppressed")
         self.assertEqual(mem["rewind"], {"u2", "a2"})
-        self.assertEqual(mem["reattached"], set())
+        self.assertEqual(mem["eclipsed"], set())
 
-    def test_marker_stands_down_when_the_branch_reattaches(self):
+    def test_marker_stands_down_when_the_branch_is_kept(self):
         # a settle-time salvage marker may predate the fix for the same bypassed reply — the
-        # re-attach renders the REAL atom, and the marker must not double it
+        # eclipse renders the REAL atom, and the marker must not double it
         ep, (_, th, rp) = self._episode(T0 + 10, "A", "u1", "the reply the user watched stream")
         marker = [{"t": T0 + 71, "orphanReply": {"uuid": rp, "text": "the reply the user watched stream"}}]
         out, _ = self._run(self.base() + ep + [aline(T0 + 140, "onward", "a2", "uA")],
@@ -1259,10 +1349,11 @@ class OrphanFlushReattach(unittest.TestCase):
         self.assertEqual(hits[0].get("uuid"), rp)
         self.assertFalse(any(a.get("orphaned") for a in atoms))
 
-    def test_parallel_tool_stub_inside_the_branch_stays_dropped(self):
-        # parallel tool-call stubs fork off the spine and are dropped by the walk; the same stub
-        # INSIDE a re-attached branch must drop identically — the re-attach splices back the
-        # branch's own leaf chain, not every descendant of the fork
+    def test_parallel_tool_stub_inside_the_winning_branch_rides_the_keep(self):
+        # the selection unit is the BRANCH, kept whole: a stub twin inside it stays (one
+        # output-less duplicate tool row — deliberate; per-leaf-chain narrowing proved
+        # reply-lossy), while stub CHAINS at the fork itself still drop (they are branches
+        # of their own and never qualify)
         recs = self.base() + [
             reminder_line(T0 + 10, "remA", "u1"),
             aline(T0 + 20, "", "tuA1", "remA", tools=("Bash",), stop=None),
@@ -1281,14 +1372,19 @@ class OrphanFlushReattach(unittest.TestCase):
         uuids = {a.get("uuid") for a in self._atoms(out)}
         self.assertIn("rpA", uuids)
         self.assertIn("trA1", uuids)
-        self.assertFalse({"stub1", "stub2"} & uuids, "the stub drops exactly as its on-spine twin does")
-        self.assertTrue({"tuA1", "trA1", "rpA"} <= mem["reattached"])
-        self.assertTrue({"stub1", "stub2"} <= mem["rewind"])
+        # the stub twin rides the kept branch: the selection unit is the WHOLE branch (a
+        # per-leaf-chain read of shared records proved reply-lossy by construction), and the
+        # cost is one output-less duplicate tool row — never a lost reply
+        self.assertTrue({"tuA1", "trA1", "rpA"} <= mem["eclipsed"])
+        self.assertTrue({"stub1", "stub2"} <= mem["eclipsed"],
+                        "over-keep is the deliberate trade: a dup tool row beats a possible reply loss")
+        self.assertEqual(mem["rewind"], set())
 
     def test_stop_hook_only_bypass_stays_dropped(self):
         # the conservative scope: a bypass of stop_hook_summary records with NO api_error carries
         # no studied machine witness (15 such forks in the live corpus, forensics pending) — the
-        # signature requires the api_error head, so this shape keeps today's behavior
+        # fork probe requires an api_error between the fork and the next conversational
+        # record, so this shape keeps today's behavior
         recs = self.base() + [
             reminder_line(T0 + 10, "remA", "u1"),
             aline(T0 + 20, "reply behind a hook-only bypass", "rpA", "remA"),
@@ -1301,12 +1397,14 @@ class OrphanFlushReattach(unittest.TestCase):
         self.assertNotIn("reply behind a hook-only bypass",
                          [_text(a) for a in self._atoms(out) if a["type"] == "assistant"])
         self.assertIn("rpA", mem["rewind"])
-        self.assertEqual(mem["reattached"], set())
+        self.assertEqual(mem["eclipsed"], set())
 
-    def test_a_user_headed_branch_never_reattaches(self):
-        # the belt on the buckle: even AT an api_error bypass, a branch whose head is a user
-        # record is not a streamed reply (all 49 corpus matches are assistant-headed) — the
-        # fork stands down whole
+    def test_a_user_headed_branch_never_survives_a_completed_flush(self):
+        # the belt on the buckle: even AT an api_error bypass with the next prompt landed (a
+        # COMPLETED flush — the "user" terminal), a branch whose head is a user record is not
+        # a streamed reply (all 49 corpus matches are assistant-headed) and is exactly what a
+        # rollback typed mid-storm leaves behind — the fork stands down whole rather than
+        # re-show a prompt its user may have deleted
         recs = self.base() + [
             uline(T0 + 20, "prompt on a dead side branch", "ux", "u1", ps="typed"),
             aline(T0 + 30, "reply on that side branch", "ax", "ux"),
@@ -1317,18 +1415,35 @@ class OrphanFlushReattach(unittest.TestCase):
         ]
         out, mem = self._run(recs)
         self.assertTrue({"ux", "ax"} <= mem["rewind"])
-        self.assertEqual(mem["reattached"], set())
+        self.assertEqual(mem["eclipsed"], set())
 
-    def test_a_pending_cut_outranks_the_reattach(self):
+    def test_a_user_headed_branch_at_a_tail_spur_stays_kept(self):
+        # the other eclipse terminal: the spur is the transcript's TAIL (a mid-flush race, a
+        # session dead mid-storm — the "exhausted" terminal), so NO next prompt exists and no
+        # user gesture can have abandoned anything — keep-on-unprovable holds and the component
+        # stays eclipsed whole (the completed-flush belt above needs the landed next prompt to
+        # bite)
+        recs = self.base() + [
+            uline(T0 + 20, "prompt on a dying branch", "ux", "u1", ps="typed"),
+            aline(T0 + 30, "reply on that branch", "ax", "ux"),
+            api_error_line(T0 + 40, "eA1", "u1", attempt=1),
+        ]
+        out, mem = self._run(recs)
+        self.assertTrue({"ux", "ax"} <= mem["eclipsed"])
+        self.assertEqual(mem["rewind"], set())
+        self.assertIn("reply on that branch",
+                      [_text(a) for a in self._atoms(out) if a["type"] == "assistant"])
+
+    def test_a_pending_cut_outranks_the_eclipse(self):
         # a bare-rollback cut armed at the fork: the walk's leaf IS the fork, there is no bypass
-        # segment to read, and nothing re-attaches — the user's pending gesture wins
+        # segment to read, and nothing eclipses — the user's pending gesture wins
         ep, (_, _, rp) = self._episode(T0 + 10, "A", "u1", "the reply the user watched stream")
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / (SID + ".jsonl")
             recs = self.base() + ep + [aline(T0 + 140, "onward", "a2", "uA")]
             path.write_text("\n".join(json.dumps(r) for r in recs) + "\n")
             mem = em.chain_membership(str(path), leaf_override="u1")
-        self.assertEqual(mem["reattached"], set())
+        self.assertEqual(mem["eclipsed"], set())
         self.assertIn(rp, mem["rewind"])
 
     # ── sibling chains at ONE fork: selection reads properties, never the CLI's byte order of
@@ -1347,19 +1462,19 @@ class OrphanFlushReattach(unittest.TestCase):
         closer = [aline(T0 + 130, "done", "a2", "u2")]  # the true leaf — always written last
         return head, reply, flush_spine, closer
 
-    def test_late_written_stub_pair_never_steals_the_reattach(self):
+    def test_late_written_stub_pair_never_steals_the_keep(self):
         # a parallel tool-stub pair parented directly AT the fork but written AFTER the reply
-        # records: the stub chain is assistant-headed, so a max-seq-record selection re-attached
-        # the STUBS and left the real reply dropped — inverting the fix's own contract purely on
-        # write order. The stub chain carries no reply text; the reply chain does.
+        # records: the stub chain is assistant-headed, so a max-seq-record selection would keep
+        # the STUBS and leave the real reply dropped — inverting the fix's own contract purely
+        # on write order. The stub chain carries no reply text; the reply chain does.
         head, reply, flush_spine, closer = self._fork_pieces()
         stubs = [aline(T0 + 20, "", "stubA", "remA", tools=("Bash",), stop=None),
                  trline(T0 + 25, "tu_stubA_0", "stubB", "stubA")]
         out, mem = self._run(head + reply + flush_spine + stubs + closer)
         self.assertIn("the reply the user watched stream",
                       [_text(a) for a in self._atoms(out) if a["type"] == "assistant"],
-                      "the persisted reply re-attaches whatever the stub pair's file position")
-        self.assertIn("rpA", mem["reattached"])
+                      "the persisted reply stays kept whatever the stub pair's file position")
+        self.assertIn("rpA", mem["eclipsed"])
         self.assertTrue({"stubA", "stubB"} <= mem["rewind"],
                         "the textless stub chain drops exactly as an early-written one does")
 
@@ -1374,8 +1489,8 @@ class OrphanFlushReattach(unittest.TestCase):
         out, mem = self._run(head + reply + flush_spine + burst2 + closer)
         self.assertIn("the reply the user watched stream",
                       [_text(a) for a in self._atoms(out) if a["type"] == "assistant"])
-        self.assertIn("rpA", mem["reattached"])
-        self.assertTrue({"eB1", "eB2"} <= mem["rewind"], "the burst chain itself never re-attaches")
+        self.assertIn("rpA", mem["eclipsed"])
+        self.assertTrue({"eB1", "eB2"} <= mem["rewind"], "the burst chain itself is never kept")
         self.assertFalse({"eB1", "eB2"} & {a.get("uuid") for a in self._atoms(out)})
 
     def test_stub_pair_write_order_never_changes_the_verdict(self):
@@ -1386,22 +1501,155 @@ class OrphanFlushReattach(unittest.TestCase):
                  trline(T0 + 25, "tu_stubA_0", "stubB", "stubA")]
         _, early = self._run(head + stubs + reply + flush_spine + closer)
         _, late = self._run(head + reply + flush_spine + stubs + closer)
-        for key in ("kept", "rewind", "reattached"):
+        for key in ("kept", "rewind", "eclipsed"):
             self.assertEqual(early[key], late[key], "write order changed the %r set" % key)
-        self.assertIn("rpA", early["reattached"])
+        self.assertIn("rpA", early["eclipsed"])
         self.assertTrue({"stubA", "stubB"} <= early["rewind"])
+
+    def test_a_grafted_burst_below_the_reply_text_never_steals_the_keep(self):
+        # shared-prefix laundering: gates and a ranking key that read leaf->fork CHAINS let a
+        # junk tail grafted BELOW a text-carrying record inherit the prefix's qualifications —
+        # a second flushed burst at the mid-turn graft point, written last, out-seq'd the real
+        # reply chain and the actual reply demoted to rewind. The selection unit is the BRANCH
+        # (ranked by its latest reply text), so a textless tail can never move the pick.
+        head = self.base() + [reminder_line(T0 + 10, "remA", "u1")]
+        reply = [aline(T0 + 20, "mid-turn text before the tool", "tuA1", "remA", tools=("Bash",), stop=None),
+                 trline(T0 + 25, "tu_tuA1_0", "trA1", "tuA1"),
+                 aline(T0 + 30, "the reply the user watched stream", "rpA", "trA1")]
+        flush_spine = [api_error_line(T0 + 11, "eA1", "remA", attempt=1),
+                       stop_hook_line(T0 + 31, "shA", "eA1"),
+                       uline(T0 + 100, "next ask", "u2", "shA")]
+        burst = [api_error_line(T0 + 40, "eB1", "tuA1", attempt=1),
+                 api_error_line(T0 + 41, "eB2", "eB1", attempt=2)]
+        closer = [aline(T0 + 130, "done", "a2", "u2")]
+        for recs in (head + reply + flush_spine + burst + closer,
+                     head + reply + burst + flush_spine + closer):
+            out, mem = self._run(recs)
+            texts = [_text(a) for a in self._atoms(out) if a["type"] == "assistant"]
+            self.assertIn("the reply the user watched stream", texts,
+                          "a grafted burst tail must never steal the keep from the reply")
+            self.assertTrue({"tuA1", "trA1", "rpA"} <= mem["eclipsed"])
+            # the grafted burst rides the kept branch (kept whole, see above) at zero display
+            # cost: system records never become atoms, kept or not
+            self.assertFalse({"eB1", "eB2"} & {a.get("uuid") for a in self._atoms(out)},
+                             "burst records never surface as atoms")
+
+    def test_a_late_stub_pair_below_the_reply_text_never_steals_the_keep(self):
+        # the same laundering, stub flavor: a parallel stub pair parented one level BELOW a
+        # text-carrying record must never steal the pick from the reply records beside it
+        # (the at-the-fork variant is a branch of its own and still drops — covered above)
+        head = self.base() + [reminder_line(T0 + 10, "remA", "u1")]
+        reply = [aline(T0 + 20, "mid-turn text before the tool", "tuA1", "remA", tools=("Bash",), stop=None),
+                 trline(T0 + 25, "tu_tuA1_0", "trA1", "tuA1"),
+                 aline(T0 + 30, "the reply the user watched stream", "rpA", "trA1")]
+        flush_spine = [api_error_line(T0 + 11, "eA1", "remA", attempt=1),
+                       stop_hook_line(T0 + 31, "shA", "eA1"),
+                       uline(T0 + 100, "next ask", "u2", "shA")]
+        stubs = [aline(T0 + 21, "", "stubA", "tuA1", tools=("Read",), stop=None),
+                 trline(T0 + 26, "tu_stubA_0", "stubB", "stubA")]
+        closer = [aline(T0 + 130, "done", "a2", "u2")]
+        out, mem = self._run(head + reply + flush_spine + stubs + closer)
+        self.assertIn("the reply the user watched stream",
+                      [_text(a) for a in self._atoms(out) if a["type"] == "assistant"],
+                      "the reply survives whatever the stub pair's file position")
+        self.assertTrue({"rpA", "trA1", "tuA1"} <= mem["eclipsed"])
+        self.assertTrue({"stubA", "stubB"} <= mem["eclipsed"],
+                        "the in-branch twin rides the keep — the deliberate over-keep trade")
+
+    def test_a_textless_tool_only_turn_survives_a_completed_flush(self):
+        # a machine-orphaned turn of PURE tool activity (no reply text) has no qualifying
+        # chain, and the whole-component stand-down swept it — reverting the eclipse's keep
+        # for work that really ran. A rollback branch's fork-side head is always the user's
+        # own record (the head-gate's reasoning, and 42/42 user-gesture rollbacks in the
+        # author's corpus), so the stand-down demotes user-headed chains ONLY; an
+        # assistant-headed textless chain is provably not rollback residue and stays kept.
+        recs = self.base() + [
+            reminder_line(T0 + 10, "remA", "u1"),
+            aline(T0 + 20, "", "tuA1", "remA", tools=("Bash",), stop=None),
+            trline(T0 + 25, "tu_tuA1_0", "trA1", "tuA1"),
+            api_error_line(T0 + 11, "eA1", "remA", attempt=1),
+            stop_hook_line(T0 + 31, "shA", "eA1"),
+            uline(T0 + 100, "next ask", "u2", "shA"),
+            aline(T0 + 130, "done", "a2", "u2"),
+        ]
+        out, mem = self._run(recs)
+        self.assertTrue({"tuA1", "trA1"} <= mem["eclipsed"],
+                        "tool work that really ran survives the completed flush")
+        self.assertTrue({"tuA1", "trA1"} <= mem["kept"])
+        self.assertEqual(mem["rewind"], set())
+
+    def test_a_failure_record_chain_never_outranks_the_reply(self):
+        # Claude Code writes a FAILED attempt as an assistant record carrying the error as a
+        # text block (isApiErrorMessage:true) — atoms() refuses to treat it as a reply, and the
+        # eclipse's reply witness must too, or a late-written failed-attempt chain qualifies
+        # and steals the keep from the turn's only real text.
+        head, reply, flush_spine, closer = self._fork_pieces()
+        failed = aline(T0 + 40, "API Error: 529 overloaded", "rpF", "remA", stop="stop_sequence")
+        failed["isApiErrorMessage"] = True
+        out, mem = self._run(head + reply + flush_spine + [failed] + closer)
+        texts = [_text(a) for a in self._atoms(out) if a["type"] == "assistant"]
+        self.assertIn("the reply the user watched stream", texts)
+        self.assertNotIn("API Error: 529 overloaded", texts)
+        self.assertIn("rpA", mem["eclipsed"])
+        self.assertIn("rpF", mem["rewind"], "a failure echo is never the eclipse's reply")
+
+    def test_twin_sub_branches_never_disenfranchise_their_own_turn(self):
+        # the shape that broke per-leaf-chain selection (adversarial construction, 2026-09-01):
+        # the REAL turn's text record has two textless sub-branches below it (the storm-cut
+        # tool result + a parallel stub twin), and an OLDER superseded attempt sits beside the
+        # branch at the fork. A unique-suffix read stripped the shared text record from both
+        # of its own chains' suffixes, both failed the text gate, and the older sibling stole
+        # the keep — reply loss. Branch-level selection keys on the branch's latest reply
+        # text: the real turn (newer text) must win, whole.
+        head = self.base() + [reminder_line(T0 + 10, "remA", "u1")]
+        older = [aline(T0 + 15, "first persisted attempt", "rpQ", "remA")]
+        turn = [aline(T0 + 20, "the reply the user watched stream", "tuT", "remA",
+                      tools=("Bash", "Read"), stop=None),
+                trline(T0 + 25, "tu_tuT_0", "trT", "tuT"),
+                aline(T0 + 21, "", "stubX", "tuT", tools=("Read",), stop=None),
+                trline(T0 + 26, "tu_stubX_0", "trX", "stubX")]
+        flush_spine = [api_error_line(T0 + 11, "eA1", "remA", attempt=1),
+                       stop_hook_line(T0 + 31, "shA", "eA1"),
+                       uline(T0 + 100, "next ask", "u2", "shA")]
+        closer = [aline(T0 + 130, "done", "a2", "u2")]
+        out, mem = self._run(head + older + turn + flush_spine + closer)
+        texts = [_text(a) for a in self._atoms(out) if a["type"] == "assistant"]
+        self.assertIn("the reply the user watched stream", texts,
+                      "the turn with the LATEST reply text wins, its twin sub-branches notwithstanding")
+        self.assertNotIn("first persisted attempt", texts)
+        self.assertTrue({"tuT", "trT"} <= mem["eclipsed"])
+        self.assertIn("rpQ", mem["rewind"], "the superseded older attempt drops")
+
+    def test_a_stranded_tool_result_at_the_fork_survives_the_stand_down(self):
+        # the storm strands a tool_result beside its ON-SPINE tool_use (the CLI buffered the
+        # errors while the tool ran, then flushed from the tool_use as the leaf): the branch
+        # head is user-TYPED but machine-MADE. The stand-down demotes only user PROMPT heads —
+        # a tool_result head is provably not rollback residue and stays kept, where its output
+        # reunites with the spine's own tool call.
+        recs = self.base() + [
+            aline(T0 + 10, "", "tuF", "u1", tools=("Bash",), stop=None),
+            trline(T0 + 20, "tu_tuF_0", "trF", "tuF"),
+            api_error_line(T0 + 15, "eA1", "tuF", attempt=1),
+            stop_hook_line(T0 + 25, "shA", "eA1"),
+            uline(T0 + 100, "next ask", "u2", "shA"),
+            aline(T0 + 130, "done", "a2", "u2"),
+        ]
+        out, mem = self._run(recs)
+        self.assertIn("trF", mem["eclipsed"], "a machine-made tool_result head survives the stand-down")
+        self.assertIn("trF", mem["kept"])
+        self.assertEqual(mem["rewind"], set())
 
     def test_two_reply_chains_prefer_the_latest_written(self):
         # two assistant-headed, text-carrying sibling chains at one fork — NOT observed in the
         # corpus (every incident fork holds exactly one) — pinned deliberately: the latest-written
         # chain wins, as the CLI's final word on that turn, and it is the same chain the pre-fix
-        # walk picked when only one existed. Only the selected chain re-attaches.
+        # walk picked when only one existed. Only the selected chain stays eclipsed.
         head, _, flush_spine, closer = self._fork_pieces()
         replies = [aline(T0 + 20, "first persisted attempt", "rpA", "remA"),
                    aline(T0 + 30, "second persisted attempt", "rpB", "remA")]
         out, mem = self._run(head + replies + flush_spine + closer)
-        self.assertIn("rpB", mem["reattached"])
-        self.assertIn("rpA", mem["rewind"], "only the selected chain re-attaches")
+        self.assertIn("rpB", mem["eclipsed"])
+        self.assertIn("rpA", mem["rewind"], "only the selected chain survives")
         texts = [_text(a) for a in self._atoms(out) if a["type"] == "assistant"]
         self.assertIn("second persisted attempt", texts)
         self.assertNotIn("first persisted attempt", texts)

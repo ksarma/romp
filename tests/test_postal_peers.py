@@ -129,11 +129,16 @@ class TwoBusExchange(unittest.TestCase):
 
     def setUp(self):
         os.environ["ROMP_POSTAL_PEERS"] = "1"
-        self._saved = (pm.self_host, pmb.self_host, pm.local_agents, pmb.local_agents)
+        self._saved = (pm.self_host, pmb.self_host, pm.local_agents, pmb.local_agents,
+                       pm.local_agents_checked, pmb.local_agents_checked)
         pm.self_host = lambda: "hosta"
         pmb.self_host = lambda: "hostb"
         pm.local_agents = lambda: [{"name": "alpha", "id": "sid-a", "dir": ""}]
         pmb.local_agents = lambda: [{"name": "beta", "id": "sid-b", "dir": ""}]
+        # _relay_in and fleet_presence rule from the CHECKED seam now (2026-08-31): same stub
+        # rows, answered=True — the harness's world is authoritative
+        pm.local_agents_checked = lambda threads=False: (pm.local_agents(), True)
+        pmb.local_agents_checked = lambda threads=False: (pmb.local_agents(), True)
         for m in (pm, pmb):
             m.PEER_STATE.clear()
             m.PEERS.clear()
@@ -158,7 +163,8 @@ class TwoBusExchange(unittest.TestCase):
 
     def tearDown(self):
         os.environ.pop("ROMP_POSTAL_PEERS", None)
-        pm.self_host, pmb.self_host, pm.local_agents, pmb.local_agents = self._saved
+        (pm.self_host, pmb.self_host, pm.local_agents, pmb.local_agents,
+         pm.local_agents_checked, pmb.local_agents_checked) = self._saved
 
     def _exchange(self):
         req = pm.build_exchange_request("srv", wait=False)
@@ -267,13 +273,18 @@ class ThreeBusRelay(unittest.TestCase):
     def setUp(self):
         os.environ["ROMP_POSTAL_PEERS"] = "1"
         self._saved = (pm.self_host, pmb.self_host, pmc.self_host,
-                       pm.local_agents, pmb.local_agents, pmc.local_agents)
+                       pm.local_agents, pmb.local_agents, pmc.local_agents,
+                       pm.local_agents_checked, pmb.local_agents_checked, pmc.local_agents_checked)
         pm.self_host = lambda: "hosta"
         pmb.self_host = lambda: "hostb"
         pmc.self_host = lambda: "hostc"
         pm.local_agents = lambda: [{"name": "alpha", "id": "sid-a", "dir": ""}]
         pmb.local_agents = lambda: [{"name": "beta", "id": "sid-b", "dir": ""}]
         pmc.local_agents = lambda: [{"name": "carol", "id": "sid-c", "dir": ""}]
+        # _relay_in and fleet_presence rule from the CHECKED seam now (2026-08-31)
+        pm.local_agents_checked = lambda threads=False: (pm.local_agents(), True)
+        pmb.local_agents_checked = lambda threads=False: (pmb.local_agents(), True)
+        pmc.local_agents_checked = lambda threads=False: (pmc.local_agents(), True)
         import shutil
         for m in (pm, pmb, pmc):
             m.PEER_STATE.clear()
@@ -303,7 +314,8 @@ class ThreeBusRelay(unittest.TestCase):
     def tearDown(self):
         os.environ.pop("ROMP_POSTAL_PEERS", None)
         (pm.self_host, pmb.self_host, pmc.self_host,
-         pm.local_agents, pmb.local_agents, pmc.local_agents) = self._saved
+         pm.local_agents, pmb.local_agents, pmc.local_agents,
+         pm.local_agents_checked, pmb.local_agents_checked, pmc.local_agents_checked) = self._saved
 
     def _xchg(self, dialer, dialed, alias):
         req = dialer.build_exchange_request(alias, wait=False)

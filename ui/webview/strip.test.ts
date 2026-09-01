@@ -19,7 +19,8 @@ test("fmtTok: 3 significant figures at every magnitude (the user 2026-08-13)", (
   assert.equal(fmtTok(999), "999");               // below 1k the raw count already carries 3 figures
 });
 
-test("usageColor mirrors the rail's green/amber/red ramp", () => {
+test("usageColor is theme-aware (ctx-color.ts): with no body classes = CLASSIC = main's 70/90 verbatim", () => {
+  // PR #763 item 1: classic keeps its exact palette; the yatharth pair is exercised in ctx-color.test.ts
   assert.equal(usageColor(0), "#54B204");
   assert.equal(usageColor(69), "#54B204");
   assert.equal(usageColor(70), "#e0b020");

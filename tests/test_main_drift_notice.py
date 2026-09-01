@@ -131,7 +131,8 @@ class UiOnlyConverge(unittest.TestCase):
     def setUp(self):
         self._saved = {n: getattr(km, n) for n in
                        ("_main_drift_verdict", "_kernel_code_changed", "_rebuild_dist",
-                        "_sync_notice", "_update_mode", "_send_to_app", "_kernel_sha")}
+                        "_sync_notice", "_update_mode", "_send_to_app", "_kernel_sha",
+                        "_main_tracking")}
         km._MAIN_DRIFT[0] = km._MAIN_DRIFT[1] = ""
         km._REBUILT_FOR[0] = ""
         self.notices, self.banners, self.rebuilds = [], [], []
@@ -139,6 +140,7 @@ class UiOnlyConverge(unittest.TestCase):
         km._send_to_app = lambda app, payload: self.banners.append(payload)
         km._update_mode = lambda: "ask"
         km._kernel_sha = lambda: "cur-sha"
+        km._main_tracking = lambda: True   # these tests exercise POST-gate behavior; the gate has its own
 
     def tearDown(self):
         for n, f in self._saved.items():
@@ -195,3 +197,108 @@ class UiOnlyConverge(unittest.TestCase):
         self.assertIn('if kind == "pull" and not _kernel_code_changed(_kernel_sha(), _checkout_sha()):', src)
         self.assertIn("_rebuild_dist()", src)
         self.assertIn("_REBUILT_FOR[0] = _checkout_sha()", src)
+
+
+class ChannelGate(unittest.TestCase):
+    """The audience gate (the user 2026-08-31, two independent "constant update notices" reports):
+    dev commits must never notify a plain install — one notice per release TAG is their whole
+    channel, owned by _update_check. The maintainer's mesh keeps the drift watcher through its own
+    signals; everything else (bootstrap installs detached at a tag, and the installs an old banner
+    walked onto a detached main sha) is the release channel and stays silent here."""
+
+    def test_the_pure_verdict_truth_table(self):
+        V = km._main_channel_verdict
+        self.assertTrue(V("main", "ask", False), "a deliberate branch-main clone tracks main")
+        self.assertTrue(V("", "auto", False), "auto mode = the unattended-converge machines")
+        self.assertTrue(V("", "ask", True), "attached remotes = the federated mesh")
+        self.assertFalse(V("", "ask", False),
+                         "detached + ask + no remotes = a plain install: the bootstrap tag "
+                         "checkout AND the old banner's walked-onto-main victims both land here")
+        self.assertFalse(V("some-branch", "ask", False), "a feature-branch checkout is not main-tracking")
+
+    def test_the_check_bails_for_a_plain_install_before_any_git_io(self):
+        saved = (km._main_tracking, km._main_drift_verdict, km._send_to_app, km._update_mode)
+        calls, banners = [], []
+        try:
+            km._update_mode = lambda: "ask"
+            km._main_tracking = lambda: False
+            km._main_drift_verdict = lambda *a: calls.append(a) or ("pull", "deadbeef")
+            km._send_to_app = lambda app, payload: banners.append(payload)
+            km._main_drift_check()
+        finally:
+            (km._main_tracking, km._main_drift_verdict, km._send_to_app, km._update_mode) = saved
+        self.assertEqual(calls, [], "gated out BEFORE the verdict — no ls-remote, no banner")
+        self.assertEqual(banners, [])
+
+    def test_the_live_reader_consults_branch_mode_and_both_remote_stores(self):
+        src = inspect.getsource(km._main_tracking)
+        self.assertIn("bool(_remotes)", src, "live attached rows count (the Mac's dial-in included)")
+        self.assertIn("KNOWN_FILE", src, "remembered hosts count — the mesh signal survives a detach")
+        self.assertIn("_main_channel_verdict(_checkout_branch(), _update_mode(), attached)", src)
+
+
+class PersistentDismissal(unittest.TestCase):
+    """Not-now outlives the page and the kernel (the user 2026-08-31): a dismissed sha/tag stays
+    dismissed until a NEW one — the per-page-load re-derive and the per-restart re-offer were the
+    notice-spam compounders on the dev mesh too."""
+
+    def setUp(self):
+        try:
+            (km.jd.STATE / km._DISMISSED_UPDATES_FILE_NAME).unlink()
+        except OSError:
+            pass
+
+    tearDown = setUp
+
+    def test_round_trip_and_restart_survival(self):
+        km._dismiss_update("aaaa1111")
+        km._dismiss_update("v0.14.0")
+        self.assertEqual(km._dismissed_updates(), ["aaaa1111", "v0.14.0"],
+                         "the store is a FILE — module state resets (a restart) cannot re-offer")
+        km._dismiss_update("aaaa1111")
+        self.assertEqual(km._dismissed_updates(), ["v0.14.0", "aaaa1111"], "re-dismissal dedupes")
+
+    def test_a_dismissed_drift_sha_never_banners_but_a_new_one_does(self):
+        saved = {n: getattr(km, n) for n in
+                 ("_main_tracking", "_main_drift_verdict", "_send_to_app", "_update_mode",
+                  "_kernel_sha", "_kernel_code_changed")}
+        banners = []
+        try:
+            km._update_mode = lambda: "ask"
+            km._main_tracking = lambda: True
+            km._kernel_sha = lambda: "cur"
+            km._kernel_code_changed = lambda a, b: True
+            km._send_to_app = lambda app, payload: banners.append(payload)
+            km._MAIN_DRIFT[0] = km._MAIN_DRIFT[1] = ""
+            km._dismiss_update("deadbee1")
+            km._main_drift_verdict = lambda *a: ("pull", "deadbee1")
+            km._main_drift_check()
+            self.assertEqual(banners, [], "the dismissed sha stays quiet across restarts")
+            km._MAIN_DRIFT[0] = km._MAIN_DRIFT[1] = ""
+            km._main_drift_verdict = lambda *a: ("pull", "feedf00d")
+            km._main_drift_check()
+            self.assertEqual([b.get("tag") for b in banners], ["feedf00d"],
+                             "a NEW sha is new information and offers")
+        finally:
+            for n, f in saved.items():
+                setattr(km, n, f)
+            km._MAIN_DRIFT[0] = km._MAIN_DRIFT[1] = ""
+
+    def test_the_banner_posts_the_dismissal_and_the_route_stores_it(self):
+        src = inspect.getsource(km)
+        self.assertIn("fetch('/update-dismiss'", src, "Not-now persists server-side, not just page-local")
+        self.assertIn('u.path == "/update-dismiss"', src)
+        self.assertIn("_dismiss_update((b or {}).get(\"tag\"))", src)
+
+    def test_update_check_route_blanks_dismissed_offers(self):
+        src = inspect.getsource(km)
+        self.assertIn('"tag": ("" if _UPDATE_AVAIL[0] in dis else _UPDATE_AVAIL[0])', src,
+                      "a page load can no longer re-derive a dismissed offer")
+
+
+class PlainInstallCopy(unittest.TestCase):
+    def test_the_drift_copy_drops_mesh_operator_language(self):
+        src = inspect.getsource(km)
+        self.assertNotIn("restarts every kernel", src)
+        self.assertIn("Update pulls them and restarts romp.", src)
+        self.assertIn("Update restarts romp onto it.", src)

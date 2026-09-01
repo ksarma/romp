@@ -8,7 +8,8 @@ and a producer pass framed before the rewind published its mints after the sweep
 shape, proven live). The fix, pinned here:
   - em.chain_membership: THE exported membership predicate, built from the display parse's exact
     inputs (resume links + lineage closure + pending cut). "rewind" is the only sweepable verdict;
-    "clear" is /clear jurisdiction, "broken" chains are kept, unknown uuids prove nothing.
+    "clear" is /clear jurisdiction, "broken" chains are kept, "eclipsed" chains are kept (a machine
+    api_error spur's abandonment, T209 — never a user gesture), unknown uuids prove nothing.
   - jd.parsed_session honors the backend's pending cut (leaf_override), so an armed bare rollback
     stops yielding abandoned units at the source.
   - jd.apply_plan_guarded: the write-moment stand-down at every planner mint site — fresh,
@@ -95,6 +96,15 @@ class Base(unittest.TestCase):
         return [uline(T0 + 60, "second ask, rewritten", "u3", "a1"),
                 aline(T0 + 70, "Reply on the new branch, settled.", "a3", "u3")]
 
+    def eclipse_recs(self):
+        """T209's machine geometry: the CLI's buffered api_error spur roots at u2 (the turn's
+        opener) and the next prompt chains onto it, abandoning a2 with no user gesture."""
+        return [{"type": "system", "subtype": "api_error", "timestamp": iso(T0 + 25),
+                 "uuid": "e1", "parentUuid": "u2",
+                 "error": {"message": "429 rate_limit_error (synthetic)"}},
+                uline(T0 + 60, "third synthetic ask", "u3", "e1"),
+                aline(T0 + 70, "Third synthetic reply.", "a3", "u3")]
+
 
 def flush_orphan_recs():
     """The api_error-flush orphaning shape (2026-09-01, synthetic): the CLI recovered from a
@@ -172,8 +182,57 @@ class ChainMembershipPredicate(Base):
     def test_an_unknown_uuid_is_in_no_set(self):
         self.write(self.base_recs())
         mem = em.chain_membership(self.path)
-        for k in ("kept", "rewind", "clear", "broken"):
+        for k in ("kept", "rewind", "clear", "broken", "eclipsed"):
             self.assertNotIn("orphan:12345", mem[k], "a synthetic salvage id proves nothing")
+
+    def test_an_eclipsed_branch_is_kept_never_rewind(self):
+        # T209: the abandoned reply is the ONLY visible copy — it must classify eclipsed (kept),
+        # and never enter the one sweepable set.
+        self.write(self.base_recs() + self.eclipse_recs())
+        mem = em.chain_membership(self.path)
+        self.assertEqual(mem["eclipsed"], {"a2"}, "the machine-abandoned reply is eclipsed")
+        self.assertIn("a2", mem["kept"], "eclipsed content is kept")
+        self.assertEqual(mem["rewind"], set(), "an eclipse is never sweepable")
+
+    def test_a_tail_spur_is_already_eclipsed_mid_flush(self):
+        # adversarial-review finding on the first cut: with the spur as the transcript's TAIL
+        # (a parse racing the CLI's multi-line flush, or a session dead mid-storm) the probe
+        # exhausted into "rewind" — one-way goal archives in the race window, and the T209 eat
+        # made permanent on the mid-storm death. An api_error on the spine out of the fork is
+        # a machine artifact whatever follows.
+        self.write(self.base_recs() + [
+            {"type": "system", "subtype": "api_error", "timestamp": iso(T0 + 25),
+             "uuid": "e1", "parentUuid": "u2",
+             "error": {"message": "429 rate_limit_error (synthetic)"}}])
+        mem = em.chain_membership(self.path)
+        self.assertEqual(mem["eclipsed"], {"a2"}, "the tail spur already eclipses, never sweeps")
+        self.assertEqual(mem["rewind"], set())
+        self.assert_parity_shape(mem)
+
+    def test_a_cyclic_machine_spine_terminates_and_keeps(self):
+        # adversarial-review finding on the first cut: a multi-node parent CYCLE of system
+        # records (corruption this module's classify already anticipates with its own cycle
+        # branch) closed the spine-child map and the probe looped forever — one corrupt
+        # transcript hung every chat build and judge pass. The guard exits the cycle and the
+        # machine-spine terminal keeps the branch (keep-on-unprovable, the module's bias).
+        # the LEAF sits inside the cycle (cyC is the file's last uuid-bearing record), which
+        # is what closes the spine-child map — a leaf outside it leaves an open chain and only
+        # the exhaustion terminal fires
+        recs = [{"type": "system", "subtype": "api_error", "timestamp": iso(T0 + i),
+                 "uuid": u, "parentUuid": pu,
+                 "error": {"message": "429 rate_limit_error (synthetic)"}}
+                for i, (u, pu) in enumerate([("cyA", "cyC"), ("cyB", "cyA")])]
+        recs.append(uline(T0 + 10, "ask rejoining the cycle", "ux", "cyA"))
+        recs.append({"type": "system", "subtype": "api_error", "timestamp": iso(T0 + 11),
+                     "uuid": "cyC", "parentUuid": "cyB",
+                     "error": {"message": "429 rate_limit_error (synthetic)"}})
+        self.write(recs)
+        mem = em.chain_membership(self.path)          # pre-guard: this call never returned
+        self.assertIn("ux", mem["kept"], "a real ask off a corrupt machine spine is kept")
+
+    def assert_parity_shape(self, mem):
+        """kept == active ∪ broken ∪ eclipsed, from the same verdict sets we were handed."""
+        self.assertTrue(mem["eclipsed"] <= mem["kept"])
 
     def test_a_pending_cut_moves_the_tail_into_rewind(self):
         # the armed bare-rollback window: nothing on disk yet, but the cut is the ground truth
@@ -183,25 +242,26 @@ class ChainMembershipPredicate(Base):
         cut = em.chain_membership(self.path, leaf_override="a1")
         self.assertEqual(cut["rewind"], {"u2", "a2"})
 
-    def test_a_flush_bypassed_reply_is_reattached_never_rewind(self):
+    def test_a_flush_bypassed_reply_is_eclipsed_never_rewind(self):
         # the api_error-flush orphaning (2026-09-01): the bypass at the fork is the CLI's own
-        # buffered-error chain, not a user gesture — the persisted reply rejoins "kept" via
-        # "reattached", so no sweep predicate can ever read it as abandoned
+        # buffered-error chain — probed THROUGH the stop_hook_summary to the landed next
+        # prompt — so the persisted reply rejoins "kept" via "eclipsed" and no sweep
+        # predicate can ever read it as abandoned
         self.write(flush_orphan_recs())
         mem = em.chain_membership(self.path)
-        self.assertEqual(mem["reattached"], {"a2x"})
-        self.assertIn("a2x", mem["kept"], "reattached is a subset of kept")
+        self.assertEqual(mem["eclipsed"], {"a2x"})
+        self.assertIn("a2x", mem["kept"], "eclipsed is a subset of kept")
         self.assertEqual(mem["rewind"], set())
 
-    def test_the_sweep_predicates_spare_a_reattached_branch(self):
+    def test_the_sweep_predicates_spare_an_eclipsed_branch(self):
         # the fix's downstream face: _rewound_away is the write-moment mint stand-down AND the
         # drop-sweep discriminator; _per_file_rewound feeds the dead-branch reconciliation
-        # (reconcile_rewound_goals unions it with mem["rewind"]) — before the re-attach, both
+        # (reconcile_rewound_goals unions it with mem["rewind"]) — before the eclipse, both
         # read the machine-orphaned branch as a rewind and goals anchored there were archived
         # by a sweep no user gesture ever justified
         self.write(flush_orphan_recs())
         self.assertFalse(jd._rewound_away(SID, str(self.path), "a2x"),
-                         "a re-attached uuid never stands a mint down")
+                         "an eclipsed uuid never stands a mint down")
         pf, fails = jd._per_file_rewound(SID, [str(self.path)])
         self.assertEqual(fails, 0)
         self.assertNotIn("a2x", pf, "the per-file discriminator agrees: nothing to sweep")
@@ -231,9 +291,17 @@ class PredicateParityGolden(Base):
         self.write(self.base_recs() + self.fork_recs())
         self.assert_parity(self.path)
 
+    def test_parity_on_an_eclipsed_machine_spur(self):
+        # the parity guard bites on the eclipsed geometry too: kept_uuids and
+        # chain_membership["kept"] must include the eclipsed branch IDENTICALLY (T209)
+        self.write(self.base_recs() + self.eclipse_recs())
+        self.assert_parity(self.path)
+        mem = em.chain_membership(self.path)
+        self.assertIn("a2", mem["kept"])
+
     def test_parity_on_a_flush_orphaned_branch(self):
-        # the re-attach lives inside chain_verdicts, so BOTH faces (kept_uuids and
-        # chain_membership) inherit it from the one implementation — pinned anyway
+        # the eclipse (probe + chain selection) lives inside chain_verdicts, so BOTH faces
+        # (kept_uuids and chain_membership) inherit it from the one implementation — pinned anyway
         self.write(flush_orphan_recs())
         self.assert_parity(self.path)
 

@@ -570,32 +570,54 @@ _lock = threading.Lock()
 def _kernel_sessions(threads=False):
     """LIVE romp sessions (tmux + SDK) from the kernel's unified GET /sessions — the kernel owns the backend
     query (TmuxBackend for tmux liveness + the SDK registry), so the bus enumerates sessions WITHOUT shelling
-    tmux and WITHOUT reading the SDK registry directly: ONE source. Loopback, authorized with X-Romp-Token
+    tmux and, for ADDRESSING, without reading the SDK registry directly: ONE source. (One deliberate
+    exception since 2026-08-31: _durable_session reads a per-session reg file on the REFUSAL path only,
+    to corroborate a suspected listing blink before ruling a session dead — never to resolve delivery.)
+    Loopback, authorized with X-Romp-Token
     (the shared 0600 serve-token file — the kernel gates every request, loopback included). [] if the kernel
     is unreachable (rare — the manager supervises it); the bus then shows no local
     agents until it's back, rather than reaching past the abstraction to tmux.
 
     ROMP_SESSIONS_FILE is a test seam (like ROMP_*_BIN): a JSON file of the same rows, read instead of the
     live kernel so the bus is testable without one."""
+    return _kernel_sessions_checked(threads=threads)[0]
+
+
+def _kernel_sessions_checked(threads=False):
+    """(rows, answered) — answered False means the liveness source DID NOT ANSWER (the kernel is
+    unreachable, typically mid-restart), which is different information from an empty listing.
+    Callers that are about to make a CLAIM about liveness (resolve_recipient's refusal) must
+    check `answered` — an unanswered fetch collapsed to [] read exactly like universal deadness,
+    and the refusal it produced blamed a demonstrably live peer (sighting 2026-08-29: a send was
+    refused as not-live mid-restart; the retry 101 seconds later delivered)."""
     seam = os.environ.get("ROMP_SESSIONS_FILE")
     if seam:
         try:
             data = json.loads(Path(seam).read_text())
             if not isinstance(data, list):
-                return []
+                return [], True
             # the seam mirrors the route: thread rows ride only when asked (the user 2026-08-22)
-            return data if threads else [r for r in data if not (isinstance(r, dict) and r.get("thread"))]
+            return (data if threads else
+                    [r for r in data if not (isinstance(r, dict) and r.get("thread"))]), True
         except Exception:
-            return []
+            return [], True
     import urllib.request
     try:
         req = urllib.request.Request(KERNEL_BASE + "/sessions" + ("?threads=1" if threads else ""),
                                      headers={"X-Romp-Token": SERVE_TOKEN})
-        with urllib.request.urlopen(req, timeout=2) as r:
+        # 6s and _http's 15s are ONE BUDGET PAIR: a refusal-bound send makes two sequential
+        # fetches (the pool + the corroboration probe), and the honest refusal must reach the
+        # sender inside the client cap — 6+6=12 < 15. Raise them TOGETHER or not at all (the
+        # 2026-08-31 review reproduced the failure mode: a fetch cap raised past the client cap
+        # made the refusal die on a closed socket, blaming the bus). 6s is measured, not guessed:
+        # the live /sessions route on a loaded 30-session kernel sampled p50 0.6s / p90 3.5s /
+        # max 4.9s (2026-08-31) — the old 2s cap failed a fifth of fetches, and each failure
+        # started the refusal chain the blink specimens rode.
+        with urllib.request.urlopen(req, timeout=6) as r:
             data = json.loads(r.read().decode("utf-8"))
-        return data if isinstance(data, list) else []
+        return (data if isinstance(data, list) else []), True
     except Exception:
-        return []
+        return [], False
 
 
 def local_agents(threads=False):
@@ -608,8 +630,12 @@ def local_agents(threads=False):
     every other reader stay exactly as they were: self-identity, recipient resolution, and the agents
     listing pass True (a thread mails its parent under its OWN name and is addressable for replies);
     everything else never sees them."""
+    return _agent_rows(_kernel_sessions(threads=threads))
+
+
+def _agent_rows(sessions):
     res = []
-    for s in _kernel_sessions(threads=threads):
+    for s in sessions:
         sid = s.get("id")
         if not sid:
             continue
@@ -622,6 +648,15 @@ def local_agents(threads=False):
             row["parent"] = s.get("parent") or ""
         res.append(row)
     return res
+
+
+def local_agents_checked(threads=False):
+    """(local_agents rows, answered) — the honesty-arm variant for consumers whose REFUSALS ride the
+    listing (the inbound relay's bounces, the presence producer): 'answered' distinguishes a kernel
+    that said "no sessions" from one that couldn't answer at all (mid-restart), the same bit the
+    sending resolver has carried since the answered-but-absent round (2026-08-31)."""
+    rows, answered = _kernel_sessions_checked(threads=threads)
+    return _agent_rows(rows), answered
 
 
 def _kernel_post(path, body, timeout=2):
@@ -738,6 +773,50 @@ def _recip_id_for(to):
         return to
     return None
 
+def _durable_session(bare, by_id):
+    """Does `bare` name a session the DURABLE per-session registry knows as live-or-resumable?
+    The corroboration read behind the answered-but-absent refusal arm (2026-08-31): the kernel's
+    listing transiently omitted live sessions (a restart-settle blink), and the bus converted an
+    incomplete-but-200 listing into a hard "not live" for both address forms — one specimen
+    mis-routed a warning mail. A reg with alive=true is a session romp WILL list (running or
+    dormant-resumable), so its absence from one listing is a listing gap, never evidence of death.
+    tmux sessions have no reg — their liveness is tmux's own, and this read stays honestly silent
+    for them. Reads the registry file directly (same box, kernel-owned): the designed API is the
+    listing itself, which is exactly the thing being second-guessed here."""
+    root = STATE.parent
+    if by_id:
+        sids = [bare]
+    elif re.fullmatch(r"[0-9a-fA-F][0-9a-fA-F-]{7,35}", bare):
+        # the short-id form (the ` · <8-char>` every list_agents row shows) — the third address
+        # form, blink-protected like the other two: prefix-match the registry files themselves
+        try:
+            sids = [f.stem for f in (root / "sdk").glob("*.json") if f.stem.startswith(bare)]
+        except OSError:
+            sids = []
+        if len(sids) != 1:
+            sids = []          # ambiguity is the standing refusal's call, never a guess here
+    else:
+        sids = []
+    if not by_id and not sids:
+        try:
+            for f in NAMES_DIR.iterdir():
+                try:
+                    if f.read_text().split("\t")[0].strip() == bare:
+                        sids.append(f.name)
+                except OSError:
+                    continue
+        except OSError:
+            pass
+    for sid in sids:
+        try:
+            reg = json.loads((root / "sdk" / (sid + ".json")).read_text())
+        except (OSError, ValueError):
+            continue
+        if isinstance(reg, dict) and reg.get("alive"):
+            return True
+    return False
+
+
 def resolve_recipient(to, frm_id=""):
     """Resolve a recipient reference to exactly ONE destination, or explain why it can't.
 
@@ -767,9 +846,10 @@ def resolve_recipient(to, frm_id=""):
     # unique by construction, so the ambiguity arm below never fires for it; the self-send check
     # still does — mailing your own sid is the same loopback as mailing your own name.
     by_id = bool(re.fullmatch(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", bare))
+    pool = all_agents(threads=True)                                   # threads addressable for replies
     direct_all = ([] if (want_host and want_host != here)
-                  else [a for a in all_agents(threads=True)
-                        if (a.get("id") == bare if by_id else a["name"] == bare)])   # threads addressable for replies
+                  else [a for a in pool
+                        if (a.get("id") == bare if by_id else a["name"] == bare)])
     if not direct_all and not by_id and not want_host             and re.fullmatch(r"[0-9a-fA-F][0-9a-fA-F-]{7,35}", bare):
         # a SHORT id — the ` · <8-char>` form every list_agents row now carries (the user
         # 2026-08-24) — addresses by unambiguous id PREFIX, so the row is enough to act on. An
@@ -777,7 +857,7 @@ def resolve_recipient(to, frm_id=""):
         # a stray word can never catch a session by luck; a remote row's id ("host:uuid") matches
         # on its uuid part, the part the row shows. TWO prefix hits fall through to the standing
         # ambiguity refusal below, exactly like a duplicated name.
-        direct_all = [a for a in all_agents(threads=True)
+        direct_all = [a for a in pool
                       if str(a.get("id") or "").rsplit(":", 1)[-1].startswith(bare)]
 
     if frm_id and any(a["id"] == frm_id for a in direct_all):
@@ -818,7 +898,46 @@ def resolve_recipient(to, frm_id=""):
                          "postal isolation — its mailbox icon is toggled off), so it can't receive "
                          "mail right now. YOUR mailbox is fine; nothing was sent. It'll "
                          "be reachable once the user toggles ITS mailbox back on." % to}
-    # Addressing is LIVE-only: no dead-session resurrection, so anything left is a typo.
+    # Addressing is LIVE-only: no dead-session resurrection — but "not live" is a claim about the
+    # world, and the kernel is its authoritative source (fail loudly, never degrade silently, the
+    # user 2026-07-03). Before making the claim, ask whether the source ANSWERED: a mid-restart
+    # kernel yields an empty listing that reads exactly like universal deadness. One loopback GET,
+    # paid only on this refusal path — and even an ANSWERED listing is interrogated before the
+    # death ruling (2026-08-31: two verified specimens of a 200 listing omitting a LIVE session,
+    # by id and by name — a restart-settle blink; the refusal mis-routed a warning mail). The
+    # fresh fetch's own rows and the answered bit travel together from ONE call, so a kernel
+    # coming back between two fetches can't convert unreachable into a false death ruling; the
+    # durable per-session registry (_durable_session) corroborates what one listing missed.
+    if want_host and want_host != here:
+        # a host qualifier naming somebody ELSE took every local out of the running by DESIGN —
+        # the local listing and registry can say nothing about that host's sessions, and blink
+        # arms firing on a same-named LOCAL row turned a typo'd host into an endless retry-shortly
+        # (review find, 2026-08-31)
+        return {"kind": "error", "status": 404, "error": "no live romp session named '%s'" % to}
+    rows, answered = _kernel_sessions_checked(threads=True)
+    if not answered and not any(not a.get("remote") for a in pool):
+        # only an EMPTY local world raises the unreachable question — a pool with live locals in
+        # it proves the source was answering (and heartbeating remotes can't vouch for LOCALS)
+        return {"kind": "error", "status": 503,
+                "error": "can't tell whether '%s' is live right now: the liveness source (the romp "
+                         "kernel) didn't answer — likely mid-restart. Nothing was sent, and this is "
+                         "NOT a claim that '%s' is dead. Retry shortly." % (bare, bare)}
+    fresh = set()
+    for r in rows:
+        if isinstance(r, dict):
+            fresh.add(str(r.get("id") or ""))
+            fresh.add(str(r.get("name") or ""))
+    blinked = bare in fresh or _durable_session(bare, by_id)
+    if not blinked and not by_id and re.fullmatch(r"[0-9a-fA-F][0-9a-fA-F-]{7,35}", bare):
+        # the short-id form prefix-matches the fresh rows too, like the pool arm it mirrors
+        hits = {i for i in fresh if i.startswith(bare)}
+        blinked = len(hits) == 1
+    if blinked:
+        return {"kind": "error", "status": 503,
+                "error": "'%s' looks live (its durable registry entry stands) but the session "
+                         "listing came back without it — likely a restart-settle blink. Nothing "
+                         "was sent, and this is NOT a claim that '%s' is dead. Retry shortly."
+                         % (bare, bare)}
     return {"kind": "error", "status": 404, "error": "no live romp session named '%s'" % to}
 
 
@@ -832,6 +951,15 @@ def _recall(from_id, to, mid):
         return []
     if to:
         rid = _recip_id_for(to)
+        if not rid and MAILROOT.is_dir():
+            # Addressing is live-only, but RECALL is not addressing: the sender is unsending their
+            # own bytes, not raising the dead. Mail parked for a session that has since died sits
+            # right here in its new/ — a name that no longer resolves live falls back to the
+            # durable name map so parked mail stays recallable (sighting 2026-08-29: a handoff
+            # parked for a dead session could not be unsent by name; only the raw id worked).
+            hits = [b.name for b in MAILROOT.iterdir()
+                    if b.is_dir() and _name_for_id(b.name) == to]
+            rid = hits[0] if len(hits) == 1 else None    # two dead boxes, one name: refuse, stay scoped
         boxes = [rid] if rid else []
     elif MAILROOT.is_dir():
         boxes = [b.name for b in MAILROOT.iterdir() if b.is_dir()]
@@ -1348,7 +1476,14 @@ class Handler(BaseHTTPRequestHandler):
                 tnote = (" — report-back tracking does not cross hosts yet; sent as a plain handoff"
                          if tracked else "")
                 mid = "px-" + _unique()
-                relay_msg = {"mid": mid, "to": hit.get("name") or to, "frm": frm,
+                # `to` carries the display name (an old-code far side matches names only), and
+                # `toId` carries the resolved row's SID (review find 2026-09-01): parking the name
+                # ALONE discarded exactly what an id-addressed send chose the sid for — a rename
+                # during the park window bounced a rename-proof address as no-live, and two
+                # same-named far sessions could silently swap deliveries. A new far side matches
+                # toId exactly first; an old one ignores the extra key. Compatible both ways.
+                relay_msg = {"mid": mid, "to": hit.get("name") or to,
+                             "toId": str(hit.get("id") or ""), "frm": frm,
                              "frm_id": frm_id, "body": body, "kind": kind,
                              "t": int(time.time())}
                 if kind == "delegate":
@@ -1585,7 +1720,7 @@ def _http(method, path, payload=None):
     headers["X-Romp-Token"] = SERVE_TOKEN            # same-machine client: the 0600 file is the credential
     req = urllib.request.Request(BASE + path, data=data, method=method, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=5) as r:
+        with urllib.request.urlopen(req, timeout=15) as r:   # the fetch-budget pair's client half — see _kernel_sessions_checked
             return json.loads(r.read().decode() or "{}")
     except urllib.error.HTTPError as e:
         try:
@@ -2073,6 +2208,57 @@ def _bounce_apply(host, b):
                                   "to": msg.get("to") or "?", "host": host,
                                   "why": (b or {}).get("why") or "refused"})
 
+_LOCAL_PRESENCE_GOOD = [[], False]   # [rows, ever_answered] — the last ANSWERED local listing
+_PRESENCE_SERVE_WARNED = [False]     # transition-only logging, the _REG_SERVE_WARNED idiom
+_PRESENCE_GOOD_FILE = STATE / "local-presence-good.json"   # …and its DISK twin: a bus restart
+#   overlapping a kernel restart (the normal self-update path — both restart on code staleness)
+#   would otherwise boot with an empty cache and gossip the blink as authoritative emptiness
+#   (review find 2026-09-01); persisting rides the cache across bus restarts, like remote-sids.
+
+
+def _presence_good_load():
+    """Prime the in-memory last-answered cache from its disk twin, once, at first need."""
+    if _LOCAL_PRESENCE_GOOD[1]:
+        return
+    try:
+        rows = json.loads(_PRESENCE_GOOD_FILE.read_text())
+        if isinstance(rows, list):
+            _LOCAL_PRESENCE_GOOD[0], _LOCAL_PRESENCE_GOOD[1] = rows, True
+    except Exception:
+        pass                                         # no twin yet (fresh box) → nothing to prime
+
+
+def _local_presence():
+    """Local agent rows for an exchange payload, blink-honest: an UNANSWERED kernel listing (a
+    mid-restart blink) must never gossip as "nobody lives here" — the far boxes' PEER_STATE flaps
+    empty and their resolvers mint hard no-live refusals for sessions that never died (specimen
+    2026-08-31: three sends refused across a far restart while the target stayed live throughout).
+    Serve the last ANSWERED rows instead (the registry's serve-last-good idiom, 2026-08-31); an
+    ANSWERED-empty listing is the truth — it serves and caches as such. This protects every peer,
+    including ones running older code, because the honesty lands in the payload itself."""
+    rows, answered = local_agents_checked()
+    if answered:
+        _LOCAL_PRESENCE_GOOD[0], _LOCAL_PRESENCE_GOOD[1] = rows, True
+        try:
+            tmp = _PRESENCE_GOOD_FILE.with_suffix(".tmp")
+            tmp.write_text(json.dumps(rows))
+            os.replace(tmp, _PRESENCE_GOOD_FILE)     # the disk twin follows every answered read
+        except Exception:
+            pass
+        if _PRESENCE_SERVE_WARNED[0]:
+            _PRESENCE_SERVE_WARNED[0] = False
+            sys.stderr.write("postal: the local listing answers again — presence serves live rows\n")
+        return rows
+    _presence_good_load()                            # a fresh bus process primes from the disk twin
+    if _LOCAL_PRESENCE_GOOD[1]:
+        if not _PRESENCE_SERVE_WARNED[0]:
+            _PRESENCE_SERVE_WARNED[0] = True
+            sys.stderr.write("postal: the local listing didn't answer — presence serves the last "
+                             "answered rows until it does\n")
+        return list(_LOCAL_PRESENCE_GOOD[0])
+    return rows                                     # never answered ANYWHERE yet → claim nothing either way
+
+
 def fleet_presence(exclude_host):
     """Presence for an exchange payload: local agents + ONE hop of gossip from our other peers, each
     labeled `via` (plans/postal-peer-buses.md 3b) — so a spoke can address the far spoke through the
@@ -2081,7 +2267,7 @@ def fleet_presence(exclude_host):
     (`viaBus`): the receiver folds gossip about a box it ALREADY peers with directly, and the id is
     the identity that survives nickname drift — the same machine wears different ssh aliases on
     different hosts, so a name can't say "same box" (the user 2026-08-12; see _via_duplicate)."""
-    out = list(local_agents())
+    out = list(_local_presence())
     for h, st in PEER_STATE.items():
         if h == exclude_host:
             continue
@@ -2181,9 +2367,18 @@ def quarantine_decide(mid, action, text=None, feedback=None):
     if action == "approve":
         body = str(text) if (text is not None and str(text).strip()) else (rec.get("body") or "")
         to_id = rec.get("toId") or ""
-        live = {a["id"] for a in local_agents()}
+        # ONE checked snapshot (2026-09-01): this arm paid TWO kernel fetches — its own fetch-pair
+        # TOCTOU, and the pair alone (2×6s) could outlast the kernel's client cap on /quarantine/act
+        # (the 830 budget-pair discipline: the halves move together — see _bus_quarantine_act). And
+        # an approve clicked during a kernel restart read the blink as "no longer live": unanswered
+        # is not absence, so it refuses retryably instead (the held message stays put).
+        agents, answered = local_agents_checked()
+        if not answered:
+            return False, ("the liveness source (the romp kernel) didn't answer — likely "
+                           "mid-restart. The held message is untouched; retry the approve shortly.")
+        live = {a["id"] for a in agents}
         if to_id not in live:                         # session renamed/revived since it was held → re-match by name
-            match = [a for a in local_agents() if a["name"] == rec.get("to") and not _postal_off(a["id"])]
+            match = [a for a in agents if a["name"] == rec.get("to") and not _postal_off(a["id"])]
             if not match:
                 return False, "recipient '%s' is no longer a live local session" % (rec.get("to") or "?")
             to_id = match[0]["id"]
@@ -2219,7 +2414,24 @@ def _relay_in(host, m, token_proven=False):
     if peer_seen_check(mid):
         return "ack", None                           # duplicate → re-ack, deliver nothing
     to = m.get("to") or ""
-    match = [a for a in local_agents() if a["name"] == to and not _postal_off(a["id"])]
+    # ONE listing snapshot for every ruling below. The isolation bounce used to re-fetch the
+    # listing after the match filtered it — and a blink between the two fetches (agent absent,
+    # then healed) minted a FALSE isolation, final by norm, with no flag involved (specimen
+    # 2026-08-30: a delegate bounced "isolation" with no flag set on either kernel and the
+    # maildir delivering minutes either side). Same fetch-pair race the sending resolver's
+    # one-fetch fix killed (2026-08-31); `answered` feeds the death-ruling gate at the tail.
+    agents, listing_answered = local_agents_checked()
+    to_id = str(m.get("toId") or "")
+    if to_id and _ID_FORM_RE.fullmatch(to_id) is None:
+        to_id = ""            # a malformed wire toId degrades to name matching — it must NEVER reach
+        #                       the durable-registry read below (a crafted "../" would turn that stat
+        #                       into a path-traversal alive-oracle; skeptic find 2026-09-01)
+    # toId (a sender-resolved SID) matches EXACTLY when present — never a name fallback, which
+    # could hand the mail to a same-named sibling, the ambiguity the sid exists to bypass. Mail
+    # from an older sender has no toId and matches by name/id-shape as before.
+    named = ([a for a in agents if str(a.get("id") or "") == to_id] if to_id
+             else [a for a in agents if _addr_matches(a, to)])
+    match = [a for a in named if not _postal_off(a["id"])]
     if match:
         # Trust key = the true ORIGIN (the forwarding host stamps m["origin"]; else the direct peer).
         # Unknown host (a race before the kernel's notify lands) defaults to directed — never auto-inject.
@@ -2252,14 +2464,37 @@ def _relay_in(host, m, token_proven=False):
         # defensive backstop for the checkin-peer path where the mobile dials our /peer-exchange.
         peer_seen_add(mid)
         return "ack", None
-    if any(a["name"] == to for a in local_agents()):
+    if named:
+        # every live candidate's mailbox flag read TRUE in THIS snapshot — a genuine flag ruling,
+        # the only thing allowed to mint an isolation bounce (finality makes this arm zero-tolerance)
         return "bounce", {"mid": mid, "why": "recipient '%s' has its mailbox off (postal isolation)" % to}
     if not m.get("origin"):                          # one hop MAX: a message that already hopped never re-forwards
-        fh, hit = peer_route(to)
+        # route by the SID when the mail carries one, by name otherwise (skeptic finds
+        # 2026-09-01, both rounds): the hub's name-only forward final-bounced a sid-addressed
+        # message whose session renamed during the park window — gossip rows carry ids, and
+        # _addr_matches routes them. Pinned mail routes by sid OR NOT AT ALL: a name fallback
+        # here forwarded the same mid to a NAMESAKE's host when gossip blinked the sid out
+        # (per-host hold dedupe let both parks stand), and the wrong host's final bounce could
+        # beat the right host's delivery ack back to the sender.
+        fh, hit = (peer_route(to_id) if to_id else peer_route(to))
         if fh and fh != host and not (hit or {}).get("via"):
             if outbox_get(fh, mid) is None:          # a resend while we hold it forwards nothing twice
                 outbox_put(fh, dict(m, origin=host))
             return "hold", None
+    # death-ruling gate — the relay leg's honesty arms (2026-08-31; the sending resolver got these
+    # in the answered-but-absent round, this inbound leg never did): an UNANSWERED listing proves
+    # nothing (a mid-restart kernel yields exactly this), and an answered listing that omits a name
+    # whose durable registry entry stands is a blink, never a death. Both read as 'retry' — a
+    # verdict neither ack'd nor bounced crosses the wire as SILENCE, so the sender's outbox keeps
+    # the mail parked and re-relays it next exchange: the honest retry-shortly, where a bounce is
+    # final. The mid stays out of peer_seen, so the re-relay is processed in full.
+    # …and when the mail PINS a sid, the corroboration is by that id ALONE: the name arm read a
+    # same-named REPLACEMENT session's standing reg as evidence and held a genuinely-gone sid in
+    # never-healing silent retry — the sender parked forever, never told (skeptic repro
+    # 2026-09-01). A pinned sid whose reg is gone everywhere bounces FINAL and honestly: the
+    # session it named no longer exists, however many namesakes live on.
+    if not listing_answered or (_durable_session(to_id, True) if to_id else _durable_session(to, False)):
+        return "retry", None
     return "bounce", {"mid": mid, "why": "no live session named '%s' on %s" % (to, self_host())}
 
 def _ack_arrived(host, mid):
@@ -2366,7 +2601,8 @@ def peer_exchange_handle(data):
         if verdict == "ack":
             acks.append(m.get("mid"))
         elif verdict == "bounce" and bounce:
-            bounces.append(bounce)                   # 'hold': forwarded — its ack comes back later
+            bounces.append(bounce)                   # 'hold': forwarded — its ack comes back later;
+        #                                              'retry': silence on purpose — the sender re-relays
 
     def _drain_backflow():                           # acks/bounces relayed BACK through us for this host
         p = _pending(host)
@@ -2438,7 +2674,28 @@ def peer_exchange_apply(host, req_sent, resp):
             if verdict == "ack":
                 p["acks"].append(m.get("mid"))
             elif verdict == "bounce" and bounce:
-                p["bounces"].append(bounce)          # 'hold': forwarded — its ack comes back later
+                p["bounces"].append(bounce)          # 'hold': forwarded — its ack comes back later;
+            #                                          'retry': silence on purpose — the sender re-relays
+
+_ID_FORM_RE = re.compile(r"[0-9a-fA-F][0-9a-fA-F-]{7,35}")   # uuid / short-id address shapes
+
+
+def _addr_matches(a, to):
+    """Does agent row `a` answer to address `to` — by name, by full session id, or by the short-id
+    prefix form every list_agents row prints (`· <8-char>`)? Review find 2026-09-01: presence rows
+    have always CARRIED ids, but the route matched names only, so a uuid send to a live far-host
+    session had no route at all — it fell through to the refusal tail and read as deadness (and a
+    first-cut mirror arm here turned that into a never-healing retry; routing is the honest cure).
+    Prefix collisions surface as multiple candidates: peer_route's standing ambiguity machinery
+    refuses multi-hits; _relay_in prefers the exact toId a new-code sender parks (see the relay
+    message), so its name matching is the old-sender compatibility path only."""
+    if a.get("name") == to:
+        return True
+    sid = str(a.get("id") or "")
+    if not sid:
+        return False
+    return sid == to or (_ID_FORM_RE.fullmatch(to) is not None and sid.startswith(to))
+
 
 def peer_route(to):
     """Where a non-local name lives: (host, agent) for exactly ONE peer match; (None, candidates) on
@@ -2457,7 +2714,7 @@ def peer_route(to):
         if want_host and host != want_host:
             continue
         for a in st.get("presence") or []:
-            if a.get("name") != to or _via_duplicate(a, direct_bus):
+            if not _addr_matches(a, to) or _via_duplicate(a, direct_bus):
                 continue
             sid = a.get("id") or ""
             if sid and sid in seen_ids:                # one session, two gossip paths → one candidate;
@@ -2794,6 +3051,11 @@ def _mcp_call(name, args):
     if name == "set_working":
         if not mid:
             return "Not inside a romp session.", True
+        if "text" not in args or args.get("text") is None:
+            # a MISSING param is never a clear command (fold-in 2026-08-31: a malformed call
+            # silently wiped the published note); the documented clear stays text=''
+            return ("set_working needs its `text` argument — nothing was changed. "
+                    "Pass text='' if you mean to clear your published note."), True
         text = args.get("text", "")
         _publish_working(mid, text)        # backend-agnostic kernel store (POST /working), not the @romp-working var
         return ("Cleared your 'working on' note." if not text.strip()

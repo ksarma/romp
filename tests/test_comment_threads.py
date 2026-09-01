@@ -831,5 +831,179 @@ class ExchangeLatchReplacedThePushCount(unittest.TestCase):
         self.assertIn('"msgs": msgs, "events": events', src)
 
 
+# ── the /fork-comment + /fork-promote route brains ───────────────────────────────────────────────
+# Parallel review dispatch (the user 2026-08-31): an external local tool (the Obsidian track-changes
+# plugin) POSTs /fork-comment to open a transcript-comment-STYLE thread on a session — TIP-anchored
+# (no highlighted record exists on that door) with the caller's own text as the opening message,
+# VERBATIM — and /fork-promote to break a thread out by forkId alone. The brains are factored from
+# the routes (_compact_request precedent), so these run without HTTP.
+
+class ForkCommentRoutes(CommentBase):
+    def setUp(self):
+        super().setUp()
+        self.be = FakeBackend()
+        self._saved_backend_for = km.Sessions.backend_for
+        self._saved_live = km.Sessions.live
+        self._saved_ready = km._sdk_ready
+        self._saved_sessions = km._sessions
+        self._saved_push_now = km._push_session_now
+        km.Sessions.backend_for = staticmethod(lambda sid: self.be)
+        km.Sessions.live = staticmethod(lambda: {})   # hermetic: never consult the box's real tmux
+        km._sdk_ready = lambda: True
+        # km.NAMES is bound at import (module-scope constant) — _rebind_state moves only jd's copy,
+        # so _name_of would read the import-time root and miss the per-test registry entry
+        self._saved_names = km.NAMES
+        km.NAMES = jd.NAMES
+        p = self._write(PARENT, self._parent_records())
+        (jd.NAMES / PARENT).write_text("parent\t%s" % self.cdir)
+        km._sessions = lambda now, window=None, forks=True: [
+            {"sid": PARENT, "name": "parent", "path": str(p), "mtime": self.now}]
+        km._push_session_now = lambda sid: None
+
+    def tearDown(self):
+        km.Sessions.backend_for = self._saved_backend_for
+        km.Sessions.live = self._saved_live
+        km.NAMES = self._saved_names
+        km._sdk_ready = self._saved_ready
+        km._sessions = self._saved_sessions
+        km._push_session_now = self._saved_push_now
+        for f in ("comment-model", "comment-effort", "comment-fast"):
+            try:
+                (km.jd.STATE / f).unlink()
+            except OSError:
+                pass
+        km.jd._state_cache.clear()
+        super().tearDown()
+
+    OPENER = ("Please review the tracked edits in this note and reply in the review thread.\n\n"
+              "Use the thread id t-123 with every reply.")
+
+    def test_fork_comment_creates_a_tip_thread_with_the_text_verbatim(self):
+        res = km._fork_comment_request({"id": PARENT, "text": self.OPENER,
+                                        "meta": {"thread": "t-123", "note": "notes/demo.md"}})
+        self.assertTrue(res.get("ok"), res)
+        tid = res["forkId"]
+        self.assertEqual([c[0] for c in self.be.calls], ["fork", "connect", "send"])
+        self.assertEqual(self.be.calls[0][3], "", "TIP fork — no highlighted record on this door")
+        self.assertEqual(self.be.calls[0][5], PARENT, "born as a threadOf fork, never a board session")
+        self.assertEqual(self.be.sent[0][1], self.OPENER,
+                         "the caller authored the whole prompt — sent verbatim, never re-framed")
+        self.assertFalse(self.be.sent[0][1].startswith(km._COMMENT_FRAME_HEAD))
+        row = km._comment_thread(PARENT, tid)
+        self.assertEqual(row["status"], "open")
+        self.assertEqual(row["cutUuid"], "")
+        self.assertEqual(row["anchorUuid"], "")
+        self.assertEqual(row["meta"], {"thread": "t-123", "note": "notes/demo.md"})
+        self.assertEqual(row["exact"], "notes/demo.md",
+                         "the popover's about-line names the note under review")
+        self.assertEqual(row["name"], "parent-comment-1", "the standard autoname idiom")
+
+    def test_fork_comment_thread_reaches_the_popover_frame(self):
+        res = km._fork_comment_request({"id": PARENT, "text": self.OPENER, "meta": {"thread": "t-1"}})
+        fr = km._comments_frame(PARENT)
+        self.assertEqual([t["tid"] for t in fr["threads"]], [res["forkId"]],
+                         "a dispatched review thread is a normal popover thread")
+
+    def test_fork_comment_resolves_a_live_session_name(self):
+        km.Sessions.live = staticmethod(lambda: {PARENT: {}})
+        res = km._fork_comment_request({"name": "parent", "text": self.OPENER})
+        self.assertTrue(res.get("ok"), res)
+
+    def test_fork_comment_applies_the_default_comment_settings(self):
+        km.jd.STATE.mkdir(parents=True, exist_ok=True)
+        (km.jd.STATE / "comment-model").write_text("haiku")
+        km.jd._state_cache.clear()
+        km._fork_comment_request({"id": PARENT, "text": self.OPENER})
+        self.assertEqual(self.be.forked_meta[0], "haiku",
+                         "the gear trio governs these forks exactly like dialog-created threads")
+
+    def test_fork_comment_refusals_are_honest(self):
+        self.assertEqual(km._fork_comment_request(None)["_status"], 400)
+        self.assertEqual(km._fork_comment_request({"id": PARENT})["_status"], 400)
+        self.assertEqual(km._fork_comment_request({"id": PARENT, "text": "  "})["_status"], 400)
+        res = km._fork_comment_request({"name": "no-such-session", "text": self.OPENER})
+        self.assertEqual(res["_status"], 404)
+        self.assertIn("no session named", res["error"])
+        km.Sessions.backend_for = staticmethod(lambda sid: object())   # tmux: no fork machinery
+        res = km._fork_comment_request({"id": PARENT, "text": self.OPENER})
+        self.assertNotIn("_status", res)
+        self.assertIn("tmux", res["error"])
+
+    def test_fork_comment_holds_the_postal_isolation_gate(self):
+        saved_shaped, saved_iso = km._postal_shaped, km._postal_isolated
+        km._postal_shaped, km._postal_isolated = (lambda t: True), (lambda s: True)
+        try:
+            res = km._fork_comment_request({"id": PARENT, "text": self.OPENER})
+        finally:
+            km._postal_shaped, km._postal_isolated = saved_shaped, saved_iso
+        self.assertFalse(res.get("ok"))
+        self.assertIn("isolation", res["error"])
+        self.assertEqual(self.be.calls, [], "refused before any fork")
+
+    def test_fork_comment_forwards_a_remote_target_and_passes_the_forkId_through(self):
+        saved_host, saved_fwd = km._host_for_sid, km._remote_forward
+        sent = []
+        km._host_for_sid = lambda sid: {"host": "TESTHOST", "local_port": 1, "token": ""}
+        km._remote_forward = lambda r, path, body: sent.append((path, body)) or {"ok": True, "forkId": "far-tid"}
+        try:
+            res = km._fork_comment_request({"id": PARENT, "text": self.OPENER, "meta": {"note": "n.md"}})
+            self.assertEqual(res, {"ok": True, "forkId": "far-tid"})
+            self.assertEqual(sent, [("/fork-comment", {"id": PARENT, "text": self.OPENER,
+                                                       "meta": {"note": "n.md"}})])
+            km._remote_forward = lambda r, path, body: None   # the tunnel didn't answer — say so
+            res = km._fork_comment_request({"id": PARENT, "text": self.OPENER})
+            self.assertFalse(res.get("ok"))
+            self.assertIn("TESTHOST", res["error"])
+        finally:
+            km._host_for_sid, km._remote_forward = saved_host, saved_fwd
+        self.assertEqual(self.be.calls, [], "a remote target never forks locally")
+
+    def _promotable(self, tid):
+        t = self.now - 200
+        self._write(tid, [uline(t, "opener", "cu1"), aline(t + 10, "reply", "ca1", parent="cu1")])
+        (jd.SDKDIR / (tid + ".json")).write_text(json.dumps(
+            {"sid": tid, "name": "thread-x", "cwd": self.cdir,
+             "lastSid": tid, "alive": True, "threadOf": PARENT}))
+
+    def test_fork_promote_materializes_under_the_threads_own_name(self):
+        tid = km._fork_comment_request({"id": PARENT, "text": self.OPENER})["forkId"]
+        self._promotable(tid)
+        res = km._fork_promote_request({"forkId": tid})
+        self.assertEqual(res, {"ok": True, "name": "parent-comment-1"})
+        self.assertIn(("promote", tid, "parent-comment-1"), self.be.calls)
+        self.assertEqual(km._comment_thread(PARENT, tid)["status"], "promoted")
+        again = km._fork_promote_request({"forkId": tid})
+        self.assertEqual(again, {"ok": True, "name": "parent-comment-1"},
+                         "already promoted = idempotent success, never a refusal")
+
+    def test_fork_promote_refusals_ride_non_2xx(self):
+        # the shipped caller reads ANY 2xx JSON as success, so every refusal must carry a status
+        self.assertEqual(km._fork_promote_request(None)["_status"], 400)
+        self.assertEqual(km._fork_promote_request({})["_status"], 400)
+        self.assertEqual(km._fork_promote_request({"forkId": "not-a-thread"})["_status"], 404)
+        tid = km._fork_comment_request({"id": PARENT, "text": self.OPENER})["forkId"]
+        res = km._fork_promote_request({"forkId": tid})   # no transcript yet → promote refuses
+        self.assertEqual(res["_status"], 409)
+        self.assertFalse(res.get("ok"))
+
+    def test_fork_promote_scans_attached_remotes_for_an_unknown_forkId(self):
+        saved_remotes, saved_fwd = km._remotes, km._remote_forward
+        asked = []
+        km._remotes = {"TESTHOST": {"host": "TESTHOST", "local_port": 1, "token": ""}}
+        km._remote_forward = lambda r, path, body: asked.append((r["host"], path, body)) or {"ok": True, "name": "far-name"}
+        try:
+            res = km._fork_promote_request({"forkId": "far-tid"})
+        finally:
+            km._remotes, km._remote_forward = saved_remotes, saved_fwd
+        self.assertEqual(res, {"ok": True, "name": "far-name"})
+        self.assertEqual(asked, [("TESTHOST", "/fork-promote", {"forkId": "far-tid"})])
+
+    def test_routes_are_wired_and_pop_the_status(self):
+        src = open(os.path.join(os.path.dirname(HERE), "kernel", "kernel.py")).read()
+        self.assertIn('if u.path in ("/fork-comment", "/fork-promote"):', src)
+        self.assertIn('res = (_fork_comment_request(b) if u.path == "/fork-comment"', src)
+        self.assertIn('return self._send(res.pop("_status", 200), json.dumps(res), "application/json")', src)
+
+
 if __name__ == "__main__":
     unittest.main()
