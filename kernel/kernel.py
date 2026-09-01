@@ -536,6 +536,7 @@ def _version_info():
             # fold rate here instead of trusting an offline replay number (T210).
             "parse": dict(em._ASM_STATS),
             "autoNudge": _auto_nudge_on(),   # server-side toggle state → the gear checkbox reflects the kernel
+            "compactSuggest": _compact_suggest_on(),   # T208+: its gear checkbox rides the same read
             "conserveMemory": _conserve_on(),   # the T148 toggle: close idle tab-less claude processes
             "login": _login_state(),         # the in-dashboard login flow's state/url/err (T157) — never a secret
             "acctLabel": _claude_account_label(),   # which login this box holds ("" = none) — the gear's Billing row
@@ -4273,7 +4274,18 @@ def _compact_suggest_tick(sid, tm, now):
         #                                                counter has fallen back below was reset by
         #                                                the session's own compact//clear — that
         #                                                episode is over (the amendment's middle path)
-        due = [t for t in COMPACT_SUGGEST_TOKENS if tokens >= t and t not in live]
+        _cfg = d.get("compactSuggestTokens")
+        thresholds = (tuple(sorted(int(x) for x in _cfg))
+                      if isinstance(_cfg, list) and _cfg
+                      and all(isinstance(x, (int, float)) and x > 0 for x in _cfg)
+                      else COMPACT_SUGGEST_TOKENS)    # "how to do it exactly" is config too (the
+        #                                               user 2026-09-01): optional per-install keys
+        #                                               beside the toggle, the shipped constants as
+        #                                               the defaults; junk shapes fall to defaults
+        _ci = d.get("compactSuggestIdleS")
+        idle_s = (int(_ci) if isinstance(_ci, (int, float)) and _ci > 0
+                  else COMPACT_SUGGEST_IDLE_S)
+        due = [t for t in thresholds if tokens >= t and t not in live]
         if not due:
             if live != latched:                        # nothing to fire, but persist the pruning so
                 cs = dict(d.get("compactSuggested") or {})   # a restart can't resurrect a spent latch
@@ -4295,7 +4307,7 @@ def _compact_suggest_tick(sid, tm, now):
     if (tm or {}).get("state", "") in _PROGRESSING_STATES:
         return False                                   # mid-turn — not idle, and never interrupt
     _st = _settle_event_key(sid)
-    if not _st or now - _st < COMPACT_SUGGEST_IDLE_S:
+    if not _st or now - _st < idle_s:
         return False                                   # not settled long enough — the crossing stays
     #                                                    armed; a later tick re-checks the same gate
     try:
