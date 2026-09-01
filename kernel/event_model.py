@@ -439,14 +439,17 @@ def _read_jsonl(path):
 # whole-parse cache contract. The cached list itself is never extended in place — a grown file stores a
 # NEW list — so a concurrent reader holding the old list is never surprised mid-iteration.
 _JSONL_CACHE = {}                 # path -> (mtime, size, offset, tail_bytes, records); dict order = LRU, hits reinsert
-_JSONL_CACHE_MAX = 256            # bounds MEMORY only — past the cap, evict the least-recently-USED entry, one per
+_JSONL_CACHE_MAX = 384            # bounds MEMORY only — past the cap, evict the least-recently-USED entry, one per
                                   # insert, never clear(). The old clear-at-cap was sized to the session count, but
                                   # the working set is FILES, not sessions (every subagent writes its own transcript):
                                   # once more distinct files than slots passed through one push cycle, the clear
                                   # nuked the HOT entries too and every push re-parsed every active transcript from
                                   # byte zero — the exact stall this cache exists to prevent, back as a permanent
                                   # background burn (recurred 2026-08-15, kernel pinned at ~30-60% CPU; the survival
-                                  # guarantee is pinned by tests/test_kernel_jsonl_cache.py).
+                                  # guarantee is pinned by tests/test_kernel_jsonl_cache.py). 256 -> 384 when the
+                                  # states/postal logs became tenants too (2026-09-01): one states file per session
+                                  # plus messages.jsonl now share the slots, and an evicted LEAF slot also demotes
+                                  # the assembly cache's identity gate to a full parse.
 _JSONL_TAIL_GUARD = 64            # bytes of pre-offset content re-verified before an incremental read
 _JSONL_CACHE_LOCK = threading.Lock()   # the cache has cross-thread callers (the judge tiers' worker pools,
                                        # the pusher, the warm threads) and HITS mutate (LRU reinsert): the
@@ -629,6 +632,20 @@ def author_of(blocks, prompt_source, postal_index, sdk_human=False):
     return None
 
 
+def _author_final(author, text):
+    """True when a postal author can never change again: the TRAILING marker resolved. author_of
+    scans markers tail-first for the first index hit, so a resolution landing later than the
+    CHOSEN marker re-decides the author — a record whose quoted/forwarded earlier marker resolved
+    while its trailing real one hadn't yet gets a plausible-but-PROVISIONAL author, not just a
+    peer-None one (the postal log is append-only and first-wins per id, so resolutions only
+    arrive, never change). The assembly heal re-emits any non-final author each visit until the
+    tail settles; non-postal authors are trivially final."""
+    if not isinstance(author, dict):
+        return True
+    pairs = postal_pairs(text)
+    return bool(author.get("peer") is not None and pairs and author.get("mid") == pairs[-1][0])
+
+
 def parse_teammate_message(text):
     """Split a native Claude Code teammate-message delivery (see TEAMMATE_MSG_RE) into per-sender blocks
     for the chat to render its own way: a list of {"id", "summary", "body"}. `color` is DELIBERATELY
@@ -646,6 +663,32 @@ def parse_teammate_message(text):
 
 
 # ═════════════════════════ FILE ADAPTER: graph recovery, quarantined ═════════════════════════
+def _emit_state():
+    """The emit layer's cross-record carry — everything the per-record emit reads that EARLIER
+    records established. A full parse starts one empty and folds every kept record through it;
+    the assembly cache (_assemble) persists it per session and folds only appended records.
+    Field-for-field these are the old atoms() locals, hoisted so both paths share one
+    implementation and cannot drift."""
+    return {"replay": set(),           # uuids classified post-compaction replays (never atoms)
+            "seen_exact": set(),       # (second, text) of every kept user text — verbatim re-writes
+            "seen_text": set(),        # texts ever seen — the restore-burst dedup's memory
+            "compacted": False, "restoring": False, "last_boundary": None,
+            "summaries": {},           # boundary uuid -> its compaction summary text
+            "skill_ids": set(),        # Skill tool_use ids among kept assistants
+            "cmd_names": {},           # promptId -> {command names} (slash-invocation twins)
+            "absorbed_keys": set(),    # _absorbed's (ts, collapsed-text) dedup memory
+            "postal_miss_rec": set(),  # kept records whose postal marker missed the index
+            "postal_miss_att": set(),  # absorbed (ts, collapsed-text) keys likewise
+            "max_ppt": 0.0}            # chronological watermark of folded pre-pass-relevant records
+
+
+def _chrono(ad, uuids):
+    """`uuids` in the emit layer's canonical order — ascending (timestamp, read order), exactly
+    the key the replay pre-pass has always walked in."""
+    return sorted(uuids, key=lambda x: (parse_z((ad.by_uuid.get(x) or {}).get("timestamp")) or 0,
+                                        ad.seq_of.get(x, 0)))
+
+
 class FileAdapter:
     """Rebuilds the active linear message sequence from the append-only on-disk graph.
 
@@ -665,46 +708,93 @@ class FileAdapter:
                                  #   witnesses: {uuid, ts (the ENQUEUE timestamp the record carries),
                                  #   text (full prompt, markers intact), seq}
         self.leaf_uuid = None
+        self._seq = 0            # global read-order counter — continued by assembly folds
+        # Graph-level facts the assembly fast-path gates read, collected at INGEST so they cover
+        # the whole graph (kept or not): every user record's promptId (a delta record repeating
+        # one forces a full parse — command twins/episodes key on it), every assistant Skill
+        # tool_use id (a delta invocation an old payload record already references forces full),
+        # and every parent target that dangled at ingest time (a delta record RESURRECTING one
+        # would rebind repaired stitches, so it forces full).
+        self.prompt_ids = set()
+        self.boundary_pids = set()
+        self.skill_use_ids = set()
+        self.src_tool_links = set()
+        self.dangling = set()
+        self._src = {}           # path -> the exact records list ingested (the jsonl cache's list
+        #                          object; identity anchors the fold's pure-append gate)
         leaf_stem = Path(leaf_path).stem
-        seq = 0
         # read the leaf last so its trailing uuid wins as the walk anchor even if a
         # sibling file happens to sort after it
         files = [f for f in candidate_files if Path(f).stem != leaf_stem] + [Path(leaf_path)]
         for fp in files:
             fsid = Path(fp).stem
-            is_leaf = (fsid == leaf_stem)
-            for r in _read_jsonl_incremental(fp):   # append-incremental: a streaming transcript costs only its delta
-                seq += 1
-                t = r.get("type")
-                u = r.get("uuid")
-                if u:
-                    self.by_uuid[u] = r
-                    self.fsid_of[u] = fsid
-                    self.seq_of[u] = seq
-                    # parentUuid normally; compact_boundary carries parentUuid:null +
-                    # logicalParentUuid:<pre-compaction leaf> — follow that so the active
-                    # path survives compaction instead of orphaning every pre-compaction turn.
-                    # A SELF-referential link (corrupt record) becomes a root: kept as-is it
-                    # 1-cycles every walk that starts or passes there.
-                    p = r.get("parentUuid") or r.get("logicalParentUuid")
-                    self.parent_of[u] = None if p == u else p
-                    if is_leaf:
-                        self.leaf_uuid = u
-                if t == "attachment":
-                    a = r.get("attachment") or {}
-                    if a.get("type") == "queued_command" and a.get("prompt"):
-                        # the prompt can be a plain string OR a content-block LIST (the SDK injection
-                        # path) — extract the TEXT either way; str() of a list keyed the Python repr,
-                        # which no enqueue content ever matches (the user 2026-07-06)
-                        ptext = a["prompt"] if isinstance(a["prompt"], str) else _text_of(a["prompt"])
-                        self.qatts.append({"uuid": u, "ts": parse_z(r.get("timestamp")),
-                                           "text": ptext, "seq": seq})
+            recs = _read_jsonl_incremental(fp)
+            self._src[str(fp)] = recs
+            self._ingest(recs, fsid, fsid == leaf_stem)
+        # PRISTINE graph state — parent links / leaf exactly as the records say, BEFORE the three
+        # repair passes mutate them. The assembly fold re-derives the passes from this each time
+        # (extend pristine with the delta, re-run the passes on a working copy), so folded graph
+        # state is literally the fresh-__init__ computation — never a latched earlier repair.
+        self._pristine_parent = dict(self.parent_of)
+        self._pristine_leaf = self.leaf_uuid
         # A PENDING bare rollback (chat delete): the kernel passes the cut point as leaf_override so
         # the walk starts there and the not-yet-abandoned tail drops exactly as it will once the CLI's
         # --resume-session-at branch takes. Applied only when the uuid is really in this graph — a
         # stale override (wrong file, raced clear) falls back to the true file leaf, never an empty parse.
         if leaf_override and leaf_override in self.by_uuid:
             self.leaf_uuid = leaf_override
+        self._run_graph_passes()
+
+    def _ingest(self, records, fsid, is_leaf):
+        """Index `records` into the graph maps — the ONE ingestion path the fresh build and the
+        assembly fold share, so a folded index is field-identical to a freshly built one."""
+        seq = self._seq
+        for r in records:
+            seq += 1
+            t = r.get("type")
+            u = r.get("uuid")
+            if u:
+                self.by_uuid[u] = r
+                self.fsid_of[u] = fsid
+                self.seq_of[u] = seq
+                # parentUuid normally; compact_boundary carries parentUuid:null +
+                # logicalParentUuid:<pre-compaction leaf> — follow that so the active
+                # path survives compaction instead of orphaning every pre-compaction turn.
+                # A SELF-referential link (corrupt record) becomes a root: kept as-is it
+                # 1-cycles every walk that starts or passes there.
+                p = r.get("parentUuid") or r.get("logicalParentUuid")
+                self.parent_of[u] = None if p == u else p
+                if p and p != u and p not in self.by_uuid:
+                    self.dangling.add(p)   # may resolve later in this read — swept below
+                if is_leaf:
+                    self.leaf_uuid = u
+                if t == "user":
+                    if r.get("promptId"):
+                        self.prompt_ids.add(r["promptId"])
+                        if r.get("isCompactSummary") is True:
+                            # a compaction summary's promptId is the designed link the boundary
+                            # ADOPTION keys on — episode records wearing it can re-seat a card
+                            self.boundary_pids.add(r["promptId"])
+                    if r.get("sourceToolUseID"):
+                        self.src_tool_links.add(r["sourceToolUseID"])
+                elif t == "assistant":
+                    for b in _content(r.get("message")) or []:
+                        if isinstance(b, dict) and b.get("type") == "tool_use" and \
+                                b.get("name") == "Skill" and b.get("id"):
+                            self.skill_use_ids.add(b["id"])
+            if t == "attachment":
+                a = r.get("attachment") or {}
+                if a.get("type") == "queued_command" and a.get("prompt"):
+                    # the prompt can be a plain string OR a content-block LIST (the SDK injection
+                    # path) — extract the TEXT either way; str() of a list keyed the Python repr,
+                    # which no enqueue content ever matches (the user 2026-07-06)
+                    ptext = a["prompt"] if isinstance(a["prompt"], str) else _text_of(a["prompt"])
+                    self.qatts.append({"uuid": u, "ts": parse_z(r.get("timestamp")),
+                                       "text": ptext, "seq": seq})
+        self._seq = seq
+        self.dangling -= self.by_uuid.keys()   # a target that landed later in the read is not dangling
+
+    def _run_graph_passes(self):
         self._adopted = {}       # boundary uuid -> its episode's splice record (the /compact stdout),
         #                          filled by _adopt_detached_compactions. Downstream consumers key on
         #                          membership: an ADOPTED boundary is a LIVE manual compact, so the
@@ -1087,7 +1177,7 @@ class FileAdapter:
             atom["rompAuto"] = True
         return atom
 
-    def _absorbed(self, kept, rompuuid, postal_index):
+    def _absorbed(self, qatts, kept, st, rompuuid, postal_index):
         """Mid-turn prompts spliced into a running turn. The witness is the queued_command
         ATTACHMENT record: the CLI writes one per splice, uuid-bearing and parent-chained,
         carrying the FULL prompt text and stamped with the ENQUEUE timestamp — and writes
@@ -1109,8 +1199,9 @@ class FileAdapter:
         atoms become fresh plannable segments and dormant sessions replay them as new goals
         (2026-07-10). Bump jd.PLACEMENTS_V in the same commit; tests/test_placements_canary.py
         pins both dimensions."""
-        atoms, emitted = [], set()
-        for q in self.qatts:
+        atoms, emitted = [], st["absorbed_keys"]   # dedup memory rides the carry: one set whether
+        #                                            the qatts arrive in one full parse or many folds
+        for q in qatts:
             if q["ts"] is None:
                 continue   # unparseable timestamp — nowhere truthful to place it
             key = (q["ts"], " ".join(q["text"].split()))
@@ -1121,27 +1212,43 @@ class FileAdapter:
             if q["uuid"] is not None and q["uuid"] not in kept:
                 continue   # this copy sits on a rewound branch — a kept twin may still emit
             emitted.add(key)
-            atoms.append(self._absorbed_atom(q["text"], q["ts"], q["seq"], q["uuid"],
-                                             rompuuid, postal_index))
+            a = self._absorbed_atom(q["text"], q["ts"], q["seq"], q["uuid"],
+                                    rompuuid, postal_index)
+            if not _author_final(a.get("author"), q["text"]):
+                st["postal_miss_att"].add(key)   # trailing marker unresolved — the heal re-checks
+            atoms.append(a)
         return atoms
 
     def atoms(self, rompuuid, postal_index):
         """Every emitted atom on the active path (plus broken-chain survivors), plus
-        synthesized absorbed atoms. (Idle atoms are added separately from the state log.)"""
+        synthesized absorbed atoms. (Idle atoms are added separately from the state log.)
+        One fold from an EMPTY carry over every kept record in chronological order — the
+        assembly cache (_assemble) folds later appends through the same _prepass/_emit_fold
+        code with the carried state, so full parse and fold are one implementation."""
         active = self.active_path()
         kept = self.kept_uuids(active)
+        st = _emit_state()
+        order = _chrono(self, kept)
+        self._prepass(order, st)
+        out = list(self._emit_fold(order, st, rompuuid, postal_index))
+        out += self._absorbed(self.qatts, kept, st, rompuuid, postal_index)
+        return out
+
+    def _prepass(self, order, st):
+        """Fold the cross-record facts of `order` (kept records, ascending (t, seq)) into the
+        carry `st`: replay classification, boundary summaries, Skill payload ids, command twins,
+        and the chronological watermark. The emit loop reads these and never writes them. The
+        assembly fold calls this with only the appended kept records — valid because its gates
+        guarantee the delta sorts at-or-after everything already folded."""
+        replay_uuids, _seen_text, _compacted = st["replay"], st["seen_text"], st["compacted"]
+        _seen_exact, _restoring = st["seen_exact"], st["restoring"]
+        summaries, last_boundary = st["summaries"], st["last_boundary"]
         # Post-compaction REPLAY dedup (the user 2026-06-22): a compact_boundary restores the recent message
         # tail VERBATIM with NEW uuids/timestamps. A replayed user prompt is the same text as an EARLIER one,
         # after a boundary — NOT new work; left in, it gets a fresh seg-id and the judges re-mint an
-        # already-done (even CLEARED) goal. Identify replays in CHRONOLOGICAL order (the main emit loop below
-        # is leaf-first) so we keep the ORIGINAL and drop the later replay — then placements dedup still holds.
-        replay_uuids, _seen_text, _compacted = set(), set(), False
-        _seen_exact, _restoring = set(), False   # (second, text) ever seen; inside a restore burst?
-        summaries, last_boundary = {}, None   # boundary_uuid -> the compaction SUMMARY text (the isCompactSummary
-        #   user record that FOLLOWS each compact_boundary — Claude's "what it kept"; captured here to attach to
-        #   the boundary atom, so the chat can show it in a collapsible box, the user 2026-07-07).
-        for u in sorted(kept, key=lambda x: (parse_z((self.by_uuid.get(x) or {}).get("timestamp")) or 0,
-                                             self.seq_of.get(x, 0))):
+        # already-done (even CLEARED) goal. Identify replays in CHRONOLOGICAL order (the emit loop is
+        # order-agnostic) so we keep the ORIGINAL and drop the later replay — then placements dedup still holds.
+        for u in order:
             r = self.by_uuid.get(u)
             if not r:
                 continue
@@ -1191,12 +1298,26 @@ class FileAdapter:
                     else:
                         _seen_exact.add(key)
                         _seen_text.add(txt)
+        st["compacted"], st["restoring"], st["last_boundary"] = _compacted, _restoring, last_boundary
+        # The chronological watermark the assembly fold's monotonic gate compares appended records
+        # against: a delta that sorts at-or-after everything already folded is the invariant that
+        # makes carrying the sets above across folds valid at all. `order` is ascending by
+        # (parse_z or 0, seq), so the LAST pre-pass-relevant record carries the max — one lookup,
+        # not a second parse_z sweep of the whole session (that re-walk measured 33ms at 30k).
+        for u in reversed(order):
+            r = self.by_uuid.get(u) or {}
+            if r.get("type") in ("user", "assistant") or (
+                    r.get("type") == "system" and r.get("subtype") == "compact_boundary"):
+                ts = parse_z(r.get("timestamp"))
+                if ts and ts > st["max_ppt"]:
+                    st["max_ppt"] = ts
+                break
         # Skill tool_use block ids: the anchor for the NEW skill-instructions shape (2026-07-10). Newer
         # CLIs inject the payload as an isMeta user record whose sourceToolUseID names the invoking Skill
         # tool_use — the text no longer starts with the "Base directory for this skill:" preamble
         # SKILL_CONTENT_RE keys on, so the designed link is the id, not a prefix.
-        skill_tool_ids = set()
-        for u in kept:
+        skill_tool_ids = st["skill_ids"]
+        for u in order:
             r = self.by_uuid.get(u) or {}
             if r.get("type") == "assistant":
                 for b in _content(r.get("message")) or []:
@@ -1210,8 +1331,8 @@ class FileAdapter:
         # a genuine HUMAN atom — and the planner minted a feed card from a /compact ("Compact
         # conversation context", the rescue thread). Collect wrapper promptIds so the twin drops as the
         # invocation echo it is.
-        cmd_prompt_names = {}
-        for u in kept:
+        cmd_prompt_names = st["cmd_names"]
+        for u in order:
             r = self.by_uuid.get(u) or {}
             if r.get("type") == "user" and r.get("promptId"):
                 btext = _text_of(_content(r.get("message"))) or ""
@@ -1226,8 +1347,15 @@ class FileAdapter:
                     name = m.group(1).strip() or "/?"
                     cmd_prompt_names.setdefault(r["promptId"], set()).add(
                         name if name.startswith("/") else "/" + name)
-        out = []
-        for u in kept:
+
+    def _emit_fold(self, order, st, rompuuid, postal_index):
+        """Yield each kept record's atom (some records emit none) — record-local given the carry
+        `st` that _prepass filled and the graph maps. The full parse and the assembly fold drive
+        this SAME generator; the fold passes only the appended kept records, so the two paths
+        cannot drift."""
+        replay_uuids, summaries = st["replay"], st["summaries"]
+        skill_tool_ids, cmd_prompt_names = st["skill_ids"], st["cmd_names"]
+        for u in order:
             r = self.by_uuid.get(u)
             if not r:
                 continue
@@ -1245,7 +1373,7 @@ class FileAdapter:
                                              # reply; deep-link anchors must skip it (kernel _seg_anchors)
                     if isinstance(r.get("apiErrorStatus"), int):
                         a["apiErrorStatus"] = r["apiErrorStatus"]   # → the durable chat card's badge ("API error · 529")
-                out.append(a)
+                yield a
             elif t == "user":
                 blocks = _content(r.get("message"))
                 btext = _text_of(blocks) if blocks else ""
@@ -1264,18 +1392,18 @@ class FileAdapter:
                     margs = COMMAND_ARGS_RE.search(btext)
                     args = (margs.group(1).strip() if margs else "")
                     disp = name + ((" " + args) if args else "")
-                    out.append({"type": "user", "uuid": u, "session_id": rompuuid, "t": ts,
-                                "fsid": fsid, "parentUuid": r.get("parentUuid"), "_seq": seq,
-                                "author": "human", "command": name,
-                                "message": {"role": "user", "content": [{"type": "text", "text": disp}]}})
+                    yield {"type": "user", "uuid": u, "session_id": rompuuid, "t": ts,
+                           "fsid": fsid, "parentUuid": r.get("parentUuid"), "_seq": seq,
+                           "author": "human", "command": name,
+                           "message": {"role": "user", "content": [{"type": "text", "text": disp}]}}
                     continue
                 mout = LOCAL_STDOUT_RE.match(btext)
                 if mout and u not in replay_uuids:
-                    out.append({"type": "assistant", "uuid": u, "session_id": rompuuid, "t": ts,
-                                "fsid": fsid, "parentUuid": r.get("parentUuid"), "_seq": seq, "command": True,
-                                "message": {"role": "assistant",
-                                            "content": [{"type": "text", "text": strip_ansi(mout.group(1)).strip()}],
-                                            "stop_reason": "end_turn"}})
+                    yield {"type": "assistant", "uuid": u, "session_id": rompuuid, "t": ts,
+                           "fsid": fsid, "parentUuid": r.get("parentUuid"), "_seq": seq, "command": True,
+                           "message": {"role": "assistant",
+                                       "content": [{"type": "text", "text": strip_ansi(mout.group(1)).strip()}],
+                                       "stop_reason": "end_turn"}}
                     continue
                 has_tool_result = any(isinstance(b, dict) and b.get("type") == "tool_result"
                                       for b in (blocks or []))
@@ -1296,11 +1424,11 @@ class FileAdapter:
                     # because the prefix missed, the isMeta skip ate the record, and the un-superseded
                     # LIVE atom stuck around forever). The tool_result guard keeps the Skill tool's own
                     # "Launching skill: X" result out of this branch if it ever carries the same link.
-                    out.append({"type": "assistant", "uuid": u, "session_id": rompuuid, "t": ts,
-                                "fsid": fsid, "parentUuid": r.get("parentUuid"), "_seq": seq,
-                                "skillMd": btext[:SKILL_MD_CAP] + ("\n\n…(skill content truncated)"
-                                                                   if len(btext) > SKILL_MD_CAP else ""),
-                                "message": {"role": "assistant", "content": [], "stop_reason": None}})
+                    yield {"type": "assistant", "uuid": u, "session_id": rompuuid, "t": ts,
+                           "fsid": fsid, "parentUuid": r.get("parentUuid"), "_seq": seq,
+                           "skillMd": btext[:SKILL_MD_CAP] + ("\n\n…(skill content truncated)"
+                                                              if len(btext) > SKILL_MD_CAP else ""),
+                           "message": {"role": "assistant", "content": [], "stop_reason": None}}
                     continue
                 # A postal DELIVERY is a message, not harness noise, even though the CLI flags it isMeta:
                 # Claude Code hands romp mail to a session as Stop-hook feedback, and that record carries
@@ -1348,9 +1476,12 @@ class FileAdapter:
                 author = author_of(blocks, ps, postal_index, getattr(self, "sdk_human", False))
                 if author is not None:
                     atom["author"] = author
+                    if not _author_final(author, btext):
+                        st["postal_miss_rec"].add(u)   # trailing marker unresolved — the assembly
+                        #                                heal re-authors this record until it lands
                 if ROMP_AUTO_RE.search(_text_of(blocks)):   # an AUTO-nudge → flag it (vs a button/typed follow-up)
                     atom["rompAuto"] = True
-                out.append(atom)
+                yield atom
             elif t == "system" and r.get("subtype") == "compact_boundary":
                 if (r.get("parentUuid") or r.get("logicalParentUuid")) == u:
                     continue   # self-anchored (corrupt): a boundary claiming to compact itself
@@ -1367,15 +1498,15 @@ class FileAdapter:
                         ts = spt
                     seq = self.seq_of.get(sp, seq) + 0.5
                 cm = r.get("compactMetadata") or r.get("compact_metadata") or {}
-                out.append({"type": "system", "subtype": "compact_boundary", "uuid": u,
-                            "session_id": rompuuid, "t": ts, "fsid": fsid,
-                            "parentUuid": self.parent_of.get(u),   # the repaired stitch (see _repair_compaction_stitches);
-                            #                                        for an ADOPTED boundary, its episode's stdout record
-                            "compact_metadata": {"trigger": cm.get("trigger"),
-                                                 "pre_tokens": cm.get("preTokens") or cm.get("pre_tokens"),
-                                                 "post_tokens": cm.get("postTokens") or cm.get("post_tokens")},
-                            "summary": summaries.get(u),   # the compaction SUMMARY captured in the pre-pass (or None)
-                            "_seq": seq})
+                yield {"type": "system", "subtype": "compact_boundary", "uuid": u,
+                       "session_id": rompuuid, "t": ts, "fsid": fsid,
+                       "parentUuid": self.parent_of.get(u),   # the repaired stitch (see _repair_compaction_stitches);
+                       #                                        for an ADOPTED boundary, its episode's stdout record
+                       "compact_metadata": {"trigger": cm.get("trigger"),
+                                            "pre_tokens": cm.get("preTokens") or cm.get("pre_tokens"),
+                                            "post_tokens": cm.get("postTokens") or cm.get("post_tokens")},
+                       "summary": summaries.get(u),   # the compaction SUMMARY captured in the pre-pass (or None)
+                       "_seq": seq}
             elif t == "system" and r.get("subtype") == "model_refusal_fallback":
                 # The model's safeguards flagged the prompt and the CLI silently retried the turn on a
                 # fallback model. That is CONVERSATION state, not harness bookkeeping — the reply that
@@ -1383,17 +1514,15 @@ class FileAdapter:
                 # (the user 2026-08-03, after a fable→opus swap mid-turn was invisible in the chat).
                 # The record's timestamp is the retry start, so the atom sorts BEFORE the fallback
                 # model's reply. Non-opener (not a user atom), so it folds into the running turn.
-                out.append({"type": "system", "subtype": "model_refusal_fallback", "uuid": u,
-                            "session_id": rompuuid, "t": ts, "fsid": fsid,
-                            "parentUuid": self.parent_of.get(u),
-                            "content": r.get("content") or "",          # the CLI's full explanation
-                            "fallback_from": r.get("originalModel") or "",
-                            "fallback_to": r.get("fallbackModel") or "",
-                            "_seq": seq})
+                yield {"type": "system", "subtype": "model_refusal_fallback", "uuid": u,
+                       "session_id": rompuuid, "t": ts, "fsid": fsid,
+                       "parentUuid": self.parent_of.get(u),
+                       "content": r.get("content") or "",          # the CLI's full explanation
+                       "fallback_from": r.get("originalModel") or "",
+                       "fallback_to": r.get("fallbackModel") or "",
+                       "_seq": seq}
             # other system subtypes (turn_duration, stop_hook_summary, local_command,
             # away_summary) are harness bookkeeping, not conversational messages -> skipped.
-        out += self._absorbed(kept, rompuuid, postal_index)
-        return out
 
 
 # A session is NOT working once it has STOPPED: the tmux hook writes state:"waiting" on the Stop event (the
@@ -1748,7 +1877,10 @@ def _load_postal_index(postal_log):
     """{msg-id -> sender rompUuid} from timeline/messages.jsonl (`from_id` is the sender's
     anchor sid). Accepts a path or an in-memory list of rows (tests)."""
     idx = {}
-    rows = postal_log if isinstance(postal_log, list) else _read_jsonl(postal_log or MESSAGES_LOG)
+    # append-incremental like the transcripts (the log is append-only; a rewrite fails the reader's
+    # tail guard and degrades to a full re-read) — the full _read_jsonl here was a measured 22ms on
+    # EVERY parse_session call against a 4MB live log
+    rows = postal_log if isinstance(postal_log, list) else _read_jsonl_incremental(postal_log or MESSAGES_LOG)
     for o in rows:
         if not isinstance(o, dict):
             continue
@@ -1761,7 +1893,8 @@ def _load_postal_index(postal_log):
 def _load_states(states):
     if states is None:
         return []
-    return list(states) if isinstance(states, list) else list(_read_jsonl(states))
+    # incremental for the same reason as the postal index above: states/<sid>.jsonl is append-only
+    return list(states) if isinstance(states, list) else list(_read_jsonl_incremental(states))
 
 
 def resume_fork_links(srows):
@@ -1835,6 +1968,309 @@ def chain_membership(leaf_path, candidate_files=None, states=None, leaf_override
     return out
 
 
+# ═════════════════════ assembly cache: fold appends, don't re-emit the world ═════════════════════
+# (2026-09-01.) _read_jsonl_incremental already amortizes bytes -> records; what still re-ran in full
+# on every append was everything ABOVE the records. Measured on the live corpus: the emit layer is
+# 0.2-0.5s per parse at 20-130MB transcripts, while the graph semantics (active_path, chain_verdicts
+# incl. the eclipsed probe, kept_uuids) cost 2-6ms even at 28k records. So a fold RE-DERIVES all
+# graph semantics exactly, every time, and folds ONLY the emit: appended records run through the
+# same _prepass/_emit_fold/_absorbed code with the carried emit state. Gates demote anything the
+# carry cannot provably absorb to a full parse — a fold never guesses; wrong means full, never
+# divergent:
+#   - candidates / resume links / sdk_human changed, or a pending cut is armed        -> full/bypass
+#   - a non-leaf candidate changed at all, or the leaf did anything but grow          -> full
+#   - the new leaf does not descend from the old leaf through the delta               -> full
+#   - the delta contains: a compact boundary or summary; a uuid already in the graph
+#     or among its recorded dangling parent targets; a promptId already seen; a Skill
+#     tool_use an old payload record already references; an unparseable or
+#     watermark-regressing conversational timestamp                                   -> full
+#   - after the fold's graph recompute, ANY old record's kept-membership changed      -> full
+# Postal is the one input with no gate, on the log's own invariant: rows are append-only and
+# resolution is first-wins per id, so an author can only go from marker-missed to resolved — and
+# _asm_heal re-authors exactly those atoms each visit until they resolve.
+# The entry is mutated only under its per-key lock, held across gates + fold + commit — a
+# deliberate departure from _JSONL_CACHE_LOCK's cheap-ops-only discipline, because this cache's
+# hits MUTATE the entry (two concurrent parses of one path must serialize or they double-fold the
+# same delta). Served atom lists are copy-on-fold and served atoms are per-serve shallow copies,
+# so callers pop _seq / rebuild turns as they always have without reaching into the cache. Any
+# exception on the fold path logs ONCE and falls back to plain full parses — loud, never wrong.
+_ASM_CACHE = {}          # key -> entry; dict order = LRU, hits reinsert. Evicts oldest-used one at
+#                          a time, never clear-at-cap (the _JSONL_CACHE 2026-08-15 lesson: a
+#                          wholesale clear nukes the hot entries and every push re-parses in full)
+_ASM_CACHE_MAX = 256
+_ASM_LOCK = threading.Lock()       # guards the cache dict + the per-key lock registry only
+_ASM_KEYLOCKS = {}                 # key -> Lock; never pruned (a Lock is tiny, and swapping a
+#                                    key's lock mid-flight would let two folds interleave)
+_ASM_STATS = {"full": 0, "fold": 0, "serve": 0, "bypass": 0, "fallback": 0}   # observability + tests
+_ASM_WARNED = [False]
+
+
+def _asm_demote(reason):
+    """Count WHY a fold demoted to a full parse (g:<reason> in _ASM_STATS) and return None —
+    the hit-rate diagnosis this cache lives or dies by, in prod and in the corpus replay."""
+    k = "g:" + reason
+    _ASM_STATS[k] = _ASM_STATS.get(k, 0) + 1
+    return None
+
+
+def _asm_key_lock(key):
+    with _ASM_LOCK:
+        lk = _ASM_KEYLOCKS.get(key)
+        if lk is None:
+            lk = _ASM_KEYLOCKS[key] = threading.Lock()
+        return lk
+
+
+def _asm_serve(entry):
+    """A caller-owned copy of the entry's emit outputs: fresh top-level atom dicts (parse_session
+    pops _seq and the turn builder sorts in place; the pristine list keeps both), a landed copy,
+    and no pending cut (cut parses never reach the cache)."""
+    return [dict(a) for a in entry["atoms"]], set(entry["landed"]), None
+
+
+def _asm_full(key, leaf_path, candidate_files, links, rompuuid, postal_index, sdk_human):
+    """Full parse + a fresh cache entry — the same steps atoms() runs, inlined so the entry keeps
+    the carry (st) the emit actually used; later folds continue from it."""
+    ad = FileAdapter(candidate_files, leaf_path, resume_links=links)
+    ad.sdk_human = sdk_human
+    st = _emit_state()
+    kept = ad.kept_uuids(ad.active_path())
+    order = _chrono(ad, kept)
+    ad._prepass(order, st)
+    atoms = list(ad._emit_fold(order, st, rompuuid, postal_index))
+    atoms += ad._absorbed(ad.qatts, kept, st, rompuuid, postal_index)
+    entry = {"ad": ad, "st": st, "atoms": atoms, "kept": kept,
+             "landed": ad.landed_text_uuids(),
+             "cands": tuple(str(f) for f in candidate_files), "links": dict(links or {}),
+             "recs": dict(ad._src), "n_qatts": len(ad.qatts)}
+    with _ASM_LOCK:
+        _ASM_CACHE.pop(key, None)
+        while len(_ASM_CACHE) >= _ASM_CACHE_MAX:
+            _ASM_CACHE.pop(next(iter(_ASM_CACHE)))   # oldest-used first; hot entries survive floods
+        _ASM_CACHE[key] = entry
+    _ASM_STATS["full"] += 1
+    return _asm_serve(entry)
+
+
+def _asm_gates(entry, leaf_path, candidate_files, links):
+    """None -> full parse. Else (delta, leaf_records): the leaf's appended records (possibly
+    empty) and the records list they came from, gate-checked per the block comment above."""
+    if entry["cands"] != tuple(str(f) for f in candidate_files) or \
+            entry["links"] != dict(links or {}):
+        return _asm_demote("inputs")
+    ad = entry["ad"]
+    leaf_stem = Path(leaf_path).stem
+    files = [f for f in candidate_files if Path(f).stem != leaf_stem] + [Path(leaf_path)]
+    delta = leaf_recs = None
+    for fp in files:
+        recs = _read_jsonl_incremental(fp)
+        old = entry["recs"].get(str(fp))
+        if old is None:
+            return _asm_demote("recs-gone")
+        if Path(fp).stem != leaf_stem:
+            if recs is not old:
+                return _asm_demote("nonleaf")   # changed — or its reader slot was evicted and
+            continue             #  rebuilt; identity is the proof, its absence means full parse
+        leaf_recs = recs
+        if recs is old:
+            delta = []
+        elif len(recs) > len(old) > 0 and recs[len(old) - 1] is old[-1]:
+            delta = recs[len(old):]   # the reader's contract: a grown file returns the SAME
+            #                           prefix objects + the parsed new bytes
+        else:
+            return _asm_demote("rewrite")
+    if delta is None:
+        return _asm_demote("no-leaf-slot")
+    if not delta:
+        return [], leaf_recs
+    max_ppt = entry["st"]["max_ppt"]
+    old_leaf = ad._pristine_leaf
+    if old_leaf is None:
+        return _asm_demote("empty-graph")
+    parent_d, new_leaf = {}, old_leaf
+    for r in delta:
+        t, u = r.get("type"), r.get("uuid")
+        if u:
+            if u in ad.by_uuid or u in ad.dangling:
+                return _asm_demote("uuid-known")   # a re-write rebinds last-write-wins index
+                #                  state; a resurrected dangling target rebinds repaired stitches
+            p = r.get("parentUuid") or r.get("logicalParentUuid")
+            parent_d[u] = None if p == u else p
+            new_leaf = u
+        if t == "system" and r.get("subtype") == "compact_boundary":
+            return _asm_demote("boundary")   # arms the restore dedup and can re-seat adoptions
+        if r.get("isCompactSummary") is True:
+            return _asm_demote("summary")    # attaches to boundaries in the chronological pre-pass
+        if t == "user" and r.get("promptId") and r["promptId"] in ad.prompt_ids:
+            # A repeated promptId is ROUTINE — every record of a turn wears its prompt's id, so
+            # tool results repeat it on nearly every append (measured: this gate, unshaped,
+            # demoted 1863 of 1869 bursts on a live 46MB replay). Only two shapes can
+            # re-classify OLD atoms: a command-wrapper-family record (it grows the twins map
+            # retroactively) and any record wearing an adoptable boundary's episode pid (it can
+            # re-seat the adopted card's splice without changing kept — invisible to the
+            # invariance check). Everything else folds: the carried twins map serves the DELTA
+            # record's own classification record-locally.
+            if r["promptId"] in ad.boundary_pids or \
+                    CMD_WRAP_RE.match(_text_of(_content(r.get("message"))) or ""):
+                return _asm_demote("promptid")
+        if t == "assistant":
+            for b in _content(r.get("message")) or []:
+                if isinstance(b, dict) and b.get("type") == "tool_use" and \
+                        b.get("name") == "Skill" and b.get("id") in ad.src_tool_links:
+                    return _asm_demote("skill-link")   # an already-ingested payload references it
+        if t in ("user", "assistant"):
+            ts = parse_z(r.get("timestamp"))
+            if ts is None or ts < max_ppt:
+                return _asm_demote("ts")   # the carry is valid only for a delta sorting at-or-
+                #                            after everything folded (the pre-pass sorts None first)
+    # Leaf descent: the new file-leaf must chain back to the old one THROUGH the delta — an
+    # api_error spur re-parent, a rewind, and a /clear fork all fail here. parent_d.pop doubles
+    # as the cycle guard; a delta with no uuid-bearing record passes trivially (leaf unmoved).
+    cur, hops = new_leaf, 0
+    while cur != old_leaf:
+        if cur is None or cur not in parent_d or hops > len(delta) + 1:
+            return _asm_demote("descent")
+        cur = parent_d.pop(cur)
+        hops += 1
+    return delta, leaf_recs
+
+
+def _asm_heal(entry, rompuuid, postal_index):
+    """Re-author atoms whose postal author is still PROVISIONAL (_author_final) against the
+    current index: replace on any change so serves match a full parse NOW, and retire the miss
+    only once the trailing marker resolves — a record whose quoted earlier marker resolved first
+    would otherwise latch the wrong sender forever (review catch, 2026-09-01). Record-local by
+    design: author_of reads only the record's text + the index. The qatt pick mirrors
+    _absorbed's kept filter exactly — the first same-key twin can sit on a rewound branch, and
+    healing from it would flip the atom's identity to the abandoned record (same review)."""
+    st, ad = entry["st"], entry["ad"]
+    if st["postal_miss_rec"]:
+        pos = {a.get("uuid"): i for i, a in enumerate(entry["atoms"]) if a.get("uuid")}
+        done = set()
+        for u in list(st["postal_miss_rec"]):
+            i = pos.get(u)
+            if i is None:
+                done.add(u)      # no atom carries it any more (entry rebuilt around it) — retire
+                continue
+            a2 = next(iter(ad._emit_fold([u], st, rompuuid, postal_index)), None)
+            if a2 is None:
+                done.add(u)
+                continue
+            if a2 != entry["atoms"][i]:
+                entry["atoms"][i] = a2   # in place is safe: serves copy, and we hold the key lock
+            if _author_final(a2.get("author"), _text_of(_content(a2.get("message")))):
+                done.add(u)
+        st["postal_miss_rec"] -= done
+    if st["postal_miss_att"]:
+        kept = entry["kept"]
+        for i, a in enumerate(entry["atoms"]):
+            if not a.get("absorbed"):
+                continue
+            key = (a["t"], " ".join(_text_of(_content(a.get("message"))).split()))
+            if key not in st["postal_miss_att"]:
+                continue
+            q = next((q for q in ad.qatts if q["ts"] == key[0]
+                      and " ".join(q["text"].split()) == key[1]
+                      and (q["uuid"] is None or q["uuid"] in kept)), None)
+            if q is None:
+                st["postal_miss_att"].discard(key)
+                continue
+            a2 = ad._absorbed_atom(q["text"], q["ts"], q["seq"], q["uuid"], rompuuid, postal_index)
+            if a2 != a:
+                entry["atoms"][i] = a2
+            if _author_final(a2.get("author"), q["text"]):
+                st["postal_miss_att"].discard(key)
+
+
+def _asm_fold(entry, delta, leaf_recs, leaf_key, leaf_stem, rompuuid, postal_index):
+    """Fold `delta` into the entry: extend the PRISTINE graph, re-derive the repair passes on a
+    working copy (fold state is literally the fresh-__init__ computation — never a latched earlier
+    repair), recompute ALL graph verdicts exactly, then emit only the appended kept records with
+    the carried state. None -> the kept-invariance check failed; caller demotes to full."""
+    ad = entry["ad"]
+    ad.parent_of = ad._pristine_parent
+    ad.leaf_uuid = ad._pristine_leaf
+    n_qatts = entry["n_qatts"]
+    ad._ingest(delta, leaf_stem, True)
+    ad._pristine_parent = ad.parent_of
+    ad._pristine_leaf = ad.leaf_uuid
+    ad.parent_of = dict(ad._pristine_parent)
+    ad._run_graph_passes()
+    kept = ad.kept_uuids(ad.active_path())
+    dset = {r.get("uuid") for r in delta if r.get("uuid")}
+    if kept - dset != entry["kept"]:
+        return _asm_demote("kept")   # ancestry moved under an old record — the fold cannot
+        #                              re-emit history; only a full parse can
+    st = entry["st"]
+    order = _chrono(ad, kept & dset)
+    ad._prepass(order, st)
+    new_atoms = list(ad._emit_fold(order, st, rompuuid, postal_index))
+    new_atoms += ad._absorbed(ad.qatts[n_qatts:], kept, st, rompuuid, postal_index)
+    for u in dset:
+        r = ad.by_uuid.get(u) or {}
+        if r.get("type") == "assistant" and _text_of(_content(r.get("message"))).strip():
+            entry["landed"].add(u)
+    entry["atoms"] = entry["atoms"] + new_atoms   # a NEW list — outstanding serves stay stable
+    entry["kept"] = kept
+    entry["n_qatts"] = len(ad.qatts)
+    entry["recs"][leaf_key] = leaf_recs           # commit LAST: a bail above re-slices the same
+    ad._src[leaf_key] = leaf_recs                 #  delta next visit and the uuid gate demotes it
+    _ASM_STATS["fold"] += 1
+    return _asm_serve(entry)
+
+
+def _assemble(leaf_path, candidate_files, links, rompuuid, postal_index, sdk_human, leaf_override):
+    """(atoms, landed, cut_t) for parse_session — atoms are caller-owned copies. The one entry
+    point that decides bypass vs serve vs fold vs full; see the block comment above."""
+    if leaf_override:
+        # A pending cut changes the walk anchor and is transient: always a plain full parse,
+        # never cached — a cut parse's truncated emit state must not seed later folds.
+        _ASM_STATS["bypass"] += 1
+        ad = FileAdapter(candidate_files, leaf_path, leaf_override=leaf_override, resume_links=links)
+        ad.sdk_human = sdk_human
+        cut_t = None
+        if leaf_override in ad.by_uuid:
+            cut_t = parse_z(ad.by_uuid[leaf_override].get("timestamp"))
+        return ad.atoms(rompuuid, postal_index), ad.landed_text_uuids(), cut_t
+    key = (os.path.realpath(str(leaf_path)), str(rompuuid), bool(sdk_human))
+    try:
+        with _asm_key_lock(key):
+            with _ASM_LOCK:
+                entry = _ASM_CACHE.get(key)
+                if entry is not None:
+                    _ASM_CACHE.pop(key, None)
+                    _ASM_CACHE[key] = entry       # a served entry is a USED entry (LRU touch)
+            if entry is not None:
+                got = _asm_gates(entry, leaf_path, candidate_files, links)
+                if got is not None:
+                    delta, leaf_recs = got
+                    _asm_heal(entry, rompuuid, postal_index)
+                    if not delta:
+                        _ASM_STATS["serve"] += 1
+                        return _asm_serve(entry)
+                    served = _asm_fold(entry, delta, leaf_recs, str(leaf_path),
+                                       Path(leaf_path).stem, rompuuid, postal_index)
+                    if served is not None:
+                        return served
+                with _ASM_LOCK:                   # gate/invariance demotion: the entry is stale
+                    _ASM_CACHE.pop(key, None)
+            return _asm_full(key, leaf_path, candidate_files, links, rompuuid,
+                             postal_index, sdk_human)
+    except Exception as e:
+        _ASM_STATS["fallback"] += 1
+        if not _ASM_WARNED[0] or _ASM_STATS["fallback"] in (10, 100, 1000, 10000):
+            _ASM_WARNED[0] = True    # once, then at count milestones — a PERSISTENT fold bug
+            #                          must not hide behind a single line in an old log
+            print("romp-event-model: assembly fold failed (%r) — serving plain full parses "
+                  "(stats %r); the fallback is correct but slow, fix the fold"
+                  % (e, dict(_ASM_STATS)), file=sys.stderr)
+        with _ASM_LOCK:
+            _ASM_CACHE.pop(key, None)
+        ad = FileAdapter(candidate_files, leaf_path, resume_links=links)
+        ad.sdk_human = sdk_human
+        return ad.atoms(rompuuid, postal_index), ad.landed_text_uuids(), None
+
+
 def parse_session(leaf_path, rompuuid=None, name=None, color="#888888", dir=None,
                   candidate_files=None, states=None, postal_log=None, now=None, sdk_human=False,
                   leaf_override=None):
@@ -1871,10 +2307,11 @@ def parse_session(leaf_path, rompuuid=None, name=None, color="#888888", dir=None
     # callers' cache keys — candidate files + the states file, whose mtime moves when a lineage
     # row lands — stay honest without knowing about these.
     candidate_files = _lineage_closure(leaf_path, candidate_files, links)
-    adapter = FileAdapter(candidate_files, leaf_path, leaf_override=leaf_override, resume_links=links)
-    adapter.sdk_human = sdk_human            # SDK-backed session → unmarked promptSource "sdk" is the human
-    atoms = adapter.atoms(rompuuid, postal_index)
-    landed = adapter.landed_text_uuids()         # replies the disk kept on ANY branch — never a loss
+    # The assembly cache serves/folds/rebuilds as the gates decide — a streamed append folds only
+    # the new records through the shared emit code; everything else is a full parse. atoms/landed
+    # come back caller-owned (fresh top-level dicts), so the mutations below never reach the cache.
+    atoms, landed, cut_t = _assemble(leaf_path, candidate_files, links, rompuuid,
+                                     postal_index, sdk_human, leaf_override)
     orphans = synthesize_orphans(_srows, atoms, landed_text_uuids=landed)
     #                                            # salvaged replies FIRST: they are real atoms the turn
     #                                              grouping must absorb (idle spans overlay afterwards)
@@ -1886,10 +2323,8 @@ def parse_session(leaf_path, rompuuid=None, name=None, color="#888888", dir=None
     # RECORD's own timestamp — an exact event, not a window — since time is the only ordering a
     # graph-less atom has. Idle spans are deliberately NOT filtered: they describe the session's
     # working state NOW (an open span runs to `now`), not conversation content.
-    if leaf_override and leaf_override in adapter.by_uuid:
-        cut_t = parse_z(adapter.by_uuid[leaf_override].get("timestamp"))
-        if cut_t:
-            orphans = [a for a in orphans if a["t"] <= cut_t]
+    if cut_t:
+        orphans = [a for a in orphans if a["t"] <= cut_t]
     atoms += orphans
     atoms += synthesize_idle(_srows, atoms, now)
     turns = segment_turns(atoms, rompuuid)
