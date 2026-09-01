@@ -3062,28 +3062,97 @@ def _main_drift_verdict(origin, checkout, running):
     return ("", "")
 
 
-KERNEL_CODE_PREFIXES = ("kernel/", "bin/", "postal/", "cli/")
-_REBUILT_FOR = [""]   # the checkout sha this RUNNING kernel already converged to by rebuilding dist
-#                       in place (UI-only change) — the drift check treats it as in-sync until a
-#                       kernel-code commit moves the target past it
+KERNEL_CODE_PREFIXES = ("kernel/", "bin/", "postal/", "cli/")   # the trees the CLASSIFIER inspects
+_REBUILT_FOR = [""]   # the checkout sha this RUNNING kernel already converged to in place (dist
+#                       rebuild / bus bounce / nothing-executed skip) — the drift check treats it as
+#                       in-sync until a kernel-code commit moves the target past it
+
+
+def _restart_class(path):
+    """Which RUNNING PROCESS a changed file's code lives in — "kernel", "bus", or "skip" (T216).
+    Verified process boundaries, not guesses: the kernel process loads exactly kernel/*.py +
+    bin/romp-kernel in-process (every kernel module rides SourceFileLoader at import; judges run
+    in-process too). postal/ is NEVER imported here — the bus is its own process with its own
+    restart verb, and bouncing the kernel for a bus change restarts the WRONG thing. cli/ is
+    loaded per `romp` invocation, never by this process — the next run picks it up. .md files
+    are docs wherever they live. Everything else in the four trees is kernel-class: when unsure,
+    the restart is the safe converge."""
+    if path.endswith(".md"):
+        return "skip"
+    if path == "bin/romp-postal-service" or path.startswith("postal/"):
+        return "bus"
+    if path.startswith(("kernel/", "bin/")):
+        return "kernel"
+    return "skip"     # cli/ + everything outside the four trees (ui, tests, docs, plans)
+
+
+def _ast_equal_blobs(a, b, path):
+    """True only when a..b PROVABLY compiles to the same semantics for `path`: both blobs readable
+    and their parsed ASTs identical (comments and formatting never enter the AST; docstrings DO,
+    so a docstring edit conservatively stays a code change). Shebang lines are comments to the
+    parser, so bin/ scripts qualify too. ANY surprise — unreadable blob (added/deleted/renamed
+    file), parse failure, non-python — is False: not provable, restart (T216)."""
+    try:
+        import ast
+        import warnings
+        blobs = []
+        for sha in (a, b):
+            r = subprocess.run(["git", "show", "%s:%s" % (sha, path)], cwd=str(ROOT),
+                               capture_output=True, timeout=20)
+            if r.returncode != 0:
+                return False
+            blobs.append(r.stdout)
+        if blobs[0] == blobs[1]:
+            return True                       # mode-only change — the content is identical
+        with warnings.catch_warnings():
+            # historical blobs raise SyntaxWarning (e.g. un-raw regex strings) — parse noise,
+            # not a verdict input; without this every probe sprays the kernel log
+            warnings.simplefilter("ignore")
+            return ast.dump(ast.parse(blobs[0])) == ast.dump(ast.parse(blobs[1]))
+    except Exception:
+        return False
+
+
+def _converge_classes(a, b):
+    """Per-file restart classes for the a..b diff: {"kernel": [...], "bus": [...], "skip": [...],
+    "ast_equal": [...]} — or None on ANY error (the caller restarts; when unsure, the restart is
+    the safe converge). kernel-class python files whose ASTs match demote to skip and are listed
+    in ast_equal so the audit row names WHY the verdict skipped them (T216)."""
+    if not a or not b:
+        return None
+    try:
+        # -z: NUL-separated RAW paths — git's default core.quotePath C-quotes any non-ASCII path
+        # ("kernel/m\303\263dulo.py", leading double-quote), which defeated the prefix match and
+        # WRONG-SKIPPED a real kernel change (T216 review, reproduced). --no-renames: rename
+        # detection collapses a move to its DESTINATION only, so a kernel file moved OUT of the
+        # tree vanished from the listing and skipped — as delete+add the old path stays visible.
+        r = subprocess.run(["git", "diff", "--name-only", "-z", "--no-renames",
+                            "%s..%s" % (a, b)], cwd=str(ROOT),
+                           capture_output=True, text=True, timeout=20)
+        if r.returncode != 0:
+            return None
+        out = {"kernel": [], "bus": [], "skip": [], "ast_equal": []}
+        for f in r.stdout.split("\0"):
+            if not f:
+                continue
+            c = _restart_class(f)
+            if c == "kernel" and _ast_equal_blobs(a, b, f):
+                out["ast_equal"].append(f)
+                c = "skip"
+            out[c].append(f)
+        return out
+    except Exception:
+        return None
 
 
 def _kernel_code_changed(a, b):
-    """Does a..b touch code the RUNNING PROCESS executes? UI/dist inputs, tests, docs, plans do not —
-    a build whose kernel code is unchanged converges by REBUILDING dist in place with the kernel left
-    up (the user 2026-08-23: most changes are UI-only, and every restart cuts every in-flight turn).
+    """Does a..b touch code the RUNNING PROCESS executes? UI/dist inputs, tests, docs, plans, cli/,
+    postal/ (the bus's own process), and PROVABLY-equal kernel python (AST match — comment-only
+    edits) do not — those converge in place with the kernel left up (the user 2026-08-23 and T216:
+    most changes never touch what this process runs, and every restart cuts every in-flight turn).
     Any error reads as True: when unsure, the restart is the safe converge."""
-    if not a or not b:
-        return True
-    try:
-        r = subprocess.run(["git", "diff", "--name-only", "%s..%s" % (a, b)], cwd=str(ROOT),
-                           capture_output=True, text=True, timeout=20)
-        if r.returncode != 0:
-            return True
-        files = [f for f in r.stdout.splitlines() if f.strip()]
-        return any(f.startswith(KERNEL_CODE_PREFIXES) for f in files)
-    except Exception:
-        return True
+    cc = _converge_classes(a, b)
+    return cc is None or bool(cc["kernel"])
 
 
 def _rebuild_dist():
@@ -3094,6 +3163,18 @@ def _rebuild_dist():
         r = subprocess.run(["node", "esbuild.js"], cwd=str(ROOT / "vscode-extension"),
                            capture_output=True, text=True, timeout=180)
         return r.returncode == 0, (r.stderr or r.stdout or "").strip()[-300:]
+    except Exception as e:
+        return False, str(e)
+
+
+def _bus_converge():
+    """Bounce the postal bus onto the new checkout — its OWN process, so a kernel restart would
+    converge the wrong thing (T216). The bus's restart verb is client-only-safe and pending mail
+    survives in the maildir. (ok, err_tail)."""
+    try:
+        r = subprocess.run([sys.executable, str(BIN / "romp-postal-service"), "restart"],
+                           capture_output=True, text=True, timeout=90)
+        return r.returncode == 0, (r.stderr or r.stdout or "").strip()[-200:]
     except Exception as e:
         return False, str(e)
 
@@ -3148,6 +3229,53 @@ def _dist_converge_check():
                      ok=False)
 
 
+_INPLACE_TRIED = [""]   # the target sha the in-place converge already attempted — ONE full attempt
+#                         (bus bounce + dist build) per target, the _dist_converge_check precedent:
+#                         a broken esbuild must not become a per-pass rebuild/bounce/notice storm;
+#                         a transient failure retries on the NEXT target, never a 300s loop
+
+
+def _in_place_converge(target):
+    """The no-kernel-code converge (T216): bounce the bus if bus-class files changed (its own
+    process — see _bus_converge), rebuild dist, latch, and AUDIT the skip verdict with its per-class
+    file lists so a wrong skip is diagnosable from disk. True = converged (caller returns); False =
+    fall through to the restart path, which is always the safe converge."""
+    if _INPLACE_TRIED[0] == target:
+        return False                       # already attempted this target — no storms
+    _INPLACE_TRIED[0] = target
+    cc = _converge_classes(_kernel_sha(), target)
+    if cc is None:
+        # the verdict's own classification succeeded moments ago, but THIS one failed (git flake,
+        # lock contention) — an empty mask here would silently drop the bus bounce and write a
+        # lying audit row; unprovable falls to the restart path, per the standing rule
+        _sync_notice("in-place converge could not re-read the diff — taking the restart path",
+                     ok=False)
+        return False
+    if cc["bus"]:
+        ok, err = _bus_converge()
+        _audit_restart_request("bus-converge", tag=target, ok=("yes" if ok else "no"),
+                               files=",".join(cc["bus"][:20]), err=("" if ok else err))
+        if ok:
+            _sync_notice("postal bus restarted onto the new build (bus-only change — the kernel "
+                         "keeps running; a kernel restart would not have updated the bus)")
+        else:
+            _sync_notice("the postal bus needs a restart for this change and the bounce failed "
+                         "(%s) — mail may run stale until `romp refresh`" % err, ok=False)
+    ok, err = _rebuild_dist()
+    if ok:
+        _REBUILT_FOR[0] = target
+        _audit_restart_request("main-converge-skip", tag=target,
+                               why="no kernel-code change",
+                               skip=",".join(cc["skip"][:20]) or "none",
+                               bus=",".join(cc["bus"][:20]),
+                               ast_equal=",".join(cc["ast_equal"][:20]))
+        _sync_notice("new build served in place (no kernel-code change; no restart) — reload the "
+                     "dashboard to pick it up")
+        return True
+    _sync_notice("in-place update failed to build (%s) — taking the restart path" % err, ok=False)
+    return False
+
+
 def _main_drift_check():
     """One origin/checkout/running comparison pass; fires the SAME banner as the release check (the
     shell's offer() renders the main-drift wording off kind:"main"). Re-fires only when the target sha
@@ -3163,18 +3291,14 @@ def _main_drift_check():
     if kind == "restart" and target == _REBUILT_FOR[0]:
         return                                        # already converged in place (UI-only rebuild)
     if kind == "restart" and not _kernel_code_changed(_kernel_sha(), target):
-        # UI-ONLY drift (the user 2026-08-23): the checkout moved but nothing the running process
-        # executes changed — converge by rebuilding dist in place, in EVERY mode and with no
-        # cool-down (a rebuild cuts no turns, which is the only thing the gates protect). A failed
-        # build falls through to the normal restart path, loudly.
-        ok, err = _rebuild_dist()
-        if ok:
-            _REBUILT_FOR[0] = target
-            _sync_notice("new build served in place (UI-only change; no restart) — reload the "
-                         "dashboard to pick it up")
+        # NO-KERNEL-CODE drift (the user 2026-08-23, widened T216): the checkout moved but nothing
+        # the running process executes changed — converge in place, in EVERY mode and with no
+        # cool-down (in-place converges cut no turns, which is the only thing the gates protect).
+        # A failed dist build falls through to the normal restart path, loudly. The class detail
+        # is ADVISORY here (audit + the bus arm): the skip VERDICT itself came from
+        # _kernel_code_changed, which fails toward restarting on any error.
+        if _in_place_converge(target):
             return
-        _sync_notice("UI-only update failed to build in place (%s) — taking the restart path" % err,
-                     ok=False)
     if not kind:
         _MAIN_DRIFT[0] = _MAIN_DRIFT[1] = ""          # in sync: a future drift is new information again
         return
@@ -3241,16 +3365,23 @@ def _run_main_update(kind, immediate=True, manager_port=_PORT_FROM_ENV):
             _sync_notice("main moved at origin, but the pull step failed: %s" % e, ok=False)
             _MAIN_DRIFT[0] = ""
             return
-    if kind == "pull" and not _kernel_code_changed(_kernel_sha(), _checkout_sha()):
-        # the pull only moved UI/dist inputs — same in-place converge as the restart-kind branch
-        ok, err = _rebuild_dist()
-        if ok:
-            _REBUILT_FOR[0] = _checkout_sha()
-            _sync_notice("new build served in place (UI-only change; no restart) — reload the "
-                         "dashboard to pick it up")
+    if kind == "pull":
+        pulled = _checkout_sha()   # ONE read: verdict input and converge target must be the same
+        #                            sha — two reads raced a moving checkout and latched a target
+        #                            the verdict never examined (T216 review)
+        if not _kernel_code_changed(_kernel_sha(), pulled) and _in_place_converge(pulled):
             return
-        _sync_notice("UI-only update failed to build in place (%s) — taking the restart path" % err,
-                     ok=False)
+    # Pay the bundle rebuild BEFORE the old kernel dies (T216): the checkout is already at the
+    # target here, so this builds the NEW code's bundles while the old kernel still serves — the
+    # fresh kernel's pre-bind _ensure_bundles then finds them current instead of paying esbuild
+    # inside the outage. Failure must never block the restart: proceed loudly, _ensure_bundles
+    # stays the backstop. Skipped when an in-place attempt for this very sha just paid (and
+    # failed) the identical build — a doomed 180s re-run would only stretch the outage.
+    if _INPLACE_TRIED[0] != _checkout_sha():
+        ok, err = _rebuild_dist()
+        if not ok:
+            _sync_notice("pre-restart bundle rebuild failed (%s) — restarting anyway; the new "
+                         "kernel rebuilds at boot" % err, ok=False)
     if manager_port is _PORT_FROM_ENV:
         manager_port = os.environ.get("ROMP_MANAGER_PORT")
     try:
