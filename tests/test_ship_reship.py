@@ -57,7 +57,11 @@ class SourcePins(unittest.TestCase):
     def test_payload_retained_and_reshipped_on_the_reconnect_event(self):
         self.assertIn("interface PendingShip { name: string; shipId: string; b64?: string }", RENDER)
         self.assertIn("if (entry) entry.b64 = b64;", RENDER)
-        self.assertIn('window.addEventListener("romp:wsup", reshipPendingUploads);', RENDER)
+        self.assertIn('window.addEventListener("romp:wsup", () => reshipPendingUploads());', RENDER)
+        # …and the federated twin events (review finding 2026-09-01): the relay's own redial and the
+        # kernel-reported tunnel recovery each re-ship THEIR host's entries — scoped by ack socket
+        self.assertIn('window.addEventListener("romp:hostRelayUp", (e) => {', RENDER)
+        self.assertIn("if (Array.isArray(m.hosts)) reshipPendingUploads(m.hosts.map(String));", RENDER)
 
     def test_ack_echoes_shipid_and_a_stray_twin_is_dropped(self):
         self.assertIn('ack["shipId"] = str(msg["shipId"])', KERNEL_SRC)
@@ -165,7 +169,9 @@ process.exit(0);
 """
 
 
-class ServedWedge(unittest.TestCase):
+class _ShipLab(unittest.TestCase):
+    """Shared hermetic lab: one kernel, one seeded SDK session, the real /chat page. Subclasses
+    carry the choreography; each gets its own kernel (setUpClass per class)."""
     maxDiff = None
 
     @classmethod
@@ -245,36 +251,49 @@ class ServedWedge(unittest.TestCase):
             cls.kernel.wait()
         shutil.rmtree(getattr(cls, "lab", ""), ignore_errors=True)
 
-    def test_restart_between_ship_and_ack_reships_heals_and_releases_the_held_send(self):
+    def _run_driver(self, driver_src, cfg_obj, timeout=300):
         cfg = os.path.join(self.lab, "cfg.json")
         with open(cfg, "w") as f:
-            json.dump({"url": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token),
-                       "kernelPid": self.kernel.pid,
-                       "relaunch": {"cmd": os.path.join(BIN, "romp-kernel"),
-                                    "env": {k: v for k, v in self.env.items()}, "log": self.klog},
-                       "file": self.png, "msg": "hold this message for the upload T215",
-                       "msg2": "a normal send after the restart T215",
-                       "shots": os.environ.get("SHIP_RESHIP_SHOTS", "")}, f)
+            json.dump(cfg_obj, f)
         driver = os.path.join(self.lab, "driver.mjs")
         with open(driver, "w") as f:
-            f.write(DRIVER)
+            f.write(driver_src)
         try:
-            p = subprocess.run(["node", driver], capture_output=True, text=True, timeout=300,
+            p = subprocess.run(["node", driver], capture_output=True, text=True, timeout=timeout,
                                env=dict(os.environ, EXT_PKG=os.path.join(EXT, "package.json"), CFG=cfg))
         except subprocess.TimeoutExpired as e:
-            self.fail("driver timed out; partial output:\n%s\n%s"
-                      % ((e.stdout or b"").decode() if isinstance(e.stdout, bytes) else (e.stdout or ""),
-                         (e.stderr or b"").decode() if isinstance(e.stderr, bytes) else (e.stderr or "")))
+            so = (e.stdout or b"").decode() if isinstance(e.stdout, bytes) else (e.stdout or "")
+            se = (e.stderr or b"").decode() if isinstance(e.stderr, bytes) else (e.stderr or "")
+            # the driver may have relaunched the lab kernel before hanging — reap it via tearDownClass
+            # (review finding 2026-09-01: this path leaked the detached replacement kernel)
+            kpid = next((ln for ln in so.splitlines() if ln.startswith("KPID:")), None)
+            if kpid:
+                type(self).kernel2_pid = int(kpid.split(":", 1)[1])
+            self.fail("driver timed out; partial output:\n%s\n%s" % (so, se))
+            return None
         kpid = next((ln for ln in p.stdout.splitlines() if ln.startswith("KPID:")), None)
         if kpid:
             type(self).kernel2_pid = int(kpid.split(":", 1)[1])
         if p.returncode == 3:
-            raise unittest.SkipTest("no playwright browser on this box — the wedge needs one (CI installs none)")
+            raise unittest.SkipTest("no playwright browser on this box — the served leg needs one (CI installs none)")
         self.assertEqual(p.returncode, 0, "driver failed:\n" + p.stdout[-3000:] + p.stderr[-3000:])
         line = next((ln for ln in p.stdout.splitlines() if ln.startswith("RESULT:")), None)
         self.assertIsNotNone(line, "driver printed no result:\n" + p.stdout[-3000:])
         r = json.loads(line[len("RESULT:"):])
         self.assertNotIn("died", r, "driver aborted early: %r" % r)
+        return r
+
+
+class ServedWedge(_ShipLab):
+    def test_restart_between_ship_and_ack_reships_heals_and_releases_the_held_send(self):
+        r = self._run_driver(DRIVER, {
+            "url": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token),
+            "kernelPid": self.kernel.pid,
+            "relaunch": {"cmd": os.path.join(BIN, "romp-kernel"),
+                         "env": {k: v for k, v in self.env.items()}, "log": self.klog},
+            "file": self.png, "msg": "hold this message for the upload T215",
+            "msg2": "a normal send after the restart T215",
+            "shots": os.environ.get("SHIP_RESHIP_SHOTS", "")})
         w, reg = r["wedge"], r["regression"]
         # the ship went out on a live socket the stopped kernel will never answer
         self.assertEqual(w["chipUpAfterShip"], 1, "the pending chip must be up after the ship: %r" % w)
@@ -295,6 +314,71 @@ class ServedWedge(unittest.TestCase):
         self.assertTrue(reg["thumbnailLanded"], "normal ship: chip → thumbnail on the ack: %r" % reg)
         self.assertEqual(reg["gateOpened"], 0, "no pending ships → no gate: %r" % reg)
         self.assertTrue(reg["sentClean"], "a plain send still clears and lands: %r" % reg)
+
+
+DRIVER_RELOAD = r"""
+import { createRequire } from "node:module";
+import fs from "node:fs";
+const require = createRequire(process.env.EXT_PKG);
+const { chromium } = require("playwright");
+const cfg = JSON.parse(fs.readFileSync(process.env.CFG, "utf8"));
+let browser;
+try { browser = await chromium.launch(); }
+catch (e) { console.error("browser-launch-failed: " + e); process.exit(3); }
+const page = await browser.newPage({ viewport: { width: 1100, height: 900 } });
+const out = {};
+const die = async (why) => {
+  fs.writeSync(1, "RESULT:" + JSON.stringify({ ...out, died: why }) + "\n");
+  await browser.close();
+  process.exit(0);
+};
+await page.goto(cfg.url);
+await page.waitForSelector("#composer-input", { timeout: 20000 });
+const tab = await page.waitForSelector("#tabs .tab, #tabs [data-sid]", { timeout: 20000 }).catch(() => null);
+if (!tab) await die("no session tab — the lab seed never reached the chat payload");
+await page.waitForTimeout(500);
+// stop the kernel so the ship's ack cannot land, then WALK AWAY mid-flight: the loss shape.
+// No restart needed — determinism comes from the page dying before any ack or re-ship can settle.
+process.kill(cfg.kernelPid, "SIGSTOP");
+await page.setInputFiles("body > input[type=file]", cfg.file);
+await page.waitForSelector(".composer-file-pending", { timeout: 10000 }).catch(() => {});
+out.chipUp = await page.locator(".composer-file-pending").count();
+await page.goto("about:blank");            // the page dies with the ship pending — no client left to ack
+process.kill(cfg.kernelPid, "SIGCONT");    // the buffered dropFile answers a dead socket, harmlessly
+// load 1: the persisted names must warn LOUDLY — and clear
+await page.goto(cfg.url);
+await page.waitForSelector("#composer-input", { timeout: 20000 });
+await page.waitForTimeout(800);
+out.toastOnFirstLoad = await page.evaluate(
+  () => (document.getElementById("warn-toasts")?.textContent || "").includes("still uploading"));
+// load 2: silence — pre-fix, persistDrafts' swallowed TDZ throw left the record, re-toasting forever
+await page.goto(cfg.url);
+await page.waitForSelector("#composer-input", { timeout: 20000 });
+await page.waitForTimeout(800);
+out.toastOnSecondLoad = await page.evaluate(
+  () => (document.getElementById("warn-toasts")?.textContent || "").includes("still uploading"));
+fs.writeSync(1, "RESULT:" + JSON.stringify(out) + "\n");
+await browser.close();
+process.exit(0);
+"""
+
+
+class ReloadLossToast(_ShipLab):
+    """The reload face, executed: a ship lost to a page death warns ONCE at the next load, then the
+    record clears. Red on the pre-fix tree: the startup clear rode persistDrafts, whose stagedMsgs
+    read sits below the restore block — the TDZ throw died in persistDrafts' own catch, the clear
+    silently never ran, and the toast re-fired on every load (review finding 2026-09-01, verified
+    on the emitted bundle)."""
+
+    def test_reload_loss_toasts_once_then_clears(self):
+        r = self._run_driver(DRIVER_RELOAD, {
+            "url": "http://127.0.0.1:%d/chat?token=%s" % (self.port, self.token),
+            "kernelPid": self.kernel.pid, "file": self.png})
+        self.assertEqual(r["chipUp"], 1, "the ship must be pending when the page dies: %r" % r)
+        self.assertTrue(r["toastOnFirstLoad"],
+                        "the lost upload must warn loudly on the next load — never a silent vanish: %r" % r)
+        self.assertFalse(r["toastOnSecondLoad"],
+                         "the loss record must clear with the toast — one warning, not one per load: %r" % r)
 
 
 if __name__ == "__main__":

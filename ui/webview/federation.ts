@@ -871,7 +871,17 @@ export class FederationManager {
       return;
     }
     conn.ws = ws;
-    ws.onopen = () => this.diag("hostconn", { host: conn.host, ev: "open" });
+    ws.onopen = () => {
+      this.diag("hostconn", { host: conn.host, ev: "open" });
+      // this host's owed replies just became reachable again — the chat re-ships its pending
+      // uploads on exactly this event (T215 review finding 2026-09-01: a remote kernel's restart
+      // redials HERE, firing neither romp:wsup nor hostUp, so nothing else could heal them).
+      // Fired on every open, not just re-opens: at boot the listener's map is empty (a no-op),
+      // and a detach/re-add mints a fresh Conn whose FIRST open is that heal event.
+      try {
+        window.dispatchEvent(new CustomEvent("romp:hostRelayUp", { detail: { host: conn.host } }));
+      } catch (e) { /* dispatch must never break the relay */ }
+    };
     ws.onmessage = (ev: MessageEvent) => {
       let msg: any;
       try {
