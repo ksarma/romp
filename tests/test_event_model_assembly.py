@@ -55,7 +55,7 @@ class Replay(unittest.TestCase):
         ref = emr.parse_session(str(path), rompuuid=SID, name="impl", dir="/TESTDIR", **kw)
         self.assertEqual(_tree(ref), _tree(inc), "incremental diverged from full at %s" % label)
 
-    def replay(self, records, states=None, postal=None, min_folds=None):
+    def replay(self, records, states=None, postal=None, min_folds=None, exact_folds=None):
         """Write `records` one at a time, comparing trees at every prefix."""
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / (SID + ".jsonl")
@@ -70,6 +70,9 @@ class Replay(unittest.TestCase):
             if min_folds is not None:
                 self.assertGreaterEqual(emi._ASM_STATS["fold"] - folds0, min_folds,
                                         "the fast path never engaged — every step full-parsed")
+            if exact_folds is not None:
+                self.assertEqual(emi._ASM_STATS["fold"] - folds0, exact_folds,
+                                 "fold count drifted — a record kind silently demotes to full")
 
     def test_all_single_file_golden_scenarios_replay_equivalently(self):
         for name, (records_fn, sent) in G.SINGLE_FILE.items():
@@ -79,8 +82,10 @@ class Replay(unittest.TestCase):
 
     def test_plain_streaming_replay_actually_folds(self):
         # the red-first pin for the whole feature: a clean append-only stream must take the
-        # fast path (equivalence alone would pass trivially if every step demoted to full)
-        self.replay(G.scenario_author_kinds(), postal=G.SENT_LOG, min_folds=4)
+        # fast path on EVERY step after the first (equivalence alone would pass trivially if
+        # steps demoted to full — an exact count catches a single record kind rotting)
+        recs = G.scenario_author_kinds()
+        self.replay(recs, postal=G.SENT_LOG, exact_folds=len(recs) - 1)
 
     def test_resume_lineage_replays_equivalently_across_files(self):
         # file A is static (identity-stable non-leaf), file B streams; the states rows carry
@@ -93,6 +98,7 @@ class Replay(unittest.TestCase):
             kw = {"candidate_files": [str(pa), str(pb)], "states": rows,
                   "postal_log": [], "now": NOW}
             pb.write_text("")
+            folds0 = emi._ASM_STATS["fold"]
             for i, r in enumerate(G.scenario_resume_lineage_fileB()):
                 with open(pb, "a") as fh:
                     fh.write(json.dumps(r) + "\n")
@@ -100,6 +106,8 @@ class Replay(unittest.TestCase):
                 emr._ASM_CACHE.clear()
                 ref = emr.parse_session(str(pb), rompuuid=SID, name="impl", dir="/TESTDIR", **kw)
                 self.assertEqual(_tree(ref), _tree(inc), "diverged at fileB record %d" % (i + 1))
+            self.assertGreater(emi._ASM_STATS["fold"] - folds0, 0,
+                               "multi-file sessions silently demote to permanent full parses")
 
 
 class GateDemotions(unittest.TestCase):
@@ -330,5 +338,127 @@ class ServedTreesAreCallerOwned(unittest.TestCase):
             emi._ASM_CACHE.clear()
 
 
+
+class FallbackPath(unittest.TestCase):
+    """The correctness backstop the design leans on: a fold-machinery exception serves a plain
+    full parse (equivalent output), warns loudly, pops the poisoned entry, and RECOVERS — the
+    next parse rebuilds and the one after folds again."""
+    maxDiff = None
+
+    def test_a_fold_exception_serves_a_full_parse_loudly_and_recovers(self):
+        import contextlib
+        import io
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / (SID + ".jsonl")
+            path.write_text(json.dumps(G.uline(T0, "opener", "u1")) + "\n")
+            kw = {"candidate_files": [str(path)], "states": None, "postal_log": [], "now": NOW}
+            emi.parse_session(str(path), rompuuid=SID, name="impl", dir="/TESTDIR", **kw)
+            with open(path, "a") as fh:
+                fh.write(json.dumps(G.aline(T0 + 10, "ok", "a1", "u1")) + "\n")
+            old_gates = emi._asm_gates
+            emi._asm_gates = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("synthetic fold bug"))
+            emi._ASM_WARNED[0] = False
+            try:
+                fb0 = emi._ASM_STATS["fallback"]
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err):
+                    inc = emi.parse_session(str(path), rompuuid=SID, name="impl", dir="/TESTDIR", **kw)
+                emr._ASM_CACHE.clear()
+                ref = emr.parse_session(str(path), rompuuid=SID, name="impl", dir="/TESTDIR", **kw)
+                self.assertEqual(_tree(ref), _tree(inc))
+                self.assertEqual(emi._ASM_STATS["fallback"], fb0 + 1)
+                self.assertTrue(emi._ASM_WARNED[0])
+                self.assertIn("assembly fold failed", err.getvalue())
+                self.assertNotIn(os.path.realpath(str(path)),
+                                 [k[0] for k in emi._ASM_CACHE])   # the poisoned entry is gone
+            finally:
+                emi._asm_gates = old_gates
+            fulls0 = emi._ASM_STATS["full"]
+            emi.parse_session(str(path), rompuuid=SID, name="impl", dir="/TESTDIR", **kw)
+            self.assertEqual(emi._ASM_STATS["full"], fulls0 + 1)      # rebuilds…
+            with open(path, "a") as fh:
+                fh.write(json.dumps(G.uline(T0 + 60, "next ask", "u2", "a1")) + "\n")
+            folds0 = emi._ASM_STATS["fold"]
+            inc = emi.parse_session(str(path), rompuuid=SID, name="impl", dir="/TESTDIR", **kw)
+            self.assertEqual(emi._ASM_STATS["fold"], folds0 + 1)      # …and folds again
+            emr._ASM_CACHE.clear()
+            ref = emr.parse_session(str(path), rompuuid=SID, name="impl", dir="/TESTDIR", **kw)
+            self.assertEqual(_tree(ref), _tree(inc))
+
+
+class HealThenFold(unittest.TestCase):
+    def test_postal_and_transcript_catch_up_in_the_same_visit(self):
+        # the heal runs before the fold in one _assemble visit: the log resolves an old miss
+        # while new records append — both effects must land, matching a full parse exactly
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / (SID + ".jsonl")
+            recs = [G.uline(T0, "opener", "u1"),
+                    G.aline(T0 + 10, "ok", "a1", "u1"),
+                    G.postal_line(T0 + 100, "ASK: bump the alpha", "u2", "a1")]
+            path.write_text("\n".join(json.dumps(r) for r in recs) + "\n")
+            kw = {"candidate_files": [str(path)], "states": None, "postal_log": [], "now": NOW}
+            emi.parse_session(str(path), rompuuid=SID, name="impl", dir="/TESTDIR", **kw)
+            with open(path, "a") as fh:
+                fh.write(json.dumps(G.aline(T0 + 110, "ack peer", "a2", "u2")) + "\n")
+            kw["postal_log"] = list(G.SENT_LOG)
+            folds0 = emi._ASM_STATS["fold"]
+            inc = emi.parse_session(str(path), rompuuid=SID, name="impl", dir="/TESTDIR", **kw)
+            emr._ASM_CACHE.clear()
+            ref = emr.parse_session(str(path), rompuuid=SID, name="impl", dir="/TESTDIR", **kw)
+            self.assertEqual(_tree(ref), _tree(inc))
+            self.assertEqual(emi._ASM_STATS["fold"], folds0 + 1)   # healed on the FOLD path
+            trig = [a for t in inc["turns"] for a in t["atoms"] if a.get("uuid") == "u2"][0]
+            self.assertEqual(trig["author"]["peer"], G.PEER)
+
+    def test_wrong_but_resolved_earlier_marker_still_heals(self):
+        # the review's major catch: a QUOTED earlier marker resolves first, so the author has
+        # peer set but names the wrong message — the heal must keep revisiting until the
+        # TRAILING marker resolves, exactly as a fresh full parse would decide it
+        mid2 = "1700000000.222_333.TESTHOST"
+        body = ("fwd of my earlier note\n<!-- romp-msg-id: %s -->\n"
+                "and the real ask\n<!-- romp-msg-id: %s -->" % (G.MID, mid2))
+        row2 = {"t": T0 + 195, "ev": "sent", "id": mid2, "from": "feeddesign",
+                "from_id": "77777777-6666-5555-4444-333333333333", "to_id": SID,
+                "body": "ASK: the real one"}
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / (SID + ".jsonl")
+            recs = [G.uline(T0, "opener", "u1"),
+                    G.aline(T0 + 10, "ok", "a1", "u1"),
+                    G.uline(T0 + 200, body, "u2", "a1", ps=None),
+                    G.aline(T0 + 210, "ack", "a2", "u2")]
+            path.write_text("\n".join(json.dumps(r) for r in recs) + "\n")
+            kw = {"candidate_files": [str(path)], "states": None,
+                  "postal_log": list(G.SENT_LOG), "now": NOW}   # only the QUOTED marker resolves
+            inc = emi.parse_session(str(path), rompuuid=SID, name="impl", dir="/TESTDIR", **kw)
+            trig = [a for t in inc["turns"] for a in t["atoms"] if a.get("uuid") == "u2"][0]
+            self.assertEqual(trig["author"]["mid"], G.MID)         # provisional: quoted marker won
+            kw["postal_log"] = list(G.SENT_LOG) + [row2]           # the trailing row lands
+            inc = emi.parse_session(str(path), rompuuid=SID, name="impl", dir="/TESTDIR", **kw)
+            emr._ASM_CACHE.clear()
+            ref = emr.parse_session(str(path), rompuuid=SID, name="impl", dir="/TESTDIR", **kw)
+            self.assertEqual(_tree(ref), _tree(inc))
+            trig = [a for t in inc["turns"] for a in t["atoms"] if a.get("uuid") == "u2"][0]
+            self.assertEqual(trig["author"]["mid"], mid2)          # re-decided, not latched
+
+
+class StatesOnlyChange(unittest.TestCase):
+    def test_idle_rows_growing_under_a_static_transcript_serve_equivalently(self):
+        # idle/orphan overlays are synthesized OUTSIDE the cache on every call — a states-only
+        # change must flow through the serve path without any transcript re-emit
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / (SID + ".jsonl")
+            path.write_text("\n".join(json.dumps(r) for r in [
+                G.uline(T0, "opener", "u1"), G.aline(T0 + 10, "ok", "a1", "u1")]) + "\n")
+            kw = {"candidate_files": [str(path)], "states": [], "postal_log": [], "now": NOW}
+            emi.parse_session(str(path), rompuuid=SID, name="impl", dir="/TESTDIR", **kw)
+            serves0 = emi._ASM_STATS["serve"]
+            kw["states"] = list(G.IDLE_STATES)
+            inc = emi.parse_session(str(path), rompuuid=SID, name="impl", dir="/TESTDIR", **kw)
+            emr._ASM_CACHE.clear()
+            ref = emr.parse_session(str(path), rompuuid=SID, name="impl", dir="/TESTDIR", **kw)
+            self.assertEqual(_tree(ref), _tree(inc))
+            self.assertEqual(emi._ASM_STATS["serve"], serves0 + 1)
+            self.assertTrue(any(a["type"] == "idle"
+                                for t in inc["turns"] for a in t["atoms"]))
 if __name__ == "__main__":
     unittest.main(verbosity=2)

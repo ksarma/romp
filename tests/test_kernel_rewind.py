@@ -242,7 +242,7 @@ class ParseCut(unittest.TestCase):
         conversation content — filtering them on the cut's timestamp would blank the live working
         indicator for any session sitting on a pending delete."""
         src = inspect.getsource(km.em.parse_session)
-        cut_block = src[src.index("if leaf_override and leaf_override in adapter.by_uuid"):]
+        cut_block = src[src.index("if cut_t:"):]   # the cut filter (cut_t resolved in _assemble)
         self.assertNotIn("synthesize_idle", cut_block.split("atoms += orphans")[0])
         self.assertIn("orphans = [a for a in orphans if a[\"t\"] <= cut_t]", src)
 

@@ -439,14 +439,17 @@ def _read_jsonl(path):
 # whole-parse cache contract. The cached list itself is never extended in place — a grown file stores a
 # NEW list — so a concurrent reader holding the old list is never surprised mid-iteration.
 _JSONL_CACHE = {}                 # path -> (mtime, size, offset, tail_bytes, records); dict order = LRU, hits reinsert
-_JSONL_CACHE_MAX = 256            # bounds MEMORY only — past the cap, evict the least-recently-USED entry, one per
+_JSONL_CACHE_MAX = 384            # bounds MEMORY only — past the cap, evict the least-recently-USED entry, one per
                                   # insert, never clear(). The old clear-at-cap was sized to the session count, but
                                   # the working set is FILES, not sessions (every subagent writes its own transcript):
                                   # once more distinct files than slots passed through one push cycle, the clear
                                   # nuked the HOT entries too and every push re-parsed every active transcript from
                                   # byte zero — the exact stall this cache exists to prevent, back as a permanent
                                   # background burn (recurred 2026-08-15, kernel pinned at ~30-60% CPU; the survival
-                                  # guarantee is pinned by tests/test_kernel_jsonl_cache.py).
+                                  # guarantee is pinned by tests/test_kernel_jsonl_cache.py). 256 -> 384 when the
+                                  # states/postal logs became tenants too (2026-09-01): one states file per session
+                                  # plus messages.jsonl now share the slots, and an evicted LEAF slot also demotes
+                                  # the assembly cache's identity gate to a full parse.
 _JSONL_TAIL_GUARD = 64            # bytes of pre-offset content re-verified before an incremental read
 _JSONL_CACHE_LOCK = threading.Lock()   # the cache has cross-thread callers (the judge tiers' worker pools,
                                        # the pusher, the warm threads) and HITS mutate (LRU reinsert): the
@@ -627,6 +630,20 @@ def author_of(blocks, prompt_source, postal_index, sdk_human=False):
     if _is_real_prompt(blocks):
         return "human"
     return None
+
+
+def _author_final(author, text):
+    """True when a postal author can never change again: the TRAILING marker resolved. author_of
+    scans markers tail-first for the first index hit, so a resolution landing later than the
+    CHOSEN marker re-decides the author — a record whose quoted/forwarded earlier marker resolved
+    while its trailing real one hadn't yet gets a plausible-but-PROVISIONAL author, not just a
+    peer-None one (the postal log is append-only and first-wins per id, so resolutions only
+    arrive, never change). The assembly heal re-emits any non-final author each visit until the
+    tail settles; non-postal authors are trivially final."""
+    if not isinstance(author, dict):
+        return True
+    pairs = postal_pairs(text)
+    return bool(author.get("peer") is not None and pairs and author.get("mid") == pairs[-1][0])
 
 
 def parse_teammate_message(text):
@@ -1192,9 +1209,8 @@ class FileAdapter:
             emitted.add(key)
             a = self._absorbed_atom(q["text"], q["ts"], q["seq"], q["uuid"],
                                     rompuuid, postal_index)
-            au = a.get("author")
-            if isinstance(au, dict) and au.get("mid") and au.get("peer") is None:
-                st["postal_miss_att"].add(key)   # marker seen, index missed — the heal re-checks
+            if not _author_final(a.get("author"), q["text"]):
+                st["postal_miss_att"].add(key)   # trailing marker unresolved — the heal re-checks
             atoms.append(a)
         return atoms
 
@@ -1280,14 +1296,17 @@ class FileAdapter:
         st["compacted"], st["restoring"], st["last_boundary"] = _compacted, _restoring, last_boundary
         # The chronological watermark the assembly fold's monotonic gate compares appended records
         # against: a delta that sorts at-or-after everything already folded is the invariant that
-        # makes carrying the sets above across folds valid at all.
-        for u in order:
+        # makes carrying the sets above across folds valid at all. `order` is ascending by
+        # (parse_z or 0, seq), so the LAST pre-pass-relevant record carries the max — one lookup,
+        # not a second parse_z sweep of the whole session (that re-walk measured 33ms at 30k).
+        for u in reversed(order):
             r = self.by_uuid.get(u) or {}
             if r.get("type") in ("user", "assistant") or (
                     r.get("type") == "system" and r.get("subtype") == "compact_boundary"):
                 ts = parse_z(r.get("timestamp"))
                 if ts and ts > st["max_ppt"]:
                     st["max_ppt"] = ts
+                break
         # Skill tool_use block ids: the anchor for the NEW skill-instructions shape (2026-07-10). Newer
         # CLIs inject the payload as an isMeta user record whose sourceToolUseID names the invoking Skill
         # tool_use — the text no longer starts with the "Base directory for this skill:" preamble
@@ -1452,9 +1471,9 @@ class FileAdapter:
                 author = author_of(blocks, ps, postal_index, getattr(self, "sdk_human", False))
                 if author is not None:
                     atom["author"] = author
-                    if isinstance(author, dict) and author.get("mid") and author.get("peer") is None:
-                        st["postal_miss_rec"].add(u)   # marker seen, index missed — the assembly
-                        #                                heal re-authors this record once it lands
+                    if not _author_final(author, btext):
+                        st["postal_miss_rec"].add(u)   # trailing marker unresolved — the assembly
+                        #                                heal re-authors this record until it lands
                 if ROMP_AUTO_RE.search(_text_of(blocks)):   # an AUTO-nudge → flag it (vs a button/typed follow-up)
                     atom["rompAuto"] = True
                 yield atom
@@ -1981,6 +2000,14 @@ _ASM_STATS = {"full": 0, "fold": 0, "serve": 0, "bypass": 0, "fallback": 0}   # 
 _ASM_WARNED = [False]
 
 
+def _asm_demote(reason):
+    """Count WHY a fold demoted to a full parse (g:<reason> in _ASM_STATS) and return None —
+    the hit-rate diagnosis this cache lives or dies by, in prod and in the corpus replay."""
+    k = "g:" + reason
+    _ASM_STATS[k] = _ASM_STATS.get(k, 0) + 1
+    return None
+
+
 def _asm_key_lock(key):
     with _ASM_LOCK:
         lk = _ASM_KEYLOCKS.get(key)
@@ -2025,7 +2052,7 @@ def _asm_gates(entry, leaf_path, candidate_files, links):
     empty) and the records list they came from, gate-checked per the block comment above."""
     if entry["cands"] != tuple(str(f) for f in candidate_files) or \
             entry["links"] != dict(links or {}):
-        return None
+        return _asm_demote("inputs")
     ad = entry["ad"]
     leaf_stem = Path(leaf_path).stem
     files = [f for f in candidate_files if Path(f).stem != leaf_stem] + [Path(leaf_path)]
@@ -2034,10 +2061,10 @@ def _asm_gates(entry, leaf_path, candidate_files, links):
         recs = _read_jsonl_incremental(fp)
         old = entry["recs"].get(str(fp))
         if old is None:
-            return None
+            return _asm_demote("recs-gone")
         if Path(fp).stem != leaf_stem:
             if recs is not old:
-                return None      # a non-leaf file changed — or its reader slot was evicted and
+                return _asm_demote("nonleaf")   # changed — or its reader slot was evicted and
             continue             #  rebuilt; identity is the proof, its absence means full parse
         leaf_recs = recs
         if recs is old:
@@ -2046,73 +2073,82 @@ def _asm_gates(entry, leaf_path, candidate_files, links):
             delta = recs[len(old):]   # the reader's contract: a grown file returns the SAME
             #                           prefix objects + the parsed new bytes
         else:
-            return None
+            return _asm_demote("rewrite")
     if delta is None:
-        return None
+        return _asm_demote("no-leaf-slot")
     if not delta:
         return [], leaf_recs
     max_ppt = entry["st"]["max_ppt"]
     old_leaf = ad._pristine_leaf
     if old_leaf is None:
-        return None
+        return _asm_demote("empty-graph")
     parent_d, new_leaf = {}, old_leaf
     for r in delta:
         t, u = r.get("type"), r.get("uuid")
         if u:
             if u in ad.by_uuid or u in ad.dangling:
-                return None      # a re-written record rebinds last-write-wins index state; a
-                #                  resurrected dangling target rebinds repaired stitches
+                return _asm_demote("uuid-known")   # a re-write rebinds last-write-wins index
+                #                  state; a resurrected dangling target rebinds repaired stitches
             p = r.get("parentUuid") or r.get("logicalParentUuid")
             parent_d[u] = None if p == u else p
             new_leaf = u
         if t == "system" and r.get("subtype") == "compact_boundary":
-            return None          # boundaries arm the restore dedup and can re-seat adoptions
+            return _asm_demote("boundary")   # arms the restore dedup and can re-seat adoptions
         if r.get("isCompactSummary") is True:
-            return None          # summaries attach to boundaries in the chronological pre-pass
+            return _asm_demote("summary")    # attaches to boundaries in the chronological pre-pass
         if t == "user" and r.get("promptId") and r["promptId"] in ad.prompt_ids:
-            return None          # a twin/wrapper/stdout split across appends re-classifies old atoms
+            return _asm_demote("promptid")   # a twin/wrapper/stdout split across appends
+            #                                  re-classifies old atoms
         if t == "assistant":
             for b in _content(r.get("message")) or []:
                 if isinstance(b, dict) and b.get("type") == "tool_use" and \
                         b.get("name") == "Skill" and b.get("id") in ad.src_tool_links:
-                    return None  # an already-ingested payload record references THIS invocation
+                    return _asm_demote("skill-link")   # an already-ingested payload references it
         if t in ("user", "assistant"):
             ts = parse_z(r.get("timestamp"))
             if ts is None or ts < max_ppt:
-                return None      # the carry is valid only for a delta sorting at-or-after
-                #                  everything already folded (the pre-pass sorts None first)
+                return _asm_demote("ts")   # the carry is valid only for a delta sorting at-or-
+                #                            after everything folded (the pre-pass sorts None first)
     # Leaf descent: the new file-leaf must chain back to the old one THROUGH the delta — an
     # api_error spur re-parent, a rewind, and a /clear fork all fail here. parent_d.pop doubles
     # as the cycle guard; a delta with no uuid-bearing record passes trivially (leaf unmoved).
     cur, hops = new_leaf, 0
     while cur != old_leaf:
         if cur is None or cur not in parent_d or hops > len(delta) + 1:
-            return None
+            return _asm_demote("descent")
         cur = parent_d.pop(cur)
         hops += 1
     return delta, leaf_recs
 
 
 def _asm_heal(entry, rompuuid, postal_index):
-    """Re-author atoms whose postal marker MISSED the index at emit time, now that the log may
-    have caught up. Record-local by design: author_of reads only the record's text + the index,
-    and a resolution never changes once present (append-only log, first-wins per id)."""
+    """Re-author atoms whose postal author is still PROVISIONAL (_author_final) against the
+    current index: replace on any change so serves match a full parse NOW, and retire the miss
+    only once the trailing marker resolves — a record whose quoted earlier marker resolved first
+    would otherwise latch the wrong sender forever (review catch, 2026-09-01). Record-local by
+    design: author_of reads only the record's text + the index. The qatt pick mirrors
+    _absorbed's kept filter exactly — the first same-key twin can sit on a rewound branch, and
+    healing from it would flip the atom's identity to the abandoned record (same review)."""
     st, ad = entry["st"], entry["ad"]
     if st["postal_miss_rec"]:
         pos = {a.get("uuid"): i for i, a in enumerate(entry["atoms"]) if a.get("uuid")}
-        healed = set()
+        done = set()
         for u in list(st["postal_miss_rec"]):
             i = pos.get(u)
             if i is None:
-                healed.add(u)    # no atom carries it any more (entry rebuilt around it) — retire
+                done.add(u)      # no atom carries it any more (entry rebuilt around it) — retire
                 continue
             a2 = next(iter(ad._emit_fold([u], st, rompuuid, postal_index)), None)
-            au = (a2 or {}).get("author")
-            if a2 is not None and isinstance(au, dict) and au.get("peer") is not None:
+            if a2 is None:
+                done.add(u)
+                continue
+            if a2 != entry["atoms"][i]:
                 entry["atoms"][i] = a2   # in place is safe: serves copy, and we hold the key lock
-                healed.add(u)
-        st["postal_miss_rec"] -= healed
+            if _author_final(a2.get("author"), _text_of(_content(a2.get("message")))):
+                done.add(u)
+        st["postal_miss_rec"] -= done
     if st["postal_miss_att"]:
+        kept = entry["kept"]
         for i, a in enumerate(entry["atoms"]):
             if not a.get("absorbed"):
                 continue
@@ -2120,14 +2156,15 @@ def _asm_heal(entry, rompuuid, postal_index):
             if key not in st["postal_miss_att"]:
                 continue
             q = next((q for q in ad.qatts if q["ts"] == key[0]
-                      and " ".join(q["text"].split()) == key[1]), None)
+                      and " ".join(q["text"].split()) == key[1]
+                      and (q["uuid"] is None or q["uuid"] in kept)), None)
             if q is None:
                 st["postal_miss_att"].discard(key)
                 continue
             a2 = ad._absorbed_atom(q["text"], q["ts"], q["seq"], q["uuid"], rompuuid, postal_index)
-            au = a2.get("author")
-            if isinstance(au, dict) and au.get("peer") is not None:
+            if a2 != a:
                 entry["atoms"][i] = a2
+            if _author_final(a2.get("author"), q["text"]):
                 st["postal_miss_att"].discard(key)
 
 
@@ -2148,7 +2185,7 @@ def _asm_fold(entry, delta, leaf_recs, leaf_key, leaf_stem, rompuuid, postal_ind
     kept = ad.kept_uuids(ad.active_path())
     dset = {r.get("uuid") for r in delta if r.get("uuid")}
     if kept - dset != entry["kept"]:
-        return None                  # ancestry moved under an old record — the fold cannot
+        return _asm_demote("kept")   # ancestry moved under an old record — the fold cannot
         #                              re-emit history; only a full parse can
     st = entry["st"]
     order = _chrono(ad, kept & dset)
@@ -2206,11 +2243,13 @@ def _assemble(leaf_path, candidate_files, links, rompuuid, postal_index, sdk_hum
             return _asm_full(key, leaf_path, candidate_files, links, rompuuid,
                              postal_index, sdk_human)
     except Exception as e:
-        if not _ASM_WARNED[0]:
-            _ASM_WARNED[0] = True
-            print("romp-event-model: assembly fold failed (%r) — serving plain full parses; "
-                  "the fallback is correct but slow, fix the fold" % (e,), file=sys.stderr)
         _ASM_STATS["fallback"] += 1
+        if not _ASM_WARNED[0] or _ASM_STATS["fallback"] in (10, 100, 1000, 10000):
+            _ASM_WARNED[0] = True    # once, then at count milestones — a PERSISTENT fold bug
+            #                          must not hide behind a single line in an old log
+            print("romp-event-model: assembly fold failed (%r) — serving plain full parses "
+                  "(stats %r); the fallback is correct but slow, fix the fold"
+                  % (e, dict(_ASM_STATS)), file=sys.stderr)
         with _ASM_LOCK:
             _ASM_CACHE.pop(key, None)
         ad = FileAdapter(candidate_files, leaf_path, resume_links=links)
