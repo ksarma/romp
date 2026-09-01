@@ -846,8 +846,12 @@ def _model_id_parts(value):
 
 
 def _model_id_label(value):
-    """The badge label for a first-party id — the SDK backend's pretty_model rule: 'Fable 5.1'."""
-    fam, maj, minor = _model_id_parts(value)
+    """The badge label for a first-party id — the SDK backend's pretty_model rule: 'Fable 5.1'; '' for
+    anything that is not one (a module-level helper never raises on junk)."""
+    parts = _model_id_parts(value)
+    if not parts:
+        return ""
+    fam, maj, minor = parts
     return "%s %d" % (fam.capitalize(), maj) + (".%d" % minor if minor else "")
 
 
@@ -877,7 +881,10 @@ def _learned_versions():
         parts = _model_id_parts(mid)
         if not parts or parts[0] not in fams:
             continue
-        fam, value = parts[0], _model_id_clean(mid)
+        fam, maj, minor = parts
+        # the DATELESS alias is what the row offers: a CLI may report the -YYYYMMDD snapshot it runs,
+        # and a snapshot retires while the alias follows the version (review 2026-09-01)
+        value = "claude-%s-%d" % (fam, maj) + ("-%d" % minor if minor else "")
         label = _model_id_label(value)
         if label.lower() in labels.setdefault(fam, set()):
             continue
@@ -932,11 +939,17 @@ def _note_model_pick(value):
     """Record a version pick as its family's new default (write-on-change). Family shorthands and
     unknown strings record nothing — they are not version picks — so a bare family click (which
     carries the alias) can never downgrade an explicit legacy pin."""
-    learned = _learned_versions()
-    fam = _version_family(value, learned)
+    fam = _version_family(value)
     if not fam:
         return
-    picks = _model_picks(learned)
+    # Merge into the RAW file, never the filtered read: a pin whose reporting session is gone is
+    # hidden on read (its family can't vouch for it right now), not erased on write — it resolves
+    # again the moment any session reports the id (review 2026-09-01).
+    try:
+        picks = json.loads((jd.STATE / MODEL_PICKS_FILE_NAME).read_text())
+    except Exception:
+        picks = {}
+    picks = picks if isinstance(picks, dict) else {}
     if picks.get(fam) == value:
         return
     picks[fam] = value
@@ -19119,18 +19132,35 @@ def _route_meta_command(be, sid, text, client=None):
     plain text that merely contains one — is the caller's to send verbatim: the CLI owns what executes.
     A refused fast toggle is told to the client (fail loudly): a dormant SDK session has no live CLI to
     apply it, and the typed text used to at least draw the CLI's own refusal."""
-    cmd = (text or "").strip()
-    if cmd.startswith("/model ") and cmd[len("/model "):].strip():
-        _set_model_or_park(be, sid, cmd[len("/model "):].strip())   # mid-compaction → parked as a queued command
-    elif cmd.startswith("/effort ") and cmd[len("/effort "):].strip():
-        _set_effort_or_park(be, sid, cmd[len("/effort "):].strip())   # mid-compaction → parked as a queued command
-    elif cmd.startswith("/fast ") and cmd[len("/fast "):].strip():
-        if not _set_fast_or_park(be, sid, cmd[len("/fast "):].strip()) and client:   # mid-compaction → parked
+    head, _, rest = (text or "").strip().partition(" ")
+    value = rest.strip()
+    # ONE token, and one the kernel can vouch for (review 2026-09-01): the setters PERSIST their value —
+    # set_model's lands in sdk-defaults.json as the seed for every future session — so a typo
+    # ("/model opsu"), a multiline message that merely opens with the command, or a fast value outside
+    # on/off is not ours to swallow: it stays the CLI's, verbatim, and the user sees the CLI's own error.
+    if not value or len(value.split()) != 1:
+        return False
+    if head == "/model" and _vouched_model(value):
+        _set_model_or_park(be, sid, value)     # mid-compaction → parked as a queued command
+    elif head == "/effort" and value in _EFFORT_VALUES:
+        _set_effort_or_park(be, sid, value)    # mid-compaction → parked as a queued command
+    elif head == "/fast" and value in ("on", "off"):
+        if not _set_fast_or_park(be, sid, value) and client:   # mid-compaction → parked
             client["send"](json.dumps({"type": "warn",
                                        "text": "Couldn't toggle fast mode — the session isn't connected right now."}))
     else:
         return False
     return True
+
+
+def _vouched_model(value):
+    """A model value the kernel will stand behind persisting: a family alias, 'default', a seed or learned
+    version id, or any well-formed first-party id of a known family (the CLI validates the exact version;
+    romp's job is keeping the registry in step). A typo is none of these."""
+    if value in _MODEL_VALUES or value == "default" or _version_family(value):
+        return True
+    parts = _model_id_parts(value)
+    return bool(parts and parts[0] in _MODEL_VALUES)
 
 
 def _deliver_send_batch(be, sid, run):
@@ -25856,10 +25886,15 @@ def _judge_state_gt(fname):
 
 # judge tiers accept VERSION ids too (the user 2026-08-25: the settings pickers mirror the
 # family+version submenus) — a version rides the SDK model param verbatim, like session picks
-_JUDGE_MODEL_VALUES = _MODEL_VALUES | set(_VERSION_FAMILY)
+_JUDGE_MODEL_VALUES = _MODEL_VALUES | set(_VERSION_FAMILY)   # the SEED half; _judge_model_values() adds the learned
+def _judge_model_values():
+    """What a judge tier may run — a family alias, a seed version id, or a version some session's CLI has
+    reported (learned): the same catalog /models hands the gear's selects, so the kernel never refuses a
+    value it offered (review 2026-09-01). Computed per call — the learned half is live."""
+    return _JUDGE_MODEL_VALUES | {v["value"] for vs in _learned_versions().values() for v in vs}
 def _set_judge_fast(v):  _set_judge_state("judge-fast", v, ("on",), allow_empty=True)
-def _set_judge_model(v, gt=None):  return _set_judge_state("judge-model", v, _JUDGE_MODEL_VALUES, gt=gt)
-def _set_index_model(v, gt=None):  return _set_judge_state("index-model", v, _JUDGE_MODEL_VALUES, gt=gt)
+def _set_judge_model(v, gt=None):  return _set_judge_state("judge-model", v, _judge_model_values(), gt=gt)
+def _set_index_model(v, gt=None):  return _set_judge_state("index-model", v, _judge_model_values(), gt=gt)
 def _set_judge_effort(v, gt=None): return _set_judge_state("judge-effort", v, _EFFORT_VALUES, allow_empty=True, gt=gt)
 def _set_index_effort(v, gt=None): return _set_judge_state("index-effort", v, _EFFORT_VALUES, allow_empty=True, gt=gt)
 # The distilling pair accepts extra sentinels (resolved by jd._distill_model/_distill_effort at call
@@ -25867,7 +25902,7 @@ def _set_index_effort(v, gt=None): return _set_judge_state("index-effort", v, _E
 # staller did before the split (the user 2026-08-14) — and effort's "none" pins no-flag. "none" exists
 # because "" cannot: _state_str folds an empty file into the default, so an allow_empty pin here would
 # read back as "follow" (caught by test_distill_tier before it shipped).
-def _set_distill_model(v, gt=None):  return _set_judge_state("distill-model", v, _JUDGE_MODEL_VALUES | {"triage"}, gt=gt)
+def _set_distill_model(v, gt=None):  return _set_judge_state("distill-model", v, _judge_model_values() | {"triage"}, gt=gt)
 def _set_distill_effort(v, gt=None): return _set_judge_state("distill-effort", v, _EFFORT_VALUES | {"triage", "none"}, gt=gt)
 # The default-COMMENT-THREAD trio (the user 2026-08-29, who wanted every new comment thread on one
 # model/effort/fast pick regardless of the session it branches from). Sentinel "session" — the shipped
@@ -25876,7 +25911,7 @@ def _set_distill_effort(v, gt=None): return _set_judge_state("distill-effort", v
 # (clear to the account default) so the setting speaks the create dialog's exact value space; fast is
 # "on" or the sentinel — a checkbox has no third state, and forcing a thread SLOW from a fast parent
 # stays a per-thread dialog pick, never a standing default.
-def _set_comment_model(v, gt=None):  return _set_judge_state("comment-model", v, _JUDGE_MODEL_VALUES | {"session", "default"}, gt=gt)
+def _set_comment_model(v, gt=None):  return _set_judge_state("comment-model", v, _judge_model_values() | {"session", "default"}, gt=gt)
 def _set_comment_effort(v, gt=None): return _set_judge_state("comment-effort", v, _EFFORT_VALUES | {"session"}, gt=gt)
 def _set_comment_fast(v, gt=None):   return _set_judge_state("comment-fast", v, {"session", "on"}, gt=gt)
 
@@ -32321,8 +32356,11 @@ class Handler(BaseHTTPRequestHandler):
                 # in by a local tool while the account is rate-limited — or while the session compacts —
                 # waits its turn instead of buying a red API-error card. ok:true still means ACCEPTED,
                 # which is all it ever meant on this route. No optimistic echo: an external/postal send
-                # isn't a human composer bubble.
-                _send_or_park(Sessions.backend_for(sid), sid, body["text"])
+                # isn't a human composer bubble. A typed /model, /effort or /fast takes the setters,
+                # exactly as the composer's does (2026-09-01) — same door, same registry.
+                be = Sessions.backend_for(sid)
+                if not _route_meta_command(be, sid, body["text"]):
+                    _send_or_park(be, sid, body["text"])
                 return self._send(200, json.dumps({"ok": True}), "application/json")
             if u.path in ("/interrupt", "/end"):
                 # Headless session control (2026-07-05): interrupt/end existed ONLY as WS drive ops, so

@@ -57,6 +57,14 @@ class Catalog(unittest.TestCase):
             for v in vs:
                 self.assertEqual(km._VERSION_FAMILY[v["value"]], fam)
 
+    def test_id_helpers_tolerate_anything(self):
+        self.assertEqual(km._model_id_parts("claude-fable-5-1[1m]"), ("fable", 5, 1))
+        self.assertEqual(km._model_id_parts("claude-opus-4-5-20251101"), ("opus", 4, 5))
+        self.assertIsNone(km._model_id_parts("us.anthropic.claude-opus-4-8-v1:0"))
+        self.assertIsNone(km._model_id_parts("opus"))
+        self.assertEqual(km._model_id_label("claude-fable-5-1"), "Fable 5.1")
+        self.assertEqual(km._model_id_label("<synthetic>"), "", "a module-level helper never raises on junk")
+
     def test_the_seed_table_knows_fable_5_1(self):
         # verified against the installed CLI's catalog 2026-09-01 (2.1.257 resolves `fable` to
         # claude-fable-5-1) and the claude-api reference; the seed must not lag the CLI it drives
@@ -230,6 +238,36 @@ class LearnedVersions(_ModelsServer):
         rows = {m["value"]: m for m in self._models()["models"]}
         learned = [v for v in rows["sonnet"]["versions"] if v.get("learned")]
         self.assertEqual(learned, [{"value": "claude-sonnet-5-1", "label": "Sonnet 5.1", "learned": True}])
+
+    def test_a_dated_snapshot_report_offers_the_dateless_alias(self):
+        # (review, 2026-09-01) a CLI may report the dated snapshot it is running; the pickable value
+        # is the DATELESS alias — the snapshot retires, the alias follows the version
+        self._reg("11111111-2222-3333-4444-555555555501", liveModelId="claude-sonnet-5-1-20260901")
+        rows = {m["value"]: m for m in self._models()["models"]}
+        learned = [v for v in rows["sonnet"]["versions"] if v.get("learned")]
+        self.assertEqual(learned, [{"value": "claude-sonnet-5-1", "label": "Sonnet 5.1", "learned": True}])
+
+    def test_the_judge_tiers_accept_a_learned_version_the_gear_offers(self):
+        # (review, 2026-09-01) the gear's judge/index/distill/comment selects are built from /models'
+        # versions, learned rows included — so the kernel must accept what it offered, and still
+        # refuse an id nobody has ever served
+        self._reg("11111111-2222-3333-4444-555555555501", liveModelId="claude-opus-5-1")
+        self.assertTrue(km._set_judge_model("claude-opus-5-1"), "offered → accepted")
+        self.assertEqual(jd._state_str("judge-model", ""), "claude-opus-5-1")
+        self.assertFalse(km._set_judge_model("claude-opus-9-9"), "never served → refused")
+        self.assertEqual(jd._state_str("judge-model", ""), "claude-opus-5-1", "a refusal changes nothing")
+
+    def test_a_pin_whose_reporting_session_is_gone_survives_on_disk(self):
+        # (review, 2026-09-01) the read filter hides a pin its family can't currently vouch for; the
+        # WRITE must not erase it — a later pick for another family merges into the raw file, so
+        # the pin resolves again the moment a session reports the id
+        (jd.STATE / km.MODEL_PICKS_FILE_NAME).write_text(json.dumps({"opus": "claude-opus-5-1"}))
+        self.assertEqual(km._model_picks(), {}, "no session vouches for it → hidden on read")
+        km._note_model_pick("claude-sonnet-4-6")
+        self.assertEqual(json.loads((jd.STATE / km.MODEL_PICKS_FILE_NAME).read_text()),
+                         {"opus": "claude-opus-5-1", "sonnet": "claude-sonnet-4-6"}, "still on disk")
+        self._reg("11111111-2222-3333-4444-555555555501", liveModelId="claude-opus-5-1")
+        self.assertEqual(km._model_picks(), {"opus": "claude-opus-5-1", "sonnet": "claude-sonnet-4-6"})
 
 
 class AliasMigration(unittest.TestCase):

@@ -177,6 +177,24 @@ class KernelWiring(unittest.TestCase):
             self.assertIn(("send", "sid-sdk", text), self.be.calls, text)
         self.assertEqual([c for c in self.be.calls if c[0] in ("set_model", "set_effort", "set_fast")], [])
 
+    def test_a_setter_takes_only_a_value_it_can_vouch_for_the_rest_stays_the_clis(self):
+        # (review, 2026-09-01) the composer can type ANYTHING, and set_model persists its value as
+        # the seed for every future session — so a typo, a multiline message that merely starts with
+        # the command, or a fast value outside on/off must NOT be swallowed: it goes to the CLI
+        # verbatim, whose own error the user then sees (as before the routing existed)
+        for text in ("/model opsu", "/model opus\nnow refactor the parser", "/model opus please",
+                     "/effort turbo", "/effort high\nand hurry", "/fast maybe", "/fast on off"):
+            self._route({"type": "sendMessage", "id": "sid-sdk", "text": text})
+            self.assertIn(("send", "sid-sdk", text), self.be.calls, text)
+        self.assertEqual([c for c in self.be.calls if c[0] in ("set_model", "set_effort", "set_fast")], [])
+        # what IS vouched for: a family alias, 'default', a seed or learned version id, and any
+        # well-formed first-party id (the CLI validates the exact version; romp keeps the registry)
+        for v in ("fable", "default", "claude-opus-4-8", "claude-opus-4-1"):
+            self._route({"type": "sendMessage", "id": "sid-sdk", "text": "/model " + v})
+            self.assertIn(("set_model", "sid-sdk", v), self.be.calls, v)
+        self._route({"type": "sendMessage", "id": "sid-sdk", "text": "/effort ultracode"})
+        self.assertIn(("set_effort", "sid-sdk", "ultracode"), self.be.calls)
+
     def test_setmodel_mid_compaction_parks_as_a_queued_command(self):
         # the user 2026-07-01: switching the model while a compaction ran broke the compaction — the
         # kernel now PARKS the change (a queued '/model …' bubble) and _apply_pending_models fires it

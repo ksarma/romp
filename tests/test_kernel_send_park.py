@@ -371,8 +371,8 @@ class SendPathsPark(unittest.TestCase):
         self.assertIn("_send_or_park(be, sid, cmd)", src, "the timeline sendCommand parks mid-compaction")
         self.assertIn('_set_effort_or_park(be, sid, str(msg["value"]))', src,
                       "the setEffort drive op parks mid-compaction (the user 2026-07-02: it slipped through)")
-        self.assertIn('_set_effort_or_park(be, sid, cmd[len("/effort "):].strip())', src,
-                      "the timeline /effort parks mid-compaction")
+        self.assertIn("_set_effort_or_park(be, sid, value)    # mid-compaction → parked as a queued command", src,
+                      "the timeline's and the composer's /effort park mid-compaction (_route_meta_command)")
 
 
 class QueuedBubble(unittest.TestCase):
