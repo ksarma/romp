@@ -39,6 +39,8 @@ class CompactSuggest(unittest.TestCase):
         self.saved_state = jd.STATE
         jd.STATE = Path(self.td.name)
         km._autonudge_cache.clear()
+        km._set_compact_suggest(True)          # T208: default-OFF per install — these tests opt in
+        km._autonudge_cache.clear()
         self._orig = {n: getattr(km, n) for n in ("_settle_event_key", "_thread_reg")}
         km._settle_event_key = lambda sid: IDLE
         km._thread_reg = lambda sid: {}
@@ -162,6 +164,25 @@ class CompactSuggest(unittest.TestCase):
         self.assertFalse(self._tick(None))
         self.assertFalse(self._tick(0))
         self.assertEqual(self.sent, [])
+
+    # ── the T208 default: OFF for a fresh install, ON only by this install's own config ──
+    def test_a_fresh_install_is_off_and_never_fires(self):
+        (jd.STATE / "auto-nudge.json").unlink()        # a virgin install: no blob at all
+        km._autonudge_cache.clear()
+        self.assertFalse(km._compact_suggest_on(), "absent key reads OFF — shipping the feature "
+                                                   "turns it on nowhere (the user's ruling)")
+        self.assertFalse(self._tick(900_000), "idle, far past both thresholds — still nothing")
+        self.assertEqual(self.sent, [])
+        km._autonudge_cache.clear()
+        self.assertEqual(self._latched(), [], "…and no latch spent while off")
+
+    def test_the_designed_toggle_flips_it_on_and_off(self):
+        km._set_compact_suggest(False)
+        km._autonudge_cache.clear()
+        self.assertFalse(self._tick(450_000))
+        km._set_compact_suggest(True)
+        km._autonudge_cache.clear()
+        self.assertTrue(self._tick(450_000), "the same crossing fires once opted in")
 
     # ── the fingerprint row ──
     def test_a_fire_logs_a_countable_row(self):

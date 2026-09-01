@@ -549,6 +549,7 @@ def _version_info():
             # The top-level fields above stay: this tab's own gear and older kernels read those.
             "settings": {"autoNudge": _auto_nudge_on(), "updateMode": _update_mode(),
                          "conserveMemory": _conserve_on(),
+                         "compactSuggest": _compact_suggest_on(),   # T208: per-install, default OFF
                          "fileEditing": _file_editing_on(),
                          "judgeModel": jd._triage_model(), "judgeEffort": jd._triage_effort(),
                          "indexModel": jd._index_model(), "indexEffort": jd._index_effort(),
@@ -2666,6 +2667,20 @@ def _set_auto_nudge(enabled):
     _write_auto_nudge(d)
 
 
+def _compact_suggest_on():
+    """The compaction-suggestion regime's own per-install toggle (T208, the user 2026-09-01: the
+    regime must NOT ship default-on to every install — it stays behind this install's config).
+    OFF by default: the key is absent from a fresh install's blob and absent reads False — no
+    setdefault, deliberately, so shipping the feature never turns it on anywhere."""
+    return bool(_auto_nudge_data().get("compactSuggestEnabled"))
+
+
+def _set_compact_suggest(enabled):
+    d = dict(_auto_nudge_data())
+    d["compactSuggestEnabled"] = bool(enabled)
+    _write_auto_nudge(d)
+
+
 def _file_editing_on():
     """Dashboard raw-mode file editing is OFF until the user says yes once (the user 2026-08-22: the
     viewer's Edit asks with a popup the first time). The flag is a SERVER-side boundary, not
@@ -4236,6 +4251,9 @@ def _worker_tag_member(sid):
 def _compact_suggest_tick(sid, tm, now):
     """One session's slice of the compaction-suggestion watcher (contract in the block comment
     above). Returns True when the suggestion went out (the caller pushes once at tick end)."""
+    if not _compact_suggest_on():
+        return False                                   # T208: default-OFF per install — the regime
+    #                                                    runs only where this install's config says so
     tokens = (tm or {}).get("ctxTokens")
     if not isinstance(tokens, (int, float)) or tokens <= 0:
         return False                                   # tmux CLIs / pre-plumbing sessions carry no
@@ -31611,6 +31629,8 @@ class Handler(BaseHTTPRequestHandler):
             _push_soon()
         elif msg and msg.get("type") == "setAutoNudge" and msg.get("enabled") is not None:
             _set_auto_nudge(bool(msg["enabled"]))   # feed gear → server-side Auto Nudge on/off
+        elif msg and msg.get("type") == "setCompactSuggest" and msg.get("enabled") is not None:
+            _set_compact_suggest(bool(msg["enabled"]))   # T208 opt-in — kernel-side like autoNudge
             # act immediately on turn-on (don't wait 4s) — but skip the dead-wait sweep: the
             # death transition has ONE observer (the pusher's tick; see _auto_nudge_tick), and
             # this WS thread racing its prev-swap could spend a transition uncorroborated
