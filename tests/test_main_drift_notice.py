@@ -178,25 +178,36 @@ class UiOnlyConverge(unittest.TestCase):
         self.assertEqual([b.get("drift") for b in self.banners], ["restart"])
 
     def test_the_classifier_reads_the_touched_paths(self):
-        import subprocess as sp
         from unittest.mock import patch
 
         class R:
             def __init__(self, out, rc=0):
                 self.stdout, self.returncode = out, rc
-        with patch.object(km.subprocess, "run", return_value=R("ui/webview/feed.ts\ndocs/a.md\n")):
+
+        def fake_run(names, show_rc=1):
+            # git diff answers the name list; git show (the AST-equality probe) answers show_rc —
+            # rc=1 means "blob unreadable", the not-provable arm that must read as kernel code
+            def run(argv, **kw):
+                return R(names) if argv[:2] == ["git", "diff"] else R(b"", rc=show_rc)
+            return run
+        with patch.object(km.subprocess, "run", fake_run("ui/webview/feed.ts\ndocs/a.md\n")):
             self.assertFalse(km._kernel_code_changed("a1", "b2"), "UI + docs only: rebuild in place")
-        with patch.object(km.subprocess, "run", return_value=R("ui/webview/feed.ts\nkernel/kernel.py\n")):
-            self.assertTrue(km._kernel_code_changed("a1", "b2"))
-        with patch.object(km.subprocess, "run", return_value=R("", rc=128)):
+        with patch.object(km.subprocess, "run", fake_run("ui/webview/feed.ts\nkernel/kernel.py\n")):
+            self.assertTrue(km._kernel_code_changed("a1", "b2"),
+                            "a kernel file whose blobs cannot be proven equal restarts")
+        with patch.object(km.subprocess, "run", fake_run("", show_rc=1)):
+            pass
+        with patch.object(km.subprocess, "run", lambda argv, **kw: R("", rc=128)):
             self.assertTrue(km._kernel_code_changed("a1", "b2"), "git failure: the restart is the safe converge")
         self.assertTrue(km._kernel_code_changed("", "b2"), "unknown shas: the restart is the safe converge")
 
     def test_the_pull_path_carries_the_same_in_place_converge(self):
         src = inspect.getsource(km._run_main_update)
         self.assertIn('if kind == "pull" and not _kernel_code_changed(_kernel_sha(), _checkout_sha()):', src)
-        self.assertIn("_rebuild_dist()", src)
-        self.assertIn("_REBUILT_FOR[0] = _checkout_sha()", src)
+        self.assertIn("_in_place_converge(_checkout_sha())", src)
+        conv = inspect.getsource(km._in_place_converge)
+        self.assertIn("_rebuild_dist()", conv)
+        self.assertIn("_REBUILT_FOR[0] = target", conv)
 
 
 class ChannelGate(unittest.TestCase):
