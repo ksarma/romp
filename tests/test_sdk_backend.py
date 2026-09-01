@@ -10,6 +10,7 @@ Two layers:
     AskUserQuestion -> it surfaces as an askLive picker -> the UI answers ->
     PermissionResultAllow(updated_input={questions, answers}) goes back.
 """
+import asyncio
 import os
 import json
 import threading
@@ -449,14 +450,21 @@ class LiveTail(unittest.TestCase):
         self.assertEqual(cmds[0]["message"]["content"], [{"type": "text", "text": "/effort high"}])
         self.assertEqual(cmds[0]["author"], "human")
 
-    def test_set_effort_on_a_dormant_session_stays_quiet(self):
-        # no live thread → the value applies on the next connect; nothing to echo into (no _live entry)
+    def test_set_effort_on_a_dormant_session_still_leaves_the_acknowledging_chip(self):
+        # no live thread → the value applies on the next connect — but the pick is still acknowledged
+        # (review 2026-09-01, reversing this test's earlier "stays quiet" pin): the chip is what the
+        # composer's optimistic bubble retires against, and with nothing landing on a dormant session a
+        # typed "/effort low" sat as an unconfirmed dashed bubble and then vanished without a trace
         d = tempfile.mkdtemp()
         be = sb.SdkBackend(d, "/bin/true", lambda *a, **k: None)
         sid = "11111111-2222-3333-4444-666666666666"
         sb.write_reg(d, sid, {"sid": sid, "name": "n", "cwd": "/tmp", "alive": True})
         self.assertTrue(be.set_effort(sid, "low"))
-        self.assertEqual(be.live_atoms(sid), [])
+        cmds = [a for a in be.live_atoms(sid) if a.get("command") == "/effort"]
+        self.assertEqual(len(cmds), 1)
+        self.assertEqual(cmds[0]["message"]["content"], [{"type": "text", "text": "/effort low"}])
+        self.assertIsNone(cmds[0]["fsid"], "no live thread and no last resume target → none")
+        self.assertEqual(sb.read_reg(d, sid)["effort"], "low", "and the value still applies at the next connect")
 
     def _live_fast_session(self, d, sid, unlocked=False):
         """A constructed SdkSession whose thread READS alive (set_fast's gate) without spawning a CLI.
@@ -1237,6 +1245,128 @@ class SetModelModePure(unittest.TestCase):
         self.assertFalse(sb._model_reflects_alias("Fable 5", "opus"), "the OLD name does not reflect the new pick")
         self.assertTrue(sb._model_reflects_alias("anything", "default"), "default matches the resolved name")
         self.assertFalse(sb._model_reflects_alias("", "opus"), "no live name yet → not resolved")
+
+    def test_a_context_tagged_pick_resolves_its_pending_switch(self):
+        # (review, 2026-09-01) "/model fable[1m]" — the CLI's 1M-context spelling — routed through the
+        # setter, but the literal "fable[1m]" is never a substring of the pretty live name "Fable 5.1",
+        # so the switching-dots stuck until the thread died. The check reads through the tag.
+        self.assertTrue(sb._model_reflects_alias("Fable 5.1", "fable[1m]"))
+        self.assertTrue(sb._model_reflects_alias("Opus 4.8", "claude-opus-4-8[1m]"))
+        self.assertFalse(sb._model_reflects_alias("Fable 5.1", "opus[1m]"), "still the family that must match")
+        sess = sb.SdkSession(self.be, {"sid": "q", "name": "n", "cwd": self.d, "model": "fable[1m]"})
+        sess.model = "Opus 4.8"
+        sess._model_pending = "fable[1m]"
+        sess._learn_model("Fable 5.1", raw="claude-fable-5-1[1m]")
+        self.assertEqual(sess._model_pending, "", "the new name clears the tagged switch — dots stop")
+
+    def test_a_refused_set_model_reverts_every_layer_and_warns(self):
+        # (review, 2026-09-01) set_model PERSISTED before the CLI accepted — sdk-defaults.json (the seed
+        # for every future session), the reg (the reconnect's --model) and chosen_model — and a refusal
+        # only LOGGED, unlike _do_set_mode, which reverts every layer. A well-formed id the CLI's catalog
+        # rejects poisoned all three. The refusal now restores what was there and rings the problems.
+        sid = self.be.spawn("m", self.d)
+        self.assertTrue(self.be.set_model(sid, "opus"))                      # the prior, accepted pick
+        sess = sb.SdkSession(self.be, sb.read_reg(self.d, sid))
+        sess.model = "Opus 4.8"
+        self.be.sessions[sid] = sess
+
+        class _RefusingClient:
+            async def set_model(self, model=None):
+                raise RuntimeError("Unknown model: %s" % model)
+
+            async def get_context_usage(self):
+                return {"percentage": 3, "model": "claude-opus-4-8"}       # the CLI stayed where it was
+        sess.client = _RefusingClient()
+        scheduled = []
+        sess.set_model_live = lambda model, prev=None: scheduled.append((model, prev))   # the loop hop, stubbed
+        # a well-formed id of a known family that the CLI's catalog rejects (another family than the
+        # live one, so the switch is genuinely pending until the CLI answers)
+        self.assertTrue(self.be.set_model(sid, "claude-fable-9-9"))
+        self.assertEqual(sb.read_reg(self.d, sid)["model"], "claude-fable-9-9", "accepted optimistically, as before")
+        self.assertEqual(sess._model_pending, "claude-fable-9-9")
+        self.assertEqual(len(scheduled), 1)
+        asyncio.run(sess._do_set_model(*scheduled[0]))
+        reg = sb.read_reg(self.d, sid)
+        self.assertEqual(reg["model"], "opus", "the reg — the reconnect's --model — is back to the accepted pick")
+        self.assertEqual(sb.read_sdk_defaults(self.d).get("model"), "opus", "the seed for future sessions too")
+        self.assertEqual(sess.chosen_model, "opus")
+        self.assertEqual(sess._model_pending, "", "nothing is coming to resolve dots for a refused switch")
+        self.assertFalse(reg.get("modelPending"))
+        probs = [p["text"] for p in self.be.problems()]
+        self.assertEqual(len(probs), 1, "loud: the refusal rings the problems, the mode path's idiom")
+        self.assertIn("claude-fable-9-9", probs[0])
+        self.assertIn("did NOT apply", probs[0])
+        self.assertIn("opus", probs[0].rsplit("reverted", 1)[-1], "and names what it reverted to")
+
+    def test_a_refused_set_model_with_no_prior_pick_leaves_no_residue(self):
+        # the prior state may be ABSENT (a session on the account default, no remembered model):
+        # the revert removes the keys it wrote rather than parking a null or the refused value
+        sid = self.be.spawn("m", self.d)
+        self.assertNotIn("model", sb.read_reg(self.d, sid))
+        self.assertNotIn("model", sb.read_sdk_defaults(self.d))
+        sess = sb.SdkSession(self.be, sb.read_reg(self.d, sid))
+        self.be.sessions[sid] = sess
+
+        class _RefusingClient:
+            async def set_model(self, model=None):
+                raise RuntimeError("Unknown model: %s" % model)
+
+            async def get_context_usage(self):
+                return {"percentage": 3, "model": "claude-fable-5-1"}
+        sess.client = _RefusingClient()
+        scheduled = []
+        sess.set_model_live = lambda model, prev=None: scheduled.append((model, prev))
+        self.assertTrue(self.be.set_model(sid, "claude-fable-9-9"))
+        asyncio.run(sess._do_set_model(*scheduled[0]))
+        self.assertNotIn("model", sb.read_reg(self.d, sid), "no pick before → no pick after")
+        self.assertNotIn("model", sb.read_sdk_defaults(self.d))
+        self.assertEqual(sess.chosen_model, "")
+        self.assertEqual(sb.read_reg(self.d, sid)["liveModel"], "Fable 5.1", "the badge shows what the CLI runs")
+
+    def test_set_model_and_effort_on_a_dormant_session_leave_an_acknowledgment_chip(self):
+        # (review, 2026-09-01) a composer "/model X" on a LIVE session lands the synthesized command
+        # chip and the webview's optimistic bubble retires against it; on a DORMANT session nothing
+        # landed, so the dashed bubble sat as "unconfirmed" and vanished with no trace. The chip — and
+        # its durable gesture twin — are the acknowledgment, whatever the session's liveness.
+        sid = self.be.spawn("m", self.d)                  # a reg, no thread: dormant
+        self.assertTrue(self.be.set_model(sid, "fable"))
+        self.assertTrue(self.be.set_effort(sid, "high"))
+        chips = {a["command"]: a for a in self.be.live_atoms(sid) if a.get("command")}
+        self.assertEqual(set(chips), {"/model", "/effort"})
+        for cmd, disp in (("/model", "/model fable"), ("/effort", "/effort high")):
+            a = chips[cmd]
+            self.assertTrue(a["uuid"].startswith("cmd:"), a["uuid"])
+            self.assertEqual((a["type"], a["author"], a["_echo_text"]), ("user", "human", disp))
+            self.assertEqual(a["message"]["content"][0]["text"], disp, "the text the optimistic bubble retires against")
+            self.assertEqual(a["session_id"], sid)
+        gestures = [json.loads(l).get("cmdGesture") for l in (Path(self.d) / "states" / (sid + ".jsonl")).read_text().splitlines()]
+        self.assertEqual([g for g in gestures if g], ["/model fable", "/effort high"], "the durable twin, so the history keeps the gesture")
+        # the dormant resolution is unchanged: the badge shows the pick now, no dots
+        reg = sb.read_reg(self.d, sid)
+        self.assertEqual((reg["model"], reg["liveModel"], reg.get("modelPending")), ("fable", "Fable", False))
+
+    def test_refresh_context_persists_the_live_model_id(self):
+        # (review, 2026-09-01) the pin the liveModelId write was missing: _do_refresh_context is the
+        # pre-turn source (get_context_usage answers on connect, before any init message), so an
+        # eager-connected session that never runs a turn still contributes its version to the pickers
+        sid = self.be.spawn("m", self.d)
+        sess = sb.SdkSession(self.be, sb.read_reg(self.d, sid))
+
+        class _Client:
+            async def get_context_usage(self):
+                return {"percentage": 41.6, "model": "claude-fable-5-1"}
+        sess.client = _Client()
+        asyncio.run(sess._do_refresh_context())
+        reg = sb.read_reg(self.d, sid)
+        self.assertEqual((reg["liveModelId"], reg["liveModel"], reg["liveCtx"]), ("claude-fable-5-1", "Fable 5.1", 42))
+        self.assertEqual(sess._model_id, "claude-fable-5-1")
+        # a [1m] variant is persisted as reported — the kernel's picker strips the tag on read
+        class _Client1m:
+            async def get_context_usage(self):
+                return {"percentage": 41.6, "model": "claude-fable-5-1[1m]"}
+        sess.client = _Client1m()
+        asyncio.run(sess._do_refresh_context())
+        self.assertEqual(sb.read_reg(self.d, sid)["liveModelId"], "claude-fable-5-1[1m]")
 
     def test_learn_model_clears_pending_only_when_the_new_name_lands(self):
         sess = sb.SdkSession(self.be, {"sid": "p", "name": "n", "cwd": self.d, "model": "fable"})

@@ -105,6 +105,31 @@ test("a family click sends the kernel's alias default; a version the seed table 
   assert.match(RENDER, /if \(v\.learned\) \{[\s\S]{0,600}row\.title = /, "and says where the version came from");
 });
 
+test("the create dialog's model menu sends the family's remembered default, like the other two pickers (2026-09-01)", () => {
+  // (review 2026-09-01) the new-thread dialog sent `c.value` — the family ALIAS — and never
+  // `c.default`, so with alias semantics the same click FLOATED a new thread while it PINNED on the
+  // chat statusline and the timeline lane. One rule on all three surfaces: the remembered pin, else
+  // the alias.
+  assert.match(RENDER, /pendingCommentAnchor\[kind\] = kind === "model" \? \(c\.default \|\| c\.value\) : c\.value;/);
+});
+
+test("the version submenu opens with a Latest row: the one gesture back to floating once a family is pinned (2026-09-01)", () => {
+  // the family row sends the pin, the version rows pin, and a typed "/model fable" leaves the pick
+  // memory alone by design — so a pinned family had no way back. Latest clears the family's
+  // remembered pin (the op carries `floating`; kernel _set_model_or_park forgets the pick) and
+  // sends the alias, so the family follows the CLI's newest release again. An explicit user
+  // gesture, so it may move state (cards-move-on-new-information).
+  assert.match(RENDER, /const pickValue = \(value: string, floating = false\) =>/);
+  assert.match(RENDER, /if \(floating\) op\.floating = true;/, "the flag rides the setModel op");
+  assert.match(RENDER, /const pinned = !!c\.default && c\.default !== c\.value;/, "pinned = the default is not the alias");
+  assert.match(RENDER, /lhead\.textContent = "Latest";/);
+  assert.match(RENDER, /pickValue\(c\.value, true\)/, "sends the ALIAS with the flag");
+  assert.match(RENDER, /sub\.appendChild\(latest\);[\s\S]{0,300}for \(const v of versions\)/, "heads the submenu, ahead of the versions");
+  assert.match(RENDER, /!pinned && isCurrentMeta\(kind, s\.status, c\.value\) \? " current" : ""/,
+    "✓ when the family is unpinned and the session runs it");
+  assert.match(RENDER, /const lsub = el\("div", "meta-item-sub"\);/, "the consequence line wears the menu vocabulary's sub-line");
+});
+
 test("the model meta-menu exposes VERSIONS: submenu, remembered default, keyboard (the user 2026-08-25)", () => {
   // families with >1 live version wear a side submenu (leftward — the menu anchors bottom-right):
   // hover or an arrow key reveals every version, each pickable with the current-✓; clicking the

@@ -116,6 +116,7 @@ def _alias_label(alias: str) -> str:
     label model_label falls back to (pretty id, or capitalised alias, '' for default)."""
     if not alias or alias == "default":
         return ""
+    alias = re.sub(r"\[[^\]]*\]$", "", alias)   # fable[1m] → Fable: the context tag is not part of the name
     return pretty_model(alias) if alias.startswith("claude-") else alias.capitalize()
 
 
@@ -145,7 +146,9 @@ def _model_reflects_alias(live_pretty: str, alias: str) -> bool:
         return False
     if not alias or alias == "default":
         return True
-    a = alias.lower()
+    # fable[1m] → fable: the CLI's 1M-context tag is never part of the pretty name, so the literal
+    # never matched and a tagged pick's switching-dots stuck until the thread died (review 2026-09-01)
+    a = re.sub(r"\[[^\]]*\]$", "", alias.lower().strip())
     a = a.split("-")[1] if a.startswith("claude-") and "-" in a else a   # claude-opus-4-8 → opus
     return a in live_pretty.lower()
 
@@ -1289,6 +1292,23 @@ def write_sdk_default(state_dir: Path, **fields) -> None:
     os.replace(tmp, p)
 
 
+def restore_sdk_default(state_dir: Path, **fields) -> None:
+    """Put remembered defaults BACK to captured prior values — the revert half of write_sdk_default, for a
+    setter whose optimistic write the CLI then refused (set_model, review 2026-09-01). Here a None restores
+    ABSENCE: the key is removed, where write_sdk_default would skip it and leave the refused value in place."""
+    d = read_sdk_defaults(state_dir)
+    for k, v in fields.items():
+        if v is None:
+            d.pop(k, None)
+        else:
+            d[k] = v
+    p = _defaults_path(state_dir)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(".tmp")
+    tmp.write_text(json.dumps(d))
+    os.replace(tmp, p)
+
+
 _WORK_KEY: str | None = None   # process-lifetime stash; None = not yet claimed from the environment
 
 
@@ -1857,12 +1877,14 @@ class SdkSession:
             self.backend._log("interrupt (%s): CLI pid %d already gone" % (self.name, pid))
         self.backend._poke()
 
-    def set_model_live(self, model):
+    def set_model_live(self, model, prev=None):
         """Change the model on a CONNECTED session via the SDK control channel. No-op if not yet
-        connected — _options applies chosen_model on connect instead."""
+        connected — _options applies chosen_model on connect instead. `prev` is what set_model captured
+        before its optimistic writes (reg model, remembered default, chosen_model) — the values every
+        layer reverts to if the CLI refuses the switch (_do_set_model, the mode path's T139 rule)."""
         if self.loop and self.client:
             self.loop.call_soon_threadsafe(
-                lambda: asyncio.ensure_future(self._do_set_model(model)))
+                lambda: asyncio.ensure_future(self._do_set_model(model, prev)))
 
     def set_mode_live(self, mode, prev="default"):
         """Change the permission mode on a CONNECTED session via the SDK control channel. `prev` is
@@ -2005,11 +2027,23 @@ class SdkSession:
             self._interrupted = False
             self.backend._poke()
 
-    async def _do_set_model(self, model):
+    async def _do_set_model(self, model, prev=None):
         try:
             await self.client.set_model(model)
         except Exception as e:
-            self.backend._log("set_model (%s -> %s) refused by the SDK: %s: %s" % (self.name, model, type(e).__name__, e))
+            # The mode path's rule (_do_set_mode, T139), applied to models (review 2026-09-01): set_model
+            # PERSISTED its value before the CLI accepted it — sdk-defaults.json (the seed for every
+            # future session), the reg (the reconnect's --model) and chosen_model — and a refusal here
+            # only logged, so a well-formed id the CLI's catalog rejects poisoned all three and the next
+            # reconnect re-asserted it. Revert every layer to what set_model captured (`prev`; a None
+            # inside it means the key was absent) and ring the problems so the failed switch is
+            # unmissable. The refresh below then re-reads the model the CLI actually kept.
+            if prev is not None:
+                self.backend._revert_model(self, prev)
+            self.backend._log("set_model (%s -> %s) refused by the SDK: %s: %s — the switch did NOT apply; "
+                              "the model reverted to %s"
+                              % (self.name, model, type(e).__name__, e,
+                                 (prev or {}).get("model") or "the account default"), problem=True)
         # Pull the real new name NOW rather than waiting for the next turn's assistant message — an idle
         # session the user switched but doesn't drive again would otherwise sit on the switching-dots
         # indefinitely (the user 2026-07-03). get_context_usage reports the current model, so this
@@ -5809,12 +5843,19 @@ class SdkBackend:
         reconnect. So every surface, the typed composer command included, comes through here — kernel
         _route_meta_command.) `value` is a family alias (fable — the CLI resolves it live, so it follows
         the family's newest) or an explicit version id (claude-fable-5, a deliberate pin); either rides
-        verbatim. 'default' resets to the CLI default (set_model(None))."""
-        if not read_reg(self.state_dir, sid):
+        verbatim. 'default' resets to the CLI default (set_model(None)).
+
+        The writes below are OPTIMISTIC — they land before the CLI has accepted the value — so what they
+        replace is captured first (`prev`) and a live refusal reverts every layer (_do_set_model, review
+        2026-09-01); a dormant session has no CLI to refuse, and its value applies at the next connect."""
+        reg = read_reg(self.state_dir, sid)
+        if not reg:
             return False
+        prev = {"model": reg.get("model"), "default": read_sdk_defaults(self.state_dir).get("model")}   # None = absent
         write_sdk_default(self.state_dir, model=value)   # remember as the seed for the NEXT new session (the user 2026-06-27)
         s = self.sessions.get(sid)
         if s:
+            prev["chosen"] = s.chosen_model
             s.chosen_model = value
             # PENDING: show switching-dots, NOT a premature/stale name, until the LIVE model reflects the
             # pick (the user 2026-07-03). The old code stamped s.model = value.capitalize() ("Opus"), but
@@ -5825,29 +5866,57 @@ class SdkBackend:
             already = _model_reflects_alias(s.model, value)
             s._model_pending = "" if already else value
             self._update_reg(sid, model=value, modelPending=bool(s._model_pending))   # locked RMW — see set_effort
-            s.set_model_live(None if value in ("", "default") else value)
-            # Synthesize the INVOCATION atom the CLI never streams (it streams only the stdout
-            # confirmation): the chat gets the same "/model sonnet" command chip the tmux path reads from
-            # its transcript, and the timeline's dot lands in REAL TIME instead of after the next disk
-            # write (the user 2026-07-02). _echo_text lets the disk's own command record retire it by
-            # text match if one ever lands; the human-floor prune covers a session that never writes one.
-            t = int(time.time())
-            disp = "/model " + value
-            uid = "cmd:%d:model" % t
-            self._live.setdefault(sid, {})[uid] = {
-                "type": "user", "uuid": uid, "session_id": sid, "fsid": s.resume_sid, "parentUuid": None,
-                "t": t, "author": "human", "command": "/model", "_echo_text": disp,
-                "message": {"role": "user", "content": [{"type": "text", "text": disp}]}}
-            # The DURABLE twin of the live chip (the user 2026-08-14): same t and text, so build_session
-            # can dedup while the chip is live and take over seamlessly once stale_cmd retires it.
-            append_cmd_gesture(self.state_dir, sid, disp, t=t)
-            self._wake_push()
+            s.set_model_live(None if value in ("", "default") else value, prev=prev)
         else:
             # DORMANT (no live thread): no turn is coming to report a real name, so resolve to the chosen
             # alias's best-effort label immediately — never leave the badge on a stale liveModel or trapped
             # on dots. The value applies for real on the next connect (chosen_model → _options).
             self._update_reg(sid, model=value, liveModel=_alias_label(value), modelPending=False)
+        # the acknowledging chip — live OR dormant (review 2026-09-01; see _ack_cmd_chip)
+        self._ack_cmd_chip(sid, "/model", "/model " + value, s.resume_sid if s else reg.get("lastSid"))
         return True
+
+    def _revert_model(self, sess: "SdkSession", prev: dict) -> None:
+        """Undo set_model's optimistic writes after the CLI refused the value: chosen_model, the pending
+        marker, the reg's `model` and sdk-defaults' `model` go back to `prev` — a None means the key was
+        ABSENT, and absence is restored (a null would read as a pick, and a leftover refused value is the
+        poison this exists to remove). Locked RMW on the reg, like _update_reg; the defaults file through
+        the same atomic rename write_sdk_default uses."""
+        sess.chosen_model = prev.get("chosen") or ""
+        sess._model_pending = ""
+        with self._reg_lock:
+            reg = read_reg(self.state_dir, sess.sid) or {"sid": sess.sid}
+            if prev.get("model") is None:
+                reg.pop("model", None)
+            else:
+                reg["model"] = prev["model"]
+            reg["modelPending"] = False
+            write_reg(self.state_dir, sess.sid, reg)
+        restore_sdk_default(self.state_dir, model=prev.get("default"))
+
+    def _ack_cmd_chip(self, sid: str, command: str, disp: str, fsid) -> None:
+        """Synthesize the INVOCATION atom the CLI never streams (it streams only the stdout confirmation)
+        for a /model-, /effort- or /auth-style pick: the chat gets the same "/model sonnet" command chip
+        the tmux path reads from its transcript, and the timeline's dot lands in REAL TIME instead of
+        after the next disk write (the user 2026-07-02). _echo_text lets the disk's own command record
+        retire it by text match if one ever lands; the human-floor prune covers a session that never
+        writes one. Then the DURABLE twin (the user 2026-08-14): same t and text, so build_session can
+        dedup while the chip is live and take over seamlessly once stale_cmd retires it — on disk BEFORE
+        the push that rebuilds the chat.
+
+        Fired whatever the session's LIVENESS (review 2026-09-01): the chip is the acknowledgment the
+        composer's optimistic bubble retires against. On a dormant session nothing landed, so a typed
+        "/model X" sat as an unconfirmed dashed bubble for its TTL and then vanished with no trace —
+        though the pick had applied to the reg. `fsid` is the live session's resume target, or the
+        reg's last known one for a dormant session."""
+        t = int(time.time())
+        uid = "cmd:%d:%s" % (t, command.lstrip("/"))
+        self._live.setdefault(sid, {})[uid] = {
+            "type": "user", "uuid": uid, "session_id": sid, "fsid": fsid, "parentUuid": None,
+            "t": t, "author": "human", "command": command, "_echo_text": disp,
+            "message": {"role": "user", "content": [{"type": "text", "text": disp}]}}
+        append_cmd_gesture(self.state_dir, sid, disp, t=t)
+        self._wake_push()
 
     def set_fast(self, sid: str, value: str) -> bool:
         """Toggle fast mode ('on'|'off'). The CLI's /fast descriptor is marked supportsNonInteractive,
@@ -5954,7 +6023,8 @@ class SdkBackend:
         if the session is idle, at the end of the current turn if it's busy. The label updates at once."""
         if value not in EFFORT_LEVELS:
             return False
-        if not read_reg(self.state_dir, sid):
+        reg = read_reg(self.state_dir, sid)
+        if not reg:
             return False
         # LOCKED read-modify-write (_update_reg), never the bare read→mutate→write this used to do: the
         # loop threads run their own locked RMWs on the same reg (queue/echo mirrors, liveCtx), and an
@@ -5976,20 +6046,12 @@ class SdkBackend:
             s.effort = value        # picker label reflects it now; the reconnect makes it real
             s._effort_pending = value   # switching-dots on the effort badge + "Reloading session…" notice until the reconnect lands
             s.request_reconnect()
-            # Synthesize the "/effort X" invocation atom, exactly as set_model does for "/model X": the
-            # reconnect leaves NO transcript record at all, so without this an idle-session effort change
-            # showed nothing in the chat while a busy one (parked) showed a queued chip — the same pick,
-            # visibly acknowledged or not depending on timing (the user 2026-07-05, who called it somewhat
-            # inconsistent). One chip, both paths.
-            t = int(time.time())
-            disp = "/effort " + value
-            uid = "cmd:%d:effort" % t
-            self._live.setdefault(sid, {})[uid] = {
-                "type": "user", "uuid": uid, "session_id": sid, "fsid": s.resume_sid, "parentUuid": None,
-                "t": t, "author": "human", "command": "/effort", "_echo_text": disp,
-                "message": {"role": "user", "content": [{"type": "text", "text": disp}]}}
-            append_cmd_gesture(self.state_dir, sid, disp, t=t)   # durable twin — see set_model
-            self._wake_push()
+        # Synthesize the "/effort X" invocation atom, exactly as set_model does for "/model X": the
+        # reconnect leaves NO transcript record at all, so without this an idle-session effort change
+        # showed nothing in the chat while a busy one (parked) showed a queued chip — the same pick,
+        # visibly acknowledged or not depending on timing (the user 2026-07-05, who called it somewhat
+        # inconsistent). One chip, both paths — and a dormant session's too (review 2026-09-01).
+        self._ack_cmd_chip(sid, "/effort", "/effort " + value, s.resume_sid if s else reg.get("lastSid"))
         return True
 
     def set_env(self, sid: str, env: dict) -> bool:
@@ -6061,15 +6123,7 @@ class SdkBackend:
             # Acknowledge the pick in the chat exactly as set_effort does: the reconnect writes no
             # transcript record, so without a synthesized chip an idle session's auth change shows
             # nothing at all.
-            t = int(time.time())
-            disp = "/auth " + value
-            uid = "cmd:%d:auth" % t
-            self._live.setdefault(sid, {})[uid] = {
-                "type": "user", "uuid": uid, "session_id": sid, "fsid": s.resume_sid, "parentUuid": None,
-                "t": t, "author": "human", "command": "/auth", "_echo_text": disp,
-                "message": {"role": "user", "content": [{"type": "text", "text": disp}]}}
-            append_cmd_gesture(self.state_dir, sid, disp, t=t)   # durable twin — see set_model
-            self._wake_push()
+            self._ack_cmd_chip(sid, "/auth", "/auth " + value, s.resume_sid)
         return True
 
     def default_auth(self, reg: dict | None = None) -> str:

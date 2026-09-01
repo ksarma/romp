@@ -10,6 +10,7 @@ CLI reports (reg.liveModelId) join the version lists, marked `learned`. The pick
 ONE choke point every set path flows through (_set_model_or_park). Synthetic only — hermetic temp
 STATE."""
 import contextlib
+import inspect
 import io
 import json
 import os
@@ -117,6 +118,35 @@ class PickMemory(unittest.TestCase):
             {"opus": "claude-opus-9-9", "sonnet": "claude-opus-4-8", "haiku": "claude-haiku-4-5"}))
         self.assertEqual(km._model_picks(), {"haiku": "claude-haiku-4-5"},
                          "unknown ids and cross-family entries never poison the default")
+
+    def test_the_floating_gesture_clears_the_familys_pin_and_sends_the_alias(self):
+        # (review, 2026-09-01) once a family carried a pin there was NO picker gesture back to
+        # floating: the family row sends the pin, the submenu lists only explicit ids, and a typed
+        # "/model opus" leaves the pick memory alone by design. The submenu's "Latest" row is that
+        # gesture — an explicit user act, so it may move state — carried as `floating` on the op.
+        class _BE:
+            calls = []
+
+            def set_model(self, sid, value):
+                self.calls.append(value)
+                return True
+        be = _BE()
+        sid = "11111111-2222-3333-4444-555555555555"
+        km._set_model_or_park(be, sid, "claude-opus-4-8")
+        km._set_model_or_park(be, sid, "claude-sonnet-4-6")
+        self.assertEqual(km._model_picks(), {"opus": "claude-opus-4-8", "sonnet": "claude-sonnet-4-6"})
+        km._set_model_or_park(be, sid, "opus", floating=True)
+        self.assertEqual(be.calls[-1], "opus", "the alias rides to the backend — the CLI resolves it live")
+        self.assertEqual(km._model_picks(), {"sonnet": "claude-sonnet-4-6"}, "only THAT family's pin is forgotten")
+        # the flag means nothing on a non-alias value: a version id with it pins as usual, and a
+        # floating alias with no pin to clear is a plain alias send
+        km._set_model_or_park(be, sid, "claude-opus-4-8", floating=True)
+        self.assertEqual(km._model_picks().get("opus"), "claude-opus-4-8")
+        km._set_model_or_park(be, sid, "haiku", floating=True)
+        self.assertEqual(km._model_picks(), {"opus": "claude-opus-4-8", "sonnet": "claude-sonnet-4-6"})
+        # and without the flag the alias still never touches the memory (the standing design)
+        km._set_model_or_park(be, sid, "opus")
+        self.assertEqual(km._model_picks().get("opus"), "claude-opus-4-8")
 
 
 class _ModelsServer(unittest.TestCase):
@@ -337,6 +367,89 @@ class AliasMigration(unittest.TestCase):
             p.unlink()
         with contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(km._model_alias_boot_pass(), 0)
+        self.assertTrue((jd.STATE / km.MODEL_ALIAS_MIGRATION_MARKER).exists(),
+                        "a clean pass over nothing is still the one run — stamped, so it never re-arms")
+
+    def test_a_post_fix_explicit_pick_of_a_seed_head_survives_the_next_boot(self):
+        # (review, 2026-09-01) the pass had no completion record, so EVERY kernel restart rewrote any
+        # stored model equal to a seed head — including a deliberate post-fix submenu pick of that very
+        # id (three of the four heads are the CURRENT releases a user pins against a future .1). That
+        # contradicted the "an explicit legacy pin stands" guarantee. A migration runs once.
+        with contextlib.redirect_stderr(io.StringIO()):
+            km._model_alias_boot_pass()
+        # the user now pins Fable 5 from the submenu — on a session, as the remembered default, and it
+        # lands in sdk-defaults as every set_model does
+        self._reg("f", model="claude-fable-5", alive=True)
+        km._note_model_pick("claude-fable-5")
+        (jd.STATE / "sdk-defaults.json").write_text(json.dumps({"model": "claude-fable-5", "effort": "xhigh"}))
+        before = self._snapshot()
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(km._model_alias_boot_pass(), 0, "the next boot is not a migration")
+        self.assertEqual(self._snapshot(), before, "the explicit pick stands everywhere it was written")
+        self.assertEqual(self._read("f")["model"], "claude-fable-5")
+        self.assertEqual(km._model_picks(), {"opus": "claude-opus-4-8", "fable": "claude-fable-5"})
+        self.assertEqual(err.getvalue(), "")
+
+    def test_the_marker_gates_the_pass_and_is_stamped_after_the_first_run(self):
+        marker = jd.STATE / km.MODEL_ALIAS_MIGRATION_MARKER
+        self.assertFalse(marker.exists(), "a state that never booted the fix carries no marker")
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(km._model_alias_boot_pass(), 4)
+        rec = json.loads(marker.read_text())
+        self.assertIsInstance(rec.get("t"), int, "stamped with the completion time")
+        self.assertEqual(rec.get("moved"), 4)
+        # a marker from a previous boot means SKIP ENTIRELY — even over state that looks migratable
+        # (a head pinned on purpose after the fix looks exactly like pre-fix residue; the marker is
+        # what tells them apart)
+        self._reg("g", model="claude-opus-5")
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(km._model_alias_boot_pass(), 0)
+        self.assertEqual(self._read("g")["model"], "claude-opus-5")
+        self.assertEqual(err.getvalue(), "")
+
+    def test_a_failed_read_withholds_the_marker_so_the_next_boot_retries(self):
+        # "returned" is not "succeeded" (the rewind migration's rule): a reg the pass could not read is
+        # a reg it did not migrate, so no marker is written and the pass re-arms at the next boot
+        (jd.STATE / "sdk" / "broken.json").write_text("{not json")
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            n = km._model_alias_boot_pass()
+        self.assertEqual(n, 4, "everything readable still migrates")
+        self.assertFalse((jd.STATE / km.MODEL_ALIAS_MIGRATION_MARKER).exists())
+        self.assertIn("no marker written", err.getvalue())
+
+    def test_the_pass_is_wired_into_main_before_the_backend_constructs(self):
+        # the ordering IS the correctness (review 2026-09-01, unpinned before): the pass rewrites reg
+        # `model` fields, which become chosen_model the moment the SDK backend constructs — and
+        # _boot_warm's alive-session read constructs it. main() must run the pass first, and once.
+        src = inspect.getsource(km.main)
+        i = src.index("_model_alias_boot_pass()")
+        self.assertLess(i, src.index("_boot_warm()"), "before _boot_warm constructs the backend")
+        self.assertLess(i, src.index("target=_sdk"), "and before the explicit _sdk thread")
+        self.assertEqual(src.count("_model_alias_boot_pass("), 1, "called from exactly one place")
+
+
+class RoutedContextTag(unittest.TestCase):
+    """The CLI spells a 1M-context variant with a [1m] tail (`fable[1m]`, `claude-opus-4-8[1m]`). The
+    kernel vouches for the tagged family alias like the tagged id, and its pending-switch check reads
+    through the tag — the pretty live name never carries one."""
+
+    def test_a_tagged_family_alias_is_vouched_for(self):
+        # (review, 2026-09-01) `claude-fable-5-1[1m]` already routed (the id parser strips the tag);
+        # `fable[1m]` fell to the CLI as literal text — the registry bypass the routing exists to close
+        self.assertTrue(km._vouched_model("fable[1m]"))
+        self.assertTrue(km._vouched_model("claude-fable-5-1[1m]"))
+        self.assertFalse(km._vouched_model("fable[2m]x"), "a tag is a trailing [..] only")
+        self.assertFalse(km._vouched_model("opsu[1m]"))
+
+    def test_the_kernels_pending_check_reads_through_the_tag(self):
+        # (review, 2026-09-01) the literal "fable[1m]" is never a substring of "Fable 5.1", so the
+        # switching-dots would ride the kernel's stamp to its cap instead of resolving on the event
+        self.assertTrue(km._alias_reflects("Fable 5.1", "fable[1m]"))
+        self.assertTrue(km._alias_reflects("Opus 4.8", "claude-opus-4-8[1m]"))
+        self.assertFalse(km._alias_reflects("Fable 5.1", "opus[1m]"))
 
 
 if __name__ == "__main__":

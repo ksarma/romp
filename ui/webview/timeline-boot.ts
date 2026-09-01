@@ -81,7 +81,9 @@ export function bridgeFunctions(post: Post): Record<string, (...a: any[]) => voi
     __rompTimelineWriteOrder: (order: unknown) =>
       writeViewOrder(Array.isArray(order) ? order.filter((x): x is string => typeof x === "string") : []),
     __rompTimelineCompact: (name: string) => post({ type: "compact", name }),
-    __rompTimelineSendCommand: (name: string, cmd: string) => post({ type: "sendCommand", name, cmd }),
+    // `extra` rides op flags beside the command text — the lane submenu's Latest row sends
+    // `{ floating: true }` so the kernel forgets the family's remembered pin (2026-09-01)
+    __rompTimelineSendCommand: (name: string, cmd: string, extra?: Record<string, unknown>) => post({ type: "sendCommand", name, cmd, ...(extra || {}) }),
     __rompTimelineSetFlag: (id: string, flag: string, value: unknown) => post({ type: "setSessionFlag", id, flag, value: !!value }),
     __rompTimelineSetViews: (views: unknown) => post({ type: "setTimelineViews", views }),
     __rompTimelineEditTag: (edit: unknown) => post({ type: "editTag", edit }),

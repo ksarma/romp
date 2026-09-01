@@ -959,6 +959,24 @@ def _note_model_pick(value):
         sys.stderr.write("model-picks save: %s\n" % traceback.format_exc())
 
 
+def _forget_model_pick(fam):
+    """Drop a family's remembered pin, so /models falls back to the alias and a family click follows the
+    CLI's newest again — the version submenu's "Latest" row (review 2026-09-01), an explicit user gesture
+    carried as `floating` on the set op. Merges into the RAW file like _note_model_pick (other families'
+    pins, vouched-for or not, stay); a family with no pin is a no-op."""
+    try:
+        picks = json.loads((jd.STATE / MODEL_PICKS_FILE_NAME).read_text())
+    except Exception:
+        return
+    if not isinstance(picks, dict) or fam not in picks:
+        return
+    picks.pop(fam, None)
+    try:
+        _atomic_write(jd.STATE / MODEL_PICKS_FILE_NAME, json.dumps(picks))
+    except Exception:
+        sys.stderr.write("model-picks save: %s\n" % traceback.format_exc())
+
+
 # The id a bare family click RECORDED before 2026-09-01 — each family's seed head as it stood then,
 # frozen here on purpose (the table above moves; this must not). A stored model equal to one of these
 # is, in nearly every case, that artefact rather than a deliberate pin: a version-submenu pick of the
@@ -967,11 +985,13 @@ def _note_model_pick(value):
 # claude-fable-5 (its strings name the migration and the id; verified in the installed binary).
 _SEED_PINS = {"claude-fable-5": "fable", "claude-opus-5": "opus", "claude-sonnet-5": "sonnet",
               "claude-haiku-4-5": "haiku"}
+MODEL_ALIAS_MIGRATION_MARKER = "model-alias-migration.done"   # STATE/…: stamped once the pass below ran clean
 
 
 def _model_alias_boot_pass():
-    """One-time state migration at kernel boot (2026-09-01): every stored model equal to a PRE-FIX seed
-    head (_SEED_PINS) becomes its family alias, in the three places the pin lived —
+    """ONE-TIME state migration at kernel boot (2026-09-01), marker-gated like _rewind_migration_bg: every
+    stored model equal to a PRE-FIX seed head (_SEED_PINS) becomes its family alias, in the three places
+    the pin lived —
     - sdk-defaults.json's remembered model (what the next NEW session seeds from);
     - model-picks.json, where a head recorded as a family's pick is DROPPED: that store holds version
       ids only, and an absent pick is exactly how /models falls to the alias;
@@ -979,28 +999,50 @@ def _model_alias_boot_pass():
       the session follows the CLI's newest from then on. Dead regs too: a revival launches from the
       same field. A LIVE session is not re-pointed mid-turn (no set_model fires here); the rewrite is
       picked up by its next reconnect, exactly as a set_model on a dormant session is.
-    Idempotent (a second run finds nothing), loud (one stderr line naming what moved, nothing when
-    nothing did), and blind to any non-head value — an explicit legacy pin, or a post-fix head such as
-    claude-fable-5-1, is a deliberate choice and stands. Runs before the SDK backend constructs, which
-    is when regs become chosen_model; a rewrite lost to a concurrent write during a restart handoff
-    simply recurs at the next boot. Returns the number of rewrites."""
+    WHY ONCE, AND WHY A MARKER (review 2026-09-01): the head ids are not retired — three of the four are
+    the CURRENT releases, exactly what a user pins from the version submenu against a future .1 — so
+    after the fix a stored head is a deliberate pin, indistinguishable from pre-fix residue by value
+    alone. Without a completion record the pass re-ran at every restart and undid those picks, against
+    the "an explicit pin stands" guarantee. The marker (STATE/model-alias-migration.done, {"t","moved"})
+    is what tells the two apart: absent → the state predates the fix and the pass runs; present → it
+    ran, and every head found from then on is the user's. The way BACK to floating for a pinned family
+    is a picker gesture, never a boot pass: the version submenu's "Latest" row (_set_model_or_park
+    `floating`) forgets the pin and sends the alias.
+    Stamped only after a CLEAN pass — "returned" is not "succeeded": a store or reg the pass could not
+    READ is one it did not migrate, so no marker is written and the pass re-arms at the next boot (an
+    absent file is nothing to migrate; a garbled one is a failure). Loud (one stderr line naming what
+    moved, nothing when nothing did) and blind to any non-head value — an explicit legacy pin, or a
+    post-fix head such as claude-fable-5-1, stands. Runs before the SDK backend constructs, which is
+    when regs become chosen_model (main()'s ordering, pinned by test); a rewrite lost to a concurrent
+    write during a restart handoff simply recurs at the next boot, since no marker lands until the pass
+    completes. Returns the number of rewrites; 0 without a word once the marker exists."""
+    marker = jd.STATE / MODEL_ALIAS_MIGRATION_MARKER
+    if marker.exists():
+        return 0
     n = 0
     moved = []
+    fails = 0
+
+    def _load(p):
+        # a dict (or whatever the file holds) — None for an ABSENT file (nothing to migrate) and for an
+        # UNREADABLE one, which also counts as a failure: it withholds the marker so the next boot retries
+        nonlocal fails
+        try:
+            return json.loads(p.read_text())
+        except FileNotFoundError:
+            return None
+        except (OSError, ValueError):
+            fails += 1
+            return None
     p = jd.STATE / "sdk-defaults.json"
-    try:
-        d = json.loads(p.read_text())
-    except (OSError, ValueError):
-        d = None
+    d = _load(p)
     if isinstance(d, dict) and d.get("model") in _SEED_PINS:
         d["model"] = _SEED_PINS[d["model"]]
         _atomic_write(p, json.dumps(d))
         n += 1
         moved.append("sdk-defaults model → %s" % d["model"])
     p = jd.STATE / MODEL_PICKS_FILE_NAME
-    try:
-        d = json.loads(p.read_text())
-    except (OSError, ValueError):
-        d = None
+    d = _load(p)
     if isinstance(d, dict):
         stale = sorted(f for f, v in d.items() if v in _SEED_PINS)
         if stale:
@@ -1014,10 +1056,7 @@ def _model_alias_boot_pass():
     except OSError:
         regs = []
     for rp in regs:
-        try:
-            reg = json.loads(rp.read_text())
-        except (OSError, ValueError):
-            continue
+        reg = _load(rp)
         if isinstance(reg, dict) and reg.get("model") in _SEED_PINS:
             reg["model"] = _SEED_PINS[reg["model"]]
             _atomic_write(rp, json.dumps(reg))
@@ -1026,6 +1065,12 @@ def _model_alias_boot_pass():
     if n:
         sys.stderr.write("romp-kernel: model-alias migration: %s (a session takes the alias at its "
                          "next reconnect)\n" % "; ".join(moved))
+    if fails:
+        sys.stderr.write("romp-kernel: model-alias migration could not read %d file(s) — no marker "
+                         "written, retrying next boot\n" % fails)
+    else:
+        jd.STATE.mkdir(parents=True, exist_ok=True)
+        _atomic_write(marker, json.dumps({"t": int(time.time()), "moved": n}))
     return n
 # "ultracode" tops the ladder (the user 2026-08-04): the CLI's own /effort offers it — xhigh effort plus
 # standing dynamic-workflow orchestration, per session. tmux delivers the literal "/effort ultracode"; the
@@ -9827,7 +9872,9 @@ def _drive(msg, client):
             be.send(sid, "/compact"); _mark_compacting(sid)   # idle → /compact now + the instant 'compacting' cue
     elif t == "sendCommand" and msg.get("cmd"):
         cmd = str(msg["cmd"]).strip()                     # the timeline lane menu sends "/model X" / "/effort X"
-        if not _route_meta_command(be, sid, cmd, client):   # /model, /effort, /fast → the setters (mid-compaction → parked)
+        # /model, /effort, /fast → the setters (mid-compaction → parked); `floating` is the lane
+        # submenu's Latest row (forget the family's pin — review 2026-09-01)
+        if not _route_meta_command(be, sid, cmd, client, floating=bool(msg.get("floating"))):
             _send_or_park(be, sid, cmd)   # mid-compaction → parked as a queued command
     elif t == "askFollowUp":
         iid = str(msg.get("itemId") or "")
@@ -9965,7 +10012,9 @@ def _drive(msg, client):
         # manual Retry-now button and the dashboard tick's redundant asks, both idempotent against it).
         _fire_api_retry(sid, be, manual=bool(msg.get("manual")))
     elif t == "setModel" and msg.get("value"):
-        _set_model_or_park(be, sid, str(msg["value"])); _push_soon()   # mid-compaction → parked as a queued command
+        # mid-compaction → parked as a queued command; `floating` is the version submenu's Latest row —
+        # forget the family's remembered pin and send the alias (review 2026-09-01)
+        _set_model_or_park(be, sid, str(msg["value"]), floating=bool(msg.get("floating"))); _push_soon()
     elif t == "setEffort" and msg.get("value"):
         _set_effort_or_park(be, sid, str(msg["value"])); _push_soon()   # tmux: /effort; SDK: reconnect with --effort; mid-compaction → parked
     elif t == "setFast" and msg.get("value") in ("on", "off"):
@@ -18538,7 +18587,8 @@ def _alias_reflects(live_pretty, alias):
         return False
     if not alias or alias == "default":
         return True
-    a = alias.lower()
+    a = re.sub(r"\[[^\]]*\]$", "", alias.lower().strip())   # fable[1m] → fable: the CLI's context tag is
+    #                                                          never part of the pretty name (review 2026-09-01)
     a = a.split("-")[1] if a.startswith("claude-") and "-" in a else a   # claude-opus-4-8 → opus
     return a in live_pretty.lower()
 
@@ -19062,12 +19112,18 @@ def _send_or_park(be, sid, text, echo=None, user_todo=None):
     return got
 
 
-def _set_model_or_park(be, sid, value):
+def _set_model_or_park(be, sid, value, floating=False):
     """Apply a model change now — or park it in the sid's FIFO op queue while the session compacts. Either
     way, the pick is ACCEPTED now: stamp the shared pending signal (_mark_model_pending) so chat + timeline
     both show switching-dots immediately, from whichever surface the click came from (the user 2026-07-03).
     `value` is a family alias (a bare family click — the CLI resolves it live) or an explicit version id
-    (a submenu pick, remembered as the family's pin); both ride to the backend verbatim."""
+    (a submenu pick, remembered as the family's pin); both ride to the backend verbatim. `floating` is the
+    version submenu's "Latest" row (review 2026-09-01): the value is a family alias AND the family's
+    remembered pin is forgotten, so the family follows the CLI's newest again — the one picker gesture
+    back from a pin (the family row sends the pin, the version rows pin, and a typed bare alias leaves
+    the memory alone by design). Meaningless on a non-alias value."""
+    if floating and value in _MODEL_VALUES:
+        _forget_model_pick(value)
     _mark_model_pending(sid, value)
     _note_model_pick(value)          # a version pick becomes its family's remembered default (2026-08-25)
     if _ops_gate(sid):
@@ -19121,9 +19177,10 @@ def _set_fast_or_park(be, sid, value):
     return be.set_fast(sid, value)
 
 
-def _route_meta_command(be, sid, text, client=None):
+def _route_meta_command(be, sid, text, client=None, floating=False):
     """A "/model X", "/effort X" or "/fast on|off" — typed into the chat composer or sent by the timeline
     lane menu — goes through the kernel's OWN setters (_set_*_or_park), never to the CLI as literal text.
+    `floating` rides the lane menu's "Latest" row to _set_model_or_park (forget the family's pin).
     The CLI would execute the text (verified 2026-09-01 on 2.1.257), but that path bypasses romp: the
     registry, sdk-defaults.json, the pick memory and the reconnect's --model all kept the OLD value, so
     a switch typed into the composer silently reverted at the next reconnect or restart (four sessions
@@ -19141,7 +19198,7 @@ def _route_meta_command(be, sid, text, client=None):
     if not value or len(value.split()) != 1:
         return False
     if head == "/model" and _vouched_model(value):
-        _set_model_or_park(be, sid, value)     # mid-compaction → parked as a queued command
+        _set_model_or_park(be, sid, value, floating=floating)     # mid-compaction → parked as a queued command
     elif head == "/effort" and value in _EFFORT_VALUES:
         _set_effort_or_park(be, sid, value)    # mid-compaction → parked as a queued command
     elif head == "/fast" and value in ("on", "off"):
@@ -19159,6 +19216,8 @@ def _vouched_model(value):
     romp's job is keeping the registry in step). A typo is none of these."""
     if value in _MODEL_VALUES or value == "default" or _version_family(value):
         return True
+    if _model_id_clean(value) in _MODEL_VALUES:   # the CLI's own 1M-context spelling of a family (fable[1m])
+        return True                                # — vouched like the tagged id below (review 2026-09-01)
     parts = _model_id_parts(value)
     return bool(parts and parts[0] in _MODEL_VALUES)
 
@@ -28630,7 +28689,7 @@ post({type:"deepLink",session:q.get("session"),anchor:q.get("anchor")||undefined
 if(window.parent!==window)window.parent.postMessage({romp:"reveal",pane:"chat"},"*");return;}}catch(e){}window.open(url,"_blank");};
 window.__rompTimelineWriteOrder=function(order){if(window.__rompWriteOrder)window.__rompWriteOrder(order);};
 window.__rompTimelineCompact=function(name){post({type:"compact",name:name});};
-window.__rompTimelineSendCommand=function(name,cmd){post({type:"sendCommand",name:name,cmd:cmd});};
+window.__rompTimelineSendCommand=function(name,cmd,extra){post(Object.assign({type:"sendCommand",name:name,cmd:cmd},extra||{}));};
 window.__rompTimelineSetFlag=function(id,flag,value){post({type:"setSessionFlag",id:id,flag:flag,value:!!value});};
 window.__rompTimelineSetViews=function(views){post({type:"setTimelineViews",views:views});};
 window.__rompTimelineEditTag=function(edit){post({type:"editTag",edit:edit});};

@@ -525,6 +525,7 @@ function initGear(post) {
       + 'border:1px solid rgba(255,255,255,0.12);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.35);'
       + 'font-size:12px;line-height:1.4;color:#cccccc;user-select:none;';
     var rowStyle = 'padding:4px 22px 4px 8px;border-radius:4px;cursor:pointer;position:relative;white-space:nowrap;display:flex;align-items:center;';
+    var CHECK_STYLE = 'position:absolute;right:6px;top:50%;transform:translateY(-50%);background:#1EA1EB;color:#fff;border-radius:50%;width:13px;height:13px;font-size:9px;font-weight:900;display:inline-flex;align-items:center;justify-content:center;line-height:1;';
     btn.addEventListener('click', function (e) {
       e.stopPropagation();
       if (menu) { closeAll(); return; }
@@ -540,21 +541,49 @@ function initGear(post) {
         var famCur = sel.value === fam.value || versions.some(function (v) { return v.value === sel.value; });
         if (famCur) {
           var ck = document.createElement('span'); ck.textContent = '\u2713';
-          ck.setAttribute('style', 'position:absolute;right:6px;top:50%;transform:translateY(-50%);background:#1EA1EB;color:#fff;border-radius:50%;width:13px;height:13px;font-size:9px;font-weight:900;display:inline-flex;align-items:center;justify-content:center;line-height:1;');
+          ck.setAttribute('style', CHECK_STYLE);
           row.appendChild(ck);
         }
         var openSub = versions.length > 1 ? function () {
           if (sub) { sub.remove(); sub = null; }
           sub = document.createElement('div');
           sub.setAttribute('style', MSTYLE + 'z-index:1002;');
+          // "Latest" heads the submenu (review 2026-09-01) \u2014 the session pickers' floating gesture, on
+          // the judge tiers too: the family row sends the remembered pin and the rows below pin, so
+          // this is the row that sends the bare alias, and the tier follows the CLI's newest again
+          var latest = document.createElement('div');
+          latest.setAttribute('style', rowStyle);
+          latest.tabIndex = 0;
+          latest.appendChild(document.createTextNode('Latest'));
+          if (sel.value === fam.value) {
+            var c0 = document.createElement('span'); c0.textContent = '\u2713';
+            c0.setAttribute('style', CHECK_STYLE);
+            latest.appendChild(c0);
+          }
+          latest.addEventListener('mouseenter', function () { latest.style.background = 'rgba(255,255,255,0.09)'; });
+          latest.addEventListener('mouseleave', function () { latest.style.background = 'transparent'; });
+          latest.addEventListener('click', function (e2) { e2.stopPropagation(); pick(fam.value); });
+          latest.addEventListener('keydown', function (e2) {
+            if (e2.key === 'Enter' || e2.key === ' ') { e2.preventDefault(); e2.stopPropagation(); pick(fam.value); }
+            else if (e2.key === 'ArrowLeft') { e2.preventDefault(); sub.remove(); sub = null; row.focus(); }
+          });
+          sub.appendChild(latest);
           versions.forEach(function (v) {
             var r2 = document.createElement('div');
             r2.setAttribute('style', rowStyle);
             r2.tabIndex = 0;
             r2.appendChild(document.createTextNode(v.label));
+            if (v.learned) {
+              // LOUD, per the fail-loudly rule: a version no seed table lists \u2014 a running session's CLI
+              // reported it (kernel /models `learned`) \u2014 says so, as the chat and timeline pickers do
+              var tag = document.createElement('span'); tag.textContent = ' new';
+              tag.setAttribute('style', 'font-size:0.82em;opacity:0.6;margin-left:4px;');
+              r2.appendChild(tag);
+              r2.title = "Reported by a running session's Claude Code; not yet in romp's built-in version list";
+            }
             if (sel.value === v.value) {
               var c2 = document.createElement('span'); c2.textContent = '\u2713';
-              c2.setAttribute('style', 'position:absolute;right:6px;top:50%;transform:translateY(-50%);background:#1EA1EB;color:#fff;border-radius:50%;width:13px;height:13px;font-size:9px;font-weight:900;display:inline-flex;align-items:center;justify-content:center;line-height:1;');
+              c2.setAttribute('style', CHECK_STYLE);
               r2.appendChild(c2);
             }
             r2.addEventListener('mouseenter', function () { r2.style.background = 'rgba(255,255,255,0.09)'; });

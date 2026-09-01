@@ -481,6 +481,28 @@ test("the lane model menu labels a family by its own label and marks a learned v
   assert.match(SRC, /if \(v\.learned\) \{[\s\S]{0,600}font-size:0\.82em;opacity:0\.6/, "the menu vocabulary's sub-line size and opacity");
 });
 
+test("the lane version submenu opens with a Latest row that clears the family's pin through the command bridge (2026-09-01)", () => {
+  // the chat picker's floating gesture, on the lane menu: Latest sends "/model <family>" with the
+  // `floating` flag, which the kernel's sendCommand arm hands to _set_model_or_park to forget the
+  // family's remembered pin — the one gesture back to floating once a family is pinned
+  const BOOT = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "timeline-boot.ts"), "utf8");
+  const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
+  assert.match(SRC, /const pick = \(value, floating\) => \{/);
+  assert.match(SRC, /this\._sendCommand\(s\.name, '\/' \+ kind \+ ' ' \+ value, kind === 'model', floating \? \{ floating: true \} : null\);/);
+  assert.match(SRC, /const pinned = !!c\.default && c\.default !== c\.value;/);
+  assert.match(SRC, /latest\.createDiv\(\{ text: 'Latest' \}\);/);
+  assert.match(SRC, /pick\(c\.value, true\)/, "sends the ALIAS with the flag");
+  assert.match(SRC, /lsub\.setAttribute\('style', 'font-size:0\.82em;opacity:0\.6;'\);[\s\S]{0,1200}for \(const v of versions\)/,
+    "heads the submenu, ahead of the versions, wearing the sub-line vocabulary");
+  assert.match(SRC, /if \(!pinned && cur\) \{ const ck = latest\.createSpan\(\{ text: '✓' \}\)/, "✓ when unpinned and the lane runs the family");
+  // the bridge carries the flag in every host: the VS Code boot glue and the kernel's shell page
+  assert.match(SRC, /_sendCommand\(name, cmd, confirm, extra\) \{/);
+  assert.match(SRC, /window\.__rompTimelineSendCommand\(name, cmd, extra \|\| undefined\); return;/);
+  assert.match(BOOT, /__rompTimelineSendCommand: \(name: string, cmd: string, extra\?: Record<string, unknown>\) => post\(\{ type: "sendCommand", name, cmd, \.\.\.\(extra \|\| \{\}\) \}\)/);
+  assert.match(KERNEL, /window\.__rompTimelineSendCommand=function\(name,cmd,extra\)\{post\(Object\.assign\(\{type:"sendCommand",name:name,cmd:cmd\},extra\|\|\{\}\)\);\};/);
+  assert.match(KERNEL, /_route_meta_command\(be, sid, cmd, client, floating=bool\(msg\.get\("floating"\)\)\)/);
+});
+
 test("the lane model menu exposes VERSIONS: submenu affordance, remembered default, keyboard (the user 2026-08-25)", () => {
   // families with >1 live version wear a side submenu — hover or ArrowRight reveals it, every
   // version directly pickable with the current-✓; clicking the family picks its remembered DEFAULT

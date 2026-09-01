@@ -7519,7 +7519,10 @@ function renderCommentPopover(): void {
             item.textContent = c.label;
             item.addEventListener("click", (ev) => {
               ev.stopPropagation();
-              if (pendingCommentAnchor) pendingCommentAnchor[kind] = c.value;
+              // a model family sends its remembered DEFAULT — the pinned version, else the alias —
+              // exactly as the chat statusline and the timeline lane do (review 2026-09-01: this
+              // dialog sent the bare alias, so the same click floated here and pinned there)
+              if (pendingCommentAnchor) pendingCommentAnchor[kind] = kind === "model" ? (c.default || c.value) : c.value;
               closeMetaMenu();
               document.getElementById("cmt-pop")?.remove();   // full rebuild shows the pick
               renderCommentPopover();
@@ -10324,9 +10327,11 @@ function toggleMetaMenu(kind: MetaKind, btn: HTMLElement, forSid?: string | null
   const s = { status };
   const menu = el("div", "meta-menu");
   menu.dataset.kind = kind;
-  const pickValue = (value: string) => {
+  const pickValue = (value: string, floating = false) => {
     if (vscodeApi) {
-      vscodeApi.postMessage({ type: kind === "model" ? "setModel" : kind === "effort" ? "setEffort" : kind === "fast" ? "setFast" : "setMode", id: opSid, value });
+      const op: Record<string, unknown> = { type: kind === "model" ? "setModel" : kind === "effort" ? "setEffort" : kind === "fast" ? "setFast" : "setMode", id: opSid, value };
+      if (floating) op.floating = true;   // the submenu's Latest row: the kernel forgets the family's pin (2026-09-01)
+      vscodeApi.postMessage(op);
       const was = metaCurrent(kind, s.status);
       metaPending.set(`${opSid}:${kind}`, { was, until: Date.now() + 20_000 });
       btn.classList.add("meta-pending");
@@ -10361,6 +10366,26 @@ function toggleMetaMenu(kind: MetaKind, btn: HTMLElement, forSid?: string | null
     const openSub = versions.length > 1 ? () => {
       closeSub();
       const sub = el("div", "meta-menu meta-sub");
+      // "Latest" heads the submenu (review 2026-09-01): the one gesture back to floating once a family
+      // carries a pin — the family row sends the pin, the rows below pin, and a typed "/model fable"
+      // leaves the pick memory alone by design. It sends the ALIAS with the `floating` flag, which the
+      // kernel's setModel arm hands to _set_model_or_park to forget the family's remembered pin, so the
+      // family follows the CLI's newest release again. An explicit user gesture, so it may move state.
+      // ✓ when the family is unpinned and the session runs it.
+      const pinned = !!c.default && c.default !== c.value;
+      const latest = el("div", "meta-item" + (!pinned && isCurrentMeta(kind, s.status, c.value) ? " current" : ""));
+      latest.tabIndex = 0;
+      const lhead = el("div");
+      lhead.textContent = "Latest";
+      const lsub = el("div", "meta-item-sub");
+      lsub.textContent = pinned ? "unpins — follows the newest " + c.label : "follows the newest " + c.label;
+      latest.append(lhead, lsub);
+      latest.addEventListener("click", (e) => { e.stopPropagation(); pickValue(c.value, true); });
+      latest.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); pickValue(c.value, true); }
+        else if (e.key === "ArrowLeft") { e.preventDefault(); closeSub(); item.focus(); }
+      });
+      sub.appendChild(latest);
       for (const v of versions) {
         const cur = (s.status.model || "").toLowerCase() === v.label.toLowerCase();
         const row = el("div", "meta-item" + (cur ? " current" : ""));
