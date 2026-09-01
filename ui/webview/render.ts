@@ -11893,6 +11893,10 @@ window.addEventListener("message", (e: MessageEvent) => {
   // had already left romp's queue (handed to the CLI — no recall exists): toast the kernel's 'too late'
   // and UNDO the optimistic composer restore if the draft is untouched — leaving the copy there invited
   // re-sending a message that is already being answered. ok:true just drops the stash (restore stands).
+  // T214: an answer that found no waiting question (the ask died with a kernel restart) — the
+  // kernel flipped nothing and says so; the toast carries the whole story, including that the
+  // session was already asked to raise its question again.
+  else if (m.type === "askLost" && typeof m.text === "string") warnToast(m.text);
   else if (m.type === "cancelResult" && typeof m.id === "string") {
     const key = m.id + " " + (typeof m.md === "string" ? m.md : "");
     const stash = pendingCancelRestores.get(key);

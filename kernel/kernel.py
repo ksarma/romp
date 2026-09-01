@@ -8637,6 +8637,23 @@ def _ack_card_move(ids, ok):
                               "buildId": _feed_build_id[0]})
 
 
+def _ask_lost(sid, client):
+    """A user's ANSWER found no waiting question (T214, verified live 2026-09-01): the ask died with
+    a kernel restart before the click arrived — the page queues clicks across the reconnect and
+    flushes them at the new kernel. The delivery outcome is honored: the caller flips NOTHING (a
+    swallowed answer must never look like progress — the cards-move rule), and the asker HEARS it
+    (fail loudly, never silence). The boot reconcile separately asks the resumed session to raise
+    its killed question again (ASK_DIED_NOTICE + the pendingAsk reg flag), so a fresh ask is already
+    on its way; the toast says so."""
+    sys.stderr.write("askLost: %s — an answer arrived with no live ask to receive it\n" % sid)
+    try:
+        client["send"](json.dumps({"type": "askLost", "id": str(sid),
+            "text": "That answer didn't reach the session — its question was lost with a restart. "
+                    "The session has been asked to raise it again; answer when it reappears."}))
+    except Exception:
+        pass
+
+
 def _picker_mid_series(sid):
     """A multi-question AskUserQuestion answered mid-series (the user 2026-07-21): one tool call carries N
     questions, and the SDK loop holds the session in the `picker` state across ALL of them (sdk_backend
@@ -8879,8 +8896,10 @@ def _drive(msg, client):
         # in `picker` across the whole set, so predicting Working would only bounce the card out and back —
         # check BEFORE answering (current_ask still holds this sub-question), suppress the flip if more remain.
         _mid = _picker_mid_series(sid)
-        be.on_ask(sid, "answer", msg["target"])
-        if not _mid: _predict_working("answer", sid=sid)
+        if be.on_ask(sid, "answer", msg["target"]):   # the DELIVERY outcome gates the flip (T214)
+            if not _mid: _predict_working("answer", sid=sid)
+        else:
+            _ask_lost(sid, client)
         _mark_views_dirty()
     elif t == "navAsk" and msg.get("target") is not None:
         be.on_ask(sid, "focus", msg["target"])            # cursor only, no select → ↑/↓ steps the preview
@@ -8888,20 +8907,26 @@ def _drive(msg, client):
         be.on_ask(sid, "toggle", msg["target"])
     elif t == "submitAsk":
         _mid = _picker_mid_series(sid)                     # mid-series multi-question submit → hold the card (see answerAsk)
-        be.on_ask(sid, "submit")
-        if not _mid: _predict_working("answer", sid=sid)
+        if be.on_ask(sid, "submit"):
+            if not _mid: _predict_working("answer", sid=sid)
+        else:
+            _ask_lost(sid, client)
         _mark_views_dirty()
     elif t == "addCustomAsk" and msg.get("text"):
         _mid = _picker_mid_series(sid)
-        be.on_ask(sid, "custom", str(msg["text"]))
-        if not _mid: _predict_working("answer", sid=sid)
+        if be.on_ask(sid, "custom", str(msg["text"])):
+            if not _mid: _predict_working("answer", sid=sid)
+        else:
+            _ask_lost(sid, client)
         _mark_views_dirty()
     elif t == "cancelAsk":
         be.on_ask(sid, "cancel"); _mark_views_dirty()     # a cancel answers nothing — no Working prediction
     elif t == "askText" and msg.get("text"):
         _mid = _picker_mid_series(sid)
-        be.on_ask(sid, "text", str(msg["text"]))
-        if not _mid: _predict_working("answer", sid=sid)
+        if be.on_ask(sid, "text", str(msg["text"])):
+            if not _mid: _predict_working("answer", sid=sid)
+        else:
+            _ask_lost(sid, client)
         _mark_views_dirty()
     elif t == "cancelQueued" and msg.get("park") is not None:
         # ✕ on a PARKED op (compaction/model queue — romp-owned, any backend). The result frame is

@@ -864,6 +864,15 @@ BOOT_RESUME_NUDGE = (
     "stopped, without asking whether to continue. Any messages queued before the restart follow "
     "this one.")
 
+# T214: the restart also killed a QUESTION the session had up — the ask future lived only in the
+# old process, so the user's answer (often flushed by the reconnecting page) had nowhere to land,
+# and the resume nudge alone told the session to continue WITHOUT asking. Same sanctioned [romp]
+# mechanics family as the restart notice above; queued right after it, before the restored backlog.
+ASK_DIED_NOTICE = (
+    "<!-- romp-injected --><!-- romp-system -->[romp] The restart also killed a question this "
+    "session had up awaiting the user's answer — it was never delivered, and any answer they sent "
+    "could not land. Ask the question again so they can answer it.")
+
 # Staggered boot-resume (the user 2026-07-20): spawning every reconciled session's CLI at once
 # detonated a fleet-wide CPU storm — each resumed claude burns ~a full core catching up on its
 # transcript, so a 13-session restart pegged the machine (load ~20) and starved the kernel's own
@@ -1789,16 +1798,27 @@ class SdkSession:
             self.loop.call_soon_threadsafe(
                 lambda: asyncio.ensure_future(self._do_set_mode(mode, prev)))
 
-    def resolve_ask(self, kind: str, payload=None):
+    def resolve_ask(self, kind: str, payload=None) -> bool:
         """Deliver a picker/permission UI action (answer/toggle/submit/custom/
-        cancel/text) into the waiting can_use_tool coroutine."""
+        cancel/text) into the waiting can_use_tool coroutine. Returns whether a live
+        ask was actually WAITING (T214, verified live 2026-09-01: an answer flushed
+        across a kernel restart found _cur_ask_fut None — the ask died with the old
+        process — and this silently no-opped while the caller reported success and
+        the board flipped to Working; the delivery outcome must be the truth). The
+        synchronous check races a concurrently-presenting ask by microseconds
+        against human-scale answers — the guarded _set below keeps the delivery
+        itself safe either way."""
         if not self.loop:
-            return
+            return False
+        fut = self._cur_ask_fut
+        if fut is None or fut.done():
+            return False                       # nothing is waiting — the ask died (a restart) or is already resolved
         def _set():
-            fut = self._cur_ask_fut
-            if fut and not fut.done():
-                fut.set_result((kind, payload))
+            f = self._cur_ask_fut
+            if f and not f.done():
+                f.set_result((kind, payload))
         self.loop.call_soon_threadsafe(_set)
+        return True
 
     def shutdown(self):
         self.ended = True
@@ -3739,12 +3759,14 @@ class SdkBackend:
                     # bg tasks the dead kernel's CLI took with it (the reg mirror, _on_task_event):
                     # the session must HEAR about them or it waits forever on a dead timer/watcher.
                     dead_tasks = [t for t in (r.get("bgTasks") or []) if isinstance(t, dict)]
-                    if not (cut or queued or dead_tasks):
+                    ask_died = bool(r.get("pendingAsk"))   # a question was up when the old kernel died (T214)
+                    if not (cut or queued or dead_tasks or ask_died):
                         continue                   # idle, empty-queued, nothing died → stays lazy
                     # Prepend to the PERSISTED queue (not enqueue()) so it is fed FIRST, before the
                     # restored backlog, and survives even a death mid-reconcile. Order: the resume
                     # nudge (continuation context), then the task-death notice.
                     prepend = ([BOOT_RESUME_NUDGE] if cut else []) \
+                            + ([ASK_DIED_NOTICE] if ask_died else []) \
                             + ([task_death_notice(dead_tasks)] if dead_tasks else [])
                     if prepend or dead_tasks:
                         with self._reg_lock:
@@ -3753,6 +3775,8 @@ class SdkBackend:
                                                       if isinstance(t, str) and t and t not in prepend]
                             if dead_tasks:
                                 reg["bgTasks"] = []   # reported — never re-notify for the same deaths
+                            if ask_died:
+                                reg["pendingAsk"] = False   # asked once per death — the re-raise mints a fresh flag
                             write_reg(self.state_dir, sid, reg)
                     if cut:
                         # Durable "romp cut this, romp is continuing it" stamp, written with the resume
@@ -6031,8 +6055,7 @@ class SdkBackend:
         if kind == "focus":
             return True   # ↑/↓ preview-step: SDK options carry their OWN preview, so the webview swaps it
                           # locally — there's no TUI cursor to drive, and it must NOT resolve the ask.
-        s.resolve_ask(kind, payload)
-        return True
+        return s.resolve_ask(kind, payload)    # the DELIVERY outcome, not mere routing (T214)
 
     # ---- callbacks used by sessions ----
     def _emit_ask(self, sess: SdkSession, ask: dict):
@@ -6041,11 +6064,17 @@ class SdkBackend:
         # was raised — the durable replay tmux gets from pane-scraping. The immediate push below is just for
         # snappiness (no 1.2s wait); the poll is the source of truth. (the user 2026-06-24: blocked-no-prompt.)
         self._pending_ask[sess.sid] = ask
+        # …and a DURABLE marker (T214): the in-memory ask dies with the kernel, and a restart-cut
+        # question was never re-presented — the boot reconcile reads this flag off the reg and asks
+        # the resumed session to raise its question again (ASK_DIED_NOTICE), so the user's answer
+        # has somewhere real to land. Cleared on resolve below and by the reconcile after it notices.
+        self._update_reg(sess.sid, pendingAsk=True)
         self._notify("chat", {"type": "askLive", "id": sess.sid, "ask": ask})
         self._poke()
 
     def _clear_ask(self, sess: SdkSession):
         self._pending_ask.pop(sess.sid, None)
+        self._update_reg(sess.sid, pendingAsk=False)   # resolved in THIS life — nothing owed at the next boot (T214)
         self._notify("chat", {"type": "askLiveClear", "id": sess.sid})
 
     def current_ask(self, sid: str):
