@@ -6670,7 +6670,7 @@ class ServeSecurity(unittest.TestCase):
         self.assertIn('app=fleet', body)
         # the romp loader RE-SHOWS on a kernel restart / WS drop (the user 2026-06-29): the shim fires
         # 'romp:wsdown' on ws.onclose and the pane loader un-fades over the stale pane until reconnect.
-        self.assertIn("window.addEventListener('romp:wsdown',show)", body)        # loader re-shows
+        self.assertIn("window.addEventListener('romp:wsdown',function(){if(ready()){badge(true);}else{show();}});", body)   # T217: content → badge; empty pane → the sheet
         self.assertIn('dispatchEvent(new Event("romp:wsdown"))', body)            # shim fires it on close
         self.assertIn("function show(){o.classList.remove('gone')", body)         # kept in the DOM, not removed
 

@@ -8116,10 +8116,13 @@ def _sdk_locked():
             # The backend's flag-consumption events resolve held rewinds (two-phase goal cleanup:
             # archive at the branch-take, restore on failure — _on_rewind_resolved).
             _sdk_backend.rewind_resolved_cb = _on_rewind_resolved
+            _mark_boot("reconcileDone")            # T217: the boot reconcile ran inside the
+            #                                        construct above — the settle's other bookend
         except Exception:
             sys.stderr.write("sdk-backend unavailable: %s\n" % traceback.format_exc())
             _sdk_problem("the SDK backend could not be built: %s" % traceback.format_exc())
             _sdk_backend = False
+            _mark_boot("reconcileDone")            # unavailable = the reconcile phase is over too
     return _sdk_backend or None
 
 
@@ -13055,6 +13058,53 @@ def _append_restart_cut(row):
         with open(RESTART_CUTS_FILE, "a", encoding="utf-8") as f:
             f.write(json.dumps(row) + "\n")
             f.flush()
+    except Exception:
+        pass
+
+
+_BOOT_MARKS = {}                                   # {"firstServe": t, "reconcileDone": t} — see _mark_boot
+
+
+def _append_boot_settled(first_serve, reconcile_done):
+    """The outage's other bookend (T217: nothing recorded how long a restart GAP lasted, so no seam
+    work is verifiable): one boot row in the same ledger, carrying when this kernel first accepted
+    requests and when its boot reconcile finished, plus outageS — firstServe minus the PREVIOUS cut
+    row's t, the felt window. Same-host deltas only by construction: the ledger lives under this
+    host's own STATE, so rows never mix clocks. Best-effort like every writer here."""
+    try:
+        prev_cut = None
+        try:
+            for line in RESTART_CUTS_FILE.read_text(encoding="utf-8").splitlines():
+                try:
+                    r = json.loads(line)
+                except Exception:
+                    continue
+                if isinstance(r, dict) and "cutTurns" in r:
+                    prev_cut = r
+        except OSError:
+            pass
+        row = {"t": int(time.time()), "pid": os.getpid(), "bootSettled": True,
+               "firstServe": round(first_serve, 2), "reconcileDone": round(reconcile_done, 2),
+               "settleS": round(reconcile_done - first_serve, 2)}
+        if prev_cut and isinstance(prev_cut.get("t"), int) and first_serve >= prev_cut["t"]:
+            row["prevCutT"] = prev_cut["t"]
+            row["outageS"] = round(first_serve - prev_cut["t"], 2)
+        _append_restart_cut(row)
+    except Exception:
+        pass
+
+
+def _mark_boot(kind):
+    """One boot milestone (firstServe = the accept loop starts; reconcileDone = the SDK backend's
+    boot reconcile returned, or was found unavailable — the phase is over either way). The backend
+    builds LAZILY, so the two marks land in either order; whichever lands second appends the
+    boot-settled row. Idempotent per kind, never raises."""
+    try:
+        if kind in _BOOT_MARKS:
+            return
+        _BOOT_MARKS[kind] = time.time()
+        if "firstServe" in _BOOT_MARKS and "reconcileDone" in _BOOT_MARKS:
+            _append_boot_settled(_BOOT_MARKS["firstServe"], _BOOT_MARKS["reconcileDone"])
     except Exception:
         pass
 
@@ -25678,6 +25728,30 @@ def _push(targets, connect=False, tmux=None):
         _clients[:] = [c for c in _clients if c.get("alive", True)]
 
 
+def _broadcast_restarting(budget_s=0.8):
+    """One final frame to every connected ws client as the kernel dies (T217: the shims otherwise
+    learn of the restart only when their socket closes and redial on a blind cadence): {type:
+    restarting, boot} — the announced-death event the shim keys its eager reconnect and its
+    banner-suppression latch on. Best-effort with a HARD sub-second budget: a client whose pipe
+    stalls is skipped, a raising send is swallowed, and the whole walk stops at the deadline — the
+    frame must never widen the shutdown (the dispatch's bound). Same-thread, no queue: the process
+    is about to _exit and nothing else will flush."""
+    try:
+        deadline = time.time() + budget_s
+        with _clients_lock:
+            clients = list(_clients)
+        payload = json.dumps({"type": "restarting", "boot": _BOOT_ID})
+        for c in clients:
+            if time.time() >= deadline:
+                break
+            try:
+                c["send"](payload)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
 def _push_all(tmux=None):
     with _clients_lock:
         clients = list(_clients)
@@ -26590,7 +26664,7 @@ function armStale(why){if(staleTimer)return;staleTimer=setTimeout(function(){sta
 // baked LOADEDV is older is running outdated code against newer kernel state — prompt a reload (never auto).
 // In the dashboard the raise routes to the shell's #rstale banner (build:1 → its BUILDMSG); standalone pages
 // self-inject the same bar. Latched: one prompt per page life, cleared only by the reload it asks for.
-var buildRaised=false,freshPending=false;   // freshPending: a reconnect is awaiting its resync frame
+var buildRaised=false,freshPending=false,restartAnnounced=0;   // freshPending: a reconnect is awaiting its resync frame; restartAnnounced: the kernel's dying frame (T217)
 function raiseBuild(){if(buildRaised)return;buildRaised=true;
 if(window.parent!==window){try{window.parent.postMessage({romp:"wsStale",build:1},"*");}catch(e){}}
 else selfBar("A newer romp build is available.","build");}
@@ -26605,16 +26679,27 @@ ws=new WebSocket(proto+location.host+"/ws?app=%s"+(wid?"&wid="+encodeURIComponen
 // socket dropped (the pane's romp loader) needs the socket's RETURN as its event to come back down. The
 // first connect deliberately doesn't fire it — nothing is waiting on it, and the loader must stay up until
 // real content lands.
-ws.onopen=function(){lastRecv=Date.now();netState("up");var wasReconn=everConnected;everConnected=true;for(var i=0;i<queue.length;i++)ws.send(queue[i]);queue=[];if(wasReconn){armStale("reconnect");freshPending=true;try{window.dispatchEvent(new Event("romp:wsup"));}catch(e){}}};
+ws.onopen=function(){lastRecv=Date.now();netState("up");var wasReconn=everConnected;everConnected=true;for(var i=0;i<queue.length;i++)ws.send(queue[i]);queue=[];
+if(wasReconn){var ann=restartAnnounced&&Date.now()-restartAnnounced<30000;restartAnnounced=0;   // one-shot: spent here
+if(!ann)armStale("reconnect");   // T217: an ANNOUNCED restart's reconnect skips the arm — the resync lands in a beat and the flash was pure noise; the resync-never-arrives case re-raises through the keepalive watchdog's forced second reconnect, which arms as always
+freshPending=true;try{window.dispatchEvent(new Event("romp:wsup"));}catch(e){}}};
 ws.onmessage=function(ev){lastRecv=Date.now();var msg;try{msg=JSON.parse(ev.data);}catch(e){return;}
 if(msg&&msg.type==="ka"){if(LOADEDV&&msg.dv&&msg.dv>LOADEDV)raiseBuild();return;}   // keepalive: stamped lastRecv above; carries the build token (drift → reload banner); nothing for the bundle to render
+// T217: the kernel announces its own death (one final frame from the dying process). Latch it: the
+// imminent close is EXPECTED — onclose redials eagerly instead of on the blind cadence, and the
+// reconnect skips the stale-banner arm once (the resync is seconds away; a restart that never
+// comes back stays loud through the disconnected state itself, and a SECOND reconnect arms as
+// always — the latch is one-shot). 30s staleness bound so a spent announcement can never drive
+// tight retries forever.
+if(msg&&msg.type==="restarting"){restartAnnounced=Date.now();staleDiag("restart-announced","");return;}
 // the first REAL frame after a reconnect is the kernel's connect-time push — the resync itself, so the
 // "what you see may be stale" prompt is answered and retires (see clearStale). Keepalives return above.
 if(freshPending){freshPending=false;clearStale();}
 if(window.__rompFed){window.__rompFed.inbound("",msg);}else{window.dispatchEvent(new MessageEvent("message",{data:msg}));}};
 // onclose: flag the shell, RE-SHOW this pane's romp loader (the user 2026-06-29, who wanted the swirling loader on
 // kernel restart), + RETRY (don't blind-reload — on a real outage the reload just fails into a dead page).
-ws.onclose=function(){netState("down");try{window.dispatchEvent(new Event("romp:wsdown"));}catch(e){}setTimeout(connect,1500);};
+ws.onclose=function(){netState("down");try{window.dispatchEvent(new Event("romp:wsdown"));}catch(e){}
+setTimeout(connect,(restartAnnounced&&Date.now()-restartAnnounced<30000)?250:1500);};   // announced death → tight redial (the frame is the event; the blind 1.5s stays for unannounced drops)
 ws.onerror=function(){try{ws.close();}catch(e){}};}
 function send(m){var s=JSON.stringify(m);if(ws&&ws.readyState===1)ws.send(s);else queue.push(s);}
 window.__rompLocalSend=send;window.__rompApp=APP;   // federation.ts (the multi-kernel manager) routes local sends + knows the app through these
@@ -26885,8 +26970,20 @@ def _pane_spin(cid, ignore_id=""):
             "background:var(--vscode-editor-background,#1e1e1e);transition:opacity .3s ease}"
             "#pane-spin.gone{opacity:0;pointer-events:none}"
             # light theme: the loader backdrop goes warm-light with the page
-            "body.theme-light #pane-spin{background:#F1EAE2}" + _LOADER_CSS + "</style>"
+            "body.theme-light #pane-spin{background:#F1EAE2}" + _LOADER_CSS +
+            # T217: the RECONNECTING affordance for a pane that already HAS content — a small corner
+            # badge (swirl + label) over the frozen, still-legible pane, never the opaque loader (the
+            # user kept losing seconds-stale but perfectly readable content behind a full-pane sheet).
+            # pointer-events:none: clicks land on the content and queue in the shim, by design.
+            "#pane-reconn{position:fixed;top:8px;right:8px;z-index:61;display:none;align-items:center;"
+            "gap:7px;padding:4px 11px;border-radius:6px;background:rgba(37,37,38,0.88);"
+            "border:1px solid rgba(255,255,255,0.12);box-shadow:0 4px 12px rgba(0,0,0,0.35);"
+            "font:12px 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;color:#ccc;pointer-events:none}"
+            "#pane-reconn.on{display:flex}"
+            "#pane-reconn img{width:14px;height:14px;animation:rl-spin 7s linear infinite}"
+            "body.theme-light #pane-reconn{background:rgba(241,234,226,0.92);color:#333}</style>"
             "<div id=pane-spin>" + _loader_inner() + "</div>"
+            "<div id=pane-reconn><img src=/media/romp-swirl-glyph.svg alt=''>reconnecting…</div>"
             "<script>(function(){var o=document.getElementById('pane-spin'),c=document.getElementById('" + cid + "'),IGN='" + ignore_id + "';"
             "if(!o)return;var fail=0;"
             "function arm(){clearTimeout(fail);fail=setTimeout(hide,30000);}"   # per SHOW, not per page load
@@ -26896,8 +26993,13 @@ def _pane_spin(cid, ignore_id=""):
             "arm();"
             "if(c){try{new MutationObserver(function(){if(ready())hide();}).observe(c,{childList:true});}catch(e){}"
             "if(ready())hide();}"
-            "window.addEventListener('romp:wsdown',show);"
-            "window.addEventListener('romp:wsup',hide);})();</script>")
+            "var rb=document.getElementById('pane-reconn');"
+            "function badge(on){if(rb)rb.classList.toggle('on',!!on);}"
+            # T217: a drop over EXISTING content keeps the content — translucent corner badge, not
+            # the opaque sheet; the sheet stays for a genuinely empty pane (cold load / never
+            # painted), per the loading-states rule. wsup ends both, exactly as before.
+            "window.addEventListener('romp:wsdown',function(){if(ready()){badge(true);}else{show();}});"
+            "window.addEventListener('romp:wsup',function(){badge(false);hide();});})();</script>")
 
 
 def _chat_page():
@@ -32562,6 +32664,9 @@ def _graceful_term(signum, frame):
     mutation, and a cut turn keeps its 'working' state tail — the NEXT kernel's boot reconcile
     resumes exactly those. Bounded (~2s) so `romp refresh` stays snappy. Never construct the
     backend here — no SDK sessions were running if it doesn't exist."""
+    _broadcast_restarting()                        # T217: announce the death FIRST — the frame is
+    #                                                the shims' eager-reconnect event, and its
+    #                                                sub-second budget cannot widen the shutdown
     res = {}
     err = ""
     try:
@@ -32653,6 +32758,8 @@ def main():
             webbrowser.open(url + "/?token=" + TOKEN)   # seeds the year-long cookie on first open (Jupyter's URL flow)
         except Exception:
             pass
+    _mark_boot("firstServe")                       # T217: the socket is bound and the accept loop
+    #                                                starts now — the outage's closing bookend
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
