@@ -124,8 +124,11 @@ test("federated sessions heal too: every ack socket's comeback re-ships ITS entr
   // it, the chat re-ships on it (v1 listened to romp:wsup alone and never healed federated wedges)
   assert.match(FED, /window\.dispatchEvent\(new CustomEvent\("romp:hostRelayUp", \{ detail: \{ host: conn\.host \} \}\)\);/);
   assert.match(RENDER, /window\.addEventListener\("romp:hostRelayUp", \(e\) => \{/);
-  // and the kernel-reported tunnel recovery re-ships the recovered hosts' entries alongside
-  assert.match(RENDER, /if \(Array\.isArray\(m\.hosts\)\) reshipPendingUploads\(m\.hosts\.map\(String\)\);/);
+  // …and NOT the kernel-reported hostUp: federation dispatches it in the tick it re-dials the relay,
+  // so the socket is still CONNECTING and a re-ship there raised a false "unreachable" toast an RTT
+  // before the relay's own onopen re-shipped correctly (review finding 2026-09-01, reverted here)
+  assert.doesNotMatch(RENDER, /m\.hosts\.map\(String\)/, "hostUp must not re-ship — romp:hostRelayUp is the event");
+  assert.match(RENDER, /if \(m\.type === "hostUp"\) \{ refreshSettledPreviews\(\); healPathImgs\(\); \}/);
 });
 
 test("dismissing the LAST pending chip settles an armed hold loudly — never a forever-wait (T215 review)", () => {

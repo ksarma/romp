@@ -10752,10 +10752,11 @@ function retirePendingShip(key: string, shipId?: string): string | null {
 // entry with no payload yet is one whose FileReader is still encoding — its own onload ships through
 // the fresh socket, so it is deliberately skipped here, never doubled.
 // SCOPED to the socket that reconnected: a remote session's ack rides that host's RELAY, not the
-// pane socket, so romp:wsup re-ships local entries only, and the host-back events below carry their
-// hosts (review finding 2026-09-01: v1 listened to romp:wsup alone, whose entries-of-every-host
-// re-ship both missed the remote relay's own redial — which fires neither romp:wsup nor hostUp — and
-// re-sent remote payloads into a relay that was still down).
+// pane socket, so romp:wsup re-ships local entries only, and the relay's own (re)open event below
+// carries its host (review finding 2026-09-01: v1 listened to romp:wsup alone, whose entries-of-
+// every-host re-ship both missed the remote relay's own redial — which fires no romp:wsup — and
+// re-sent remote payloads into a relay that was still down; the kernel-reported hostUp is NOT a
+// re-ship event either — see the handler — because it precedes the relay's open by a round trip).
 function reshipPendingUploads(hosts?: readonly string[]): void {
   if (!vscodeApi) return;
   for (const [id, list] of pendingShips) {
@@ -11933,12 +11934,12 @@ window.addEventListener("message", (e: MessageEvent) => {
   // a RECONNECT-class event goes further: settled chips (budget spent) re-attempt regardless of
   // their error text, and the path-image chips parked in imgFailed get one fresh host round-trip
   // (bounded: reconnects are rare events, never a per-push loop)
-  if (m.type === "hostUp") {
-    refreshSettledPreviews(); healPathImgs();
-    // the recovered hosts' owed acks are reachable again — re-ship their retained uploads too
-    // (the relay's own redial also heals via romp:hostRelayUp; both are idempotent by shipId)
-    if (Array.isArray(m.hosts)) reshipPendingUploads(m.hosts.map(String));
-  }
+  // hostUp deliberately does NOT re-ship pending uploads (review finding 2026-09-01): federation
+  // dispatches it in the same synchronous tick it re-dials a recovered host's relay, so the socket is
+  // still CONNECTING — a re-ship here hit outbound's readyState gate and raised a false "unreachable —
+  // dropFile was not delivered" toast (and tore down an in-flight provisional create) an RTT before
+  // the relay's own onopen re-shipped correctly. romp:hostRelayUp IS that onopen — the one exact event.
+  if (m.type === "hostUp") { refreshSettledPreviews(); healPathImgs(); }
   if (m.type === "session") upsert(m);
   else if (m.type === "globalRetryPaused") {
     globalRetryPaused = !!m.value;

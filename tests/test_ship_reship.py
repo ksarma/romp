@@ -58,10 +58,11 @@ class SourcePins(unittest.TestCase):
         self.assertIn("interface PendingShip { name: string; shipId: string; b64?: string }", RENDER)
         self.assertIn("if (entry) entry.b64 = b64;", RENDER)
         self.assertIn('window.addEventListener("romp:wsup", () => reshipPendingUploads());', RENDER)
-        # …and the federated twin events (review finding 2026-09-01): the relay's own redial and the
-        # kernel-reported tunnel recovery each re-ship THEIR host's entries — scoped by ack socket
+        # …and the federated twin (review finding 2026-09-01): the relay's own (re)open re-ships THAT
+        # host's entries — scoped by ack socket. The kernel-reported hostUp does NOT: it fires in the
+        # tick federation re-dials the relay, before the socket is open (second review, same day)
         self.assertIn('window.addEventListener("romp:hostRelayUp", (e) => {', RENDER)
-        self.assertIn("if (Array.isArray(m.hosts)) reshipPendingUploads(m.hosts.map(String));", RENDER)
+        self.assertNotIn("reshipPendingUploads(m.hosts", RENDER)
 
     def test_ack_echoes_shipid_and_a_stray_twin_is_dropped(self):
         self.assertIn('ack["shipId"] = str(msg["shipId"])', KERNEL_SRC)
