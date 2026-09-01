@@ -3,8 +3,14 @@
 opus became Opus 5 — silently losing legacy versions that remain live on the API. The kernel's
 /models now carries each family's versions (dateless alias ids, verified against the claude-api
 reference) plus a DEFAULT: the most recent version the user picked for that family (model-picks.json,
-a viewer pref like colormap), else the newest. The pick memory hooks the ONE choke point every set
-path flows through (_set_model_or_park). Synthetic only — hermetic temp STATE."""
+a viewer pref like colormap), else the family ALIAS itself (2026-09-01: the seed table's head used to
+stand in for the alias, so a bare family click pinned every session to claude-fable-5 while the
+CLI's own `fable` alias moved on to Fable 5.1). The seed table is a SEED: ids a running session's
+CLI reports (reg.liveModelId) join the version lists, marked `learned`. The pick memory hooks the
+ONE choke point every set path flows through (_set_model_or_park). Synthetic only — hermetic temp
+STATE."""
+import contextlib
+import io
 import json
 import os
 import tempfile
@@ -50,6 +56,13 @@ class Catalog(unittest.TestCase):
         for fam, vs in km.MODEL_VERSIONS.items():
             for v in vs:
                 self.assertEqual(km._VERSION_FAMILY[v["value"]], fam)
+
+    def test_the_seed_table_knows_fable_5_1(self):
+        # verified against the installed CLI's catalog 2026-09-01 (2.1.257 resolves `fable` to
+        # claude-fable-5-1) and the claude-api reference; the seed must not lag the CLI it drives
+        self.assertEqual(km.MODEL_VERSIONS["fable"][0], {"value": "claude-fable-5-1", "label": "Fable 5.1"})
+        self.assertIn("claude-fable-5", [v["value"] for v in km.MODEL_VERSIONS["fable"]],
+                      "Fable 5 stays pickable as an explicit pin")
 
 
 class PickMemory(unittest.TestCase):
@@ -98,8 +111,8 @@ class PickMemory(unittest.TestCase):
                          "unknown ids and cross-family entries never poison the default")
 
 
-class ModelsRoute(unittest.TestCase):
-    """GET /models carries versions + default per family."""
+class _ModelsServer(unittest.TestCase):
+    """A kernel HTTP handler on a loopback port + a hermetic STATE, for the /models route tests."""
 
     @classmethod
     def setUpClass(cls):
@@ -127,20 +140,165 @@ class ModelsRoute(unittest.TestCase):
         with urllib.request.urlopen(req, timeout=10) as r:
             return json.loads(r.read().decode())
 
+
+class ModelsRoute(_ModelsServer):
+    """GET /models carries versions + default per family."""
+
     def test_each_family_carries_versions_and_a_default(self):
         d = self._models()
         rows = {m["value"]: m for m in d["models"]}
         self.assertEqual([v["value"] for v in rows["opus"]["versions"]],
                          [v["value"] for v in km.MODEL_VERSIONS["opus"]])
-        self.assertEqual(rows["opus"]["default"], "claude-opus-5",
-                         "no pick yet → the family's newest")
         self.assertIn("color", rows["opus"], "the colormap tint still rides every family row")
+        for v in rows["opus"]["versions"]:
+            self.assertFalse(v.get("learned"), "seed-table entries are not marked as learned")
+
+    def test_a_family_with_no_pick_defaults_to_its_alias_not_the_seed_head(self):
+        # THE BUG (2026-09-01): the default fell to MODEL_VERSIONS[fam][0], so a bare "Fable" click
+        # pinned the session to claude-fable-5 — and when the CLI's `fable` alias advanced to Fable
+        # 5.1, every picker-set session stayed behind. The alias is what the CLI resolves LIVE (the
+        # authoritative source for "newest"), so a family click sends the alias.
+        rows = {m["value"]: m for m in self._models()["models"]}
+        for fam in ("fable", "opus", "sonnet", "haiku"):
+            self.assertEqual(rows[fam]["default"], fam, "no pick yet → the family alias, never a pinned id")
 
     def test_the_default_follows_the_users_last_pick(self):
         km._note_model_pick("claude-opus-4-8")
         rows = {m["value"]: m for m in self._models()["models"]}
         self.assertEqual(rows["opus"]["default"], "claude-opus-4-8")
-        self.assertEqual(rows["sonnet"]["default"], "claude-sonnet-5", "other families unaffected")
+        self.assertEqual(rows["sonnet"]["default"], "sonnet", "other families unaffected: still the alias")
+
+    def test_an_explicit_version_pick_pins_and_a_family_click_never_downgrades_it(self):
+        # the version submenu is the ONE place a pin comes from; a later family click (which now
+        # carries the alias) records nothing, so the remembered pin stands
+        class _BE:
+            calls = []
+
+            def set_model(self, sid, value):
+                self.calls.append(value)
+                return True
+        be = _BE()
+        sid = "11111111-2222-3333-4444-555555555555"
+        km._set_model_or_park(be, sid, "claude-opus-4-8")
+        km._set_model_or_park(be, sid, "opus")
+        self.assertEqual(be.calls, ["claude-opus-4-8", "opus"], "both reach the backend verbatim")
+        rows = {m["value"]: m for m in self._models()["models"]}
+        self.assertEqual(rows["opus"]["default"], "claude-opus-4-8", "the explicit pin survives the alias click")
+
+
+class LearnedVersions(_ModelsServer):
+    """The seed table is a SEED, not the catalog: a model id a running session's CLI actually reported
+    (reg.liveModelId, persisted by the SDK backend's _learn_model) joins its family's version list —
+    the CLI is the authoritative source for what it serves — and is marked so the pickers can say it
+    is new rather than hide a live model behind a stale menu."""
+
+    def _reg(self, sid, **fields):
+        d = jd.STATE / "sdk"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / (sid + ".json")).write_text(json.dumps({"sid": sid, "name": "web", "cwd": "/tmp", "alive": True, **fields}))
+
+    def test_a_reported_id_outside_the_seed_table_joins_its_family_marked_learned(self):
+        self._reg("11111111-2222-3333-4444-555555555501", liveModel="Opus 5.1", liveModelId="claude-opus-5-1")
+        rows = {m["value"]: m for m in self._models()["models"]}
+        vs = rows["opus"]["versions"]
+        self.assertEqual(vs[0], {"value": "claude-opus-5-1", "label": "Opus 5.1", "learned": True},
+                         "newest first — the learned 5.1 lands ahead of the seed's 5")
+        self.assertEqual([v["value"] for v in vs[1:]], [v["value"] for v in km.MODEL_VERSIONS["opus"]])
+        self.assertEqual(rows["opus"]["default"], "opus", "a learned id changes nothing about the alias default")
+
+    def test_a_learned_id_is_pickable_and_remembered_like_a_seed_one(self):
+        self._reg("11111111-2222-3333-4444-555555555501", liveModelId="claude-opus-5-1")
+        km._note_model_pick("claude-opus-5-1")
+        self.assertEqual(km._model_picks(), {"opus": "claude-opus-5-1"})
+        rows = {m["value"]: m for m in self._models()["models"]}
+        self.assertEqual(rows["opus"]["default"], "claude-opus-5-1")
+
+    def test_ids_the_seed_already_covers_or_that_are_not_first_party_add_nothing(self):
+        # a dated snapshot of a seed version shares its label → the seed's dateless alias covers it;
+        # a provider-prefixed id and a non-model string are not the shape the pickers send
+        self._reg("11111111-2222-3333-4444-555555555501", liveModelId="claude-opus-4-5-20251101")
+        self._reg("11111111-2222-3333-4444-555555555502", liveModelId="us.anthropic.claude-opus-4-8-v1:0")
+        self._reg("11111111-2222-3333-4444-555555555503", liveModelId="<synthetic>")
+        rows = {m["value"]: m for m in self._models()["models"]}
+        self.assertEqual([v["value"] for v in rows["opus"]["versions"]],
+                         [v["value"] for v in km.MODEL_VERSIONS["opus"]])
+
+    def test_a_context_tag_is_stripped_and_duplicates_collapse(self):
+        # the CLI spells a 1M-context variant with a [1m] tail; two sessions on the same id → one row
+        self._reg("11111111-2222-3333-4444-555555555501", liveModelId="claude-sonnet-5-1[1m]")
+        self._reg("11111111-2222-3333-4444-555555555502", liveModelId="claude-sonnet-5-1")
+        rows = {m["value"]: m for m in self._models()["models"]}
+        learned = [v for v in rows["sonnet"]["versions"] if v.get("learned")]
+        self.assertEqual(learned, [{"value": "claude-sonnet-5-1", "label": "Sonnet 5.1", "learned": True}])
+
+
+class AliasMigration(unittest.TestCase):
+    """One-time boot pass (2026-09-01), mirroring the CLI's own 2.1.257 `migration_fable5_to_fable_alias`:
+    a stored model equal to a family's PRE-FIX seed head (what a bare family click used to record) becomes
+    the family alias, so the next reconnect spawns `--model fable` and follows the CLI's newest. An
+    explicit non-head pick is a deliberate pin and is left alone. Idempotent, loud, synthetic state."""
+
+    def setUp(self):
+        self.td = tempfile.TemporaryDirectory()
+        self._state = jd.STATE
+        jd.STATE = Path(self.td.name)
+        (jd.STATE / "sdk").mkdir(parents=True)
+        (jd.STATE / "sdk-defaults.json").write_text(json.dumps({"model": "claude-fable-5", "effort": "xhigh"}))
+        (jd.STATE / km.MODEL_PICKS_FILE_NAME).write_text(json.dumps({"fable": "claude-fable-5", "opus": "claude-opus-4-8"}))
+        self._reg("a", model="claude-fable-5", liveModel="Fable 5", alive=True)
+        self._reg("b", model="claude-opus-4-8", alive=True)
+        self._reg("c", alive=False)
+        self._reg("d", model="claude-sonnet-5", alive=False)
+        self._reg("e", model="claude-fable-5-1")
+
+    def tearDown(self):
+        jd.STATE = self._state
+        self.td.cleanup()
+
+    def _reg(self, sid, **fields):
+        (jd.STATE / "sdk" / (sid + ".json")).write_text(json.dumps({"sid": sid, "name": sid, "cwd": "/tmp", **fields}))
+
+    def _read(self, sid):
+        return json.loads((jd.STATE / "sdk" / (sid + ".json")).read_text())
+
+    def _snapshot(self):
+        return {p.name: p.read_text() for p in jd.STATE.rglob("*.json")}
+
+    def test_seed_heads_become_aliases_everywhere_and_explicit_pins_stand(self):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            n = km._model_alias_boot_pass()
+        self.assertEqual(n, 4, "defaults + the fable pick + regs a and d")
+        self.assertEqual(json.loads((jd.STATE / "sdk-defaults.json").read_text()), {"model": "fable", "effort": "xhigh"},
+                         "the remembered default follows the alias; effort untouched")
+        self.assertEqual(km._model_picks(), {"opus": "claude-opus-4-8"},
+                         "a head recorded as a pick is dropped — an absent pick IS the alias in that store")
+        a = self._read("a")
+        self.assertEqual(a["model"], "fable", "the next reconnect spawns --model fable")
+        self.assertEqual((a["liveModel"], a["alive"], a["name"]), ("Fable 5", True, "a"), "nothing else on the reg moves")
+        self.assertEqual(self._read("b")["model"], "claude-opus-4-8", "an explicit legacy pin is deliberate")
+        self.assertNotIn("model", self._read("c"), "a session on the account default stays that way")
+        self.assertEqual(self._read("d")["model"], "sonnet", "every family's pre-fix head migrates, dead regs too")
+        self.assertEqual(self._read("e")["model"], "claude-fable-5-1",
+                         "a post-fix head was never a family-click artefact — an explicit pin, untouched")
+        self.assertIn("model-alias", err.getvalue())
+        self.assertIn("fable", err.getvalue(), "the stderr line names what moved")
+
+    def test_idempotent_and_silent_once_done(self):
+        with contextlib.redirect_stderr(io.StringIO()):
+            km._model_alias_boot_pass()
+        before = self._snapshot()
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(km._model_alias_boot_pass(), 0)
+        self.assertEqual(self._snapshot(), before)
+        self.assertEqual(err.getvalue(), "", "nothing to say when nothing moved")
+
+    def test_nothing_to_migrate_on_a_fresh_state(self):
+        for p in list(jd.STATE.rglob("*.json")):
+            p.unlink()
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(km._model_alias_boot_pass(), 0)
 
 
 if __name__ == "__main__":

@@ -53,6 +53,9 @@ class FakeBackend:
     def set_effort(self, sid, v):
         self.calls.append(("set_effort", sid, v)); return True
 
+    def set_fast(self, sid, v):
+        self.calls.append(("set_fast", sid, v)); return True
+
     def rename(self, sid, n):
         self.calls.append(("rename", sid, n)); return True
 
@@ -149,6 +152,30 @@ class KernelWiring(unittest.TestCase):
         self._route({"type": "setModel", "id": "sid-sdk", "value": "opus"})
         self.assertIn(("set_model", "sid-sdk", "opus"), self.be.calls)
         self.assertFalse(any(c == ("send", "sid-sdk", "/model opus") for c in self.be.calls))
+
+    def test_a_typed_slash_model_effort_fast_routes_through_the_setters_not_literal_text(self):
+        # THE BUG (2026-09-01): the chat composer's "/model X" went to the backend as literal text;
+        # the CLI executed it, but romp's registry, sdk-defaults.json and the reconnect's --model
+        # still said the OLD model — so the user's switch silently reverted at the next reconnect.
+        # The composer now takes the same door the timeline's sendCommand does (set_model & co).
+        self._route({"type": "sendMessage", "id": "sid-sdk", "text": "/model claude-fable-5-1"})
+        self._route({"type": "sendMessage", "id": "sid-sdk", "text": " /effort high "})
+        self._route({"type": "sendMessage", "id": "sid-sdk", "text": "/fast on"})
+        self.assertIn(("set_model", "sid-sdk", "claude-fable-5-1"), self.be.calls)
+        self.assertIn(("set_effort", "sid-sdk", "high"), self.be.calls)
+        self.assertIn(("set_fast", "sid-sdk", "on"), self.be.calls)
+        self.assertEqual([c for c in self.be.calls if c[0] == "send"], [], "none of them reach the CLI as text")
+        # …and the version pick lands in the shared pick memory exactly as a menu click would
+        self._route({"type": "sendMessage", "id": "sid-sdk", "text": "/model claude-opus-4-8"})
+        self.assertEqual(km._model_picks().get("opus"), "claude-opus-4-8")
+
+    def test_other_slash_commands_and_plain_text_still_go_through_verbatim(self):
+        # only the three the kernel has a setter for are intercepted; the CLI owns everything else,
+        # and a bare "/model" (no value) is the CLI's own picker, not a set
+        for text in ("/compact", "/model", "/clear", "hi /model opus", "/models please"):
+            self._route({"type": "sendMessage", "id": "sid-sdk", "text": text})
+            self.assertIn(("send", "sid-sdk", text), self.be.calls, text)
+        self.assertEqual([c for c in self.be.calls if c[0] in ("set_model", "set_effort", "set_fast")], [])
 
     def test_setmodel_mid_compaction_parks_as_a_queued_command(self):
         # the user 2026-07-01: switching the model while a compaction ran broke the compaction — the

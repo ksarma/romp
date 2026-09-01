@@ -2496,6 +2496,14 @@ class TimelinePanel {
           const row = sub.createDiv({ text: v.label });
           row.setAttribute('style', 'padding:4px 22px 4px 8px;border-radius:4px;cursor:pointer;position:relative;white-space:nowrap;');
           row.setAttribute('tabindex', '0');
+          if (v.learned) {
+            // LOUD, per the fail-loudly rule: this version is in no seed table — a running session's
+            // CLI reported it (kernel /models `learned`) — so the row says so instead of a stale menu
+            // hiding a live model. The chat's .meta-item-sub treatment, inlined for a foreign document.
+            const tag = row.createSpan({ text: ' new' });
+            tag.setAttribute('style', 'font-size:0.82em;opacity:0.6;margin-left:4px;');
+            row.setAttribute('title', "Reported by a running session's Claude Code; not yet in romp's built-in version list");
+          }
           if (cv) { const ck = row.createSpan({ text: '✓' }); ck.setAttribute('style', MENU_CHECK_STYLE); }
           row.addEventListener('mouseenter', () => { row.style.background = 'rgba(255,255,255,0.09)'; });
           row.addEventListener('mouseleave', () => { row.style.background = 'transparent'; });

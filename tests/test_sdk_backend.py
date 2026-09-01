@@ -1205,6 +1205,27 @@ class SetModelModePure(unittest.TestCase):
         self.assertFalse(reg.get("modelPending"), "nothing is coming to resolve dots → resolve immediately, no trap")
         self.assertEqual(sb.model_label(reg["liveModel"], reg["model"]), "Fable")
 
+    def test_learn_model_persists_the_raw_id_beside_the_pretty_name(self):
+        # 2026-09-01: the pickers' version lists are seeded from a table and COMPLETED from what the
+        # CLI actually reports (the authoritative source for what it serves) — that needs the raw id,
+        # not just the badge text, persisted where the kernel reads regs (liveModelId).
+        sid = self.be.spawn("m", self.d)
+        sess = sb.SdkSession(self.be, sb.read_reg(self.d, sid))
+        sess._learn_model("Fable 5.1", raw="claude-fable-5-1")
+        reg = sb.read_reg(self.d, sid)
+        self.assertEqual((reg["liveModel"], reg["liveModelId"]), ("Fable 5.1", "claude-fable-5-1"))
+        # a pre-fix reg knows the NAME but not the id: the first report of an unchanged name still
+        # lands the id (otherwise a long-running session would never contribute its version)
+        sid2 = self.be.spawn("n", self.d)
+        sb.write_reg(self.d, sid2, {**sb.read_reg(self.d, sid2), "liveModel": "Fable 5"})
+        sess2 = sb.SdkSession(self.be, sb.read_reg(self.d, sid2))
+        self.assertEqual(sess2.model, "Fable 5")
+        sess2._learn_model("Fable 5", raw="claude-fable-5")
+        self.assertEqual(sb.read_reg(self.d, sid2)["liveModelId"], "claude-fable-5")
+        # the seeded id survives construction, so an unchanged report writes nothing new
+        sess3 = sb.SdkSession(self.be, sb.read_reg(self.d, sid2))
+        self.assertEqual(sess3._model_id, "claude-fable-5")
+
     def test_alias_label_and_model_reflects_alias(self):
         self.assertEqual(sb._alias_label("opus"), "Opus")
         self.assertEqual(sb._alias_label("claude-opus-4-8"), "Opus 4.8")

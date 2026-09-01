@@ -65,9 +65,12 @@ class JudgeSettings(unittest.TestCase):
         ksrc = inspect.getsource(km)
         self.assertIn('if p == "/models":', ksrc)
         # the shared lists, each choice carrying its colormap tint (the user 2026-08-17) — and,
-        # since the version submenus (the user 2026-08-25), each family's versions + default too
+        # since the version submenus (the user 2026-08-25), each family's versions + default too:
+        # the versions from the seed table ∪ what running sessions report, the default the family's
+        # remembered pin else its ALIAS (2026-09-01 — never the seed head, which pinned sessions)
         self.assertIn('{"models": [dict(c, color=_model_color(c["value"], _stops),', ksrc)
-        self.assertIn('versions=[dict(v) for v in MODEL_VERSIONS.get(c["value"]) or []]', ksrc)
+        self.assertIn('versions=_cat.get(c["value"]) or [],', ksrc)
+        self.assertIn('default=_picks.get(c["value"]) or c["value"])', ksrc)
 
     # ---- per-tier overrides honored + validated ----
     def test_judge_tiers_accept_version_ids(self):

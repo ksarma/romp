@@ -10075,7 +10075,9 @@ type MetaKind = "mode" | "model" | "effort" | "fast";
 // One dropdown entry. `sub` is the second line for a choice whose consequence is not obvious from its
 // label; `sdkOnly` drops the entry on a tmux session, whose backend cannot apply it.
 interface MetaChoice { label: string; value: string; sub?: string; sdkOnly?: boolean; color?: number[] | null;
-  versions?: { label: string; value: string }[]; default?: string }   // model families only (the user 2026-08-25)
+  versions?: { label: string; value: string; learned?: boolean }[]; default?: string }   // model families only (the
+  // user 2026-08-25). `default` is the family's remembered version pin, else the family ALIAS (2026-09-01);
+  // `learned` marks a version no seed table lists — a running session's CLI reported it (kernel /models).
 // Model + effort choices come from the kernel's /models — the ONE list shared with the timeline lanes and the
 // judge-tier settings (the user 2026-07-02, who wanted one shared code path, not hardcoded in multiple places), so
 // the client holds no model literals (mirrors paletteColors above). Populated in place on load so META_CHOICES
@@ -10364,6 +10366,15 @@ function toggleMetaMenu(kind: MetaKind, btn: HTMLElement, forSid?: string | null
         const row = el("div", "meta-item" + (cur ? " current" : ""));
         row.tabIndex = 0;
         row.textContent = v.label;
+        if (v.learned) {
+          // LOUD, per the fail-loudly rule: this version is in no seed table — a running session's CLI
+          // reported it (kernel /models `learned`) — so the row says so instead of a stale menu hiding
+          // a live model. The marker wears the menu vocabulary's sub-line size and opacity.
+          const tag = el("span", "meta-item-sub");
+          tag.textContent = " new";
+          row.appendChild(tag);
+          row.title = "Reported by a running session's Claude Code; not yet in romp's built-in version list";
+        }
         row.addEventListener("click", (e) => { e.stopPropagation(); pickValue(v.value); });
         row.addEventListener("keydown", (e) => {
           if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); pickValue(v.value); }
