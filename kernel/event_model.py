@@ -520,6 +520,13 @@ def _read_jsonl_incremental(path):
     return records
 
 
+def _is_tool_result(r):
+    """True when a user-typed record is a machine-made tool_result (its first content block),
+    not a person's prompt — the discriminator the eclipse stand-down needs."""
+    c = _content((r or {}).get("message"))
+    return bool(c) and isinstance(c[0], dict) and c[0].get("type") == "tool_result"
+
+
 def _content(message):
     """The content[] of a message, normalized: a bare string becomes one text block,
     so every atom carries a list of blocks (the 'one atom, many blocks' shape)."""
@@ -1189,24 +1196,38 @@ class FileAdapter:
         deleted: a rollback typed DURING a storm produces exactly this geometry, because the
         CLI flushes its buffered api_error records at the next enqueue, so the user's
         replacement prompt lands past the error spur and their abandoned branch rejoins at an
-        api_error fork. So the eclipse keeps ONE chain, selected by what it carries, never by
-        the CLI's byte order of writes (nothing contracts flush order; an order-keyed pick let
-        a late-written stub pair steal the keep, and a late-written burst veto it): among the
-        component's leaf->fork chains, the max-seq chain whose HEAD is an assistant record AND
-        which carries reply text (landed_text_uuids, the one existing definition) — the two
-        properties every corpus incident's salvaged chain has (49/49 across 4,678 transcripts;
-        the 2,809 non-eclipse rewind forks: 2,035 stub pairs, 700 superseded retries, 42
-        user-gesture rollbacks, 32 other; zero overlap). A (max-seq, leaf-seq) key keeps the
-        pick deterministic; the latest write is the CLI's final word on the turn, and it
-        matches the single-chain walk whenever only one chain exists. Everything else in the
-        component demotes to "rewind", exactly as its on-spine twins classify.
+        api_error fork. So the eclipse keeps ONE BRANCH — the sub-tree under one fork-side
+        head — selected by what it carries, never by the CLI's byte order of writes (nothing
+        contracts flush order; an order-keyed pick let a late-written stub pair steal the keep,
+        and a late-written burst veto it). A branch qualifies when its fork-side HEAD is an
+        assistant record (a user gesture's head is always the user's own record) and it
+        carries reply text anywhere in the sub-tree; the winner is the branch with the
+        latest-written reply text, tiebroken by head seq. The text witness is landed_text_uuids
+        MINUS isApiErrorMessage records (error-as-text failure echoes, which atoms() likewise
+        refuses to treat as replies) — so junk carries no weight in the key, and no textless
+        tail can move the pick whatever its file position. The unit is deliberately the WHOLE
+        branch, never a leaf-chain within it: leaf-chains of one branch share records, and
+        every per-chain read of shared state proved breakable (a full-chain gate laundered a
+        junk tail's steal; a unique-suffix gate let a branch's own twin sub-branches strip
+        their turn's text and hand the keep to an older sibling — reply loss, this repo's one
+        fatal error). The accepted cost is cosmetic: a stub twin inside the winning branch
+        renders one output-less duplicate tool row, and a grafted burst inside it costs
+        nothing (system records never become atoms). The qualifying properties are the ones
+        every incident's salvaged branch has in the author's corpus scan (49/49 across 4,678
+        transcripts; the 2,809 non-eclipse rewind forks: 2,035 stub pairs, 700 superseded
+        retries, 42 user-gesture rollbacks, 32 other; zero overlap). Sibling branches demote
+        to "rewind", exactly as their on-spine twins classify.
 
         When NO chain qualifies, the two eclipse terminals part ways, each on its own event:
           "user"      — the flush COMPLETED (the next prompt sits past the spur), so a machine-
-                        orphaned reply would qualify if one existed; a component of user-headed
-                        chains here is indistinguishable from a rollback the storm raced, and
-                        re-showing deleted content is the hazard this verdict was designed
-                        around. The fork stands down whole: the component demotes to "rewind".
+                        orphaned reply would qualify if one existed; a USER-HEADED branch here
+                        is indistinguishable from a rollback the storm raced, and re-showing
+                        deleted content is the hazard this verdict was designed around. The
+                        user-headed branches demote to "rewind" — and ONLY those, where
+                        user-headed means a user PROMPT at the fork-side head: an assistant-
+                        headed textless branch (a turn of pure tool activity) and a stranded
+                        tool_result head (user-TYPED but machine-MADE) are both provably not
+                        rollback residue, and they stay "eclipsed"/kept.
           "exhausted" — the spur is the transcript's TAIL (a parse racing the multi-line
                         flush, a session dead mid-storm) or a corrupt machine cycle: no next
                         prompt exists, so no user gesture can have abandoned anything, and
@@ -1240,30 +1261,59 @@ class FileAdapter:
                 stack.extend(children.get(x, ()))
             if landed is None:
                 landed = self.landed_text_uuids()
-            best = None                   # (max-seq key, chain): the qualifying chain that stays kept
-            for leaf in comp:             # one candidate chain per component leaf
-                if any(c in comp for c in children.get(leaf, ())):
-                    continue              # interior record — its leaf's walk covers it
-                chain, cu = [], leaf      # this sibling chain's own leaf->fork walk
-                while cu is not None and cu != F and cu in comp:
-                    chain.append(cu)
-                    cu = self.parent_of.get(cu)
-                if cu != F or not chain:
-                    continue              # unwalkable shape — never a candidate
-                if (self.by_uuid.get(chain[-1]) or {}).get("type") != "assistant":
-                    continue              # head isn't a streamed reply record (a user gesture, a burst)
-                if not any(u in landed for u in chain):
-                    continue              # no reply text anywhere on the chain → a stub pair, not a reply
-                key = (max(self.seq_of.get(x, 0) for x in chain), self.seq_of.get(leaf, 0))
-                if best is None or key > best[0]:
-                    best = (key, chain)
-            if best is not None:
-                for u in comp - set(best[1]):
-                    verdict[u] = "rewind"     # siblings drop exactly as their on-spine twins do
+            # SELECTION IS PER BRANCH — the sub-tree under each fork-side head — never per
+            # leaf-chain. Leaf-chains of one branch SHARE records, and any per-chain read of
+            # shared state proved breakable by construction: a full-chain gate let a junk tail
+            # inherit the prefix's text and steal the pick on write order, and a unique-suffix
+            # gate let a branch's own twin sub-branches strip their turn's text record from
+            # both suffixes and disenfranchise the REAL reply (an older sibling then stole the
+            # keep — reply loss, this repo's one fatal error). The branch is the unit the CLI
+            # persisted; it is kept or dropped WHOLE. The known cost is cosmetic and deliberate:
+            # a parallel stub twin inside the winning branch renders one output-less duplicate
+            # tool row, and a grafted error burst inside it costs nothing at all (system
+            # records never become atoms, kept or not). Never trade a possible reply for a
+            # duplicate row.
+            def _subtree(h):
+                seen, st = set(), [h]
+                while st:
+                    x = st.pop()
+                    if x in seen or x not in comp:
+                        continue
+                    seen.add(x)
+                    st.extend(children.get(x, ()))
+                return seen
+            qual, user_heads = [], []
+            for h in heads:
+                hr = self.by_uuid.get(h) or {}
+                head_t = hr.get("type")
+                if head_t == "user" and not _is_tool_result(hr):
+                    user_heads.append(h)  # rollback-shaped: the "user" stand-down's one target.
+                #                           A tool_result head is user-TYPED but machine-MADE (a
+                #                           result the storm stranded beside its on-spine tool_use)
+                #                           — provably not rollback residue, so it stays kept; its
+                #                           output even reunites with the spine's tool call.
+                if head_t != "assistant":
+                    continue              # fork-side head isn't a streamed reply record (a user gesture, a burst)
+                sub = _subtree(h)
+                txt = [self.seq_of.get(x, 0) for x in sub
+                       if x in landed and not (self.by_uuid.get(x) or {}).get("isApiErrorMessage")]
+                #                           failure echoes (isApiErrorMessage: error-as-text) are not
+                #                           replies — mirrors atoms()' own refusal to anchor on them
+                if not txt:
+                    continue              # no reply text anywhere in the branch → a stub pair, a burst
+                qual.append(((max(txt), self.seq_of.get(h, 0)), h, sub))
+                #             ^ ranked by the branch's LATEST REPLY TEXT — the CLI's final word on the
+                #               turn. Junk records carry no text, so nothing textless can move the key.
+            if qual:
+                keep = max(qual)[2]
+                for u in comp - keep:
+                    verdict[u] = "rewind"     # sibling branches drop exactly as their on-spine twins do
             elif fork_terminal.get(F) == "user":
-                for u in comp:
-                    verdict[u] = "rewind"     # completed flush, no reply chain → stand down whole
-            # "exhausted" with no qualifying chain: everything stays eclipsed (keep-on-unprovable)
+                for h in user_heads:          # completed flush, no reply branch → drop ONLY rollback-shaped
+                    for u in _subtree(h):     # branches (fork-side head = the user's own deleted record);
+                        verdict[u] = "rewind" # an assistant-headed textless branch (a tool-only turn) is
+                #                               provably not rollback residue and stays kept
+            # "exhausted" with no qualifying branch: everything stays eclipsed (keep-on-unprovable)
 
     def kept_uuids(self, active):
         """The active leaf-ancestors PLUS any line on a BROKEN chain (its parentUuid points
@@ -1281,8 +1331,10 @@ class FileAdapter:
         predicate (chain_membership) can never diverge from what the parse keeps.
         set(active) is unioned as-is: the walk can record a dangling FINAL ancestor that is
         in no file's index, and it has always been kept. Within an eclipsed fork's component,
-        _select_eclipsed_chains has already narrowed the verdict to the one machine-orphaned
-        reply chain, so this union keeps exactly what the eclipse salvages."""
+        _select_eclipsed_chains has already narrowed the verdict — to the one machine-orphaned
+        reply chain when one qualifies, and otherwise per that walk's terminal rules (user-
+        headed chains demote behind a completed flush; a tail spur keeps everything) — so this
+        union keeps exactly what the eclipse salvages."""
         return set(active) | {u for u, v in self.chain_verdicts(active).items()
                               if v in ("broken", "eclipsed")}
 
@@ -2081,8 +2133,9 @@ def chain_membership(leaf_path, candidate_files=None, states=None, leaf_override
     "rewind" is the ONLY set that ever justifies sweeping a goal: "clear" branches are /clear
     jurisdiction (the episode machinery settles those cards), "broken" chains are kept by design,
     "eclipsed" chains are KEPT content a machine spur abandoned (never a user gesture — T209;
-    narrowed to the fork's one machine-orphaned reply chain by _select_eclipsed_chains, so
-    nothing sweeps a reply nobody abandoned and nothing keeps a sibling the walk drops on-spine),
+    narrowed by _select_eclipsed_chains to the fork's one machine-orphaned reply chain when one
+    qualifies, else per its terminal rules, so nothing sweeps a reply nobody abandoned and
+    nothing keeps a sibling the walk drops on-spine),
     and a uuid in NO set is unprovable (a synthetic orphan:<t> salvage id, a cross-file uuid whose
     file is outside the lineage, a legacy None) — callers must treat unknown as NOT abandoned.
     Caveat (resume-fork stitch shape): a recorded fork's fresh head is re-pointed at the from-file's

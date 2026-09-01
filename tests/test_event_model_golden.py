@@ -1349,10 +1349,11 @@ class EclipsedChainSelection(unittest.TestCase):
         self.assertEqual(hits[0].get("uuid"), rp)
         self.assertFalse(any(a.get("orphaned") for a in atoms))
 
-    def test_parallel_tool_stub_inside_the_branch_stays_dropped(self):
-        # parallel tool-call stubs fork off the spine and are dropped by the walk; the same stub
-        # INSIDE an eclipsed branch must drop identically — the selection keeps the branch's
-        # own reply chain, not every descendant of the fork
+    def test_parallel_tool_stub_inside_the_winning_branch_rides_the_keep(self):
+        # the selection unit is the BRANCH, kept whole: a stub twin inside it stays (one
+        # output-less duplicate tool row — deliberate; per-leaf-chain narrowing proved
+        # reply-lossy), while stub CHAINS at the fork itself still drop (they are branches
+        # of their own and never qualify)
         recs = self.base() + [
             reminder_line(T0 + 10, "remA", "u1"),
             aline(T0 + 20, "", "tuA1", "remA", tools=("Bash",), stop=None),
@@ -1371,9 +1372,13 @@ class EclipsedChainSelection(unittest.TestCase):
         uuids = {a.get("uuid") for a in self._atoms(out)}
         self.assertIn("rpA", uuids)
         self.assertIn("trA1", uuids)
-        self.assertFalse({"stub1", "stub2"} & uuids, "the stub drops exactly as its on-spine twin does")
+        # the stub twin rides the kept branch: the selection unit is the WHOLE branch (a
+        # per-leaf-chain read of shared records proved reply-lossy by construction), and the
+        # cost is one output-less duplicate tool row — never a lost reply
         self.assertTrue({"tuA1", "trA1", "rpA"} <= mem["eclipsed"])
-        self.assertTrue({"stub1", "stub2"} <= mem["rewind"])
+        self.assertTrue({"stub1", "stub2"} <= mem["eclipsed"],
+                        "over-keep is the deliberate trade: a dup tool row beats a possible reply loss")
+        self.assertEqual(mem["rewind"], set())
 
     def test_stop_hook_only_bypass_stays_dropped(self):
         # the conservative scope: a bypass of stop_hook_summary records with NO api_error carries
@@ -1500,6 +1505,139 @@ class EclipsedChainSelection(unittest.TestCase):
             self.assertEqual(early[key], late[key], "write order changed the %r set" % key)
         self.assertIn("rpA", early["eclipsed"])
         self.assertTrue({"stubA", "stubB"} <= early["rewind"])
+
+    def test_a_grafted_burst_below_the_reply_text_never_steals_the_keep(self):
+        # shared-prefix laundering: gates and a ranking key that read leaf->fork CHAINS let a
+        # junk tail grafted BELOW a text-carrying record inherit the prefix's qualifications —
+        # a second flushed burst at the mid-turn graft point, written last, out-seq'd the real
+        # reply chain and the actual reply demoted to rewind. The selection unit is the BRANCH
+        # (ranked by its latest reply text), so a textless tail can never move the pick.
+        head = self.base() + [reminder_line(T0 + 10, "remA", "u1")]
+        reply = [aline(T0 + 20, "mid-turn text before the tool", "tuA1", "remA", tools=("Bash",), stop=None),
+                 trline(T0 + 25, "tu_tuA1_0", "trA1", "tuA1"),
+                 aline(T0 + 30, "the reply the user watched stream", "rpA", "trA1")]
+        flush_spine = [api_error_line(T0 + 11, "eA1", "remA", attempt=1),
+                       stop_hook_line(T0 + 31, "shA", "eA1"),
+                       uline(T0 + 100, "next ask", "u2", "shA")]
+        burst = [api_error_line(T0 + 40, "eB1", "tuA1", attempt=1),
+                 api_error_line(T0 + 41, "eB2", "eB1", attempt=2)]
+        closer = [aline(T0 + 130, "done", "a2", "u2")]
+        for recs in (head + reply + flush_spine + burst + closer,
+                     head + reply + burst + flush_spine + closer):
+            out, mem = self._run(recs)
+            texts = [_text(a) for a in self._atoms(out) if a["type"] == "assistant"]
+            self.assertIn("the reply the user watched stream", texts,
+                          "a grafted burst tail must never steal the keep from the reply")
+            self.assertTrue({"tuA1", "trA1", "rpA"} <= mem["eclipsed"])
+            # the grafted burst rides the kept branch (kept whole, see above) at zero display
+            # cost: system records never become atoms, kept or not
+            self.assertFalse({"eB1", "eB2"} & {a.get("uuid") for a in self._atoms(out)},
+                             "burst records never surface as atoms")
+
+    def test_a_late_stub_pair_below_the_reply_text_never_steals_the_keep(self):
+        # the same laundering, stub flavor: a parallel stub pair parented one level BELOW a
+        # text-carrying record must never steal the pick from the reply records beside it
+        # (the at-the-fork variant is a branch of its own and still drops — covered above)
+        head = self.base() + [reminder_line(T0 + 10, "remA", "u1")]
+        reply = [aline(T0 + 20, "mid-turn text before the tool", "tuA1", "remA", tools=("Bash",), stop=None),
+                 trline(T0 + 25, "tu_tuA1_0", "trA1", "tuA1"),
+                 aline(T0 + 30, "the reply the user watched stream", "rpA", "trA1")]
+        flush_spine = [api_error_line(T0 + 11, "eA1", "remA", attempt=1),
+                       stop_hook_line(T0 + 31, "shA", "eA1"),
+                       uline(T0 + 100, "next ask", "u2", "shA")]
+        stubs = [aline(T0 + 21, "", "stubA", "tuA1", tools=("Read",), stop=None),
+                 trline(T0 + 26, "tu_stubA_0", "stubB", "stubA")]
+        closer = [aline(T0 + 130, "done", "a2", "u2")]
+        out, mem = self._run(head + reply + flush_spine + stubs + closer)
+        self.assertIn("the reply the user watched stream",
+                      [_text(a) for a in self._atoms(out) if a["type"] == "assistant"],
+                      "the reply survives whatever the stub pair's file position")
+        self.assertTrue({"rpA", "trA1", "tuA1"} <= mem["eclipsed"])
+        self.assertTrue({"stubA", "stubB"} <= mem["eclipsed"],
+                        "the in-branch twin rides the keep — the deliberate over-keep trade")
+
+    def test_a_textless_tool_only_turn_survives_a_completed_flush(self):
+        # a machine-orphaned turn of PURE tool activity (no reply text) has no qualifying
+        # chain, and the whole-component stand-down swept it — reverting the eclipse's keep
+        # for work that really ran. A rollback branch's fork-side head is always the user's
+        # own record (the head-gate's reasoning, and 42/42 user-gesture rollbacks in the
+        # author's corpus), so the stand-down demotes user-headed chains ONLY; an
+        # assistant-headed textless chain is provably not rollback residue and stays kept.
+        recs = self.base() + [
+            reminder_line(T0 + 10, "remA", "u1"),
+            aline(T0 + 20, "", "tuA1", "remA", tools=("Bash",), stop=None),
+            trline(T0 + 25, "tu_tuA1_0", "trA1", "tuA1"),
+            api_error_line(T0 + 11, "eA1", "remA", attempt=1),
+            stop_hook_line(T0 + 31, "shA", "eA1"),
+            uline(T0 + 100, "next ask", "u2", "shA"),
+            aline(T0 + 130, "done", "a2", "u2"),
+        ]
+        out, mem = self._run(recs)
+        self.assertTrue({"tuA1", "trA1"} <= mem["eclipsed"],
+                        "tool work that really ran survives the completed flush")
+        self.assertTrue({"tuA1", "trA1"} <= mem["kept"])
+        self.assertEqual(mem["rewind"], set())
+
+    def test_a_failure_record_chain_never_outranks_the_reply(self):
+        # Claude Code writes a FAILED attempt as an assistant record carrying the error as a
+        # text block (isApiErrorMessage:true) — atoms() refuses to treat it as a reply, and the
+        # eclipse's reply witness must too, or a late-written failed-attempt chain qualifies
+        # and steals the keep from the turn's only real text.
+        head, reply, flush_spine, closer = self._fork_pieces()
+        failed = aline(T0 + 40, "API Error: 529 overloaded", "rpF", "remA", stop="stop_sequence")
+        failed["isApiErrorMessage"] = True
+        out, mem = self._run(head + reply + flush_spine + [failed] + closer)
+        texts = [_text(a) for a in self._atoms(out) if a["type"] == "assistant"]
+        self.assertIn("the reply the user watched stream", texts)
+        self.assertNotIn("API Error: 529 overloaded", texts)
+        self.assertIn("rpA", mem["eclipsed"])
+        self.assertIn("rpF", mem["rewind"], "a failure echo is never the eclipse's reply")
+
+    def test_twin_sub_branches_never_disenfranchise_their_own_turn(self):
+        # the shape that broke per-leaf-chain selection (adversarial construction, 2026-09-01):
+        # the REAL turn's text record has two textless sub-branches below it (the storm-cut
+        # tool result + a parallel stub twin), and an OLDER superseded attempt sits beside the
+        # branch at the fork. A unique-suffix read stripped the shared text record from both
+        # of its own chains' suffixes, both failed the text gate, and the older sibling stole
+        # the keep — reply loss. Branch-level selection keys on the branch's latest reply
+        # text: the real turn (newer text) must win, whole.
+        head = self.base() + [reminder_line(T0 + 10, "remA", "u1")]
+        older = [aline(T0 + 15, "first persisted attempt", "rpQ", "remA")]
+        turn = [aline(T0 + 20, "the reply the user watched stream", "tuT", "remA",
+                      tools=("Bash", "Read"), stop=None),
+                trline(T0 + 25, "tu_tuT_0", "trT", "tuT"),
+                aline(T0 + 21, "", "stubX", "tuT", tools=("Read",), stop=None),
+                trline(T0 + 26, "tu_stubX_0", "trX", "stubX")]
+        flush_spine = [api_error_line(T0 + 11, "eA1", "remA", attempt=1),
+                       stop_hook_line(T0 + 31, "shA", "eA1"),
+                       uline(T0 + 100, "next ask", "u2", "shA")]
+        closer = [aline(T0 + 130, "done", "a2", "u2")]
+        out, mem = self._run(head + older + turn + flush_spine + closer)
+        texts = [_text(a) for a in self._atoms(out) if a["type"] == "assistant"]
+        self.assertIn("the reply the user watched stream", texts,
+                      "the turn with the LATEST reply text wins, its twin sub-branches notwithstanding")
+        self.assertNotIn("first persisted attempt", texts)
+        self.assertTrue({"tuT", "trT"} <= mem["eclipsed"])
+        self.assertIn("rpQ", mem["rewind"], "the superseded older attempt drops")
+
+    def test_a_stranded_tool_result_at_the_fork_survives_the_stand_down(self):
+        # the storm strands a tool_result beside its ON-SPINE tool_use (the CLI buffered the
+        # errors while the tool ran, then flushed from the tool_use as the leaf): the branch
+        # head is user-TYPED but machine-MADE. The stand-down demotes only user PROMPT heads —
+        # a tool_result head is provably not rollback residue and stays kept, where its output
+        # reunites with the spine's own tool call.
+        recs = self.base() + [
+            aline(T0 + 10, "", "tuF", "u1", tools=("Bash",), stop=None),
+            trline(T0 + 20, "tu_tuF_0", "trF", "tuF"),
+            api_error_line(T0 + 15, "eA1", "tuF", attempt=1),
+            stop_hook_line(T0 + 25, "shA", "eA1"),
+            uline(T0 + 100, "next ask", "u2", "shA"),
+            aline(T0 + 130, "done", "a2", "u2"),
+        ]
+        out, mem = self._run(recs)
+        self.assertIn("trF", mem["eclipsed"], "a machine-made tool_result head survives the stand-down")
+        self.assertIn("trF", mem["kept"])
+        self.assertEqual(mem["rewind"], set())
 
     def test_two_reply_chains_prefer_the_latest_written(self):
         # two assistant-headed, text-carrying sibling chains at one fork — NOT observed in the
