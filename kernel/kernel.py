@@ -32042,11 +32042,18 @@ class Handler(BaseHTTPRequestHandler):
         elif msg and msg.get("type") == "dropFile" and msg.get("name") and msg.get("b64"):
             fp = _save_dropped_file(str(msg["name"]), str(msg["b64"]))   # bytes → saved file → insert its path
             if fp:
-                _reply(client, {"type": "droppedPath", "path": fp})
+                ack = {"type": "droppedPath", "path": fp}
             else:
                 # a failed save must be NACKED, not silent (fail loudly): the client keeps a pending
                 # chip up from the moment the file was picked, and only this reply can retire it
-                _reply(client, {"type": "dropSaveFailed", "name": str(msg["name"])})
+                ack = {"type": "dropSaveFailed", "name": str(msg["name"])}
+            if msg.get("shipId"):
+                # echo the client's ship id (T215): a kernel restart between ship and ack makes the
+                # client RE-SHIP the bytes on reconnect, so duplicate acks are possible — the echoed
+                # id lets it retire exactly the chip that asked and DROP a stray twin, instead of
+                # attaching the twin to whatever tab is active
+                ack["shipId"] = str(msg["shipId"])
+            _reply(client, ack)
         elif msg and msg.get("type") == "openFile" and msg.get("path"):
             # caption / linkified path click → open it on the kernel's machine (relative → resolved vs
             # the session cwd). The web dashboard sends this only where it IS the right answer; a remote

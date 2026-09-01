@@ -71,8 +71,8 @@ test("any successful send supersedes a hold, so a spent hold can never double-se
 });
 
 test("the ack attaches to the composer that SHIPPED the file, not whatever tab is active", () => {
-  assert.match(RENDER, /function retirePendingShip\(key: string\): string \| null \{/);
-  assert.match(RENDER, /const owner = retirePendingShip\(m\.path\) \|\| activeId;/);
+  assert.match(RENDER, /function retirePendingShip\(key: string, shipId\?: string\): string \| null \{/);
+  assert.match(RENDER, /const owner = retirePendingShip\(m\.path, ackShip\) \|\| activeId;/);
   assert.match(RENDER, /addComposerFile\(owner, m\.path\);/);
 });
 

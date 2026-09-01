@@ -10642,8 +10642,17 @@ const composerFiles = new Map<string, string[]>();   // sid -> attachment paths,
 // with nothing on screen it reads as a dead click (the user 2026-08-11). So the strip shows a pending
 // chip (name + pulsing dots) from the instant the file is picked, replaced by the real thumbnail when
 // the ack lands, or removed with a loud toast when the kernel nacks (dropSaveFailed). In-memory only,
-// NOT persisted with drafts: a reload kills the page whose socket the ack would ride.
-const pendingShips = new Map<string, string[]>();    // sid -> shipped names awaiting droppedPath
+// NOT persisted with drafts (a reload cannot resurrect the bytes) — but each entry RETAINS its encoded
+// payload until the ack retires it, because the ack rides the very socket the dropFile went out on: a
+// kernel restart between ship and ack means that ack can never arrive, and the chip pulsed forever
+// while a held send never fired (T215). The reconnect event (romp:wsup) re-ships every retained
+// payload; shipId lets an ack retire exactly the chip that asked, so a duplicate ack from a re-ship
+// race is dropped instead of attached to whatever tab is active. Names of ships lost to a full page
+// RELOAD persist beside the drafts and surface as a loud re-attach toast at startup (the VS Code pipe
+// reloads its webview on reconnect, so the wedge there is a vanished chip, not an eternal one).
+interface PendingShip { name: string; shipId: string; b64?: string }
+let shipSeq = 0;   // per-page mint — a shipId only ever meets acks for this page's own ships
+const pendingShips = new Map<string, PendingShip[]>();   // sid -> ships awaiting droppedPath
 
 // The kernel saves a shipped file as drops/<ms>-<sanitized name> (_save_dropped_file). Mirror its
 // sanitizer so an ack can be matched back to the pending chip it retires by basename suffix; the
@@ -10653,36 +10662,70 @@ function shipSafeName(name: string): string {
   return (name.replace(/[^\w.-]+/g, "_").slice(-80)) || "drop";
 }
 
-function addPendingShip(id: string | null, name: string): void {
+function addPendingShip(id: string | null, name: string, shipId: string): void {
   if (!id) return;
   const list = pendingShips.get(id) || [];
-  list.push(name);
+  list.push({ name, shipId });
   pendingShips.set(id, list);
+  persistDrafts();   // the NAMES ride the draft store so a reload can say what it lost (T215)
   if (id === activeId) renderComposerFiles(id);
 }
 
-// An ack (or nack) retires ONE pending chip: the entry whose sanitized name `key` ends with — `key`
-// is the saved path on ack (basename <ms>-<safe name>) or the raw name on nack, and both end with
-// the sanitized original — else the oldest (the kernel answers a connection's dropFiles in order).
-// Searched active-tab-first across all sessions because the ack carries no session id. Returns the
-// sid whose chip it retired (null if none matched), so the ack can attach the file to the composer
-// that SHIPPED it — attaching to whatever tab was active at ack time put a slow upload's file on the
-// wrong session's strip after a mid-flight tab switch (the user 2026-08-16, the send-while-uploading
-// report's second face).
-function retirePendingShip(key: string): string | null {
+// The sid holding a given shipId (null if none): the ack handler's stray-duplicate gate — an ack
+// carrying a shipId no pending entry holds answers a ship already retired (a re-ship raced the
+// original ack across a reconnect), and must be dropped, not attached to the active composer.
+function shipOwner(shipId: string): string | null {
+  for (const [id, list] of pendingShips) if (list.some((p) => p.shipId === shipId)) return id;
+  return null;
+}
+
+// An ack (or nack) retires ONE pending chip: the entry whose shipId the ack echoes (exact — new
+// kernels echo it); else the entry whose sanitized name `key` ends with — `key` is the saved path on
+// ack (basename <ms>-<safe name>) or the raw name on nack, and both end with the sanitized original —
+// else the oldest (the kernel answers a connection's dropFiles in order). Searched active-tab-first
+// across all sessions because a legacy ack carries no session id. Returns the sid whose chip it
+// retired (null if none matched), so the ack can attach the file to the composer that SHIPPED it —
+// attaching to whatever tab was active at ack time put a slow upload's file on the wrong session's
+// strip after a mid-flight tab switch (the user 2026-08-16, the send-while-uploading report's
+// second face).
+function retirePendingShip(key: string, shipId?: string): string | null {
   const k = "-" + shipSafeName(key.split("/").pop() || key);
   const ids = activeId ? [activeId, ...pendingShips.keys()] : [...pendingShips.keys()];
   for (const id of ids) {
     const list = pendingShips.get(id);
     if (!list || !list.length) continue;
-    const i = list.findIndex((n) => k.endsWith("-" + shipSafeName(n)));
+    let i = shipId ? list.findIndex((p) => p.shipId === shipId) : -1;
+    if (shipId && i < 0) continue;   // an id-carrying ack retires ONLY its own entry, wherever it lives
+    if (i < 0) i = list.findIndex((p) => k.endsWith("-" + shipSafeName(p.name)));
     list.splice(i >= 0 ? i : 0, 1);
     if (!list.length) pendingShips.delete(id);
+    persistDrafts();
     if (id === activeId) renderComposerFiles(id);
     return id;
   }
   return null;
 }
+
+// Re-ship every retained payload on the kernel-is-back event (romp:wsup — the page shim fires it when
+// this pane's socket reconnects). The old socket died with the acks still owed, so re-sending the
+// bytes is the ONLY way the chip's retiring event can still arrive; the kernel just saves a fresh
+// copy (a duplicate file in drops/ is an orphan, never attached — the shipId-matched ack retires this
+// chip and any stray twin ack is dropped by shipOwner's gate). An entry with no payload yet is one
+// whose FileReader is still encoding — its own onload ships through the fresh socket, so it is
+// deliberately skipped here, never doubled.
+function reshipPendingUploads(): void {
+  if (!vscodeApi) return;
+  for (const [id, list] of pendingShips) {
+    for (const p of list) {
+      if (!p.b64) continue;
+      const msg: { type: string; name: string; b64: string; shipId: string; id?: string } =
+        { type: "dropFile", name: p.name, b64: p.b64, shipId: p.shipId };
+      if (id) msg.id = id;
+      vscodeApi.postMessage(msg);
+    }
+  }
+}
+window.addEventListener("romp:wsup", reshipPendingUploads);
 
 // Sids whose SEND is HELD until every pending ship acks (the user 2026-08-16: sending mid-upload
 // silently dropped the attachment — the send read only the acked list). Armed by the confirm's
@@ -10707,7 +10750,13 @@ function persistDrafts(): void {
     vscodeApi?.setState?.({ ...(vscodeApi.getState?.() || {}), drafts: Object.fromEntries(drafts),
                             citations: Object.fromEntries(composerCitations),
                             files: Object.fromEntries(composerFiles),
-                            staged: stagedMsgs.entries() });
+                            staged: stagedMsgs.entries(),
+                            // NAMES of ships still awaiting their ack — never the bytes. A reload
+                            // cannot resurrect the upload (the payload dies with the page), so the
+                            // next load reads these to say LOUDLY what was lost (T215; the VS Code
+                            // pipe reloads its webview on kernel reconnect, taking mid-flight ships
+                            // with it — the silent-vanish face of the same wedge).
+                            shipsInFlight: [...pendingShips.values()].flat().map((p) => p.name) });
   } catch { /* ignore */ }
 }
 try {
@@ -10733,6 +10782,20 @@ try {
       }
       if (list.length) composerCitations.set(k, list);
     }
+  // Ships that were still awaiting their ack when the page died (persistDrafts's shipsInFlight): the
+  // payload died with the page, so the upload is LOST — say so loudly with the re-attach affordance
+  // spelled out, and clear the record so the toast fires once, not on every future load (T215). This
+  // is the reload face of the ship/ack wedge; the same-page reconnect face re-ships via romp:wsup.
+  const lostShips = ((vscodeApi?.getState?.() || {}) as any).shipsInFlight;
+  if (Array.isArray(lostShips)) {
+    const names = lostShips.filter((x): x is string => typeof x === "string" && !!x);
+    if (names.length) {
+      warnToast(names.join(", ") + (names.length === 1
+                ? " was still uploading when this page reloaded, so it was NOT attached — attach it again."
+                : " were still uploading when this page reloaded, so they were NOT attached — attach them again."));
+      persistDrafts();   // pendingShips is empty at startup → the persisted names clear here
+    }
+  }
 } catch { /* ignore */ }
 
 // Composer EDIT mode (per session): set when the user clicks a bubble's edit affordance — the composer
@@ -11018,11 +11081,11 @@ function renderComposerFiles(id: string | null): void {
   // In-flight ships, after the real thumbnails: name + pulsing dots until the droppedPath ack swaps
   // in the thumbnail above. The ✕ removes just the CHIP (there is no cancelling a send in flight) —
   // the escape hatch for an ack lost to a mid-ship disconnect, so a stuck chip is never trapped.
-  pending.forEach((n, i) => {
+  pending.forEach((p, i) => {
     const box = el("span", "composer-file composer-file-pending");
-    box.title = n + " — uploading";
+    box.title = p.name + " — uploading";
     const nm = el("span", "composer-file-name");
-    nm.textContent = n;
+    nm.textContent = p.name;
     const dots = el("span", "composer-ship-dots");
     dots.append(el("i"), el("i"), el("i"));
     box.append(nm, dots);
@@ -11035,6 +11098,7 @@ function renderComposerFiles(id: string | null): void {
       if (!list) return;
       list.splice(i, 1);
       if (!list.length && id) pendingShips.delete(id);
+      persistDrafts();   // the dismissed chip's name must not resurface as a reload-loss toast
       renderComposerFiles(id);
     });
     box.appendChild(x);
@@ -12025,17 +12089,21 @@ window.addEventListener("message", (e: MessageEvent) => {
     if (s && s.name !== m.name) { s.name = m.name; renderTabs(); }
   }
   else if (m.type === "droppedPath" && typeof m.path === "string") {   // host-saved drop/paste/pick → a thumbnail, not path text (the user 2026-08-04)
+    const ackShip = typeof m.shipId === "string" && m.shipId ? m.shipId : undefined;
+    if (ackShip && !shipOwner(ackShip)) return;   // a duplicate of a ship already retired (a reconnect
+    //                                               re-ship raced the original ack) — attaching it again
+    //                                               would double the file on whatever tab is active (T215)
     const cbox = document.getElementById("cmt-pop")?.querySelector(".cmt-input") as HTMLTextAreaElement | null;
     if (cbox) {
       // a comment popover is open — its own clip shipped this file, so the path lands in ITS box
-      retirePendingShip(m.path);
+      retirePendingShip(m.path, ackShip);
       cbox.value = (cbox.value ? cbox.value.trimEnd() + " " : "") + m.path + " ";
       cbox.dispatchEvent(new Event("input"));   // the draft listener persists it
       if (previewKind(m.path) === "img") cmtShippedImgs.push(m.path);   // the echo's thumbnail ride
       cbox.focus();
       return;
     }
-    const owner = retirePendingShip(m.path) || activeId;               // the chip this ack answers names the OWNING composer (no-op for pickFile, which never ships)
+    const owner = retirePendingShip(m.path, ackShip) || activeId;      // the chip this ack answers names the OWNING composer (no-op for pickFile, which never ships)
     addComposerFile(owner, m.path);
     // an OPEN ship-gate dialog counts as a held send (the user 2026-08-19): the upload finishing is
     // the answer to the question it asks, so it closes itself and the send fires — no click needed
@@ -12050,7 +12118,10 @@ window.addEventListener("message", (e: MessageEvent) => {
   } else if (m.type === "dropSaveFailed" && typeof m.name === "string") {
     // the kernel could not SAVE the shipped bytes — clear the pending chip and say so loudly,
     // never leave dots pulsing over a file that is not coming (fail loudly, don't degrade silently)
-    const owner = retirePendingShip(m.name) || activeId;
+    const nackShip = typeof m.shipId === "string" && m.shipId ? m.shipId : undefined;
+    if (nackShip && !shipOwner(nackShip)) return;   // duplicate nack for a chip already settled — the
+    //                                                 first one warned; a re-warn would double the toast
+    const owner = retirePendingShip(m.name, nackShip) || activeId;
     const held = !!owner && sendOnShip.delete(owner);    // a held send must not fire without the file it waited for
     const gateWasOpen = shipGateSid === owner;
     if (gateWasOpen) { shipGateSid = null; closeConfirm(null); }   // the question is moot — but a failed save never auto-sends
@@ -12923,17 +12994,20 @@ function shipFileToHost(f: File, sidAt: string | null = activeId) {
   // user 2026-08-11). Retired by the droppedPath ack / dropSaveFailed nack (see retirePendingShip).
   const name = f.name || "pasted.png";
   const sid = sidAt;   // captured at CALL (= ship) time via the default param — a tab switch
-  addPendingShip(sid, name);   // mid-encode (or mid-verify, for a pasted path) must not reroute
+  const shipId = "s" + Date.now().toString(36) + "." + (++shipSeq);   // page-local; the ack echoes it
+  addPendingShip(sid, name, shipId);   // mid-encode (or mid-verify, for a pasted path) must not reroute
   const reader = new FileReader();
   reader.onload = () => {
     const b64 = String(reader.result || "").split(",")[1] || "";
-    if (!b64 || !vscodeApi) { retirePendingShip(name); return; }
-    const msg: { type: string; name: string; b64: string; id?: string } =
-      { type: "dropFile", name, b64 };
+    if (!b64 || !vscodeApi) { retirePendingShip(name, shipId); return; }
+    const entry = sid ? (pendingShips.get(sid) || []).find((p) => p.shipId === shipId) : undefined;
+    if (entry) entry.b64 = b64;   // retained until the ack — the reconnect re-ship needs the bytes (T215)
+    const msg: { type: string; name: string; b64: string; shipId: string; id?: string } =
+      { type: "dropFile", name, b64, shipId };
     if (sid) msg.id = sid;   // the owning session → the owning kernel
     vscodeApi.postMessage(msg);
   };
-  reader.onerror = () => retirePendingShip(name);   // an unreadable file must not leave a stuck chip
+  reader.onerror = () => retirePendingShip(name, shipId);   // an unreadable file must not leave a stuck chip
   reader.readAsDataURL(f);
 }
 
