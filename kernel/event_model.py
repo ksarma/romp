@@ -958,6 +958,10 @@ class FileAdapter:
                      a rewind.
           "broken" — parentUuid points at a uuid in NO transcript, or a cycle: unprovable,
                      KEPT (silently dropping a real ask is this repo's one fatal error).
+          "reattached" — a rewound-looking branch whose bypass at the fork is the CLI's own
+                     buffered api_error flush, not a user gesture: the branch is the turn's
+                     REAL persisted reply, machine-orphaned, and rejoins the kept path
+                     (see _reattach_flush_orphans). KEPT; never sweepable.
         `active` defaults to active_path(); pass it when already computed."""
         if active is None:
             active = self.active_path()
@@ -984,7 +988,105 @@ class FileAdapter:
         out = {}
         for u in self.by_uuid:
             out[u] = "active" if u in active else classify(u)
+        self._reattach_flush_orphans(out, active)
         return out
+
+    def _reattach_flush_orphans(self, verdict, active):
+        """Machine-orphaned reply branches rejoin the kept path (2026-09-01). When the CLI
+        internally recovers from an API-error storm it streams AND persists the reply — but it
+        buffers the storm's api_error system records and flushes them at the NEXT turn's start,
+        parent-chained from the leaf as it stood at ERROR time, before the reply. The flushed
+        chain hijacks the leaf (stop_hook_summary on the last api_error, next user record on the
+        stop hook), so the persisted reply branch is bypassed on disk: classified "rewind" above
+        and dropped, while the ghost-reply gates (landed_text_uuids) rightly refuse the orphan
+        salvage because the text landed on SOME branch. Net: the reply vanished from the chat,
+        the judges read the turn as reply-less, and the model's own memory of it died at the
+        next transcript reload (two incidents verified at transcript level; the shape reaches
+        back to at least mid-Aug 2026). The CLI's flush is the root cause, filed as
+        anthropics/claude-code#91113; this re-attach makes the parse immune regardless.
+
+        The bypass carries an exact event signature, machine-made by construction: the
+        ACTIVE-SPINE child of the fork is a system/api_error record. A real user rewind forks at
+        a USER gesture — their replacement prompt / the --resume-session-at relaunch — never
+        through an error chain. Corpus scan (4,678 transcripts, 2026-09-01): 49 rewind bypasses
+        start with api_error, every one an assistant-headed branch carrying reply text (the run
+        then reads api_error+ then usually one stop_hook_summary; 5/49 storms wrote no stop-hook
+        record, so the stop hook is NOT part of the predicate) — against 2,809 rewind forks that
+        do not (2,035 parallel tool-call stubs, 700 superseded assistant retries, 42 genuine
+        user-gesture rollbacks, 32 other), zero overlap.
+
+        Re-attach = splice back ONE linear chain of the branch component, leaf walked rootward
+        to the fork, verdict "reattached". A fork can hold SIBLING rewound chains (a stub pair
+        parented at the fork, a second flushed burst chained from it), so selection reads the
+        chains' PROPERTIES, never the CLI's byte order of writes — nothing contracts the order
+        the CLI flushes its buffers in, and keying on the component's single max-seq record let
+        whichever chain happened to be written last steal the splice (a late-written stub pair
+        re-attached INSTEAD of the reply) or veto it (a late-written second burst failed the
+        head check and stood the whole fork down, silently keeping the pre-fix data loss). The
+        selected chain is the max-seq chain whose HEAD is an assistant record AND which carries
+        reply text — the two properties every corpus match has (a user-gesture branch head is
+        never assistant; a stub chain never carries text) — and the fork stands down only when
+        NO chain qualifies. Two qualifying chains at one fork are unobserved in the corpus
+        (every incident fork holds exactly one text-bearing assistant chain); the max-seq
+        tiebreak is deliberate: the latest write is the CLI's final word on that turn, and it
+        is the same chain the pre-fix walk picked when only one existed. Mirroring the active
+        spine's own rule, parallel tool-call stubs INSIDE the selected chain's component stay
+        "rewind" exactly as their on-spine twins do. A LATER genuine rollback past the fork
+        re-points the active spine through the user's own record, the signature stops matching,
+        and the branch drops again — the user's gesture outranks this salvage by construction."""
+        rew = {u for u, v in verdict.items() if v == "rewind"}
+        if not rew:
+            return
+        children = {}
+        for u in self.by_uuid:
+            p = self.parent_of.get(u)
+            if p is not None:
+                children.setdefault(p, []).append(u)
+        forks = {}                        # fork uuid -> its rewound branch heads
+        for u in rew:
+            p = self.parent_of.get(u)
+            if p in active:
+                forks.setdefault(p, []).append(u)
+        landed = None                     # text-bearing assistant uuids (the reply witness) — computed
+        #                                   lazily: stub forks are everywhere, api_error bypasses rare,
+        #                                   and chain_verdicts runs on every build of a held session
+        for F, heads in forks.items():
+            spine_next = next((c for c in children.get(F, ()) if c in active), None)
+            if spine_next is None:
+                continue                  # fork at the walk's leaf (a pending cut) — no bypass to read
+            r0 = self.by_uuid.get(spine_next) or {}
+            if r0.get("type") != "system" or r0.get("subtype") != "api_error":
+                continue                  # no machine witness → stub / superseded retry / user fork: stays dropped
+            if landed is None:
+                landed = self.landed_text_uuids()
+            comp, stack = set(), list(heads)
+            while stack:                  # the branch component: child-closure of the rewound heads
+                x = stack.pop()
+                if x in comp or x not in rew:
+                    continue
+                comp.add(x)
+                stack.extend(children.get(x, ()))
+            best = None                   # (max-seq key, chain): the qualifying chain that re-attaches
+            for leaf in comp:             # one candidate chain per component leaf
+                if any(c in comp for c in children.get(leaf, ())):
+                    continue              # interior record — its leaf's walk covers it
+                chain, cu = [], leaf      # this sibling chain's own leaf->fork walk
+                while cu is not None and cu != F and cu in comp:
+                    chain.append(cu)
+                    cu = self.parent_of.get(cu)
+                if cu != F or not chain:
+                    continue              # unwalkable shape — leave it classified as it was
+                if (self.by_uuid.get(chain[-1]) or {}).get("type") != "assistant":
+                    continue              # head isn't a streamed reply record (a user gesture, a burst)
+                if not any(u in landed for u in chain):
+                    continue              # no reply text anywhere on the chain → a stub pair, not a reply
+                key = (max(self.seq_of.get(x, 0) for x in chain), self.seq_of.get(leaf, 0))
+                if best is None or key > best[0]:
+                    best = (key, chain)
+            if best is None:
+                continue                  # no assistant-headed text-carrying chain → stand the fork down
+            for u in best[1]:
+                verdict[u] = "reattached"
 
     def kept_uuids(self, active):
         """The active leaf-ancestors PLUS any line on a BROKEN chain (its parentUuid points
@@ -998,8 +1100,11 @@ class FileAdapter:
         Derived from chain_verdicts — one implementation, so the exported membership
         predicate (chain_membership) can never diverge from what the parse keeps.
         set(active) is unioned as-is: the walk can record a dangling FINAL ancestor that is
-        in no file's index, and it has always been kept."""
-        return set(active) | {u for u, v in self.chain_verdicts(active).items() if v == "broken"}
+        in no file's index, and it has always been kept. "reattached" lines — machine-orphaned
+        reply branches the api_error-flush bypass abandoned (see _reattach_flush_orphans) —
+        are kept too: they are the turn's real persisted reply."""
+        return set(active) | {u for u, v in self.chain_verdicts(active).items()
+                              if v in ("broken", "reattached")}
 
     def _absorbed_atom(self, full, t, seq, auid, rompuuid, postal_index):
         """One synthesized user atom for a mid-turn splice. The atom carries the FULL text — any
@@ -1064,8 +1169,9 @@ class FileAdapter:
         return atoms
 
     def atoms(self, rompuuid, postal_index):
-        """Every emitted atom on the active path (plus broken-chain survivors), plus
-        synthesized absorbed atoms. (Idle atoms are added separately from the state log.)"""
+        """Every emitted atom on the active path (plus broken-chain survivors and re-attached
+        machine-orphaned reply branches — see _reattach_flush_orphans), plus synthesized
+        absorbed atoms. (Idle atoms are added separately from the state log.)"""
         active = self.active_path()
         kept = self.kept_uuids(active)
         # Post-compaction REPLAY dedup (the user 2026-06-22): a compact_boundary restores the recent message
@@ -1738,15 +1844,18 @@ def _lineage_closure(leaf_path, candidate_files, links):
 
 
 def chain_membership(leaf_path, candidate_files=None, states=None, leaf_override=None):
-    """THE exported chain-membership fact — {"kept", "rewind", "clear", "broken"} uuid sets, built
-    from the DISPLAY parse's exact inputs (resume links + lineage closure + leaf_override = the
-    kernel's pending bare-rollback cut) so it can never disagree with what the user sees. This is
-    the one predicate every rewind-cleanup consumer must use (goal sweeps, mint-time stand-downs,
-    the dead-branch reconciliation): before it was exported, four partial hand-rolled twins of this
-    walk disagreed on resume forks, pending cuts and broken chains (2026-08-17).
+    """THE exported chain-membership fact — {"kept", "rewind", "clear", "broken", "reattached"}
+    uuid sets, built from the DISPLAY parse's exact inputs (resume links + lineage closure +
+    leaf_override = the kernel's pending bare-rollback cut) so it can never disagree with what the
+    user sees. This is the one predicate every rewind-cleanup consumer must use (goal sweeps,
+    mint-time stand-downs, the dead-branch reconciliation): before it was exported, four partial
+    hand-rolled twins of this walk disagreed on resume forks, pending cuts and broken chains
+    (2026-08-17).
 
     "rewind" is the ONLY set that ever justifies sweeping a goal: "clear" branches are /clear
     jurisdiction (the episode machinery settles those cards), "broken" chains are kept by design,
+    "reattached" branches are machine-orphaned replies spliced back into "kept" (a subset of it;
+    see _reattach_flush_orphans — they were never abandoned by anyone, so nothing sweeps them),
     and a uuid in NO set is unprovable (a synthetic orphan:<t> salvage id, a cross-file uuid whose
     file is outside the lineage, a legacy None) — callers must treat unknown as NOT abandoned.
     Caveat (resume-fork stitch shape): a recorded fork's fresh head is re-pointed at the from-file's
@@ -1764,8 +1873,8 @@ def chain_membership(leaf_path, candidate_files=None, states=None, leaf_override
     # computes (active ∪ broken; see its docstring: "derived from chain_verdicts — one
     # implementation"), without paying the graph walk a second time inside it. The hold view
     # re-asks this on every build of a held session, so the walk count matters there.
-    out = {"kept": set(active) | {u for u, v in verdicts.items() if v == "broken"},
-           "rewind": set(), "clear": set(), "broken": set()}
+    out = {"kept": set(active) | {u for u, v in verdicts.items() if v in ("broken", "reattached")},
+           "rewind": set(), "clear": set(), "broken": set(), "reattached": set()}
     for u, v in verdicts.items():
         if v != "active":
             out[v].add(u)

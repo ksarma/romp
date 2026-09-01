@@ -200,7 +200,11 @@ class PlacementIdentityCanary(unittest.TestCase):
         # every pinned id is UNCHANGED — the bump seals sessions whose machine-cut resumes forked
         # fresh-headed transcripts, whose previously-dropped pre-cut atoms rejoin the set
         # (tests/test_kernel_resume_fork_lineage.py covers the stitch itself).
-        self.assertEqual(jd.PLACEMENTS_V, 9, "EXPECTED_SEG_IDS was pinned under PLACEMENTS_V=9 — "
+        # v10 (2026-09-01, the api_error-flush re-attach): this fixture carries no flush-orphaned
+        # branch, so every pinned id is UNCHANGED — the bump seals sessions whose error-stormed
+        # turns' previously-dropped reply branches rejoin the set
+        # (tests/test_event_model_golden.py OrphanFlushReattach covers the re-attach itself).
+        self.assertEqual(jd.PLACEMENTS_V, 10, "EXPECTED_SEG_IDS was pinned under PLACEMENTS_V=10 — "
                          "re-pin the ids and this version together, in the same commit")
 
 
