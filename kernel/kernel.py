@@ -21843,6 +21843,14 @@ def build_feed(now, tmux=None):
                 # and highlights it, and a null keeps today's whole-message behavior
                 "summaryAnchorQuote": (nodes[nid].get("summaryQuote")
                                        if _sa_u and _sa_u == nodes[nid].get("summaryAnchor") else None),
+                # per-paragraph landings (T220, the user's ruling): each cited paragraph's own atom +
+                # located span, aligned to the takeaway's paragraphs (None = that paragraph falls back
+                # to the whole-summary landing). Gated exactly like the quote above: the cited tier
+                # must hold authority (the T153 outrun rule) — absent on old stores forever, no sweep.
+                "summaryAnchorsPara": ([({"u": e["a"], **({"q": e["q"]} if e.get("q") else {})} if e else None)
+                                        for e in nodes[nid].get("summaryAnchors") or []]
+                                       if (nodes[nid].get("summaryAnchors")
+                                           and _sa_u and _sa_u == nodes[nid].get("summaryAnchor")) else None),
                 "warns": nodes[nid].get("warns") or None,   # judge-stamped anomalies (judge _node_warn) → yellow "warning" chip; click shows each warn's what/why detail (the user 2026-07-02)
                 "failLog": nodes[nid].get("failLog") or None,   # the summarizer's failed attempts (judge _fail_log): model + literal error per try → the chip's hover history + modal "What was tried" (the user 2026-08-18)
                 "nudged": ({"count": int(nrec.get("count", 0)), "times": _nudge_times().get(nid, [])[-8:]}

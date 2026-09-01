@@ -82,5 +82,51 @@ class SupportingSpan(unittest.TestCase):
         self.assertEqual(jd._locate_quote(atom_text, ""), (None, None))
 
 
+
+class PerParagraphCitations(unittest.TestCase):
+    """T220 (the user's ruling, 2026-09-01): a multi-paragraph takeaway's paragraphs may rest on
+    DIFFERENT messages — the protocol grows numbered per-paragraph citations (SOURCE k: mN, each
+    with an optional QUOTE k), parsed off the tail in any order, mixed freely with the whole-summary
+    SOURCE line. Invalid paragraph numbers and unoffered labels drop honestly; an uncited paragraph
+    stays None (the feed falls back to the whole-summary landing, never a dead or guessed one)."""
+
+    def test_parse_numbered_cites_both_orders_and_mixed(self):
+        body, cites = jd._split_sources(
+            "Para one outcome.\n\nPara two outcome.\n\n"
+            'SOURCE 1: m2\nQUOTE 1: "the first grounding sentence"\nSOURCE 2: m5\nSOURCE: m5')
+        self.assertEqual(body, "Para one outcome.\n\nPara two outcome.")
+        self.assertEqual(cites["whole"], ("m5", None))
+        self.assertEqual(cites["paras"][1], ("m2", "the first grounding sentence"))
+        self.assertEqual(cites["paras"][2], ("m5", None))
+        # the other order, quote after its source at the very end
+        body2, cites2 = jd._split_sources(
+            "P1.\n\nP2.\n\nSOURCE: m1\nSOURCE 2: m3\nQUOTE 2: “second span”")
+        self.assertEqual(cites2["whole"], ("m1", None))
+        self.assertEqual(cites2["paras"][2], ("m3", "second span"))
+        # legacy single-line replies parse exactly as before through the compat wrapper
+        b3, s3, q3 = jd._split_source("Take.\nSOURCE: m2\nQUOTE: \"x y z\"")
+        self.assertEqual((b3, s3, q3), ("Take.", "m2", "x y z"))
+
+    def test_store_aligns_anchors_to_takeaway_paragraphs_with_honest_gaps(self):
+        marks = jd._CiteMarks()
+        marks.label("uuid-a", "alpha work wrapped; the alpha suite is green end to end")
+        marks.label("uuid-b", "beta shipped separately with its own follow-ups")
+        nd = {}
+        body = "Alpha done.\n\nBeta done.\n\nStill open: gamma."
+        jd._store_para_cites(nd, marks, body,
+                             {1: ("m1", "the ALPHA suite is green"), 2: ("m9", None), 3: ("m2", None)})
+        a = nd["summaryAnchors"]
+        self.assertEqual(len(a), 3, "aligned to the takeaway's paragraphs")
+        self.assertEqual(a[0]["a"], "uuid-a")
+        self.assertEqual(a[0]["q"], "the alpha suite is green", "the span locates in ITS paragraph's cited atom (raw casing)")
+        self.assertIsNone(a[1], "an unoffered label (m9) drops — never a guessed anchor")
+        self.assertEqual(a[2], {"a": "uuid-b"}, "a cite with no quote stores the anchor alone")
+
+    def test_no_valid_cites_stores_none_old_shape_forever(self):
+        nd = {}
+        jd._store_para_cites(nd, jd._CiteMarks(), "One para.", {5: ("m1", None)})
+        self.assertIsNone(nd["summaryAnchors"], "out-of-range k → nothing stored; absent = today's whole-summary behavior")
+
+
 if __name__ == "__main__":
     unittest.main()

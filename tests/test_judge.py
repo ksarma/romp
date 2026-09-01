@@ -4671,6 +4671,39 @@ class DistillAtDone(unittest.TestCase):
         nd = jd.load_goals(SID)["nodes"][self.G]
         self.assertIsNone(nd["summaryQuote"], "unfindable stores None — the landing keeps today's behavior")
 
+    def test_per_paragraph_cites_store_aligned_end_to_end(self):
+        # T220: two takeaway paragraphs resting on two different messages — each cited with its own
+        # SOURCE k (+ a QUOTE for the first), stored aligned; the third (uncited) paragraph stays None.
+        a1 = ("Alpha wrapped end to end; the alpha suite is green across every case and both "
+              "follow-ups are filed under their own items.")
+        a2 = ("Beta shipped separately this afternoon; its bundle went out with the compat shim "
+              "and the rollout notes were posted to the thread.")
+        records = [uline(T0, "ship alpha and beta", "u1", ps="typed"),
+                   aline(T0 + 10, a1, "aa", "u1"),
+                   aline(T0 + 20, a2, "ab", "aa", stop="end_turn")]
+        segs = [sg for turn in build_session(records)["turns"] for sg in em.segments(turn)]
+        path = Path(self._td) / (SID + ".jsonl")
+        path.write_text("\n".join(json.dumps(r) for r in records) + "\n")
+        node = {"id": self.G, "text": "ship alpha and beta", "parentId": None, "nodeComplete": True,
+                "blocked": False, "cleared": False, "trail": [sg["id"] for sg in segs],
+                "t": T0, "mt": T0 + 30, "summary": None,
+                "log": [{"src": "planner", "kind": "done", "ev_t": T0 + 25, "at": T0 + 26}]}
+        jd.save_goals(SID, {"rompUuid": SID, "seq": 1, "placementsV": jd.PLACEMENTS_V, "lastNode": self.G,
+                            "placements": {}, "status": {self.G: "working"},
+                            "confirming": [self.G], "nodes": {self.G: node}})
+        jd.distill_llm = (lambda *a, **k:
+                          "TAKEAWAY: Alpha done.\n\nBeta done.\n\nStill open: the smoke pass.\n"
+                          'SOURCE: m2\nSOURCE 1: m1\nQUOTE 1: "the alpha suite is green"\nSOURCE 2: m2')
+        self.assertEqual(jd._distill_session(SID, str(path), NOW), 1)
+        nd = jd.load_goals(SID)["nodes"][self.G]
+        anchors = nd["summaryAnchors"]
+        self.assertEqual(len(anchors), 3, "aligned to the takeaway's three paragraphs")
+        self.assertEqual(anchors[0]["a"], "aa")
+        self.assertEqual(anchors[0]["q"], "the alpha suite is green", "paragraph 1's span, located in ITS atom")
+        self.assertEqual(anchors[1], {"a": "ab"})
+        self.assertIsNone(anchors[2], "the uncited leftover paragraph falls back to the whole-summary landing")
+        self.assertEqual(nd["summaryAnchor"], "ab", "the whole-summary citation stands beside them, unchanged")
+
     def test_a_confirming_top_distills_before_settle(self):
         path = self._write()
         jd.distill_llm = lambda *a, **k: "BACKGROUND: b.\nTAKEAWAY: shipped the widget.\nSOURCE: m1"
@@ -5178,8 +5211,9 @@ class SourceCitation(unittest.TestCase):
         # pre-decided next lever repeats the requirement as the LAST thing the model reads (recency), after
         # the section specs, so the trailing line is top-of-mind at generation time. Briefer-only: the
         # distiller was clean post-fix (0 cite-miss), so its working prompt is left untouched.
-        tail = jd.BLOCK_BRIEF_SYS[-520:]           # the reminder grew the QUOTE option (T218) — same recency lever
+        tail = jd.BLOCK_BRIEF_SYS[-700:]           # the reminder grew QUOTE (T218) + per-paragraph cites (T220) — same recency lever
         self.assertIn("your reply must end with", tail, "the reminder rides at the very end of the briefer prompt")
+        self.assertIn("SOURCE k: mN", tail, "…and offers the per-paragraph form (T220)")
         self.assertIn("SOURCE: mN", tail, "and it restates the exact required line")
         self.assertIn("Do not stop at the takeaway", tail, "hammering the observed miss: ending on the takeaway")
         self.assertIn("QUOTE:", tail, "the supporting-span option rides the same end-reminder (T218)")

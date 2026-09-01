@@ -2636,7 +2636,7 @@ def _rebase_onto_disk(fsid, store):
         # (the ""→None null keeps its old briefedMt on purpose).
         for _stamp, _fields in (("distilledMt", ("summary", "summaryParts", "background",
                                                  "summaryAnchor", "summaryQuote", "summaryQuoteOff",
-                                                 "distillFails")),
+                                                 "summaryAnchors", "distillFails")),
                                 ("briefedMt", ("blockSummary", "briefParts", "briefFails")),
                                 ("stalledMt", ("stallSummary", "stallFails"))):
             if int(dnd.get(_stamp) or 0) > int(mnd.get(_stamp) or 0):
@@ -3494,34 +3494,78 @@ class _CiteMarks:
         return self.map.get("m%d" % self._n)
 
 
-def _split_source(text):
-    """(body, label, quote) — split the model's trailing `SOURCE: mN` citation line, and the optional
-    `QUOTE: "…"` supporting-span line (T218: the study's most common partial was the right message with
-    the supporting sentence buried deep — the span lets the landing scroll TO the sentence), off a
-    distill/brief reply. Lenient on shape (optional [brackets], either line order, stray whitespace)
-    but anchored to the END of the reply, so a body that merely mentions a label is never mistaken
-    for the citation. label/quote are None when absent/malformed — the kernel then keeps exactly the
-    pre-span behavior."""
+def _split_sources(text):
+    """(body, cites) — the FULL citation parse (T220, the user's per-paragraph ruling): peel every
+    trailing citation line off a distill/brief reply, in any order —
+        SOURCE: mN            the whole-summary citation (T218's shape, unchanged)
+        QUOTE: "…"            its optional supporting span
+        SOURCE k: mN          paragraph k's own citation (k counts the TAKEAWAY's paragraphs, top to
+        QUOTE k: "…"          bottom) and its optional span
+    cites = {"whole": (label|None, quote|None), "paras": {k: (label, quote|None)}}. Parsing stops at
+    the first non-citation line from the end, so a body that merely mentions a label is never
+    mistaken for one. Malformed lines drop the parse back to the body — the callers' fallbacks stay
+    exactly T218's."""
     text = (text or "").strip()
-    quote = None
-    for _ in range(2):                                     # the two trailing lines, either order
-        mq = re.search(r"(?:^|\n)\s*QUOTE:\s*[\"\u201c]?(.+?)[\"\u201d]?\s*$", text)
-        if mq and quote is None and "\n" not in mq.group(1):
-            quote = mq.group(1).strip() or None
-            text = text[:mq.start()].strip()
+    whole_label, whole_quote = None, None
+    paras = {}
+    para_quotes = {}
+    line_re = re.compile(r"(?:^|\n)\s*(SOURCE|QUOTE)(?:\s+(\d+))?:\s*(.+?)\s*$")
+    while True:
+        m = line_re.search(text)
+        if not m or m.end() != len(text):
+            break
+        kind, num, val = m.group(1), m.group(2), m.group(3).strip()
+        if kind == "SOURCE":
+            lm = re.fullmatch(r"\[?(m\d+)\]?", val)
+            if not lm:
+                break                                   # malformed tail line → leave it on the body
+            if num:
+                paras.setdefault(int(num), lm.group(1))
+            elif whole_label is None:
+                whole_label = lm.group(1)
+        else:
+            q = val.strip("\"\u201c\u201d").strip()
+            if not q or "\n" in q:
+                break
+            if num:
+                para_quotes.setdefault(int(num), q)
+            elif whole_quote is None:
+                whole_quote = q
+        text = text[:m.start()].rstrip()
+    return text.strip(), {"whole": (whole_label, whole_quote),
+                          "paras": {k: (lab, para_quotes.get(k)) for k, lab in paras.items()}}
+
+
+def _split_source(text):
+    """(body, label, quote) — the whole-summary view of _split_sources: T218's shape, kept for every
+    caller with no per-paragraph story (the stall note, the corrective-retry check)."""
+    body, cites = _split_sources(text)
+    lab, quote = cites["whole"]
+    return body, lab, quote
+
+
+def _store_para_cites(nd, marks, body, para_cites):
+    """Store per-paragraph anchors aligned to the TAKEAWAY's paragraphs (T220): entry k-1 carries
+    paragraph k's cited atom + its located span; an invalid k, an unoffered label, or an uncited
+    paragraph stays None — the feed then falls back to the whole-summary landing for that paragraph,
+    never a dead or guessed one. Nothing valid → None (the pre-T220 shape, so old single-anchor
+    stores read identically forever — no migration sweep)."""
+    paras = [pp for pp in re.split(r"\n\s*\n", body or "") if pp.strip()]
+    anchors = [None] * len(paras)
+    any_set = False
+    for k, (lab, quote) in (para_cites or {}).items():
+        u = marks.map.get(lab)
+        if not u or not (isinstance(k, int) and 1 <= k <= len(paras)):
             continue
-        break
-    m = re.search(r"(?:^|\n)\s*SOURCE:\s*\[?(m\d+)\]?\s*$", text)
-    if not m:
-        return text, None, quote
-    body = text[:m.start()].strip()
-    # a QUOTE line ABOVE the SOURCE line (the other order): strip it off the body tail too
-    if quote is None:
-        mq = re.search(r"(?:^|\n)\s*QUOTE:\s*[\"\u201c]?(.+?)[\"\u201d]?\s*$", body)
-        if mq and "\n" not in mq.group(1):
-            quote = mq.group(1).strip() or None
-            body = body[:mq.start()].strip()
-    return body, m.group(1), quote
+        entry = {"a": u}
+        if quote:
+            off, span = _locate_quote(marks.texts.get(lab, ""), quote)
+            if span:
+                entry["q"] = span
+                entry["off"] = off
+        anchors[k - 1] = entry
+        any_set = True
+    nd["summaryAnchors"] = anchors if any_set else None
 
 
 def _locate_quote(atom_text, quote):
@@ -10120,7 +10164,11 @@ DISTILL_SYS = (
     "closely it names the goal. This line is parsed off and never shown. When one sentence of the "
     "cited message most directly supports your takeaway, add one more final line after SOURCE: "
     "QUOTE: \"<that sentence, copied verbatim, under 25 words>\", exactly as it appears, never "
-    "paraphrased; omit the line when no single sentence carries it. It is parsed off too.")
+    "paraphrased; omit the line when no single sentence carries it. It is parsed off too. And when "
+    "your takeaway has more than one paragraph resting on DIFFERENT messages, cite per paragraph "
+    "instead: one line per paragraph, SOURCE k: mN, where k is that paragraph's number in the "
+    "takeaway from the top, each optionally followed by its own QUOTE k: \"…\"; keep the plain "
+    "SOURCE line too as the summary-wide citation. All of these lines are parsed off.")
 
 
 def distill_llm(goal_text, work_text, done_why="", prior_summary="", items=None, frame=None,
@@ -10408,8 +10456,10 @@ BLOCK_BRIEF_SYS = (
     "line that is exactly SOURCE: mN. When one sentence of the cited message most directly supports "
     "what you wrote, you may add one more final line after it: QUOTE: \"<that sentence, copied "
     "verbatim, under 25 words>\", exactly as it appears, never paraphrased; omit it when no single "
-    "sentence carries it. Do not stop at the takeaway; SOURCE (and the optional QUOTE) come last, and "
-    "both are parsed off and never shown.")
+    "sentence carries it. When your reply has several paragraphs resting on different messages, you "
+    "may also cite each: SOURCE k: mN with an optional QUOTE k, k counting your paragraphs from the "
+    "top. Do not stop at the takeaway; the citation lines come last, and all are parsed off and "
+    "never shown.")
 
 
 def brief_llm(goal_text, work_text, owed, frame=None, user_ask=None, shortfall=None):
@@ -10513,8 +10563,10 @@ STALL_BRIEF_SYS = (
     "line that is exactly SOURCE: mN. When one sentence of the cited message most directly supports "
     "what you wrote, you may add one more final line after it: QUOTE: \"<that sentence, copied "
     "verbatim, under 25 words>\", exactly as it appears, never paraphrased; omit it when no single "
-    "sentence carries it. Do not stop at the takeaway; SOURCE (and the optional QUOTE) come last, and "
-    "both are parsed off and never shown.")
+    "sentence carries it. When your reply has several paragraphs resting on different messages, you "
+    "may also cite each: SOURCE k: mN with an optional QUOTE k, k counting your paragraphs from the "
+    "top. Do not stop at the takeaway; the citation lines come last, and all are parsed off and "
+    "never shown.")
 
 
 def stall_llm(goal_text, work_text, holding):
@@ -11036,7 +11088,8 @@ def _distill_session(fsid, path, now):
                 changed = True                          # persist the counter / the settle
                 continue
             raw = out
-            out, src, _quote = _split_source(out)
+            out, _bcites = _split_sources(out)
+            src, _quote = _bcites["whole"]
             bg, out = _split_sections(out)
             # OWED COVERAGE IS COUNTABLE (the user 2026-08-30): a multi-item <owed> demands one
             # paragraph per item, but the merge allowance made a dropped item look like a merge —
@@ -11099,6 +11152,7 @@ def _distill_session(fsid, path, now):
             # the gather fed this very call (the user 2026-07-21) — every brief ships a stored anchor
             nodes[top]["summaryAnchor"] = marks.map.get(src) or marks.newest()
             _store_cited_span(nodes[top], marks, src, _quote)
+            _store_para_cites(nodes[top], marks, out, {} if _fallback_brief else _bcites["paras"])   # (T220)
             if marks.map and marks.map.get(src) is None and not _fallback_brief:
                 # labels offered, no usable citation → log only (the stamp already grounded the
                 # anchor, so a card warn would be noise, the user 2026-07-21). The verbatim
@@ -11167,9 +11221,11 @@ def _distill_session(fsid, path, now):
             changed = True
             continue
         raw = out
-        out, src, _quote = _split_source(out)
+        out, _cites = _split_sources(out)
+        src, _quote = _cites["whole"]
         bg, out = _split_sections(out)
         nodes[top]["summary"] = out                 # full text — NEVER truncate a takeaway mid-word (the user 2026-07-06)
+        _store_para_cites(nodes[top], marks, out, _cites["paras"])   # per-paragraph landings (T220)
         nodes[top]["summaryParts"] = ([{"id": d["id"], "since": _done_since(d)} for d in _dsubs]
                                       if len(_dsubs) > 1 else None)   # same order as <completed-items>; the feed's count-match gate decides whether the model actually split
         nodes[top]["background"] = bg if bg else None   # re-orientation for a reader who forgot the thread (2026-07-02)
