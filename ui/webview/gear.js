@@ -530,6 +530,11 @@ function initGear(post) {
     var mo = new MutationObserver(syncBtn);
     mo.observe(sel, { childList: true });
     sel.addEventListener('change', syncBtn);
+    // fill() writes sel.value SILENTLY on every open (a change event here would POST the setting
+    // back), so the button must join the ONE repaint registry fill() flushes — without this it
+    // showed its install-tick label (the first option) while the select and the STATE file held
+    // the user's pick (the user 2026-09-01, whose Opus distill pick displayed as Follow triage).
+    selectPickPaints.push(syncBtn);
     setTimeout(syncBtn, 0);
     var menu = null, sub = null;
     var closeAll = function () { if (sub) { sub.remove(); sub = null; } if (menu) { menu.remove(); menu = null; } };
@@ -791,6 +796,21 @@ function initGear(post) {
       mark.hidden = false;
     });
   }
+  // fill()'s ONE write path for kernel-backed selects (the user 2026-09-01, whose stored distill
+  // pick displayed as the default): a stored value the option list doesn't carry is INJECTED as a
+  // marked option and selected — the row shows the truth (an off-list value, named) rather than
+  // silently falling to its first option. Values are validated at write time by the kernel, so an
+  // injection here means THIS page's list is behind the store — worth seeing, never worth hiding.
+  function setShow(sel, val) {
+    if (!sel) return;
+    if (val && !Array.prototype.some.call(sel.options, function (o) { return o.value === val; })) {
+      var o = document.createElement('option');
+      o.value = val;
+      o.textContent = val + " — not in this kernel's list";
+      sel.appendChild(o);
+    }
+    sel.value = val;
+  }
   function fill() { fillChoices().then(function () { return fetch(ku('/version'), { cache: 'no-store' }); }).then(function (r) { return r.json(); }).then(function (v) {
     // ONE /tunnels fetch feeds every cross-machine comparison: the autoNudge box and the select marks.
     // A failed /tunnels leaves the local answers standing, unmarked — same fallback as before.
@@ -803,15 +823,15 @@ function initGear(post) {
     if (cvm) cvm.checked = !!v.conserveMemory;   // T148: the kernel's persisted conserve flag is authoritative
     lgRender(v);   // the Billing login block (T157) rides the same /version read
     if ((v.login || {}).state && !lgTimer) lgTimer = setTimeout(lgPoll, 1500);   // a flow mid-run resumes polling
-    if (upm && typeof v.updateMode === 'string') upm.value = v.updateMode;   // the kernel's persisted mode is authoritative
-    if (jm && typeof v.judgeModel === 'string') jm.value = v.judgeModel;   // the judge's ACTUAL current model/effort per tier is authoritative
-    if (im && typeof v.indexModel === 'string') im.value = v.indexModel;
-    if (je && typeof v.judgeEffort === 'string') je.value = v.judgeEffort;
-    if (ie && typeof v.indexEffort === 'string') ie.value = v.indexEffort;
-    if (dm && typeof v.distillModel === 'string') dm.value = v.distillModel;   // RAW: "triage" selects the Follow-triage option
-    if (de && typeof v.distillEffort === 'string') de.value = v.distillEffort;
-    if (cmm && typeof v.commentModel === 'string') cmm.value = v.commentModel;   // RAW: "session" selects Same as the session
-    if (cme && typeof v.commentEffort === 'string') cme.value = v.commentEffort;
+    if (typeof v.updateMode === 'string') setShow(upm, v.updateMode);   // the kernel's persisted mode is authoritative
+    if (typeof v.judgeModel === 'string') setShow(jm, v.judgeModel);   // the judge's ACTUAL current model/effort per tier is authoritative
+    if (typeof v.indexModel === 'string') setShow(im, v.indexModel);
+    if (typeof v.judgeEffort === 'string') setShow(je, v.judgeEffort);
+    if (typeof v.indexEffort === 'string') setShow(ie, v.indexEffort);
+    if (typeof v.distillModel === 'string') setShow(dm, v.distillModel);   // RAW: "triage" selects the Follow-triage option
+    if (typeof v.distillEffort === 'string') setShow(de, v.distillEffort);
+    if (typeof v.commentModel === 'string') setShow(cmm, v.commentModel);   // RAW: "session" selects Same as the session
+    if (typeof v.commentEffort === 'string') setShow(cme, v.commentEffort);
     if (cmf && typeof v.commentFast === 'string') cmf.checked = v.commentFast === 'on';
     cmtFastGate(false);
     if (dd && typeof v.defaultDir === 'string') dd.value = v.defaultDir;   // the kernel's persisted default is authoritative

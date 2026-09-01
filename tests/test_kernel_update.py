@@ -476,7 +476,9 @@ class Wiring(unittest.TestCase):
         for opt in ("value=ask", "value=auto", "value=off"):
             self.assertIn(opt, self.gear)
         self.assertIn("post({ type: 'setUpdateMode', mode: upm.value })", self.gear)
-        self.assertIn("upm.value = v.updateMode", self.gear)
+        # fill() renders through setShow now (2026-09-01): the same silent write, plus the
+        # honest marked-option injection when a stored value is off this page's list
+        self.assertIn("setShow(upm, v.updateMode)", self.gear)
         self.assertIn('msg.get("type") == "setUpdateMode"', self.src)
 
 
