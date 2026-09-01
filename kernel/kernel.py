@@ -560,6 +560,10 @@ def _version_info():
             # counters, no paths — safe for the auth-exempt route. Deploy verification reads the live
             # fold rate here instead of trusting an offline replay number (T210).
             "parse": dict(em._ASM_STATS),
+            # T222: where the model pickers' version list came from (seed / cache / api), when, what
+            # the API added beyond the shipped seed, and the last refresh failure — so a stale list
+            # is a visible fact in `romp version`, never a guess
+            "modelCatalog": _catalog_public_status(),
             "autoNudge": _auto_nudge_on(),   # server-side toggle state → the gear checkbox reflects the kernel
             "compactSuggest": _compact_suggest_on(),   # T208+: its gear checkbox rides the same read
             "conserveMemory": _conserve_on(),   # the T148 toggle: close idle tab-less claude processes
@@ -827,7 +831,8 @@ MODEL_CHOICES = [{"value": "fable", "label": "Fable"}, {"value": "opus", "label"
 # (model-picks.json below), else the newest. Full ids ride every set path verbatim already — the
 # alias table stops at the family names, so a version pick needs no new transport.
 MODEL_VERSIONS = {
-    "fable":  [{"value": "claude-fable-5", "label": "Fable 5"}],
+    "fable":  [{"value": "claude-fable-5-1", "label": "Fable 5.1"},   # verified live 2026-09-01 (Models API + CLI 2.1.257)
+               {"value": "claude-fable-5", "label": "Fable 5"}],
     "opus":   [{"value": "claude-opus-5", "label": "Opus 5"},
                {"value": "claude-opus-4-8", "label": "Opus 4.8"},
                {"value": "claude-opus-4-7", "label": "Opus 4.7"},
@@ -841,23 +846,286 @@ MODEL_VERSIONS = {
 _VERSION_FAMILY = {v["value"]: fam for fam, vs in MODEL_VERSIONS.items() for v in vs}
 MODEL_PICKS_FILE_NAME = "model-picks.json"   # {family: full-id} — a viewer pref all surfaces read, like colormap
 
+# ── the LIVE model catalog (T222, the user 2026-09-01: romp must stop needing a hand edit when
+# Anthropic ships a model). The table above is the SEED and the loud fallback. The kernel queries the
+# Models API (GET /v1/models — the documented programmatic source) on its OWN credential and merges
+# new version ids into the families, ADD-ONLY: an id the API omits but the seed knows stays (key-scoped
+# visibility differs per account); a dated snapshot, a suffixed variant (-fast) or the pre-4 naming
+# never joins (routing ids, not versions — the alias-table lesson); every family stays newest-first.
+# Cached durably (STATE/model-catalog.json) so a dead API never blanks a picker. Refreshed on exact
+# EVENTS — boot, and a claude-* id reaching a set path or the pick store that the merged list does not
+# know (the very moment staleness bites) — never on a timer. Unreachable API = serve seed+cache and
+# SAY SO (stderr + /version), never a quietly stale list. ROMP_MODEL_CATALOG=off disables the fetch
+# outright — hermetic labs must never reach the network; ROMP_MODELS_URL points tests at a fake.
+MODEL_CATALOG_FILE_NAME = "model-catalog.json"
+MODELS_API_URL = os.environ.get("ROMP_MODELS_URL") or "https://api.anthropic.com/v1/models"
+_MODEL_SEED = {fam: [dict(v) for v in vs] for fam, vs in MODEL_VERSIONS.items()}   # the shipped table, frozen
+_MODEL_ID_RE = re.compile(r"^claude-(fable|opus|sonnet|haiku)-(\d+(?:-\d+)*)$")
+_catalog_lock = threading.Lock()
+_catalog_status = {"source": "seed", "fetchedAt": None, "lastError": None, "added": [], "inflight": False}
+_catalog_asked = set()   # unknown ids that already fired a refresh this kernel life (event dedup, no clock)
+
+
+def _catalog_family(mid):
+    """The picker family a Models-API id belongs to, or None for ids that are not pickable VERSIONS:
+    dated snapshots (claude-opus-4-5-20251101), suffixed variants (claude-opus-4-6-fast), the pre-4
+    naming (claude-3-5-sonnet-…) — deployment/routing ids the seed deliberately never lists."""
+    m = _MODEL_ID_RE.match(str(mid or ""))
+    if not m or any(len(p) >= 8 for p in m.group(2).split("-")):
+        return None
+    return m.group(1)
+
+
+def _version_key(mid):
+    """Numeric version tuple of a family id, for newest-first ordering ('claude-opus-4-8' → (4, 8);
+    'claude-opus-5' → (5,) sorts above it, 'claude-fable-5-1' → (5, 1) above (5,))."""
+    m = _MODEL_ID_RE.match(str(mid or ""))
+    return tuple(int(p) for p in m.group(2).split("-")) if m else ()
+
+
+def _catalog_label(display_name, mid):
+    """The seed's label style from the API's display_name ('Claude Fable 5.1' → 'Fable 5.1'); an
+    absent display_name derives from the id ('claude-opus-4-9' → 'Opus 4.9')."""
+    d = str(display_name or "").strip()
+    if d.lower().startswith("claude "):
+        d = d[7:].strip()
+    if d:
+        return d
+    fam = _catalog_family(mid) or ""
+    return (fam[:1].upper() + fam[1:] + " " + ".".join(str(n) for n in _version_key(mid))).strip()
+
+
+def merge_model_catalog(seed, rows):
+    """ADD-ONLY merge of Models-API rows ({id, display_name, created_at}) into a seed
+    {family: [{value, label}, …]}. Every seed entry survives; an unknown pickable id joins its family
+    with its display label; non-version ids are skipped; each family is re-sorted newest-first by
+    the id's own version tuple (seed and API entries alike — no created_at needed, and the seed's
+    dateless aliases sort exactly where they belong). Pure: returns a NEW dict, tests drive it."""
+    merged = {fam: [dict(v) for v in vs] for fam, vs in seed.items()}
+    for r in rows or []:
+        mid = str((r or {}).get("id") or "")
+        fam = _catalog_family(mid)
+        if not fam or fam not in merged or any(v["value"] == mid for v in merged[fam]):
+            continue
+        merged[fam].append({"value": mid, "label": _catalog_label((r or {}).get("display_name"), mid)})
+    for fam in merged:
+        merged[fam].sort(key=lambda v: _version_key(v["value"]), reverse=True)
+    return merged
+
+
+def _apply_model_catalog(merged, source):
+    """Install a merged catalog IN PLACE — the family lists, the reverse map and the judge setters'
+    allowed set are mutated, never rebound — so every consumer (the /models route, _model_picks'
+    validity check, setJudgeModel's validation) sees it with no re-import. Returns the ids that
+    were new to the running table."""
+    with _catalog_lock:
+        added = []
+        for fam, vs in merged.items():
+            if fam not in MODEL_VERSIONS:
+                continue
+            known = {v["value"] for v in MODEL_VERSIONS[fam]}
+            added += [v["value"] for v in vs if v["value"] not in known]
+            MODEL_VERSIONS[fam][:] = [dict(v) for v in vs]
+        _VERSION_FAMILY.clear()
+        _VERSION_FAMILY.update({v["value"]: fam for fam, vs in MODEL_VERSIONS.items() for v in vs})
+        jv, mv = globals().get("_JUDGE_MODEL_VALUES"), globals().get("_MODEL_VALUES")   # defined further
+        if isinstance(jv, set) and isinstance(mv, set):   # down the module; absent only during import
+            jv.clear()                                   # rebuilt, not grown: the set mirrors the table exactly
+            jv.update(mv)
+            jv.update(_VERSION_FAMILY)
+        seed_ids = {v["value"] for vs in _MODEL_SEED.values() for v in vs}
+        _catalog_status["added"] = sorted(v for v in _VERSION_FAMILY if v not in seed_ids)
+        _catalog_status["source"] = source
+    return added
+
+
+def _catalog_cache_path():
+    return jd.STATE / MODEL_CATALOG_FILE_NAME
+
+
+def _load_model_catalog_cache():
+    """Boot: install the last fetched catalog BEFORE any picker asks, so a dead API never blanks a
+    picker and the seed alone is only what this build shipped with. Returns the cached row count."""
+    try:
+        d = json.loads(_catalog_cache_path().read_text())
+        rows = d.get("models") if isinstance(d, dict) else None
+        if not isinstance(rows, list):
+            return 0
+    except Exception:
+        return 0
+    _apply_model_catalog(merge_model_catalog(_MODEL_SEED, rows), "cache")
+    _catalog_status["fetchedAt"] = d.get("fetchedAt")
+    return len(rows)
+
+
+def _models_api_credential():
+    """(header, value) for the kernel's OWN credential path, or None when the box has none the kernel
+    may use: the manager-env API key the SDK backend claimed out of os.environ (sdk_backend.work_api_key
+    — the key the judges ride), else an ANTHROPIC_AUTH_TOKEN bearer. A login-only box (Claude Code's
+    OAuth, no key) has no HTTP credential the kernel can borrow: the refresh says so once and serves
+    the seed — the CLI's own alias table still tracks each family's newest there."""
+    fn = getattr(jd, "_WORK_KEY_FN", None)
+    key = ""
+    if fn is not None:
+        try:
+            key = fn() or ""
+        except Exception:
+            key = ""
+    key = key or os.environ.get("ANTHROPIC_API_KEY", "") or ""
+    if key:
+        return ("x-api-key", key)
+    tok = os.environ.get("ANTHROPIC_AUTH_TOKEN", "") or ""
+    if tok:
+        return ("Authorization", "Bearer " + tok)
+    return None
+
+
+def _fetch_models_api(cred, timeout=8):
+    """Every page of GET /v1/models as [{id, display_name, created_at}] (after_id / has_more paging per
+    the API reference). Raises on ANY failure — the caller owns the loudness."""
+    import urllib.request
+    rows, after, pages = [], None, 0
+    while pages < 10:
+        url = MODELS_API_URL + "?limit=100" + ("&after_id=" + urllib.parse.quote(after) if after else "")
+        hdrs = {"anthropic-version": "2023-06-01", cred[0]: cred[1]}
+        if cred[0] == "Authorization":
+            hdrs["anthropic-beta"] = "oauth-2025-04-20"     # OAuth bearers ride this beta, per the reference
+        with urllib.request.urlopen(urllib.request.Request(url, headers=hdrs), timeout=timeout) as r:
+            d = json.loads(r.read().decode("utf-8", "replace"))
+        data = d.get("data") if isinstance(d, dict) else None
+        if not isinstance(data, list):
+            raise ValueError("Models API returned no data list (keys=%r)"
+                             % (sorted(d)[:8] if isinstance(d, dict) else type(d).__name__))
+        rows += [{"id": str(m.get("id") or ""), "display_name": m.get("display_name"),
+                  "created_at": m.get("created_at")} for m in data if isinstance(m, dict) and m.get("id")]
+        pages += 1
+        if not d.get("has_more") or not d.get("last_id"):
+            break
+        after = str(d["last_id"])
+    return rows
+
+
+def _refresh_model_catalog(reason, _async=True):
+    """Fetch the live list, install the add-only merge, cache it durably. Single-flight; off entirely
+    under ROMP_MODEL_CATALOG=off. LOUD on every failure path — a stderr line naming the reason and
+    what is being served instead, mirrored into /version's modelCatalog — never a silently stale picker."""
+    if (os.environ.get("ROMP_MODEL_CATALOG") or "").strip().lower() == "off":
+        return False
+    with _catalog_lock:
+        if _catalog_status["inflight"]:
+            return False
+        _catalog_status["inflight"] = True
+
+    def go():
+        try:
+            cred = _models_api_credential()
+            if cred is None:
+                _catalog_status["lastError"] = "no API credential in the kernel's environment"
+                sys.stderr.write("model catalog (%s): no API credential the kernel can use — serving the "
+                                 "%s list; new models need ANTHROPIC_API_KEY in the manager env (or a "
+                                 "MODEL_VERSIONS edit)\n" % (reason, _catalog_status["source"]))
+                return
+            try:
+                rows = _fetch_models_api(cred)
+            except Exception as e:
+                _catalog_status["lastError"] = "%s: %s" % (type(e).__name__, str(e)[:200])
+                sys.stderr.write("model catalog (%s): Models API unreachable (%s) — serving the %s list "
+                                 "(%d extra id(s) beyond the seed)\n"
+                                 % (reason, _catalog_status["lastError"], _catalog_status["source"],
+                                    len(_catalog_status["added"])))
+                return
+            added = _apply_model_catalog(merge_model_catalog(_MODEL_SEED, rows), "api")
+            now = int(time.time())
+            _catalog_status["fetchedAt"] = now
+            _catalog_status["lastError"] = None
+            try:
+                _atomic_write(_catalog_cache_path(), json.dumps({"fetchedAt": now, "models": rows}))
+            except Exception:
+                sys.stderr.write("model catalog: cache write failed: %s\n" % traceback.format_exc())
+            if added:
+                sys.stderr.write("model catalog (%s): %d new version id(s) joined the pickers: %s\n"
+                                 % (reason, len(added), ", ".join(added)))
+                try:
+                    _push_soon()                          # pickers re-read /models on the next frame
+                except Exception:
+                    pass
+        finally:
+            _catalog_status["inflight"] = False
+
+    if _async:
+        threading.Thread(target=go, name="model-catalog", daemon=True).start()
+    else:
+        go()
+    return True
+
+
+def _note_unknown_model(mid):
+    """The staleness EVENT: a claude-* version id reached a set path or the pick store and the merged
+    list does not know it — exactly when a hand-updated table used to go quietly stale. Fires ONE
+    refresh per unknown id per kernel life (dedup by id, never a clock); aliases, dated snapshots
+    and garbage never fire. Returns whether a refresh was started."""
+    mid = str(mid or "")
+    if not _catalog_family(mid) or mid in _VERSION_FAMILY or mid in _catalog_asked:
+        return False
+    _catalog_asked.add(mid)
+    return _refresh_model_catalog("unknown model id %s" % mid)
+
+
+def _catalog_public_status():
+    """/version's modelCatalog block — where the list came from, when, what it added, and the last
+    failure (so `romp version` and a curl can see a stale-list problem instead of guessing)."""
+    return {"source": _catalog_status["source"], "fetchedAt": _catalog_status["fetchedAt"],
+            "lastError": _catalog_status["lastError"], "added": list(_catalog_status["added"])}
+
+
+def _cli_model_blocks():
+    """{model id: {needs, cli, t}} — versions the INSTALLED CLI refused by minimum version, written by
+    the SDK backend from the CLI's own error at the first attempt (sdk_backend.note_cli_model_block)
+    and cleared by the first real reply on that model. The catalog can list ids newer than the CLI
+    (the API is the source; the CLI gates by version), so the refusal is surfaced on the version row
+    the moment it is known rather than only at pick time (T222)."""
+    try:
+        d = json.loads((jd.STATE / "cli-model-blocks.json").read_text())
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def _with_cli_block(version, blocks):
+    """A /models version row stamped with its CLI refusal, if any: cliNeeds (the minimum version the
+    CLI named) and a label suffix every picker renders as-is — no client change, honest everywhere."""
+    b = blocks.get(version.get("value")) if blocks else None
+    if isinstance(b, dict) and b.get("needs"):
+        version["cliNeeds"] = str(b["needs"])
+        version["label"] = "%s — needs CLI ≥ %s" % (version.get("label", version.get("value")), b["needs"])
+    return version
+
 
 def _model_picks():
     """The per-family last-picked map. Only known version ids survive the read (a stale or hand-edited
     entry falls back to the family's newest rather than poisoning the default)."""
     try:
         d = json.loads((jd.STATE / MODEL_PICKS_FILE_NAME).read_text())
-        return {f: v for f, v in d.items() if isinstance(v, str) and _VERSION_FAMILY.get(v) == f} \
-            if isinstance(d, dict) else {}
+        if not isinstance(d, dict):
+            return {}
+        out = {}
+        for f, v in d.items():
+            if isinstance(v, str) and _VERSION_FAMILY.get(v) == f:
+                out[f] = v
+            elif isinstance(v, str):
+                _note_unknown_model(v)   # a pick this list doesn't know → the catalog staleness event (T222)
+        return out
     except Exception:
         return {}
 
 
 def _note_model_pick(value):
     """Record a version pick as its family's new default (write-on-change). Family shorthands and
-    unknown strings record nothing — they are not version picks."""
+    unknown strings record nothing — they are not version picks (an unknown claude-* id does fire
+    the catalog's staleness refresh: it may be a model newer than this list)."""
     fam = _VERSION_FAMILY.get(str(value or ""))
     if not fam:
+        _note_unknown_model(value)
         return
     picks = _model_picks()
     if picks.get(fam) == value:
@@ -8242,6 +8510,13 @@ def _sdk_locked():
             # the unwired judges inherited the post-claim env on a login-less host and every call
             # refused "Not logged in" for 13 hours while the cards sat parked in Working).
             jd._WORK_KEY_FN = sbmod.work_api_key
+            # T222: the live model catalog — the last fetched list installs before any picker asks,
+            # then the BOOT event refreshes it (async; the key is claimable from here on)
+            try:
+                _load_model_catalog_cache()
+                _refresh_model_catalog("boot")
+            except Exception:
+                sys.stderr.write("model catalog boot: %s\n" % traceback.format_exc())
             _sdk_backend = sbmod.SdkBackend(
                 jd.STATE, _claude_bin(), _send_to_app,
                 poke=_producer_wake.set, push=_pusher_wake.set,
@@ -30629,10 +30904,16 @@ class Handler(BaseHTTPRequestHandler):
                 # DEFAULT — the last version the user picked for that family, else the newest (the
                 # user 2026-08-25: family click = remembered pick; the submenu holds the rest).
                 _picks = _model_picks()
+                # a version the INSTALLED CLI has refused by minimum version says so on its own row
+                # (T222): the refusal is learned from the CLI's own error at the first attempt
+                # (sdk_backend.note_cli_model_block) and cleared by the first real reply on that
+                # model — so every picker shows the reason before the next pick, not only after it
+                _blocks = _cli_model_blocks()
                 return self._send(200, json.dumps(
                     {"models": [dict(c, color=_model_color(c["value"], _stops),
                                      tone=_model_tone(c["value"]),
-                                     versions=[dict(v) for v in MODEL_VERSIONS.get(c["value"]) or []],
+                                     versions=[_with_cli_block(dict(v), _blocks)
+                                               for v in MODEL_VERSIONS.get(c["value"]) or []],
                                      default=_picks.get(c["value"])
                                          or ((MODEL_VERSIONS.get(c["value"]) or [{}])[0].get("value")
                                              or c["value"]))

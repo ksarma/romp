@@ -576,6 +576,71 @@ def append_retry_gave_up(state_dir: Path, sid: str, retries: int, kind: str = ""
         f.write(json.dumps(rec) + "\n")
 
 
+CLI_MODEL_BLOCKS_FILE = "cli-model-blocks.json"
+# The CLI's own refusal when a model id is valid on the API but newer than the installed binary
+# (verified live 2026-09-01 on 2.1.221 vs claude-fable-5-1): the ONLY shape this recognises, so a
+# different error can never be misfiled as a version block.
+_CLI_MIN_VERSION_RE = re.compile(
+    r"Claude Code (\S+) does not support this model; version (\S+) or newer is required")
+
+
+def _assistant_text(msg) -> str:
+    """The text blocks of an AssistantMessage joined — the error settle's own words."""
+    out = []
+    for b in (getattr(msg, "content", None) or []):
+        t = getattr(b, "text", None)
+        if isinstance(t, str):
+            out.append(t)
+        elif isinstance(b, dict) and isinstance(b.get("text"), str):
+            out.append(b["text"])
+    return "".join(out)
+
+
+def _rewrite_json(p: Path, obj) -> None:
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(p.suffix + ".tmp")
+    tmp.write_text(json.dumps(obj))
+    os.replace(tmp, p)
+
+
+def note_cli_model_block(state_dir, model_id, error_text) -> bool:
+    """Record that the INSTALLED CLI refused `model_id` by minimum version (T222): the live model
+    catalog can list ids newer than the binary — the API is the catalog's source, the CLI gates by
+    version — so the kernel's /models stamps the refusal on that version row the moment it is known,
+    not only after the next pick fails. Durable ({model: {needs, cli, t}} in STATE/cli-model-blocks.json)
+    and event-cleared by the first real reply on that model (clear_cli_model_block). Returns whether the
+    text was the version refusal; anything else records nothing."""
+    m = _CLI_MIN_VERSION_RE.search(error_text or "")
+    mid = str(model_id or "")
+    if not m or "claude" not in mid.lower():
+        return False
+    p = Path(state_dir) / CLI_MODEL_BLOCKS_FILE
+    try:
+        d = json.loads(p.read_text())
+        d = d if isinstance(d, dict) else {}
+    except Exception:
+        d = {}
+    d[mid] = {"needs": m.group(2), "cli": m.group(1), "t": int(time.time())}
+    _rewrite_json(p, d)
+    return True
+
+
+def clear_cli_model_block(state_dir, model_id) -> bool:
+    """A real reply on `model_id` proves the installed CLI serves it now — drop its block (the CLI was
+    updated; event-based, never a timer). Returns whether a block was removed."""
+    mid = str(model_id or "")
+    p = Path(state_dir) / CLI_MODEL_BLOCKS_FILE
+    try:
+        d = json.loads(p.read_text())
+    except Exception:
+        return False
+    if not isinstance(d, dict) or mid not in d:
+        return False
+    del d[mid]
+    _rewrite_json(p, d)
+    return True
+
+
 ORPHAN_REPLY_CAP = 8000   # text cap per orphan marker — a lost reply is worth keeping, but bound the file
 
 
@@ -2742,8 +2807,23 @@ class SdkSession:
                 if self.retrying and self.retry_count:
                     append_retry_gave_up(self.backend.state_dir, self.sid, self.retry_count,
                                          kind=str(msg.error))
+                # the installed CLI refusing a model by MINIMUM VERSION is worth remembering for every
+                # picker (T222): the model catalog can list ids newer than the binary
+                try:
+                    note_cli_model_block(self.backend.state_dir, self.chosen_model or self.model,
+                                         _assistant_text(msg))
+                except Exception:
+                    pass
             elif self.retrying and self.retry_count:   # first real output after a storm → durable recovery marker
                 append_retry_recovered(self.backend.state_dir, self.sid, self.retry_count)
+            if not getattr(msg, "error", None):
+                # a real reply on a model proves the CLI serves it — its block (if any) lifts on the event
+                try:
+                    for _mid in {str(getattr(msg, "model", None) or ""), str(self.chosen_model or "")}:
+                        if "claude" in _mid.lower():
+                            clear_cli_model_block(self.backend.state_dir, _mid)
+                except Exception:
+                    pass
             self.retrying = False                      # either way the storm is over (recovered, or settled in error)
             self.retry_count = 0
             self.retry_info = None

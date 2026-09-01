@@ -156,7 +156,8 @@ class ServedMatrix(unittest.TestCase):
                    CLAUDE_CONFIG_DIR=os.path.join(cls.lab, "claude"),
                    ROMP_MANAGER_PORT="1", ROMP_KERNEL_NO_OPEN="1",
                    ROMP_SERVE_TOKEN=cls.token, ROMP_KERNEL_PORT=str(cls.port),
-                   ROMP_DIST_DIR=dist)
+                   ROMP_DIST_DIR=dist,
+                   ROMP_MODEL_CATALOG="off")   # hermetic: the T222 catalog fetch must never reach the network
         env.pop("ROMP_STATE_DIR", None)
         cls.kernel = subprocess.Popen([os.path.join(BIN, "romp-kernel")],
                                       stdout=open(os.path.join(cls.lab, "kernel.log"), "w"),
