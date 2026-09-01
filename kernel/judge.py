@@ -166,15 +166,73 @@ def _index_model():   return _state_str("index-model", INDEX_MODEL)    # gear "I
 def _triage_effort(): return _state_str("judge-effort", "")   # "" → pass NO --effort (the long-standing default)
 def _index_effort():  return _state_str("index-effort", "")
 def _judge_fast():    return _state_str("judge-fast", "") == "on"   # gear "Fast judging" → STATE/judge-fast
-INDEX_EFFORT_DEFAULT = "low"   # the index tier's cost lever on adaptive-thinking models (2026-09-01; see _judge_env)
+INDEX_EFFORT_DEFAULT = "low"   # the index tier's cost lever on models that take --effort (2026-09-01; see _judge_env)
+
+
+# Which models take `--effort` (and run adaptive thinking) is GENERATIONAL, not a family trait — read
+# from CLI 2.1.257's baked-in model catalog (2026-09-01): every Fable, Opus 4.6 and later and Sonnet 4.6
+# and later carry `effort` + `adaptive_thinking`; Sonnet 4.5, Opus 4.5 and older, every Haiku and every
+# claude-3 model carry neither, so `--effort` is silently ignored there and MAX_THINKING_TOKENS=0 is the
+# one lever that keeps their thinking off. The first cut of this lever keyed on family alone ("not
+# Haiku"), and an index tier pinned to Sonnet 4.5 — a pick the gear's version submenu offers — got an
+# ignored `--effort low` and full extended thinking: 3.5x the cost and 2.3x the latency of the env var,
+# measured. The rule below is the catalog's; a stranger gets the cost-safe answer, never a guess.
+_EFFORT_FLOOR = {"fable": (5, 0), "opus": (4, 6), "sonnet": (4, 6)}   # family -> first (major, minor) with it
+_MODEL_FAMILIES = ("fable", "opus", "sonnet", "haiku")   # haiku: no version in the catalog takes effort
+_UNKNOWN_MODEL_LOGGED = set()   # ids already announced as unplaceable (one stderr line each)
+
+
+def _model_family_version(model):
+    """(family, version) read off a model id or alias. `version` is a (major, minor) tuple for a
+    versioned id — `claude-opus-4-5`, `claude-fable-5-1`, a dated `claude-sonnet-4-5-20250929`, a
+    provider-prefixed `us.anthropic.claude-opus-4-6-…`, the 2024 shape `claude-3-5-sonnet-20241022`;
+    a `[1m]` context suffix or a Vertex `@date` is dropped first — None for a bare family alias
+    (`opus`, which the CLI resolves to the family's current head), and () when the family is named
+    but no version can be read. (None, None) when no family is recognized at all."""
+    m = re.sub(r"[\[@].*$", "", str(model or "").strip().lower())
+    toks = [t for t in re.split(r"[^a-z0-9]+", m) if t]
+    fi = next((i for i, t in enumerate(toks) if t in _MODEL_FAMILIES), None)
+    if fi is None:
+        return None, None
+    fam = toks[fi]
+    if toks == [fam]:
+        return fam, None
+    nums = []
+    for t in toks[fi + 1:]:                     # claude-opus-4-5[-20251101]: the version follows the family
+        if t.isdigit() and len(t) <= 2:
+            nums.append(int(t))
+        else:
+            break
+    if not nums:                                # claude-3-5-sonnet-20241022: the version precedes it
+        for t in reversed(toks[:fi]):
+            if t.isdigit() and len(t) <= 2:
+                nums.insert(0, int(t))
+            else:
+                break
+    if not nums:
+        return fam, ()
+    return fam, (nums[0], nums[1] if len(nums) > 1 else 0)
 
 
 def _adaptive_thinking(model):
-    """True for model families with adaptive thinking — every current family but Haiku. Derived from the
-    id or alias by FAMILY name, not a hardcoded id list: `haiku`, `claude-haiku-4-5` and any dated Haiku
-    id read as Haiku; fable/opus/sonnet aliases and their full ids read adaptive. Haiku is the one family
-    whose cost lever differs (thinking off), so it is the one the discriminator names."""
-    return "haiku" not in str(model or "").lower()
+    """True when `model` takes `--effort` and runs adaptive thinking — the models whose index-tier cost
+    lever is effort (_EFFORT_FLOOR: Fable, every version; Opus >= 4.6; Sonnet >= 4.6; a bare alias is
+    its family's current head, all past the floor; Haiku never). An id this cannot place — no family it
+    knows, or a family with no readable version — gets the COST-SAFE answer, False: the env var, which
+    every model honors that has thinking to turn off. Announced once per id on stderr, because guessing
+    "adaptive" for a stranger is exactly how the Sonnet 4.5 bill happened."""
+    fam, ver = _model_family_version(model)
+    if fam is None or ver == ():
+        if model not in _UNKNOWN_MODEL_LOGGED:
+            _UNKNOWN_MODEL_LOGGED.add(model)
+            sys.stderr.write("romp-judge: model %r is not one I can place (family + version) — the index "
+                             "tier runs it with thinking off (MAX_THINKING_TOKENS=0), the cost-safe lever, "
+                             "and passes no --effort; extend _EFFORT_FLOOR if it takes effort\n" % (model,))
+        return False
+    floor = _EFFORT_FLOOR.get(fam)
+    if floor is None:
+        return False
+    return True if ver is None else ver >= floor
 
 
 _FAST_MODELS = ("opus",)   # fast mode is an Opus-only research preview; the flag on any other model is
@@ -1033,19 +1091,22 @@ def _limit_clear():
 def _judge_env(tier, auth="login", model=None):
     """The subprocess env for ONE judge call. Drops the TMUX vars (so the child isn't taken for a live
     pane) and trips the Stop-hook recursion guard. For the INDEX tier it also applies the cost lever the
-    MODEL can take (2026-09-01, the Fable 5.1 guide): on HAIKU — no adaptive thinking — it disables
-    extended thinking (MAX_THINKING_TOKENS=0): the captioner + archiver do mechanical one-shot
-    summarization, where Haiku's default thinking is pure waste — a probe showed a ~385-token thinking
-    block emitted before a ~15-token caption (722 -> 24 output tokens, 7.1s -> 0.9s per call, ~92% cheaper,
-    identical caption). On every other family (Fable, Opus, Sonnet — adaptive thinking) the env var is
-    NOT set: Fable rejects thinking:disabled outright and Sonnet/Opus degrade under it, so their lever is
-    `--effort low` instead (_judge_run, INDEX_EFFORT_DEFAULT, the gear's Indexing effort pick overriding).
-    `model` is the call's model; None resolves the tier's configured pick (_index_model), so a bare
-    _judge_env("index") answers about the tier as configured rather than assuming Haiku. TRIAGE keeps
-    thinking on every model: the planner / closer / grouper / distiller make real placement + closure
-    judgments. Output is the expensive half (Haiku $5/Mtok out) AND the latency driver (~58 tok/s,
-    serial), so this is the captioner's biggest single lever — and it's what makes any future batching
-    latency-safe.
+    MODEL can take (2026-09-01): on a model WITHOUT adaptive thinking (Haiku, Sonnet 4.5, Opus 4.5 and
+    older — _adaptive_thinking, read from the CLI's catalog) it disables extended thinking
+    (MAX_THINKING_TOKENS=0): the captioner + archiver do mechanical one-shot summarization, where the
+    default thinking is pure waste — a Haiku probe showed a ~385-token thinking block emitted before a
+    ~15-token caption (722 -> 24 output tokens, 7.1s -> 0.9s per call, ~92% cheaper, identical caption).
+    On a model WITH adaptive thinking (Fable, Opus 4.6+, Sonnet 4.6+) the env var is NOT set, because
+    it is not a lever there: CLI 2.1.257 drops the thinking parameter for a model carrying its
+    `rejects_disabled_thinking` capability (Fable — the API refuses thinking:disabled on it), so on Fable
+    the var was a silent no-op and every "thinking-off" call ran FULL-COST adaptive thinking; the lever
+    those models do take is `--effort low` (_judge_run, INDEX_EFFORT_DEFAULT, the gear's Indexing effort
+    pick overriding). `model` is the call's model; None resolves the tier's configured pick
+    (_index_model), so a bare _judge_env("index") answers about the tier as configured rather than
+    assuming Haiku. TRIAGE keeps thinking on every model: the planner / closer / grouper / distiller make
+    real placement + closure judgments. Output is the expensive half (Haiku $5/Mtok out) AND the latency
+    driver (~58 tok/s, serial), so this is the captioner's biggest single lever — and it's what makes any
+    future batching latency-safe.
 
     `auth` is the call's resolved billing (_judge_auth). The ambient ANTHROPIC_API_KEY is stripped
     unconditionally — in the kernel process the SDK backend already claimed it out of os.environ, and
@@ -1060,8 +1121,9 @@ def _judge_env(tier, auth="login", model=None):
         env.pop(k, None)
     env["ROMP_SUMMARIZING"] = "1"                     # trips the Stop-hook recursion guard
     if tier == "index":
-        # Haiku's lever only (2026-09-01): no thinking for mechanical summarization. Every other
-        # family has adaptive thinking and takes `--effort` in _judge_run instead — never this var.
+        # The lever for a model without adaptive thinking (2026-09-01): no thinking for mechanical
+        # summarization. A model with it takes `--effort` in _judge_run instead — never this var,
+        # which the CLI ignores for Fable (see the docstring) and which the others don't need.
         if not _adaptive_thinking(model if model is not None else _index_model()):
             env["MAX_THINKING_TOKENS"] = "0"
     if auth == "key" and wk:
@@ -1167,10 +1229,12 @@ def _judge_run(model, sys_prompt, user, effort=None, judge=None, tier="triage", 
     #                                                   the MODEL decides the index tier's lever (below)
     # Per-tier effort from the gear (STATE/judge-effort | index-effort | distill-effort) when the caller
     # didn't pass one — "" or None means NO --effort flag, the long-standing default. An explicit caller
-    # effort (the plan A/B) still wins. The INDEX tier is the exception (2026-09-01): on an
-    # adaptive-thinking model its cost lever IS effort — INDEX_EFFORT_DEFAULT unless the gear's Indexing
-    # effort pick says otherwise — because thinking-off is rejected (Fable) or degrades (Sonnet/Opus)
-    # there; Haiku's lever is the env var _judge_env set, and it keeps the no-flag default.
+    # effort (the plan A/B) still wins. The INDEX tier is the exception (2026-09-01): on a model with
+    # adaptive thinking (Fable, Opus 4.6+, Sonnet 4.6+ — _adaptive_thinking) its cost lever IS effort —
+    # INDEX_EFFORT_DEFAULT unless the gear's Indexing effort pick says otherwise — because the
+    # thinking-off env var is a no-op the CLI drops on Fable (full-cost thinking, silently); a model
+    # without it (Haiku, Sonnet 4.5, Opus 4.5 and older) ignores --effort, so its lever is the env var
+    # _judge_env set, and it keeps the no-flag default.
     if effort is None:
         if tier == "index":
             effort = _index_effort() or (INDEX_EFFORT_DEFAULT if _adaptive_thinking(model) else "")
