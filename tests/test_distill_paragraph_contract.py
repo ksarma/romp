@@ -157,6 +157,27 @@ class DecisionListContract(unittest.TestCase):
                          "a finished goal's takeaway is an outcome, not a status story")
 
 
+class QuoteLineJoinsTheProtocol(unittest.TestCase):
+    """T218: the SOURCE protocol grows an optional supporting-span line — the prompts offer it in all
+    three judges' words (verbatim, under 25 words, omit when no single sentence carries it), and the
+    parser peels it in either order without disturbing the body or the SOURCE label."""
+
+    def test_all_three_prompts_offer_the_quote_line(self):
+        for name, sysp in (("distiller", jd.DISTILL_SYS), ("briefer", jd.BLOCK_BRIEF_SYS),
+                           ("staller", jd.STALL_BRIEF_SYS)):
+            self.assertIn("QUOTE:", sysp, name)
+            self.assertIn("copied", sysp, name + " — verbatim, never paraphrased")
+            self.assertIn("omit", sysp.lower(), name + " — optional by instruction, absent stays honest")
+
+    def test_parser_peels_quote_in_either_order(self):
+        b1, s1, q1 = jd._split_source('take.\nSOURCE: m2\nQUOTE: "the exact sentence"')
+        self.assertEqual((b1, s1, q1), ("take.", "m2", "the exact sentence"))
+        b2, s2, q2 = jd._split_source('take.\nQUOTE: "the exact sentence"\nSOURCE: m2')
+        self.assertEqual((b2, s2, q2), ("take.", "m2", "the exact sentence"))
+        b3, s3, q3 = jd._split_source("take.\nSOURCE: m2")
+        self.assertEqual((b3, s3, q3), ("take.", "m2", None))
+
+
 class ParserKeepsTheParagraphs(unittest.TestCase):
     """The reply parser is what has to survive the new shape: a takeaway is now MULTI-paragraph, the
     trailing SOURCE line still peels off around it, and a decorated label still parses."""
@@ -167,7 +188,7 @@ class ParserKeepsTheParagraphs(unittest.TestCase):
              "SOURCE: m4")
 
     def _parse(self, reply):
-        body, src = jd._split_source(reply)
+        body, src, _q = jd._split_source(reply)
         bg, take = jd._split_sections(body)
         return bg, take, src
 
