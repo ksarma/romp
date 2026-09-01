@@ -126,6 +126,15 @@ class CompactSuggest(unittest.TestCase):
         self.assertFalse(self._tick(450_000), "the recycle rule owns workers")
         self.assertEqual(self.sent, [])
 
+    def test_a_muted_session_is_never_suggested(self):
+        # the user's explicit per-session opt-out (hideFromFeed) — every sibling injector honors
+        # it; a routed review pass caught this tick missing the check (2026-09-01)
+        (jd.STATE / "session-flags.json").write_text(json.dumps({SID: {"hideFromFeed": True}}))
+        km._flags_cache.clear()
+        self.assertFalse(self._tick(450_000))
+        self.assertEqual(self.sent, [])
+        self.assertEqual(self._latched(), [], "…and the crossing stays armed, never spent")
+
     def test_a_comment_thread_fork_is_never_suggested(self):
         km._thread_reg = lambda sid: {"threadOf": "11111111-2222-3333-4444-ffffffffffff"}
         self.assertFalse(self._tick(450_000))

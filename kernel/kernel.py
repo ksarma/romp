@@ -4257,6 +4257,12 @@ def _compact_suggest_tick(sid, tm, now):
                 _write_auto_nudge(d)
             return False
     # exclusions + the idle gate, all AT FIRE TIME (never latch a fire that never went out):
+    if _session_flag(sid, "hideFromFeed"):
+        return False                                   # muted — the user's explicit per-session
+    #                                                    opt-out that every sibling injector honors
+    #                                                    (the nudge gate, the interrupt-block tick;
+    #                                                    a routed review caught this one missing,
+    #                                                    2026-09-01)
     if _worker_tag_member(sid):
         return False                                   # the recycle rule owns workers
     if _thread_reg(sid).get("threadOf"):
