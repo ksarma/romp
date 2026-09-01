@@ -647,16 +647,50 @@ class CommentOps(CommentBase):
         self.assertEqual(km._load_comments(PARENT).get("threads", []), [])
         self.assertEqual(self.be.calls, [])
 
-    def test_reply_reaches_the_thread_and_reopens_a_resolved_one(self):
+    def test_reply_reaches_an_open_thread(self):
+        _, tid = km._comment_create(PARENT, "a1", "exponential backoff", "Why?")
+        err = km._comment_reply(PARENT, tid, "one more question")
+        self.assertIsNone(err)
+        self.assertEqual(self.be.sent[-1], (tid, "one more question"))
+
+    def test_a_closed_thread_never_reopens(self):
+        # the user's standing rule (2026-09-01): a thread they closed stays on disk and is never
+        # revived — replying is refused with the reason (this retires the 2026-08-22/T145
+        # "replying IS the reopen gesture" arm, which resumed the CLI and flipped the row open)
         _, tid = km._comment_create(PARENT, "a1", "exponential backoff", "Why?")
         km._comment_resolve(PARENT, tid)
         self.assertEqual(km._comment_thread(PARENT, tid)["status"], "resolved")
-        self.assertIn(("kill", tid), self.be.calls)
+        n_sent = len(self.be.sent)
         err = km._comment_reply(PARENT, tid, "one more question")
+        self.assertTrue(err and "closed" in err, err)
+        self.assertNotIn(("resume", tid), self.be.calls, "nothing wakes a closed thread")
+        self.assertEqual(len(self.be.sent), n_sent, "nothing is delivered to it either")
+        self.assertEqual(km._comment_thread(PARENT, tid)["status"], "resolved", "the row stays closed")
+
+    def test_relaying_a_resolved_thread_keeps_it_closed(self):
+        # resolved -> relay -> reply must not become the reopen door the direct reply refuses
+        _, tid = km._comment_create(PARENT, "a1", "exponential backoff", "Why?")
+        km._comment_resolve(PARENT, tid)
+        saved = km._thread_messages
+        km._thread_messages = lambda tsid, cut, floor_t=0: [{"who": "user", "text": "the ask", "t": 5},
+                                                             {"who": "assistant", "text": "the answer", "t": 6}]
+        try:
+            self.assertIsNone(km._comment_merge(PARENT, tid))
+        finally:
+            km._thread_messages = saved
+        self.assertEqual(km._comment_thread(PARENT, tid)["status"], "resolved", "sent back, still closed")
+        err = km._comment_reply(PARENT, tid, "one more")
+        self.assertTrue(err and "closed" in err, err)
+
+    def test_a_relayed_thread_stays_talkable(self):
+        # T145 (the user 2026-08-28): a relay is NOT a close — the explicit reply continues the
+        # thread, so only RESOLVED threads fall under the never-reopen rule
+        _, tid = km._comment_create(PARENT, "a1", "exponential backoff", "Why?")
+        km._comment_update(PARENT, tid, status="merged")
+        err = km._comment_reply(PARENT, tid, "afterthought")
         self.assertIsNone(err)
-        self.assertIn(("resume", tid), self.be.calls, "replying IS the reopen gesture")
+        self.assertIn(("resume", tid), self.be.calls, "the reply is the explicit gesture that wakes it")
         self.assertEqual(km._comment_thread(PARENT, tid)["status"], "open")
-        self.assertEqual(self.be.sent[-1], (tid, "one more question"))
 
     def test_delete_interrupts_the_inflight_reply_before_the_kill(self):
         # deleting a thread mid-generation must STOP the work, not just its cue (the user 2026-08-17)

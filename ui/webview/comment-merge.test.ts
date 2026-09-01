@@ -33,9 +33,10 @@ test("relayed is a first-class status, and the thread STAYS TALKABLE", () => {
   assert.match(RENDER, /th\.status === "resolved" \|\| th\.status === "merged" \? " resolved" : ""/);
   // the composer invites the next message instead of declaring the thread done
   assert.match(RENDER, /Reply to continue — the discussion so far was relayed to the session…/);
-  // …and the kernel reopens a relayed thread on reply exactly like a resolved one
-  assert.match(KERNEL, /_comment_update_if\(parent_sid, tid, \("open", "resolved", "merged"\),\n\s*status="open"/);
-  assert.match(KERNEL, /if prior in \("resolved", "merged"\):/);
+  // …and the kernel reopens a relayed thread on reply. A RESOLVED thread no longer does (the user
+  // 2026-09-01: a thread they closed never reopens) — only the relayed status stays talkable (T223).
+  assert.match(KERNEL, /_comment_update_if\(parent_sid, tid, \("open", "merged"\),\n\s*status="open"/);
+  assert.match(KERNEL, /if prior == "merged":/);
 });
 
 test("the persistent sent-back marker sits at the relay's place in time and survives reopens", () => {
