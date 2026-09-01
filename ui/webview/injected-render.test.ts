@@ -6,7 +6,9 @@
 //   the romp mark + swirl above a gray bubble, the source prefix stripped for display):
 //     kernel-restart resume · rename ping · process-died notice · dead-background-tasks notice ·
 //     pr-watch landing family · generic watch family (markers added by T130) · auto/fork nudges ·
-//     multi-goal bundles · awaiting backstop · debt reminders · the retry message · goal check-ins
+//     multi-goal bundles · awaiting backstop · debt reminders · the retry message · goal check-ins ·
+//     the compaction suggestion (T207: person-voiced prose, but the ARRIVAL is the kernel's — a bare
+//     send rendered as the user's own blue bubble and the user ruled it must read system-injected)
 //   PERSON-VOICED BY DESIGN (no marker — they are written as the person's own words, per the
 //   2026-06-20 rule and the injected-voice test): typed follow-ups · the Continue gesture ·
 //   comment-thread openers · edit traces — these stay the user's blue. (Thread RELAYS moved to
@@ -33,6 +35,7 @@ test("every machine-voiced shape classifies 'romp' — the flag the markers set,
     { name: "generic watch", ev: { romp: true, md: "[romp] The condition you asked romp to watch now HOLDS…", tag: "watch" } },
     { name: "thread relay (T145)", ev: { romp: true, md: "I took a side discussion with another assistant about this passage…", tag: "relay" } },
     { name: "auto-nudge", ev: { romp: true, rompAuto: true, md: "Where does this stand?" } },
+    { name: "compaction suggestion (T207)", ev: { romp: true, md: "It's been quiet here for a while…" } },
     { name: "nudge button", ev: { romp: true, md: "Status update please?" } },
   ]) assert.equal(senderKind(shape.ev as never), "romp", shape.name + " wears the one machine treatment");
   // …and the romp flag OUTRANKS a tag: a tagged watch notice is romp's own voice, not a third party's
@@ -58,6 +61,14 @@ test("the visible source prefix strips for DISPLAY only, in the romp render bran
 
 test("the watch notices carry the marker at the injection site — no prose pattern-matching anywhere", () => {
   assert.match(KERNEL, /return body \+ "\\n\\n<!-- romp-injected --><!-- romp-system --><!-- romp-tag: pr-watch -->"/);
+  // T207: the compaction suggestion's send appends the injector tail (romp-note + injected + auto)
+  // right after the bare prose constant — the source pin that keeps it out of the blue-bubble class
+  assert.match(KERNEL, /COMPACT_SUGGEST_TEXT \+ "\\n\\n"\n\s+"<!-- romp-note:/);
+  const sugSend = KERNEL.slice(KERNEL.indexOf("COMPACT_SUGGEST_TEXT + "), KERNEL.indexOf("COMPACT_SUGGEST_TEXT + ") + 600);
+  assert.match(sugSend, /<!-- romp-injected -->/);
+  assert.ok(!sugSend.includes("<!-- romp-auto -->"),
+    "NOT romp-auto: that marker means auto-NUDGES and its gist says 'nudged for a status update' — " +
+    "injected alone gives the gray bubble with the prose's own first line as the gist");
   assert.match(KERNEL, /return body \+ "\\n\\n<!-- romp-injected --><!-- romp-system --><!-- romp-tag: watch -->"/);
   // the restart family already wore them
   assert.match(SDK, /<!-- romp-injected --><!-- romp-system -->\[romp\] The romp kernel restarted/);
