@@ -1280,33 +1280,76 @@ def read_sdk_defaults(state_dir: Path) -> dict:
         return {}
 
 
-def write_sdk_default(state_dir: Path, **fields) -> None:
-    """Merge {model?, effort?} into the remembered defaults (atomic tmp+rename). Only non-None keys passed
-    are touched, so remembering a model never clobbers the remembered effort and vice-versa."""
-    d = read_sdk_defaults(state_dir)
-    d.update({k: v for k, v in fields.items() if v is not None})
+_defaults_lock = threading.Lock()   # serializes the read-modify-writes below: the kernel thread (set_model, the
+#                                     parked-op replay) and the SDK loop thread (_revert_model) both write the file
+
+
+def _write_sdk_defaults(state_dir: Path, d: dict) -> None:
+    """The one writer: atomic tmp+rename. Callers hold _defaults_lock."""
     p = _defaults_path(state_dir)
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_suffix(".tmp")
     tmp.write_text(json.dumps(d))
     os.replace(tmp, p)
+
+
+def write_sdk_default(state_dir: Path, **fields) -> None:
+    """Merge {model?, effort?} into the remembered defaults (atomic tmp+rename). Only non-None keys passed
+    are touched, so remembering a model never clobbers the remembered effort and vice-versa."""
+    with _defaults_lock:
+        d = read_sdk_defaults(state_dir)
+        d.update({k: v for k, v in fields.items() if v is not None})
+        _write_sdk_defaults(state_dir, d)
 
 
 def restore_sdk_default(state_dir: Path, **fields) -> None:
     """Put remembered defaults BACK to captured prior values — the revert half of write_sdk_default, for a
     setter whose optimistic write the CLI then refused (set_model, review 2026-09-01). Here a None restores
     ABSENCE: the key is removed, where write_sdk_default would skip it and leave the refused value in place."""
-    d = read_sdk_defaults(state_dir)
-    for k, v in fields.items():
-        if v is None:
-            d.pop(k, None)
+    with _defaults_lock:
+        d = read_sdk_defaults(state_dir)
+        for k, v in fields.items():
+            if v is None:
+                d.pop(k, None)
+            else:
+                d[k] = v
+        _write_sdk_defaults(state_dir, d)
+
+
+def restore_sdk_default_if(state_dir: Path, key: str, held, prev) -> bool:
+    """The compare-and-swap form of restore_sdk_default (fixer round 4, 2026-09-01): put `key` back to
+    `prev` (None = absence) ONLY while the store still holds `held` — the value the reverting writer wrote.
+    The store is SHARED across sessions, so a refusal that lands after another session's accepted pick must
+    not roll that pick back: a writer whose evidence predates the diary stands down. Read fresh under the
+    lock; returns whether it wrote."""
+    with _defaults_lock:
+        d = read_sdk_defaults(state_dir)
+        if d.get(key) != held:
+            return False
+        if prev is None:
+            d.pop(key, None)
         else:
-            d[k] = v
-    p = _defaults_path(state_dir)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(".tmp")
-    tmp.write_text(json.dumps(d))
-    os.replace(tmp, p)
+            d[key] = prev
+        _write_sdk_defaults(state_dir, d)
+        return True
+
+
+def _cli_refusal(e: BaseException) -> bool:
+    """Did the CLI ANSWER a control request with an error — or did the answer never arrive? The SDK
+    (claude_agent_sdk 0.2.132, _internal/query.py) raises a BARE Exception for both, so the type alone says
+    nothing; the construction does:
+    - a CLI error response: `Exception(response["error"])`, built in the reader from the control_response
+      frame — exact Exception, no cause, the CLI's own text ("Unknown model: …"; "Unknown error" when the
+      frame carried none);
+    - no answer: `Exception("Control request timeout: <subtype>") from TimeoutError` when fail_after expires
+      — which is also how a request STRANDED by Query.close() ends, since close() cancels the reader without
+      resolving pending requests (a reconnect teardown does exactly that);
+    - a reader that dies fans ITS OWN exception (ProcessError, CLIJSONDecodeError, …) into every pending
+      request, and a client already disconnected raises CLIConnectionError — typed, never a bare Exception.
+    Verified by probe against the installed package (fixer round 4, 2026-09-01). Only the first is a verdict
+    on the VALUE; the others say nothing about it, and a setter must not revert on them."""
+    return (type(e) is Exception and e.__cause__ is None
+            and not str(e).startswith("Control request timeout"))
 
 
 _WORK_KEY: str | None = None   # process-lifetime stash; None = not yet claimed from the environment
@@ -2038,12 +2081,50 @@ class SdkSession:
             # reconnect re-asserted it. Revert every layer to what set_model captured (`prev`; a None
             # inside it means the key was absent) and ring the problems so the failed switch is
             # unmissable. The refresh below then re-reads the model the CLI actually kept.
-            if prev is not None:
-                self.backend._revert_model(self, prev)
-            self.backend._log("set_model (%s -> %s) refused by the SDK: %s: %s — the switch did NOT apply; "
-                              "the model reverted to %s"
-                              % (self.name, model, type(e).__name__, e,
-                                 (prev or {}).get("model") or "the account default"), problem=True)
+            #
+            # But only on a VERDICT (fixer round 4, 2026-09-01) — an exception here is one of three worlds:
+            # - SUPERSEDED: a newer pick owns chosen_model (this session picked again while the request
+            #   was out). This request's snapshots predate the diary — stand down entirely, ring nothing:
+            #   the user's later pick already answered whatever this one would have said.
+            # - NO ANSWER (_cli_refusal False: a timeout, a request stranded by a reconnect teardown, a
+            #   dead reader, a disconnected client) says nothing about the value. Reproduced: a model and
+            #   an effort picked mid-turn, parked, replayed back-to-back at turn end — set_model's request
+            #   went to the OLD CLI and set_effort's reconnect tore that client down with the answer
+            #   unread; the new connection ran the pick (--model rides _options) and 60s later the strand
+            #   timed out, the revert flipped every layer back to the previous model while the CLI ran the
+            #   new one, and the problems said the switch "did NOT apply" (false) — the registry/argv
+            #   divergence this whole change closes, re-minted, plus a false fallback card for a cheaper
+            #   prev. Leave the optimistic state (it IS what the next connect asserts) and say once, on
+            #   the log and not the ring, that the answer was lost. If the CLI had in fact refused and the
+            #   answer was lost, the next connect's --model fails LOUDLY through the launch-error path.
+            # - A REFUSAL: revert, ring, and tell the kernel to forget the pin it recorded (below).
+            picked = prev.get("picked") if prev else None
+            if prev is not None and self.chosen_model != picked:
+                self.backend._log("set_model (%s -> %s): the CLI answered (%s: %s) after a newer pick (%s) — "
+                                  "standing down; the newer pick owns every layer"
+                                  % (self.name, picked, type(e).__name__, e,
+                                     self.chosen_model or "the account default"), problem=False)
+            elif not _cli_refusal(e):
+                self.backend._log("set_model (%s -> %s): the CLI's answer was lost (%s: %s) — not a refusal; "
+                                  "the pick stands and the next connect asserts it"
+                                  % (self.name, picked if prev else model, type(e).__name__, e), problem=False)
+            else:
+                if prev is not None:
+                    self.backend._revert_model(self, prev)
+                self.backend._log("set_model (%s -> %s) refused by the SDK: %s: %s — the switch did NOT apply; "
+                                  "the model reverted to %s"
+                                  % (self.name, model, type(e).__name__, e,
+                                     (prev or {}).get("model") or "the account default"), problem=True)
+                # The kernel recorded a version as its family's pin BEFORE the CLI ruled (_note_model_pick
+                # at its choke point), and the revert above never reached that memory — so the family row
+                # kept sending the refused id and re-ringing this on every click. Class-level hook, the
+                # on_model_fallback idiom: the backend rules on the CLI's answer, the kernel owns the store.
+                hook = getattr(type(self.backend), "on_model_refused", None)
+                if hook and picked:
+                    try:
+                        hook(self.sid, picked)
+                    except Exception as e2:
+                        self.backend._log("model-pick forget (%s): %s" % (self.name, e2), problem=True)
         # Pull the real new name NOW rather than waiting for the next turn's assistant message — an idle
         # session the user switched but doesn't drive again would otherwise sit on the switching-dots
         # indefinitely (the user 2026-07-03). get_context_usage reports the current model, so this
@@ -5851,7 +5932,8 @@ class SdkBackend:
         reg = read_reg(self.state_dir, sid)
         if not reg:
             return False
-        prev = {"model": reg.get("model"), "default": read_sdk_defaults(self.state_dir).get("model")}   # None = absent
+        # None = absent; `picked` is the value the writes below hold, so the revert can compare-and-swap
+        prev = {"model": reg.get("model"), "default": read_sdk_defaults(self.state_dir).get("model"), "picked": value}
         write_sdk_default(self.state_dir, model=value)   # remember as the seed for the NEXT new session (the user 2026-06-27)
         s = self.sessions.get(sid)
         if s:
@@ -5881,18 +5963,31 @@ class SdkBackend:
         marker, the reg's `model` and sdk-defaults' `model` go back to `prev` — a None means the key was
         ABSENT, and absence is restored (a null would read as a pick, and a leftover refused value is the
         poison this exists to remove). Locked RMW on the reg, like _update_reg; the defaults file through
-        the same atomic rename write_sdk_default uses."""
-        sess.chosen_model = prev.get("chosen") or ""
-        sess._model_pending = ""
+        the same atomic rename write_sdk_default uses.
+
+        COMPARE-AND-SWAP per layer (fixer round 4, 2026-09-01): a layer goes back only while it still
+        holds the refused value — `prev["picked"]`, what set_model wrote. A refusal that lands after a
+        newer accepted pick (this session's next pick; another session's pick in the SHARED defaults
+        store) must not roll that pick back: a writer whose evidence predates the diary stands down.
+        A `prev` without `picked` (an older caller) reverts unconditionally, as before."""
+        cas = "picked" in prev
+        picked = prev.get("picked")
+        if not cas or sess.chosen_model == picked:
+            sess.chosen_model = prev.get("chosen") or ""
+            sess._model_pending = ""
         with self._reg_lock:
             reg = read_reg(self.state_dir, sess.sid) or {"sid": sess.sid}
-            if prev.get("model") is None:
-                reg.pop("model", None)
-            else:
-                reg["model"] = prev["model"]
-            reg["modelPending"] = False
-            write_reg(self.state_dir, sess.sid, reg)
-        restore_sdk_default(self.state_dir, model=prev.get("default"))
+            if not cas or reg.get("model") == picked:
+                if prev.get("model") is None:
+                    reg.pop("model", None)
+                else:
+                    reg["model"] = prev["model"]
+                reg["modelPending"] = False
+                write_reg(self.state_dir, sess.sid, reg)
+        if cas:
+            restore_sdk_default_if(self.state_dir, "model", picked, prev.get("default"))
+        else:
+            restore_sdk_default(self.state_dir, model=prev.get("default"))
 
     def _ack_cmd_chip(self, sid: str, command: str, disp: str, fsid) -> None:
         """Synthesize the INVOCATION atom the CLI never streams (it streams only the stdout confirmation)

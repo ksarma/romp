@@ -21,6 +21,7 @@ import urllib.request
 from http.server import ThreadingHTTPServer
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
+from unittest import mock
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
@@ -148,6 +149,64 @@ class PickMemory(unittest.TestCase):
         km._set_model_or_park(be, sid, "opus")
         self.assertEqual(km._model_picks().get("opus"), "claude-opus-4-8")
 
+    def _clients(self):
+        """Two fake connected pickers — a chat and a timeline client — on the kernel's live roster; the
+        frames they receive, decoded. Removed again in tearDown-order by the returned callable."""
+        got = {"chat": [], "timeline": []}
+        fakes = [{"app": app, "wid": "w1", "alive": True,
+                  "send": (lambda s, _a=app: got[_a].append(json.loads(s)))} for app in got]
+        with km._clients_lock:
+            km._clients.extend(fakes)
+
+        def drop():
+            with km._clients_lock:
+                km._clients[:] = [c for c in km._clients if c not in fakes]
+        self.addCleanup(drop)
+        return got
+
+    def test_a_pick_or_a_forget_tells_every_open_picker_to_re_read_models(self):
+        # (fixer round 4, 2026-09-01) both webviews read a family's `default` from a /models list
+        # fetched ONCE at page load and never refreshed, and nothing mutated it after a pick. So after
+        # Latest un-pinned a family on the kernel, the same tab's next family click still sent the
+        # stale pinned id and silently RE-PINNED; another dashboard's pick moved the default without
+        # this tab knowing. The kernel now emits a models frame whenever the pick memory CHANGES —
+        # event-keyed, never a poll — and every picker re-fetches on it.
+        got = self._clients()
+        km._note_model_pick("claude-opus-4-8")
+        for app in ("chat", "timeline"):
+            self.assertEqual([f["type"] for f in got[app]], ["models"], app)
+            self.assertIsInstance(got[app][0]["rev"], int)
+        rev = got["chat"][0]["rev"]
+        km._note_model_pick("claude-opus-4-8")            # write-on-change: nothing moved, nothing said
+        km._note_model_pick("opus")                        # an alias records nothing
+        km._forget_model_pick("sonnet")                    # no pin to forget
+        self.assertEqual(len(got["chat"]), 1)
+        km._forget_model_pick("opus")                      # the Latest gesture
+        self.assertEqual([f["type"] for f in got["chat"]], ["models", "models"])
+        self.assertEqual(got["chat"][1]["rev"], rev + 1, "a moving counter — a client can tell frames apart")
+        self.assertEqual(len(got["timeline"]), 2)
+
+    def test_a_refused_version_is_forgotten_only_while_it_is_still_the_pin(self):
+        # (fixer round 4, 2026-09-01) the CLI's refusal reaches the kernel through the backend's
+        # on_model_refused hook; the family's pin goes ONLY if it still holds the refused id — a newer
+        # accepted pin for the family is not this refusal's to touch (the stand-down doctrine).
+        got = self._clients()
+        sid = "11111111-2222-3333-4444-555555555555"
+        km._note_model_pick("claude-opus-4-8")
+        km._model_pick_refused(sid, "claude-opus-4-8")
+        self.assertEqual(km._model_picks(), {}, "the refused pin is forgotten")
+        self.assertEqual([f["type"] for f in got["chat"]], ["models", "models"], "…and the pickers hear it")
+        km._note_model_pick("claude-opus-4-8")
+        km._note_model_pick("claude-opus-4-7")             # the newer pick
+        km._model_pick_refused(sid, "claude-opus-4-8")     # the older one's refusal lands late
+        self.assertEqual(km._model_picks(), {"opus": "claude-opus-4-7"}, "the newer pin stands")
+        km._model_pick_refused(sid, "opus")                # an alias was never a pin: no-op
+        km._model_pick_refused(sid, "total-nonsense")
+        self.assertEqual(km._model_picks(), {"opus": "claude-opus-4-7"})
+        # the kernel installs the hook where it wires the fallback card — pinned like that one
+        src = inspect.getsource(km._sdk_locked)
+        self.assertIn("on_model_refused = staticmethod(_model_pick_refused)", src)
+
 
 class _ModelsServer(unittest.TestCase):
     """A kernel HTTP handler on a loopback port + a hermetic STATE, for the /models route tests."""
@@ -222,6 +281,22 @@ class ModelsRoute(_ModelsServer):
         self.assertEqual(be.calls, ["claude-opus-4-8", "opus"], "both reach the backend verbatim")
         rows = {m["value"]: m for m in self._models()["models"]}
         self.assertEqual(rows["opus"]["default"], "claude-opus-4-8", "the explicit pin survives the alias click")
+
+
+class RefusedPick(_ModelsServer):
+    """The CLI refused a version the picker recorded as its family's pin (fixer round 4, 2026-09-01)."""
+
+    def test_a_refused_version_pick_returns_the_family_default_to_the_alias(self):
+        class _BE:
+            def set_model(self, sid, value):
+                return True
+        sid = "11111111-2222-3333-4444-555555555555"
+        km._set_model_or_park(_BE(), sid, "claude-opus-4-8")
+        opus = next(m for m in self._models()["models"] if m["value"] == "opus")
+        self.assertEqual(opus["default"], "claude-opus-4-8", "recorded before the CLI rules, as designed")
+        km._model_pick_refused(sid, "claude-opus-4-8")      # the backend's hook, on the CLI's error
+        opus = next(m for m in self._models()["models"] if m["value"] == "opus")
+        self.assertEqual(opus["default"], "opus", "the family row sends the alias again — not the refused id")
 
 
 class LearnedVersions(_ModelsServer):
@@ -410,15 +485,58 @@ class AliasMigration(unittest.TestCase):
         self.assertEqual(err.getvalue(), "")
 
     def test_a_failed_read_withholds_the_marker_so_the_next_boot_retries(self):
-        # "returned" is not "succeeded" (the rewind migration's rule): a reg the pass could not read is
-        # a reg it did not migrate, so no marker is written and the pass re-arms at the next boot
-        (jd.STATE / "sdk" / "broken.json").write_text("{not json")
+        # "returned" is not "succeeded" (the rewind migration's rule): a reg the pass could not READ is
+        # a reg it did not migrate, so no marker is written and the pass re-arms at the next boot. A
+        # TRANSIENT failure — the file is there, this boot could not open it (fixer round 4: a garbled
+        # file is the other kind, see the next test).
+        self._reg("locked", model="claude-fable-5")
+        real = Path.read_text
+
+        def read_text(p, *a, **k):
+            if p.name == "locked.json":
+                raise PermissionError(13, "Permission denied", str(p))
+            return real(p, *a, **k)
         err = io.StringIO()
-        with contextlib.redirect_stderr(err):
+        with mock.patch.object(Path, "read_text", read_text), contextlib.redirect_stderr(err):
             n = km._model_alias_boot_pass()
         self.assertEqual(n, 4, "everything readable still migrates")
         self.assertFalse((jd.STATE / km.MODEL_ALIAS_MIGRATION_MARKER).exists())
         self.assertIn("no marker written", err.getvalue())
+        self.assertIn("locked.json", err.getvalue(), "the line names the file the next boot will retry")
+        self.assertEqual(self._read("locked")["model"], "claude-fable-5", "untouched — it will migrate when readable")
+
+    def test_a_garbled_store_is_named_loudly_and_never_withholds_the_marker(self):
+        # (fixer round 4, 2026-09-01) a file json.loads cannot parse holds no pin ANY reader can see —
+        # read_reg, read_sdk_defaults and the picks loader all return None/{} over it — so retrying
+        # over it can never migrate anything; yet the pass counted it a failure, never stamped, and
+        # re-floated every deliberate post-fix pin at every boot without ever naming the file. Garbage
+        # is PERMANENT: name the path loudly, treat it as nothing to migrate, and stamp.
+        (jd.STATE / "sdk" / "broken.json").write_text("{not json")
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            n = km._model_alias_boot_pass()
+        self.assertEqual(n, 4, "everything readable migrates")
+        self.assertTrue((jd.STATE / km.MODEL_ALIAS_MIGRATION_MARKER).exists(), "stamped — the pass is done")
+        self.assertIn("broken.json", err.getvalue(), "the garbled file is NAMED")
+        self.assertNotIn("no marker written", err.getvalue())
+        self.assertEqual((jd.STATE / "sdk" / "broken.json").read_text(), "{not json", "never rewritten by the pass")
+        # the same for a garbled defaults store, and the next boot is silent: the user's post-fix
+        # pin of a seed head stands (the very re-float the missing marker caused)
+        for p in list(jd.STATE.rglob("*.json")):
+            p.unlink()
+        (jd.STATE / "sdk-defaults.json").write_text("garbage")
+        self._reg("f", model="claude-fable-5")
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(km._model_alias_boot_pass(), 0, "the marker gates it")
+        self.assertEqual(err.getvalue(), "")
+        self.assertEqual(self._read("f")["model"], "claude-fable-5")
+        (jd.STATE / km.MODEL_ALIAS_MIGRATION_MARKER).unlink()
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(km._model_alias_boot_pass(), 1)
+        self.assertIn("sdk-defaults.json", err.getvalue())
+        self.assertTrue((jd.STATE / km.MODEL_ALIAS_MIGRATION_MARKER).exists())
 
     def test_the_pass_is_wired_into_main_before_the_backend_constructs(self):
         # the ordering IS the correctness (review 2026-09-01, unpinned before): the pass rewrites reg

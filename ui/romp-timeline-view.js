@@ -634,12 +634,22 @@ function laneDeviations(s) {
 // on load so _openMetaMenu keeps its reference; the lane picker appends its own 'Default' sentinel (not a model).
 const MODEL_CHOICES = [];
 const EFFORT_CHOICES = [];
-try {
-  if (typeof fetch !== 'undefined') fetch('/models', { cache: 'no-store' }).then((r) => r.json()).then((d) => {
-    if (Array.isArray(d.models)) { MODEL_CHOICES.length = 0; for (const m of d.models) MODEL_CHOICES.push(m); MODEL_CHOICES.push({ label: 'Default', value: 'default' }); }
-    if (Array.isArray(d.efforts)) { EFFORT_CHOICES.length = 0; for (const e of d.efforts) EFFORT_CHOICES.push(e); }
-  }).catch(() => {});
-} catch (e) {}
+// Loaded once at page load and RE-LOADED on the kernel's {type:"models"} frame (TimelinePanel.refreshModels,
+// the frame's arm in both boots): the pick memory moved — a version pinned, a family un-pinned by Latest, a
+// refused pin dropped, from any surface or dashboard — and a family's `default` is what its row SENDS, so
+// a list fetched once went stale the moment anything changed it (fixer round 4, 2026-09-01: after Latest
+// un-pinned a family, the lane's next family click sent the old pinned id and silently re-pinned). Refilled
+// IN PLACE so _openMetaMenu's reference holds. Event-keyed on the frame, never a poll.
+function loadModelChoices() {
+  try {
+    if (typeof fetch !== 'undefined') return fetch('/models', { cache: 'no-store' }).then((r) => r.json()).then((d) => {
+      if (Array.isArray(d.models)) { MODEL_CHOICES.length = 0; for (const m of d.models) MODEL_CHOICES.push(m); MODEL_CHOICES.push({ label: 'Default', value: 'default' }); }
+      if (Array.isArray(d.efforts)) { EFFORT_CHOICES.length = 0; for (const e of d.efforts) EFFORT_CHOICES.push(e); }
+    }).catch(() => {});
+  } catch (e) {}
+  return Promise.resolve();
+}
+loadModelChoices();
 // Is this menu entry the lane's CURRENT value? Effort matches exactly; the model var holds a display
 // name ("Opus 4.8"), so match on the leading word — same rule as the chat view's isCurrentMeta.
 function isCurrentMeta(kind, s, value) {
@@ -2434,6 +2444,9 @@ class TimelinePanel {
   }
 
   _closeMetaMenu() { if (this._metaMenu) { if (this._metaMenu._sub) this._metaMenu._sub.remove(); this._metaMenu.remove(); this._metaMenu = null; } }
+  // the kernel's models frame: the pick memory moved → re-read /models so the lane picker's family rows
+  // send the fresh default (see loadModelChoices; 2026-09-01). Returns the fetch promise for the tests.
+  refreshModels() { return loadModelChoices(); }
 
   // Where a drop-down should live and be measured: the tip's host document (the topmost same-origin
   // window — in the web shell that's the whole page, so a menu taller than the timeline band gets the
@@ -4970,4 +4983,4 @@ class TimelinePanel {
   body(s) { return s ? '<div class="b">' + s + '</div>' : ''; }
 }
 
-module.exports = { TimelinePanel, badgeFor, roundedPath, crossX, workAnchorOf, idleGaps, fmtSpan, dotLit, barLit, interpNow, shouldReanchorEdge, reanchorEdge, isFreshNowSample, barEndT, dragAxis, stripRompMarks, collapseRepeat, reqText, menuTop, offsetRect, laneDeviations, viewVisible, viewLabel, viewMoreCount, viewToggleMember, viewTagUnion, lensAll, lensToggle, lensVisible, lensLabel, timelineLens };
+module.exports = { TimelinePanel, badgeFor, roundedPath, crossX, workAnchorOf, idleGaps, fmtSpan, dotLit, barLit, interpNow, shouldReanchorEdge, reanchorEdge, isFreshNowSample, barEndT, dragAxis, stripRompMarks, collapseRepeat, reqText, menuTop, offsetRect, laneDeviations, viewVisible, viewLabel, viewMoreCount, viewToggleMember, viewTagUnion, lensAll, lensToggle, lensVisible, lensLabel, timelineLens, loadModelChoices, MODEL_CHOICES };

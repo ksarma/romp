@@ -503,6 +503,38 @@ test("the lane version submenu opens with a Latest row that clears the family's 
   assert.match(KERNEL, /_route_meta_command\(be, sid, cmd, client, floating=bool\(msg\.get\("floating"\)\)\)/);
 });
 
+test("executed: the lane picker's /models list re-fetches IN PLACE on the kernel's models frame (fixer round 4, 2026-09-01)", async () => {
+  // the list was fetched once at load and never refreshed, so after a Latest un-pin the lane's next
+  // family click sent the stale pinned id and silently re-pinned. loadModelChoices is the one loader
+  // (page load is its first call); refreshModels — the frame's arm in both boots — calls it again,
+  // and the array keeps its reference so _openMetaMenu reads the fresh `default`.
+  const { loadModelChoices, MODEL_CHOICES } = requireCjs(VIEW_PATH);
+  const realFetch = (globalThis as any).fetch;
+  let served: any = { models: [{ label: "Fable", value: "fable", default: "claude-fable-5", versions: [] }], efforts: [{ label: "High", value: "high" }] };
+  (globalThis as any).fetch = async () => ({ json: async () => served });
+  try {
+    const ref = MODEL_CHOICES;
+    await loadModelChoices();
+    assert.equal(MODEL_CHOICES, ref, "same array — the menu builder's reference");
+    assert.equal(MODEL_CHOICES[0].default, "claude-fable-5", "pinned");
+    assert.deepEqual(MODEL_CHOICES[MODEL_CHOICES.length - 1], { label: "Default", value: "default" }, "the lane's own sentinel still appended");
+    served = { models: [{ label: "Fable", value: "fable", default: "fable", versions: [] }], efforts: [] };
+    const p: any = Object.create(TimelinePanel.prototype);
+    await p.refreshModels();                       // what the models frame calls
+    assert.equal(MODEL_CHOICES, ref);
+    assert.equal(MODEL_CHOICES[0].default, "fable", "un-pinned: the next family click sends the alias");
+    assert.equal(MODEL_CHOICES.length, 2);
+  } finally {
+    (globalThis as any).fetch = realFetch;
+  }
+  // both boots dispatch the frame to it — the VS Code glue and the kernel's inline browser twin
+  const BOOT = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "timeline-boot.ts"), "utf8");
+  const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
+  assert.match(BOOT, /if \(m\.type === "models" && panel\.refreshModels\) \{ panel\.refreshModels\(\); return true; \}/);
+  assert.match(KERNEL, /else if\(m\.type==="models"&&panel\.refreshModels\)panel\.refreshModels\(\);/);
+  assert.match(SRC, /^loadModelChoices\(\);$/m, "page load is the first call");
+});
+
 test("the lane model menu exposes VERSIONS: submenu affordance, remembered default, keyboard (the user 2026-08-25)", () => {
   // families with >1 live version wear a side submenu — hover or ArrowRight reveals it, every
   // version directly pickable with the current-✓; clicking the family picks its remembered DEFAULT

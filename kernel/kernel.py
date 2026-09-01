@@ -827,6 +827,8 @@ MODEL_VERSIONS = {
 }
 _VERSION_FAMILY = {v["value"]: fam for fam, vs in MODEL_VERSIONS.items() for v in vs}   # the SEED's reverse map
 MODEL_PICKS_FILE_NAME = "model-picks.json"   # {family: full-id} — a viewer pref all surfaces read, like colormap
+_model_picks_lock = threading.Lock()   # its read-modify-writes run on the WS-handler, producer AND SDK-loop threads
+_models_rev = [0]                      # bumps on every pick-memory change; rides the models frame (_models_changed)
 # A first-party model id as the CLI reports it: family, major, optional minor. A -YYYYMMDD snapshot
 # date or a [1m] context tag may trail and is ignored (claude-fable-5-1, claude-opus-4-5-20251101).
 _MODEL_ID_RE = re.compile(r"^claude-([a-z]+)-(\d+)(?:-(\d+))?(?:-\d{8})?$")
@@ -935,6 +937,20 @@ def _model_picks(learned=None):
     return {f: v for f, v in d.items() if isinstance(v, str) and _version_family(v, learned) == f}
 
 
+def _models_changed():
+    """The pick memory MOVED — a version pinned, a family un-pinned (Latest), a refused pin dropped — so every
+    open picker's cached /models list is stale, and its `default` is what a family click SENDS. Tell the chat
+    and timeline clients now with a models frame (the palette frame's idiom; both re-fetch /models on it) —
+    event-keyed on the change itself, never a poll. A counter rides it so a client can tell frames apart.
+    (Fixer round 4, 2026-09-01: after Latest un-pinned a family on the kernel, the same tab's next family
+    click sent the STALE pinned id and silently re-pinned; a second dashboard's pick moved the default
+    without the first tab knowing.)"""
+    _models_rev[0] += 1
+    frame = {"type": "models", "rev": _models_rev[0]}
+    for app in ("chat", "timeline"):
+        _send_to_app(app, frame)
+
+
 def _note_model_pick(value):
     """Record a version pick as its family's new default (write-on-change). Family shorthands and
     unknown strings record nothing — they are not version picks — so a bare family click (which
@@ -945,36 +961,58 @@ def _note_model_pick(value):
     # Merge into the RAW file, never the filtered read: a pin whose reporting session is gone is
     # hidden on read (its family can't vouch for it right now), not erased on write — it resolves
     # again the moment any session reports the id (review 2026-09-01).
-    try:
-        picks = json.loads((jd.STATE / MODEL_PICKS_FILE_NAME).read_text())
-    except Exception:
-        picks = {}
-    picks = picks if isinstance(picks, dict) else {}
-    if picks.get(fam) == value:
-        return
-    picks[fam] = value
-    try:
-        _atomic_write(jd.STATE / MODEL_PICKS_FILE_NAME, json.dumps(picks))
-    except Exception:
-        sys.stderr.write("model-picks save: %s\n" % traceback.format_exc())
+    with _model_picks_lock:
+        try:
+            picks = json.loads((jd.STATE / MODEL_PICKS_FILE_NAME).read_text())
+        except Exception:
+            picks = {}
+        picks = picks if isinstance(picks, dict) else {}
+        if picks.get(fam) == value:
+            return
+        picks[fam] = value
+        try:
+            _atomic_write(jd.STATE / MODEL_PICKS_FILE_NAME, json.dumps(picks))
+        except Exception:
+            sys.stderr.write("model-picks save: %s\n" % traceback.format_exc())
+            return
+    _models_changed()
 
 
-def _forget_model_pick(fam):
+def _forget_model_pick(fam, only=None):
     """Drop a family's remembered pin, so /models falls back to the alias and a family click follows the
     CLI's newest again — the version submenu's "Latest" row (review 2026-09-01), an explicit user gesture
     carried as `floating` on the set op. Merges into the RAW file like _note_model_pick (other families'
-    pins, vouched-for or not, stay); a family with no pin is a no-op."""
-    try:
-        picks = json.loads((jd.STATE / MODEL_PICKS_FILE_NAME).read_text())
-    except Exception:
-        return
-    if not isinstance(picks, dict) or fam not in picks:
-        return
-    picks.pop(fam, None)
-    try:
-        _atomic_write(jd.STATE / MODEL_PICKS_FILE_NAME, json.dumps(picks))
-    except Exception:
-        sys.stderr.write("model-picks save: %s\n" % traceback.format_exc())
+    pins, vouched-for or not, stay); a family with no pin is a no-op. `only` (fixer round 4, 2026-09-01)
+    drops the pin only while it still holds that exact id — the refusal path's compare-and-swap, so a
+    late refusal never drops a NEWER pin the user has since accepted."""
+    with _model_picks_lock:
+        try:
+            picks = json.loads((jd.STATE / MODEL_PICKS_FILE_NAME).read_text())
+        except Exception:
+            return
+        if not isinstance(picks, dict) or fam not in picks:
+            return
+        if only is not None and picks.get(fam) != only:
+            return                                   # a newer pin — not this writer's to drop
+        picks.pop(fam, None)
+        try:
+            _atomic_write(jd.STATE / MODEL_PICKS_FILE_NAME, json.dumps(picks))
+        except Exception:
+            sys.stderr.write("model-picks save: %s\n" % traceback.format_exc())
+            return
+    _models_changed()
+
+
+def _model_pick_refused(sid, value):
+    """The SDK backend's on_model_refused hook (fixer round 4, 2026-09-01): the CLI ANSWERED a set_model with
+    an error, so `value` — recorded as its family's pin at the choke point, BEFORE the CLI ruled — is an id
+    the CLI will not run. Forget it, but only while it is still the pin (a newer accepted pick for the
+    family is not this refusal's to touch); the forget emits the models frame, so every picker's family
+    row stops sending the refused id instead of re-ringing the problem on each click. An alias or an
+    unknown string was never a pin: no-op."""
+    fam = _version_family(value)
+    if fam:
+        _forget_model_pick(fam, only=value)
 
 
 # The id a bare family click RECORDED before 2026-09-01 — each family's seed head as it stood then,
@@ -1010,7 +1048,13 @@ def _model_alias_boot_pass():
     `floating`) forgets the pin and sends the alias.
     Stamped only after a CLEAN pass — "returned" is not "succeeded": a store or reg the pass could not
     READ is one it did not migrate, so no marker is written and the pass re-arms at the next boot (an
-    absent file is nothing to migrate; a garbled one is a failure). Loud (one stderr line naming what
+    absent file is nothing to migrate). Two failures are not one (fixer round 4, 2026-09-01): a read the
+    OS refused is TRANSIENT — the file is there, this boot could not open it — and withholds the marker;
+    a file json.loads cannot parse is PERMANENT garbage — it holds no pin ANY reader can see (read_reg,
+    read_sdk_defaults and the picks loader all return None/{} over it), so retrying over it could never
+    migrate anything, and counting it a failure withheld the marker forever and re-floated every
+    deliberate post-fix pin at every boot without ever naming the file. Garbage is named loudly, by
+    path, and treated as nothing to migrate; the marker still lands. Loud (one stderr line naming what
     moved, nothing when nothing did) and blind to any non-head value — an explicit legacy pin, or a
     post-fix head such as claude-fable-5-1, stands. Runs before the SDK backend constructs, which is
     when regs become chosen_model (main()'s ordering, pinned by test); a rewrite lost to a concurrent
@@ -1024,15 +1068,24 @@ def _model_alias_boot_pass():
     fails = 0
 
     def _load(p):
-        # a dict (or whatever the file holds) — None for an ABSENT file (nothing to migrate) and for an
-        # UNREADABLE one, which also counts as a failure: it withholds the marker so the next boot retries
+        # a dict (or whatever the file holds) — None for an ABSENT file (nothing to migrate), for one the
+        # OS would not let us READ (transient: counted, named, withholds the marker so the next boot
+        # retries) and for one that is not JSON (permanent: named, nothing to migrate, never counted)
         nonlocal fails
         try:
-            return json.loads(p.read_text())
+            text = p.read_text()
         except FileNotFoundError:
             return None
-        except (OSError, ValueError):
+        except OSError as e:
             fails += 1
+            sys.stderr.write("romp-kernel: model-alias migration: could not read %s (%s) — retrying next "
+                             "boot\n" % (p, e))
+            return None
+        try:
+            return json.loads(text)
+        except ValueError as e:
+            sys.stderr.write("romp-kernel: model-alias migration: %s is not JSON (%s) — no reader can see a "
+                             "pin in it, so there is nothing there to migrate; left as is\n" % (p, e))
             return None
     p = jd.STATE / "sdk-defaults.json"
     d = _load(p)
@@ -9199,6 +9252,9 @@ def _sdk_locked():
             # observes the transition; the judge store owns the card; the kernel wires the two
             type(_sdk_backend).on_model_fallback = staticmethod(
                 lambda sid, frm, to: (jd.mint_fallback_card(sid, frm, to), _push_soon()))
+            # a version the CLI REFUSED must leave the pick memory too (fixer round 4, 2026-09-01): the
+            # backend rules on the CLI's answer, the kernel owns model-picks.json — the same wiring shape
+            type(_sdk_backend).on_model_refused = staticmethod(_model_pick_refused)
             # The judge parses the SAME cut world the display parse does (jd._PENDING_CUT_FN): during
             # an armed bare rollback the planner must not see — and mint from — the deleted tail.
             # getattr-guarded like every other backend probe (a test fake without the affordance
@@ -28682,6 +28738,7 @@ else if(m.type==="hover"&&panel.setHover)panel.setHover(m);
 // this inline copy serves the browser, that one the VS Code webview. net-popover-known.test.ts's sibling
 // timeline-boot.test.ts pins the pair.
 else if(m.type==="revealEvent"&&panel.revealEvent)panel.revealEvent(m.sid,m.t,m.id);
+else if(m.type==="models"&&panel.refreshModels)panel.refreshModels();
 else if(m.type==="tagEditFailed"&&panel.tagEditFailed)panel.tagEditFailed(m);
 else if(m.type==="openViewsDialog"&&panel._openViewsDialog)panel._openViewsDialog(null);});
 window.__rompTimelineOpenExternal=function(url){try{var u=new URL(url);if(u.protocol==="vscode:"){var q=u.searchParams;

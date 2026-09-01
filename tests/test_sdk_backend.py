@@ -1272,7 +1272,7 @@ class SetModelModePure(unittest.TestCase):
 
         class _RefusingClient:
             async def set_model(self, model=None):
-                raise RuntimeError("Unknown model: %s" % model)
+                raise Exception("Unknown model: %s" % model)   # the SDK's shape for a CLI error response (_cli_refusal)
 
             async def get_context_usage(self):
                 return {"percentage": 3, "model": "claude-opus-4-8"}       # the CLI stayed where it was
@@ -1309,7 +1309,7 @@ class SetModelModePure(unittest.TestCase):
 
         class _RefusingClient:
             async def set_model(self, model=None):
-                raise RuntimeError("Unknown model: %s" % model)
+                raise Exception("Unknown model: %s" % model)
 
             async def get_context_usage(self):
                 return {"percentage": 3, "model": "claude-fable-5-1"}
@@ -1322,6 +1322,201 @@ class SetModelModePure(unittest.TestCase):
         self.assertNotIn("model", sb.read_sdk_defaults(self.d))
         self.assertEqual(sess.chosen_model, "")
         self.assertEqual(sb.read_reg(self.d, sid)["liveModel"], "Fable 5.1", "the badge shows what the CLI runs")
+
+    # ── refusal vs no-answer (fixer round 4, 2026-09-01) ──────────────────────────────────────────
+    # The installed SDK (claude_agent_sdk 0.2.132, _internal/query.py) raises a BARE Exception for
+    # two different worlds: the CLI ANSWERED a control request with an error (`Exception(response
+    # ["error"])`, built from the control_response frame — no cause), and the answer NEVER CAME
+    # (`Exception("Control request timeout: set_model") from TimeoutError` after fail_after; Query.close()
+    # cancels the reader without resolving pending requests, so a request stranded by a reconnect
+    # teardown ends the same way). A reader that dies re-raises ITS OWN typed error into every pending
+    # request; a disconnected client raises CLIConnectionError. Verified by probe against the
+    # installed package, 2026-09-01. The fakes below reproduce those exact shapes.
+
+    def _live(self, prior="opus", live="Opus 4.8"):
+        sid = self.be.spawn("m", self.d)
+        if prior:
+            self.assertTrue(self.be.set_model(sid, prior))
+        sess = sb.SdkSession(self.be, sb.read_reg(self.d, sid))
+        sess.model = live
+        self.be.sessions[sid] = sess
+        scheduled = []
+        sess.set_model_live = lambda model, prev=None: scheduled.append((model, prev))
+        return sid, sess, scheduled
+
+    def test_the_refusal_discriminator_matches_the_installed_sdks_shapes(self):
+        refusal = Exception("Unknown model: claude-fable-9-9")                 # control_response subtype=error
+        self.assertTrue(sb._cli_refusal(refusal))
+        self.assertTrue(sb._cli_refusal(Exception("Unknown error")), "the SDK's default text when the CLI's error is empty")
+        try:
+            raise Exception("Control request timeout: set_model") from TimeoutError()   # fail_after expired / stranded
+        except Exception as e:
+            self.assertFalse(sb._cli_refusal(e), "a timeout is no answer")
+        self.assertFalse(sb._cli_refusal(Exception("Control request timeout: set_model")),
+                         "…even read without its cause: the prefix alone says no answer")
+
+        class ProcessError(Exception):                                          # a typed SDK error the dying reader
+            pass                                                                # fans out to pending requests
+        self.assertFalse(sb._cli_refusal(ProcessError("exit 1")), "a reader death is no answer")
+        self.assertFalse(sb._cli_refusal(RuntimeError("stream broke")))
+
+    def test_a_lost_answer_is_not_a_refusal_the_pick_stands_and_nothing_rings(self):
+        # (fixer round 4, 2026-09-01) the reproduced strand: a model AND an effort picked while the
+        # session worked, both parked, replayed back-to-back at turn end — set_model's control request
+        # went to the OLD CLI and set_effort's reconnect tore that client down with the answer unread.
+        # The NEW connection came up with --model <new> (chosen_model rides _options) and ran it; 60s
+        # later the stranded request timed out and the revert flipped chosen_model, the reg and
+        # sdk-defaults back to the PREVIOUS model while the CLI ran the new one — the registry/argv
+        # divergence this branch exists to close, re-minted, plus a false "did NOT apply" problem and,
+        # for a cheaper prev, a false model-fallback card at the next reconnect.
+        sid, sess, scheduled = self._live()
+        logs = []
+        self.be._log_cb = logs.append
+
+        class _NeverAnswers:
+            async def set_model(self, model=None):
+                raise Exception("Control request timeout: set_model") from TimeoutError()
+
+            async def get_context_usage(self):
+                return {"percentage": 3, "model": "claude-fable-5-1"}    # the reconnect runs the pick
+        sess.client = _NeverAnswers()
+        self.assertTrue(self.be.set_model(sid, "fable"))
+        asyncio.run(sess._do_set_model(*scheduled[0]))
+        self.assertEqual(sess.chosen_model, "fable", "the pick stands — the next connect's _options asserts it")
+        self.assertEqual(sb.read_reg(self.d, sid)["model"], "fable", "the reg (the reconnect's --model) keeps the pick")
+        self.assertEqual(sb.read_sdk_defaults(self.d).get("model"), "fable", "so does the seed for future sessions")
+        self.assertEqual(self.be.problems(), [], "a lost answer is not a failed switch — nothing rings")
+        lost = [m for m in logs if "set_model" in m and "fable" in m]
+        self.assertEqual(len(lost), 1, "one line says the answer was lost")
+        self.assertNotIn("refused", lost[0])
+        self.assertNotIn("did NOT apply", lost[0])
+        self.assertIn("lost", lost[0])
+        # the same for a client that was already disconnected when the request was made (the SDK's
+        # typed CLIConnectionError), and for a reader death fanned out to the pending request
+        for exc in (type("CLIConnectionError", (Exception,), {})("Not connected. Call connect() first."),
+                    type("ProcessError", (Exception,), {})("Command failed with exit code 1")):
+            sid2, sess2, sched2 = self._live()
+
+            class _Typed:
+                async def set_model(self, model=None, _e=exc):
+                    raise _e
+
+                async def get_context_usage(self):
+                    return {"percentage": 3, "model": "claude-sonnet-4-6"}
+            sess2.client = _Typed()
+            self.assertTrue(self.be.set_model(sid2, "sonnet"))
+            asyncio.run(sess2._do_set_model(*sched2[0]))
+            self.assertEqual(sess2.chosen_model, "sonnet", type(exc).__name__)
+            self.assertEqual(sb.read_reg(self.d, sid2)["model"], "sonnet", type(exc).__name__)
+        self.assertEqual(self.be.problems(), [])
+
+    def test_a_refusal_landing_after_a_newer_pick_stands_down_entirely(self):
+        # (fixer round 4, 2026-09-01) same session, A then B: A's control request answers late with the
+        # CLI's error AFTER B was accepted. _revert_model wrote A's captured snapshots back
+        # unconditionally, so the ACCEPTED pick B rolled back to the pre-A model in every layer while
+        # the CLI ran B. Repo doctrine: a writer whose evidence predates the diary stands down.
+        sid, sess, scheduled = self._live()
+
+        class _Client:
+            def __init__(self):
+                self.b_done = asyncio.Event()
+                self.accepted = None
+
+            async def set_model(self, model=None):
+                if model == "claude-fable-9-9":          # pick A — the CLI answers with an error, late
+                    await self.b_done.wait()
+                    raise Exception("Unknown model: %s" % model)
+                self.accepted = model                    # pick B — accepted at once
+                self.b_done.set()
+
+            async def get_context_usage(self):
+                return {"percentage": 3, "model": "claude-sonnet-4-6"}
+        self.assertTrue(self.be.set_model(sid, "claude-fable-9-9"))     # A: prev = opus
+        self.assertTrue(self.be.set_model(sid, "sonnet"))               # B: prev = A
+        self.assertEqual(sb.read_reg(self.d, sid)["model"], "sonnet")
+
+        async def drive():
+            cl = _Client()
+            sess.client = cl
+            ta = asyncio.ensure_future(sess._do_set_model(*scheduled[0]))   # one task per pick, as set_model_live does
+            tb = asyncio.ensure_future(sess._do_set_model(*scheduled[1]))
+            await asyncio.gather(ta, tb)
+            return cl
+        cl = asyncio.run(drive())
+        self.assertEqual(cl.accepted, "sonnet")
+        self.assertEqual(sess.chosen_model, "sonnet", "B stands: the late refusal of A owns nothing any more")
+        self.assertEqual(sb.read_reg(self.d, sid)["model"], "sonnet")
+        self.assertEqual(sb.read_sdk_defaults(self.d).get("model"), "sonnet")
+        self.assertEqual(self.be.problems(), [], "a superseded refusal is not the user's problem — B applied")
+
+    def test_a_revert_leaves_a_layer_a_newer_writer_holds(self):
+        # (fixer round 4, 2026-09-01) the cross-session twin: sdk-defaults.json is SHARED. S1 picks X
+        # (later refused); S2 — dormant, no CLI to refuse — picks Y, which lands in the defaults as
+        # every set_model does. X's refusal then restored S1's captured default over Y. Each layer
+        # reverts only while it still holds the refused value (compare-and-swap).
+        s1, sess1, sched1 = self._live()
+        s2 = self.be.spawn("two", self.d)
+        self.assertTrue(self.be.set_model(s1, "claude-fable-9-9"))     # X: captures default = opus
+        self.assertTrue(self.be.set_model(s2, "haiku"))                # Y: defaults.model = haiku
+        self.assertEqual(sb.read_sdk_defaults(self.d).get("model"), "haiku")
+
+        class _Refusing:
+            async def set_model(self, model=None):
+                raise Exception("Unknown model: %s" % model)
+
+            async def get_context_usage(self):
+                return {"percentage": 3, "model": "claude-opus-4-8"}
+        sess1.client = _Refusing()
+        asyncio.run(sess1._do_set_model(*sched1[0]))
+        self.assertEqual(sess1.chosen_model, "opus", "S1's own layers revert — they still held X")
+        self.assertEqual(sb.read_reg(self.d, s1)["model"], "opus")
+        self.assertEqual(sb.read_sdk_defaults(self.d).get("model"), "haiku", "S2's newer default survives")
+        self.assertEqual(sb.read_reg(self.d, s2)["model"], "haiku")
+        self.assertEqual(len(self.be.problems()), 1, "S1's refusal is still loud")
+
+    def test_a_real_refusal_tells_the_kernel_to_forget_the_pick_a_lost_or_superseded_one_does_not(self):
+        # (fixer round 4, 2026-09-01) the kernel records a version as its family's pin BEFORE the CLI
+        # rules (_set_model_or_park → _note_model_pick), and the revert never reached that memory: after
+        # a refusal the family row kept sending the refused id, re-ringing the problem on every click.
+        # The backend now tells the kernel through a class-level hook, the on_model_fallback idiom —
+        # on a REAL refusal only.
+        calls = []
+        type(self.be).on_model_refused = staticmethod(lambda sid, value: calls.append((sid, value)))
+        try:
+            sid, sess, scheduled = self._live()
+
+            class _Refusing:
+                async def set_model(self, model=None):
+                    raise Exception("Unknown model: %s" % model)
+
+                async def get_context_usage(self):
+                    return {"percentage": 3, "model": "claude-opus-4-8"}
+            sess.client = _Refusing()
+            self.assertTrue(self.be.set_model(sid, "claude-fable-9-9"))
+            asyncio.run(sess._do_set_model(*scheduled[0]))
+            self.assertEqual(calls, [(sid, "claude-fable-9-9")], "the refused id, as the kernel recorded it")
+            # a lost answer: no call
+            sid2, sess2, sched2 = self._live()
+
+            class _Lost:
+                async def set_model(self, model=None):
+                    raise Exception("Control request timeout: set_model") from TimeoutError()
+
+                async def get_context_usage(self):
+                    return {"percentage": 3, "model": "claude-fable-5-1"}
+            sess2.client = _Lost()
+            self.assertTrue(self.be.set_model(sid2, "claude-fable-5-1"))
+            asyncio.run(sess2._do_set_model(*sched2[0]))
+            self.assertEqual(len(calls), 1, "a lost answer forgets nothing")
+            # a superseded refusal: no call either — the newer pick owns the memory
+            sid3, sess3, sched3 = self._live()
+            sess3.client = _Refusing()
+            self.assertTrue(self.be.set_model(sid3, "claude-fable-9-9"))
+            self.assertTrue(self.be.set_model(sid3, "claude-sonnet-4-6"))
+            asyncio.run(sess3._do_set_model(*sched3[0]))
+            self.assertEqual(len(calls), 1, "a superseded refusal stands down from the memory too")
+        finally:
+            del type(self.be).on_model_refused
 
     def test_set_model_and_effort_on_a_dormant_session_leave_an_acknowledgment_chip(self):
         # (review, 2026-09-01) a composer "/model X" on a LIVE session lands the synthesized command

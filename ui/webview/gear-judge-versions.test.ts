@@ -62,3 +62,17 @@ test("the gear's version submenu opens with a Latest row that sends the bare fam
   assert.match(GEAR, /latest\.addEventListener\('click', function \(e2\) \{ e2\.stopPropagation\(\); pick\(fam\.value\); \}\)/);
   assert.match(GEAR, /sub\.appendChild\(latest\);[\s\S]{0,300}versions\.forEach\(function \(v\)/, "heads the submenu, ahead of the versions");
 });
+
+test("the gear's cached /models list re-reads on the kernel's models frame (fixer round 4, 2026-09-01)", () => {
+  // fillChoices caches the list after its first fetch and the family rows send `fam.default` from
+  // that cache at click time — so a pin or a Latest un-pin made anywhere (this dashboard's chat
+  // picker, another dashboard) left the gear's family rows sending a stale default. Event-keyed on
+  // the kernel's models frame, like the settingStale listener beside it; never a poll. Only the
+  // cache moves — re-filling the <option> sets would reset the selects' values.
+  assert.match(GEAR, /if \(!m \|\| m\.type !== 'models'\) return;/);
+  const at = GEAR.indexOf("m.type !== 'models'");
+  const seg = GEAR.slice(at, at + 400);
+  assert.ok(seg.includes("fetch(ku('/models'), { cache: 'no-store' })"), "the same endpoint fillChoices reads");
+  assert.ok(seg.includes("if (d && Array.isArray(d.models)) choices = d;"), "replaces the cache the rows read at click time");
+  assert.ok(!seg.includes("innerHTML"), "the option sets are left alone");
+});

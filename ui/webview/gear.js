@@ -800,6 +800,17 @@ function initGear(post) {
       return choices;
     }).catch(function () { return null; });
   }
+  // The kernel's models frame (fixer round 4, 2026-09-01): the pick memory moved — a version pinned, a
+  // family un-pinned by Latest, a refused pin dropped, from any surface or dashboard — so the cached
+  // list's `default` (what a family row SENDS, read from `choices` at click time) is stale. Re-read on
+  // the event, like the settingStale listener below; never a poll. Only the cache moves: re-filling the
+  // <option> sets would reset the selects' values while the modal is up.
+  window.addEventListener('message', function (e) {
+    var m = e.data;
+    if (!m || m.type !== 'models') return;
+    fetch(ku('/models'), { cache: 'no-store' }).then(function (r) { return r.json(); })
+      .then(function (d) { if (d && Array.isArray(d.models)) choices = d; }).catch(function () {});
+  });
   function lv() { var t = document.querySelector('script[src*="feed.js"]');
     var m = t && t.getAttribute('src').match(/[?&]v=(\d+)/); return m ? +m[1] : 0; }
   function clearAutoNudgeSplit() {
