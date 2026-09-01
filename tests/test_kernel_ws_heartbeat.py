@@ -114,7 +114,7 @@ class BuildDriftBanner(unittest.TestCase):
                       "embedded pane routes build drift to the shell banner, tagged so it words it as a BUILD")
         self.assertIn('selfBar("A newer romp build is available.","build")', js,
                       "standalone page self-injects the same reload bar")
-        self.assertIn("var buildRaised=false,freshPending=false;", js)   # latched: one prompt per page life
+        self.assertIn("var buildRaised=false,freshPending=false,restartAnnounced=0;", js)   # latched: one prompt per page life (T217 added the announced-restart latch to the line)
         #                                    (freshPending rides along: the CONN prompt's self-retire, 2026-08-01)
 
     def test_every_pane_page_passes_its_version_to_the_shim(self):
