@@ -999,8 +999,8 @@ class FileAdapter:
         salvage because the text landed on SOME branch. Net: the reply vanished from the chat,
         the judges read the turn as reply-less, and the model's own memory of it died at the
         next transcript reload (two incidents verified at transcript level; the shape reaches
-        back to at least mid-Aug 2026). The CLI's flush is the root cause; this re-attach makes
-        the parse immune regardless.
+        back to at least mid-Aug 2026). The CLI's flush is the root cause, filed as
+        anthropics/claude-code#91113; this re-attach makes the parse immune regardless.
 
         The bypass carries an exact event signature, machine-made by construction: the
         ACTIVE-SPINE child of the fork is a system/api_error record. A real user rewind forks at
@@ -1012,12 +1012,23 @@ class FileAdapter:
         do not (2,035 parallel tool-call stubs, 700 superseded assistant retries, 42 genuine
         user-gesture rollbacks, 32 other), zero overlap.
 
-        Re-attach = splice back the branch's own leaf chain: from the branch's maximal-seq
-        record (the leaf the CLI would have kept had the flush not hijacked it) walked rootward
-        to the fork, verdict "reattached". Mirroring the active spine's own rule, parallel
-        tool-call stubs INSIDE the branch stay "rewind" exactly as their on-spine twins do; the
-        chain head must be an assistant record (all corpus matches are; a user-gesture branch
-        head never is) or the whole fork stands down. A LATER genuine rollback past the fork
+        Re-attach = splice back ONE linear chain of the branch component, leaf walked rootward
+        to the fork, verdict "reattached". A fork can hold SIBLING rewound chains (a stub pair
+        parented at the fork, a second flushed burst chained from it), so selection reads the
+        chains' PROPERTIES, never the CLI's byte order of writes — nothing contracts the order
+        the CLI flushes its buffers in, and keying on the component's single max-seq record let
+        whichever chain happened to be written last steal the splice (a late-written stub pair
+        re-attached INSTEAD of the reply) or veto it (a late-written second burst failed the
+        head check and stood the whole fork down, silently keeping the pre-fix data loss). The
+        selected chain is the max-seq chain whose HEAD is an assistant record AND which carries
+        reply text — the two properties every corpus match has (a user-gesture branch head is
+        never assistant; a stub chain never carries text) — and the fork stands down only when
+        NO chain qualifies. Two qualifying chains at one fork are unobserved in the corpus
+        (every incident fork holds exactly one text-bearing assistant chain); the max-seq
+        tiebreak is deliberate: the latest write is the CLI's final word on that turn, and it
+        is the same chain the pre-fix walk picked when only one existed. Mirroring the active
+        spine's own rule, parallel tool-call stubs INSIDE the selected chain's component stay
+        "rewind" exactly as their on-spine twins do. A LATER genuine rollback past the fork
         re-points the active spine through the user's own record, the signature stops matching,
         and the branch drops again — the user's gesture outranks this salvage by construction."""
         rew = {u for u, v in verdict.items() if v == "rewind"}
@@ -1033,6 +1044,9 @@ class FileAdapter:
             p = self.parent_of.get(u)
             if p in active:
                 forks.setdefault(p, []).append(u)
+        landed = None                     # text-bearing assistant uuids (the reply witness) — computed
+        #                                   lazily: stub forks are everywhere, api_error bypasses rare,
+        #                                   and chain_verdicts runs on every build of a held session
         for F, heads in forks.items():
             spine_next = next((c for c in children.get(F, ()) if c in active), None)
             if spine_next is None:
@@ -1040,6 +1054,8 @@ class FileAdapter:
             r0 = self.by_uuid.get(spine_next) or {}
             if r0.get("type") != "system" or r0.get("subtype") != "api_error":
                 continue                  # no machine witness → stub / superseded retry / user fork: stays dropped
+            if landed is None:
+                landed = self.landed_text_uuids()
             comp, stack = set(), list(heads)
             while stack:                  # the branch component: child-closure of the rewound heads
                 x = stack.pop()
@@ -1047,16 +1063,26 @@ class FileAdapter:
                     continue
                 comp.add(x)
                 stack.extend(children.get(x, ()))
-            tip = max(comp, key=lambda x: self.seq_of.get(x, 0))
-            chain, cu = [], tip           # the branch's own leaf->fork chain, the part that re-attaches
-            while cu is not None and cu != F and cu in comp:
-                chain.append(cu)
-                cu = self.parent_of.get(cu)
-            if cu != F or not chain:
-                continue                  # unwalkable shape — leave it classified as it was
-            if (self.by_uuid.get(chain[-1]) or {}).get("type") != "assistant":
-                continue                  # the head isn't a streamed reply record → stand the fork down
-            for u in chain:
+            best = None                   # (max-seq key, chain): the qualifying chain that re-attaches
+            for leaf in comp:             # one candidate chain per component leaf
+                if any(c in comp for c in children.get(leaf, ())):
+                    continue              # interior record — its leaf's walk covers it
+                chain, cu = [], leaf      # this sibling chain's own leaf->fork walk
+                while cu is not None and cu != F and cu in comp:
+                    chain.append(cu)
+                    cu = self.parent_of.get(cu)
+                if cu != F or not chain:
+                    continue              # unwalkable shape — leave it classified as it was
+                if (self.by_uuid.get(chain[-1]) or {}).get("type") != "assistant":
+                    continue              # head isn't a streamed reply record (a user gesture, a burst)
+                if not any(u in landed for u in chain):
+                    continue              # no reply text anywhere on the chain → a stub pair, not a reply
+                key = (max(self.seq_of.get(x, 0) for x in chain), self.seq_of.get(leaf, 0))
+                if best is None or key > best[0]:
+                    best = (key, chain)
+            if best is None:
+                continue                  # no assistant-headed text-carrying chain → stand the fork down
+            for u in best[1]:
                 verdict[u] = "reattached"
 
     def kept_uuids(self, active):

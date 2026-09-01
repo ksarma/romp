@@ -1331,6 +1331,81 @@ class OrphanFlushReattach(unittest.TestCase):
         self.assertEqual(mem["reattached"], set())
         self.assertIn(rp, mem["rewind"])
 
+    # ── sibling chains at ONE fork: selection reads properties, never the CLI's byte order of
+    # writes (no on-disk transcript carries these shapes today — this is the defense against
+    # write-order drift, since nothing contracts the order the CLI flushes its buffers in) ──
+
+    def _fork_pieces(self):
+        """The shared single-episode skeleton, split so tests can permute WRITE order without
+        changing the graph: (head, reply, flush_spine, closer). The graph is always the same —
+        fork at remA, reply chain rpA, flushed spine eA1->shA->u2 — only file order varies."""
+        head = self.base() + [reminder_line(T0 + 10, "remA", "u1")]
+        reply = [aline(T0 + 30, "the reply the user watched stream", "rpA", "remA")]
+        flush_spine = [api_error_line(T0 + 11, "eA1", "remA", attempt=1),
+                       stop_hook_line(T0 + 31, "shA", "eA1"),
+                       uline(T0 + 100, "next ask", "u2", "shA")]
+        closer = [aline(T0 + 130, "done", "a2", "u2")]  # the true leaf — always written last
+        return head, reply, flush_spine, closer
+
+    def test_late_written_stub_pair_never_steals_the_reattach(self):
+        # a parallel tool-stub pair parented directly AT the fork but written AFTER the reply
+        # records: the stub chain is assistant-headed, so a max-seq-record selection re-attached
+        # the STUBS and left the real reply dropped — inverting the fix's own contract purely on
+        # write order. The stub chain carries no reply text; the reply chain does.
+        head, reply, flush_spine, closer = self._fork_pieces()
+        stubs = [aline(T0 + 20, "", "stubA", "remA", tools=("Bash",), stop=None),
+                 trline(T0 + 25, "tu_stubA_0", "stubB", "stubA")]
+        out, mem = self._run(head + reply + flush_spine + stubs + closer)
+        self.assertIn("the reply the user watched stream",
+                      [_text(a) for a in self._atoms(out) if a["type"] == "assistant"],
+                      "the persisted reply re-attaches whatever the stub pair's file position")
+        self.assertIn("rpA", mem["reattached"])
+        self.assertTrue({"stubA", "stubB"} <= mem["rewind"],
+                        "the textless stub chain drops exactly as an early-written one does")
+
+    def test_sibling_error_burst_chain_never_stands_the_fork_down(self):
+        # a second api_error burst flushed as its OWN sibling chain from the same fork, written
+        # last: its tail was the component's max-seq record, the head check saw a system record,
+        # and the WHOLE fork stood down — the reply silently kept the pre-fix data-loss behavior.
+        # An ineligible sibling chain must never veto the eligible one.
+        head, reply, flush_spine, closer = self._fork_pieces()
+        burst2 = [api_error_line(T0 + 40, "eB1", "remA", attempt=1),
+                  api_error_line(T0 + 41, "eB2", "eB1", attempt=2)]
+        out, mem = self._run(head + reply + flush_spine + burst2 + closer)
+        self.assertIn("the reply the user watched stream",
+                      [_text(a) for a in self._atoms(out) if a["type"] == "assistant"])
+        self.assertIn("rpA", mem["reattached"])
+        self.assertTrue({"eB1", "eB2"} <= mem["rewind"], "the burst chain itself never re-attaches")
+        self.assertFalse({"eB1", "eB2"} & {a.get("uuid") for a in self._atoms(out)})
+
+    def test_stub_pair_write_order_never_changes_the_verdict(self):
+        # both chains present, both write orders — stubs before the reply records and after —
+        # must yield the SAME membership: order-independence pinned at the membership level
+        head, reply, flush_spine, closer = self._fork_pieces()
+        stubs = [aline(T0 + 20, "", "stubA", "remA", tools=("Bash",), stop=None),
+                 trline(T0 + 25, "tu_stubA_0", "stubB", "stubA")]
+        _, early = self._run(head + stubs + reply + flush_spine + closer)
+        _, late = self._run(head + reply + flush_spine + stubs + closer)
+        for key in ("kept", "rewind", "reattached"):
+            self.assertEqual(early[key], late[key], "write order changed the %r set" % key)
+        self.assertIn("rpA", early["reattached"])
+        self.assertTrue({"stubA", "stubB"} <= early["rewind"])
+
+    def test_two_reply_chains_prefer_the_latest_written(self):
+        # two assistant-headed, text-carrying sibling chains at one fork — NOT observed in the
+        # corpus (every incident fork holds exactly one) — pinned deliberately: the latest-written
+        # chain wins, as the CLI's final word on that turn, and it is the same chain the pre-fix
+        # walk picked when only one existed. Only the selected chain re-attaches.
+        head, _, flush_spine, closer = self._fork_pieces()
+        replies = [aline(T0 + 20, "first persisted attempt", "rpA", "remA"),
+                   aline(T0 + 30, "second persisted attempt", "rpB", "remA")]
+        out, mem = self._run(head + replies + flush_spine + closer)
+        self.assertIn("rpB", mem["reattached"])
+        self.assertIn("rpA", mem["rewind"], "only the selected chain re-attaches")
+        texts = [_text(a) for a in self._atoms(out) if a["type"] == "assistant"]
+        self.assertIn("second persisted attempt", texts)
+        self.assertNotIn("first persisted attempt", texts)
+
 
 class SlashCommandTurn(unittest.TestCase):
     def test_command_turn_is_tracked_and_flagged(self):

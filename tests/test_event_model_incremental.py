@@ -309,6 +309,39 @@ class FlushOrphanReattachEquivalence(unittest.TestCase):
         self.assertIn(reply, self._reply_uuids(cold),
                       "the bypassed reply survives the flush append")
 
+    def test_late_stub_pair_append_reattaches_identically_warm_and_cold(self):
+        # the write-order-drift append: a parallel tool-stub pair parented at the PRE-reply fork
+        # arrives AFTER the flush growth, so the stub records outrank every reply record in file
+        # order. Selection is by property, not byte order — warm and cold must both splice back
+        # the reply and leave the stubs dropped, in this order too.
+        b = lambda i: "11111111-2222-3333-4444-%012d" % i
+        reply = b(2)
+        prefix, growth = _flush_orphan_recs()
+        stub_pair = [
+            {"type": "assistant", "uuid": b(8), "parentUuid": b(1),
+             "timestamp": "2026-07-05T10:00:10Z",
+             "message": {"role": "assistant", "stop_reason": None,
+                         "content": [{"type": "tool_use", "id": "tu_8_0",
+                                      "name": "Bash", "input": {}}]}},
+            {"type": "user", "uuid": b(9), "parentUuid": b(8),
+             "timestamp": "2026-07-05T10:00:15Z",
+             "message": {"role": "user", "content": [{"type": "tool_result",
+                         "tool_use_id": "tu_8_0", "content": "ok"}]}},
+        ]
+        _write(self.p, prefix)
+        em.parse_session(self.p)                          # cold; primes the cache
+        _append(self.p, growth[:-1])                      # the flush spine, up to the next ask
+        em.parse_session(self.p)                          # warm mid-step: grew-branch reuse
+        _append(self.p, stub_pair + growth[-1:])          # stubs land LAST but before the true leaf
+        warm = em.parse_session(self.p)
+        em._JSONL_CACHE.clear()
+        cold = em.parse_session(self.p)
+        self.assertEqual(warm, cold, "grown through the late-stub append: warm == cold")
+        self.assertIn(reply, self._reply_uuids(cold),
+                      "the reply re-attaches even when the stub chain is the newest write")
+        atom_uuids = {a.get("uuid") for t in cold["turns"] for a in t["atoms"]}
+        self.assertFalse({b(8), b(9)} & atom_uuids, "the stub chain stays dropped")
+
 
 if __name__ == "__main__":
     unittest.main()
