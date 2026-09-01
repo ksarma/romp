@@ -13063,6 +13063,9 @@ def _append_restart_cut(row):
 
 
 _BOOT_MARKS = {}                                   # {"firstServe": t, "reconcileDone": t} — see _mark_boot
+_BOOT_MARKS_LOCK = threading.Lock()                # the two marks land on DIFFERENT threads (main vs the
+#                                                    lazy backend builder) — without this, both could see
+#                                                    "both present" and double-append the boot row
 
 
 def _append_boot_settled(first_serve, reconcile_done):
@@ -13100,10 +13103,15 @@ def _mark_boot(kind):
     builds LAZILY, so the two marks land in either order; whichever lands second appends the
     boot-settled row. Idempotent per kind, never raises."""
     try:
-        if kind in _BOOT_MARKS:
-            return
-        _BOOT_MARKS[kind] = time.time()
-        if "firstServe" in _BOOT_MARKS and "reconcileDone" in _BOOT_MARKS:
+        with _BOOT_MARKS_LOCK:
+            if kind in _BOOT_MARKS:
+                return
+            _BOOT_MARKS[kind] = time.time()
+            write = "firstServe" in _BOOT_MARKS and "reconcileDone" in _BOOT_MARKS \
+                and not _BOOT_MARKS.get("_row")
+            if write:
+                _BOOT_MARKS["_row"] = True         # exactly one row per boot, whichever thread wins
+        if write:
             _append_boot_settled(_BOOT_MARKS["firstServe"], _BOOT_MARKS["reconcileDone"])
     except Exception:
         pass
