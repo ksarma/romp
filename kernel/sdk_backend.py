@@ -814,6 +814,20 @@ def read_reg(state_dir: Path, sid: str) -> dict | None:
         return None
 
 
+def read_reg_for_rmw(state_dir: Path, sid: str) -> "dict | None":
+    """read_reg for a READ-MODIFY-WRITE on one reg FIELD: {} when the reg genuinely does not
+    exist (a fresh session — an empty base is correct), None when the reg EXISTS but would not
+    read (a transient failure). A None caller MUST skip its write: rebuilding a list field from
+    an empty base and persisting it silently wipes the field — bgLedger/bgLedgerEnded, pushNotes,
+    taskWrites, sessionCrons all carried this shape (the 2026-09-01 field-level gutting class,
+    the field-sized sibling of _update_reg's whole-reg guard). Losing one update is the far
+    smaller harm: the next lands on the healed read."""
+    reg = read_reg(state_dir, sid)
+    if reg is not None:
+        return reg
+    return None if _reg_path(state_dir, sid).exists() else {}
+
+
 def write_reg(state_dir: Path, sid: str, reg: dict) -> None:
     p = _reg_path(state_dir, sid)
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -2913,7 +2927,10 @@ class SdkSession:
         try:
             crons = inp.get("session_crons") if isinstance(inp, dict) else None
             if isinstance(crons, list):
-                prev = (read_reg(self.backend.state_dir, self.sid) or {})
+                prev = read_reg_for_rmw(self.backend.state_dir, self.sid)
+                if prev is None:
+                    # the except below logs it — skip, never wipe the armed set (field-gutting class)
+                    raise OSError("reg unreadable — session_crons record skipped rather than wiping the armed set")
                 nw = time.time()
                 known = {c.get("id"): c for c in (prev.get("sessionCrons") or []) if isinstance(c, dict)}
                 # Adoption pool for the CALL-TIME records (_sched_tool_hook): a toolhook entry knows the
@@ -2974,7 +2991,10 @@ class SdkSession:
             bg = inp.get("background_tasks") if isinstance(inp, dict) else None
             if isinstance(bg, list):
                 nw = int(time.time())
-                live, ended = self._ledger_read()
+                lr = self._ledger_read()
+                if lr is None:
+                    raise OSError("reg unreadable — reconcile skipped")   # the except below logs it
+                live, ended = lr
                 running = {str(t.get("id")): t for t in bg
                            if isinstance(t, dict) and t.get("status") == "running" and t.get("id")}
                 kept = []
@@ -2998,8 +3018,8 @@ class SdkSession:
                                      "desc": str(t.get("description") or "")[:300], "armedAt": nw,
                                      "deadlineEpoch": None, "persistent": False,
                                      "procGen": self.proc_gen, "agentId": None, "src": "stopReconcile"})
-                l0, e0 = self._ledger_read()
-                if kept != l0 or ended != e0:
+                lr0 = self._ledger_read()
+                if lr0 is not None and (kept != lr0[0] or ended != lr0[1]):
                     self._ledger_write(kept, ended)
         except Exception as e:
             self.backend._log("stop hook (%s): bg-ledger reconcile failed: %s" % (self.name, e))
@@ -3037,7 +3057,11 @@ class SdkSession:
             if not isinstance(targs, dict):
                 return {}
             nw = time.time()
-            prev = (read_reg(self.backend.state_dir, self.sid) or {})
+            prev = read_reg_for_rmw(self.backend.state_dir, self.sid)
+            if prev is None:
+                self.backend._log("sched tool hook (%s): reg unreadable — skipping this record "
+                                  "rather than wiping the armed set" % self.name)
+                return {}
             cur = [c for c in (prev.get("sessionCrons") or []) if isinstance(c, dict)]
             if tname == "ScheduleWakeup":
                 if targs.get("stop"):
@@ -3098,7 +3122,14 @@ class SdkSession:
     _LEDGER_CAP = 40
 
     def _ledger_read(self):
-        reg = read_reg(self.backend.state_dir, self.sid) or {}
+        """(live, ended) — or None when the reg exists but would not read this instant: the
+        caller must SKIP its write (writing rebuilt empties back wipes the ledger — the
+        field-gutting class; see read_reg_for_rmw)."""
+        reg = read_reg_for_rmw(self.backend.state_dir, self.sid)
+        if reg is None:
+            self.backend._log("bg ledger (%s): reg unreadable — skipping this pass rather than "
+                              "wiping the ledger" % self.name)
+            return None
         live = [e for e in (reg.get("bgLedger") or []) if isinstance(e, dict)]
         ended = [e for e in (reg.get("bgLedgerEnded") or []) if isinstance(e, dict)]
         return live, ended
@@ -3119,7 +3150,10 @@ class SdkSession:
             if not isinstance(tresp, dict):
                 tresp = {}
             nw = time.time()
-            live, ended = self._ledger_read()
+            lr = self._ledger_read()
+            if lr is None:
+                return {}                             # skip, never wipe — the next event re-records
+            live, ended = lr
             if tname == "TaskStop":
                 tid = str(targs.get("task_id") or targs.get("taskId") or targs.get("id")
                           or targs.get("shell_id") or "")   # shell_id: the deprecated param the CLI still accepts
@@ -3171,7 +3205,10 @@ class SdkSession:
             tuid = str((inp or {}).get("tool_use_id") or tool_use_id or "")
             if not tuid:
                 return {}
-            live, ended = self._ledger_read()
+            lr = self._ledger_read()
+            if lr is None:
+                return {}                             # skip, never wipe
+            live, ended = lr
             kept = [e for e in live if str(e.get("toolUseId")) != tuid]
             if len(kept) != len(live):
                 why = "interrupted" if (inp or {}).get("is_interrupt") else "launch-failed"
@@ -3210,7 +3247,11 @@ class SdkSession:
                 # writes faster than any consumer's read cadence, and a last-write-wins slot loses
                 # every agentId but the newest — the attribution this field exists for
                 tid = str(tresp.get("taskId") or targs.get("taskId") or "") or None
-                reg = read_reg(self.backend.state_dir, self.sid) or {}   # sole writer; no await
+                reg = read_reg_for_rmw(self.backend.state_dir, self.sid)   # sole writer; no await
+                if reg is None:
+                    self.backend._log("facts hook (%s): reg unreadable — skipping the taskWrites "
+                                      "record rather than wiping it" % self.name)
+                    return {}
                 #                                                          before the write below —
                 #                                                          the event loop IS the lock
                 writes = [w for w in (reg.get("taskWrites") or []) if isinstance(w, dict)]
@@ -3218,7 +3259,11 @@ class SdkSession:
                 self.backend._update_reg(self.sid, taskWrites=writes[-self._TASK_WRITES_CAP:])
                 self.backend._poke()          # the store is authoritative — this says "re-read it NOW"
             elif tname == "PushNotification":
-                reg = read_reg(self.backend.state_dir, self.sid) or {}   # sole writer of pushNotes;
+                reg = read_reg_for_rmw(self.backend.state_dir, self.sid)   # sole writer of pushNotes;
+                if reg is None:
+                    self.backend._log("facts hook (%s): reg unreadable — skipping the pushNotes "
+                                      "record rather than wiping it" % self.name)
+                    return {}
                 #                              NO await between this read and the write below — the
                 #                              session's single event loop is what serializes this
                 #                              RMW, not _reg_lock. Inserting an await here reopens
