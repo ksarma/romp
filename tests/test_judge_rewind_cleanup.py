@@ -106,6 +106,24 @@ class Base(unittest.TestCase):
                 aline(T0 + 70, "Third synthetic reply.", "a3", "u3")]
 
 
+def flush_orphan_recs():
+    """The api_error-flush orphaning shape (2026-09-01, synthetic): the CLI recovered from a
+    storm and persisted the reply (a2x), then flushed its buffered api_error records from the
+    PRE-reply leaf (u2), hijacking the chain — the reply branch is bypassed on disk with no user
+    gesture anywhere near the fork."""
+    return [uline(T0, "first synthetic ask", "u1"),
+            aline(T0 + 10, "First synthetic reply, fully settled here.", "a1", "u1"),
+            uline(T0 + 20, "the stormed ask", "u2", "a1"),
+            aline(T0 + 40, "Reply the flush bypassed on disk.", "a2x", "u2"),
+            {"type": "system", "subtype": "api_error", "timestamp": iso(T0 + 21), "uuid": "e1",
+             "parentUuid": "u2", "level": "error", "retryAttempt": 1, "maxRetries": 10,
+             "retryInMs": 1000, "source": "request_retry"},
+            {"type": "system", "subtype": "stop_hook_summary", "timestamp": iso(T0 + 41),
+             "uuid": "sh1", "parentUuid": "e1", "level": "suggestion"},
+            uline(T0 + 60, "the ask after the storm", "u3", "sh1"),
+            aline(T0 + 70, "Reply on the flushed spine.", "a3", "u3")]
+
+
 class ChainMembershipPredicate(Base):
     """em.chain_membership — the ONE exported membership fact (identity-key hazards, per verdict)."""
 
@@ -224,6 +242,33 @@ class ChainMembershipPredicate(Base):
         cut = em.chain_membership(self.path, leaf_override="a1")
         self.assertEqual(cut["rewind"], {"u2", "a2"})
 
+    def test_a_flush_bypassed_reply_is_eclipsed_never_rewind(self):
+        # the api_error-flush orphaning (2026-09-01): the bypass at the fork is the CLI's own
+        # buffered-error chain — probed THROUGH the stop_hook_summary to the landed next
+        # prompt — so the persisted reply rejoins "kept" via "eclipsed" and no sweep
+        # predicate can ever read it as abandoned
+        self.write(flush_orphan_recs())
+        mem = em.chain_membership(self.path)
+        self.assertEqual(mem["eclipsed"], {"a2x"})
+        self.assertIn("a2x", mem["kept"], "eclipsed is a subset of kept")
+        self.assertEqual(mem["rewind"], set())
+
+    def test_the_sweep_predicates_spare_an_eclipsed_branch(self):
+        # the fix's downstream face: _rewound_away is the write-moment mint stand-down AND the
+        # drop-sweep discriminator; _per_file_rewound feeds the dead-branch reconciliation
+        # (reconcile_rewound_goals unions it with mem["rewind"]) — before the eclipse, both
+        # read the machine-orphaned branch as a rewind and goals anchored there were archived
+        # by a sweep no user gesture ever justified
+        self.write(flush_orphan_recs())
+        self.assertFalse(jd._rewound_away(SID, str(self.path), "a2x"),
+                         "an eclipsed uuid never stands a mint down")
+        pf, fails = jd._per_file_rewound(SID, [str(self.path)])
+        self.assertEqual(fails, 0)
+        self.assertNotIn("a2x", pf, "the per-file discriminator agrees: nothing to sweep")
+        # contrast, same predicates: a genuine user-gesture fork still answers durably rewound
+        self.write(self.base_recs() + self.fork_recs())
+        self.assertEqual(jd._rewound_away(SID, str(self.path), "u2"), "durable")
+
 
 class PredicateParityGolden(Base):
     """Item 10: the exported helper vs the display parse's own adapter — byte-identical kept sets
@@ -253,6 +298,12 @@ class PredicateParityGolden(Base):
         self.assert_parity(self.path)
         mem = em.chain_membership(self.path)
         self.assertIn("a2", mem["kept"])
+
+    def test_parity_on_a_flush_orphaned_branch(self):
+        # the eclipse (probe + chain selection) lives inside chain_verdicts, so BOTH faces
+        # (kept_uuids and chain_membership) inherit it from the one implementation — pinned anyway
+        self.write(flush_orphan_recs())
+        self.assert_parity(self.path)
 
     def test_parity_under_a_pending_cut(self):
         self.write(self.base_recs())
