@@ -953,6 +953,15 @@ class FileAdapter:
           "active" — on the leaf->root spine (what the chat shows).
           "rewind" — the chain rejoins the active spine: this line was REWOUND AWAY. The
                      only verdict that ever justifies dropping/sweeping content.
+          "eclipsed" — the chain rejoins the active spine, but the spine leaves the fork
+                     through MACHINE bookkeeping (an api_error spur): nobody rewound
+                     anything — the CLI flushed its buffered retry-storm records chained
+                     off the turn's opener and hung the next prompt on that spur, so the
+                     turn's real output fell off the spine with no user gesture. KEPT:
+                     it is the ONLY copy of a reply the user watched render (T209, the
+                     user 2026-09-01 — a five-minute turn's answer vanished behind a
+                     "Recovered after retries" note when the next send flushed the spur;
+                     no orphanReply marker exists because the disk DID keep the text).
           "clear"  — the chain reaches a clean null root the leaf does not share: `/clear`
                      jurisdiction (the episode machinery settles those) — never swept as
                      a rewind.
@@ -961,12 +970,61 @@ class FileAdapter:
         `active` defaults to active_path(); pass it when already computed."""
         if active is None:
             active = self.active_path()
+        # spine child map (parent -> its child ON the spine), for the fork-kind probe below
+        spine_child, _u, _guard = {}, self.leaf_uuid, 0
+        while _u is not None and _guard < 500000:
+            _p = self.parent_of.get(_u)
+            if _p is None or _p in spine_child:
+                break                              # root, or a cycle already crossed
+            spine_child[_p] = _u
+            _u = _p; _guard += 1
+        _fork_memo = {}
+        def fork_kind(f):
+            """rewind vs eclipsed for a chain rejoining the spine at f. A genuine rollback
+            re-parents the user's NEXT PROMPT directly at the cut (the spine leaves f with a
+            conversational record); the SDK's buffered-flush geometry puts >=1 system
+            api_error record STRICTLY BETWEEN f and the next conversational record — an
+            exact machine event, so this can never re-show content a person deleted. An
+            assistant record ending the probe means the spine re-replied: the fork is a
+            superseded attempt (the orphan salvage's jurisdiction), not an eclipse."""
+            if f in _fork_memo:
+                return _fork_memo[f]
+            res, u, saw_err, _seen = "rewind", spine_child.get(f), False, set()
+            while u is not None and u not in _seen:
+                _seen.add(u)
+                r = self.by_uuid.get(u) or {}
+                t = r.get("type")
+                if t == "assistant":
+                    break
+                if t == "user":
+                    if saw_err:
+                        res = "eclipsed"
+                    break
+                if t == "system" and r.get("subtype") == "api_error":
+                    saw_err = True
+                u = spine_child.get(u)
+            else:
+                # The spine RAN OUT (or cycled — _seen is the guard classify's own cycle branch
+                # has and this probe first shipped without: a multi-node cycle of system records
+                # hung every parse, found by adversarial review) before any conversational
+                # record: the spur is the transcript's current TAIL — a parse racing the CLI's
+                # multi-line flush, or a session that died in the storm. An api_error on the
+                # spine out of the fork is a machine artifact whatever follows, and defaulting
+                # this terminal to the one SWEEPABLE verdict re-opened the T209 loss for
+                # exactly those windows (one-way goal archives in the race; a permanent eat on
+                # the mid-storm death). A pending-cut fork is untouched: the cut leaf has no
+                # spine child, so the loop never runs and saw_err stays False.
+                if saw_err:
+                    res = "eclipsed"
+            _fork_memo[f] = res
+            return res
         verdict = {}
         def classify(start):
             path, u = [], start
             while True:
                 if u in active:
-                    res = "rewind"; break          # chain rejoins the active spine -> rewound fork
+                    res = fork_kind(u); break      # chain rejoins the active spine -> rewound fork,
+                    #                                unless a machine spur abandoned it (eclipsed)
                 if u in verdict:
                     res = verdict[u]; break
                 if u not in self.by_uuid:
@@ -995,11 +1053,15 @@ class FileAdapter:
         dangling chain is the one thing we cannot prove dead, and silently dropping a real
         ask is this repo's one fatal error, so we keep it. (Verified 0 dangling cases
         across the live corpus: this is a safety net, not a behavior change.)
+        An ECLIPSED chain is also kept: a machine-written api_error spur stole the leaf's
+        ancestry from a turn's real output (see chain_verdicts) — dropping it ate the only
+        visible copy of a rendered reply (T209).
         Derived from chain_verdicts — one implementation, so the exported membership
         predicate (chain_membership) can never diverge from what the parse keeps.
         set(active) is unioned as-is: the walk can record a dangling FINAL ancestor that is
         in no file's index, and it has always been kept."""
-        return set(active) | {u for u, v in self.chain_verdicts(active).items() if v == "broken"}
+        return set(active) | {u for u, v in self.chain_verdicts(active).items()
+                              if v in ("broken", "eclipsed")}
 
     def _absorbed_atom(self, full, t, seq, auid, rompuuid, postal_index):
         """One synthesized user atom for a mid-turn splice. The atom carries the FULL text — any
@@ -1747,6 +1809,7 @@ def chain_membership(leaf_path, candidate_files=None, states=None, leaf_override
 
     "rewind" is the ONLY set that ever justifies sweeping a goal: "clear" branches are /clear
     jurisdiction (the episode machinery settles those cards), "broken" chains are kept by design,
+    "eclipsed" chains are KEPT content a machine spur abandoned (never a user gesture — T209),
     and a uuid in NO set is unprovable (a synthetic orphan:<t> salvage id, a cross-file uuid whose
     file is outside the lineage, a legacy None) — callers must treat unknown as NOT abandoned.
     Caveat (resume-fork stitch shape): a recorded fork's fresh head is re-pointed at the from-file's
@@ -1761,11 +1824,11 @@ def chain_membership(leaf_path, candidate_files=None, states=None, leaf_override
     active = adapter.active_path()
     verdicts = adapter.chain_verdicts(active)
     # kept, derived from the verdicts already in hand — BY DEFINITION the same set kept_uuids
-    # computes (active ∪ broken; see its docstring: "derived from chain_verdicts — one
+    # computes (active ∪ broken ∪ eclipsed; see its docstring: "derived from chain_verdicts — one
     # implementation"), without paying the graph walk a second time inside it. The hold view
     # re-asks this on every build of a held session, so the walk count matters there.
-    out = {"kept": set(active) | {u for u, v in verdicts.items() if v == "broken"},
-           "rewind": set(), "clear": set(), "broken": set()}
+    out = {"kept": set(active) | {u for u, v in verdicts.items() if v in ("broken", "eclipsed")},
+           "rewind": set(), "clear": set(), "broken": set(), "eclipsed": set()}
     for u, v in verdicts.items():
         if v != "active":
             out[v].add(u)

@@ -342,6 +342,55 @@ def scenario_resume_lineage_fileB():
     ]
 
 
+def sysline(t, subtype, uuid, parent, **extra):
+    r = {"type": "system", "subtype": subtype, "timestamp": iso(t), "uuid": uuid,
+         "parentUuid": parent}
+    r.update(extra)
+    return r
+
+
+def scenario_eclipsed_branch_kept():
+    """T209 (the user 2026-09-01): during a rate-limit storm the CLI buffers its api_error
+    records and flushes them at the NEXT enqueue — chained off the turn's OPENING prompt —
+    then hangs the stop hook and the next prompt on that spur. The turn's real output
+    (thinking, tool work, the final reply the user watched render) falls off the
+    leaf->root spine with no user gesture, and no orphanReply marker exists because the
+    disk DID keep the text. The eclipsed verdict keeps the branch: >=1 api_error record
+    sits STRICTLY BETWEEN the fork and the next conversational record, an exact machine
+    event no genuine rollback produces (a rollback re-parents the user's next prompt
+    directly at the cut)."""
+    return [
+        uline(T0, "please chart the throughput numbers", "u1", parent=None, ps="typed"),
+        aline(T0 + 30, "Charting the throughput numbers now.", "a1", "u1",
+              tools=("Bash",), stop=None),
+        trline(T0 + 40, "tu_a1_0", "tr1", "a1"),
+        aline(T0 + 60, "Throughput rises linearly until the cache saturates.", "a2", "tr1",
+              stop="end_turn"),
+        # the buffered spur, flushed later in FILE order but parent-chained off u1
+        sysline(T0 + 31, "api_error", "e1", "u1", level="error",
+                error={"message": "429 rate_limit_error (synthetic)"}),
+        sysline(T0 + 45, "api_error", "e2", "e1", level="error",
+                error={"message": "429 rate_limit_error (synthetic)"}),
+        sysline(T0 + 61, "stop_hook_summary", "sh1", "e2", hookCount=1),
+        uline(T0 + 120, "thanks - now label the axes", "u2", parent="sh1", ps="typed"),
+        aline(T0 + 150, "Labeled both axes.", "a3", "u2", stop="end_turn"),
+    ]
+
+
+def scenario_retry_superseded():
+    """The other side of the eclipse discriminator: when the spine RE-REPLIED after the
+    api_error records (an assistant record ends the fork probe before any user prompt),
+    the off-path partial is a superseded attempt — kept OFF, exactly as before, so a
+    retry that re-replied never doubles (the orphan salvage's own dedup rule)."""
+    return [
+        uline(T0, "summarize the log file", "u1", parent=None, ps="typed"),
+        aline(T0 + 30, "Half an answer that a retry replaced.", "a_old", "u1", stop=None),
+        sysline(T0 + 31, "api_error", "e1", "u1", level="error",
+                error={"message": "429 rate_limit_error (synthetic)"}),
+        aline(T0 + 90, "The full answer after the retry.", "a_new", "e1", stop="end_turn"),
+    ]
+
+
 SINGLE_FILE = {
     "multi_input_absorbed": (scenario_multi_input_absorbed, None),
     "author_kinds": (scenario_author_kinds, SENT_LOG),
@@ -355,6 +404,8 @@ SINGLE_FILE = {
     "rewind_off_path": (scenario_rewind_off_path, None),
     "broken_chain_kept": (scenario_broken_chain_kept, None),
     "slash_command_turn": (scenario_slash_command_turn, None),
+    "eclipsed_branch_kept": (scenario_eclipsed_branch_kept, None),
+    "retry_superseded": (scenario_retry_superseded, None),
 }
 
 # fsid stems for the resume scenario (placeholder UUIDs)
@@ -1097,6 +1148,43 @@ class BrokenChainFloor(unittest.TestCase):
         self.assertIn("orphaned but real ask", texts, "a real ask must never be silently dropped")
         self.assertIn("main line ask", texts)
         self.assertIn("second main ask", texts)
+
+
+class EclipsedBranch(unittest.TestCase):
+    """T209 (the user 2026-09-01): a rendered five-minute turn vanished behind the
+    "Recovered after retries" note the moment the user sent their next message — the CLI's
+    buffered api_error flush had re-rooted the conversation spine through its error spur,
+    abandoning the turn's kept output with no user gesture and no orphanReply marker to
+    salvage it (the disk kept the text; only the spine left it). Both directions pinned:
+    the machine-abandoned branch is KEPT, while a superseded retry and a genuine rollback
+    (test_rewind_branch_is_dropped above) stay dropped."""
+
+    def test_eclipsed_turn_output_is_kept(self):
+        out = run_scenario("eclipsed_branch_kept")
+        uuids = [a.get("uuid") for t in out["turns"] for a in t["atoms"]]
+        for u in ("u1", "a1", "tr1", "a2", "u2", "a3"):
+            self.assertIn(u, uuids, "eclipsed turn output must stay visible")
+        texts = [_text(a) for t in out["turns"] for a in t["atoms"]]
+        self.assertIn("Throughput rises linearly until the cache saturates.", texts,
+                      "the only visible copy of the reply must never be eaten")
+
+    def test_superseded_retry_stays_dropped(self):
+        out = run_scenario("retry_superseded")
+        texts = [_text(a) for t in out["turns"] for a in t["atoms"]]
+        self.assertIn("The full answer after the retry.", texts)
+        self.assertNotIn("Half an answer that a retry replaced.", texts,
+                         "a retry that re-replied must not double")
+
+    def test_chain_membership_reports_eclipsed_kept(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / (SID + ".jsonl")
+            path.write_text("\n".join(json.dumps(r) for r in scenario_eclipsed_branch_kept()) + "\n")
+            mem = em.chain_membership(str(path))
+        self.assertIn("eclipsed", mem)
+        self.assertEqual(mem["eclipsed"], {"a1", "tr1", "a2"})
+        self.assertTrue(mem["eclipsed"] <= mem["kept"], "eclipsed chains are kept")
+        self.assertEqual(mem["rewind"], set(),
+                         "an eclipse is not a rewind — nothing here may be swept")
 
 
 class SlashCommandTurn(unittest.TestCase):
