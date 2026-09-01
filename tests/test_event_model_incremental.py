@@ -236,5 +236,79 @@ class ManualCompactAdoptionEquivalence(unittest.TestCase):
         self.assertEqual(len(self._cards(cold)), 1, "exactly one adopted card either way")
 
 
+def _flush_orphan_recs():
+    """A transcript that grows THROUGH an api_error-flush orphaning (synthetic content; shape
+    mirrors the 2026-09-01 incident transcripts): the prefix ends with the streamed reply as the
+    leaf — a perfectly linear chain — and the growth is the CLI's next-turn flush (buffered
+    api_error records parent-chained from the PRE-reply leaf, a stop_hook_summary, the next user
+    record), which bypasses the reply branch on disk. Returns (prefix, growth)."""
+    b = lambda i: "11111111-2222-3333-4444-%012d" % i
+    ts = lambda s: "2026-07-05T10:%02d:%02dZ" % (s // 60, s % 60)
+    prefix = [
+        {"type": "user", "uuid": b(0), "parentUuid": None, "timestamp": ts(0),
+         "promptSource": "typed", "message": {"role": "user", "content": "storm-turn ask"}},
+        {"type": "attachment", "uuid": b(1), "parentUuid": b(0), "timestamp": ts(5),
+         "attachment": {"type": "total_tokens_reminder"}},
+        {"type": "assistant", "uuid": b(2), "parentUuid": b(1), "timestamp": ts(60),
+         "message": {"role": "assistant",
+                     "content": [{"type": "text", "text": "the reply the storm nearly ate"}],
+                     "stop_reason": "end_turn"}},
+    ]
+    growth = [
+        {"type": "system", "subtype": "api_error", "uuid": b(3), "parentUuid": b(1),
+         "timestamp": ts(6), "level": "error", "retryAttempt": 1, "maxRetries": 10,
+         "retryInMs": 1000, "source": "request_retry"},
+        {"type": "system", "subtype": "api_error", "uuid": b(4), "parentUuid": b(3),
+         "timestamp": ts(7), "level": "error", "retryAttempt": 2, "maxRetries": 10,
+         "retryInMs": 1049, "source": "request_retry"},
+        {"type": "system", "subtype": "stop_hook_summary", "uuid": b(5), "parentUuid": b(4),
+         "timestamp": ts(61), "level": "suggestion", "hookCount": 1},
+        {"type": "user", "uuid": b(6), "parentUuid": b(5), "timestamp": ts(120),
+         "promptSource": "typed", "message": {"role": "user", "content": "next ask after the storm"}},
+        {"type": "assistant", "uuid": b(7), "parentUuid": b(6), "timestamp": ts(130),
+         "message": {"role": "assistant",
+                     "content": [{"type": "text", "text": "clean reply on the next turn"}],
+                     "stop_reason": "end_turn"}},
+    ]
+    return prefix, growth
+
+
+class FlushOrphanReattachEquivalence(unittest.TestCase):
+    """Growth THROUGH an api_error-flush orphaning parses identically warm and cold: before the
+    flush lands the reply is simply the leaf (active); the flush append bypasses it, and the
+    re-attach (em._reattach_flush_orphans) must reach the same verdict from the incremental
+    cache's grew-branch reuse as from a byte-zero read — the compactcard precedent
+    (ManualCompactAdoptionEquivalence) extended to the re-attach."""
+
+    def setUp(self):
+        em._JSONL_CACHE.clear()
+        fd, self.p = tempfile.mkstemp(suffix=".jsonl")
+        os.close(fd)
+
+    def tearDown(self):
+        em._JSONL_CACHE.clear()
+        os.unlink(self.p)
+
+    def _reply_uuids(self, out):
+        return [a.get("uuid") for t in out["turns"] for a in t["atoms"]
+                if a.get("type") == "assistant"]
+
+    def test_growth_through_the_flush_reattaches_identically_warm_and_cold(self):
+        reply = "11111111-2222-3333-4444-%012d" % 2
+        prefix, growth = _flush_orphan_recs()
+        _write(self.p, prefix)
+        first = em.parse_session(self.p)                  # cold; primes the cache
+        self.assertIn(reply, self._reply_uuids(first), "pre-flush, the reply is simply the leaf")
+        _append(self.p, growth)
+        warm = em.parse_session(self.p)                   # rides the grew-branch reuse
+        self.assertEqual(em.parse_session(self.p), warm,
+                         "a re-parse from the warm cache is stable — the re-attach mutated no cached record")
+        em._JSONL_CACHE.clear()
+        cold = em.parse_session(self.p)
+        self.assertEqual(warm, cold, "grown through the flush: warm == cold, re-attach included")
+        self.assertIn(reply, self._reply_uuids(cold),
+                      "the bypassed reply survives the flush append")
+
+
 if __name__ == "__main__":
     unittest.main()
