@@ -137,6 +137,24 @@ test("the Auto Nudge box speaks for every attached machine, and says so when the
     "the hover line must name who differs");
 });
 
+test("the /compact suggestion is a real settings checkbox beside Auto Nudge (the user 2026-09-01)", () => {
+  // T208 shipped the kernel toggle with no UI; the user ruled it must be an ordinary settings
+  // checkbox next to Auto Nudge — off by default for new installs, one click to turn on.
+  assert.ok(GEAR.includes("id=rs-suggestcompact"), "the checkbox exists in the gear markup");
+  const sessions = GEAR.indexOf(">Sessions<"), chat = GEAR.indexOf(">Chat<");
+  const at = GEAR.indexOf("id=rs-suggestcompact");
+  assert.ok(sessions < at && at < chat, "…in the Sessions section, with its siblings");
+  assert.ok(GEAR.indexOf("id=rs-autonudge") < at && at < GEAR.indexOf("id=rs-conserve"),
+    "…directly after Auto Nudge, where the user asked for it");
+  assert.ok(/csg\.addEventListener\('change'/.test(GEAR)
+    && GEAR.includes("post({ type: 'setCompactSuggest', enabled: csg.checked })"),
+    "the click posts the kernel's designed setCompactSuggest message");
+  assert.ok(GEAR.includes("csg.checked = !!v.compactSuggest"),
+    "…and the box always shows the kernel's persisted answer, never a page default");
+  assert.ok(GEAR.includes("['compactSuggest', csg]"),
+    "attached machines that disagree get the same mixed mark as every kernel-side setting");
+});
+
 test("the gear owns its browseResult (the reply lands in the FEED document, not the chat's)", () => {
   assert.ok(GEAR.includes("'browseResult'") && GEAR.includes("'gear'"));
 });

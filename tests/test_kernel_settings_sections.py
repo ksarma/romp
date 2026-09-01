@@ -42,7 +42,8 @@ class SettingsSectionsTest(unittest.TestCase):
         # Account (the very top, the user 2026-08-30): the login row leads the gear
         self.assertTrue(h.index(">Account<") < h.index("id=rs-login-btn") < h.index(">Sessions<"))
         # Sessions (lifecycle): dir, backend, nudge, conserve, file editing — before Chat
-        for rid in ("id=rs-defaultdir", "id=rs-backend", "id=rs-autonudge", "id=rs-conserve", "id=rs-fileedit"):
+        for rid in ("id=rs-defaultdir", "id=rs-backend", "id=rs-autonudge", "id=rs-suggestcompact",
+                    "id=rs-conserve", "id=rs-fileedit"):
             self.assertTrue(h.index(">Sessions<") < h.index(rid) < h.index(">Chat<"), rid)
         # Chat: transcript prefs AND the comment defaults (comments are part of the chat)
         for rid in ("id=rs-compact", "id=rs-branch", "id=rs-cmtmodel", "id=rs-cmtfast"):

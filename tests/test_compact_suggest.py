@@ -184,6 +184,32 @@ class CompactSuggest(unittest.TestCase):
         km._autonudge_cache.clear()
         self.assertTrue(self._tick(450_000), "the same crossing fires once opted in")
 
+    # ── the per-install config keys: "how to do it exactly" is config too ──
+    def test_custom_thresholds_replace_the_defaults(self):
+        d = dict(km._auto_nudge_data())
+        d["compactSuggestTokens"] = [100_000, 200_000]
+        km._write_auto_nudge(d)
+        km._autonudge_cache.clear()
+        self.assertTrue(self._tick(150_000), "past the CUSTOM first threshold, under the default")
+        self.assertEqual(self._latched(), [100_000])
+        self.assertTrue(self._tick(250_000), "…and the custom second is its own episode")
+
+    def test_a_junk_thresholds_shape_falls_to_the_defaults(self):
+        d = dict(km._auto_nudge_data())
+        d["compactSuggestTokens"] = ["soon", -3]
+        km._write_auto_nudge(d)
+        km._autonudge_cache.clear()
+        self.assertFalse(self._tick(150_000), "junk config never lowers the bar")
+        self.assertTrue(self._tick(450_000), "the shipped defaults stand")
+
+    def test_a_custom_idle_window_replaces_the_default(self):
+        d = dict(km._auto_nudge_data())
+        d["compactSuggestIdleS"] = 30
+        km._write_auto_nudge(d)
+        km._autonudge_cache.clear()
+        km._settle_event_key = lambda sid: FRESH       # two minutes idle — under the default hour
+        self.assertTrue(self._tick(450_000), "…but past the custom 30s window")
+
     # ── the fingerprint row ──
     def test_a_fire_logs_a_countable_row(self):
         self._tick(450_000)
