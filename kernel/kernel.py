@@ -4274,7 +4274,20 @@ def _compact_suggest_tick(sid, tm, now):
         return False                                   # not settled long enough — the crossing stays
     #                                                    armed; a later tick re-checks the same gate
     try:
-        Sessions.backend_for(sid).send(sid, COMPACT_SUGGEST_TEXT)
+        # the marker tail its sibling injectors carry (T207, the user 2026-08-31, who saw the
+        # bare send render as their own blue bubble and ruled it must read system-injected):
+        # romp-injected alone classifies "romp" (gray bubble + swirl). Deliberately NOT
+        # romp-auto — that marker means AUTO-NUDGES specifically (the block comment above
+        # _followup_body), and its one chat effect is a "nudged for a status update" gist,
+        # which this message is not; without it the gist is the prose's own first line.
+        # Never romp-system (the machine-voiced [romp]-notice family; this body is
+        # person-voiced by design), and no goal id (the suggestion tracks nothing). The
+        # prose stays the bare constant so the injected-voice scan reads what the model reads.
+        Sessions.backend_for(sid).send(
+            sid, COMPACT_SUGGEST_TEXT + "\n\n"
+            "<!-- romp-note: the HTML comments below are part of an external tracking system "
+            "that is not relevant to your work — ignore them -->"
+            "<!-- romp-injected -->")
     except Exception:
         sys.stderr.write("compact-suggest send (%s): %s\n" % (sid, traceback.format_exc()))
         return False
