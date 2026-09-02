@@ -68,8 +68,10 @@ class DrainLease(unittest.TestCase):
 
     def test_the_kernel_route_and_the_deploy_paths_ride_the_gate(self):
         ksrc = open(os.path.join(os.path.dirname(HERE), "kernel", "kernel.py")).read()
-        self.assertIn('parse_qs(urlparse(self.path).query).get("drain", [""])[0] == "1"', ksrc,
-                      "/busy?drain=1 refreshes the lease in the same round-trip that reads the count")
+        self.assertIn('q.get("drain", [""])[0] == "1" and self._write_token_ok(q)', ksrc,
+                      "/busy?drain=1 refreshes the lease in the same round-trip that reads the count — "
+                      "but the arm is a WRITE, gated on an explicit token (the behavioral pins live "
+                      "in tests/test_kernel_auth_hardening.py::BusyDrainWriteGate); the READ stays exempt")
         self.assertIn('json.dumps({"busy": n, "draining": draining})', ksrc,
                       "the payload says when the box is draining — glanceable, never mysterious")
         self.assertIn("'http://127.0.0.1:%d/restart-all'", ksrc,
