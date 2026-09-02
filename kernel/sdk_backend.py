@@ -3987,9 +3987,11 @@ class SdkBackend:
                         # a comment THREAD is never auto-resumed at boot (the user 2026-09-01: threads
                         # persist on disk and come alive only on an explicit reply/branch; a deploy
                         # boot resuming a cut thread turn put dormant threads back in RAM). Its
-                        # orphaned CLI was reaped above and its pending flags healed just now; only a
-                        # PERSISTED QUEUE — the user's own typed reply the CLI never started — earns
-                        # the resume, because delivering it IS honoring an explicit gesture.
+                        # orphaned CLI was reaped above and its switch flags healed just now; a killed
+                        # question or dead background tasks (the arm below) wait for its explicit
+                        # wake, where _ensure reports and clears them. Only a PERSISTED QUEUE — the
+                        # user's own typed reply the CLI never started — earns the resume, because
+                        # delivering it IS honoring an explicit gesture.
                         continue
                     # A cut turn is any MACHINE-ACTIVE last state, not just "working" (the user
                     # 2026-08-19, whose figure session sat blocked-on-you after every restart that
@@ -5171,6 +5173,40 @@ class SdkBackend:
                     reg["model"] = nm
                     reg["liveModel"] = _alias_label(nm)
                     self._update_reg(sid, model=nm, liveModel=_alias_label(nm))   # _reg_lock, not self._lock
+            if reg.get("threadOf"):
+                # A dormant thread's DEAD LIFE, reported at its explicit wake. The boot sweep never
+                # resumes a thread for it (T223), so what the sweep tells a resumed top-level session
+                # — a question the kernel's death killed (pendingAsk, T214), background tasks that
+                # died with the process (the bgTasks mirror) — a thread hears here, once, ahead of the
+                # reply that woke it; the flags clear with the report. Not at the boot skip: a notice
+                # persisted there would read as a queue at the next boot and earn the very resume T223
+                # forbids, and clearing silently would drop true information (a watcher the thread
+                # still waits on is dead). Nothing else reads these flags, so before this they rode
+                # across every boot and wake until a later boot found the thread WITH a queued reply
+                # and prepended the stale notices ahead of it. A flagless wake writes nothing.
+                dead_tasks = [t for t in (reg.get("bgTasks") or []) if isinstance(t, dict)]
+                ask_died = bool(reg.get("pendingAsk"))
+                if dead_tasks or ask_died:
+                    notices = ([ASK_DIED_NOTICE] if ask_died else []) \
+                            + ([task_death_notice(dead_tasks)] if dead_tasks else [])
+                    with self._reg_lock:                   # _lock → _reg_lock: the rider's order above
+                        cur = read_reg(self.state_dir, sid) or dict(reg)
+                        rest = [t for t in (cur.get("queue") or [])
+                                if isinstance(t, str) and t and t not in notices]
+                        # a resume nudge at the head stays there — continuation context first, then
+                        # the notices, the sweep's order; the crash resume prepends one before it
+                        # calls here
+                        head = rest[:1] if rest and rest[0] in (BOOT_RESUME_NUDGE, CRASH_RESUME_NUDGE) else []
+                        cur["queue"] = head + notices + rest[len(head):]
+                        cur["bgTasks"] = []                # reported — never re-notify for the same deaths
+                        cur["pendingAsk"] = False          # asked once per death
+                        write_reg(self.state_dir, sid, cur)
+                    reg["queue"] = cur["queue"]            # SdkSession seeds its queue from THIS dict
+                    reg["bgTasks"] = []
+                    reg["pendingAsk"] = False
+                    self._log("thread %s wakes to its dead life: %s" % (sid[:8], ", ".join(
+                        (["a killed question"] if ask_died else [])
+                        + (["%d dead background task(s)" % len(dead_tasks)] if dead_tasks else []))))
             s = SdkSession(self, reg)
             s.on_boot_settled = on_boot_settled
             self.sessions[sid] = s

@@ -17,6 +17,7 @@ import time
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 from importlib.machinery import SourceFileLoader
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -3039,6 +3040,40 @@ class BgTaskLifecycle(unittest.TestCase):
         be2._on_session_gone(s2)
         self.assertEqual(be2._ensured, [])
         self.assertEqual([t["desc"] for t in sb.read_reg(be2.state_dir, s2.sid)["bgTasks"]], ["timer"])
+
+    def test_a_threads_crash_resume_hears_dead_tasks_once_after_the_nudge(self):
+        # a comment thread's CLI dies mid-turn with the kernel alive: the crash resume spawns the
+        # fresh session through _ensure, whose thread-wake report (the boot sweep never resumes a
+        # thread, so a thread's dead life is reported at its wake) queues the task-death notice from
+        # the reg mirror — and this method's own report from the in-memory set follows with the
+        # identical text. The session hears it ONCE, after the continuation nudge: the order the
+        # boot sweep gives a top-level session.
+        be = sb.SdkBackend(tempfile.mkdtemp(), "/bin/true", lambda *a, **k: None)
+        sid = "11111111-2222-3333-4444-00000000c0de"
+        reg = {"sid": sid, "name": "n", "cwd": "/tmp", "alive": True,
+               "threadOf": "11111111-2222-3333-4444-000000000000"}
+        sb.write_reg(be.state_dir, sid, reg)
+        s = sb.SdkSession(be, reg)
+        self._feed(s, "task_started", {"task_id": "b1", "description": "release watcher"})
+        note = sb.task_death_notice(s._live_bg_tasks())
+        s.inflight = 1                                       # mid-turn: the crash-resume path
+        made = []
+
+        class _Rec:
+            def __init__(self, backend, reg):
+                made.append(dict(reg))
+                self.thread = mock.Mock(is_alive=lambda: True)
+                self.on_boot_settled = None
+
+            def start(self):
+                pass
+
+        with mock.patch.object(sb, "SdkSession", _Rec):
+            be._on_session_gone(s)
+        self.assertEqual(made[0].get("queue"), [sb.CRASH_RESUME_NUDGE, note], "nudge first, the notice once")
+        reg = sb.read_reg(be.state_dir, sid)
+        self.assertEqual(reg["queue"], [sb.CRASH_RESUME_NUDGE, note], "the persisted queue agrees")
+        self.assertEqual(reg["bgTasks"], [])
 
     def test_construction_heals_stranded_pending_switch_flags(self):
         # a pending /model / /effort switch that died with the previous process must not strand the
