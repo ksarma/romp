@@ -248,6 +248,32 @@ test('a transient refusal (the hold arms later) renders the armed-after-refusal 
     'a transient refusal must not read as a hold that never armed');
 });
 
+test('a hold that ARMED and was then LOST renders the lost-after-arming cause, never "before arming" (T227)', async () => {
+  // the other order: the first poll arms the hold, every later poll is refused (the token file went
+  // away mid-park). Two bare counters read this as "refused N before arming" — the ordering flag
+  // says what actually happened.
+  fs.writeFileSync(TOKEN_FILE, 'drain-probe-credential\n');
+  // two refusals BEFORE the arm, then the hold arms, then every later poll is refused: the line must
+  // count the post-arm refusals on their own and name the pre-arm ones separately (the review's
+  // catch: a boolean flag let the whole total read as "after arming")
+  kstub.answers = [JSON.stringify({ busy: 1, draining: false }), JSON.stringify({ busy: 1, draining: false }),
+                   JSON.stringify({ busy: 1, draining: true })];
+  kstub.fallback = JSON.stringify({ busy: 1, draining: false });
+  let logged;
+  try {
+    logged = await capturedUntil(/applying deferred refresh/, () => { queueQuietRestart('ghost'); });
+  } finally { clearPendingQuiet(); }
+  const applyLine = logged.split('\n').find((l) => /applying deferred refresh/.test(l));
+  assert.match(applyLine, /backstop cap/);
+  assert.match(applyLine, /armed and was then LOST/, 'the cause states the order that happened');
+  const m = /refused (\d+) time\(s\) after arming, (\d+) before/.exec(applyLine);
+  assert.ok(m, 'the line splits post-arm from pre-arm refusals: ' + applyLine);
+  assert.equal(Number(m[2]), 2, 'exactly the two scripted pre-arm refusals read as "before"');
+  assert.ok(Number(m[1]) >= 1, 'the post-arm count is the loss itself, never inflated by the pre-arm two');
+  assert.doesNotMatch(applyLine, /before arming|never armed/,
+    'the reversed order must not borrow the other cause');
+});
+
 test('an in-flight probe from a cleared park never stamps the park that replaced it', async () => {
   fs.writeFileSync(TOKEN_FILE, 'drain-probe-credential\n');
   kstub.answers = [HOLD];                                           // park A's first probe parks server-side

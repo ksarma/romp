@@ -560,8 +560,9 @@ def _version_info():
             # counters, no paths — safe for the auth-exempt route. Deploy verification reads the live
             # fold rate here instead of trusting an offline replay number (T210).
             "parse": dict(em._ASM_STATS),
-            "drainRefused": dict(_DRAIN_REFUSED),   # T224: refused /busy?drain=1 arms — count, open
-            #                                          episode, last time; the silent degrade made visible
+            "drainRefused": dict(_DRAIN_REFUSED),   # T224: refused /busy?drain=1 arms — count (lifetime
+            #                                          total), episodeCount (the current/last episode),
+            #                                          open episode, last time; the silent degrade made visible
             # T222: where the model pickers' version list came from (seed / cache / api), when, what
             # the API added beyond the shipped seed, and the last refresh failure — so a stale list
             # is a visible fact in `romp version`, never a guess
@@ -26341,15 +26342,23 @@ def _broadcast_restarting(budget_s=0.8):
 # storm), a running count, and re-arm on the next SUCCESSFUL arm (the event that ends the episode),
 # so a second refusal episode is new information said again. The facts ride /version beside the
 # parse counters — bare numbers, safe for the auth-exempt route — so `romp version` shows them.
-_DRAIN_REFUSED = {"count": 0, "episode": False, "lastT": 0}
+# Fields (T227, the user 2026-09-02): `count` is the LIFETIME total of refused requests across every
+# episode this kernel life has seen; `episodeCount` is the refusals in the CURRENT (or, once closed,
+# the most recent) episode — the number the recovery line reports, since "the episode above is over
+# after N" must mean THAT episode, not the running total (a second episode of one refusal used to
+# read "after 2"); `episode` is whether one is open; `lastT` the latest refusal.
+_DRAIN_REFUSED = {"count": 0, "episodeCount": 0, "episode": False, "lastT": 0}
 
 
 def _note_drain_refused():
     try:
         _DRAIN_REFUSED["count"] += 1
         _DRAIN_REFUSED["lastT"] = int(time.time())
-        if not _DRAIN_REFUSED["episode"]:
+        if _DRAIN_REFUSED["episode"]:
+            _DRAIN_REFUSED["episodeCount"] += 1
+        else:
             _DRAIN_REFUSED["episode"] = True
+            _DRAIN_REFUSED["episodeCount"] = 1     # a fresh episode starts its own count
             sys.stderr.write("romp-kernel: REFUSED a drain hold — /busy?drain=1 arrived without a valid "
                              "serve token (an old manager, or a drive-by client): new turn starts are NOT "
                              "held while it polls; the exempt count still answers. Said once per refusal "
@@ -26363,7 +26372,8 @@ def _note_drain_armed():
         if _DRAIN_REFUSED["episode"]:
             _DRAIN_REFUSED["episode"] = False
             sys.stderr.write("romp-kernel: drain hold armed again after %d refused request(s) — the "
-                             "refusal episode above is over\n" % _DRAIN_REFUSED["count"])
+                             "refusal episode above is over (%d refused in total this kernel life)\n"
+                             % (_DRAIN_REFUSED["episodeCount"], _DRAIN_REFUSED["count"]))
     except Exception:
         pass
 
