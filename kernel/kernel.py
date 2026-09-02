@@ -28019,7 +28019,7 @@ post({type:"deepLink",session:q.get("session"),anchor:q.get("anchor")||undefined
 if(window.parent!==window)window.parent.postMessage({romp:"reveal",pane:"chat"},"*");return;}}catch(e){}window.open(url,"_blank");};
 window.__rompTimelineWriteOrder=function(order){if(window.__rompWriteOrder)window.__rompWriteOrder(order);};
 window.__rompTimelineCompact=function(name){post({type:"compact",name:name});};
-window.__rompTimelineSendCommand=function(name,cmd){post({type:"sendCommand",name:name,cmd:cmd});};
+window.__rompTimelineSendCommand=function(name,cmd,extra){post(Object.assign({type:"sendCommand",name:name,cmd:cmd},extra||{}));};
 window.__rompTimelineSetFlag=function(id,flag,value){post({type:"setSessionFlag",id:id,flag:flag,value:!!value});};
 window.__rompTimelineSetViews=function(views){post({type:"setTimelineViews",views:views});};
 window.__rompTimelineEditTag=function(edit){post({type:"editTag",edit:edit});};

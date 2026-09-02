@@ -114,6 +114,35 @@ class PickMemory(unittest.TestCase):
         self.assertEqual(km._model_picks(), {"haiku": "claude-haiku-4-5"},
                          "unknown ids and cross-family entries never poison the default")
 
+    def test_the_floating_gesture_clears_the_familys_pin_and_sends_the_alias(self):
+        # once a family carried a pin there was NO picker gesture back to floating: the family row
+        # sends the pin, the submenu lists only explicit ids, and a typed "/model opus" leaves the
+        # pick memory alone by design. The submenu's "Latest" row is that gesture — an explicit user
+        # act, so it may move state — carried as `floating` on the op.
+        class _BE:
+            calls = []
+
+            def set_model(self, sid, value):
+                self.calls.append(value)
+                return True
+        be = _BE()
+        sid = "11111111-2222-3333-4444-555555555555"
+        km._set_model_or_park(be, sid, "claude-opus-4-8")
+        km._set_model_or_park(be, sid, "claude-sonnet-4-6")
+        self.assertEqual(km._model_picks(), {"opus": "claude-opus-4-8", "sonnet": "claude-sonnet-4-6"})
+        km._set_model_or_park(be, sid, "opus", floating=True)
+        self.assertEqual(be.calls[-1], "opus", "the alias rides to the backend — the CLI resolves it live")
+        self.assertEqual(km._model_picks(), {"sonnet": "claude-sonnet-4-6"}, "only THAT family's pin is forgotten")
+        # the flag means nothing on a non-alias value: a version id with it pins as usual, and a
+        # floating alias with no pin to clear is a plain alias send
+        km._set_model_or_park(be, sid, "claude-opus-4-8", floating=True)
+        self.assertEqual(km._model_picks().get("opus"), "claude-opus-4-8")
+        km._set_model_or_park(be, sid, "haiku", floating=True)
+        self.assertEqual(km._model_picks(), {"opus": "claude-opus-4-8", "sonnet": "claude-sonnet-4-6"})
+        # and without the flag the alias still never touches the memory (the standing design)
+        km._set_model_or_park(be, sid, "opus")
+        self.assertEqual(km._model_picks().get("opus"), "claude-opus-4-8")
+
     def _clients(self):
         """Three fake connected clients — a chat, a timeline and a FEED client (the feed bundle is where the
         settings gear's pickers live) — on the kernel's live roster; the frames they receive, decoded.

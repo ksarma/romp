@@ -2540,11 +2540,13 @@ class TimelinePanel {
   // one Enter only OPENS the dialog and the model never changes. The extra Enter accepts the default
   // "Yes". /effort and /compact apply directly (no cache-invalidation confirmation), so they don't pass
   // it. The extra Enter is harmless even if a build skips the dialog (an empty composer submit is a no-op).
-  _sendCommand(name, cmd, confirm) {
+  _sendCommand(name, cmd, confirm, extra) {
     if (!name || !cmd) return;
     try {
+      // `extra` is op flags for the kernel bridge (the Latest row's `{ floating: true }`); the direct
+      // tmux paste below has no kernel to carry them to, so it sends the bare command
       if (typeof window !== 'undefined' && typeof window.__rompTimelineSendCommand === 'function') {
-        window.__rompTimelineSendCommand(name, cmd); return;
+        window.__rompTimelineSendCommand(name, cmd, extra || undefined); return;
       }
       const cp = require('child_process'), tmux = this._tmuxPath();
       const env = Object.assign({}, process.env, { LANG: 'en_US.UTF-8', LC_ALL: 'en_US.UTF-8', LC_CTYPE: 'en_US.UTF-8' });
@@ -2602,8 +2604,10 @@ class TimelinePanel {
     menu.dataset.rompMenu = '1';   // the echo writers skip in-menu presses (T213)
     menu._kind = kind; menu._sid = s.id;
     const h = this._menuHost(anchorEl.getBoundingClientRect());
-    const pick = (value) => {
-      this._sendCommand(s.name, '/' + kind + ' ' + value, kind === 'model');
+    const pick = (value, floating) => {
+      // `floating` is the version submenu's Latest row: the flag rides the command to the kernel,
+      // which forgets the family's remembered pin
+      this._sendCommand(s.name, '/' + kind + ' ' + value, kind === 'model', floating ? { floating: true } : null);
       const now = (typeof Date !== 'undefined' && Date.now) ? Date.now() : 0;
       this._metaPending[s.id + ':' + kind] = { was: (kind === 'model' ? s.model : s.effort) || '', until: now + 20000 };
       this._closeMetaMenu();
@@ -2626,7 +2630,27 @@ class TimelinePanel {
         closeSub();
         const sub = document.body.createDiv();
         sub.setAttribute('style', 'position:fixed;z-index:1002;min-width:96px;' + MENU_STYLE);
-    sub.dataset.rompMenu = '1';   // the echo writers skip in-menu presses (T213)
+        sub.dataset.rompMenu = '1';   // the echo writers skip in-menu presses (T213) — the Latest row rides inside
+        // "Latest" heads the submenu: the one gesture back to floating once a family carries a pin —
+        // the family row sends the pin, the rows below pin, and a typed alias leaves the pick memory
+        // alone by design. It sends the alias with the `floating` flag, which the kernel's sendCommand
+        // arm hands to _set_model_or_park to forget the family's remembered pin, so the family follows
+        // the CLI's newest release again. ✓ when unpinned and current.
+        const pinned = !!c.default && c.default !== c.value;
+        const latest = sub.createDiv();
+        latest.setAttribute('style', 'padding:4px 22px 4px 8px;border-radius:4px;cursor:pointer;position:relative;white-space:nowrap;');
+        latest.setAttribute('tabindex', '0');
+        latest.createDiv({ text: 'Latest' });
+        const lsub = latest.createDiv({ text: pinned ? 'unpins — follows the newest ' + c.label : 'follows the newest ' + c.label });
+        lsub.setAttribute('style', 'font-size:0.82em;opacity:0.6;');
+        if (!pinned && cur) { const ck = latest.createSpan({ text: '✓' }); ck.setAttribute('style', MENU_CHECK_STYLE); }
+        latest.addEventListener('mouseenter', () => { latest.style.background = HOVER_BG; });
+        latest.addEventListener('mouseleave', () => { latest.style.background = 'transparent'; });
+        latest.addEventListener('click', (e) => { e.stopPropagation(); pick(c.value, true); });
+        latest.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); pick(c.value, true); }
+          else if (e.key === 'ArrowLeft') { e.preventDefault(); closeSub(); item.focus(); }
+        });
         for (const v of versions) {
           const cv = ((s.model || '').toLowerCase() === v.label.toLowerCase());
           const row = sub.createDiv({ text: v.label });

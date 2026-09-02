@@ -7350,20 +7350,50 @@ function renderCommentPopover(): void {
           closeMetaMenu();
           const menu = el("div", "meta-menu");
           for (const c of META_CHOICES[kind]) {
+            // a PINNED model family (its /models default is a version, not the alias) — see the Latest row below
+            const pinnedTo = kind === "model" ? (c.default || "") : "";
+            const pinned = !!pinnedTo && pinnedTo !== c.value;
             const cur = kind === "fast"
               ? c.value === ((effVal || st?.fast || "off").toLowerCase() === "on" ? "on" : "off")
-              : effVal ? (c.value === effVal || !!c.versions?.some((v) => v.value === effVal))
+              : effVal ? (pinned ? effVal === pinnedTo : (c.value === effVal || !!c.versions?.some((v) => v.value === effVal)))
               : (st ? isCurrentMeta(kind, st, c.value) : false);
             const item = el("div", "meta-item" + (cur ? " current" : ""));
             item.textContent = c.label;
             item.addEventListener("click", (ev) => {
               ev.stopPropagation();
-              if (pendingCommentAnchor) pendingCommentAnchor[kind] = c.value;
+              // a model family sends its remembered DEFAULT — the pinned version, else the alias —
+              // exactly as the chat statusline and the timeline lane do (this dialog sent the bare
+              // alias, so the same click floated here and pinned there)
+              if (pendingCommentAnchor) pendingCommentAnchor[kind] = kind === "model" ? (c.default || c.value) : c.value;
               closeMetaMenu();
               document.getElementById("cmt-pop")?.remove();   // full rebuild shows the pick
               renderCommentPopover();
             });
             menu.appendChild(item);
+            if (pinned) {
+              // This menu is FLAT — no submenu, so no Latest row — and once a family carried a pin the
+              // family row launched on the pin and nothing here launched on the alias. The family row
+              // names the pin it launches on, and a "<Family> · Latest" row beside it sends the bare
+              // alias: a per-thread launch pref, never the family's memory (an alias records nothing at
+              // the kernel's choke point, so no floating flag rides it).
+              const pinSub = el("div", "meta-item-sub");
+              pinSub.textContent = modelChoiceLabel(pinnedTo).label;
+              item.appendChild(pinSub);
+              const latest = el("div", "meta-item" + (effVal === c.value ? " current" : ""));
+              const lh = el("div");
+              lh.textContent = c.label + " · Latest";
+              const ls = el("div", "meta-item-sub");
+              ls.textContent = "follows the newest " + c.label;
+              latest.append(lh, ls);
+              latest.addEventListener("click", (ev) => {
+                ev.stopPropagation();
+                if (pendingCommentAnchor) pendingCommentAnchor[kind] = c.value;
+                closeMetaMenu();
+                document.getElementById("cmt-pop")?.remove();
+                renderCommentPopover();
+              });
+              menu.appendChild(latest);
+            }
           }
           document.body.appendChild(menu);
           const r2 = btn.getBoundingClientRect();
@@ -10312,9 +10342,11 @@ function toggleMetaMenu(kind: MetaKind, btn: HTMLElement, forSid?: string | null
   const s = { status };
   const menu = el("div", "meta-menu");
   menu.dataset.kind = kind;
-  const pickValue = (value: string) => {
+  const pickValue = (value: string, floating = false) => {
     if (vscodeApi) {
-      vscodeApi.postMessage({ type: kind === "model" ? "setModel" : kind === "effort" ? "setEffort" : kind === "fast" ? "setFast" : "setMode", id: opSid, value });
+      const op: Record<string, unknown> = { type: kind === "model" ? "setModel" : kind === "effort" ? "setEffort" : kind === "fast" ? "setFast" : "setMode", id: opSid, value };
+      if (floating) op.floating = true;   // the submenu's Latest row: the kernel forgets the family's pin
+      vscodeApi.postMessage(op);
       const was = metaCurrent(kind, s.status);
       metaPending.set(`${opSid}:${kind}`, { was, until: Date.now() + 20_000 });
       btn.classList.add("meta-pending");
@@ -10361,6 +10393,26 @@ function toggleMetaMenu(kind: MetaKind, btn: HTMLElement, forSid?: string | null
     const openSub = versions.length > 1 ? () => {
       closeSub();
       const sub = el("div", "meta-menu meta-sub");
+      // "Latest" heads the submenu: the one gesture back to floating once a family carries a pin — the
+      // family row sends the pin, the rows below pin, and a typed "/model fable" leaves the pick memory
+      // alone by design. It sends the ALIAS with the `floating` flag, which the kernel's setModel arm
+      // hands to _set_model_or_park to forget the family's remembered pin, so the family follows the
+      // CLI's newest release again. An explicit user gesture, so it may move state. ✓ when the family
+      // is unpinned and the session runs it.
+      const pinned = !!c.default && c.default !== c.value;
+      const latest = el("div", "meta-item" + (!pinned && isCurrentMeta(kind, s.status, c.value) ? " current" : ""));
+      latest.tabIndex = 0;
+      const lhead = el("div");
+      lhead.textContent = "Latest";
+      const lsub = el("div", "meta-item-sub");
+      lsub.textContent = pinned ? "unpins — follows the newest " + c.label : "follows the newest " + c.label;
+      latest.append(lhead, lsub);
+      latest.addEventListener("click", (e) => { e.stopPropagation(); pickValue(c.value, true); });
+      latest.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); pickValue(c.value, true); }
+        else if (e.key === "ArrowLeft") { e.preventDefault(); closeSub(); item.focus(); }
+      });
+      sub.appendChild(latest);
       for (const v of versions) {
         const cur = (s.status.model || "").toLowerCase() === v.label.toLowerCase();
         const row = el("div", "meta-item" + (cur ? " current" : ""));

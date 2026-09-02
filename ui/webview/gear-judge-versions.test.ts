@@ -54,6 +54,20 @@ test("the gear's version rows mark a learned version as new, like the chat and t
   assert.match(GEAR, /if \(v\.learned\) \{[\s\S]{0,600}r2\.title = /, "and says where the version came from");
 });
 
+test("the gear's version submenu opens with a Latest row that sends the bare family alias", () => {
+  // the session pickers' floating gesture, on the judge tiers too: a tier set to a version stays
+  // there until picked off it, and the family row sends the remembered pin — Latest is the row that
+  // sends the alias itself, so the tier follows the CLI's newest again
+  assert.match(GEAR, /latest\.appendChild\(document\.createTextNode\('Latest'\)\)/);
+  assert.match(GEAR, /latest\.addEventListener\('click', function \(e2\) \{ e2\.stopPropagation\(\); pick\(fam\.value\); \}\)/);
+  assert.match(GEAR, /sub\.appendChild\(latest\);[\s\S]{0,300}versions\.forEach\(function \(v\)/, "heads the submenu, ahead of the versions");
+  // the Latest row wears the same themed tokens as every other row (T226) — no raw dark literal
+  const at = GEAR.indexOf("latest.appendChild(document.createTextNode('Latest'))");
+  const seg = GEAR.slice(at, at + 1200);
+  assert.match(seg, /var\(--menu-hover, rgba\(255,255,255,0\.09\)\)/, "row hover through the token");
+  assert.match(seg, /background:var\(--check-bg, #1EA1EB\)/, "the ✓ mark through the token");
+});
+
 test("the gear's cached /models list re-reads on the kernel's models frame", () => {
   // fillChoices caches the list after its first fetch and the family rows send `fam.default` from
   // that cache at click time — so a pin or a Latest un-pin made anywhere (this dashboard's chat

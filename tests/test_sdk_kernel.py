@@ -198,6 +198,30 @@ class KernelWiring(unittest.TestCase):
         self._route({"type": "sendMessage", "id": "sid-sdk", "text": "/model fable[1m]"})
         self.assertIn(("set_model", "sid-sdk", "fable[1m]"), self.be.calls)
 
+    def test_the_floating_flag_clears_the_pin_from_both_picker_doors(self):
+        # the submenu's "Latest" row: the chat/comment pickers post setModel with `floating`, the
+        # timeline lane menu sends its "/model X" command with the same flag — both forget the
+        # family's remembered pin and send the alias, so the family follows the CLI's newest again.
+        # A plain alias (no flag) keeps leaving the memory alone.
+        picks = km.jd.STATE / km.MODEL_PICKS_FILE_NAME
+        picks.unlink(missing_ok=True)
+        # the timeline keys sendCommand by session NAME (_sid_of resolves it through the live map)
+        self._route({"type": "setModel", "id": "sid-sdk", "value": "claude-sonnet-4-6"})
+        self.assertTrue(self._route({"type": "sendCommand", "name": "sid-sdk", "cmd": "/model claude-opus-4-8"}))
+        self.assertEqual(km._model_picks(), {"sonnet": "claude-sonnet-4-6", "opus": "claude-opus-4-8"})
+        self._route({"type": "setModel", "id": "sid-sdk", "value": "sonnet"})
+        self._route({"type": "sendCommand", "name": "sid-sdk", "cmd": "/model opus"})
+        self.assertEqual(km._model_picks(), {"sonnet": "claude-sonnet-4-6", "opus": "claude-opus-4-8"},
+                         "a bare alias send never downgrades a pin (the standing design)")
+        self._route({"type": "setModel", "id": "sid-sdk", "value": "sonnet", "floating": True})
+        self.assertEqual(km._model_picks(), {"opus": "claude-opus-4-8"})
+        self._route({"type": "sendCommand", "name": "sid-sdk", "cmd": "/model opus", "floating": True})
+        self.assertEqual(km._model_picks(), {})
+        self.assertEqual([c for c in self.be.calls if c[0] == "set_model"][-2:],
+                         [("set_model", "sid-sdk", "sonnet"), ("set_model", "sid-sdk", "opus")],
+                         "the alias itself is what reaches the backend")
+        picks.unlink(missing_ok=True)
+
     def test_setmodel_mid_compaction_parks_as_a_queued_command(self):
         # the user 2026-07-01: switching the model while a compaction ran broke the compaction — the
         # kernel now PARKS the change (a queued '/model …' bubble) and _apply_pending_models fires it
