@@ -337,5 +337,142 @@ class UmbrellaDissolution(unittest.TestCase):
                          "the un-stranded ask carries its own evidence — the trace can reach it now")
 
 
+MID3 = "1787499000.000003_1.TESTHOST"
+MID4 = "1787499000.000004_1.TESTHOST"
+
+
+class ImageOnlyAsk(unittest.TestCase):
+    """_human_prompt_record returns an EMPTY-TEXT record for an image-only dictated prompt (a human
+    record with no text blocks), and a fallback that gated the userAsk stamp on text.strip()
+    minted with askRef but NO userAsk — a top with no dictation evidence the ask-unit exemption
+    accepts, so a fully-fanned image ask rendered NOWHERE and the dedupe linked later dispatches
+    into that invisible top. The stamp falls back to the '(user message)' placeholder
+    (_seg_label's own titleless-prompt presentation), so the exemption's userAsk check holds for
+    image asks."""
+
+    def test_an_image_only_human_record_is_still_a_record(self):
+        rec = jd._human_prompt_record({"uuid": "hu", "type": "user", "author": "human",
+                                       "message": {"role": "user", "content": [
+                                           {"type": "image",
+                                            "source": {"media_type": "image/png",
+                                                       "data": "Zm9v"}}]}}, MGR)
+        self.assertIsInstance(rec, dict, "an image-only prompt is dictation — the chain roots")
+        self.assertEqual(rec.get("text"), "")
+
+    def _mint(self, st, seg, mid):
+        rec = {"text": "", "sid": MGR, "carded": False,
+               "askRef": {"peer": MGR, "goalId": MGR + ":g1"}}
+        return jd.apply_courier(st, seg, T0, "review the screenshot",
+                                {"peer": MGR, "goalId": MGR + ":t1", "msgId": mid},
+                                prompt_uuid="anchor", frame="review the screenshot",
+                                user_ask=rec)
+
+    def test_the_fallback_mint_stamps_a_userask_for_an_image_only_ask(self):
+        st = {"rompUuid": WK1, "seq": 0, "nodes": {}, "placements": {}, "status": {}}
+        nid = self._mint(st, "seg1", MID1)
+        ua = st["nodes"][nid].get("userAsk")
+        self.assertIsInstance(ua, dict, "askRef never rides without the dictation stamp")
+        self.assertTrue(str(ua.get("text") or "").strip(),
+                        "empty dictation stamps the placeholder, never nothing")
+        # …and the exemption accepts it: fanned onward, the ask keeps its card
+        st["nodes"]["h1"] = _node("h1", "↪ delegated to tests: the screenshot", nid,
+                                  handoff={"peer": WK2, "msgId": MID2})
+        self.assertFalse(km._pure_delegation_top(st["nodes"], nid),
+                         "a fully-fanned image ask renders SOMEWHERE")
+
+    def test_a_second_dispatch_of_the_image_ask_links_into_the_visible_top(self):
+        st = {"rompUuid": WK1, "seq": 0, "nodes": {}, "placements": {}, "status": {}}
+        nid = self._mint(st, "seg1", MID1)
+        nid2 = self._mint(st, "seg2", MID3)
+        self.assertEqual(nid2, nid, "one image ask, one card — the placeholder is its identity")
+        self.assertIn(MID3, [l.get("msgId") for l in (st["nodes"][nid].get("links") or [])])
+
+
+class MergeCarriesDelegationIdentity(unittest.TestCase):
+    """_merge_nodes dropped origin, links, and askRef when the grouper folded a courier-minted top
+    into a planner twin — a lost askRef reopened duplicate minting for the next dispatch of the
+    same ask, and a lost origin/links stranded the sender's non-quiet tracker FOREVER
+    (run_propagate's back-link and its dismissal arm both join on the msgId)."""
+
+    def _world(self):
+        surv = _node(WK1 + ":g1", "Drag-range selection over run rows", None)
+        dupe = _node(WK1 + ":g2", "Drag-range selection (delegated)", None,
+                     origin={"peer": MGR, "goalId": MGR + ":t1", "msgId": MID1},
+                     userAsk={"text": "drag-range selection over run rows", "sid": MGR},
+                     askRef={"peer": MGR, "goalId": MGR + ":a1"},
+                     links=[{"peer": MGR, "goalId": MGR + ":t2", "msgId": MID2}])
+        return {"rompUuid": WK1, "seq": 2, "nodes": {surv["id"]: surv, dupe["id"]: dupe},
+                "placements": {}, "status": {}}
+
+    def test_the_merge_carries_origin_links_and_askref(self):
+        st = self._world()
+        self.assertEqual(jd._merge_nodes(st, WK1 + ":g2", WK1 + ":g1", T0 + 10, "twin"), 1)
+        surv = st["nodes"][WK1 + ":g1"]
+        self.assertEqual((surv.get("origin") or {}).get("msgId"), MID1)
+        self.assertEqual(surv.get("askRef"), {"peer": MGR, "goalId": MGR + ":a1"})
+        self.assertIn(MID2, [l.get("msgId") for l in (surv.get("links") or [])])
+        self.assertEqual((surv.get("userAsk") or {}).get("sid"), MGR)
+
+    def test_a_survivor_with_its_own_origin_keeps_the_dupes_msgid_as_a_link(self):
+        st = self._world()
+        st["nodes"][WK1 + ":g1"]["origin"] = {"peer": MGR, "goalId": MGR + ":t0", "msgId": MID4}
+        jd._merge_nodes(st, WK1 + ":g2", WK1 + ":g1", T0 + 10, "twin")
+        surv = st["nodes"][WK1 + ":g1"]
+        self.assertEqual((surv.get("origin") or {}).get("msgId"), MID4,
+                         "the survivor's own birth stands — origin stays truthful")
+        self.assertIn(MID1, [l.get("msgId") for l in (surv.get("links") or [])],
+                      "…and the dupe's delegation stays joinable by msgId")
+
+    def test_merge_then_second_dispatch_links_not_mints(self):
+        st = self._world()
+        jd._merge_nodes(st, WK1 + ":g2", WK1 + ":g1", T0 + 10, "twin")
+        rec = {"text": "drag-range selection over run rows", "sid": MGR, "carded": False,
+               "askRef": {"peer": MGR, "goalId": MGR + ":a1"}}
+        before = set(st["nodes"])
+        nid = jd.apply_courier(st, "segN", T0 + 20, "drag-range, second pass",
+                               {"peer": MGR, "goalId": MGR + ":t3", "msgId": MID3},
+                               prompt_uuid="anc", frame="second pass", user_ask=rec)
+        self.assertEqual(nid, WK1 + ":g1", "the ask identity survived the merge — link")
+        self.assertEqual(set(st["nodes"]), before, "no duplicate mint")
+        self.assertIn(MID3, [l.get("msgId") for l in (st["nodes"][nid].get("links") or [])])
+
+    def test_merge_then_ending_completes_the_senders_trackers(self):
+        # end-to-end: the recipient's merged card completes → run_propagate ends BOTH the
+        # origin's tracker and the linked dispatch's tracker off the one surviving card
+        td = tempfile.TemporaryDirectory()
+        _msgs, _disc = jd.MESSAGES, jd.discover
+        jd.MESSAGES = Path(td.name) / "messages.jsonl"
+        jd.MESSAGES.write_text("")
+        jd.discover = lambda now, window=None, forks=True: [
+            (WK1, "/dev/null", None, "api"), (MGR, "/dev/null", None, "web")]
+        try:
+            st = self._world()
+            jd._merge_nodes(st, WK1 + ":g2", WK1 + ":g1", T0 + 10, "twin")
+            jd.record_verdict(st, st["nodes"][WK1 + ":g1"], "closer", "done", NOW - 100,
+                              why="both halves landed")
+            jd.save_goals(WK1, st)
+            jd.save_goals(MGR, {"rompUuid": MGR, "seq": 2, "nodes": {
+                MGR + ":t1": _node(MGR + ":t1", "↪ delegated to api: drag-range", None,
+                                   handoff={"peer": WK1, "msgId": MID1}),
+                MGR + ":t2": _node(MGR + ":t2", "↪ delegated to api: drag-range, again", None,
+                                   handoff={"peer": WK1, "msgId": MID2})},
+                "placements": {}, "status": {}})
+            jd.run_propagate(now=NOW)
+            m = jd.load_goals(MGR)
+            self.assertTrue(m["nodes"][MGR + ":t1"].get("nodeComplete"),
+                            "the origin back-link ends t1")
+            self.assertTrue(m["nodes"][MGR + ":t2"].get("nodeComplete"),
+                            "the carried link ends t2")
+        finally:
+            jd.MESSAGES, jd.discover = _msgs, _disc
+            for sid in (MGR, WK1):
+                for dd in (jd.GOALDIR, jd.GOALARCHDIR):
+                    try:
+                        (dd / (sid + ".json")).unlink()
+                    except OSError:
+                        pass
+            td.cleanup()
+
+
 if __name__ == "__main__":
     unittest.main()
