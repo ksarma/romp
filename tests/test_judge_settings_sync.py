@@ -36,10 +36,11 @@ class ApplySettings(unittest.TestCase):
         for f in ("judge-model", "index-model", "judge-effort", "index-effort",
                   "distill-model", "distill-effort",
                   "comment-model", "comment-effort", "comment-fast"):
-            try:
-                (km.jd.STATE / f).unlink()
-            except OSError:
-                pass
+            for name in (f, f + ".gt"):   # the value and its gesture-stamp sidecar (gesture ordering)
+                try:
+                    (km.jd.STATE / name).unlink()
+                except OSError:
+                    pass
 
     def test_distill_pair_applies_pins_and_reports_raw(self):
         # the ack answers the RAW stored value ("triage" = following the triage pick), matching
@@ -73,36 +74,39 @@ class ApplySettings(unittest.TestCase):
                          "garbage never reaches the files or `claude --model`")
 
     def test_an_older_propagated_value_never_overwrites_a_newer_pick(self):
-        # THE REPORTED STOMP (the user 2026-08-30): their Distilling pick kept resetting — any
-        # later-arriving propagation replaced a fresher local pick wholesale, because the apply had
-        # no notion of WHEN each value was picked. Now every propagated field carries its pick
-        # stamp, and older-or-equal never lands.
-        km._apply_judge_settings({"distillModel": "claude-opus-4-8"})   # the user's pick, mtime = now
-        res = km._apply_judge_settings({"distillModel": "triage",
-                                        "stamps": {"distillModel": time.time() - 3600}})
+        # THE REPORTED STOMP (the user 2026-08-30, whose Distilling pick kept resetting): any
+        # later-arriving propagation replaced a fresher local pick wholesale, because the apply
+        # had no notion of WHEN each value was picked. Every apply now orders by the ORIGIN
+        # GESTURE's stamp (the body-level `gt` every propagation leg forwards); older-or-equal
+        # stands down at the store. The per-field mtime "stamps" that first fixed this stomp are
+        # re-pinned here in gesture-stamp terms — one clock decides every write, at both hops.
+        now_ms = int(time.time() * 1000)
+        km._apply_judge_settings({"distillModel": "claude-opus-4-8", "gt": now_ms})
+        res = km._apply_judge_settings({"distillModel": "triage", "gt": now_ms - 3600 * 1000})
         self.assertEqual(res["distillModel"], "claude-opus-4-8",
                          "an hour-old peer value must not stomp the fresh pick")
-        newer = time.time() + 60
-        res = km._apply_judge_settings({"distillModel": "triage", "stamps": {"distillModel": newer}})
+        res = km._apply_judge_settings({"distillModel": "triage", "gt": now_ms + 60000})
         self.assertEqual(res["distillModel"], "triage", "a genuinely newer pick still lands")
-        self.assertAlmostEqual((km.jd.STATE / "distill-model").stat().st_mtime, newer, delta=1,
-                               msg="the ORIGIN's pick time rides the file, so recency survives re-fans")
+        self.assertEqual(km._judge_state_gt("distill-model"), now_ms + 60000,
+                         "the ORIGIN's gesture stamp rides the sidecar, so recency survives re-fans")
 
     def test_a_stampless_body_keeps_the_legacy_apply(self):
-        # an older kernel (or a manual curl) sends no stamps — it applies unconditionally, exactly
+        # an older kernel (or a manual curl) sends no gt — it applies unconditionally, exactly
         # as before; the stomp protection needs both ends on this code
         km._apply_judge_settings({"distillModel": "claude-opus-4-8"})
         res = km._apply_judge_settings({"distillModel": "haiku"})
         self.assertEqual(res["distillModel"], "haiku")
 
     def test_a_rejected_value_never_steals_the_stamp(self):
-        # garbage with a newer stamp: the setter refuses it, and the utime must NOT re-stamp the
-        # surviving old content with the new time (that would shadow-block the next honest pick)
-        km._apply_judge_settings({"judgeModel": "fable"})
-        t0 = (km.jd.STATE / "judge-model").stat().st_mtime
-        km._apply_judge_settings({"judgeModel": "gpt-99", "stamps": {"judgeModel": time.time() + 999}})
+        # garbage with a newer stamp: the setter refuses it BEFORE the ordering check
+        # (_set_judge_state validates first), so the sidecar must NOT advance — a burned stamp
+        # would shadow-block the next honest pick
+        now_ms = int(time.time() * 1000)
+        km._apply_judge_settings({"judgeModel": "fable", "gt": now_ms})
+        km._apply_judge_settings({"judgeModel": "gpt-99", "gt": now_ms + 999000})
         self.assertEqual((km.jd.STATE / "judge-model").read_text(), "fable")
-        self.assertEqual((km.jd.STATE / "judge-model").stat().st_mtime, t0)
+        self.assertEqual(km._judge_state_gt("judge-model"), now_ms,
+                         "a refused value never burns its gesture stamp")
 
     def test_distill_sentinel_returns_the_pair_to_follow_mode(self):
         km._apply_judge_settings({"distillModel": "haiku", "distillEffort": "high"})
@@ -169,24 +173,20 @@ class PropagateFansOut(unittest.TestCase):
     def test_every_up_kernel_with_an_admin_path_gets_the_pick(self):
         km._remote_kernel_call = lambda r, m, p, payload=None, timeout=8: (
             self.calls.append((r["host"], m, p, payload)) or (200, {"ok": True}, None))
-        try:
-            (km.jd.STATE / "judge-model").unlink()   # never picked here -> no stamp to carry
-        except OSError:
-            pass
         km._propagate_judge_settings({"judgeModel": "fable"})
         self.assertEqual(self.calls,
-                         [("boxup", "POST", "/judge-settings", {"judgeModel": "fable", "stamps": {}})],
+                         [("boxup", "POST", "/judge-settings", {"judgeModel": "fable"})],
                          "up + token only; a down row or one with no token is not an admin path")
 
-    def test_the_fanned_body_stamps_each_field_with_its_pick_time(self):
-        # the user 2026-08-30 ("my Distilling pick continually gets reset"): authority is per field
-        # and per PICK TIME — the stamp is the STATE file's own mtime, the pick event itself
+    def test_the_fanned_body_carries_the_origin_gesture_stamp(self):
+        # the user 2026-08-30 (whose Distilling pick kept resetting): authority is per PICK TIME.
+        # The fan forwards the BODY unchanged — including the origin gesture's `gt`, the same
+        # stamp the local store just applied — so every receiver orders by the one clock
+        # (test_setting_gesture_order.py pins the receiver side).
         km._remote_kernel_call = lambda r, m, p, payload=None, timeout=8: (
             self.calls.append(payload) or (200, {"ok": True}, None))
-        km._set_distill_model("claude-opus-4-8")
-        want = (km.jd.STATE / "distill-model").stat().st_mtime
-        km._propagate_judge_settings({"distillModel": "claude-opus-4-8"})
-        self.assertEqual(self.calls[0]["stamps"], {"distillModel": want})
+        km._propagate_judge_settings({"distillModel": "claude-opus-4-8", "gt": 1725000000000})
+        self.assertEqual(self.calls[0], {"distillModel": "claude-opus-4-8", "gt": 1725000000000})
 
     def test_a_miss_is_loud_and_names_the_machine(self):
         km._remote_kernel_call = lambda *a, **k: (None, None, "could not reach boxup's kernel: boom")
@@ -212,14 +212,22 @@ class OneHopNeverALoop(unittest.TestCase):
                       "a forwarded body never carries the flag — one hop, never a mesh loop")
 
     def test_every_gear_op_propagates_its_own_field(self):
-        for frag in ('args=({"judgeModel": str(msg["model"])},)',
-                     'args=({"indexModel": str(msg["model"])},)',
-                     'args=({"judgeEffort": str(msg.get("effort") or "")},)',
-                     'args=({"indexEffort": str(msg.get("effort") or "")},)',
-                     'args=({"commentModel": str(msg["model"])},)',
-                     'args=({"commentEffort": str(msg["effort"])},)',
-                     'args=({"commentFast": str(msg["fast"])},)'):
+        # each fan-out body carries the APPLIED gesture stamp `_jgt` (gesture-time ordering,
+        # 2026-08-29: receivers order by it too — see test_setting_gesture_order.py), and only
+        # an applied pick fans out at all (`_jgt is not None`): a stood-down or invalid one
+        # propagates nothing, since re-propagation is how a stale flush once reverted the mesh
+        for frag in ('args=({"judgeModel": str(msg["model"]), "gt": _jgt},)',
+                     'args=({"indexModel": str(msg["model"]), "gt": _jgt},)',
+                     'args=({"judgeEffort": str(msg.get("effort") or ""), "gt": _jgt},)',
+                     'args=({"indexEffort": str(msg.get("effort") or ""), "gt": _jgt},)',
+                     'args=({"distillModel": str(msg["model"]), "gt": _jgt},)',
+                     'args=({"distillEffort": str(msg["effort"]), "gt": _jgt},)',
+                     'args=({"commentModel": str(msg["model"]), "gt": _jgt},)',
+                     'args=({"commentEffort": str(msg["effort"]), "gt": _jgt},)',
+                     'args=({"commentFast": str(msg["fast"]), "gt": _jgt},)'):
             self.assertIn(frag, self.src, frag)
+        self.assertGreaterEqual(self.src.count("if _jgt is not None:"), 9,
+                                "every judge-tier fan-out is gated on the pick actually applying")
 
     def test_the_gear_copy_says_the_pick_follows(self):
         with open(os.path.join(os.path.dirname(HERE), "ui", "webview", "gear.js")) as f:

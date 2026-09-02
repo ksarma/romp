@@ -32,5 +32,5 @@ test("caret faces RIGHT everywhere; the submenu side is measured with the right 
 
 test("the kernel accepts version ids on every judge tier", () => {
   assert.match(KERNEL, /_JUDGE_MODEL_VALUES = _MODEL_VALUES \| set\(_VERSION_FAMILY\)/);
-  assert.match(KERNEL, /_set_judge_state\("distill-model", v, _JUDGE_MODEL_VALUES \| \{"triage"\}\)/);
+  assert.match(KERNEL, /_set_judge_state\("distill-model", v, _JUDGE_MODEL_VALUES \| \{"triage"\}, gt=gt\)/);
 });

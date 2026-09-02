@@ -353,8 +353,10 @@ test("Edit is consent-gated, and the gate is the KERNEL's flag, not the button (
   assert.match(VIEW, /fetch\(kernelUrl\("\/version"\), \{ cache: "no-store" \}\)/);
   assert.match(VIEW, /\.fileEditing;/);
   // no flag → a plain-words popup; only a YES posts the opt-in, and it broadcasts (KERNEL_SETTING)
+  // — stamped with the gesture's own time, so a copy queued for a down host and flushed hours
+  // later can never outrank a newer pick at the kernel (the store orders applies by gt)
   assert.match(VIEW, /window\.confirm\(\s*\n?\s*"Allow editing files from the dashboard\?/);
-  assert.match(VIEW, /post\(\{ type: "setFileEditing", enabled: true \}\);/);
+  assert.match(VIEW, /post\(\{ type: "setFileEditing", enabled: true, gt: Date\.now\(\) \}\);/);
   // the popup's promise of a gear off-switch is real, and the save route refuses server-side
   const GEAR = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "gear.js"), "utf8");
   assert.ok(GEAR.includes("'setFileEditing'"), "the gear can turn it back off");
