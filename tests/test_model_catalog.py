@@ -406,7 +406,8 @@ class CliBlocks(unittest.TestCase):
 
 
 class ModelsRoute(unittest.TestCase):
-    """GET /models serves the MERGED list plus any CLI block — every picker reads this one route."""
+    """GET /models serves the MERGED list plus any CLI block — every picker reads this one route. The
+    catalog owns the version LIST; the alias owns the DEFAULT."""
 
     @classmethod
     def setUpClass(cls):
@@ -446,7 +447,18 @@ class ModelsRoute(unittest.TestCase):
         self.assertEqual(opus[0]["cliNeeds"], "2.1.251")
         self.assertIn("needs CLI ≥ 2.1.251", opus[0]["label"])
         self.assertEqual(rows["fable"]["versions"][0], {"value": "claude-fable-5-1", "label": "Fable 5.1"})
-        self.assertEqual(rows["fable"]["default"], "claude-fable-5-1", "no pin → family-newest is 5.1")
+        self.assertEqual(rows["fable"]["default"], "fable",
+                         "no pin → the family ALIAS, which the CLI resolves to its newest live — never the list's head")
+
+    def test_a_family_default_is_the_alias_even_when_the_catalog_knows_a_newer_head(self):
+        # the catalog may lead a family with an id newer than the seed knew, and a bare family click
+        # STILL sends the alias — a pinned head was the bug (every picker-set session stayed on
+        # claude-fable-5 while `fable` moved on)
+        km._apply_model_catalog(km.merge_model_catalog(km._MODEL_SEED, FAKE_ROWS), "api")
+        rows = {m["value"]: m for m in self._models()["models"]}
+        self.assertEqual(rows["opus"]["versions"][0]["value"], "claude-opus-9-9", "the catalog's head leads the list")
+        for fam in ("fable", "opus", "sonnet", "haiku"):
+            self.assertEqual(rows[fam]["default"], fam, "%s: no pick → the alias" % fam)
 
 
 def _free_port():

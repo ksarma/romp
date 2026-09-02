@@ -829,10 +829,14 @@ MODEL_CHOICES = [{"value": "fable", "label": "Fable"}, {"value": "opus", "label"
 # Every version a family can pin (the user 2026-08-25: shorthand aliases resolve to the NEWEST —
 # opus became Opus 5 — silently losing the legacy versions that remain live on the API). Newest
 # first; values are the API's DATELESS aliases, verified against the claude-api reference
-# 2026-08-25 (deprecated 4.1/4.0-era models excluded on purpose — they are retiring). Clicking a
-# family in a picker sends that family's DEFAULT: the most recent version the user picked for it
-# (model-picks.json below), else the newest. Full ids ride every set path verbatim already — the
-# alias table stops at the family names, so a version pick needs no new transport.
+# 2026-08-25 (deprecated 4.1/4.0-era models excluded on purpose — they are retiring). This table is
+# the SEED the live catalog below grows. The catalog owns the LIST; the alias owns the DEFAULT:
+# clicking a family in a picker sends that family's DEFAULT — the most recent VERSION the user
+# picked for it (model-picks.json below), else the family ALIAS itself. The CLI resolves an alias
+# live, so a bare family click follows the family's newest release exactly as the CLI's own default
+# does. (Before this the default fell to this table's head, which pinned every picker-set session
+# to claude-fable-5 while `fable` moved on.) Full ids ride every set path verbatim already — the
+# CLI's alias table stops at the family names, so a version pick needs no new transport.
 MODEL_VERSIONS = {
     "fable":  [{"value": "claude-fable-5-1", "label": "Fable 5.1"},   # verified live 2026-09-01 (Models API + CLI 2.1.257)
                {"value": "claude-fable-5", "label": "Fable 5"}],
@@ -848,6 +852,7 @@ MODEL_VERSIONS = {
 }
 _VERSION_FAMILY = {v["value"]: fam for fam, vs in MODEL_VERSIONS.items() for v in vs}
 MODEL_PICKS_FILE_NAME = "model-picks.json"   # {family: full-id} — a viewer pref all surfaces read, like colormap
+_model_picks_lock = threading.Lock()   # its read-modify-writes run on the WS-handler, producer AND SDK-loop threads
 
 # ── the LIVE model catalog (T222, the user 2026-09-01: romp must stop needing a hand edit when
 # Anthropic ships a model). The table above is the SEED and the loud fallback. The kernel queries the
@@ -863,6 +868,10 @@ MODEL_PICKS_FILE_NAME = "model-picks.json"   # {family: full-id} — a viewer pr
 MODEL_CATALOG_FILE_NAME = "model-catalog.json"
 MODELS_API_URL = os.environ.get("ROMP_MODELS_URL") or "https://api.anthropic.com/v1/models"
 _MODEL_SEED = {fam: [dict(v) for v in vs] for fam, vs in MODEL_VERSIONS.items()}   # the shipped table, frozen
+# THE one grammar for a first-party model id (family, then the version's numeric parts — a -YYYYMMDD
+# snapshot date is just a long last part, which _catalog_family refuses and _model_id_parts drops).
+# The catalog's helpers and the pick memory's id helpers all read it; a second regex of this name
+# would shadow it.
 _MODEL_ID_RE = re.compile(r"^claude-(fable|opus|sonnet|haiku)-(\d+(?:-\d+)*)$")
 _catalog_lock = threading.Lock()
 _catalog_status = {"source": "seed", "fetchedAt": None, "lastError": None, "added": [], "inflight": False}
@@ -1123,9 +1132,40 @@ def _with_cli_block(version, blocks):
     return version
 
 
+def _model_id_clean(value):
+    """The id without a trailing [1m]-style context tag, lower-cased — what the pickers send back."""
+    return re.sub(r"\[[^\]]*\]$", "", str(value or "").strip().lower())
+
+
+def _model_id_parts(value):
+    """('fable', 5, 1) for 'claude-fable-5-1' — and for the [1m]-tagged and -YYYYMMDD-dated spellings a
+    CLI reports (the tag is stripped, the date dropped: the version is what precedes it); None for
+    anything that is not a first-party VERSION id of a picker family (a provider-prefixed id, a family
+    alias, a -fast variant, '<synthetic>'). Reads the catalog's one id grammar (_MODEL_ID_RE)."""
+    m = _MODEL_ID_RE.match(_model_id_clean(value))
+    if not m:
+        return None
+    nums = m.group(2).split("-")
+    if len(nums[-1]) >= 8:                       # a dated snapshot: claude-opus-4-5-20251101 → (4, 5)
+        nums = nums[:-1]
+    if not 1 <= len(nums) <= 2:                  # major[.minor] only — three numeric parts is no version
+        return None
+    return (m.group(1), int(nums[0]), int(nums[1]) if len(nums) > 1 else 0)
+
+
+def _model_id_label(value):
+    """The badge label for a first-party id — the SDK backend's pretty_model rule: 'Fable 5.1'; '' for
+    anything that is not one (a module-level helper never raises on junk)."""
+    parts = _model_id_parts(value)
+    if not parts:
+        return ""
+    fam, maj, minor = parts
+    return "%s %d" % (fam.capitalize(), maj) + (".%d" % minor if minor else "")
+
+
 def _model_picks():
     """The per-family last-picked map. Only known version ids survive the read (a stale or hand-edited
-    entry falls back to the family's newest rather than poisoning the default)."""
+    entry falls back to the family alias rather than poisoning the default)."""
     try:
         d = json.loads((jd.STATE / MODEL_PICKS_FILE_NAME).read_text())
         if not isinstance(d, dict):
@@ -1143,20 +1183,52 @@ def _model_picks():
 
 def _note_model_pick(value):
     """Record a version pick as its family's new default (write-on-change). Family shorthands and
-    unknown strings record nothing — they are not version picks (an unknown claude-* id does fire
-    the catalog's staleness refresh: it may be a model newer than this list)."""
+    unknown strings record nothing — they are not version picks — so a bare family click (which
+    carries the alias) can never downgrade an explicit legacy pin (an unknown claude-* id does fire
+    the catalog's staleness refresh: it may be a model newer than this list, T222)."""
     fam = _VERSION_FAMILY.get(str(value or ""))
     if not fam:
         _note_unknown_model(value)
         return
-    picks = _model_picks()
-    if picks.get(fam) == value:
-        return
-    picks[fam] = value
-    try:
-        _atomic_write(jd.STATE / MODEL_PICKS_FILE_NAME, json.dumps(picks))
-    except Exception:
-        sys.stderr.write("model-picks save: %s\n" % traceback.format_exc())
+    # Merge into the RAW file, never the filtered read: an entry the read filter hides (one the
+    # catalog cannot vouch for right now) is not erased by another family's write — it resolves
+    # again the moment the catalog learns the id.
+    with _model_picks_lock:
+        try:
+            picks = json.loads((jd.STATE / MODEL_PICKS_FILE_NAME).read_text())
+        except Exception:
+            picks = {}
+        picks = picks if isinstance(picks, dict) else {}
+        if picks.get(fam) == value:
+            return
+        picks[fam] = value
+        try:
+            _atomic_write(jd.STATE / MODEL_PICKS_FILE_NAME, json.dumps(picks))
+        except Exception:
+            sys.stderr.write("model-picks save: %s\n" % traceback.format_exc())
+
+
+def _forget_model_pick(fam, only=None):
+    """Drop a family's remembered pin, so /models falls back to the alias and a family click follows the
+    CLI's newest again — the version submenu's "Latest" row, an explicit user gesture carried as
+    `floating` on the set op. Merges into the RAW file like _note_model_pick (other families' pins,
+    vouched-for or not, stay); a family with no pin is a no-op. `only` drops the pin only while it still
+    holds that exact id — the refusal path's compare-and-swap, so a late refusal never drops a NEWER pin
+    the user has since accepted."""
+    with _model_picks_lock:
+        try:
+            picks = json.loads((jd.STATE / MODEL_PICKS_FILE_NAME).read_text())
+        except Exception:
+            return
+        if not isinstance(picks, dict) or fam not in picks:
+            return
+        if only is not None and picks.get(fam) != only:
+            return                                   # a newer pin — not this writer's to drop
+        picks.pop(fam, None)
+        try:
+            _atomic_write(jd.STATE / MODEL_PICKS_FILE_NAME, json.dumps(picks))
+        except Exception:
+            sys.stderr.write("model-picks save: %s\n" % traceback.format_exc())
 # "ultracode" tops the ladder (the user 2026-08-04): the CLI's own /effort offers it — xhigh effort plus
 # standing dynamic-workflow orchestration, per session. tmux delivers the literal "/effort ultracode"; the
 # SDK backend maps it to effort=xhigh + the `ultracode` settings key (the CLI's documented per-session
@@ -7323,9 +7395,12 @@ def _pick_identity_color(now=None):
 def _apply_new_session_prefs(sid, body):
     """POST /new's optional per-spawn "model"/"effort" (the user 2026-08-14): applied through the SAME
     park-aware setters as the dashboard's setModel/setEffort ops, and echoed back so the caller can be
-    loud when a kernel ignores them. Values pass through VERBATIM — full model ids as the picker sends
-    them (claude-fable-5), never a short alias: the CLI alias table stops at opus/sonnet/haiku and
-    quietly resolved "fable" to Opus 5 (observed live 2026-08-14). Runs on the idempotent existing:true
+    loud when a kernel ignores them. Values pass through VERBATIM — a family alias (fable: the CLI
+    resolves it live, so it follows the family's newest release) or a full version id (claude-fable-5,
+    a deliberate pin), whichever the caller sends. (A note here once claimed the CLI resolved "fable"
+    to Opus 5 and so required full ids; that is not reproducible on any installed CLI from 2.1.224 on
+    — each resolves `fable` to the Fable family's newest — and was most likely a misread server-side
+    fallback.) Runs on the idempotent existing:true
     open too, so a nightly re-brief re-asserts them on the standing session — ultracode is per-session
     by design (never a write_sdk_default seed), and a headless script has no WS, so this is the
     sanctioned door."""
@@ -9253,8 +9328,13 @@ def _drive(msg, client):
         return True                                       # consumed: refused, reported, and recorded
     be = Sessions.backend_for(sid)
     if t == "sendMessage" and msg.get("text"):
-
-        _send_or_park(be, sid, str(msg["text"]), echo="human"); _push_soon()  # idle → instant echo; SDK busy → queued bubble forwarded mid-turn + folded (but a SLASH COMMAND parks to fire alone at turn end — mid-turn it would land as text, not execute); tmux busy → held + merged at turn end
+        # a typed "/model X" / "/effort X" / "/fast X" is a SETTING, not a message: it takes the kernel's
+        # own setter — registry, sdk-defaults, pick memory and the reconnect's --model all follow — never
+        # the CLI as literal text (see _route_meta_command). Everything else is the CLI's.
+        if _route_meta_command(be, sid, str(msg["text"]), client):
+            _push_soon()
+        else:
+            _send_or_park(be, sid, str(msg["text"]), echo="human"); _push_soon()  # idle → instant echo; SDK busy → queued bubble forwarded mid-turn + folded (but a SLASH COMMAND parks to fire alone at turn end — mid-turn it would land as text, not execute); tmux busy → held + merged at turn end
     elif t == "rewindSend" and msg.get("uuid") and msg.get("text"):
         # Edit a past message (SDK sessions): rewind the conversation to just before it and send the
         # edited text as the branch's next turn. NO optimistic kernel echo — the edit lands mid-chat
@@ -9288,13 +9368,9 @@ def _drive(msg, client):
         _compact_or_park(be, sid)                        # parked → queued chip; quiet → now + the instant cue
     elif t == "sendCommand" and msg.get("cmd"):
         cmd = str(msg["cmd"]).strip()                     # the timeline lane menu sends "/model X" / "/effort X"
-        if cmd.startswith("/model "):
-            _set_model_or_park(be, sid, cmd[len("/model "):].strip())   # mid-compaction → parked as a queued command
-        elif cmd.startswith("/effort "):
-            _set_effort_or_park(be, sid, cmd[len("/effort "):].strip())   # mid-compaction → parked as a queued command
-        elif cmd.startswith("/fast "):
-            _set_fast_or_park(be, sid, cmd[len("/fast "):].strip())   # mid-compaction → parked as a queued command
-        else:
+        # /model, /effort, /fast → the setters (mid-compaction → parked); `floating` is the lane
+        # submenu's Latest row (forget the family's pin)
+        if not _route_meta_command(be, sid, cmd, client, floating=bool(msg.get("floating"))):
             _send_or_park(be, sid, cmd)   # mid-compaction → parked as a queued command
     elif t == "askFollowUp":
         iid = str(msg.get("itemId") or "")
@@ -9456,7 +9532,9 @@ def _drive(msg, client):
         # manual Retry-now button and the dashboard tick's redundant asks, both idempotent against it).
         _fire_api_retry(sid, be, manual=bool(msg.get("manual")))
     elif t == "setModel" and msg.get("value"):
-        _set_model_or_park(be, sid, str(msg["value"])); _push_soon()   # mid-compaction → parked as a queued command
+        # mid-compaction → parked as a queued command; `floating` is the version submenu's Latest row —
+        # forget the family's remembered pin and send the alias
+        _set_model_or_park(be, sid, str(msg["value"]), floating=bool(msg.get("floating"))); _push_soon()
     elif t == "setEffort" and msg.get("value"):
         _set_effort_or_park(be, sid, str(msg["value"])); _push_soon()   # tmux: /effort; SDK: reconnect with --effort; mid-compaction → parked
     elif t == "setFast" and msg.get("value") in ("on", "off"):
@@ -18521,10 +18599,18 @@ def _compact_request(who):
     return {"ok": True, "queued": _compact_or_park(Sessions.backend_for(sid), sid)}
 
 
-def _set_model_or_park(be, sid, value):
+def _set_model_or_park(be, sid, value, floating=False):
     """Apply a model change now — or park it in the sid's FIFO op queue while the session compacts. Either
     way, the pick is ACCEPTED now: stamp the shared pending signal (_mark_model_pending) so chat + timeline
-    both show switching-dots immediately, from whichever surface the click came from (the user 2026-07-03)."""
+    both show switching-dots immediately, from whichever surface the click came from (the user 2026-07-03).
+    `value` is a family alias (a bare family click — the CLI resolves it live) or an explicit version id
+    (a submenu pick, remembered as the family's pin); both ride to the backend verbatim. `floating` is the
+    version submenu's "Latest" row: the value is a family alias AND the family's remembered pin is
+    forgotten, so the family follows the CLI's newest again — the one picker gesture back from a pin (the
+    family row sends the pin, the version rows pin, and a typed bare alias leaves the memory alone by
+    design). Meaningless on a non-alias value."""
+    if floating and value in _MODEL_VALUES:
+        _forget_model_pick(value)
     _mark_model_pending(sid, value)
     _note_model_pick(value)          # a version pick becomes its family's remembered default (2026-08-25)
     if _ops_gate(sid):
@@ -18565,6 +18651,51 @@ def _set_fast_or_park(be, sid, value):
         _park_op(sid, ("fast", value))
         return True
     return be.set_fast(sid, value)
+
+
+def _route_meta_command(be, sid, text, client=None, floating=False):
+    """A "/model X", "/effort X" or "/fast on|off" — typed into the chat composer or sent by the timeline
+    lane menu — goes through the kernel's OWN setters (_set_*_or_park), never to the CLI as literal text.
+    `floating` rides the lane menu's "Latest" row to _set_model_or_park (forget the family's pin).
+    The CLI would execute the text (verified on 2.1.257), but that path bypasses romp: the registry,
+    sdk-defaults.json, the pick memory and the reconnect's --model all kept the OLD value, so a switch
+    typed into the composer silently reverted at the next reconnect or restart. The setters are also
+    what parks the change mid-compaction. Returns True when it took the command. Anything else —
+    another slash command, a bare "/model" (the CLI's own picker), plain text that merely contains one
+    — is the caller's to send verbatim: the CLI owns what executes. A refused fast toggle is told to
+    the client (fail loudly): a dormant SDK session has no live CLI to apply it, and the typed text
+    used to at least draw the CLI's own refusal."""
+    head, _, rest = (text or "").strip().partition(" ")
+    value = rest.strip()
+    # ONE token, and one the kernel can vouch for: the setters PERSIST their value — set_model's lands
+    # in sdk-defaults.json as the seed for every future session — so a typo ("/model opsu"), a
+    # multiline message that merely opens with the command, or a fast value outside on/off is not
+    # ours to swallow: it stays the CLI's, verbatim, and the user sees the CLI's own error.
+    if not value or len(value.split()) != 1:
+        return False
+    if head == "/model" and _vouched_model(value):
+        _set_model_or_park(be, sid, value, floating=floating)     # mid-compaction → parked as a queued command
+    elif head == "/effort" and value in _EFFORT_VALUES:
+        _set_effort_or_park(be, sid, value)    # mid-compaction → parked as a queued command
+    elif head == "/fast" and value in ("on", "off"):
+        if not _set_fast_or_park(be, sid, value) and client:   # mid-compaction → parked
+            client["send"](json.dumps({"type": "warn",
+                                       "text": "Couldn't toggle fast mode — the session isn't connected right now."}))
+    else:
+        return False
+    return True
+
+
+def _vouched_model(value):
+    """A model value the kernel will stand behind persisting: a family alias, 'default', a catalog
+    version id, or any well-formed first-party id of a known family (the CLI validates the exact
+    version; romp's job is keeping the registry in step). A typo is none of these."""
+    if value in _MODEL_VALUES or value == "default" or _VERSION_FAMILY.get(value):
+        return True
+    if _model_id_clean(value) in _MODEL_VALUES:   # the CLI's own 1M-context spelling of a family (fable[1m])
+        return True                                # — vouched like the tagged id below
+    parts = _model_id_parts(value)
+    return bool(parts and parts[0] in _MODEL_VALUES)
 
 
 def _deliver_send_batch(be, sid, run):
@@ -31086,8 +31217,10 @@ class Handler(BaseHTTPRequestHandler):
                 # colors only cover the current value, so the list is where the shared tint belongs)
                 _stops = cm.stops_for(_colormap())
                 # each family also carries its VERSIONS (newest first, the family's tint) and its
-                # DEFAULT — the last version the user picked for that family, else the newest (the
-                # user 2026-08-25: family click = remembered pick; the submenu holds the rest).
+                # DEFAULT — the last version the user picked for that family, else the family ALIAS
+                # (the user 2026-08-25: family click = remembered pick; the submenu holds the rest).
+                # The alias, never the list's head: the CLI resolves an alias live, and the head
+                # pinned every picker-set session to claude-fable-5 while `fable` moved on.
                 _picks = _model_picks()
                 # a version the INSTALLED CLI has refused by minimum version says so on its own row
                 # (T222): the refusal is learned from the CLI's own error at the first attempt
@@ -31099,9 +31232,7 @@ class Handler(BaseHTTPRequestHandler):
                                      tone=_model_tone(c["value"]),
                                      versions=[_with_cli_block(dict(v), _blocks)
                                                for v in MODEL_VERSIONS.get(c["value"]) or []],
-                                     default=_picks.get(c["value"])
-                                         or ((MODEL_VERSIONS.get(c["value"]) or [{}])[0].get("value")
-                                             or c["value"]))
+                                     default=_picks.get(c["value"]) or c["value"])
                                 for c in MODEL_CHOICES],
                      "efforts": [dict(c, color=_effort_color(c["value"], _stops), tone=_effort_tone(c["value"]))
                                  for c in EFFORT_CHOICES],
@@ -31528,8 +31659,11 @@ class Handler(BaseHTTPRequestHandler):
                 # in by a local tool while the account is rate-limited — or while the session compacts —
                 # waits its turn instead of buying a red API-error card. ok:true still means ACCEPTED,
                 # which is all it ever meant on this route. No optimistic echo: an external/postal send
-                # isn't a human composer bubble.
-                _send_or_park(Sessions.backend_for(sid), sid, body["text"])
+                # isn't a human composer bubble. A typed /model, /effort or /fast takes the setters,
+                # exactly as the composer's does — same door, same registry.
+                be = Sessions.backend_for(sid)
+                if not _route_meta_command(be, sid, body["text"]):
+                    _send_or_park(be, sid, body["text"])
                 return self._send(200, json.dumps({"ok": True}), "application/json")
             if u.path in ("/fork-comment", "/fork-promote"):
                 # Parallel review dispatch (the user 2026-08-31, via the Obsidian track-changes

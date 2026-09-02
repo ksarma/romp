@@ -3,8 +3,10 @@
 opus became Opus 5 — silently losing legacy versions that remain live on the API. The kernel's
 /models now carries each family's versions (dateless alias ids, verified against the claude-api
 reference) plus a DEFAULT: the most recent version the user picked for that family (model-picks.json,
-a viewer pref like colormap), else the newest. The pick memory hooks the ONE choke point every set
-path flows through (_set_model_or_park). Synthetic only — hermetic temp STATE."""
+a viewer pref like colormap), else the family ALIAS itself (the seed table's head used to stand in
+for the alias, so a bare family click pinned every session to claude-fable-5 while the CLI's own
+`fable` alias moved on to Fable 5.1). The pick memory hooks the ONE choke point every set path flows
+through (_set_model_or_park). Synthetic only — hermetic temp STATE."""
 import json
 import os
 import tempfile
@@ -56,6 +58,14 @@ class Catalog(unittest.TestCase):
             for v in vs:
                 self.assertEqual(km._VERSION_FAMILY[v["value"]], fam)
 
+    def test_id_helpers_tolerate_anything(self):
+        self.assertEqual(km._model_id_parts("claude-fable-5-1[1m]"), ("fable", 5, 1))
+        self.assertEqual(km._model_id_parts("claude-opus-4-5-20251101"), ("opus", 4, 5))
+        self.assertIsNone(km._model_id_parts("us.anthropic.claude-opus-4-8-v1:0"))
+        self.assertIsNone(km._model_id_parts("opus"))
+        self.assertEqual(km._model_id_label("claude-fable-5-1"), "Fable 5.1")
+        self.assertEqual(km._model_id_label("<synthetic>"), "", "a module-level helper never raises on junk")
+
 
 class PickMemory(unittest.TestCase):
     """Per-family last-picked defaults: written at the choke point, read into /models."""
@@ -103,8 +113,8 @@ class PickMemory(unittest.TestCase):
                          "unknown ids and cross-family entries never poison the default")
 
 
-class ModelsRoute(unittest.TestCase):
-    """GET /models carries versions + default per family."""
+class _ModelsServer(unittest.TestCase):
+    """A kernel HTTP handler on a loopback port + a hermetic STATE, for the /models route tests."""
 
     @classmethod
     def setUpClass(cls):
@@ -132,20 +142,61 @@ class ModelsRoute(unittest.TestCase):
         with urllib.request.urlopen(req, timeout=10) as r:
             return json.loads(r.read().decode())
 
+
+class ModelsRoute(_ModelsServer):
+    """GET /models carries versions + default per family."""
+
     def test_each_family_carries_versions_and_a_default(self):
         d = self._models()
         rows = {m["value"]: m for m in d["models"]}
         self.assertEqual([v["value"] for v in rows["opus"]["versions"]],
                          [v["value"] for v in km.MODEL_VERSIONS["opus"]])
-        self.assertEqual(rows["opus"]["default"], "claude-opus-5",
-                         "no pick yet → the family's newest")
         self.assertIn("color", rows["opus"], "the colormap tint still rides every family row")
+
+    def test_a_family_with_no_pick_defaults_to_its_alias_not_the_seed_head(self):
+        # THE BUG: the default fell to MODEL_VERSIONS[fam][0], so a bare "Fable" click pinned the
+        # session to claude-fable-5 — and when the CLI's `fable` alias advanced to Fable 5.1, every
+        # picker-set session stayed behind. The alias is what the CLI resolves LIVE (the authoritative
+        # source for "newest"), so a family click sends the alias.
+        rows = {m["value"]: m for m in self._models()["models"]}
+        for fam in ("fable", "opus", "sonnet", "haiku"):
+            self.assertEqual(rows[fam]["default"], fam, "no pick yet → the family alias, never a pinned id")
 
     def test_the_default_follows_the_users_last_pick(self):
         km._note_model_pick("claude-opus-4-8")
         rows = {m["value"]: m for m in self._models()["models"]}
         self.assertEqual(rows["opus"]["default"], "claude-opus-4-8")
-        self.assertEqual(rows["sonnet"]["default"], "claude-sonnet-5", "other families unaffected")
+        self.assertEqual(rows["sonnet"]["default"], "sonnet", "other families unaffected: still the alias")
+
+    def test_an_explicit_version_pick_pins_and_a_family_click_never_downgrades_it(self):
+        # the version submenu is the ONE place a pin comes from; a later family click (which now
+        # carries the alias) records nothing, so the remembered pin stands
+        class _BE:
+            calls = []
+
+            def set_model(self, sid, value):
+                self.calls.append(value)
+                return True
+        be = _BE()
+        sid = "11111111-2222-3333-4444-555555555555"
+        km._set_model_or_park(be, sid, "claude-opus-4-8")
+        km._set_model_or_park(be, sid, "opus")
+        self.assertEqual(be.calls, ["claude-opus-4-8", "opus"], "both reach the backend verbatim")
+        rows = {m["value"]: m for m in self._models()["models"]}
+        self.assertEqual(rows["opus"]["default"], "claude-opus-4-8", "the explicit pin survives the alias click")
+
+
+class RoutedContextTag(unittest.TestCase):
+    """The CLI spells a 1M-context variant with a [1m] tail (`fable[1m]`, `claude-opus-4-8[1m]`). The
+    kernel vouches for the tagged family alias like the tagged id."""
+
+    def test_a_tagged_family_alias_is_vouched_for(self):
+        # `claude-fable-5-1[1m]` routes (the id parser strips the tag); `fable[1m]` must too, or it
+        # falls to the CLI as literal text — the registry bypass the routing exists to close
+        self.assertTrue(km._vouched_model("fable[1m]"))
+        self.assertTrue(km._vouched_model("claude-fable-5-1[1m]"))
+        self.assertFalse(km._vouched_model("fable[2m]x"), "a tag is a trailing [..] only")
+        self.assertFalse(km._vouched_model("opsu[1m]"))
 
 
 if __name__ == "__main__":

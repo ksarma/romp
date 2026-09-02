@@ -65,8 +65,11 @@ class JudgeSettings(unittest.TestCase):
         ksrc = inspect.getsource(km)
         self.assertIn('if p == "/models":', ksrc)
         # the shared lists, each choice carrying its colormap tint (the user 2026-08-17) — and,
-        # since the version submenus (the user 2026-08-25), each family's versions + default too
+        # since the version submenus (the user 2026-08-25), each family's versions + default too:
+        # the default is the family's remembered pin, else its ALIAS — never the list's head, which
+        # pinned every picker-set session to the head id while the CLI's alias moved on
         self.assertIn('{"models": [dict(c, color=_model_color(c["value"], _stops),', ksrc)
+        self.assertIn('default=_picks.get(c["value"]) or c["value"])', ksrc)
         # …each version row stamped with any CLI minimum-version refusal (T222, 2026-09-01: the live
         # catalog can list ids newer than the installed binary, so the row says so before a pick)
         self.assertIn('versions=[_with_cli_block(dict(v), _blocks)', ksrc)
