@@ -2431,9 +2431,21 @@ class SdkSession:
             return True
         return False
 
+    def _arm_ask(self):
+        """Create (or keep) the future an answer lands on. INVARIANT: an ask is never PRESENTED before
+        this future exists. resolve_ask reads _cur_ask_fut synchronously on the caller's thread and
+        reports False when nothing is waiting (T214's truthful delivery outcome), so an answer that
+        lands between _emit_ask and the coroutine's first await must already find the future armed —
+        otherwise it is reported lost and the ask waits forever. Before T214 that read was deferred
+        into the loop, which hid the gap; every ask site now calls this right before _emit_ask, and
+        _next_ask_action awaits the armed future rather than minting a second one."""
+        fut = self._cur_ask_fut
+        if fut is None or fut.done():
+            self._cur_ask_fut = asyncio.get_running_loop().create_future()
+        return self._cur_ask_fut
+
     async def _next_ask_action(self):
-        fut = asyncio.get_running_loop().create_future()
-        self._cur_ask_fut = fut
+        fut = self._arm_ask()
         try:
             return await fut
         finally:
@@ -3110,6 +3122,7 @@ class SdkSession:
         ask = permission_to_live(tool_name, tool_input, context)
         remember_n = 2 if getattr(context, "suggestions", None) else None
         self._mark("permission")
+        self._arm_ask()
         self.backend._emit_ask(self, ask)
         decision = "deny"
         try:
@@ -3153,6 +3166,7 @@ class SdkSession:
         if pv:
             ask["previewKind"], ask["preview"] = pv[0], pv[1]
         self._mark("permission")
+        self._arm_ask()
         self.backend._emit_ask(self, ask)
         choice = "3"
         try:
@@ -3194,6 +3208,7 @@ class SdkSession:
         selected: set[int] = set()
         customs: list[str] = []                       # free-text answers the user typed (multi accumulates)
         def emit():
+            self._arm_ask()
             self.backend._emit_ask(self, ask_question_to_live(question, qi, total, selected, customs))
         emit()
         while True:
