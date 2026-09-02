@@ -117,7 +117,9 @@ test("a kernel warn re-syncs the active view so a refused optimistic removal ret
 test("reply opens a modal (outside the rebuilt transcript) and posts one answer+stamp op", () => {
   // one kernel op both injects the reply AND stamps the todo answered — never sendMessage plus a
   // separate stamp; and a modal, not an inline box, because the card rebuilds every push
-  assert.match(RENDER, /function showUserTodoReply\(sid: string, todoId: string, todoText: string\)/);
+  // (todoDetail — the ask's optional longer context, quoted beneath the line — joined 2026-09-02;
+  // user-todo-detail-hint.test.ts pins what the modal does with it)
+  assert.match(RENDER, /function showUserTodoReply\(sid: string, todoId: string, todoText: string, todoDetail = ""\)/);
   assert.match(RENDER, /vscodeApi\?\.postMessage\(\{ type: "userTodoAnswer", id: sid, todoId, text \}\)/);
 });
 

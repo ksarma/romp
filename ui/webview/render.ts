@@ -24,6 +24,7 @@ import { compactDisplay, toolCounts, type DisplayItem } from "./compact";
 import { senderKind } from "./sender-identity";
 import { loadSettings, onExternalSettingsChange, installSettingsSync, type RompSettings } from "./settings";
 import { delegate } from "./actions";
+import { utDetailHint, utHintFor, applyUtHint, UT_HINT_CLASS } from "./user-todo-hint";
 import { KIND_WORD } from "./spin-caption";
 import { isClearCmd, openTopTitles, clearConfirmDetail, endConfirmDetail } from "./clear-confirm";
 import { prebuildPlan, type ViewState } from "./prebuild";
@@ -2953,15 +2954,23 @@ function renderTodo(ev: Extract<ChatEvent, { kind: "todo" }>): HTMLElement {
       const line = el("div", "ut-line");
       const txt = el("span", "ut-text");
       txt.textContent = t.text;
-      if (t.detail) {   // progressive disclosure: the one-line version by default, detail one click away
+      // progressive disclosure: the one-line version by default, detail one click away — and the row
+      // SAYS there is more (the user 2026-09-02): a small "▸ details" hint trails the text when detail
+      // exists, nothing when it doesn't, so a bare ask and one with context read differently at a
+      // glance. The hint sits INSIDE the text span — the click target is the span as before, the
+      // hint adds no target and no listener (user-todo-hint.ts; the click-safety rule, ui/CLAUDE.md).
+      const hint = utDetailHint(t.detail, utDetailOpen.has(t.id));
+      if (hint) {
         txt.classList.add("ut-has-detail");
         txt.dataset.act = "uttoggle"; txt.dataset.tid = t.id;
-        txt.title = "click for detail";
+        txt.title = hint.title;
+        const more = el("span", UT_HINT_CLASS); applyUtHint(more, hint); txt.appendChild(more);
       }
       line.appendChild(txt);
       const reply = el("button", "ut-btn ut-reply");
       reply.dataset.act = "utreply"; reply.dataset.tid = t.id; reply.dataset.sid = renderingSid || "";
       (reply as any)._uttext = t.text;   // rides the node like qx's _qmd: the modal quotes the need it answers
+      (reply as any)._utdetail = t.detail || "";   // …and its detail, so the whole need is in view while answering
       reply.textContent = "Reply";
       reply.title = "answer this — your reply goes straight to the session";
       const dis = el("button", "ut-btn ut-dismiss");
@@ -2977,9 +2986,9 @@ function renderTodo(ev: Extract<ChatEvent, { kind: "todo" }>): HTMLElement {
         dis.addEventListener("pointerleave", () => { dis.classList.remove("armed"); dis.textContent = "Dismiss"; });
       line.append(reply, dis);
       row.appendChild(line);
-      if (t.detail) {
+      if (hint) {
         const d = el("div", "ut-detail" + (utDetailOpen.has(t.id) ? " open" : ""));
-        d.textContent = t.detail;
+        d.textContent = t.detail || "";
         row.appendChild(d);
       }
       card.appendChild(row);
@@ -6546,12 +6555,17 @@ function showForkPrompt(sid: string, uuid: string): void {
 // at the send — never sendMessage plus a separate stamp, so the two can't diverge. A modal, not
 // an inline input on the card: the card rebuilds on every push, which would clobber a half-typed
 // inline box; the overlay lives outside #content and survives.
-function showUserTodoReply(sid: string, todoId: string, todoText: string): void {
+function showUserTodoReply(sid: string, todoId: string, todoText: string, todoDetail = ""): void {
   document.getElementById("ut-reply-prompt")?.remove();
   const overlay = el("div", "picker-overlay confirm-overlay"); overlay.id = "ut-reply-prompt";
   const box = el("div", "picker-box confirm-box");
   const h = el("div", "confirm-title"); h.textContent = "Reply";
   const d = el("div", "confirm-detail ut-reply-quote"); d.textContent = todoText;
+  // the ask's detail, when it has one, quoted beneath the line in the row fold's own dress — the
+  // whole need stays in view while the answer is typed, without opening the fold first; a bare
+  // ask adds nothing here
+  const dd = todoDetail.trim() ? el("div", "ut-detail open") : null;
+  if (dd) dd.textContent = todoDetail;
   const input = document.createElement("textarea");
   input.className = "ut-reply-input"; input.rows = 3;
   input.placeholder = "Your answer — it goes straight to the session…";
@@ -6574,7 +6588,7 @@ function showUserTodoReply(sid: string, todoId: string, todoText: string): void 
   input.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); go(); } });
   input.addEventListener("input", () => input.classList.remove("bad"));
   overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
-  box.append(h, d, input, actions);
+  box.append(h, d); if (dd) box.appendChild(dd); box.append(input, actions);
   actions.append(cancel, send);
   overlay.appendChild(box);
   document.body.appendChild(overlay);
@@ -13744,11 +13758,16 @@ setupSettings();
       if (open) utDetailOpen.add(tid); else utDetailOpen.delete(tid);
       const det = elx.closest(".ut-item")?.querySelector(".ut-detail");
       det?.classList.toggle("open", open);
+      // the "▸ details" hint flips with the fold (▾ while open) — with the body appearing, that flip
+      // IS the click's acknowledgement, immediate and local; the next push re-renders the same state
+      const more = elx.querySelector<HTMLElement>("." + UT_HINT_CLASS);
+      if (more) applyUtHint(more, utHintFor(open));
+      elx.title = utHintFor(open).title;
     },
     utreply: (elx) => {
       const tid = elx.dataset.tid, sid = elx.dataset.sid || activeId;
       if (!tid || !sid) return;
-      showUserTodoReply(sid, tid, ((elx as any)._uttext as string) || "");
+      showUserTodoReply(sid, tid, ((elx as any)._uttext as string) || "", ((elx as any)._utdetail as string) || "");
     },
     // Dismiss arms then confirms in place (the cmtdelete idiom): clearing an ask the agent still
     // waits on deserves a second click, but is light enough to skip a modal. Optimistic removal —
