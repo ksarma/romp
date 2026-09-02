@@ -387,7 +387,10 @@ own model and are exact.
   `why` carries. When the state is `unknown`, `window` and the rates are `null`
   and `n` is `requests` over 900 s at read time.
 - `why`: the newest transition's reason in words, the same string as its row.
-- `transitions`: this bucket's rows from the top-level list.
+- `transitions`: this bucket's own last 50 transitions, newest last, in the
+  same row shape as the top-level list. It is kept per bucket, not filtered
+  from the top-level list, so a neighbour that churns through fifty
+  transitions does not push this bucket's history out of view.
 - `lastError`: the newest attempt or give-up that was not a success, from
   memory only (lost at restart): `at`; `status` (the HTTP status, or `null`);
   `category` (the CLI's error category string, for example `rate_limit`,

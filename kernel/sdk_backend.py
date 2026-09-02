@@ -1337,6 +1337,7 @@ class ApiHealth:
         # the derivation's input is (state, since); the rest is what the newest transition recorded
         self._last_state: dict = {}
         self._transitions: deque = deque(maxlen=API_HEALTH_TRANSITIONS_KEEP)   # the global tail, newest last
+        self._by_bucket: dict = {}       # bucket key -> deque(maxlen=API_HEALTH_TRANSITIONS_KEEP): that bucket's own tail
         self._seed(time.time() if boot_at is None else float(boot_at))
 
     # ---- labels ----
@@ -1500,7 +1501,7 @@ class ApiHealth:
         unavailable for the kernel's whole life. A row that is not JSON, lacks its fields, or carries a
         non-numeric `t` or a non-string `bucket` is skipped; the skips are logged once."""
         try:
-            rows, recs, bad, legacy = [], {}, 0, False
+            rows, per, recs, bad, legacy = [], {}, {}, 0, False
             try:
                 doc = json.loads(self._state_path().read_text())
             except FileNotFoundError:
@@ -1522,6 +1523,7 @@ class ApiHealth:
                         bad += 1
                         continue
                     rows.append(r)
+                    per.setdefault(r["bucket"], []).append(r)
                     recs[r["bucket"]] = {"state": r["to"], "since": float(r["t"] or 0), "why": r.get("why") or "",
                                          "evidence": r.get("evidence"), "auth": r.get("auth"), "family": r.get("family")}
             else:
@@ -1544,12 +1546,20 @@ class ApiHealth:
                         continue
                     recs[key] = {"state": st, "since": since, "why": rec.get("why") or "", "evidence": rec.get("evidence"),
                                  "auth": rec.get("auth"), "family": rec.get("family")}
+                    per[key] = []
+                    for r in rec.get("transitions") or []:
+                        if self._row_ok(r):
+                            per[key].append(r)
+                        else:
+                            bad += 1
             if bad and self._log:
                 self._log("api-health: %d malformed row(s) skipped at boot (%s)"
                           % (bad, API_HEALTH_LEGACY_LEDGER if legacy else API_HEALTH_STATE_FILE))
             filed = False
             with self._lock:
                 self._transitions.extend(rows)
+                for key, rs in per.items():
+                    self._by_bucket[key] = deque(rs, maxlen=API_HEALTH_TRANSITIONS_KEEP)
                 for key, rec in recs.items():
                     a, f = key.split("|", 1) if "|" in key else (key, "unknown")
                     auth = rec["auth"] if isinstance(rec["auth"], str) and rec["auth"] else a
@@ -1567,7 +1577,7 @@ class ApiHealth:
         except Exception as e:   # loud, and the backend still comes up
             if self._log:
                 self._log("api-health: state file unreadable (%s) — starting with no history" % e)
-            self._last_state, self._transitions = {}, deque(maxlen=API_HEALTH_TRANSITIONS_KEEP)
+            self._last_state, self._transitions, self._by_bucket = {}, deque(maxlen=API_HEALTH_TRANSITIONS_KEEP), {}
 
     def _read_legacy_tail(self):
         """The last 64 KB of the first cut's STATE/api-health.jsonl as lines, or None when there is no
@@ -1590,22 +1600,26 @@ class ApiHealth:
             return None
 
     def _file_locked(self, row: dict):
-        """Record one transition in the tail. The caller holds the lock and writes the state file once
-        it has filed everything this read found."""
+        """Record one transition in both tails: the global one and its bucket's own. The bucket's tail is
+        NOT a filter of the global one — that shape let a neighbour churning through fifty transitions
+        erase a quiet bucket's history from its own payload. The caller holds the lock and writes the
+        state file once it has filed everything this read found."""
         self._transitions.append(row)
+        self._by_bucket.setdefault(row["bucket"], deque(maxlen=API_HEALTH_TRANSITIONS_KEEP)).append(row)
 
     def _write_state_locked(self):
         """Publish the persisted half of the signal — the per-bucket (state, stateSince, why, evidence)
         and the transition tail — to STATE/api-health.json whole: a writer-unique temp in the same dir,
         then os.replace (the kernel's _atomic_write idiom), so a reader or a crash never sees a partial
         document. Called under the lock, at most once per read that filed something; the document is
-        bounded (one record per bucket, API_HEALTH_TRANSITIONS_KEEP rows), so rewriting it whole is a
-        few KB. Never raises into a request handler."""
+        bounded (one record per bucket, API_HEALTH_TRANSITIONS_KEEP rows in the global tail and in each
+        bucket's own), so rewriting it whole is a few KB. Never raises into a request handler."""
         p = self._state_path()
         doc = {"schema": API_HEALTH_SCHEMA,
                "transitions": list(self._transitions),
                "buckets": {k: {"state": v["state"], "stateSince": v["since"], "why": v["why"], "evidence": v["evidence"],
-                               "auth": v["auth"], "family": v["family"]} for k, v in self._last_state.items()}}
+                               "auth": v["auth"], "family": v["family"],
+                               "transitions": list(self._by_bucket.get(k, ()))} for k, v in self._last_state.items()}}
         tmp = p.with_name("%s.%d.%s.tmp" % (p.name, os.getpid(), uuid.uuid4().hex[:8]))
         try:
             p.parent.mkdir(parents=True, exist_ok=True)
@@ -1677,7 +1691,7 @@ class ApiHealth:
                 buckets[key] = {"auth": auth, "family": fam, "windows": wins,
                                 "state": rec["state"], "stateSince": round(rec["since"], 3),
                                 "evidence": rec["evidence"], "why": rec["why"],
-                                "transitions": [r for r in self._transitions if r.get("bucket") == key],
+                                "transitions": list(self._by_bucket.get(key, ())),
                                 "lastError": last_err}
                 if API_HEALTH_SEVERITY[rec["state"]] > API_HEALTH_SEVERITY[worst] or worst_key is None:
                     worst, worst_key = rec["state"], key

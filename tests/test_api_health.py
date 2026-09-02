@@ -1348,6 +1348,40 @@ class StateFile(unittest.TestCase):
         self.assertIn("4", hits[0])
         self.assertEqual([(r["from"], r["to"]) for r in _rows(d)], [("thrashing", "unknown")])
 
+    def test_a_churning_bucket_does_not_truncate_a_quiet_neighbours_history(self):
+        """Finding 4 (round 2): the per-bucket `transitions` was a filter of the GLOBAL 50-row tail, so
+        a neighbour churning through fifty transitions erased a quiet bucket's history from its own
+        payload. The design note: per-bucket `transitions` is that bucket's own last 50; the top-level
+        list is the global last 50, each stamped with its bucket. Both tails persist."""
+        d = tempfile.mkdtemp()
+        ah = sb.ApiHealth(d)
+        qk = LABEL + "|haiku"
+        for e in _storm(T0 - 600, T0, family="haiku"):
+            ah._push(e)
+        for i in range(30):                      # the fable bucket churns: 60 transitions
+            base = T0 + i * 5000
+            for e in _storm(base - 600, base):
+                ah._push(e)
+            ah.snapshot(base)
+            ah.snapshot(base + 2000)             # past retention: both buckets unknown
+        end = T0 + 30 * 5000
+        snap = ah.snapshot(end)
+        self.assertEqual([(r["from"], r["to"]) for r in snap["buckets"][qk]["transitions"]],
+                         [("unknown", "thrashing"), ("thrashing", "unknown")], "the quiet bucket keeps its own history")
+        self.assertEqual(len(snap["buckets"][KEY]["transitions"]), sb.API_HEALTH_TRANSITIONS_KEEP)
+        self.assertTrue(all(r["bucket"] == KEY for r in snap["buckets"][KEY]["transitions"]))
+        self.assertEqual(len(snap["transitions"]), sb.API_HEALTH_TRANSITIONS_KEEP)
+        self.assertTrue(all(r["bucket"] == KEY for r in snap["transitions"]), "the global tail is the churner's")
+        # …and both tails survive a restart through the state file (both buckets are already unknown, so the
+        # boot files nothing new)
+        doc = _doc(d)
+        self.assertEqual(len(doc["buckets"][qk]["transitions"]), 2)
+        self.assertEqual(len(doc["buckets"][KEY]["transitions"]), sb.API_HEALTH_TRANSITIONS_KEEP)
+        snap2 = sb.ApiHealth(d, boot_at=end + 1).snapshot(end + 2)
+        self.assertEqual(snap2["buckets"][qk]["transitions"], snap["buckets"][qk]["transitions"])
+        self.assertEqual(snap2["buckets"][KEY]["transitions"], snap["buckets"][KEY]["transitions"])
+        self.assertEqual(snap2["transitions"], snap["transitions"])
+
 
 class Diagnostics(unittest.TestCase):
     def setUp(self):
