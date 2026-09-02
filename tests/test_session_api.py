@@ -46,6 +46,20 @@ class AbcContract(unittest.TestCase):
         m = re.search(r"def forwards_sends\(self\)[\s\S]*?\n        return (\w+)", src)
         self.assertTrue(m and m.group(1) == "True", "SdkBackend.forwards_sends returns True")
 
+    def test_move_is_a_concrete_default_that_refuses_and_the_sdk_implements_it(self):
+        # move (the user 2026-09-01: a session follows a subproject promoted to its own repo) is a
+        # CONCRETE default on the ABC — a backend with no relocation primitive (tmux) answers with the
+        # reason, never "" (which would read as success) and never a raise. The SDK backend implements
+        # it over the CLI's set_cwd control request; asserted at the source level like the abstract set.
+        self.assertNotIn("move", ABSTRACT, "move is a concrete default (tmux inherits the refusal)")
+        why = sb.SessionBackend.move(object(), "sid", "/tmp")
+        self.assertIsInstance(why, str)
+        self.assertTrue(why, "the default is a REASON, not an empty success")
+        self.assertIn("tmux", why)
+        src = open(os.path.join(BIN, "romp_sdk_backend.py"), encoding="utf-8").read()
+        self.assertIn("\n    def move(self, sid: str, new_cwd: str) -> str:", src,
+                      "SdkBackend implements move")
+
     def test_sdk_backend_honors_every_abstract_method(self):
         # SdkBackend is SDK-gated so it can't import the ABC when the dep is absent; it conforms by
         # duck-typing. Assert at the SOURCE level (no SDK dep needed) that it DEFINES each abstract method,
