@@ -3944,7 +3944,15 @@ class TimelinePanel {
     const jShow = !!(shownJudges.length && data.judging && data.judging.some((e) => shownKeys.has(e.judge) && inWin(e.t)));
     const bandH = jShow ? (JB_TOPGAP + shownJudges.length * JROW + JB_BOTGAP) : 0;
     const W = Math.max(640, this.wrap.clientWidth || 900);
-    const plotW = W - M.left - M.right, H = M.top + Math.max(1, vis.length) * LANE_GAP + bandH + M.bottom;
+    // PENDING HOSTS (the user 2026-09-02): attached hosts whose lanes have not arrived yet (the merged
+    // payload's pendingHosts — federation.ts: listed by /tunnels, no lanes payload from it on this pane
+    // yet) each reserve ONE placeholder row under the lanes, so a restart or a phone re-foreground never
+    // reads as those hosts having vanished. Retired by the host's first lanes payload or its detach —
+    // the merge's events, never a timer here. Not lanes: never in vis/vidx, no hit targets, no drag.
+    const pend = Array.isArray(data.pendingHosts) ? data.pendingHosts.filter((h) => typeof h === 'string') : [];
+    const pendDead = Array.isArray(data.pendingDead) ? data.pendingDead : [];
+    const pendBase = Math.max(1, vis.length);   // the first placeholder row sits under the last lane (or the empty-window line)
+    const plotW = W - M.left - M.right, H = M.top + (Math.max(1, vis.length) + pend.length) * LANE_GAP + bandH + M.bottom;
     svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H); svg.setAttribute('height', H); svg.setAttribute('width', W);
     // x is LINEAR in compressed time → smooth pan (only zoom rescales). Identity compress = plain linear.
     const x = (t) => M.left + (compress(t) - cT0) / winSec * plotW;
@@ -4008,6 +4016,20 @@ class TimelinePanel {
     const compactSeen = new Set();   // sids whose compacting scan-bar is live this draw → reconcile the overlay after
     const workSeen = new Set();      // sids whose WORKING label overlay is live this draw → reconcile after (persistent pulse)
     const metaSeen = new Set();      // sids showing the "model switching…" dots this draw → reconcile the overlay after
+    // the pending-host placeholder rows (see `pend` above): the romp swirl glyph, reverse-spun like every
+    // romp loader, then the host named in the quiet italic the "host:" prefix wears on a real lane. A
+    // dead link says "reconnecting to" (the kernel is redialing it); an open one still waiting on its
+    // first payload says "loading sessions from". Drawn before the lanes — its own y band, no overlap.
+    pend.forEach((h, k) => {
+      const y = laneY(pendBase + k), sz = 13, cx = PADL + sz / 2;
+      const img = el('image', { x: PADL, y: y - sz / 2, width: sz, height: sz, href: mediaUrl('romp-swirl-glyph.svg'), 'pointer-events': 'none' });
+      img.appendChild(el('animateTransform', { attributeName: 'transform', type: 'rotate', from: '360 ' + cx + ' ' + y, to: '0 ' + cx + ' ' + y, dur: '2.4s', repeatCount: 'indefinite' }));
+      svg.appendChild(img);
+      const t = el('text', { x: PADL + sz + 6, y: y + 3.5, 'text-anchor': 'start', 'font-weight': 400, 'font-style': 'italic', 'font-size': 12, fill: MODEL_FG, 'pointer-events': 'none' });
+      t.setAttribute('data-pending-host', h);
+      t.textContent = (pendDead.indexOf(h) >= 0 ? 'reconnecting to ' : 'loading sessions from ') + h + '\u2026';
+      svg.appendChild(t);
+    });
     vis.forEach((s, i) => {
       const y = laneY(i);
       // perceptual idle fade: faded lanes blend their colors toward bgRGB to a uniform low luminance.
@@ -4798,7 +4820,7 @@ class TimelinePanel {
     // by the SESSION it acted on; adjacent same-session marks merge into a stretch of attention. A mark
     // within ~8s of the live edge is "running now" (white-outlined). (docs/judges.md; data.judging.)
     if (jShow) {
-      const jb0 = M.top + vis.length * LANE_GAP + JB_TOPGAP;     // top of the first judge row, under the lanes
+      const jb0 = M.top + (vis.length + pend.length) * LANE_GAP + JB_TOPGAP;     // top of the first judge row, under the lanes (+ the pending-host rows)
       const jY = (i) => jb0 + i * JROW + JROW * 0.5;
       const nameOf = (sid) => { const s = data.sessions.find((z) => z.id === sid); return s ? s.name : sid; };
       const sepY = jb0 - JB_TOPGAP * 0.5;

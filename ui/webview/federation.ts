@@ -504,7 +504,7 @@ export function stitchMessages(messages: any[], sessions: readonly any[]): any[]
  *  Scalar chrome (now/usage/focus/hover/cmapGrad…) stays LOCAL — the browser's own kernel is the
  *  clock + chrome authority, same as the feed merge. */
 export function mergeHostTimelines(perHost: Record<string, any>, hostSeq: readonly string[],
-                                   view: readonly string[] = []): any {
+                                   view: readonly string[] = [], deadHosts: readonly string[] = []): any {
   const local = perHost[LOCAL] || {};
   const offsets = hostOffsets(perHost);   // each host's clock vs the local authority, this merge
   const merged: any = { ...local, sessions: [], turns: {}, messages: [], judging: [] };
@@ -519,6 +519,14 @@ export function mergeHostTimelines(perHost: Record<string, any>, hostSeq: readon
   // the same way, before the message stitch, which pairs postal arrows against the lane list.
   merged.sessions = applyViewOrderTo(merged.sessions, view, (x: any) => String((x && x.id) || ""));
   merged.messages = rebaseExecs(stitchMessages(merged.messages, merged.sessions), offsets);
+  // Hosts ATTACHED but yet to contribute a lanes payload — the feed merge's pendingHosts rule, applied
+  // to the lanes channel (the user 2026-09-02: after a restart or a phone re-foreground the remote
+  // hosts' lanes were simply absent for two minutes, with nothing on the board saying they were
+  // coming). Presence in perHost is the event: the host's first lanes payload (an empty one included)
+  // retires it, a detach deletes the entry, and the view draws a placeholder row per name until then.
+  // No timers anywhere in this signal. The local kernel never pends.
+  merged.pendingHosts = hostSeq.filter((h) => h !== LOCAL && !(h in perHost));
+  merged.pendingDead = merged.pendingHosts.filter((h: string) => deadHosts.includes(h));
   return merged;
 }
 
@@ -543,6 +551,33 @@ export function mergeHostBars(perHost: Record<string, any>, hostSeq: readonly st
   return merged;
 }
 
+// ── remote-socket liveness (the user 2026-09-02) ─────────────────────────────────────────────────
+// The kernel heartbeats EVERY WebSocket it serves — `ka` frames every KEEPALIVE_S (10s) — and those
+// frames ride the /remote/<host>/ws relay too, so a remote socket that is truly open hears from its
+// kernel at least every ~10s. The pane shim already keys a watchdog on exactly that beat for the LOCAL
+// socket (STALE_MS): a half-open socket fires no onclose, ever, so a missing heartbeat is the only
+// evidence there is. The remote sockets here had NO such check: on the audited phone re-foreground
+// both relay sockets OPENED (handshake complete) and then delivered nothing — dead on arrival — and
+// nothing bounded the wait until TCP gave up ~104s later (close 1006), so two attached, healthy hosts
+// rendered as simply absent for two minutes, which the user read as wiped state. Same bounds as the
+// shim, byte for byte: 30s of silence on an OPEN socket, 15s stuck CONNECTING, 8s CLOSED with no
+// fresh attempt (a lost retry timer — a throttled tab).
+export const REMOTE_STALE_MS = 30000;
+export const REMOTE_CONNECT_MS = 15000;
+export const REMOTE_REDIAL_MS = 8000;
+
+/** What the watchdog should do about ONE remote socket, from its state alone (pure, unit-tested):
+ *  "close" — force-close so the onclose→redial chain runs (open but silent past the keepalive bound,
+ *  or a hung handshake); "redial" — CLOSED with no fresh attempt: dial directly; "" — leave it be.
+ *  `lastRecv` is stamped at open and on every frame, so an open socket's silence is measured from
+ *  its own open, never from an earlier socket's traffic. */
+export function socketVerdict(readyState: number, lastRecv: number, connT: number, now: number): "close" | "redial" | "" {
+  if (readyState === 1) return now - (lastRecv || connT) > REMOTE_STALE_MS ? "close" : "";
+  if (readyState === 0) return now - connT > REMOTE_CONNECT_MS ? "close" : "";
+  if (readyState === 3) return now - connT > REMOTE_REDIAL_MS ? "redial" : "";
+  return "";
+}
+
 // ── the wiring: WebSockets per kernel + the attach UI ────────────────────────────────────────────
 // Thin glue over the pure functions above. The LOCAL kernel stays the shim's existing single WS — this
 // manager only ADDS connections to attached remote kernels, so with no remotes attached the dashboard is
@@ -556,6 +591,8 @@ interface Conn {
   url: string;
   closed: boolean;
   live: boolean; // kernel reports this tunnel "up" — the only state in which its port is dialed
+  lastRecv: number; // epoch ms of the last frame on the CURRENT socket (keepalives count); 0 = none yet
+  connT: number;    // when the current socket's connect() attempt started — the watchdog's reference point
 }
 
 export class FederationManager {
@@ -607,6 +644,36 @@ export class FederationManager {
       writeViewOrder(Array.isArray(order) ? order.filter((x: unknown): x is string => typeof x === "string") : []);
     this.poll();
     setInterval(() => this.poll(), 4000); // converge on attach/detach made from the shell's network panel
+    // the remote sockets' liveness watchdog (socketVerdict above) — the shim's 5s tick, for the relay side
+    setInterval(() => this.watchdog(Date.now()), 5000);
+    // …and the shim's visibility fast-path, for the relay side: a backgrounded tab's timers are
+    // throttled and its sockets may have died in its sleep, so the instant it is foregrounded every
+    // remote socket that is not open, or has gone quiet past the bound, is closed and redialed now
+    // rather than waited out — the phone's re-foreground is exactly the audited case.
+    try {
+      document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") this.watchdog(Date.now(), true); });
+    } catch (e) { /* no document — the node tests construct the manager bare */ }
+  }
+
+  /** One pass of the remote-socket watchdog (public so the tests can tick it with their own clock):
+   *  apply socketVerdict to every dialed connection. `foreground` (the visibility fast-path) also
+   *  kills a socket still CONNECTING, whatever its age — a handshake the sleeping tab never finished. */
+  watchdog(now: number, foreground = false): void {
+    for (const c of this.conns.values()) {
+      if (c.closed || !c.ws) continue;
+      const rs = c.ws.readyState;
+      let v = socketVerdict(rs, c.lastRecv, c.connT, now);
+      if (foreground && rs === 0) v = "close";
+      if (v === "close") {
+        // the same breadcrumb family as open/close/detach, so a "cards came back late" report reads
+        // WHICH socket the watchdog put down and how long it had been silent
+        this.diag("hostconn", { host: c.host, ev: "watchdog-close", why: rs === 1 ? "quiet" : "connecting",
+                                quietMs: c.lastRecv ? now - c.lastRecv : -1, foreground });
+        try { c.ws.close(); } catch (e) { /* already dying — onclose redials either way */ }
+      } else if (v === "redial") {
+        this.connect(c);
+      }
+    }
   }
 
   // kernel → browser: prefix this host's ids, merge tab orders, hand the rest to the panes.
@@ -675,15 +742,46 @@ export class FederationManager {
       this.lastFeedCounts = sig;
       this.diag("feedmerge", { counts });
     }
-    const dead = this.hostSeq.filter((h) => {
+    this.publishPending();
+    const dead = this.deadHosts();
+    window.dispatchEvent(new MessageEvent("message", { data: mergeHostFeeds(this.perHostFeed, this.hostSeq, this.view(), dead) }));
+  }
+
+  // the hosts whose link is DOWN right now (this manager knows its sockets) — the merges' pendingDead input
+  private deadHosts(): string[] {
+    return this.hostSeq.filter((h) => {
       if (h === LOCAL) return false;
       const c = this.conns.get(h);
       return !c || !c.ws || c.ws.readyState === 3;   // no socket / closed = a dead link right now
     });
-    window.dispatchEvent(new MessageEvent("message", { data: mergeHostFeeds(this.perHostFeed, this.hostSeq, this.view(), dead) }));
+  }
+
+  private lastPendingSig = "";
+
+  /** Which attached hosts THIS pane is still waiting on, by the channel it renders: the chat reads the
+   *  tab list, the feed and fleet the feed payload, the timeline the lanes skeleton. */
+  private pendingFor(): string[] {
+    const src = this.app === "timeline" ? this.perHostTl : this.app === "chat" ? this.perHostOrder : this.perHostFeed;
+    return this.hostSeq.filter((h) => h !== LOCAL && !(h in src));
+  }
+
+  // Tell the SHELL which hosts this pane has not heard from yet (the user 2026-09-02): the network
+  // panel reads the kernel's /tunnels, where a host whose tunnel is fine says "connected" — while the
+  // board behind it shows no trace of that host. The shell folds every pane's list and the panel row
+  // says "connected · loading sessions…" until this pane's first payload from that host retires it.
+  // Posted on CHANGE only, and only to a same-origin parent (a cross-origin host has no network panel).
+  private publishPending(): void {
+    const hosts = this.pendingFor();
+    const sig = hosts.join("\u0000");
+    if (sig === this.lastPendingSig) return;
+    this.lastPendingSig = sig;
+    try {
+      if (window.parent && window.parent !== window) window.parent.postMessage({ romp: "hostsPending", app: this.app, hosts }, "*");
+    } catch (e) { /* a cross-origin parent throws on access — nothing there to tell */ }
   }
 
   private emitMergedTimeline(bars: boolean): void {
+    this.publishPending();   // before the holds: a pane still waiting on its LOCAL lanes is waiting on the remotes too
     // HOLD until the LOCAL lanes snapshot exists. The merges take `now` (the clock authority) from the
     // local payload, so a remote host winning the connect race would emit now:undefined — which the
     // panel's fitWindow turned into a permanently-NaN window (every bar/axis x = NaN; the "stub lane
@@ -700,7 +798,7 @@ export class FederationManager {
     const data = bars
       // the bars message carries no lanes — hand the merged lane list in for the connector stitch
       ? mergeHostBars(this.perHostTlBars, this.hostSeq, mergeHostTimelines(this.perHostTl, this.hostSeq, this.view()).sessions)
-      : { type: "data", data: mergeHostTimelines(this.perHostTl, this.hostSeq, this.view()) };
+      : { type: "data", data: mergeHostTimelines(this.perHostTl, this.hostSeq, this.view(), this.deadHosts()) };
     window.dispatchEvent(new MessageEvent("message", { data }));
   }
 
@@ -712,6 +810,7 @@ export class FederationManager {
   private emitMergedOrder(): void {
     const order = mergeHostOrder(this.perHostOrder, this.hostSeq, this.view());
     const tabs = this.hostSeq.flatMap((h) => this.perHostTabs[h] || []);
+    this.publishPending();
     window.dispatchEvent(new MessageEvent("message", { data: { type: "tabOrder", order, tabs, views: this.localViews ?? undefined } }));
   }
 
@@ -797,8 +896,18 @@ export class FederationManager {
       return;
     }
     const want = new Map<string, any>(tunnels.filter((t) => t.token && t.localPort).map((t) => [t.host, t]));
-    for (const [host, t] of want) if (!this.conns.has(host)) this.openRemote(host, t.token, t.status === "up");
+    let opened = false;
+    for (const [host, t] of want) if (!this.conns.has(host)) { this.openRemote(host, t.token, t.status === "up"); opened = true; }
     for (const host of [...this.conns.keys()]) if (!want.has(host)) this.closeRemote(host);
+    // A host just ATTACHED is pending from this moment, not from the next push that happens to land:
+    // re-emit the merged payloads so the placeholders appear at the attach event. Each emission holds
+    // until the LOCAL payload exists (the feed's hold is here; the timeline's is its own), so a page
+    // still booting never gets an empty merged feed dropped onto its loader.
+    if (opened) {
+      if (LOCAL in this.perHostFeed) this.emitMergedFeed();
+      this.emitMergedTimeline(false);
+      this.publishPending();
+    }
     // The kernel's tunnel state gates dialing: it health-checks its own ssh tunnels, so "up" is
     // authoritative for whether anything listens on the local port at all. Blind 2s retries against
     // a dead tunnel port feed the browser's per-host WebSocket failure backoff (Firefox delays
@@ -845,7 +954,7 @@ export class FederationManager {
     const w = dashboardWid();
     const url = `${proto}${location.host}/remote/${encodeURIComponent(host)}/ws?app=${encodeURIComponent(this.app)}&token=${encodeURIComponent(token)}`
       + (w ? `&wid=${encodeURIComponent(w)}` : "");
-    const conn: Conn = { host, ws: null, url, closed: false, live };
+    const conn: Conn = { host, ws: null, url, closed: false, live, lastRecv: 0, connT: 0 };
     this.conns.set(host, conn);
     this.ensureHost(host);
     this.connect(conn);
@@ -864,6 +973,8 @@ export class FederationManager {
     if (conn.closed || !conn.live) return;
     if (conn.ws && (conn.ws.readyState === 0 || conn.ws.readyState === 1)) return; // already connecting/open
     let ws: WebSocket;
+    conn.connT = Date.now();
+    conn.lastRecv = 0;
     try {
       ws = new WebSocket(conn.url);
     } catch (e) {
@@ -873,6 +984,7 @@ export class FederationManager {
     conn.ws = ws;
     ws.onopen = () => {
       this.diag("hostconn", { host: conn.host, ev: "open" });
+      conn.lastRecv = Date.now();   // the watchdog measures this socket's silence from ITS open
       // this host's owed replies just became reachable again — the chat re-ships its pending
       // uploads on exactly this event (T215 review finding 2026-09-01: a remote kernel's restart
       // redials HERE, firing neither romp:wsup nor hostUp, so nothing else could heal them).
@@ -883,6 +995,7 @@ export class FederationManager {
       } catch (e) { /* dispatch must never break the relay */ }
     };
     ws.onmessage = (ev: MessageEvent) => {
+      conn.lastRecv = Date.now();   // every frame counts, the keepalive included — that is the heartbeat
       let msg: any;
       try {
         msg = JSON.parse(ev.data);

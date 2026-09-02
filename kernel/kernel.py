@@ -28660,6 +28660,18 @@ var _pendTrust={},_pendMirror={};
 // tunnel, so it never rides the 3s poll itself: refresh() kicks it, one in flight at a time
 // (_pairsBusy), and the answer repaints from the poll's cached args (_lastArgs) — no fetch loop.
 var _pendPair={},_pairs=null,_pairsBusy=false,_lastArgs=null,_lastUp=0;
+// HOSTS THE BOARD HAS NOT HEARD FROM YET (the user 2026-09-02): this panel reads the kernel's /tunnels,
+// where a host whose ssh tunnel is fine says "connected" — while the panes behind it can show no trace of
+// that host for a while after a kernel restart or a phone re-foreground (their relay sockets are still
+// (re)dialing, the first payload has not landed). Each pane's federation manager posts the hosts IT is
+// still waiting on ({romp:'hostsPending', app, hosts}, on change); a host any pane still pends wears
+// "connected · loading sessions…" with the loader here, so the panel never contradicts the blank board.
+// Retired by the pane's own first payload from that host (its next post drops the name) — no timer.
+var _pend={};
+function pendingIn(h){for(var k in _pend){if(_pend[k].indexOf(h)>=0)return true;}return false;}
+window.addEventListener('message',function(e){var m=e&&e.data;if(!m||m.romp!=='hostsPending')return;
+_pend[m.app||'?']=(m.hosts||[]).filter(function(h){return typeof h==='string';});
+if(!back.hidden&&_lastArgs)render.apply(null,_lastArgs);});
 // ITS CONNECTIONS (the user 2026-08-11): every up host's row expands into THAT machine's own
 // attached-host list — same row treatment, working controls — so what's connected to what is
 // managed from one dashboard. Rows come from /tunnels/of (its own /tunnels over your tunnel + its
@@ -28974,7 +28986,7 @@ row.innerHTML='<span class=rnet-dot style=\"'+dot+'\" title=\"'+(TIP[t.status]||
 // A host mid-attach gets the romp loader inline (the user 2026-07-29): the swirl glyph spinning beside
 // the status word, so "connecting" reads as something HAPPENING rather than a label that might be stuck.
 // The repo's loading rule spelled small: same glyph, same reverse spin as the composer's slash spinner.
-'<span class=nm><b>'+t.host+'</b> <span class=st title=\"'+(TIP[t.status]||'')+'\">'+(busyStatus(t.status)?spin():'')+(LBL[t.status]||t.status)+(t.checkinPeer?' \\u00b7 checked in here':'')+(t.token?'':' \\u00b7 no token')+(again?' \\u00b7 '+again:'')+ver+'</span></span>'+
+'<span class=nm><b>'+t.host+'</b> <span class=st title=\"'+(TIP[t.status]||'')+'\">'+(busyStatus(t.status)?spin():'')+(LBL[t.status]||t.status)+((t.status==='up'&&pendingIn(t.host))?' \\u00b7 <span class=rnet-pend title=\"The tunnel is up; this dashboard is still loading '+t.host+'\\u2019s sessions. They appear the moment its first payload lands.\">'+spin()+'loading sessions\\u2026</span>':'')+(t.checkinPeer?' \\u00b7 checked in here':'')+(t.token?'':' \\u00b7 no token')+(again?' \\u00b7 '+again:'')+ver+'</span></span>'+
 retry+pull+ask+upd+strt+'<button data-h=\"'+t.host+'\" title=\"Close the ssh tunnel to '+t.host+'. It stays in this list as a previously-attached host, keeping its trust level, so you can re-attach in one click.\">Detach</button>'+
 // ITS CONNECTIONS toggle — the keyed expand (progressive disclosure): compact row by default,
 // that machine's own attached list one click deeper, fetched on the click, never the poll.
