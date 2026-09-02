@@ -86,7 +86,8 @@ function fetch(url, opts){
 const ALERTS = [];
 function alert(m){ ALERTS.push(String(m)); }
 const setTimeout_ = setTimeout;
-const window = { addEventListener(){}, location:{reload(){}} };
+// listeners are RECORDED so a test can deliver a pane's postMessage (the hostsPending row copy)
+const window = { _l:{}, addEventListener(k,f){ (this._l[k]=this._l[k]||[]).push(f); }, location:{reload(){}} };
 const console_err = [];
 const console = { error(...a){ console_err.push(a.map(String).join(' ')); }, log(){}, warn(){} };
 
@@ -356,6 +357,44 @@ class RemotesPanelRender(unittest.TestCase):
         self.assertIn("select[data-pt-on]", js)
         self.assertIn("/tunnels/trust-remote", js)
         self.assertIn("/tunnels/pairs", js)
+
+
+class PendingHostsRowCopy(RemotesPanelRender):
+    """The panel must not contradict a blank board (the user 2026-09-02): after a kernel restart or a
+    phone re-foreground the panes can show no trace of an attached host for a while (their relay
+    sockets are still (re)dialing, the first payload has not landed) while this panel's row, read off
+    the kernel's /tunnels, says a bare 'connected'. Each pane's federation manager posts the hosts IT
+    still waits on ({romp:'hostsPending', app, hosts}); a host any pane still pends wears
+    'connected · loading sessions…' with the loader until that pane's next post drops it."""
+
+    DELIVER = ("(window._l.message||[]).forEach(function(f){f({data:{romp:'hostsPending',app:'feed',"
+               "hosts:['TESTHOST']}});});")
+    RETIRE = ("(window._l.message||[]).forEach(function(f){f({data:{romp:'hostsPending',app:'feed',"
+              "hosts:[]}});});")
+
+    def test_a_pane_still_waiting_on_an_up_host_marks_its_row_as_loading(self):
+        out = self._run(drive=self.DELIVER)
+        self.assertEqual(out["rows"], 1)
+        self.assertIn("loading sessions\u2026", out["html"])
+        self.assertIn("rnet-spin", out["html"], "the romp loader, not a bare word that could equally be stuck")
+        self.assertIn("connected", out["html"], "the kernel's own truth stays: the tunnel IS up")
+
+    def test_the_mark_leaves_when_the_pane_reports_the_payload_landed(self):
+        out = self._run(drive=self.DELIVER + self.RETIRE)
+        self.assertNotIn("loading sessions", out["html"])
+
+    def test_a_host_no_pane_pends_wears_no_mark(self):
+        out = self._run()
+        self.assertNotIn("loading sessions", out["html"])
+
+    def test_a_down_host_never_wears_the_loading_mark(self):
+        # the kernel's own status word covers a down tunnel ("reconnecting…"); the pane-side mark is
+        # only for the case where the tunnel is FINE and the dashboard is the one still catching up
+        t = json.loads(json.dumps(TUNNELS))
+        t["tunnels"][0]["status"] = "down"
+        out = self._run(drive=self.DELIVER, tunnels=t)
+        self.assertNotIn("loading sessions", out["html"])
+        self.assertIn("reconnecting", out["html"])
 
 
 if __name__ == "__main__":
