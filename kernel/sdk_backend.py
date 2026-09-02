@@ -1826,6 +1826,10 @@ class SdkSession:
             self._clearing = True
         self._input_wake: asyncio.Event | None = None
         self._cur_ask_fut: asyncio.Future | None = None
+        self._ask_serial = asyncio.Lock()            # ONE live ask per session: the SDK dispatches every control
+        #   request as its own detached task, so two asks CAN overlap; unserialized, the second would either
+        #   overwrite the first's future (a hang) or share it (one click answering both — a silently wrong
+        #   permission). Each ask site holds this from present to resolve (PR #875 review, 2026-09-02).
         self._lock = threading.Lock()
         self._ready = threading.Event()
         # Boot-stagger hook (see BOOT_RESUME_CONCURRENCY): fired exactly once when this session's CLI
@@ -2310,9 +2314,24 @@ class SdkSession:
             return True
         return False
 
+    def _arm_ask(self):
+        """Create (or keep) the future an answer lands on. INVARIANT: an ask is never PRESENTED before
+        this future exists. resolve_ask reads _cur_ask_fut synchronously on the caller's thread and
+        reports False when nothing is waiting (T214's truthful delivery outcome), so an answer that
+        lands between _emit_ask and the coroutine's first await must already find the future armed —
+        otherwise it is reported lost and the ask waits forever. Before T214 that read was deferred
+        into the loop, which hid the gap; every ask site now calls this right before _emit_ask, and
+        _next_ask_action awaits the armed future rather than minting a second one. The keep branch
+        exists for _next_ask_action alone: the sites hold _ask_serial from present to resolve, so a
+        site never finds another ask's live future here (two overlapping asks sharing one future
+        would let a single click answer both)."""
+        fut = self._cur_ask_fut
+        if fut is None or fut.done():
+            self._cur_ask_fut = asyncio.get_running_loop().create_future()
+        return self._cur_ask_fut
+
     async def _next_ask_action(self):
-        fut = asyncio.get_running_loop().create_future()
-        self._cur_ask_fut = fut
+        fut = self._arm_ask()
         try:
             return await fut
         finally:
@@ -2999,23 +3018,25 @@ class SdkSession:
         # ordinal so we map it back to the action here.
         ask = permission_to_live(tool_name, tool_input, context)
         remember_n = 2 if getattr(context, "suggestions", None) else None
-        self._mark("permission")
-        self.backend._emit_ask(self, ask)
         decision = "deny"
-        try:
-            while True:
-                kind, payload = await self._next_ask_action()
-                if kind == "answer":
-                    n = str(payload)
-                    decision = "allow" if n == "1" else "remember" if n == str(remember_n) else "deny"
-                    break
-                if kind == "cancel":
-                    decision = "deny"
-                    break
-        finally:
-            self.backend._clear_ask(self)
-            if self.inflight:
-                self._mark("working")
+        async with self._ask_serial:                  # one live ask at a time (see _ask_serial)
+            self._mark("permission")
+            self._arm_ask()
+            self.backend._emit_ask(self, ask)
+            try:
+                while True:
+                    kind, payload = await self._next_ask_action()
+                    if kind == "answer":
+                        n = str(payload)
+                        decision = "allow" if n == "1" else "remember" if n == str(remember_n) else "deny"
+                        break
+                    if kind == "cancel":
+                        decision = "deny"
+                        break
+            finally:
+                self.backend._clear_ask(self)
+                if self.inflight:
+                    self._mark("working")
         if decision == "remember":
             return PermissionResultAllow(behavior="allow", updated_permissions=list(context.suggestions))
         if decision == "allow":
@@ -3042,20 +3063,22 @@ class SdkSession:
         }
         if pv:
             ask["previewKind"], ask["preview"] = pv[0], pv[1]
-        self._mark("permission")
-        self.backend._emit_ask(self, ask)
         choice = "3"
-        try:
-            while True:
-                kind, payload = await self._next_ask_action()
-                if kind == "answer":
-                    choice = str(payload); break
-                if kind == "cancel":
-                    choice = "3"; break
-        finally:
-            self.backend._clear_ask(self)
-            if self.inflight:
-                self._mark("working")
+        async with self._ask_serial:                  # one live ask at a time (see _ask_serial)
+            self._mark("permission")
+            self._arm_ask()
+            self.backend._emit_ask(self, ask)
+            try:
+                while True:
+                    kind, payload = await self._next_ask_action()
+                    if kind == "answer":
+                        choice = str(payload); break
+                    if kind == "cancel":
+                        choice = "3"; break
+            finally:
+                self.backend._clear_ask(self)
+                if self.inflight:
+                    self._mark("working")
         if choice == "1":
             return PermissionResultAllow(behavior="allow")
         if choice == "2":
@@ -3079,11 +3102,16 @@ class SdkSession:
         return build_answers(questions, picks)
 
     async def _ask_one(self, question: dict, qi: int, total: int):
+        async with self._ask_serial:                  # one live ask at a time (see _ask_serial)
+            return await self._ask_one_locked(question, qi, total)
+
+    async def _ask_one_locked(self, question: dict, qi: int, total: int):
         multi = bool(question.get("multiSelect"))
         nreal = len(question.get("options") or [])
         selected: set[int] = set()
         customs: list[str] = []                       # free-text answers the user typed (multi accumulates)
         def emit():
+            self._arm_ask()
             self.backend._emit_ask(self, ask_question_to_live(question, qi, total, selected, customs))
         emit()
         while True:
