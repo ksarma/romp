@@ -226,11 +226,13 @@ const FONT = '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-ser
 // The ONE menu vocabulary every romp dropdown wears (CLAUDE.md rule, the user 2026-08-09) — the chat
 // pane's .ctx-menu/.meta-menu spec (ui/webview/styles.css), inlined with its values RESOLVED because
 // this pane may live in a foreign document (Obsidian) that loads neither styles.css nor its vars, and
-// would otherwise hand the menus the host app's own font. Card #252526, hairline border, 6px radius,
+// would otherwise hand the menus the host app's own font. Card, hairline border, 6px radius,
 // 12px romp sans; the current-choice mark is the same ✓-in-circle the chat meta menus use.
-// Composed from the palette at applyPal() time (see PAL below): dark stays the chat spec verbatim
-// (card #252526, hairline rgba(255,255,255,0.12), shadow rgba(0,0,0,0.35), text #cccccc, ✓ #1EA1EB);
-// the light theme re-skins the same card (white, black hairline, clay ✓).
+// Composed from the palette at applyPal() time (see PAL below) — the RESOLVED twin of the sheets'
+// menu tokens (--menu-bg/--menu-fg/--menu-border/--menu-hover/--check-bg, T226): PAL_DARK carries
+// the dark spec verbatim (card #252526, hairline rgba(255,255,255,0.12), shadow rgba(0,0,0,0.35),
+// text #cccccc, ✓ #1EA1EB) and PAL_LIGHT the light block's values (card #FBF6EF, clay ✓). The
+// palette is this pane's fallback mechanism: Obsidian loads no sheet and no vars at all.
 const menuStyleFor = (p) => 'padding:4px;background:' + p.menuBg + ';border:1px solid ' + p.hairline + ';'
   + 'border-radius:6px;box-shadow:0 4px 12px ' + p.menuShadow + ';font:12px/1.4 ' + FONT + ';'
   + 'color:' + p.menuFg + ';user-select:none;';

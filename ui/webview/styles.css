@@ -91,6 +91,20 @@ body.scheme-solarized-dark {
      2026-08-26. Mirrored in feed.css (own :root). */
   --radius-menu: 6px;
   --shadow-menu: 0 4px 12px rgba(0, 0, 0, 0.35);
+  /* the menu SKIN, as tokens (T226, 2026-09-02: in the light theme every inline-styled dropdown —
+     the settings pickers, the tag menu — stayed a #252526 card with #cccccc text, unreadable): the
+     card, its text, its hairline, its row-hover wash. Dark values = the literals the vocabulary
+     always named, byte-for-byte; the light block re-skins them in its own palette. The card and
+     text COMPOSE the VS Code menu tokens, so the extension's webview keeps following the editor's
+     menu colours exactly as .ctx-menu always did, and the served THEME_CSS resolves them to the
+     dark spec. Inline menu strings reference these with the dark literal as the var() FALLBACK
+     (a file:// harness or a foreign host loads no sheet). Mirrored in feed.css (own :root). */
+  --menu-bg: var(--vscode-menu-background, #252526);
+  --menu-fg: var(--vscode-menu-foreground, #cccccc);
+  --menu-border: rgba(255, 255, 255, 0.12);
+  --menu-hover: rgba(255, 255, 255, 0.09);
+  --menu-ring: #fff;                 /* the current-swatch halo in a menu's colour grid (review round, T226) */
+  --check-ring: rgba(30, 161, 235, 0.55);   /* the ✓ family's translucent ring — --check-bg at 0.55 */
   /* the transient-notice (toast/banner) vocabulary — one raised surface, radius and shadow for
      every self-dismissing notice; five variants had drifted in before 2026-08-26. Mirrored in
      feed.css (own :root); the kernel's banners carry the same values as literals. */
@@ -174,7 +188,9 @@ body.theme-light {
   --dim: #5D574E;
   --rail: rgba(0, 0, 0, 0.14);
   --green: #3E7D0E;
-  --check-bg: #1EA1EB;   /* the session-identity default blue is BRAND, same in both themes */
+  --check-bg: #C2410C;   /* the ✓ mark is THEMED (T226 ruling, 2026-09-02): every check on every surface
+                            wears the theme's own mark — dark keeps the #1EA1EB brand blue, light wears
+                            its clay accent (what the timeline's PAL_LIGHT already drew) */
   --code-fg: #8C4A00;
   --code-bg: rgba(180, 83, 9, 0.08);
   --box-bg: rgba(0, 0, 0, 0.03);
@@ -193,6 +209,12 @@ body.theme-light {
   --st-blocked-bg: #e5484d; --st-blocked-fg: #ffffff;
   --radius-menu: 6px;
   --shadow-menu: 0 4px 12px rgba(31, 26, 20, 0.16);
+  --menu-bg: #FBF6EF;
+  --menu-fg: #1F1E1D;
+  --menu-border: rgba(0, 0, 0, 0.12);
+  --menu-hover: rgba(0, 0, 0, 0.06);
+  --menu-ring: #1F1E1D;
+  --check-ring: rgba(194, 65, 12, 0.55);
   --surface-raised: #FAF5EE;
   --radius-toast: 8px;
   --shadow-toast: 0 8px 28px rgba(31, 26, 20, 0.18);
@@ -507,8 +529,9 @@ body.chat-theme-yatharth .tab.active.colored:not(.tab-blocked) {
 /* right-click context menu on a tab — themed like VS Code's own menus */
 .ctx-menu {
   position: fixed; z-index: 100; min-width: 110px; padding: 4px;
-  background: var(--vscode-menu-background, #252526);
-  color: var(--vscode-menu-foreground, var(--fg));
+  background: var(--menu-bg);   /* the reference spec reads the menu tokens it names (T226); the token
+                                   composes the VS Code menu colour this rule always followed */
+  color: var(--menu-fg);
   border: 1px solid var(--box-border); border-radius: var(--radius-menu);
   box-shadow: var(--shadow-menu);
   font-size: 0.92em;
@@ -533,7 +556,7 @@ body.chat-theme-yatharth .tab.active.colored:not(.tab-blocked) {
 .ctx-tag-x { flex: 0 0 auto; background: none; border: none; color: var(--dim); cursor: pointer; font: inherit; padding: 0 2px; }
 .ctx-tag-x:hover { color: var(--fg); }
 .ctx-item-newtag { cursor: default; }
-.ctx-tag-input { width: 100%; background: #1e1e1e; color: #ccc; border: 1px solid #3a3a3a; border-radius: 5px; padding: 3px 6px; font: inherit; }
+.ctx-tag-input { width: 100%; background: var(--vscode-editor-background, #1e1e1e); color: var(--menu-fg); border: 1px solid var(--hairline); border-radius: 5px; padding: 3px 6px; font: inherit; }   /* themed (T226): the dark values resolve byte-equal */
 .ctx-tag-input:focus { outline: none; border-color: var(--accent); }
 .ctx-item-body { display: flex; flex-direction: column; line-height: 1.25; }
 .ctx-item-sub { font-size: 0.82em; opacity: 0.6; }
@@ -557,7 +580,7 @@ body.chat-theme-yatharth .tab.active.colored:not(.tab-blocked) {
   box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.25); }
 .ctx-swatch:hover { transform: scale(1.12); }
 /* the session's current color: a white ring with a gap (the menu-bg fills the gap so it reads as a halo) */
-.ctx-swatch.sel { box-shadow: 0 0 0 2px var(--vscode-menu-background, #252526), 0 0 0 3.5px #fff; }
+.ctx-swatch.sel { box-shadow: 0 0 0 2px var(--menu-bg), 0 0 0 3.5px var(--menu-ring); }   /* themed halo (T226 review): a white ring vanished on the light card */
 
 .tab-close { opacity: 0; font-size: 1.1em; line-height: 1; padding: 0 2px; border-radius: 3px; color: var(--dim); }
 .tab:hover .tab-close { opacity: 0.7; }
@@ -1211,7 +1234,7 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
 @keyframes meta-dots { 0%, 70%, 100% { opacity: 0.3; } 35% { opacity: 1; } }
 .meta-menu {
   position: fixed; z-index: 60; min-width: 96px;
-  background: var(--vscode-editorWidget-background, #252526);
+  background: var(--menu-bg);   /* one card across every menu (T226); served dark unchanged */
   border: 1px solid var(--box-border); border-radius: var(--radius-menu);
   padding: 4px; box-shadow: var(--shadow-menu);
   font-family: var(--sans); font-size: 0.92em;
@@ -1224,7 +1247,7 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
   padding: 4px 22px 4px 8px; border-radius: 4px; cursor: pointer;
   color: var(--fg); position: relative; white-space: nowrap;
 }
-.meta-item:hover { background: rgba(255, 255, 255, 0.09); }
+.meta-item:hover { background: var(--menu-hover); }   /* the themed row wash (T226) */
 /* second line for a choice whose consequence its label doesn't carry (Bypass permissions). Same
    0.82em / 0.6 opacity as .ctx-item-sub — one sub-line size across every romp menu. */
 .meta-item-sub { font-size: 0.82em; opacity: 0.6; }
