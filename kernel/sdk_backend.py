@@ -3933,7 +3933,8 @@ class SdkBackend:
             a USER interrupt but was exactly the silent purgatory for a kernel-death cut (2026-07-05:
             every SDK session stranded mid-turn until hand-resumed).
           * A session with a persisted queue (reg['queue'], the _persist_queue mirror): resume it so the
-            queue delivers via the __init__ seed.
+            queue delivers via the __init__ seed. Each reg is read FRESH inside the loop — the boot
+            reseed may have re-queued a lost send after `regs` was listed.
         Everything else stays lazy/dormant. Loud one-line summary whenever anything was recovered."""
         try:
             alive = [r for r in regs if r.get("alive") and r.get("sid")]
@@ -3962,6 +3963,17 @@ class SdkBackend:
                 # session killed two whole reconcile passes.
                 try:
                     sid = str(r["sid"])
+                    # Read the reg FRESH: `regs` is __init__'s listing from BEFORE _reseed_echoes ran,
+                    # and its re-delivery arm (_mark_dropped_echoes) may since have put a lost human
+                    # send back into this reg's queue ON DISK — a row listed before that write still
+                    # shows the old queue, so a session whose only reason to resume was the re-queued
+                    # text read `queued` empty here and stayed dormant until the next spawn or boot
+                    # (re-queued, never delivered). The same fresh read the RMW arm below already
+                    # does; a failed read keeps the listed row (per-session isolation still applies).
+                    fresh = read_reg(self.state_dir, sid)
+                    if fresh is not None:
+                        fresh.setdefault("sid", sid)      # a raw reg file may omit it; list_regs added it
+                        r = fresh
                     # A /model / /effort switch mid-flight at the kernel's death can never clear its
                     # pending flags (the in-memory switch died) — and the dormant path serves them
                     # verbatim, so the badge's switching-dots sat there forever (the user 2026-07-11).
