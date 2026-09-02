@@ -323,19 +323,86 @@ function quietGate(st, busy, now, opts) {
   return { action: 'wait', reason: `${busy} turn(s) in flight` };
 }
 
-let pendingQuiet = null;   // {since, count, mode:'all'|<kernel id>, timer}
+let pendingQuiet = null;   // {since, count, mode:'all'|<kernel id>, timer, drainRefusedCount, drainArmedCount}
+
+// The primary kernel's serve token. The drain arm of '/busy?drain=1' is a WRITE — it holds every
+// session's new turn starts — so the kernel now requires the token for it (a drive-by loopback page
+// or a tailnet client, holding no token, can no longer freeze turns by looping the poll). We are the
+// same-user local daemon: read the 0600 token file (the kernel writes it under its state root on
+// startup), or the env a profile baked in. Absent/unreadable → the poll still reads the count (the
+// read stays auth-exempt), the drain hold just does not arm; the quiet-window gate still works off
+// the count. Read fresh each poll so a kernel that reminted its token is picked up.
+//
+// FAIL LOUDLY, NOT DIFFERENTLY: left silent, both halves of that degrade disappear — a token-read
+// failure collapses to '' with zero log, and the kernel's `draining` answer (the refusal signal
+// it returns in the same /busy response) gets parsed out and dropped — so a parked deploy would
+// believe new turn starts were held while the kernel armed nothing; busy never quiets, and the
+// 15-minute backstop SIGTERMs the kernel MID-TURN (the exact cut the quiet window exists to
+// prevent) with no line anywhere naming the cause. The degrade BEHAVIOR is deliberate
+// (count-only polling keeps working; the /busy read arm needs no token) — these notices
+// make it visible, once per refusal EPISODE, not per 3s poll: queueQuietRestart re-arms them when
+// a fresh park begins, and an ARMED drain answer re-arms the refusal notice mid-park
+// (kernelToken() reads fresh per poll, so a hold can recover when the token file
+// comes back and be refused AGAIN when it goes; each transition is new information, said once).
+let tokenNoticed = false;   // the serve-token read failed → said once
+let drainNoticed = false;   // the kernel answered a drain=1 poll with draining:false → said once per episode
+function resetDrainNotices() { tokenNoticed = false; drainNoticed = false; }
+
+function kernelToken() {
+  const t = (process.env.ROMP_SERVE_TOKEN || '').trim();
+  if (t) return t;
+  const file = path.join(STATE_ROOT, 'serve-token');
+  try { return fs.readFileSync(file, 'utf8').trim(); }
+  catch (e) {
+    if (!tokenNoticed) {
+      tokenNoticed = true;
+      log(`kernel serve token unreadable (${file}: ${e && e.message}) — polling token-less: the busy count still reads, but the kernel will refuse to arm the drain hold`);
+    }
+    return '';
+  }
+}
 
 function fetchBusy(port, cb, path) {
   // the PARKED quiet poll passes '/busy?drain=1' (T121): the same probe that reads the count also
   // refreshes the kernel's drain lease, so new turn starts hold while the restart is parked and
   // the count falls on turn-end events. The lease dies by itself (~12s) when this manager stops
-  // polling — no off-switch to forget — and a fresh kernel boots clear by construction.
-  const req = http.get({ host: HOST, port, path: path || '/busy', timeout: 2000 }, (res) => {
+  // polling — no off-switch to forget — and a fresh kernel boots clear by construction. The drain
+  // arm is a gated WRITE, so present the token (X-Romp-Token, the local-daemon header form); a
+  // plain read needs none, but carrying it costs nothing.
+  // The callback gets (busy, draining): `draining` is the kernel's own answer for whether the
+  // hold is armed — true/false from the response, null when unknown (an older kernel without the
+  // field, an unreachable kernel, unparsable body). A drain=1 poll answered draining:false is a
+  // REFUSED drain (token missing/rejected — the kernel still serves the exempt count): said once
+  // per refusal episode — an armed answer after a noticed refusal logs the recovery and re-arms
+  // the notice, so a hold lost AGAIN later is not swallowed by the first episode's line. `null`
+  // never cries refusal — no field is no evidence, not a rejection.
+  const tok = kernelToken();
+  const headers = tok ? { 'X-Romp-Token': tok } : {};
+  const wantDrain = /[?&]drain=1(?:&|$)/.test(path || '');
+  const req = http.get({ host: HOST, port, path: path || '/busy', timeout: 2000, headers }, (res) => {
     let b = ''; res.on('data', (d) => (b += d));
-    res.on('end', () => { let n = null; try { const v = JSON.parse(b).busy; n = Number.isFinite(v) ? v : null; } catch { n = null; } cb(n); });
+    res.on('end', () => {
+      let n = null, draining = null;
+      try {
+        const j = JSON.parse(b);
+        n = Number.isFinite(j.busy) ? j.busy : null;
+        draining = typeof j.draining === 'boolean' ? j.draining : null;
+      } catch { n = null; }
+      if (wantDrain && n !== null && draining === false && !drainNoticed) {
+        drainNoticed = true;
+        log(`kernel refused the drain hold (asked via /busy?drain=1 ${tok ? 'but it rejected the token' : 'holding no token'}) — new turn starts are NOT held; the quiet window runs count-only and its backstop may cut turns mid-flight`);
+      } else if (wantDrain && n !== null && draining === true && drainNoticed) {
+        // recovery: the hold armed after the refusal above — put that on record and re-arm the
+        // notice (event-keyed: the arm is the new information), so a SECOND refusal episode in
+        // the same park logs again instead of hiding behind the first episode's line.
+        drainNoticed = false;
+        log('kernel armed the drain hold after the refusal above — new turn starts are held from here');
+      }
+      cb(n, draining);
+    });
   });
-  req.on('timeout', () => { req.destroy(); cb(null); });
-  req.on('error', () => cb(null));
+  req.on('timeout', () => { req.destroy(); cb(null, null); });
+  req.on('error', () => cb(null, null));
 }
 
 function clearPendingQuiet() {
@@ -379,11 +446,29 @@ function queueQuietRestart(mode) {
     log(`refresh queued behind the pending one (${pendingQuiet.count} coalesced — one bounce will deliver all)`);
     return pendingQuiet.count;
   }
-  pendingQuiet = { since: Date.now(), count: 1, mode, timer: null };
+  pendingQuiet = { since: Date.now(), count: 1, mode, timer: null,
+                   drainRefusedCount: 0, drainArmedCount: 0 };
+  resetDrainNotices();                   // the token/refusal notices re-arm when a fresh park begins
   log(`refresh queued — applying at the next quiet window (no SDK turn in flight; backstop ${Math.round(QUIET_MAX_DEFER_MS / 60000)} min)`);
   const tick = () => quietTick({
     pending: () => pendingQuiet,
-    fetchBusy: (cb) => fetchBusy(KERNEL_PORT, cb, '/busy?drain=1'),   // parked → hold new turn starts (T121)
+    fetchBusy: (done) => {
+      // record the kernel's drain answers as EVIDENCE ON THE PARK THAT ISSUED THIS POLL — the
+      // park is captured here, at issue time, never read back from pendingQuiet when the response
+      // lands (an in-flight probe from a just-cleared park must not stamp a brand-new park that
+      // never polled). Refusals and arms are COUNTED, not latched into one bit: kernelToken()
+      // reads fresh per poll, so a refusal can be transient (a token restored mid-park arms every
+      // later poll), and the apply line below renders what this park's counts actually show.
+      const park = pendingQuiet;
+      const cb = (busy, draining) => {
+        if (park && busy !== null) {
+          if (draining === false) park.drainRefusedCount++;
+          else if (draining === true) park.drainArmedCount++;
+        }
+        done(busy);
+      };
+      fetchBusy(KERNEL_PORT, cb, '/busy?drain=1');   // parked → hold new turn starts (T121)
+    },
     now: Date.now,
     opts: { maxDeferMs: QUIET_MAX_DEFER_MS },
     log,
@@ -391,7 +476,15 @@ function queueQuietRestart(mode) {
     apply: (g) => {
       const p = pendingQuiet;
       clearPendingQuiet();               // also disarms the pre-armed next tick
-      log(`applying deferred refresh — ${g.reason} (${p.count} request(s) coalesced, waited ${Math.round((Date.now() - p.since) / 1000)}s)`);
+      // On a backstop cut, say what this park's drain evidence shows (a wrong cause misleads the
+      // reader worse than none): every answer refused → the hold never armed; refused then armed
+      // → the hold arrived late, so turns started before it may still be cut. No refusals → no
+      // suffix (and draining:null answers are no evidence either way, so they count nowhere).
+      const cause = g.reason !== 'backstop cap' || p.drainRefusedCount === 0 ? ''
+        : p.drainArmedCount === 0
+          ? ' — the kernel never armed the drain hold for this park (see the refusal line above), so in-flight turns may be cut'
+          : ` — the drain hold was refused ${p.drainRefusedCount} time(s) before arming for this park, so turns started before it armed may be cut`;
+      log(`applying deferred refresh — ${g.reason}${cause} (${p.count} request(s) coalesced, waited ${Math.round((Date.now() - p.since) / 1000)}s)`);
       if (p.mode === 'all') restartAllOrSelf(); else restartKernel(p.mode);
     },
   });
@@ -546,7 +639,8 @@ function ensureUp() {
 // ── dispatch ────────────────────────────────────────────────────────────────
 // Exported for unit tests (restartGate = the pure storm-cap decision). The CLI dispatch runs only when this
 // file is executed directly, so require()-ing it from a test has no side effects.
-module.exports = { restartGate, quietGate, quietTick, loadSpecs, specEnv, fileStamp };
+module.exports = { restartGate, quietGate, quietTick, loadSpecs, specEnv, fileStamp,
+                   kernelToken, fetchBusy, resetDrainNotices, queueQuietRestart, clearPendingQuiet };
 if (require.main === module) {
   const cmd = process.argv[2];
   // `restart-all` (the `romp refresh` deploy path) bounces IMMEDIATELY by default (T160, the user
