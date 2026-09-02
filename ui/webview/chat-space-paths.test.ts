@@ -35,7 +35,7 @@ test("the kernel verifies with the filesystem, resolved exactly like a click", (
 });
 
 test("linkifyFileUris whole-links a verified span's entire inline-code content", () => {
-  assert.match(RENDER, /function linkifyFileUris\(root: HTMLElement, skipThumbs\?: string\[\], spacePaths\?: string\[\],\s*\n\s*pathLinks\?: Record<string, string>, pathPins\?: Record<string, string>\): void/);
+  assert.match(RENDER, /function linkifyFileUris\(root: HTMLElement, skipThumbs\?: string\[\], spacePaths\?: string\[\],\s*\n\s*pathLinks\?: Record<string, string>, pathPins\?: Record<string, string>, sid\?: string \| null\): void/);
   // the pass targets inline <code> only, skips anything already linked or fenced
   assert.match(RENDER, /for \(const code of Array\.from\(root\.querySelectorAll\("code"\)\)\) \{\s*\n\s*if \(code\.closest\("a, \.file-uri-link, pre"\)\) continue;/);
   // exact-match against the kernel's verified set, then the whole content becomes one open link

@@ -2971,7 +2971,7 @@ MCP_TOOLS = [
      "description": "Flag something you need from the person you work for — a decision, an input, or an action only they can provide — while you keep working on what you can. Give one short line saying what you need and why; add detail only if the line can't carry it. Returns an id: withdraw it (withdraw_user_todo) the moment the need is met or moot. Not for status updates or FYIs — only things you are waiting on them for.",
      "inputSchema": {"type": "object",
                      "properties": {"text": {"type": "string", "description": "one short line: what you need from them and why"},
-                                    "detail": {"type": "string", "description": "optional longer context, only when the short line can't carry it"}},
+                                    "detail": {"type": "string", "description": "optional longer context, only when the short line can't carry it; a file path in it (absolute, or relative to your working directory) becomes a link the person can open"}},
                      "required": ["text"]}},
     {"name": "withdraw_user_todo",
      "description": "Take back a need you flagged (by id) once it's met, answered some other way, or no longer applies — so the person you work for doesn't act on a stale request.",

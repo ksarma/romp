@@ -53,7 +53,7 @@ test("fileLinkRoute: the cards-pane preference relays only when framed; everythi
 });
 
 test("every file-link surface in the chat goes through openPath — no direct openFile posts left", () => {
-  for (const call of [/openPath\(path\);/, /openPath\(open, relative \? activeId : null\);/,
+  for (const call of [/openPath\(path\);/, /openPath\(open, relative \? \(sid \?\? activeId\) : null\);/,
                       /openPath\(p, id \|\| null\);/]) assert.match(RENDER, call);
   // the ONLY openFile postMessage left in render.ts is openPath's own fallback branch
   assert.equal((RENDER.match(/type: "openFile"/g) || []).length, 2,

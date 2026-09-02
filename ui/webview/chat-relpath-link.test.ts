@@ -19,15 +19,15 @@ test("the linkifier matches file:// URIs AND bare paths, and gates each token ki
   assert.match(RENDER, /if \(!isUri && !looksLikeFilePath\(tok\) && !\(inCode && looksLikeBareFileName\(tok\)\)\) continue;/);
   // the kernel's pathLinks verdict then narrows further, and its value is the OPEN target — pinned
   // in chat-path-links.test.ts; here we pin that the link opens `open`, whatever chose it
-  assert.match(RENDER, /const link = isUri \? fileUriLink\(tok\) : openPathLink\(tok, open, true\);/);
+  assert.match(RENDER, /const link = isUri \? fileUriLink\(tok\) : openPathLink\(tok, open, true, sid\);/);
   assert.match(RENDER, /frag\.appendChild\(link\);/);
 });
 
 test("a relative path click carries the active session id so whoever resolves it uses that cwd", () => {
-  assert.match(RENDER, /function openPathLink\(raw: string, open: string, relative = false\)/);
+  assert.match(RENDER, /function openPathLink\(raw: string, open: string, relative = false, sid\?: string \| null\)/);
   // relative → send the session id; absolute/file:// → none needed. Both go through openPath, which
   // picks the host (VS Code editor vs the feed pane's viewer) — see the openPath test below.
-  assert.match(RENDER, /openPath\(open, relative \? activeId : null\);/);
+  assert.match(RENDER, /openPath\(open, relative \? \(sid \?\? activeId\) : null\);/);
 });
 
 test("the cheap pre-filter keys on a slash — or, inside inline code, a dot", () => {
