@@ -85,7 +85,7 @@ async function withManager(fn: (fm: any, emitted: any[], diag: any[], posted: an
 }
 const localFeed = { type: "feed", asks: [], items: [], working: [], ledgers: [], order: [], sessions: [], now: 1000, buildId: 1 };
 
-test("a relay socket that opens and then goes silent past the bound is force-closed with a breadcrumb, and redialed", async () => {
+test("a relay socket that opens and then goes silent past the bound is abandoned with a breadcrumb, and a fresh one dialed at once", async () => {
   await withManager((fm, _emitted, diag) => {
     fm.openRemote("TESTHOST", "tok", true);
     assert.equal(FakeWS.made.length, 1, "an up host is dialed at once");
@@ -108,10 +108,17 @@ test("a relay socket that opens and then goes silent past the bound is force-clo
     assert.equal(crumb.data.host, "TESTHOST");
     assert.equal(crumb.data.why, "quiet");
     assert.ok(crumb.data.quietMs > REMOTE_STALE_MS, "…and how long it had been silent");
-    // the browser fires onclose for our own close(); the manager's existing onclose path redials
-    ws.die(1005);
+    // NOT waited for: a dead socket's closing handshake never completes (the browser holds CLOSING
+    // ~60s before onclose) — the fresh dial happens in the same pass, and the corpse is disowned
+    assert.equal(FakeWS.made.length, 2, "a fresh socket is dialed at once");
     const conn = fm.conns.get("TESTHOST");
-    conn.closed = true;   // stop the 2s retry timer from dialing after the test (closeRemote would also emit)
+    assert.equal(conn.ws, FakeWS.made[1], "the conn now owns the new socket");
+    assert.equal(ws.onclose, null, "the abandoned socket's handlers are detached — its late onclose redials nothing");
+    assert.equal(ws.onmessage, null);
+    FakeWS.made[1].open();
+    FakeWS.made[1].frame({ type: "feed", asks: [] });
+    assert.equal(diag.filter((d) => d.data && d.data.ev === "watchdog-close").length, 1, "one crumb per abandonment");
+    conn.closed = true;
   });
 });
 
@@ -125,6 +132,7 @@ test("the foreground fast-path kills a socket still CONNECTING, whatever its age
     fm.watchdog(clock, true);
     assert.equal(ws.closed, 1, "…but a foreground pass closes it now rather than waiting the handshake bound out");
     assert.equal(diag.filter((d) => d.data && d.data.ev === "watchdog-close" && d.data.why === "connecting" && d.data.foreground).length, 1);
+    assert.equal(FakeWS.made.length, 2, "…and dials a fresh one in the same pass");
     fm.conns.get("TESTHOST").closed = true;
   });
 });

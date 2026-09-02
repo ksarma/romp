@@ -27338,6 +27338,14 @@ var SK="romp-vscode-state-%s";   // persist webview state to localStorage so UI 
 window.acquireVsCodeApi=function(){return{postMessage:function(m){if(window.__rompFed){window.__rompFed.outbound(m);}else{send(m);}},
 getState:function(){try{return JSON.parse(localStorage.getItem(SK)||"null");}catch(e){return null;}},
 setState:function(s){try{localStorage.setItem(SK,JSON.stringify(s));}catch(e){}}};};connect();
+// ABANDON a dead socket rather than wait for it (2026-09-02): close() on a socket whose far side is gone
+// starts a closing handshake nobody answers, and the browser holds CLOSING for ~60s before onclose fires —
+// the audited phone panes came back 64s after their own watchdog-close for exactly this reason (a pane's
+// quiet socket → close() → nothing → the reconnect only when the browser gave up). Detach its handlers
+// (its eventual onclose is nobody's event — it must not fire wsdown or a second redial), close it for
+// hygiene, do what onclose did (flag the shell, re-show the loader), and let the caller dial NOW.
+function abandon(){var d=ws;if(!d)return;d.onopen=d.onmessage=d.onclose=d.onerror=null;try{d.close();}catch(e){}ws=null;
+netState("down");try{window.dispatchEvent(new Event("romp:wsdown"));}catch(e){}}
 // progress watchdog (state-keyed, one per socket state): OPEN but silent past STALE_MS = half-open, no
 // onclose will ever fire — force-close (the user 2026-06-29). CONNECTING past its deadline = the browser is
 // holding the attempt (Firefox delays re-admitting a recently-failed endpoint, and a handshake can hang) and
@@ -27345,7 +27353,7 @@ setState:function(s){try{localStorage.setItem(SK,JSON.stringify(s));}catch(e){}}
 // "Disconnected — reconnecting…" banner sat until a manual refresh). CLOSED with no fresh attempt = the 1.5s
 // retry timer was lost (throttled/killed) — re-dial directly; connect()'s own guard makes this idempotent.
 setInterval(function(){if(!ws)return;
-if(ws.readyState===1){if(everConnected&&Date.now()-lastRecv>STALE_MS){staleDiag("watchdog-close","quiet");try{ws.close();}catch(e){}}return;}
+if(ws.readyState===1){if(everConnected&&Date.now()-lastRecv>STALE_MS){staleDiag("watchdog-close","quiet");abandon();connect();}return;}
 if(ws.readyState===0&&Date.now()-connT>15000){try{ws.close();}catch(e){}return;}
 if(ws.readyState===3&&Date.now()-connT>8000){connect();}},5000);
 // visibility fast-path (the user 2026-07-05): a BACKGROUNDED tab has its timers throttled, so the 5s watchdog
@@ -27354,7 +27362,7 @@ if(ws.readyState===3&&Date.now()-connT>8000){connect();}},5000);
 // prompt at once AND force a reconnect (which resyncs live), rather than leaving the user on a frozen frame.
 document.addEventListener("visibilitychange",function(){if(document.visibilityState!=="visible"||!everConnected)return;
 if(!ws||ws.readyState!==1||Date.now()-lastRecv>STALE_MS){armStale("foreground");freshPending=true;
-try{if(ws&&ws.readyState<=1)ws.close();}catch(e){}   // OPEN or stuck-CONNECTING both die here → onclose retries
+if(ws&&ws.readyState===1)abandon();else{try{if(ws&&ws.readyState===0)ws.close();}catch(e){}}   // OPEN-but-quiet → abandoned + redialed below, now; stuck-CONNECTING → aborted, onclose retries
 if(!ws||ws.readyState===3)connect();}});})();
 """ % (app, int(v), app, app)
 

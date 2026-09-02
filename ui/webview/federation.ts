@@ -669,7 +669,17 @@ export class FederationManager {
         // WHICH socket the watchdog put down and how long it had been silent
         this.diag("hostconn", { host: c.host, ev: "watchdog-close", why: rs === 1 ? "quiet" : "connecting",
                                 quietMs: c.lastRecv ? now - c.lastRecv : -1, foreground });
-        try { c.ws.close(); } catch (e) { /* already dying — onclose redials either way */ }
+        // ABANDON it, don't wait for it: close() on a socket whose far side is gone starts a closing
+        // handshake nobody answers, and the browser holds CLOSING for ~60s before onclose fires (the
+        // audited panes came back 64s after their own watchdog-close for exactly this reason; the
+        // served-page harness reproduced it against a silent far end). Detach its handlers — its
+        // eventual onclose is nobody's event, and must not redial a second time — close it for
+        // hygiene, and dial a fresh socket NOW. connect() gates on `live` and on `closed` as always.
+        const dead = c.ws;
+        dead.onopen = dead.onmessage = dead.onclose = dead.onerror = null;
+        try { dead.close(); } catch (e) { /* already dying */ }
+        c.ws = null;
+        this.connect(c);
       } else if (v === "redial") {
         this.connect(c);
       }
