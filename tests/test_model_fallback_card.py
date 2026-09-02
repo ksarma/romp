@@ -24,14 +24,26 @@ SID = "11111111-2222-3333-4444-555555555555"
 
 
 class FallbackCard(unittest.TestCase):
+    """OWN sid, like DedupeBackstop below and for the same reason: load_goals replays the per-sid
+    user-override journal, other modules journal gestures against the shared placeholder SID, and a
+    fresh store's first node id collides ("<sid>:g1") — a leftover journaled follow-up reopened the
+    minted card mid-test, so the completed-top assertion went red only under whole-suite ordering
+    (a parallel run surfaced it, 2026-09-02). A sid nobody else touches keeps this about the mint."""
+
+    FSID = "66666666-7777-8888-9999-aaaaaaaaaaaa"
+
     def tearDown(self):
         for f in jd.GOALDIR.glob("*"):
             f.unlink()
+        try:
+            (jd._overrides_dir() / (self.FSID + ".jsonl")).unlink()
+        except OSError:
+            pass
 
     def test_mints_a_completed_top_naming_the_swap(self):
-        gid = jd.mint_fallback_card(SID, "claude-fable-5", "claude-sonnet-5", ev_t=1_787_500_000)
+        gid = jd.mint_fallback_card(self.FSID, "claude-fable-5", "claude-sonnet-5", ev_t=1_787_500_000)
         self.assertTrue(gid)
-        store = jd.load_goals(SID)
+        store = jd.load_goals(self.FSID)
         nd = store["nodes"][gid]
         self.assertTrue(nd["nodeComplete"])
         self.assertIn("fell back to claude-sonnet-5", nd["doneWhy"])

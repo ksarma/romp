@@ -33,6 +33,11 @@ def _mode(p):
 
 class RemotesFilePermissions(unittest.TestCase):
     def setUp(self):
+        # the kernel module is ONE object per process for every test file that loads it under this
+        # name (a peer file's km IS this km), so the row planted here leaves with the test: under
+        # xdist a whole-map reader elsewhere (test_kernel_trust's PairsSnapshot) found it (2026-09-02)
+        saved = dict(km._remotes)
+        self.addCleanup(lambda: (km._remotes.clear(), km._remotes.update(saved)))
         km._remotes.clear()
         km._remotes["TESTHOST"] = {"host": "TESTHOST", "kernel_port": 29855, "local_port": 8801,
                                    "bus_port": 8802, "token": "REMOTE-SECRET-TOKEN", "proc": None,

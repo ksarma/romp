@@ -1156,8 +1156,13 @@ class TimelinePanel {
     // in the OTHER same-origin panes, exactly the gap the local closers can't cover.
     this._onMenuEcho = (e) => { if (e.key === 'romp:menu-echo' && e.newValue) this._onDocClick(); };
     try { window.addEventListener('storage', this._onMenuEcho); } catch (e) { /* storage blocked */ }
-    document.addEventListener('pointerdown', () => {
-      try { localStorage.setItem('romp:menu-echo', JSON.stringify({ t: Date.now() })); } catch (e) { /* storage blocked */ }
+    document.addEventListener('pointerdown', (e) => {
+      // in-menu presses broadcast NO echo (T213): with this pane's menus LIFTED into the shell
+      // document (_menuHost), the echo bounced back here and detached the pressed row before its
+      // click could fire — tag-menu.ts's writer carries the same guard and the whole story
+      const t = e.target;
+      if (t && typeof t.closest === 'function' && t.closest('[data-tag-menu],[data-romp-menu]')) return;
+      try { localStorage.setItem('romp:menu-echo', JSON.stringify({ t: Date.now() })); } catch (e2) { /* storage blocked */ }
     }, true);
     // The menus render in the tip's host document (see _menuHost), so a click or Escape landing on the
     // HOST page — which now shows the menu — must close them too. Same teardown discipline as the tip:
@@ -2605,6 +2610,7 @@ class TimelinePanel {
     // (Obsidian) that loads neither styles.css nor romp's font stack.
     const menu = document.body.createDiv();
     menu.setAttribute('style', 'position:fixed;z-index:1001;min-width:96px;' + MENU_STYLE);
+    menu.dataset.rompMenu = '1';   // the echo writers skip in-menu presses (T213)
     menu._kind = kind; menu._sid = s.id;
     const h = this._menuHost(anchorEl.getBoundingClientRect());
     const pick = (value, floating) => {
@@ -2633,6 +2639,7 @@ class TimelinePanel {
         closeSub();
         const sub = document.body.createDiv();
         sub.setAttribute('style', 'position:fixed;z-index:1002;min-width:96px;' + MENU_STYLE);
+        sub.dataset.rompMenu = '1';   // the echo writers skip in-menu presses (T213) — the Latest row rides inside
         // "Latest" heads the submenu (review 2026-09-01): the one gesture back to floating once a
         // family carries a pin — the family row sends the pin, the rows below pin, and a typed alias
         // leaves the pick memory alone by design. It sends the alias with the `floating` flag, which
@@ -3085,6 +3092,7 @@ class TimelinePanel {
     if (reopen) return;
     const menu = document.body.createDiv();
     menu.setAttribute('style', 'position:fixed;z-index:1001;min-width:200px;' + MENU_STYLE);
+    menu.dataset.rompMenu = '1';   // the echo writers skip in-menu presses (T213)
     menu.addEventListener('click', (e) => e.stopPropagation());
     const item = (label, opts) => {
       const row = menu.createDiv();
@@ -3158,6 +3166,7 @@ class TimelinePanel {
     if (reopen) return;
     const menu = document.body.createDiv();
     menu.setAttribute('style', 'position:fixed;z-index:1001;min-width:180px;' + MENU_STYLE);
+    menu.dataset.rompMenu = '1';   // the echo writers skip in-menu presses (T213)
     menu.addEventListener('click', (e) => e.stopPropagation());
     const item = (label, opts) => {
       const row = menu.createDiv();
@@ -3644,6 +3653,7 @@ class TimelinePanel {
     // shared menu vocabulary again (MENU_STYLE).
     const menu = document.body.createDiv();
     menu.setAttribute('style', 'position:fixed;z-index:1001;width:280px;' + MENU_STYLE);
+    menu.dataset.rompMenu = '1';   // the echo writers skip in-menu presses (T213)
     menu._sid = s.id;
     menu.addEventListener('click', (e) => e.stopPropagation());   // inside clicks must not reach the doc closer
     const build = () => {

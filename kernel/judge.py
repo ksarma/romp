@@ -1627,6 +1627,10 @@ def _tool_arg(name, inp):
 # announcement stub instead of the wrap-up).
 CITE_MIN_CHARS = 80
 
+# a PR/commit/compare link in a tool result — the result class the anchor study convicted (T218):
+# the substance of "shipped it" IS the link, so the atom holding it must be citable
+_PR_LINK_RE = re.compile(r"https://github\.com/\S+/(?:pull|commit|compare)/\S+")
+
 
 def _unit_text(atoms, marker=None):
     """The caption model's input for one unit (segment or turn): what the user asked, what the
@@ -1635,17 +1639,23 @@ def _unit_text(atoms, marker=None):
     ([m3]) so the model can CITE the one message its takeaway is grounded in (see _split_source).
     Sub-floor stubs (< CITE_MIN_CHARS) still ride along as context, just unlabeled — uncitable by
     construction."""
-    user_said, asst_said, tools = [], [], []
+    user_said, asst_said, tools, results = [], [], [], []
     for a in atoms:
         if a["type"] == "user" and a.get("author") is not None:
             t = _FOLLOWUP_MARKER_RE.sub("", _atom_text(a)).strip()   # the follow-up marker is plumbing, not user text
             if t:
+                # a PEER's postal report is SUBSTANCE, not just context (T218, the study's postal class:
+                # the summary's evidence was the peer's ready-report, but only assistant prose could be
+                # cited, so the click landed on the announcement) — same substantive-prose floor
+                if marker is not None and a.get("uuid") and isinstance(a.get("author"), dict) \
+                        and len(t) >= CITE_MIN_CHARS:
+                    t = "%s %s" % (marker.label(a["uuid"], t), t)
                 user_said.append(t)
         elif a["type"] == "assistant" and not a.get("isApiError"):   # skip API-error records — a retry / usage-limit storm's noise, never captionable work (the user 2026-07-06)
             t = _atom_text(a)
             if t:
                 if marker is not None and a.get("uuid") and len(t) >= CITE_MIN_CHARS:
-                    t = "%s %s" % (marker.label(a["uuid"]), t)
+                    t = "%s %s" % (marker.label(a["uuid"], t), t)
                 asst_said.append(t)
             for b in (a.get("message") or {}).get("content", []):
                 if isinstance(b, dict) and b.get("type") == "tool_use":
@@ -1656,6 +1666,19 @@ def _unit_text(atoms, marker=None):
                     label = "%s(%s)" % (n, arg) if arg else n
                     if label not in tools:
                         tools.append(label)
+        if a["type"] == "user" and marker is not None and a.get("uuid"):
+            # a tool RESULT carrying a PR/commit link is substance by construction (T218: 'Committing
+            # and shipping…' was citable while the PR it shipped was not) — offer the label on a compact
+            # RESULT line; plain tool output stays out (noise floors the prompt, not the citation)
+            for b in (a.get("message") or {}).get("content", []):
+                if isinstance(b, dict) and b.get("type") == "tool_result":
+                    rt = " ".join(c.get("text", "") for c in (b.get("content") or [])
+                                  if isinstance(c, dict) and c.get("type") == "text").strip()
+                    mlink = _PR_LINK_RE.search(rt)
+                    if mlink:
+                        head = rt.splitlines()[0][:160] if rt else mlink.group(0)
+                        results.append("%s %s" % (marker.label(a["uuid"], rt), head))
+                        break
     out = []
     if user_said:
         out.append("USER ASKED: " + _shape(" | ".join(user_said), 1200, 1800))
@@ -1669,6 +1692,8 @@ def _unit_text(atoms, marker=None):
             picked.append(t)
             total += len(t) + 2
         out.append("TOOLS USED: " + ", ".join(picked))
+    if results:
+        out.append("RESULTS: " + " | ".join(results[:4]))   # the PR/commit links the work actually produced
     return "\n".join(out).strip()
 
 
@@ -2760,7 +2785,8 @@ def _rebase_onto_disk(fsid, store):
         # or older disk stamp keeps ours, which also preserves the deliberate blockSummary re-open
         # (the ""→None null keeps its old briefedMt on purpose).
         for _stamp, _fields in (("distilledMt", ("summary", "summaryParts", "background",
-                                                 "summaryAnchor", "distillFails")),
+                                                 "summaryAnchor", "summaryQuote", "summaryQuoteOff",
+                                                 "summaryAnchors", "distillFails")),
                                 ("briefedMt", ("blockSummary", "briefParts", "briefFails")),
                                 ("stalledMt", ("stallSummary", "stallFails"))):
             if int(dnd.get(_stamp) or 0) > int(mnd.get(_stamp) or 0):
@@ -3598,12 +3624,16 @@ class _CiteMarks:
     2026-07-01). One instance per call; labels are meaningless across calls."""
     def __init__(self):
         self.map = {}                                       # "m3" → atom uuid
+        self.texts = {}                                     # "m3" → the atom's raw text (T218: the span
+        #                                                     locate validates the QUOTE against the very
+        #                                                     text the label was offered on)
         self._n = 0
 
-    def label(self, uuid):
+    def label(self, uuid, text=""):
         self._n += 1
         lab = "m%d" % self._n
         self.map[lab] = uuid
+        self.texts[lab] = text or ""
         return "[%s]" % lab
 
     def newest(self):
@@ -3614,16 +3644,107 @@ class _CiteMarks:
         return self.map.get("m%d" % self._n)
 
 
-def _split_source(text):
-    """(body, label) — split the model's final `SOURCE: mN` citation line off a distill/brief reply.
-    Lenient on shape (optional [brackets], stray whitespace) but anchored to the END of the reply, so a
-    body that merely mentions a label is never mistaken for the citation. label is None when the line
-    is absent/malformed — the kernel then falls back to its deterministic anchor."""
+def _split_sources(text):
+    """(body, cites) — the FULL citation parse (T220, the user's per-paragraph ruling): peel every
+    trailing citation line off a distill/brief reply, in any order —
+        SOURCE: mN            the whole-summary citation (T218's shape, unchanged)
+        QUOTE: "…"            its optional supporting span
+        SOURCE k: mN          paragraph k's own citation (k counts the TAKEAWAY's paragraphs, top to
+        QUOTE k: "…"          bottom) and its optional span
+    cites = {"whole": (label|None, quote|None), "paras": {k: (label, quote|None)}}. Parsing stops at
+    the first non-citation line from the end, so a body that merely mentions a label is never
+    mistaken for one. Malformed lines drop the parse back to the body — the callers' fallbacks stay
+    exactly T218's."""
     text = (text or "").strip()
-    m = re.search(r"(?:^|\n)\s*SOURCE:\s*\[?(m\d+)\]?\s*$", text)
-    if not m:
-        return text, None
-    return text[:m.start()].strip(), m.group(1)
+    whole_label, whole_quote = None, None
+    paras = {}
+    para_quotes = {}
+    line_re = re.compile(r"(?:^|\n)\s*(SOURCE|QUOTE)(?:\s+(\d+))?:\s*(.+?)\s*$")
+    while True:
+        m = line_re.search(text)
+        if not m or m.end() != len(text):
+            break
+        kind, num, val = m.group(1), m.group(2), m.group(3).strip()
+        if kind == "SOURCE":
+            lm = re.fullmatch(r"\[?(m\d+)\]?", val)
+            if not lm:
+                break                                   # malformed tail line → leave it on the body
+            if num:
+                paras.setdefault(int(num), lm.group(1))
+            elif whole_label is None:
+                whole_label = lm.group(1)
+        else:
+            q = val.strip("\"\u201c\u201d").strip()
+            if not q or "\n" in q:
+                break
+            if num:
+                para_quotes.setdefault(int(num), q)
+            elif whole_quote is None:
+                whole_quote = q
+        text = text[:m.start()].rstrip()
+    return text.strip(), {"whole": (whole_label, whole_quote),
+                          "paras": {k: (lab, para_quotes.get(k)) for k, lab in paras.items()}}
+
+
+def _split_source(text):
+    """(body, label, quote) — the whole-summary view of _split_sources: T218's shape, kept for every
+    caller with no per-paragraph story (the stall note, the corrective-retry check)."""
+    body, cites = _split_sources(text)
+    lab, quote = cites["whole"]
+    return body, lab, quote
+
+
+def _store_para_cites(nd, marks, body, para_cites):
+    """Store per-paragraph anchors aligned to the TAKEAWAY's paragraphs (T220): entry k-1 carries
+    paragraph k's cited atom + its located span; an invalid k, an unoffered label, or an uncited
+    paragraph stays None — the feed then falls back to the whole-summary landing for that paragraph,
+    never a dead or guessed one. Nothing valid → None (the pre-T220 shape, so old single-anchor
+    stores read identically forever — no migration sweep)."""
+    paras = [pp for pp in re.split(r"\n\s*\n", body or "") if pp.strip()]
+    anchors = [None] * len(paras)
+    any_set = False
+    for k, (lab, quote) in (para_cites or {}).items():
+        u = marks.map.get(lab)
+        if not u or not (isinstance(k, int) and 1 <= k <= len(paras)):
+            continue
+        entry = {"a": u}
+        if quote:
+            off, span = _locate_quote(marks.texts.get(lab, ""), quote)
+            if span:
+                entry["q"] = span
+                entry["off"] = off
+        anchors[k - 1] = entry
+        any_set = True
+    nd["summaryAnchors"] = anchors if any_set else None
+
+
+def _locate_quote(atom_text, quote):
+    """(offset, raw_span) of `quote` inside `atom_text` — exact substring first, else a whitespace-
+    collapsed case-insensitive match mapped BACK to the atom's raw span; (None, None) when absent or
+    unfindable — the landing then keeps today's whole-message behavior, never a guess (T218)."""
+    at, q = atom_text or "", (quote or "").strip()
+    if not at or not q:
+        return None, None
+    i = at.find(q)
+    if i >= 0:
+        return i, q
+    pat = re.compile(r"\s+".join(re.escape(w) for w in q.split()), re.I)
+    m = pat.search(at)
+    if m:
+        return m.start(), m.group(0)
+    return None, None
+
+
+def _store_cited_span(nd, marks, src, quote):
+    """Store the QUOTE's located span beside the anchor (T218) — ONLY when the citation itself
+    resolved (the deterministic newest() fallback anchors a different atom, so a quote there would
+    highlight text the reader isn't looking at). Unfindable/absent → None: the landing keeps today's
+    whole-message behavior, never a guess."""
+    off, span = (None, None)
+    if quote and marks.map.get(src):
+        off, span = _locate_quote(marks.texts.get(src, ""), quote)
+    nd["summaryQuote"] = span
+    nd["summaryQuoteOff"] = off
 
 
 def _node_warn(nd, kind, t, msg, detail, surface=None):
@@ -10283,7 +10404,14 @@ DISTILL_SYS = (
     "your takeaway: the most informative and most current one, usually the message that wrapped up the "
     "work, never an early plan, analysis, or superseded attempt when a later message reflects how it "
     "actually ended, and never a line that merely announces or hands off work about to start, however "
-    "closely it names the goal. This line is parsed off and never shown.")
+    "closely it names the goal. This line is parsed off and never shown. When one sentence of the "
+    "cited message most directly supports your takeaway, add one more final line after SOURCE: "
+    "QUOTE: \"<that sentence, copied verbatim, under 25 words>\", exactly as it appears, never "
+    "paraphrased; omit the line when no single sentence carries it. It is parsed off too. And when "
+    "your takeaway has more than one paragraph resting on DIFFERENT messages, cite per paragraph "
+    "instead: one line per paragraph, SOURCE k: mN, where k is that paragraph's number in the "
+    "takeaway from the top, each optionally followed by its own QUOTE k: \"…\"; keep the plain "
+    "SOURCE line too as the summary-wide citation. All of these lines are parsed off.")
 
 
 def distill_llm(goal_text, work_text, done_why="", prior_summary="", items=None, frame=None,
@@ -10567,8 +10695,14 @@ BLOCK_BRIEF_SYS = (
     "context on the decision, usually where the question and its options were actually laid out; never a "
     "line that merely announces or hands off work about to start, however closely it names the goal. This "
     "line is parsed off and never shown.\n\n"
-    "One last check before you send: if any [mN] labels appeared in <work>, the final line of your reply "
-    "must be exactly SOURCE: mN. Do not stop at the takeaway; the SOURCE line always comes last.")
+    "One last check before you send: if any [mN] labels appeared in <work>, your reply must end with a "
+    "line that is exactly SOURCE: mN. When one sentence of the cited message most directly supports "
+    "what you wrote, you may add one more final line after it: QUOTE: \"<that sentence, copied "
+    "verbatim, under 25 words>\", exactly as it appears, never paraphrased; omit it when no single "
+    "sentence carries it. When your reply has several paragraphs resting on different messages, you "
+    "may also cite each: SOURCE k: mN with an optional QUOTE k, k counting your paragraphs from the "
+    "top. Do not stop at the takeaway; the citation lines come last, and all are parsed off and "
+    "never shown.")
 
 
 def brief_llm(goal_text, work_text, owed, frame=None, user_ask=None, shortfall=None):
@@ -10668,8 +10802,14 @@ STALL_BRIEF_SYS = (
     "on the line and nothing after it. Never omit it while labels are present, and never invent a label "
     "you weren't shown. It cites the single message the user should open to see where the work stopped, "
     "usually the most recent substantive one. This line is parsed off and never shown.\n\n"
-    "One last check before you send: if any [mN] labels appeared in <work>, the final line of your reply "
-    "must be exactly SOURCE: mN. Do not stop at the takeaway; the SOURCE line always comes last.")
+    "One last check before you send: if any [mN] labels appeared in <work>, your reply must end with a "
+    "line that is exactly SOURCE: mN. When one sentence of the cited message most directly supports "
+    "what you wrote, you may add one more final line after it: QUOTE: \"<that sentence, copied "
+    "verbatim, under 25 words>\", exactly as it appears, never paraphrased; omit it when no single "
+    "sentence carries it. When your reply has several paragraphs resting on different messages, you "
+    "may also cite each: SOURCE k: mN with an optional QUOTE k, k counting your paragraphs from the "
+    "top. Do not stop at the takeaway; the citation lines come last, and all are parsed off and "
+    "never shown.")
 
 
 def stall_llm(goal_text, work_text, holding):
@@ -11063,11 +11203,12 @@ def _distill_session(fsid, path, now):
                 changed = True
                 continue
             raw = out
-            out, src = _split_source(out)
+            out, src, _quote = _split_source(out)
             bg, out = _split_sections(out)
             nodes[top]["stallSummary"] = out           # full text — never truncate mid-word (the briefer's rule)
             nodes[top]["background"] = bg if bg else None
             nodes[top]["summaryAnchor"] = marks.map.get(src) or marks.newest()
+            _store_cited_span(nodes[top], marks, src, _quote)
             if marks.map and marks.map.get(src) is None:
                 _log_judge_error("staller", fsid, "cite-miss", goal=top, note="%s; %d labels offered; reply tail: %r" % (
                     ("cited unoffered label %s" % src) if src else "no SOURCE line", len(marks.map), (raw or "")[-160:]))
@@ -11190,7 +11331,8 @@ def _distill_session(fsid, path, now):
                 changed = True                          # persist the counter / the settle
                 continue
             raw = out
-            out, src = _split_source(out)
+            out, _bcites = _split_sources(out)
+            src, _quote = _bcites["whole"]
             bg, out = _split_sections(out)
             # OWED COVERAGE IS COUNTABLE (the user 2026-08-30): a multi-item <owed> demands one
             # paragraph per item, but the merge allowance made a dropped item look like a merge —
@@ -11218,10 +11360,10 @@ def _distill_session(fsid, path, now):
                         # never counts as a verdict (the 2026-07-03 rule, met again here)
                         changed = True
                         continue
-                    _o2, _s2 = _split_source(_r2 or "")
+                    _o2, _s2, _q2 = _split_source(_r2 or "")
                     _b2, _o2 = _split_sections(_o2)
                     if _r2 and len([p for p in re.split(r"\n\s*\n", _o2) if p.strip()]) >= len(owed):
-                        raw, out, src = _r2, _o2, _s2
+                        raw, out, src, _quote = _r2, _o2, _s2, _q2   # the retry's own citation + span replace the draft's
                         bg = _b2 or bg                 # keep the draft's orientation if the retry lost it
                     else:
                         out = "\n\n".join(
@@ -11230,6 +11372,7 @@ def _distill_session(fsid, path, now):
                         #      ^ numbered like the rule's own list shape (the review's catch: an
                         #        unnumbered fallback re-shipped the dense recap the rule kills)
                         src = None                     # verbatim recorded whys — no model citation
+                        _quote = None                  # …and no span: romp authored this text (T218)
                         _fallback_brief = True         # …so the cite-miss check below stands down:
                         #                                romp authored this text; "no SOURCE line"
                         #                                would report the stale first draft's tail
@@ -11251,6 +11394,8 @@ def _distill_session(fsid, path, now):
             # the brief's cited source, else the WRITE-TIME deterministic stamp: the newest labeled atom
             # the gather fed this very call (the user 2026-07-21) — every brief ships a stored anchor
             nodes[top]["summaryAnchor"] = marks.map.get(src) or marks.newest()
+            _store_cited_span(nodes[top], marks, src, _quote)
+            _store_para_cites(nodes[top], marks, out, {} if _fallback_brief else _bcites["paras"])   # (T220)
             if marks.map and marks.map.get(src) is None and not _fallback_brief:
                 # labels offered, no usable citation → log only (the stamp already grounded the
                 # anchor, so a card warn would be noise, the user 2026-07-21). The verbatim
@@ -11319,15 +11464,18 @@ def _distill_session(fsid, path, now):
             changed = True
             continue
         raw = out
-        out, src = _split_source(out)
+        out, _cites = _split_sources(out)
+        src, _quote = _cites["whole"]
         bg, out = _split_sections(out)
         nodes[top]["summary"] = out                 # full text — NEVER truncate a takeaway mid-word (the user 2026-07-06)
+        _store_para_cites(nodes[top], marks, out, _cites["paras"])   # per-paragraph landings (T220)
         nodes[top]["summaryParts"] = ([{"id": d["id"], "since": _done_since(d)} for d in _dsubs]
                                       if len(_dsubs) > 1 else None)   # same order as <completed-items>; the feed's count-match gate decides whether the model actually split
         nodes[top]["background"] = bg if bg else None   # re-orientation for a reader who forgot the thread (2026-07-02)
         # the takeaway's cited source, else the WRITE-TIME deterministic stamp: the newest labeled atom
         # this very call read (the user 2026-07-21) — every summary ships a stored anchor
         nodes[top]["summaryAnchor"] = marks.map.get(src) or marks.newest()
+        _store_cited_span(nodes[top], marks, src, _quote)
         if marks.map and marks.map.get(src) is None:       # labels offered, no usable citation → log only:
             # the stamp already grounded the anchor, so a card warn would be noise (the user 2026-07-21)
             _log_judge_error("distiller", fsid, "cite-miss", goal=top, note="%s; %d labels offered; reply tail: %r" % (

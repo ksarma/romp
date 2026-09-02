@@ -5328,7 +5328,12 @@ class ViewBuilder(unittest.TestCase):
         # the user 2026-08-11; source pin — the branch lives inline in the WS message loop)
         self.assertIsNone(km._save_dropped_file("bad.png", "%%%not-base64%%%"), "undecodable bytes → None")
         src = Path(BIN, "romp-kernel").read_text()
-        self.assertIn('_reply(client, {"type": "dropSaveFailed", "name": str(msg["name"])})', src)
+        self.assertIn('ack = {"type": "dropSaveFailed", "name": str(msg["name"])}', src)
+        # the ack/nack ECHOES the client's shipId when one was sent (T215): a kernel restart between
+        # ship and ack makes the client re-ship on reconnect, so duplicate acks are possible — the
+        # echoed id lets it retire exactly the chip that asked and drop a stray twin
+        self.assertIn('ack["shipId"] = str(msg["shipId"])', src)
+        self.assertIn('_reply(client, ack)', src)
 
     def test_permission_mode_cycle_presses(self):
         # shift+tab press count from current → target in the cycle (the user 2026-06-16): there's no
@@ -6670,7 +6675,7 @@ class ServeSecurity(unittest.TestCase):
         self.assertIn('app=fleet', body)
         # the romp loader RE-SHOWS on a kernel restart / WS drop (the user 2026-06-29): the shim fires
         # 'romp:wsdown' on ws.onclose and the pane loader un-fades over the stale pane until reconnect.
-        self.assertIn("window.addEventListener('romp:wsdown',show)", body)        # loader re-shows
+        self.assertIn("window.addEventListener('romp:wsdown',function(){if(ready()){badge(true);}else{show();}});", body)   # T217: content → badge; empty pane → the sheet
         self.assertIn('dispatchEvent(new Event("romp:wsdown"))', body)            # shim fires it on close
         self.assertIn("function show(){o.classList.remove('gone')", body)         # kept in the DOM, not removed
 

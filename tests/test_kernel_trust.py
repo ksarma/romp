@@ -354,10 +354,19 @@ class PairsSnapshot(unittest.TestCase):
     origin as directed); None + a named per-host error = that machine was unreadable this pass —
     surfaced, never silently dropped (fail loudly)."""
 
+    def setUp(self):
+        # these tests assert the WHOLE hosts map, and the kernel module is ONE object per process for
+        # every test file that loads it under this name — so start from an empty map and put back
+        # exactly what was there (under xdist another file's leftover row landed in the snapshot,
+        # 2026-09-02); popping only this class's own hosts left any other file's row in place
+        with km._remotes_lock:
+            self._saved = dict(km._remotes)
+            km._remotes.clear()
+
     def tearDown(self):
         with km._remotes_lock:
-            for h in ("boxa", "boxb"):
-                km._remotes.pop(h, None)
+            km._remotes.clear()
+            km._remotes.update(self._saved)
 
     def test_pairs_read_both_directions_from_each_machines_own_table(self):
         # boxa holds boxb via an attached-tunnel row; boxb holds boxa via a relay (viaReach) row —

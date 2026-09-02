@@ -3414,3 +3414,8 @@ body.filebrowse-open { overflow: hidden; }
    spoke" from "something was injected" at a glance (the user 2026-08-18) */
 .scroll-marks .scroll-mark.machine { background: #8a8f98; opacity: 0.55; }
 
+
+/* the supporting-span highlight (T218): the sentence the summary rests on, painted via the CSS
+   Custom Highlight API (no DOM surgery — the turn list re-renders constantly). Accent-tinted like
+   the focus family, never a status colour. */
+::highlight(cite-span) { background-color: rgba(156, 210, 255, 0.30); color: #ffffff; }

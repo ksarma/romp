@@ -449,8 +449,15 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
 .fitem.ask { cursor: pointer; }
 .fitem.ask, .fitem.fgroup { border-color: rgba(var(--card-r, 255), var(--card-g, 255), var(--card-b, 255), 0.5); }
 .fitem.ask.pinned  { border-color: rgba(var(--card-r, 255), var(--card-g, 255), var(--card-b, 255), 0.85); }   /* pinned: bolded, persistent */
-/* effective focus: full-opacity same colour, thickened a touch by a 1px same-colour ring (a bolder highlight
-   without a layout-shifting border-width change), plus the hover lift — the user 2026-07-15.
+/* effective focus: full-opacity same colour, thickened a touch — plus the hover lift (the user 2026-07-15).
+   The extra 1px is the BORDER growing with a compensating negative margin, ONE paint with the card body
+   (T221, the user 2026-09-01: the old 1px box-shadow ring was a second paint laid against the border, and
+   the contact between two adjacent paints is renderer- and zoom-dependent — their Mac browser opened a
+   1px dark seam between ring and border across the whole top edge; a single paint cannot seam at any
+   zoom or radius). Under the global border-box sizing with auto width/height, border 2→3px plus
+   margin -1px grows the OUTER edge by exactly the 1px the ring occupied while the flow position and the
+   content box stay byte-identical — verified by rect comparison, so no layout-shifting border change
+   (the original rule's own constraint, kept by construction).
    A CROSS-PANE hover (a chat rail dot, a timeline bar) lands on this same rule rather than wearing a look
    of its own (the user 2026-07-23): it used to paint the neutral white .dot-hl outline, which read as a
    different kind of event from hovering the card with the mouse when it means exactly the same thing.
@@ -458,7 +465,8 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
    specificity, so a pinned card still bolds to full when another pane hovers it. */
 .fitem.ask.focused, .fitem.ask.dot-hl, .fitem.fgroup.dot-hl {
   border-color: rgb(var(--card-r, 255), var(--card-g, 255), var(--card-b, 255));
-  box-shadow: 0 0 0 1px rgb(var(--card-r, 255), var(--card-g, 255), var(--card-b, 255)), 0 2px 7px rgba(0, 0, 0, 0.30);
+  border-width: 3px; margin: -1px;
+  box-shadow: 0 2px 7px rgba(0, 0, 0, 0.30);
 }
 
 /* decision sub-card — an OPEN question needing the user, rendered in the ask card */
@@ -499,8 +507,10 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
 .fask-para { margin: 0 0 6px; }
 .fask-para:last-child { margin-bottom: 0; }
 .fask-para-age { color: var(--dim); white-space: nowrap; }
-.fask-para-link { cursor: pointer; }
-.fask-para-link:hover { text-decoration: underline; text-decoration-color: var(--dim); }
+.fask-para-link { cursor: pointer; border-radius: 5px; margin-left: -4px; padding-left: 4px; margin-right: -4px; padding-right: 4px; }
+/* the per-paragraph affordance (T220, the user's ruling): hovering highlights exactly the paragraph
+   under the pointer — each clickable piece reads as its own target as the pointer moves */
+.fask-para-link:hover { background: rgba(255, 255, 255, 0.07); text-decoration: underline; text-decoration-color: var(--dim); }
 /* the card's distiller sections (the user 2026-07-07, compactness): the Background/Summary TOGGLES now ride
    the time row (row3) and are MUTUALLY EXCLUSIVE — one body shows at a time, or neither — so .fask-secs is
    just the body container (a plain block; whichever body is open runs the full card width). The toggles are

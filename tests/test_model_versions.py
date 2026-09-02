@@ -51,6 +51,11 @@ class Catalog(unittest.TestCase):
                 self.assertNotRegex(v["value"], r"-20\d{6}$", "dated snapshot id leaked in")
         self.assertEqual(km.MODEL_VERSIONS["opus"][0]["value"], "claude-opus-5")
         self.assertEqual(km.MODEL_VERSIONS["sonnet"][0]["value"], "claude-sonnet-5")
+        # T222 (the user 2026-09-01): Fable 5.1 heads the fable family — verified live against the
+        # Models API (created 2026-08-28) and the installed CLI (2.1.257) before it was seeded
+        self.assertEqual(km.MODEL_VERSIONS["fable"][0], {"value": "claude-fable-5-1", "label": "Fable 5.1"})
+        self.assertIn("claude-fable-5", [v["value"] for v in km.MODEL_VERSIONS["fable"]],
+                      "the legacy fable stays pickable (add-only, never a silent drop)")
         self.assertIn("claude-opus-4-8", [v["value"] for v in km.MODEL_VERSIONS["opus"]],
                       "legacy versions live on the API stay pickable")
 

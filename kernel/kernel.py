@@ -279,12 +279,29 @@ def _machine_cut_cause(users, i, cut_t=0.0, cut_cause=""):
     IS that cut. Ordering alone makes this exact (the cut always precedes its resume), so a genuine stop
     made later is always past the stamp and still reads as the user's; no window, no expiry. A scan that
     reaches a terminator never consults the stamp: there the transcript already answered."""
+    passed_romp = False
     for nxt in users[i + 1:]:
         if nxt.get("author") == "romp":
             cause = _interrupt_cause(nxt)
             if cause:
                 return cause
-        elif em.is_interrupt_record(nxt) or nxt.get("author") == "human":
+            passed_romp = True                           # a cause-less romp atom is a RE-ENGAGE (a
+            #                                              nudge, a notice for some other cut): past
+            #                                              it, a later stop record is a SEPARATE
+            #                                              episode, never this record's twin
+        elif em.is_interrupt_record(nxt):
+            if passed_romp:
+                return None                              # romp re-engaged between the records → the
+            #                                              earlier stop stands on its own (the
+            #                                              notice-past-the-next-stop case)
+            # else: BACK-TO-BACK stop records are ONE cut event (T219, the user 2026-09-01: a
+            # restart cutting a turn mid-tool-use writes TWO records — 'for tool use' then plain —
+            # and the old terminator here made the first read as the user's stop without ever
+            # consulting the notice just past it or the backend's stamp; the card then claimed
+            # 'you stopped this session mid-turn' for a deploy the user never touched, twice on
+            # the live specimen). Read past the twin: the notice ahead, a real terminator, or the
+            # stamp below decides for BOTH.
+        elif nxt.get("author") == "human":
             return None                                  # the transcript settled it — the stamp says nothing new
     if cut_cause and (users[i].get("t") or 0) <= cut_t:   # notice not on disk yet → the backend's own record
         return cut_cause
@@ -299,8 +316,16 @@ def _interrupt_marks(turns, sid=""):
     it, or — before that notice reaches disk — the backend's machineCut stamp). The interrupt record
     itself authors 'human', so it's classified FIRST. `sid` is optional only so the pure-atom callers in
     the tests stay pure: pass it wherever it is known, or a cut still on its way to disk reads as a stop."""
-    users = [a for turn in turns for a in (turn.get("atoms") or []) if a.get("type") == "user"]
+    atoms = [a for turn in turns for a in (turn.get("atoms") or [])]
     cut_t, cut_cause = _last_machine_cut(sid) if sid else (0.0, "")
+    return _interrupt_marks_atoms(atoms, cut_t, cut_cause)
+
+
+def _interrupt_marks_atoms(atoms, cut_t=0.0, cut_cause=""):
+    """The pure-atom core of _interrupt_marks — `atoms` plus the backend's machineCut stamp as
+    plain arguments, so the classifier is testable without a states/ file (T219's repro rides
+    this surface)."""
+    users = [a for a in atoms if a.get("type") == "user"]
     last_intr = last_human = 0
     for i, a in enumerate(users):
         t = a.get("t", 0)
@@ -534,6 +559,10 @@ def _version_info():
             # counters, no paths — safe for the auth-exempt route. Deploy verification reads the live
             # fold rate here instead of trusting an offline replay number (T210).
             "parse": dict(em._ASM_STATS),
+            # T222: where the model pickers' version list came from (seed / cache / api), when, what
+            # the API added beyond the shipped seed, and the last refresh failure — so a stale list
+            # is a visible fact in `romp version`, never a guess
+            "modelCatalog": _catalog_public_status(),
             "autoNudge": _auto_nudge_on(),   # server-side toggle state → the gear checkbox reflects the kernel
             "compactSuggest": _compact_suggest_on(),   # T208+: its gear checkbox rides the same read
             "conserveMemory": _conserve_on(),   # the T148 toggle: close idle tab-less claude processes
@@ -845,9 +874,10 @@ MODEL_CHOICES = [{"value": "fable", "label": "Fable"}, {"value": "opus", "label"
 # first; values are the API's DATELESS aliases, verified against the claude-api reference and the
 # installed CLI's own catalog (2026-09-01: 2.1.257 resolves `fable` to claude-fable-5-1; deprecated
 # 4.1/4.0-era models excluded on purpose — they are retiring). This table is a SEED, not the
-# catalog: /models completes each family with the ids running sessions' CLIs actually report
-# (_learned_versions) — the CLI is the authoritative source for what it serves, and a table alone
-# lagged a release the day Fable 5.1 shipped. Clicking a family in a picker sends that family's
+# catalog: the Models API fetch below grows it in place (T222), and /models completes each family
+# with the ids running sessions' CLIs actually report ahead of that (_learned_versions) — the CLI
+# is the authoritative source for what it serves, and a table alone lagged a release the day Fable
+# 5.1 shipped. The catalog owns the LIST; the alias owns the DEFAULT: clicking a family in a picker sends that family's
 # DEFAULT: the most recent VERSION the user picked for it (model-picks.json below), else the family
 # ALIAS itself — the CLI resolves an alias live, so a bare family click follows the family's newest
 # release exactly as the CLI's own default does. (Until 2026-09-01 the default fell to this table's
@@ -855,7 +885,7 @@ MODEL_CHOICES = [{"value": "fable", "label": "Fable"}, {"value": "opus", "label"
 # _model_alias_boot_pass for the state that left behind.) Full ids ride every set path verbatim
 # already — the CLI's alias table stops at the family names, so a version pick needs no new transport.
 MODEL_VERSIONS = {
-    "fable":  [{"value": "claude-fable-5-1", "label": "Fable 5.1"},
+    "fable":  [{"value": "claude-fable-5-1", "label": "Fable 5.1"},   # verified live 2026-09-01 (Models API + CLI 2.1.257)
                {"value": "claude-fable-5", "label": "Fable 5"}],
     "opus":   [{"value": "claude-opus-5", "label": "Opus 5"},
                {"value": "claude-opus-4-8", "label": "Opus 4.8"},
@@ -876,10 +906,313 @@ _model_picks_lock = threading.Lock()   # its read-modify-writes run on the WS-ha
 # hand a page that kept its high-water mark a LOWER rev, or that page would ignore every re-read until the
 # count caught up — a silent stale list. Milliseconds leave room for one bump per ms across a restart.
 _models_rev = [int(time.time() * 1000)]
-# A first-party model id as the CLI reports it: family, major, optional minor. A -YYYYMMDD snapshot
-# date or a [1m] context tag may trail and is ignored (claude-fable-5-1, claude-opus-4-5-20251101).
-_MODEL_ID_RE = re.compile(r"^claude-([a-z]+)-(\d+)(?:-(\d+))?(?:-\d{8})?$")
 _learned_announced = set()   # ids already announced on stderr as outside the seed table (once per process)
+
+# ── the LIVE model catalog (T222, the user 2026-09-01: romp must stop needing a hand edit when
+# Anthropic ships a model). The table above is the SEED and the loud fallback. The kernel queries the
+# Models API (GET /v1/models — the documented programmatic source) on its OWN credential and merges
+# new version ids into the families, ADD-ONLY: an id the API omits but the seed knows stays (key-scoped
+# visibility differs per account); a dated snapshot, a suffixed variant (-fast) or the pre-4 naming
+# never joins (routing ids, not versions — the alias-table lesson); every family stays newest-first.
+# Cached durably (STATE/model-catalog.json) so a dead API never blanks a picker. Refreshed on exact
+# EVENTS — boot, and a claude-* id reaching a set path or the pick store that the merged list does not
+# know (the very moment staleness bites) — never on a timer. Unreachable API = serve seed+cache and
+# SAY SO (stderr + /version), never a quietly stale list. ROMP_MODEL_CATALOG=off disables the fetch
+# outright — hermetic labs must never reach the network; ROMP_MODELS_URL points tests at a fake.
+MODEL_CATALOG_FILE_NAME = "model-catalog.json"
+MODELS_API_URL = os.environ.get("ROMP_MODELS_URL") or "https://api.anthropic.com/v1/models"
+_MODEL_SEED = {fam: [dict(v) for v in vs] for fam, vs in MODEL_VERSIONS.items()}   # the shipped table, frozen
+# THE one grammar for a first-party model id (family, then the version's numeric parts — a -YYYYMMDD
+# snapshot date is just a long last part, which _catalog_family refuses and _model_id_parts drops).
+# The catalog's helpers and the learned-id path both read it: two regexes of this name once shadowed
+# each other across the fold and every learned-id parse raised (2026-09-02).
+_MODEL_ID_RE = re.compile(r"^claude-(fable|opus|sonnet|haiku)-(\d+(?:-\d+)*)$")
+_catalog_lock = threading.Lock()
+_catalog_status = {"source": "seed", "fetchedAt": None, "lastError": None, "added": [], "inflight": False}
+_catalog_asked = set()   # unknown ids that already fired a refresh this kernel life (event dedup, no clock)
+
+
+def _catalog_family(mid):
+    """The picker family a Models-API id belongs to, or None for ids that are not pickable VERSIONS:
+    dated snapshots (claude-opus-4-5-20251101), suffixed variants (claude-opus-4-6-fast), the pre-4
+    naming (claude-3-5-sonnet-…) — deployment/routing ids the seed deliberately never lists."""
+    m = _MODEL_ID_RE.match(str(mid or ""))
+    if not m or any(len(p) >= 8 for p in m.group(2).split("-")):
+        return None
+    return m.group(1)
+
+
+def _version_key(mid):
+    """Numeric version tuple of a family id, for newest-first ordering ('claude-opus-4-8' → (4, 8);
+    'claude-opus-5' → (5,) sorts above it, 'claude-fable-5-1' → (5, 1) above (5,))."""
+    m = _MODEL_ID_RE.match(str(mid or ""))
+    return tuple(int(p) for p in m.group(2).split("-")) if m else ()
+
+
+def _catalog_label(display_name, mid):
+    """The seed's label style from the API's display_name ('Claude Fable 5.1' → 'Fable 5.1'); an
+    absent display_name derives from the id ('claude-opus-4-9' → 'Opus 4.9')."""
+    d = str(display_name or "").strip()
+    if d.lower().startswith("claude "):
+        d = d[7:].strip()
+    if d:
+        return d
+    fam = _catalog_family(mid) or ""
+    return (fam[:1].upper() + fam[1:] + " " + ".".join(str(n) for n in _version_key(mid))).strip()
+
+
+def merge_model_catalog(seed, rows):
+    """ADD-ONLY merge of Models-API rows ({id, display_name, created_at}) into a seed
+    {family: [{value, label}, …]}. Every seed entry survives; an unknown pickable id joins its family
+    with its display label; non-version ids are skipped; each family is re-sorted newest-first by
+    the id's own version tuple (seed and API entries alike — no created_at needed, and the seed's
+    dateless aliases sort exactly where they belong). Pure: returns a NEW dict, tests drive it."""
+    merged = {fam: [dict(v) for v in vs] for fam, vs in seed.items()}
+    for r in rows or []:
+        mid = str((r or {}).get("id") or "")
+        fam = _catalog_family(mid)
+        if not fam or fam not in merged or any(v["value"] == mid for v in merged[fam]):
+            continue
+        merged[fam].append({"value": mid, "label": _catalog_label((r or {}).get("display_name"), mid)})
+    for fam in merged:
+        merged[fam].sort(key=lambda v: _version_key(v["value"]), reverse=True)
+    return merged
+
+
+def _apply_model_catalog(merged, source):
+    """Install a merged catalog IN PLACE — the family lists, the reverse map and the judge setters'
+    allowed set are mutated, never rebound — so every consumer (the /models route, _model_picks'
+    validity check, setJudgeModel's validation) sees it with no re-import. Returns the ids that
+    were new to the running table."""
+    with _catalog_lock:
+        added = []
+        for fam, vs in merged.items():
+            if fam not in MODEL_VERSIONS:
+                continue
+            known = {v["value"] for v in MODEL_VERSIONS[fam]}
+            added += [v["value"] for v in vs if v["value"] not in known]
+            MODEL_VERSIONS[fam][:] = [dict(v) for v in vs]
+        _VERSION_FAMILY.clear()
+        _VERSION_FAMILY.update({v["value"]: fam for fam, vs in MODEL_VERSIONS.items() for v in vs})
+        jv, mv = globals().get("_JUDGE_MODEL_VALUES"), globals().get("_MODEL_VALUES")   # defined further
+        if isinstance(jv, set) and isinstance(mv, set):   # down the module; absent only during import
+            jv.clear()                                   # rebuilt, not grown: the set mirrors the table exactly
+            jv.update(mv)
+            jv.update(_VERSION_FAMILY)
+        seed_ids = {v["value"] for vs in _MODEL_SEED.values() for v in vs}
+        _catalog_status["added"] = sorted(v for v in _VERSION_FAMILY if v not in seed_ids)
+        _catalog_status["source"] = source
+    return added
+
+
+def _family_newest_model(mid):
+    """The family's newest FULL id when `mid` is a superseded full id of that family (claude-fable-5 →
+    claude-fable-5-1), else None: a bare alias (fable) has no family here and auto-tracks on its own;
+    the newest id itself, an unknown id, or a non-version id (dated snapshot) remaps to nothing.
+    Upstream's T223 rider installs this as the backend's thread WAKE hook, so a dormant comment thread
+    registered on a superseded full id comes up on family-newest at its next explicit open. THE FORK
+    DOES NOT WIRE IT (see _sdk_locked): that remap heals the pre-fix artefact of a family click writing
+    the head's full id, and after the alias pickers (#140) a full id in a reg is the user's deliberate
+    pin — pins stand. Kept uncalled as upstream's merge surface, not as a live path."""
+    fam = _catalog_family(mid)
+    if not fam:
+        return None
+    with _catalog_lock:
+        rows = list(MODEL_VERSIONS.get(fam) or [])
+    full = [v["value"] for v in rows if _catalog_family(v.get("value"))]   # versioned ids only
+    if not full or mid not in full:
+        return None                          # an id the catalog does not list is not ours to remap
+    newest = max(full, key=_version_key)
+    return newest if _version_key(newest) > _version_key(mid) else None
+
+
+def _catalog_cache_path():
+    return jd.STATE / MODEL_CATALOG_FILE_NAME
+
+
+def _load_model_catalog_cache():
+    """Boot: install the last fetched catalog BEFORE any picker asks, so a dead API never blanks a
+    picker and the seed alone is only what this build shipped with. Returns the cached row count."""
+    try:
+        d = json.loads(_catalog_cache_path().read_text())
+        rows = d.get("models") if isinstance(d, dict) else None
+        if not isinstance(rows, list):
+            return 0
+    except Exception:
+        return 0
+    _apply_model_catalog(merge_model_catalog(_MODEL_SEED, rows), "cache")
+    _catalog_status["fetchedAt"] = d.get("fetchedAt")
+    return len(rows)
+
+
+def _models_api_credential():
+    """(header, value) for the kernel's OWN credential path, or None when the process carries none the
+    kernel may use for a DIRECT API call. In order: ANTHROPIC_LP_API_KEY — a key set aside for direct
+    calls (this fetch is one small GET; low priority is exactly right) — else the manager-env API key
+    the SDK backend CLAIMED out of os.environ["ANTHROPIC_API_KEY"] when the kernel built it
+    (sdk_backend.work_api_key, wired as jd._WORK_KEY_FN in _sdk_locked before the boot refresh — the
+    same stash the judges bill to), else an ANTHROPIC_AUTH_TOKEN bearer.
+    HONEST about the second rung (fork, 2026-09-02, correcting a first draft that claimed an ambient
+    ANTHROPIC_API_KEY was never read): the kernel DOES read the ANTHROPIC_API_KEY its own environment
+    carried — through the claimer, once, exactly as the judges do — and it cannot tell a work key from
+    a session-auth key by value. The fork's rule is operational, not enforceable here: the MANAGER's
+    environment (service.env) carries the LP/work key, never the interactive session-auth key, so
+    whatever the judges bill to is what this fetch bills to. What the kernel does NOT do is read the
+    variable on its own with no claimer wired: a key in the environment before the backend exists was
+    designated for nothing here and is left alone. A login-only box (Claude Code's OAuth, no key) has
+    no HTTP credential the kernel can borrow: the refresh says so once and serves the seed — the CLI's
+    own alias table still tracks each family's newest there."""
+    lp = (os.environ.get("ANTHROPIC_LP_API_KEY") or "").strip()
+    if lp:
+        return ("x-api-key", lp)
+    fn = getattr(jd, "_WORK_KEY_FN", None)
+    key = ""
+    if fn is not None:
+        try:
+            key = fn() or ""
+        except Exception:
+            key = ""
+    if key:
+        return ("x-api-key", key)
+    tok = os.environ.get("ANTHROPIC_AUTH_TOKEN", "") or ""
+    if tok:
+        return ("Authorization", "Bearer " + tok)
+    return None
+
+
+def _fetch_models_api(cred, timeout=8):
+    """Every page of GET /v1/models as [{id, display_name, created_at}] (after_id / has_more paging per
+    the API reference). Raises on ANY failure — the caller owns the loudness."""
+    import urllib.request
+    rows, after, pages = [], None, 0
+    while pages < 10:
+        url = MODELS_API_URL + "?limit=100" + ("&after_id=" + urllib.parse.quote(after) if after else "")
+        hdrs = {"anthropic-version": "2023-06-01", cred[0]: cred[1]}
+        if cred[0] == "Authorization":
+            hdrs["anthropic-beta"] = "oauth-2025-04-20"     # OAuth bearers ride this beta, per the reference
+        with urllib.request.urlopen(urllib.request.Request(url, headers=hdrs), timeout=timeout) as r:
+            d = json.loads(r.read().decode("utf-8", "replace"))
+        data = d.get("data") if isinstance(d, dict) else None
+        if not isinstance(data, list):
+            raise ValueError("Models API returned no data list (keys=%r)"
+                             % (sorted(d)[:8] if isinstance(d, dict) else type(d).__name__))
+        rows += [{"id": str(m.get("id") or ""), "display_name": m.get("display_name"),
+                  "created_at": m.get("created_at")} for m in data if isinstance(m, dict) and m.get("id")]
+        pages += 1
+        if not d.get("has_more") or not d.get("last_id"):
+            break
+        after = str(d["last_id"])
+    return rows
+
+
+def _refresh_model_catalog(reason, _async=True):
+    """Fetch the live list, install the add-only merge, cache it durably. Single-flight; off entirely
+    under ROMP_MODEL_CATALOG=off. LOUD on every failure path — a stderr line naming the reason and
+    what is being served instead, mirrored into /version's modelCatalog — never a silently stale picker."""
+    if (os.environ.get("ROMP_MODEL_CATALOG") or "").strip().lower() == "off":
+        return False
+    with _catalog_lock:
+        if _catalog_status["inflight"]:
+            return False
+        _catalog_status["inflight"] = True
+
+    def go():
+        try:
+            cred = _models_api_credential()
+            if cred is None:
+                _catalog_status["lastError"] = "no API credential in the kernel's environment"
+                sys.stderr.write("model catalog (%s): no API credential the kernel can use — serving the "
+                                 "%s list; new models need ANTHROPIC_LP_API_KEY, or the manager's own API key "
+                                 "in its environment (the one the SDK backend claims and the judges bill to — "
+                                 "the manager's work key, never a session-auth key), or a MODEL_VERSIONS edit\n"
+                                 % (reason, _catalog_status["source"]))
+                return
+            try:
+                rows = _fetch_models_api(cred)
+            except Exception as e:
+                _catalog_status["lastError"] = "%s: %s" % (type(e).__name__, str(e)[:200])
+                sys.stderr.write("model catalog (%s): Models API unreachable (%s) — serving the %s list "
+                                 "(%d extra id(s) beyond the seed)\n"
+                                 % (reason, _catalog_status["lastError"], _catalog_status["source"],
+                                    len(_catalog_status["added"])))
+                return
+            added = _apply_model_catalog(merge_model_catalog(_MODEL_SEED, rows), "api")
+            now = int(time.time())
+            _catalog_status["fetchedAt"] = now
+            _catalog_status["lastError"] = None
+            try:
+                _atomic_write(_catalog_cache_path(), json.dumps({"fetchedAt": now, "models": rows}))
+            except Exception:
+                sys.stderr.write("model catalog: cache write failed: %s\n" % traceback.format_exc())
+            if added:
+                sys.stderr.write("model catalog (%s): %d new version id(s) joined the pickers: %s\n"
+                                 % (reason, len(added), ", ".join(added)))
+                try:
+                    # the models frame: every open picker re-reads /models on it (chat/comment, the
+                    # timeline lanes, the gear). Nothing re-reads the choice lists on its own after
+                    # page load — a session-list push (the line this replaced) told the pickers
+                    # nothing, so an open dashboard kept the page-load list until a reload (2026-09-02)
+                    _models_changed()
+                except Exception:
+                    pass
+        finally:
+            _catalog_status["inflight"] = False
+
+    if _async:
+        threading.Thread(target=go, name="model-catalog", daemon=True).start()
+    else:
+        go()
+    return True
+
+
+def _note_unknown_model(mid):
+    """The staleness EVENT: a claude-* version id reached a set path or the pick store and the merged
+    list does not know it — exactly when a hand-updated table used to go quietly stale. Fires ONE
+    refresh per unknown id per kernel life (dedup by id, never a clock); aliases, dated snapshots
+    and garbage never fire. Returns whether a refresh was started.
+    The id is marked asked only when its refresh actually STARTS (fold fixer, 2026-09-02): the refresh
+    is single-flight, so a sighting while one is inflight — the boot fetch, exactly when a running
+    session's CLI first reports a new release — starts nothing, and marking it then spent the id's
+    one refresh on a no-op. Unmarked, the next sighting after the inflight fetch lands (every /models
+    read re-derives the learned list) asks for real if the catalog still lacks the id; a catalog that
+    caught up short-circuits on _VERSION_FAMILY first."""
+    mid = str(mid or "")
+    if not _catalog_family(mid) or mid in _VERSION_FAMILY or mid in _catalog_asked:
+        return False
+    started = _refresh_model_catalog("unknown model id %s" % mid)
+    if started:
+        _catalog_asked.add(mid)
+    return started
+
+
+def _catalog_public_status():
+    """/version's modelCatalog block — where the list came from, when, what it added, and the last
+    failure (so `romp version` and a curl can see a stale-list problem instead of guessing)."""
+    return {"source": _catalog_status["source"], "fetchedAt": _catalog_status["fetchedAt"],
+            "lastError": _catalog_status["lastError"], "added": list(_catalog_status["added"])}
+
+
+def _cli_model_blocks():
+    """{model id: {needs, cli, t}} — versions the INSTALLED CLI refused by minimum version, written by
+    the SDK backend from the CLI's own error at the first attempt (sdk_backend.note_cli_model_block)
+    and cleared by the first real reply on that model. The catalog can list ids newer than the CLI
+    (the API is the source; the CLI gates by version), so the refusal is surfaced on the version row
+    the moment it is known rather than only at pick time (T222)."""
+    try:
+        d = json.loads((jd.STATE / "cli-model-blocks.json").read_text())
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def _with_cli_block(version, blocks):
+    """A /models version row stamped with its CLI refusal, if any: cliNeeds (the minimum version the
+    CLI named) and a label suffix every picker renders as-is — no client change, honest everywhere."""
+    b = blocks.get(version.get("value")) if blocks else None
+    if isinstance(b, dict) and b.get("needs"):
+        version["cliNeeds"] = str(b["needs"])
+        version["label"] = "%s — needs CLI ≥ %s" % (version.get("label", version.get("value")), b["needs"])
+    return version
 
 
 def _model_id_clean(value):
@@ -888,10 +1221,19 @@ def _model_id_clean(value):
 
 
 def _model_id_parts(value):
-    """('fable', 5, 1) for 'claude-fable-5-1'; None for anything that is not a bare first-party id (a
-    provider-prefixed id, a family alias, '<synthetic>')."""
+    """('fable', 5, 1) for 'claude-fable-5-1' — and for the [1m]-tagged and -YYYYMMDD-dated spellings a
+    CLI reports (the tag is stripped, the date dropped: the version is what precedes it); None for
+    anything that is not a first-party VERSION id of a picker family (a provider-prefixed id, a family
+    alias, a -fast variant, '<synthetic>'). Reads the catalog's one id grammar (_MODEL_ID_RE)."""
     m = _MODEL_ID_RE.match(_model_id_clean(value))
-    return (m.group(1), int(m.group(2)), int(m.group(3) or 0)) if m else None
+    if not m:
+        return None
+    nums = m.group(2).split("-")
+    if len(nums[-1]) >= 8:                       # a dated snapshot: claude-opus-4-5-20251101 → (4, 5)
+        nums = nums[:-1]
+    if not 1 <= len(nums) <= 2:                  # major[.minor] only — three numeric parts is no version
+        return None
+    return (m.group(1), int(nums[0]), int(nums[1]) if len(nums) > 1 else 0)
 
 
 def _model_id_label(value):
@@ -907,16 +1249,21 @@ def _model_id_label(value):
 def _learned_versions():
     """{family: [{"value", "label", "learned": True}, …]} — every model id a session's CLI has actually
     REPORTED (reg.liveModelId, persisted by the SDK backend's _learn_model from the init / assistant
-    `model` fields) that the seed table does not list. The CLI is the authoritative source for what
-    it serves; this is the live half of the catalog, so a new release appears in the pickers the
-    moment any session runs on it. A dated snapshot of a seed version shares its label and adds
-    nothing (the seed's dateless alias covers it); provider-prefixed and synthetic ids are not the
-    shape the pickers send and are skipped. Reads the same reg files _thread_reg does. A first
-    sighting is announced once on stderr — and the pickers mark the row — so an unlisted model is
-    LOUD, never a silent gap behind a stale menu (the fail-loudly rule)."""
+    `model` fields) that the CATALOG does not list — the seed table as the Models API fetch and its
+    cache have grown it (T222). The CLI is the authoritative source for what it serves; this is the
+    catalog's live lookahead, so a new release appears in the pickers the moment any session runs on
+    it, and each sighting is also T222's staleness EVENT (_note_unknown_model: one refresh per id per
+    kernel life, spent only when it actually starts), so the catalog catches up and the row's mark
+    drops. A dated snapshot of a known version shares its label and adds nothing (the dateless alias
+    covers it); provider-prefixed and synthetic ids are not the shape the pickers send and are
+    skipped. Reads the same reg files _thread_reg does. A first sighting is announced once on stderr —
+    and the pickers mark the row — so an unlisted model is LOUD, never a silent gap behind a stale
+    menu (the fail-loudly rule)."""
     out = {}
     fams = {c["value"] for c in MODEL_CHOICES}
-    labels = {fam: {v["label"].lower() for v in vs} for fam, vs in MODEL_VERSIONS.items()}
+    with _catalog_lock:                          # the catalog is rebuilt in place on its own thread
+        known = set(_VERSION_FAMILY)
+        labels = {fam: {v["label"].lower() for v in vs} for fam, vs in MODEL_VERSIONS.items()}
     try:
         regs = sorted((jd.STATE / "sdk").glob("*.json"))
     except OSError:
@@ -935,10 +1282,11 @@ def _learned_versions():
         # and a snapshot retires while the alias follows the version (review 2026-09-01)
         value = "claude-%s-%d" % (fam, maj) + ("-%d" % minor if minor else "")
         label = _model_id_label(value)
-        if label.lower() in labels.setdefault(fam, set()):
+        if value in known or label.lower() in labels.setdefault(fam, set()):
             continue
         labels[fam].add(label.lower())
         out.setdefault(fam, []).append({"value": value, "label": label, "learned": True})
+        _note_unknown_model(value)               # the catalog lacks an id a CLI serves: refresh it (dedup by id)
         if value not in _learned_announced:
             _learned_announced.add(value)
             sys.stderr.write("romp-kernel: model %s (%s) is not in the built-in version list — a running "
@@ -947,22 +1295,34 @@ def _learned_versions():
 
 
 def _versions_catalog(learned=None):
-    """{family: versions} the pickers show — the seed table ∪ the learned ids, newest first."""
+    """{family: versions} the pickers show — the CATALOG (the seed table as the Models API fetch and its
+    cache have grown it in place, T222) ∪ the LEARNED ids (what a running session's CLI reports that
+    the catalog does not list yet, marked), deduped by id, newest first by each id's own version tuple
+    (one ordering rule, the catalog's _version_key). The catalog owns the list; the learned rows are
+    its live lookahead until the next refresh folds them in (fold 2026-09-02)."""
     learned = _learned_versions() if learned is None else learned
+    with _catalog_lock:                          # snapshot: the catalog is rebuilt in place on its own thread
+        cat = {fam: [dict(v) for v in vs] for fam, vs in MODEL_VERSIONS.items()}
     out = {}
-    for fam, vs in MODEL_VERSIONS.items():
-        rows = [dict(v) for v in vs] + list(learned.get(fam) or [])
-        rows.sort(key=lambda v: (_model_id_parts(v["value"]) or ("", 0, 0))[1:], reverse=True)
+    for fam, rows in cat.items():
+        seen = {v["value"] for v in rows}
+        for v in learned.get(fam) or []:
+            if v["value"] not in seen:
+                seen.add(v["value"])
+                rows.append(dict(v))
+        rows.sort(key=lambda v: _version_key(v["value"]), reverse=True)
         out[fam] = rows
     return out
 
 
 def _version_family(value, learned=None):
-    """The family a VERSION id belongs to — a seed-table id, or one a session's CLI has reported
-    (learned) — and '' for anything else: a family alias, 'default', a never-seen id. This is what
-    makes a value a pin the pick memory may record."""
+    """The family a VERSION id belongs to — a catalog id (the seed table, or one the Models API fetch
+    added to it), or one a session's CLI has reported (learned) — and '' for anything else: a family
+    alias, 'default', a never-seen id. This is what makes a value a pin the pick memory may record;
+    read at CALL time, so an id the catalog learned after boot is a pin from that moment on."""
     v = str(value or "")
-    fam = _VERSION_FAMILY.get(v)
+    with _catalog_lock:
+        fam = _VERSION_FAMILY.get(v)
     if fam:
         return fam
     for f, vs in (_learned_versions() if learned is None else learned).items():
@@ -972,8 +1332,10 @@ def _version_family(value, learned=None):
 
 
 def _model_picks(learned=None):
-    """The per-family last-picked map. Only known version ids — seed or learned — survive the read (a
-    stale or hand-edited entry falls back to the family alias rather than poisoning the default)."""
+    """The per-family last-picked map. Only known version ids — catalog or learned — survive the read (a
+    stale or hand-edited entry falls back to the family alias rather than poisoning the default); a
+    pick NO list knows is the catalog's staleness event (T222): it may name a model newer than the
+    list, so it fires one refresh, and is honored the moment the catalog learns the id."""
     try:
         d = json.loads((jd.STATE / MODEL_PICKS_FILE_NAME).read_text())
     except Exception:
@@ -981,11 +1343,20 @@ def _model_picks(learned=None):
     if not isinstance(d, dict):
         return {}
     learned = _learned_versions() if learned is None else learned
-    return {f: v for f, v in d.items() if isinstance(v, str) and _version_family(v, learned) == f}
+    out = {}
+    for f, v in d.items():
+        if not isinstance(v, str):
+            continue
+        if _version_family(v, learned) == f:
+            out[f] = v
+        else:
+            _note_unknown_model(v)   # a pick no list knows → the catalog staleness event (T222)
+    return out
 
 
 def _models_changed():
-    """The pick memory MOVED — a version pinned, a family un-pinned (Latest), a refused pin dropped — so every
+    """The pick memory MOVED — a version pinned, a family un-pinned (Latest), a refused pin dropped — or the
+    version LIST grew (the catalog fetch added ids, T222; fold 2026-09-02), so every
     open picker's cached /models list is stale, and its `default` is what a family click SENDS. Tell every
     client that hosts a picker now with a models frame (the palette frame's idiom; each re-fetches /models on
     it) — event-keyed on the change itself, never a poll. A counter rides it so a client can tell frames
@@ -1006,9 +1377,12 @@ def _models_changed():
 def _note_model_pick(value):
     """Record a version pick as its family's new default (write-on-change). Family shorthands and
     unknown strings record nothing — they are not version picks — so a bare family click (which
-    carries the alias) can never downgrade an explicit legacy pin."""
+    carries the alias) can never downgrade an explicit legacy pin (an unknown claude-* id does fire
+    the catalog's staleness refresh: it may be a model newer than this list, T222). A version is a
+    catalog id (seed, or one the Models API fetch added) or a learned one (_version_family)."""
     fam = _version_family(value)
     if not fam:
+        _note_unknown_model(value)
         return
     # Merge into the RAW file, never the filtered read: a pin whose reporting session is gone is
     # hidden on read (its family can't vouch for it right now), not erased on write — it resolves
@@ -4466,28 +4840,97 @@ def _main_drift_verdict(origin, checkout, running):
     return ("", "")
 
 
-KERNEL_CODE_PREFIXES = ("kernel/", "bin/", "postal/", "cli/")
-_REBUILT_FOR = [""]   # the checkout sha this RUNNING kernel already converged to by rebuilding dist
-#                       in place (UI-only change) — the drift check treats it as in-sync until a
-#                       kernel-code commit moves the target past it
+KERNEL_CODE_PREFIXES = ("kernel/", "bin/", "postal/", "cli/")   # the trees the CLASSIFIER inspects
+_REBUILT_FOR = [""]   # the checkout sha this RUNNING kernel already converged to in place (dist
+#                       rebuild / bus bounce / nothing-executed skip) — the drift check treats it as
+#                       in-sync until a kernel-code commit moves the target past it
+
+
+def _restart_class(path):
+    """Which RUNNING PROCESS a changed file's code lives in — "kernel", "bus", or "skip" (T216).
+    Verified process boundaries, not guesses: the kernel process loads exactly kernel/*.py +
+    bin/romp-kernel in-process (every kernel module rides SourceFileLoader at import; judges run
+    in-process too). postal/ is NEVER imported here — the bus is its own process with its own
+    restart verb, and bouncing the kernel for a bus change restarts the WRONG thing. cli/ is
+    loaded per `romp` invocation, never by this process — the next run picks it up. .md files
+    are docs wherever they live. Everything else in the four trees is kernel-class: when unsure,
+    the restart is the safe converge."""
+    if path.endswith(".md"):
+        return "skip"
+    if path == "bin/romp-postal-service" or path.startswith("postal/"):
+        return "bus"
+    if path.startswith(("kernel/", "bin/")):
+        return "kernel"
+    return "skip"     # cli/ + everything outside the four trees (ui, tests, docs, plans)
+
+
+def _ast_equal_blobs(a, b, path):
+    """True only when a..b PROVABLY compiles to the same semantics for `path`: both blobs readable
+    and their parsed ASTs identical (comments and formatting never enter the AST; docstrings DO,
+    so a docstring edit conservatively stays a code change). Shebang lines are comments to the
+    parser, so bin/ scripts qualify too. ANY surprise — unreadable blob (added/deleted/renamed
+    file), parse failure, non-python — is False: not provable, restart (T216)."""
+    try:
+        import ast
+        import warnings
+        blobs = []
+        for sha in (a, b):
+            r = subprocess.run(["git", "show", "%s:%s" % (sha, path)], cwd=str(ROOT),
+                               capture_output=True, timeout=20)
+            if r.returncode != 0:
+                return False
+            blobs.append(r.stdout)
+        if blobs[0] == blobs[1]:
+            return True                       # mode-only change — the content is identical
+        with warnings.catch_warnings():
+            # historical blobs raise SyntaxWarning (e.g. un-raw regex strings) — parse noise,
+            # not a verdict input; without this every probe sprays the kernel log
+            warnings.simplefilter("ignore")
+            return ast.dump(ast.parse(blobs[0])) == ast.dump(ast.parse(blobs[1]))
+    except Exception:
+        return False
+
+
+def _converge_classes(a, b):
+    """Per-file restart classes for the a..b diff: {"kernel": [...], "bus": [...], "skip": [...],
+    "ast_equal": [...]} — or None on ANY error (the caller restarts; when unsure, the restart is
+    the safe converge). kernel-class python files whose ASTs match demote to skip and are listed
+    in ast_equal so the audit row names WHY the verdict skipped them (T216)."""
+    if not a or not b:
+        return None
+    try:
+        # -z: NUL-separated RAW paths — git's default core.quotePath C-quotes any non-ASCII path
+        # ("kernel/m\303\263dulo.py", leading double-quote), which defeated the prefix match and
+        # WRONG-SKIPPED a real kernel change (T216 review, reproduced). --no-renames: rename
+        # detection collapses a move to its DESTINATION only, so a kernel file moved OUT of the
+        # tree vanished from the listing and skipped — as delete+add the old path stays visible.
+        r = subprocess.run(["git", "diff", "--name-only", "-z", "--no-renames",
+                            "%s..%s" % (a, b)], cwd=str(ROOT),
+                           capture_output=True, text=True, timeout=20)
+        if r.returncode != 0:
+            return None
+        out = {"kernel": [], "bus": [], "skip": [], "ast_equal": []}
+        for f in r.stdout.split("\0"):
+            if not f:
+                continue
+            c = _restart_class(f)
+            if c == "kernel" and _ast_equal_blobs(a, b, f):
+                out["ast_equal"].append(f)
+                c = "skip"
+            out[c].append(f)
+        return out
+    except Exception:
+        return None
 
 
 def _kernel_code_changed(a, b):
-    """Does a..b touch code the RUNNING PROCESS executes? UI/dist inputs, tests, docs, plans do not —
-    a build whose kernel code is unchanged converges by REBUILDING dist in place with the kernel left
-    up (the user 2026-08-23: most changes are UI-only, and every restart cuts every in-flight turn).
+    """Does a..b touch code the RUNNING PROCESS executes? UI/dist inputs, tests, docs, plans, cli/,
+    postal/ (the bus's own process), and PROVABLY-equal kernel python (AST match — comment-only
+    edits) do not — those converge in place with the kernel left up (the user 2026-08-23 and T216:
+    most changes never touch what this process runs, and every restart cuts every in-flight turn).
     Any error reads as True: when unsure, the restart is the safe converge."""
-    if not a or not b:
-        return True
-    try:
-        r = subprocess.run(["git", "diff", "--name-only", "%s..%s" % (a, b)], cwd=str(ROOT),
-                           capture_output=True, text=True, timeout=20)
-        if r.returncode != 0:
-            return True
-        files = [f for f in r.stdout.splitlines() if f.strip()]
-        return any(f.startswith(KERNEL_CODE_PREFIXES) for f in files)
-    except Exception:
-        return True
+    cc = _converge_classes(a, b)
+    return cc is None or bool(cc["kernel"])
 
 
 def _rebuild_dist():
@@ -4498,6 +4941,18 @@ def _rebuild_dist():
         r = subprocess.run(["node", "esbuild.js"], cwd=str(ROOT / "vscode-extension"),
                            capture_output=True, text=True, timeout=180)
         return r.returncode == 0, (r.stderr or r.stdout or "").strip()[-300:]
+    except Exception as e:
+        return False, str(e)
+
+
+def _bus_converge():
+    """Bounce the postal bus onto the new checkout — its OWN process, so a kernel restart would
+    converge the wrong thing (T216). The bus's restart verb is client-only-safe and pending mail
+    survives in the maildir. (ok, err_tail)."""
+    try:
+        r = subprocess.run([sys.executable, str(BIN / "romp-postal-service"), "restart"],
+                           capture_output=True, text=True, timeout=90)
+        return r.returncode == 0, (r.stderr or r.stdout or "").strip()[-200:]
     except Exception as e:
         return False, str(e)
 
@@ -4552,6 +5007,53 @@ def _dist_converge_check():
                      ok=False)
 
 
+_INPLACE_TRIED = [""]   # the target sha the in-place converge already attempted — ONE full attempt
+#                         (bus bounce + dist build) per target, the _dist_converge_check precedent:
+#                         a broken esbuild must not become a per-pass rebuild/bounce/notice storm;
+#                         a transient failure retries on the NEXT target, never a 300s loop
+
+
+def _in_place_converge(target):
+    """The no-kernel-code converge (T216): bounce the bus if bus-class files changed (its own
+    process — see _bus_converge), rebuild dist, latch, and AUDIT the skip verdict with its per-class
+    file lists so a wrong skip is diagnosable from disk. True = converged (caller returns); False =
+    fall through to the restart path, which is always the safe converge."""
+    if _INPLACE_TRIED[0] == target:
+        return False                       # already attempted this target — no storms
+    _INPLACE_TRIED[0] = target
+    cc = _converge_classes(_kernel_sha(), target)
+    if cc is None:
+        # the verdict's own classification succeeded moments ago, but THIS one failed (git flake,
+        # lock contention) — an empty mask here would silently drop the bus bounce and write a
+        # lying audit row; unprovable falls to the restart path, per the standing rule
+        _sync_notice("in-place converge could not re-read the diff — taking the restart path",
+                     ok=False)
+        return False
+    if cc["bus"]:
+        ok, err = _bus_converge()
+        _audit_restart_request("bus-converge", tag=target, ok=("yes" if ok else "no"),
+                               files=",".join(cc["bus"][:20]), err=("" if ok else err))
+        if ok:
+            _sync_notice("postal bus restarted onto the new build (bus-only change — the kernel "
+                         "keeps running; a kernel restart would not have updated the bus)")
+        else:
+            _sync_notice("the postal bus needs a restart for this change and the bounce failed "
+                         "(%s) — mail may run stale until `romp refresh`" % err, ok=False)
+    ok, err = _rebuild_dist()
+    if ok:
+        _REBUILT_FOR[0] = target
+        _audit_restart_request("main-converge-skip", tag=target,
+                               why="no kernel-code change",
+                               skip=",".join(cc["skip"][:20]) or "none",
+                               bus=",".join(cc["bus"][:20]),
+                               ast_equal=",".join(cc["ast_equal"][:20]))
+        _sync_notice("new build served in place (no kernel-code change; no restart) — reload the "
+                     "dashboard to pick it up")
+        return True
+    _sync_notice("in-place update failed to build (%s) — taking the restart path" % err, ok=False)
+    return False
+
+
 def _main_drift_check():
     """One origin/checkout/running comparison pass; fires the SAME banner as the release check (the
     shell's offer() renders the main-drift wording off kind:"main"). Re-fires only when the target sha
@@ -4567,18 +5069,14 @@ def _main_drift_check():
     if kind == "restart" and target == _REBUILT_FOR[0]:
         return                                        # already converged in place (UI-only rebuild)
     if kind == "restart" and not _kernel_code_changed(_kernel_sha(), target):
-        # UI-ONLY drift (the user 2026-08-23): the checkout moved but nothing the running process
-        # executes changed — converge by rebuilding dist in place, in EVERY mode and with no
-        # cool-down (a rebuild cuts no turns, which is the only thing the gates protect). A failed
-        # build falls through to the normal restart path, loudly.
-        ok, err = _rebuild_dist()
-        if ok:
-            _REBUILT_FOR[0] = target
-            _sync_notice("new build served in place (UI-only change; no restart) — reload the "
-                         "dashboard to pick it up")
+        # NO-KERNEL-CODE drift (the user 2026-08-23, widened T216): the checkout moved but nothing
+        # the running process executes changed — converge in place, in EVERY mode and with no
+        # cool-down (in-place converges cut no turns, which is the only thing the gates protect).
+        # A failed dist build falls through to the normal restart path, loudly. The class detail
+        # is ADVISORY here (audit + the bus arm): the skip VERDICT itself came from
+        # _kernel_code_changed, which fails toward restarting on any error.
+        if _in_place_converge(target):
             return
-        _sync_notice("UI-only update failed to build in place (%s) — taking the restart path" % err,
-                     ok=False)
     if not kind:
         _MAIN_DRIFT[0] = _MAIN_DRIFT[1] = ""          # in sync: a future drift is new information again
         return
@@ -4645,16 +5143,23 @@ def _run_main_update(kind, immediate=True, manager_port=_PORT_FROM_ENV):
             _sync_notice("main moved at origin, but the pull step failed: %s" % e, ok=False)
             _MAIN_DRIFT[0] = ""
             return
-    if kind == "pull" and not _kernel_code_changed(_kernel_sha(), _checkout_sha()):
-        # the pull only moved UI/dist inputs — same in-place converge as the restart-kind branch
-        ok, err = _rebuild_dist()
-        if ok:
-            _REBUILT_FOR[0] = _checkout_sha()
-            _sync_notice("new build served in place (UI-only change; no restart) — reload the "
-                         "dashboard to pick it up")
+    if kind == "pull":
+        pulled = _checkout_sha()   # ONE read: verdict input and converge target must be the same
+        #                            sha — two reads raced a moving checkout and latched a target
+        #                            the verdict never examined (T216 review)
+        if not _kernel_code_changed(_kernel_sha(), pulled) and _in_place_converge(pulled):
             return
-        _sync_notice("UI-only update failed to build in place (%s) — taking the restart path" % err,
-                     ok=False)
+    # Pay the bundle rebuild BEFORE the old kernel dies (T216): the checkout is already at the
+    # target here, so this builds the NEW code's bundles while the old kernel still serves — the
+    # fresh kernel's pre-bind _ensure_bundles then finds them current instead of paying esbuild
+    # inside the outage. Failure must never block the restart: proceed loudly, _ensure_bundles
+    # stays the backstop. Skipped when an in-place attempt for this very sha just paid (and
+    # failed) the identical build — a doomed 180s re-run would only stretch the outage.
+    if _INPLACE_TRIED[0] != _checkout_sha():
+        ok, err = _rebuild_dist()
+        if not ok:
+            _sync_notice("pre-restart bundle rebuild failed (%s) — restarting anyway; the new "
+                         "kernel rebuilds at boot" % err, ok=False)
     if manager_port is _PORT_FROM_ENV:
         manager_port = os.environ.get("ROMP_MANAGER_PORT")
     try:
@@ -8923,6 +9428,8 @@ def _comment_status_refusal(prior):
         return "this thread is being relayed back to the session; give it a moment."
     if prior == "merged":
         return "this discussion was already relayed; reply in the thread to continue it."
+    if prior == "resolved":
+        return "this thread was closed; start a new comment to continue the conversation."
     return "that thread is gone."
 
 
@@ -9444,12 +9951,16 @@ def _comment_create(parent_sid, anchor_uuid, exact, text, name="", model="", eff
 
 
 def _comment_reply(parent_sid, tid, text):
-    """Send the user's next message into an existing thread. A resolved thread reopens — replying IS
-    the reopen gesture (event-based; no separate arm). Returns an error string or None."""
+    """Send the user's next message into a thread. A thread the user CLOSED (resolved) never reopens
+    (the user 2026-09-01, standing rule: closed threads stay on disk, never revived) — the reply is
+    refused with the reason, and a new comment starts a new thread; this retires the 2026-08-22
+    "replying reopens a resolved thread" arm. A RELAYED (merged) thread is not closed: T145 (the user
+    2026-08-28) keeps it talkable — a reply is the explicit gesture that continues it, and the next
+    relay carries only the new tail. Returns an error string or None."""
     be = Sessions.backend_for(parent_sid)
     if not hasattr(be, "fork"):
         return "threads need the SDK backend."
-    prior, th = _comment_update_if(parent_sid, tid, ("open", "resolved", "merged"),
+    prior, th = _comment_update_if(parent_sid, tid, ("open", "merged"),
                                    status="open", lastSeenT=int(time.time()))
     if th is None:
         if prior == "promoted":
@@ -9457,9 +9968,9 @@ def _comment_reply(parent_sid, tid, text):
             return "this thread is now the session '%s'; continue there." % (row.get("promotedName") or "")
         return _comment_status_refusal(prior)
     tsid = th["sid"]
-    if prior in ("resolved", "merged"):
-        # a RELAYED thread stays talkable (T145): replying reopens it exactly like a resolved one —
-        # the conversation continues, and a later relay sends only the new tail past relayedT
+    if prior == "merged":
+        # a RELAYED thread stays talkable (T145): the explicit reply continues it — the CLI comes
+        # back for exactly this gesture, and a later relay sends only the new tail past relayedT
         reg = _thread_reg(tsid)
         be.resume(reg.get("name") or ("thread-" + tsid[:8]), tsid)   # alive again; names/ untouched
     if not be.send(tsid, str(text)):
@@ -9541,7 +10052,11 @@ def _comment_merge(parent_sid, tid):
         be.send(parent_sid, body)
     except Exception as e:
         return _revert("the merge message could not be delivered: %s" % e)
-    _comment_update(parent_sid, tid, status="merged",
+    _comment_update(parent_sid, tid,
+                    # a thread the user CLOSED stays closed after its content is sent back (the user
+                    # 2026-09-01) — "merged" is the talkable status, and resolved→relay→reply must
+                    # not become the reopen door the direct reply refuses
+                    status=("resolved" if prior == "resolved" else "merged"),
                     relayedT=max((m.get("t") or 0) for m in msgs))
     if hasattr(be, "kill"):
         try:
@@ -9864,6 +10379,13 @@ def _sdk_locked():
             # the unwired judges inherited the post-claim env on a login-less host and every call
             # refused "Not logged in" for 13 hours while the cards sat parked in Working).
             jd._WORK_KEY_FN = sbmod.work_api_key
+            # T222: the live model catalog — the last fetched list installs before any picker asks,
+            # then the BOOT event refreshes it (async; the key is claimable from here on)
+            try:
+                _load_model_catalog_cache()
+                _refresh_model_catalog("boot")
+            except Exception:
+                sys.stderr.write("model catalog boot: %s\n" % traceback.format_exc())
             _sdk_backend = sbmod.SdkBackend(
                 jd.STATE, _claude_bin(), _send_to_app,
                 poke=_producer_wake.set, push=_pusher_wake.set,
@@ -9884,6 +10406,16 @@ def _sdk_locked():
             # store names no signed-in account — the same authority the usage bars trust, so the
             # pick can never sit in the UI as applied fact on a box that demonstrably cannot apply it
             _sdk_backend.login_ok = lambda: bool(_claude_account())
+            # NO thread-wake model remap on the fork (fold fixer, 2026-09-02). Upstream's T223 rider
+            # installs _family_newest_model as the backend's wake hook, so a dormant comment thread
+            # registered on a superseded full id comes up on its family's newest at its next explicit
+            # wake — built for the pre-fix artefact where a FAMILY click wrote the head's full id into
+            # the reg, an accidental pin. After the alias pickers (#140) a full id in reg.model is a
+            # DELIBERATE pin (the version submenu writes the pick verbatim, the create dialog sends a
+            # pinned family's id, the marker-gated _model_alias_boot_pass treats every post-migration
+            # head as the user's; the way back to floating is the Latest gesture), so the remap would
+            # override only deliberate pins. The backend's hook stays at its None default and its
+            # consult in _ensure stays inert; pinned in tests/test_thread_rows.py (ThreadWakePinsStand).
             # silent mid-turn model swaps mint a completed card (the user 2026-08-23) — the backend
             # observes the transition; the judge store owns the card; the kernel wires the two
             type(_sdk_backend).on_model_fallback = staticmethod(
@@ -9901,10 +10433,13 @@ def _sdk_locked():
             # The backend's flag-consumption events resolve held rewinds (two-phase goal cleanup:
             # archive at the branch-take, restore on failure — _on_rewind_resolved).
             _sdk_backend.rewind_resolved_cb = _on_rewind_resolved
+            _mark_boot("reconcileDone")            # T217: the boot reconcile ran inside the
+            #                                        construct above — the settle's other bookend
         except Exception:
             sys.stderr.write("sdk-backend unavailable: %s\n" % traceback.format_exc())
             _sdk_problem("the SDK backend could not be built: %s" % traceback.format_exc())
             _sdk_backend = False
+            _mark_boot("reconcileDone")            # unavailable = the reconcile phase is over too
     return _sdk_backend or None
 
 
@@ -10886,7 +11421,8 @@ def _drive(msg, client):
         # Fork this conversation into a NEW parallel session (the user 2026-08-13). uuid (optional) is the
         # user message the fork cuts just BEFORE — absent means the whole conversation. LOUD on refusal;
         # on success the new tab arrives focused via _fork_session's own push.
-        err = _fork_session(sid, str(msg.get("uuid") or ""), str(msg["name"]), client=client)
+        err = _thread_name_refusal(str(msg["name"]).strip(), _thread_names()) \
+            or _fork_session(sid, str(msg.get("uuid") or ""), str(msg["name"]), client=client)
         if err:
             client["send"](json.dumps({"type": "warn", "text": err}))
     elif t == "commentCreate" and msg.get("uuid") and msg.get("exact") and msg.get("text"):
@@ -10985,6 +11521,8 @@ def _drive(msg, client):
         new = str(msg["name"]).strip()
         if not NAME_RE.match(new):
             client["send"](json.dumps({"type": "warn", "text": "session names use letters, digits, . _ - only."}))
+        elif _thread_name_refusal(new, _thread_names()):     # a thread's name — never relabel onto it (T223)
+            client["send"](json.dumps({"type": "warn", "text": _thread_name_refusal(new, _thread_names())}))
         elif be.rename(sid, new):                         # live → tmux rename hook / SDK reg; dead → names file
             client["send"](json.dumps({"type": "renamed", "id": sid, "name": new}))
     else:
@@ -15022,6 +15560,61 @@ def _append_restart_cut(row):
         pass
 
 
+_BOOT_MARKS = {}                                   # {"firstServe": t, "reconcileDone": t} — see _mark_boot
+_BOOT_MARKS_LOCK = threading.Lock()                # the two marks land on DIFFERENT threads (main vs the
+#                                                    lazy backend builder) — without this, both could see
+#                                                    "both present" and double-append the boot row
+
+
+def _append_boot_settled(first_serve, reconcile_done):
+    """The outage's other bookend (T217: nothing recorded how long a restart GAP lasted, so no seam
+    work is verifiable): one boot row in the same ledger, carrying when this kernel first accepted
+    requests and when its boot reconcile finished, plus outageS — firstServe minus the PREVIOUS cut
+    row's t, the felt window. Same-host deltas only by construction: the ledger lives under this
+    host's own STATE, so rows never mix clocks. Best-effort like every writer here."""
+    try:
+        prev_cut = None
+        try:
+            for line in RESTART_CUTS_FILE.read_text(encoding="utf-8").splitlines():
+                try:
+                    r = json.loads(line)
+                except Exception:
+                    continue
+                if isinstance(r, dict) and "cutTurns" in r:
+                    prev_cut = r
+        except OSError:
+            pass
+        row = {"t": int(time.time()), "pid": os.getpid(), "bootSettled": True,
+               "firstServe": round(first_serve, 2), "reconcileDone": round(reconcile_done, 2),
+               "settleS": round(reconcile_done - first_serve, 2)}
+        if prev_cut and isinstance(prev_cut.get("t"), int) and first_serve >= prev_cut["t"]:
+            row["prevCutT"] = prev_cut["t"]
+            row["outageS"] = round(first_serve - prev_cut["t"], 2)
+        _append_restart_cut(row)
+    except Exception:
+        pass
+
+
+def _mark_boot(kind):
+    """One boot milestone (firstServe = the accept loop starts; reconcileDone = the SDK backend's
+    boot reconcile returned, or was found unavailable — the phase is over either way). The backend
+    builds LAZILY, so the two marks land in either order; whichever lands second appends the
+    boot-settled row. Idempotent per kind, never raises."""
+    try:
+        with _BOOT_MARKS_LOCK:
+            if kind in _BOOT_MARKS:
+                return
+            _BOOT_MARKS[kind] = time.time()
+            write = "firstServe" in _BOOT_MARKS and "reconcileDone" in _BOOT_MARKS \
+                and not _BOOT_MARKS.get("_row")
+            if write:
+                _BOOT_MARKS["_row"] = True         # exactly one row per boot, whichever thread wins
+        if write:
+            _append_boot_settled(_BOOT_MARKS["firstServe"], _BOOT_MARKS["reconcileDone"])
+    except Exception:
+        pass
+
+
 def _recent_restart_reason(window=90, now=None):
     """The most recent restart-audit action within `window` seconds — joins the cut row to WHO asked
     (deploy refresh, self-update, the rail button…). Best-effort: an anonymous SIGTERM has no row
@@ -15466,6 +16059,52 @@ def _thread_rows():
                     "lastSid": jd._sdk_last_sid(tsid) or tsid,
                     "working": "", "backend": "sdk"})
     return out
+
+
+def _thread_names():
+    """name -> (tsid, parent) for every comment thread that is NOT promoted — every name it answers
+    to (the comments-store name AND the registry name; a pre-naming thread's reg says
+    "thread-<hash>" while its row has no name), dormant or alive (a thread whose parent was ended
+    is alive=False with its row still open, and a revived parent finds it again). The CREATE doors
+    (POST /new, WS createSession) and the RELABEL doors (/fork, /rename and their WS twins) must
+    consult this: a thread's name is taken, and minting or renaming a top-level session onto it
+    makes a NAMESAKE — a real session with its own CLI process, listed as a tab, poisoning every
+    by-name surface (T223, 2026-09-01: a model-set sweep drove `romp new --model … <name>` over
+    every reg incl. 20 dormant threads and minted 18 such namesakes). Returns None when the stores
+    cannot be read: callers REFUSE on None — an unverifiable name must never mint (fail toward
+    refusing, the standing rule; the first cut returned {} and silently reopened the door)."""
+    out = {}
+    try:
+        cdir = jd.STATE / "comments"
+        files = sorted(cdir.glob("*.json")) if cdir.is_dir() else []
+        for f in files:
+            parent = f.stem
+            for t in (_load_comments(parent).get("threads") or []):
+                if (t.get("status") or "open") == "promoted":
+                    continue
+                tsid = str(t.get("sid") or t.get("tid") or "")
+                if not tsid:
+                    continue
+                for nm in (str(t.get("name") or tsid[:8]),        # the row's name, or the bare hash
+                           str(_thread_reg(tsid).get("name") or "")):   # _thread_rows shows for a nameless row
+                    if nm:
+                        out.setdefault(nm, (tsid, parent))
+    except Exception:
+        sys.stderr.write("thread names: cannot read the comments stores — create/rename doors "
+                         "refuse until they can: %s\n" % traceback.format_exc())
+        return None
+    return out
+
+
+def _thread_name_refusal(nm, names):
+    """The refusal text for a create/relabel door hitting a thread's name (None names = unverifiable)."""
+    if names is None:
+        return "couldn't verify \"%s\" against the comment threads — try again in a moment" % nm
+    hit = names.get(nm)
+    if not hit:
+        return ""
+    return ("\"%s\" is a comment thread of %s — open it from that session's comments, or pick another "
+            "name" % (nm, _name_of(hit[1]) or hit[1][:8]))
 
 
 # ── inbox-socket delivery (Claude Code ≥ 2.1.224) ──
@@ -16155,7 +16794,13 @@ def _sid_of(who):
     if _name_of(who):
         return who
     live = Sessions.live()
-    return who if who in live else _live_names(live).get(who, who)
+    if who in live:
+        return who
+    hit = _live_names(live).get(who)
+    if hit:
+        return hit
+    th = (_thread_names() or {}).get(who)     # a comment thread's name: the explicit send reaches
+    return th[0] if th else who               # the THREAD (T223) — not a phantom sid spelled like a name
 
 
 def _optimistic_echo(sid, text, author="human"):
@@ -24064,6 +24709,20 @@ def build_feed(now, tmux=None):
                                      and (nodes[nid].get("summary") or "").strip()) or None,   # the DONE twin: [{id, since}] per takeaway paragraph when the distiller split by <completed-items>; done-event times (the user 2026-07-24)
                 "background": nodes[nid].get("background"),    # the distiller's BACKGROUND section: re-orientation for a reader who forgot the thread — collapsed by default on the card (the user 2026-07-02)
                 "summaryAnchorUuid": _sa_u,    # click the summary line → the completion turn's wrap-up (completed pin), else the cited/latest prose (the user 2026-07-14)
+                # the supporting SPAN (T218): the distiller's verbatim quote, located in the cited atom at
+                # write time — shipped ONLY while the resolved anchor IS the cited atom (the fallback tiers
+                # land elsewhere, where the span would highlight the wrong text); the landing scrolls to
+                # and highlights it, and a null keeps today's whole-message behavior
+                "summaryAnchorQuote": (nodes[nid].get("summaryQuote")
+                                       if _sa_u and _sa_u == nodes[nid].get("summaryAnchor") else None),
+                # per-paragraph landings (T220, the user's ruling): each cited paragraph's own atom +
+                # located span, aligned to the takeaway's paragraphs (None = that paragraph falls back
+                # to the whole-summary landing). Gated exactly like the quote above: the cited tier
+                # must hold authority (the T153 outrun rule) — absent on old stores forever, no sweep.
+                "summaryAnchorsPara": ([({"u": e["a"], **({"q": e["q"]} if e.get("q") else {})} if e else None)
+                                        for e in nodes[nid].get("summaryAnchors") or []]
+                                       if (nodes[nid].get("summaryAnchors")
+                                           and _sa_u and _sa_u == nodes[nid].get("summaryAnchor")) else None),
                 "warns": nodes[nid].get("warns") or None,   # judge-stamped anomalies (judge _node_warn) → yellow "warning" chip; click shows each warn's what/why detail (the user 2026-07-02)
                 "failLog": nodes[nid].get("failLog") or None,   # the summarizer's failed attempts (judge _fail_log): model + literal error per try → the chip's hover history + modal "What was tried" (the user 2026-08-18)
                 "nudged": ({"count": int(nrec.get("count", 0)), "times": _nudge_times().get(nid, [])[-8:]}
@@ -26613,6 +27272,8 @@ def _show_on_timeline_focus(msg):
     chip in the composer (see _cite_for) → a follow-up without the explicit Follow-up button."""
     f = {"type": "focus", "id": msg["sid"], "anchor": msg.get("anchorUuid"),
          "anchorT": msg.get("t"), "anchorKind": _focus_kind(msg.get("anchor"))}
+    if msg.get("quote"):
+        f["anchorQuote"] = str(msg["quote"])[:300]   # the supporting span (T218) — the chat highlights it on landing
     cite = _cite_for(msg.get("itemId"))
     if cite:
         f["cite"] = cite
@@ -28278,6 +28939,30 @@ def _push(targets, connect=False, tmux=None):
         _clients[:] = [c for c in _clients if c.get("alive", True)]
 
 
+def _broadcast_restarting(budget_s=0.8):
+    """One final frame to every connected ws client as the kernel dies (T217: the shims otherwise
+    learn of the restart only when their socket closes and redial on a blind cadence): {type:
+    restarting, boot} — the announced-death event the shim keys its eager reconnect and its
+    banner-suppression latch on. Best-effort with a HARD sub-second budget: a client whose pipe
+    stalls is skipped, a raising send is swallowed, and the whole walk stops at the deadline — the
+    frame must never widen the shutdown (the dispatch's bound). Same-thread, no queue: the process
+    is about to _exit and nothing else will flush."""
+    try:
+        deadline = time.time() + budget_s
+        with _clients_lock:
+            clients = list(_clients)
+        payload = json.dumps({"type": "restarting", "boot": _BOOT_ID})
+        for c in clients:
+            if time.time() >= deadline:
+                break
+            try:
+                c["send"](payload)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
 def _push_all(tmux=None):
     with _clients_lock:
         clients = list(_clients)
@@ -29336,7 +30021,7 @@ function armStale(why){if(staleTimer)return;staleTimer=setTimeout(function(){sta
 // baked LOADEDV is older is running outdated code against newer kernel state — prompt a reload (never auto).
 // In the dashboard the raise routes to the shell's #rstale banner (build:1 → its BUILDMSG); standalone pages
 // self-inject the same bar. Latched: one prompt per page life, cleared only by the reload it asks for.
-var buildRaised=false,freshPending=false;   // freshPending: a reconnect is awaiting its resync frame
+var buildRaised=false,freshPending=false,restartAnnounced=0;   // freshPending: a reconnect is awaiting its resync frame; restartAnnounced: the kernel's dying frame (T217)
 function raiseBuild(){if(buildRaised)return;buildRaised=true;
 if(window.parent!==window){try{window.parent.postMessage({romp:"wsStale",build:1},"*");}catch(e){}}
 else selfBar("A newer romp build is available.","build");}
@@ -29351,16 +30036,27 @@ ws=new WebSocket(proto+location.host+"/ws?app=%s"+(wid?"&wid="+encodeURIComponen
 // socket dropped (the pane's romp loader) needs the socket's RETURN as its event to come back down. The
 // first connect deliberately doesn't fire it — nothing is waiting on it, and the loader must stay up until
 // real content lands.
-ws.onopen=function(){lastRecv=Date.now();netState("up");var wasReconn=everConnected;everConnected=true;for(var i=0;i<queue.length;i++)ws.send(queue[i]);queue=[];if(wasReconn){armStale("reconnect");freshPending=true;try{window.dispatchEvent(new Event("romp:wsup"));}catch(e){}}};
+ws.onopen=function(){lastRecv=Date.now();netState("up");var wasReconn=everConnected;everConnected=true;for(var i=0;i<queue.length;i++)ws.send(queue[i]);queue=[];
+if(wasReconn){var ann=restartAnnounced&&Date.now()-restartAnnounced<30000;restartAnnounced=0;   // one-shot: spent here
+if(!ann)armStale("reconnect");   // T217: an ANNOUNCED restart's reconnect skips the arm — the resync lands in a beat and the flash was pure noise; the resync-never-arrives case re-raises through the keepalive watchdog's forced second reconnect, which arms as always
+freshPending=true;try{window.dispatchEvent(new Event("romp:wsup"));}catch(e){}}};
 ws.onmessage=function(ev){lastRecv=Date.now();var msg;try{msg=JSON.parse(ev.data);}catch(e){return;}
 if(msg&&msg.type==="ka"){if(LOADEDV&&msg.dv&&msg.dv>LOADEDV)raiseBuild();return;}   // keepalive: stamped lastRecv above; carries the build token (drift → reload banner); nothing for the bundle to render
+// T217: the kernel announces its own death (one final frame from the dying process). Latch it: the
+// imminent close is EXPECTED — onclose redials eagerly instead of on the blind cadence, and the
+// reconnect skips the stale-banner arm once (the resync is seconds away; a restart that never
+// comes back stays loud through the disconnected state itself, and a SECOND reconnect arms as
+// always — the latch is one-shot). 30s staleness bound so a spent announcement can never drive
+// tight retries forever.
+if(msg&&msg.type==="restarting"){restartAnnounced=Date.now();staleDiag("restart-announced","");return;}
 // the first REAL frame after a reconnect is the kernel's connect-time push — the resync itself, so the
 // "what you see may be stale" prompt is answered and retires (see clearStale). Keepalives return above.
 if(freshPending){freshPending=false;clearStale();}
 if(window.__rompFed){window.__rompFed.inbound("",msg);}else{window.dispatchEvent(new MessageEvent("message",{data:msg}));}};
 // onclose: flag the shell, RE-SHOW this pane's romp loader (the user 2026-06-29, who wanted the swirling loader on
 // kernel restart), + RETRY (don't blind-reload — on a real outage the reload just fails into a dead page).
-ws.onclose=function(){netState("down");try{window.dispatchEvent(new Event("romp:wsdown"));}catch(e){}setTimeout(connect,1500);};
+ws.onclose=function(){netState("down");try{window.dispatchEvent(new Event("romp:wsdown"));}catch(e){}
+setTimeout(connect,(restartAnnounced&&Date.now()-restartAnnounced<30000)?250:1500);};   // announced death → tight redial (the frame is the event; the blind 1.5s stays for unannounced drops)
 ws.onerror=function(){try{ws.close();}catch(e){}};}
 function send(m){var s=JSON.stringify(m);if(ws&&ws.readyState===1)ws.send(s);else queue.push(s);}
 window.__rompLocalSend=send;window.__rompApp=APP;   // federation.ts (the multi-kernel manager) routes local sends + knows the app through these
@@ -29643,8 +30339,20 @@ def _pane_spin(cid, ignore_id=""):
             "background:var(--vscode-editor-background,#1e1e1e);transition:opacity .3s ease}"
             "#pane-spin.gone{opacity:0;pointer-events:none}"
             # light theme: the loader backdrop goes warm-light with the page
-            "body.theme-light #pane-spin{background:#F1EAE2}" + _LOADER_CSS + "</style>"
+            "body.theme-light #pane-spin{background:#F1EAE2}" + _LOADER_CSS +
+            # T217: the RECONNECTING affordance for a pane that already HAS content — a small corner
+            # badge (swirl + label) over the frozen, still-legible pane, never the opaque loader (the
+            # user kept losing seconds-stale but perfectly readable content behind a full-pane sheet).
+            # pointer-events:none: clicks land on the content and queue in the shim, by design.
+            "#pane-reconn{position:fixed;top:8px;right:8px;z-index:61;display:none;align-items:center;"
+            "gap:7px;padding:4px 11px;border-radius:6px;background:rgba(37,37,38,0.88);"
+            "border:1px solid rgba(255,255,255,0.12);box-shadow:0 4px 12px rgba(0,0,0,0.35);"
+            "font:12px 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;color:#ccc;pointer-events:none}"
+            "#pane-reconn.on{display:flex}"
+            "#pane-reconn img{width:14px;height:14px;animation:rl-spin 7s linear infinite}"
+            "body.theme-light #pane-reconn{background:rgba(241,234,226,0.92);color:#333}</style>"
             "<div id=pane-spin>" + _loader_inner() + "</div>"
+            "<div id=pane-reconn><img src=/media/romp-swirl-glyph.svg alt=''>reconnecting…</div>"
             "<script>(function(){var o=document.getElementById('pane-spin'),c=document.getElementById('" + cid + "'),IGN='" + ignore_id + "';"
             "if(!o)return;var fail=0;"
             "function arm(){clearTimeout(fail);fail=setTimeout(hide,30000);}"   # per SHOW, not per page load
@@ -29654,8 +30362,13 @@ def _pane_spin(cid, ignore_id=""):
             "arm();"
             "if(c){try{new MutationObserver(function(){if(ready())hide();}).observe(c,{childList:true});}catch(e){}"
             "if(ready())hide();}"
-            "window.addEventListener('romp:wsdown',show);"
-            "window.addEventListener('romp:wsup',hide);})();</script>")
+            "var rb=document.getElementById('pane-reconn');"
+            "function badge(on){if(rb)rb.classList.toggle('on',!!on);}"
+            # T217: a drop over EXISTING content keeps the content — translucent corner badge, not
+            # the opaque sheet; the sheet stays for a genuinely empty pane (cold load / never
+            # painted), per the loading-states rule. wsup ends both, exactly as before.
+            "window.addEventListener('romp:wsdown',function(){if(ready()){badge(true);}else{show();}});"
+            "window.addEventListener('romp:wsup',function(){badge(false);hide();});})();</script>")
 
 
 def _chat_page():
@@ -33163,16 +33876,23 @@ class Handler(BaseHTTPRequestHandler):
                 # selectors wear the same colors the statusline badges do, for ANY pick — the badge
                 # colors only cover the current value, so the list is where the shared tint belongs)
                 _stops = cm.stops_for(_colormap())
-                # each family also carries its VERSIONS (newest first, the family's tint — the seed
-                # table plus every id a running session's CLI reports, those marked `learned`) and its
-                # DEFAULT — the last version the user picked for that family, else the family ALIAS
-                # (the user 2026-08-25: family click = remembered pick; the submenu holds the rest.
-                # 2026-09-01: the alias, never the seed head — the CLI resolves an alias live, and the
-                # head pinned every picker-set session to claude-fable-5 while `fable` moved on).
+                # each family also carries its VERSIONS (newest first, the family's tint): the CATALOG
+                # — the seed table as the Models API fetch and its cache have grown it (T222) — plus
+                # every id a running session's CLI reports that the catalog lacks yet, those marked
+                # `learned`; and its DEFAULT — the last version the user picked for that family, else
+                # the family ALIAS (the user 2026-08-25: family click = remembered pick; the submenu
+                # holds the rest. 2026-09-01: the alias, never the list's head — the CLI resolves an
+                # alias live, and the head pinned every picker-set session to claude-fable-5 while
+                # `fable` moved on. Fold 2026-09-02: the catalog owns the LIST, the alias the DEFAULT).
                 _rev = _models_rev[0]
                 _learned = _learned_versions()
                 _picks = _model_picks(_learned)
                 _cat = _versions_catalog(_learned)
+                # a version the INSTALLED CLI has refused by minimum version says so on its own row
+                # (T222): the refusal is learned from the CLI's own error at the first attempt
+                # (sdk_backend.note_cli_model_block) and cleared by the first real reply on that
+                # model — so every picker shows the reason before the next pick, not only after it
+                _blocks = _cli_model_blocks()
                 return self._send(200, json.dumps(
                     # `rev` is the pick memory's revision — the models frame's counter (_models_changed),
                     # read here BEFORE the picks so a payload never carries a rev newer than its list: a
@@ -33181,7 +33901,8 @@ class Handler(BaseHTTPRequestHandler):
                     {"rev": _rev,
                      "models": [dict(c, color=_model_color(c["value"], _stops),
                                      tone=_model_tone(c["value"]),
-                                     versions=_cat.get(c["value"]) or [],
+                                     versions=[_with_cli_block(dict(v), _blocks)
+                                               for v in _cat.get(c["value"]) or []],
                                      default=_picks.get(c["value"]) or c["value"])
                                 for c in MODEL_CHOICES],
                      "efforts": [dict(c, color=_effort_color(c["value"], _stops), tone=_effort_tone(c["value"]))
@@ -33756,6 +34477,18 @@ class Handler(BaseHTTPRequestHandler):
                     extra = _apply_new_session_prefs(live[nm], b)
                     return self._send(200, json.dumps({"ok": True, "id": live[nm], "existing": True, **extra}),
                                       "application/json")
+                names = _thread_names()
+                if names is None:
+                    return self._send(503, json.dumps({"ok": False, "error": _thread_name_refusal(nm, None)}),
+                                      "application/json")
+                th = names.get(nm)
+                if th:
+                    # a comment THREAD owns this name: the idempotent open lands on the thread (prefs
+                    # applied to it — the sweep's intent) and no namesake is ever minted (T223)
+                    extra = _apply_new_session_prefs(th[0], b)
+                    return self._send(200, json.dumps({"ok": True, "id": th[0], "existing": True,
+                                                       "thread": True, "parent": th[1], **extra}),
+                                      "application/json")
                 if (b.get("backend") or "sdk") == "sdk":
                     if not _sdk_ready():          # see _sdk_ready — a built backend is not a working one
                         return self._send(200, json.dumps({"ok": False, "error": SDK_SETUP_HINT}),
@@ -33798,6 +34531,9 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(200, json.dumps({"ok": False, "error":
                         'a session named "%s" is already running — pick another name' % nm}),
                                       "application/json")
+                tref = _thread_name_refusal(nm, _thread_names())
+                if tref:                             # a comment thread's name — the same poisoning (T223)
+                    return self._send(200, json.dumps({"ok": False, "error": tref}), "application/json")
                 psid = live.get(parent) or ""
                 if not psid and re.fullmatch(r"[0-9a-fA-F-]{32,36}", parent):
                     psid = parent                 # a sid: _fork_session validates it owns a transcript
@@ -33837,6 +34573,9 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(200, json.dumps({"ok": False, "error":
                         'a session named "%s" is already running — pick another name' % nm}),
                                       "application/json")
+                tref = _thread_name_refusal(nm, _thread_names())
+                if tref:                             # a comment thread's name — never relabel onto it (T223)
+                    return self._send(200, json.dumps({"ok": False, "error": tref}), "application/json")
                 tsid = live.get(target) or ""
                 if not tsid and re.fullmatch(r"[0-9a-fA-F-]{32,36}", target):
                     tsid = target
@@ -34856,6 +35595,8 @@ class Handler(BaseHTTPRequestHandler):
                 elif nm in live:                 # already running → its tab is already up; just focus it
                     _reveal_chat_for(client, {"type": "focus", "id": live[nm]})
                     _mark_views_dirty()          # pusher ships the tab; never a synchronous fleet build here
+                elif _thread_name_refusal(nm, _thread_names()):   # a thread's name (or unverifiable): never mint a namesake tab (T223)
+                    client["send"](json.dumps({"type": "warn", "text": _thread_name_refusal(nm, _thread_names())}))
                 elif msg.get("backend") == "sdk":   # non-tmux: drive via the Agent SDK
                     # _sdk_ready(), not _sdk(): the backend object exists even with the dependency
                     # missing, so the old check took it as a yes and created a session that could never
@@ -35042,11 +35783,18 @@ class Handler(BaseHTTPRequestHandler):
         elif msg and msg.get("type") == "dropFile" and msg.get("name") and msg.get("b64"):
             fp = _save_dropped_file(str(msg["name"]), str(msg["b64"]))   # bytes → saved file → insert its path
             if fp:
-                _reply(client, {"type": "droppedPath", "path": fp})
+                ack = {"type": "droppedPath", "path": fp}
             else:
                 # a failed save must be NACKED, not silent (fail loudly): the client keeps a pending
                 # chip up from the moment the file was picked, and only this reply can retire it
-                _reply(client, {"type": "dropSaveFailed", "name": str(msg["name"])})
+                ack = {"type": "dropSaveFailed", "name": str(msg["name"])}
+            if msg.get("shipId"):
+                # echo the client's ship id (T215): a kernel restart between ship and ack makes the
+                # client RE-SHIP the bytes on reconnect, so duplicate acks are possible — the echoed
+                # id lets it retire exactly the chip that asked and DROP a stray twin, instead of
+                # attaching the twin to whatever tab is active
+                ack["shipId"] = str(msg["shipId"])
+            _reply(client, ack)
         elif msg and msg.get("type") == "openFile" and msg.get("path"):
             # caption / linkified path click → open it on the kernel's machine (relative → resolved vs
             # the session cwd). The web dashboard sends this only where it IS the right answer; a remote
@@ -35652,6 +36400,9 @@ def _graceful_term(signum, frame):
     mutation, and a cut turn keeps its 'working' state tail — the NEXT kernel's boot reconcile
     resumes exactly those. Bounded (~2s) so `romp refresh` stays snappy. Never construct the
     backend here — no SDK sessions were running if it doesn't exist."""
+    _broadcast_restarting()                        # T217: announce the death FIRST — the frame is
+    #                                                the shims' eager-reconnect event, and its
+    #                                                sub-second budget cannot widen the shutdown
     res = {}
     err = ""
     try:
@@ -35764,6 +36515,8 @@ def main():
             webbrowser.open(url + "/?c=" + _mint_handoff())
         except Exception:
             pass
+    _mark_boot("firstServe")                       # T217: the socket is bound and the accept loop
+    #                                                starts now — the outage's closing bookend
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

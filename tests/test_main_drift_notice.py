@@ -132,9 +132,12 @@ class UiOnlyConverge(unittest.TestCase):
         self._saved = {n: getattr(km, n) for n in
                        ("_main_drift_verdict", "_kernel_code_changed", "_rebuild_dist",
                         "_sync_notice", "_update_mode", "_send_to_app", "_kernel_sha",
-                        "_main_tracking")}
+                        "_main_tracking", "_converge_classes")}
         km._MAIN_DRIFT[0] = km._MAIN_DRIFT[1] = ""
         km._REBUILT_FOR[0] = ""
+        km._INPLACE_TRIED[0] = ""
+        km._converge_classes = lambda a, b: {"kernel": [], "bus": [],
+                                             "skip": ["ui/webview/feed.ts"], "ast_equal": []}
         self.notices, self.banners, self.rebuilds = [], [], []
         km._sync_notice = lambda msg, ok=True: self.notices.append((msg, ok))
         km._send_to_app = lambda app, payload: self.banners.append(payload)
@@ -147,6 +150,7 @@ class UiOnlyConverge(unittest.TestCase):
             setattr(km, n, f)
         km._MAIN_DRIFT[0] = km._MAIN_DRIFT[1] = ""
         km._REBUILT_FOR[0] = ""
+        km._INPLACE_TRIED[0] = ""
 
     def test_ui_only_restart_drift_rebuilds_in_place_and_latches(self):
         km._main_drift_verdict = lambda o, c, k: ("restart", "tgt-ui")
@@ -178,25 +182,37 @@ class UiOnlyConverge(unittest.TestCase):
         self.assertEqual([b.get("drift") for b in self.banners], ["restart"])
 
     def test_the_classifier_reads_the_touched_paths(self):
-        import subprocess as sp
         from unittest.mock import patch
+        km._converge_classes = self._saved["_converge_classes"]   # the REAL classifier under test
 
         class R:
             def __init__(self, out, rc=0):
                 self.stdout, self.returncode = out, rc
-        with patch.object(km.subprocess, "run", return_value=R("ui/webview/feed.ts\ndocs/a.md\n")):
+
+        def fake_run(names, show_rc=1):
+            # git diff answers the NUL-separated name list; git show (the AST-equality probe)
+            # answers show_rc — rc=1 means "blob unreadable", the not-provable arm that must
+            # read as kernel code
+            def run(argv, **kw):
+                return R(names) if argv[:2] == ["git", "diff"] else R(b"", rc=show_rc)
+            return run
+        with patch.object(km.subprocess, "run", fake_run("ui/webview/feed.ts\0docs/a.md\0")):
             self.assertFalse(km._kernel_code_changed("a1", "b2"), "UI + docs only: rebuild in place")
-        with patch.object(km.subprocess, "run", return_value=R("ui/webview/feed.ts\nkernel/kernel.py\n")):
-            self.assertTrue(km._kernel_code_changed("a1", "b2"))
-        with patch.object(km.subprocess, "run", return_value=R("", rc=128)):
+        with patch.object(km.subprocess, "run", fake_run("ui/webview/feed.ts\0kernel/kernel.py\0")):
+            self.assertTrue(km._kernel_code_changed("a1", "b2"),
+                            "a kernel file whose blobs cannot be proven equal restarts")
+        with patch.object(km.subprocess, "run", lambda argv, **kw: R("", rc=128)):
             self.assertTrue(km._kernel_code_changed("a1", "b2"), "git failure: the restart is the safe converge")
         self.assertTrue(km._kernel_code_changed("", "b2"), "unknown shas: the restart is the safe converge")
 
     def test_the_pull_path_carries_the_same_in_place_converge(self):
         src = inspect.getsource(km._run_main_update)
-        self.assertIn('if kind == "pull" and not _kernel_code_changed(_kernel_sha(), _checkout_sha()):', src)
-        self.assertIn("_rebuild_dist()", src)
-        self.assertIn("_REBUILT_FOR[0] = _checkout_sha()", src)
+        self.assertIn("pulled = _checkout_sha()", src)
+        self.assertIn("not _kernel_code_changed(_kernel_sha(), pulled) and _in_place_converge(pulled)",
+                      src, "verdict input and converge target are the SAME read — never raced")
+        conv = inspect.getsource(km._in_place_converge)
+        self.assertIn("_rebuild_dist()", conv)
+        self.assertIn("_REBUILT_FOR[0] = target", conv)
 
 
 class ChannelGate(unittest.TestCase):

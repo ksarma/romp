@@ -924,10 +924,20 @@ export class FederationManager {
     conn.ws = ws;
     ws.onopen = () => {
       // settings queued while the socket was down go out FIRST — on the open event itself, never a
-      // timer — so nothing sent after the reconnect can overtake them (see flushPending)
+      // timer — so nothing sent after the reconnect can overtake them (see flushPending). That is
+      // also why the relay-up dispatch below comes AFTER the flush: the chat's upload re-ship rides
+      // that event, and a re-shipped dropFile must not get ahead of a queued setting on this socket.
       const flushed = this.flushPending(conn);
       this.diag("hostconn", flushed.length ? { host: conn.host, ev: "open", flushed }
                                            : { host: conn.host, ev: "open" });
+      // this host's owed replies just became reachable again — the chat re-ships its pending
+      // uploads on exactly this event (T215 review finding 2026-09-01: a remote kernel's restart
+      // redials HERE, firing neither romp:wsup nor hostUp, so nothing else could heal them).
+      // Fired on every open, not just re-opens: at boot the listener's map is empty (a no-op),
+      // and a detach/re-add mints a fresh Conn whose FIRST open is that heal event.
+      try {
+        window.dispatchEvent(new CustomEvent("romp:hostRelayUp", { detail: { host: conn.host } }));
+      } catch (e) { /* dispatch must never break the relay */ }
     };
     ws.onmessage = (ev: MessageEvent) => {
       let msg: any;
