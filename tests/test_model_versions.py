@@ -114,6 +114,58 @@ class PickMemory(unittest.TestCase):
         self.assertEqual(km._model_picks(), {"haiku": "claude-haiku-4-5"},
                          "unknown ids and cross-family entries never poison the default")
 
+    def _clients(self):
+        """Three fake connected clients — a chat, a timeline and a FEED client (the feed bundle is where the
+        settings gear's pickers live) — on the kernel's live roster; the frames they receive, decoded.
+        Removed again in tearDown-order by the returned callable."""
+        got = {"chat": [], "timeline": [], "feed": []}
+        fakes = [{"app": app, "wid": "w1", "alive": True,
+                  "send": (lambda s, _a=app: got[_a].append(json.loads(s)))} for app in got]
+        with km._clients_lock:
+            km._clients.extend(fakes)
+
+        def drop():
+            with km._clients_lock:
+                km._clients[:] = [c for c in km._clients if c not in fakes]
+        self.addCleanup(drop)
+        return got
+
+    def test_a_pick_or_a_forget_tells_every_open_picker_to_re_read_models(self):
+        # both webviews read a family's `default` from a /models list fetched ONCE at page load and
+        # never refreshed, and nothing mutated it after a pick. So after Latest un-pinned a family on
+        # the kernel, the same tab's next family click still sent the stale pinned id and silently
+        # RE-PINNED; another dashboard's pick moved the default without this tab knowing. The kernel
+        # emits a models frame whenever the pick memory CHANGES — event-keyed, never a poll — and
+        # every picker re-fetches on it.
+        got = self._clients()
+        km._note_model_pick("claude-opus-4-8")
+        for app in ("chat", "timeline", "feed"):
+            self.assertEqual([f["type"] for f in got[app]], ["models"], app)
+            self.assertIsInstance(got[app][0]["rev"], int)
+        rev = got["chat"][0]["rev"]
+        km._note_model_pick("claude-opus-4-8")            # write-on-change: nothing moved, nothing said
+        km._note_model_pick("opus")                        # an alias records nothing
+        km._forget_model_pick("sonnet")                    # no pin to forget
+        self.assertEqual(len(got["chat"]), 1)
+        km._forget_model_pick("opus")                      # the Latest gesture
+        self.assertEqual([f["type"] for f in got["chat"]], ["models", "models"])
+        self.assertEqual(got["chat"][1]["rev"], rev + 1, "a moving counter — a client can tell frames apart")
+        self.assertEqual(len(got["timeline"]), 2)
+        self.assertEqual(len(got["feed"]), 2)
+
+    def test_the_frame_reaches_the_feed_bundle_where_the_settings_gear_lives(self):
+        # the settings gear, whose judge-tier family rows send the cached list's `default`, is part of
+        # the FEED bundle (feed.ts requires gear.js; the web shell's rail gear and VS Code's settings
+        # command both post openSettings into the feed pane). A frame to the chat and timeline apps
+        # alone never reaches the gear where it actually opens, and its first-open cache keeps sending
+        # a stale pinned default after another picker un-pinned. Every app that hosts a picker hears it.
+        got = self._clients()
+        km._note_model_pick("claude-sonnet-4-6")
+        self.assertEqual([f["type"] for f in got["feed"]], ["models"], "the feed client hears the pin")
+        self.assertEqual(got["feed"][0], got["chat"][0], "the same frame every picker host gets")
+        km._forget_model_pick("sonnet")
+        self.assertEqual([f["type"] for f in got["feed"]], ["models", "models"], "…and the un-pin")
+
 
 class _ModelsServer(unittest.TestCase):
     """A kernel HTTP handler on a loopback port + a hermetic STATE, for the /models route tests."""
@@ -154,6 +206,33 @@ class ModelsRoute(_ModelsServer):
         self.assertEqual([v["value"] for v in rows["opus"]["versions"]],
                          [v["value"] for v in km.MODEL_VERSIONS["opus"]])
         self.assertIn("color", rows["opus"], "the colormap tint still rides every family row")
+
+    def test_the_payload_carries_the_pick_memorys_revision_the_frame_announces(self):
+        # every picker answers a models frame with a fresh GET /models and applies whatever lands — so
+        # two overlapping fetches (a frame during the page-load fetch; two quick frames) can resolve
+        # out of order and the STALE list wins until the next change. The payload carries the same
+        # `rev` the frame does, so a consumer can keep the newest it has applied and drop an older
+        # response that lands late.
+        got = self._clients()
+        d = self._models()
+        self.assertIsInstance(d.get("rev"), int, "the payload is stamped")
+        self.assertEqual(d["rev"], km._models_rev[0])
+        km._note_model_pick("claude-opus-4-8")
+        self.assertEqual(self._models()["rev"], got["chat"][0]["rev"],
+                         "after a change the payload's rev IS the frame's — one counter, two carriers")
+        self.assertGreater(self._models()["rev"], d["rev"])
+
+    def _clients(self):
+        got = {"chat": []}
+        fakes = [{"app": "chat", "wid": "w1", "alive": True, "send": lambda s: got["chat"].append(json.loads(s))}]
+        with km._clients_lock:
+            km._clients.extend(fakes)
+
+        def drop():
+            with km._clients_lock:
+                km._clients[:] = [c for c in km._clients if c not in fakes]
+        self.addCleanup(drop)
+        return got
 
     def test_a_family_with_no_pick_defaults_to_its_alias_not_the_seed_head(self):
         # THE BUG: the default fell to MODEL_VERSIONS[fam][0], so a bare "Fable" click pinned the

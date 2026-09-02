@@ -857,6 +857,12 @@ _VERSION_FAMILY = {v["value"]: fam for fam, vs in MODEL_VERSIONS.items() for v i
 MODEL_PICKS_FILE_NAME = "model-picks.json"   # {family: full-id} — a viewer pref all surfaces read, like colormap
 _model_picks_lock = threading.Lock()   # its read-modify-writes run on the WS-handler, producer AND SDK-loop threads
 _learned_announced = set()   # ids already announced on stderr as outside the catalog (once per process)
+# Bumps on every pick-memory change and every catalog growth; rides the models frame (_models_changed) AND
+# the /models payload, so a picker can drop a response older than one it has applied. Seeded from the clock
+# rather than 0: the counter is per process, and a kernel restart must never hand a page that kept its
+# high-water mark a LOWER rev, or that page would ignore every re-read until the count caught up — a silent
+# stale list. Milliseconds leave room for one bump per ms across a restart.
+_models_rev = [int(time.time() * 1000)]
 
 # ── the LIVE model catalog (T222, the user 2026-09-01: romp must stop needing a hand edit when
 # Anthropic ships a model). The table above is the SEED and the loud fallback. The kernel queries the
@@ -1081,7 +1087,11 @@ def _refresh_model_catalog(reason, _async=True):
                 sys.stderr.write("model catalog (%s): %d new version id(s) joined the pickers: %s\n"
                                  % (reason, len(added), ", ".join(added)))
                 try:
-                    _push_soon()                          # pickers re-read /models on the next frame
+                    # the models frame: every open picker re-reads /models on it (chat/comment, the
+                    # timeline lanes, the gear). Nothing re-reads the choice lists on its own after
+                    # page load — a session-list push (the line this replaced) told the pickers
+                    # nothing, so an open dashboard kept the page-load list until a reload
+                    _models_changed()
                 except Exception:
                     pass
         finally:
@@ -1283,6 +1293,25 @@ def _model_picks(learned=None):
     return out
 
 
+def _models_changed():
+    """The pick memory MOVED — a version pinned, a family un-pinned (Latest), a refused pin dropped — or the
+    version LIST grew (the catalog fetch added ids, T222), so every open picker's cached /models list is
+    stale, and its `default` is what a family click SENDS. Tell every client that hosts a picker now with a
+    models frame (the palette frame's idiom; each re-fetches /models on it) — event-keyed on the change
+    itself, never a poll. A counter rides it so a client can tell frames apart, and the same counter stamps
+    the /models payload so a late response never overwrites a newer one. (Without it, after Latest
+    un-pinned a family on the kernel the same tab's next family click sent the STALE pinned id and silently
+    re-pinned; a second dashboard's pick moved the default without the first tab knowing.) The FEED app is
+    on the list because the settings gear lives in the feed bundle (feed.ts requires gear.js; the shell's
+    rail gear and VS Code's settings command both open it in the feed pane). The feed shim and the VS Code
+    pipe hand every non-keepalive frame to the window as a message; feed.ts's own listener ignores a type
+    it does not know."""
+    _models_rev[0] += 1
+    frame = {"type": "models", "rev": _models_rev[0]}
+    for app in ("chat", "timeline", "feed"):
+        _send_to_app(app, frame)
+
+
 def _note_model_pick(value):
     """Record a version pick as its family's new default (write-on-change). Family shorthands and
     unknown strings record nothing — they are not version picks — so a bare family click (which
@@ -1309,6 +1338,8 @@ def _note_model_pick(value):
             _atomic_write(jd.STATE / MODEL_PICKS_FILE_NAME, json.dumps(picks))
         except Exception:
             sys.stderr.write("model-picks save: %s\n" % traceback.format_exc())
+            return
+    _models_changed()
 
 
 def _forget_model_pick(fam, only=None):
@@ -1332,6 +1363,8 @@ def _forget_model_pick(fam, only=None):
             _atomic_write(jd.STATE / MODEL_PICKS_FILE_NAME, json.dumps(picks))
         except Exception:
             sys.stderr.write("model-picks save: %s\n" % traceback.format_exc())
+            return
+    _models_changed()
 # "ultracode" tops the ladder (the user 2026-08-04): the CLI's own /effort offers it — xhigh effort plus
 # standing dynamic-workflow orchestration, per session. tmux delivers the literal "/effort ultracode"; the
 # SDK backend maps it to effort=xhigh + the `ultracode` settings key (the CLI's documented per-session
@@ -27978,6 +28011,7 @@ else if(m.type==="hover"&&panel.setHover)panel.setHover(m);
 // this inline copy serves the browser, that one the VS Code webview. net-popover-known.test.ts's sibling
 // timeline-boot.test.ts pins the pair.
 else if(m.type==="revealEvent"&&panel.revealEvent)panel.revealEvent(m.sid,m.t,m.id);
+else if(m.type==="models"&&panel.refreshModels)panel.refreshModels();
 else if(m.type==="tagEditFailed"&&panel.tagEditFailed)panel.tagEditFailed(m);
 else if(m.type==="openViewsDialog"&&panel._openViewsDialog)panel._openViewsDialog(null);});
 window.__rompTimelineOpenExternal=function(url){try{var u=new URL(url);if(u.protocol==="vscode:"){var q=u.searchParams;
@@ -31332,6 +31366,7 @@ class Handler(BaseHTTPRequestHandler):
                 # holds the rest). The alias, never the list's head: the CLI resolves an alias live,
                 # and the head pinned every picker-set session to claude-fable-5 while `fable` moved
                 # on. The catalog owns the LIST, the alias the DEFAULT.
+                _rev = _models_rev[0]
                 _learned = _learned_versions()
                 _picks = _model_picks(_learned)
                 _cat = _versions_catalog(_learned)
@@ -31341,7 +31376,12 @@ class Handler(BaseHTTPRequestHandler):
                 # model — so every picker shows the reason before the next pick, not only after it
                 _blocks = _cli_model_blocks()
                 return self._send(200, json.dumps(
-                    {"models": [dict(c, color=_model_color(c["value"], _stops),
+                    # `rev` is the pick memory's revision — the models frame's counter (_models_changed),
+                    # read here BEFORE the picks so a payload never carries a rev newer than its list: a
+                    # picker keeps the highest rev it applied and drops a response that lands late with a
+                    # lower one (two overlapping fetches can resolve out of order)
+                    {"rev": _rev,
+                     "models": [dict(c, color=_model_color(c["value"], _stops),
                                      tone=_model_tone(c["value"]),
                                      versions=[_with_cli_block(dict(v), _blocks)
                                                for v in _cat.get(c["value"]) or []],

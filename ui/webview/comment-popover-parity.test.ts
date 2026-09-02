@@ -181,6 +181,33 @@ test("the popover resizes from ANY edge or corner, macOS-style; the old grip kee
   assert.match(CSSs, /resize: both/, "the native grip stays");
 });
 
+test("the pickers re-read /models on the kernel's models frame — the pick memory moved", () => {
+  // Both pickers read a family's `default` from a /models list fetched ONCE at page load; nothing
+  // mutated it after a pick and no push carried it. So after Latest un-pinned a family on the kernel,
+  // the same tab's next family click sent the STALE pinned id and silently re-pinned; another
+  // dashboard's pick moved the default unseen. Event-keyed: the kernel emits a models frame whenever
+  // model-picks.json changes (a pin, a Latest un-pin, a refused pin dropped) or the catalog grows,
+  // and the list is re-fetched IN PLACE on it — META_CHOICES keeps its reference, so the next family
+  // click reads the fresh default. Never a poll.
+  assert.match(RENDER, /function loadModelChoices\(\): void \{/);
+  const loader = RENDER.split("function loadModelChoices(): void {")[1].split("\n}\n")[0];
+  assert.ok(loader.includes('fetch(kernelUrl("/models"), { cache: "no-store" })'), "the same fetch as page load");
+  assert.ok(loader.includes("MODEL_CHOICES.length = 0; MODEL_CHOICES.push(...d.models"), "refilled in place — the shared reference holds");
+  assert.match(RENDER, /^loadModelChoices\(\);$/m, "…and page load is just the first call");
+  assert.match(RENDER, /else if \(m\.type === "models"\) loadModelChoices\(\);/, "the frame arm");
+  // the kernel side: one emitter, fired by every writer of the pick memory, to EVERY app that hosts a
+  // picker — chat, timeline, and the feed, where the settings gear's judge-tier pickers live
+  assert.match(KERNEL, /frame = \{"type": "models", "rev": _models_rev\[0\]\}/);
+  assert.match(KERNEL, /for app in \("chat", "timeline", "feed"\):\s*\n\s*_send_to_app\(app, frame\)/);
+  // …and the payload carries the same counter, so a consumer can drop a response older than one applied
+  assert.match(KERNEL, /\{"rev": _rev,\s*\n\s*"models": \[/);
+  assert.match(KERNEL, /_rev = _models_rev\[0\]\s*\n\s*_learned = _learned_versions\(\)/, "read before the list, never after it");
+  const note = KERNEL.split("def _note_model_pick(")[1].split("\ndef ")[0];
+  const forget = KERNEL.split("def _forget_model_pick(")[1].split("\ndef ")[0];
+  assert.ok(note.includes("_models_changed()"), "a pin emits");
+  assert.ok(forget.includes("_models_changed()"), "a forget emits");
+});
+
 test("the create name input wears no underline at rest (the user 2026-08-25)", () => {
   assert.match(CSS, /\.cmt-name \{[^}]*border-bottom: 1px solid transparent;/s);
   assert.doesNotMatch(CSS, /\.cmt-name \{[^}]*dashed/s);

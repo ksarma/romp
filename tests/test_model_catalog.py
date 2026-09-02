@@ -230,6 +230,21 @@ class FetchAndFallback(unittest.TestCase):
         jd.STATE = self._state
         self.td.cleanup()
 
+    def _clients(self):
+        """Fake dashboard clients on the kernel's client list — one per app that hosts a picker — so the
+        models frame's fan-out can be asserted (the test_model_versions idiom)."""
+        got = []
+        fakes = [{"app": app, "wid": "w-" + app, "alive": True,
+                  "send": (lambda s, a=app: got.append((a, json.loads(s))))} for app in ("chat", "timeline", "feed")]
+        with km._clients_lock:
+            km._clients.extend(fakes)
+
+        def drop():
+            with km._clients_lock:
+                km._clients[:] = [c for c in km._clients if c not in fakes]
+        self.addCleanup(drop)
+        return got
+
     def _refresh(self, reason="test"):
         err = io.StringIO()
         with redirect_stderr(err):
@@ -286,6 +301,25 @@ class FetchAndFallback(unittest.TestCase):
         self.assertIn("no API credential", km._catalog_status["lastError"])
         self.assertIn("no API credential the kernel can use", log)
         self.assertEqual(km.MODEL_VERSIONS["fable"][0]["value"], "claude-fable-5-1", "seed still serves")
+
+    def test_a_fetch_that_adds_ids_tells_every_open_picker_to_re_read_models(self):
+        # the refresh used to call _push_soon() here, its comment claiming the pickers re-read /models
+        # on the next frame — but nothing re-reads the choice lists after page load, so an open
+        # dashboard kept the page-load list until a reload. The event the pickers DO act on is the
+        # models frame (chat/comment loadModelChoices, the timeline's refreshModels, the gear's
+        # adoptChoices/paintChoices): the fetch that grows the list emits it, with the rev the payload carries.
+        got = self._clients()
+        rev0 = km._models_rev[0]
+        started, _ = self._refresh("boot")
+        self.assertTrue(started)
+        frames = [(a, f) for a, f in got if f.get("type") == "models"]
+        self.assertEqual(sorted(a for a, _ in frames), ["chat", "feed", "timeline"],
+                         "one frame to every app that hosts a picker")
+        self.assertTrue(all(f["rev"] > rev0 for _, f in frames), "the frame carries a rev newer than before")
+        self.assertEqual({f["rev"] for _, f in frames}, {km._models_rev[0]}, "the /models payload's counter")
+        got.clear()
+        self._refresh("boot")                    # the same rows again: nothing joined, so nothing rings
+        self.assertEqual([f for _, f in got if f.get("type") == "models"], [], "a fetch that adds nothing is silent")
 
     def test_the_cache_serves_when_the_api_later_dies(self):
         # a dead API never blanks a picker: the previous fetch's rows install at boot from the cache

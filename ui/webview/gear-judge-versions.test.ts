@@ -53,3 +53,22 @@ test("the gear's version rows mark a learned version as new, like the chat and t
   assert.match(GEAR, /if \(v\.learned\) \{[\s\S]{0,600}font-size:0\.82em;opacity:0\.6/, "the menu vocabulary's sub-line size and opacity");
   assert.match(GEAR, /if \(v\.learned\) \{[\s\S]{0,600}r2\.title = /, "and says where the version came from");
 });
+
+test("the gear's cached /models list re-reads on the kernel's models frame", () => {
+  // fillChoices caches the list after its first fetch and the family rows send `fam.default` from
+  // that cache at click time — so a pin or a Latest un-pin made anywhere (this dashboard's chat
+  // picker, another dashboard) left the gear's family rows sending a stale default. Event-keyed on
+  // the kernel's models frame, like the settingStale listener beside it; never a poll. The cache
+  // moving repaints the selects through the ONE painter fillChoices uses (paintChoices, which hands
+  // each select its value back), so a frame that lands before the page-load fill has painted still
+  // leaves populated pickers.
+  assert.match(GEAR, /if \(!m \|\| m\.type !== 'models'\) return;/);
+  const at = GEAR.indexOf("m.type !== 'models'");
+  const seg = GEAR.slice(at, at + 400);
+  assert.ok(seg.includes("fetch(ku('/models'), { cache: 'no-store' })"), "the same endpoint fillChoices reads");
+  assert.ok(seg.includes("if (d && Array.isArray(d.models) && adoptChoices(d)) paintChoices();"),
+    "replaces the cache the rows read at click time — through the rev gate — and repaints from it (gear-models-frame.test.ts runs both)");
+  assert.ok(!seg.includes("innerHTML"), "no second option writer: the painter is shared with fillChoices");
+  assert.ok(GEAR.includes("var held = sel.value;") && GEAR.includes("if (held) setShow(sel, held);"),
+    "the painter gives every select its value back — through the one off-list-aware write path, so a value the new list lacks is re-injected rather than blanked (gear-models-frame.test.ts runs it)");
+});

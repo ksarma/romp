@@ -10015,11 +10015,26 @@ interface MetaChoice { label: string; value: string; sub?: string; sdkOnly?: boo
 // keeps its reference; the session picker appends its own "Default" (use-the-CLI-default) sentinel — not a model.
 const MODEL_CHOICES: { label: string; value: string; color?: number[] | null }[] = [];
 const EFFORT_CHOICES: { label: string; value: string; color?: number[] | null }[] = [];
-fetch(kernelUrl("/models"), { cache: "no-store" }).then((r) => r.json()).then((d) => {
-  if (Array.isArray(d.models)) { MODEL_CHOICES.length = 0; MODEL_CHOICES.push(...d.models, { label: "Default", value: "default" }); }
-  if (Array.isArray(d.efforts)) { EFFORT_CHOICES.length = 0; EFFORT_CHOICES.push(...d.efforts); }
-  if (d.commentDefaults) adoptCommentDefaults(d.commentDefaults);
-}).catch(() => { /* picker stays empty until it lands */ });
+// Loaded at page load and RE-LOADED on the kernel's {type:"models"} frame — the pick memory moved (a
+// version pinned, a family un-pinned by Latest, a refused pin dropped; from this tab, another dashboard,
+// or the kernel itself) or the catalog grew. A family's `default` is what its row SENDS, so a list
+// fetched once went stale the moment anything changed it: after Latest un-pinned a family, this tab's
+// next family click sent the old pinned id and silently re-pinned. Refilled IN PLACE so META_CHOICES
+// keeps its reference; event-keyed on the frame, never a poll.
+// A response is applied only if it is not OLDER than one already applied: its `rev` is the pick memory's
+// revision — the same counter the models frame carries — and two fetches can overlap (a frame during the
+// page-load fetch; two quick frames) and resolve out of order, so without the check the STALE list won
+// until the next change. A payload without a rev (an older kernel) always applies.
+let modelChoicesRev = -1;
+function loadModelChoices(): void {
+  fetch(kernelUrl("/models"), { cache: "no-store" }).then((r) => r.json()).then((d) => {
+    if (typeof d.rev === "number") { if (d.rev < modelChoicesRev) return; modelChoicesRev = d.rev; }
+    if (Array.isArray(d.models)) { MODEL_CHOICES.length = 0; MODEL_CHOICES.push(...d.models, { label: "Default", value: "default" }); }
+    if (Array.isArray(d.efforts)) { EFFORT_CHOICES.length = 0; EFFORT_CHOICES.push(...d.efforts); }
+    if (d.commentDefaults) adoptCommentDefaults(d.commentDefaults);
+  }).catch(() => { /* picker stays as it was until it lands */ });
+}
+loadModelChoices();
 // The kernel's default-comment settings, RAW ("session" = same as the session — the user 2026-08-29):
 // what a new comment thread launches on when the dialog is left untouched. Pre-read so the create
 // dialog SHOWS the effective default and a pick stays a deviation; the kernel re-resolves at create,
@@ -12094,6 +12109,9 @@ window.addEventListener("message", (e: MessageEvent) => {
   // The identity palette changed (gear → Session colors): refresh the right-click menu's swatch set so a
   // menu opened after the switch offers the NEW palette (the kernel remaps + repaints sessions itself).
   else if (m.type === "palette" && Array.isArray(m.colors)) paletteColors = m.colors;
+  // The kernel's pick memory moved (a pin, a Latest un-pin, a refused pin dropped) or its catalog grew:
+  // re-read /models so the family rows send the fresh default — the models-list twin of the palette frame.
+  else if (m.type === "models") loadModelChoices();
   else if (m.type === "sessionList") {
     // Whose list is this? federation stamps the source host; a local reply carries none. A reply for a
     // host the picker has since switched away from is dropped rather than painted over the current one

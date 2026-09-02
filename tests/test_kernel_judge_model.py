@@ -68,7 +68,10 @@ class JudgeSettings(unittest.TestCase):
         # since the version submenus (the user 2026-08-25), each family's versions + default too:
         # the default is the family's remembered pin, else its ALIAS — never the list's head, which
         # pinned every picker-set session to the head id while the CLI's alias moved on
-        self.assertIn('{"models": [dict(c, color=_model_color(c["value"], _stops),', ksrc)
+        # (the payload leads with `rev`, the pick memory's revision, so a picker can drop a /models
+        # response older than one it applied — the models frame's counter)
+        self.assertIn('{"rev": _rev,', ksrc)
+        self.assertIn('"models": [dict(c, color=_model_color(c["value"], _stops),', ksrc)
         self.assertIn('default=_picks.get(c["value"]) or c["value"])', ksrc)
         # …each version row stamped with any CLI minimum-version refusal (T222, 2026-09-01: the live
         # catalog can list ids newer than the installed binary, so the row says so before a pick)
