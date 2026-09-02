@@ -718,6 +718,64 @@ function initGear(post) {
       dd.value = m.path; dd.dispatchEvent(new Event('change'));
     }
   });
+  // A stood-down gesture must be visible to the dashboard that made it (2026-08-29). When a
+  // settings gesture loses the ordering race (a frozen tab's queued flush, or a click here that a
+  // newer pick elsewhere outranks), the kernel answers the DELIVERING socket with a settingStale
+  // frame — without it the refusal was one kernel stderr line: this modal kept displaying the
+  // refused pick as applied (fill() runs only on open), and with every kernel AGREEING on the
+  // kept value the mixed marks show nothing. Event-keyed: the frame IS the deciding event — toast
+  // it in plain words and re-read the kernel's actual values if the modal is up. No polling.
+  var STALE_LABELS = { 'auto-nudge': 'Auto Nudge', 'compact-suggest': 'Suggest /compact',
+    'file-editing': 'File editing',
+    'update-mode': 'Automatic updates', 'judge-model': 'Triage model', 'judge-effort': 'Triage effort',
+    'index-model': 'Indexing model', 'index-effort': 'Indexing effort',
+    'distill-model': 'Distilling model', 'distill-effort': 'Distilling effort',
+    'comment-model': 'Comment model', 'comment-effort': 'Comment effort',
+    'comment-fast': 'Fast comment threads' };
+  // Dismissal is the warn-toast FAMILY treatment (the user 2026-08-25: a notice with no visible
+  // way out gets in the way — worst on touch, and this toast's mint site is a frozen phone tab
+  // flushing on recovery): a visible ✕ in the chip-✕ dress, the whole toast still click-dismisses,
+  // Escape clears the stack, and the fade precedes the auto-remove. COPIED from the family home
+  // (render.ts warnToast + styles.css .warn-toast-x) because the gear is its own document, loaded
+  // by panes that ship only this sheet — keep the two in step (setting-stale.test.ts pins this copy).
+  function staleToast(text) {
+    var box = document.getElementById('rs-stale-toasts');
+    if (!box) {   // created once; dismissal delegated to the STABLE container (click-safe rule)
+      box = document.createElement('div'); box.id = 'rs-stale-toasts';
+      box.addEventListener('click', function (e2) {
+        var t = e2.target;
+        while (t && t !== box && !(t.classList && t.classList.contains('rs-stale-toast'))) t = t.parentNode;
+        if (t && t !== box) t.remove();
+      });
+      // Escape clears the stack, additively — never stopPropagation: clearing a toast is
+      // noise-removal, not a key any other surface loses (family rule, render.ts warnToast)
+      document.addEventListener('keydown', function (e2) {
+        if (e2.key === 'Escape') Array.prototype.slice.call(box.children).forEach(function (w) { w.remove(); });
+      });
+      document.body.appendChild(box);
+    }
+    var t = document.createElement('div');
+    t.className = 'rs-stale-toast'; t.setAttribute('role', 'status'); t.title = 'click to dismiss';
+    var txt = document.createElement('span');
+    txt.className = 'rs-stale-toast-msg'; txt.textContent = text;
+    var x = document.createElement('button');
+    x.className = 'rs-stale-toast-x'; x.setAttribute('aria-label', 'Dismiss'); x.title = 'dismiss (Esc)';
+    x.textContent = '✕';   // clicks bubble to the container's delegated dismiss, like the family's
+    t.appendChild(txt); t.appendChild(x);
+    box.appendChild(t);
+    setTimeout(function () { t.classList.add('fade'); }, 11000);   // the family fade first…
+    setTimeout(function () { t.remove(); }, 12000);   // …then the self-clearing backstop; a click/Esc dismisses sooner
+  }
+  window.addEventListener('message', function (e) {
+    var m = e.data;
+    if (!m || m.type !== 'settingStale') return;
+    var label = STALE_LABELS[m.setting] || String(m.setting || 'A setting');
+    var kept = m.kept === true ? 'on' : m.kept === false ? 'off'
+      : (typeof m.kept === 'string' && m.kept ? m.kept : '');
+    staleToast(label + ' changed more recently somewhere else — keeping the newer choice'
+      + (kept ? ' (' + kept + ')' : '') + '.');
+    if (!p.hidden) fill();   // the open modal re-reads the kernel's values so it stops showing the refused pick
+  });
   // The model/effort <option>s come from /models — the same single source the
   // chat + timeline pickers use. Cached after the first successful fetch.
   var choices = null;
