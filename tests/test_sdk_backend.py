@@ -1397,6 +1397,49 @@ class LiveAskReplay(unittest.TestCase):
         self.assertIsNone(self.backend.current_ask(sess.sid))       # answered/cancelled → gone
 
 
+class AskArmedBeforePresent(unittest.TestCase):
+    """An ask is never PRESENTED before the future its answer lands on exists. resolve_ask reads
+    _cur_ask_fut synchronously on the caller's thread and reports False when nothing is waiting (T214's
+    truthful delivery outcome), so an answer that arrives between _emit_ask and the coroutine's first
+    await must already find the future armed — or it is reported lost and the coroutine waits forever.
+    Production dodges the gap by microseconds (only the kernel's click handlers answer, from another
+    thread); an answer delivered synchronously INSIDE the presentation callback hits it every time. That
+    is exactly how the SDK-gated round-trip classes below drive their asks, and neither CI installs the
+    SDK, so both skipped the hang. Pinned WITHOUT the SDK: _ask_one needs none, so the standard runner
+    and CI exercise the invariant. The answer rides on_ask -> resolve_ask, the kernel's own path."""
+
+    SID = "11111111-2222-3333-4444-555555555555"
+
+    def test_an_answer_delivered_inside_the_presentation_callback_is_not_lost(self):
+        import asyncio
+        outcomes = []
+
+        def notify(app, msg):
+            if msg.get("type") == "askLive":
+                # same call stack as _emit_ask: the future must ALREADY exist here
+                outcomes.append(self.backend.on_ask(msg["id"], "answer", 2))
+
+        d = tempfile.mkdtemp()
+        self.backend = sb.SdkBackend(d, "/bin/true", notify)
+        sess = sb.SdkSession(self.backend, {"sid": self.SID, "name": "n", "cwd": d})
+        self.backend.sessions[self.SID] = sess
+        q = {"question": "Cats or dogs?", "header": "Pet", "multiSelect": False,
+             "options": [{"label": "cats"}, {"label": "dogs"}]}
+
+        async def go():
+            sess.loop = asyncio.get_running_loop()
+            return await asyncio.wait_for(sess._ask_one(q, 0, 1), timeout=5)
+
+        try:
+            res = asyncio.run(go())
+        except asyncio.TimeoutError:
+            self.fail("the answer was dropped: _ask_one presented its ask before arming the future, "
+                      "so resolve_ask found nothing waiting and the coroutine never returned")
+        self.assertEqual(res, "dogs")
+        self.assertEqual(outcomes, [True], "resolve_ask must report the answer DELIVERED (T214), not lost")
+        self.assertIsNone(sess._cur_ask_fut, "the armed future clears once the ask is answered")
+
+
 # --- Runner + can_use_tool bridge (needs the SDK message classes) ---
 try:
     import claude_agent_sdk as _sdk
