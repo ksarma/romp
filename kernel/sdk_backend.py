@@ -1294,19 +1294,33 @@ def list_regs(state_dir: Path) -> list[dict]:
     out = []
     try:
         entries = list(os.scandir(d))
+    except FileNotFoundError:
+        # a MISSING sdk/ dir is genuine emptiness (a fresh state root the first write hasn't
+        # created yet), not a transient fault — scandir RAISES on it, it does not yield []. The
+        # OSError arm below misread this as a failed scan and served the module cache's rows,
+        # which in a process holding backends over SEVERAL state roots (the test suite's shape)
+        # resurrected another root's sessions into this one. The unlink rule holds: a dir that
+        # is gone took its regs with it, so the honest answer is [].
+        return out
     except OSError:
         # the WHOLE-LISTING twin of the per-entry contract (review find 2026-09-01): a transient
         # enumeration failure blanked every row at once — the loudest possible false-death signal
-        # under this very docstring. Serve every reg's last good row instead; a genuinely empty or
-        # missing dir enumerates FINE (scandir yields []/raises only on real faults), so truth is
-        # untouched. A fresh process with an empty cache still returns [] — it has nothing to claim.
-        if _REG_CACHE:
-            if "\x00scan" not in _REG_SERVE_WARNED:   # sentinel key: incidents log once, not per scan
-                _REG_SERVE_WARNED.add("\x00scan")
-                sys.stderr.write("list_regs: scan of %s failed — serving every last good row\n" % d)
-            return [dict(v[1]) for v in _REG_CACHE.values()]
+        # under this very docstring. Serve every reg's last good row instead — of THIS ROOT ONLY:
+        # _REG_CACHE is module-global across every backend in the process, so an unfiltered serve
+        # hands a PermissionError/EMFILE-class fault on one root the rows cached from OTHER state
+        # roots — the same cross-root session resurrection the arm above closes for the
+        # missing-dir case. A genuinely empty dir enumerates FINE (scandir yields []; a missing
+        # one is the arm above), so truth is untouched, and a fresh process with an empty cache
+        # still returns [] — nothing to claim.
+        mine = [dict(v[1]) for p, v in _REG_CACHE.items() if p.startswith(str(d) + os.sep)]
+        if mine:
+            skey = "\x00scan:%s" % d                  # sentinel key, PER ROOT: incidents log once
+            if skey not in _REG_SERVE_WARNED:         # per root, not per scan
+                _REG_SERVE_WARNED.add(skey)
+                sys.stderr.write("list_regs: scan of %s failed — serving this root's last good rows\n" % d)
+            return mine
         return out
-    _REG_SERVE_WARNED.discard("\x00scan")             # healed → the next scan incident logs afresh
+    _REG_SERVE_WARNED.discard("\x00scan:%s" % d)      # healed → the next scan incident logs afresh
     seen = set()
     for de in entries:
         if not de.name.endswith(".json"):
