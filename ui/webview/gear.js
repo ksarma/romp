@@ -786,41 +786,57 @@ function initGear(post) {
     choices = d || { models: [], efforts: [] };
     return true;
   }
+  // Write every select's <option>s from the CURRENT list — whichever response won — and give each select
+  // back the value it held, when the list still offers it (fixer round 6, 2026-09-02). Rewriting a
+  // select's options resets it to its first option, which is why the round-4 listener never repainted;
+  // but round 5 also made the page-load fill skip its paint when the frame's re-read had applied a newer
+  // list first, and every later fill() then short-circuited on the cache — eight empty pickers for the
+  // life of the page. The paint keys on the list, not on which fetch carried it.
+  function paintChoices() {
+    var mo = (choices.models || []).map(function (m) {
+      var vs = (m.versions || []).map(function (v) { return '<option value="' + v.value + '">' + v.label + '</option>'; }).join('');
+      return '<option value="' + m.value + '">' + m.label + '</option>' + vs;   // versions ride as options too — the hidden select stays the value holder for any pick
+    }).join('');
+    var eff = (choices.efforts || []).map(function (m) { return '<option value="' + m.value + '">' + m.label + '</option>'; }).join('');
+    var eo = '<option value="">Default</option>' + eff;
+    function put(sel, html) {
+      if (!sel) return;
+      var held = sel.value;
+      sel.innerHTML = html;
+      if (held) sel.value = held;
+    }
+    put(jm, mo); put(im, mo);
+    put(je, eo); put(ie, eo);
+    // the distilling pair leads with the follow-triage sentinel — its default, so a fresh kernel
+    // shows "Follow triage" rather than a model nobody picked. Its Default (no effort flag) is the
+    // stored sentinel "none", never "" — an empty state file reads back as the default ("follow").
+    put(dm, '<option value="triage">Follow triage</option>' + mo);
+    put(de, '<option value="triage">Follow triage</option><option value="none">Default</option>' + eff);
+    // the comment pair leads with the same-as-the-session sentinel — its default, so a fresh
+    // kernel shows the inherit behavior, not a model nobody picked; "default" = the account default
+    put(cmm, '<option value="session">Same as the session</option><option value="default">Default</option>' + mo);
+    put(cme, '<option value="session">Same as the session</option>' + eff);
+  }
   function fillChoices() {
     if (choices) return Promise.resolve(choices);
     return fetch(ku('/models'), { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (d) {
-      if (!adoptChoices(d)) return choices;   // a re-read applied a newer list while this one was in flight
-      var mo = (choices.models || []).map(function (m) {
-        var vs = (m.versions || []).map(function (v) { return '<option value="' + v.value + '">' + v.label + '</option>'; }).join('');
-        return '<option value="' + m.value + '">' + m.label + '</option>' + vs;   // versions ride as options too — the hidden select stays the value holder for any pick
-      }).join('');
-      var eff = (choices.efforts || []).map(function (m) { return '<option value="' + m.value + '">' + m.label + '</option>'; }).join('');
-      var eo = '<option value="">Default</option>' + eff;
-      if (jm) jm.innerHTML = mo; if (im) im.innerHTML = mo;
-      if (je) je.innerHTML = eo; if (ie) ie.innerHTML = eo;
-      // the distilling pair leads with the follow-triage sentinel — its default, so a fresh kernel
-      // shows "Follow triage" rather than a model nobody picked. Its Default (no effort flag) is the
-      // stored sentinel "none", never "" — an empty state file reads back as the default ("follow").
-      if (dm) dm.innerHTML = '<option value="triage">Follow triage</option>' + mo;
-      if (de) de.innerHTML = '<option value="triage">Follow triage</option><option value="none">Default</option>' + eff;
-      // the comment pair leads with the same-as-the-session sentinel — its default, so a fresh
-      // kernel shows the inherit behavior, not a model nobody picked; "default" = the account default
-      if (cmm) cmm.innerHTML = '<option value="session">Same as the session</option><option value="default">Default</option>' + mo;
-      if (cme) cme.innerHTML = '<option value="session">Same as the session</option>' + eff;
+      adoptChoices(d);   // a re-read may have applied a NEWER list while this one was in flight: paint from whichever won
+      paintChoices();
       return choices;
     }).catch(function () { return null; });
   }
   // The kernel's models frame (fixer round 4, 2026-09-01): the pick memory moved — a version pinned, a
   // family un-pinned by Latest, a refused pin dropped, from any surface or dashboard — so the cached
   // list's `default` (what a family row SENDS, read from `choices` at click time) is stale. Re-read on
-  // the event, like the settingStale listener below; never a poll. Only the cache moves: re-filling the
-  // <option> sets would reset the selects' values while the modal is up. The frame reaches this document
-  // because the kernel sends it to the FEED app too (the gear lives in the feed bundle; fixer round 5).
+  // the event, like the settingStale listener below; never a poll. The list moving repaints the selects
+  // too (paintChoices keeps their values), so a frame that lands before the page-load fill has painted
+  // still leaves populated pickers. The frame reaches this document because the kernel sends it to the
+  // FEED app too (the gear lives in the feed bundle; fixer round 5).
   window.addEventListener('message', function (e) {
     var m = e.data;
     if (!m || m.type !== 'models') return;
     fetch(ku('/models'), { cache: 'no-store' }).then(function (r) { return r.json(); })
-      .then(function (d) { if (d && Array.isArray(d.models)) adoptChoices(d); }).catch(function () {});
+      .then(function (d) { if (d && Array.isArray(d.models) && adoptChoices(d)) paintChoices(); }).catch(function () {});
   });
   function lv() { var t = document.querySelector('script[src*="feed.js"]');
     var m = t && t.getAttribute('src').match(/[?&]v=(\d+)/); return m ? +m[1] : 0; }

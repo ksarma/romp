@@ -13,9 +13,23 @@ import * as path from "node:path";
 const GEAR = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "gear.js"), "utf8");
 const tick = () => new Promise((r) => setImmediate(r));
 
+// A <select> stand-in with the spec's value semantics the paint relies on (fixer round 6, 2026-09-02):
+// setting innerHTML resets the value; assigning a value selects it only if an option carries it, else
+// "". The round-5 tests passed NULL selects (fillChoices guards each with `if (jm) …`), which is exactly
+// why they could not see the pickers left empty — nothing was there to be empty.
+type Sel = { innerHTML: string; value: string; options: string[] };
+function sel(): Sel {
+  const s: any = { _html: "", _v: "" };
+  Object.defineProperty(s, "innerHTML", { get() { return s._html; }, set(h: string) { s._html = h; s._v = ""; } });
+  Object.defineProperty(s, "options", { get() { return [...s._html.matchAll(/value="([^"]*)"/g)].map((m) => m[1]); } });
+  Object.defineProperty(s, "value", { get() { return s._v; }, set(v: string) { s._v = s.options.includes(v) ? v : ""; } });
+  return s as Sel;
+}
+const SELECTS = ["jm", "im", "je", "ie", "dm", "de", "cmm", "cme"] as const;
+
 // The block, evaluated with the closure variables it reads passed in: `window` (the listener's target),
-// `fetch`/`ku` (the read), and the eight <select>s as null — fillChoices guards each (`if (jm) …`).
-function lift() {
+// `fetch`/`ku` (the read), and the eight <select>s — real stand-ins by default, or null (the guards).
+function lift(withSelects = true) {
   const start = GEAR.indexOf("  var choices = null");
   const at = GEAR.indexOf("m.type !== 'models'", start);
   const stop = GEAR.indexOf("\n  });\n", at) + "\n  });\n".length;
@@ -28,14 +42,16 @@ function lift() {
     assert.equal(url, "/models");
     return new Promise<any>((res) => pending.push((d: any) => res({ json: async () => d })));
   };
-  const fn = new Function("window", "fetch", "ku", "jm", "im", "je", "ie", "dm", "de", "cmm", "cme",
+  const S: Record<(typeof SELECTS)[number], Sel | null> = Object.fromEntries(SELECTS.map((k) => [k, withSelects ? sel() : null])) as any;
+  const fn = new Function("window", "fetch", "ku", ...SELECTS,
     src + "\n  return { fillChoices: fillChoices, choices: function () { return choices; } };");
-  const api = fn(win, fetchStub, (p: string) => p, null, null, null, null, null, null, null, null);
+  const api = fn(win, fetchStub, (p: string) => p, ...SELECTS.map((k) => S[k]));
   const frame = (rev: number) => listeners.forEach((l) => l({ data: { type: "models", rev } }));
-  return { api, listeners, pending, frame };
+  return { api, listeners, pending, frame, S };
 }
-const list = (rev: number | undefined, def: string) =>
-  ({ ...(rev === undefined ? {} : { rev }), models: [{ label: "Fable", value: "fable", default: def, versions: [] }], efforts: [] });
+const list = (rev: number | undefined, def: string, versions: Array<{ value: string; label: string }> = []) =>
+  ({ ...(rev === undefined ? {} : { rev }), models: [{ label: "Fable", value: "fable", default: def, versions }],
+     efforts: [{ label: "High", value: "high" }] });
 
 test("executed: the models frame re-reads /models and replaces the cache the family rows read at click time", async () => {
   const { api, listeners, pending, frame } = lift();
@@ -87,4 +103,69 @@ test("a payload without a rev (an older kernel) always applies", async () => {
   pending[1](list(undefined, "fable"));
   await tick(); await tick();
   assert.equal(api.choices().models[0].default, "fable");
+});
+
+test("the round-5 guards still hold with no selects in the document", async () => {
+  const { api, pending } = lift(false);
+  const first = api.fillChoices();
+  pending[0](list(1, "fable"));
+  assert.equal((await first).models[0].default, "fable", "a fill with nothing to paint still returns the list");
+});
+
+test("executed: when the frame's re-read overtakes the page-load fill, every picker is still painted — from the list that won", async () => {
+  // (fixer round 6, 2026-09-02) round 5 returned early from the page-load fill when the frame's re-read had
+  // already applied a newer list, BEFORE writing any <option>s — and every later fill() short-circuited on
+  // the cache, so all eight pickers stayed empty for the life of the page. The paint keys on the list.
+  const V = [{ value: "claude-fable-5", label: "Fable 5" }];
+  const { api, pending, frame, S } = lift();
+  const first = api.fillChoices();                       // page load: request 1
+  frame(6);                                              // a pick elsewhere during it: request 2
+  pending[1](list(6, "fable", V));                       // request 2 resolves first
+  await tick(); await tick();
+  pending[0](list(5, "claude-fable-5", V));              // request 1 lands late, older
+  await first; await tick();
+  assert.equal(api.choices().models[0].default, "fable", "the newer list is the cache");
+  for (const k of SELECTS) assert.ok(S[k]!.innerHTML.length > 0, `${k} is painted`);
+  assert.deepEqual(S.jm!.options, ["fable", "claude-fable-5"], "family + version options, from the list that won");
+  assert.deepEqual(S.je!.options, ["", "high"]);
+  assert.deepEqual(S.dm!.options, ["triage", "fable", "claude-fable-5"], "the distilling sentinel leads");
+  assert.deepEqual(S.de!.options, ["triage", "none", "high"]);
+  assert.deepEqual(S.cmm!.options, ["session", "default", "fable", "claude-fable-5"], "the comment sentinels lead");
+  assert.deepEqual(S.cme!.options, ["session", "high"]);
+  // a later modal open (fill → fillChoices) is a cache hit and the pickers stay painted
+  assert.equal((await api.fillChoices()).models[0].default, "fable");
+  assert.equal(pending.length, 2, "no third fetch");
+  S.jm!.value = "fable";
+  assert.equal(S.jm!.value, "fable", "a pick can land on the painted options");
+});
+
+test("executed: a frame's repaint keeps the value each select held while the modal is up", async () => {
+  // the round-4 listener never repainted BECAUSE a rewrite resets a select to its first option; the paint
+  // gives every select its value back when the new list still offers it — which is why it can repaint
+  const V = [{ value: "claude-fable-5", label: "Fable 5" }];
+  const { api, pending, frame, S } = lift();
+  const first = api.fillChoices();
+  pending[0](list(1, "claude-fable-5", V));
+  await first;
+  S.jm!.value = "claude-fable-5"; S.je!.value = "high"; S.dm!.value = "fable"; S.cme!.value = "session";
+  frame(2);                                              // Latest un-pinned the family elsewhere; a session learned 5.1
+  const V2 = V.concat([{ value: "claude-fable-5-1", label: "Fable 5.1" }]);
+  pending[1](list(2, "fable", V2));
+  await tick(); await tick();
+  assert.equal(api.choices().models[0].default, "fable", "the cache moved");
+  assert.deepEqual(S.jm!.options, ["fable", "claude-fable-5", "claude-fable-5-1"], "…and so did the options");
+  assert.deepEqual(S.cmm!.options, ["session", "default", "fable", "claude-fable-5", "claude-fable-5-1"]);
+  assert.equal(S.jm!.value, "claude-fable-5", "the pinned version the user had selected is still selected");
+  assert.equal(S.je!.value, "high");
+  assert.equal(S.dm!.value, "fable");
+  assert.equal(S.cme!.value, "session");
+  // a stale response repaints nothing (the list did not move), so a value is never disturbed for no reason
+  const html = S.jm!.innerHTML;
+  frame(3); frame(4);
+  pending[3](list(4, "fable", V2));                      // the newer, same list
+  pending[2](list(3, "claude-fable-5", V));              // the older, dropped
+  await tick(); await tick();
+  assert.equal(api.choices().rev, 4);
+  assert.equal(S.jm!.innerHTML, html);
+  assert.equal(S.jm!.value, "claude-fable-5");
 });
