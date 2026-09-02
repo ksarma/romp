@@ -5929,14 +5929,15 @@ class JudgeEnv(unittest.TestCase):
                          "captioner/archiver on Haiku run with thinking off")
         self.assertEqual(jd._judge_env("index", model="claude-haiku-4-5").get("MAX_THINKING_TOKENS"), "0",
                          "a full Haiku id is the same family")
-        for m in ("fable", "opus", "sonnet", "claude-opus-4-8", "claude-sonnet-5"):
+        for m in ("fable", "opus", "sonnet", "claude-opus-4-8", "claude-sonnet-5", "claude-mythos-5-1"):
             self.assertNotIn("MAX_THINKING_TOKENS", jd._judge_env("index", model=m),
                              "%s has adaptive thinking — effort is the lever, never thinking-off" % m)
 
     def test_the_boundary_is_generational_not_per_family(self):
         # Sonnet 4.5 and Opus 4.5 — both offered by the gear's version submenu — carry no adaptive
-        # thinking and ignore --effort, so the env var is their one lever (CLI 2.1.257's catalog). Red
-        # under round 1's family rule ("not Haiku"), which passed them an ignored --effort low and full
+        # thinking, so the env var is their lever (CLI 2.1.257's catalog; Sonnet 4.5 also ignores
+        # --effort, Opus 4.5 takes it but still thinks at full budget without the var). Red under
+        # round 1's family rule ("not Haiku"), which passed them --effort low and no var — full
         # extended thinking: 3.5x the cost and 2.3x the latency of this env var, measured.
         for m in ("claude-sonnet-4-5", "claude-opus-4-5", "claude-opus-4-1", "claude-sonnet-4-5-20250929",
                   "claude-3-5-sonnet-20241022"):
@@ -5982,16 +5983,20 @@ class JudgeEnv(unittest.TestCase):
 
 
 class EffortCapability(unittest.TestCase):
-    """_adaptive_thinking is the CLI catalog's rule (2.1.257, read 2026-09-01), not a family heuristic:
-    Fable (every version), Opus >= 4.6 and Sonnet >= 4.6 take --effort and run adaptive thinking; Haiku,
-    Sonnet 4.5, Opus 4.5 and older and every claude-3 model do not. A bare alias is its family's current
-    head. A stranger — no family it knows, or no readable version — is COST-SAFE (False) and announced
-    once on stderr; guessing "adaptive" for one is how Sonnet 4.5 got full-cost thinking in round 1."""
+    """_adaptive_thinking is the CLI's rule (2.1.257, re-derived from the binary 2026-09-02), not a
+    family heuristic: Fable and Mythos (every version), Opus >= 4.6 and Sonnet >= 4.6 run adaptive
+    thinking; Haiku 4.5 and older, Sonnet 4.5 and older, Opus 4.5 and older and every claude-3 model do
+    not — that is the CLI's own hardcoded denylist. A bare alias is the catalog's head for it (`haiku` is
+    Haiku 4.5, below the line). A stranger — no family it knows, or no readable version — gets what the
+    CLI gives an unlisted first-party model: adaptive thinking, --effort forwarded, and thinking:disabled
+    REFUSED (dropped from the request), so the answer is True and the effort lever, announced once on
+    stderr. Round 2 answered False there and called it cost-safe; on first-party it was the opposite —
+    the env var a stranger got is exactly the parameter the CLI drops for it."""
 
     ADAPTIVE = ("fable", "opus", "sonnet", "fable[1m]", "Claude-Opus-5", "claude-fable-5", "claude-fable-5-1",
                 "claude-opus-5", "claude-sonnet-5", "claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6",
                 "claude-sonnet-4-6", "claude-opus-4-6-20260115", "us.anthropic.claude-sonnet-5-20260301-v1:0",
-                "claude-opus-5@20260301")
+                "claude-opus-5@20260301", "claude-mythos-5", "claude-mythos-5-1")
     NOT = ("haiku", "claude-haiku-4-5", "claude-sonnet-4-5", "claude-opus-4-5", "claude-opus-4-1",
            "claude-opus-4-0", "claude-sonnet-4-0", "claude-sonnet-4-5[1m]", "claude-sonnet-4-5-20250929",
            "claude-opus-4-20250514", "claude-3-7-sonnet-20250219", "claude-3-5-haiku-20241022")
@@ -6017,31 +6022,46 @@ class EffortCapability(unittest.TestCase):
         self.assertEqual(p("claude-mystery-9"), (None, None))
         self.assertEqual(p("opusplan"), (None, None), "a family SUBSTRING is not a family")
         self.assertEqual(p("claude-opus-latest"), ("opus", ()), "family named, version unreadable")
+        self.assertEqual(p("claude-mythos-5-1"), ("mythos", (5, 1)), "the fifth family in the 2.1.257 catalog")
 
-    def test_a_stranger_is_cost_safe_and_announced_once(self):
+    def test_a_stranger_follows_the_cli_fallback_and_is_announced_once(self):
+        # CLI 2.1.257 answers every capability question for a model outside its catalog and its
+        # denylists with the provider default, and on first-party that default is YES: effort forwarded,
+        # adaptive thinking, and thinking:disabled refused — the env var is DROPPED from the request for
+        # such a model. So the effort lever is the one that lands; the env var would be a silent no-op.
         jd._UNKNOWN_MODEL_LOGGED.clear()
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
-            self.assertFalse(jd._adaptive_thinking("claude-mystery-9"), "never guess adaptive for a stranger")
-            self.assertFalse(jd._adaptive_thinking("claude-mystery-9"))
-            self.assertFalse(jd._adaptive_thinking("claude-opus-latest"), "a family with no readable version too")
+            self.assertTrue(jd._adaptive_thinking("claude-mystery-9"), "the CLI treats a stranger as adaptive")
+            self.assertTrue(jd._adaptive_thinking("claude-mystery-9"))
+            self.assertTrue(jd._adaptive_thinking("claude-opus-latest"), "a family with no readable version too")
         lines = err.getvalue().splitlines()
         self.assertEqual(len(lines), 2, "one line per distinct id, however often it is asked")
         self.assertIn("claude-mystery-9", lines[0])
-        self.assertIn("MAX_THINKING_TOKENS=0", lines[0], "the line names the lever the stranger gets")
+        self.assertIn("--effort", lines[0], "the line names the lever the stranger gets")
+        self.assertNotIn("MAX_THINKING_TOKENS=0", lines[0], "…and not the one the CLI would drop")
         self.assertIn("claude-opus-latest", lines[1])
         jd._UNKNOWN_MODEL_LOGGED.clear()
+
+    def test_a_bare_alias_is_the_catalog_head_not_a_blanket_yes(self):
+        # the catalog's aliases block: fable → 5.1, opus → 5, sonnet → 5 (all past the line) but
+        # haiku → 4.5 (below it) — an alias is placed by the version it resolves to, never by family
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            for alias, want in (("fable", True), ("opus", True), ("sonnet", True), ("haiku", False)):
+                self.assertEqual(jd._adaptive_thinking(alias), want, alias)
+        self.assertEqual(err.getvalue(), "", "every alias is placeable — nothing announced")
 
 
 class IndexTierLever(unittest.TestCase):
     """The index tier's cost lever is EFFORT on a model with adaptive thinking (2026-09-01): the
-    thinking-off env var is a no-op the CLI drops on Fable (full-cost thinking, silently), and effort is
-    the lever those models honor. _judge_run resolves the tier's model first, then: no adaptive thinking
-    (Haiku, Sonnet 4.5, Opus 4.5 and older — which also ignore --effort) → MAX_THINKING_TOKENS=0 and no
-    --effort flag; adaptive thinking (Fable, Opus 4.6+, Sonnet 4.6+) → `--effort <index-effort setting,
-    default low>` and NO env var. The gear's existing Indexing effort pick (STATE/index-effort) is the
-    configurability; the tier logs which lever applied, once per model. The subprocess is stubbed and
-    its argv + env captured — nothing runs."""
+    thinking-off env var is a no-op the CLI drops on Fable and Mythos (full-cost thinking, silently),
+    and effort is the lever those models honor. _judge_run resolves the tier's model first, then: no
+    adaptive thinking (Haiku, Sonnet 4.5, Opus 4.5 and older) → MAX_THINKING_TOKENS=0 and no --effort
+    flag; adaptive thinking (Fable, Mythos, Opus 4.6+, Sonnet 4.6+, and any model the CLI's catalog does
+    not place — its first-party default) → `--effort <index-effort setting, default low>` and NO env
+    var. The gear's existing Indexing effort pick (STATE/index-effort) is the configurability; the tier
+    logs which lever applied, once per model. The subprocess is stubbed and its argv + env captured —
+    nothing runs."""
 
     def setUp(self):
         self.calls = []
@@ -6089,7 +6109,7 @@ class IndexTierLever(unittest.TestCase):
 
     def test_opus_and_sonnet_index_models_take_the_same_lever(self):
         for m in ("opus", "sonnet", "claude-opus-4-8", "claude-opus-5", "claude-sonnet-5", "claude-fable-5-1",
-                  "claude-sonnet-4-6", "claude-opus-4-6"):
+                  "claude-sonnet-4-6", "claude-opus-4-6", "claude-mythos-5-1"):
             self.calls.clear()
             cmd, env, _ = self._run(m)
             self.assertEqual(self._effort_of(cmd), "low", m)
@@ -6102,27 +6122,32 @@ class IndexTierLever(unittest.TestCase):
 
     def test_pre_4_6_sonnet_and_opus_index_models_keep_thinking_off_and_pass_no_effort_flag(self):
         # Red under round 1's family rule: Sonnet 4.5 and Opus 4.5 (both in the gear's version submenu)
-        # got an ignored `--effort low` and NO env var — full extended thinking, measured at 3.5x the
-        # cost and 2.3x the latency of the env-var path. The catalog says they carry no adaptive
-        # thinking and no effort, so the env var is their lever and the log line says which applied.
+        # got `--effort low` and NO env var — full extended thinking, measured at 3.5x the cost and 2.3x
+        # the latency of the env-var path. The CLI denylists both for adaptive thinking (Sonnet 4.5 also
+        # for effort; Opus 4.5 does take --effort, but that never turns its thinking off), so the env var
+        # is their lever, the default passes no flag, and the log line says which applied.
         for m in ("claude-sonnet-4-5", "claude-opus-4-5"):
             self.calls.clear()
             jd._LEVER_LOGGED.clear()
             cmd, env, err = self._run(m)
             self.assertEqual(env.get("MAX_THINKING_TOKENS"), "0", m)
-            self.assertNotIn("--effort", cmd, "%s ignores the flag; do not pretend it is a lever" % m)
+            self.assertNotIn("--effort", cmd, "no flag by default on %s: thinking-off is its lever" % m)
             self.assertIn("MAX_THINKING_TOKENS=0", err, "the lever line names the env var for %s" % m)
 
-    def test_an_unknown_index_model_takes_the_cost_safe_lever_and_says_so_once(self):
+    def test_an_unknown_index_model_follows_the_cli_fallback_and_says_so_once(self):
+        # CLI 2.1.257's answer for a model outside its catalog and denylists is the first-party default:
+        # adaptive, effort forwarded, thinking:disabled refused — so the env var would be dropped from
+        # the request and effort is the lever that lands. (Round 2 sent the env var here and called it
+        # cost-safe; for a stranger it was the one lever guaranteed not to work.)
         jd._UNKNOWN_MODEL_LOGGED.clear()
         try:
             cmd, env, err = self._run("claude-mystery-9")
-            self.assertEqual(env.get("MAX_THINKING_TOKENS"), "0", "never guess adaptive for a stranger")
-            self.assertNotIn("--effort", cmd)
+            self.assertEqual(self._effort_of(cmd), "low", "the CLI treats a stranger as adaptive: effort is the lever")
+            self.assertNotIn("MAX_THINKING_TOKENS", env, "the var the CLI drops for such a model")
             self.assertIn("claude-mystery-9", err)
             self.assertEqual(err.count("not one I can place"), 1,
                              "announced once, though the predicate ran three times inside the one call")
-            self.assertIn("MAX_THINKING_TOKENS=0", err, "…and the lever line still says which lever applied")
+            self.assertIn("--effort low", err, "…and the lever line still says which lever applied")
         finally:
             jd._UNKNOWN_MODEL_LOGGED.clear()
 
