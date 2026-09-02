@@ -13,9 +13,11 @@ Two guards:
     and the number-agreeing word rides one count (the webview-side twins live in
     ui/webview/awaiting-box-sync.test.ts and spin-caption.test.ts).
   * ServedSync — the executed guard: a hermetic kernel, the real /chat page, MutationObservers on the
-    chip and the box; the SDK Stop hook's own awaiting overlay row (source 1) is appended to
-    states/<sid>.jsonl, and the box must show within one frame of the chip — then an awaiting:false
-    row must clear both together. Skips LOUDLY without the extension deps or a playwright browser
+    chip and the box; a SYNTHETIC awaiting overlay row is appended to states/<sid>.jsonl — the reader's
+    source 1, in the shape sdk_backend.append_awaiting writes plus the optional kind + count fields the
+    reader accepts (no live producer writes those two today; the row exercises the reader → chip → box
+    path, the same path a real producer's row would take) — and the box must show within one frame of
+    the chip; then an awaiting:false row must clear both together. Skips LOUDLY without the extension deps or a playwright browser
     (CI installs none).
 
 All fixtures synthetic.
@@ -90,7 +92,8 @@ await page.evaluate(() => {
   };
   new MutationObserver(tick).observe(document.body, { subtree: true, childList: true, characterData: true, attributes: true });
 });
-// the SDK Stop hook's own overlay row (sdk_backend.append_awaiting's shape, plus kind + count)
+// a synthetic overlay row for the reader's source 1: append_awaiting's shape plus the optional kind + count
+// fields the reader accepts (no live producer writes those two today — this drives the reader's path)
 fs.appendFileSync(cfg.states, JSON.stringify({ t: Math.floor(Date.now() / 1000), awaiting: true, kind: "agents",
   count: 1, why: "1 background agent still working" }) + "\n");
 await page.waitForFunction(() => window.__t.chipOn !== null, null, { timeout: 30000 }).catch(() => {});
