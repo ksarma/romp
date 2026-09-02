@@ -1132,26 +1132,39 @@ class TransitionLedger(unittest.TestCase):
     def test_the_derivation_runs_with_the_ingest_lock_released(self):
         """snapshot() used to hold the ring lock across the whole derivation, and every session
         thread's _push takes the same lock — measured 70–376 ms stalls at 15k–40k ring events. The
-        ring is copied under the lock, derived outside it, and the lock is re-taken only to file."""
+        ring is copied under the lock, derived outside it, and the lock is re-taken only to file.
+
+        Round 2: the probe covers the WHOLE phase-2 derivation — the state function AND the window
+        counts of every bucket — not the state function alone. A mutant that re-took the lock around
+        the counts (the bulk of the per-bucket work) passed the narrower probe."""
         ah = sb.ApiHealth(tempfile.mkdtemp())
         for e in _storm(T0 - 600, T0) + _clean(T0 - 600, T0, family="haiku"):
             ah._push(e)
-        real = sb.api_health_state
-        seen = []
+        real_state, real_counts = sb.api_health_state, sb.api_health_counts
+        seen = {"state": [], "counts": []}
 
-        def probe(*a, **k):
+        def lock_free():
             free = ah._lock.acquire(blocking=False)
             if free:
                 ah._lock.release()
-            seen.append(free)
-            return real(*a, **k)
-        sb.api_health_state = probe
+            return free
+
+        def probe_state(*a, **k):
+            seen["state"].append(lock_free())
+            return real_state(*a, **k)
+
+        def probe_counts(*a, **k):
+            seen["counts"].append(lock_free())
+            return real_counts(*a, **k)
+        sb.api_health_state, sb.api_health_counts = probe_state, probe_counts
         try:
             snap = ah.snapshot(T0)
         finally:
-            sb.api_health_state = real
-        self.assertEqual(len(seen), 2, "both buckets derived")
-        self.assertTrue(all(seen), "the lock was held during a derivation")
+            sb.api_health_state, sb.api_health_counts = real_state, real_counts
+        self.assertEqual(len(seen["state"]), 2, "both buckets derived")
+        self.assertEqual(len(seen["counts"]), 2 * len(sb.api_health_config()["windows"]), "every window of both")
+        self.assertTrue(all(seen["state"]), "the lock was held during a state derivation")
+        self.assertTrue(all(seen["counts"]), "the lock was held during a window count")
         self.assertEqual(snap["buckets"][KEY]["state"], "thrashing", "…and the result still files")
         self.assertEqual(len(ah._transitions), 2)
 
