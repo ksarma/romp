@@ -54,6 +54,30 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   **same served UI** over the **same protocol**, so the two front ends stay
   consistent by construction. Keeping the WS protocol stable is the compatibility
   contract.
+- **The feed is pushed as one full frame, then as deltas.** A feed socket receives
+  the cached `{type:"feed"}` frame the moment it connects, not on the next change,
+  and the kernel dedups per client, so an unchanged board sends nothing. A client
+  that announces `?caps=feedDelta` on its socket (the kernel-served feed page does;
+  the VS Code pipes, the Fleet pane and federation's remote sockets do not) then
+  receives `{type:"feedDelta"}` frames: changed cards by `itemId`, removed ids,
+  the same for ledgers by `sid`, and the small top-level fields whole under `top`
+  when any changed. `federation.ts` applies a delta onto the last full frame it
+  holds for the host and re-emits a merged full frame, so every consumer still
+  sees whole `feed` frames; a delta it cannot apply gets a `needFullFeed` and a
+  re-base. Card age colours are computed client-side from `t` (`age-color.ts`)
+  and never shipped: a server-computed colour ticked with the clock and re-sent
+  the whole board on every step (5.76 MB a push on a board of about 660 cards,
+  measured 2026-09-02).
+- **Liveness is a keepalive, and staleness is event-keyed.** The kernel sends a
+  `ka` frame to every socket every 10 s; the pane shim force-closes a socket that
+  has gone 30 s without any frame. After a reconnect the shim raises the "what you
+  see may be stale" prompt only on a `ka` arriving before the resync frame (the
+  kernel is alive and talking to this socket but has not resynced it) or on the
+  reconnected socket closing again before it; the first non-keepalive frame
+  retires the prompt. A client that falls 16 MB behind is dropped by the kernel,
+  loudly: one `ws drop:` line in the kernel log and a row in the dashboard's bell.
+  Every close leaves a `wsclose` breadcrumb (code, reason, socket age) in
+  `client-diag.jsonl`.
 - **Both judge tiers run continuously for any live session — no connection gate.**
   The kernel runs the index tier (captioner + archiver) AND the triage tier
   (planner → closer → courier → grouper → consolidator → distiller) in parallel,

@@ -83,7 +83,12 @@ class ShimWatchdogSourcePins(unittest.TestCase):
 
     def test_shim_ignores_the_keepalive_frame(self):
         # the ka frame never reaches the bundles: the shim consumes it (build-drift check, then return)
-        self.assertIn('if(msg&&msg.type==="ka"){if(LOADEDV&&msg.dv&&msg.dv>LOADEDV)raiseBuild();return;}', KSRC)
+        i = KSRC.index('if(msg&&msg.type==="ka"){if(LOADEDV&&msg.dv&&msg.dv>LOADEDV)raiseBuild();')
+        branch = KSRC[i:KSRC.index("return;}", i) + 8]
+        self.assertNotIn("dispatchEvent", branch, "the ka branch returns before the frame reaches the bundle")
+        # the one other thing the branch does (2026-09-02): a keepalive on a reconnected socket whose resync
+        # has not landed raises the stale prompt — the event the old 1s arming timer approximated
+        self.assertIn('if(stalePending){var sw=stalePending;stalePending="";raiseStale(sw);}', branch)
 
 
 class BuildDriftBanner(unittest.TestCase):
