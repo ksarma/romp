@@ -1297,13 +1297,15 @@ function fileUriToPath(uri: string): string {
 // and a VS Code editor won't render a PDF, so it's routed rather than navigated. `relative` bare paths
 // carry the active session id so whoever resolves them uses THAT session's cwd — a relative
 // `design/foo.md` is relative to the repo the agent runs in, not the kernel's cwd (the user 2026-07-06).
-function openPathLink(raw: string, open: string, relative = false): HTMLElement {
+// `sid` names that session explicitly when the text belongs to one other than the active tab —
+// a todo's note is written by the session that flagged it, wherever the card is read.
+function openPathLink(raw: string, open: string, relative = false, sid?: string | null): HTMLElement {
   const a = el("span", "file-uri-link");
   a.textContent = raw;                       // shown exactly as written, selectable/copyable in place
   a.title = "Open " + open;
   a.addEventListener("click", (e) => {
     e.stopPropagation();
-    openPath(open, relative ? activeId : null);
+    openPath(open, relative ? (sid ?? activeId) : null);
   });
   return a;
 }
@@ -1358,7 +1360,7 @@ const CLICKABLE_PATH_RE = /file:\/\/\/?[^\s<>"'`)]+|[~.\w\-]*\/[~.\w\-/]*[\w\-]|
 // all (an old kernel, a cached payload) keeps today's shape-only linking rather than unlinking history.
 // file:// URIs are explicit absolute paths — never gated on the map.
 function linkifyFileUris(root: HTMLElement, skipThumbs?: string[], spacePaths?: string[],
-    pathLinks?: Record<string, string>, pathPins?: Record<string, string>): void {
+    pathLinks?: Record<string, string>, pathPins?: Record<string, string>, sid?: string | null): void {
   // A whole-backtick http(s) URL becomes a TAPPABLE link that still looks like code (the user
   // 2026-08-16, on mobile, wanting to tap through to a dashboard link a session sent). Bare URLs
   // and [text](url) already link via marked's gfm autolink + the global anchor click delegate;
@@ -1385,7 +1387,7 @@ function linkifyFileUris(root: HTMLElement, skipThumbs?: string[], spacePaths?: 
       if (code.closest("a, .file-uri-link, pre")) continue;    // already linked, or a fenced block
       const tok = (code.textContent || "").trim();
       if (!verified.has(tok)) continue;
-      const link = openPathLink(tok, tok, true);
+      const link = openPathLink(tok, tok, true, sid);
       code.replaceChildren(link);                              // the <code> chrome stays; its content is the link
       kernelVerified.add(tok);
       if (previewKind(tok) && !previewable.includes(tok) && !(skipThumbs && skipThumbs.includes(tok))) {
@@ -1417,7 +1419,7 @@ function linkifyFileUris(root: HTMLElement, skipThumbs?: string[], spacePaths?: 
       if (!isUri && pathLinks && typeof fixed !== "string") continue;   // checked against the filesystem: no such file (or several) → prose
       if (m.index > last) frag.appendChild(document.createTextNode(text.slice(last, m.index)));
       const open = isUri ? fileUriToPath(tok) : (fixed ?? tok);
-      const link = isUri ? fileUriLink(tok) : openPathLink(tok, open, true);
+      const link = isUri ? fileUriLink(tok) : openPathLink(tok, open, true, sid);
       frag.appendChild(link);
       if (!isUri && typeof fixed === "string") kernelVerified.add(open);   // the kernel stat'd it this build
       if (previewKind(open) && !previewable.includes(open) && !(skipThumbs && skipThumbs.includes(open))) {
@@ -2989,6 +2991,10 @@ function renderTodo(ev: Extract<ChatEvent, { kind: "todo" }>): HTMLElement {
       if (hint) {
         const d = el("div", "ut-detail" + (utDetailOpen.has(t.id) ? " open" : ""));
         d.textContent = t.detail || "";
+        // a path in the note opens like one in a transcript (the user 2026-09-02): the same
+        // linkifier, with the todo's OWN session resolving relative paths — the note was written
+        // from that session's working directory, whichever tab the card is read in
+        linkifyFileUris(d, undefined, undefined, undefined, undefined, renderingSid || null);
         row.appendChild(d);
       }
       card.appendChild(row);
@@ -6688,7 +6694,7 @@ function showUserTodoReply(sid: string, todoId: string, todoText: string, todoDe
   // whole need stays in view while the answer is typed, without opening the fold first; a bare
   // ask adds nothing here
   const dd = todoDetail.trim() ? el("div", "ut-detail open") : null;
-  if (dd) dd.textContent = todoDetail;
+  if (dd) { dd.textContent = todoDetail; linkifyFileUris(dd, undefined, undefined, undefined, undefined, sid); }
   const input = document.createElement("textarea");
   input.className = "ut-reply-input"; input.rows = 3;
   input.placeholder = "Your answer — it goes straight to the session…";
