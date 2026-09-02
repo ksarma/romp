@@ -212,7 +212,8 @@ class FetchAndFallback(unittest.TestCase):
         self._url, self._fn = km.MODELS_API_URL, getattr(jd, "_WORK_KEY_FN", None)
         self._env = {k: os.environ.get(k) for k in _CRED_VARS}
         # the fake sees only this (never a key-shaped string: the pre-commit scanner). The LP key is the
-        # credential the fetch prefers (CredentialPolicy below) — an ambient ANTHROPIC_API_KEY is never read
+        # credential the fetch prefers (CredentialPolicy below); the claimer is unwired here, so no
+        # ANTHROPIC_API_KEY a developer's shell exports can be read either
         os.environ["ANTHROPIC_LP_API_KEY"] = "synthetic-test-credential"
         jd._WORK_KEY_FN = None
         km.MODELS_API_URL = "http://127.0.0.1:%d/v1/models" % self.port
@@ -365,11 +366,16 @@ def _restore_env(saved):
 
 class CredentialPolicy(unittest.TestCase):
     """Which credential the catalog fetch rides (fork policy, 2026-09-02): ANTHROPIC_LP_API_KEY first — a
-    key set aside for direct API calls — else the manager-env key the SDK backend CLAIMED (the judges'
-    key, deliberate by construction), else an OAuth bearer. An AMBIENT ANTHROPIC_API_KEY is never read:
-    on a box whose Claude Code sessions authenticate with a key, that variable in a shell IS the
-    session-auth key, and a kernel started from such a shell inherits it without anyone designating it
-    for the kernel's own calls. Synthetic, never key-shaped values (the pre-commit scanner)."""
+    key set aside for direct API calls — else the manager-env work key the SDK backend CLAIMED out of
+    os.environ["ANTHROPIC_API_KEY"] when the kernel built it (sdk_backend.work_api_key, wired as
+    jd._WORK_KEY_FN — the same stash the judges bill to), else an OAuth bearer. So the kernel DOES read
+    the ANTHROPIC_API_KEY its own environment carried — through the claimer, once, exactly as the
+    judges do — and it cannot tell a work key from a session-auth key by value; the fork's rule is
+    operational: the MANAGER's environment carries the LP/work key, never the interactive session-auth
+    key (fixer 2026-09-02, correcting a first draft here that claimed the variable was never read — it
+    only exercised the UNWIRED claimer). What the kernel does not do is read the variable on its own
+    with no claimer wired: a key in the environment before the backend exists was designated for
+    nothing here. Synthetic, never key-shaped values (the pre-commit scanner)."""
 
     def setUp(self):
         self._env = {k: os.environ.get(k) for k in _CRED_VARS}
@@ -377,27 +383,54 @@ class CredentialPolicy(unittest.TestCase):
             os.environ.pop(k, None)
         self._fn = getattr(jd, "_WORK_KEY_FN", None)
         jd._WORK_KEY_FN = None
+        self._stash = sb._WORK_KEY       # the claimer's process-lifetime stash: unclaimed, so a claim happens HERE
+        sb._WORK_KEY = None
 
     def tearDown(self):
+        sb._WORK_KEY = self._stash
         jd._WORK_KEY_FN = self._fn
         _restore_env(self._env)
 
-    def test_the_lp_key_is_preferred_over_the_claimed_key_and_any_ambient_one(self):
+    def test_the_lp_key_is_preferred_over_the_claimed_key(self):
         os.environ["ANTHROPIC_LP_API_KEY"] = "synthetic-lp-credential"
-        os.environ["ANTHROPIC_API_KEY"] = "synthetic-ambient-credential"
+        os.environ["ANTHROPIC_API_KEY"] = "synthetic-manager-env-credential"
         jd._WORK_KEY_FN = lambda: "synthetic-claimed-credential"
         self.assertEqual(km._models_api_credential(), ("x-api-key", "synthetic-lp-credential"))
 
     def test_the_claimed_manager_env_key_is_second(self):
-        os.environ["ANTHROPIC_API_KEY"] = "synthetic-ambient-credential"    # present, and still not what rides
+        os.environ["ANTHROPIC_API_KEY"] = "synthetic-manager-env-credential"    # unread except THROUGH the claimer
         jd._WORK_KEY_FN = lambda: "synthetic-claimed-credential"
         self.assertEqual(km._models_api_credential(), ("x-api-key", "synthetic-claimed-credential"))
 
-    def test_a_bare_ambient_api_key_is_never_read_and_the_refresh_says_so(self):
+    def test_the_wired_claimer_reads_the_managers_key_the_judges_bill_to(self):
+        # the WIRED path — jd._WORK_KEY_FN = sdk_backend.work_api_key, exactly what _sdk_locked installs
+        # before the boot refresh: with only ANTHROPIC_API_KEY in the environment, that key IS the one
+        # the fetch rides, claimed out of the environment the judges' way
+        os.environ["ANTHROPIC_API_KEY"] = "synthetic-manager-env-credential"
+        jd._WORK_KEY_FN = sb.work_api_key
+        self.assertEqual(km._models_api_credential(), ("x-api-key", "synthetic-manager-env-credential"))
+        self.assertNotIn("ANTHROPIC_API_KEY", os.environ, "claimed OUT of os.environ — no session CLI inherits it")
+        self.assertEqual(jd._work_key(), "synthetic-manager-env-credential",
+                         "one stash: what the judges bill to is what the catalog fetch bills to")
+
+    def test_with_the_claimer_wired_the_lp_key_still_wins(self):
+        os.environ["ANTHROPIC_API_KEY"] = "synthetic-manager-env-credential"
+        os.environ["ANTHROPIC_LP_API_KEY"] = "synthetic-lp-credential"
+        jd._WORK_KEY_FN = sb.work_api_key
+        self.assertEqual(km._models_api_credential(), ("x-api-key", "synthetic-lp-credential"))
+
+    def test_the_kernel_wires_the_claimer_before_the_boot_refresh(self):
+        import inspect
+        src = inspect.getsource(km._sdk_locked)
+        self.assertLess(src.index("jd._WORK_KEY_FN = sbmod.work_api_key"), src.index('_refresh_model_catalog("boot")'),
+                        "the boot fetch runs with the claimer wired: the manager-env key is what it rides")
+
+    def test_an_unwired_ambient_key_is_not_read_and_the_refresh_says_so(self):
         os.environ["ANTHROPIC_API_KEY"] = "synthetic-ambient-credential"
-        self.assertIsNone(km._models_api_credential(), "no claimer wired → an ambient key was designated for nothing here")
-        # …and the refresh's no-credential line names the policy, so a keyed box that wants the catalog
-        # knows which variable to set instead of wondering why the key in its shell was ignored
+        self.assertIsNone(km._models_api_credential(), "no claimer wired → nothing claimed, nothing read")
+        self.assertIn("ANTHROPIC_API_KEY", os.environ, "…and the environment is left as it was")
+        # …and the refresh's no-credential line names what a box that wants the catalog must carry —
+        # the LP key, or the manager's own work key — honestly, so nobody exports a session-auth key
         os.environ.pop("ROMP_MODEL_CATALOG", None)
         _reset_catalog()
         try:
@@ -406,7 +439,9 @@ class CredentialPolicy(unittest.TestCase):
                 self.assertTrue(km._refresh_model_catalog("boot", _async=False))
             self.assertIn("no API credential the kernel can use", err.getvalue())
             self.assertIn("ANTHROPIC_LP_API_KEY", err.getvalue())
-            self.assertIn("ambient ANTHROPIC_API_KEY is deliberately not read", err.getvalue())
+            self.assertIn("the manager's own API key", err.getvalue())
+            self.assertIn("never a session-auth key", err.getvalue())
+            self.assertNotIn("deliberately not read", err.getvalue(), "the first draft's overclaim is gone")
             self.assertIn("no API credential", km._catalog_status["lastError"])
         finally:
             _reset_catalog()
@@ -444,6 +479,26 @@ class StalenessEvent(unittest.TestCase):
         self.assertTrue(km._note_unknown_model("claude-opus-9-9"))
         self.assertFalse(km._note_unknown_model("claude-opus-9-9"), "dedup by id — no second refresh")
         self.assertEqual(self.fired, ["unknown model id claude-opus-9-9"])
+
+    def test_a_sighting_during_an_inflight_refresh_is_not_spent(self):
+        # (fold fixer, 2026-09-02) the refresh is single-flight: an id first sighted WHILE one is inflight
+        # (the boot fetch — exactly when a running session's CLI first reports a new release) gets no
+        # refresh started for it. Its one refresh per kernel life must not be spent on that no-op: if
+        # the inflight fetch lands without the id (a failed fetch, a key that cannot see it), the next
+        # sighting is the id's own refresh. The REAL gate first, then the landing.
+        km._refresh_model_catalog = self._orig
+        os.environ.pop("ROMP_MODEL_CATALOG", None)
+        km._catalog_status["inflight"] = True
+        try:
+            self.assertFalse(km._note_unknown_model("claude-opus-9-9"), "inflight → nothing started")
+        finally:
+            km._catalog_status["inflight"] = False
+            os.environ["ROMP_MODEL_CATALOG"] = "off"
+        self.assertNotIn("claude-opus-9-9", km._catalog_asked, "nothing started, so nothing spent")
+        km._refresh_model_catalog = lambda reason, _async=True: (self.fired.append(reason), True)[1]
+        self.assertTrue(km._note_unknown_model("claude-opus-9-9"), "the next sighting asks for real")
+        self.assertEqual(self.fired, ["unknown model id claude-opus-9-9"])
+        self.assertFalse(km._note_unknown_model("claude-opus-9-9"), "…and THAT was the id's one refresh")
 
     def test_known_ids_aliases_snapshots_and_garbage_never_fire(self):
         for v in ("claude-opus-5", "claude-fable-5-1", "opus", "default", "claude-opus-4-5-20251101",

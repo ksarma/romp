@@ -1008,10 +1008,12 @@ def _apply_model_catalog(merged, source):
 def _family_newest_model(mid):
     """The family's newest FULL id when `mid` is a superseded full id of that family (claude-fable-5 →
     claude-fable-5-1), else None: a bare alias (fable) has no family here and auto-tracks on its own;
-    the newest id itself, an unknown id, or a non-version id (dated snapshot) remaps to nothing. The
-    thread WAKE path uses this (T223 rider, the user 2026-09-01): a dormant comment thread registered
-    on a superseded full id comes up on family-newest at its next EXPLICIT open — nothing may wake it
-    just to fix the id, so the remap happens only when it is being woken anyway."""
+    the newest id itself, an unknown id, or a non-version id (dated snapshot) remaps to nothing.
+    Upstream's T223 rider installs this as the backend's thread WAKE hook, so a dormant comment thread
+    registered on a superseded full id comes up on family-newest at its next explicit open. THE FORK
+    DOES NOT WIRE IT (see _sdk_locked): that remap heals the pre-fix artefact of a family click writing
+    the head's full id, and after the alias pickers (#140) a full id in a reg is the user's deliberate
+    pin — pins stand. Kept uncalled as upstream's merge surface, not as a live path."""
     fam = _catalog_family(mid)
     if not fam:
         return None
@@ -1044,20 +1046,22 @@ def _load_model_catalog_cache():
 
 
 def _models_api_credential():
-    """(header, value) for the kernel's OWN credential path, or None when the box has none the kernel
-    may use for a DIRECT API call. In order: ANTHROPIC_LP_API_KEY — a key set aside for direct calls
-    (this fetch is one small GET; low priority is exactly right) — else the manager-env API key the
-    SDK backend CLAIMED out of os.environ (sdk_backend.work_api_key — a key the manager env carried on
-    purpose, the one the judges ride), else an ANTHROPIC_AUTH_TOKEN bearer.
-    An AMBIENT ANTHROPIC_API_KEY is deliberately never read (fork policy, 2026-09-02): on a box where
-    Claude Code sessions authenticate with an API key, that variable in a shell IS the session-auth
-    key, and a kernel started from such a shell inherits it without anyone having designated it for
-    the kernel's own calls — role-scoped keys must not cross roles. The claimer is the single reader
-    that makes a manager-env key deliberate (service.env carries it so the judges can bill to it);
-    with no claimer wired, a key found in the environment was designated for nothing here. A
-    login-only box (Claude Code's OAuth, no key) has no HTTP credential the kernel can borrow: the
-    refresh says so once and serves the seed — the CLI's own alias table still tracks each family's
-    newest there."""
+    """(header, value) for the kernel's OWN credential path, or None when the process carries none the
+    kernel may use for a DIRECT API call. In order: ANTHROPIC_LP_API_KEY — a key set aside for direct
+    calls (this fetch is one small GET; low priority is exactly right) — else the manager-env API key
+    the SDK backend CLAIMED out of os.environ["ANTHROPIC_API_KEY"] when the kernel built it
+    (sdk_backend.work_api_key, wired as jd._WORK_KEY_FN in _sdk_locked before the boot refresh — the
+    same stash the judges bill to), else an ANTHROPIC_AUTH_TOKEN bearer.
+    HONEST about the second rung (fork, 2026-09-02, correcting a first draft that claimed an ambient
+    ANTHROPIC_API_KEY was never read): the kernel DOES read the ANTHROPIC_API_KEY its own environment
+    carried — through the claimer, once, exactly as the judges do — and it cannot tell a work key from
+    a session-auth key by value. The fork's rule is operational, not enforceable here: the MANAGER's
+    environment (service.env) carries the LP/work key, never the interactive session-auth key, so
+    whatever the judges bill to is what this fetch bills to. What the kernel does NOT do is read the
+    variable on its own with no claimer wired: a key in the environment before the backend exists was
+    designated for nothing here and is left alone. A login-only box (Claude Code's OAuth, no key) has
+    no HTTP credential the kernel can borrow: the refresh says so once and serves the seed — the CLI's
+    own alias table still tracks each family's newest there."""
     lp = (os.environ.get("ANTHROPIC_LP_API_KEY") or "").strip()
     if lp:
         return ("x-api-key", lp)
@@ -1118,9 +1122,9 @@ def _refresh_model_catalog(reason, _async=True):
             if cred is None:
                 _catalog_status["lastError"] = "no API credential in the kernel's environment"
                 sys.stderr.write("model catalog (%s): no API credential the kernel can use — serving the "
-                                 "%s list; new models need ANTHROPIC_LP_API_KEY or a manager-env key the "
-                                 "SDK backend claims (or a MODEL_VERSIONS edit); an ambient ANTHROPIC_API_KEY "
-                                 "is deliberately not read — it is the session-auth key on a keyed box\n"
+                                 "%s list; new models need ANTHROPIC_LP_API_KEY, or the manager's own API key "
+                                 "in its environment (the one the SDK backend claims and the judges bill to — "
+                                 "the manager's work key, never a session-auth key), or a MODEL_VERSIONS edit\n"
                                  % (reason, _catalog_status["source"]))
                 return
             try:
@@ -1165,12 +1169,20 @@ def _note_unknown_model(mid):
     """The staleness EVENT: a claude-* version id reached a set path or the pick store and the merged
     list does not know it — exactly when a hand-updated table used to go quietly stale. Fires ONE
     refresh per unknown id per kernel life (dedup by id, never a clock); aliases, dated snapshots
-    and garbage never fire. Returns whether a refresh was started."""
+    and garbage never fire. Returns whether a refresh was started.
+    The id is marked asked only when its refresh actually STARTS (fold fixer, 2026-09-02): the refresh
+    is single-flight, so a sighting while one is inflight — the boot fetch, exactly when a running
+    session's CLI first reports a new release — starts nothing, and marking it then spent the id's
+    one refresh on a no-op. Unmarked, the next sighting after the inflight fetch lands (every /models
+    read re-derives the learned list) asks for real if the catalog still lacks the id; a catalog that
+    caught up short-circuits on _VERSION_FAMILY first."""
     mid = str(mid or "")
     if not _catalog_family(mid) or mid in _VERSION_FAMILY or mid in _catalog_asked:
         return False
-    _catalog_asked.add(mid)
-    return _refresh_model_catalog("unknown model id %s" % mid)
+    started = _refresh_model_catalog("unknown model id %s" % mid)
+    if started:
+        _catalog_asked.add(mid)
+    return started
 
 
 def _catalog_public_status():
@@ -1241,11 +1253,12 @@ def _learned_versions():
     cache have grown it (T222). The CLI is the authoritative source for what it serves; this is the
     catalog's live lookahead, so a new release appears in the pickers the moment any session runs on
     it, and each sighting is also T222's staleness EVENT (_note_unknown_model: one refresh per id per
-    kernel life), so the catalog catches up and the row's mark drops. A dated snapshot of a known
-    version shares its label and adds nothing (the dateless alias covers it); provider-prefixed and
-    synthetic ids are not the shape the pickers send and are skipped. Reads the same reg files
-    _thread_reg does. A first sighting is announced once on stderr — and the pickers mark the row —
-    so an unlisted model is LOUD, never a silent gap behind a stale menu (the fail-loudly rule)."""
+    kernel life, spent only when it actually starts), so the catalog catches up and the row's mark
+    drops. A dated snapshot of a known version shares its label and adds nothing (the dateless alias
+    covers it); provider-prefixed and synthetic ids are not the shape the pickers send and are
+    skipped. Reads the same reg files _thread_reg does. A first sighting is announced once on stderr —
+    and the pickers mark the row — so an unlisted model is LOUD, never a silent gap behind a stale
+    menu (the fail-loudly rule)."""
     out = {}
     fams = {c["value"] for c in MODEL_CHOICES}
     with _catalog_lock:                          # the catalog is rebuilt in place on its own thread
@@ -10393,10 +10406,16 @@ def _sdk_locked():
             # store names no signed-in account — the same authority the usage bars trust, so the
             # pick can never sit in the UI as applied fact on a box that demonstrably cannot apply it
             _sdk_backend.login_ok = lambda: bool(_claude_account())
-            # a dormant comment thread registered on a superseded full model id comes up on its
-            # family's newest at its next EXPLICIT wake (T223 rider) — the catalog is the kernel's,
-            # so the backend consults this hook instead of importing it
-            _sdk_backend.thread_wake_model = _family_newest_model
+            # NO thread-wake model remap on the fork (fold fixer, 2026-09-02). Upstream's T223 rider
+            # installs _family_newest_model as the backend's wake hook, so a dormant comment thread
+            # registered on a superseded full id comes up on its family's newest at its next explicit
+            # wake — built for the pre-fix artefact where a FAMILY click wrote the head's full id into
+            # the reg, an accidental pin. After the alias pickers (#140) a full id in reg.model is a
+            # DELIBERATE pin (the version submenu writes the pick verbatim, the create dialog sends a
+            # pinned family's id, the marker-gated _model_alias_boot_pass treats every post-migration
+            # head as the user's; the way back to floating is the Latest gesture), so the remap would
+            # override only deliberate pins. The backend's hook stays at its None default and its
+            # consult in _ensure stays inert; pinned in tests/test_thread_rows.py (ThreadWakePinsStand).
             # silent mid-turn model swaps mint a completed card (the user 2026-08-23) — the backend
             # observes the transition; the judge store owns the card; the kernel wires the two
             type(_sdk_backend).on_model_fallback = staticmethod(
