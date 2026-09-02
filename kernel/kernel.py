@@ -8906,10 +8906,17 @@ def _sdk_locked():
             # store names no signed-in account — the same authority the usage bars trust, so the
             # pick can never sit in the UI as applied fact on a box that demonstrably cannot apply it
             _sdk_backend.login_ok = lambda: bool(_claude_account())
-            # a dormant comment thread registered on a superseded full model id comes up on its
-            # family's newest at its next EXPLICIT wake (T223 rider) — the catalog is the kernel's,
-            # so the backend consults this hook instead of importing it
-            _sdk_backend.thread_wake_model = _family_newest_model
+            # NO thread-wake model remap. The T223 rider installed _family_newest_model as the
+            # backend's wake hook, so a dormant comment thread registered on a superseded full id came
+            # up on its family's newest at its next explicit wake — built for the artefact where a
+            # FAMILY click wrote the head's full id into the reg, an accidental pin. With the alias as
+            # the family default a full id in reg.model is a DELIBERATE pin (the version submenu writes
+            # the pick verbatim, the create dialog sends a pinned family's id, the marker-gated
+            # _model_alias_boot_pass treats every post-migration head as the user's; the way back to
+            # floating is the Latest gesture), so the remap would override only deliberate pins. The
+            # backend's hook stays at its None default and its consult in _ensure stays inert;
+            # _family_newest_model stays as a helper. Pinned in tests/test_thread_rows.py
+            # (ThreadWakePinsStand).
             # silent mid-turn model swaps mint a completed card (the user 2026-08-23) — the backend
             # observes the transition; the judge store owns the card; the kernel wires the two
             type(_sdk_backend).on_model_fallback = staticmethod(
