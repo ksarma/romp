@@ -5969,6 +5969,27 @@ def _working_top_goal(sid):
     return None
 
 
+def _open_top_goal(sid):
+    """A TOP-level goal of `sid` that is still OPEN — rolled-up status 'working' OR 'blocked' (parked on the
+    user) — or None. The working-note expiry keys on this, not on _working_top_goal: a session waiting on
+    the user has not finished, and the worktree, branch and files it published still belong to it (the
+    2026-09-02 census found parked sessions whose notes had been lifted while they held exactly those)."""
+    try:
+        store = jd.load_goals(sid)
+    except Exception:
+        return None
+    nodes = store.get("nodes", {}); status = store.get("status", {})
+    cleared = _cleared_ids()
+    for nid, nd in nodes.items():
+        if nd.get("parentId"):                           # top-level only
+            continue
+        if nd.get("cleared") or nid in cleared:
+            continue
+        if status.get(nid, "working") in ("working", "blocked"):
+            return nid
+    return None
+
+
 def _open_leaves(nodes, top_id):
     """The OUTSTANDING leaves under top_id, in tree (document) order: each an OPEN node (not done, not
     cleared) with no OPEN children — so the umbrella tops don't count as work, only the actual pending
@@ -8446,14 +8467,16 @@ def _set_working_note(sid, text):
 
 def _clear_done_working_notes(now, tmux):
     """Event-based expiry of the set_working ownership note (the user 2026-06-24): once a session is IDLE
-    with NO working top goal left — its work is done (only done / blocked-on-you / cleared remains) — its
-    @romp-working claim is moot, so clear it. Peers reading list_agents then stop coordinating against a
-    finished session instead of waking it to ask "do you still own this?". Keyed on the completion EVENT
-    (idle + no working top goal), NOT a time heuristic. A session still WORKING — or idle with a goal still
-    WORKING (orphaned/stalled, the auto-nudge case) — keeps its note; it still owns that in-flight work.
-    (A session parked blocked-on-YOU also has its note lifted: it isn't actively editing, and it re-publishes
-    on resume — consistent with Part 1 flagging idle notes stale.) Runs every pusher tick, independent of the
-    auto-nudge toggle; a no-op (one tmux read) unless some session has published a note."""
+    with NO open top goal left — its work is done (only done / cleared remains) — its @romp-working claim
+    is moot, so clear it. Peers reading list_agents then stop coordinating against a finished session
+    instead of waking it to ask "do you still own this?". Keyed on the completion EVENT (idle + no open top
+    goal), NOT a time heuristic. A session still WORKING — or idle with a goal still WORKING (orphaned/
+    stalled, the auto-nudge case) — keeps its note; it still owns that in-flight work. So does a session
+    parked BLOCKED on the user: it has not finished, and the worktree, branch and files its note names are
+    still its own — the first cut lifted those notes too, and the 2026-09-02 census found parked sessions
+    whose claims had vanished from list_agents while they still held them, which is the interference the
+    contract "a peer with no note holds nothing" exists to prevent. Runs every pusher tick, independent of
+    the auto-nudge toggle; a no-op (one tmux read) unless some session has published a note."""
     notes = _working_notes()
     if not notes:
         return
@@ -8469,9 +8492,9 @@ def _clear_done_working_notes(now, tmux):
             continue
         if not turns or _session_working(turns):         # still working per the event model → keep its claim
             continue
-        if _working_top_goal(sid):                        # an OPEN working top goal remains → still its work
+        if _open_top_goal(sid):                           # a working OR blocked top goal remains → still its work
             continue
-        _set_working_note(sid, "")                        # idle + nothing working → lift the stale claim
+        _set_working_note(sid, "")                        # idle + nothing open → lift the stale claim
 
 
 def _chat_tab_sessions(now, tmux):
