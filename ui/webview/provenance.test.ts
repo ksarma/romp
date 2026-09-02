@@ -116,7 +116,7 @@ test("every timed line wears its own recency colour — time AND text, the chat 
   // the user 2026-07-27: colour the timestamps and their items the way the chat tab hover does. The
   // feed tints the whole row (and the when cell explicitly, beating its dim class) from the SHARED
   // age-color ramp; the un-timed remainder row keeps the panel's dim default (t: 0 guards it).
-  assert.match(FEED, /import \{ ageColorReadable \} from "\.\/age-color";/);
+  assert.match(FEED, /import \{ ageColorReadable, ageRgb \} from "\.\/age-color";/);
   assert.match(FEED, /if \(r\.t > 0\) \{ const c = ageColorReadable\(hostNow - r\.t\); row\.style\.color = c; w\.style\.color = c; \}/);
 });
 

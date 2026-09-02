@@ -17,7 +17,7 @@ import { freezeDiff, contentSig } from "./feed-freeze";
 import { hostNameNodes, hostPartsNodes, hostIsDown, hostDownNote, hostOf } from "./host-prefix";
 import { extHoverMatches } from "./card-key";
 import { provenanceRows, provenanceGroupRows, rootStart, type ProvFmt, type ProvRow } from "./provenance";
-import { ageColorReadable } from "./age-color";
+import { ageColorReadable, ageRgb } from "./age-color";
 import { badgeNotices, clearBoundaryNotices, sdkProblemNotices, syncNotices,
   type ClearNoticeRow, type SdkNoticeRow, type SyncNoticeRow } from "./badge-mirror";
 import { initStrip } from "./strip";
@@ -55,7 +55,6 @@ interface AskTreeNode {
   followupPending?: boolean;                                     // this sub was optimistically reopened by a per-sub follow-up → "↻ Followed up" chip (kernel flatten, judges 047264f)
   summary?: string | null;                                       // the DISTILLER's key takeaway for a completed goal (artifact or 1-3 sentences) → the modal's auto-line for a DONE node (kernel flatten 78fc97b)
   blockSummary?: string | null;                                  // the BLOCK-distiller's decision brief for a blocked goal → the modal's auto-line for a BLOCKED node (kernel 466393c); null until produced
-  trgb?: [number, number, number];                               // last-activity recency tint (timestamp)
   cleared?: boolean;                                             // user-cleared sub (nodeOverride op:clear) → struck-through faded row + "cleared" chip; the mark stays tied to status (box = done, the user 2026-07-26)
   reviewedEarlier?: boolean;                                     // this done sub predates the top's review boundary (kernel flatten ↔ jd.review_boundary, the distiller's own scoping) → collapsed behind one "N reviewed earlier" row (the user 2026-08-19)
   parked?: { n: number } | null;                                 // LEAPFROGGED open row (kernel _parked_rows, the user 2026-08-24): nothing filed under it while n younger siblings were dispatched past it → quiet "parked" tag + the card's dim sub-goals suffix; retires on its own delegation edge or any verdict
@@ -72,7 +71,6 @@ interface AskItem {
   itemId: string; sid: string; name: string; color: { bg: string; fg: string } | null;
   text: string; t: number; live: boolean;
   turnId: string;
-  trgb: [number, number, number];
   column: "working" | "needs_input" | "completed";   // RAW kernel value (build_feed): working/needs_input/completed. askColumn() maps it to the local Column. NOT "asks" — that was a stale lie that silently broke `it.column === "asks"` checks.
   followupPending?: boolean;                       // you followed up on a settled card → optimistically reopened, awaiting the judge's re-file (kernel)
   followupAt?: number | null;                      // when that follow-up/continue went — the latched button's honest age (T150)
@@ -133,7 +131,7 @@ interface AskItem {
 interface AskGroup {
   turnId: string; title: string; members: AskItem[];   // members sorted chronologically
   name: string; color: { bg: string; fg: string } | null; sid: string;   // shared asking session
-  t: number; trgb: [number, number, number]; column: Column; live: boolean;
+  t: number; column: Column; live: boolean;
 }
 let asks: AskItem[] = [];
 let viewAsks = true;           // asks inbox is the default; deliverables behind the toggle
@@ -416,6 +414,12 @@ function askColumn(it: AskItem): Column {
 // How opaque the recency tint is over the (black) page — low = a faint, very
 // see-through wash of the hawaii color; the colormap itself darkens with age.
 const TINT_ALPHA = 0.22;
+// The card wash and the age tints come from the card's AGE on the shared recency ramp (age-color.ts) —
+// the same stops the kernel used when it shipped a per-card `trgb` in every frame. Computed here since
+// 2026-09-02: a colour that ticks with the clock made every frame look new to the kernel's dedup and
+// re-sent the whole board on every colour step; the 15s tick below keeps the tints honest between pushes.
+function cardTint(ageSecs: number): string { const [r, g, b] = ageRgb(ageSecs); return `rgba(${r}, ${g}, ${b}, ${TINT_ALPHA})`; }
+function ageTint(ageSecs: number): string { return "rgb(" + ageRgb(ageSecs).join(",") + ")"; }
 
 // Session identity colours are 6-digit hex; split one into [r,g,b] channels. The card border colour is
 // CSS-driven from these channels (--card-r/g/b) so the outline is a PLAIN rgba (not color-mix(), which a
@@ -1675,8 +1679,7 @@ function updateAskCard(card: HTMLElement, it: AskItem) {
   // hasn't classified the in-progress turn yet. No Clear/Nudge (nothing to curate), no auto-line, no tree.
   card.style.opacity = it.provisional ? ".62" : "";
   a._title.style.fontStyle = it.provisional ? "italic" : "";
-  const [r, g, b] = it.trgb;
-  card.style.background = `rgba(${r}, ${g}, ${b}, ${TINT_ALPHA})`;
+  card.style.background = cardTint(hostNow - it.t);
   // GHOST prompt: a provisional placeholder gets a dashed outline so it reads as not-yet-real (the user
   // 2026-06-19), distinct from the solid recency-tinted border of a real card. Reset to solid when the
   // planner replaces it with the classified card.
@@ -2389,7 +2392,7 @@ function buildGroup(turnId: string, members: AskItem[]): AskGroup {
   return {
     turnId, title: ms[0].groupTitle || ms[0].text, members: ms,
     name: ms[0].name, color: ms[0].color, sid: ms[0].sid,
-    t: repr.t, trgb: repr.trgb, column, live: ms.some((m) => m.live),
+    t: repr.t, column, live: ms.some((m) => m.live),
   };
 }
 
@@ -2495,8 +2498,7 @@ function updateGroupCard(card: HTMLElement, g: AskGroup) {
   const eff = hoverAskId ?? pinnedAskId;
   card.className = "fitem ask fgroup" + (g.live ? " live" : " dead")
     + (fkey === eff ? " focused" : "") + (fkey === pinnedAskId ? " pinned" : "");
-  const [r, gg, b] = g.trgb;
-  card.style.background = `rgba(${r}, ${gg}, ${b}, ${TINT_ALPHA})`;
+  card.style.background = cardTint(hostNow - g.t);
   // outline in the group's session identity colour (the user 2026-07-15) — CSS: 0.5α rest, bolded on hover/pin
   setCardChannels(card, (g.color && hexToRgb(g.color.bg)) || [r, gg, b]);
   a._title.textContent = g.title;
@@ -2862,7 +2864,7 @@ function renderTreeNode(box: HTMLElement, it: AskItem, node: AskTreeNode, byId: 
   // a node needing the user reads as "Blocked" (red) — the marker + this label are the block
   // signal, distinct from a recency-tinted age (the user 2026-06-17). Other states show "(Xm ago)".
   meta.textContent = node.status === "question" ? (node.qderived ? "Blocked inside" : "Blocked") : "(" + relAge(hostNow - node.last) + ")";
-  if (node.status !== "question" && node.trgb) meta.style.color = "rgb(" + node.trgb.join(",") + ")";   // Hawaii recency tint
+  if (node.status !== "question") meta.style.color = ageTint(hostNow - node.last);   // recency tint, from the node's last activity
   line.appendChild(meta);
   // Whole-line click NAVIGATES into the chat. PREFERRED: node.anchorUuid (kernel 996ebd7) deep-links to
   // the EXACT turn by id — where the node resolved (done/blocked) or was minted (open) — killing the
@@ -3249,7 +3251,7 @@ function renderModal() {
     agent.onclick = () => vscodeApi?.postMessage({ type: "openSession", id: grp.sid });
     ageEl.textContent = relAge(hostNow - grp.t);
     wireAgeTip(ageEl, () => provenanceGroupRows(grp.members.map(rootStart), grp.t, hostNow, PROV_FMT));
-    ageEl.style.color = "rgb(" + grp.trgb.join(",") + ")";   // tint the age by recency (the time colour scheme)
+    ageEl.style.color = ageTint(hostNow - grp.t);   // tint the age by recency (the time colour scheme)
     clrEl.onclick = () => { for (const mem of grp.members) vscodeApi?.postMessage({ type: "askClear", itemId: mem.itemId, sid: mem.sid }); fullscreenAskId = null; renderModal(); };
     // follow-up on a group goes to the session that took the typed prompt — one
     // message prefixed with the GROUP title, filed under the first member's ask
@@ -3266,7 +3268,7 @@ function renderModal() {
     agent.onclick = () => vscodeApi?.postMessage({ type: "openSession", id: it.sid });
     ageEl.textContent = relAge(hostNow - it.t);
     wireAgeTip(ageEl, () => provenanceRows(it, hostNow, PROV_FMT));
-    ageEl.style.color = "rgb(" + it.trgb.join(",") + ")";   // tint the age by recency (the time colour scheme)
+    ageEl.style.color = ageTint(hostNow - it.t);   // tint the age by recency (the time colour scheme)
     clrEl.onclick = () => { vscodeApi?.postMessage({ type: "askClear", itemId: it.itemId, sid: it.sid }); fullscreenAskId = null; renderModal(); };
     // "Check status" (the user 2026-07-20): shown when the card has open/blocked subs to sweep and the
     // session is live to answer. Same ack + re-arm contract as the card button (event-based: the judge's
@@ -5169,6 +5171,15 @@ window.addEventListener("message", (e: MessageEvent) => {
     }
     return;
   }
+  if (m.type === "feedDelta") {
+    // Deltas are applied by the federation layer (federation.ts inbound), which holds the last full frame
+    // per host and re-emits a merged full `feed`. One reaching this handler means no such layer consumed
+    // it: say so and ask for a full frame rather than sit on the last one (fail loudly, never degrade).
+    console.error("feed: a feedDelta frame reached the pane unapplied — asking the kernel for a full frame");
+    vscodeApi?.postMessage({ type: "clientDiag", surface: "feed", what: "feedDelta-unapplied", data: { buildId: m.buildId } });
+    vscodeApi?.postMessage({ type: "needFullFeed" });
+    return;
+  }
   if (m.type === "feed") {
     // HOVER-FREEZE: a hovered card must not move on screen — queue the payload (newest wins) and
     // hint the deferred churn on the headers instead; mouseleave/blur flush it (see freezeEnter).
@@ -5427,13 +5438,16 @@ function revealCards(keys: Set<string>) {
   }
 }
 
-// Keep "Xm ago" honest between host pushes (host reposts ~1×/min for color fade).
+// Keep "Xm ago" AND the recency wash honest between host pushes. The host no longer reposts for the
+// fade (2026-09-02): the tint is computed here from the card's own `t` (cardTint), so an unchanged board
+// costs nothing on the wire and the fade still moves.
 setInterval(() => {
   const now = Math.floor(Date.now() / 1000);
   for (const [id, card] of askEls) {
     const it = asks.find((a) => a.itemId === id);
     const t = (card as any)._time as HTMLElement | undefined;
     if (it && t) t.textContent = relAge(now - it.t);
+    if (it) card.style.background = cardTint(now - it.t);
   }
 }, 15000);
 

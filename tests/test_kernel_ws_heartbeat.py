@@ -119,7 +119,7 @@ class BuildDriftBanner(unittest.TestCase):
 
     def test_every_pane_page_passes_its_version_to_the_shim(self):
         for app in ("chat", "feed", "fleet", "timeline"):
-            self.assertIn('_shim("%s", v)' % app, KSRC, "%s page bakes its ?v token into the shim" % app)
+            self.assertIn('_shim("%s", v' % app, KSRC, "%s page bakes its ?v token into the shim" % app)   # (the feed page also passes caps=)
 
 
 if __name__ == "__main__":

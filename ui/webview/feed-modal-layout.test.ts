@@ -54,8 +54,9 @@ test("on a phone the tree row wraps so the reply text keeps a full line, not a 1
 });
 
 test("the age is recency-tinted in both modal variants (ask / group)", () => {
-  assert.match(FEED, /ageEl\.style\.color = "rgb\(" \+ it\.trgb\.join\(","\) \+ "\)"/);
-  assert.match(FEED, /ageEl\.style\.color = "rgb\(" \+ grp\.trgb\.join\(","\) \+ "\)"/);
+  // computed from the card's age on the shared ramp since 2026-09-02 — the kernel no longer ships `trgb`
+  assert.match(FEED, /ageEl\.style\.color = ageTint\(hostNow - it\.t\);/);
+  assert.match(FEED, /ageEl\.style\.color = ageTint\(hostNow - grp\.t\);/);
 });
 
 test("modal marks: not-yet-done is a hollow RING the size of the ✓ disc; derived done is the OUTLINED ✓", () => {

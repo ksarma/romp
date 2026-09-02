@@ -13,6 +13,7 @@
 
 import { adoptArrivals, applyViewOrder, applyViewOrderTo, churnSwaps, healOrder, pruneViewOrder,
          readViewOrder, writeViewOrder, VIEW_ORDER_KEY, VIEW_ORDER_EVENT } from "./view-order";
+import { applyFeedDelta } from "./feed-delta";
 import { hostOf, bareId } from "./host-prefix";
 
 export const SEP = ":";
@@ -647,6 +648,25 @@ export class FederationManager {
     if (m && m.type === "feed") {
       this.perHostFeed[host] = m;
       this.ensureHost(host);
+      this.emitMergedFeed();
+      return;
+    }
+    if (m && m.type === "feedDelta") {
+      // The kernel streams the feed as DELTAS to a caught-up socket that announced it can take them (the
+      // shim's ?caps=feedDelta, 2026-09-02). Only the LOCAL socket announces — remote sockets never do,
+      // so a delta from one is a protocol error (its ids would also have escaped prefixInbound). Apply
+      // onto the last full frame held for the host and re-emit the merge exactly as a full frame would:
+      // every consumer downstream keeps seeing whole `feed` frames. No base to apply onto (a delta before
+      // any full frame on this socket) cannot be repaired here: say so and ask for a full frame, the way
+      // the chat asks (needFull) when a chatTail starts past what it holds.
+      const base = host === LOCAL ? this.perHostFeed[host] : null;
+      if (!base) {
+        this.diag("feedDelta-nobase", { host: host || "local", buildId: m.buildId });
+        const s = (window as any).__rompLocalSend;
+        if (host === LOCAL && typeof s === "function") s({ type: "needFullFeed" });
+        return;
+      }
+      this.perHostFeed[host] = applyFeedDelta(base, m);
       this.emitMergedFeed();
       return;
     }

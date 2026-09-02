@@ -23517,7 +23517,7 @@ def _provisional_card(s, name, color, fsid, live, now, store=None):
         text = pre + g if g else prompt[:140].strip()
     t = held.get("t", lt["t"])
     return {"itemId": "provisional:" + fsid, "sid": fsid, "name": name, "color": color, "text": text,
-            "t": t, "live": live, "trgb": list(cm.age_rgb(now - t, _colormap())),
+            "t": t, "live": live,
             "turnId": None, "origin": None, "followupPending": None,
             "summary": None, "blockSummary": None, "background": None,
             "blocked": None, "column": "working",
@@ -23553,7 +23553,7 @@ def _awaiting_card(s, name, color, fsid, live, now, why, kind=None, since=None):
     # the headline. The task list rides `awaiting` for the pill, so the headline needn't repeat every task.
     text = (why[:1].upper() + why[1:]) if why else "Waiting on a background task"
     return {"itemId": "awaiting:" + fsid, "sid": fsid, "name": name, "color": color, "text": text,
-            "t": t, "live": live, "trgb": list(cm.age_rgb(now - t, _colormap())),
+            "t": t, "live": live,
             "turnId": None, "origin": None, "followupPending": None,
             "summary": None, "blockSummary": None, "background": None,
             "blocked": None, "column": "working",
@@ -23617,7 +23617,7 @@ def _blocked_placeholder(s, name, color, fsid, live, now, perm_state, since):
     if not text:
         text = "Awaiting your input" if perm_state == "picker" else "Awaiting your approval"
     return {"itemId": "blocked:" + fsid, "sid": fsid, "name": name, "color": color, "text": text,
-            "t": t, "live": live, "trgb": list(cm.age_rgb(now - t, _colormap())),
+            "t": t, "live": live,
             "turnId": None, "origin": None, "followupPending": None,
             "summary": None, "blockSummary": None, "background": None,
             "blocked": {"state": perm_state,
@@ -23649,7 +23649,7 @@ def _user_todo_placeholder(s, name, color, fsid, live, now, todos):
     if len(todos) > 1:
         text += "  (+%d more)" % (len(todos) - 1)
     return {"itemId": "usertodo:" + fsid, "sid": fsid, "name": name, "color": color, "text": text,
-            "t": newest, "live": live, "trgb": list(cm.age_rgb(now - newest, _colormap())),
+            "t": newest, "live": live,
             "turnId": None, "origin": None, "followupPending": None,
             "summary": None, "blockSummary": None, "background": None,
             "blocked": {"state": "userTodos", "count": len(todos),
@@ -24244,7 +24244,7 @@ def build_feed(now, tmux=None):
                         # (newest mt in its subtree, _fsubmax), so a replied-to / re-touched node freshens in
                         # the modal tree just as its card does — not pinned to the mint `t` (the user
                         # 2026-07-01). `t` stays the mint time (the node's nav-time fallback).
-                        "t": nd["t"], "last": _fsubmax(nid), "trgb": list(cm.age_rgb(now - _fsubmax(nid), _colormap())),
+                        "t": nd["t"], "last": _fsubmax(nid),
                         # mt = last-modified (the segment the planner applied done / block) → a blocked or
                         # done node deep-links to WHERE IT RESOLVED, not where it was minted. Falls back to
                         # t for never-modified nodes (open work, derived done). (the user 2026-06-16.)
@@ -24821,7 +24821,6 @@ def build_feed(now, tmux=None):
             card = {
                 "itemId": nid, "sid": fsid, "name": name, "color": color, "text": card_text,
                 "t": disp_t, "live": live,
-                "trgb": list(cm.age_rgb(now - disp_t, _colormap())),
                 "turnId": nid, "origin": origin,
                 **({"handoffTo": handoff_to} if handoff_to else {}),
                 **({"delegTracked": _tracked_peers} if _tracked_peers else {}),
@@ -25044,7 +25043,6 @@ def build_feed(now, tmux=None):
             "itemId": item_id, "sid": ph["toId"], "name": ph["toName"], "color": _name_color(ph["toId"]),
             "text": "Hand-off parked for %s (offline)" % ph["toName"],
             "t": ph["t"], "live": False,
-            "trgb": list(cm.age_rgb(now - ph["t"], _colormap())),
             "turnId": item_id, "origin": None,
             "followupPending": None, "waitingOn": None,
             "summary": None, "blockSummary": None, "background": None, "summaryAnchorUuid": None, "warns": None,
@@ -25886,7 +25884,6 @@ def _quarantine_cards(now, cleared):
             "color": _name_color(rec.get("toId") or ""),
             "text": "New message",
             "t": t, "live": False,
-            "trgb": list(cm.age_rgb(now - t, _colormap())),
             "turnId": item_id, "origin": None,
             "followupPending": None, "waitingOn": None,
             "summary": None, "blockSummary": None, "background": None, "summaryAnchorUuid": None, "warns": None,
@@ -27544,11 +27541,12 @@ def _segment_of_uuid(sid, uuid, now):
 # up from the chat file's: a payload MAY carry the clock, but everything the dedup compares must not.
 _DEDUP_VOLATILE = ("now", "buildId")
 
-# A deduped view still has to FADE. The feed colors each card by age against the payload's `now`, so a
-# client that received nothing for many minutes would hold its colors frozen. The client already keeps the
-# "Xm ago" text honest from its own clock on a 15s tick; this preserves the host repost that the fade was
-# always documented to ride on (feed.ts: "host reposts ~1×/min for color fade") and nothing beyond it.
-# So an UNCHANGED view costs one repost a minute instead of ~30.
+# A deduped view used to have to FADE: the feed coloured each card by age against the payload's `now`, so a
+# client that received nothing for many minutes held its colours frozen, and this repost (one a minute
+# instead of ~30) kept the fade moving. Since 2026-09-02 the feed computes the tint client-side from each
+# card's `t` (age-color.ts) and the delta path (_send_feed) never reposts — an unchanged board costs nothing.
+# The repost stays for the legacy full-frame path (_send_client's volatile-keyed payloads: full feed frames
+# to clients that did not announce deltas, the timeline bars), whose consumers were written against it.
 _DEDUP_REPOST_S = 60.0
 
 
@@ -27677,6 +27675,126 @@ def _send_chat(c, m, ms, change_from, led_changed):
         _send_client(c, ("chat", sid), m_send)
     st[sid] = ((evs[head_from].get("uuid") if head_from < total else None), head_from)
     return ms
+
+
+# ── the feed's delta path ─────────────────────────────────────────────────────────────────────────
+# Every feed push used to be the WHOLE frame: measured 2026-09-02 on a board of ~660 cards, 5.76 MB per
+# push (asks 4.8 MB, ledgers 0.95 MB, everything else ~13 KB), re-sent on every change — every few seconds
+# during activity — when only 0-21 cards and 0-1 ledgers differed between consecutive pushes. Three frames
+# of that (16 MB, WS_QUEUE_BYTES) put a client behind enough to be dropped (_mk_ws_send), its reconnect
+# resynced with another full frame, and the shim's stale banner flashed on every drop: ~300 raises a day,
+# almost all on the feed pane. A caught-up client that has ANNOUNCED it can apply deltas (see FEED_DELTA_CAP)
+# now gets a {type:"feedDelta"} instead: the cards that changed (by itemId), the itemIds that left, the same
+# for ledgers (by sid), and the small top-level fields whole when any of them changed. Nothing changed →
+# nothing sent, exactly as before. A client that has not announced, or has not yet received a full frame on
+# this socket, gets the full {type:"feed"} frame — the legacy path, kept for every consumer that reads it
+# (the Fleet pane, older bundles, anything relaying frames).
+#
+# The parts below are computed ONCE per build and shared by every client (the 2026-08-10 CPU discipline):
+# per-card and per-ledger serializations keyed by id, plus the rest of the frame minus the clock fields.
+# The per-card strings are spliced straight into the delta frame, so an upsert is never re-serialized, and
+# a client's held state is a REFERENCE to the maps of the build it last received — immutable per build, so
+# "did anything change since this client's last frame" is an identity check when the build is the same and
+# a dict-of-strings compare when it is not.
+FEED_DELTA_CAP = "feedDelta"   # the capability a client announces (ws ?caps=feedDelta) to opt into deltas
+
+# Fields of the feed frame that are collections keyed by an id, sent as upserts/removals: (key, id field).
+_FEED_KEYED = (("asks", "itemId"), ("ledgers", "sid"))
+
+
+def _feed_parts(feed):
+    """Per-item serializations of a feed frame: ({itemId: json}, {sid: json} or None when the build carried
+    no ledgers, {the other top-level fields}, their json). `default=str` matches the full frame's dumps
+    fallbacks so a value the full frame can carry never breaks the delta."""
+    cards = {a["itemId"]: json.dumps(a, default=str) for a in (feed.get("asks") or [])}
+    leds = ({l["sid"]: json.dumps(l, default=str) for l in feed["ledgers"]}
+            if isinstance(feed.get("ledgers"), list) else None)
+    rest = {k: v for k, v in feed.items()
+            if k not in ("type", "asks", "ledgers") and k not in _DEDUP_VOLATILE}
+    return cards, leds, rest, json.dumps(rest, sort_keys=True, default=str)
+
+
+def _feed_delta(prev, cur, feed):
+    """The {type:"feedDelta"} wire string taking a client from parts `prev` to parts `cur`, or None when
+    nothing differs (the caller then sends nothing at all — a clock-only tick never reaches the wire)."""
+    pcards, pleds, _prest, prest_ms = prev
+    cards, leds, rest, rest_ms = cur
+    if pcards is cards and pleds is leds and prest_ms == rest_ms:
+        return None
+    up = [s for k, s in cards.items() if pcards.get(k) != s]
+    gone = [k for k in pcards if k not in cards]
+    lup, lgone, led_reset = [], [], False
+    if leds is not None:
+        if pleds is None:                       # the client never held ledgers → this build's set, whole
+            lup, led_reset = list(leds.values()), True
+        else:
+            lup = [s for k, s in leds.items() if pleds.get(k) != s]
+            lgone = [k for k in pleds if k not in leds]
+    top_changed = prest_ms != rest_ms
+    if not (up or gone or lup or lgone or led_reset or top_changed):
+        return None
+    out = ['{"type":"feedDelta","now":%s,"buildId":%s' % (json.dumps(feed.get("now")), json.dumps(feed.get("buildId")))]
+    if up:
+        out.append(',"asks":[' + ",".join(up) + "]")
+    if gone:
+        out.append(',"removeAsks":' + json.dumps(gone))
+    if led_reset or lup or lgone:               # present ⇒ the client's ledgers list exists after applying it
+        out.append(',"ledgers":[' + ",".join(lup) + "]")
+        if lgone:
+            out.append(',"removeLedgers":' + json.dumps(lgone))
+    if top_changed:
+        out.append(',"top":' + rest_ms)
+    out.append("}")
+    return "".join(out)
+
+
+def _send_feed(c, feed, ms, sig, parts):
+    """Send the feed to ONE client: a delta when it announced FEED_DELTA_CAP and holds a frame from this
+    socket, else the full frame through _send_client (per-client dedup + the once-a-minute repost that path
+    keeps for legacy consumers). Either way the client's held parts are recorded, so a client that announces
+    later, or whose first frame was the connect-time one (see _ws), rebases from what it actually holds."""
+    prev = c.get("efeed")
+    if prev is not None and FEED_DELTA_CAP in (c.get("caps") or ()):
+        s = _feed_delta(prev, parts, feed)
+        c["efeed"] = parts
+        if s is None:
+            _perf("send", slot="feed", bytes=len(ms), deduped=1)
+            return
+        c.setdefault("sent", {})[("feed",)] = (sig, time.time())   # the dedup slot stays truthful either way
+        _perf("send", slot="feedDelta", bytes=len(s), deduped=0)
+        _client_send(c, s, ("feed",))
+        return
+    _send_client(c, ("feed",), feed, pre=ms, sig=sig)
+    c["efeed"] = parts
+
+
+def _feed_wire_now():
+    """The freshest feed frame the kernel can serve WITHOUT a build, as a _feed_wire tuple, or None on a cold
+    kernel. The pusher refreshes _feed_wire only while a feed/fleet client is connected, so with none open
+    it can lag the latest build (which chat clients keep warm through _cached_feed); in that case the latest
+    build is serialized here (ledger-less — the pusher attaches those on its next cycle) and cached."""
+    global _feed_wire
+    w = _feed_wire
+    built = _built_feed[1]
+    if w is not None and (built is None or w[0] is built):
+        return w
+    if built is None:
+        return None
+    ms = json.dumps(built)
+    w = (built, None, built, ms, _dedup_sig(built, ms), _feed_parts(built))
+    _feed_wire = w
+    return w
+
+
+def _send_feed_now(c):
+    """Serve client `c` the cached feed frame immediately (a fresh socket, or one that asked for a re-base).
+    Returns whether a frame was sent; a cold kernel has nothing cached and the pusher serves it instead."""
+    w = _feed_wire_now()
+    if w is None:
+        return False
+    _send_client(c, ("feed",), w[2], pre=w[3], sig=w[4])
+    c["efeed"] = w[5]
+    return True
 
 
 # The active recency colormap (the user 2026-06-16 wanted a chooser): persisted in STATE/colormap, read
@@ -27943,10 +28061,7 @@ def _propagate_judge_settings(body):
 
 def _reply(c, msg):
     """Send a one-shot reply to ONE client (no per-key dedup; for request/response like imgData)."""
-    try:
-        c["send"](json.dumps(msg))
-    except Exception:
-        c["alive"] = False
+    _client_send(c, json.dumps(msg))
 
 
 def _setting_kept_value(name):
@@ -29089,18 +29204,19 @@ def _push(targets, connect=False, tmux=None):
     # OBJECT is always new but its content only changes when a session's ledger/status genuinely
     # moved — dict == is C-speed and allocation-free, far cheaper than re-serializing).
     global _feed_wire, _bars_wire
-    feed_ms = feed_sig = bars = bars_ms = bars_sig = None
+    feed_ms = feed_sig = feed_parts = bars = bars_ms = bars_sig = None
     for c in targets:
         if c["app"] in ("feed", "fleet"):   # the feed pane AND the Fleet view both ride the feed payload (Fleet reads feed.ledgers)
             if feed_ms is None:
                 w = _feed_wire                           # tuple snapshot — rebound whole, never mutated (torn reads)
                 if w is not None and w[0] is feed_src and w[1] == feed.get("ledgers"):
-                    feed, feed_ms, feed_sig = w[2], w[3], w[4]
+                    feed, feed_ms, feed_sig, feed_parts = w[2], w[3], w[4], w[5]
                 else:
                     feed_ms = json.dumps(feed)
                     feed_sig = _dedup_sig(feed, feed_ms)
-                    _feed_wire = (feed_src, feed.get("ledgers"), feed, feed_ms, feed_sig)
-            _send_client(c, ("feed",), feed, pre=feed_ms, sig=feed_sig)
+                    feed_parts = _feed_parts(feed)       # the delta path's per-item forms, once per build too
+                    _feed_wire = (feed_src, feed.get("ledgers"), feed, feed_ms, feed_sig, feed_parts)
+            _send_feed(c, feed, feed_ms, feed_sig, feed_parts)
         elif c["app"] == "timeline" and timeline is not None:
             if bars_ms is None:
                 w = _bars_wire
@@ -29281,7 +29397,7 @@ _built_timeline = [None, None, 0.0, 0.0]          # [fleet_sig, payload, built_a
 # build is never re-serialized cycle after cycle (~357KB + ~1.65MB per cycle measured on a quiet fleet).
 # TUPLES, rebound whole — a concurrent connect push on a WS thread snapshots the ref and can never see a
 # torn entry; the identity keys stay alive because these tuples (and the build caches above) hold them.
-_feed_wire = None   # (feed_src, ledgers, wire_feed, ms, sig)
+_feed_wire = None   # (feed_src, ledgers, wire_feed, ms, sig, parts) — parts = _feed_parts(wire_feed)
 _bars_wire = None   # (timeline, warming, bars, ms, sig)
 # Each build is intrinsically ~1-1.6s (re-segments every session); the IDEAL is a per-session lane/card cache
 # (only the changed session rebuilds), but that's a big refactor of build_feed/build_timeline. Interim cap: a
@@ -30125,11 +30241,15 @@ html,body{background:var(--vscode-editor-background);}
 body{font-family:var(--vscode-font-family);font-size:13px;color:var(--vscode-foreground);margin:0;padding:0;}"""
 
 # The WS bridge shim (ported verbatim from chat-view server.ts shimJs — same protocol).
-def _shim(app, v=0):
+def _shim(app, v=0, caps=""):
     # `v` = the dist build token this page was served with (its ?v= urls). The shim compares it against the
     # `dv` riding every keepalive and raises the build banner on drift — so EVERY kernel-served page gets the
     # "newer build" prompt, not just the dashboard landing's /version poll (the user 2026-07-13: a standalone
     # pane sat silent through rebuilds).
+    # `caps` = the wire capabilities the page's BUNDLE has (comma-separated), announced on the ws URL so the
+    # kernel can send it a leaner stream: the feed page passes FEED_DELTA_CAP (its federation layer applies
+    # {type:"feedDelta"} frames). The kernel serves page and bundle from one dist, so it is the kernel's
+    # knowledge to assert; a page that passes nothing gets the full frames it always did.
     return """
 (function(){var queue=[],ws=null,everConnected=false;
 // This pane's DASHBOARD id. ?wid= when the host supplies one (the VS Code extension builds its own pane
@@ -30139,7 +30259,7 @@ def _shim(app, v=0):
 // (a focus, a jump) at the dashboard that asked instead of at every one that is open (the user 2026-07-29).
 var wid=new URLSearchParams(location.search).get("wid")||"";
 try{if(!wid)wid=window.sessionStorage.getItem("romp:wid")||"";}catch(e){}
-var APP="%s";var LOADEDV=%d;var lastRecv=0;var STALE_MS=30000;   // watchdog: no frame (incl. keepalive) for this long → the socket is dead → reconnect
+var APP="%s";var LOADEDV=%d;var CAPS="%s";var lastRecv=0;var STALE_MS=30000;   // watchdog: no frame (incl. keepalive) for this long → the socket is dead → reconnect
 var connT=0;   // when the current socket's connect() attempt started — the progress watchdog's reference point
 // Tell the shell this pane's WS state so it can show ONE "disconnected" banner (the user 2026-06-27): a real
 // network drop used to blind-reload into a dead page, leaving the pane silently frozen with no explanation.
@@ -30206,7 +30326,7 @@ else selfBar("A newer romp build is available.","build");}
 function connect(){if(ws&&(ws.readyState===0||ws.readyState===1))return;   // one live attempt at a time — a lost timer + the watchdog can both call in
 connT=Date.now();var proto=location.protocol==="https:"?"wss://":"ws://";
 var active="";try{var st0=JSON.parse(localStorage.getItem(SK)||"null");active=(st0&&st0.activeId)||"";}catch(e){}
-ws=new WebSocket(proto+location.host+"/ws?app=%s"+(wid?"&wid="+encodeURIComponent(wid):"")+(active?"&active="+encodeURIComponent(active):""));
+ws=new WebSocket(proto+location.host+"/ws?app=%s"+(wid?"&wid="+encodeURIComponent(wid):"")+(active?"&active="+encodeURIComponent(active):"")+(CAPS?"&caps="+encodeURIComponent(CAPS):""));
 // onopen: flush the queue; a RECONNECT (after a drop) also PROMPTS a reload — the fresh socket resyncs live via
 // the kernel's next push, and the banner offers a full reload for anything a live push doesn't cover. This
 // replaces the old silent location.reload() (the user: don't foist a reload; let me click — [[prefer-reload-banner-not-auto]]).
@@ -30260,7 +30380,7 @@ document.addEventListener("visibilitychange",function(){if(document.visibilitySt
 if(!ws||ws.readyState!==1||Date.now()-lastRecv>STALE_MS){armStale("foreground");freshPending=true;
 try{if(ws&&ws.readyState<=1)ws.close();}catch(e){}   // OPEN or stuck-CONNECTING both die here → onclose retries
 if(!ws||ws.readyState===3)connect();}});})();
-""" % (app, int(v), app, app)
+""" % (app, int(v), caps, app, app)
 
 
 # On a narrow / touch viewport the chat's session tabs wrap into several rows and eat vertical space.
@@ -30584,7 +30704,7 @@ def _feed_page():
             "<script src=/dist/feed.js?v=%d></script></body></html>"   # feed.js builds + wires the gear modal itself
             % (v, v, THEME_CSS,
                '<div id="feed-head"></div><div id="feed-list"></div><div id="feed-foot"></div>',
-               _pane_spin("feed-list"), _shim("feed", v), v, v))
+               _pane_spin("feed-list"), _shim("feed", v, caps=FEED_DELTA_CAP), v, v))
 
 
 # Fleet — a BY-SESSION view that MIRRORS the ledger box (the user 2026-06-23): each session, then its goal
@@ -35491,6 +35611,14 @@ class Handler(BaseHTTPRequestHandler):
             client.get("sent", {}).pop(("chat", sid), None)   # …and drop the dedup slot, so the full send lands
             self._push_one(client)                            # repair NOW, not on the next 0.5-3s tick
             return
+        if msg and msg.get("type") == "needFullFeed":
+            # The feed's twin of needFull: the client could not apply a {type:"feedDelta"} (no base frame
+            # on its side, or a bundle that never expected one). Forget what we believe it holds and serve
+            # the full frame now; the delta stream re-bases from that.
+            client.pop("efeed", None)
+            client.get("sent", {}).pop(("feed",), None)
+            _send_feed_now(client)
+            return
         if msg and msg.get("type") == "loadOlder" and msg.get("id"):
             # Browser scrolled back to the top of the loaded tail and there's older history on disk → ship the
             # previous WIRE_CHUNK events so it can prepend them (the wire tail-windowing scroll-back, the user
@@ -36212,6 +36340,14 @@ class Handler(BaseHTTPRequestHandler):
         app = (q.get("app") or ["chat"])[0]
         wid = (q.get("wid") or [""])[0]         # which DASHBOARD this pane belongs to → _send_to_view aims at one
         active = (q.get("active") or [""])[0]   # the tab this client is looking at → _push builds it FIRST
+        # Capabilities the client ANNOUNCES (comma-separated). The one today is FEED_DELTA_CAP: a page whose
+        # bundle can apply {type:"feedDelta"} says so on its ws URL (the shim adds it for the kernel-served
+        # feed page — see _shim's `caps`). Announced on the URL rather than in a first message because it
+        # has to be known at connect time (the connect-time frame below is the delta stream's base) and it
+        # has to survive every reconnect without the bundle re-announcing. Anything that does not announce
+        # — the VS Code extension's pipes, federation's remote sockets, the Fleet pane, an older bundle —
+        # keeps receiving the full {type:"feed"} frame it always did.
+        caps = (q.get("caps") or [""])[0]
         self.send_response(101)
         self.send_header("Upgrade", "websocket")
         self.send_header("Connection", "Upgrade")
@@ -36224,7 +36360,8 @@ class Handler(BaseHTTPRequestHandler):
         # push/heartbeat loops (see _ws_sender). Pongs still ride self.wfile — they are ≤125-byte control
         # frames answered on this client's own handler thread, and both paths serialise on the same `lock`.
         q = queue.Queue()
-        client = {"app": app, "wid": wid, "alive": True, "qbytes": 0, "qlock": threading.Lock()}
+        client = {"app": app, "wid": wid, "alive": True, "qbytes": 0, "qlock": threading.Lock(),
+                  "caps": set(x for x in caps.split(",") if x)}
         client["send"] = _mk_ws_send(q, self.connection, client)
         threading.Thread(target=_ws_sender, args=(q, self.connection, lock, client),
                          daemon=True, name="ws-send").start()
@@ -36232,6 +36369,13 @@ class Handler(BaseHTTPRequestHandler):
             client["active"] = active                  # active-tab-first streaming (the user 2026-06-24)
         with _clients_lock:
             _clients.append(client)
+        # A feed/fleet client gets the cached feed frame AT ONCE, before its first message is even read.
+        # Measured 2026-09-02: a reconnecting feed pane waited 7-24 s for its first frame, because the
+        # bundle sends {type:"ready"} (the connect push) only on page load — a shim reconnect got nothing
+        # until the pusher's next cycle reached it, and the stale banner sat there meanwhile. The cached
+        # wire form costs one enqueue; the pusher's next cycle then dedups against it (or sends a delta).
+        if app in ("feed", "fleet"):
+            _send_feed_now(client)
         try:
             while client["alive"]:
                 # one COMPLETE message per iteration — fragments reassembled, pings answered inline
