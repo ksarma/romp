@@ -116,6 +116,7 @@ def _alias_label(alias: str) -> str:
     label model_label falls back to (pretty id, or capitalised alias, '' for default)."""
     if not alias or alias == "default":
         return ""
+    alias = re.sub(r"\[[^\]]*\]$", "", alias)   # fable[1m] → Fable: the context tag is not part of the name
     return pretty_model(alias) if alias.startswith("claude-") else alias.capitalize()
 
 
@@ -145,7 +146,9 @@ def _model_reflects_alias(live_pretty: str, alias: str) -> bool:
         return False
     if not alias or alias == "default":
         return True
-    a = alias.lower()
+    # fable[1m] → fable: the CLI's 1M-context tag is never part of the pretty name, so the literal
+    # never matched and a tagged pick's switching-dots stuck until the thread died
+    a = re.sub(r"\[[^\]]*\]$", "", alias.lower().strip())
     a = a.split("-")[1] if a.startswith("claude-") and "-" in a else a   # claude-opus-4-8 → opus
     return a in live_pretty.lower()
 
@@ -1427,16 +1430,93 @@ def read_sdk_defaults(state_dir: Path) -> dict:
         return {}
 
 
-def write_sdk_default(state_dir: Path, **fields) -> None:
-    """Merge {model?, effort?} into the remembered defaults (atomic tmp+rename). Only non-None keys passed
-    are touched, so remembering a model never clobbers the remembered effort and vice-versa."""
-    d = read_sdk_defaults(state_dir)
-    d.update({k: v for k, v in fields.items() if v is not None})
+_defaults_lock = threading.Lock()   # serializes the read-modify-writes below: the kernel thread (set_model, the
+#                                     parked-op replay) and the SDK loop thread (_revert_model) both write the file
+
+
+def _write_sdk_defaults(state_dir: Path, d: dict) -> None:
+    """The one writer: atomic tmp+rename. Callers hold _defaults_lock."""
     p = _defaults_path(state_dir)
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_suffix(".tmp")
     tmp.write_text(json.dumps(d))
     os.replace(tmp, p)
+
+
+# The remembered `model` carries the IDENTITY of the write that put it there: `modelTok`, a fresh token
+# stamped by every writer of that key. The store is shared across sessions and a live set_model writes it
+# BEFORE the CLI has ruled, so a refusal has to ask "is the value in the store still MY write?" — and by
+# value that question has no answer: another session's accepted pick of the same id looks exactly like
+# this session's pending one, a foreign pending write looks like a baseline, and an id this session
+# refused long ago is indistinguishable from the same id another session accepted since. The token
+# answers it exactly (SdkBackend._seed_write_*). Only `model` carries one — effort/mode/auth have no
+# live refusal path through this store.
+_TOKENED_DEFAULTS = frozenset({"model"})
+
+
+def _mint_write_tok() -> str:
+    return uuid.uuid4().hex
+
+
+def write_sdk_default(state_dir: Path, **fields) -> None:
+    """Merge {model?, effort?} into the remembered defaults (atomic tmp+rename). Only non-None keys passed
+    are touched, so remembering a model never clobbers the remembered effort and vice-versa. A `model`
+    written here is SETTLED as it lands (a dormant session's pick, applied at its next connect; nothing
+    can refuse it now), and its fresh `modelTok` says so to any pending write it replaced: that write is
+    no longer the store's head, so its refusal leaves the store alone."""
+    with _defaults_lock:
+        d = read_sdk_defaults(state_dir)
+        d.update({k: v for k, v in fields.items() if v is not None})
+        for k in _TOKENED_DEFAULTS:
+            if fields.get(k) is not None:
+                d[k + "Tok"] = _mint_write_tok()
+        _write_sdk_defaults(state_dir, d)
+
+
+def _swap_sdk_default_locked(state_dir: Path, key: str, value):
+    """swap_sdk_default's body, for a caller that already holds _defaults_lock and has more to do under
+    the same hold (SdkBackend._seed_write_pending inserts the write's node before letting go: with the
+    swap and the insert in two holds, a refusal of the write this one replaced could run between them,
+    re-point only the nodes that existed, and leave the new node pointing at the refused pair). Callers
+    hold _defaults_lock."""
+    d = read_sdk_defaults(state_dir)
+    prior, prior_tok = d.get(key), d.get(key + "Tok")
+    tok = _mint_write_tok()
+    d[key] = value
+    d[key + "Tok"] = tok
+    _write_sdk_defaults(state_dir, d)
+    return prior, prior_tok, tok
+
+
+def swap_sdk_default(state_dir: Path, key: str, value):
+    """Write one remembered default under a FRESH write token and return the (value, token) it REPLACED
+    (None, None = the key was absent) plus the token minted — the read and the write in ONE lock hold.
+    A setter that read its snapshot, released, and then took the lock to write let a writer on the
+    other thread (a revert, another session's pick) land in between, so the snapshot described a value
+    the write never replaced. The optimistic setter's read-modify-write; the prior pair is what
+    SdkBackend._seed_write_refused puts back when this write is refused while it is still the store's
+    head."""
+    with _defaults_lock:
+        return _swap_sdk_default_locked(state_dir, key, value)
+
+
+def _cli_refusal(e: BaseException) -> bool:
+    """Did the CLI ANSWER a control request with an error — or did the answer never arrive? The SDK
+    (claude_agent_sdk 0.2.132, _internal/query.py) raises a BARE Exception for both, so the type alone says
+    nothing; the construction does:
+    - a CLI error response: `Exception(response["error"])`, built in the reader from the control_response
+      frame — exact Exception, no cause, the CLI's own text ("Unknown model: …"; "Unknown error" when the
+      frame carried none);
+    - no answer: `Exception("Control request timeout: <subtype>") from TimeoutError` when fail_after expires
+      — which is also how a request STRANDED by Query.close() ends, since close() cancels the reader without
+      resolving pending requests (a reconnect teardown does exactly that);
+    - a reader that dies fans ITS OWN exception (ProcessError, CLIJSONDecodeError, …) into every pending
+      request, and a client already disconnected raises CLIConnectionError — typed, never a bare Exception.
+    Verified by probe against the installed package. Only the first is a verdict on the VALUE; the others
+    say nothing about it, and a setter must not revert on them. A future SDK that types these exceptions
+    makes this conservative (never a revert) — the safe failure."""
+    return (type(e) is Exception and e.__cause__ is None
+            and not str(e).startswith("Control request timeout"))
 
 
 _WORK_KEY: str | None = None   # process-lifetime stash; None = not yet claimed from the environment
@@ -1699,6 +1779,16 @@ class SdkSession:
         self._sub_lock = threading.Lock()            #   hooks mutate on the loop thread; snapshot() reads from the kernel thread
         #                                                (guards _subagents AND _bg_tasks)
         self.chosen_model = reg.get("model") or ""   # the alias the user picked (opus/sonnet/…); self.model is the display name
+        # The last model the CLI ACCEPTED for THIS session — the target its own layers (chosen_model, the
+        # reg's `model`) revert to when a set_model is refused. None = absent (the account default). The
+        # reg's value at construction is asserted by the connect (--model rides _options), so it starts
+        # here; it then moves only on a verdict: the CLI accepting a pick (_do_set_model), a connect
+        # reporting the model it launched with (the init message), a lost answer (the pick stands and the
+        # next connect asserts it). Every writer of those two layers is this session, so the last accepted
+        # value IS the baseline. The SHARED sdk-defaults `model` is a different matter — other sessions
+        # write it too — and is ruled per WRITE, by token, in SdkBackend._seed_write_*: no per-session
+        # view of that layer exists here on purpose (see _seed_write_refused). Under self._lock.
+        self._model_accepted = reg.get("model")
         self._model_pending = ""                     # target ALIAS while a /model switch is resolving: the badge shows
         #   animated dots until the LIVE model actually reflects the pick (the user 2026-07-03: a switch stamped the
         #   chosen alias but left liveModel stale, and model_label PREFERS liveModel → the badge kept the OLD name).
@@ -1930,12 +2020,24 @@ class SdkSession:
             self.backend._log("interrupt (%s): CLI pid %d already gone" % (self.name, pid))
         self.backend._poke()
 
-    def set_model_live(self, model):
+    def set_model_live(self, model, prev=None):
         """Change the model on a CONNECTED session via the SDK control channel. No-op if not yet
-        connected — _options applies chosen_model on connect instead."""
+        connected — _options applies chosen_model on connect instead. `prev` is what set_model wrote
+        (`picked`) and the token of its shared-defaults write (`tok`) — the keys every layer's revert
+        compares against if the CLI refuses the switch (_do_set_model, the mode path's T139 rule)."""
         if self.loop and self.client:
             self.loop.call_soon_threadsafe(
-                lambda: asyncio.ensure_future(self._do_set_model(model)))
+                lambda: asyncio.ensure_future(self._do_set_model(model, prev)))
+
+    # ---- the accepted model (see __init__) ----
+
+    def _model_accept(self, picked):
+        """The CLI accepted `picked` (or a connect launched with it, or its answer was lost and the pick
+        stands): it is what this session's own layers revert to from here on. Says nothing about the
+        shared defaults — a connect vouches for the reg it launched from, and a write to the shared store
+        is settled by its own token (SdkBackend._seed_write_settled)."""
+        with self._lock:
+            self._model_accepted = picked
 
     def set_mode_live(self, mode, prev="default"):
         """Change the permission mode on a CONNECTED session via the SDK control channel. `prev` is
@@ -2084,11 +2186,95 @@ class SdkSession:
             self._interrupted = False
             self.backend._poke()
 
-    async def _do_set_model(self, model):
+    async def _do_set_model(self, model, prev=None):
         try:
             await self.client.set_model(model)
         except Exception as e:
-            self.backend._log("set_model (%s -> %s) refused by the SDK: %s: %s" % (self.name, model, type(e).__name__, e))
+            # The mode path's rule (_do_set_mode, T139), applied to models: set_model PERSISTED its value
+            # before the CLI accepted it — sdk-defaults.json (the seed for every future session), the reg
+            # (the reconnect's --model) and chosen_model — and a refusal here only logged, so a well-formed
+            # id the CLI's catalog rejects poisoned all three and the next reconnect re-asserted it. Revert
+            # every layer and ring the problems so the failed switch is unmissable. The refresh below then
+            # re-reads the model the CLI actually kept.
+            #
+            # But only on a VERDICT — an exception here is one of three worlds:
+            # - SUPERSEDED: a newer pick owns chosen_model (this session picked again while the request
+            #   was out). This request's evidence predates the diary — stand down entirely, ring nothing:
+            #   the user's later pick already answered whatever this one would have said.
+            # - NO ANSWER (_cli_refusal False: a timeout, a request stranded by a reconnect teardown, a
+            #   dead reader, a disconnected client) says nothing about the value. Reproduced: a model and
+            #   an effort picked mid-turn, parked, replayed back-to-back at turn end — set_model's request
+            #   went to the OLD CLI and set_effort's reconnect tore that client down with the answer
+            #   unread; the new connection ran the pick (--model rides _options) and 60s later the strand
+            #   timed out. Reverting there flips every layer back to the previous model while the CLI runs
+            #   the new one — the registry/argv divergence this change closes, re-minted, plus a false
+            #   fallback card for a cheaper prev. Leave the optimistic state (it IS what the next connect
+            #   asserts) and say once, on the log and not the ring, that the answer was lost. If the CLI
+            #   had in fact refused and the answer was lost, the next connect's --model fails LOUDLY
+            #   through the launch-error path.
+            # - A REFUSAL: revert, ring, and tell the kernel to forget the pin it recorded (below).
+            # Where this session's own layers go BACK to is the last ACCEPTED model (_model_accepted),
+            # never the values this pick's writes happened to replace — with two picks in flight the
+            # second's snapshot held the first, and two refusals in a row would write the first REFUSED id
+            # back. The SHARED defaults are unwound by this write's token (_seed_write_refused): the store
+            # goes back only where this write is still what it holds.
+            picked = prev.get("picked") if prev else None
+            tok = prev.get("tok") if prev else None
+            refusal = _cli_refusal(e)
+            with self._lock:
+                superseded = prev is not None and self.chosen_model != picked
+            if superseded:
+                # Standing down from the SESSION's layers — the newer pick owns chosen_model and the reg.
+                # Not from the shared store: this write's node still sits under the newer pick's. A REFUSAL
+                # splices it out — a refusal of THAT pick would otherwise unwind onto this refused id;
+                # spliced, the newer pick's unwind lands on what this write replaced — and moves the store
+                # only if this write is somehow still its head (the newer write already unwound): a refused
+                # value must not stay the seed just because it lost a race. A LOST answer says nothing
+                # about the id: its node goes the way a settled write's does, and the newer pick's unwind
+                # lands on THIS write — a lost pick stands, as a thread's death leaves it standing
+                # (_seed_writes_dropped).
+                if refusal:
+                    self.backend._seed_write_refused(tok)
+                else:
+                    self.backend._seed_write_settled(tok)
+                self.backend._log("set_model (%s -> %s): %s (%s: %s) after a newer pick (%s) — "
+                                  "standing down; the newer pick owns every layer"
+                                  % (self.name, picked, "the CLI answered" if refusal else "the CLI's answer was lost",
+                                     type(e).__name__, e, self.chosen_model or "the account default"), problem=False)
+            elif not refusal:
+                if prev is not None:
+                    self._model_accept(picked)   # the pick stands as the baseline the next connect asserts
+                    self.backend._seed_write_settled(tok)
+                self.backend._log("set_model (%s -> %s): the CLI's answer was lost (%s: %s) — not a refusal; "
+                                  "the pick stands and the next connect asserts it"
+                                  % (self.name, picked if prev else model, type(e).__name__, e), problem=False)
+            else:
+                back = "the account default"
+                if prev is not None:
+                    back = self.backend._revert_model(self, prev) or back
+                self.backend._log("set_model (%s -> %s) refused by the SDK: %s: %s — the switch did NOT apply; "
+                                  "the model reverted to %s" % (self.name, model, type(e).__name__, e, back),
+                                  problem=True)
+            # The kernel recorded a version as its family's pin BEFORE the CLI ruled (_note_model_pick at
+            # its choke point), and the revert never reached that memory — so the family row kept sending
+            # the refused id and re-ringing this on every click. Class-level hook, the on_model_fallback
+            # idiom: the backend rules on the CLI's answer, the kernel owns the store. Fired for a
+            # SUPERSEDED refusal too: the CLI did rule on the id, and the pin it left in the kernel's
+            # memory is the refused id's, not the newer pick's — the newer pick recorded its own. The hook
+            # compares-and-swaps by value (_forget_model_pick(fam, only=id)), so a newer pin for the same
+            # family is never this refusal's to drop. A lost answer says nothing about the id and forgets
+            # nothing — superseded or not.
+            if refusal:
+                hook = getattr(type(self.backend), "on_model_refused", None)
+                if hook and picked:
+                    try:
+                        hook(self.sid, picked)
+                    except Exception as e2:
+                        self.backend._log("model-pick forget (%s): %s" % (self.name, e2), problem=True)
+        else:
+            if prev is not None:
+                self._model_accept(prev.get("picked"))   # the verdict that moves the accepted state
+                self.backend._seed_write_settled(prev.get("tok"))
         # Pull the real new name NOW rather than waiting for the next turn's assistant message — an idle
         # session the user switched but doesn't drive again would otherwise sit on the switching-dots
         # indefinitely (the user 2026-07-03). get_context_usage reports the current model, so this
@@ -2680,6 +2866,13 @@ class SdkSession:
             #                             is over, so the boot-stagger slot (if any) frees NOW
             d = msg.data if isinstance(msg.data, dict) else {}
             self._learn_model(pretty_model(d.get("model")), raw=str(d.get("model") or ""))
+            # the connect launched with chosen_model (--model rides _options) and the CLI is up on it: the
+            # verdict for a pick whose control request never resolved (its task died with the previous
+            # thread) — it is the accepted model now, so a later refused pick reverts to IT. The reg's
+            # layer only: the connect says nothing about the SHARED defaults, which another session may
+            # have moved since (the store is ruled per write, by token).
+            if hasattr(self, "_model_accepted"):   # __new__-built test doubles skip __init__
+                self._model_accept(self.chosen_model or None)
             self.perm_mode = d.get("permissionMode") or self.perm_mode
             # Fast-mode truth rides the init payload — the AUTHORITATIVE re-assert behind set_fast's
             # optimistic flip, shared with the connect-time initialize response (_adopt_fast_state).
@@ -3849,6 +4042,9 @@ class SdkBackend:
         self._log_cb = log
         self.sessions: dict[str, SdkSession] = {}
         self._lock = threading.Lock()
+        self._seed_writes: dict = {}              # tok → {sid, value, prior, priorTok}: set_model's optimistic
+        #                                             writes to the SHARED sdk-defaults `model`, pending the
+        #                                             CLI's verdict (see _seed_write_pending); under _defaults_lock
         self._reg_lock = threading.Lock()         # serializes _update_reg read-modify-writes (queue mirror
         #                                           writes come from kernel AND loop threads)
         self._pending_ask: dict[str, bool] = {}   # sid -> has an ask awaiting answer
@@ -5885,50 +6081,203 @@ class SdkBackend:
 
     def set_model(self, sid: str, value: str) -> bool:
         """Change the session's model. Persisted in the registry (so a reconnect keeps it) and applied
-        LIVE on a connected session via the SDK control channel — NOT a /model slash injection, which the
-        SDK input stream does not interpret. 'default' resets to the CLI default (set_model(None))."""
-        if not read_reg(self.state_dir, sid):
+        LIVE on a connected session via the SDK control channel (set_model_live) — the designed API,
+        preferred over a '/model X' text send. (An earlier note here said the SDK input stream does not
+        interpret a literal /model; the CLI does execute one arriving as a top-level prompt — verified on
+        2.1.257 — but that path BYPASSES this registry: the reg, sdk-defaults.json and the reconnect's
+        --model keep the old value, and the switch silently reverts at the next reconnect. So every
+        surface, the typed composer command included, comes through here — kernel _route_meta_command.)
+        `value` is a family alias (fable — the CLI resolves it live, so it follows the family's newest)
+        or an explicit version id (claude-fable-5, a deliberate pin); either rides verbatim. 'default'
+        resets to the CLI default (set_model(None)).
+
+        The writes below are OPTIMISTIC — they land before the CLI has accepted the value — and a live
+        refusal reverts every layer (_do_set_model). The session's OWN layers (chosen_model, the reg) go
+        back to its last ACCEPTED model (_model_accepted), not to whatever the writes replaced: with two
+        picks in flight the second's snapshot held the first, so two refusals in a row would write the
+        first REFUSED id back. The SHARED sdk-defaults `model` is written under a fresh token
+        (swap_sdk_default, one lock hold for the read and the write — a snapshot read outside the hold
+        could describe a value the write never replaced) and remembered as a pending write
+        (_seed_write_pending) until the CLI rules; its refusal unwinds exactly that write by token
+        (_seed_write_refused), never a by-value guess. `prev` carries the value written (`picked`) for
+        the session layers' compare-and-swap and the token (`tok`) for the store's. A dormant session
+        has no CLI to refuse, and its value applies at the next connect."""
+        reg = read_reg(self.state_dir, sid)
+        if not reg:
             return False
-        write_sdk_default(self.state_dir, model=value)   # remember as the seed for the NEXT new session (the user 2026-06-27)
         s = self.sessions.get(sid)
         if s:
-            s.chosen_model = value
-            # PENDING: show switching-dots, NOT a premature/stale name, until the LIVE model reflects the
-            # pick (the user 2026-07-03). The old code stamped s.model = value.capitalize() ("Opus"), but
-            # left reg.liveModel stale — and model_label PREFERS liveModel, so a session that hadn't yet run
-            # a turn in the new model kept showing the OLD name. Now the pick marks pending; _do_set_model
-            # pulls the real name, which clears it (and the dormant/never-driven trap can't happen — the
-            # refresh resolves an idle session, and _on_session_gone resolves a thread that exits mid-switch).
-            already = _model_reflects_alias(s.model, value)
-            s._model_pending = "" if already else value
-            self._update_reg(sid, model=value, modelPending=bool(s._model_pending))   # locked RMW — see set_effort
-            s.set_model_live(None if value in ("", "default") else value)
-            # Synthesize the INVOCATION atom the CLI never streams (it streams only the stdout
-            # confirmation): the chat gets the same "/model sonnet" command chip the tmux path reads from
-            # its transcript, and the timeline's dot lands in REAL TIME instead of after the next disk
-            # write (the user 2026-07-02). _echo_text lets the disk's own command record retire it by
-            # text match if one ever lands; the human-floor prune covers a session that never writes one.
-            t = int(time.time())
-            disp = "/model " + value
-            uid = "cmd:%d:model" % t
-            self._live.setdefault(sid, {})[uid] = {
-                "type": "user", "uuid": uid, "session_id": sid, "fsid": s.resume_sid, "parentUuid": None,
-                "t": t, "author": "human", "command": "/model", "_echo_text": disp,
-                "message": {"role": "user", "content": [{"type": "text", "text": disp}]}}
-            # The DURABLE twin of the live chip (the user 2026-08-14): same t and text, so build_session
-            # can dedup while the chip is live and take over seamlessly once stale_cmd retires it.
-            append_cmd_gesture(self.state_dir, sid, disp, t=t)
-            self._wake_push()
+            with s._lock:
+                s.chosen_model = value
+                # PENDING: show switching-dots, NOT a premature/stale name, until the LIVE model reflects the
+                # pick (the user 2026-07-03). The old code stamped s.model = value.capitalize() ("Opus"), but
+                # left reg.liveModel stale — and model_label PREFERS liveModel, so a session that hadn't yet run
+                # a turn in the new model kept showing the OLD name. Now the pick marks pending; _do_set_model
+                # pulls the real name, which clears it (and the dormant/never-driven trap can't happen — the
+                # refresh resolves an idle session, and _on_session_gone resolves a thread that exits mid-switch).
+                already = _model_reflects_alias(s.model, value)
+                s._model_pending = "" if already else value
+                pending = bool(s._model_pending)
+            # remember as the seed for the NEXT new session (the user 2026-06-27) — pending the CLI's verdict
+            tok = self._seed_write_pending(sid, value)
+            prev = {"picked": value, "tok": tok}   # what the layers hold until the CLI rules — the revert's CAS keys
+            self._update_reg(sid, model=value, modelPending=pending)   # locked RMW — see set_effort
+            s.set_model_live(None if value in ("", "default") else value, prev=prev)
         else:
+            write_sdk_default(self.state_dir, model=value)   # the seed for the NEXT new session (the user 2026-06-27)
             # DORMANT (no live thread): no turn is coming to report a real name, so resolve to the chosen
             # alias's best-effort label immediately — never leave the badge on a stale liveModel or trapped
             # on dots. The value applies for real on the next connect (chosen_model → _options).
             self._update_reg(sid, model=value, liveModel=_alias_label(value), modelPending=False)
+        # the acknowledging chip — live OR dormant (see _ack_cmd_chip)
+        self._ack_cmd_chip(sid, "/model", "/model " + value, s.resume_sid if s else reg.get("lastSid"))
         return True
+
+    def _revert_model(self, sess: "SdkSession", prev: dict) -> str:
+        """Undo set_model's optimistic writes after the CLI refused the value: chosen_model, the pending
+        marker and the reg's `model` go back to the session's last ACCEPTED model (_model_accepted: the
+        CLI's last accepted pick, or the model a connect launched with — never a value this session wrote
+        and the CLI then refused; see __init__). A None there means the key was ABSENT, and absence is
+        restored (a null would read as a pick, and a leftover refused value is the poison this exists to
+        remove). Locked RMW on the reg, like _update_reg. The SHARED sdk-defaults `model` is unwound by
+        this write's TOKEN (_seed_write_refused): back to what the write replaced, only while the write is
+        still what the store holds. Returns the model the session went back to ("" for the account
+        default), for the log line.
+
+        COMPARE-AND-SWAP per layer: a layer goes back only while it still holds the refused write — by
+        value for the session's own layers (`prev["picked"]`, what set_model wrote; every writer of those
+        layers is this session), by token for the shared store (a value compare cannot tell this write
+        from another session's write of the same id). A refusal that lands after a newer accepted pick
+        (this session's next pick; another session's pick in the SHARED defaults store) must not roll
+        that pick back: a writer whose evidence predates the diary stands down. The compare and the
+        assign of chosen_model sit in one hold of the session lock — set_model assigns it from the kernel
+        thread under the same lock, so the swap cannot tear."""
+        picked = prev.get("picked")
+        with sess._lock:
+            back_model = sess._model_accepted
+            if sess.chosen_model == picked:
+                sess.chosen_model = back_model or ""
+                sess._model_pending = ""
+        with self._reg_lock:
+            reg = read_reg(self.state_dir, sess.sid) or {"sid": sess.sid}
+            if reg.get("model") == picked:
+                if back_model is None:
+                    reg.pop("model", None)
+                else:
+                    reg["model"] = back_model
+                reg["modelPending"] = False
+                write_reg(self.state_dir, sess.sid, reg)
+        self._seed_write_refused(prev.get("tok"))
+        return back_model or ""
+
+    # ---- the shared defaults' `model`, ruled per WRITE ----
+    # sdk-defaults.json seeds every NEW session, and every session's set_model writes it BEFORE the CLI has
+    # ruled on the value. A refusal must then put the store back — but only where the store still holds
+    # THIS write. Deciding that by VALUE, from a per-session picture of the layer, is wrong three ways:
+    # picking the value the store ALREADY holds (another session's accepted pick — the common case) cannot
+    # be adopted as the baseline, so a refusal restores a stale one over that session's pick; an id this
+    # session refused long ago stays unadoptable even after another session accepted it; and another
+    # session's PENDING write, not yet ruled on, gets adopted as a baseline — two cross-session refusals
+    # then seed a refused id. Identity instead: every write of the key carries a fresh token (`modelTok`),
+    # and a live set_model's write is remembered here, by token, with the (value, token) pair it replaced,
+    # until the CLI rules. Pending writes form a chain — each one's prior is the write it landed on — and a
+    # verdict touches exactly its own node: accepted → the node goes (a newer write above it unwinds onto
+    # an accepted value); refused → the store goes back to the node's prior IF the write is still the head,
+    # and a newer node that replaced it now points past it (so ITS unwind never lands on a refused id).
+    # A write that is not the head and that no pending node replaced was written over by a settled writer
+    # (a dormant pick, another kernel, a hand edit): that writer holds the store, and the refusal leaves
+    # it alone. The chain lives in memory: after a kernel restart no verdict can reach a write made
+    # before it (the reconnect asserts the reg's model and a launch refusal is loud on its own path), and
+    # a token in the file that no node knows can never be matched — fail-safe. All under _defaults_lock.
+
+    def _seed_write_pending(self, sid: str, value: str) -> str:
+        """set_model's optimistic write of the shared `model`: land it under a fresh token and remember
+        what it replaced, until the session's own _do_set_model rules. Returns the token. The write and
+        its node land in ONE hold of the lock: in two, a refusal of the write this one replaced — on the
+        loop thread, through _revert_model — could run between them, pop its node and re-point only the
+        nodes that EXISTED, and this node would be inserted still pointing at the refused pair (the head
+        check standing down: the file's head is this write). This write's own refusal would then restore
+        the refused id under a token no node knew — unwindable by nothing, and the seed of every new
+        session."""
+        with _defaults_lock:
+            prior, prior_tok, tok = _swap_sdk_default_locked(self.state_dir, "model", value)
+            self._seed_writes[tok] = {"sid": sid, "value": value, "prior": prior, "priorTok": prior_tok}
+        return tok
+
+    def _seed_write_settled(self, tok) -> None:
+        """The CLI accepted the write (or its answer was lost and the pick stands): nothing will unwind
+        it. Its node goes; a pending write above it keeps pointing at it, so that write's refusal
+        restores this ACCEPTED value."""
+        if tok is None:
+            return
+        with _defaults_lock:
+            self._seed_writes.pop(tok, None)
+
+    def _seed_write_refused(self, tok) -> bool:
+        """The CLI refused the write (a refusal a newer pick of the same session superseded included):
+        leave the store as if the write had never happened. Head → back to the (value, token) it
+        replaced, absence included; a pending write that replaced it now points past it; not the head
+        and not under a pending write → stand down (a settled writer holds the store). Returns whether
+        the file moved."""
+        if tok is None:
+            return False
+        with _defaults_lock:
+            node = self._seed_writes.pop(tok, None)
+            if node is None:
+                return False
+            for other in self._seed_writes.values():
+                if other["priorTok"] == tok:            # the write that landed on this one unwinds past it now
+                    other["prior"], other["priorTok"] = node["prior"], node["priorTok"]
+            d = read_sdk_defaults(self.state_dir)
+            if d.get("modelTok") != tok:                # a newer writer's, or an untokened file's: not ours to move
+                return False
+            if node["prior"] is None:
+                d.pop("model", None)
+            else:
+                d["model"] = node["prior"]
+            if node["priorTok"] is None:
+                d.pop("modelTok", None)
+            else:
+                d["modelTok"] = node["priorTok"]
+            _write_sdk_defaults(self.state_dir, d)
+            return True
+
+    def _seed_writes_dropped(self, sid: str) -> None:
+        """The session's thread died: every verdict its pending writes were waiting for died with it (a
+        stranded request is a lost answer at most, never a refusal), so the nodes are garbage. Drop
+        them; the store keeps whatever it holds — the reconnect asserts the reg's model."""
+        with _defaults_lock:
+            for t in [t for t, n in self._seed_writes.items() if n["sid"] == sid]:
+                self._seed_writes.pop(t, None)
+
+    def _ack_cmd_chip(self, sid: str, command: str, disp: str, fsid) -> None:
+        """Synthesize the INVOCATION atom the CLI never streams (it streams only the stdout confirmation)
+        for a /model-, /effort- or /auth-style pick: the chat gets the same "/model sonnet" command chip
+        the tmux path reads from its transcript, and the timeline's dot lands in REAL TIME instead of
+        after the next disk write (the user 2026-07-02). _echo_text lets the disk's own command record
+        retire it by text match if one ever lands; the human-floor prune covers a session that never
+        writes one. Then the DURABLE twin (the user 2026-08-14): same t and text, so build_session can
+        dedup while the chip is live and take over seamlessly once stale_cmd retires it — on disk BEFORE
+        the push that rebuilds the chat.
+
+        Fired whatever the session's LIVENESS: the chip is the acknowledgment the composer's optimistic
+        bubble retires against. On a dormant session nothing landed, so a typed "/model X" sat as an
+        unconfirmed dashed bubble for its TTL and then vanished with no trace — though the pick had
+        applied to the reg. `fsid` is the live session's resume target, or the reg's last known one for
+        a dormant session."""
+        t = int(time.time())
+        uid = "cmd:%d:%s" % (t, command.lstrip("/"))
+        self._live.setdefault(sid, {})[uid] = {
+            "type": "user", "uuid": uid, "session_id": sid, "fsid": fsid, "parentUuid": None,
+            "t": t, "author": "human", "command": command, "_echo_text": disp,
+            "message": {"role": "user", "content": [{"type": "text", "text": disp}]}}
+        append_cmd_gesture(self.state_dir, sid, disp, t=t)
+        self._wake_push()
 
     def set_fast(self, sid: str, value: str) -> bool:
         """Toggle fast mode ('on'|'off'). The CLI's /fast descriptor is marked supportsNonInteractive,
-        so the SDK input stream DOES interpret the literal '/fast on|off' text (unlike /model — see
+        so the SDK input stream DOES interpret the literal '/fast on|off' text (as it does /model —
+        which romp still routes through the control channel for the registry's sake, see
         set_model) — but only on a connection made with the `fastMode` flag-settings opt-in; without
         it the CLI refuses the command outright ("Fast mode is not available in the Agent SDK",
         verified against claude 2.1.224). So this is a hybrid:
@@ -6030,7 +6379,8 @@ class SdkBackend:
         if the session is idle, at the end of the current turn if it's busy. The label updates at once."""
         if value not in EFFORT_LEVELS:
             return False
-        if not read_reg(self.state_dir, sid):
+        reg = read_reg(self.state_dir, sid)
+        if not reg:
             return False
         # LOCKED read-modify-write (_update_reg), never the bare read→mutate→write this used to do: the
         # loop threads run their own locked RMWs on the same reg (queue/echo mirrors, liveCtx), and an
@@ -6052,20 +6402,12 @@ class SdkBackend:
             s.effort = value        # picker label reflects it now; the reconnect makes it real
             s._effort_pending = value   # switching-dots on the effort badge + "Reloading session…" notice until the reconnect lands
             s.request_reconnect()
-            # Synthesize the "/effort X" invocation atom, exactly as set_model does for "/model X": the
-            # reconnect leaves NO transcript record at all, so without this an idle-session effort change
-            # showed nothing in the chat while a busy one (parked) showed a queued chip — the same pick,
-            # visibly acknowledged or not depending on timing (the user 2026-07-05, who called it somewhat
-            # inconsistent). One chip, both paths.
-            t = int(time.time())
-            disp = "/effort " + value
-            uid = "cmd:%d:effort" % t
-            self._live.setdefault(sid, {})[uid] = {
-                "type": "user", "uuid": uid, "session_id": sid, "fsid": s.resume_sid, "parentUuid": None,
-                "t": t, "author": "human", "command": "/effort", "_echo_text": disp,
-                "message": {"role": "user", "content": [{"type": "text", "text": disp}]}}
-            append_cmd_gesture(self.state_dir, sid, disp, t=t)   # durable twin — see set_model
-            self._wake_push()
+        # Synthesize the "/effort X" invocation atom, exactly as set_model does for "/model X": the
+        # reconnect leaves NO transcript record at all, so without this an idle-session effort change
+        # showed nothing in the chat while a busy one (parked) showed a queued chip — the same pick,
+        # visibly acknowledged or not depending on timing (the user 2026-07-05, who called it somewhat
+        # inconsistent). One chip, both paths — and a dormant session's too.
+        self._ack_cmd_chip(sid, "/effort", "/effort " + value, s.resume_sid if s else reg.get("lastSid"))
         return True
 
     def set_auth(self, sid: str, value: str) -> bool:
@@ -6103,15 +6445,7 @@ class SdkBackend:
             # Acknowledge the pick in the chat exactly as set_effort does: the reconnect writes no
             # transcript record, so without a synthesized chip an idle session's auth change shows
             # nothing at all.
-            t = int(time.time())
-            disp = "/auth " + value
-            uid = "cmd:%d:auth" % t
-            self._live.setdefault(sid, {})[uid] = {
-                "type": "user", "uuid": uid, "session_id": sid, "fsid": s.resume_sid, "parentUuid": None,
-                "t": t, "author": "human", "command": "/auth", "_echo_text": disp,
-                "message": {"role": "user", "content": [{"type": "text", "text": disp}]}}
-            append_cmd_gesture(self.state_dir, sid, disp, t=t)   # durable twin — see set_model
-            self._wake_push()
+            self._ack_cmd_chip(sid, "/auth", "/auth " + value, s.resume_sid)
         return True
 
     def default_auth(self, reg: dict | None = None) -> str:
@@ -6694,6 +7028,7 @@ class SdkBackend:
                 self._update_reg(sess.sid, liveModel=_alias_label(sess.chosen_model), modelPending=False)
             except Exception as e:
                 self._log("session gone (%s): model-pending clear failed: %s" % (sess.name, e))
+        self._seed_writes_dropped(sess.sid)   # no verdict can reach its pending shared-model writes now
         if sess._effort_pending:          # an /effort reconnect that never landed before the thread died → clear the dots/notice
             sess._effort_pending = ""
             try:

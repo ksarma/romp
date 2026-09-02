@@ -69,13 +69,17 @@ class CmdGestureSourcePins(unittest.TestCase):
     def test_backend_writes_the_marker_beside_each_synthesized_live_chip(self):
         # every setter that synthesizes a live command chip (set_model / set_effort / set_auth) writes the
         # durable twin with the SAME t and disp, so build_session's (t, text) dedup holds while the chip is
-        # live and the durable event takes over seamlessly once stale_cmd retires it.
-        self.assertEqual(BACKEND_SRC.count("append_cmd_gesture(self.state_dir, sid, disp, t=t)"), 3)
-        for uid_tag in ('"cmd:%d:model"', '"cmd:%d:effort"', '"cmd:%d:auth"'):
-            i = BACKEND_SRC.index(uid_tag)
-            j = BACKEND_SRC.index("append_cmd_gesture(self.state_dir, sid, disp, t=t)", i)
-            k = BACKEND_SRC.index("self._wake_push()", i)
-            self.assertLess(j, k, "the marker is on disk before the push that rebuilds the chat")
+        # live and the durable event takes over seamlessly once stale_cmd retires it. The three share ONE
+        # builder (_ack_cmd_chip — so the chip fires on a dormant session too); the property is pinned on
+        # the builder, and every setter must go through it.
+        for cmd in ("/model", "/effort", "/auth"):
+            self.assertEqual(BACKEND_SRC.count('self._ack_cmd_chip(sid, "%s", "%s " + value, ' % (cmd, cmd)), 1, cmd)
+        i = BACKEND_SRC.index("def _ack_cmd_chip(")
+        self.assertIn('uid = "cmd:%d:%s" % (t, command.lstrip("/"))', BACKEND_SRC[i:i + 3000])
+        j = BACKEND_SRC.index("append_cmd_gesture(self.state_dir, sid, disp, t=t)", i)
+        k = BACKEND_SRC.index("self._wake_push()", i)
+        self.assertLess(j, k, "the marker is on disk before the push that rebuilds the chat")
+        self.assertEqual(BACKEND_SRC.count("append_cmd_gesture(self.state_dir, sid, disp, t=t)"), 1, "one builder, no stray copies")
 
     def test_build_session_interleaves_and_dedups_against_the_live_chip(self):
         src = inspect.getsource(km.build_session)

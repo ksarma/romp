@@ -1365,6 +1365,18 @@ def _forget_model_pick(fam, only=None):
             sys.stderr.write("model-picks save: %s\n" % traceback.format_exc())
             return
     _models_changed()
+
+
+def _model_pick_refused(sid, value):
+    """The SDK backend's on_model_refused hook: the CLI ANSWERED a set_model with an error, so `value` —
+    recorded as its family's pin at the choke point, BEFORE the CLI ruled — is an id the CLI will not
+    run. Forget it, but only while it is still the pin (a newer accepted pick for the family is not this
+    refusal's to touch); the forget emits the models frame, so every picker's family row stops sending
+    the refused id instead of re-ringing the problem on each click. An alias or an unknown string was
+    never a pin: no-op."""
+    fam = _version_family(value)
+    if fam:
+        _forget_model_pick(fam, only=value)
 # "ultracode" tops the ladder (the user 2026-08-04): the CLI's own /effort offers it — xhigh effort plus
 # standing dynamic-workflow orchestration, per session. tmux delivers the literal "/effort ultracode"; the
 # SDK backend maps it to effort=xhigh + the `ultracode` settings key (the CLI's documented per-session
@@ -8784,6 +8796,9 @@ def _sdk_locked():
             # observes the transition; the judge store owns the card; the kernel wires the two
             type(_sdk_backend).on_model_fallback = staticmethod(
                 lambda sid, frm, to: (jd.mint_fallback_card(sid, frm, to), _push_soon()))
+            # a version the CLI REFUSED must leave the pick memory too: the backend rules on the CLI's
+            # answer, the kernel owns model-picks.json — the same wiring shape
+            type(_sdk_backend).on_model_refused = staticmethod(_model_pick_refused)
             # The judge parses the SAME cut world the display parse does (jd._PENDING_CUT_FN): during
             # an armed bare rollback the planner must not see — and mint from — the deleted tail.
             # getattr-guarded like every other backend probe (a test fake without the affordance
@@ -18201,7 +18216,8 @@ def _alias_reflects(live_pretty, alias):
         return False
     if not alias or alias == "default":
         return True
-    a = alias.lower()
+    a = re.sub(r"\[[^\]]*\]$", "", alias.lower().strip())   # fable[1m] → fable: the CLI's context tag is
+    #                                                          never part of the pretty name
     a = a.split("-")[1] if a.startswith("claude-") and "-" in a else a   # claude-opus-4-8 → opus
     return a in live_pretty.lower()
 

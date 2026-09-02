@@ -9,6 +9,7 @@ for the alias, so a bare family click pinned every session to claude-fable-5 whi
 through (_set_model_or_park). The seed table is a SEED: ids a running session's CLI reports
 (reg.liveModelId) join the version lists, marked `learned`, until the catalog fetch folds them in.
 Synthetic only — hermetic temp STATE."""
+import inspect
 import json
 import os
 import tempfile
@@ -195,6 +196,44 @@ class PickMemory(unittest.TestCase):
         km._forget_model_pick("sonnet")
         self.assertEqual([f["type"] for f in got["feed"]], ["models", "models"], "…and the un-pin")
 
+    def test_a_refused_version_is_forgotten_only_while_it_is_still_the_pin(self):
+        # the CLI's refusal reaches the kernel through the backend's on_model_refused hook; the family's
+        # pin goes ONLY if it still holds the refused id — a newer accepted pin for the family is not
+        # this refusal's to touch (a writer whose evidence predates the diary stands down)
+        got = self._clients()
+        sid = "11111111-2222-3333-4444-555555555555"
+        km._note_model_pick("claude-opus-4-8")
+        km._model_pick_refused(sid, "claude-opus-4-8")
+        self.assertEqual(km._model_picks(), {}, "the refused pin is forgotten")
+        self.assertEqual([f["type"] for f in got["chat"]], ["models", "models"], "…and the pickers hear it")
+        km._note_model_pick("claude-opus-4-8")
+        km._note_model_pick("claude-opus-4-7")             # the newer pick
+        km._model_pick_refused(sid, "claude-opus-4-8")     # the older one's refusal lands late
+        self.assertEqual(km._model_picks(), {"opus": "claude-opus-4-7"}, "the newer pin stands")
+        km._model_pick_refused(sid, "opus")                # an alias was never a pin: no-op
+        km._model_pick_refused(sid, "total-nonsense")
+        self.assertEqual(km._model_picks(), {"opus": "claude-opus-4-7"})
+        # the kernel installs the hook where it wires the fallback card — pinned like that one
+        src = inspect.getsource(km._sdk_locked)
+        self.assertIn("on_model_refused = staticmethod(_model_pick_refused)", src)
+
+    def test_a_superseded_refusals_forget_drops_only_the_refused_pin_the_newer_pick_survives(self):
+        # the backend fires on_model_refused for a refusal the session's own NEWER pick superseded too
+        # (test_sdk_backend pins that). Safe for the newer pick because this side compares-and-swaps by
+        # value: the newer pick's pin — same family or another — is untouched, and only the refused
+        # id's own pin goes.
+        sid = "11111111-2222-3333-4444-555555555555"
+        km._note_model_pick("claude-fable-9-9")             # A, refused later
+        km._note_model_pick("claude-sonnet-4-6")            # B, the newer pick, another family
+        km._model_pick_refused(sid, "claude-fable-9-9")     # A's refusal lands after B
+        self.assertEqual(km._model_picks(), {"sonnet": "claude-sonnet-4-6"},
+                         "A's pin goes — a family click no longer sends the refused id; B's stands")
+        km._note_model_pick("claude-fable-9-9")             # A again
+        km._note_model_pick("claude-fable-5-1")             # B in the SAME family: the pin is B now
+        km._model_pick_refused(sid, "claude-fable-9-9")
+        self.assertEqual(km._model_picks(), {"sonnet": "claude-sonnet-4-6", "fable": "claude-fable-5-1"},
+                         "the newer pick's pin survives its predecessor's refusal")
+
 
 class _ModelsServer(unittest.TestCase):
     """A kernel HTTP handler on a loopback port + a hermetic STATE, for the /models route tests."""
@@ -296,6 +335,22 @@ class ModelsRoute(_ModelsServer):
         self.assertEqual(rows["opus"]["default"], "claude-opus-4-8", "the explicit pin survives the alias click")
 
 
+class RefusedPick(_ModelsServer):
+    """The CLI refused a version the picker recorded as its family's pin."""
+
+    def test_a_refused_version_pick_returns_the_family_default_to_the_alias(self):
+        class _BE:
+            def set_model(self, sid, value):
+                return True
+        sid = "11111111-2222-3333-4444-555555555555"
+        km._set_model_or_park(_BE(), sid, "claude-opus-4-8")
+        opus = next(m for m in self._models()["models"] if m["value"] == "opus")
+        self.assertEqual(opus["default"], "claude-opus-4-8", "recorded before the CLI rules, as designed")
+        km._model_pick_refused(sid, "claude-opus-4-8")      # the backend's hook, on the CLI's error
+        opus = next(m for m in self._models()["models"] if m["value"] == "opus")
+        self.assertEqual(opus["default"], "opus", "the family row sends the alias again — not the refused id")
+
+
 class LearnedVersions(_ModelsServer):
     """The seed table is a SEED, not the catalog: a model id a running session's CLI actually reported
     (reg.liveModelId, persisted by the SDK backend's _learn_model) joins its family's version list —
@@ -374,7 +429,15 @@ class LearnedVersions(_ModelsServer):
 
 class RoutedContextTag(unittest.TestCase):
     """The CLI spells a 1M-context variant with a [1m] tail (`fable[1m]`, `claude-opus-4-8[1m]`). The
-    kernel vouches for the tagged family alias like the tagged id."""
+    kernel vouches for the tagged family alias like the tagged id, and its pending-switch check reads
+    through the tag — the pretty live name never carries one."""
+
+    def test_the_kernels_pending_check_reads_through_the_tag(self):
+        # the literal "fable[1m]" is never a substring of "Fable 5.1", so the switching-dots would ride
+        # the kernel's stamp to its cap instead of resolving on the event
+        self.assertTrue(km._alias_reflects("Fable 5.1", "fable[1m]"))
+        self.assertTrue(km._alias_reflects("Opus 4.8", "claude-opus-4-8[1m]"))
+        self.assertFalse(km._alias_reflects("Fable 5.1", "opus[1m]"))
 
     def test_a_tagged_family_alias_is_vouched_for(self):
         # `claude-fable-5-1[1m]` routes (the id parser strips the tag); `fable[1m]` must too, or it

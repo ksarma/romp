@@ -481,6 +481,8 @@ class ModelsRoute(unittest.TestCase):
     """GET /models serves the MERGED list plus any CLI block — every picker reads this one route. The
     catalog owns the version LIST; the alias owns the DEFAULT."""
 
+    SID = "11111111-2222-3333-4444-555555555555"
+
     @classmethod
     def setUpClass(cls):
         cls.srv = ThreadingHTTPServer(("127.0.0.1", 0), km.Handler)
@@ -551,6 +553,23 @@ class ModelsRoute(unittest.TestCase):
         self.assertEqual(len(rows51), 1)
         self.assertFalse(rows51[0].get("learned"), "the catalog owns the row now")
         self.assertEqual(rows51[0]["label"], "Opus 5.1")
+
+    def test_a_catalog_id_is_pickable_as_a_pin_and_a_refusal_forgets_it(self):
+        # an id only the catalog knows (no seed row, no session reporting it) is a version the pick
+        # memory may record — read at call time, so it counts from the moment the catalog learned it —
+        # and the CLI refusing it forgets the pin like any other (the on_model_refused hook)
+        km._apply_model_catalog(km.merge_model_catalog(km._MODEL_SEED, FAKE_ROWS), "api")
+        self.assertTrue(km._vouched_model("claude-opus-9-9"), "the composer's /model vouches for a catalog id")
+        self.assertEqual(km._version_family("claude-opus-9-9"), "opus")
+        km._note_model_pick("claude-opus-9-9")
+        self.assertEqual(km._model_picks(), {"opus": "claude-opus-9-9"})
+        rows = {m["value"]: m for m in self._models()["models"]}
+        self.assertEqual(rows["opus"]["default"], "claude-opus-9-9", "the family row sends the pin")
+        self.assertEqual(rows["sonnet"]["default"], "sonnet", "other families: still the alias")
+        km._model_pick_refused(self.SID, "claude-opus-9-9")       # the backend's hook, on the CLI's error
+        rows = {m["value"]: m for m in self._models()["models"]}
+        self.assertEqual(rows["opus"]["default"], "opus", "forgotten → the alias again")
+        self.assertEqual(km._model_picks(), {})
 
 
 def _free_port():
