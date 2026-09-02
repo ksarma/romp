@@ -838,8 +838,9 @@ MODEL_CHOICES = [{"value": "fable", "label": "Fable"}, {"value": "opus", "label"
 # picked for it (model-picks.json below), else the family ALIAS itself. The CLI resolves an alias
 # live, so a bare family click follows the family's newest release exactly as the CLI's own default
 # does. (Before this the default fell to this table's head, which pinned every picker-set session
-# to claude-fable-5 while `fable` moved on.) Full ids ride every set path verbatim already — the
-# CLI's alias table stops at the family names, so a version pick needs no new transport.
+# to claude-fable-5 while `fable` moved on; see _model_alias_boot_pass for the state that left
+# behind.) Full ids ride every set path verbatim already — the CLI's alias table stops at the
+# family names, so a version pick needs no new transport.
 MODEL_VERSIONS = {
     "fable":  [{"value": "claude-fable-5-1", "label": "Fable 5.1"},   # verified live 2026-09-01 (Models API + CLI 2.1.257)
                {"value": "claude-fable-5", "label": "Fable 5"}],
@@ -1377,6 +1378,123 @@ def _model_pick_refused(sid, value):
     fam = _version_family(value)
     if fam:
         _forget_model_pick(fam, only=value)
+
+
+# The id a bare family click RECORDED before the alias became the default — each family's seed head as
+# it stood then, frozen here on purpose (the table above moves; this must not). A stored model equal to
+# one of these is, in nearly every case, that artefact rather than a deliberate pin: a version-submenu
+# pick of the same id was indistinguishable from a family click, and the migration treats the head as
+# alias-worthy exactly as the CLI's own 2.1.257 `migration_fable5_to_fable_alias` treats a user setting
+# of claude-fable-5 (its strings name the migration and the id; verified in the installed binary).
+_SEED_PINS = {"claude-fable-5": "fable", "claude-opus-5": "opus", "claude-sonnet-5": "sonnet",
+              "claude-haiku-4-5": "haiku"}
+MODEL_ALIAS_MIGRATION_MARKER = "model-alias-migration.done"   # STATE/…: stamped once the pass below ran clean
+
+
+def _model_alias_boot_pass():
+    """ONE-TIME state migration at kernel boot, marker-gated like _rewind_migration_bg: every stored
+    model equal to a PRE-FIX seed head (_SEED_PINS) becomes its family alias, in the three places the
+    pin lived —
+    - sdk-defaults.json's remembered model (what the next NEW session seeds from);
+    - model-picks.json, where a head recorded as a family's pick is DROPPED: that store holds version
+      ids only, and an absent pick is exactly how /models falls to the alias;
+    - every session reg's `model` — what _options hands the CLI as --model on the next reconnect, so
+      the session follows the CLI's newest from then on. Dead regs too: a revival launches from the
+      same field. A LIVE session is not re-pointed mid-turn (no set_model fires here); the rewrite is
+      picked up by its next reconnect, exactly as a set_model on a dormant session is.
+    WHY ONCE, AND WHY A MARKER: the head ids are not retired — three of the four are the CURRENT
+    releases, exactly what a user pins from the version submenu against a future .1 — so after the fix
+    a stored head is a deliberate pin, indistinguishable from pre-fix residue by value alone. Without a
+    completion record the pass would re-run at every restart and undo those picks, against the "an
+    explicit pin stands" guarantee. The marker (STATE/model-alias-migration.done, {"t","moved"}) is
+    what tells the two apart: absent → the state predates the fix and the pass runs; present → it ran,
+    and every head found from then on is the user's. The way BACK to floating for a pinned family is a
+    picker gesture, never a boot pass: the version submenu's "Latest" row (_set_model_or_park
+    `floating`) forgets the pin and sends the alias.
+    Stamped only after a CLEAN pass — "returned" is not "succeeded": a store or reg the pass could not
+    READ is one it did not migrate, so no marker is written and the pass re-arms at the next boot (an
+    absent file is nothing to migrate). Two failures are not one: a read the OS refused is TRANSIENT —
+    the file is there, this boot could not open it — and withholds the marker; a file json.loads cannot
+    parse is PERMANENT garbage — it holds no pin ANY reader can see (read_reg, read_sdk_defaults and the
+    picks loader all return None/{} over it), so retrying over it could never migrate anything, and
+    counting it a failure would withhold the marker forever and re-float every deliberate post-fix pin
+    at every boot without ever naming the file. Garbage is named loudly, by path, and treated as
+    nothing to migrate; the marker still lands. Loud (one stderr line naming what moved, nothing when
+    nothing did) and blind to any non-head value — an explicit legacy pin, or a post-fix head such as
+    claude-fable-5-1, stands. Runs before the SDK backend constructs, which is when regs become
+    chosen_model (main()'s ordering, pinned by test); a rewrite lost to a concurrent write during a
+    restart handoff simply recurs at the next boot, since no marker lands until the pass completes.
+    Returns the number of rewrites; 0 without a word once the marker exists."""
+    marker = jd.STATE / MODEL_ALIAS_MIGRATION_MARKER
+    if marker.exists():
+        return 0
+    n = 0
+    moved = []
+    fails = 0
+
+    def _load(p):
+        # a dict (or whatever the file holds) — None for an ABSENT file (nothing to migrate), for one the
+        # OS would not let us READ (transient: counted, named, withholds the marker so the next boot
+        # retries) and for one that is not JSON (permanent: named, nothing to migrate, never counted).
+        # Read as BYTES and let json.loads decode: read_text() decodes, and a file holding non-UTF-8
+        # bytes raises UnicodeDecodeError there — a ValueError, not an OSError — which would escape both
+        # arms, abort the whole pass at that file and re-arm it every boot. Decoding belongs to the parse
+        # arm: a file no reader can decode holds no pin any reader can see, exactly like one that is not
+        # JSON.
+        nonlocal fails
+        try:
+            data = p.read_bytes()
+        except FileNotFoundError:
+            return None
+        except OSError as e:
+            fails += 1
+            sys.stderr.write("romp-kernel: model-alias migration: could not read %s (%s) — retrying next "
+                             "boot\n" % (p, e))
+            return None
+        try:
+            return json.loads(data)
+        except ValueError as e:              # json's own errors and UnicodeDecodeError alike
+            sys.stderr.write("romp-kernel: model-alias migration: %s is not JSON (%s) — no reader can see a "
+                             "pin in it, so there is nothing there to migrate; left as is\n" % (p, e))
+            return None
+    p = jd.STATE / "sdk-defaults.json"
+    d = _load(p)
+    if isinstance(d, dict) and d.get("model") in _SEED_PINS:
+        d["model"] = _SEED_PINS[d["model"]]
+        _atomic_write(p, json.dumps(d))
+        n += 1
+        moved.append("sdk-defaults model → %s" % d["model"])
+    p = jd.STATE / MODEL_PICKS_FILE_NAME
+    d = _load(p)
+    if isinstance(d, dict):
+        stale = sorted(f for f, v in d.items() if v in _SEED_PINS)
+        if stale:
+            for f in stale:
+                d.pop(f)
+            _atomic_write(p, json.dumps(d))
+            n += len(stale)
+            moved.append("model-picks dropped %s" % ", ".join(stale))
+    try:
+        regs = sorted((jd.STATE / "sdk").glob("*.json"))
+    except OSError:
+        regs = []
+    for rp in regs:
+        reg = _load(rp)
+        if isinstance(reg, dict) and reg.get("model") in _SEED_PINS:
+            reg["model"] = _SEED_PINS[reg["model"]]
+            _atomic_write(rp, json.dumps(reg))
+            n += 1
+            moved.append("session %s → %s" % (reg.get("name") or rp.stem, reg["model"]))
+    if n:
+        sys.stderr.write("romp-kernel: model-alias migration: %s (a session takes the alias at its "
+                         "next reconnect)\n" % "; ".join(moved))
+    if fails:
+        sys.stderr.write("romp-kernel: model-alias migration could not read %d file(s) — no marker "
+                         "written, retrying next boot\n" % fails)
+    else:
+        jd.STATE.mkdir(parents=True, exist_ok=True)
+        _atomic_write(marker, json.dumps({"t": int(time.time()), "moved": n}))
+    return n
 # "ultracode" tops the ladder (the user 2026-08-04): the CLI's own /effort offers it — xhigh effort plus
 # standing dynamic-workflow orchestration, per session. tmux delivers the literal "/effort ultracode"; the
 # SDK backend maps it to effort=xhigh + the `ultracode` settings key (the CLI's documented per-session
@@ -33719,6 +33837,10 @@ def main():
             sys.stderr.write("romp-kernel: re-armed %d given-up summary line(s) at startup\n" % _n)   # promised this since 07-03; now wired)
     except Exception:
         sys.stderr.write("startup rearm: %s\n" % traceback.format_exc())
+    try:                                                      # a stored model pinned to a family's PRE-FIX seed
+        _model_alias_boot_pass()                              # head (claude-fable-5) → the family alias, so the
+    except Exception:                                         # next reconnect follows the CLI's newest.
+        sys.stderr.write("model-alias migration: %s\n" % traceback.format_exc())   # MUST precede _sdk: regs → chosen_model there
     _write_palette_mirror()                                   # keep bin/romp's palette-colors mirror current across code updates
     _boot_warm()                                              # pre-parse the live fleet during the reconnect gap (fast first paint)
     threading.Thread(target=_sdk, daemon=True).start()        # construct the SDK backend NOW so its boot

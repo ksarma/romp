@@ -9,7 +9,9 @@ for the alias, so a bare family click pinned every session to claude-fable-5 whi
 through (_set_model_or_park). The seed table is a SEED: ids a running session's CLI reports
 (reg.liveModelId) join the version lists, marked `learned`, until the catalog fetch folds them in.
 Synthetic only — hermetic temp STATE."""
+import contextlib
 import inspect
+import io
 import json
 import os
 import tempfile
@@ -19,6 +21,7 @@ import urllib.request
 from http.server import ThreadingHTTPServer
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
+from unittest import mock
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
@@ -425,6 +428,214 @@ class LearnedVersions(_ModelsServer):
                          {"opus": "claude-opus-5-1", "sonnet": "claude-sonnet-4-6"}, "still on disk")
         self._reg("11111111-2222-3333-4444-555555555501", liveModelId="claude-opus-5-1")
         self.assertEqual(km._model_picks(), {"opus": "claude-opus-5-1", "sonnet": "claude-sonnet-4-6"})
+
+
+class AliasMigration(unittest.TestCase):
+    """One-time boot pass, mirroring the CLI's own 2.1.257 `migration_fable5_to_fable_alias`: a stored
+    model equal to a family's PRE-FIX seed head (what a bare family click used to record) becomes the
+    family alias, so the next reconnect spawns `--model fable` and follows the CLI's newest. An explicit
+    non-head pick is a deliberate pin and is left alone. Idempotent, loud, synthetic state."""
+
+    def setUp(self):
+        self.td = tempfile.TemporaryDirectory()
+        self._state = jd.STATE
+        jd.STATE = Path(self.td.name)
+        (jd.STATE / "sdk").mkdir(parents=True)
+        (jd.STATE / "sdk-defaults.json").write_text(json.dumps({"model": "claude-fable-5", "effort": "xhigh"}))
+        (jd.STATE / km.MODEL_PICKS_FILE_NAME).write_text(json.dumps({"fable": "claude-fable-5", "opus": "claude-opus-4-8"}))
+        self._reg("a", model="claude-fable-5", liveModel="Fable 5", alive=True)
+        self._reg("b", model="claude-opus-4-8", alive=True)
+        self._reg("c", alive=False)
+        self._reg("d", model="claude-sonnet-5", alive=False)
+        self._reg("e", model="claude-fable-5-1")
+
+    def tearDown(self):
+        jd.STATE = self._state
+        self.td.cleanup()
+
+    def _reg(self, sid, **fields):
+        (jd.STATE / "sdk" / (sid + ".json")).write_text(json.dumps({"sid": sid, "name": sid, "cwd": "/tmp", **fields}))
+
+    def _read(self, sid):
+        return json.loads((jd.STATE / "sdk" / (sid + ".json")).read_text())
+
+    def _snapshot(self):
+        return {p.name: p.read_text() for p in jd.STATE.rglob("*.json")}
+
+    def test_seed_heads_become_aliases_everywhere_and_explicit_pins_stand(self):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            n = km._model_alias_boot_pass()
+        self.assertEqual(n, 4, "defaults + the fable pick + regs a and d")
+        self.assertEqual(json.loads((jd.STATE / "sdk-defaults.json").read_text()), {"model": "fable", "effort": "xhigh"},
+                         "the remembered default follows the alias; effort untouched")
+        self.assertEqual(km._model_picks(), {"opus": "claude-opus-4-8"},
+                         "a head recorded as a pick is dropped — an absent pick IS the alias in that store")
+        a = self._read("a")
+        self.assertEqual(a["model"], "fable", "the next reconnect spawns --model fable")
+        self.assertEqual((a["liveModel"], a["alive"], a["name"]), ("Fable 5", True, "a"), "nothing else on the reg moves")
+        self.assertEqual(self._read("b")["model"], "claude-opus-4-8", "an explicit legacy pin is deliberate")
+        self.assertNotIn("model", self._read("c"), "a session on the account default stays that way")
+        self.assertEqual(self._read("d")["model"], "sonnet", "every family's pre-fix head migrates, dead regs too")
+        self.assertEqual(self._read("e")["model"], "claude-fable-5-1",
+                         "a post-fix head was never a family-click artefact — an explicit pin, untouched")
+        self.assertIn("model-alias", err.getvalue())
+        self.assertIn("fable", err.getvalue(), "the stderr line names what moved")
+
+    def test_idempotent_and_silent_once_done(self):
+        with contextlib.redirect_stderr(io.StringIO()):
+            km._model_alias_boot_pass()
+        before = self._snapshot()
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(km._model_alias_boot_pass(), 0)
+        self.assertEqual(self._snapshot(), before)
+        self.assertEqual(err.getvalue(), "", "nothing to say when nothing moved")
+
+    def test_nothing_to_migrate_on_a_fresh_state(self):
+        for p in list(jd.STATE.rglob("*.json")):
+            p.unlink()
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(km._model_alias_boot_pass(), 0)
+        self.assertTrue((jd.STATE / km.MODEL_ALIAS_MIGRATION_MARKER).exists(),
+                        "a clean pass over nothing is still the one run — stamped, so it never re-arms")
+
+    def test_a_post_fix_explicit_pick_of_a_seed_head_survives_the_next_boot(self):
+        # without a completion record EVERY kernel restart would rewrite any stored model equal to a
+        # seed head — including a deliberate post-fix submenu pick of that very id (three of the four
+        # heads are the CURRENT releases a user pins against a future .1). That contradicts the
+        # "an explicit legacy pin stands" guarantee. A migration runs once.
+        with contextlib.redirect_stderr(io.StringIO()):
+            km._model_alias_boot_pass()
+        # the user now pins Fable 5 from the submenu — on a session, as the remembered default, and it
+        # lands in sdk-defaults as every set_model does
+        self._reg("f", model="claude-fable-5", alive=True)
+        km._note_model_pick("claude-fable-5")
+        (jd.STATE / "sdk-defaults.json").write_text(json.dumps({"model": "claude-fable-5", "effort": "xhigh"}))
+        before = self._snapshot()
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(km._model_alias_boot_pass(), 0, "the next boot is not a migration")
+        self.assertEqual(self._snapshot(), before, "the explicit pick stands everywhere it was written")
+        self.assertEqual(self._read("f")["model"], "claude-fable-5")
+        self.assertEqual(km._model_picks(), {"opus": "claude-opus-4-8", "fable": "claude-fable-5"})
+        self.assertEqual(err.getvalue(), "")
+
+    def test_the_marker_gates_the_pass_and_is_stamped_after_the_first_run(self):
+        marker = jd.STATE / km.MODEL_ALIAS_MIGRATION_MARKER
+        self.assertFalse(marker.exists(), "a state that never booted the fix carries no marker")
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(km._model_alias_boot_pass(), 4)
+        rec = json.loads(marker.read_text())
+        self.assertIsInstance(rec.get("t"), int, "stamped with the completion time")
+        self.assertEqual(rec.get("moved"), 4)
+        # a marker from a previous boot means SKIP ENTIRELY — even over state that looks migratable
+        # (a head pinned on purpose after the fix looks exactly like pre-fix residue; the marker is
+        # what tells them apart)
+        self._reg("g", model="claude-opus-5")
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(km._model_alias_boot_pass(), 0)
+        self.assertEqual(self._read("g")["model"], "claude-opus-5")
+        self.assertEqual(err.getvalue(), "")
+
+    def test_a_failed_read_withholds_the_marker_so_the_next_boot_retries(self):
+        # "returned" is not "succeeded" (the rewind migration's rule): a reg the pass could not READ is
+        # a reg it did not migrate, so no marker is written and the pass re-arms at the next boot. A
+        # TRANSIENT failure — the file is there, this boot could not open it (a garbled file is the
+        # other kind, see the next test).
+        self._reg("locked", model="claude-fable-5")
+        real_text, real_bytes = Path.read_text, Path.read_bytes
+
+        def refuse(p):
+            if p.name == "locked.json":
+                raise PermissionError(13, "Permission denied", str(p))
+
+        def read_text(p, *a, **k):
+            refuse(p)
+            return real_text(p, *a, **k)
+
+        def read_bytes(p, *a, **k):        # the pass reads bytes — the OS refuses either way
+            refuse(p)
+            return real_bytes(p, *a, **k)
+        err = io.StringIO()
+        with mock.patch.object(Path, "read_text", read_text), mock.patch.object(Path, "read_bytes", read_bytes), \
+                contextlib.redirect_stderr(err):
+            n = km._model_alias_boot_pass()
+        self.assertEqual(n, 4, "everything readable still migrates")
+        self.assertFalse((jd.STATE / km.MODEL_ALIAS_MIGRATION_MARKER).exists())
+        self.assertIn("no marker written", err.getvalue())
+        self.assertIn("locked.json", err.getvalue(), "the line names the file the next boot will retry")
+        self.assertEqual(self._read("locked")["model"], "claude-fable-5", "untouched — it will migrate when readable")
+
+    def test_a_garbled_store_is_named_loudly_and_never_withholds_the_marker(self):
+        # a file json.loads cannot parse holds no pin ANY reader can see — read_reg, read_sdk_defaults
+        # and the picks loader all return None/{} over it — so retrying over it can never migrate
+        # anything; counting it a failure would never stamp, and re-float every deliberate post-fix pin
+        # at every boot without ever naming the file. Garbage is PERMANENT: name the path loudly, treat
+        # it as nothing to migrate, and stamp.
+        (jd.STATE / "sdk" / "broken.json").write_text("{not json")
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            n = km._model_alias_boot_pass()
+        self.assertEqual(n, 4, "everything readable migrates")
+        self.assertTrue((jd.STATE / km.MODEL_ALIAS_MIGRATION_MARKER).exists(), "stamped — the pass is done")
+        self.assertIn("broken.json", err.getvalue(), "the garbled file is NAMED")
+        self.assertNotIn("no marker written", err.getvalue())
+        self.assertEqual((jd.STATE / "sdk" / "broken.json").read_text(), "{not json", "never rewritten by the pass")
+        # the same for a garbled defaults store, and the next boot is silent: the user's post-fix
+        # pin of a seed head stands (the very re-float a missing marker would cause)
+        for p in list(jd.STATE.rglob("*.json")):
+            p.unlink()
+        (jd.STATE / "sdk-defaults.json").write_text("garbage")
+        self._reg("f", model="claude-fable-5")
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(km._model_alias_boot_pass(), 0, "the marker gates it")
+        self.assertEqual(err.getvalue(), "")
+        self.assertEqual(self._read("f")["model"], "claude-fable-5")
+        (jd.STATE / km.MODEL_ALIAS_MIGRATION_MARKER).unlink()
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(km._model_alias_boot_pass(), 1)
+        self.assertIn("sdk-defaults.json", err.getvalue())
+        self.assertTrue((jd.STATE / km.MODEL_ALIAS_MIGRATION_MARKER).exists())
+
+    def test_a_store_that_is_not_utf8_is_garbage_named_loudly_and_the_rest_still_migrates(self):
+        # splitting reading (catching OSError) from parsing (catching ValueError) misses a file holding
+        # non-UTF-8 bytes: Path.read_text raises UnicodeDecodeError in the READ — a ValueError, not an
+        # OSError — which would escape both arms, abort the whole pass at that file (every later reg
+        # unmigrated), print a traceback, and re-arm at every boot since the marker never stamps. No
+        # reader can see a pin in such a file (read_reg, read_sdk_defaults and the picks loader all
+        # return None/{} over it), so it is garbage like any other: named by path, nothing to migrate,
+        # and the pass runs to completion and stamps.
+        (jd.STATE / "sdk-defaults.json").write_bytes(b'{"model": "claude-fable-5", "note": "caf\xe9"}')   # Latin-1 byte
+        (jd.STATE / "sdk" / "latin.json").write_bytes(b'{"sid": "latin", "model": "claude-fable-5\xe9"}')
+        self._reg("z", model="claude-opus-5")     # sorts after latin.json — must still migrate
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            n = km._model_alias_boot_pass()
+        self.assertEqual(n, 4, "the fable pick + regs a, d and z — everything readable migrates")
+        self.assertEqual(self._read("z")["model"], "opus", "a reg sorted AFTER the garbled one still migrates")
+        self.assertEqual(self._read("a")["model"], "fable")
+        self.assertTrue((jd.STATE / km.MODEL_ALIAS_MIGRATION_MARKER).exists(), "stamped — the pass is done")
+        out = err.getvalue()
+        self.assertNotIn("Traceback", out, "a garbled file is a named line, never a crash")
+        self.assertIn("latin.json", out, "the garbled reg is NAMED")
+        self.assertIn("sdk-defaults.json", out, "so is the garbled defaults store")
+        self.assertNotIn("no marker written", out)
+        self.assertEqual((jd.STATE / "sdk" / "latin.json").read_bytes(), b'{"sid": "latin", "model": "claude-fable-5\xe9"}',
+                         "never rewritten by the pass")
+
+    def test_the_pass_is_wired_into_main_before_the_backend_constructs(self):
+        # the ordering IS the correctness: the pass rewrites reg `model` fields, which become
+        # chosen_model the moment the SDK backend constructs — and _boot_warm's alive-session read
+        # constructs it. main() must run the pass first, and once.
+        src = inspect.getsource(km.main)
+        i = src.index("_model_alias_boot_pass()")
+        self.assertLess(i, src.index("_boot_warm()"), "before _boot_warm constructs the backend")
+        self.assertLess(i, src.index("target=_sdk"), "and before the explicit _sdk thread")
+        self.assertEqual(src.count("_model_alias_boot_pass("), 1, "called from exactly one place")
 
 
 class RoutedContextTag(unittest.TestCase):
