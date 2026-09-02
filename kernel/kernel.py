@@ -1234,7 +1234,8 @@ def _name_of(sid):
 def _cwd_of(sid):
     """The session's working directory from the names registry (2nd tab field: name\\tcwd\\tbg\\tfg), or "".
     Written at launch for BOTH backends (tmux romp launcher + SDK write_name), so it's available before any
-    transcript exists. The directory is fixed at creation — there's no SDK call to relocate a session."""
+    transcript exists — and REWRITTEN by a move (SdkBackend.move, the CLI's set_cwd control request), so
+    this is the current directory, not the launch one; every transcript path derives from it."""
     parts = _names_parts(sid)
     return parts[1] if parts and len(parts) > 1 else ""
 
@@ -7063,8 +7064,9 @@ def _expand_dir(raw):
 
 
 def _resolve_create_dir(raw, create=False):
-    """Resolve a UI-supplied new-session directory → (path, error). ~ and $VAR are expanded; the path must
-    be an existing directory (the session's cwd is fixed at creation, so a bad path can't be fixed later —
+    """Resolve a UI-supplied session directory → (path, error) — for a NEW session and for a move
+    (moveSession / POST /move, the one later fix for a wrong pick). ~ and $VAR are expanded; the path must
+    be an existing directory (a session launched into a bad path is a real session nothing can find —
     reject it up front), and it is canonicalized — symlinks and trailing slash via realpath, on-disk
     casing via _true_case — because the string, not just the directory, is load-bearing (see
     _true_case). Empty/None → the kernel default, no error.
@@ -9173,7 +9175,8 @@ def _kernel_knows(sid):
 _FOREIGN_OP_VERB = {"sendMessage": "message", "askFollowUp": "reply", "askText": "answer",
                     "addCustomAsk": "answer", "answerAsk": "answer", "submitAsk": "answer",
                     "rewindSend": "edited message", "sendCommand": "command", "renameSession": "rename",
-                    "endSession": "end", "interrupt": "interrupt", "compactSession": "compact"}
+                    "endSession": "end", "interrupt": "interrupt", "compactSession": "compact",
+                    "moveSession": "move"}
 
 
 def _refuse_drive(client, op, sid, msg):
@@ -9223,7 +9226,7 @@ def _drive(msg, client):
     t = msg.get("type")
     ID_OPS = ("sendMessage", "rewindSend", "rewindDelete", "interrupt", "compactSession", "dismissDialog", "answerAsk", "navAsk", "toggleAsk", "submitAsk",
               "addCustomAsk", "cancelAsk", "askText", "cancelQueued", "dismissEcho", "apiRetry", "setModel", "setEffort", "setMode", "setFast",
-              "setAuth", "endSession", "renameSession", "stopTask", "rewindFiles", "mcpAction", "forkSession",
+              "setAuth", "endSession", "renameSession", "moveSession", "stopTask", "rewindFiles", "mcpAction", "forkSession",
               "commentCreate", "commentReply", "commentResolve", "commentDelete", "commentSeen", "commentPromote",
               "commentMerge")
     if t in ID_OPS and msg.get("id"):
@@ -9592,6 +9595,18 @@ def _drive(msg, client):
             client["send"](json.dumps({"type": "warn", "text": _thread_name_refusal(new, _thread_names())}))
         elif be.rename(sid, new):                         # live → tmux rename hook / SDK reg; dead → names file
             client["send"](json.dumps({"type": "renamed", "id": sid, "name": new}))
+    elif t == "moveSession" and msg.get("dir"):
+        # Move the session's working directory (the user 2026-09-01: a subproject was promoted to its own
+        # repo and the session should follow it). The dir is resolved and canonicalised HERE like a
+        # new-session dir (~ / $VAR, must exist, realpath + true case — the string is load-bearing), then
+        # the op goes through the same park-or-fire gate as every drive op: mid-turn it waits as a queued
+        # chip for the turn's end, idle it fires now. Every refusal is a typed moveFailed to the asker.
+        raw = str(msg["dir"]).strip()
+        path, derr = _resolve_create_dir(raw) if raw else (None, "pick a folder to move the session to")
+        if derr:
+            client["send"](json.dumps({"type": "moveFailed", "id": sid, "name": _name_of(sid) or sid, "text": derr}))
+        else:
+            _move_or_park(be, sid, path, client)
     else:
         return False    # recognized type but a required field is missing (e.g. sendMessage w/o text) → no-op
     return True
@@ -10068,6 +10083,13 @@ class TmuxBackend(sb.SessionBackend):
 
     def rename(self, sid, new_name):
         return _rename_session(str(sid), new_name) is not None   # live → tmux rename hook; dead → names file
+
+    def move(self, sid, cwd):
+        # No relocation primitive exists for a TUI session: /cd is interactive and romp would have to
+        # type it blind, with no answer to read and no transcript move to verify. The ABC default's
+        # honest refusal, worded for the terminal case so the user learns what to do instead.
+        return ("this session runs in a terminal (tmux), which has no way to move a running session — "
+                "start a new session in that folder instead")
 
     # chat tail — the kernel-side input echo store (_tmux_echo) is tmux's live_atoms; queued msgs are folded
     # event-based from the transcript's queue-operation records.
@@ -18186,7 +18208,7 @@ def _save_pending_ops():
         sys.stderr.write("pending-ops save: %s\n" % traceback.format_exc())
 
 
-_pending_ops = _load_pending_ops()   # sid -> [("send", text, echo) | ("model", v) | ("effort", v) | ("fast", v) | ("compact",), …] in park order
+_pending_ops = _load_pending_ops()   # sid -> [("send", text, echo) | ("model", v) | ("effort", v) | ("fast", v) | ("cwd", path, busy_retries) | ("compact",), …] in park order
 
 
 _PATH_UNRESOLVED = object()   # _compacting_now's "no path was passed" sentinel — None is a real value (no transcript)
@@ -18316,7 +18338,7 @@ def _ops_gate(sid):
     escape hatch), and it is what a user reaches for when they want the storm to stop, not the queue."""
     sid = str(sid)
     return (_compacting_now(sid) or _working_now(sid) or bool(_pending_ops.get(sid))
-            or _limit_hold(sid) is not None)
+            or sid in _moving or _limit_hold(sid) is not None)   # a move in flight holds the queue too
 
 
 def _park_op(sid, op):
@@ -18325,7 +18347,7 @@ def _park_op(sid, op):
     earlier parked op of the same kind IN PLACE — its queue position stands, its value updates — so the
     chat shows one "/model …" chip carrying the latest pick. Messages always append."""
     q = _pending_ops.setdefault(str(sid), [])
-    if op[0] in ("model", "effort", "fast"):
+    if op[0] in ("model", "effort", "fast", "cwd"):
         for i, o in enumerate(q):
             if o[0] == op[0]:
                 q[i] = op
@@ -18348,7 +18370,94 @@ def _parked_md(op):
         return op[1]                     # the typed slash command IS the bubble (so the running-/compact fold matches it too)
     if op[0] == "compact":
         return "/compact"
+    if op[0] == "cwd":
+        # a parked MOVE (moveSession): plain words, not a slash command — nothing the user could type
+        # does this, so a "/cd" chip would advertise a command the composer does not have
+        return "move to " + _tilde(op[1])
     return "/%s %s" % (op[0], op[1])
+
+
+# ── moving a session's working directory (the user 2026-09-01) ─────────────────────────────────
+# A move rides the drive-op FIFO like /compact: parked as ("cwd", <canonical path>, <busy retries>)
+# while the session is not quiet, fired when it is. The backend's move() is a BLOCKING round trip
+# (set_cwd's control response) — it runs on its own thread so neither the WS handler nor the producer
+# tick waits on it, and `_moving` holds the session's queue for the duration: _ops_gate parks anything
+# pressed meanwhile and _apply_pending_ops skips the sid, so nothing else reaches the CLI mid-move.
+_moving: set = set()
+_move_askers: dict = {}          # sid -> wid of the dashboard that asked for a PARKED move (failure lands there)
+_MOVE_BUSY_RETRIES = 3           # CLI-side `busy` answers retried on the next pass without waiting for a turn end
+                                 # (the CLI's post-result window); after these, the op waits on turn_seq (_move_now)
+
+
+def _move_or_park(be, sid, path, client=None):
+    """Park-or-fire for a move, the same gate every drive op takes (_ops_gate): mid-turn, compacting,
+    behind an existing queue, or under an account hold it parks as a visible "move to …" chip and
+    fires at the turn's end (_apply_pending_ops); quiet, it fires now."""
+    sid = str(sid)
+    wid = (client or {}).get("wid") or ""
+    if _ops_gate(sid):
+        _park_op(sid, ("cwd", path, 0))
+        _move_askers[sid] = wid
+        return None
+    return _fire_move(be, sid, path, 0, wid)
+
+
+def _fire_move(be, sid, path, tries, wid):
+    """Run the backend's blocking move on its own thread (returned, so a test can join it). `_moving`
+    is claimed synchronously, before the thread starts, so a producer tick landing in between cannot
+    fire the op behind this one."""
+    sid = str(sid)
+    _moving.add(sid)
+    th = threading.Thread(target=_move_now, args=(be, sid, path, tries, wid), name="romp-move", daemon=True)
+    th.start()
+    return th
+
+
+def _move_now(be, sid, path, tries, wid):
+    """The move itself, on whatever thread called it: ask the backend, then report. "" → the session
+    broadcast carries the new cwd (build_session reads _cwd_of) and the asker gets a typed `moved`;
+    "busy" → the CLI has a turn in flight that romp's own idle check did not see, and the op goes BACK
+    to the head of the queue. Two shapes hide behind that answer, and the retry keys on the event each
+    one has:
+      * a turn the CLI started itself (a hook, a background task's notification): romp's inflight never
+        counted it, but it ENDS with a ResultMessage like any other, and that end is the cue — the parked
+        op carries the backend's turn_seq, and the producer pass fires it once that counter has moved;
+      * the CLI's own post-result bookkeeping window (sub-second, after a turn romp DID see end): no
+        further ResultMessage is coming, so the counter never moves — the first _MOVE_BUSY_RETRIES passes
+        therefore fire without waiting on it. Past those, the op waits for the event only, as a visible,
+        cancellable chip, instead of failing loudly while the CLI's turn is still running.
+    Anything else → a typed moveFailed with the backend's reason verbatim. Returns the backend's answer,
+    for the synchronous callers (POST /move)."""
+    sid = str(sid)
+    nm = _name_of(sid) or sid
+    try:
+        try:
+            res = be.move(sid, path) if hasattr(be, "move") else \
+                "this session's backend has no way to move a running session"
+        except Exception as e:
+            res = "%s: %s" % (type(e).__name__, str(e)[:200])
+    finally:
+        _moving.discard(sid)
+    if res == "busy":
+        seq = be.turn_seq(sid) if hasattr(be, "turn_seq") else None      # the turn end this retry waits on
+        _pending_ops.setdefault(sid, []).insert(0, ("cwd", path, tries + 1, seq))   # head: it was already first
+        _move_askers[sid] = wid
+        _save_pending_ops()
+        _mark_views_dirty()
+        return res
+    if res:
+        _move_failed(sid, nm, wid, res)
+        return res
+    _commands_for_cwd(_cwd_of(sid))          # the new folder's slash commands warm before the next "/"
+    _mark_views_dirty()                       # the cwd lives in names/ — no sig sees it; rebuild past the sig
+    _push_soon()
+    _send_to_view("chat", {"type": "moved", "id": sid, "name": nm, "cwd": _tilde(_cwd_of(sid))}, wid)
+    return res
+
+
+def _move_failed(sid, nm, wid, text):
+    sys.stderr.write("move '%s' (%s): %s\n" % (nm, sid, text))
+    _send_to_view("chat", {"type": "moveFailed", "id": sid, "name": nm, "text": text}, wid)
 
 
 def _cancel_miss_text(md):
@@ -18605,12 +18714,26 @@ def _apply_pending_ops():
         if not ops:
             _pending_ops.pop(sid, None)
             continue
+        if sid in _moving:
+            continue                                  # a move is mid-flight: its relocation must finish first
         if _compacting_now(sid) or _working_now(sid) or _limit_hold(sid):
             continue                                  # …or the account can't serve a request yet
         try:
             be = Sessions.backend_for(sid)
             while ops:
                 op = ops[0]
+                if op[0] == "cwd":
+                    # a parked move: fires on its own thread and CLAIMS _moving before this pass ends, so
+                    # the ops behind it wait for the relocation to finish (the next pass skips the sid
+                    # until then) — a send fed mid-move could make the CLI reject the move as busy
+                    tries = int(op[2]) if len(op) > 2 else 0
+                    seq = op[3] if len(op) > 3 else None
+                    if (seq is not None and tries >= _MOVE_BUSY_RETRIES and hasattr(be, "turn_seq")
+                            and be.turn_seq(sid) == seq):
+                        break      # the CLI still owns a turn romp cannot see: its ResultMessage is the cue (_move_now)
+                    ops.pop(0)
+                    _fire_move(be, sid, op[1], tries, _move_askers.pop(sid, ""))
+                    break
                 if op[0] == "send":
                     run = []                          # coalesce the leading run of sends → deliver them AT ONCE
                     while ops and ops[0][0] == "send":
@@ -20258,8 +20381,14 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
     # effect + this session's model / cwd / branch / permission-mode / version (NOT the harness prompt —
     # see _claudemd_docs). Only when there's a real transcript to describe AND something to show.
     meta = _session_meta(sess["path"])
-    scwd = _cwd_of(sid) or meta.get("cwd") or ""    # the session's fixed dir — known even before the first turn
-    docs = _claudemd_docs(meta.get("cwd") or scwd)
+    # The registry's dir FIRST (known before the first turn), the transcript's stamp only as a fallback:
+    # a move (SdkBackend.move) rewrites the registry at once, while the transcript keeps stamping the old
+    # cwd until the model's next turn — so the card would name the old folder for as long as the session
+    # sat idle after the move. And the per-record `cwd` stamp is the CLI's TRACKED cwd, which a shell
+    # `cd` inside a Bash tool call also moves (with no transcript move behind it), so it never was the
+    # session's project directory — only the registry (and the CLI's own `relocated` record) is.
+    scwd = _cwd_of(sid) or meta.get("cwd") or ""
+    docs = _claudemd_docs(scwd)
     # The WORKTREE the session actually works in (the user 2026-08-13): the repo convention here puts real
     # work on per-session worktrees beside the registered clone, so the registered dir's branch read 'main'
     # forever and the real location showed nowhere. The newest write-tool file_path names the tree — the
@@ -20271,7 +20400,7 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
     work_tree = ({"dir": _tilde(_wt_top), "branch": _wt_br}
                  if _wt_top and os.path.realpath(_wt_top) != os.path.realpath(_reg_top or "/nonexistent")
                  else None)
-    sysinfo = {"kind": "system", "model": last_model, "cwd": _tilde(meta.get("cwd") or scwd),
+    sysinfo = {"kind": "system", "model": last_model, "cwd": _tilde(scwd),
                # branch from the transcript if present (normalized: a detached stamp says 'HEAD', not a
                # branch), else derived straight from the folder so it shows on open (the user 2026-06-24) —
                # works for a never-run session of EITHER backend.
@@ -20321,7 +20450,7 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
     _kids = (_be_fk.fork_children().get(sid) if _be_fk and hasattr(_be_fk, "fork_children") else None) or None
     return {"type": "session", "id": sid, "name": sess["name"], "color": _name_color(sid),
             "branch": branch, "branches": _kids,
-            "cwd": _tilde(_cwd_of(sid) or meta.get("cwd") or ""),   # fixed-at-creation dir; lane tab shows it (the user 2026-06-22)
+            "cwd": _tilde(_cwd_of(sid) or meta.get("cwd") or ""),   # the CURRENT dir (a move rewrites it); lane tab shows it (the user 2026-06-22)
             # git branch as a TOP-LEVEL session field, NOT just inside the head system event: the status-bar
             # branch + tab tooltip must show for EVERY session, but the system event lives at events[0] and the
             # WIRE_TAIL window ships only the last 250 events — so on any session with >250 events the head
@@ -31752,6 +31881,46 @@ class Handler(BaseHTTPRequestHandler):
                 _mark_views_dirty()
                 return self._send(200, json.dumps({"ok": True, "id": tsid, "name": nm}),
                                   "application/json")
+            if u.path == "/move":
+                # Headless move (`romp move`, the user 2026-09-01): the moveSession WS op as a one-shot
+                # POST, sibling of /rename. Body: {"target": <live name or sid>, "dir": <folder>}. The dir
+                # is resolved like a new-session dir (must exist; canonicalised). A quiet session moves
+                # NOW and the reply carries the outcome; a busy one parks the move behind its turn and
+                # the reply says so (queued: true) — the CLI cannot tell whether that later fires, so it
+                # reports the park honestly rather than waiting on a turn of unknown length. Loud errors.
+                try:
+                    b = json.loads(raw_body or b"{}")
+                except Exception:
+                    b = {}
+                target = str((b or {}).get("target") or "").strip()
+                raw_dir = str((b or {}).get("dir") or "").strip()
+                if not target or not raw_dir:
+                    return self._send(400, json.dumps({"ok": False, "error": "target and dir required"}),
+                                      "application/json")
+                path, derr = _resolve_create_dir(raw_dir)
+                if derr:
+                    return self._send(200, json.dumps({"ok": False, "error": derr}), "application/json")
+                live = _live_names(_tmux_sessions())
+                tsid = live.get(target) or ""
+                if not tsid and re.fullmatch(r"[0-9a-fA-F-]{32,36}", target):
+                    tsid = target
+                if not tsid or not _kernel_knows(tsid):
+                    return self._send(200, json.dumps({"ok": False, "error":
+                        'no live session named "%s" (a dormant one can be moved by sid)' % target}),
+                                      "application/json")
+                be = Sessions.backend_for(tsid)
+                if _ops_gate(tsid):
+                    _park_op(tsid, ("cwd", path, 0))
+                    return self._send(200, json.dumps({"ok": True, "id": tsid, "queued": True, "dir": path}),
+                                      "application/json")
+                _moving.add(tsid)
+                res = _move_now(be, tsid, path, 0, "")   # synchronous here: the reply IS the outcome
+                if res == "busy":
+                    return self._send(200, json.dumps({"ok": True, "id": tsid, "queued": True, "dir": path}),
+                                      "application/json")
+                if res:
+                    return self._send(200, json.dumps({"ok": False, "error": res}), "application/json")
+                return self._send(200, json.dumps({"ok": True, "id": tsid, "dir": path}), "application/json")
             if u.path == "/color":
                 # Headless recolor (`romp color`, the user 2026-08-23 via the manager/worker workflow:
                 # a manager keeps its whole worker group one identity color): the setSessionColor WS op
