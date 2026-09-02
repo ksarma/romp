@@ -7320,19 +7320,65 @@ def _pick_identity_color(now=None):
     return bgs[i], fgs[i]
 
 
+_ENV_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")   # the shell-identifier alphabet
+
+# sdk_backend.ENV_RESERVED_NAMES' kernel-side mirror: the identity env the SDK spawn owns
+# (options.env — `romp end self` resolves through ROMP_SID), which a same-named user var would
+# silently shadow or be shadowed by. Same lockstep contract as the validator below.
+_ENV_RESERVED_NAMES = ("ROMP_SID", "ROMP_SESSION_NAME")
+
+
+def _env_error(env):
+    """Why POST /new's "env" is not a valid per-session env payload — "" when it is. The kernel-side
+    mirror of sdk_backend.env_request_error (that module loads lazily inside _sdk(), so the handler
+    can't import it at the door): a dict of NAME → string-value pairs, names in the shell-identifier
+    alphabet — the payload lands in the per-sid flag-settings file the CLI reads at launch, where a
+    name outside it would be written silently and exported never. The first offender is NAMED and the
+    whole request refused (fail-loudly, the user 2026-07-03): a skipped var is a session quietly
+    running without the env it was asked to have. The backend validates AGAIN: spawn backs this
+    door with its loud ValueError, but set_env re-checks and refuses with a silent False its
+    callers discard — so on the existing:true path drift between the two copies would be a 200
+    with an env echo and nothing applied. This copy MUST stay in lockstep with
+    sdk_backend.env_request_error, pinned by test_session_env's ValidatorLockstep."""
+    if not isinstance(env, dict):
+        return "env must be an object of NAME: value pairs"
+    for k, v in env.items():
+        if not isinstance(k, str) or not _ENV_NAME_RE.match(k):
+            return "env: bad name %r — names match [A-Za-z_][A-Za-z0-9_]*" % (k,)
+        if k in _ENV_RESERVED_NAMES:
+            return ("env: %s is reserved — romp sets the session's identity env "
+                    "(ROMP_SID, ROMP_SESSION_NAME) itself" % k)
+        if not isinstance(v, str):
+            return "env: the value for %r must be a string" % (k,)
+        if "\x00" in v:
+            # NUL only — newlines and other control bytes are legitimate env content. An execve
+            # envp entry is a NUL-terminated C string, so this value is unfulfillable BY DEFINITION:
+            # accepted, it bakes into the reg a var the CLI can only truncate or throw on, either
+            # way diverging from what /new echoed as applied.
+            return "env: the value for %r contains a NUL byte — no process environment can carry one" % (k,)
+    return ""
+
+
 def _apply_new_session_prefs(sid, body):
-    """POST /new's optional per-spawn "model"/"effort" (the user 2026-08-14): applied through the SAME
+    """POST /new's optional per-spawn "model"/"effort" (the user 2026-08-14) and "env": applied through the SAME
     park-aware setters as the dashboard's setModel/setEffort ops, and echoed back so the caller can be
     loud when a kernel ignores them. Values pass through VERBATIM — full model ids as the picker sends
     them (claude-fable-5), never a short alias: the CLI alias table stops at opus/sonnet/haiku and
     quietly resolved "fable" to Opus 5 (observed live 2026-08-14). Runs on the idempotent existing:true
     open too, so a nightly re-brief re-asserts them on the standing session — ultracode is per-session
     by design (never a write_sdk_default seed), and a headless script has no WS, so this is the
-    sanctioned door."""
+    sanctioned door. On a FRESH spawn the env was already born into the reg (_create_sdk_session), so
+    the env leg here is the unchanged re-assert set_env skips the reconnect for — the echo still comes
+    back. The handler validated env at the door and refused non-SDK targets, so the hasattr guard is only
+    the backstop for direct callers."""
     out = {}
     m = str((body or {}).get("model") or "").strip()
     e = str((body or {}).get("effort") or "").strip()
-    if not (m or e):
+    ev = (body or {}).get("env")
+    ev = ev if isinstance(ev, dict) else None
+    # an EXPLICIT {} is asked (the clear-all declaration — set_env replaces, so {} clears);
+    # only an absent/non-dict env is "not asked".
+    if not (m or e) and ev is None:
         return out
     try:
         be = Sessions.backend_for(str(sid))
@@ -7346,11 +7392,14 @@ def _apply_new_session_prefs(sid, body):
     if e:
         _set_effort_or_park(be, str(sid), e)
         out["effort"] = e
+    if ev is not None and hasattr(be, "set_env"):
+        _set_env_or_park(be, str(sid), dict(ev))
+        out["env"] = dict(ev)
     _push_soon()
     return out
 
 
-def _create_sdk_session(nm, cwd, auth="", prefs=None, client=None):
+def _create_sdk_session(nm, cwd, auth="", prefs=None, client=None, env=None):
     """Create + open a new SDK-backed session, ACK-FAST (the user 2026-07-14, who asked why it took so long
     to open a new SDK session). spawn() is file writes and connect() is threaded (~0.4s to a booting
     CLI) — the 7-10s the user waited was the handler's inline _push_all(): a new session invalidates the
@@ -7379,7 +7428,10 @@ def _create_sdk_session(nm, cwd, auth="", prefs=None, client=None):
     push."""
     bg, fg = _pick_identity_color()   # fleet-aware: only the kernel sees BOTH backends' live sessions
     _commands_for_cwd(cwd)   # pre-warm the slash-command list — a new session predicts a composer (the user 2026-08-13)
-    sid = _sdk().spawn(nm, cwd, bg, fg, auth=auth)
+    # env rides the SPAWN (the reg is born with it), not the prefs pass behind it: the prefs pass
+    # runs pre-connect (pure reg writes), so its env leg sees the reg already carrying this env and
+    # skips the set — the echo still comes back through `extra`.
+    sid = _sdk().spawn(nm, cwd, bg, fg, auth=auth, env=env)
     extra = _apply_new_session_prefs(sid, prefs or {})
     _sdk().connect(sid)    # eager-connect so the model lists immediately, not only after the 1st message
     if client is not None:
@@ -18186,7 +18238,7 @@ def _save_pending_ops():
         sys.stderr.write("pending-ops save: %s\n" % traceback.format_exc())
 
 
-_pending_ops = _load_pending_ops()   # sid -> [("send", text, echo) | ("model", v) | ("effort", v) | ("fast", v) | ("compact",), …] in park order
+_pending_ops = _load_pending_ops()   # sid -> [("send", text, echo) | ("model", v) | ("effort", v) | ("fast", v) | ("env", {…}) | ("compact",), …] in park order
 
 
 _PATH_UNRESOLVED = object()   # _compacting_now's "no path was passed" sentinel — None is a real value (no transcript)
@@ -18325,7 +18377,7 @@ def _park_op(sid, op):
     earlier parked op of the same kind IN PLACE — its queue position stands, its value updates — so the
     chat shows one "/model …" chip carrying the latest pick. Messages always append."""
     q = _pending_ops.setdefault(str(sid), [])
-    if op[0] in ("model", "effort", "fast"):
+    if op[0] in ("model", "effort", "fast", "env"):
         for i, o in enumerate(q):
             if o[0] == op[0]:
                 q[i] = op
@@ -18348,6 +18400,10 @@ def _parked_md(op):
         return op[1]                     # the typed slash command IS the bubble (so the running-/compact fold matches it too)
     if op[0] == "compact":
         return "/compact"
+    if op[0] == "env":
+        # a dict payload, rendered as the NAME=VALUE list it was asked as (sorted: the bubble and the
+        # ✕ handshake must agree byte-for-byte across the park's disk round-trip)
+        return "/env " + " ".join("%s=%s" % kv for kv in sorted(op[1].items()))
     return "/%s %s" % (op[0], op[1])
 
 
@@ -18543,6 +18599,17 @@ def _set_effort_or_park(be, sid, value):
         be.set_effort(sid, value)
 
 
+def _set_env_or_park(be, sid, value):
+    """Apply a per-session env change (POST /new's "env", the spawn-time slice) now — or park it while
+    the session compacts, in the same FIFO as /model and /effort: a CHANGE applies by reconnecting
+    (env is connect-time, like effort), which mid-compaction would derail the compaction exactly the
+    way an effort switch would. An unchanged re-assert is a no-op inside set_env either way."""
+    if _ops_gate(sid):
+        _park_op(sid, ("env", value))
+    else:
+        be.set_env(sid, value)
+
+
 def _set_auth_or_park(be, sid, value):
     """Apply a billing-account change now — or park it while the session compacts, in the same FIFO as
     /model and /effort (it reconnects the session, which mid-compaction would derail the compaction
@@ -18645,6 +18712,9 @@ def _apply_pending_ops():
                     ops.pop(0)
                 elif op[0] == "auth":
                     be.set_auth(sid, op[1])
+                    ops.pop(0)
+                elif op[0] == "env":
+                    be.set_env(sid, op[1])
                     ops.pop(0)
                 else:
                     ops.pop(0)                        # unknown op kind → drop, never wedge the queue
@@ -31620,7 +31690,8 @@ class Handler(BaseHTTPRequestHandler):
                 # backend — without a browser. Body: {"name": ..., "dir": ..., "backend": "sdk"|"tmux"},
                 # plus optional "model"/"effort" (full ids/levels, applied park-aware and echoed back;
                 # also applied on the existing:true open, so a re-brief re-asserts them — see
-                # _apply_new_session_prefs).
+                # _apply_new_session_prefs) and optional "env" (a NAME→value map of per-session env
+                # vars, the user 2026-08-17: born into the SDK spawn, re-asserted the same way).
                 # Same validation and the same no-silent-fallback rule as the WS op: when the SDK
                 # backend is unavailable, say so (ok:false + reason), never hand back a mystery tmux
                 # session. An already-live name is a success (idempotent open), not an error.
@@ -31632,6 +31703,20 @@ class Handler(BaseHTTPRequestHandler):
                 if not nm or not NAME_RE.match(nm):
                     return self._send(400, json.dumps({"ok": False, "error":
                         "session names use letters, digits, . _ - only"}), "application/json")
+                # env is validated HERE, before anything is created: a bad payload refuses the WHOLE
+                # request (fail-loudly) — never a session spawned quietly missing the env it asked for.
+                # Absent and null mean "not asked" (the model/effort empty-skip contract). An EXPLICIT
+                # {} is the clear-all declaration: set_env is replace-not-merge (a re-run declares the
+                # full env the session should have), and {} is that contract's limiting case — the only
+                # way to remove a spawn-time var from a running session. Every OTHER value goes through
+                # the validator, so falsy junk (false, 0, "", []) 400s instead of being silently
+                # swallowed as "not asked" while the caller reads ok:true as the env applying.
+                env_req = (b or {}).get("env")
+                if env_req is not None:
+                    eerr = _env_error(env_req)
+                    if eerr:
+                        return self._send(400, json.dumps({"ok": False, "error": eerr}),
+                                          "application/json")
                 # mkdir:true makes a missing dir (the WS op's "create it" answer, available headlessly too)
                 cwd, derr = _resolve_create_dir(b.get("dir"), create=bool(b.get("mkdir")))
                 if derr:
@@ -31640,6 +31725,18 @@ class Handler(BaseHTTPRequestHandler):
                                       "application/json")
                 live = _live_names(_tmux_sessions())
                 if nm in live:
+                    if env_req is not None:
+                        # env rides the per-sid flag-settings file, which only the SDK backend hands
+                        # its CLI — a live tmux session can't take it, and dropping it silently would
+                        # leave this machine believing an env the session never saw.
+                        try:
+                            _envbe = Sessions.backend_for(live[nm])
+                        except Exception:
+                            _envbe = None
+                        if not hasattr(_envbe, "set_env"):
+                            return self._send(200, json.dumps({"ok": False, "error":
+                                'per-session env needs an SDK session — "%s" runs on tmux, whose CLI '
+                                "reads the tmux server's environment" % nm}), "application/json")
                     extra = _apply_new_session_prefs(live[nm], b)
                     return self._send(200, json.dumps({"ok": True, "id": live[nm], "existing": True, **extra}),
                                       "application/json")
@@ -31661,9 +31758,14 @@ class Handler(BaseHTTPRequestHandler):
                                           "application/json")
                     a = (b or {}).get("auth")
                     sid, extra = _create_sdk_session(nm, cwd, auth=(a if a in ("login", "key") else ""),
-                                                     prefs=b)   # pins ride the FIRST connect — see the def
+                                                     prefs=b,   # pins ride the FIRST connect — see the def
+                                                     env=env_req)   # env is born into the spawn's reg
                     return self._send(200, json.dumps({"ok": True, "id": sid, "dir": cwd, **extra}),
                                       "application/json")
+                if env_req is not None:
+                    return self._send(200, json.dumps({"ok": False, "error":
+                        "per-session env needs the SDK backend — a tmux session's CLI reads the "
+                        "tmux server's environment"}), "application/json")
                 threading.Thread(target=_spawn_session, args=(nm, cwd), daemon=True).start()
                 return self._send(200, json.dumps({"ok": True, "pending": True, "dir": cwd}),
                                   "application/json")

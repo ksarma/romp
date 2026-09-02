@@ -132,7 +132,8 @@ class SpawnPinsRideTheFirstConnect(unittest.TestCase):
                         "pins land in the reg after spawn and BEFORE connect — connect-time, race-free")
 
     def test_the_new_route_threads_the_body_through(self):
-        self.assertTrue(re.search(r"_create_sdk_session\(nm, cwd, auth=\(a if a in \(\"login\", \"key\"\) else \"\"\),\s*\n\s*prefs=b\)", self.KERNEL),
+        # the env request rides the same call, after prefs (inline comments tolerated)
+        self.assertTrue(re.search(r"_create_sdk_session\(nm, cwd, auth=\(a if a in \(\"login\", \"key\"\) else \"\"\),\s*\n\s*prefs=b,[^\n]*\n\s*env=env_req\)", self.KERNEL),
                         "/new hands its body to the create path instead of applying pins after connect")
 
 

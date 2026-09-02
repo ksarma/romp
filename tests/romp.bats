@@ -113,6 +113,11 @@ STUB
 # Helper — a fake `curl` for the kernel-API paths (`romp new` SDK spawn + `-m` send).
 # Logs every call to MOCK_LOG and answers {"ok": true}; MOCK_CURL_FAIL_SEND=1 makes
 # the /send leg fail the way curl -f does, so per-leg error reporting is testable.
+# MOCK_CURL_FAIL_NEW=1 makes the /new leg a connection failure (exit 7, no body);
+# MOCK_CURL_NEW_400=1 makes the kernel answer /new with a 400 whose JSON body names
+# the problem — honoring the FLAGS romp passes, the way real curl splits on a 4xx:
+# a short-flag cluster carrying -f discards the body and exits 22; plain -s prints
+# the body and exits 0. So the test proves the flags, not just the message.
 _stub_curl() {
     cat > "$MOCK_DIR/curl" << 'MOCK'
 #!/usr/bin/env bash
@@ -120,6 +125,14 @@ echo "curl $*" >> "$MOCK_LOG"
 url=""
 for a in "$@"; do [[ "$a" == http* ]] && url="$a"; done
 if [[ -n "${MOCK_CURL_FAIL_SEND:-}" && "$url" == */send ]]; then exit 22; fi
+if [[ -n "${MOCK_CURL_FAIL_NEW:-}" && "$url" == */new ]]; then exit 7; fi
+if [[ -n "${MOCK_CURL_NEW_400:-}" && "$url" == */new ]]; then
+  for a in "$@"; do
+    if [[ "$a" == "-f" || "$a" == -[!-]*f* ]]; then exit 22; fi
+  done
+  echo '{"ok": false, "error": "env: ROMP_SID is reserved — romp sets the session identity env itself"}'
+  exit 0
+fi
 echo '{"ok": true}'
 MOCK
     chmod +x "$MOCK_DIR/curl"
@@ -405,6 +418,29 @@ MOCK
     [ "$status" -eq 1 ]
     [[ "$output" == *"did NOT land"* ]]
     [[ "$output" == *"romp send ideabox"* ]]
+}
+
+@test "new: a kernel 400 surfaces the kernel's own refusal, never 'not reachable'" {
+    # every /new validation error (reserved env names, bad names, bad values) is a 400 whose
+    # body names the problem — masked as a connection failure, the user retypes forever
+    _stub_curl
+    touch "$MOCK_LOG"
+    export ROMP_SERVE_TOKEN=testtok
+    export MOCK_CURL_NEW_400=1
+    run run_romp new --env ROMP_SID=x web
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"ROMP_SID is reserved"* ]]
+    [[ "$output" != *"not reachable"* ]]
+}
+
+@test "new: a real connection failure still says 'not reachable'" {
+    _stub_curl
+    touch "$MOCK_LOG"
+    export ROMP_SERVE_TOKEN=testtok
+    export MOCK_CURL_FAIL_NEW=1
+    run run_romp new web
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"not reachable"* ]]
 }
 
 @test "help lists new -m" {
@@ -1337,14 +1373,50 @@ PY
     ROMP_KERNEL_PORT="$(cat "$TEST_DIR/port")" run run_romp new --model claude-fable-5 opt
     kill "$srv" 2>/dev/null || true
     [ "$status" -eq 0 ]
-    [[ "$output" == *"did not acknowledge --model/--effort"* ]]
+    # per-asked-key: only --model was asked, so only --model is named as dropped
+    [[ "$output" == *"did not acknowledge --model (older kernel?)"* ]]
+}
+
+@test "new --model + --env: a kernel that acks model but drops env warns about --env specifically" {
+    command -v python3 >/dev/null 2>&1 || skip "python3 not available"
+    touch "$MOCK_LOG"
+    mkdir -p "$XDG_STATE_HOME/romp"
+    printf 'tok-test' > "$XDG_STATE_HOME/romp/serve-token"
+    # fake OLDER kernel mid-window: echoes model (a key it knows) but silently ignores env — the
+    # guaranteed self-hosting shape between merging env support and `romp refresh`. The old
+    # all-or-nothing check read this partial ack as full success and the env drop went unsaid.
+    python3 - "$TEST_DIR/port" <<'PY' &
+import sys, json
+from http.server import BaseHTTPRequestHandler, HTTPServer
+portfile = sys.argv[1]
+class H(BaseHTTPRequestHandler):
+    def do_POST(self):
+        body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
+        out = json.dumps({"ok": True, "id": "11111111-2222-3333-4444-555555555555",
+                          "model": body.get("model")}).encode()
+        self.send_response(200); self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(out))); self.end_headers()
+        self.wfile.write(out)
+    def log_message(self, *a): pass
+srv = HTTPServer(("127.0.0.1", 0), H)
+with open(portfile, "w") as f:
+    f.write(str(srv.server_address[1]))
+srv.handle_request()
+PY
+    local srv=$!
+    until [ -s "$TEST_DIR/port" ]; do sleep 0.05; done
+    ROMP_KERNEL_PORT="$(cat "$TEST_DIR/port")" run run_romp new --model claude-fable-5 --env FEATURE_FLAG=1 envy
+    kill "$srv" 2>/dev/null || true
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"applied model claude-fable-5"* ]]
+    [[ "$output" == *"did not acknowledge --env (older kernel?)"* ]]
 }
 
 @test "new --model with -t refuses loudly (SDK-only flags), and starts nothing" {
     touch "$MOCK_LOG"
     run run_romp new -t --model claude-fable-5 x
     [ "$status" -eq 2 ]
-    [[ "$output" == *"--model/--effort need the default (SDK) session"* ]]
+    [[ "$output" == *"--model/--effort/--env need the default (SDK) session"* ]]
     [ "$(grep -c 'tmux new-session' "$MOCK_LOG")" -eq 0 ]
 }
 
@@ -1353,4 +1425,114 @@ PY
     [ "$status" -eq 0 ]
     [[ "$output" == *"--model <id>"* ]]
     [[ "$output" == *"--effort <level>"* ]]
+}
+
+# Helper — a one-shot fake kernel for the --env tests: records the /new body and echoes the env
+# back, the applied-ack contract of the real handler (the same shape the --model/--effort fake uses).
+_env_fake_kernel() {
+    mkdir -p "$XDG_STATE_HOME/romp"
+    printf 'tok-test' > "$XDG_STATE_HOME/romp/serve-token"
+    python3 - "$TEST_DIR/port" "$TEST_DIR/req.log" <<'PY' &
+import sys, json
+from http.server import BaseHTTPRequestHandler, HTTPServer
+portfile, log = sys.argv[1], sys.argv[2]
+class H(BaseHTTPRequestHandler):
+    def do_POST(self):
+        body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
+        with open(log, "w") as f:
+            json.dump({"path": self.path, "body": body}, f)
+        out = {"ok": True, "id": "11111111-2222-3333-4444-555555555555"}
+        if "env" in body:              # echo whenever ASKED — {} (the clear declaration) included
+            out["env"] = body["env"]
+        out = json.dumps(out).encode()
+        self.send_response(200); self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(out))); self.end_headers()
+        self.wfile.write(out)
+    def log_message(self, *a): pass
+srv = HTTPServer(("127.0.0.1", 0), H)
+with open(portfile, "w") as f:
+    f.write(str(srv.server_address[1]))
+srv.handle_request()
+PY
+    _env_srv=$!
+    until [ -s "$TEST_DIR/port" ]; do sleep 0.05; done
+}
+
+@test "new --env: repeatable flags accumulate into ONE env object on /new, echoed as applied" {
+    command -v python3 >/dev/null 2>&1 || skip "python3 not available"
+    touch "$MOCK_LOG"
+    _env_fake_kernel
+    ROMP_KERNEL_PORT="$(cat "$TEST_DIR/port")" run run_romp new --env FEATURE_FLAG=1 --env UI_THEME=dark envy
+    kill "$_env_srv" 2>/dev/null || true
+    [ "$status" -eq 0 ]
+    grep -q '"FEATURE_FLAG": "1"' "$TEST_DIR/req.log"
+    grep -q '"UI_THEME": "dark"' "$TEST_DIR/req.log"
+    [[ "$output" == *"applied env FEATURE_FLAG=1,UI_THEME=dark"* ]]
+    [ "$(grep -c 'tmux new-session' "$MOCK_LOG")" -eq 0 ]
+}
+
+@test "new --env: the value splits on the FIRST '=' and an empty value is meaningful" {
+    command -v python3 >/dev/null 2>&1 || skip "python3 not available"
+    touch "$MOCK_LOG"
+    _env_fake_kernel
+    ROMP_KERNEL_PORT="$(cat "$TEST_DIR/port")" run run_romp new --env TOGGLE=a=b --env EMPTY= envy
+    kill "$_env_srv" 2>/dev/null || true
+    [ "$status" -eq 0 ]
+    grep -q '"TOGGLE": "a=b"' "$TEST_DIR/req.log"
+    grep -q '"EMPTY": ""' "$TEST_DIR/req.log"
+}
+
+@test "new without --env sends NO env key (absent means don't touch, never an empty object)" {
+    command -v python3 >/dev/null 2>&1 || skip "python3 not available"
+    touch "$MOCK_LOG"
+    _env_fake_kernel
+    ROMP_KERNEL_PORT="$(cat "$TEST_DIR/port")" run run_romp new envy
+    kill "$_env_srv" 2>/dev/null || true
+    [ "$status" -eq 0 ]
+    run grep '"env"' "$TEST_DIR/req.log"
+    [ "$status" -ne 0 ]
+}
+
+@test "new --env: a malformed or empty NAME is a usage error, never a silent skip" {
+    touch "$MOCK_LOG"
+    run run_romp new --env 9BAD=1 x
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"[A-Za-z_][A-Za-z0-9_]*"* ]]
+    run run_romp new --env =x x
+    [ "$status" -eq 2 ]
+    run run_romp new --env NOEQUALS x
+    [ "$status" -eq 2 ]
+    run run_romp new --env
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"usage: romp new"* ]]
+    [ "$(grep -c 'tmux new-session' "$MOCK_LOG")" -eq 0 ]
+}
+
+@test "new --no-env sends the explicit empty declaration and reports the clear as applied" {
+    command -v python3 >/dev/null 2>&1 || skip "python3 not available"
+    touch "$MOCK_LOG"
+    _env_fake_kernel
+    ROMP_KERNEL_PORT="$(cat "$TEST_DIR/port")" run run_romp new --no-env envy
+    kill "$_env_srv" 2>/dev/null || true
+    [ "$status" -eq 0 ]
+    grep -q '"env": {}' "$TEST_DIR/req.log"
+    [[ "$output" == *"applied env cleared"* ]]
+    [[ "$output" != *"WARNING"* ]]
+}
+
+@test "new --env with -t refuses loudly (SDK-only flags), and starts nothing" {
+    touch "$MOCK_LOG"
+    run run_romp new -t --env FEATURE_FLAG=1 x
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"need the default (SDK) session"* ]]
+    run run_romp new -t --no-env x
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"need the default (SDK) session"* ]]
+    [ "$(grep -c 'tmux new-session' "$MOCK_LOG")" -eq 0 ]
+}
+
+@test "new: help names --env (the same presence guard as --model/--effort)" {
+    run run_romp -h
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"--env NAME=VALUE"* ]]
 }
