@@ -321,7 +321,8 @@ class BusyDrainWriteGate(unittest.TestCase):
             _serve_get("/busy?drain=1")                                  # refused → episode opens
             _serve_get("/busy?drain=1", headers={"X-Romp-Token": TOK})   # armed → episode closes, recovery line
             _serve_get("/busy?drain=1")                                  # refused again → a NEW episode
-        self.assertFalse(self._refusals()["episode"] is None)
+        self.assertTrue(self._refusals()["episode"], "the third request RE-OPENED the episode — "
+                        "the flag must flip back, not just the counter (the review's vacuous-pin catch)")
         self.assertEqual(err.getvalue().count("REFUSED a drain hold"), 2,
                          "the successful arm re-arms the notice: a second episode is new information")
         self.assertIn("armed again", err.getvalue(), "the recovery is on the record too")
