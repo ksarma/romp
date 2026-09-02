@@ -1603,9 +1603,12 @@ class ApiHealth:
         """Record one transition in both tails: the global one and its bucket's own. The bucket's tail is
         NOT a filter of the global one — that shape let a neighbour churning through fifty transitions
         erase a quiet bucket's history from its own payload. The caller holds the lock and writes the
-        state file once it has filed everything this read found."""
+        state file once it has filed everything this read found. One kernel-log line per transition, in
+        the `retry-pause:` lines' style, so the log alone reconstructs an incident: bucket, move, why."""
         self._transitions.append(row)
         self._by_bucket.setdefault(row["bucket"], deque(maxlen=API_HEALTH_TRANSITIONS_KEEP)).append(row)
+        if self._log:
+            self._log("api-health: %s %s -> %s — %s" % (row["bucket"], row.get("from"), row["to"], row.get("why") or ""))
 
     def _write_state_locked(self):
         """Publish the persisted half of the signal — the per-bucket (state, stateSince, why, evidence)

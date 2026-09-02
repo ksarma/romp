@@ -1382,6 +1382,43 @@ class StateFile(unittest.TestCase):
         self.assertEqual(snap2["buckets"][KEY]["transitions"], snap["buckets"][KEY]["transitions"])
         self.assertEqual(snap2["transitions"], snap["transitions"])
 
+    def test_every_transition_logs_one_line_in_the_kernel_log(self):
+        """The design note: a read that finds a transition appends it, writes the state file and logs
+        one stderr line in the existing `retry-pause:` style. The line names the bucket, the move and
+        the why, so the kernel log alone reconstructs an incident. Finding 5 (round 2): the build wrote
+        the row and logged nothing."""
+        d = tempfile.mkdtemp()
+        lines = []
+        ah = sb.ApiHealth(d, log=lines.append)
+        for e in _storm(T0 - 600, T0):
+            ah._push(e)
+        ah.snapshot(T0)
+
+        def moves(ls):
+            return [l for l in ls if l.startswith("api-health: ") and " -> " in l]
+        self.assertEqual(len(moves(lines)), 1, lines)
+        self.assertIn(KEY + " unknown -> thrashing", moves(lines)[0])
+        self.assertIn("rate429 over", moves(lines)[0], "the why rides the line")
+        ah.snapshot(T0 + 5)
+        self.assertEqual(len(moves(lines)), 1, "no change, no line")
+        ah.snapshot(T0 + 2000)
+        self.assertEqual(len(moves(lines)), 2)
+        self.assertIn(KEY + " thrashing -> unknown", moves(lines)[1])
+        # the boot's continuity row is a transition too, and logs; a bucket already unknown files nothing
+        boot = []
+        sb.ApiHealth(d, log=boot.append, boot_at=T0 + 3000)
+        self.assertEqual(moves(boot), [])
+        d2 = tempfile.mkdtemp()
+        ah2 = sb.ApiHealth(d2)
+        for e in _storm(T0 - 600, T0):
+            ah2._push(e)
+        ah2.snapshot(T0)
+        boot = []
+        sb.ApiHealth(d2, log=boot.append, boot_at=T0 + 30)
+        self.assertEqual(len(moves(boot)), 1, boot)
+        self.assertIn(KEY + " thrashing -> unknown", moves(boot)[0])
+        self.assertIn("restart", moves(boot)[0])
+
 
 class Diagnostics(unittest.TestCase):
     def setUp(self):

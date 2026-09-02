@@ -460,8 +460,9 @@ enters the window and the instant it leaves, so the exit condition is
 evaluated at `asOf - holdS`, at `asOf` and at each breakpoint between. Evaluating the 900 s window
 at `asOf - holdS` needs events back to `asOf - 1020`, so `config.retentionS`
 is 1020 and the ring keeps nothing older. A read that finds a transition stamps
-it with `t = asOf`, appends it to `transitions` and rewrites the state file. A
-reader polling every few seconds observes every transition within one poll of
+it with `t = asOf`, appends it to `transitions`, rewrites the state file and
+logs one line in the kernel log (`api-health: <bucket> <from> -> <to> — <why>`).
+A reader polling every few seconds observes every transition within one poll of
 its breakpoint; a sparser reader observes the state at its read times and the
 transitions those reads find, and nothing in between: a state entered and left
 between two reads is not recorded, and `recovering -> healthy` needs a read at
