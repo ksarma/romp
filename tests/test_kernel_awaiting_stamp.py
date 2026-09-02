@@ -155,7 +155,8 @@ class SessionLevelStamp(unittest.TestCase):
             "rompUuid": SID, "seq": 1, "placements": {}, "status": {}, "nodes": nodes}))
         self.assertEqual(km._session_awaiting(SID, "/p", True, stamp=True),
                          {"kind": "job", "why": "slurm 4821 regenerating the parts",
-                          "since": 200})   # the stamp's awaitingAt → the chips' elapsed readout (the user 2026-08-23)
+                          "since": 200,   # the stamp's awaitingAt → the chips' elapsed readout (the user 2026-08-23)
+                          "count": None})   # a stamp naming no peers carries no count (T225)
         self.assertEqual(km._session_stamp_full(SID),
                          ("g1", 200, "slurm 4821 regenerating the parts", "job", ()))
 
@@ -168,7 +169,7 @@ class SessionLevelStamp(unittest.TestCase):
         self._seed(("g1", "the watcher it armed; files the clip when it triggers", 200))
         self.assertEqual(km._session_awaiting(SID, "/p", True, stamp=True),
                          {"kind": None, "since": 200,
-                          "why": "the watcher it armed; files the clip when it triggers"})
+                          "why": "the watcher it armed; files the clip when it triggers", "count": None})
 
     def test_stamp_false_stays_none_so_the_feed_scopes_per_goal(self):
         # the crux: the feed calls stamp=False, so the session-level signal is None for a stamp-only session
@@ -257,7 +258,8 @@ class SessionLevelDelegation(unittest.TestCase):
         self.assertEqual(km._session_awaiting(SID, "/p", True, stamp=True),
                          {"kind": "peer", "why": "delegated to probe; waiting on their result",
                           "since": None,   # the handoff graph has no single event time here → no duration
-                          "peers": [{"name": "probe", "host": "", "sid": self.PEER, "color": None}]})
+                          "peers": [{"name": "probe", "host": "", "sid": self.PEER, "color": None}],
+                          "count": 1})   # one identified peer → "Awaiting peer" (T225)
 
     def test_handoff_peer_identities_carry_name_host_and_colour_for_the_card(self):
         # the card's awaiting box names the peers the way the origin line does (the user 2026-08-23):
@@ -289,7 +291,7 @@ class SessionLevelDelegation(unittest.TestCase):
         nodes["g1"]["awaitingWhy"], nodes["g1"]["awaitingAt"] = "the sweep it launched", 200
         self._seed(nodes)
         self.assertEqual(km._session_awaiting(SID, "/p", True, stamp=True),
-                         {"kind": None, "why": "the sweep it launched", "since": 200})
+                         {"kind": None, "why": "the sweep it launched", "since": 200, "count": None})
 
     def test_a_pure_delegation_top_stays_dark_matching_its_suppressed_card(self):
         # EVERY leaf a handoff → the feed suppresses the card in every column, so its dot never lights;
@@ -365,7 +367,7 @@ class KindScopedRules(unittest.TestCase):
     def test_a_peer_answer_supersedes_only_peer_waits(self):
         self._seed("job")
         self.assertEqual(km._session_awaiting(SID, "/p", True, stamp=True),
-                         {"kind": "job", "why": "the wait", "since": 200},
+                         {"kind": "job", "why": "the wait", "since": 200, "count": None},
                          "unrelated mail cannot end a wait on an external job")
         self._seed("peer")
         self.assertIsNone(km._session_awaiting(SID, "/p", True, stamp=True),
@@ -434,14 +436,14 @@ class OverlayDoesNotVeto(unittest.TestCase):
         self._seed()
         self.assertEqual(km._session_awaiting(SID, "/p", True, stamp=True),
                          {"kind": None, "why": "a dispatched release watch; tags when green",
-                          "since": 200},
+                          "since": 200, "count": None},
                          "the Stop hook's ambient false must not hide the judge's stamp")
 
     def test_a_live_true_row_still_wins_with_its_own_why(self):
         self._overlay({"t": 100, "awaiting": True, "why": "a job the hook reported"})
         self._seed()
         self.assertEqual(km._session_awaiting(SID, "/p", True, stamp=True),
-                         {"kind": None, "why": "a job the hook reported", "since": 100},
+                         {"kind": None, "why": "a job the hook reported", "since": 100, "count": None},
                          "a positive overlay row keeps its channel")
 
     def test_false_row_and_no_stamp_is_plain_none(self):

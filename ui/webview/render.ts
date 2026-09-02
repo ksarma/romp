@@ -24,7 +24,7 @@ import { compactDisplay, toolCounts, type DisplayItem } from "./compact";
 import { senderKind } from "./sender-identity";
 import { loadSettings, onExternalSettingsChange, installSettingsSync, type RompSettings } from "./settings";
 import { delegate } from "./actions";
-import { KIND_WORD } from "./spin-caption";
+import { KIND_WORD, kindWord } from "./spin-caption";
 import { isClearCmd, openTopTitles, clearConfirmDetail, endConfirmDetail } from "./clear-confirm";
 import { prebuildPlan, type ViewState } from "./prebuild";
 import { reconcileTabOrder } from "./tab-order";
@@ -229,7 +229,7 @@ interface TodoTask { id: string; subject: string; activeForm?: string; status: s
 
 type ChipState = "working" | "ready" | "needsInput" | "awaiting" | "awaitingBg" | "idle" | "closed" | "compacting" | "clearing" | "blocked" | "retrying" | "interrupting" | "opening";   // needsInput = a live permission/picker prompt (on YOU) — renamed from the legacy "awaiting" (2026-08-15), which stays accepted for OLDER REMOTE KERNELS across federation; awaitingBg = idle main thread waiting on background work it dispatched (the user 2026-07-13)
 type PeerIdent = { name: string; host?: string; sid?: string; color?: { bg: string; fg: string } | null };   // a named peer behind a peer-kind wait (kernel _peer_identity, 2026-08-26)
-interface Status { state: ChipState; sinceEpoch: number | null; awaitingWhy?: string | null; awaitingKind?: string | null; awaitingPeers?: PeerIdent[] | null; awaitingTasks?: string[]; awaitingTaskIds?: string[]; effort?: string; model?: string; modelPending?: boolean; effortPending?: boolean; mode?: string; fast?: string; auth?: string; authLive?: string; authPending?: boolean; authBoth?: boolean; authAcct?: string; ctx?: string; ctxColor?: number[]; modelColor?: number[]; effortColor?: number[]; modelTone?: number[]; effortTone?: number[]; ctxTone?: number[]; faded?: boolean; backend?: string; apiTooLong?: boolean; apiSpendLimit?: boolean; apiModelLimit?: boolean; apiAuthErr?: boolean; apiRefusal?: boolean; retrySuppressed?: boolean; retryNextAt?: number | null; retryTries?: number | null; }   // awaitingWhy/awaitingTasks = what an awaitingBg session is waiting on (kernel _session_awaiting's phrasing + the live awaited task descriptions) — the #bg-tasks box renders it when no tracked tasks claim the box (renderAwaitWhy; the user 2026-08-13, who moved it out of the statusline the same day PR #350 put it there)   // retrySuppressed = the user interrupted this thread's API-error storm → romp's auto-retry stays OFF for it until a successful turn re-arms (the user 2026-07-06). backend = "tmux" | "sdk"; apiTooLong = the "blocked" is a "prompt is too long" error (on you → red tab) vs a transient API error (amber/retrying); apiSpendLimit = a monthly spend cap (on you → raise it; NEVER auto-retried — retrying can't fix it, the user 2026-07-14); apiModelLimit = this session's MODEL is out of allowance (on you → switch model or add credits; not auto-retried either, the user 2026-08-01); apiRefusal = the model's safeguards refused the prompt itself (on you → rewrite it or drop the thread; never auto-retried — a refusal is deterministic on the same input, so a retry just manufactures the same refusal, the user 2026-08-15); ctxColor = the GLOBAL colormap's RGB for the context%, computed server-side; modelColor/effortColor = the same map's RGB tint for the model name + effort (by capability/effort rank), server-computed; modelPending = a /model switch is resolving → the badge shows switching-dots until the new name lands (server-driven, event-based, the user 2026-07-03); fast = the CLI's fast-mode state ("on"/"off"/"cooldown", from the SDK init's fast_mode_state; absent = unknown/unavailable → no fast badge)
+interface Status { state: ChipState; sinceEpoch: number | null; awaitingWhy?: string | null; awaitingKind?: string | null; awaitingPeers?: PeerIdent[] | null; awaitingTasks?: string[]; awaitingTaskIds?: string[]; awaitingCount?: number | null; effort?: string; model?: string; modelPending?: boolean; effortPending?: boolean; mode?: string; fast?: string; auth?: string; authLive?: string; authPending?: boolean; authBoth?: boolean; authAcct?: string; ctx?: string; ctxColor?: number[]; modelColor?: number[]; effortColor?: number[]; modelTone?: number[]; effortTone?: number[]; ctxTone?: number[]; faded?: boolean; backend?: string; apiTooLong?: boolean; apiSpendLimit?: boolean; apiModelLimit?: boolean; apiAuthErr?: boolean; apiRefusal?: boolean; retrySuppressed?: boolean; retryNextAt?: number | null; retryTries?: number | null; }   // awaitingWhy/awaitingTasks = what an awaitingBg session is waiting on (kernel _session_awaiting's phrasing + the live awaited task descriptions) — the #bg-tasks box renders it when no tracked tasks claim the box (renderAwaitWhy; the user 2026-08-13, who moved it out of the statusline the same day PR #350 put it there)   // retrySuppressed = the user interrupted this thread's API-error storm → romp's auto-retry stays OFF for it until a successful turn re-arms (the user 2026-07-06). backend = "tmux" | "sdk"; apiTooLong = the "blocked" is a "prompt is too long" error (on you → red tab) vs a transient API error (amber/retrying); apiSpendLimit = a monthly spend cap (on you → raise it; NEVER auto-retried — retrying can't fix it, the user 2026-07-14); apiModelLimit = this session's MODEL is out of allowance (on you → switch model or add credits; not auto-retried either, the user 2026-08-01); apiRefusal = the model's safeguards refused the prompt itself (on you → rewrite it or drop the thread; never auto-retried — a refusal is deterministic on the same input, so a retry just manufactures the same refusal, the user 2026-08-15); ctxColor = the GLOBAL colormap's RGB for the context%, computed server-side; modelColor/effortColor = the same map's RGB tint for the model name + effort (by capability/effort rank), server-computed; modelPending = a /model switch is resolving → the badge shows switching-dots until the new name lands (server-driven, event-based, the user 2026-07-03); fast = the CLI's fast-mode state ("on"/"off"/"cooldown", from the SDK init's fast_mode_state; absent = unknown/unavailable → no fast badge)
 interface Color { bg: string; fg: string; }
 // A run_in_background task surfaced in the #bg-tasks box (the kernel's _bg_tasks): a one-line summary +
 // status, expandable to the command + its output. status = running | completed | failed. For a dispatched
@@ -9481,7 +9481,7 @@ function renderAwaitWhy(host: HTMLElement, s: Session | null) {
     });
     lab.append(" · " + why.replace(/^delegated to [^;]*;\s*/i, "").replace(/^(waiting on|awaiting)\s+/i, ""));
   } else {
-    lab.textContent = "Awaiting" + (kw ? " " + kw : "") + " · " + why.replace(/^(waiting on|awaiting)\s+/i, "");
+    lab.textContent = "Awaiting" + (kw ? " " + kindWord(s!.status.awaitingKind, s!.status.awaitingCount) : "") + " · " + why.replace(/^(waiting on|awaiting)\s+/i, "");
   }
   head.appendChild(lab);
   host.appendChild(head);
@@ -10567,7 +10567,7 @@ function updateStatusline() {
         if (chipPeers[0].color && chipPeers[0].color.bg) nm.style.color = chipPeers[0].color.bg;
         chip.appendChild(nm);
       } else chip.append(chipPeers.length + " peers");
-    } else chip.textContent = CHIP_LABEL.awaitingBg + (kw ? " " + kw : "");
+    } else chip.textContent = CHIP_LABEL.awaitingBg + (kw ? " " + kindWord(s.status.awaitingKind, s.status.awaitingCount) : "");   // "Awaiting agent" for one, "agents" for more (T225)
     chip.title = (s.status.awaitingWhy || "idle, waiting on background work it dispatched")
                + " — clears when the result lands";
     sl.appendChild(chip);
@@ -11654,6 +11654,7 @@ function update(msg: any) {
   const s = sessions.get(msg.id);
   if (!s) return;
   s.events = msg.events || s.events;
+  const before = awaitKey(s.status);
   s.status = msg.status || s.status;
   reconcileRewind(s);                    // pending-rewind overlay + the editable-bubble set, from the fresh payload
   reconcileOptimistic(s);                // re-assert (or retire) any in-flight optimistic sends on this push
@@ -11661,6 +11662,7 @@ function update(msg: any) {
   if (msg.id === activeId) {
     appendActive();
     renderLedger(); // refresh the summary box (ages + any new items) as the active session works
+    if (awaitKey(s.status) !== before) renderBgTasks();   // the box rides the chip's own frame (T225; see chatTail)
   } else {
     const v = views.get(msg.id);
     if (v) v.stale = true; // re-render its current turn when it's next shown
@@ -11729,6 +11731,7 @@ function chatTail(msg: any) {
   // view stale so the window is rebuilt from the events that actually remain.
   const shrank = s.events.length < wasLen;
   if (typeof msg.total === "number") s.headTotal = msg.total;
+  const before = awaitKey(s.status);
   if (msg.status) s.status = msg.status;
   if ("ledger" in msg) ledgers.set(msg.id, msg.ledger ?? null);
   renderTabs();
@@ -11740,6 +11743,12 @@ function chatTail(msg: any) {
     }
     appendActive();
     renderLedger();
+    // THIS is the frame that flips the chip (T225): a status-only change reaches a caught-up client as a
+    // chatTail with an empty suffix and the full status — awaitingWhy/Kind/Count/Tasks included. The box
+    // rendered only from the full-session path, so the chip read "Awaiting agents" with no box until a
+    // transcript change happened to send a full frame (31s+ in the user's shot; never, in the quiet lab).
+    // Render the box from the SAME frame, keyed on the awaited fields CHANGING — never on the per-second ticks.
+    if (awaitKey(s.status) !== before) renderBgTasks();
   } else {
     const v = views.get(msg.id);
     if (v) v.stale = true;
@@ -11830,12 +11839,30 @@ function requestOlder(sid: string, v: View, content: HTMLElement): void {
   vscodeApi?.postMessage({ type: "loadOlder", id: sid, before: s.headFrom });
 }
 
+// The awaiting fields the #bg-tasks box renders from (renderAwaitWhy / the awaited-row outline) — one
+// key per status, so a status-only frame re-renders the box exactly when THESE change (the chip's own
+// flip is one of them) and never on the per-second ticks that touch nothing the box shows.
+function awaitKey(st: Status | undefined): string {
+  if (!st) return "";
+  return JSON.stringify([st.state, st.awaitingWhy || "", st.awaitingKind || "", st.awaitingCount ?? null,
+                         st.awaitingTasks || [], st.awaitingTaskIds || [],
+                         (st.awaitingPeers || []).map((p) => [p.host || "", p.name || ""])]);
+}
+
 function statusOnly(msg: any) {
   const s = sessions.get(msg.id);
   if (!s) return;
+  const before = awaitKey(s.status);
   s.status = msg.status || s.status;
   renderTabs();                          // status-only push → repaint the chip; order is untouched
-  if (msg.id === activeId) updateStatusline();
+  if (msg.id === activeId) {
+    updateStatusline();
+    // T225 (the user 2026-09-02): the awaiting BOX must be there the moment the chip says so. Both read
+    // this one payload, but the box was rendered only by the full-session frame path, so a status-only
+    // flip to Awaiting left the chip on and the box absent until the next transcript change or tab
+    // switch (31s+ observed). Same frame, same data — re-render the box when its fields changed.
+    if (awaitKey(s.status) !== before) renderBgTasks();
+  }
 }
 
 // The ✕'s own path: drop the tab now, THEN remember the close (see closingTabs). The order matters and

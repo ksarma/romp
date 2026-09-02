@@ -12595,7 +12595,7 @@ def _watch_awaiting(sid):
         return None
     since = min([r.get("at") for r in rows + prs if r.get("at")] or [None])
     why = ("waiting on " + descs[0]) if len(descs) == 1 else         ("waiting on %d armed watches — %s, …" % (len(descs), descs[0]))
-    return {"kind": "job", "why": why, "since": since, "tasks": descs}
+    return {"kind": "job", "why": why, "since": since, "tasks": descs, "count": len(descs)}
 
 
 def _watch_notice(kind, row, detail=""):
@@ -15515,6 +15515,7 @@ def _session_awaiting(sid, path, idle, stamp=False):
         # normally runs inside an open turn → idle=False → this branch never ran) — count via len().
         n = len(subs)
         return {"kind": "agents", "why": "%d background agent%s still working" % (n, "" if n == 1 else "s"),
+                "count": n,   # how many are awaited — the chip/box word agrees in number with THIS (T225)
                 "since": min([s.get("since") for s in subs if s.get("since")] or [None])}   # the oldest live agent's start — the wait has held at least this long
     tasks = _bg_live_norm(sid, path)
     if tasks:
@@ -15529,9 +15530,9 @@ def _session_awaiting(sid, path, idle, stamp=False):
                                     for t in pending) else "task")
             since = min([t.get("t") for t in pending if t.get("t")] or [None])   # the oldest pending dispatch
             if len(pending) == 1:
-                return {"kind": kind, "since": since,
+                return {"kind": kind, "since": since, "count": 1,
                         "why": "waiting on a background task%s" % ((": " + d0) if d0 else "")}
-            return {"kind": kind, "since": since,
+            return {"kind": kind, "since": since, "count": len(pending),
                     "why": "waiting on %d background tasks%s"
                            % (len(pending), (" — " + d0 + ", …") if d0 else "")}
     # Source 0.9 — ARMED KERNEL WATCHES this session registered (`romp watch --cmd` / `romp watch-pr`):
@@ -15547,6 +15548,7 @@ def _session_awaiting(sid, path, idle, stamp=False):
         ovk = ov.get("kind")
         return {"kind": ovk if ovk in jd.AWAIT_KINDS else None,
                 "since": ov.get("t") or None,          # the overlay row's own stamp — when the hook declared the wait
+                "count": ov["count"] if isinstance(ov.get("count"), int) and ov["count"] > 0 else None,   # only when the producer said (no parsing the why)
                 "why": ov.get("why") or "waiting on dispatched work"}
     # An awaiting:false overlay row is NOT a veto — it says only that THIS channel has nothing to add.
     # The SDK Stop hook has written an unconditional false at every turn end since 2026-07-07 while
@@ -15573,10 +15575,11 @@ def _session_awaiting(sid, path, idle, stamp=False):
         # and nobody else's (the user 2026-08-08): the three surfaces answered one question two ways.
         y = _owned_yield_why(sid, path)
         if y:
-            return {"kind": "task", "why": y, "since": None}   # a live owned dispatch — in-harness work (no single event time to show)
+            return {"kind": "task", "why": y, "since": None, "count": 1}   # a live owned dispatch — in-harness work (no single event time to show)
         _gid, _at, st_why, st_kind, st_peers = _session_stamp_full(sid)
         if st_why:
-            out = {"kind": st_kind, "why": st_why, "since": _at or None}   # the judge's own classification rides the stamp, with its awaitingAt
+            out = {"kind": st_kind, "why": st_why, "since": _at or None,   # the judge's own classification rides the stamp, with its awaitingAt
+                   "count": len(st_peers) if st_peers else None}   # a peer stamp knows its peers; other stamps carry no count
             if st_kind == "peer" and st_peers:
                 # the stamp RECORDS who the wait is on (judge awaitPeers) — name them (2026-08-26);
                 # `peers` rides only when known, so every other arm's shape is byte-identical
@@ -15588,6 +15591,7 @@ def _session_awaiting(sid, path, idle, stamp=False):
             pi = _session_delegated_identities(sid)
             if pi:
                 out["peers"] = pi
+                out["count"] = len(pi)
             return out
     return None
 
@@ -20171,6 +20175,10 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
                   # WHO a peer-kind wait is on — [{name, host, sid, color}], the same identities the feed
                   # box wears, so the chat chip + awaiting box name the actual session (2026-08-26)
                   "awaitingPeers": ((_aw or {}).get("peers") or None),
+                  # HOW MANY things are awaited (T225; the user 2026-09-02 wants the label to agree in
+                  # number — a single agent is not "agents") — the chip and the box derive the word from
+                  # this one number; None when the source cannot know (an untyped stamp, a bare overlay)
+                  "awaitingCount": ((_aw or {}).get("count") if isinstance((_aw or {}).get("count"), int) else None),
                   "awaitingTasks": (((_awaiting_task_descs(sid, sess["path"]) or
                                       (_aw or {}).get("tasks") or [])) if awaiting_why else []),
                   # …and the same tasks' launch ids, so the #bg-tasks box outlines exactly the awaited
@@ -20979,7 +20987,7 @@ def _provisional_card(s, name, color, fsid, live, now, store=None):
             "provisional": True, "judging": not turn_open, "tree": []}
 
 
-def _awaiting_card(s, name, color, fsid, live, now, why, kind=None, since=None):
+def _awaiting_card(s, name, color, fsid, live, now, why, kind=None, since=None, count=None):
     """A lightweight WORKING-column placeholder for a LIVE, IDLE session AWAITING a dispatched BACKGROUND
     TASK when there is NO open goal to floor to awaiting (the user 2026-07-13). The turn ended and every
     card is done/cleared/placed, so the goal loop has nothing to floor AND _provisional_card bows out (its
@@ -21014,6 +21022,7 @@ def _awaiting_card(s, name, color, fsid, live, now, why, kind=None, since=None):
             # 2026-07-13). judging False: this session is idle-awaiting, not analyzing — the pill, not a
             # "Working…"/"Analyzing…" chip, carries the state (feed.ts defers the provisional chip when awaiting).
             "awaiting": {"why": why, "kind": kind, "since": since,
+                         "count": count if isinstance(count, int) else None,   # the feed pill's word agrees in number (T225)
                          "tasks": _awaiting_task_descs(fsid, s["path"])},
             "provisional": True, "judging": False, "tree": []}
 
@@ -21707,6 +21716,7 @@ def build_feed(now, tmux=None):
         sess_awaiting_why = _sess_aw["why"] if _sess_aw else None
         sess_awaiting_kind = _sess_aw["kind"] if _sess_aw else None
         sess_awaiting_since = _sess_aw.get("since") if _sess_aw else None   # the wait's own event time (the user 2026-08-23)
+        sess_awaiting_count = _sess_aw.get("count") if _sess_aw else None   # how many are awaited — the pill's word agrees in number (T225)
         sess_awaiting_peers = _sess_aw.get("peers") if _sess_aw else None   # named identities when the arm knows them (2026-08-26)
         if sess_awaiting_why and not who_working:
             awaiting.append(name)                    # the AWAITING dot list (await-green, the user 2026-07-13) — the
@@ -22327,7 +22337,8 @@ def build_feed(now, tmux=None):
                 # awaiting card so the wait shows in the FEED, not just on the timeline — the hole the user
                 # hit ("there's no card there"). Ephemeral: gone the moment sess_awaiting_why clears.
                 asks.append(_awaiting_card(s, name, color, fsid, live, now, sess_awaiting_why,
-                                           kind=sess_awaiting_kind, since=sess_awaiting_since))
+                                           kind=sess_awaiting_kind, since=sess_awaiting_since,
+                                           count=sess_awaiting_count))
     # THE SERVING FOLD, commit side (T137): join each candidate's rows under its dispatch's
     # tracker row — a read-only render-time join across stores (the node itself stays in the
     # WORKER's store, where plan-sync completion, nudge freshness, and clears live; node ids are
