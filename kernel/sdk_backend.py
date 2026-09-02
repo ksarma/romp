@@ -887,10 +887,11 @@ def acct_digest() -> str:
 # (the kernel has had a pusher thread die quietly before). The state is derived from the ring AND the
 # last persisted (state, stateSince) — the hysteresis needs a memory the ring alone does not hold once a
 # storm has slid past the windows — and from nothing else. Only STATE TRANSITIONS a read observes are
-# written to disk (STATE/api-health.jsonl), so the history survives a restart while the per-request
-# events do not: persisting every attempt would add a write per API call for a window that empties
-# itself in 17 minutes, and a restart already announces itself through bootId/complete — every bucket
-# comes back `unknown` (an empty ring is no evidence) with its transitions continuous across the boot.
+# written to disk (STATE/api-health.json: the per-bucket state plus a bounded transition tail, rewritten
+# whole and atomically on each), so the history survives a restart while the per-request events do not:
+# persisting every attempt would add a write per API call for a window that empties itself in 17
+# minutes, and a restart already announces itself through bootId/complete — every bucket comes back
+# `unknown` (an empty ring is no evidence) with its transitions continuous across the boot.
 #
 # What is deliberately NOT here: probes, actions, hooks, error text, paths, key material. The kernel
 # publishes what it observed; a consumer reads the signal and applies its own policy.
@@ -914,9 +915,10 @@ def acct_digest() -> str:
 # ---------------------------------------------------------------------------
 
 API_HEALTH_SCHEMA = 1
-API_HEALTH_LEDGER = "api-health.jsonl"      # STATE/… — observed state transitions, one JSON row per line
+API_HEALTH_STATE_FILE = "api-health.json"   # STATE/… — per-bucket (state, stateSince, …) + the transition tail; rewritten whole on each transition
+API_HEALTH_LEGACY_LEDGER = "api-health.jsonl"   # STATE/… — the first cut's append-only ledger: read ONCE to seed a missing state file, never written
 API_HEALTH_SALT_FILE = "api-health-salt"    # STATE/… — the per-install label salt (0600); EMPTY file = unsalted
-API_HEALTH_LEDGER_KEEP = 50                 # transitions carried in the payload (newest last)
+API_HEALTH_TRANSITIONS_KEEP = 50            # transitions kept, newest last
 
 # The constants, in one place, with the ADR's backtested defaults (one incident, one box — re-check
 # against the next). Each is overridable for tests through ROMP_API_HEALTH_<NAME>; the payload echoes
@@ -1334,8 +1336,8 @@ class ApiHealth:
         # bucket key -> {"state", "since", "why", "evidence", "auth", "family"}: the persisted half of
         # the derivation's input is (state, since); the rest is what the newest transition recorded
         self._last_state: dict = {}
-        self._transitions: list = []     # the ledger's tail, newest last (API_HEALTH_LEDGER_KEEP)
-        self._seed_from_ledger(time.time() if boot_at is None else float(boot_at))
+        self._transitions: deque = deque(maxlen=API_HEALTH_TRANSITIONS_KEEP)   # the global tail, newest last
+        self._seed(time.time() if boot_at is None else float(boot_at))
 
     # ---- labels ----
     def salt(self) -> str:
@@ -1466,96 +1468,165 @@ class ApiHealth:
                            status if isinstance(status, int) and not isinstance(status, bool) else None,
                            sid, turn, category))
 
-    # ---- the ledger ----
-    def _ledger_path(self) -> Path:
-        return self.state_dir / API_HEALTH_LEDGER
+    # ---- the state file ----
+    def _state_path(self) -> Path:
+        return self.state_dir / API_HEALTH_STATE_FILE
 
-    def _seed_from_ledger(self, boot_at: float):
-        """Restore the transition tail from STATE/api-health.jsonl and set EVERY persisted bucket to
-        `unknown` as of `boot_at` — the ring is empty, so there is no evidence for any other state and no
-        held pre-restart state — filing `<state> -> unknown` for each bucket that was not already
-        unknown, so the transitions list is continuous across the restart and the first read with enough
-        evidence records `unknown -> <state>` after it.
+    @staticmethod
+    def _row_ok(r) -> bool:
+        """A persisted transition row: a dict with a non-empty string `bucket` and `to` and a numeric `t`."""
+        if not isinstance(r, dict):
+            return False
+        b, to = r.get("bucket"), r.get("to")
+        if not (isinstance(b, str) and b and isinstance(to, str) and to):
+            return False
+        try:
+            float(r.get("t") or 0)
+        except (TypeError, ValueError):
+            return False
+        return True
+
+    def _seed(self, boot_at: float):
+        """Restore the per-bucket (state, stateSince, why, evidence) and the transition tail from
+        STATE/api-health.json — or, when there is none yet, from the tail of the first cut's append-only
+        STATE/api-health.jsonl — and set EVERY persisted bucket to `unknown` as of `boot_at`: the ring
+        is empty, so there is no evidence for any other state and no held pre-restart state.
+        `<state> -> unknown` is filed for each bucket that was not already unknown, so the transitions
+        list is continuous across the restart and the first read with enough evidence records
+        `unknown -> <state>` after it. What the boot filed is written, and so is a legacy seed, so the
+        old ledger is read once: the state file exists from the first boot that found one.
 
         Never raises: this runs inside SdkBackend.__init__, and an exception here pinned the SDK backend
         unavailable for the kernel's whole life. A row that is not JSON, lacks its fields, or carries a
         non-numeric `t` or a non-string `bucket` is skipped; the skips are logged once."""
         try:
+            rows, recs, bad, legacy = [], {}, 0, False
             try:
-                with open(self._ledger_path(), "rb") as f:
+                doc = json.loads(self._state_path().read_text())
+            except FileNotFoundError:
+                doc = None
+            if doc is None:
+                lines = self._read_legacy_tail()
+                if lines is None:
+                    return
+                legacy = True
+                for ln in lines:
+                    if not ln.strip():
+                        continue
                     try:
-                        f.seek(-65536, os.SEEK_END)     # the tail is all that is ever needed
-                        f.readline()                    # drop the partial first line
-                    except OSError:
-                        f.seek(0)
-                    lines = f.read().decode("utf-8", "replace").splitlines()
-            except OSError:
-                return
-            rows, last, bad = [], {}, 0
-            for ln in lines:
-                if not ln.strip():
-                    continue
-                try:
-                    r = json.loads(ln)
-                except ValueError:
-                    bad += 1
-                    continue
-                b = r.get("bucket") if isinstance(r, dict) else None
-                to = r.get("to") if isinstance(r, dict) else None
-                if not (isinstance(b, str) and b and isinstance(to, str) and to):
-                    bad += 1
-                    continue
-                try:
-                    t = float(r.get("t") or 0)
-                except (TypeError, ValueError):
-                    bad += 1
-                    continue
-                rows.append(r)
-                last[b] = (to, t, r.get("auth"), r.get("family"))
+                        r = json.loads(ln)
+                    except ValueError:
+                        bad += 1
+                        continue
+                    if not self._row_ok(r):
+                        bad += 1
+                        continue
+                    rows.append(r)
+                    recs[r["bucket"]] = {"state": r["to"], "since": float(r["t"] or 0), "why": r.get("why") or "",
+                                         "evidence": r.get("evidence"), "auth": r.get("auth"), "family": r.get("family")}
+            else:
+                if not isinstance(doc, dict):
+                    raise ValueError("not a JSON object")
+                for r in doc.get("transitions") or []:
+                    if self._row_ok(r):
+                        rows.append(r)
+                    else:
+                        bad += 1
+                for key, rec in (doc.get("buckets") or {}).items():
+                    st = rec.get("state") if isinstance(rec, dict) else None
+                    if not (isinstance(key, str) and key and isinstance(st, str) and st):
+                        bad += 1
+                        continue
+                    try:
+                        since = float(rec.get("stateSince") or 0)
+                    except (TypeError, ValueError):
+                        bad += 1
+                        continue
+                    recs[key] = {"state": st, "since": since, "why": rec.get("why") or "", "evidence": rec.get("evidence"),
+                                 "auth": rec.get("auth"), "family": rec.get("family")}
             if bad and self._log:
-                self._log("api-health: %d malformed ledger row(s) skipped at boot (%s)" % (bad, self._ledger_path().name))
-            self._transitions = rows[-API_HEALTH_LEDGER_KEEP:]
-            for key, (to, t, auth, fam) in last.items():
-                a, f = key.split("|", 1) if "|" in key else (key, "unknown")
-                auth = auth if isinstance(auth, str) and auth else a
-                fam = fam if isinstance(fam, str) and fam else f
-                ev = {"window": None, "rate429": None, "rate5xx": None, "n": 0}
-                if to != "unknown":
-                    self._append_ledger_locked({"t": round(boot_at, 3), "bucket": key, "auth": auth, "family": fam,
-                                                "from": to, "to": "unknown", "why": API_HEALTH_RESTART_WHY,
-                                                "evidence": ev})
-                self._last_state[key] = {"state": "unknown", "since": boot_at, "why": API_HEALTH_RESTART_WHY,
-                                         "evidence": ev, "auth": auth, "family": fam}
+                self._log("api-health: %d malformed row(s) skipped at boot (%s)"
+                          % (bad, API_HEALTH_LEGACY_LEDGER if legacy else API_HEALTH_STATE_FILE))
+            filed = False
+            with self._lock:
+                self._transitions.extend(rows)
+                for key, rec in recs.items():
+                    a, f = key.split("|", 1) if "|" in key else (key, "unknown")
+                    auth = rec["auth"] if isinstance(rec["auth"], str) and rec["auth"] else a
+                    fam = rec["family"] if isinstance(rec["family"], str) and rec["family"] else f
+                    ev = {"window": None, "rate429": None, "rate5xx": None, "n": 0}
+                    if rec["state"] != "unknown":
+                        self._file_locked({"t": round(boot_at, 3), "bucket": key, "auth": auth, "family": fam,
+                                           "from": rec["state"], "to": "unknown", "why": API_HEALTH_RESTART_WHY,
+                                           "evidence": ev})
+                        filed = True
+                    self._last_state[key] = {"state": "unknown", "since": boot_at, "why": API_HEALTH_RESTART_WHY,
+                                             "evidence": ev, "auth": auth, "family": fam}
+                if filed or legacy:
+                    self._write_state_locked()
         except Exception as e:   # loud, and the backend still comes up
             if self._log:
-                self._log("api-health: ledger unreadable (%s) — starting with no history" % e)
-            self._last_state, self._transitions = {}, []
+                self._log("api-health: state file unreadable (%s) — starting with no history" % e)
+            self._last_state, self._transitions = {}, deque(maxlen=API_HEALTH_TRANSITIONS_KEEP)
 
-    def _append_ledger_locked(self, row: dict):
-        """One row, one write: an O_APPEND write of a short line is atomic on POSIX, so two kernel
-        threads observing at once cannot interleave rows. Never raises into a request handler."""
-        p = self._ledger_path()
+    def _read_legacy_tail(self):
+        """The last 64 KB of the first cut's STATE/api-health.jsonl as lines, or None when there is no
+        such file. The read starts at the first row boundary AT OR AFTER the 64 KB mark: it seeks one
+        byte short of the mark and drops through the first newline, so a row that begins exactly at the
+        mark is kept. (The first cut sought to the mark and dropped its first LINE, a complete row
+        whenever the mark fell on a boundary — one invisible transition per boot once the file passed
+        64 KB, and a bucket whose newest row it was fell out of the seed.) The file is left as it is:
+        never written, never removed."""
+        try:
+            with open(self.state_dir / API_HEALTH_LEGACY_LEDGER, "rb") as f:
+                try:
+                    pos = f.seek(-65537, os.SEEK_END)
+                except OSError:
+                    pos = f.seek(0)
+                if pos > 0:
+                    f.readline()
+                return f.read().decode("utf-8", "replace").splitlines()
+        except OSError:
+            return None
+
+    def _file_locked(self, row: dict):
+        """Record one transition in the tail. The caller holds the lock and writes the state file once
+        it has filed everything this read found."""
+        self._transitions.append(row)
+
+    def _write_state_locked(self):
+        """Publish the persisted half of the signal — the per-bucket (state, stateSince, why, evidence)
+        and the transition tail — to STATE/api-health.json whole: a writer-unique temp in the same dir,
+        then os.replace (the kernel's _atomic_write idiom), so a reader or a crash never sees a partial
+        document. Called under the lock, at most once per read that filed something; the document is
+        bounded (one record per bucket, API_HEALTH_TRANSITIONS_KEEP rows), so rewriting it whole is a
+        few KB. Never raises into a request handler."""
+        p = self._state_path()
+        doc = {"schema": API_HEALTH_SCHEMA,
+               "transitions": list(self._transitions),
+               "buckets": {k: {"state": v["state"], "stateSince": v["since"], "why": v["why"], "evidence": v["evidence"],
+                               "auth": v["auth"], "family": v["family"]} for k, v in self._last_state.items()}}
+        tmp = p.with_name("%s.%d.%s.tmp" % (p.name, os.getpid(), uuid.uuid4().hex[:8]))
         try:
             p.parent.mkdir(parents=True, exist_ok=True)
-            fd = os.open(str(p), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
-            try:
-                os.write(fd, (json.dumps(row) + "\n").encode("utf-8"))
-            finally:
-                os.close(fd)
+            tmp.write_text(json.dumps(doc))
+            os.replace(tmp, p)
         except OSError as e:
             if self._log:
-                self._log("api-health: ledger append failed: %s" % e)
-        self._transitions.append(row)
-        del self._transitions[:-API_HEALTH_LEDGER_KEEP]
+                self._log("api-health: state file write failed: %s" % e)
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
 
     # ---- the read ----
     def snapshot(self, now: float | None = None, uptime_s=None) -> dict:
         """The /api-health payload minus boot identity (the kernel stamps bootId/bootAt from /version's
         globals). Windows and states are computed here, from the ring and the last persisted
-        (state, stateSince), at read time; the transitions a read finds are the events that write
-        ledger rows. Every KNOWN bucket is derived — one in the ring, or one the ledger remembers whose
-        events have all aged out: absent from the ring is `unknown`, filed at the read that found it so,
-        which is how an episode closes when traffic stops between two reads.
+        (state, stateSince), at read time; the transitions a read finds are the events that rewrite
+        the state file. Every KNOWN bucket is derived — one in the ring, or one the state file remembers
+        whose events have all aged out: absent from the ring is `unknown`, filed at the read that found
+        it so, which is how an episode closes when traffic stops between two reads.
 
         Three phases around the lock: copy the ring under it; derive with it RELEASED (every session
         thread's _push takes the same lock, and a derivation over tens of thousands of ring events
@@ -1587,6 +1658,7 @@ class ApiHealth:
             derived.append((key, auth, fam, prev, st, wins, last_err))
         buckets = {}
         worst, worst_key = "unknown", None
+        filed = False
         with self._lock:
             for key, auth, fam, prev, st, wins, last_err in derived:
                 cur = self._last_state.get(key)
@@ -1594,9 +1666,10 @@ class ApiHealth:
                     rec = cur                    # a concurrent read filed this bucket first: its record stands
                 else:
                     for tr in st["transitions"]:
-                        self._append_ledger_locked({"t": round(now, 3), "bucket": key, "auth": auth, "family": fam,
-                                                    "from": tr["from"], "to": tr["to"], "why": tr["why"],
-                                                    "evidence": tr["evidence"]})
+                        self._file_locked({"t": round(now, 3), "bucket": key, "auth": auth, "family": fam,
+                                           "from": tr["from"], "to": tr["to"], "why": tr["why"],
+                                           "evidence": tr["evidence"]})
+                        filed = True
                     rec = {"state": st["state"], "since": st["since"], "auth": auth, "family": fam,
                            "why": st["why"] if st["why"] is not None else ((prev or {}).get("why") or ""),
                            "evidence": st["evidence"] if st["evidence"] is not None else (prev or {}).get("evidence")}
@@ -1608,6 +1681,8 @@ class ApiHealth:
                                 "lastError": last_err}
                 if API_HEALTH_SEVERITY[rec["state"]] > API_HEALTH_SEVERITY[worst] or worst_key is None:
                     worst, worst_key = rec["state"], key
+            if filed:
+                self._write_state_locked()       # once per read, after every bucket's record is current
             transitions = list(self._transitions)
         return {"schema": API_HEALTH_SCHEMA, "asOf": round(now, 3), "uptimeS": None if uptime_s is None else round(uptime_s, 1),
                 "complete": None if uptime_s is None else bool(uptime_s >= max(cfg["windows"])),

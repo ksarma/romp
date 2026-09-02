@@ -457,7 +457,7 @@ enters the window and the instant it leaves, so the exit condition is
 evaluated at `asOf - holdS`, at `asOf` and at each breakpoint between. Evaluating the 900 s window
 at `asOf - holdS` needs events back to `asOf - 1020`, so `config.retentionS`
 is 1020 and the ring keeps nothing older. A read that finds a transition stamps
-it with `t = asOf`, appends it to `transitions` and writes the ledger row. A
+it with `t = asOf`, appends it to `transitions` and rewrites the state file. A
 reader polling every few seconds observes every transition within one poll of
 its breakpoint; a sparser reader observes the state at its read times and the
 transitions those reads find, and nothing in between: a state entered and left
@@ -467,17 +467,25 @@ nobody reads.
 
 ### Persistence and restart
 
-A read that observes a transition appends one row to `STATE/api-health.jsonl`;
-the payload's `transitions` is that ledger's tail. The event ring itself is in
-memory only, so a restart empties the windows: `seq` restarts at 0, `bootId`
-changes, `complete` stays false until each window fits inside the new uptime,
-and every bucket the ledger knows comes back `unknown` with `stateSince` at the
-boot time. For each bucket whose persisted state was not already `unknown` the
-reload files `<state> -> unknown` at boot, so the transitions list is
-continuous across the restart, and the first read with enough evidence records
-`unknown -> <state>` after it. The pre-restart state is not carried over: an
-empty ring is no evidence. A ledger row that cannot be read is skipped and
+A read that observes a transition rewrites `STATE/api-health.json`, whole and
+atomically (a temp in the same directory, then a rename). The file holds each
+bucket's `state`, `stateSince`, `why` and `evidence` and the `transitions`
+tail, so it stays bounded however many transitions pass; per-request events
+are never written. The event ring itself is in memory only, so a restart
+empties the windows: `seq` restarts at 0, `bootId` changes, `complete` stays
+false until each window fits inside the new uptime, and every bucket the state
+file knows comes back `unknown` with `stateSince` at the boot time. For each
+bucket whose persisted state was not already `unknown` the reload files
+`<state> -> unknown` at boot, so the transitions list is continuous across the
+restart, and the first read with enough evidence records `unknown -> <state>`
+after it. The pre-restart state is not carried over: an empty ring is no
+evidence. A state file, or an entry in it, that cannot be read is skipped and
 logged, and never keeps the SDK backend from starting.
+
+Earlier builds appended one row per transition to `STATE/api-health.jsonl`. A
+kernel that boots without a state file seeds one from that ledger's last 64 KB,
+once, and leaves the ledger alone; once the state file exists the ledger is
+never read again and can be deleted.
 
 ## Where things live
 
