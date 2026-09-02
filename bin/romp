@@ -657,6 +657,7 @@ For scripts / agents:
 EOF
     _romp_cmd "romp url"                   -            "Print ONLY the tokened dashboard URL (for scripts; humans just run \`romp\`)"
     _romp_cmd "romp sessions [--json]"     -            "List the fleet with each session's state, colours and backend"
+    _romp_cmd "romp api-health"            -            "The API-health signal across your sessions (GET /api-health as JSON: per-key/family retry rates and a thrash state)"
     _romp_cmd "romp fork <parent> <name>"  -            "Branch a session into a new parallel one (parent untouched; --at <uuid> picks the cut)"
     _romp_cmd "romp rename <session> <name>" -          "Rename a session (uuid-keyed: mailboxes, goals and history all follow)"
     _romp_cmd "romp color <session> [<#hex|slot>]" -    "Recolor a session's identity swatch (palette hex or slot number; no color arg reads bg/fg)"
@@ -800,6 +801,21 @@ for r in rows:
     print("%-*s  %-10s  %-5s  %s" % (w, r.get("name") or "", r.get("state") or "",
                                      r.get("backend") or "", r.get("dir") or ""))
 '
+    exit 0
+fi
+
+# `romp api-health` — the kernel's API-health signal, verbatim JSON (GET /api-health): per
+# (auth label, model family) attempt/response/give-up counts over 60/300/900 s windows and the
+# thrash/degraded/recovering state the kernel derives from them. For scripts and consumers that act
+# on it (switch a key, hold a job); the kernel holds no policy of its own. Same shape as `sessions`:
+# the token on stdin, a dead kernel fails loudly, an unknown flag is refused.
+if [[ "${1:-}" == "api-health" ]]; then
+    shift
+    if [[ $# -gt 0 ]]; then echo "usage: romp api-health" >&2; exit 2; fi
+    _kport="${ROMP_KERNEL_PORT:-29855}"
+    _resp="$(_romp_token_cfg | curl -sf -m 10 --config - "http://127.0.0.1:$_kport/api-health")" \
+        || { echo "romp api-health: kernel not reachable on :$_kport (is romp running?)" >&2; exit 1; }
+    printf '%s\n' "$_resp"
     exit 0
 fi
 

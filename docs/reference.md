@@ -282,6 +282,74 @@ agent's launcher by parsing it — line by line, never sourced, so a malformed
 line is skipped rather than executed). Rotate a value by editing the file and
 restarting the manager (`romp-service install`); a missing file is a no-op.
 
+## The API-health signal
+
+`GET /api-health` returns one JSON document describing how the API is treating
+the sessions this kernel runs. It is computed from frames the kernel already
+parses: the per-attempt retry frame, each successful response, and the settle
+of a turn the CLI gave up on. The route takes the serve token, like every read
+that is more than a bare counter; `romp api-health` prints the document. The
+kernel takes no action on it: a consumer reads the signal and applies its own
+policy (move traffic to another key, hold a batch).
+
+Events are bucketed by **auth-source label** and **model family**
+(`"<auth>|<family>"`, for example `key:0123456789ab|fable`), because rate
+limits are per model family per account: pooled, one family's storm disappears
+under another family's clean traffic. The auth label is a salted digest: the
+same key or login gives the same label within one install, and nothing about
+the key itself is in it. The salt lives at `STATE/api-health-salt`, minted once
+at 0600; an empty file switches to unsalted digests. `key:helper`, `key:env`
+and `key:managed` name sources whose material the kernel never holds.
+
+Each bucket carries three windows (`60`, `300`, `900` seconds, ending at
+`asOf`), each with:
+
+- `requests`: attempts with a status, `ok + rateLimited + overloaded +
+  serverErrors + otherErrors`. `noStatus` (a connection-level failure) and
+  `gaveUp` sit outside the sum: a give-up is already inside one of the status
+  counters, since the exhausting attempt emits no retry frame and the settle is
+  the only place it can be counted.
+- `rate429` = `rateLimited / requests`, `rate5xx` = `(overloaded +
+  serverErrors) / requests`; both `null` at zero requests.
+- `retries`, `sessionsRetrying`, `turnsRetrying`: attempts, distinct sessions
+  and distinct turns with at least one retry in the window.
+- `complete`: false while the window is longer than the kernel's uptime.
+
+`rate429` is an attempt share, not a request share: one stuck turn contributes
+up to `max_retries` attempts. The payload says so (`"rate429Basis":
+"attempts"`); read `sessionsRetrying` and `turnsRetrying` beside it to tell one
+stuck session from a saturated key.
+
+The signal covers each session's main thread only. A subagent's retries never
+reach the kernel (the CLI folds them into a progress frame the SDK drops), so
+its responses are not counted either; counting one side would dilute every
+rate during a storm. `coverage.sidechainExcluded` is `true` to say so.
+tmux-backed sessions and the judges' own calls have no SDK stream and are
+outside the signal.
+
+Each bucket also carries a **state**, derived from the windows at read time and
+nothing else: `healthy`; `thrashing` (the 429 share is high; the actionable
+state); `degraded` (the server-error share is high while 429s are not, a
+provider-side problem another key may not fix); `recovering` (the exit
+condition has held for the hold time, one more hold to go); or `unknown` (no
+window reaches the minimum sample; never a held claim). A bucket near a cap
+does not flap: enter and exit thresholds differ, exits need both the 300 s and
+900 s windows clean for 120 s, and every decision needs a minimum sample. The
+constants are echoed under `config`. `overall.state` is the most severe bucket
+state (`unknown` ranks below `healthy`), with `worstBucket` naming it.
+
+A read that observes a bucket's state change appends one row to
+`STATE/api-health.jsonl` (`t`, `bucket`, `from`, `to`, `why`); the payload's
+`transitions` is that ledger's tail, so history survives a restart. The event
+ring itself is in memory only: a restart empties the windows, `bootId` (the
+same id `/version` and `X-Romp-Boot` carry) changes, and `complete` stays
+false until each window fits inside the new uptime.
+
+Retries carry no model field, so they are attributed to the session's
+last-learned family: attempts between a mid-storm model fallback and its first
+successful reply file under the previous family. Successful responses use their
+own model and are exact.
+
 ## Where things live
 
 State is written under `${XDG_STATE_HOME:-~/.local/state}/romp/`. Transcripts
