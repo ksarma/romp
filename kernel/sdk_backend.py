@@ -1421,6 +1421,48 @@ def flag_settings_path(state_dir, sid: str, *, ultracode: bool = False, fast: bo
     return p
 
 
+THINKING_SUMMARIES_FILE = "thinking-summaries.json"   # written by the kernel's gear toggle (_set_thinking_summaries)
+
+
+def thinking_summaries_on(state_dir: Path) -> bool:
+    """The kernel's per-install thinking-summaries toggle (2026-09-01), read at every connect by _options
+    — a connect-time knob like flag_settings_path's above. Absent, unreadable or malformed all read False:
+    OFF is the shipped default and the opt-in must be provable. Same file the kernel writes
+    ({"enabled": bool, "gt": ms}); reading never creates it."""
+    try:
+        d = json.loads((Path(state_dir) / THINKING_SUMMARIES_FILE).read_text())
+        return bool(isinstance(d, dict) and d.get("enabled"))
+    except (OSError, ValueError):
+        return False
+
+
+THINKING_SUMMARIES_KW = {"type": "adaptive", "display": "summarized"}   # the SDK's typed ThinkingConfigAdaptive
+
+
+def thinking_kw(state_dir: Path):
+    """What _options hands ClaudeAgentOptions as `thinking=`: the SDK's typed ThinkingConfigAdaptive with
+    display "summarized" when the per-install toggle is on, None when it is off (nothing passed, so the
+    CLI's own default stands). Pure and SDK-free on purpose (2026-09-01, round 2): the standard test
+    runner has no claude_agent_sdk and skips every _options pin, so the decision lives where it runs."""
+    return dict(THINKING_SUMMARIES_KW) if thinking_summaries_on(state_dir) else None
+
+
+def thinking_override_note(thinking, cli_env) -> str:
+    """The one log line owed when `thinking` (thinking_kw's answer) will override a thinking cap the CLI
+    would otherwise honor. CLI 2.1.257 resolves `--thinking adaptive` FIRST — ahead of a MAX_THINKING_TOKENS
+    in its environment and of `alwaysThinkingEnabled: false` in settings (verified in the binary) — so on
+    an install that had thinking off, asking for summaries turns adaptive thinking ON, at full thinking
+    cost. The SDK has no display-only field, so the override is inherent; what romp owes is to say so.
+    `cli_env` is the environment the CLI child will see (the SDK transport merges options.env over the
+    process's). "" when there is nothing to say: toggle off, or no cap present — the settings layer is
+    not readable from here, so that half is carried by the gear's sub-copy alone."""
+    if not thinking or "MAX_THINKING_TOKENS" not in cli_env:
+        return ""
+    return ("thinking summaries: MAX_THINKING_TOKENS=%s is set in the CLI's environment, but the toggle's "
+            "--thinking adaptive takes precedence: sessions run adaptive thinking (billed as such) where the "
+            "cap had it off" % cli_env["MAX_THINKING_TOKENS"])
+
+
 def _defaults_path(state_dir: Path) -> Path:
     return Path(state_dir) / "sdk-defaults.json"
 
@@ -3921,6 +3963,7 @@ class SdkBackend:
         self.mcp_config = mcp_config
         self.append_prompt_path = append_prompt_path
         self._log_cb = log
+        self._thinking_override_logged = False   # thinking_override_note said once per backend (see _options)
         self.sessions: dict[str, SdkSession] = {}
         self._lock = threading.Lock()
         self._reg_lock = threading.Lock()         # serializes _update_reg read-modify-writes (queue mirror
@@ -4949,6 +4992,30 @@ class SdkBackend:
             effort=("xhigh" if (sess.effort or DEFAULT_EFFORT) == "ultracode" else (sess.effort or DEFAULT_EFFORT)),
             max_buffer_size=SDK_MAX_BUFFER,   # a >1MB stdout message would crash the receive loop → kill any live picker
         )
+        # Thinking summaries (the kernel's per-install gear toggle, 2026-09-01). CLI 2.1.257 forces
+        # thinking display "omitted" for every non-interactive session unless --thinking-display is passed
+        # explicitly (its showThinkingSummaries settings key is consulted in interactive mode only), so
+        # every SDK session returned signature-only thinking blocks. When the toggle is on, pass the SDK's
+        # TYPED field — types.py ThinkingConfigAdaptive, display "summarized" | "omitted"; the transport
+        # turns it into `--thinking adaptive --thinking-display summarized` — never extra_args, which is
+        # for flags with no field. The flag is NOT display-only: the CLI resolves `--thinking adaptive`
+        # FIRST, ahead of a MAX_THINKING_TOKENS in its environment and of `alwaysThinkingEnabled: false`
+        # in settings (verified in the 2.1.257 binary), so on an install that had thinking OFF this turns
+        # adaptive thinking ON, at full thinking cost. The SDK has no display-only field, so the override
+        # is inherent to asking for summaries; what romp owes is to say so — the gear's sub-copy does,
+        # and thinking_override_note logs the one case visible from here (a cap in the CLI's environment,
+        # fixed for this process's lifetime, hence once per backend). Connect-time like effort: re-read
+        # on EVERY connect, so a reconnect re-asserts the current answer, and a running session picks a
+        # flip up at its next reconnect — an effort/billing/env/bypass switch, the first fast-mode opt-in,
+        # a rewind, a kernel restart; NOT a model switch, which set_model applies live over the control
+        # channel. Off → no `thinking` at all: the CLI's own default stands, exactly as before.
+        tk = thinking_kw(self.state_dir)
+        if tk:
+            kw["thinking"] = tk
+            note = thinking_override_note(tk, {**os.environ, **kw["env"]})
+            if note and not self._thinking_override_logged:
+                self._thinking_override_logged = True
+                self._log(note)
         # romp's harness prompt is APPENDED via the SDK's DESIGNED system_prompt field — the Claude Code preset
         # plus an `append` (types.py SystemPromptPreset) — NOT extra_args={"append-system-prompt"}. Same effect
         # (append to the default Claude Code system prompt) but it's the typed, documented option; extra_args is

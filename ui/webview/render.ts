@@ -2595,9 +2595,15 @@ function renderEventInner(ev: ChatEvent): HTMLElement {
   if (ev.kind === "thinking") {
     const turn = el("div", "turn turn-thinking");
     turn.appendChild(dot("ring"));
-    const t = el("div", "thinking" + (ev.encrypted ? " encrypted" : ""));
-    t.textContent = ev.encrypted ? "Thinking…" : ev.text;
-    if (ev.encrypted) { turn.appendChild(t); return turn; }   // already a one-liner
+    // Opaque = signed AND textless: only then is "Thinking…" all there is to show. A block with a
+    // signature and text is a reasoning SUMMARY (the kernel asks for them when its thinking-summaries
+    // toggle is on) and renders like any thinking text. The kernel's flag means opaque already; the
+    // text is re-checked here so a bundle fed by an older kernel (flag = signed) still shows what it
+    // was handed (2026-09-01 — before this, every summary hid behind the placeholder).
+    const opaque = ev.encrypted && !(ev.text || "").trim();
+    const t = el("div", "thinking" + (opaque ? " encrypted" : ""));
+    t.textContent = opaque ? "Thinking…" : ev.text;
+    if (opaque) { turn.appendChild(t); return turn; }   // already a one-liner
     // condense: clamp to ~2 lines with a fade; click to expand (the user: don't let
     // the interspersed thinking blocks dominate vertically).
     const clamp = el("div", "think-clamp");
