@@ -435,7 +435,7 @@ class DurableAwaitingSource(unittest.TestCase):
             self._restore(saved)
             os.unlink(path)
         self.assertEqual(why, {"kind": "task", "why": "waiting on a background task: power watcher",
-                               "since": None})   # the transcript scan carries no dispatch stamp → no duration, never a guess
+                               "since": None, "count": 1})   # the transcript scan carries no dispatch stamp → no duration, never a guess
 
     def test_the_notification_landing_ends_it(self):
         path = _write([_launch(), _notif_str(tid=TUSE)])

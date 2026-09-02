@@ -1579,7 +1579,8 @@ class ViewBuilder(unittest.TestCase):
                         "awaiting:true with no later work turn stays awaiting")
         self.assertEqual(km._session_awaiting(SID, str(self.tpath), True),
                          {"kind": None, "since": 200,   # the overlay row's own stamp → the chips' elapsed readout (the user 2026-08-23)
-                          "why": "Waiting on 2 background jobs it launched."},
+                          "why": "Waiting on 2 background jobs it launched.",
+                          "count": None},   # a bare overlay row names no count — never parsed from the why (T225)
                          "the genuine awaiting badge still shows")
 
     def test_blocked_rolls_up_the_card_tree_so_a_buried_block_is_visible(self):
@@ -1671,21 +1672,24 @@ class ViewBuilder(unittest.TestCase):
             km._tmux_sessions = lambda: {SID: {"subagents": [{"type": "", "since": T0}, {"type": "", "since": T0}]}}
             self.assertEqual(km._session_awaiting(SID, str(p), True),
                              {"kind": "agents", "why": "2 background agents still working",
-                              "since": T0},   # the oldest live agent's start → the chips' elapsed readout (the user 2026-08-23)
+                              "since": T0,   # the oldest live agent's start → the chips' elapsed readout (the user 2026-08-23)
+                              "count": 2},   # the live agent count — the chip's number agreement rides it (T225)
                              "a live subagent DOES leave an idle session awaiting (a working flavor)")
             # source 0.5: the live bg-task set — one task shows its description verbatim
             km._tmux_sessions = lambda: {SID: {"bgTasks": [timer]}}
             self.assertEqual(km._session_awaiting(SID, str(p), True),
                              {"kind": "task", "since": T0 + 9,   # the dispatch stamp (the user 2026-08-23)
-                              "why": "waiting on a background task: 20-minute timer for campaign-start check"})
+                              "why": "waiting on a background task: 20-minute timer for campaign-start check",
+                              "count": 1})
             km._tmux_sessions = lambda: {SID: {"bgTasks": [timer, dict(timer, desc="power watcher")]}}
             self.assertEqual(km._session_awaiting(SID, str(p), True),
                              {"kind": "task", "since": T0 + 9,
-                              "why": "waiting on 2 background tasks — 20-minute timer for campaign-start check, …"})
+                              "why": "waiting on 2 background tasks — 20-minute timer for campaign-start check, …",
+                              "count": 2})
             # subagents outrank bg tasks when both run (they're the bigger dispatch)
             km._tmux_sessions = lambda: {SID: {"subagents": [{"type": "", "since": T0}], "bgTasks": [timer]}}
             self.assertEqual(km._session_awaiting(SID, str(p), True),
-                             {"kind": "agents", "why": "1 background agent still working", "since": T0})
+                             {"kind": "agents", "why": "1 background agent still working", "since": T0, "count": 1})
         finally:
             km._tmux_sessions = saved
 
@@ -1701,7 +1705,7 @@ class ViewBuilder(unittest.TestCase):
         ]) + "\n")
         self.assertEqual(km._session_awaiting(SID, "/nonexistent", True),
                          {"kind": None, "why": "3 agents in flight",
-                          "since": T0 + 1},   # the overlay row's own stamp (the user 2026-08-23)
+                          "since": T0 + 1, "count": None},   # the overlay row's own stamp (the user 2026-08-23)
                          "the latest awaiting overlay (interleaved with state records) drives the badge")
         self.assertIsNone(km._session_awaiting(SID, "/nonexistent", False),
                           "a WORKING session is not 'awaiting' (idle=False short-circuits)")
