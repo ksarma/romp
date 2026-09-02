@@ -5076,7 +5076,7 @@ function showTabMenu(e: MouseEvent, id: string) {
     const l = el("span", "ctx-item-label"); l.textContent = "Move to folder…"; bodyEl.appendChild(l);
     const sb = el("span", "ctx-item-sub");
     sb.textContent = isTmux ? "terminal sessions can't move — start a new one in that folder"
-                            : "the conversation, mail and history come along";
+                            : "the conversation, mail, goals and history stay with the session";
     bodyEl.appendChild(sb);
     mv.appendChild(bodyEl);
     if (!isTmux) mv.addEventListener("click", (ev) => { ev.stopPropagation(); dismissTabMenu(); showMovePrompt(id); });
