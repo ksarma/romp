@@ -323,7 +323,7 @@ function quietGate(st, busy, now, opts) {
   return { action: 'wait', reason: `${busy} turn(s) in flight` };
 }
 
-let pendingQuiet = null;   // {since, count, mode:'all'|<kernel id>, timer, drainRefusedCount, drainArmedCount}
+let pendingQuiet = null;   // {since, count, mode:'all'|<kernel id>, timer, drainRefusedCount, drainArmedCount, drainLostAfterArm}
 
 // The primary kernel's serve token. The drain arm of '/busy?drain=1' is a WRITE — it holds every
 // session's new turn starts — so the kernel now requires the token for it (a drive-by loopback page
@@ -460,7 +460,7 @@ function queueQuietRestart(mode) {
     return pendingQuiet.count;
   }
   pendingQuiet = { since: Date.now(), count: 1, mode, timer: null,
-                   drainRefusedCount: 0, drainArmedCount: 0 };
+                   drainRefusedCount: 0, drainArmedCount: 0, drainLostAfterArm: false };
   resetDrainNotices();                   // the token/refusal notices re-arm when a fresh park begins
   log(`refresh queued — applying at the next quiet window (no SDK turn in flight; backstop ${Math.round(QUIET_MAX_DEFER_MS / 60000)} min)`);
   const tick = () => quietTick({
@@ -475,8 +475,12 @@ function queueQuietRestart(mode) {
       const park = pendingQuiet;
       const cb = (busy, draining) => {
         if (park && busy !== null) {
-          if (draining === false) park.drainRefusedCount++;
-          else if (draining === true) park.drainArmedCount++;
+          if (draining === false) {
+            park.drainRefusedCount++;
+            // ORDER matters for the apply line (T227): two bare counters cannot tell "refused, then
+            // armed" from "armed, then LOST" — a refusal that lands AFTER any arm is the loss
+            if (park.drainArmedCount > 0) park.drainLostAfterArm = true;
+          } else if (draining === true) park.drainArmedCount++;
         }
         done(busy);
       };
@@ -491,12 +495,16 @@ function queueQuietRestart(mode) {
       clearPendingQuiet();               // also disarms the pre-armed next tick
       // On a backstop cut, say what this park's drain evidence shows (a wrong cause misleads the
       // reader worse than none): every answer refused → the hold never armed; refused then armed
-      // → the hold arrived late, so turns started before it may still be cut. No refusals → no
-      // suffix (and draining:null answers are no evidence either way, so they count nowhere).
+      // → the hold arrived late, so turns started before it may still be cut; armed then LOST
+      // (T227: a refusal after any arm) → the hold covered the early part of the park only, so
+      // turns started after the loss may be cut. No refusals → no suffix (and draining:null
+      // answers are no evidence either way, so they count nowhere).
       const cause = g.reason !== 'backstop cap' || p.drainRefusedCount === 0 ? ''
         : p.drainArmedCount === 0
           ? ' — the kernel never armed the drain hold for this park (see the refusal line above), so in-flight turns may be cut'
-          : ` — the drain hold was refused ${p.drainRefusedCount} time(s) before arming for this park, so turns started before it armed may be cut`;
+          : p.drainLostAfterArm
+            ? ` — the drain hold armed and was then LOST for this park (refused ${p.drainRefusedCount} time(s) after arming), so turns started after the loss may be cut`
+            : ` — the drain hold was refused ${p.drainRefusedCount} time(s) before arming for this park, so turns started before it armed may be cut`;
       log(`applying deferred refresh — ${g.reason}${cause} (${p.count} request(s) coalesced, waited ${Math.round((Date.now() - p.since) / 1000)}s)`);
       if (p.mode === 'all') restartAllOrSelf(); else restartKernel(p.mode);
     },

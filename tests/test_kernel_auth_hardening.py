@@ -301,7 +301,7 @@ class BusyDrainWriteGate(unittest.TestCase):
 
     def test_a_refused_drain_logs_once_per_episode_and_counts_every_request(self):
         import io, contextlib
-        km._DRAIN_REFUSED.update(count=0, episode=False, lastT=0)
+        km._DRAIN_REFUSED.update(count=0, episodeCount=0, episode=False, lastT=0)
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
             _serve_get("/busy?drain=1")
@@ -315,7 +315,7 @@ class BusyDrainWriteGate(unittest.TestCase):
 
     def test_an_armed_drain_ends_the_episode_and_a_later_refusal_logs_again(self):
         import io, contextlib
-        km._DRAIN_REFUSED.update(count=0, episode=False, lastT=0)
+        km._DRAIN_REFUSED.update(count=0, episodeCount=0, episode=False, lastT=0)
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
             _serve_get("/busy?drain=1")                                  # refused → episode opens
@@ -325,10 +325,26 @@ class BusyDrainWriteGate(unittest.TestCase):
                         "the flag must flip back, not just the counter (the review's vacuous-pin catch)")
         self.assertEqual(err.getvalue().count("REFUSED a drain hold"), 2,
                          "the successful arm re-arms the notice: a second episode is new information")
-        self.assertIn("armed again", err.getvalue(), "the recovery is on the record too")
+        self.assertIn("armed again after 1 refused request(s)", err.getvalue(),
+                      "the recovery names the EPISODE's count (one refusal), never the running total "
+                      "(T227: a second episode of one refusal used to read 'after 2')")
+        self.assertEqual(self._refusals()["count"], 2, "…while the lifetime total keeps counting")
+        self.assertEqual(self._refusals()["episodeCount"], 1, "the re-opened episode restarts at one")
+
+    def test_a_longer_first_episode_reports_its_own_count_on_recovery(self):
+        import io, contextlib
+        km._DRAIN_REFUSED.update(count=0, episodeCount=0, episode=False, lastT=0)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            _serve_get("/busy?drain=1"); _serve_get("/busy?drain=1"); _serve_get("/busy?drain=1")
+            _serve_get("/busy?drain=1", headers={"X-Romp-Token": TOK})
+            _serve_get("/busy?drain=1")
+        self.assertIn("armed again after 3 refused request(s)", err.getvalue())
+        self.assertEqual(self._refusals()["count"], 4)
+        self.assertEqual(self._refusals()["episodeCount"], 1)
 
     def test_the_refusal_facts_ride_the_version_route(self):
-        km._DRAIN_REFUSED.update(count=0, episode=False, lastT=0)
+        km._DRAIN_REFUSED.update(count=0, episodeCount=0, episode=False, lastT=0)
         import io, contextlib
         with contextlib.redirect_stderr(io.StringIO()):
             _serve_get("/busy?drain=1")

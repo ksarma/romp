@@ -248,6 +248,25 @@ test('a transient refusal (the hold arms later) renders the armed-after-refusal 
     'a transient refusal must not read as a hold that never armed');
 });
 
+test('a hold that ARMED and was then LOST renders the lost-after-arming cause, never "before arming" (T227)', async () => {
+  // the other order: the first poll arms the hold, every later poll is refused (the token file went
+  // away mid-park). Two bare counters read this as "refused N before arming" — the ordering flag
+  // says what actually happened.
+  fs.writeFileSync(TOKEN_FILE, 'drain-probe-credential\n');
+  kstub.answers = [JSON.stringify({ busy: 1, draining: true })];    // first poll: the hold arms…
+  kstub.fallback = JSON.stringify({ busy: 1, draining: false });    // …then every later poll is refused
+  let logged;
+  try {
+    logged = await capturedUntil(/applying deferred refresh/, () => { queueQuietRestart('ghost'); });
+  } finally { clearPendingQuiet(); }
+  const applyLine = logged.split('\n').find((l) => /applying deferred refresh/.test(l));
+  assert.match(applyLine, /backstop cap/);
+  assert.match(applyLine, /armed and was then LOST/, 'the cause states the order that happened');
+  assert.match(applyLine, /after arming/, '…and counts the refusals AFTER the arm');
+  assert.doesNotMatch(applyLine, /before arming|never armed/,
+    'the reversed order must not borrow the other cause');
+});
+
 test('an in-flight probe from a cleared park never stamps the park that replaced it', async () => {
   fs.writeFileSync(TOKEN_FILE, 'drain-probe-credential\n');
   kstub.answers = [HOLD];                                           // park A's first probe parks server-side
