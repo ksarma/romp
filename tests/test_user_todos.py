@@ -739,6 +739,34 @@ class BuildSessionSeam(unittest.TestCase):
         self.assertEqual(len(payload["userTodos"]), 1, "muted ≠ hidden on the session's own tab")
         self.assertEqual(len(self._todo_events(payload)), 1, "the split card renders too")
 
+    def test_a_row_carries_detail_iff_the_ask_has_one(self):
+        # The row's "more behind this" hint (render.ts renderTodo → user-todo-hint.ts) keys on the
+        # PRESENCE of `detail` on the payload row — that presence is the has-detail flag (no
+        # separate boolean: the row already carries the text, and a second field could drift from
+        # it). So it must track the store exactly: present, with the text, when the ask carries a
+        # non-blank detail; ABSENT (not empty, not null) for a bare one-line ask — and a blank or
+        # whitespace-only detail written straight into the store is no detail either, so the seam
+        # (_open_user_todos), not just the register route, is what drops it.
+        (jd.STATE / "user-todos.json").write_text(json.dumps({SID: [
+            {"id": "ut-aaaaaaaa", "text": "Need the auth-scheme decision to wire login",
+             "createdT": NOW - 40, "detail": "OAuth vs cookie — either unblocks login"},
+            {"id": "ut-bbbbbbbb", "text": "Need a test credential for the api session", "createdT": NOW - 30},
+            {"id": "ut-cccccccc", "text": "Need your pick of the two route layouts",
+             "createdT": NOW - 20, "detail": "  \n\t "},
+            {"id": "ut-dddddddd", "text": "Need the staging port", "createdT": NOW - 10, "detail": ""}]}))
+        km._user_todos_cache.clear()
+        payload = km.build_session(SID, NOW)
+        rows = {t["id"]: t for t in payload["userTodos"]}
+        self.assertEqual(set(rows), {"ut-aaaaaaaa", "ut-bbbbbbbb", "ut-cccccccc", "ut-dddddddd"})
+        self.assertEqual(rows["ut-aaaaaaaa"]["detail"], "OAuth vs cookie — either unblocks login")
+        self.assertNotIn("detail", rows["ut-bbbbbbbb"], "a bare ask ships no detail key at all")
+        self.assertNotIn("detail", rows["ut-cccccccc"], "whitespace-only detail is no detail")
+        self.assertNotIn("detail", rows["ut-dddddddd"], "an empty detail is no detail")
+        ev_rows = {t["id"]: t for t in self._todo_events(payload)[0]["userTodos"]}
+        self.assertEqual({k: ("detail" in v) for k, v in ev_rows.items()},
+                         {k: ("detail" in v) for k, v in rows.items()},
+                         "the split-card event rows carry the same has-detail truth as the field")
+
     def test_a_todo_write_busts_the_chat_build_cache(self):
         # _chat_build_sig is (transcript, states, …) — a todo write changes NEITHER, so without the
         # store in the signature a background tab's cached chat never showed the new row

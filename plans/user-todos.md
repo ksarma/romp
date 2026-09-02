@@ -238,7 +238,9 @@ expectation consciously alongside the chip's.
 two sections — **the agent's plan** (the existing checklist, exactly as today) and **waiting
 on you** (open user todos, newest last), each auto-hiding when empty, so today's behavior is
 unchanged when no todos exist. Each todo row carries its short text (detail behind the
-existing disclosure idiom), a **Reply** affordance (answer path above) and a **Dismiss**.
+existing disclosure idiom — and when there IS detail, the row wears a small "▸ details" hint
+after the text, so a bare one-line ask and one with more behind it read differently at a glance;
+a bare ask renders nothing extra), a **Reply** affordance (answer path above) and a **Dismiss**.
 Two different things share this card on purpose: the agent's plan for itself, and the agent's
 asks of you — the glossary keeps the terms apart.
 
