@@ -4,6 +4,7 @@ consume). The WS transport + HTTP serving aren't unit-tested; the projection —
 (chat), goals→feed cards, ledger→TOC — is. Synthetic fleet only: invented text, placeholder
 UUIDs; no real session data.
 """
+import inspect
 import json
 import os
 import re
@@ -2446,6 +2447,22 @@ class ViewBuilder(unittest.TestCase):
                          {g1: "completed", g2: "blocked", g3: "working"})
         self.assertEqual(km._working_top_goal(SID), g3, "only a working TOP goal (not done/blocked/sub) qualifies")
 
+    def test_open_top_goal_counts_a_blocked_top_as_open(self):
+        # the working-note expiry's predicate: a top goal parked on the user is OPEN (the session has not
+        # finished), while done and cleared tops are not
+        g1, g2, sub = SID + ":g1", SID + ":g2", SID + ":s1"
+        def n(nid, parent, done, blocked, cleared):
+            return {"id": nid, "text": nid, "parentId": parent, "nodeComplete": done,
+                    "blocked": blocked, "cleared": cleared, "trail": [], "t": T0}
+        self._goal_store({g1: n(g1, None, True, False, False), g2: n(g2, None, False, True, False),
+                          sub: n(sub, g2, False, False, False)},
+                         {g1: "completed", g2: "blocked", sub: "working"})
+        self.assertIsNone(km._working_top_goal(SID), "nothing is WORKING at the top")
+        self.assertEqual(km._open_top_goal(SID), g2, "…but the blocked top is still open work")
+        self._goal_store({g1: n(g1, None, True, False, False), g2: n(g2, None, False, False, True)},
+                         {g1: "completed", g2: "working"})
+        self.assertIsNone(km._open_top_goal(SID), "done + cleared → nothing open")
+
     def test_working_top_goal_none_when_cleared(self):
         g = SID + ":g1"
         self._goal_store({g: {"id": g, "text": "x", "parentId": None, "nodeComplete": False,
@@ -2459,17 +2476,17 @@ class ViewBuilder(unittest.TestCase):
         # records every _set_working_note(sid, text) the pass makes.
         cleared = []
         saved = (km._working_notes, km._alive_sessions, km._set_working_note,
-                 km._session_working, km._working_top_goal, jd.parsed_session)
+                 km._session_working, km._open_top_goal, jd.parsed_session)
         km._working_notes = lambda: dict(notes)
         km._alive_sessions = lambda now, tmux: [{"sid": SID, "path": str(self.tpath)}]
         km._set_working_note = lambda sid, text: cleared.append((sid, text))
         km._session_working = lambda turns: working
-        km._working_top_goal = lambda sid: top_goal
+        km._open_top_goal = lambda sid: top_goal
         jd.parsed_session = lambda sid, paths, now: {"turns": [{"atoms": [], "ended": True}]}
 
         def restore():
             (km._working_notes, km._alive_sessions, km._set_working_note,
-             km._session_working, km._working_top_goal, jd.parsed_session) = saved
+             km._session_working, km._open_top_goal, jd.parsed_session) = saved
         return cleared, restore
 
     def test_working_note_cleared_when_idle_and_done(self):
@@ -2495,6 +2512,18 @@ class ViewBuilder(unittest.TestCase):
             self.assertEqual(cleared, [], "idle but a working top goal remains (orphaned/stalled) → still its work")
         finally:
             restore()
+
+    def test_working_note_kept_while_a_top_goal_is_blocked_on_the_user(self):
+        # the expiry keys on _open_top_goal, which counts a BLOCKED (parked-on-you) top goal as open: the
+        # session has not finished and the worktree its note names is still its own (census 2026-09-02)
+        cleared, restore = self._stub_expire({SID: "feed.ts"}, working=False, top_goal=SID + ":gb")
+        try:
+            km._clear_done_working_notes(NOW, {SID: {"state": "idle"}})
+            self.assertEqual(cleared, [], "parked on the user is not done → the claim stands")
+        finally:
+            restore()
+        self.assertIn("_open_top_goal(sid)", inspect.getsource(km._clear_done_working_notes),
+                      "the expiry reads the open-goal predicate, not the working-only one")
 
     def test_working_note_tmux_working_short_circuits_before_parse(self):
         cleared, restore = self._stub_expire({SID: "feed.ts"}, working=False, top_goal=None)
