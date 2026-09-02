@@ -30,6 +30,7 @@ os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
 os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 jd = SourceFileLoader("romp_judge_askunit", os.path.join(BIN, "romp-judge")).load_module()
+km = SourceFileLoader("romp_kernel_askunit", os.path.join(BIN, "romp-kernel")).load_module()
 
 NOW = 1_787_500_000
 T0 = NOW - 3600
@@ -183,6 +184,31 @@ class CourierWorld(unittest.TestCase):
         planted = [nd for nd in w1["nodes"].values() if isinstance(nd.get("origin"), dict)]
         self.assertEqual(len(planted), 1, "no ask node resolved → the recipient card IS the ask's card")
         self.assertTrue(planted[0].get("frame"), "the fallback mint keeps the frame enrichment")
+
+    def test_the_fanned_ask_keeps_one_visible_card_through_completion(self):
+        # THE BOARD CONSEQUENCE of the link path: the kernel's _pure_delegation_top suppressed any
+        # top whose every leaf is a handoff dict — exactly the shape T101's own link path builds
+        # for a fully-fanned ask — so one dictated ask fanned to two workers had NO card anywhere
+        # (no recipient tops by design, the ask top suppressed). The suppression exempts the
+        # ask-unit now: ONE card, visible in Working with its two tracker children, and still
+        # visible when it lands in Completed.
+        self._mgr()
+        jd.run_courier(now=NOW)
+        m = jd.load_goals(MGR)
+        ask = MGR + ":g1"
+        self.assertEqual(len(self._trackers_under(ask)), 2)
+        self.assertFalse(km._pure_delegation_top(m["nodes"], ask),
+                         "the dictated ask keeps its card — fan-out lives INSIDE it")
+        jd.rollup_status(m, False)
+        self.assertEqual(m["status"].get(ask, "working"), "working", "…in Working while open")
+        for nid, nd in m["nodes"].items():
+            if isinstance(nd.get("handoff"), dict):
+                jd.record_verdict(m, nd, "romp", "done", NOW + 10, why="the peer reported back")
+        jd.record_verdict(m, m["nodes"][ask], "closer", "done", NOW + 20, why="both halves landed")
+        jd.rollup_status(m, True)
+        self.assertEqual(m["status"].get(ask), "completed", "…and lands in Completed")
+        self.assertFalse(km._pure_delegation_top(m["nodes"], ask),
+                         "a finished ask is still the ask — never re-read as pure coordination")
 
     def test_linking_never_moves_the_ask_cards_column(self):
         self._mgr()

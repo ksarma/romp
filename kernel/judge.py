@@ -7188,6 +7188,49 @@ def _mirror_mint_ctx(session, store, fsid, path, latest_seg, now):
     return ctx
 
 
+def _latch_ask_anchors(fsid, session, store):
+    """LATCH the ask-unit exemption's anchor verdict durably on the node. The kernel's
+    _pure_delegation_top must decide "is this promptUuid-anchored top the dictated ask?" by
+    resolving the anchor RECORD — but it reads the CACHED parse only (build_feed's cold-start
+    contract) and fails open on doubt, so a machine-anchored coordination card would flap
+    shown→hidden on every restart/cache-cold beat: cache temperature, not new information (the
+    cards-move-on-new-information rule). The verdict is a fact about a record that never changes
+    once readable, so resolve it ONCE from the judge's own WARM parse and stamp `askAnchor` on the
+    node: 'human' (the dictated ask), 'machine' (a peer mail, the agent's own atom, romp
+    bookkeeping — _human_prompt_record, the one definition of 'dictated'), or 'absent' (the
+    stitched chain no longer holds the uuid: rewound/compacted/pre-/clear — durable doubt, which
+    keeps failing open exactly as the per-beat read did, just stably). The write rides the planner
+    apply path (_plan_session's end-of-pass rollup+save) — judge-side, the goal store's normal
+    writer; build_feed stays read-only. Only the tops the exemption actually consults are latched:
+    parentless, promptUuid-bearing, no origin (a courier top's evidence is T105's userAsk, never
+    its mail anchor), not itself a tracker. A parse with NO atoms at all latches nothing — a
+    missing/unreadable transcript is no evidence of absence, and 'absent' must never be minted
+    from one. Returns the number latched; the caller's unconditional save persists them."""
+    cands = [nd for nd in store.get("nodes", {}).values()
+             if isinstance(nd, dict) and nd.get("parentId") is None and nd.get("promptUuid")
+             and not isinstance(nd.get("origin"), dict)
+             and not isinstance(nd.get("handoff"), dict)
+             and not nd.get("askAnchor")]
+    if not cands:
+        return 0
+    by_uuid = {}
+    for turn in session.get("turns") or []:
+        for a in turn.get("atoms") or []:
+            if a.get("uuid"):
+                by_uuid[a["uuid"]] = a
+    if not by_uuid:
+        return 0
+    n = 0
+    for nd in cands:
+        a = by_uuid.get(nd["promptUuid"])
+        if a is None:
+            nd["askAnchor"] = "absent"
+        else:
+            nd["askAnchor"] = "human" if _human_prompt_record(a, fsid) else "machine"
+        n += 1
+    return n
+
+
 def _plan_session(fsid, path, now):
     """Advance ONE session's goal tree: place its un-placed planner UNITS oldest-first (each sees the prior
     tree's open menu) and GROUP after every placement (the user 2026-06-17: planner + grouper are both
@@ -7675,6 +7718,9 @@ def _plan_session(fsid, path, now):
         #   segment's chain liveness, not about anchor suitability.
         _group_store(store, fsid, now)
         save_goals(fsid, store)
+    _latch_ask_anchors(fsid, session, store)          # durable ask-unit anchor verdicts — no LLM,
+    #                                                   idempotent (latched nodes skip), persisted
+    #                                                   by the save just below
     rollup_status(store, _session_settled(fsid, path, session, store))
     save_goals(fsid, store)
     return placed
@@ -12047,13 +12093,34 @@ def _lift_handoff_children(store, hid):
     return moved
 
 
+def _human_prompt_record(a, sender):
+    """The {"text","sid"} record when atom `a` IS a human-dictated prompt record, else None. The
+    ONE definition of 'dictated' (factored out of _session_user_prompt_record so the kernel's
+    ask-unit exemption reads the SAME rule against its own cached parse instead of growing a
+    second one): author 'human' minus the CLI's interrupt artifacts — the board audit's rule — and
+    an attachment record (a queued_command wrapping what the user dictated mid-turn) exactly when
+    it carries no postal or romp-injected marker. Everything else — mail, romp's own lines, the
+    agent's assistant atoms, machine input — is None."""
+    if a.get("author") == "human":
+        if em.is_interrupt_record(a):
+            return None
+        c = (a.get("message") or {}).get("content")
+        # human prompt records carry content as a plain string; block lists ride _atom_text
+        txt = c if isinstance(c, str) else (_atom_text(a) or str(a.get("text") or ""))
+        return {"text": txt, "sid": sender}
+    if a.get("type") == "attachment":
+        txt = _atom_text(a) or str(a.get("text") or "")
+        if em.postal_pairs(txt) or NUDGE_MARKER_RE.search(txt):
+            return None
+        return {"text": txt, "sid": sender} if txt.strip() else None
+    return None
+
+
 def _session_user_prompt_record(sender, path, uuid, now):
     """The HUMAN prompt record behind `uuid` in the sender's session — {"text","sid"}, always
     truthy — or None. Read from the CACHED stitched parse (parsed_session: fork-aware,
-    author-stamped with the SDK-human channel applied), so the courier pays no extra parse. author
-    'human' minus the CLI's interrupt artifacts is the rule the board audit used; an attachment
-    record (a queued_command wrapping what the user dictated mid-turn) counts as human exactly when
-    it carries no postal or romp-injected marker. Everything else — mail, romp's own lines, machine
+    author-stamped with the SDK-human channel applied), so the courier pays no extra parse. The
+    record rule is _human_prompt_record above; everything else — mail, romp's own lines, machine
     input, a record the stitched chain no longer holds — is None. The record carries the atom's RAW
     text (markers and all; shape it with _ask_head at the point of use): returning the record
     instead of True is T105 — the prose writers anchor at the ROOT ask, so the trace must carry the
@@ -12066,19 +12133,7 @@ def _session_user_prompt_record(sender, path, uuid, now):
         for a in turn.get("atoms") or []:
             if a.get("uuid") != uuid:
                 continue
-            if a.get("author") == "human":
-                if em.is_interrupt_record(a):
-                    return None
-                c = (a.get("message") or {}).get("content")
-                # human prompt records carry content as a plain string; block lists ride _atom_text
-                txt = c if isinstance(c, str) else (_atom_text(a) or str(a.get("text") or ""))
-                return {"text": txt, "sid": sender}
-            if a.get("type") == "attachment":
-                txt = _atom_text(a) or str(a.get("text") or "")
-                if em.postal_pairs(txt) or NUDGE_MARKER_RE.search(txt):
-                    return None
-                return {"text": txt, "sid": sender} if txt.strip() else None
-            return None
+            return _human_prompt_record(a, sender)
     return None
 
 
