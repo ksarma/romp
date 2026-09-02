@@ -43,8 +43,18 @@ class _FakeProc:
         self.terminated += 1
 
 
+def _keep_remotes(case):
+    """Restore the kernel's `_remotes` map after `case`: the module is ONE object per process for every
+    test file that loads it under this name, so a TESTHOST row planted here otherwise outlives the
+    test — under xdist a whole-map reader in another file (test_kernel_trust's PairsSnapshot) found
+    it (2026-09-02)."""
+    saved = dict(km._remotes)
+    case.addCleanup(lambda: (km._remotes.clear(), km._remotes.update(saved)))
+
+
 class DemandRedial(unittest.TestCase):
     def setUp(self):
+        _keep_remotes(self)
         km._remotes.clear()
         km._tunnel_wake.clear()
 
@@ -102,6 +112,7 @@ class DemandDoors(unittest.TestCase):
         cls.srv.shutdown()
 
     def setUp(self):
+        _keep_remotes(self)
         km._remotes.clear()
         km._tunnel_wake.clear()
         km._remotes["TESTHOST"] = {"host": "TESTHOST", "kernel_port": 29855, "local_port": 1,
