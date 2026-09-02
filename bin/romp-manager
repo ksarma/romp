@@ -323,7 +323,7 @@ function quietGate(st, busy, now, opts) {
   return { action: 'wait', reason: `${busy} turn(s) in flight` };
 }
 
-let pendingQuiet = null;   // {since, count, mode:'all'|<kernel id>, timer, drainRefusedCount, drainArmedCount, drainLostAfterArm}
+let pendingQuiet = null;   // {since, count, mode:'all'|<kernel id>, timer, drainRefusedCount, drainArmedCount, drainRefusedAfterArm}
 
 // The primary kernel's serve token. The drain arm of '/busy?drain=1' is a WRITE — it holds every
 // session's new turn starts — so the kernel now requires the token for it (a drive-by loopback page
@@ -460,7 +460,7 @@ function queueQuietRestart(mode) {
     return pendingQuiet.count;
   }
   pendingQuiet = { since: Date.now(), count: 1, mode, timer: null,
-                   drainRefusedCount: 0, drainArmedCount: 0, drainLostAfterArm: false };
+                   drainRefusedCount: 0, drainArmedCount: 0, drainRefusedAfterArm: 0 };
   resetDrainNotices();                   // the token/refusal notices re-arm when a fresh park begins
   log(`refresh queued — applying at the next quiet window (no SDK turn in flight; backstop ${Math.round(QUIET_MAX_DEFER_MS / 60000)} min)`);
   const tick = () => quietTick({
@@ -478,8 +478,10 @@ function queueQuietRestart(mode) {
           if (draining === false) {
             park.drainRefusedCount++;
             // ORDER matters for the apply line (T227): two bare counters cannot tell "refused, then
-            // armed" from "armed, then LOST" — a refusal that lands AFTER any arm is the loss
-            if (park.drainArmedCount > 0) park.drainLostAfterArm = true;
+            // armed" from "armed, then LOST" — a refusal that lands AFTER any arm is the loss, and
+            // it is COUNTED on its own (the review's catch: a boolean here let the line report the
+            // park's whole refusal total as "after arming", pre-arm refusals included)
+            if (park.drainArmedCount > 0) park.drainRefusedAfterArm++;
           } else if (draining === true) park.drainArmedCount++;
         }
         done(busy);
@@ -502,8 +504,8 @@ function queueQuietRestart(mode) {
       const cause = g.reason !== 'backstop cap' || p.drainRefusedCount === 0 ? ''
         : p.drainArmedCount === 0
           ? ' — the kernel never armed the drain hold for this park (see the refusal line above), so in-flight turns may be cut'
-          : p.drainLostAfterArm
-            ? ` — the drain hold armed and was then LOST for this park (refused ${p.drainRefusedCount} time(s) after arming), so turns started after the loss may be cut`
+          : p.drainRefusedAfterArm > 0
+            ? ` — the drain hold armed and was then LOST for this park (refused ${p.drainRefusedAfterArm} time(s) after arming, ${p.drainRefusedCount - p.drainRefusedAfterArm} before), so turns started after the loss may be cut`
             : ` — the drain hold was refused ${p.drainRefusedCount} time(s) before arming for this park, so turns started before it armed may be cut`;
       log(`applying deferred refresh — ${g.reason}${cause} (${p.count} request(s) coalesced, waited ${Math.round((Date.now() - p.since) / 1000)}s)`);
       if (p.mode === 'all') restartAllOrSelf(); else restartKernel(p.mode);

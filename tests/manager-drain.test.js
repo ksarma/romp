@@ -253,8 +253,12 @@ test('a hold that ARMED and was then LOST renders the lost-after-arming cause, n
   // away mid-park). Two bare counters read this as "refused N before arming" — the ordering flag
   // says what actually happened.
   fs.writeFileSync(TOKEN_FILE, 'drain-probe-credential\n');
-  kstub.answers = [JSON.stringify({ busy: 1, draining: true })];    // first poll: the hold arms…
-  kstub.fallback = JSON.stringify({ busy: 1, draining: false });    // …then every later poll is refused
+  // two refusals BEFORE the arm, then the hold arms, then every later poll is refused: the line must
+  // count the post-arm refusals on their own and name the pre-arm ones separately (the review's
+  // catch: a boolean flag let the whole total read as "after arming")
+  kstub.answers = [JSON.stringify({ busy: 1, draining: false }), JSON.stringify({ busy: 1, draining: false }),
+                   JSON.stringify({ busy: 1, draining: true })];
+  kstub.fallback = JSON.stringify({ busy: 1, draining: false });
   let logged;
   try {
     logged = await capturedUntil(/applying deferred refresh/, () => { queueQuietRestart('ghost'); });
@@ -262,7 +266,10 @@ test('a hold that ARMED and was then LOST renders the lost-after-arming cause, n
   const applyLine = logged.split('\n').find((l) => /applying deferred refresh/.test(l));
   assert.match(applyLine, /backstop cap/);
   assert.match(applyLine, /armed and was then LOST/, 'the cause states the order that happened');
-  assert.match(applyLine, /after arming/, '…and counts the refusals AFTER the arm');
+  const m = /refused (\d+) time\(s\) after arming, (\d+) before/.exec(applyLine);
+  assert.ok(m, 'the line splits post-arm from pre-arm refusals: ' + applyLine);
+  assert.equal(Number(m[2]), 2, 'exactly the two scripted pre-arm refusals read as "before"');
+  assert.ok(Number(m[1]) >= 1, 'the post-arm count is the loss itself, never inflated by the pre-arm two');
   assert.doesNotMatch(applyLine, /before arming|never armed/,
     'the reversed order must not borrow the other cause');
 });
