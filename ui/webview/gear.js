@@ -249,8 +249,9 @@ function initGear(post) {
   // ran off the card's right edge). Progressive disclosure: the CLOSED state is ONE row — the
   // current option's name + its description/preview, ellipsized so it can never overrun — and the
   // options are one click away in the house menu vocabulary (the chat .ctx-menu spec; versionMenu
-  // below inlines the same values: #252526 card, hairline border, 6px radius, the 0 4px 12px
-  // shadow, 12px text, 0.82em sub-lines, the #1EA1EB \u2713-in-circle current mark). NOT a native
+  // below inlines the same values through the menu TOKENS — var(--menu-bg/--menu-fg/--menu-border/
+  // --menu-hover, --radius-menu, --shadow-menu, --check-bg) with the dark literals as fallbacks
+  // (T226: the literals alone left every picker a dark card in the light theme). NOT a native
   // <select> like the Context-gauge row above: these options carry rich row content — the scheme
   // rows preview their own colored tiers (the user 2026-08-24: "I need to see a preview") — which
   // <option> cannot render. The open menu is position:absolute inside the row's wrapper (the
@@ -274,8 +275,8 @@ function initGear(post) {
     var menu = document.createElement('div');
     menu.hidden = true;
     menu.style.cssText = 'position:absolute;left:0;right:0;top:100%;margin-top:4px;z-index:30;padding:4px;' +
-      'background:#252526;border:1px solid rgba(255,255,255,0.12);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.35);' +
-      'font-size:12px;line-height:1.4;color:#cccccc;user-select:none';
+      'background:var(--menu-bg, #252526);border:1px solid var(--menu-border, rgba(255,255,255,0.12));border-radius:var(--radius-menu, 6px);box-shadow:var(--shadow-menu, 0 4px 12px rgba(0,0,0,0.35));' +
+      'font-size:12px;line-height:1.4;color:var(--menu-fg, #cccccc);user-select:none';
     wrap.appendChild(btn); wrap.appendChild(menu);
     var close = function () { menu.hidden = true; if (openHousePick === menu) openHousePick = null; };
     btn.addEventListener('click', function (e) {
@@ -309,10 +310,10 @@ function initGear(post) {
         row.innerHTML = rowHTML(o);
         if (cur && o.id === cur.id) {
           var ck = document.createElement('span'); ck.textContent = '\u2713';
-          ck.setAttribute('style', 'position:absolute;right:6px;top:50%;transform:translateY(-50%);background:#1EA1EB;color:#fff;border-radius:50%;width:13px;height:13px;font-size:9px;font-weight:900;display:inline-flex;align-items:center;justify-content:center;line-height:1;');
+          ck.setAttribute('style', 'position:absolute;right:6px;top:50%;transform:translateY(-50%);background:var(--check-bg, #1EA1EB);color:#fff;border-radius:50%;width:13px;height:13px;font-size:9px;font-weight:900;display:inline-flex;align-items:center;justify-content:center;line-height:1;');
           row.appendChild(ck);
         }
-        row.addEventListener('mouseenter', function () { row.style.background = 'rgba(255,255,255,0.09)'; });
+        row.addEventListener('mouseenter', function () { row.style.background = 'var(--menu-hover, rgba(255,255,255,0.09))'; });
         row.addEventListener('mouseleave', function () { row.style.background = 'transparent'; });
         row.addEventListener('click', function (e) { e.stopPropagation(); close(); pick(o.id); });
         menu.appendChild(row);
@@ -375,7 +376,7 @@ function initGear(post) {
     { id: 'never', name: 'Never' }
   ];
   function tabCtxRowHTML(o) {
-    return '<span style="flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#ccc">' + o.name + '</span>';
+    return '<span style="flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--fg, #ccc)">' + o.name + '</span>';
   }
   var tcDrop = housePick(document.getElementById('rs-tabctx-pick'), 'tabctx', tabCtxRowHTML, function (id) {
     if (tc) { tc.value = id; tc.dispatchEvent(new Event('change')); }
@@ -404,7 +405,7 @@ function initGear(post) {
     wrap.setAttribute('style', 'position:relative;' + wrapStyle);
     sel.parentNode.insertBefore(wrap, sel.nextSibling);
     var rowHTML = function (o) {
-      return '<span style="flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#ccc">' + o.name + '</span>';
+      return '<span style="flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--fg, #ccc)">' + o.name + '</span>';
     };
     var drop = housePick(wrap, 'val', rowHTML, function (id) {
       sel.value = id; sel.dispatchEvent(new Event('change')); paint();
@@ -548,9 +549,9 @@ function initGear(post) {
     document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeAll(); });
     try { window.addEventListener('storage', function (e) { if (e.key === 'romp:menu-echo' && e.newValue) closeAll(); }); } catch (e) {}
     var pick = function (val) { sel.value = val; sel.dispatchEvent(new Event('change')); syncBtn(); closeAll(); };
-    var MSTYLE = 'position:fixed;z-index:1001;min-width:130px;padding:4px;background:#252526;'
-      + 'border:1px solid rgba(255,255,255,0.12);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.35);'
-      + 'font-size:12px;line-height:1.4;color:#cccccc;user-select:none;';
+    var MSTYLE = 'position:fixed;z-index:1001;min-width:130px;padding:4px;background:var(--menu-bg, #252526);'
+      + 'border:1px solid var(--menu-border, rgba(255,255,255,0.12));border-radius:var(--radius-menu, 6px);box-shadow:var(--shadow-menu, 0 4px 12px rgba(0,0,0,0.35));'
+      + 'font-size:12px;line-height:1.4;color:var(--menu-fg, #cccccc);user-select:none;';
     var rowStyle = 'padding:4px 22px 4px 8px;border-radius:4px;cursor:pointer;position:relative;white-space:nowrap;display:flex;align-items:center;';
     btn.addEventListener('click', function (e) {
       e.stopPropagation();
@@ -567,7 +568,7 @@ function initGear(post) {
         var famCur = sel.value === fam.value || versions.some(function (v) { return v.value === sel.value; });
         if (famCur) {
           var ck = document.createElement('span'); ck.textContent = '\u2713';
-          ck.setAttribute('style', 'position:absolute;right:6px;top:50%;transform:translateY(-50%);background:#1EA1EB;color:#fff;border-radius:50%;width:13px;height:13px;font-size:9px;font-weight:900;display:inline-flex;align-items:center;justify-content:center;line-height:1;');
+          ck.setAttribute('style', 'position:absolute;right:6px;top:50%;transform:translateY(-50%);background:var(--check-bg, #1EA1EB);color:#fff;border-radius:50%;width:13px;height:13px;font-size:9px;font-weight:900;display:inline-flex;align-items:center;justify-content:center;line-height:1;');
           row.appendChild(ck);
         }
         var openSub = versions.length > 1 ? function () {
@@ -581,10 +582,10 @@ function initGear(post) {
             r2.appendChild(document.createTextNode(v.label));
             if (sel.value === v.value) {
               var c2 = document.createElement('span'); c2.textContent = '\u2713';
-              c2.setAttribute('style', 'position:absolute;right:6px;top:50%;transform:translateY(-50%);background:#1EA1EB;color:#fff;border-radius:50%;width:13px;height:13px;font-size:9px;font-weight:900;display:inline-flex;align-items:center;justify-content:center;line-height:1;');
+              c2.setAttribute('style', 'position:absolute;right:6px;top:50%;transform:translateY(-50%);background:var(--check-bg, #1EA1EB);color:#fff;border-radius:50%;width:13px;height:13px;font-size:9px;font-weight:900;display:inline-flex;align-items:center;justify-content:center;line-height:1;');
               r2.appendChild(c2);
             }
-            r2.addEventListener('mouseenter', function () { r2.style.background = 'rgba(255,255,255,0.09)'; });
+            r2.addEventListener('mouseenter', function () { r2.style.background = 'var(--menu-hover, rgba(255,255,255,0.09))'; });
             r2.addEventListener('mouseleave', function () { r2.style.background = 'transparent'; });
             r2.addEventListener('click', function (e2) { e2.stopPropagation(); pick(v.value); });
             r2.addEventListener('keydown', function (e2) {
@@ -608,9 +609,9 @@ function initGear(post) {
           caret.textContent = '\u25B8';   // ALWAYS right-facing — it marks "expandable", not the side
           caret.setAttribute('style', 'margin-left:auto;padding-left:10px;opacity:0.55;');
           row.appendChild(caret);
-          row.addEventListener('mouseenter', function () { row.style.background = 'rgba(255,255,255,0.09)'; openSub(); });
+          row.addEventListener('mouseenter', function () { row.style.background = 'var(--menu-hover, rgba(255,255,255,0.09))'; openSub(); });
         } else {
-          row.addEventListener('mouseenter', function () { row.style.background = 'rgba(255,255,255,0.09)'; if (sub) { sub.remove(); sub = null; } });
+          row.addEventListener('mouseenter', function () { row.style.background = 'var(--menu-hover, rgba(255,255,255,0.09))'; if (sub) { sub.remove(); sub = null; } });
         }
         row.addEventListener('mouseleave', function () { row.style.background = 'transparent'; });
         row.addEventListener('click', function (e2) { e2.stopPropagation(); pick(fam.default || fam.value); });

@@ -67,7 +67,10 @@ if (typeof document !== "undefined") {
 }
 
 /** Open (or toggle shut) the lens menu anchored under `anchor`. The ctx-family skin — the chat
- *  pane's .ctx-menu is the reference spec (CLAUDE.md menu vocabulary). */
+ *  pane's .ctx-menu is the reference spec (CLAUDE.md menu vocabulary), worn here through the menu
+ *  TOKENS (--menu-bg/--menu-fg/--menu-border/--menu-hover + --radius-menu/--shadow-menu/--check-bg)
+ *  with the dark literals as var() fallbacks — every mounting page loads styles.css or feed.css,
+ *  so the light theme's block re-skins the card (T226, 2026-09-02). */
 export function openTagMenu(anchor: HTMLElement, opts: TagMenuOpts): void {
   const reopen = !!openMenu && openMenu.dataset.tagMenu === "1";
   closeTagMenu();
@@ -75,9 +78,9 @@ export function openTagMenu(anchor: HTMLElement, opts: TagMenuOpts): void {
   const menu = document.createElement("div");
   menu.dataset.tagMenu = "1";
   menu.setAttribute("style",
-    "position:fixed;z-index:1001;min-width:180px;padding:4px;background:#252526;" +
-    "border:1px solid rgba(255,255,255,0.12);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.35);" +
-    "font-size:12px;line-height:1.4;color:#cccccc;user-select:none;");
+    "position:fixed;z-index:1001;min-width:180px;padding:4px;background:var(--menu-bg, #252526);" +
+    "border:1px solid var(--menu-border, rgba(255,255,255,0.12));border-radius:var(--radius-menu, 6px);box-shadow:var(--shadow-menu, 0 4px 12px rgba(0,0,0,0.35));" +
+    "font-size:12px;line-height:1.4;color:var(--menu-fg, #cccccc);user-select:none;");
   menu.addEventListener("click", (e) => e.stopPropagation());
   const build = () => {
     menu.textContent = "";
@@ -98,11 +101,11 @@ export function openTagMenu(anchor: HTMLElement, opts: TagMenuOpts): void {
         const c = document.createElement("span");
         c.textContent = "✓";
         c.setAttribute("style", "position:absolute;right:6px;top:50%;transform:translateY(-50%);"
-          + "background:#1EA1EB;color:#fff;border-radius:50%;width:13px;height:13px;font-size:9px;"
+          + "background:var(--check-bg, #1EA1EB);color:#fff;border-radius:50%;width:13px;height:13px;font-size:9px;"
           + "font-weight:900;display:inline-flex;align-items:center;justify-content:center;line-height:1;");
       r.appendChild(c);
       }
-      r.addEventListener("mouseenter", () => { r.style.background = "rgba(255,255,255,0.09)"; });
+      r.addEventListener("mouseenter", () => { r.style.background = "var(--menu-hover, rgba(255,255,255,0.09))"; });
       r.addEventListener("mouseleave", () => { r.style.background = "transparent"; });
       menu.appendChild(r);
       return r;
@@ -115,7 +118,7 @@ export function openTagMenu(anchor: HTMLElement, opts: TagMenuOpts): void {
         .addEventListener("click", () => { opts.onApply(toggleLens(lens, { tag: u.name }), false); build(); });
     if (opts.onConfigure) {
       const s = document.createElement("div");
-      s.setAttribute("style", "height:1px;margin:4px 6px;background:rgba(255,255,255,0.12);");
+      s.setAttribute("style", "height:1px;margin:4px 6px;background:var(--menu-border, rgba(255,255,255,0.12));");
       menu.appendChild(s);
       row("Configure tags…", false, null, true).addEventListener("click", () => { closeTagMenu(); opts.onConfigure!(); });
     }
