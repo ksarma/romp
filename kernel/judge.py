@@ -4308,11 +4308,34 @@ def rollup_status(store, session_closed, now=None):
     # TOP-LEVEL with their own provenance intact, and the empty container leaves the store. This is
     # what un-strands the asks the provenance audit measured (every dead chain ended at a promptless
     # container): once the child is a top again, its promptUuid/origin evidence is reachable by the
-    # mint-time trace and the closer's nominations. Idempotent by construction (no umbrellas remain
-    # after one pass) and self-healing like the lift above: a save-rebase republishing a stale
-    # parentId is re-dissolved on the very next rollup. Diary-less container removal follows the
-    # born-done backlog self-heal precedent — an umbrella has no verdicts of its own to preserve.
-    _umbrellas = {k for k, v in nodes.items() if isinstance(v, dict) and v.get("umbrella")}
+    # mint-time trace and the closer's nominations. Idempotent by construction (no undissolved
+    # umbrellas remain after one pass) and self-healing like the lift above: a save-rebase
+    # republishing a stale parentId is re-dissolved on the very next rollup. Diary-less container
+    # removal follows the born-done backlog self-heal precedent — an umbrella has no verdicts of
+    # its own to preserve.
+    #
+    # THE SWEEP YIELDS TO THE USER'S UNDO: archives keep their containers, so UndoClear can pull a
+    # pre-T101 umbrella back into the live store — and the sweep was eating the card the user had
+    # JUST restored, promoting its children in its place. The un-clear is NEWER information than
+    # the standing purge (a writer whose evidence predates the diary stands down): a container
+    # whose latest clear-family diary row is the user's undo-restore (the reopen/undo=True row
+    # _mark_nodes_cleared's dual-write and the unclear override replay both record) is SPARED — it
+    # stays the card the user asked back for, until they clear it again. A flag-CLEARED container
+    # is spared too: it is already off the board and the compactor archives it whole; dissolving
+    # it in that window would promote its children out of the user's seal. Peer-adopted and
+    # legacy copies carry neither mark and dissolve as before.
+    def _undo_restored(v):
+        latest = ""
+        latest_t = -1
+        for e in (v.get("log") or []):
+            k = e.get("kind")
+            if k == "clear" or (k == "reopen" and e.get("undo")):
+                et = int(e.get("ev_t") or 0)
+                if et >= latest_t:                      # ties go to the later row (append order):
+                    latest_t, latest = et, k            # the restore that popped a same-second clear wins
+        return latest == "reopen"
+    _umbrellas = {k for k, v in nodes.items() if isinstance(v, dict) and v.get("umbrella")
+                  and not v.get("cleared") and not _undo_restored(v)}
     if _umbrellas:
         _uparent = {k: nodes[k].get("parentId") for k in _umbrellas}
         def _solid_parent(uid):

@@ -336,6 +336,52 @@ class UmbrellaDissolution(unittest.TestCase):
         self.assertEqual(st["nodes"][MGR + ":a1"].get("promptUuid"), "hu",
                          "the un-stranded ask carries its own evidence — the trace can reach it now")
 
+    def test_an_undo_restored_container_survives_the_dissolution(self):
+        # THE SWEEP YIELDS TO THE USER'S UNDO: UndoClear pulls an archived pre-T101 container back
+        # into the live store (archives keep their containers), and the very next rollup dissolved
+        # it — the card the user just restored vanished into its promoted children. The un-clear
+        # IS newer information than the standing purge: it is recorded on the node by the real
+        # writers (_mark_nodes_cleared's dual-write and the unclear override replay both file the
+        # user reopen row with undo=True), and a container whose latest clear-family event is that
+        # restore is SPARED. Everything without that fresh restore — legacy leftovers, peer-adopted
+        # copies — dissolves exactly as before.
+        st = self._legacy()
+        u1 = st["nodes"][MGR + ":u1"]
+        self.assertTrue(jd.record_verdict(st, u1, "user", "clear", NOW - 100,
+                                          why="cleared from the feed"))
+        self.assertTrue(jd.record_verdict(st, u1, "user", "reopen", NOW - 50,
+                                          why="undo clear", undo=True))
+        u1["cleared"] = False
+        jd.rollup_status(st, False)
+        self.assertIn(MGR + ":u1", st["nodes"], "the card the user restored survives the sweep")
+        self.assertEqual(st["nodes"][MGR + ":a1"].get("parentId"), MGR + ":u1",
+                         "…with its children where the user left them")
+        self.assertEqual(st["placements"].get("segX"), MGR + ":u1", "…and its placement intact")
+        self.assertNotIn(MGR + ":u2", st["nodes"],
+                         "the spare is exact: a nested container with no restore still dissolves")
+        self.assertEqual(st["nodes"][MGR + ":a2"].get("parentId"), MGR + ":u1",
+                         "…its child re-parents to the first surviving non-dissolved ancestor")
+        snap = json.dumps(st["nodes"], sort_keys=True, default=dict)
+        jd.rollup_status(st, False)
+        self.assertEqual(json.dumps(st["nodes"], sort_keys=True, default=dict), snap, "idempotent")
+
+    def test_a_re_cleared_spared_container_waits_for_the_compactor(self):
+        # the round trip's other half: after the restore the user clears the card AGAIN. Between
+        # that clear and the archive compaction the container sits flag-cleared in the live store —
+        # the sweep must stand down there too, or it pops the container and promotes its children
+        # OUT of the user's seal as fresh live tops. The compactor owns a cleared card's exit.
+        st = self._legacy()
+        u1 = st["nodes"][MGR + ":u1"]
+        jd.record_verdict(st, u1, "user", "clear", NOW - 100, why="cleared from the feed")
+        jd.record_verdict(st, u1, "user", "reopen", NOW - 50, why="undo clear", undo=True)
+        jd.record_verdict(st, u1, "user", "clear", NOW - 10, why="cleared from the feed")
+        u1["cleared"] = True
+        jd.rollup_status(st, False)
+        self.assertIn(MGR + ":u1", st["nodes"],
+                      "flag-cleared: the compactor archives it whole — the sweep never dissolves it")
+        self.assertEqual(st["nodes"][MGR + ":a1"].get("parentId"), MGR + ":u1",
+                         "…so its children never escape the user's clear")
+
 
 MID3 = "1787499000.000003_1.TESTHOST"
 MID4 = "1787499000.000004_1.TESTHOST"
