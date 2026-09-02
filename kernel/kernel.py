@@ -27375,10 +27375,19 @@ _CHAT_MOBILE_CSS = (
     "#mtag-slot{flex:0 0 auto;display:flex;align-items:center;gap:5px}"   # T161: the tag control's slot, sized by the shared button's own inline metrics
     "#madd{flex:0 0 auto;width:36px;display:flex;align-items:center;justify-content:center;cursor:pointer;"
     "background:#2a2a2a;color:#bbbbbb;border:1px solid #3a3a3a;border-radius:6px;font-size:16px;line-height:1}"
+    # the mobile session picker IS a dropdown (T226 review): its card + hairline read the menu tokens
+    # (dark: --menu-bg → #252526 and --hairline → #3a3a3a, byte-identical to the literals they replace)
     "#mlist{display:none;position:absolute;left:8px;right:8px;top:100%;margin-top:4px;z-index:200;"
-    "max-height:60vh;overflow:auto;background:#252526;border:1px solid #3a3a3a;border-radius:8px;"
+    "max-height:60vh;overflow:auto;background:var(--menu-bg,#252526);border:1px solid var(--hairline,#3a3a3a);border-radius:8px;"
     "box-shadow:0 8px 24px #000000aa}"
     "#mlist.open{display:block}"
+    # the light theme re-skins what has no byte-identical dark token (a light block, like the kernel's
+    # loader/toast light rules — the dark values above stay exactly as they were)
+    "body.theme-light #mlist{box-shadow:var(--shadow-menu)}"
+    "body.theme-light .mrow{border-bottom-color:var(--menu-border)}"
+    "body.theme-light .mrow .nm{color:var(--menu-fg)}"
+    "body.theme-light .mrow .mclose{color:var(--text-muted)}"
+    "body.theme-light .mrow.active{background:var(--accent-wash)}"
     ".mrow{display:flex;align-items:center;gap:9px;padding:10px 12px;cursor:pointer;"
     "border-bottom:1px solid #ffffff12;font:600 13px 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}"
     ".mrow:last-child{border-bottom:0}"

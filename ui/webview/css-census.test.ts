@@ -33,7 +33,7 @@ const rawDims = (css: string) => {
 // EXACT counts, not ceilings (PR #763 item 7: a <= pin with slack lets new raw hexes arrive
 // unnoticed) — a count that moves in EITHER direction is a deliberate change to name here.
 const EXACT: Record<string, number> = {
-  "gear.css": 16,
+  "gear.css": 14,   // T226 review: the colormap/palette dropdowns' two `0 8px 24px #000000aa` shadows moved onto var(--shadow-menu)
   "strip.css": 8,
   "fleet-pane.css": 9,
   "timeline-pane.css": 10,

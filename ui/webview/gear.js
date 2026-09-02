@@ -376,7 +376,7 @@ function initGear(post) {
     { id: 'never', name: 'Never' }
   ];
   function tabCtxRowHTML(o) {
-    return '<span style="flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--fg, #ccc)">' + o.name + '</span>';
+    return '<span style="flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--menu-fg, #ccc)">' + o.name + '</span>';
   }
   var tcDrop = housePick(document.getElementById('rs-tabctx-pick'), 'tabctx', tabCtxRowHTML, function (id) {
     if (tc) { tc.value = id; tc.dispatchEvent(new Event('change')); }
@@ -405,7 +405,7 @@ function initGear(post) {
     wrap.setAttribute('style', 'position:relative;' + wrapStyle);
     sel.parentNode.insertBefore(wrap, sel.nextSibling);
     var rowHTML = function (o) {
-      return '<span style="flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--fg, #ccc)">' + o.name + '</span>';
+      return '<span style="flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--menu-fg, #ccc)">' + o.name + '</span>';
     };
     var drop = housePick(wrap, 'val', rowHTML, function (id) {
       sel.value = id; sel.dispatchEvent(new Event('change')); paint();

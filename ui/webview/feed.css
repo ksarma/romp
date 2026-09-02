@@ -43,6 +43,8 @@
   --menu-fg: var(--vscode-menu-foreground, #cccccc);
   --menu-border: rgba(255, 255, 255, 0.12);
   --menu-hover: rgba(255, 255, 255, 0.09);
+  --menu-ring: #fff;
+  --check-ring: rgba(30, 161, 235, 0.55);
   --surface-raised: #252526;  /* the transient-notice vocabulary — mirrors styles.css */
   --radius-toast: 8px;
   --shadow-toast: 0 8px 28px rgba(0, 0, 0, 0.45);
@@ -150,6 +152,8 @@ body.theme-light {
   --menu-fg: #1F1E1D;
   --menu-border: rgba(0, 0, 0, 0.12);
   --menu-hover: rgba(0, 0, 0, 0.06);
+  --menu-ring: #1F1E1D;
+  --check-ring: rgba(194, 65, 12, 0.55);
   --surface-raised: #FAF5EE;
   --radius-toast: 8px;
   --shadow-toast: 0 8px 28px rgba(31, 26, 20, 0.18);
@@ -601,7 +605,7 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
    prevents). Outline pill in the done-check blue (--check-bg), the same family as the ✓ it will wear. */
 .fask-doneconfirming { flex: 0 0 auto; font-size: 0.66em; font-weight: 700; letter-spacing: 0.04em;
   padding: 1px 6px; border-radius: var(--radius-pill); line-height: 1.4;
-  color: var(--check-bg); border: 1px solid rgba(30, 161, 235, 0.55); }
+  color: var(--check-bg); border: 1px solid var(--check-ring); }   /* the ring follows the themed ✓ (T226 review) */
 /* "nudge failed" — the one auto-nudge didn't resolve the stall and is never re-asked (design/
    stalled-open-todos-nudge.md); red pill: this thread is waiting on the human now */
 .fask-nudgefailed { flex: 0 0 auto; font-size: 0.66em; font-weight: 700; letter-spacing: 0.04em;
@@ -1125,7 +1129,7 @@ body { display: flex; flex-direction: column; position: relative; }   /* column 
   box-shadow: var(--shadow-menu); }
 .feed-sessmenu .fsm-row { display: flex; align-items: center; gap: 7px; padding: 4px 9px;
   border-radius: 4px; cursor: pointer; font-size: 11px; white-space: nowrap; }
-.feed-sessmenu .fsm-row:hover { background: rgba(255, 255, 255, 0.07); }
+.feed-sessmenu .fsm-row:hover { background: var(--menu-hover); }   /* the one menu hover (T226 review): 0.07 was drift, and a white wash vanished in light */
 .feed-sessmenu .fsm-row.on { background: var(--accent-wash); }
 /* TAG CHIPS on the combobox's session rows (the user 2026-08-25 — the smaller unification variant):
    the dialog's own outline-pill vocabulary at the row's scale, NON-interactive (grouping made
@@ -1566,8 +1570,8 @@ a.fileview-btn[hidden] { display: none; }
    you or completes; the armed state is the quiet accent bell beside Clear. */
 .ctx-menu {
   position: fixed; z-index: 100; min-width: 110px; padding: 4px;
-  background: var(--vscode-menu-background, #252526);
-  color: var(--vscode-menu-foreground, var(--fg));
+  background: var(--menu-bg);   /* mirrors styles.css .ctx-menu — the menu tokens (T226) */
+  color: var(--menu-fg);
   border: 1px solid var(--box-border); border-radius: var(--radius-menu);
   box-shadow: var(--shadow-menu);
   font-size: 0.92em;

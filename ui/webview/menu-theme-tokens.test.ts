@@ -19,6 +19,8 @@ const FEED = ui("webview", "feed.css");
 const GEAR = ui("webview", "gear.js");
 const MENU = ui("webview", "tag-menu.ts");
 const TIMELINE = ui("romp-timeline-view.js");
+const GEAR_CSS = ui("webview", "gear.css");
+const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
 
 /** The body of the FIRST rule whose selector line starts with `selector {` — brace-depth scan, so a
  *  comment containing braces inside the block cannot end it early. */
@@ -43,7 +45,7 @@ const slice = (src: string, from: string, to: string) => {
 };
 const norm = (s: string) => s.replace(/\s+/g, "").toLowerCase();
 
-const MENU_TOKENS = ["--menu-bg", "--menu-fg", "--menu-border", "--menu-hover"];
+const MENU_TOKENS = ["--menu-bg", "--menu-fg", "--menu-border", "--menu-hover", "--menu-ring", "--check-ring"];
 // the dark spec — the literals the CLAUDE.md rule always named, now the dark theme's token values
 const DARK = {
   "--menu-bg": "var(--vscode-menu-background, #252526)",
@@ -51,6 +53,8 @@ const DARK = {
   "--menu-border": "rgba(255, 255, 255, 0.12)",
   "--menu-hover": "rgba(255, 255, 255, 0.09)",
   "--check-bg": "#1EA1EB",
+  "--menu-ring": "#fff",
+  "--check-ring": "rgba(30, 161, 235, 0.55)",
 };
 const LIGHT = {
   "--menu-bg": "#FBF6EF",           // the light block's own menu card (its --vscode-menu-background stand-in)
@@ -58,6 +62,8 @@ const LIGHT = {
   "--menu-border": "rgba(0, 0, 0, 0.12)",
   "--menu-hover": "rgba(0, 0, 0, 0.06)",
   "--check-bg": "#C2410C",          // the light theme's clay — the mark the timeline's PAL_LIGHT already drew
+  "--menu-ring": "#1F1E1D",
+  "--check-ring": "rgba(194, 65, 12, 0.55)",
 };
 
 test("the menu skin tokens live in BOTH theme blocks of BOTH sheets — dark byte-for-byte the old literals", () => {
@@ -80,8 +86,8 @@ test("the menu skin tokens live in BOTH theme blocks of BOTH sheets — dark byt
 // definitions (the two blocks above; PAL_DARK in the timeline) and nowhere else.
 const DARK_LITERALS: Array<[string, RegExp]> = [
   ["#252526 card", /#252526/i],
-  ["rgba(255,255,255,0.12) hairline", /rgba\(\s*255\s*,\s*255\s*,\s*255\s*,\s*0?\.12\s*\)/],
-  ["rgba(255,255,255,0.09) hover", /rgba\(\s*255\s*,\s*255\s*,\s*255\s*,\s*0?\.09\s*\)/],
+  // ANY white-alpha wash is dark-only by construction (review round: the 0.12/0.09-only pair let a 0.25 through)
+  ["white-alpha hairline/hover/wash", /rgba\(\s*255\s*,\s*255\s*,\s*255\s*,/i],
   ["rgba(0,0,0,0.35) shadow", /rgba\(\s*0\s*,\s*0\s*,\s*0\s*,\s*0?\.35\s*\)/],
   ["#cccccc text", /#cccccc\b/i],
   ["#ccc text", /#ccc\b/i],
@@ -101,7 +107,13 @@ const SURFACES: Array<[string, string]> = [
   ["feed.css .ctx-menu", block(FEED, ".ctx-menu")],
   ["feed.css .ctx-item:hover", block(FEED, ".ctx-item:hover")],
   ["gear.js housePick (the settings pickers — the Theme select)", slice(GEAR, "function housePick(", "var SCHEMES = [")],
-  ["gear.js versionMenu (model pickers + version submenus)", slice(GEAR, "function versionMenu(", "versionMenu(jm);")],
+  // from MSTYLE: the menu CARD and its rows — the trigger BUTTON above it is a closed-state control, not a menu
+  ["gear.js versionMenu (model pickers + version submenus)", slice(GEAR, "    var MSTYLE = ", "versionMenu(jm);")],
+  ["gear.css #rs-cmap-list", GEAR_CSS.slice(GEAR_CSS.indexOf("\n#rs-cmap-list {"), GEAR_CSS.indexOf("}", GEAR_CSS.indexOf("\n#rs-cmap-list {")))],
+  ["gear.css #rs-pal-list", GEAR_CSS.slice(GEAR_CSS.indexOf("\n#rs-pal-list {"), GEAR_CSS.indexOf("}", GEAR_CSS.indexOf("\n#rs-pal-list {")))],
+  ["feed.css .feed-sessmenu .fsm-row:hover", FEED.slice(FEED.indexOf("\n.feed-sessmenu .fsm-row:hover {"), FEED.indexOf("}", FEED.indexOf("\n.feed-sessmenu .fsm-row:hover {")))],
+  ["styles.css .ctx-swatch.sel", CHAT.slice(CHAT.indexOf("\n.ctx-swatch.sel {"), CHAT.indexOf("}", CHAT.indexOf("\n.ctx-swatch.sel {")))],
+  ["kernel.py mobile session picker (#mlist)", KERNEL.slice(KERNEL.indexOf('"#mlist{display:none;'), KERNEL.indexOf('".mrow.ph'))],
   ["tag-menu.ts openTagMenu", slice(MENU, "export function openTagMenu", "export function tagMenuButton")],
   ["timeline menuStyleFor/menuCheckStyleFor", slice(TIMELINE, "const menuStyleFor", "let MENU_STYLE")],
 ];
@@ -132,10 +144,11 @@ test("the inline menus wear the tokens — card, text, hairline, hover, radius, 
   // a token whose dark value COMPOSES a VS Code var (--menu-bg/--menu-fg) resolves, sheet-less, to its own
   // innermost fallback; a literal value (rgba/hex) is already the resolved value
   const innermost = (v: string) => { const m = v.startsWith("var(") ? v.match(/,\s*(.+)\)\s*$/) : null; return m ? m[1] : v; };
+  const GEOMETRY: Record<string, string> = { "--radius-menu": "6px", "--shadow-menu": "0 4px 12px rgba(0, 0, 0, 0.35)" };
   for (const src of [pick, vers, tag]) {
     for (const m of src.matchAll(/var\((--menu-[\w-]+|--check-bg|--radius-menu|--shadow-menu),\s*((?:[^()]|\([^()]*\))*)\)/g)) {
-      const tok = m[1] as keyof typeof DARK, fb = m[2];
-      const want = tok === "--radius-menu" ? "6px" : tok === "--shadow-menu" ? "0 4px 12px rgba(0, 0, 0, 0.35)" : innermost(DARK[tok]);
+      const tok: string = m[1], fb = m[2];
+      const want = GEOMETRY[tok] ?? innermost(DARK[tok as keyof typeof DARK]);
       assert.equal(norm(fb), norm(want), `${tok} fallback ${fb} must equal the dark token value ${want}`);
     }
   }
@@ -147,8 +160,8 @@ test("the ✓ mark is themed through --check-bg on every surface: dark #1EA1EB, 
   assert.match(block(CHAT, ".ctx-sub .ctx-item.current::after"), /background: var\(--check-bg\)/);
   assert.match(FEED, /\.feed-viewmenu \.ctx-item\.current::after \{[^}]*var\(--check-bg\)/s, "the feed's view menu check");
   // the timeline's palette IS its theme definition — its two values are the two blocks' values
-  assert.match(TIMELINE, /const PAL_DARK = \{[\s\S]*?accentSolid: '#1EA1EB'/, "PAL_DARK ✓ = the dark token");
-  assert.match(TIMELINE, /const PAL_LIGHT = \{[\s\S]*?accentSolid: '#C2410C'/, "PAL_LIGHT ✓ = the light token");
+  assert.match(TIMELINE, /const PAL_DARK = \{[^}]*?accentSolid: '#1EA1EB'/, "PAL_DARK ✓ = the dark token");
+  assert.match(TIMELINE, /const PAL_LIGHT = \{[^}]*?accentSolid: '#C2410C'/, "PAL_LIGHT ✓ = the light token");
   assert.match(TIMELINE, /background:' \+ p\.accentSolid \+ '/, "menuCheckStyleFor reads the palette, never a literal");
   for (const [name, css] of [["styles.css", CHAT], ["feed.css", FEED]] as const) {
     assert.ok(block(css, ":root").includes("--check-bg: #1EA1EB;"), name + " dark ✓ pinned byte-for-byte");
@@ -159,9 +172,38 @@ test("the ✓ mark is themed through --check-bg on every surface: dark #1EA1EB, 
 
 test("the CLAUDE.md rule names the tokens and keeps the hex as the dark theme's values", () => {
   const md = fs.readFileSync(path.resolve(process.cwd(), "..", "CLAUDE.md"), "utf8");
-  const rule = md.slice(md.indexOf("### Menus and dropdowns wear ONE vocabulary"), md.indexOf("The romp accent is light blue"));
+  const rule = slice(md, "### Menus and dropdowns wear ONE vocabulary", "The romp accent is light blue");
   for (const tok of ["--menu-bg", "--menu-fg", "--menu-border", "--menu-hover", "--radius-menu", "--shadow-menu", "--check-bg"])
     assert.ok(rule.includes("`" + tok + "`"), "the rule names " + tok);
   assert.ok(rule.includes("`#252526`") && rule.includes("`#1EA1EB`"), "the dark values stay documented");
-  assert.match(rule, /FALLBACK/, "the one sanctioned place for a raw hex in a menu string");
+  assert.match(rule, /fallback/i, "the one sanctioned place for a raw hex in a menu string");
+});
+
+test("the sheets' reference menu rules wear the tokens too — one card, one hover, one ring (review round)", () => {
+  // .ctx-menu is the rule the CLAUDE.md text names as the spec; it and .meta-menu read --menu-bg/--menu-fg
+  // (served dark: byte-identical — the token composes the VS Code colour they always followed).
+  // .ctx-item:hover stays on --vscode-menu-selectionBackground BY DESIGN: the tab menu is "themed
+  // like VS Code's own menus" and the served dark hover is its blue selection — the one sanctioned
+  // divergence, named here so it cannot be mistaken for an oversight.
+  for (const [name, css] of [["styles.css", CHAT], ["feed.css", FEED]] as const) {
+    assert.match(block(css, ".ctx-menu"), /background: var\(--menu-bg\);/, name + " .ctx-menu card");
+    assert.match(block(css, ".ctx-menu"), /color: var\(--menu-fg\);/, name + " .ctx-menu text");
+  }
+  assert.match(block(CHAT, ".meta-menu"), /background: var\(--menu-bg\);/, ".meta-menu card");
+  assert.match(CHAT, /\.ctx-swatch\.sel \{ box-shadow: 0 0 0 2px var\(--menu-bg\), 0 0 0 3\.5px var\(--menu-ring\); \}/, "the current-swatch halo is themed");
+  assert.match(CHAT, /\.ctx-tag-input \{[^}]*color: var\(--menu-fg\)/, "the New-tag input reads the MENU text (scheme-invariant, = the old #ccc in dark)");
+  assert.match(FEED, /\.feed-sessmenu \.fsm-row:hover \{ background: var\(--menu-hover\); \}/, "the session combobox rows hover with the one wash");
+  assert.match(FEED, /\.fask-doneconfirming \{[^}]*border: 1px solid var\(--check-ring\)/, "the done-confirming ring follows the themed ✓");
+  for (const id of ["#rs-cmap-list", "#rs-pal-list"]) {
+    const at = GEAR_CSS.indexOf("\n" + id + " {"); const rule = GEAR_CSS.slice(at, GEAR_CSS.indexOf("}", at));
+    assert.match(rule, /background: var\(--menu-bg, #252526\)/, id + " card"); assert.match(rule, /var\(--shadow-menu, /, id + " shadow");
+  }
+  // the picker rows this change retokenised read the MENU text, not the chat scheme's --fg
+  assert.equal((GEAR.match(/color:var\(--menu-fg, #ccc\)/g) || []).length, 2, "tabCtx + selectPick rows");
+  // the mobile session picker (kernel _CHAT_MOBILE_CSS) is a dropdown too: card + hairline on the tokens,
+  // and a light block for the values that have no byte-identical dark token
+  const mob = KERNEL.slice(KERNEL.indexOf('"#mlist{display:none;'), KERNEL.indexOf('".mrow.ph'));
+  assert.match(mob, /background:var\(--menu-bg,#252526\)/, "#mlist card");
+  assert.match(mob, /border:1px solid var\(--hairline,#3a3a3a\)/, "#mlist hairline (dark #3a3a3a byte-identical)");
+  assert.match(KERNEL, /body\.theme-light #mlist\{/, "the light block re-skins the mobile picker");
 });
