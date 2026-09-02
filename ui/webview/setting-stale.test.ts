@@ -68,10 +68,10 @@ test("the toast wears the family dismissal: a visible ✕ in the chip-✕ dress,
   // the fade precedes the auto-remove, on the family's timings
   assert.match(GEAR, /t\.classList\.add\('fade'\); \}, 11000\)/, "the fade arms first");
   assert.match(GEAR, /t\.remove\(\); \}, 12000\)/, "the self-clearing backstop stays");
-  // the ✕ wears the chip-✕ dress in gear.css's own literal palette (the gear's hosts don't load
-  // styles.css, so var(--dim)/var(--fg) don't resolve here)
-  assert.match(GEAR_CSS, /\.rs-stale-toast-x \{ flex: 0 0 auto; border: none; background: none; cursor: pointer; color: #9aa0a6;/);
-  assert.match(GEAR_CSS, /\.rs-stale-toast-x:hover \{ color: #fff; background: rgba\(255, 255, 255, 0\.08\); \}/);
+  // the ✕ wears the chip-✕ dress through gear.css's token-with-fallback idiom (the census sheet:
+  // tokens resolve in a themed host; the literal fallbacks keep the standalone gear looking right)
+  assert.match(GEAR_CSS, /\.rs-stale-toast-x \{ flex: 0 0 auto; border: none; background: none; cursor: pointer;\n\s*color: var\(--text-muted, #9aa0a6\);/);
+  assert.match(GEAR_CSS, /\.rs-stale-toast-x:hover \{ color: var\(--fg, #fff\); background: rgba\(255, 255, 255, 0\.08\); \}/);
   assert.match(GEAR_CSS, /\.rs-stale-toast\.fade \{ opacity: 0; \}/, "the fade class actually fades");
   assert.match(GEAR_CSS, /\.rs-stale-toast \{[^}]*transition: opacity/, "…through a real transition");
 });

@@ -242,7 +242,7 @@ class ParseCut(unittest.TestCase):
         conversation content — filtering them on the cut's timestamp would blank the live working
         indicator for any session sitting on a pending delete."""
         src = inspect.getsource(km.em.parse_session)
-        cut_block = src[src.index("if leaf_override and leaf_override in adapter.by_uuid"):]
+        cut_block = src[src.index("if cut_t:"):]   # the cut filter (cut_t resolved in _assemble)
         self.assertNotIn("synthesize_idle", cut_block.split("atoms += orphans")[0])
         self.assertIn("orphans = [a for a in orphans if a[\"t\"] <= cut_t]", src)
 
@@ -635,6 +635,36 @@ class TwoPhaseRewindTiming(unittest.TestCase):
             km._sdk = saved_sdk
         self.assertNotIn(self.doomed, km.jd.load_goals(SID)["nodes"])
         self.assertIsNone(km._rewind_hold_get(SID))
+
+
+class HoldLeafEclipsedFlip(unittest.TestCase):
+    """T209 companion: _hold_leaf_still_active on a leaf a MACHINE api_error spur abandoned.
+    Before the eclipsed verdict, that leaf read "rewind" -> False -> the resolver ARCHIVED the
+    held cards on a machine artifact; now it reads kept -> True -> restore, the direction that
+    never destroys on an event no user made."""
+
+    def setUp(self):
+        self.td = Path(tempfile.mkdtemp())
+        self._saved_sessions = km._sessions
+
+    def tearDown(self):
+        km._sessions = self._saved_sessions
+
+    def test_an_eclipsed_leaf_reads_still_active(self):
+        p = self.td / (SID + ".jsonl")
+        with open(p, "w") as f:
+            for r in [_rec("user", "u1", None, "first ask"),
+                      _rec("assistant", "a1", "u1", "first reply"),
+                      _rec("user", "u2", "a1", "second ask"),
+                      _rec("assistant", "a2", "u2", "the reply the spur eclipsed"),
+                      _rec("system", "e1", "u2", subtype="api_error",
+                           error={"message": "429 rate_limit_error (synthetic)"}),
+                      _rec("user", "u3", "e1", "third ask"),
+                      _rec("assistant", "a3", "u3", "third reply")]:
+                f.write(json.dumps(r) + "\n")
+        km._sessions = lambda now: [{"sid": SID, "path": str(p)}]
+        self.assertIs(km._hold_leaf_still_active(SID, "a2"), True,
+                      "a machine-eclipsed leaf is live content, not a taken rewind")
 
 
 class RewindKeptLookupEconomy(unittest.TestCase):

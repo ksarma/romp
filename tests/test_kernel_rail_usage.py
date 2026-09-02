@@ -45,8 +45,11 @@ class RailUsage(unittest.TestCase):
             self.assertIn(win, self.html, "renders both rate-limit windows")
         # the used bar wears the SELECTED COLORMAP colour (server-computed in _usage, read here as seg.color)
         self.assertIn("seg.color", self.html, "the used bar is colored by the selected colormap")
-        self.assertIn("cm.ramp(pct / 100.0, stops)", inspect.getsource(km._usage),
-                      "_usage maps used-% onto the global colormap")
+        self.assertIn("seg.tone", self.html, "and the yatharth themes pick the tone shipped beside it (PR #763)")
+        self.assertIn('"color": list(cm.ramp(pct / 100.0, cm.stops_for(_colormap())))', inspect.getsource(km._usage),
+                      "classic seg.color stays the recency-colormap sample, byte-identical to main (PR #763 item 1)")
+        self.assertIn("cm.context_rgb(pct)", inspect.getsource(km._usage),
+                      "the yatharth tone (seg.tone) rides beside the classic color")
         # ONE shared hover PANEL for BOTH windows (the user 2026-06-26): it reproduces the used/elapsed bars
         # that used to sit under the timeline, with the reset countdown, and NO explanatory prose.
         self.assertIn("#ru-tip{", self.html, "a styled hover tooltip panel")

@@ -24,16 +24,27 @@ km = SourceFileLoader("romp_kernel", os.path.join(BIN, "romp-kernel")).load_modu
 class ContextColormap(unittest.TestCase):
     def test_build_timeline_colors_the_lane_context_bar_server_side(self):
         src = inspect.getsource(km.build_timeline)
-        self.assertIn("ctx_stops = cm.stops_for(_colormap())", src, "the global colormap stops are read once")
+        self.assertIn("ctx_stops = cm.stops_for(_colormap())", src, "the global colormap still drives the compaction sweep")
         self.assertIn('"ctxColor"', src, "each lane carries a server-computed context color")
-        self.assertIn("cm.ramp((tm[\"context\"] or 0) / 100.0, ctx_stops)", src,
-                      "context% maps onto the global colormap (bright = full)")
+        self.assertIn('cm.ramp((tm["context"] or 0) / 100.0, ctx_stops)', src,
+                      "classic ctxColor stays the recency-colormap sample, byte-identical to main (PR #763 item 1)")
+        self.assertIn("cm.context_rgb(tm[\"context\"] or 0)", src,
+                      "the yatharth tone (ctxTone) rides beside the classic color")
 
     def test_build_session_status_carries_a_context_color(self):
         src = inspect.getsource(km.build_session)
         self.assertIn('"ctxColor"', src, "the chat status carries a server-computed context color")
-        self.assertIn("cm.ramp(tm[\"context\"] / 100.0, cm.stops_for(_colormap()))", src,
-                      "context% maps onto the global colormap")
+        self.assertIn('cm.ramp(tm["context"] / 100.0, cm.stops_for(_colormap()))', src,
+                      "classic ctxColor stays the recency-colormap sample, byte-identical to main (PR #763 item 1)")
+        self.assertIn("cm.context_rgb(tm[\"context\"])", src,
+                      "the yatharth tone (ctxTone) rides beside the classic color")
+
+    def test_context_tone_thresholds_are_the_one_pair(self):
+        # ONE warn/danger pair for every gauge (was 60/85 on ctx gauges, 70/90 on usage bars)
+        self.assertEqual((km.cm.CTX_WARN, km.cm.CTX_DANGER), (70, 88))
+        self.assertEqual(tuple(km.cm.context_rgb(km.cm.CTX_DANGER)), km.cm.DANGER_RGB)
+        self.assertEqual(tuple(km.cm.context_rgb(km.cm.CTX_WARN)), km.cm.WARN_RGB)
+        self.assertEqual(tuple(km.cm.context_rgb(km.cm.CTX_WARN - 1)), km.cm.tone_rgb("context", (km.cm.CTX_WARN - 1) / 100.0))
 
     def test_build_timeline_ships_a_compaction_sweep_gradient(self):
         # the timeline scan-bar has no client-side colormap, so build_timeline samples the SAME map at the

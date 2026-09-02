@@ -158,7 +158,7 @@ test("the badges' COLOR is the chat's too: the rank tints ride the frame (the 20
   // metaColor), and the comments frame never carried them, so the popover's stayed plain gray.
   assert.match(KERNEL, /"modelColor": _model_color\(\(reg\.get\("liveModel"\) or reg\.get\("model"\) or ""\) if reg else "",\s*\n\s*cm\.stops_for\(_colormap\(\)\)\),/);
   assert.match(KERNEL, /"effortColor": _effort_color\(\(reg\.get\("effort"\) or ""\) if reg else "",\s*\n\s*cm\.stops_for\(_colormap\(\)\)\),/);
-  assert.match(RENDER, /modelColor: th\.modelColor, effortColor: th\.effortColor \} as Status;/);
+  assert.match(RENDER, /modelColor: th\.modelColor, effortColor: th\.effortColor,\n\s*modelTone: \(th as any\)\.modelTone, effortTone: \(th as any\)\.effortTone \} as Status;/);
   // the equality bar (asserted headless over the built bundle, per the follow-up): computed
   // font-family/size/weight AND color/opacity equal chat↔popover for chip, timer, and all badges
 });

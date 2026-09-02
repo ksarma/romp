@@ -105,7 +105,8 @@ test("figures render AT their mention: after the block naming them; same-block f
   assert.match(RENDER, /const BLOCK_SEL = "p, li, h1, h2, h3, h4, h5, h6, blockquote, td, th";/);
   assert.match(RENDER, /anchor\.insertAdjacentElement\("afterend", strip\);/, "a paragraph's figure lands right after it");
   assert.match(RENDER, /\/\^\(LI\|TD\|TH\)\$\/\.test\(anchor\.tagName\)/, "a list item keeps its figure inside, under its bullet");
-  assert.match(RENDER, /previewable\.slice\(0, 4\)/, "the wallpaper cap stays");
+  // no eager cap since the user's 2026-08-30 ruling: every mention renders, lazily loaded
+  assert.match(RENDER, /for \(const p of previewable\) renderFig\(p\);/);
 });
 
 test("VS Code's pending image chip pulses while the host round-trip is in flight; a failed one doesn't", () => {
@@ -125,6 +126,35 @@ test("full-size images wear the user-image scale — one size per information ty
   assert.match(CSS, /\.path-full-img \{[^}]*max-height: 320px/);
   assert.match(CSS, /\.user-img \{[^}]*max-height: 320px/);
   assert.match(CSS, /\.path-full-pdfcard \{/);
+});
+
+test("EVERY figure mention renders eagerly — no cap, no chip (the user's 2026-08-30 ruling)", () => {
+  // Their ruling, paraphrased: they should be able to preview as many images as they want in the
+  // thread — overruling the 4-eager+chip fold shipped a day earlier. All verified mentions render
+  // at their anchors through the one renderFig path; off-screen cost is bounded by the browser's
+  // own lazy loading, never by a count.
+  assert.match(RENDER, /for \(const p of previewable\) renderFig\(p\);/);
+  assert.ok(!/FIG_EAGER|figsExpanded|path-more/.test(RENDER), "the cap/latch/chip machinery is gone, not dormant");
+  assert.ok(!/linkifyFileUris\([^)]*foldKey/.test(RENDER), "the latch's foldKey param retired with it");
+  assert.ok(!CSS.includes(".path-more"), "the chip's CSS retired with it");
+  assert.match(PREVIEW, /img\.loading = "lazy";/);
+  assert.match(PREVIEW, /img\.decoding = "async";/);
+});
+
+test("a verified relative path is previewable exactly like an absolute one — the cap was the only gate", () => {
+  // Parity, pinned where each hop lives: the walk's open target is the kernel's verdict (the token
+  // itself for a tier-1 relative hit, the fixed repo path for tiers 2/3 — so a backticked relative
+  // AND a bare filename both ride), previewKind is extension-only (relativity-blind), and both the
+  // eager and the expanded render hand previewFull the SAME entry previewable carries — pin lookup
+  // included, so a relative embed rides its own pin key ((pathPins || {})[p]).
+  assert.match(RENDER, /const open = isUri \? fileUriToPath\(tok\) : \(fixed \?\? tok\);/);
+  assert.match(RENDER, /previewable\.push\(open\);/);
+  assert.match(PREVIEW, /const ext = path\.slice\(path\.lastIndexOf\("\."\) \+ 1\)\.toLowerCase\(\);/);
+  assert.match(RENDER, /previewFull\(p, renderingOwnerSid \?\? activeId, kernelVerified\.has\(p\), \(pathPins \|\| \{\}\)\[p\]\)/);
+  // kernel side of the same claim: a tier-1 hit keys the verdict AND the pin on the token as
+  // written (relative stays relative; /file?path=<relative>&sid= serves it — verified live)
+  assert.ok(KERNEL.includes("return tok                                        # tier 1"), "tier 1 keeps the token as its own target");
+  assert.match(KERNEL, /pins\[r\] = pin/);
 });
 
 test("previewThumb is gone with the feed's artifact strips (2026-08-14) — the full render is the one preview", () => {

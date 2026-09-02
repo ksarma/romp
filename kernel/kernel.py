@@ -527,7 +527,15 @@ def _version_info():
     return {"kernel_sha": _kernel_sha(), "kernel_ver": _kernel_ver(), "pid": os.getpid(), "started": int(_STARTED),
             "boot": _BOOT_ID,   # lets a page retire update offers from a previous kernel life (2026-08-15)
             "uptime_s": int(time.time() - _STARTED), "dist_ver": _dist_ver(), "bundles": bundles,
+            # THIS kernel process's transcript-assembly counters (event_model._ASM_STATS: full/fold/
+            # serve/bypass/fallback + per-gate g:<reason> demotes + ts-repair) — the designed home for
+            # runtime observability: /healthz's body is a frozen liveness contract ("ok"), while this
+            # route already reports process runtime (pid/uptime) and `romp version` reads it. Bare
+            # counters, no paths — safe for the auth-exempt route. Deploy verification reads the live
+            # fold rate here instead of trusting an offline replay number (T210).
+            "parse": dict(em._ASM_STATS),
             "autoNudge": _auto_nudge_on(),   # server-side toggle state → the gear checkbox reflects the kernel
+            "compactSuggest": _compact_suggest_on(),   # T208+: its gear checkbox rides the same read
             "conserveMemory": _conserve_on(),   # the T148 toggle: close idle tab-less claude processes
             "login": _login_state(),         # the in-dashboard login flow's state/url/err (T157) — never a secret
             "acctLabel": _claude_account_label(),   # which login this box holds ("" = none) — the gear's Billing row
@@ -549,6 +557,7 @@ def _version_info():
             # The top-level fields above stay: this tab's own gear and older kernels read those.
             "settings": {"autoNudge": _auto_nudge_on(), "updateMode": _update_mode(),
                          "conserveMemory": _conserve_on(),
+                         "compactSuggest": _compact_suggest_on(),   # T208: per-install, default OFF
                          "fileEditing": _file_editing_on(),
                          "judgeModel": jd._triage_model(), "judgeEffort": jd._triage_effort(),
                          "indexModel": jd._index_model(), "indexEffort": jd._index_effort(),
@@ -741,14 +750,46 @@ def iso(t):
         return ""
 
 
-def _name_color(sid):
-    """Session display color {bg,fg} from the names registry (3rd tab field), or null."""
+def _names_snapshot():
+    """{sid: tab-fields list} for every names-registry entry, read once. The pusher cycle publishes
+    this as its names scope (_live_scope.names): build_session re-resolves every path token through
+    _cwd_of and every outgoing postal card through _name_color_by_name, so the ACTIVE tab's rebuild
+    re-read the same ~64 one-line files hundreds of times per 0.5s cycle — ~38% of the pusher's wall
+    time (py-spy 2026-08-31: _cwd_of 22%, _name_color_by_name 16%). Same one-snapshot-per-cycle idiom
+    as the tmux liveness hoist (2026-08-10); a mid-cycle rename/create lands next cycle, the exact
+    staleness the liveness snapshot already tolerates by construction."""
+    snap = {}
     try:
-        parts = (NAMES / sid).read_text().rstrip("\n").split("\t")
-        if len(parts) > 2 and parts[2].startswith("#"):
-            return {"bg": parts[2], "fg": "#ffffff"}
+        for f in NAMES.iterdir():
+            try:
+                snap[f.name] = f.read_text().rstrip("\n").split("\t")
+            except Exception:   # OSError, but ALSO UnicodeDecodeError on a torn/raw-bytes entry — the
+                continue        # per-call readers this replaces caught bare Exception, and this function
+        #                         runs on the pusher thread's bare loop, so it must NEVER raise (review
+        #                         find 2026-08-31: one non-UTF-8 entry would have killed the pusher for
+        #                         good, and again on every restart while the file persisted)
     except Exception:
         pass
+    return snap
+
+
+def _names_parts(sid):
+    """The names-registry tab fields for sid — from the cycle's names scope when one is set (one
+    registry read per PUSHER CYCLE instead of per token/card), else a direct read. None = no entry."""
+    snap = getattr(_live_scope, "names", None)
+    if snap is not None:
+        return snap.get(str(sid))
+    try:
+        return (NAMES / str(sid)).read_text().rstrip("\n").split("\t")
+    except Exception:
+        return None
+
+
+def _name_color(sid):
+    """Session display color {bg,fg} from the names registry (3rd tab field), or null."""
+    parts = _names_parts(sid)
+    if parts and len(parts) > 2 and parts[2].startswith("#"):
+        return {"bg": parts[2], "fg": "#ffffff"}
     return None
 
 
@@ -1211,32 +1252,26 @@ def _set_palette(name):
 def _name_of(sid):
     """Session display name from the names registry (1st tab field), or None. The event model gives a
     postal atom's peer as the sender's rompUuid (sid), so a postal card resolves it to a name + color."""
-    try:
-        return (NAMES / sid).read_text().rstrip("\n").split("\t")[0] or None
-    except Exception:
-        return None
+    parts = _names_parts(sid)
+    return (parts[0] or None) if parts else None
 
 
 def _cwd_of(sid):
     """The session's working directory from the names registry (2nd tab field: name\\tcwd\\tbg\\tfg), or "".
     Written at launch for BOTH backends (tmux romp launcher + SDK write_name), so it's available before any
     transcript exists. The directory is fixed at creation — there's no SDK call to relocate a session."""
-    try:
-        parts = (NAMES / sid).read_text().rstrip("\n").split("\t")
-        return parts[1] if len(parts) > 1 else ""
-    except Exception:
-        return ""
+    parts = _names_parts(sid)
+    return parts[1] if parts and len(parts) > 1 else ""
 
 
 def _identity_of(sid):
     """The session's identity colors (bg, fg) from the names registry (3rd/4th tab fields), or ("", ""). Written
     at launch for BOTH backends (tmux launcher + SDK write_name), so it's available without shelling tmux —
     the unified GET /sessions reads identity from here for either backend."""
-    try:
-        parts = (NAMES / sid).read_text().rstrip("\n").split("\t")
-        return (parts[2] if len(parts) > 2 else "", parts[3] if len(parts) > 3 else "")
-    except Exception:
+    parts = _names_parts(sid)
+    if not parts:
         return ("", "")
+    return (parts[2] if len(parts) > 2 else "", parts[3] if len(parts) > 3 else "")
 
 
 def _session_backend(sid, tm):
@@ -1511,21 +1546,29 @@ def _debt_reminder_body(asks):
 def _fire_debt_reminder(sid, now, alive_ids):
     """Send the reminder for every not-yet-reminded ask this session owes; True when one went out. The
     per-ask dedup key (asker>debtor:ts) makes this once-per-ask-EVER — escalation past an ignored
-    reminder belongs to the sender's card (the nudge-failed ladder), not to repeat reminders."""
+    reminder belongs to the sender's card (the nudge-failed ladder), not to repeat reminders.
+    Records AFTER the send, so a failed send retries (_mark_auto_nudged's direction) — and the record
+    write RE-READS the blob fresh under _NUDGE_LOCK and mutates only debtNudged, the key this writer
+    owns. The old shape held a pre-send snapshot across the live send and wrote the whole blob back:
+    last-writer-wins over every key, so it erased whatever a concurrent writer landed in the gap —
+    including _compact_suggest_tick's claim-before-send latch, which re-opened the double send the
+    claim exists to close (2026-09-01, refuter-confirmed)."""
     asks = _debt_asks(sid, alive_ids)
     if not asks:
         return False
-    d = _auto_nudge_data()
-    dn = dict(d.get("debtNudged") or {})
+    dn0 = _auto_nudge_data().get("debtNudged") or {}
     due = [(asker, name, ts, kind, head) for asker, name, ts, kind, head in asks
-           if ("%s>%s:%d" % (asker, sid, ts)) not in dn]
+           if ("%s>%s:%d" % (asker, sid, ts)) not in dn0]
     if not due:
         return False
     Sessions.backend_for(sid).send(sid, _debt_reminder_body([(n, t, k, h) for _a, n, t, k, h in due]))
-    for asker, _n, ts, _k, _h in due:
-        dn["%s>%s:%d" % (asker, sid, ts)] = int(now)
-    d["debtNudged"] = dn
-    _write_auto_nudge(d)
+    with _NUDGE_LOCK:
+        d = dict(_auto_nudge_data())
+        dn = dict(d.get("debtNudged") or {})
+        for asker, _n, ts, _k, _h in due:
+            dn["%s>%s:%d" % (asker, sid, ts)] = int(now)
+        d["debtNudged"] = dn
+        _write_auto_nudge(d)
     return True
 
 
@@ -1577,27 +1620,31 @@ def _debt_reminder_outcomes(sid, lt, now):
     its chance and moved on without replying (the reminder's own response turn included: both honest
     exits it offered were postal replies, so a reply-less end IS the failure). A debtor that never turns
     again is the backstop's case (_debt_backstop_tick)."""
-    d = _auto_nudge_data()
-    dn = dict(d.get("debtNudged") or {})
-    if not dn:
+    dn0 = _auto_nudge_data().get("debtNudged") or {}
+    if not dn0:
         return
     last_any, _ask = _postal_wait_maps()
     lt_end = (lt.get("end", lt.get("t", 0)) or 0) if lt else 0
-    changed = False
-    for key, fire_t in list(dn.items()):
+    drop = []
+    for key, fire_t in dn0.items():
         parsed = _debt_key_parse(key)
         if not parsed or parsed[1] != sid:
             continue
         asker, _debtor, ts = parsed
         if last_any.get((sid, asker), 0) >= ts:        # answered → the reminder worked
-            dn.pop(key); changed = True
+            drop.append(key)
             continue
         if isinstance(fire_t, (int, float)) and lt_end > fire_t:
             _debt_escalate(asker, sid, ts, now)        # moved on without replying → the user's turn
-            dn.pop(key); changed = True
-    if changed:
-        d["debtNudged"] = dn
-        _write_auto_nudge(d)
+            drop.append(key)
+    if drop:
+        with _NUDGE_LOCK:                              # retire-only, key-scoped: the goal-store IO
+            d = dict(_auto_nudge_data())               # above stays outside the lock; the fresh
+            dn = dict(d.get("debtNudged") or {})       # re-read means every key another writer
+            for key in drop:                           # landed meanwhile (a compact-suggest claim)
+                dn.pop(key, None)                      # survives this write (2026-09-01)
+            d["debtNudged"] = dn
+            _write_auto_nudge(d)
 
 
 def _debt_backstop_tick(now):
@@ -1605,27 +1652,31 @@ def _debt_backstop_tick(now):
     idling forever on its reminder: past the same backstop the awaiting/deferral machinery uses, an
     unanswered reminder escalates (or, if answered meanwhile, retires) regardless. Mirrors
     AWAITING_DEADMAN_SECS' rationale: a missing event, surfaced rather than waited on forever."""
-    d = _auto_nudge_data()
-    dn = dict(d.get("debtNudged") or {})
-    if not dn:
+    dn0 = _auto_nudge_data().get("debtNudged") or {}
+    if not dn0:
         return
     last_any, _ask = _postal_wait_maps()
-    changed = False
-    for key, fire_t in list(dn.items()):
+    drop = []
+    for key, fire_t in dn0.items():
         parsed = _debt_key_parse(key)
         if not parsed:
-            dn.pop(key); changed = True                # malformed → drop rather than loop on it forever
+            drop.append(key)                           # malformed → drop rather than loop on it forever
             continue
         asker, debtor, ts = parsed
         if last_any.get((debtor, asker), 0) >= ts:
-            dn.pop(key); changed = True
+            drop.append(key)
             continue
         if isinstance(fire_t, (int, float)) and now - fire_t > NUDGE_DEFER_BACKSTOP_SECS:
             _debt_escalate(asker, debtor, ts, now)
-            dn.pop(key); changed = True
-    if changed:
-        d["debtNudged"] = dn
-        _write_auto_nudge(d)
+            drop.append(key)
+    if drop:
+        with _NUDGE_LOCK:                              # _debt_reminder_outcomes' write shape exactly:
+            d = dict(_auto_nudge_data())               # escalation IO outside the lock, then a fresh
+            dn = dict(d.get("debtNudged") or {})       # re-read popping only this writer's own keys,
+            for key in drop:                           # so a concurrent claim on any other key
+                dn.pop(key, None)                      # survives (2026-09-01)
+            d["debtNudged"] = dn
+            _write_auto_nudge(d)
 
 
 def _rgb(color):
@@ -2069,6 +2120,14 @@ def _norm_timeline_views(d):
             order.append(n[:_VIEWS_MAX_NAME])
     if order:
         out["tagOrder"] = order
+    # `at` — the store's write stamp, served to every client and echoed back with its blob: the
+    # WRITER'S EVIDENCE TIME the stale-writer guard in _set_timeline_views compares tag mtimes
+    # against. Preserved through the rebuild like mtime; absent stays absent (a legacy blob).
+    try:
+        if d.get("at"):
+            out["at"] = int(d["at"])
+    except (TypeError, ValueError):
+        pass
     return out
 
 
@@ -2122,6 +2181,50 @@ def _set_timeline_views(blob):
     except Exception:
         prev = {}
     now = int(time.time())
+    # ── the stale-writer guard (the user 2026-08-31: a tag silently lost all 7 of its members) ──
+    # The full-blob path (setTimelineViews) is last-writer-wins by design, so a dashboard whose
+    # in-memory copy predates newer edits — a page that slept through a kernel restart, a second
+    # dashboard, a long-lived Obsidian panel — posts the whole STALE world back, and every member
+    # or tag added since vanishes silently. The v2 mtimes are forge-proof at this very door, so
+    # the door enforces the cards-move rule on itself: a writer whose evidence predates a tag's
+    # newer store state stands down FOR THAT TAG — the rest of its write lands — and the refusal
+    # is LOUD (a dashboard notice + stderr), never a silent divergence.
+    #   ev — the writer's evidence time: the `at` stamp the store put on the blob it served
+    #   (every client echoes the whole blob back; RMW writers like _edit_tag deep-copy the store,
+    #   so they always carry the newest), else the newest tag mtime the blob carries, else 0 —
+    #   an mtime-less legacy blob can never de-member or delete a stamped tag.
+    ev = 0
+    if isinstance(blob, dict):
+        try:
+            ev = int(blob.get("at") or 0)
+        except (TypeError, ValueError):
+            ev = 0
+    ev = max([ev] + [int(t.get("mtime") or 0) for t in v["tags"]])
+    incoming = {t["id"] for t in v["tags"]}
+    refused, kept = [], []
+    for t in v["tags"]:
+        pt = prev.get(t["id"])
+        if pt and pt.get("mtime") and int(pt["mtime"]) > ev and \
+                (pt.get("name"), pt.get("color"), pt.get("members")) != \
+                (t.get("name"), t.get("color"), t.get("members")):
+            refused.append('"%s"' % pt.get("name"))
+            kept.append(json.loads(json.dumps(pt)))       # the store's newer truth stands
+        else:
+            kept.append(t)
+    for tid, pt in prev.items():
+        if tid not in incoming and pt.get("mtime") and int(pt["mtime"]) > ev:
+            refused.append('"%s" (deletion)' % pt.get("name"))
+            kept.append(json.loads(json.dumps(pt)))       # a stale writer cannot delete newer state
+    v["tags"] = kept[:_VIEWS_MAX_TAGS]
+    if refused:
+        why = ("a stale dashboard write was partially refused: its copy of %s predates newer "
+               "edits (the newer state was kept — reload that dashboard to resync)"
+               % ", ".join(sorted(set(refused))))
+        sys.stderr.write("romp-kernel: %s\n" % why)
+        try:
+            _sync_notice(why, ok=False)
+        except Exception:
+            pass
     for t in v["tags"]:
         pt = prev.get(t["id"])
         if pt is None or (pt.get("name"), pt.get("color"), pt.get("members")) != \
@@ -2129,6 +2232,7 @@ def _set_timeline_views(blob):
             t["mtime"] = now
         elif pt.get("mtime"):
             t["mtime"] = pt["mtime"]
+    v["at"] = now
     _atomic_write(_views_path(), json.dumps(v, sort_keys=True))
 
 
@@ -3733,8 +3837,14 @@ _SETTINGS_LOCK = threading.RLock()
 # ONE lock for the nudge ledger's read-modify-write spans (2026-08-19 audit: a live episode
 # record vanished with no state-visible writer — the ledger's writers run on the producer tick,
 # judge callbacks, and WS handlers concurrently, and two overlapping dict(read)…write() spans
-# silently drop whichever landed first). The four EPISODE-record writers hold it across their
-# span; remaining writers (debt, settings) migrate as touched.
+# silently drop whichever landed first). EVERY writer holds it now (the last unlocked ones —
+# debt, deferrals, the interrupt-block marker — migrated 2026-09-01, when a debt writer's
+# pre-send snapshot erased a concurrent compact-suggest claim and re-opened the double send the
+# claim closes), in one of two shapes: a writer whose whole span is cheap dict ops holds the
+# lock across it (_set_auto_nudge's idiom), and a writer with IO between evidence and write (a
+# live send, the goal-store escalations, the sweep's transcript reads) does that IO OUTSIDE the
+# lock, then RE-READS the blob fresh under it and mutates only the keys it owns — never a held
+# snapshot, whose whole-blob write is last-writer-wins over every other key.
 _NUDGE_LOCK = threading.RLock()
 
 
@@ -3874,6 +3984,35 @@ def _set_auto_nudge(enabled, gt=None):
             sys.stderr.write("setting auto-nudge: write failed (%s) — nothing applied\n" % e)
             return None
         return d["gt"]
+
+
+def _compact_suggest_on():
+    """The compaction-suggestion regime's own per-install toggle (T208, the user 2026-09-01: the
+    regime must NOT ship default-on to every install — it stays behind this install's config).
+    OFF by default: the key is absent from a fresh install's blob and absent reads False — no
+    setdefault, deliberately, so shipping the feature never turns it on anywhere."""
+    return bool(_auto_nudge_data().get("compactSuggestEnabled"))
+
+
+def _set_compact_suggest(enabled, gt=None):
+    """Returns the applied gesture stamp (epoch ms), or None when a stale `gt` stood down or the
+    store write failed (OSError: loud on stderr, nothing applied, nothing ticked) —
+    _set_auto_nudge's contract exactly (same blob, same _NUDGE_LOCK), but the
+    stamp is PER SETTING (`compactSuggestGt`): the two checkboxes share a file, not a clock, so a
+    queued compact-suggest flush can never stand down against a newer auto-nudge gesture or steal
+    authority from one (the gesture-time ordering block above _gesture_ms)."""
+    with _NUDGE_LOCK:
+        d = dict(_auto_nudge_data())
+        if _setting_stale("compact-suggest", gt, _gt_int(d.get("compactSuggestGt"))):
+            return None
+        d["compactSuggestEnabled"] = bool(enabled)
+        d["compactSuggestGt"] = gt if gt is not None else int(time.time() * 1000)
+        try:
+            _write_auto_nudge(d)
+        except OSError as e:
+            sys.stderr.write("setting compact-suggest: write failed (%s) — nothing applied\n" % e)
+            return None
+        return d["compactSuggestGt"]
 
 
 def _file_editing_on():
@@ -4033,11 +4172,32 @@ def _run_update(tag):
                + "  curl -s -X POST 'http://127.0.0.1:%d/restart-all' >/dev/null 2>&1\n" % int(mport)) if mport.isdigit() \
         else "  : # no manager — the new code arms on the next romp start (the report says so)\n"
     ok_rep = {"ok": True, "tag": tag, "restarted": bool(mport.isdigit())}
+    # advance() — the tree lands EXACTLY on the release commit. The fast-forward is the normal
+    # release-to-release move, EXCEPT for an install sitting DETACHED off every tag: the
+    # pre-2026-08-31 drift banner's Update ran `git checkout --detach origin/main` on plain
+    # installs, and from a main sha AHEAD of the next tag `git merge --ff-only <tag>` does not
+    # fail — it silently no-ops ("Already up to date"), stranding the install off the release
+    # channel forever with an ok report. So: detached AND not exactly on a tag → check the tag out
+    # directly, LOUDLY in the update log (never a silent history jump). A BRANCH checkout (the
+    # maintainer's main-tracking clones) never takes the fallback — for it the no-op ff stays the
+    # harmless behavior it always was; and a diverged install exactly ON a tag still fails
+    # visibly through the ff.
+    advance = (
+        "advance(){\n"
+        + "  if ! git symbolic-ref -q HEAD >/dev/null 2>&1 "
+          "&& ! git describe --exact-match --tags >/dev/null 2>&1; then\n"
+        + "    echo 'HEAD is detached off every release tag (an older update walked this install "
+          "onto a main-branch commit) - checking out %s directly to return to the release "
+          "channel' >> %s;\n" % (tag, log)
+        + "    git checkout --detach refs/tags/%s >> %s 2>&1; return $?;\n" % (tag, log)
+        + "  fi\n"
+        + "  git merge --ff-only %s >> %s 2>&1; }\n" % (tag, log))
     script = (
         "cd %s || exit 1\n" % q(str(ROOT))
         + "{ echo; echo \"== romp self-update to %s ==\"; date; } >> %s 2>&1\n" % (tag, log)
-        + "if git fetch origin refs/tags/%s:refs/tags/%s >> %s 2>&1 && git merge --ff-only %s >> %s 2>&1 "
-          "&& ./install.sh >> %s 2>&1; then\n" % (tag, tag, log, tag, log, log)
+        + advance
+        + "if git fetch origin refs/tags/%s:refs/tags/%s >> %s 2>&1 && advance "
+          "&& ./install.sh >> %s 2>&1; then\n" % (tag, tag, log, log)
         + "  printf '%%s' %s > %s\n" % (q(json.dumps(ok_rep)), rep)
         + restart
         + "else\n"
@@ -4112,12 +4272,15 @@ def _update_check():
             _sync_notice("a newer romp (%s) is available, but the automatic update to it already ran "
                          "once without landing — update.log under ~/.local/state/romp has the story; "
                          "the banner still offers it" % latest, ok=False)
-            _send_to_app("shell", {"type": "updateAvail", "cur": _kernel_ver() or "", "tag": latest,
-                                   "boot": _BOOT_ID})
+            if latest not in _dismissed_updates():
+                _send_to_app("shell", {"type": "updateAvail", "cur": _kernel_ver() or "", "tag": latest,
+                                       "boot": _BOOT_ID})
             return
         _atomic_write(jd.STATE / "update-attempted.json", json.dumps({"tag": latest, "t": int(time.time())}))
         _run_update(latest)
     else:
+        if latest in _dismissed_updates():
+            return                    # Not-now'd THIS release, durably — a newer one offers again
         _send_to_app("shell", {"type": "updateAvail", "cur": _kernel_ver() or "", "tag": latest,
                                "boot": _BOOT_ID})
 
@@ -4166,6 +4329,72 @@ def _checkout_sha():
         return out.stdout.strip()[:8]
     except Exception:
         return ""
+
+
+def _checkout_branch():
+    """The shared checkout's current branch name, '' when detached (a bootstrap install sits
+    detached at a release tag — and the maintainer's auto-converged boxes sit detached at main
+    shas, which is why the branch alone is not the whole channel verdict) or unreadable."""
+    try:
+        out = subprocess.run(["git", "symbolic-ref", "-q", "--short", "HEAD"],
+                             cwd=str(ROOT), capture_output=True, text=True, timeout=10)
+        return out.stdout.strip()
+    except Exception:
+        return ""
+
+
+def _main_channel_verdict(branch, mode, attached):
+    """The pure audience decision for the main-drift watcher (the user 2026-08-31, after two
+    independent "constant update notices" reports from plain installs): dev commits must never
+    notify a plain install — their channel is release TAGS, one notice each, owned by
+    _update_check. The watcher's audience was always the maintainer's own mesh (its 2026-08-14
+    design comment says so), and that mesh is recognizable by its own signals:
+      * the checkout is ON branch main — a deliberate main-tracking clone;
+      * update mode "auto" — the unattended-converge machines;
+      * attached remotes — the federated dashboard's mesh (live rows or remembered hosts).
+    Everything else — a bootstrap install detached at a release tag, and the installs an old
+    banner already walked onto a DETACHED main sha (at-or-behind origin/main with no mesh
+    signals = the release channel, not drift) — stays silent here."""
+    return branch == "main" or mode == "auto" or bool(attached)
+
+
+def _main_tracking():
+    """_main_channel_verdict over the live inputs."""
+    with _remotes_lock:
+        attached = bool(_remotes)
+    if not attached:
+        try:
+            attached = bool(json.loads(KNOWN_FILE.read_text()))
+        except Exception:
+            attached = False
+    return _main_channel_verdict(_checkout_branch(), _update_mode(), attached)
+
+
+# ── Not-now, PERSISTED (the user 2026-08-31): a dismissal used to live in one page's JS var, so
+# every page load re-derived the offer and every kernel restart re-offered the same sha — the
+# re-nag half of the notice-spam reports. The store is a small capped list of dismissed
+# identifiers (release tags and drift shas, one mechanism); event-keyed: a NEW sha/tag is not in
+# the list and offers normally. Auto mode never consults it — dismissal is a banner concept.
+_DISMISSED_UPDATES_FILE_NAME = "update-dismissed.json"
+
+
+def _dismissed_updates():
+    try:
+        d = json.loads((jd.STATE / _DISMISSED_UPDATES_FILE_NAME).read_text())
+        return [str(x) for x in d if isinstance(x, str)][-20:] if isinstance(d, list) else []
+    except Exception:
+        return []
+
+
+def _dismiss_update(ident):
+    ident = str(ident or "").strip()[:80]
+    if not ident:
+        return
+    cur = [x for x in _dismissed_updates() if x != ident] + [ident]
+    try:
+        _atomic_write(jd.STATE / _DISMISSED_UPDATES_FILE_NAME, json.dumps(cur[-20:]))
+    except OSError:
+        sys.stderr.write("update-dismiss: store write failed\n")
 
 
 def _main_drift_verdict(origin, checkout, running):
@@ -4274,6 +4503,11 @@ def _main_drift_check():
     CHANGES — new information, never a re-nag of the sha already offered or dismissed."""
     if _update_mode() == "off":
         return
+    if not _main_tracking():
+        # the audience gate (the user 2026-08-31): plain installs live on the release channel —
+        # one notice per new TAG, from _update_check — and must never hear about dev commits.
+        # The maintainer's mesh keeps this watcher through its own signals (_main_channel_verdict).
+        return
     kind, target = _main_drift_verdict(_origin_main_sha(), _checkout_sha(), _kernel_sha())
     if kind == "restart" and target == _REBUILT_FOR[0]:
         return                                        # already converged in place (UI-only rebuild)
@@ -4310,6 +4544,8 @@ def _main_drift_check():
         _LAST_AUTO_CONVERGE[0] = time.time()
         _run_main_update(kind)
     else:
+        if target in _dismissed_updates():
+            return                    # Not-now'd THIS sha, durably — a NEW sha offers again
         _send_to_app("shell", {"type": "updateAvail", "kind": "main", "drift": kind,
                                "cur": _kernel_sha() or "", "tag": target, "boot": _BOOT_ID})
 
@@ -5013,14 +5249,15 @@ def _intr_blocked(sid=None):
 
 
 def _set_intr_blocked(sid, gid):
-    d = dict(_auto_nudge_data())
-    m = dict(d.get("intrBlocked") or {})
-    if gid:
-        m[str(sid)] = gid
-    else:
-        m.pop(str(sid), None)
-    d["intrBlocked"] = m
-    _write_auto_nudge(d)
+    with _NUDGE_LOCK:                    # every ledger writer serializes here (2026-09-01) — an
+        d = dict(_auto_nudge_data())     # unlocked read→write span, however small, can erase a
+        m = dict(d.get("intrBlocked") or {})   # concurrent writer's keys (whole-blob last-writer-wins)
+        if gid:
+            m[str(sid)] = gid
+        else:
+            m.pop(str(sid), None)
+        d["intrBlocked"] = m
+        _write_auto_nudge(d)
 
 
 def _intr_block_stands(sid, gid):
@@ -5128,10 +5365,14 @@ def _log_nudge_event(sid, gid, t, count, verdict="fired", ev_t=None, parked_s=No
     for the timeline's DEBUG judging band (per-nudge ⚡ marker) AND the redundancy accounting (the
     user 2026-08-25): every decision the gate takes is a row — fired / skipped-redundant /
     held-fresh-re-judged / fired-at-cap / skipped-redundant-at-cap / skipped-redundant-memo (the
-    T142 memo served a ruling already made on this exact evidence, no judge call; the row carries
-    parkedS — seconds the session has sat parked since the skip's answeredAt — so the quiet-session
-    deadlock fingerprint is countable from this log alone, 2026-08-29) / fired-parked-backstop (the
-    memo held but the session sat parked past the dead-man stand — the fire re-engages it) /
+    T142 memo served a ruling already made on this exact evidence, no judge call — since the
+    parked-tick round, 2026-08-30, a parked goal SLEEPS at the gate instead, so this row marks a
+    rare race, never a per-visit re-serve) / re-armed (the park lifted: a memo key moved — written
+    once per key-move, carrying parkedS, seconds since the skip's answeredAt) /
+    fired-parked-backstop (the memo held but the session sat parked past the dead-man stand — the
+    fire re-engages it; carries the final parkedS via its evidence row) /
+    compact-suggested (the idle+context watcher's suggestion went out; evT carries the token count
+    it fired on, 2026-08-30) /
     resolved-at-send / blocked-on-user-at-send — carrying the evidence snapshot's timestamp, so redundant fires are
     countable from the log alone. That accounting is what extended the freshness guard to the cap
     path (the user 2026-08-27, T120: the pre-T120 force-fired-at-cap rows measured the blind fire
@@ -5413,6 +5654,164 @@ def _closer_pending(sid, path, now, store):
     return not _closer_settled(store, lt.get("id"), len(lt.get("atoms") or []))
 
 
+# ── the compaction SUGGESTION (the user 2026-08-30, via the nightly optimizer) ──────────────────
+# The ~300k RECYCLE rule stays workers-only; every OTHER session gets a suggestion it decides on
+# itself: once its context crosses each threshold below AND it has been idle at least an hour, it
+# is told — in the person's voice, marker-free (the rename-ping precedent) — that a /compact at a
+# natural boundary would keep it snappy. Event-keyed end to end: the CROSSING arms it, a per-
+# threshold latch on the auto-nudge blob makes each fire once per episode, the idle gate reads the
+# settle event's age at fire time (_settle_event_key — the hook-ledger seam), and the latch re-arms
+# only on the session's own CONTEXT RESET (compact//clear/rewind), observed as the authoritative
+# token counter falling back below the latched threshold — a session that ignores the suggestion
+# is never re-asked (its counter never falls, the latch stands), one that acts hears nothing until
+# it has genuinely filled up again (the manager's amendment, 2026-08-30). Workers are excluded by
+# their roster tags (*_workers in the session-tag store), comment-thread forks by their registry
+# marker, and anything mid-turn by the progressing-state gate. Rides the auto-nudge tick's
+# alive-session walk — no new poll, no timer.
+COMPACT_SUGGEST_TOKENS = (400_000, 800_000)
+COMPACT_SUGGEST_IDLE_S = 3600
+def _compact_suggest_body(name):
+    """The suggestion's prose, named for ITS recipient (T212, the user 2026-09-01: the message said
+    "run /compact", a terminal affordance — an SDK session cannot type a slash command and burned
+    attempts finding the kernel-mediated form). One universal wording, not a per-backend branch:
+    only SDK sessions ever receive this message (a tmux CLI carries no token count, so the watcher
+    never fires for it — the /compact branch would be unreachable code), and `romp compact <name>`
+    is the form that works from an SDK session's own shell, queueing safely if a turn is open.
+    Naming the romp COMMAND is practical information, not machinery-naming — the session-prompt
+    housekeeping note already gives every session the name's meaning (the sanctioned precedent);
+    the injected-voice scan carries a matching, commented command-span allowance."""
+    return ("It's been quiet here for a while and this conversation has built up a lot of context. "
+            "When you next reach a natural stopping point, run `romp compact %s` in your shell to "
+            "compact it and keep things snappy; your call, nothing is waiting on it." % name)
+
+
+def _worker_tag_member(sid):
+    """True when any *_workers tag in the session-tag store holds this sid — the worker rosters ARE
+    session tags (the `romp tag` headless-edit workflow), and the recycle rule owns those sessions."""
+    try:
+        d = json.loads(_views_path().read_text())
+    except (OSError, ValueError):
+        return False
+    for t in (d.get("tags") or []):
+        if not str(t.get("name") or "").lower().endswith("workers"):
+            continue
+        for m in (t.get("members") or []):
+            ms = m.get("sid") if isinstance(m, dict) else str(m or "")
+            if ms == sid or (isinstance(ms, str) and ms.split(":", 1)[-1] == sid):
+                return True
+    return False
+
+
+def _compact_suggest_tick(sid, tm, now):
+    """One session's slice of the compaction-suggestion watcher (contract in the block comment
+    above). Returns True when the suggestion went out (the caller pushes once at tick end)."""
+    if not _compact_suggest_on():
+        return False                                   # T208: default-OFF per install — the regime
+    #                                                    runs only where this install's config says so
+    tokens = (tm or {}).get("ctxTokens")
+    if not isinstance(tokens, (int, float)) or tokens <= 0:
+        return False                                   # tmux CLIs / pre-plumbing sessions carry no
+    #                                                    count → never suggested (conservative)
+    tokens = int(tokens)
+    with _NUDGE_LOCK:                                  # blob read-modify-write only — the send happens
+        d = dict(_auto_nudge_data())                   # OUTSIDE the lock (never hold it across IO)
+        latched = [int(x) for x in (d.get("compactSuggested") or {}).get(sid, [])]
+        live = [t for t in latched if tokens >= t]     # the RE-ARM: a latch whose threshold the
+        #                                                counter has fallen back below was reset by
+        #                                                the session's own compact//clear — that
+        #                                                episode is over (the amendment's middle path)
+        _cfg = d.get("compactSuggestTokens")
+        thresholds = (tuple(sorted(int(x) for x in _cfg))
+                      if isinstance(_cfg, list) and _cfg
+                      and all(isinstance(x, (int, float)) and x > 0 for x in _cfg)
+                      else COMPACT_SUGGEST_TOKENS)    # "how to do it exactly" is config too (the
+        #                                               user 2026-09-01): optional per-install keys
+        #                                               beside the toggle, the shipped constants as
+        #                                               the defaults; junk shapes fall to defaults
+        _ci = d.get("compactSuggestIdleS")
+        idle_s = (int(_ci) if isinstance(_ci, (int, float)) and _ci > 0
+                  else COMPACT_SUGGEST_IDLE_S)
+        due = [t for t in thresholds if tokens >= t and t not in live]
+        if not due:
+            if live != latched:                        # nothing to fire, but persist the pruning so
+                cs = dict(d.get("compactSuggested") or {})   # a restart can't resurrect a spent latch
+                cs[sid] = live
+                d["compactSuggested"] = cs
+                _write_auto_nudge(d)
+            return False
+    # exclusions + the idle gate, all AT FIRE TIME (never latch a fire that never went out):
+    if _session_flag(sid, "hideFromFeed"):
+        return False                                   # muted — the user's explicit per-session
+    #                                                    opt-out that every sibling injector honors
+    #                                                    (the nudge gate, the interrupt-block tick;
+    #                                                    a routed review caught this one missing,
+    #                                                    2026-09-01)
+    if _worker_tag_member(sid):
+        return False                                   # the recycle rule owns workers
+    if _thread_reg(sid).get("threadOf"):
+        return False                                   # a comment-thread fork is not first-class
+    if (tm or {}).get("state", "") in _PROGRESSING_STATES:
+        return False                                   # mid-turn — not idle, and never interrupt
+    _st = _settle_event_key(sid)
+    if not _st or now - _st < idle_s:
+        return False                                   # not settled long enough — the crossing stays
+    #                                                    armed; a later tick re-checks the same gate
+    with _NUDGE_LOCK:                                  # CLAIM BEFORE SEND (the double-send race,
+        # 2026-09-01): the check above releases the lock before the fire-time gates, and this tick
+        # has three concurrent entry points (the pusher's periodic pass, setAutoNudge's and
+        # setCompactSuggest's WS re-ticks) — latching only after the send let two entries pass the
+        # same unlatched check and inject the suggestion twice into one session. The latch write
+        # IS the claim: a fresh read under the lock re-derives what is still due (a concurrent
+        # entry may have claimed it in the gap), the winner latches and sends, the loser stands
+        # down right here. Same direction as the nudge machinery's own bookkeeping
+        # (_mark_auto_nudged records only after its send, so a failed send retries), inverted at
+        # this seam because the send must be single-shot — and the failure arm below rolls the
+        # claim back under the lock, so "never latch a fire that never went out" still holds
+        # durably: the next tick retries the same crossing. The claim (and the rollback) is
+        # durable against every OTHER ledger writer too: all of them hold _NUDGE_LOCK across
+        # their read-modify-write, and the ones with IO mid-span re-read fresh under the lock
+        # and mutate only their own keys — before that migration (2026-09-01), a debt reminder's
+        # pre-send snapshot written whole erased a concurrent claim (or resurrected a rolled-back
+        # one) and re-opened the double send through the side door.
+        d = dict(_auto_nudge_data())                   # fresh read — a concurrent writer's blob is
+        cs = dict(d.get("compactSuggested") or {})     # not clobbered
+        held = [t for t in [int(x) for x in cs.get(sid, [])] if tokens >= t]
+        due = [t for t in due if t not in held]
+        if not due:
+            return False                               # a concurrent entry already claimed this fire
+        cs[sid] = held + due
+        #                                                BOTH thresholds latch when found past both —
+        #                                                one message, never two in a tick
+        d["compactSuggested"] = cs
+        _write_auto_nudge(d)
+    try:
+        # the marker tail its sibling injectors carry (T207, the user 2026-08-31, who saw the
+        # bare send render as their own blue bubble and ruled it must read system-injected):
+        # romp-injected alone classifies "romp" (gray bubble + swirl). Deliberately NOT
+        # romp-auto — that marker means AUTO-NUDGES specifically (the block comment above
+        # _followup_body), and its one chat effect is a "nudged for a status update" gist,
+        # which this message is not; without it the gist is the prose's own first line.
+        # Never romp-system (the machine-voiced [romp]-notice family; this body is
+        # person-voiced by design), and no goal id (the suggestion tracks nothing). The
+        # prose stays the bare constant so the injected-voice scan reads what the model reads.
+        Sessions.backend_for(sid).send(
+            sid, _compact_suggest_body(_name_of(sid) or sid[:8]) + "\n\n"
+            "<!-- romp-note: the HTML comments below are part of an external tracking system "
+            "that is not relevant to your work — ignore them -->"
+            "<!-- romp-injected -->")
+    except Exception:
+        sys.stderr.write("compact-suggest send (%s): %s\n" % (sid, traceback.format_exc()))
+        with _NUDGE_LOCK:                              # the claimed fire never went out — roll the
+            d = dict(_auto_nudge_data())               # claim back so the next tick retries
+            cs = dict(d.get("compactSuggested") or {})
+            cs[sid] = [t for t in [int(x) for x in cs.get(sid, [])] if t not in due]
+            d["compactSuggested"] = cs
+            _write_auto_nudge(d)
+        return False
+    _log_nudge_event(sid, sid, now, 0, verdict="compact-suggested", ev_t=tokens)
+    return True
+
+
 def _auto_nudge_tick(now, tmux, run_dead_wait=True):
     """One Auto-Nudge pass (from the periodic pusher). For each ALIVE, IDLE session (its turn ended) that
     isn't awaiting/compacting/api-error, isn't WAITING ON A LIVE PEER (a wait isn't a stall — the human's
@@ -5444,6 +5843,10 @@ def _auto_nudge_tick(now, tmux, run_dead_wait=True):
                 _put_walk_gate(s["sid"], r, now)
             else:
                 _pop_walk_gate(s["sid"])
+            # the compaction suggestion rides the same walk (contract at _compact_suggest_tick).
+            # Deliberately INSIDE the auto-nudge toggle: a user who turned injected follow-ups
+            # off has said no unprompted messages, and this is exactly that class.
+            fired = _compact_suggest_tick(s["sid"], tmux.get(s["sid"]), now) or fired
         except Exception:
             sys.stderr.write("auto-nudge (session %s): %s\n"
                              % (s.get("sid") or "?", traceback.format_exc()))
@@ -5466,7 +5869,10 @@ def _auto_nudge_tick(now, tmux, run_dead_wait=True):
     except Exception:
         sys.stderr.write("awaiting-wake outcomes: %s\n" % traceback.format_exc())
     if fired:
-        _push_all()
+        # ack-fast, not inline: this tick usually runs on the pusher thread, but the WS setAutoNudge
+        # op calls it directly (act-now on turn-on) — a fleet build there is the 2026-08-30 POST-wedge
+        # class, so the fired nudges ride the woken pusher's next cycle instead
+        _push_soon()
 
 
 # The awaiting WAKE (the user 2026-07-22, reworked 2026-08-11): a durable ⏳ stamp can, in the worst case,
@@ -6532,27 +6938,30 @@ def _nudge_deferred_ok(gid, reason, now, sid=None, ev_t=None):
     a seen counter or a screen (both retired; a frozen record can no longer hide a stale claim,
     because nothing freezes). `ev_t` rides WHY_TURN_IN_FLIGHT records: the newest diary evidence the
     hold is waiting to see END, which is exactly the event the sweep retires it on."""
-    d = _auto_nudge_data()
-    dd = dict(d.get("deferred") or {})
-    if not reason:
-        if gid in dd:                                    # the reviver ran → forget the deferral
-            dd.pop(gid, None)
+    with _NUDGE_LOCK:                                    # the ledger's one write discipline (2026-09-01):
+        # every read→write span holds the lock — the decisions between are pure dict ops, and an
+        # unlocked span here could erase whatever another writer landed in the gap
+        d = dict(_auto_nudge_data())
+        dd = dict(d.get("deferred") or {})
+        if not reason:
+            if gid in dd:                                # the reviver ran → forget the deferral
+                dd.pop(gid, None)
+                d["deferred"] = dd
+                _write_auto_nudge(d)
+            return True
+        rec = dd.get(gid)
+        first = _deferral_at(rec)
+        if first is None:
+            dd[gid] = {"at": int(now), "why": reason, "sid": sid,
+                       **({"evT": int(ev_t)} if ev_t else {})}
             d["deferred"] = dd
             _write_auto_nudge(d)
-        return True
-    rec = dd.get(gid)
-    first = _deferral_at(rec)
-    if first is None:
-        dd[gid] = {"at": int(now), "why": reason, "sid": sid,
-                   **({"evT": int(ev_t)} if ev_t else {})}
-        d["deferred"] = dd
-        _write_auto_nudge(d)
-        return False
-    if _deferral_why(rec) != reason:                     # the wait moved to a DIFFERENT reviver: keep the clock
-        dd[gid] = {"at": first, "why": reason, "sid": sid,
-                   **({"evT": int(ev_t)} if ev_t else {})}
-        d["deferred"] = dd
-        _write_auto_nudge(d)
+            return False
+        if _deferral_why(rec) != reason:                 # the wait moved to a DIFFERENT reviver: keep the clock
+            dd[gid] = {"at": first, "why": reason, "sid": sid,
+                       **({"evT": int(ev_t)} if ev_t else {})}
+            d["deferred"] = dd
+            _write_auto_nudge(d)
     # WEDGED-REVIVER BOUND ON THE PASS EVENT, not a clock (W2c, the user 2026-08-24): the named
     # reviver is wedged exactly when its OWNING TIER has completed a per-session pass over this fsid
     # SINCE the deferral was minted and the reason still stands — the pass ran and did not retire it.
@@ -6616,8 +7025,7 @@ def _deferral_sweep_tick(now):
     An unknown/future why stands (and presents) until the walk re-runs it — the honest default. The
     sweep only POPS; it never rewrites a why (one writer per duty: rewriting here raced the walk and
     could re-dress a durable hold as in-flight whenever any judge call happened to be running)."""
-    d = _auto_nudge_data()
-    dd = dict(d.get("deferred") or {})
+    dd = dict(_auto_nudge_data().get("deferred") or {})
     if not dd:
         return
     by_sid = {}
@@ -6625,7 +7033,7 @@ def _deferral_sweep_tick(now):
         sid = (rec.get("sid") if isinstance(rec, dict) else None) or str(gid).rsplit(":", 1)[0]
         by_sid.setdefault(sid, []).append((gid, rec))
     active = {r.get("fsid") for r in jd.active_runs()}
-    changed = False
+    drop = []
     for sid, recs in by_sid.items():
         try:
             store = jd.load_goals(sid)
@@ -6674,11 +7082,15 @@ def _deferral_sweep_tick(now):
                 except Exception:
                     pop = False
             if pop:
-                dd.pop(gid, None)
-                changed = True
-    if changed:
-        d["deferred"] = dd
-        _write_auto_nudge(d)
+                drop.append(gid)
+    if drop:
+        with _NUDGE_LOCK:                              # the sweep's evidence-gathering above is heavy
+            d = dict(_auto_nudge_data())               # IO held across a long span — so it writes the
+            dd = dict(d.get("deferred") or {})         # debt writers' way (2026-09-01): a fresh
+            for gid in drop:                           # re-read under the lock, popping only the gids
+                dd.pop(gid, None)                      # it decided, so a concurrent writer's keys
+            d["deferred"] = dd                         # (a compact-suggest claim, a fresh mint)
+            _write_auto_nudge(d)                       # survive the write
 
 
 def _last_assistant_text(path, cap=4000):
@@ -6939,6 +7351,9 @@ def _auto_nudge_session(s, now, tmux, nudged, waitfor, alive_ids=None):
     # user and says nothing about what a peer needs from it. Lifts the moment the last todo
     # clears: answer, dismiss, or withdraw, each a real event this store read sees live.
     _todo_standdown = bool(_open_user_todos(sid))
+    _pworld = {}                                     # the park gate's lazy world read (report + settle
+    #                                                  key), shared with the judge batch below so the
+    #                                                  tick's read count and sequencing don't change
     for gid in list(nodes):
         nd = nodes[gid]
         if nd.get("parentId") is not None or nd.get("cleared") or gid in cleared:
@@ -6962,11 +7377,52 @@ def _auto_nudge_session(s, now, tmux, nudged, waitfor, alive_ids=None):
             # same records, same response gates, same escalation, its own copy (see _wake_goal).
             fired = _wake_goal(sid, gid, _stamp, nudged, turns, store, now, lt, tmux) or fired
             continue
+        # PARK GATE (the user 2026-08-30, the parked-tick round): a goal whose record holds the full
+        # memo pair is PARKED — the ruling already said this exact world doesn't warrant a fire — so
+        # it must not be re-evaluated (or logged) at every pass: 98.5% of a day's nudge-events rows
+        # (8877 of 9010) were per-visit memo re-serves on parked goals, ~9k rows/day, the worst goal
+        # 2628 rows in 15h. Event-indexed instead: while BOTH keys still match the current world and
+        # the dead-man stand is unexpired, continue with no row and no machinery; the goal re-enters
+        # exactly on its own events — a key move lifts the park (one re-armed row, then the batch
+        # re-judges), dead-man expiry falls through to the batch's parked-backstop fire. One lazy
+        # world read per session-tick, SHARED with the judge batch below (reads and freshness-guard
+        # sequencing unchanged). An unreadable report read keeps the park — the memo's own semantics
+        # ("dies when the report MOVES"), never a blind re-arm. Sits BELOW the awaiting-stamp branch
+        # on purpose: a judge stamping a wait on a parked goal still takes the wake ladder (that
+        # verdict moves neither memo key), and ABOVE the reviver/deferral machinery, which exists to
+        # protect fires this goal isn't taking.
+        _prec = nudged.get(gid) or {}
+        if _prec.get("redundantEvT") and "redundantSettleT" in _prec and not _prec.get("failed"):
+            if "r" not in _pworld:
+                _pworld["r"] = _last_assistant_report(s["path"])
+                _pworld["s"] = _settle_event_key(sid)
+            _cur_ts, _cur_st = _pworld["r"][1], _pworld["s"]
+            _panch = max(_prec.get("answeredAt") or 0, _prec.get("at") or 0)
+            if not _cur_ts or (_prec["redundantEvT"] == _cur_ts
+                               and _prec["redundantSettleT"] == _cur_st):
+                if _panch and now - _panch <= AWAITING_DEADMAN_SECS:
+                    continue                         # PARKED: asleep until its own next event
+                #                                      (dead-man expired → fall through: the batch's
+                #                                       parked-backstop leg owns the fire)
+            elif (_cur_ts, _cur_st) != (_prec.get("rearmEvT"), _prec.get("rearmSettleT")):
+                # the park LIFTED — one row per state change. The stamp below is what makes it
+                # once: a downstream hold can defer the fire for many ticks with the memo keys
+                # still the old pair, and without the stamp this leg re-logged per visit (the
+                # adversarial pass's catch) — the very shape this round kills. A fire replaces
+                # the record (stamp drops); a re-memo re-parks it (this leg unreachable).
+                _log_nudge_event(sid, gid, now, _prec.get("count") or 0, verdict="re-armed",
+                                 ev_t=_cur_ts, parked_s=(now - _panch) if _panch else None)
+                nudged[gid] = dict(_prec, rearmEvT=_cur_ts, rearmSettleT=_cur_st)
+                _put_nudged(gid, nudged[gid])
         if _todo_standdown:
             continue                                 # the status nudge (and its failed-stamp surface, which
             #                                          would file a SECOND needs-you story beside the floored
             #                                          card) stands down while an open todo explains the idle;
-            #                                          the wake above and the debt reminder below flow past
+            #                                          the wake above and the debt reminder below flow past.
+            #                                          Sits BELOW the park gate on purpose: this is exactly the
+            #                                          "downstream hold" its re-armed stamp anticipates, so a
+            #                                          park lift during an open todo logs its one row and the
+            #                                          fire waits here.
         # LAST-RESORT GATE (the user 2026-07-22): every OTHER mechanism that could still move this card
         # off 'working' must be exhausted first. This is what the 2026-07-22 false interrupt needed: the
         # card's 'working' came from a STALE agent-to-do mirror, and the nudge fired before the sync that
@@ -7071,13 +7527,15 @@ def _auto_nudge_session(s, now, tmux, nudged, waitfor, alive_ids=None):
         # report as the ANSWER (answeredAt: the ladder measures its next patience window from it,
         # exactly as it would from a real reply) and skips the fire. Any failure fires as before —
         # the gate is an optimization, the ladder is the job.
-        recent, recent_ts = _last_assistant_report(s["path"])
+        recent, recent_ts = _pworld["r"] if "r" in _pworld else _last_assistant_report(s["path"])
         if recent:
             try:
                 _nodes = jd.load_goals(sid).get("nodes", {})
             except Exception:
                 _nodes = {}
-            settle_t = _settle_event_key(sid)      # the memo's second key half — one read per tick
+            settle_t = _pworld["s"] if "s" in _pworld else _settle_event_key(sid)
+            #                                      ^ the memo's second key half — the park gate's
+            #                                        read when it ran, one read per tick either way
 
             def _judge_batch(cands, report, report_ts, held_pass):
                 keep = []
@@ -8763,6 +9221,8 @@ def _comments_frame(sid, tmux=None):
                                                    cm.stops_for(_colormap())),
                         "effortColor": _effort_color((reg.get("effort") or "") if reg else "",
                                                      cm.stops_for(_colormap())),
+                        "modelTone": _model_tone((reg.get("liveModel") or reg.get("model") or "") if reg else ""),
+                        "effortTone": _effort_tone((reg.get("effort") or "") if reg else ""),
                         "msgs": msgs, "events": events})
     return {"type": "comments", "id": sid, "threads": threads}
 
@@ -8846,7 +9306,8 @@ def _comment_launch_prefs(model="", effort="", fast=""):
     return tuple(out)
 
 
-def _comment_create(parent_sid, anchor_uuid, exact, text, name="", model="", effort="", fast="", color="", now=None):
+def _comment_create(parent_sid, anchor_uuid, exact, text, name="", model="", effort="", fast="", color="",
+                    now=None, raw_opener=False, meta=None):
     """Anchor a new comment thread: fork the parent at the highlighted message (inclusive) as a
     threadOf fork — no names/ entry, so no judge seeding is needed until promotion — and send the
     opening message. Returns (error, tid): error is the warn-toast string (tid None), success is
@@ -8859,7 +9320,17 @@ def _comment_create(parent_sid, anchor_uuid, exact, text, name="", model="", eff
     `model`/`effort` (the user 2026-08-17): per-thread overrides picked in the same dialog — the
     thread runs on them, the parent is untouched (fork() writes them into the thread's reg only).
     `fast` ("on"/"off"/"" — the user 2026-08-29) rides the same way; empty falls through
-    _comment_launch_prefs to the kernel's default-comment settings, then to inheriting the parent."""
+    _comment_launch_prefs to the kernel's default-comment settings, then to inheriting the parent.
+
+    `anchor_uuid ""` = a TIP fork, no highlighted record: the restart-seam fallback
+    _comment_cut_target already produces (cut "" → the thread takes the whole conversation) made a
+    designed input for callers with no transcript anchor — the /fork-comment door (the user
+    2026-08-31, whose track-changes review comments dispatch onto parallel forks). cut_t is the
+    create moment, so the timeline square sits where the thread began. `raw_opener` sends `text`
+    VERBATIM as the opening message — the caller authored the whole prompt (the plugin's thread
+    instructions); the quote frame would bury it under a passage that doesn't exist. `meta`
+    ({thread, note} strings) rides the registry row for provenance — the popover shows the row's
+    exact/name as usual; nothing kernel-side consumes meta beyond storing it."""
     be = Sessions.backend_for(parent_sid)
     if not (hasattr(be, "fork") and _sdk_ready()):
         return "threads need the SDK backend; this session runs on tmux, so there is nothing to fork.", None
@@ -8869,9 +9340,12 @@ def _comment_create(parent_sid, anchor_uuid, exact, text, name="", model="", eff
     sess = next((s for s in _sessions(now) if s["sid"] == parent_sid), None)
     if not sess:
         return "no transcript for this session yet, so nothing to comment on.", None
-    cut, cut_t, err = _comment_cut_target(sess["path"], parent_sid, str(anchor_uuid))
-    if err:
-        return err, None
+    if str(anchor_uuid or ""):
+        cut, cut_t, err = _comment_cut_target(sess["path"], parent_sid, str(anchor_uuid))
+        if err:
+            return err, None
+    else:
+        cut, cut_t = "", int(now)   # tip fork by request (see docstring) — no record to cut at
     nm = str(name or "").strip()
     if nm and not NAME_RE.match(nm):
         return "thread names use letters, digits, . _ - only.", None
@@ -8879,10 +9353,12 @@ def _comment_create(parent_sid, anchor_uuid, exact, text, name="", model="", eff
     if col and not re.fullmatch(r"#[0-9a-fA-F]{6}", col):
         col = ""                                   # not a palette hex → let the backend hash one
     tsid = str(uuid.uuid4())
-    row = {"tid": tsid, "sid": tsid, "anchorUuid": str(anchor_uuid), "cutUuid": cut,
+    row = {"tid": tsid, "sid": tsid, "anchorUuid": str(anchor_uuid or ""), "cutUuid": cut,
            "anchorT": cut_t,   # the commented message's own time — the timeline square's x
            "exact": str(exact)[:2000], "status": "open",
            "createdT": int(now), "lastSeenT": int(now)}
+    if isinstance(meta, dict) and (meta.get("thread") or meta.get("note")):
+        row["meta"] = {k: str(meta.get(k) or "")[:500] for k in ("thread", "note") if meta.get(k)}
     with _comments_lock:
         data = _load_comments(parent_sid)
         if not nm:
@@ -8897,7 +9373,7 @@ def _comment_create(parent_sid, anchor_uuid, exact, text, name="", model="", eff
         be.fork(nm, parent_sid, cut, bg=col, fg=(pal.fg_for(col) if col else ""), sid=tsid, thread_of=parent_sid,
                 model=model, effort=effort, fast=fast)
         be.connect(tsid)
-        be.send(tsid, _comment_first_message(exact, text))
+        be.send(tsid, text if raw_opener else _comment_first_message(exact, text))
     except Exception as e:
         with _comments_lock:                       # loud + lossless: no half-born thread row
             data = _load_comments(parent_sid)
@@ -9156,6 +9632,96 @@ def _comment_promote(parent_sid, tid, new_name, now=None, client=None):
     return None
 
 
+def _comment_fork_owner(tid):
+    """(parent_sid, row) for the comment thread with this tid, scanning every parent's registry —
+    /fork-promote arrives with only the forkId, no parent (the caller got it from /fork-comment and
+    kept nothing else). The store is one small json per commented-on session; None when no parent
+    holds it (including an empty/absent comments dir)."""
+    try:
+        files = sorted((jd.STATE / "comments").glob("*.json"))
+    except OSError:
+        return None
+    for f in files:
+        for th in _load_comments(f.stem).get("threads") or []:
+            if th.get("tid") == tid:
+                return f.stem, th
+    return None
+
+
+def _fork_comment_request(body):
+    """POST /fork-comment's brain, factored for tests (the _compact_request precedent): create a
+    transcript-comment-STYLE fork of the target session — the threadOf idiom, anchored at the TIP
+    (no highlighted record exists on this door) — and send `text` VERBATIM as the opening message
+    (the caller authored the whole prompt; the user 2026-08-31, whose track-changes review comments
+    dispatch onto parallel forks instead of interleaving through the target's main lane). Response
+    {"ok", "forkId"} or {"ok": False, "error"} (+_status when not 200). model/effort/fast ride
+    empty, so _comment_launch_prefs applies the kernel's default-comment picks exactly as a
+    dialog-created thread. Remote targets forward like /send; the far kernel runs this same brain
+    and its forkId passes through."""
+    if not isinstance(body, dict):
+        return {"ok": False, "error": "bad json", "_status": 400}
+    who = str(body.get("id") or body.get("name") or "")
+    text = body.get("text")
+    if not who or not isinstance(text, str) or not text.strip():
+        return {"ok": False, "error": "id (or name) and text required", "_status": 400}
+    meta = body.get("meta") if isinstance(body.get("meta"), dict) else {}
+    sid = _sid_of(who)
+    # the /send postal-isolation gate, same wrong-door reasoning: a fork of the target carries the
+    # target's context, so postal-shaped content routed here is agent mail dodging the mailbox
+    if _postal_shaped(text) and _postal_isolated(sid):
+        return {"ok": False, "error":
+                "isolation: the target session's mailbox is OFF — agent mail is refused on every "
+                "route; the refusal is final (the user can toggle its mailbox back on)"}
+    r = _host_for_sid(sid)
+    if r is not None:                                   # remote session → forward over its -L tunnel
+        res = _remote_forward(r, "/fork-comment", {"id": sid, "text": text, "meta": meta})
+        if isinstance(res, dict) and res.get("forkId"):
+            return {"ok": True, "forkId": str(res["forkId"])}
+        err = res.get("error") if isinstance(res, dict) else None
+        return {"ok": False, "error": str(err) if err else
+                "the remote kernel for this session (%s) isn't answering — thread not created"
+                % r.get("host", "?")}
+    if not _name_of(sid) and sid not in Sessions.live():
+        return {"ok": False, "error": "no session named '%s' here" % who, "_status": 404}
+    # the popover title: the note under review beats the generic default (glanceable), and the
+    # exact slot carries the same string — the header's "about" line for a thread with no passage
+    gist = str(meta.get("note") or meta.get("thread") or "").strip()
+    err, tid = _comment_create(sid, "", gist or "a review thread", text,
+                               raw_opener=True, meta=meta)
+    if err:
+        return {"ok": False, "error": err}
+    return {"ok": True, "forkId": tid}
+
+
+def _fork_promote_request(body):
+    """POST /fork-promote's brain: materialize a /fork-comment thread as a first-class session —
+    the existing break-out path (_comment_promote), exposed over HTTP. The promoted name is the
+    thread's own registry name (the <parent>-comment-N default or whatever it was renamed to).
+    REFUSALS RIDE NON-2xx (_status 400/404/409): the shipped caller treats any 2xx JSON as
+    success (the plugin's promote call), so an ok:false 200 would read as promoted. An
+    already-promoted thread is idempotent success — the ask is already true."""
+    if not isinstance(body, dict) or not str(body.get("forkId") or "").strip():
+        return {"ok": False, "error": "forkId required", "_status": 400}
+    fid = str(body["forkId"]).strip()
+    hit = _comment_fork_owner(fid)
+    if hit is None:
+        with _remotes_lock:
+            rows = list(_remotes.values())
+        for r in rows:                                  # the fork may live on an attached remote —
+            res = _remote_forward(r, "/fork-promote", {"forkId": fid})   # its kernel owns the registry
+            if isinstance(res, dict) and res.get("ok"):
+                return {"ok": True, "name": str(res.get("name") or "")}
+        return {"ok": False, "error": "no comment thread with that forkId", "_status": 404}
+    parent_sid, row = hit
+    if (row.get("status") or "") == "promoted":
+        return {"ok": True, "name": str(row.get("promotedName") or "")}
+    nm = str(row.get("name") or "").strip() or ("thread-" + fid[:8])
+    err = _comment_promote(parent_sid, fid, nm)
+    if err:
+        return {"ok": False, "error": err, "_status": 409}
+    return {"ok": True, "name": nm}
+
+
 # --- optional SDK (non-tmux) session backend (docs/sdk-backend.md) --------------------
 # A second SessionBackend that drives Claude via the Agent SDK instead of a tmux TUI,
 # selectable per session. Built lazily so the tmux-only path never imports the SDK and the
@@ -9343,6 +9909,36 @@ def _auth_avail():
         default = "login"
     return {"login": bool(_claude_account()), "key": key,
             "acct": _claude_account_label(), "default": default}
+
+
+def _cap_switch_offer(sid, aerr):
+    """The explicit billing-switch OFFER for a login-billed session dead on the account's usage cap —
+    or None. The user's BINDING ruling (2026-08-30, via the nightly optimizer): a session must NEVER
+    silently switch billing in either direction — so romp only OFFERS, and only the user's explicit
+    pick (the card button → the same setAuth route a gear billing pick takes) switches; the reverse
+    is equally manual. Minted only when every leg is true and readable: the error is the plain
+    retryable class (spend/model/auth/tooLong/refusal each carry their own remedy), a login-account
+    window actually sits at its cap with a readable reset ahead (usage.json — the authority the retry
+    pause reads; fable excluded, model-scoped), THIS session bills the login (the CLI's authLive
+    first, the picked intent second — the Billing tooltip's sources), and the machine holds a key to
+    offer. Self-expiring: resets_at passing ends the mint on the next build — the deciding event —
+    and the post-reset auto-retry is untouched either way (this offer sits beside it, never instead)."""
+    if not aerr or aerr.get("tooLong") or aerr.get("spendLimit") or aerr.get("modelLimit") \
+            or aerr.get("authErr") or aerr.get("refusal"):
+        return None
+    tm = (_tmux_sessions() or {}).get(str(sid)) or {}
+    if str(tm.get("authLive") or tm.get("auth") or "") != "login" or not _auth_key_present():
+        return None
+    try:
+        u = json.loads((jd.STATE / "usage.json").read_text())
+    except Exception:
+        return None
+    now = time.time()
+    for k in ("five_hour", "seven_day"):
+        w = u.get(k) or {}
+        if isinstance(w, dict) and (w.get("pct") or 0) >= 100 and (w.get("resets_at") or 0) > now:
+            return {"resetsAt": int(w["resets_at"]), "window": k}
+    return None
 
 
 def _judge_limit_view():
@@ -9771,6 +10367,23 @@ def _ack_card_move(ids, ok):
                               "buildId": _feed_build_id[0]})
 
 
+def _ask_lost(sid, client):
+    """A user's ANSWER found no waiting question (T214, verified live 2026-09-01): the ask died with
+    a kernel restart before the click arrived — the page queues clicks across the reconnect and
+    flushes them at the new kernel. The delivery outcome is honored: the caller flips NOTHING (a
+    swallowed answer must never look like progress — the cards-move rule), and the asker HEARS it
+    (fail loudly, never silence). The boot reconcile separately asks the resumed session to raise
+    its killed question again (ASK_DIED_NOTICE + the pendingAsk reg flag), so a fresh ask is already
+    on its way; the toast says so."""
+    sys.stderr.write("askLost: %s — an answer arrived with no live ask to receive it\n" % sid)
+    try:
+        client["send"](json.dumps({"type": "askLost", "id": str(sid),
+            "text": "That answer didn't reach the session — its question was lost with a restart. "
+                    "The session has been asked to raise it again; answer when it reappears."}))
+    except Exception:
+        pass
+
+
 def _picker_mid_series(sid):
     """A multi-question AskUserQuestion answered mid-series (the user 2026-07-21): one tool call carries N
     questions, and the SDK loop holds the session in the `picker` state across ALL of them (sdk_backend
@@ -9937,10 +10550,7 @@ def _drive(msg, client):
         # Mid-turn (or behind an existing queue) the click PARKS as a queued /compact chip and fires when
         # the turn ends (the user 2026-07-02, who saw the icon blink with nothing happening while working — now
         # the queued chip IS the acknowledgement, and later messages chain behind it in press order).
-        if _ops_gate(sid):
-            _park_op(sid, ("compact",))
-        else:
-            be.send(sid, "/compact"); _mark_compacting(sid)   # idle → /compact now + the instant 'compacting' cue
+        _compact_or_park(be, sid)                        # parked → queued chip; quiet → now + the instant cue
     elif t == "sendCommand" and msg.get("cmd"):
         cmd = str(msg["cmd"]).strip()                     # the timeline lane menu sends "/model X" / "/effort X"
         # /model, /effort, /fast → the setters (mid-compaction → parked); `floating` is the lane
@@ -10017,8 +10627,10 @@ def _drive(msg, client):
         # in `picker` across the whole set, so predicting Working would only bounce the card out and back —
         # check BEFORE answering (current_ask still holds this sub-question), suppress the flip if more remain.
         _mid = _picker_mid_series(sid)
-        be.on_ask(sid, "answer", msg["target"])
-        if not _mid: _predict_working("answer", sid=sid)
+        if be.on_ask(sid, "answer", msg["target"]):   # the DELIVERY outcome gates the flip (T214)
+            if not _mid: _predict_working("answer", sid=sid)
+        else:
+            _ask_lost(sid, client)
         _mark_views_dirty()
     elif t == "navAsk" and msg.get("target") is not None:
         be.on_ask(sid, "focus", msg["target"])            # cursor only, no select → ↑/↓ steps the preview
@@ -10026,20 +10638,26 @@ def _drive(msg, client):
         be.on_ask(sid, "toggle", msg["target"])
     elif t == "submitAsk":
         _mid = _picker_mid_series(sid)                     # mid-series multi-question submit → hold the card (see answerAsk)
-        be.on_ask(sid, "submit")
-        if not _mid: _predict_working("answer", sid=sid)
+        if be.on_ask(sid, "submit"):
+            if not _mid: _predict_working("answer", sid=sid)
+        else:
+            _ask_lost(sid, client)
         _mark_views_dirty()
     elif t == "addCustomAsk" and msg.get("text"):
         _mid = _picker_mid_series(sid)
-        be.on_ask(sid, "custom", str(msg["text"]))
-        if not _mid: _predict_working("answer", sid=sid)
+        if be.on_ask(sid, "custom", str(msg["text"])):
+            if not _mid: _predict_working("answer", sid=sid)
+        else:
+            _ask_lost(sid, client)
         _mark_views_dirty()
     elif t == "cancelAsk":
         be.on_ask(sid, "cancel"); _mark_views_dirty()     # a cancel answers nothing — no Working prediction
     elif t == "askText" and msg.get("text"):
         _mid = _picker_mid_series(sid)
-        be.on_ask(sid, "text", str(msg["text"]))
-        if not _mid: _predict_working("answer", sid=sid)
+        if be.on_ask(sid, "text", str(msg["text"])):
+            if not _mid: _predict_working("answer", sid=sid)
+        else:
+            _ask_lost(sid, client)
         _mark_views_dirty()
     elif t == "cancelQueued" and msg.get("park") is not None:
         # ✕ on a PARKED op (compaction/model queue — romp-owned, any backend). The result frame is
@@ -10058,6 +10676,22 @@ def _drive(msg, client):
         err = _cancel_backend_queued(be, sid, int(msg["idx"]), str(msg.get("md") or ""))
         client["send"](json.dumps({"type": "cancelResult", "ok": not err, "id": sid,
                                    "md": str(msg.get("md") or ""), "text": err or ""}))
+        _push_soon()
+    elif t == "cancelQueued" and msg.get("md"):
+        # ✕ at the OPTIMISTIC stage (the user 2026-08-30, who pressed send mid-compaction and sat in
+        # an unlabeled, uncancellable beat): the client knows only the body — no park/idx has round-
+        # tripped yet — so locate the send wherever it landed. The ws is ordered, so the send op was
+        # processed before this cancel: the FIFO's md-relocate finds a parked one, a backend-queued
+        # one is found by body, and neither means it already forwarded into the CLI — the one honest
+        # refusal, loud (the same cancelResult contract as the park/idx arms).
+        md = str(msg["md"])
+        err = _cancel_parked(sid, -1, md)
+        if err and hasattr(be, "unqueue"):
+            err2 = _cancel_backend_queued(be, sid, -1, md)
+            if err2 is None:
+                err = None
+        client["send"](json.dumps({"type": "cancelResult", "ok": not err, "id": sid,
+                                   "md": md, "text": err or ""}))
         _push_soon()
     elif t == "dismissEcho" and hasattr(be, "dismiss_echo"):
         # ✕ on a never-delivered bubble (a send whose CLI died holding it — the backend's dropped-echo
@@ -10483,7 +11117,7 @@ def _open_or_revive(sid, live=False, client=None):
                               # model / permission-mode publish from the init message right away AND the model
                               # is changeable BEFORE the first message — not only after one (the user 2026-06-24:
                               # opening an SDK session showed no model/effort until a message was sent).
-        _push_all()
+        _push_soon()   # ack-fast (the 2026-08-30 wedge: inline fleet builds piled 53 POST handlers; the pusher coalesces)
     focus = {"type": "focus", "id": sid}
     if live:
         focus["live"] = True
@@ -10531,7 +11165,7 @@ def _revive_session(sid, client=None):
     _tab_tmux_carry["dead"].discard(str(sid))   # a PROVEN revival clears the kill tombstone — the
     #                                             collapse carry may list this sid again (see _tab_carry_forget)
     _kept_open.discard(sid)       # it's live again → no longer a read-only kept tab
-    _push_all()                   # surface it promptly (the 4s pusher would catch it anyway)
+    _push_soon()                  # surface it promptly — the woken pusher builds it off this thread
     if client is not None:        # the asker's revive loader clears on this focus; other windows stay put
         _reveal_chat_for(client, {"type": "focus", "id": sid})
 
@@ -11169,6 +11803,8 @@ class Sessions:
                                 "connected": bool(st.get("connected")),   # SDK handshake up → the opening-chip override stands down (fresh sessions have no transcript yet)
                                 "spawning": bool(st.get("spawning")),   # spawn/handshake in flight NOW — the ONLY window the opening chip covers (a dormant created session must read ready, the user 2026-08-13)
                                 "context": ctx if isinstance(ctx, (int, float)) else None, "compactPct": None,
+                                "ctxTokens": st.get("ctxTokens"),   # raw totalTokens (SDK only) — the
+                                #   compaction-suggestion thresholds key on true tokens (2026-08-30)
                                 "fast": st.get("fast", ""),   # fast-mode state from the CLI's init ("on"/"off"/"cooldown"; "" = unknown → no badge)
                                 "fastReason": st.get("fastReason", ""),   # init's disabled_reason — non-empty hides the chat toggle
                                 "auth": st.get("auth", ""),   # which account this session bills ('login'|'key') → gear badge
@@ -11759,7 +12395,11 @@ def _bus_quarantine_act(body):
     delivery and the held-message store. On approve the bus re-runs the peer's deliver(), so an approved
     message lands as normal postal mail. Returns (ok, error)."""
     try:
-        conn = http.client.HTTPConnection("127.0.0.1", BUS_PORT, timeout=6)
+        # 20s: the client half of the approve path's budget pair (2026-09-01). The bus-side approve
+        # pays one checked kernel fetch (≤6s) plus the recipient's deliver push (≤12s), so a 6s cap
+        # here gave up mid-approve — the delivery landed while the kernel reported the bus
+        # unreachable. The halves move together (the 830 budget-pair discipline).
+        conn = http.client.HTTPConnection("127.0.0.1", BUS_PORT, timeout=20)
         conn.request("POST", "/quarantine/act", json.dumps(body),
                      {"Content-Type": "application/json", "X-Romp-Token": TOKEN})
         resp = conn.getresponse()
@@ -13265,10 +13905,15 @@ WATCH_RUN_TIMEOUT = 45        # one predicate run's own bound
 WATCH_MAX = 200               # registration cap — a runaway loop's backstop, far above real use
 _watches = []                 # [{id, cmd, every, timeoutS, sid, note, at} + runtime {_next, _ran}]
 _watch_lock = threading.Lock()
-_WATCH_KEYS = ("id", "cmd", "every", "timeoutS", "sid", "note", "at")
+_WATCH_KEYS = ("id", "cmd", "every", "timeoutS", "sid", "note", "at", "soft")
 
 
 def _watches_load():
+    try:
+        for f in (jd.STATE / "watch-scratch").glob("*.sh"):
+            f.unlink()          # a crash mid-run strands its predicate script; boot sweeps the scratch
+    except Exception:
+        pass
     try:
         rows = json.loads(WATCH_FILE.read_text())
     except Exception:
@@ -13316,7 +13961,7 @@ def add_watch(cmd, sid, every=None, timeout_s=None, note="", now=None):
         row = {"id": wid, "cmd": cmd, "every": every, "timeoutS": timeout_s,
                "sid": str(sid), "note": str(note or "")[:200],
                "at": int(now if now is not None else time.time()),
-               "_next": 0, "_ran": False}
+               "soft": False, "_next": 0, "_ran": False}
         _watches.append(row)
     _watches_save()
     return {k: row[k] for k in _WATCH_KEYS}, None
@@ -13337,6 +13982,33 @@ def list_watches():
         return [{k: r.get(k) for k in _WATCH_KEYS} for r in _watches]
 
 
+def _watch_awaiting(sid):
+    """Armed kernel-owned watches REGISTERED BY this session — generic `romp watch --cmd` rows plus
+    `romp watch-pr` rows — as awaited CONTENT: {"kind","why","since","tasks"} or None. The user's rule
+    (2026-08-30, relayed from a session whose cluster-job watch showed only a chip tooltip): ANY awaited
+    thing — jobs, watches, pending externals — shows in the chat's green box, even mid-turn. A watch row
+    is event-true at both ends (armed at registration, removed when the predicate fires, times out, or
+    is cancelled), and it's kernel-owned, so this source survives restarts like the watches themselves.
+    `tasks` lists each watch in the registrant's own words (the --note, else an elided predicate), so a
+    plural wait can enumerate them in the box's fold."""
+    sid = str(sid)
+    with _watch_lock:
+        rows = [dict(r) for r in _watches if str(r.get("sid")) == sid]
+    prs = [dict(r) for r in _pr_watches if str(r.get("sid")) == sid]   # tick-thread idiom: copy, no lock
+    descs = []
+    for r in rows:
+        note = (r.get("note") or "").strip()
+        cmd = str(r.get("cmd") or "")
+        descs.append(note or "a kernel watch: %s" % (cmd if len(cmd) <= 80 else cmd[:77] + "…"))
+    for r in prs:
+        descs.append("PR #%s (%s) to land" % (r.get("pr"), r.get("repo")))
+    if not descs:
+        return None
+    since = min([r.get("at") for r in rows + prs if r.get("at")] or [None])
+    why = ("waiting on " + descs[0]) if len(descs) == 1 else         ("waiting on %d armed watches — %s, …" % (len(descs), descs[0]))
+    return {"kind": "job", "why": why, "since": since, "tasks": descs}
+
+
 def _watch_notice(kind, row, detail=""):
     """The one mail a generic watch sends — the [romp] mechanics-notice family (ABOUT romp's own
     watch service, like the pr-watch and restart notices). PURE for the voice test. The session's
@@ -13351,7 +14023,13 @@ def _watch_notice(kind, row, detail=""):
     elif kind == "timeout":
         body = ("[romp] romp gave up watching after %s: %s never held (the check kept saying not-yet). "
                 "This watch is done — re-register with `romp watch` if you still need it."
-                % (_fmt_span_s(int(row.get("timeoutS") or 0)), what))
+                % (_fmt_span_s(int(row.get("hardS") or row.get("timeoutS") or 0)), what))
+    elif kind == "soft":
+        body = ("[romp] Still watching: %s has not held after %s (your requested bound). A short bound "
+                "no longer ends a watch silently — romp keeps checking through %s total, and will mail "
+                "the moment it holds. If it's moot, cancel with `romp watch --cancel %s`."
+                % (what, _fmt_span_s(int(row.get("timeoutS") or 0)),
+                   _fmt_span_s(WATCH_DEFAULT_TIMEOUT), row.get("id") or "?"))
     else:   # execfail — the first run could not even execute
         body = ("[romp] The watch command could not run at all (%s): %s. This watch was dropped — "
                 "fix the command and re-register with `romp watch`."
@@ -13368,11 +14046,35 @@ def _fmt_span_s(s):
     return "%ds" % s
 
 
+def _watch_reg_hint(cmd):
+    """The one self-match the script-file runner cannot fix, answered at registration: the kernel's
+    own wrapper no longer carries the predicate text (see _watch_run), but a wrapper the predicate
+    ITSELF spawns — an ssh far-side shell, a parent bash — still echoes the pattern in its own argv,
+    and that construction is the caller's. pgrep/pkill -f registrations get told loudly, up front."""
+    if re.search(r"\bp(?:grep|kill)\b[^|;&]*\s-\w*f", str(cmd or "")):
+        return ("pgrep/pkill -f match whole command lines: a wrapper your check spawns (an ssh "
+                "remote shell, a parent bash) carries the pattern in its own argv and self-matches. "
+                "Prefer pgrep -x, a pidfile, or an output-file check.")
+    return None
+
+
 def _watch_run(cmd):
     """One predicate run → (exitcode, output tail). Bounded; a timeout reads as not-yet (the
-    predicate gets another try — its own bound is the watch timeout)."""
+    predicate gets another try — its own bound is the watch timeout). The predicate text lives in a
+    SCRIPT FILE and the runner's argv carries only its path (the user 2026-08-29, structural
+    self-match-proofing): under `sh -c <text>` the wrapper's own command line CONTAINED the
+    predicate, so a `pgrep -f <pattern>` watch matched its own wrapper — the pattern rode the argv,
+    e.g. the watched job's ssh line — and reported still-running until the timeout flushed it, 35
+    minutes after the job actually finished. With the text on disk, no process the runner owns ever
+    carries the pattern; what the predicate itself spawns (a remote ssh shell echoing it) is the
+    caller's construction, hinted loudly at registration."""
+    sp = None
     try:
-        r = subprocess.run(["/bin/sh", "-c", cmd], capture_output=True, text=True,
+        sd = jd.STATE / "watch-scratch"
+        sd.mkdir(parents=True, exist_ok=True)
+        sp = sd / ("w-%s.sh" % os.urandom(4).hex())
+        sp.write_text(cmd + "\n")
+        r = subprocess.run(["/bin/sh", str(sp)], capture_output=True, text=True,
                            timeout=WATCH_RUN_TIMEOUT)
         out = ((r.stdout or "") + (("\n" + r.stderr) if r.stderr else "")).strip()
         return r.returncode, out[-1000:]
@@ -13380,34 +14082,72 @@ def _watch_run(cmd):
         return None, "the check ran past %ds" % WATCH_RUN_TIMEOUT
     except Exception as e:
         return 127, str(e)[:200]
+    finally:
+        try:
+            if sp is not None:
+                sp.unlink()
+        except OSError:
+            pass
 
 
 def _watch_tick(now):
-    """One supervisor-pass sweep (rate-gated per row) — the pr-watch pump's twin."""
+    """One supervisor-pass sweep (rate-gated per row) — the pr-watch pump's twin.
+
+    TIMEOUTS split soft/hard (the user 2026-08-29, after two overnight cluster watches died at
+    1h caller-habit bounds while their conditions held later): a caller bound SHORTER than the
+    kernel default no longer ends the watch — it sends one still-watching check-in (naming the
+    cancel id) and the watch re-arms through the DEFAULT cap, where the giving-up mail ends it as
+    ever (the standing never-a-silent-dead-loop rule). A caller bound at or past the default is an
+    explicit choice and ends there, as before. And every retiring NOTICE must actually DELIVER
+    before its row retires: delivery is best-effort transport, and retiring on a failed send lost
+    a met condition silently — the row now stays for the next cadence and retries, bounded an hour
+    past the hard cap (stderr, never a zombie)."""
     with _watch_lock:
         rows = list(_watches)
     done = []
+    changed = False
     for r in rows:
         if now < r.get("_next", 0):
             continue
-        if now - int(r.get("at") or 0) >= int(r.get("timeoutS") or WATCH_DEFAULT_TIMEOUT):
-            _pr_watch_deliver(r["sid"], _watch_notice("timeout", r))
+        every = int(r.get("every") or WATCH_DEFAULT_EVERY)
+        born = int(r.get("at") or 0)
+        t_o = int(r.get("timeoutS") or WATCH_DEFAULT_TIMEOUT)
+        hard = max(t_o, WATCH_DEFAULT_TIMEOUT)
+        r["hardS"] = hard                                # the timeout notice names the REAL span
+        if now - born >= hard + 3600:
+            sys.stderr.write("romp-kernel: watch %s dropped — its notices would not deliver\n"
+                             % r.get("id"))
             done.append(r)
+            continue
+        if now - born >= hard:
+            if _pr_watch_deliver(r["sid"], _watch_notice("timeout", r)):
+                done.append(r)
+            else:
+                r["_next"] = now + every                 # the notice failed — retry, never lose it
             continue
         code, out = _watch_run(r["cmd"])
         first = not r.get("_ran")
         r["_ran"] = True
         if code == 0:
-            _pr_watch_deliver(r["sid"], _watch_notice("met", r, out))
-            done.append(r)
+            if _pr_watch_deliver(r["sid"], _watch_notice("met", r, out)):
+                done.append(r)
+            else:
+                r["_next"] = now + every                 # met but unheard — the row retries the mail
             continue
         if first and code in (126, 127):
             # a command that cannot exec at all must not wait silently for its timeout
-            _pr_watch_deliver(r["sid"], _watch_notice("execfail", r, out or ("exit %s" % code)))
-            done.append(r)
+            if _pr_watch_deliver(r["sid"], _watch_notice("execfail", r, out or ("exit %s" % code))):
+                done.append(r)
+            else:
+                r["_next"] = now + every
             continue
-        r["_next"] = now + int(r.get("every") or WATCH_DEFAULT_EVERY)
-    if done:
+        if t_o < hard and now - born >= t_o and not r.get("soft"):
+            # the caller's short bound: one still-watching check-in, then the watch keeps going
+            if _pr_watch_deliver(r["sid"], _watch_notice("soft", r)):
+                r["soft"] = True                         # once, persisted — a restart must not repeat it
+                changed = True
+        r["_next"] = now + every
+    if done or changed:
         with _watch_lock:
             for r in done:
                 if r in _watches:
@@ -14603,17 +15343,46 @@ def _session_rows():
     responds. NB: 0-arg, distinct from the picker's _session_list(now, tmux) — they once collided (the user
     2026-06-22); keep the names distinct."""
     notes = _working_notes()                                # {sid: working-note} (tmux @romp-working; P3 adds SDK)
+    # ONE transcript-path sweep for the WHOLE listing: _path_of per row re-ran discover()'s
+    # fingerprint validity check (3 stats × every names entry + a stat per discovered transcript)
+    # for every live session — ~30 rows × ~280 syscalls a request, measured at ~71% of this route's
+    # handler time on a loaded kernel (py-spy 2026-08-31, the /sessions p90-3.3s complaint). Same
+    # hoist idiom as the pusher cycle's _tmux_sessions() snapshot (2026-08-10) and the tm= param.
+    try:
+        paths = {s["sid"]: s["path"] for s in _sessions(time.time())}
+    except Exception:
+        # the hoist runs OUTSIDE the per-row guard below, so it needs its own containment (review
+        # find, 2026-08-31): a discover raise (a names-dir permission fault or remove race) must
+        # degrade to PATHLESS rows — an empty map is exactly _path_of's miss, so every row still
+        # serves complete with compacting=False — never a 500 for the whole route.
+        sys.stderr.write("session-list path sweep failed (rows serve pathless): %s\n"
+                         % traceback.format_exc())
+        paths = {}
     out = []
     for sid, meta in Sessions.live().items():
-        bg, fg = _identity_of(sid)
-        out.append({"id": sid, "name": _name_of(sid) or sid[:8], "state": meta.get("state", ""),
-                    "dir": _cwd_of(sid), "bg": bg, "fg": fg,
-                    # lastSid: the session's CURRENT transcript fsid (SDK registry join, mtime-memoized).
-                    # CLAUDE_CODE_SESSION_ID inside a forked session carries THIS id, not the stable sid,
-                    # so the postal bus resolves self-identity through it (the user 2026-07-27: a
-                    # post-/clear session mailed as "unknown" and read an empty mailbox).
-                    "lastSid": jd._sdk_last_sid(sid) or sid,
-                    "working": notes.get(sid, ""), "backend": meta.get("backend", "")})
+        try:
+            bg, fg = _identity_of(sid)
+            out.append({"id": sid, "name": _name_of(sid) or sid[:8], "state": meta.get("state", ""),
+                        "dir": _cwd_of(sid), "bg": bg, "fg": fg,
+                        # lastSid: the session's CURRENT transcript fsid (SDK registry join, mtime-memoized).
+                        # CLAUDE_CODE_SESSION_ID inside a forked session carries THIS id, not the stable sid,
+                        # so the postal bus resolves self-identity through it (the user 2026-07-27: a
+                        # post-/clear session mailed as "unknown" and read an empty mailbox).
+                        "lastSid": jd._sdk_last_sid(sid) or sid,
+                        # compacting: the corroborated signal the chat chip uses (_compacting_now, cached
+                        # parse), exposed so `romp compact --wait` and scripted recycling can watch a
+                        # compaction start and clear through the kernel's own read, never a scrape.
+                        "compacting": bool(_compacting_now(sid, tm=meta, path=paths.get(sid))),
+                        "working": notes.get(sid, ""), "backend": meta.get("backend", "")})
+        except Exception:
+            # one row's helper blowing up must not hide the session — or the WHOLE listing (this
+            # loop is what GET /sessions serves, and absence reads as death downstream: the postal
+            # bus refuses sends on it). Same per-row contract as the SDK merge's guard (2026-08-31).
+            sys.stderr.write("session row for %s failed (kept minimal): %s\n"
+                             % (sid, traceback.format_exc()))
+            out.append({"id": sid, "name": sid[:8], "state": meta.get("state", ""), "dir": "",
+                        "bg": "", "fg": "", "lastSid": sid, "compacting": False,
+                        "working": "", "backend": meta.get("backend", "")})
     return out
 
 
@@ -15383,7 +16152,7 @@ def _cycle_mode(name, sid, target):
         # a stale `cur`. We caused the change, so we know the new mode is `target` — write it. (A switch made
         # directly in the terminal TUI still can't be observed; that's a CC-exposure gap, not ours.) (2026-06-18.)
         _TMUX.record_permission_mode(name, target)
-        _push_all()                                                 # re-render so the chat mode label flips now
+        _push_soon()                                                # re-render so the chat mode label flips now
     threading.Thread(target=go, daemon=True).start()
 
 
@@ -16236,6 +17005,14 @@ def _session_awaiting(sid, path, idle, stamp=False):
             return {"kind": kind, "since": since,
                     "why": "waiting on %d background tasks%s"
                            % (len(pending), (" — " + d0 + ", …") if d0 else "")}
+    # Source 0.9 — ARMED KERNEL WATCHES this session registered (`romp watch --cmd` / `romp watch-pr`):
+    # kernel-owned and restart-proof like the rows themselves, event-true at both ends (armed at
+    # registration, cleared when the predicate fires or the watch cancels/times out). The user's rule
+    # (2026-08-30): ANY awaited thing shows — an idle session holding only a watch used to read plain
+    # ready, its wait visible nowhere but `romp watch --list`.
+    w = _watch_awaiting(sid)
+    if w:
+        return w
     ov = _states_awaiting_overlay(sid)
     if ov is not None and ov.get("awaiting"):         # a producer wrote a LIVE awaiting:true → trust its why
         ovk = ov.get("kind")
@@ -17315,12 +18092,28 @@ def _postal_intent(kind, body=""):
     return m.group(1) if m else ""
 
 
+_postal_index_memo = [None]   # ((mtime_ns, size), idx) — exact-change key of messages.jsonl
+
+
 def _postal_index():
     """messages.jsonl 'sent' rows keyed by msg id → {id, from, fromId, toId, body, kind, t, park}. The
-    clean body lives here, not in the delivered text. Mirrors postal-spec.ts loadPostalIndex."""
+    clean body lives here, not in the delivered text. Mirrors postal-spec.ts loadPostalIndex.
+    Memoized on the log's (mtime_ns, size): the log is append-only and every send appends, so the key
+    moves on exactly the events that change the answer — build_session hydrates every postal card
+    through this and re-parsed the whole log per push otherwise (~7% of the pusher's wall time,
+    py-spy 2026-08-31). Consumers only read the index (_hydrate_postal), so sharing one dict is safe."""
+    p = jd.STATE / "timeline" / "messages.jsonl"
+    try:
+        st = os.stat(p)
+        key = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return {}                                       # no log yet → nothing to memoize
+    hit = _postal_index_memo[0]
+    if hit is not None and hit[0] == key:
+        return hit[1]
     idx = {}
     try:
-        lines = (jd.STATE / "timeline" / "messages.jsonl").read_text(errors="replace").splitlines()
+        lines = p.read_text(errors="replace").splitlines()
     except OSError:
         return idx
     for ln in lines:
@@ -17333,12 +18126,21 @@ def _postal_index():
                             "fromHost": o.get("from_host", ""),
                             "toId": o.get("to_id", ""), "body": o.get("body", ""), "kind": o.get("kind", ""),
                             "t": o["t"] if isinstance(o.get("t"), (int, float)) else 0, "park": bool(o.get("park"))}
+    _postal_index_memo[0] = (key, idx)
     return idx
 
 
 def _name_color_by_name(name):
     """Identity color {bg,fg} for a session by NAME (outgoing postal carries the recipient name, not a
-    sid). Scans the names registry. None if not found."""
+    sid). Reads the cycle's names scope when one is set — build_session hydrates every outgoing postal
+    card through here, and the full-registry rescans were ~16% of the pusher's wall time (py-spy
+    2026-08-31) — else scans the registry. None if not found."""
+    snap = getattr(_live_scope, "names", None)
+    if snap is not None:
+        for parts in snap.values():
+            if parts and parts[0] == name and len(parts) > 2 and parts[2].startswith("#"):
+                return {"bg": parts[2], "fg": "#ffffff"}
+        return None
     try:
         for f in NAMES.iterdir():
             parts = f.read_text().rstrip("\n").split("\t")
@@ -18482,7 +19284,7 @@ def _warm_fleet_bg(now):
                     break
                 _parse(s["path"], s["sid"], now)          # warm the kernel parse cache
             _built_feed[1] = None                         # force the next build to use the now-warm parses
-            _push_all()
+            _push_soon()   # ack-fast (the 2026-08-30 wedge: inline fleet builds piled 53 POST handlers; the pusher coalesces)
         except Exception:
             sys.stderr.write("warm: %s\n" % traceback.format_exc())
         finally:
@@ -18861,13 +19663,27 @@ def _save_pending_ops():
 _pending_ops = _load_pending_ops()   # sid -> [("send", text, echo) | ("model", v) | ("effort", v) | ("fast", v) | ("env", {…}) | ("compact",), …] in park order
 
 
-def _compacting_now(sid):
+_PATH_UNRESOLVED = object()   # _compacting_now's "no path was passed" sentinel — None is a real value (no transcript)
+
+
+def _compacting_now(sid, tm=None, path=_PATH_UNRESOLVED):
     """Is this session compacting RIGHT NOW — the same corroborated signal the chip uses (_compacting:
     live/optimistic state, disproved by resumed work or a compact_boundary, 180s optimistic cap), read
-    from the CACHED parse only so it's cheap enough for the WS handler and the producer tick."""
+    from the CACHED parse only so it's cheap enough for the WS handler and the producer tick. `tm` lets
+    a caller already holding the session's live() meta pass it in — _session_rows exposes this per row,
+    and refetching would pay one full Sessions.live() merge PER ROW on a polled route (review find,
+    2026-08-30). `path` is the same hoist for the transcript path: the default _path_of resolves
+    through a full _sessions() sweep — discover()'s fingerprint re-stats every names entry ×3 plus a
+    stat per discovered transcript, ON EVERY CALL, cache hit included — and paying that per row was
+    ~71% of GET /sessions' handler time on a loaded kernel (py-spy 2026-08-31; p90 3.3s, bimodal:
+    the syscalls are ~50ms quiet but each GIL re-acquire can lose a 5ms slice to the pusher/judge
+    threads). A caller holding a listing-wide sid→path map passes the row's path; None means "no
+    transcript", exactly _path_of's miss."""
     sid = str(sid)
-    tm = _tmux_sessions().get(sid)
-    path = _path_of(sid)
+    if tm is None:
+        tm = _tmux_sessions().get(sid)
+    if path is _PATH_UNRESOLVED:
+        path = _path_of(sid)
     session = (_parse_cached(path) if path else None) or {"turns": []}
     return _compacting(sid, (tm or {}).get("state", ""), session, int(time.time()), (tm or {}).get("since"))
 
@@ -19181,6 +19997,52 @@ def _send_or_park(be, sid, text, echo=None, user_todo=None):
     if echo:
         _optimistic_echo(sid, text, author=echo)
     return got
+
+
+def _compact_or_park(be, sid):
+    """The ONE compaction entry — the chat's compact button (WS "compact") and POST /compact both land
+    here, so there is never a second compaction path. Not quiet (open turn / compacting / queue ahead /
+    account hold) → park as a ("compact",) op, which fires ALONE at turn end; quiet → /compact NOW with
+    the instant 'compacting' cue. Returns True when parked (queued), False when fired now — the route
+    tells its caller which ("compacting now" vs "queued")."""
+    if _ops_gate(sid):
+        _park_op(sid, ("compact",))
+        return True
+    be.send(sid, "/compact")
+    _mark_compacting(sid)
+    return False
+
+
+def _compact_request(who):
+    """POST /compact's brain, factored for tests: resolve (name or sid, the same _sid_of the /send route
+    uses), forward a remote session over its tunnel, refuse a dead one honestly (a dead session has no
+    context to compact — reviving is the caller's move), else hand to _compact_or_park. First-class
+    headless /compact (the user 2026-08-30, via the dashboard team): the sanctioned alternative to
+    end+new under the worker-recycling rule — a session cannot /compact ITSELF mid-turn, so recycling
+    needs an external hand. Strictly better than `romp send <s> /compact`, whose idle path misses the
+    instant compacting cue."""
+    who = str(who or "")
+    if not who:
+        return {"ok": False, "error": "id or name required", "_status": 400}
+    sid = _sid_of(who)
+    r = _host_for_sid(sid)
+    if r is not None:                                   # remote session → forward over its -L tunnel
+        res = _remote_forward(r, "/compact", {"id": sid})
+        if res is None:                                 # the far kernel didn't answer — say so, never
+            return {"ok": False, "error":               # pretend it compacted
+                    "the remote kernel for this session (%s) isn't answering — nothing was compacted"
+                    % r.get("host", "?")}
+        if not isinstance(res, dict):
+            res = {"ok": True}
+        # the caller's --wait polls the LOCAL /sessions, which never lists remote rows — name the
+        # host so the CLI can refuse the wait honestly instead of reporting the session dead
+        res.setdefault("remote", str(r.get("host") or "?"))
+        return res
+    if sid not in Sessions.live():
+        return {"ok": False, "error":
+                "no live session named '%s' — a dead session has no context to compact; revive it first"
+                % who}
+    return {"ok": True, "queued": _compact_or_park(Sessions.backend_for(sid), sid)}
 
 
 def _set_model_or_park(be, sid, value, floating=False):
@@ -20750,6 +21612,14 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
     # (_session_awaiting returns None while open_now). Session-scoped chat-view chip → the durable stamp too,
     # so the composer's awaiting chip survives a kernel restart like the feed card.
     _aw = _session_awaiting(sid, sess["path"], not open_now, stamp=True)
+    # Armed kernel watches stay visible even MID-TURN (the user 2026-08-30, whose cluster-job watch
+    # showed only a chip tooltip while the box at the chat bottom stayed dark): _session_awaiting
+    # answers None while the turn is open BY DESIGN — the chip must keep reading "working" (the shared
+    # state formula is untouched) — but the awaited CONTENT still rides the payload, and the box keys
+    # on the fields' presence, never on the state. Idle sessions get watches through
+    # _session_awaiting's own source 0.9, which also stamps the awaitingBg chip.
+    if not _aw and open_now:
+        _aw = _watch_awaiting(sid)
     awaiting_why = _aw["why"] if _aw else None
     awaiting_kind = _aw["kind"] if _aw else None
     # API error → the session is BLOCKED until retried: a bottom card (renderApiError, a RED dot) AND the chip
@@ -20986,7 +21856,8 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
                   # WHO a peer-kind wait is on — [{name, host, sid, color}], the same identities the feed
                   # box wears, so the chat chip + awaiting box name the actual session (2026-08-26)
                   "awaitingPeers": ((_aw or {}).get("peers") or None),
-                  "awaitingTasks": (_awaiting_task_descs(sid, sess["path"]) if awaiting_why else []),
+                  "awaitingTasks": (((_awaiting_task_descs(sid, sess["path"]) or
+                                      (_aw or {}).get("tasks") or [])) if awaiting_why else []),
                   # …and the same tasks' launch ids, so the #bg-tasks box outlines exactly the awaited
                   # rows in the chip's await-green (the user 2026-08-19)
                   "awaitingTaskIds": (_awaiting_task_ids(sid, sess["path"]) if awaiting_why else []),
@@ -21045,8 +21916,13 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
                   # 2026-07-02): the statusline meta buttons just apply these (mirrors ctxColor). None = default.
                   "modelColor": _model_color(tm["model"], cm.stops_for(_colormap())),
                   "effortColor": _effort_color(tm["effort"], cm.stops_for(_colormap())),
-                  # context% on the GLOBAL colormap (the user 2026-06-26): computed server-side so the chat
-                  # battery + tab tooltip just apply it (mirrors the usage bar + timeline lanes). bright = full.
+                  # the yatharth-theme tones, shipped beside the classic colors (client picks by theme)
+                  "modelTone": _model_tone(tm["model"]),
+                  "effortTone": _effort_tone(tm["effort"]),
+                  "ctxTone": (list(cm.context_rgb(tm["context"]))
+                              if tm["context"] is not None else None),
+                  # context% on the GLOBAL colormap — the CLASSIC palette, byte-identical to main
+                  # (the tone variant rides in ctxTone above)
                   "ctxColor": (list(cm.ramp(tm["context"] / 100.0, cm.stops_for(_colormap())))
                                if tm["context"] is not None else None)}
     elif tmux or _has_tmux():                          # tmux usable but this session isn't running → closed
@@ -22572,6 +23448,7 @@ def build_feed(now, tmux=None):
         # the truth. One formula, one truth: awaiting wins; the floor applies only to a session truly dead
         # in the water.
         aerr = _api_error(s["path"]) if (ps and not who_working and not sess_awaiting_why) else None   # cache-only: fills in after the warm
+        _cap_off = _cap_switch_offer(fsid, aerr) if aerr else None   # the billing-switch OFFER (never a silent switch, 2026-08-30)
         api_top = None
         if aerr:
             f = store.get("lastNode")
@@ -23132,6 +24009,10 @@ def build_feed(now, tmux=None):
                 "nudged": ({"count": int(nrec.get("count", 0)), "times": _nudge_times().get(nid, [])[-8:]}
                            if nrec.get("count") else None),   # auto-nudge HISTORY (fires + when) → the stalled chip's evidence, on the chip tooltip + modal (the user 2026-07-02)
                 "blocked": ({"state": "apiError",
+                             # the OFFER (2026-08-30): login-billed + capped window + a key on hand →
+                             # the card proposes switching THIS session's billing; the pick is the
+                             # user's alone, both directions (see _cap_switch_offer)
+                             **({"capOffer": _cap_off} if _cap_off else {}),
                              "status": aerr.get("status"),
                              "text": aerr.get("text"), "tooLong": bool(aerr.get("tooLong")),
                              "spendLimit": bool(aerr.get("spendLimit")),
@@ -23651,13 +24532,13 @@ def _usage():
         # 2026-08-13). An empty snapshot falls through instead; every read below tolerates absence.
         o = {}
 
-    stops = cm.stops_for(_colormap())                 # the GLOBAL colormap (the user 2026-06-26) colors the used bar
     def seg(s):
         if isinstance(s, dict) and isinstance(s.get("pct"), (int, float)):
             ra = s.get("resets_at")
             pct = max(0, min(100, round(s["pct"])))
             return {"pct": pct, "resetsAt": ra if isinstance(ra, (int, float)) else None,
-                    "color": list(cm.ramp(pct / 100.0, stops))}   # used-% on the selected colormap
+                    "color": list(cm.ramp(pct / 100.0, cm.stops_for(_colormap()))),   # CLASSIC colormap fill
+                    "tone": list(cm.context_rgb(pct))}   # the yatharth-theme tone (client picks by theme)
         return None
     five, seven, fable = seg(o.get("five_hour")), seg(o.get("seven_day")), seg(o.get("fable"))
     # THE LOGIN THAT PRODUCED THESE WINDOWS MUST STILL BE SIGNED IN (the user 2026-08-04, who logged
@@ -25290,9 +26171,13 @@ def build_timeline(now, tmux=None, with_bars=True, live_only=False):
             # disabled_reason means /fast would refuse) — the lane spends it on a single asterisk after
             # the model name (the user 2026-08-08, who wanted the compact form here)
             "fast": ("" if tm.get("fastReason") else tm.get("fast", "")) if tm else "",
+            "modelTone": _model_tone(tm["model"] if tm else ""),
+            "effortTone": _effort_tone(tm["effort"] if tm else ""),
+            "ctxTone": (list(cm.context_rgb(tm["context"] or 0))
+                        if tm and tm["context"] is not None else None),
             "context": (tm["context"] if tm else None),
             "ctxColor": (list(cm.ramp((tm["context"] or 0) / 100.0, ctx_stops))
-                         if tm and tm["context"] is not None else None),   # context% on the GLOBAL colormap (bright = full)
+                         if tm and tm["context"] is not None else None),   # the CLASSIC colormap fill (tone in ctxTone)
             "subagents": ((tm.get("subagents") if tm else None) or []),   # live Task subagents (SDK) → lane pill
             "awaiting": _state_intervals(sid, _NEEDS_INPUT_STATES, now),
             "compacting": _state_intervals(sid, "compacting", now),
@@ -25936,6 +26821,8 @@ _EFFORT_RANK = dict(_ramp_ranks(EFFORT_CHOICES, ascending=True))   # low 0.0 …
 
 
 def _model_color(model, stops):
+    # the CLASSIC palette: the recency-colormap sample, exactly as it has always been — the
+    # default theme's colors are the owner's call and must not move (PR #763 review, 2026-08-30).
     m = (model or "").lower()
     for word, v in _MODEL_RANK:
         if word in m:
@@ -25946,6 +26833,26 @@ def _model_color(model, stops):
 def _effort_color(effort, stops):
     v = _EFFORT_RANK.get((effort or "").strip().lower())
     return list(cm.ramp(v, stops)) if v is not None else None
+
+
+# The TONE variants ship ALONGSIDE the classic colors (modelTone/effortTone/ctxTone beside
+# modelColor/effortColor/ctxColor): the single-hue ramps (orange by capability, violet by effort,
+# teal context) belong to the yatharth themes, and the THEME lives client-side in localStorage —
+# the kernel cannot know a page's theme (one kernel serves browser + VS Code + Obsidian at once),
+# so it ships both palettes and the client picks (PR #763 review item 1, the shape the owner
+# offered). An older client simply ignores the extra fields; an older kernel ships no tones and
+# the client falls back to the classic colors.
+def _model_tone(model):
+    m = (model or "").lower()
+    for word, v in _MODEL_RANK:
+        if word in m:
+            return list(cm.tone_rgb("model", v))
+    return None
+
+
+def _effort_tone(effort):
+    v = _EFFORT_RANK.get((effort or "").strip().lower())
+    return list(cm.tone_rgb("effort", v)) if v is not None else None
 
 
 def _set_colormap(name):
@@ -26068,6 +26975,13 @@ _JUDGE_SETTING_FIELDS = (("judgeModel", _set_judge_model), ("indexModel", _set_i
                          ("commentModel", _set_comment_model), ("commentEffort", _set_comment_effort),
                          ("commentFast", _set_comment_fast))
 
+# Upstream's per-field PICK-STAMP mechanism (mtime + a body "stamps" dict, their 2026-08-30
+# distill-stomp fix) is deliberately NOT adopted here: this fork already orders every setting by
+# its GESTURE stamp (`gt`, minted at the user's gesture, journaled per field in the `.gt` sidecar,
+# decided in the setter under one lock — see _setting_stale and tests/test_setting_gesture_order.py),
+# which covers the same stomp plus the queued-gesture and settingStale-reply cases. Two recency
+# clocks (gesture ms vs file mtime) deciding the same write would fight; the gt clock wins.
+
 
 def _apply_judge_settings(body):
     """Apply any of the judge-tier fields in `body` through the validated setters (garbage
@@ -26101,7 +27015,7 @@ def _apply_judge_settings(body):
         except Exception:
             sys.stderr.write("rearm-on-model-change: %s\n" % traceback.format_exc())
         _producer_wake.set()
-        _push_all()
+        _push_soon()   # ack-fast (the 2026-08-30 wedge: inline fleet builds piled 53 POST handlers; the pusher coalesces)
     return {"ok": True, "judgeModel": jd._triage_model(), "indexModel": jd._index_model(),
             "judgeEffort": jd._triage_effort(), "indexEffort": jd._index_effort(),
             "distillModel": jd._state_str("distill-model", "triage"),
@@ -26141,6 +27055,8 @@ def _setting_kept_value(name):
     the stand-down path, never on the apply path). Booleans stay booleans; the gear words them."""
     if name == "auto-nudge":
         return bool(_auto_nudge_data().get("enabled"))
+    if name == "compact-suggest":
+        return _compact_suggest_on()
     if name == "file-editing":
         return _file_editing_on()
     if name == "update-mode":
@@ -28158,9 +29074,15 @@ def _pusher_cycle():
     #                                       however deep it hides (_bg_live_norm, _compacting_now,
     #                                       build_feed's per-session gates) — see _live_scope
     try:
+        _live_scope.names = _names_snapshot()   # …and the cycle's NAMES snapshot, same idiom: the name/
+        #                                       cwd/color helpers otherwise re-read the registry per path
+        #                                       token and per postal card (~38% of pusher wall, py-spy
+        #                                       2026-08-31). INSIDE the try: a raise here must still hit
+        #                                       the finally, or the liveness scope above leaks set
         _pusher_cycle_jobs(now, tmux, any_client)
     finally:
         _live_scope.snapshot = None
+        _live_scope.names = None
 
 
 def _pusher_cycle_jobs(now, tmux, any_client):
@@ -28251,6 +29173,20 @@ def _pusher():
 
 
 # ───────────────────────── HTTP / page serving ─────────────────────────
+# The theme reader for kernel-served pages that load NO webview bundle (the landing shell and the
+# /timeline pane): applies the two theme body classes before anything paints, re-applies on both
+# settings signals, and (when the page carries one) keeps the meta-theme OS chrome color honest.
+# Mirrors ui/webview/theme.ts + settings.ts loadSettings' migration — theme.test.ts greps them in step.
+_THEME_READER = (
+    "<script>(function(){function ap(){var t='classic';"
+    "try{var s=JSON.parse(localStorage.getItem('romp:settings')||'{}');"
+    "t=(s.theme==='yatharth'||s.theme==='yatharth-light')?s.theme:(s.theme==='classic'?'classic':(s.chatTabTheme==='yatharth'?'yatharth':'classic'));}catch(e){}"
+    "document.body.classList.toggle('chat-theme-yatharth',t!=='classic');"
+    "document.body.classList.toggle('theme-light',t==='yatharth-light');"
+    "var m=document.getElementById('meta-theme');if(m)m.setAttribute('content',t==='yatharth-light'?'#F1EAE2':'#1e1e1e');}"
+    "ap();window.addEventListener('storage',function(e){if(e.key==='romp:settings')ap();});"
+    "window.addEventListener('romp:settings',ap);})()</script>")
+
 THEME_CSS = """@font-face{font-family:'Inter';src:url(/media/InterVariable.woff2) format('woff2-variations');font-weight:100 900;font-style:normal;font-display:swap}@font-face{font-family:'Inter';src:url(/media/InterVariable-Italic.woff2) format('woff2-variations');font-weight:100 900;font-style:italic;font-display:swap}:root{--vscode-font-family:'Inter',system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
 --vscode-editor-font-family:ui-monospace,"SF Mono",Menlo,Consolas,"DejaVu Sans Mono",monospace;--vscode-chat-font-family:var(--vscode-font-family);
 --vscode-chat-font-size:13px;--vscode-foreground:#cccccc;--vscode-descriptionForeground:#9aa3ad;
@@ -28593,7 +29529,9 @@ _LOADER_CSS = (
     ".rl-dots i{width:7px;height:7px;border-radius:50%;background:#9cd2ff;animation:rl-bnc 1.1s ease-in-out infinite}"
     ".rl-dots i:nth-child(2){animation-delay:.16s}.rl-dots i:nth-child(3){animation-delay:.32s}"
     "@keyframes rl-bnc{0%,75%,100%{opacity:.25;transform:translateY(0)}38%{opacity:1;transform:translateY(-5px)}}"
-    "@keyframes rl-spin{to{transform:rotate(-360deg)}}")
+    "@keyframes rl-spin{to{transform:rotate(-360deg)}}"
+    # light theme (body.theme-light): the pulsing dots wear the clay accent instead of the blue
+    "body.theme-light .rl-dots i{background:#C2410C}")
 
 
 def _loader_inner():
@@ -28641,7 +29579,9 @@ def _pane_spin(cid, ignore_id=""):
     chat (the regression: tab names pulsed, no loader). Counting children whose id != ignore_id fixes it."""
     return ("<style>#pane-spin{position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;"
             "background:var(--vscode-editor-background,#1e1e1e);transition:opacity .3s ease}"
-            "#pane-spin.gone{opacity:0;pointer-events:none}" + _LOADER_CSS + "</style>"
+            "#pane-spin.gone{opacity:0;pointer-events:none}"
+            # light theme: the loader backdrop goes warm-light with the page
+            "body.theme-light #pane-spin{background:#F1EAE2}" + _LOADER_CSS + "</style>"
             "<div id=pane-spin>" + _loader_inner() + "</div>"
             "<script>(function(){var o=document.getElementById('pane-spin'),c=document.getElementById('" + cid + "'),IGN='" + ignore_id + "';"
             "if(!o)return;var fail=0;"
@@ -28788,17 +29728,17 @@ def _timeline_page():
     # its first child — which is the .romp-tl-wrap on TimelinePanel construction, BEFORE any bars — so it
     # left an empty bar gap. The view now owns its own bars-area loader (draw()'s _drawBarsLoader, gated on
     # _barsLoaded) so the spinner stays until the deferred {type:"bars"} payload actually renders.
-    return ("<!DOCTYPE html><html lang=en><head><meta charset=UTF-8>"
+    return (("<!DOCTYPE html><html lang=en><head><meta charset=UTF-8>"
             "<meta name=viewport content='width=device-width,initial-scale=1'>"
             "<link rel=icon type=image/svg+xml href=/media/romp-swirl-glyph.svg>"
-            "<title>Romp · timeline</title><style>%s\n%s</style></head><body><div id=host></div>"
+            "<title>Romp · timeline</title><style>%s\n%s</style></head><body>" + _THEME_READER + "<div id=host></div>"
             "<script>%s</script>"                               # the shared WS shim (connect/queue/watchdog)
             "<script src=/dist/federation.js?v=%d></script>"    # multi-kernel manager: after the shim, before the boot
             "<script>%s</script>"
             "<script>var module={exports:{}};(function(module,exports){\n%s\n})(module,module.exports);"
             "var TimelinePanel=module.exports.TimelinePanel;"
             "window.__rompConnectTimeline(new TimelinePanel(document.getElementById('host')));"
-            "</script></body></html>" % (THEME_CSS, tl_css, _shim("timeline", v), v, _TIMELINE_BOOT, view_js))
+            "</script></body></html>") % (THEME_CSS, tl_css, _shim("timeline", v), v, _TIMELINE_BOOT, view_js))
 
 
 def _chat_body():
@@ -29241,7 +30181,9 @@ WINS.forEach(function(w){var seg=u[w[0]];if(!seg)return;
 // confident 0% beside a live account's real bars). The last-known number renders in the hover,
 // labelled as such; the rail's aggregate never counts an unknown as a value.
 var rolled=!!(seg.resetsAt&&nowS>seg.resetsAt),pct=Math.max(0,Math.min(100,seg.pct||0));
-var col=(seg.color&&seg.color.length===3)?('rgb('+seg.color.join(',')+')'):'#54B204';   // selected colormap (server-computed)
+var nc=document.body.classList.contains('chat-theme-yatharth');   // dual palette (PR #763): the yatharth themes take seg.tone, classic keeps seg.color verbatim
+var csrc=(nc&&seg.tone&&seg.tone.length===3)?seg.tone:seg.color;
+var col=(csrc&&csrc.length===3)?('rgb('+csrc.join(',')+')'):(nc?(pct>=88?'#c0392b':(pct>=70?'#d7a23a':'#5196B8')):'#54B204');   // classic fallback = main's flat green; yatharth = the unified pair (ctx-color.ts)
 var tp=(!rolled&&seg.resetsAt&&w[1])?Math.max(0,Math.min(100,Math.round((nowS-(seg.resetsAt-w[1]))/w[1]*100))):null;
 det[w[0]]={name:w[2],pct:pct,col:col,tp:tp,unk:rolled,ago:(rolled?fmtAgo(seg.resetsAt):null),reset:(!rolled&&seg.resetsAt)?fmtR(seg.resetsAt):null};});}
 // ONE aggregated set of bars for every account at once (the user 2026-08-08: never repeat the windows
@@ -30446,7 +31388,12 @@ _STALE_CSS = (
     # which is what cramped the old one-row layout — and off-centers this one
     "@media (max-width:640px){#rstale{flex-wrap:wrap;gap:10px 12px;width:92vw;box-sizing:border-box}"
     "#rstale .rs-msg{flex:1 1 100%}"
-    "#rstale button{flex:1 1 auto}}")
+    "#rstale button{flex:1 1 auto}}"
+    # light theme (body.theme-light): white card, hairline border, warm dark text
+    "body.theme-light #rstale{background:#FFFFFF;border-color:rgba(0,0,0,0.12);color:#1F1E1D;"
+    "box-shadow:0 8px 28px rgba(31,26,20,0.18)}"
+    "body.theme-light #rstale .rs-dismiss{color:#5D574E;border-color:rgba(0,0,0,0.18)}"
+    "body.theme-light #rstale .rs-dismiss:hover{color:#1F1E1D}")
 _STALE_HTML = (
     "<div id=rstale role=alert><span class=rs-msg>A newer romp build is available.</span>"
     "<button class=rs-reload id=rstale-reload>Reload</button>"
@@ -30566,7 +31513,12 @@ _UPD_CSS = (
     "#rupd .rup-go{background:#54B204;color:#0c1a00;font-weight:600;border-color:#3f8a00}"
     "#rupd .rup-go:hover:not(:disabled){background:#62c80a}"
     "#rupd .rup-dismiss{background:none;color:#9aa0a6;border-color:#4a4d51}"
-    "#rupd .rup-dismiss:hover{color:#e6e6e6}")
+    "#rupd .rup-dismiss:hover{color:#e6e6e6}"
+    # light theme (body.theme-light): white card, hairline border, warm dark text
+    "body.theme-light #rupd{background:#FFFFFF;border-color:rgba(0,0,0,0.12);color:#1F1E1D;"
+    "box-shadow:0 8px 28px rgba(31,26,20,0.18)}"
+    "body.theme-light #rupd .rup-dismiss{color:#5D574E;border-color:rgba(0,0,0,0.18)}"
+    "body.theme-light #rupd .rup-dismiss:hover{color:#1F1E1D}")
 _UPD_HTML = (
     "<div id=rupd role=alert><span class=rup-msg></span>"
     "<button class=rup-go id=rupd-go>Update</button>"
@@ -30592,8 +31544,8 @@ _UPD_JS = (
     "show('romp is updating \\u2014 the dashboard reloads when it restarts\\u2026');poll();return;}"
     "if(boot&&bootNow&&boot!==bootNow)return;"
     "if(waiting||!tag||tag===dismissedTag)return;curTag=tag;go.hidden=false;go.disabled=false;dm.hidden=false;"
-    "if(drift==='pull')show('new romp commits are on main ('+tag+') \\u2014 Update pulls them and restarts every kernel.');"
-    "else if(drift==='restart')show('romp '+tag+' is ready on disk \\u2014 Update restarts every kernel onto it.');"
+    "if(drift==='pull')show('new romp commits are on main ('+tag+') \\u2014 Update pulls them and restarts romp.');"
+    "else if(drift==='restart')show('romp '+tag+' is ready on disk \\u2014 Update restarts romp onto it.');"
     "else show('romp '+tag+' is available'+(cur?' \\u2014 you are on '+cur:'')+'.');}"
     "window.__rompUpdateOffer=offer;"   # the shell WS relays the kernel's boot-check push here
     # the kernel restarted under a SHOWING offer → the offer's evidence predates the new life: retire
@@ -30620,7 +31572,10 @@ _UPD_JS = (
     "if(window.__rompNotify)window.__rompNotify('sync','the update this prompt offered already ran \\u2014 nothing left to do');return;}"
     "go.disabled=false;dm.hidden=false;"
     "show('Could not start the update: '+em);});};"
-    "dm.onclick=function(){dismissedTag=curTag;box.classList.remove('show');};"
+    "dm.onclick=function(){dismissedTag=curTag;box.classList.remove('show');"
+    # persist the Not-now (the user 2026-08-31): page loads and kernel restarts stop re-offering
+    "try{fetch('/update-dismiss',{method:'POST',headers:{'Content-Type':'application/json'},"
+    "body:JSON.stringify({tag:curTag})}).catch(function(){});}catch(e){}};"
     "fetch('/update-check',{cache:'no-store'}).then(function(r){return r.json();}).then(function(d){"
     "bootNow=(d&&d.boot)||'';"
     "if(d&&d.state==='running'){waiting=true;go.hidden=true;dm.hidden=true;"
@@ -30661,7 +31616,12 @@ _RDRIFT_CSS = (
     "#rdrift .rd-upd{background:var(--accent,#9cd2ff);color:var(--accent-fg,#0c1a2e);font-weight:600}"
     "#rdrift .rd-upd:disabled{opacity:0.6;cursor:default}"
     "#rdrift .rd-dismiss{background:none;color:#9aa0a6;border-color:#4a4d51}"
-    "#rdrift .rd-dismiss:hover{color:#e6e6e6}")
+    "#rdrift .rd-dismiss:hover{color:#e6e6e6}"
+    # light theme (body.theme-light): white card, hairline border, warm dark text
+    "body.theme-light #rdrift{background:#FFFFFF;border-color:rgba(0,0,0,0.12);color:#1F1E1D;"
+    "box-shadow:0 8px 28px rgba(31,26,20,0.18)}"
+    "body.theme-light #rdrift .rd-dismiss{color:#5D574E;border-color:rgba(0,0,0,0.18)}"
+    "body.theme-light #rdrift .rd-dismiss:hover{color:#1F1E1D}")
 _RDRIFT_HTML = (
     "<div id=rdrift role=alert><span class=rd-spin aria-hidden=true></span><span class=rd-msg></span>"
     "<button class=rd-upd id=rdrift-upd>Update</button>"
@@ -30754,6 +31714,28 @@ _REFRESH_SVG = (
     "<path d='M9.5 5.4 L11.7 1.6 L13.5 5.2 Z' fill='currentColor'/></svg>")
 
 
+# THE pane presentation order (the user 2026-08-30: mobile must list the panes in the desktop
+# order — "mobile is a re-layout of the desktop, never a re-ordering"). This list is the desktop
+# rail strip's left-to-right order, which is the user's own choice (2026-07-05) and the desktop's
+# actual visible LIST of the named panes (the column layout cannot express it: Sessions/timeline
+# is a band, not a column). BOTH the desktop rail buttons and the mobile #mtabs buttons render
+# from this one constant — reorder here and both surfaces move together; a second hardcoded list
+# is the bug this replaces. Keys stay internal (timeline/fleet); labels are the user-facing names.
+_PANE_ORDER = (("chat", "Chat"), ("timeline", "Sessions"), ("fleet", "Outline"), ("feed", "Feed"))
+
+
+def _rail_buttons_html():
+    """The desktop rail's pane toggles, in _PANE_ORDER."""
+    return "".join("<div class=rail-btn data-pane=%s>%s</div>" % kv for kv in _PANE_ORDER)
+
+
+def _mtab_buttons_html():
+    """The mobile bottom bar's pane tabs — the SAME order as the desktop rail, by construction.
+    class=on keys on the chat KEY (the initially shown pane), never on position."""
+    return "".join("<button data-pane=%s%s>%s</button>"
+                   % (k, " class=on" if k == "chat" else "", lbl) for k, lbl in _PANE_ORDER)
+
+
 def _landing():
     # one flex row of up to FOUR independently-toggled panes (chat | fleet | feed | timeline) behind a far-left
     # rail; draggable gutters between visible panes; the rail also pins the ⛭ settings + ↻ refresh actions at
@@ -30792,7 +31774,7 @@ def _landing():
             "<meta name=mobile-web-app-capable content=yes>"
             "<meta name=apple-mobile-web-app-status-bar-style content=black>"
             "<meta name=apple-mobile-web-app-title content=Romp>"
-            "<meta name=theme-color content='#1e1e1e'>"
+            "<meta name=theme-color id=meta-theme content='#1e1e1e'>"
             "<link rel=icon type=image/svg+xml href=/media/romp-swirl-glyph.svg><title>Romp</title><style>"
             ":root{--accent:#9cd2ff;--accent-fg:#0c1a2e}"
             # Inter loads PER DOCUMENT (2026-08-27, PR-730 review): the shell names 'Inter' in every
@@ -30928,14 +31910,14 @@ def _landing():
             ".rnet-top span{flex:1 1 auto}"
             "#rnet-x{background:none;border:none;color:#9aa0a6;font-size:16px;line-height:1;cursor:pointer;padding:0 2px}"
             "#rnet-x:hover{color:#fff}"
-            # One family of sizes, by information type (CLAUDE.md): 11.5px for the panel's own explanatory
+            # One family of sizes, by information type (CLAUDE.md): 11px for the panel's own explanatory
             # text (gist, expanded prose, add-form hint), 11px for per-row status and settings.
-            ".rnet-gist{color:#9aa0a6;font-size:11.5px;line-height:1.45;margin-bottom:11px}"
+            ".rnet-gist{color:#9aa0a6;font-size:11px;line-height:1.45;margin-bottom:11px}"
             ".rnet-more{background:none;border:none;color:var(--accent);font:inherit;cursor:pointer;padding:0;margin-left:6px}"
             ".rnet-more:hover{text-decoration:underline}"
-            ".rnet-sub{color:#9aa0a6;font-size:11.5px;line-height:1.45;margin:-6px 0 11px}"
+            ".rnet-sub{color:#9aa0a6;font-size:11px;line-height:1.45;margin:-6px 0 11px}"
             # The fold runs to a few short paragraphs and a list, so give them spacing of their own rather
-            # than the browser's 1em block margins, which are enormous next to 11.5px text. No new font
+            # than the browser's 1em block margins, which are enormous next to 11px text. No new font
             # size: the lead-ins are bold at the same size (CLAUDE.md's one-size-per-information-type).
             ".rnet-sub p{margin:0 0 7px}"
             ".rnet-sub ul{margin:0 0 7px;padding-left:15px}"
@@ -30955,7 +31937,7 @@ def _landing():
             "#rnet-from{flex:0 0 auto;max-width:44%;background:#121212;color:#ccc;border:1px solid #3a3a3a;border-radius:6px;padding:4px 6px;font:inherit}"
             "#rnet-attach{flex:0 0 auto;background:var(--accent);color:var(--accent-fg);border:none;border-radius:6px;padding:4px 12px;font-weight:600;cursor:pointer}"
             "#rnet-attach:disabled{opacity:0.5;cursor:default}"
-            ".rnet-hint{color:#6e7681;font-size:11.5px;line-height:1.45;margin-top:6px}"
+            ".rnet-hint{color:#6e7681;font-size:11px;line-height:1.45;margin-top:6px}"
             ".rnet-hint[hidden]{display:none}"
             # A host is one ITEM of two lines: what it is doing + the actions on line 1, the settings that
             # persist for it on line 2. They used to share one flat row, which put "Detach" at the same
@@ -31016,7 +31998,7 @@ def _landing():
             # THIS machine's release + commit, sitting above the host list at the same muted weight the
             # host rows' own build text wears — it is the baseline they are read against, not a heading.
             # Empty outside a git checkout, and it then costs no vertical room at all.
-            ".rnet-mybuild{color:#6e7681;font-size:11.5px;font-variant-numeric:tabular-nums;margin:-6px 0 10px}"
+            ".rnet-mybuild{color:#6e7681;font-size:11px;font-variant-numeric:tabular-nums;margin:-6px 0 10px}"
             ".rnet-mybuild:empty{display:none}"
             # the fleet-restart report (the user 2026-07-29): shown once when the page comes back, and
             # weighted toward the hosts it could NOT do — those are the ones needing a decision.
@@ -31275,7 +32257,7 @@ def _landing():
             # The panel wears the SAME modal vocabulary as the settings card / network panel (the user
             # 2026-07-27: the first cut's font shorthand leaned on --vscode-font-family, which the browser
             # shell never defines, so the whole shorthand was invalid and the text rendered oversized in
-            # the page default): #252526 card, 13px system-ui body, 14px/600 header, 11.5px rows + 11px
+            # the page default): #252526 card, 13px system-ui body, 14px/600 header, 11px rows + 11px
             # dim times (the network panel's information-type sizes), rnet-style action button + close.
             "#rerr-panel{width:min(700px,94vw);max-height:min(60vh,480px);"   # 60% wider (the user 2026-07-28); a flex child of the centered backdrop, no own positioning
             "display:flex;flex-direction:column;background:#252526;border:1px solid #3a3a3a;border-radius:10px;"
@@ -31292,7 +32274,7 @@ def _landing():
             # grid rows (the user 2026-07-28): a fixed 96px chip column — wider than the widest chip
             # ("follow-up failed") — so every message starts at the SAME x, left-aligned past the chips.
             ".rerr-row{display:grid;grid-template-columns:96px 1fr auto auto;align-items:baseline;"
-            "column-gap:8px;padding:6px 12px;color:#ccc;font-size:11.5px;line-height:1.45}"
+            "column-gap:8px;padding:6px 12px;color:#ccc;font-size:11px;line-height:1.45}"
             ".rerr-row .rerr-chip{justify-self:start}"
             ".rerr-row.link{cursor:pointer}"
             ".rerr-row.link:hover{background:rgba(255,255,255,0.05)}"
@@ -31301,7 +32283,7 @@ def _landing():
             ".rerr-t{flex:0 0 auto;color:#6e7681;font-size:11px;white-space:nowrap;font-variant-numeric:tabular-nums}"
             ".rerr-del{flex:0 0 auto;cursor:pointer;opacity:.5;font-weight:700}"
             ".rerr-del:hover{opacity:1}"
-            ".rerr-empty{padding:16px 12px;color:#6e7681;text-align:center;font-size:11.5px}"
+            ".rerr-empty{padding:16px 12px;color:#6e7681;text-align:center;font-size:11px}"
             # The per-kind filter bar (the user 2026-07-28): a vertical white "show" label on the left, then
             # the toggles in an even GRID — 8 kinds over the minimum 2 rows x 4 equal columns, every chip the
             # same cell width, instead of one ragged wrapping row. The toggles ARE the chips — lit means
@@ -31329,7 +32311,63 @@ def _landing():
             # other "romp is doing something" cue wears. A failed sync still wears the sync chip; its own
             # text says it could not, and the network panel keeps the red on the row itself.
             ".rerr-chip.k-sync{color:var(--accent);border-color:rgba(156,210,255,0.6)}"
+            # ── LIGHT THEME (opt-in, body.theme-light — set by the inline theme reader below): the shell
+            # chrome's warm-light skin. Pure additive overrides; with the class absent nothing here matches,
+            # so the dark rendering is byte-identical. Accent goes clay (#C2410C) via the same --accent var
+            # every accent consumer already reads.
+            "body.theme-light{--accent:#C2410C;--accent-fg:#FFF8F2;background:#F1EAE2}"
+            # the html element keeps its dark background otherwise (body.theme-light can't reach an
+            # ancestor without :has); body covers the viewport, but paint the canvas right too
+            "html:has(> body.theme-light){background:#F1EAE2}"
+            # light iframes: scoped to the class so a dark pane never flashes light — the LIFTED
+            # settings/picker iframes keep their id-scoped background:transparent (higher specificity),
+            # so the modal dim still composites over the real panes (the 2026-08-08 lesson).
+            "body.theme-light iframe{background:#F1EAE2}"
+            "body.theme-light .pane-rail{background:#E7DED2;border-top-color:#DCD2C4}"
+            "body.theme-light .rail-btn{color:#5D574E}"
+            "body.theme-light .rail-btn:hover{color:#C2410C;background:rgba(0,0,0,0.05)}"
+            "body.theme-light .rail-btn.on{background:rgba(194,65,12,0.10);border-color:rgba(194,65,12,0.35)}"
+            "body.theme-light .rail-act{color:#5D574E}"
+            "body.theme-light .rail-act:hover{color:#1F1E1D;background:rgba(0,0,0,0.06)}"
+            "body.theme-light .gv{background:linear-gradient(90deg,transparent 3px,rgba(0,0,0,0.14) 3px,rgba(0,0,0,0.14) 4px,transparent 4px)}"
+            "body.theme-light .gh{background:linear-gradient(180deg,transparent 3px,rgba(0,0,0,0.14) 3px,rgba(0,0,0,0.14) 4px,transparent 4px)}"
+            "body.theme-light .gv::after,body.theme-light .gh::after{background:rgba(0,0,0,0.22)}"
+            "body.theme-light .gv:hover{background:linear-gradient(90deg,transparent 3px,rgba(194,65,12,0.30) 3px,rgba(194,65,12,0.30) 4px,transparent 4px)}"
+            "body.theme-light .gh:hover{background:linear-gradient(180deg,transparent 3px,rgba(194,65,12,0.30) 3px,rgba(194,65,12,0.30) 4px,transparent 4px)}"
+            "body.theme-light .gv:hover::after,body.theme-light .gh:hover::after{background:var(--accent)}"
+            "body.theme-light .pane.pane-focused::after{box-shadow:inset 0 0 0 2px rgba(194,65,12,0.55)}"
+            "body.theme-light #romp-boot{background:#F1EAE2}"
+            # (the loader dots' light rule rides in _LOADER_CSS, included below)
+            # light cards: raised white over the warm page, dark warm text, hairline borders, soft shadows
+            "body.theme-light #rerr-panel{background:#FFFFFF;border-color:rgba(0,0,0,0.12);color:#1F1E1D;"
+            "box-shadow:0 12px 36px rgba(31,26,20,0.18)}"
+            "body.theme-light #rerr-panel .rerr-top{color:#1F1E1D;border-bottom-color:rgba(0,0,0,0.12)}"
+            "body.theme-light .rerr-row{color:#1F1E1D}"
+            "body.theme-light .rerr-row+.rerr-row{border-top-color:rgba(0,0,0,0.08)}"
+            "body.theme-light .rerr-row.link:hover{background:rgba(0,0,0,0.04)}"
+            "body.theme-light #rerr-clear{background:#E7DED2;color:#1F1E1D;border-color:rgba(0,0,0,0.12)}"
+            "body.theme-light #rerr-clear:hover{background:#DED2C2;color:#1F1E1D}"
+            "body.theme-light #rerr-x{color:#5D574E}body.theme-light #rerr-x:hover{color:#1F1E1D}"
+            "body.theme-light #rerr-filters{border-bottom-color:rgba(0,0,0,0.08)}"
+            "body.theme-light .rerr-flabel{color:#1F1E1D}"
+            "body.theme-light #rnet-panel{background:#FFFFFF;border-color:rgba(0,0,0,0.12);color:#1F1E1D;"
+            "box-shadow:0 12px 36px rgba(31,26,20,0.18)}"
+            "body.theme-light #rnet-panel .rnet-top{color:#1F1E1D;border-bottom-color:rgba(0,0,0,0.12)}"
+            "body.theme-light #rnet-x{color:#5D574E}body.theme-light #rnet-x:hover{color:#1F1E1D}"
+            "body.theme-light #rfleet-panel{background:#FFFFFF;border-color:rgba(0,0,0,0.12);color:#1F1E1D;"
+            "box-shadow:0 12px 36px rgba(31,26,20,0.18)}"
+            "body.theme-light #ru-tip{background:#FFFFFF;border-color:rgba(0,0,0,0.12);color:#1F1E1D;"
+            "box-shadow:0 5px 18px rgba(31,26,20,0.18)}"
+            "body.theme-light .ru-tip-name{color:#1F1E1D}"
+            "body.theme-light .ru-name{color:#5D574E}"
+            "body.theme-light .ru-pct{color:#1F1E1D}"
+            "body.theme-light .ru-track{background:rgba(0,0,0,0.10)}"
+            "body.theme-light #mtabs{background:#E7DED2;border-top-color:#DCD2C4}"
+            "body.theme-light #mtabs button{color:#5D574E}"
+            "body.theme-light #mtabs button.on{color:#C2410C}"
+            "body.theme-light #mtabs .mtabs-div{background:#DCD2C4}"
             "</style></head><body class='po-chat po-feed po-timeline'>"
+            + _THEME_READER +
             "<div id=romp-boot>" + _loader_inner() + "</div>"
             # the notification popover (hidden until the bell is clicked; backdrop click closes). No
             # Reload button (the user 2026-07-27: redundant next to the rail's own restart/refresh —
@@ -31360,10 +32398,8 @@ def _landing():
             # (.rail-acts, pinned RIGHT via margin-left:auto) with the ↻ refresh + network + ⛭ gear, always visible.
             "<div class=pane-rail>"
             "<div class=rail-scroll>"
-            "<div class=rail-btn data-pane=chat>Chat</div>"
-            "<div class=rail-btn data-pane=timeline>Sessions</div>"   # data-pane key stays 'timeline' (internal); the pane outgrew the label (the user 2026-08-24)
-            "<div class=rail-btn data-pane=fleet>Outline</div>"   # data-pane key stays 'fleet' (internal); the user-facing label is Outline
-            "<div class=rail-btn data-pane=feed>Feed</div>"
+            # the pane toggles, from _PANE_ORDER — the ONE ordering the mobile tabs share
+            + _rail_buttons_html() +
             # the Claude /usage rate-limit bars (Pro/Max): three compact vertical bar-pairs (used % colored +
             # elapsed % slate), %-label, full detail on hover — side-by-side in the bottom bar.
             "<div id=rail-usage data-keycmd=usage.open></div>"
@@ -31411,10 +32447,9 @@ def _landing():
             "</div>"   # /.pane-rail (bottom bar)
             "</div>"
             "<nav id=mtabs>"
-            "<button data-pane=chat class=on>Chat</button>"
-            "<button data-pane=fleet>Outline</button>"   # data-pane key stays 'fleet' (internal), label Outline
-            "<button data-pane=feed>Feed</button>"
-            "<button data-pane=timeline>Sessions</button>"   # same rename on the phone tabs
+            # the pane tabs, from _PANE_ORDER — the desktop rail's exact order (the user 2026-08-30:
+            # mobile is a re-layout, never a re-ordering)
+            + _mtab_buttons_html() +
             # the rail's ACTIONS, reachable on mobile too (the user 2026-07-11): settings + the network
             # panel + a usage panel showing the desktop tooltip's window bars. data-act (not data-pane) —
             # they fire, they don't switch the shown pane.
@@ -32083,10 +33118,12 @@ class Handler(BaseHTTPRequestHandler):
                     # lower one (two overlapping fetches can resolve out of order; fixer round 5, 2026-09-01)
                     {"rev": _rev,
                      "models": [dict(c, color=_model_color(c["value"], _stops),
+                                     tone=_model_tone(c["value"]),
                                      versions=_cat.get(c["value"]) or [],
                                      default=_picks.get(c["value"]) or c["value"])
                                 for c in MODEL_CHOICES],
-                     "efforts": [dict(c, color=_effort_color(c["value"], _stops)) for c in EFFORT_CHOICES],
+                     "efforts": [dict(c, color=_effort_color(c["value"], _stops), tone=_effort_tone(c["value"]))
+                                 for c in EFFORT_CHOICES],
                      # the create dialog's pre-read (the user 2026-08-29): what a new comment thread
                      # gets when the dialog is left untouched — RAW ("session" = same as the session),
                      # so the dialog shows the effective default and a pick stays a deviation
@@ -32217,13 +33254,21 @@ class Handler(BaseHTTPRequestHandler):
                             failed = str(rep.get("why") or "the pull or install failed")
                         elif rep is not None:
                             updated = str(rep.get("tag") or "")
+                # a DISMISSED identifier never re-derives an offer on a page load (the user
+                # 2026-08-31: the per-page-load re-offer was a notice-spam compounder)
+                dis = _dismissed_updates()
+                dsha = _MAIN_DRIFT[0] or _MAIN_DRIFT[1]
+                if dsha in dis:
+                    dsha = ""
                 return self._send(200, json.dumps({
-                    "cur": _kernel_ver() or "", "tag": _UPDATE_AVAIL[0], "mode": _update_mode(),
+                    "cur": _kernel_ver() or "",
+                    "tag": ("" if _UPDATE_AVAIL[0] in dis else _UPDATE_AVAIL[0]),
+                    "mode": _update_mode(),
                     "state": _UPDATE_STATE[0], "failed": failed, "updated": updated,
                     # the pending MAIN-DRIFT offer (2026-08-15): a page loaded after the push can
                     # re-derive it, and a stale page can revalidate before acting
-                    "drift": ("pull" if _MAIN_DRIFT[0] else ("restart" if _MAIN_DRIFT[1] else "")),
-                    "driftSha": _MAIN_DRIFT[0] or _MAIN_DRIFT[1],
+                    "drift": (("pull" if _MAIN_DRIFT[0] else "restart") if dsha else ""),
+                    "driftSha": dsha,
                     "boot": _BOOT_ID}), "application/json", cache="no-cache")
             if p == "/notify-all":
                 # the master bell's state (the user 2026-08-09): on = every task notifies when it
@@ -32325,6 +33370,15 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(200, FLEET_REPORT.read_text(), "application/json")
                 except OSError:
                     return self._send(200, json.dumps({"rows": []}), "application/json")
+            if u.path == "/update-dismiss":
+                # the banner's Not-now, PERSISTED (the user 2026-08-31): the dismissal outlives the
+                # page and the kernel — event-keyed, a NEW sha/tag offers again. Body: {"tag": id}.
+                try:
+                    b = json.loads(raw_body or b"{}")
+                except Exception:
+                    b = {}
+                _dismiss_update((b or {}).get("tag"))
+                return self._send(200, json.dumps({"ok": True}), "application/json")
             if u.path == "/update":
                 # the banner's Update button (the user 2026-08-09). Only what the kernel's own checks
                 # found is ever acted on — the route takes no version from the client. A pending
@@ -32499,6 +33553,30 @@ class Handler(BaseHTTPRequestHandler):
                 if not _route_meta_command(be, sid, body["text"]):
                     _send_or_park(be, sid, body["text"])
                 return self._send(200, json.dumps({"ok": True}), "application/json")
+            if u.path in ("/fork-comment", "/fork-promote"):
+                # Parallel review dispatch (the user 2026-08-31, via the Obsidian track-changes
+                # plugin): /fork-comment forks the target as a transcript-comment-style thread and
+                # opens it with the caller's text verbatim → {"forkId"}; /fork-promote breaks a
+                # thread out into a first-class session. Brains factored for tests; refusal
+                # statuses are part of the contract (see _fork_promote_request).
+                try:
+                    b = json.loads(raw_body or b"{}")
+                except Exception:
+                    b = None
+                res = (_fork_comment_request(b) if u.path == "/fork-comment"
+                       else _fork_promote_request(b))
+                return self._send(res.pop("_status", 200), json.dumps(res), "application/json")
+            if u.path == "/compact":
+                # `romp compact <session>` — see _compact_request. Body: {"id"|"name": <session>};
+                # response {"ok", "queued"} so the CLI can say "compacting now" vs "queued".
+                try:
+                    b = json.loads(raw_body or b"{}")
+                    who = str(b.get("id") or b.get("name") or "") if isinstance(b, dict) else ""
+                except Exception:
+                    who = ""
+                res = _compact_request(who)
+                status = res.pop("_status", 200)
+                return self._send(status, json.dumps(res), "application/json")
             if u.path in ("/interrupt", "/end"):
                 # Headless session control (2026-07-05): interrupt/end existed ONLY as WS drive ops, so
                 # a session could be FED without a browser (POST /send, postal) but never STOPPED — a
@@ -32549,7 +33627,7 @@ class Handler(BaseHTTPRequestHandler):
                     # dismisses it on every client and re-draws as the dead swirl on the next push
                     ended = _confirmed_ended(sid)
                     if ended is not True:
-                        _push_all()
+                        _push_soon()   # ack-fast (the 2026-08-30 wedge: request threads poke the pusher, never build inline)
                         return self._send(200, json.dumps({"ok": False,
                                                            "error": "the session is still running — the kill didn't take"
                                                                     if ended is False else
@@ -32558,7 +33636,7 @@ class Handler(BaseHTTPRequestHandler):
                     _record_death(sid, int(time.time()), "kill")
                     _comment_kill_all(sid, be)   # its comment threads must not outlive it (the WS endSession twin)
                     _send_to_app("chat", {"type": "closed", "id": sid})
-                _push_all()
+                _push_soon()   # ack-fast (the 2026-08-30 wedge: inline fleet builds piled 53 POST handlers; the pusher coalesces)
                 return self._send(200, json.dumps({"ok": True}), "application/json")
             if u.path == "/new":
                 # Headless session creation (`romp new`, 2026-07-25): the WS createSession op as a
@@ -32803,7 +33881,11 @@ class Handler(BaseHTTPRequestHandler):
                                      timeout_s=b.get("timeoutS"), note=b.get("note"))
                 if err:
                     return self._send(200, json.dumps({"ok": False, "error": err}), "application/json")
-                return self._send(200, json.dumps({"ok": True, "watch": row}), "application/json")
+                resp = {"ok": True, "watch": row}
+                hint = _watch_reg_hint(b.get("cmd"))
+                if hint:
+                    resp["hint"] = hint
+                return self._send(200, json.dumps(resp), "application/json")
             if u.path in ("/tag", "/group"):
                 # Headless tag edit (`romp tag`, the user 2026-08-23, the manager/worker workflow:
                 # the worker roster IS a session tag, so an agent needs to keep one current — and can
@@ -33510,6 +34592,14 @@ class Handler(BaseHTTPRequestHandler):
                 _auto_nudge_tick(int(time.time()), _tmux_sessions(), run_dead_wait=False)
             else:
                 _tell_stale_gesture(client)
+        elif msg and msg.get("type") == "setCompactSuggest" and msg.get("enabled") is not None:
+            # T208 opt-in — kernel-side like autoNudge, gt-gated like every queued setting; the
+            # suggestion rides the auto-nudge walk, so turn-on acts immediately (same tick, same
+            # dead-wait skip as setAutoNudge above)
+            if _set_compact_suggest(bool(msg["enabled"]), gt=_gesture_ms(msg)) is not None:
+                _auto_nudge_tick(int(time.time()), _tmux_sessions(), run_dead_wait=False)
+            else:
+                _tell_stale_gesture(client)
         elif msg and msg.get("type") == "setUpdateMode" and msg.get("mode") in _UPDATE_MODES:
             # feed gear → how romp handles new releases at boot; gt-gated like every queued setting
             if _set_update_mode(str(msg["mode"]), gt=_gesture_ms(msg)) is None:
@@ -33774,7 +34864,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 sys.stderr.write("closeTab: refused for %s — not confirmed ended, nothing closed, "
                                  "no closed broadcast\n" % sid)
-            _push_all()
+            _push_soon()   # ack-fast (the 2026-08-30 wedge: inline fleet builds piled 53 POST handlers; the pusher coalesces)
         elif msg and msg.get("type") == "openSession" and msg.get("id"):
             # live → focus its (always-shown) tab; dead → the chat's confirmRevive modal. `live` lands on
             # the chat's LIVE TAIL (a blocked card's picker chip → right on the prompt, the user 2026-07-08).
@@ -33796,7 +34886,7 @@ class Handler(BaseHTTPRequestHandler):
         elif msg and msg.get("type") == "viewReadOnly" and msg.get("id"):
             _kept_open.add(msg["id"])            # confirmRevive → "View read-only": this dead session
             #                                      gets a (struck) read-only tab now, without resuming it
-            _push_all()
+            _push_soon()   # ack-fast (the 2026-08-30 wedge: inline fleet builds piled 53 POST handlers; the pusher coalesces)
             _reveal_chat_for(client, {"type": "focus", "id": msg["id"]})
         elif msg and msg.get("type") == "deepLink" and msg.get("session"):
             _reveal_or_confirm(msg["session"], {"type": "focus", "id": msg["session"], "anchor": msg.get("anchor"),

@@ -397,13 +397,14 @@ class QueuedBubble(unittest.TestCase):
 
     def test_drive_answers_every_cancel_with_an_authoritative_result_frame(self):
         # the user 2026-07-20: a ✕ whose target had already been handed to the CLI silently no-opped
-        # while the client showed the message as deleted — and the CLI answered it anyway. BOTH cancel
-        # arms now reply with a cancelResult frame (ok + the 'too late' text on a miss) so the client
-        # can toast and undo its optimistic composer restore.
+        # while the client showed the message as deleted — and the CLI answered it anyway. EVERY cancel
+        # arm replies with a cancelResult frame (ok + the 'too late' text on a miss) so the client
+        # can toast and undo its optimistic composer restore. Three arms since 2026-08-30: park, idx,
+        # and the optimistic md-only arm (a ✕ before any park/idx has round-tripped).
         import inspect
         src = inspect.getsource(km._drive)
-        self.assertEqual(src.count('"type": "cancelResult"'), 2,
-                         "one authoritative reply per cancel arm (park + idx)")
+        self.assertEqual(src.count('"type": "cancelResult"'), 3,
+                         "one authoritative reply per cancel arm (park + idx + md-only)")
         self.assertIn('"ok": not err', src)
         self.assertIn('"text": err or ""', src)
 

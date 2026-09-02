@@ -92,10 +92,13 @@ class RelayInPassesItThrough(unittest.TestCase):
     def setUp(self):
         self.td = tempfile.TemporaryDirectory()
         self._saved = (pm.deliver, pm.local_agents, pm._postal_off, pm.peer_seen_check,
-                       pm.peer_seen_add, dict(pm.PEERS), pm.QUARANTINE)
+                       pm.peer_seen_add, dict(pm.PEERS), pm.QUARANTINE, pm.local_agents_checked)
         self.delivered = []
         pm.deliver = lambda *a, **k: self.delivered.append((a, k)) or "m-local"
         pm.local_agents = lambda threads=False: [{"id": RCP, "name": "api", "remote": False}]
+        # _relay_in rules from the CHECKED seam now (the one-snapshot honesty arms, 2026-08-31);
+        # wrap the same stub rows with answered=True so the harness's world stays authoritative
+        pm.local_agents_checked = lambda threads=False: (pm.local_agents(threads=threads), True)
         pm._postal_off = lambda sid: False
         pm.peer_seen_check = lambda mid: False
         pm.peer_seen_add = lambda mid: None
@@ -103,7 +106,7 @@ class RelayInPassesItThrough(unittest.TestCase):
 
     def tearDown(self):
         (pm.deliver, pm.local_agents, pm._postal_off, pm.peer_seen_check,
-         pm.peer_seen_add, peers, pm.QUARANTINE) = self._saved
+         pm.peer_seen_add, peers, pm.QUARANTINE, pm.local_agents_checked) = self._saved
         pm.PEERS.clear()
         pm.PEERS.update(peers)
         self.td.cleanup()

@@ -62,6 +62,175 @@ class LiveOnlyAddressing(unittest.TestCase):
         self.assertEqual(pm._recip_id_for("beta"), GHOST)
 
 
+class RecallReachesParkedMailForTheDead(unittest.TestCase):
+    """The ONE deliberate carve-out from live-only addressing (2026-08-29): RECALL is not
+    addressing. The sender is unsending their OWN bytes, which sit locally in the recipient's
+    new/ — no delivery, no resurrection. A handoff parked for a session that then died could not
+    be unsent by NAME (only the raw box id worked, which nobody has at hand); _recall now falls
+    back to the durable name map when the name no longer resolves live. Ambiguity still refuses:
+    two dead boxes wearing one name is not a guess the sender authorized."""
+
+    def setUp(self):
+        _set_live([{"id": ALPHA, "name": "alpha"}])
+
+    def tearDown(self):
+        os.environ.pop("ROMP_SESSIONS_FILE", None)
+        for rid in (GHOST, "99999999-8888-7777-6666-555555555556"):
+            box = pm.MAILROOT / rid / "new"
+            if box.is_dir():
+                for f in box.iterdir():
+                    f.unlink()
+
+    def _park(self, rid, name, mid="m1"):
+        box = pm.MAILROOT / rid / "new"
+        box.mkdir(parents=True, exist_ok=True)
+        (box / mid).write_text("From: alpha\nFrom-Id: %s\nX-Park: 1\n\nthe handoff body" % ALPHA)
+        pm.NAMES_DIR.mkdir(parents=True, exist_ok=True)
+        (pm.NAMES_DIR / rid).write_text("%s\thost" % name)
+
+    def test_recall_by_dead_name_finds_the_parked_box(self):
+        self._park(GHOST, "ghost")
+        removed = pm._recall(ALPHA, "ghost", None)
+        self.assertEqual([r["id"] for r in removed], ["m1"])
+        self.assertEqual(list((pm.MAILROOT / GHOST / "new").iterdir()), [])
+
+    def test_two_dead_boxes_one_name_refuses(self):
+        twin = "99999999-8888-7777-6666-555555555556"
+        self._park(GHOST, "ghost", mid="m1")
+        self._park(twin, "ghost", mid="m2")
+        self.assertEqual(pm._recall(ALPHA, "ghost", None), [])
+
+    def test_only_the_senders_own_mail_comes_back(self):
+        self._park(GHOST, "ghost")
+        self.assertEqual(pm._recall("00000000-0000-0000-0000-000000000001", "ghost", None), [])
+
+
+class KernelSilenceIsNotDeadness(unittest.TestCase):
+    """The liveness source not ANSWERING is different information from "nobody by that name is
+    live" (the authoritative-sources rule: fail loudly, never degrade silently). _kernel_sessions
+    collapsed both to [], so a send during a kernel restart was refused with a false deadness
+    claim about a demonstrably live peer (sighting 2026-08-29; the retry 101s later delivered).
+    resolve_recipient now probes the source once on the refusal path and answers 503-honestly."""
+
+    def setUp(self):
+        os.environ.pop("ROMP_SESSIONS_FILE", None)
+        self._base = pm.KERNEL_BASE
+        pm.KERNEL_BASE = "http://127.0.0.1:9"      # nothing listens: every fetch fails fast
+
+    def tearDown(self):
+        pm.KERNEL_BASE = self._base
+        os.environ.pop("ROMP_SESSIONS_FILE", None)
+        pm.HEARTBEATS.clear()
+
+    def test_unanswered_source_refuses_without_claiming_death(self):
+        res = pm.resolve_recipient("ghost")
+        self.assertEqual((res["kind"], res["status"]), ("error", 503))
+        self.assertIn("didn't answer", res["error"])
+        self.assertNotIn("no live romp session", res["error"], "the false deadness claim is the bug")
+
+    def test_an_answered_empty_listing_still_refuses_as_not_live(self):
+        _set_live([])
+        res = pm.resolve_recipient("ghost")
+        self.assertEqual((res["kind"], res["status"]), ("error", 404))
+        self.assertIn("no live romp session named 'ghost'", res["error"])
+
+
+class AnsweredButAbsentIsNotDeadness(unittest.TestCase):
+    """The OTHER false-refusal arm (2026-08-31): the kernel ANSWERED but its listing transiently
+    omitted a live session (a restart-settle blink), and the bus converted that into a hard "not
+    live" — two verified specimens, one by id and one by name, one of which mis-routed a warning
+    mail. A pool miss now corroborates against the DURABLE per-session registry (and the probe
+    fetch's own rows) before ruling death: reg alive=true → soft retry-shortly, never a death
+    claim. A name with no reg anywhere keeps the hard 404 — a typo stays a typo."""
+
+    GHOST_SID = "99999999-8888-7777-6666-000000000001"
+
+    def setUp(self):
+        _set_live([{"id": ALPHA, "name": "alpha"}])     # answered listing, target absent
+        self._sdk = pm.STATE.parent / "sdk"
+        self._sdk.mkdir(parents=True, exist_ok=True)
+        pm.NAMES_DIR.mkdir(parents=True, exist_ok=True)
+
+    def tearDown(self):
+        os.environ.pop("ROMP_SESSIONS_FILE", None)
+        pm.HEARTBEATS.clear()
+        for f in list(self._sdk.iterdir()) + list(pm.NAMES_DIR.iterdir()):
+            f.unlink()
+
+    def _reg(self, sid, name, alive=True):
+        (self._sdk / (sid + ".json")).write_text(json.dumps({"sid": sid, "name": name, "alive": alive}))
+        (pm.NAMES_DIR / sid).write_text("%s\t/tmp" % name)
+
+    def test_id_addressed_with_a_live_reg_refuses_soft(self):
+        self._reg(self.GHOST_SID, "blinky")
+        res = pm.resolve_recipient(self.GHOST_SID)
+        self.assertEqual((res["kind"], res["status"]), ("error", 503))
+        self.assertIn("restart-settle blink", res["error"])
+        self.assertIn("NOT a claim", res["error"])
+
+    def test_name_addressed_with_a_live_reg_refuses_soft(self):
+        self._reg(self.GHOST_SID, "blinky")
+        res = pm.resolve_recipient("blinky")
+        self.assertEqual((res["kind"], res["status"]), ("error", 503))
+        self.assertIn("restart-settle blink", res["error"])
+
+    def test_a_dead_reg_keeps_the_hard_404_both_forms(self):
+        self._reg(self.GHOST_SID, "gone4good", alive=False)
+        for who in (self.GHOST_SID, "gone4good"):
+            res = pm.resolve_recipient(who)
+            self.assertEqual((res["kind"], res["status"]), ("error", 404), who)
+            self.assertIn("no live romp session", res["error"])
+
+    def test_no_reg_anywhere_keeps_the_hard_404(self):
+        res = pm.resolve_recipient("typo-name")
+        self.assertEqual((res["kind"], res["status"]), ("error", 404))
+
+    def test_the_probe_fetchs_own_rows_count_as_presence(self):
+        # the pool (all_agents) missed the target but the probe's fresh listing has it — the
+        # kernel came back between the two reads; that is a blink, never a death ruling
+        saved = pm.all_agents
+        pm.all_agents = lambda threads=False: [{"id": ALPHA, "name": "alpha", "remote": False}]
+        try:
+            _set_live([{"id": ALPHA, "name": "alpha"}, {"id": self.GHOST_SID, "name": "blinky"}])
+            res = pm.resolve_recipient("blinky")
+        finally:
+            pm.all_agents = saved
+        self.assertEqual((res["kind"], res["status"]), ("error", 503))
+        self.assertIn("restart-settle blink", res["error"])
+
+    def test_a_host_qualified_miss_keeps_the_hard_404(self):
+        # a host qualifier naming somebody ELSE takes every local out of the running by design —
+        # the local listing/registry can say nothing about that host, so the blink arms must not
+        # fire on a same-named LOCAL row (review find: a typo'd host became an endless retry-shortly)
+        self._reg(self.GHOST_SID, "blinky")
+        _set_live([{"id": self.GHOST_SID, "name": "blinky"}])
+        res = pm.resolve_recipient("otherhost:blinky")
+        self.assertEqual((res["kind"], res["status"]), ("error", 404))
+
+    def test_short_id_blink_refuses_soft(self):
+        # the third address form (the 8-char id prefix every list_agents row shows) is
+        # blink-protected like the other two
+        self._reg(self.GHOST_SID, "blinky")
+        res = pm.resolve_recipient(self.GHOST_SID[:8])
+        self.assertEqual((res["kind"], res["status"]), ("error", 503))
+        self.assertIn("restart-settle blink", res["error"])
+
+    def test_short_id_with_two_matching_regs_keeps_the_404(self):
+        twin = self.GHOST_SID[:-1] + "f"
+        self._reg(self.GHOST_SID, "blinky")
+        self._reg(twin, "blinky2")
+        res = pm.resolve_recipient(self.GHOST_SID[:8])
+        self.assertEqual((res["kind"], res["status"]), ("error", 404),
+                         "two registry hits on one prefix is the ambiguity family: refuse, never guess")
+
+    def test_durable_session_reads(self):
+        self._reg(self.GHOST_SID, "blinky")
+        self.assertTrue(pm._durable_session(self.GHOST_SID, by_id=True))
+        self.assertTrue(pm._durable_session("blinky", by_id=False))
+        self.assertFalse(pm._durable_session("nobody", by_id=False))
+        self.assertFalse(pm._durable_session("99999999-8888-7777-6666-000000000002", by_id=True))
+
+
 class RemovedSurfacesAreGone(unittest.TestCase):
     def test_removed_mcp_tools_absent(self):
         names = _tool_names()

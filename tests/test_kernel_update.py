@@ -7,6 +7,7 @@ discovered version; off = never checks. The update runs DETACHED (fetch + ff-onl
 report to update-report.json, restart through the manager door only on success), and the outcome is
 always filed as a sync notice — by the next boot, or by /update-check's poll on the still-running
 kernel (fail loudly, never silent). Synthetic tags/paths only."""
+import inspect
 import io
 import json
 import os
@@ -477,8 +478,115 @@ class Wiring(unittest.TestCase):
         # the post is gesture-stamped (2026-08-29): setUpdateMode rides federation's queued
         # KERNEL_SETTING class, so the kernel orders applies by the click's own time
         self.assertIn("post({ type: 'setUpdateMode', mode: upm.value, gt: Date.now() })", self.gear)
-        self.assertIn("upm.value = v.updateMode", self.gear)
+        # fill() renders through setShow now (2026-09-01): the same silent write, plus the
+        # honest marked-option injection when a stored value is off this page's list
+        self.assertIn("setShow(upm, v.updateMode)", self.gear)
         self.assertIn('msg.get("type") == "setUpdateMode"', self.src)
+
+
+class ReleaseChannelMigration(unittest.TestCase):
+    """The REQUIRED migration (the user 2026-08-31): installs the old drift banner walked onto a
+    detached main sha must return to the release channel on the next tag. From a sha AHEAD of the
+    tag, `git merge --ff-only <tag>` fails — the script now falls back to checking the tag out
+    directly when HEAD is not itself on any tag, loudly in the update log. EXECUTED on a real
+    throwaway repo pair (bare origin + detached install), not a source pin: the fallback's git
+    behavior is the thing under test."""
+
+    def _repos(self, tmp):
+        """origin (bare) with c1 —tag v9.9.8→ c2 —tag v9.9.9→ c3 (main tip); the install cloned
+        and DETACHED at c3 — ahead of v9.9.9, on no tag: the walked-onto-main shape."""
+        env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid",
+               "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.invalid"}
+        def g(cwd, *args):
+            r = subprocess.run(["git", *args], cwd=cwd, env=env, capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, "git %s: %s%s" % (" ".join(args), r.stdout, r.stderr))
+            return r.stdout.strip()
+        src = os.path.join(tmp, "src")
+        os.makedirs(src)
+        g(src, "init", "-q", "-b", "main")
+        with open(os.path.join(src, "install.sh"), "w") as f:
+            f.write("#!/bin/sh\nexit 0\n")
+        os.chmod(os.path.join(src, "install.sh"), 0o755)
+        g(src, "add", "install.sh")
+        g(src, "commit", "-qm", "c1")
+        g(src, "tag", "v9.9.8")
+        g(src, "commit", "-qm", "c2", "--allow-empty")
+        g(src, "tag", "v9.9.9")
+        g(src, "commit", "-qm", "c3", "--allow-empty")
+        bare = os.path.join(tmp, "origin.git")
+        g(tmp, "clone", "-q", "--bare", src, bare)
+        inst = os.path.join(tmp, "install")
+        g(tmp, "clone", "-q", bare, inst)
+        g(inst, "checkout", "-q", "--detach", "origin/main")     # the old banner's walk
+        return g, inst
+
+    def _run(self, tag, inst):
+        """Capture _run_update's script via the Popen seam, run it SYNCHRONOUSLY. The log and
+        report are shared hermetic state — start each run clean or one test reads another's."""
+        for f in ("update.log", "update-report.json"):
+            try:
+                (km.jd.STATE / f).unlink()
+            except OSError:
+                pass
+        calls = []
+        env = {**os.environ, "ROMP_MANAGER_PORT": ""}            # no manager → no restart leg
+        with mock.patch.object(km.subprocess, "Popen", side_effect=lambda *a, **kw: calls.append(a)), \
+             mock.patch.object(km, "ROOT", Path(inst)), \
+             mock.patch.dict(km.os.environ, env, clear=True):
+            km._UPDATE_STATE[0] = ""
+            self.assertTrue(km._run_update(tag))
+        km._UPDATE_STATE[0] = ""
+        script = calls[0][0][2]
+        subprocess.run(["bash", "-c", script], cwd=inst, capture_output=True, text=True)
+        return script
+
+    def test_a_walked_onto_main_install_returns_to_the_release_channel_loudly(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            g, inst = self._repos(tmp)
+            self._run("v9.9.9", inst)
+            self.assertEqual(g(inst, "rev-parse", "HEAD"), g(inst, "rev-parse", "v9.9.9^{}"),
+                             "HEAD landed exactly on the tag — back on the release channel")
+            rep = json.loads((km.jd.STATE / "update-report.json").read_text())
+            self.assertTrue(rep.get("ok"), rep)
+            log = (km.jd.STATE / "update.log").read_text()
+            self.assertIn("return to the release channel", log,
+                          "the move is LOUD in the update log, never a silent history jump")
+
+    def test_forward_only_no_path_ever_moves_an_install_backward(self):
+        # the user's freeze ruling (2026-08-31): walked-along installs freeze WHERE THEY SIT —
+        # never rolled back — and move only when a NEW release offers forward. The guarantee is
+        # the offer gate itself: _run_update is reachable only through _update_check, which
+        # refuses any tag whose version is not strictly newer than the running one — so the
+        # migration's explicit checkout can only ever land on a release AHEAD of the install.
+        src = inspect.getsource(km._update_check)
+        self.assertIn("if not lv or lv <= cur:", src)
+        i_gate = src.index("if not lv or lv <= cur:")
+        i_run = src.index("_run_update(latest)")
+        self.assertLess(i_gate, i_run, "the strictly-newer gate precedes the only auto _run_update call")
+
+    def test_a_branch_checkout_never_takes_the_fallback(self):
+        # the maintainer guard: a main-tracking BRANCH clone ahead of the tag keeps the harmless
+        # no-op fast-forward it always had — the fallback yanking it onto a tag would strand the
+        # very mesh the channel gate exists to keep noticed
+        with tempfile.TemporaryDirectory() as tmp:
+            g, inst = self._repos(tmp)
+            g(inst, "checkout", "-q", "main")                     # a dev clone, ahead of v9.9.9
+            head = g(inst, "rev-parse", "HEAD")
+            self._run("v9.9.9", inst)
+            self.assertEqual(g(inst, "rev-parse", "HEAD"), head,
+                             "branch checkouts are never moved by the migration")
+            log = (km.jd.STATE / "update.log").read_text()
+            self.assertNotIn("return to the release channel", log)
+
+    def test_the_normal_release_to_release_move_never_takes_the_fallback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            g, inst = self._repos(tmp)
+            g(inst, "checkout", "-q", "--detach", "v9.9.8")       # a healthy bootstrap install
+            self._run("v9.9.9", inst)
+            self.assertEqual(g(inst, "rev-parse", "HEAD"), g(inst, "rev-parse", "v9.9.9^{}"))
+            log = (km.jd.STATE / "update.log").read_text()
+            self.assertNotIn("return to the release channel", log,
+                             "the fast-forward is the whole move — no fallback, no log line")
 
 
 if __name__ == "__main__":
