@@ -4252,7 +4252,8 @@ function ensureJudgeLimit(): HTMLElement {
   btn.onclick = () => {
     btn.disabled = true;
     btn.textContent = "Switching…";                      // acknowledge before the round-trip
-    vscodeApi?.postMessage({ type: "setJudgeModel", model: "opus" });
+    // gt: a settings gesture like any gear pick — stamped at the click so the kernel can order it
+    vscodeApi?.postMessage({ type: "setJudgeModel", model: "opus", gt: Date.now() });
   };
   b.appendChild(btn);
   const sess = el("span", "jl-sess"); b.appendChild(sess);   // who the window actually touches (2026-08-28)

@@ -475,7 +475,9 @@ class Wiring(unittest.TestCase):
         self.assertIn("id=rs-updates", self.gear)
         for opt in ("value=ask", "value=auto", "value=off"):
             self.assertIn(opt, self.gear)
-        self.assertIn("post({ type: 'setUpdateMode', mode: upm.value })", self.gear)
+        # the post is gesture-stamped (2026-08-29): setUpdateMode rides federation's queued
+        # KERNEL_SETTING class, so the kernel orders applies by the click's own time
+        self.assertIn("post({ type: 'setUpdateMode', mode: upm.value, gt: Date.now() })", self.gear)
         # fill() renders through setShow now (2026-09-01): the same silent write, plus the
         # honest marked-option injection when a stored value is off this page's list
         self.assertIn("setShow(upm, v.updateMode)", self.gear)

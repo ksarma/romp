@@ -434,13 +434,18 @@ function initGear(post) {
   // Each attached kernel keeps its own copy, so the post goes to all of them
   // (federation.ts KERNEL_SETTING) — which is also what resolves a split box:
   // the click picks one answer and every machine takes it.
+  // Every KERNEL_SETTING post carries `gt`: epoch ms minted HERE, at the click. Federation queues
+  // these per host while a socket is down and flushes them on reconnect, so a delayed copy must
+  // carry the ORIGINAL gesture's time — the kernel orders applies by it and stands a stale flush
+  // down instead of walking the mesh back to an hours-old pick (a frozen tab's flush did exactly
+  // that). Stamp in the message literal, never at send/flush time.
   if (an) an.addEventListener('change', function () {
     clearAutoNudgeSplit();
-    post({ type: 'setAutoNudge', enabled: an.checked });
+    post({ type: 'setAutoNudge', enabled: an.checked, gt: Date.now() });
   });
-  if (fe) fe.addEventListener('change', function () { post({ type: 'setFileEditing', enabled: fe.checked }); });
+  if (fe) fe.addEventListener('change', function () { post({ type: 'setFileEditing', enabled: fe.checked, gt: Date.now() }); });
   if (cvm) cvm.addEventListener('change', function () { post({ type: 'setConserve', enabled: cvm.checked }); });
-  if (csg) csg.addEventListener('change', function () { post({ type: 'setCompactSuggest', enabled: csg.checked }); });
+  if (csg) csg.addEventListener('change', function () { post({ type: 'setCompactSuggest', enabled: csg.checked, gt: Date.now() }); });
   // ── the in-dashboard LOGIN flow (T157): the dashboard is already on the phone over Tailscale,
   // so streaming the CLI's paste-code OAuth URL here IS the phone login. The code input is a pure
   // pass-through to the kernel's PTY — nothing is stored or logged on any side.
@@ -513,7 +518,7 @@ function initGear(post) {
   });
   if (lgI) lgI.addEventListener('keydown', function (e) { if (e.key === 'Enter' && lgSend) lgSend.click(); });
   if (lgX) lgX.addEventListener('click', function () { lgModal(false); post({ type: 'loginCancel' }); if (lgTimer) { clearTimeout(lgTimer); lgTimer = null; } lgRender({ login: { state: '' } }); });
-  if (upm) upm.addEventListener('change', function () { post({ type: 'setUpdateMode', mode: upm.value }); });
+  if (upm) upm.addEventListener('change', function () { post({ type: 'setUpdateMode', mode: upm.value, gt: Date.now() }); });
   // The judge MODEL pickers mirror the session pickers (the user 2026-08-25): families top-level,
   // clicking a family sends its /models `default` (the user's remembered version), hover or
   // ArrowRight reveals a side submenu of versions. The native select stays (hidden) as the VALUE
@@ -640,12 +645,12 @@ function initGear(post) {
     versionMenu(cmm, [{ value: 'session', label: 'Same as the session', versions: [] },
                       { value: 'default', label: 'Default', versions: [] }]);
   });
-  if (jm) jm.addEventListener('change', function () { post({ type: 'setJudgeModel', model: jm.value }); });
-  if (im) im.addEventListener('change', function () { post({ type: 'setIndexModel', model: im.value }); });
-  if (je) je.addEventListener('change', function () { post({ type: 'setJudgeEffort', effort: je.value }); });
-  if (ie) ie.addEventListener('change', function () { post({ type: 'setIndexEffort', effort: ie.value }); });
-  if (dm) dm.addEventListener('change', function () { post({ type: 'setDistillModel', model: dm.value }); });
-  if (de) de.addEventListener('change', function () { post({ type: 'setDistillEffort', effort: de.value }); });
+  if (jm) jm.addEventListener('change', function () { post({ type: 'setJudgeModel', model: jm.value, gt: Date.now() }); });
+  if (im) im.addEventListener('change', function () { post({ type: 'setIndexModel', model: im.value, gt: Date.now() }); });
+  if (je) je.addEventListener('change', function () { post({ type: 'setJudgeEffort', effort: je.value, gt: Date.now() }); });
+  if (ie) ie.addEventListener('change', function () { post({ type: 'setIndexEffort', effort: ie.value, gt: Date.now() }); });
+  if (dm) dm.addEventListener('change', function () { post({ type: 'setDistillModel', model: dm.value, gt: Date.now() }); });
+  if (de) de.addEventListener('change', function () { post({ type: 'setDistillEffort', effort: de.value, gt: Date.now() }); });
   // Fast is an Opus-only research preview (render.ts fastAvailable, the same rule): a pinned
   // non-Opus comment model makes the box a dead control, so it disables — and a model pick that
   // strands a checked box also unchecks it, visibly, as part of the user's own gesture (never a
@@ -658,12 +663,12 @@ function initGear(post) {
     cmf.disabled = !can;
     if (!can && cmf.checked && fromModelPick) {
       cmf.checked = false;
-      post({ type: 'setCommentFast', fast: 'session' });
+      post({ type: 'setCommentFast', fast: 'session', gt: Date.now() });
     }
   }
-  if (cmm) cmm.addEventListener('change', function () { post({ type: 'setCommentModel', model: cmm.value }); cmtFastGate(true); });
-  if (cme) cme.addEventListener('change', function () { post({ type: 'setCommentEffort', effort: cme.value }); });
-  if (cmf) cmf.addEventListener('change', function () { post({ type: 'setCommentFast', fast: cmf.checked ? 'on' : 'session' }); });
+  if (cmm) cmm.addEventListener('change', function () { post({ type: 'setCommentModel', model: cmm.value, gt: Date.now() }); cmtFastGate(true); });
+  if (cme) cme.addEventListener('change', function () { post({ type: 'setCommentEffort', effort: cme.value, gt: Date.now() }); });
+  if (cmf) cmf.addEventListener('change', function () { post({ type: 'setCommentFast', fast: cmf.checked ? 'on' : 'session', gt: Date.now() }); });
   // feed-colormap preview bar: a horizontal gradient of the SELECTED map's stops (mirrors render.ts COLORMAPS).
   var CMAPS = { aurora: [[84, 178, 4], [0, 180, 115], [35, 175, 156], [66, 169, 176], [25, 168, 201], [14, 164, 227], [74, 155, 241], [113, 145, 244], [144, 136, 240]],
     hawaii: [[140, 2, 115], [146, 46, 85], [151, 78, 62], [155, 111, 40], [156, 150, 28], [137, 189, 74], [107, 212, 142], [103, 233, 213], [179, 242, 253]],

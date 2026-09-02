@@ -2859,6 +2859,85 @@ def _nudge_text(count, stalled=False):
 _autonudge_cache = {}   # str(path) -> ((mtime_ns,size), dict)
 
 
+# ── kernel settings: gesture-time ordering (2026-08-29) ──────────────────────────────────────────
+# A setting message can reach this kernel long after the click that made it: federation queues
+# KERNEL_SETTING sends per host while a socket is down and flushes them on reconnect
+# (ui/webview/federation.ts sendRemote/flushPending), and that queue is latest-per-TAB — a frozen
+# dashboard tab (a backgrounded phone, a throttled browser tab) re-dials hours later and flushes a
+# pick the user has since superseded from another device. This kernel used to apply whatever
+# arrived, and the judge tiers RE-PROPAGATE what they apply (_propagate_judge_settings), so one
+# stale flush could walk the whole mesh back to an hours-old pick — and with every kernel then
+# agreeing, the gear's mixed-marks disagreement surface showed nothing. The writer's evidence
+# predated the store's newer state, so it stands down at the write moment (the standing card rule,
+# applied to settings). Ordering is enforced HERE, at the authoritative store, so every path is
+# covered at once: live sends, queue flushes, racing dashboards, and the propagation legs.
+#   - Every dashboard gesture carries `gt`: epoch ms captured ONCE where the message is built (the
+#     gear's change handlers, the file viewer's consent post, the feed's judge-limit switch), so a
+#     queued flush delivers the ORIGINAL gesture's time, never its send time.
+#   - Each setting's store persists the last-APPLIED gt beside the value (auto-nudge.json /
+#     file-editing.json gain a "gt" field; the bare judge-tier stores gain a `<name>.gt` sidecar);
+#     an arriving stamp older-or-equal to it stands down — no apply, no propagation, one loud
+#     stderr line naming both stamps.
+#   - A message with NO stamp (an older dashboard, a direct HTTP caller) applies as it always did
+#     and records its arrival time, so stamped and unstamped writers still order against each other.
+# Clock skew: cross-device wall clocks (NTP) are the ordering source. Gestures contend at human
+# timescales — the flush that motivated this arrived hours late, and a two-dashboard race is
+# seconds apart — so sub-second NTP skew is immaterial; equal stamps keep the STORED value (stand
+# down) for determinism.
+
+def _gesture_ms(msg):
+    """The gesture stamp riding `msg` (epoch ms), or None when the sender didn't stamp one."""
+    gt = msg.get("gt") if isinstance(msg, dict) else None
+    return int(gt) if isinstance(gt, (int, float)) and gt > 0 else None
+
+
+def _gt_int(v):
+    """A stored stamp, defensively: anything unreadable orders as 0, so it never blocks an apply."""
+    try:
+        return int(v or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _setting_stale(name, gt, applied_gt):
+    """True when gesture `gt` must stand down against the store's last-applied stamp — loudly.
+    A stand-down is also recorded on THIS thread (_pop_stale_notice) so the WS branch that
+    delivered the gesture can answer its own socket with a settingStale frame: the stderr line
+    alone left the refusing kernel's verdict invisible to the dashboard that made the gesture
+    (the open gear kept showing the refused pick, and with the mesh AGREEING on the kept value
+    the mixed marks showed nothing). Every check clears the previous verdict first, so a popped
+    notice is always the CURRENT call's."""
+    _stale_seen.last = None
+    if gt is None or gt > applied_gt:
+        return False
+    _stale_seen.last = {"setting": name, "storedGt": applied_gt}
+    sys.stderr.write("setting %s: stale gesture stood down (gesture %d <= applied %d) — "
+                     "no apply, no propagation\n" % (name, gt, applied_gt))
+    return True
+
+
+_stale_seen = threading.local()   # per-thread: the last _setting_stale stand-down (the WS reply seam)
+
+
+def _pop_stale_notice():
+    """The current thread's last stand-down verdict, consumed. The gt-gated setters run
+    synchronously on the thread that dispatched the message, so this is exact — no id plumbing."""
+    d = getattr(_stale_seen, "last", None)
+    _stale_seen.last = None
+    return d
+
+
+# ONE lock for every gt-gated setting's read-check-write span (2026-08-29): the stores read the
+# stamp, check _setting_stale, then write, on a ThreadingHTTPServer — with no lock, two
+# near-simultaneous flushes of one setting (two dashboards flushing on a host's recovery) could
+# both pass the check against the same stored stamp and then land in SOCKET order, the exact
+# inversion the gesture-time mechanism exists to prevent. The critical sections are tiny (a stat
+# + small read, a compare, an atomic write), so one module-level lock covers them all;
+# _set_auto_nudge is the one exception — its file doubles as the nudge ledger, whose other
+# writers already serialize on _NUDGE_LOCK, so it keeps that lock across the same span.
+_SETTINGS_LOCK = threading.RLock()
+
+
 # ONE lock for the nudge ledger's read-modify-write spans (2026-08-19 audit: a live episode
 # record vanished with no state-visible writer — the ledger's writers run on the producer tick,
 # judge callbacks, and WS handlers concurrently, and two overlapping dict(read)…write() spans
@@ -2984,10 +3063,25 @@ def _write_auto_nudge(d):
     _atomic_write(jd.STATE / "auto-nudge.json", json.dumps(d))
 
 
-def _set_auto_nudge(enabled):
-    d = dict(_auto_nudge_data())
-    d["enabled"] = bool(enabled)
-    _write_auto_nudge(d)
+def _set_auto_nudge(enabled, gt=None):
+    """Returns the applied gesture stamp (epoch ms), or None when a stale `gt` stood down —
+    see the gesture-time ordering block above _NUDGE_LOCK — or the store write failed (OSError:
+    loud on stderr, nothing applied). The catch lives HERE, like _set_update_mode's and
+    _set_judge_state's: a raised OSError reaches the WS reader loop, which classifies it as a
+    socket failure and re-raises into a silent pass — a full-disk gear toggle tearing the whole
+    dashboard WebSocket down with zero log output."""
+    with _NUDGE_LOCK:
+        d = dict(_auto_nudge_data())
+        if _setting_stale("auto-nudge", gt, _gt_int(d.get("gt"))):
+            return None
+        d["enabled"] = bool(enabled)
+        d["gt"] = gt if gt is not None else int(time.time() * 1000)
+        try:
+            _write_auto_nudge(d)
+        except OSError as e:
+            sys.stderr.write("setting auto-nudge: write failed (%s) — nothing applied\n" % e)
+            return None
+        return d["gt"]
 
 
 def _compact_suggest_on():
@@ -2998,10 +3092,25 @@ def _compact_suggest_on():
     return bool(_auto_nudge_data().get("compactSuggestEnabled"))
 
 
-def _set_compact_suggest(enabled):
-    d = dict(_auto_nudge_data())
-    d["compactSuggestEnabled"] = bool(enabled)
-    _write_auto_nudge(d)
+def _set_compact_suggest(enabled, gt=None):
+    """Returns the applied gesture stamp (epoch ms), or None when a stale `gt` stood down or the
+    store write failed (OSError: loud on stderr, nothing applied, nothing ticked) —
+    _set_auto_nudge's contract exactly (same blob, same _NUDGE_LOCK), but the
+    stamp is PER SETTING (`compactSuggestGt`): the two checkboxes share a file, not a clock, so a
+    queued compact-suggest flush can never stand down against a newer auto-nudge gesture or steal
+    authority from one (the gesture-time ordering block above _gesture_ms)."""
+    with _NUDGE_LOCK:
+        d = dict(_auto_nudge_data())
+        if _setting_stale("compact-suggest", gt, _gt_int(d.get("compactSuggestGt"))):
+            return None
+        d["compactSuggestEnabled"] = bool(enabled)
+        d["compactSuggestGt"] = gt if gt is not None else int(time.time() * 1000)
+        try:
+            _write_auto_nudge(d)
+        except OSError as e:
+            sys.stderr.write("setting compact-suggest: write failed (%s) — nothing applied\n" % e)
+            return None
+        return d["compactSuggestGt"]
 
 
 def _file_editing_on():
@@ -3019,8 +3128,29 @@ def _file_editing_on():
         return False
 
 
-def _set_file_editing(enabled):
-    _atomic_write(jd.STATE / "file-editing.json", json.dumps({"enabled": bool(enabled)}))
+def _set_file_editing(enabled, gt=None):
+    """Returns the applied gesture stamp (epoch ms), or None when a stale `gt` stood down —
+    see the gesture-time ordering block above _NUDGE_LOCK — or the store write failed (OSError:
+    loud on stderr, nothing applied; caught HERE like _set_update_mode's, because a raised OSError
+    reads as a socket failure to the WS reader loop and silently tears the connection down).
+    A file without the field (written before the mechanism) reads as gt 0, so any stamped gesture
+    applies over it. The whole read-check-write span holds _SETTINGS_LOCK: without it, two racing
+    flushes could both check against the same stored stamp and land in socket order (see the
+    lock's own comment)."""
+    with _SETTINGS_LOCK:
+        try:
+            prev = json.loads((jd.STATE / "file-editing.json").read_text())
+        except Exception:
+            prev = None
+        if _setting_stale("file-editing", gt, _gt_int(prev.get("gt")) if isinstance(prev, dict) else 0):
+            return None
+        stamp = gt if gt is not None else int(time.time() * 1000)
+        try:
+            _atomic_write(jd.STATE / "file-editing.json", json.dumps({"enabled": bool(enabled), "gt": stamp}))
+        except OSError as e:
+            sys.stderr.write("setting file-editing: write failed (%s) — nothing applied\n" % e)
+            return None
+        return stamp
 
 
 # ── automatic updates of THIS machine (the user 2026-08-09) ───────────────────────────────────────
@@ -3053,9 +3183,36 @@ def _update_mode():
         return "ask"
 
 
-def _set_update_mode(mode):
-    if mode in _UPDATE_MODES:
-        _atomic_write(jd.STATE / "update-mode.json", json.dumps({"mode": mode}))
+def _update_mode_gt():
+    """Last-applied gesture stamp for the update mode — a file without the field (written before
+    the mechanism), or no file at all, reads as 0, so any stamped gesture applies over it."""
+    try:
+        d = json.loads((jd.STATE / "update-mode.json").read_text())
+        return _gt_int(d.get("gt")) if isinstance(d, dict) else 0
+    except (OSError, ValueError):
+        return 0
+
+
+def _set_update_mode(mode, gt=None):
+    """Returns the applied gesture stamp (epoch ms); None when the mode is invalid, a stale `gt`
+    stood down, or the write failed (loud — nothing applied). setUpdateMode rides federation's
+    queued KERNEL_SETTING class like the rest of the gear, so it is gt-gated exactly like
+    _set_file_editing: a frozen tab's hours-late flush must not silently revert how this machine
+    self-updates at boot (ask/auto/off). Value + stamp live in one json, read-check-write under
+    _SETTINGS_LOCK; an unstamped set (older dashboard, direct caller) applies as it always did
+    and records its arrival time."""
+    if mode not in _UPDATE_MODES:
+        return None
+    with _SETTINGS_LOCK:
+        if _setting_stale("update-mode", gt, _update_mode_gt()):
+            return None
+        stamp = gt if gt is not None else int(time.time() * 1000)
+        try:
+            _atomic_write(jd.STATE / "update-mode.json", json.dumps({"mode": mode, "gt": stamp}))
+        except OSError as e:
+            sys.stderr.write("setting update-mode: write failed (%s) — nothing applied\n" % e)
+            return None
+        return stamp
 
 
 def _semver(tag):
@@ -25058,29 +25215,72 @@ def _set_colormap(name):
 # _triage_effort / _index_effort read these on the judge's NEXT pass; no restart). Models validate against the
 # shared MODEL_CHOICES; efforts against EFFORT_CHOICES, with "" clearing the file back to the default (no
 # --effort). Ignore anything else, so a stale/garbage value can't reach `claude --model`.
-def _set_judge_state(fname, value, allowed, allow_empty=False):
-    if value in allowed or (allow_empty and value == ""):
+def _set_judge_state(fname, value, allowed, allow_empty=False, gt=None):
+    """Returns the applied gesture stamp (epoch ms); None in exactly three cases, all of which
+    the callers' `_jgt is not None` gates convert into NO propagation:
+      - the value is invalid (not in `allowed`) — refused before the ordering check, so a
+        refused value never burns its stamp;
+      - a stale `gt` stood down (the gesture-time ordering block above _SETTINGS_LOCK);
+      - the store could not be written (OSError) — loud on stderr, and deliberately still
+        unpropagated: a value the LOCAL store never took must not fan out to the mesh
+        (consistency over delivery — the mesh converging on a value its origin doesn't hold
+        would be the stale-flush revert in a new costume; the next applied change re-fans).
+    The stamp lives in a `<fname>.gt` sidecar because these stores are bare values other readers
+    (jd._state_str) parse raw — an absent sidecar reads as 0, so pre-existing picks yield to any
+    stamped one. The read-check-write span holds _SETTINGS_LOCK (racing flushes must land in
+    gesture order, not socket order), and both files publish via _atomic_write, SIDECAR FIRST: a
+    crash between the two leaves the new stamp guarding the old value, which errs safe — a
+    legitimate re-send stands down once and the next change heals — where value-first left the
+    new value guarded by the OLD stamp, letting a later stale gesture invert the ordering."""
+    if not (value in allowed or (allow_empty and value == "")):
+        return None
+    with _SETTINGS_LOCK:
+        if _setting_stale(fname, gt, _judge_state_gt(fname)):
+            return None
+        stamp = gt if gt is not None else int(time.time() * 1000)
         try:
             jd.STATE.mkdir(parents=True, exist_ok=True)
-            (jd.STATE / fname).write_text(value)
-        except OSError:
-            pass
+            _atomic_write(jd.STATE / (fname + ".gt"), str(stamp))
+        except OSError as e:
+            sys.stderr.write("setting %s: could not write the gesture stamp (%s) — nothing "
+                             "applied, nothing propagated\n" % (fname, e))
+            return None
+        try:
+            _atomic_write(jd.STATE / fname, value)
+        except OSError as e:
+            # rollback is impossible (the sidecar already published), so be LOUD about the exact
+            # half-applied state: the stamp advanced without its value, which only ever errs
+            # toward one extra stand-down — change the setting again to heal both files.
+            sys.stderr.write("setting %s: HALF-APPLIED — stamp %d landed but the value write "
+                             "failed (%s); the store keeps its previous value guarded by the new "
+                             "stamp. Not applied for the judges, not propagated; the next change "
+                             "heals it.\n" % (fname, stamp, e))
+            return None
+    return stamp
+
+
+def _judge_state_gt(fname):
+    """Last-applied gesture stamp for a judge-tier store — absent or garbled orders as 0."""
+    try:
+        return _gt_int((jd.STATE / (fname + ".gt")).read_text().strip())
+    except Exception:
+        return 0
 
 
 # judge tiers accept VERSION ids too (the user 2026-08-25: the settings pickers mirror the
 # family+version submenus) — a version rides the SDK model param verbatim, like session picks
 _JUDGE_MODEL_VALUES = _MODEL_VALUES | set(_VERSION_FAMILY)
-def _set_judge_model(v):  _set_judge_state("judge-model", v, _JUDGE_MODEL_VALUES)
-def _set_index_model(v):  _set_judge_state("index-model", v, _JUDGE_MODEL_VALUES)
-def _set_judge_effort(v): _set_judge_state("judge-effort", v, _EFFORT_VALUES, allow_empty=True)
-def _set_index_effort(v): _set_judge_state("index-effort", v, _EFFORT_VALUES, allow_empty=True)
+def _set_judge_model(v, gt=None):  return _set_judge_state("judge-model", v, _JUDGE_MODEL_VALUES, gt=gt)
+def _set_index_model(v, gt=None):  return _set_judge_state("index-model", v, _JUDGE_MODEL_VALUES, gt=gt)
+def _set_judge_effort(v, gt=None): return _set_judge_state("judge-effort", v, _EFFORT_VALUES, allow_empty=True, gt=gt)
+def _set_index_effort(v, gt=None): return _set_judge_state("index-effort", v, _EFFORT_VALUES, allow_empty=True, gt=gt)
 # The distilling pair accepts extra sentinels (resolved by jd._distill_model/_distill_effort at call
 # time): "triage" (the default) means FOLLOW the triage pick live — exactly what the distiller/briefer/
 # staller did before the split (the user 2026-08-14) — and effort's "none" pins no-flag. "none" exists
 # because "" cannot: _state_str folds an empty file into the default, so an allow_empty pin here would
 # read back as "follow" (caught by test_distill_tier before it shipped).
-def _set_distill_model(v):  _set_judge_state("distill-model", v, _JUDGE_MODEL_VALUES | {"triage"})
-def _set_distill_effort(v): _set_judge_state("distill-effort", v, _EFFORT_VALUES | {"triage", "none"})
+def _set_distill_model(v, gt=None):  return _set_judge_state("distill-model", v, _JUDGE_MODEL_VALUES | {"triage"}, gt=gt)
+def _set_distill_effort(v, gt=None): return _set_judge_state("distill-effort", v, _EFFORT_VALUES | {"triage", "none"}, gt=gt)
 # The default-COMMENT-THREAD trio (the user 2026-08-29, who wanted every new comment thread on one
 # model/effort/fast pick regardless of the session it branches from). Sentinel "session" — the shipped
 # default — means SAME AS THE SESSION: resolved to the empty override at create time
@@ -25088,9 +25288,9 @@ def _set_distill_effort(v): _set_judge_state("distill-effort", v, _EFFORT_VALUES
 # (clear to the account default) so the setting speaks the create dialog's exact value space; fast is
 # "on" or the sentinel — a checkbox has no third state, and forcing a thread SLOW from a fast parent
 # stays a per-thread dialog pick, never a standing default.
-def _set_comment_model(v):  _set_judge_state("comment-model", v, _JUDGE_MODEL_VALUES | {"session", "default"})
-def _set_comment_effort(v): _set_judge_state("comment-effort", v, _EFFORT_VALUES | {"session"})
-def _set_comment_fast(v):   _set_judge_state("comment-fast", v, {"session", "on"})
+def _set_comment_model(v, gt=None):  return _set_judge_state("comment-model", v, _JUDGE_MODEL_VALUES | {"session", "default"}, gt=gt)
+def _set_comment_effort(v, gt=None): return _set_judge_state("comment-effort", v, _EFFORT_VALUES | {"session"}, gt=gt)
+def _set_comment_fast(v, gt=None):   return _set_judge_state("comment-fast", v, {"session", "on"}, gt=gt)
 
 
 # The four judge-tier settings PROPAGATE: a pick made here follows to every linked kernel (the user
@@ -25101,7 +25301,10 @@ def _set_comment_fast(v):   _set_judge_state("comment-fast", v, {"session", "on"
 # machine's judges. The receiving kernel's /judge-settings route applies WITHOUT re-propagating, so
 # the machines converge in one hop from the machine the user touched and can never ping-pong. A
 # machine reachable only through a relay holds no admin path from here; it adopts when the pick is
-# made from (or forwarded via) the machine that owns its tunnel.
+# made from (or forwarded via) the machine that owns its tunnel. Every fan-out body carries the
+# ORIGIN gesture's `gt` (the WS handlers forward the stamp the local store just applied), so a
+# stale pick can never win at any receiver by arriving via this second hop — each receiver's
+# _apply_judge_settings orders by it exactly as the first hop did.
 
 _JUDGE_SETTING_FIELDS = (("judgeModel", _set_judge_model), ("indexModel", _set_index_model),
                          ("judgeEffort", _set_judge_effort), ("indexEffort", _set_index_effort),
@@ -25112,25 +25315,13 @@ _JUDGE_SETTING_FIELDS = (("judgeModel", _set_judge_model), ("indexModel", _set_i
                          ("commentModel", _set_comment_model), ("commentEffort", _set_comment_effort),
                          ("commentFast", _set_comment_fast))
 
-# field -> its STATE file, for the per-field PICK STAMPS below (the user 2026-08-30, whose distill
-# pick kept "resetting": authority between kernels must be per field and per pick time, never
-# whichever machine spoke last).
-_JUDGE_SETTING_FILES = {"judgeModel": "judge-model", "indexModel": "index-model",
-                        "judgeEffort": "judge-effort", "indexEffort": "index-effort",
-                        "distillModel": "distill-model", "distillEffort": "distill-effort",
-                        "commentModel": "comment-model", "commentEffort": "comment-effort",
-                        "commentFast": "comment-fast"}
-
-
-def _setting_stamp(field):
-    """WHEN a kernel-side setting was last picked = its STATE file's mtime. The write IS the pick
-    event (every setter writes the file at pick time), and a propagated apply preserves the ORIGIN's
-    stamp via utime below — so the stamp is the pick's own event time on every machine, and recency
-    comparisons stay honest across hops. None = never picked here."""
-    try:
-        return (jd.STATE / _JUDGE_SETTING_FILES[field]).stat().st_mtime
-    except (OSError, KeyError):
-        return None
+# The per-field PICK STAMPS this leg carried from 2026-08-30 (each field's STATE-file mtime in a
+# body "stamps" dict, preserved by utime at the receiver — the distill-pick stomp fix) are
+# superseded by the gesture stamp: one clock decides every write. Two recency clocks deciding the
+# same write would fight, and mtime only guarded THIS hop — a stale WS flush was still applied
+# locally at a fresh mtime and then fanned out as the newest pick. The body-level `gt` covers the
+# same stomp (older-or-equal never overwrites newer, a refused value never steals recency, a
+# stampless body keeps the legacy apply) at both hops, decided in the setter under one lock.
 
 
 def _apply_judge_settings(body):
@@ -25138,36 +25329,17 @@ def _apply_judge_settings(body):
     never reaches the state files or `claude --model`), and answer with the CURRENT values —
     the ack shows what actually landed, since an invalid value is deliberately ignored. The
     distill pair answers RAW ("triage" = following the triage pick), matching /version: the
-    gear shows the user's choice, not its resolution."""
+    gear shows the user's choice, not its resolution. A body-level `gt` (the origin gesture's
+    stamp, forwarded by every propagation leg) covers each field the body carries: a field
+    whose stored stamp is newer stands down individually (_setting_stale) — and the ack then
+    shows the newer value still standing."""
     _dm_before = jd._distill_model()
-    # Per-field PICK AUTHORITY (the user 2026-08-30, whose Distilling pick "continually gets reset"):
-    # a propagated body stamps each field with its pick time, and an OLDER (or same-moment) value
-    # never overwrites a newer local pick — the stomp was any later-arriving propagation replacing a
-    # fresher pick wholesale. A stampless body (an older kernel, a manual curl) keeps the legacy
-    # apply-unconditionally behavior; the protection needs both ends on this code. An applied
-    # stamped field keeps the ORIGIN's pick time (utime) so recency survives re-fans, and the stamp
-    # is copied only when the value actually LANDED (a rejected/garbage value must not steal the
-    # newer time onto the old content).
-    stamps = body.get("stamps") if isinstance(body, dict) and isinstance(body.get("stamps"), dict) else {}
+    _gt = _gesture_ms(body)
     for key, setter in _JUDGE_SETTING_FIELDS:
         if isinstance(body, dict) and key in body:
-            st = stamps.get(key)
-            try:
-                st = float(st) if st is not None else None
-            except (TypeError, ValueError):
-                st = None
-            if st is not None:
-                local = _setting_stamp(key)
-                if local is not None and local >= st:
-                    continue                          # older never overwrites newer (the fix's whole point)
-            setter(str(body.get(key) or ""))
-            if st is not None:
-                try:
-                    p = jd.STATE / _JUDGE_SETTING_FILES[key]
-                    if p.exists() and p.read_text().strip() == str(body.get(key) or "").strip():
-                        os.utime(p, (st, st))
-                except OSError:
-                    pass
+            setter(str(body.get(key) or ""), gt=_gt)
+    _pop_stale_notice()   # HTTP legs have no delivering dashboard socket — discard the verdict so
+    #                       no later message handled on a kept-alive connection's thread inherits it
     if jd._distill_model() != _dm_before:
         # Switching the distill tier's EFFECTIVE model is a discrete recovery event (the user
         # 2026-08-18, who pointed the tier away from an outage-scoped model and expected the failed
@@ -25200,12 +25372,6 @@ def _propagate_judge_settings(body):
     itself never blocks on the machines. A miss is LOUD (a machine that missed the pick would
     silently run its judges on another model forever) but not retried — the next change re-fans,
     and /judge-settings with {"propagate": true} re-syncs on demand."""
-    # Every fanned field carries its PICK STAMP (the local STATE file's mtime — the pick event
-    # itself, or the origin's preserved time on a re-fan), so the receiving side can refuse an
-    # older value over a newer pick (the user 2026-08-30). Computed once, at fan time.
-    body = dict(body)
-    _st = {f: _setting_stamp(f) for f in body if f in _JUDGE_SETTING_FILES}
-    body["stamps"] = {f: t for f, t in _st.items() if t is not None}
     with _remotes_lock:
         rows = [dict(r) for r in _remotes.values()
                 if r.get("status") == "up" and r.get("local_port") and r.get("token")]
@@ -25223,6 +25389,36 @@ def _reply(c, msg):
         c["send"](json.dumps(msg))
     except Exception:
         c["alive"] = False
+
+
+def _setting_kept_value(name):
+    """The value a stood-down gesture lost to — read at reply time only (one cheap store read on
+    the stand-down path, never on the apply path). Booleans stay booleans; the gear words them."""
+    if name == "auto-nudge":
+        return bool(_auto_nudge_data().get("enabled"))
+    if name == "compact-suggest":
+        return _compact_suggest_on()
+    if name == "file-editing":
+        return _file_editing_on()
+    if name == "update-mode":
+        return _update_mode()
+    return jd._state_str(name, "")   # the judge-tier stores are bare value files
+
+
+def _tell_stale_gesture(client):
+    """A gt-gated setter just refused: if that refusal was a stale STAND-DOWN (recorded on this
+    thread by _setting_stale), answer the DELIVERING socket with a small settingStale frame — the
+    same targeted _reply idiom the saveFile acks use, never a broadcast. Without it the refusal
+    was one kernel stderr line: the dashboard that made the gesture kept displaying the refused
+    pick as applied (the gear fills only on open), and with the mesh AGREEING on the kept value
+    the mixed marks showed nothing. The gear toasts the frame and re-fills if open — event-keyed,
+    the frame IS the deciding event; no polling. A refusal for any other cause (invalid value,
+    OSError) records no notice and sends nothing."""
+    st = _pop_stale_notice()
+    if not st:
+        return
+    _reply(client, {"type": "settingStale", "setting": st["setting"],
+                    "storedGt": st["storedGt"], "kept": _setting_kept_value(st["setting"])})
 
 
 # ---- pasted-image hydration + dropped-file handling (ported from the old TS kernel chat-view/src/
@@ -32285,7 +32481,8 @@ class Handler(BaseHTTPRequestHandler):
                 # Applies via the validated setters, answers with the CURRENT four values.
                 # {"propagate": true} additionally fans the pick out from THIS machine (the manual /
                 # scripted re-sync); forwarded bodies never carry it, so propagation is one hop and
-                # can never ping-pong around the mesh.
+                # can never ping-pong around the mesh. A body-level `gt` is kept in the forward —
+                # the origin gesture's stamp orders the apply at every receiver (_setting_stale).
                 try:
                     body = json.loads(raw_body or b"{}")
                 except Exception:
@@ -32467,19 +32664,30 @@ class Handler(BaseHTTPRequestHandler):
             _set_conserve(bool(msg.get("enabled")))
             _push_soon()
         elif msg and msg.get("type") == "setAutoNudge" and msg.get("enabled") is not None:
-            _set_auto_nudge(bool(msg["enabled"]))   # feed gear → server-side Auto Nudge on/off
+            # feed gear → server-side Auto Nudge on/off; a stale gesture stamp stands down (no
+            # apply), and the dashboard that made the losing gesture hears it
+            if _set_auto_nudge(bool(msg["enabled"]), gt=_gesture_ms(msg)) is None:
+                _tell_stale_gesture(client)
         elif msg and msg.get("type") == "setCompactSuggest" and msg.get("enabled") is not None:
-            _set_compact_suggest(bool(msg["enabled"]))   # T208 opt-in — kernel-side like autoNudge
-            # act immediately on turn-on (don't wait 4s) — but skip the dead-wait sweep: the
-            # death transition has ONE observer (the pusher's tick; see _auto_nudge_tick), and
-            # this WS thread racing its prev-swap could spend a transition uncorroborated
-            _auto_nudge_tick(int(time.time()), _tmux_sessions(), run_dead_wait=False)
+            # T208 opt-in — kernel-side like autoNudge, gt-gated like every queued setting. Only a
+            # real apply acts immediately on turn-on (don't wait 4s) — a stood-down toggle is not
+            # new information — and the tick skips the dead-wait sweep: the death transition has
+            # ONE observer (the pusher's tick; see _auto_nudge_tick), and this WS thread racing
+            # its prev-swap could spend a transition uncorroborated
+            if _set_compact_suggest(bool(msg["enabled"]), gt=_gesture_ms(msg)) is not None:
+                _auto_nudge_tick(int(time.time()), _tmux_sessions(), run_dead_wait=False)
+            else:
+                _tell_stale_gesture(client)
         elif msg and msg.get("type") == "setUpdateMode" and msg.get("mode") in _UPDATE_MODES:
-            _set_update_mode(str(msg["mode"]))      # feed gear → how romp handles new releases at boot
+            # feed gear → how romp handles new releases at boot; gt-gated like every queued setting
+            if _set_update_mode(str(msg["mode"]), gt=_gesture_ms(msg)) is None:
+                _tell_stale_gesture(client)
         elif msg and msg.get("type") == "setFileEditing" and msg.get("enabled") is not None:
             # The viewer's Edit consent popup (the user 2026-08-22) — a kernel-side setting like
             # setAutoNudge, broadcast by federation.ts KERNEL_SETTING so one yes answers the mesh.
-            _set_file_editing(bool(msg["enabled"]))
+            # A stale gesture stamp stands down (a queued flush must not undo a newer choice).
+            if _set_file_editing(bool(msg["enabled"]), gt=_gesture_ms(msg)) is None:
+                _tell_stale_gesture(client)
         elif msg and msg.get("type") == "askClear" and msg.get("itemId"):
             # a cleared card drops any composer citation chip pointing INTO it (the user 2026-07-01) — the
             # goal is gone, so following up on it makes no sense. Chips can cite a SUB-goal of the card
@@ -32933,42 +33141,76 @@ class Handler(BaseHTTPRequestHandler):
             _set_colormap(str(msg["name"]))    # recency colormap chooser → recolours the feed on next push
         elif msg and msg.get("type") == "setPalette" and msg.get("name"):
             _set_palette(str(msg["name"]))     # gear "Session colors" → remap the fleet onto the chosen set
+        # The judge-tier picks below share one shape: apply through the validated setter with the
+        # message's gesture stamp (_gesture_ms — a stale stamp stands down; see _setting_stale),
+        # and only an APPLIED pick fans out, carrying the applied stamp `_jgt` so it orders the
+        # same way at every receiver. A stood-down or invalid pick propagates NOTHING — the
+        # re-propagation leg is exactly how one stale flush used to revert the whole mesh — and a
+        # STOOD-DOWN one additionally answers the delivering socket (_tell_stale_gesture) so the
+        # dashboard that made the losing gesture hears it.
         elif msg and msg.get("type") == "setJudgeModel" and msg.get("model"):
-            _set_judge_model(str(msg["model"]))     # gear "Triage model" dropdown → the judge uses it next pass
-            threading.Thread(target=_propagate_judge_settings,   # …and every linked kernel's judges with it
-                             args=({"judgeModel": str(msg["model"])},), daemon=True).start()
+            _jgt = _set_judge_model(str(msg["model"]), gt=_gesture_ms(msg))   # gear "Triage model" dropdown → the judge uses it next pass
+            if _jgt is not None:
+                threading.Thread(target=_propagate_judge_settings,   # …and every linked kernel's judges with it
+                                 args=({"judgeModel": str(msg["model"]), "gt": _jgt},), daemon=True).start()
+            else:
+                _tell_stale_gesture(client)
         elif msg and msg.get("type") == "setIndexModel" and msg.get("model"):
-            _set_index_model(str(msg["model"]))     # gear "Indexing model" dropdown
-            threading.Thread(target=_propagate_judge_settings,
-                             args=({"indexModel": str(msg["model"])},), daemon=True).start()
+            _jgt = _set_index_model(str(msg["model"]), gt=_gesture_ms(msg))   # gear "Indexing model" dropdown
+            if _jgt is not None:
+                threading.Thread(target=_propagate_judge_settings,
+                                 args=({"indexModel": str(msg["model"]), "gt": _jgt},), daemon=True).start()
+            else:
+                _tell_stale_gesture(client)
         elif msg and msg.get("type") == "setJudgeEffort":
-            _set_judge_effort(str(msg.get("effort") or ""))   # gear "Triage effort" ("" = default/none)
-            threading.Thread(target=_propagate_judge_settings,
-                             args=({"judgeEffort": str(msg.get("effort") or "")},), daemon=True).start()
+            _jgt = _set_judge_effort(str(msg.get("effort") or ""), gt=_gesture_ms(msg))   # gear "Triage effort" ("" = default/none)
+            if _jgt is not None:
+                threading.Thread(target=_propagate_judge_settings,
+                                 args=({"judgeEffort": str(msg.get("effort") or ""), "gt": _jgt},), daemon=True).start()
+            else:
+                _tell_stale_gesture(client)
         elif msg and msg.get("type") == "setIndexEffort":
-            _set_index_effort(str(msg.get("effort") or ""))   # gear "Indexing effort"
-            threading.Thread(target=_propagate_judge_settings,
-                             args=({"indexEffort": str(msg.get("effort") or "")},), daemon=True).start()
+            _jgt = _set_index_effort(str(msg.get("effort") or ""), gt=_gesture_ms(msg))   # gear "Indexing effort"
+            if _jgt is not None:
+                threading.Thread(target=_propagate_judge_settings,
+                                 args=({"indexEffort": str(msg.get("effort") or ""), "gt": _jgt},), daemon=True).start()
+            else:
+                _tell_stale_gesture(client)
         elif msg and msg.get("type") == "setDistillModel" and msg.get("model"):
-            _set_distill_model(str(msg["model"]))   # gear "Distilling model" ("triage" = follow the triage pick)
-            threading.Thread(target=_propagate_judge_settings,
-                             args=({"distillModel": str(msg["model"])},), daemon=True).start()
+            _jgt = _set_distill_model(str(msg["model"]), gt=_gesture_ms(msg))   # gear "Distilling model" ("triage" = follow the triage pick)
+            if _jgt is not None:
+                threading.Thread(target=_propagate_judge_settings,
+                                 args=({"distillModel": str(msg["model"]), "gt": _jgt},), daemon=True).start()
+            else:
+                _tell_stale_gesture(client)
         elif msg and msg.get("type") == "setDistillEffort" and msg.get("effort"):
-            _set_distill_effort(str(msg["effort"]))   # gear "Distilling effort" ("triage" = follow; "none" = pinned no-flag)
-            threading.Thread(target=_propagate_judge_settings,
-                             args=({"distillEffort": str(msg["effort"])},), daemon=True).start()
+            _jgt = _set_distill_effort(str(msg["effort"]), gt=_gesture_ms(msg))   # gear "Distilling effort" ("triage" = follow; "none" = pinned no-flag)
+            if _jgt is not None:
+                threading.Thread(target=_propagate_judge_settings,
+                                 args=({"distillEffort": str(msg["effort"]), "gt": _jgt},), daemon=True).start()
+            else:
+                _tell_stale_gesture(client)
         elif msg and msg.get("type") == "setCommentModel" and msg.get("model"):
-            _set_comment_model(str(msg["model"]))   # gear "Comment model" ("session" = same as the session)
-            threading.Thread(target=_propagate_judge_settings,
-                             args=({"commentModel": str(msg["model"])},), daemon=True).start()
+            _jgt = _set_comment_model(str(msg["model"]), gt=_gesture_ms(msg))   # gear "Comment model" ("session" = same as the session)
+            if _jgt is not None:
+                threading.Thread(target=_propagate_judge_settings,
+                                 args=({"commentModel": str(msg["model"]), "gt": _jgt},), daemon=True).start()
+            else:
+                _tell_stale_gesture(client)
         elif msg and msg.get("type") == "setCommentEffort" and msg.get("effort"):
-            _set_comment_effort(str(msg["effort"]))   # gear "Comment effort"
-            threading.Thread(target=_propagate_judge_settings,
-                             args=({"commentEffort": str(msg["effort"])},), daemon=True).start()
+            _jgt = _set_comment_effort(str(msg["effort"]), gt=_gesture_ms(msg))   # gear "Comment effort"
+            if _jgt is not None:
+                threading.Thread(target=_propagate_judge_settings,
+                                 args=({"commentEffort": str(msg["effort"]), "gt": _jgt},), daemon=True).start()
+            else:
+                _tell_stale_gesture(client)
         elif msg and msg.get("type") == "setCommentFast" and msg.get("fast"):
-            _set_comment_fast(str(msg["fast"]))     # gear "Fast comment threads" ("on" / "session")
-            threading.Thread(target=_propagate_judge_settings,
-                             args=({"commentFast": str(msg["fast"])},), daemon=True).start()
+            _jgt = _set_comment_fast(str(msg["fast"]), gt=_gesture_ms(msg))     # gear "Fast comment threads" ("on" / "session")
+            if _jgt is not None:
+                threading.Thread(target=_propagate_judge_settings,
+                                 args=({"commentFast": str(msg["fast"]), "gt": _jgt},), daemon=True).start()
+            else:
+                _tell_stale_gesture(client)
 
     def _ws(self):
         key = self.headers.get("Sec-WebSocket-Key")
