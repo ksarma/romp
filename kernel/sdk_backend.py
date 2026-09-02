@@ -1303,6 +1303,17 @@ def api_health_state(events, now: float, prev=None, cfg: dict | None = None) -> 
     return {"state": state, "since": since, "why": why, "evidence": ev, "transitions": trans}
 
 
+def _pid_alive(pid: int) -> bool:
+    """Signal 0: True for a live process (ours or another user's), False for no such pid."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True                                     # exists; not ours to signal
+    return True
+
+
 class ApiHealth:
     """The aggregator: one ring of AhEvent tuples, one seen-message-id map, one lock, the per-bucket
     (state, stateSince, evidence) and the transition ledger. Owned by SdkBackend; fed from
@@ -1355,6 +1366,7 @@ class ApiHealth:
             tmp = p.with_name("%s.%d.%s.tmp" % (p.name, os.getpid(), uuid.uuid4().hex[:8]))
             try:
                 p.parent.mkdir(parents=True, exist_ok=True)
+                self._sweep_dead_salt_temps(p)
                 fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
                 try:
                     os.write(fd, v.encode())
@@ -1380,6 +1392,27 @@ class ApiHealth:
                     self._log("api-health: could not mint the label salt (%s) — labels unsalted this kernel life" % e)
                 self._salt = ""
             return self._salt
+
+    def _sweep_dead_salt_temps(self, p: Path):
+        """Remove `api-health-salt.<pid>.<hex>.tmp` leftovers whose writer is DEAD: a kernel that died
+        between creating its temp and linking it. Harmless clutter otherwise, but it accumulates in a
+        state dir that is never otherwise cleaned. A temp whose writer pid is alive — or our own pid: a
+        sibling instance in this process — is a mint in progress and stays; unlinking it would turn
+        that writer's link into FileNotFoundError and leave it unsalted for its life. Never raises."""
+        try:
+            for t in p.parent.glob(p.name + ".*.tmp"):
+                try:
+                    pid = int(t.name[len(p.name) + 1:].split(".", 1)[0])
+                except ValueError:
+                    continue                            # not a name we minted: not ours to remove
+                if pid == os.getpid() or _pid_alive(pid):
+                    continue
+                try:
+                    t.unlink()
+                except OSError:
+                    pass
+        except OSError:
+            pass
 
     def auth_label(self, source, *, work_key: str = "", launched_keyed: bool = False) -> str:
         """api_health_auth_label with this install's salt and the account digest the usage bars use."""

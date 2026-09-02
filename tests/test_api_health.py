@@ -854,12 +854,18 @@ class SaltedLabels(unittest.TestCase):
         open(p, "w").close()
         self.assertEqual(sb.ApiHealth(d).salt(), "", "the empty file is the switch")
 
-    def test_two_threads_minting_at_once_get_one_salt(self):
-        """Finding 1: the mint used to create the file (O_EXCL) and then write it — a sibling thread
-        reading in between saw an EMPTY file, the documented unsalted switch, cached '' and labelled
-        the same key differently. The write is widened here to make the gap certain."""
+    def test_two_instances_minting_at_once_get_one_salt(self):
+        """Finding 1: the mint used to create the file (O_EXCL) and then write it — a reader in
+        between saw an EMPTY file, the documented unsalted switch, cached '' and labelled the same
+        key differently. The write is widened here to make the gap certain.
+
+        Round 2: the reader is a PEER instance over the same state dir (a second kernel process, or
+        a sibling aggregator in this one), not a second thread on one instance. One instance's
+        `_salt_lock` serialises nothing across instances, so only the atomic publish (bytes to a
+        temp, the name taken by link) keeps the peer from ever seeing the file empty — a mutant
+        that keeps the lock but creates-then-writes passes the one-instance form of this test."""
         d = tempfile.mkdtemp()
-        ah = sb.ApiHealth(d)
+        ah, peer = sb.ApiHealth(d), sb.ApiHealth(d)
         real_write = os.write
         started = threading.Event()
 
@@ -877,7 +883,7 @@ class SaltedLabels(unittest.TestCase):
             def b():
                 started.wait(2.0)
                 time.sleep(0.05)          # squarely inside the widened write
-                got["b"] = ah.salt()
+                got["b"] = peer.salt()
             ta, tb = threading.Thread(target=a), threading.Thread(target=b)
             ta.start()
             tb.start()
@@ -885,9 +891,57 @@ class SaltedLabels(unittest.TestCase):
             tb.join(5)
         finally:
             sb.os.write = real_write
-        self.assertTrue(got.get("a") and got.get("b"), "both threads got a salt: %r" % (got,))
+        self.assertTrue(got.get("a") and got.get("b"), "both instances got a salt: %r" % (got,))
         self.assertEqual(got["a"], got["b"], "one salt — never '' for the loser of the race")
         self.assertEqual(sb.ApiHealth(d).salt(), got["a"], "…and the file holds it")
+        self.assertEqual(os.listdir(d), [sb.API_HEALTH_SALT_FILE], "the loser's temp is gone too")
+
+    def test_a_writer_that_dies_mid_mint_leaves_no_salt_file_and_the_next_boot_mints(self):
+        """Finding 1, round 2: a kernel that dies between creating its temp and publishing it must
+        leave NOTHING at the salt path — the next boot then mints a real salt. A create-then-write
+        mutant leaves an EMPTY salt file behind, which every later reader takes for the unsalted
+        switch, for the life of the install."""
+        d = tempfile.mkdtemp()
+
+        class Died(BaseException):        # not Exception: nothing in the mint may swallow it
+            pass
+
+        real_write = os.write
+
+        def die(fd, data):
+            raise Died()
+        sb.os.write = die
+        try:
+            with self.assertRaises(Died):
+                sb.ApiHealth(d).salt()
+        finally:
+            sb.os.write = real_write
+        self.assertFalse(os.path.exists(os.path.join(d, sb.API_HEALTH_SALT_FILE)), "nothing half-published")
+        s = sb.ApiHealth(d).salt()
+        self.assertTrue(s, "the next boot mints a real salt, not the unsalted switch")
+        self.assertEqual(sb.ApiHealth(d).salt(), s)
+
+    def test_a_dead_writers_leftover_temp_is_swept_at_mint_and_a_live_writers_is_not(self):
+        """The crash above leaves `api-health-salt.<pid>.<hex>.tmp` behind. The next mint sweeps
+        temps whose writer pid is dead. A temp whose writer is ALIVE is a mint in progress and stays:
+        unlinking it would turn that writer's link into FileNotFoundError and leave it unsalted."""
+        d = tempfile.mkdtemp()
+        dead = 2 ** 22 - 7
+        while True:
+            try:
+                os.kill(dead, 0)
+            except ProcessLookupError:
+                break
+            except OSError:
+                pass
+            dead -= 1
+        stale = "%s.%d.deadbeef.tmp" % (sb.API_HEALTH_SALT_FILE, dead)
+        live = "%s.%d.cafef00d.tmp" % (sb.API_HEALTH_SALT_FILE, os.getpid())
+        for name in (stale, live):
+            open(os.path.join(d, name), "w").close()
+        s = sb.ApiHealth(d).salt()
+        self.assertTrue(s)
+        self.assertEqual(sorted(os.listdir(d)), sorted([sb.API_HEALTH_SALT_FILE, live]))
 
     def test_the_init_resolves_the_label_once_onto_the_session(self):
         be = _backend()
