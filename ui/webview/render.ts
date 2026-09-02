@@ -7553,20 +7553,50 @@ function renderCommentPopover(): void {
           closeMetaMenu();
           const menu = el("div", "meta-menu");
           for (const c of META_CHOICES[kind]) {
+            // a PINNED model family (its /models default is a version, not the alias) — see the Latest row below
+            const pinnedTo = kind === "model" ? (c.default || "") : "";
+            const pinned = !!pinnedTo && pinnedTo !== c.value;
             const cur = kind === "fast"
               ? c.value === ((effVal || st?.fast || "off").toLowerCase() === "on" ? "on" : "off")
-              : effVal ? (c.value === effVal || !!c.versions?.some((v) => v.value === effVal))
+              : effVal ? (pinned ? effVal === pinnedTo : (c.value === effVal || !!c.versions?.some((v) => v.value === effVal)))
               : (st ? isCurrentMeta(kind, st, c.value) : false);
             const item = el("div", "meta-item" + (cur ? " current" : ""));
             item.textContent = c.label;
             item.addEventListener("click", (ev) => {
               ev.stopPropagation();
-              if (pendingCommentAnchor) pendingCommentAnchor[kind] = c.value;
+              // a model family sends its remembered DEFAULT — the pinned version, else the alias —
+              // exactly as the chat statusline and the timeline lane do (review 2026-09-01: this
+              // dialog sent the bare alias, so the same click floated here and pinned there)
+              if (pendingCommentAnchor) pendingCommentAnchor[kind] = kind === "model" ? (c.default || c.value) : c.value;
               closeMetaMenu();
               document.getElementById("cmt-pop")?.remove();   // full rebuild shows the pick
               renderCommentPopover();
             });
             menu.appendChild(item);
+            if (pinned) {
+              // This menu is FLAT — no submenu, so no Latest row — and once a family carried a pin the
+              // family row launched on the pin and nothing here launched on the alias (fixer round 4,
+              // 2026-09-01). The family row now names the pin it launches on, and a "<Family> · Latest"
+              // row beside it sends the bare alias: a per-thread launch pref, never the family's memory
+              // (an alias records nothing at the kernel's choke point, so no floating flag rides it).
+              const pinSub = el("div", "meta-item-sub");
+              pinSub.textContent = modelChoiceLabel(pinnedTo).label;
+              item.appendChild(pinSub);
+              const latest = el("div", "meta-item" + (effVal === c.value ? " current" : ""));
+              const lh = el("div");
+              lh.textContent = c.label + " · Latest";
+              const ls = el("div", "meta-item-sub");
+              ls.textContent = "follows the newest " + c.label;
+              latest.append(lh, ls);
+              latest.addEventListener("click", (ev) => {
+                ev.stopPropagation();
+                if (pendingCommentAnchor) pendingCommentAnchor[kind] = c.value;
+                closeMetaMenu();
+                document.getElementById("cmt-pop")?.remove();
+                renderCommentPopover();
+              });
+              menu.appendChild(latest);
+            }
           }
           document.body.appendChild(menu);
           const r2 = btn.getBoundingClientRect();
@@ -10209,18 +10239,35 @@ type MetaKind = "mode" | "model" | "effort" | "fast";
 // One dropdown entry. `sub` is the second line for a choice whose consequence is not obvious from its
 // label; `sdkOnly` drops the entry on a tmux session, whose backend cannot apply it.
 interface MetaChoice { label: string; value: string; sub?: string; sdkOnly?: boolean; color?: number[] | null;
-  versions?: { label: string; value: string }[]; default?: string }   // model families only (the user 2026-08-25)
+  versions?: { label: string; value: string; learned?: boolean }[]; default?: string }   // model families only (the
+  // user 2026-08-25). `default` is the family's remembered version pin, else the family ALIAS (2026-09-01);
+  // `learned` marks a version no seed table lists — a running session's CLI reported it (kernel /models).
 // Model + effort choices come from the kernel's /models — the ONE list shared with the timeline lanes and the
 // judge-tier settings (the user 2026-07-02, who wanted one shared code path, not hardcoded in multiple places), so
 // the client holds no model literals (mirrors paletteColors above). Populated in place on load so META_CHOICES
 // keeps its reference; the session picker appends its own "Default" (use-the-CLI-default) sentinel — not a model.
 const MODEL_CHOICES: { label: string; value: string; color?: number[] | null }[] = [];
 const EFFORT_CHOICES: { label: string; value: string; color?: number[] | null }[] = [];
-fetch(kernelUrl("/models"), { cache: "no-store" }).then((r) => r.json()).then((d) => {
-  if (Array.isArray(d.models)) { MODEL_CHOICES.length = 0; MODEL_CHOICES.push(...d.models, { label: "Default", value: "default" }); }
-  if (Array.isArray(d.efforts)) { EFFORT_CHOICES.length = 0; EFFORT_CHOICES.push(...d.efforts); }
-  if (d.commentDefaults) adoptCommentDefaults(d.commentDefaults);
-}).catch(() => { /* picker stays empty until it lands */ });
+// Loaded at page load and RE-LOADED on the kernel's {type:"models"} frame — the pick memory moved (a
+// version pinned, a family un-pinned by Latest, a refused pin dropped; from this tab, another dashboard,
+// or the kernel itself). A family's `default` is what its row SENDS, so a list fetched once went stale
+// the moment anything changed it: after Latest un-pinned a family, this tab's next family click sent
+// the old pinned id and silently re-pinned (fixer round 4, 2026-09-01). Refilled IN PLACE so META_CHOICES
+// keeps its reference; event-keyed on the frame, never a poll.
+// A response is applied only if it is not OLDER than one already applied (fixer round 5, 2026-09-01): its
+// `rev` is the pick memory's revision — the same counter the models frame carries — and two fetches can
+// overlap (a frame during the page-load fetch; two quick frames) and resolve out of order, so without the
+// check the STALE list won until the next change. A payload without a rev (an older kernel) always applies.
+let modelChoicesRev = -1;
+function loadModelChoices(): void {
+  fetch(kernelUrl("/models"), { cache: "no-store" }).then((r) => r.json()).then((d) => {
+    if (typeof d.rev === "number") { if (d.rev < modelChoicesRev) return; modelChoicesRev = d.rev; }
+    if (Array.isArray(d.models)) { MODEL_CHOICES.length = 0; MODEL_CHOICES.push(...d.models, { label: "Default", value: "default" }); }
+    if (Array.isArray(d.efforts)) { EFFORT_CHOICES.length = 0; EFFORT_CHOICES.push(...d.efforts); }
+    if (d.commentDefaults) adoptCommentDefaults(d.commentDefaults);
+  }).catch(() => { /* picker stays as it was until it lands */ });
+}
+loadModelChoices();
 // The kernel's default-comment settings, RAW ("session" = same as the session — the user 2026-08-29):
 // what a new comment thread launches on when the dialog is left untouched. Pre-read so the create
 // dialog SHOWS the effective default and a pick stays a deviation; the kernel re-resolves at create,
@@ -10498,9 +10545,11 @@ function toggleMetaMenu(kind: MetaKind, btn: HTMLElement, forSid?: string | null
   const s = { status };
   const menu = el("div", "meta-menu");
   menu.dataset.kind = kind;
-  const pickValue = (value: string) => {
+  const pickValue = (value: string, floating = false) => {
     if (vscodeApi) {
-      vscodeApi.postMessage({ type: kind === "model" ? "setModel" : kind === "effort" ? "setEffort" : kind === "fast" ? "setFast" : "setMode", id: opSid, value });
+      const op: Record<string, unknown> = { type: kind === "model" ? "setModel" : kind === "effort" ? "setEffort" : kind === "fast" ? "setFast" : "setMode", id: opSid, value };
+      if (floating) op.floating = true;   // the submenu's Latest row: the kernel forgets the family's pin (2026-09-01)
+      vscodeApi.postMessage(op);
       const was = metaCurrent(kind, s.status);
       metaPending.set(`${opSid}:${kind}`, { was, until: Date.now() + 20_000 });
       btn.classList.add("meta-pending");
@@ -10547,11 +10596,40 @@ function toggleMetaMenu(kind: MetaKind, btn: HTMLElement, forSid?: string | null
     const openSub = versions.length > 1 ? () => {
       closeSub();
       const sub = el("div", "meta-menu meta-sub");
+      // "Latest" heads the submenu (review 2026-09-01): the one gesture back to floating once a family
+      // carries a pin — the family row sends the pin, the rows below pin, and a typed "/model fable"
+      // leaves the pick memory alone by design. It sends the ALIAS with the `floating` flag, which the
+      // kernel's setModel arm hands to _set_model_or_park to forget the family's remembered pin, so the
+      // family follows the CLI's newest release again. An explicit user gesture, so it may move state.
+      // ✓ when the family is unpinned and the session runs it.
+      const pinned = !!c.default && c.default !== c.value;
+      const latest = el("div", "meta-item" + (!pinned && isCurrentMeta(kind, s.status, c.value) ? " current" : ""));
+      latest.tabIndex = 0;
+      const lhead = el("div");
+      lhead.textContent = "Latest";
+      const lsub = el("div", "meta-item-sub");
+      lsub.textContent = pinned ? "unpins — follows the newest " + c.label : "follows the newest " + c.label;
+      latest.append(lhead, lsub);
+      latest.addEventListener("click", (e) => { e.stopPropagation(); pickValue(c.value, true); });
+      latest.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); pickValue(c.value, true); }
+        else if (e.key === "ArrowLeft") { e.preventDefault(); closeSub(); item.focus(); }
+      });
+      sub.appendChild(latest);
       for (const v of versions) {
         const cur = (s.status.model || "").toLowerCase() === v.label.toLowerCase();
         const row = el("div", "meta-item" + (cur ? " current" : ""));
         row.tabIndex = 0;
         row.textContent = v.label;
+        if (v.learned) {
+          // LOUD, per the fail-loudly rule: this version is in no seed table — a running session's CLI
+          // reported it (kernel /models `learned`) — so the row says so instead of a stale menu hiding
+          // a live model. The marker wears the menu vocabulary's sub-line size and opacity.
+          const tag = el("span", "meta-item-sub");
+          tag.textContent = " new";
+          row.appendChild(tag);
+          row.title = "Reported by a running session's Claude Code; not yet in romp's built-in version list";
+        }
         row.addEventListener("click", (e) => { e.stopPropagation(); pickValue(v.value); });
         row.addEventListener("keydown", (e) => {
           if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); pickValue(v.value); }
@@ -12324,6 +12402,9 @@ window.addEventListener("message", (e: MessageEvent) => {
   // The identity palette changed (gear → Session colors): refresh the right-click menu's swatch set so a
   // menu opened after the switch offers the NEW palette (the kernel remaps + repaints sessions itself).
   else if (m.type === "palette" && Array.isArray(m.colors)) paletteColors = m.colors;
+  // The kernel's pick memory moved (a pin, a Latest un-pin, a refused pin dropped): re-read /models so the
+  // family rows send the fresh default — the models-list twin of the palette frame above (2026-09-01).
+  else if (m.type === "models") loadModelChoices();
   else if (m.type === "sessionList") {
     // Whose list is this? federation stamps the source host; a local reply carries none. A reply for a
     // host the picker has since switched away from is dropped rather than painted over the current one

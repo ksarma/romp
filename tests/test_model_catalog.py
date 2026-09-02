@@ -358,6 +358,13 @@ class StalenessEvent(unittest.TestCase):
         self.assertEqual(self.fired[-1], "unknown model id claude-sonnet-7")
 
 
+def _reg(state, sid, **fields):
+    """A synthetic session reg under STATE/sdk — what _learned_versions reads liveModelId from."""
+    d = state / "sdk"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / (sid + ".json")).write_text(json.dumps({"sid": sid, "name": "web", "cwd": "/tmp", "alive": True, **fields}))
+
+
 class CliBlocks(unittest.TestCase):
     """A version the installed CLI refuses by minimum version says so on its /models row (T222)."""
 
@@ -406,7 +413,10 @@ class CliBlocks(unittest.TestCase):
 
 
 class ModelsRoute(unittest.TestCase):
-    """GET /models serves the MERGED list plus any CLI block — every picker reads this one route."""
+    """GET /models serves the MERGED list plus any CLI block — every picker reads this one route. The
+    fold's rule (2026-09-02): the catalog owns the version LIST, the alias owns the DEFAULT."""
+
+    SID = "11111111-2222-3333-4444-555555555555"
 
     @classmethod
     def setUpClass(cls):
@@ -446,7 +456,55 @@ class ModelsRoute(unittest.TestCase):
         self.assertEqual(opus[0]["cliNeeds"], "2.1.251")
         self.assertIn("needs CLI ≥ 2.1.251", opus[0]["label"])
         self.assertEqual(rows["fable"]["versions"][0], {"value": "claude-fable-5-1", "label": "Fable 5.1"})
-        self.assertEqual(rows["fable"]["default"], "claude-fable-5-1", "no pin → family-newest is 5.1")
+        self.assertEqual(rows["fable"]["default"], "fable",
+                         "no pin → the family ALIAS, which the CLI resolves to its newest live — never the list's head")
+
+    def test_a_family_default_is_the_alias_even_when_the_catalog_knows_a_newer_head(self):
+        # the fold's rule in one line: the catalog may lead a family with an id newer than the seed knew,
+        # and a bare family click STILL sends the alias — a pinned head was the 2026-09-01 bug (every
+        # picker-set session stayed on claude-fable-5 while `fable` moved on)
+        km._apply_model_catalog(km.merge_model_catalog(km._MODEL_SEED, FAKE_ROWS), "api")
+        rows = {m["value"]: m for m in self._models()["models"]}
+        self.assertEqual(rows["opus"]["versions"][0]["value"], "claude-opus-9-9", "the catalog's head leads the list")
+        for fam in ("fable", "opus", "sonnet", "haiku"):
+            self.assertEqual(rows[fam]["default"], fam, "%s: no pick → the alias" % fam)
+
+    def test_versions_are_the_catalog_union_the_learned_ids_deduped_by_id(self):
+        km._apply_model_catalog(km.merge_model_catalog(km._MODEL_SEED, FAKE_ROWS), "api")
+        _reg(jd.STATE, "11111111-2222-3333-4444-555555555501", liveModelId="claude-opus-9-9")   # the catalog knows it
+        _reg(jd.STATE, "11111111-2222-3333-4444-555555555502", liveModelId="claude-opus-5-1")   # the catalog lacks it
+        vs = {m["value"]: m for m in self._models()["models"]}["opus"]["versions"]
+        self.assertEqual([v["value"] for v in vs],
+                         ["claude-opus-9-9", "claude-opus-5-1", "claude-opus-5", "claude-opus-4-8",
+                          "claude-opus-4-7", "claude-opus-4-6", "claude-opus-4-5"],
+                         "one list, newest first, the learned id slotted by its own version tuple")
+        self.assertFalse(vs[0].get("learned"), "a reported id the catalog lists is the catalog's row — not doubled, not marked")
+        self.assertTrue(vs[1].get("learned"), "a reported id the catalog lacks joins, marked")
+        # the catalog catches up (the refresh the sighting fired lands): the mark drops, still one row
+        km._apply_model_catalog(km.merge_model_catalog(
+            km._MODEL_SEED, FAKE_ROWS + [{"id": "claude-opus-5-1", "display_name": "Claude Opus 5.1"}]), "api")
+        vs = {m["value"]: m for m in self._models()["models"]}["opus"]["versions"]
+        rows51 = [v for v in vs if v["value"] == "claude-opus-5-1"]
+        self.assertEqual(len(rows51), 1)
+        self.assertFalse(rows51[0].get("learned"), "the catalog owns the row now")
+        self.assertEqual(rows51[0]["label"], "Opus 5.1")
+
+    def test_a_catalog_id_is_pickable_as_a_pin_and_a_refusal_forgets_it(self):
+        # an id only the catalog knows (no seed row, no session reporting it) is a version the pick
+        # memory may record — read at call time, so it counts from the moment the catalog learned it —
+        # and the CLI refusing it forgets the pin like any other (the fork's on_model_refused hook)
+        km._apply_model_catalog(km.merge_model_catalog(km._MODEL_SEED, FAKE_ROWS), "api")
+        self.assertTrue(km._vouched_model("claude-opus-9-9"), "the composer's /model vouches for a catalog id")
+        self.assertEqual(km._version_family("claude-opus-9-9"), "opus")
+        km._note_model_pick("claude-opus-9-9")
+        self.assertEqual(km._model_picks(), {"opus": "claude-opus-9-9"})
+        rows = {m["value"]: m for m in self._models()["models"]}
+        self.assertEqual(rows["opus"]["default"], "claude-opus-9-9", "the family row sends the pin")
+        self.assertEqual(rows["sonnet"]["default"], "sonnet", "other families: still the alias")
+        km._model_pick_refused(self.SID, "claude-opus-9-9")       # the backend's hook, on the CLI's error
+        rows = {m["value"]: m for m in self._models()["models"]}
+        self.assertEqual(rows["opus"]["default"], "opus", "forgotten → the alias again")
+        self.assertEqual(km._model_picks(), {})
 
 
 def _free_port():

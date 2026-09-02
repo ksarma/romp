@@ -633,7 +633,7 @@ EOF
     _romp_cmd "romp new -t <name>"         -            "Start it as a terminal (tmux) session and attach (--detach: don't attach)"
     _romp_cmd "romp new -d <dir> <name>"   -            "Working directory for the new session (default: the current folder)"
     _romp_cmd "romp new -m <text> <name>"  -            "Start it AND deliver <text> as its first prompt (one command, idea to working)"
-    _romp_cmd "romp new --model <id> <name>" -          "Model for the SDK session, as a FULL id (e.g. claude-fable-5); re-asserted if <name> already runs"
+    _romp_cmd "romp new --model <id> <name>" -          "Model for the SDK session: a family alias (fable — follows the newest) or a full id (claude-fable-5 — a pin); re-asserted if <name> already runs"
     _romp_cmd "romp new --effort <level> <name>" -      "Reasoning effort for the SDK session (e.g. high, ultracode); re-asserted if <name> already runs"
     _romp_cmd "romp new --env NAME=VALUE <name>" -      "Per-session env var for the SDK session (repeatable; toggles, never secrets); a re-run on a running <name> replaces the whole set"
     _romp_cmd "romp new --no-env <name>"   -            "Clear a running SDK session's per-session env (declares the empty set)"
@@ -1710,8 +1710,10 @@ case "${1:-}" in
                 --model)   shift
                            # per-spawn model, riding POST /new (the user 2026-08-14: the nightly
                            # optimizer must always run fable, and a headless script has no WS).
-                           # FULL id as the picker sends it (claude-fable-5) — the alias table
-                           # stops at opus/sonnet/haiku and quietly resolved "fable" to Opus 5.
+                           # VERBATIM: a family alias (fable — the CLI resolves it live, so it
+                           # follows the family's newest) or a full id (claude-fable-5, a pin). A
+                           # note here once said the CLI resolved "fable" to Opus 5 and so required
+                           # full ids; not reproducible on any installed CLI (corrected 2026-09-01).
                            if [[ $# -eq 0 || -z "$1" || "$1" == -* ]]; then
                                echo "usage: romp new [-t] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] [--env NAME=VALUE] [--no-env] <name>" >&2; exit 2
                            fi
