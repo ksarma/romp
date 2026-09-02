@@ -1045,10 +1045,22 @@ def _load_model_catalog_cache():
 
 def _models_api_credential():
     """(header, value) for the kernel's OWN credential path, or None when the box has none the kernel
-    may use: the manager-env API key the SDK backend claimed out of os.environ (sdk_backend.work_api_key
-    — the key the judges ride), else an ANTHROPIC_AUTH_TOKEN bearer. A login-only box (Claude Code's
-    OAuth, no key) has no HTTP credential the kernel can borrow: the refresh says so once and serves
-    the seed — the CLI's own alias table still tracks each family's newest there."""
+    may use for a DIRECT API call. In order: ANTHROPIC_LP_API_KEY — a key set aside for direct calls
+    (this fetch is one small GET; low priority is exactly right) — else the manager-env API key the
+    SDK backend CLAIMED out of os.environ (sdk_backend.work_api_key — a key the manager env carried on
+    purpose, the one the judges ride), else an ANTHROPIC_AUTH_TOKEN bearer.
+    An AMBIENT ANTHROPIC_API_KEY is deliberately never read (fork policy, 2026-09-02): on a box where
+    Claude Code sessions authenticate with an API key, that variable in a shell IS the session-auth
+    key, and a kernel started from such a shell inherits it without anyone having designated it for
+    the kernel's own calls — role-scoped keys must not cross roles. The claimer is the single reader
+    that makes a manager-env key deliberate (service.env carries it so the judges can bill to it);
+    with no claimer wired, a key found in the environment was designated for nothing here. A
+    login-only box (Claude Code's OAuth, no key) has no HTTP credential the kernel can borrow: the
+    refresh says so once and serves the seed — the CLI's own alias table still tracks each family's
+    newest there."""
+    lp = (os.environ.get("ANTHROPIC_LP_API_KEY") or "").strip()
+    if lp:
+        return ("x-api-key", lp)
     fn = getattr(jd, "_WORK_KEY_FN", None)
     key = ""
     if fn is not None:
@@ -1056,7 +1068,6 @@ def _models_api_credential():
             key = fn() or ""
         except Exception:
             key = ""
-    key = key or os.environ.get("ANTHROPIC_API_KEY", "") or ""
     if key:
         return ("x-api-key", key)
     tok = os.environ.get("ANTHROPIC_AUTH_TOKEN", "") or ""
@@ -1107,8 +1118,10 @@ def _refresh_model_catalog(reason, _async=True):
             if cred is None:
                 _catalog_status["lastError"] = "no API credential in the kernel's environment"
                 sys.stderr.write("model catalog (%s): no API credential the kernel can use — serving the "
-                                 "%s list; new models need ANTHROPIC_API_KEY in the manager env (or a "
-                                 "MODEL_VERSIONS edit)\n" % (reason, _catalog_status["source"]))
+                                 "%s list; new models need ANTHROPIC_LP_API_KEY or a manager-env key the "
+                                 "SDK backend claims (or a MODEL_VERSIONS edit); an ambient ANTHROPIC_API_KEY "
+                                 "is deliberately not read — it is the session-auth key on a keyed box\n"
+                                 % (reason, _catalog_status["source"]))
                 return
             try:
                 rows = _fetch_models_api(cred)
@@ -1131,7 +1144,11 @@ def _refresh_model_catalog(reason, _async=True):
                 sys.stderr.write("model catalog (%s): %d new version id(s) joined the pickers: %s\n"
                                  % (reason, len(added), ", ".join(added)))
                 try:
-                    _push_soon()                          # pickers re-read /models on the next frame
+                    # the models frame: every open picker re-reads /models on it (chat/comment, the
+                    # timeline lanes, the gear). Nothing re-reads the choice lists on its own after
+                    # page load — a session-list push (the line this replaced) told the pickers
+                    # nothing, so an open dashboard kept the page-load list until a reload (2026-09-02)
+                    _models_changed()
                 except Exception:
                     pass
         finally:
@@ -1223,7 +1240,8 @@ def _learned_versions():
     `model` fields) that the CATALOG does not list — the seed table as the Models API fetch and its
     cache have grown it (T222). The CLI is the authoritative source for what it serves; this is the
     catalog's live lookahead, so a new release appears in the pickers the moment any session runs on
-    it, until the next refresh folds it in and the row's mark drops. A dated snapshot of a known
+    it, and each sighting is also T222's staleness EVENT (_note_unknown_model: one refresh per id per
+    kernel life), so the catalog catches up and the row's mark drops. A dated snapshot of a known
     version shares its label and adds nothing (the dateless alias covers it); provider-prefixed and
     synthetic ids are not the shape the pickers send and are skipped. Reads the same reg files
     _thread_reg does. A first sighting is announced once on stderr — and the pickers mark the row —
@@ -1255,6 +1273,7 @@ def _learned_versions():
             continue
         labels[fam].add(label.lower())
         out.setdefault(fam, []).append({"value": value, "label": label, "learned": True})
+        _note_unknown_model(value)               # the catalog lacks an id a CLI serves: refresh it (dedup by id)
         if value not in _learned_announced:
             _learned_announced.add(value)
             sys.stderr.write("romp-kernel: model %s (%s) is not in the built-in version list — a running "
@@ -1323,7 +1342,8 @@ def _model_picks(learned=None):
 
 
 def _models_changed():
-    """The pick memory MOVED — a version pinned, a family un-pinned (Latest), a refused pin dropped — so every
+    """The pick memory MOVED — a version pinned, a family un-pinned (Latest), a refused pin dropped — or the
+    version LIST grew (the catalog fetch added ids, T222; fold 2026-09-02), so every
     open picker's cached /models list is stale, and its `default` is what a family click SENDS. Tell every
     client that hosts a picker now with a models frame (the palette frame's idiom; each re-fetches /models on
     it) — event-keyed on the change itself, never a poll. A counter rides it so a client can tell frames

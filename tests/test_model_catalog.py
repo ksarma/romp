@@ -210,8 +210,10 @@ class FetchAndFallback(unittest.TestCase):
         self._state = jd.STATE
         jd.STATE = Path(self.td.name)
         self._url, self._fn = km.MODELS_API_URL, getattr(jd, "_WORK_KEY_FN", None)
-        self._env_key = os.environ.get("ANTHROPIC_API_KEY")
-        os.environ["ANTHROPIC_API_KEY"] = "synthetic-test-credential"   # the fake sees only this (never a key-shaped string: the pre-commit scanner)
+        self._env = {k: os.environ.get(k) for k in _CRED_VARS}
+        # the fake sees only this (never a key-shaped string: the pre-commit scanner). The LP key is the
+        # credential the fetch prefers (CredentialPolicy below) — an ambient ANTHROPIC_API_KEY is never read
+        os.environ["ANTHROPIC_LP_API_KEY"] = "synthetic-test-credential"
         jd._WORK_KEY_FN = None
         km.MODELS_API_URL = "http://127.0.0.1:%d/v1/models" % self.port
         _FakeModelsAPI.rows, _FakeModelsAPI.status, _FakeModelsAPI.page_size = list(FAKE_ROWS), 200, 100
@@ -223,12 +225,24 @@ class FetchAndFallback(unittest.TestCase):
         _reset_catalog()
         km.MODELS_API_URL = self._url
         jd._WORK_KEY_FN = self._fn
-        if self._env_key is None:
-            os.environ.pop("ANTHROPIC_API_KEY", None)
-        else:
-            os.environ["ANTHROPIC_API_KEY"] = self._env_key
+        _restore_env(self._env)
         jd.STATE = self._state
         self.td.cleanup()
+
+    def _clients(self):
+        """Fake dashboard clients on the kernel's client list — one per app that hosts a picker — so the
+        models frame's fan-out can be asserted (the test_model_versions idiom)."""
+        got = []
+        fakes = [{"app": app, "wid": "w-" + app, "alive": True,
+                  "send": (lambda s, a=app: got.append((a, json.loads(s))))} for app in ("chat", "timeline", "feed")]
+        with km._clients_lock:
+            km._clients.extend(fakes)
+
+        def drop():
+            with km._clients_lock:
+                km._clients[:] = [c for c in km._clients if c not in fakes]
+        self.addCleanup(drop)
+        return got
 
     def _refresh(self, reason="test"):
         err = io.StringIO()
@@ -278,14 +292,33 @@ class FetchAndFallback(unittest.TestCase):
         self.assertIn("Models API unreachable", log)
 
     def test_no_credential_says_so_and_serves_the_seed(self):
-        os.environ.pop("ANTHROPIC_API_KEY", None)
-        os.environ.pop("ANTHROPIC_AUTH_TOKEN", None)
+        for k in _CRED_VARS:
+            os.environ.pop(k, None)
         started, log = self._refresh("boot")
         self.assertTrue(started)
         self.assertEqual(_FakeModelsAPI.seen, [], "no request without a credential")
         self.assertIn("no API credential", km._catalog_status["lastError"])
         self.assertIn("no API credential the kernel can use", log)
         self.assertEqual(km.MODEL_VERSIONS["fable"][0]["value"], "claude-fable-5-1", "seed still serves")
+
+    def test_a_fetch_that_adds_ids_tells_every_open_picker_to_re_read_models(self):
+        # (fold 2026-09-02) the refresh used to call _push_soon() here, its comment claiming the pickers
+        # re-read /models on the next frame — but nothing re-reads the choice lists after page load, so
+        # an open dashboard kept the page-load list until a reload. The event the pickers DO act on is the
+        # models frame (chat/comment loadModelChoices, the timeline's refreshModels, the gear's
+        # adoptChoices/paintChoices): the fetch that grows the list emits it, with the rev the payload carries.
+        got = self._clients()
+        rev0 = km._models_rev[0]
+        started, _ = self._refresh("boot")
+        self.assertTrue(started)
+        frames = [(a, f) for a, f in got if f.get("type") == "models"]
+        self.assertEqual(sorted(a for a, _ in frames), ["chat", "feed", "timeline"],
+                         "one frame to every app that hosts a picker")
+        self.assertTrue(all(f["rev"] > rev0 for _, f in frames), "the frame carries a rev newer than before")
+        self.assertEqual({f["rev"] for _, f in frames}, {km._models_rev[0]}, "the /models payload's counter")
+        got.clear()
+        self._refresh("boot")                    # the same rows again: nothing joined, so nothing rings
+        self.assertEqual([f for _, f in got if f.get("type") == "models"], [], "a fetch that adds nothing is silent")
 
     def test_the_cache_serves_when_the_api_later_dies(self):
         # a dead API never blanks a picker: the previous fetch's rows install at boot from the cache
@@ -317,6 +350,74 @@ class FetchAndFallback(unittest.TestCase):
         self.assertEqual(v["source"], "api")
         self.assertEqual(v["added"], ["claude-opus-9-9"])
         self.assertIsNone(v["lastError"])
+
+
+_CRED_VARS = ("ANTHROPIC_LP_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
+
+
+def _restore_env(saved):
+    for k, v in saved.items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
+
+
+class CredentialPolicy(unittest.TestCase):
+    """Which credential the catalog fetch rides (fork policy, 2026-09-02): ANTHROPIC_LP_API_KEY first — a
+    key set aside for direct API calls — else the manager-env key the SDK backend CLAIMED (the judges'
+    key, deliberate by construction), else an OAuth bearer. An AMBIENT ANTHROPIC_API_KEY is never read:
+    on a box whose Claude Code sessions authenticate with a key, that variable in a shell IS the
+    session-auth key, and a kernel started from such a shell inherits it without anyone designating it
+    for the kernel's own calls. Synthetic, never key-shaped values (the pre-commit scanner)."""
+
+    def setUp(self):
+        self._env = {k: os.environ.get(k) for k in _CRED_VARS}
+        for k in _CRED_VARS:
+            os.environ.pop(k, None)
+        self._fn = getattr(jd, "_WORK_KEY_FN", None)
+        jd._WORK_KEY_FN = None
+
+    def tearDown(self):
+        jd._WORK_KEY_FN = self._fn
+        _restore_env(self._env)
+
+    def test_the_lp_key_is_preferred_over_the_claimed_key_and_any_ambient_one(self):
+        os.environ["ANTHROPIC_LP_API_KEY"] = "synthetic-lp-credential"
+        os.environ["ANTHROPIC_API_KEY"] = "synthetic-ambient-credential"
+        jd._WORK_KEY_FN = lambda: "synthetic-claimed-credential"
+        self.assertEqual(km._models_api_credential(), ("x-api-key", "synthetic-lp-credential"))
+
+    def test_the_claimed_manager_env_key_is_second(self):
+        os.environ["ANTHROPIC_API_KEY"] = "synthetic-ambient-credential"    # present, and still not what rides
+        jd._WORK_KEY_FN = lambda: "synthetic-claimed-credential"
+        self.assertEqual(km._models_api_credential(), ("x-api-key", "synthetic-claimed-credential"))
+
+    def test_a_bare_ambient_api_key_is_never_read_and_the_refresh_says_so(self):
+        os.environ["ANTHROPIC_API_KEY"] = "synthetic-ambient-credential"
+        self.assertIsNone(km._models_api_credential(), "no claimer wired → an ambient key was designated for nothing here")
+        # …and the refresh's no-credential line names the policy, so a keyed box that wants the catalog
+        # knows which variable to set instead of wondering why the key in its shell was ignored
+        os.environ.pop("ROMP_MODEL_CATALOG", None)
+        _reset_catalog()
+        try:
+            err = io.StringIO()
+            with redirect_stderr(err):
+                self.assertTrue(km._refresh_model_catalog("boot", _async=False))
+            self.assertIn("no API credential the kernel can use", err.getvalue())
+            self.assertIn("ANTHROPIC_LP_API_KEY", err.getvalue())
+            self.assertIn("ambient ANTHROPIC_API_KEY is deliberately not read", err.getvalue())
+            self.assertIn("no API credential", km._catalog_status["lastError"])
+        finally:
+            _reset_catalog()
+            os.environ["ROMP_MODEL_CATALOG"] = "off"     # the suite-wide floor, back in place
+
+    def test_a_bearer_token_is_the_last_resort(self):
+        os.environ["ANTHROPIC_AUTH_TOKEN"] = "synthetic-bearer-credential"
+        self.assertEqual(km._models_api_credential(), ("Authorization", "Bearer synthetic-bearer-credential"))
+        jd._WORK_KEY_FN = lambda: "synthetic-claimed-credential"
+        self.assertEqual(km._models_api_credential(), ("x-api-key", "synthetic-claimed-credential"),
+                         "a claimed key outranks the bearer")
 
 
 class StalenessEvent(unittest.TestCase):
@@ -356,6 +457,17 @@ class StalenessEvent(unittest.TestCase):
         self.assertEqual(self.fired, ["unknown model id claude-opus-9-9"])
         km._note_model_pick("claude-sonnet-7")          # the choke point every set surface flows through
         self.assertEqual(self.fired[-1], "unknown model id claude-sonnet-7")
+
+    def test_a_reported_id_the_catalog_lacks_fires_the_refresh(self):
+        # (fold 2026-09-02) a running session's CLI reporting an id the catalog does not list is exactly
+        # the staleness the event names: the id joins the pickers marked `learned` at once (the fork's
+        # lookahead) AND the catalog is asked to catch up, once per id — after which the mark drops
+        _reg(jd.STATE, "11111111-2222-3333-4444-555555555501", liveModelId="claude-opus-5-1")
+        learned = km._learned_versions()
+        self.assertEqual([v["value"] for v in learned["opus"]], ["claude-opus-5-1"])
+        self.assertEqual(self.fired, ["unknown model id claude-opus-5-1"])
+        km._learned_versions()
+        self.assertEqual(len(self.fired), 1, "once per id per kernel life — every /models read re-derives the list")
 
 
 def _reg(state, sid, **fields):
