@@ -301,6 +301,43 @@ the key itself is in it. The salt lives at `STATE/api-health-salt`, minted once
 at 0600; an empty file switches to unsalted digests. `key:helper`, `key:env`
 and `key:managed` name sources whose material the kernel never holds.
 
+### Top-level fields
+
+- `schema`: `1`, incremented on any incompatible change.
+- `asOf`: wall-clock epoch seconds at which this response was computed from the
+  event ring. Every window and every state is computed at read time, so `asOf`
+  is the response time. A clock step moves it; a reader that wants a freshness
+  check a clock step cannot fake uses `seq`.
+- `bootId`, `bootAt`, `uptimeS`: the kernel process identity, the same id
+  `/version` and `X-Romp-Boot` carry. A changed `bootId` means a restart, and
+  the windows restarted with it.
+- `complete`: true once the longest window (900 s) fits inside the uptime.
+- `seq`: count of ring events (attempts, successful responses and give-ups)
+  ingested since boot. Monotonic within a boot: two reads with the same `seq`
+  saw no traffic in between.
+- `lastEventAt`: the newest event of any kind in the ring, across every bucket.
+- `coverage`: `sdkSessionsLive` (SDK-backed sessions the backend holds that have
+  not ended); `inTurn` (of those, sessions with a turn in flight: working or
+  retrying); `retrying` (sessions inside a retry storm right now, the cheapest
+  direct thrash indicator, independent of the ratio thresholds);
+  `tmuxSessionsUncovered` (tmux-backed sessions, which have no SDK stream and are
+  outside the signal; `null` when the kernel could not enumerate them);
+  `sidechainExcluded` (a constant `true`: subagent traffic is
+  outside the signal on both sides of the ratio). A reader that sees `inTurn >
+  0` and a `lastEventAt` minutes old should treat the signal as unknown rather
+  than healthy.
+- `config`: the constants in force (see "Derived state").
+- `overall`: `state`, the most severe state among buckets that are not
+  `unknown` (`thrashing > degraded > recovering > healthy`; `unknown` when every
+  bucket is), and `worstBucket`, the bucket that set it. There are no pooled
+  windows: summing 429 rates across auth sources mixes unrelated quotas.
+- `buckets`: keyed `"<auth>|<family>"`.
+- `transitions`: the last 50 state transitions across every bucket, newest
+  last, each `{t, bucket, auth, family, from, to, why, evidence}`.
+- `rate429Basis`: the constant `"attempts"` (see "Windows").
+
+### Windows
+
 Each bucket carries three windows (`60`, `300`, `900` seconds, ending at
 `asOf`), each with:
 
@@ -318,7 +355,9 @@ Each bucket carries three windows (`60`, `300`, `900` seconds, ending at
 `rate429` is an attempt share, not a request share: one stuck turn contributes
 up to `max_retries` attempts. The payload says so (`"rate429Basis":
 "attempts"`); read `sessionsRetrying` and `turnsRetrying` beside it to tell one
-stuck session from a saturated key.
+stuck session from a saturated key. A high `rate429` with `gaveUp` at zero is
+traffic being slowed, not blocked; a consumer whose action is expensive should
+require `gaveUp` or `turnsRetrying` over its own span, not `state` alone.
 
 The signal covers each session's main thread only. A subagent's retries never
 reach the kernel (the CLI folds them into a progress frame the SDK drops), so
@@ -327,28 +366,118 @@ rate during a storm. `coverage.sidechainExcluded` is `true` to say so.
 tmux-backed sessions and the judges' own calls have no SDK stream and are
 outside the signal.
 
-Each bucket also carries a **state**, derived from the windows at read time and
-nothing else: `healthy`; `thrashing` (the 429 share is high; the actionable
-state); `degraded` (the server-error share is high while 429s are not, a
-provider-side problem another key may not fix); `recovering` (the exit
-condition has held for the hold time, one more hold to go); or `unknown` (no
-window reaches the minimum sample; never a held claim). A bucket near a cap
-does not flap: enter and exit thresholds differ, exits need both the 300 s and
-900 s windows clean for 120 s, and every decision needs a minimum sample. The
-constants are echoed under `config`. `overall.state` is the most severe bucket
-state (`unknown` ranks below `healthy`), with `worstBucket` naming it.
-
-A read that observes a bucket's state change appends one row to
-`STATE/api-health.jsonl` (`t`, `bucket`, `from`, `to`, `why`); the payload's
-`transitions` is that ledger's tail, so history survives a restart. The event
-ring itself is in memory only: a restart empties the windows, `bootId` (the
-same id `/version` and `X-Romp-Boot` carry) changes, and `complete` stays
-false until each window fits inside the new uptime.
-
 Retries carry no model field, so they are attributed to the session's
 last-learned family: attempts between a mid-storm model fallback and its first
 successful reply file under the previous family. Successful responses use their
 own model and are exact.
+
+### Per-bucket state fields
+
+- `state`: `unknown`, `healthy`, `thrashing`, `degraded` or `recovering` (see
+  "Derived state").
+- `stateSince`: epoch seconds of the read that recorded the transition into the
+  current state. Every transition is stamped with the time of the read that
+  found it (`transitions[].t`), and `stateSince` is that stamp for the newest
+  one, so `asOf - stateSince` is how long the state has held as observed. For
+  `unknown` it is the read that found no qualifying window, or the boot time
+  after a restart.
+- `evidence`: `{window, rate429, rate5xx, n}`, the window that decided the
+  newest transition, its two rates and its `requests`, recorded at that
+  transition and kept with the state; they are the numbers the transition's
+  `why` carries. When the state is `unknown`, `window` and the rates are `null`
+  and `n` is `requests` over 900 s at read time.
+- `why`: the newest transition's reason in words, the same string as its row.
+- `transitions`: this bucket's rows from the top-level list.
+- `lastError`: the newest attempt or give-up that was not a success, from
+  memory only (lost at restart): `at`; `status` (the HTTP status, or `null`);
+  `category` (the CLI's error category string, for example `rate_limit`,
+  `overloaded` or `server_error`; `null` when the frame carried none); `class`
+  (the counter it landed in); `kind` (`retry` or `gaveup`). There is no text
+  field, by design: the wire carries none today, and the transcript's 429 text
+  names the organisation and the model.
+
+### Derived state
+
+`state` is computed at read time as a pure function of the bucket's event ring,
+the last persisted `(state, stateSince)` and `asOf`. It has no other inputs and
+no thread of its own.
+
+- `unknown`: no window of the bucket has `requests >= minRequests` (10). Any
+  state moves to `unknown` when that is so; it is also the state after boot and
+  the state of a bucket whose traffic has stopped. `stateSince` is the read
+  that found it so. From `unknown`, the first read with a qualifying window
+  classifies afresh: an enter condition gives `thrashing` or `degraded`,
+  otherwise `healthy`. `unknown` keeps no memory of the state before it; a
+  consumer that wants to join an incident across an `unknown` gap reads
+  `transitions`.
+- `healthy`: the default once there is evidence.
+- `thrashing`: the 429 share is high. The actionable state: a consumer can move
+  traffic to another key or organisation.
+- `degraded`: the server-side error share (`overloaded` plus `serverErrors`) is
+  high while the 429 share is not. A provider-side problem another key may not
+  fix, so a separate state.
+- `recovering`: the exit condition has been met, but the hold time has not
+  passed.
+
+The transitions follow, with the constants that `config` echoes. A rule reads a
+window only when that window has `requests >= minRequests`:
+
+- Enter `thrashing`: `rate429(300 s) >= enter429` (0.20), or `rate429(900 s) >=
+  enter429Slow` (0.15), or `rate429(60 s) >= enter429Fast` (0.50) with
+  `requests(60 s) >= fastMinRequests` (20). From `healthy`, `recovering` and
+  `unknown`, and from `degraded` at once: `thrashing` takes precedence over
+  `degraded` whenever the 429 condition holds, on entry and afterwards.
+- Enter `degraded`: the same conditions on `rate5xx` (`enter5xx` 0.20,
+  `enter5xxSlow` 0.15, `enter5xxFast` 0.50) while the 429 condition does not
+  hold, from `healthy`, `recovering` and `unknown`. There is no direct
+  `thrashing -> degraded`: leaving `thrashing` goes through `recovering`, and
+  `recovering -> degraded` fires in the same read when the 5xx condition holds
+  (two rows with one `t`).
+- `thrashing -> recovering`: `rate429(300 s) <= exit429` (0.10) and
+  `rate429(900 s) <= exit429`, both windows qualifying, held at every instant of
+  the last `holdS` (120 s). `degraded -> recovering`: the same on `rate5xx` with
+  `exit5xx` (0.10).
+- `recovering -> healthy`: both exit conditions (429 and 5xx) held throughout
+  the last `holdS`, and `asOf - stateSince >= holdS`. Both are required because
+  the persisted state is `(state, stateSince)` alone and nothing says which
+  state `recovering` came from. A bucket with one rate between its exit and
+  enter thresholds stays `recovering`, which is the accurate label.
+- `recovering -> thrashing | degraded`: the enter condition again, immediately.
+
+Enter and exit thresholds differ, exits need a hold on two windows, and every
+decision needs a minimum sample, so a bucket near a cap does not flap. A
+reading between exit and enter (0.10 to 0.15 on the 900 s window) holds the
+state however long it lasts, and traffic too thin to qualify the 300 s window
+cannot satisfy an exit, so it holds the state too; the windows beside the state
+show what the traffic is doing.
+
+"Held throughout the last `holdS`" is decided exactly, without sampling. A
+window's counts change only at breakpoints, the instant an event's timestamp
+enters the window and the instant it leaves, so the exit condition is
+evaluated at `asOf - holdS`, at `asOf` and at each breakpoint between. Evaluating the 900 s window
+at `asOf - holdS` needs events back to `asOf - 1020`, so `config.retentionS`
+is 1020 and the ring keeps nothing older. A read that finds a transition stamps
+it with `t = asOf`, appends it to `transitions` and writes the ledger row. A
+reader polling every few seconds observes every transition within one poll of
+its breakpoint; a sparser reader observes the state at its read times and the
+transitions those reads find, and nothing in between: a state entered and left
+between two reads is not recorded, and `recovering -> healthy` needs a read at
+least `holdS` after the read that entered `recovering`. Nothing derives while
+nobody reads.
+
+### Persistence and restart
+
+A read that observes a transition appends one row to `STATE/api-health.jsonl`;
+the payload's `transitions` is that ledger's tail. The event ring itself is in
+memory only, so a restart empties the windows: `seq` restarts at 0, `bootId`
+changes, `complete` stays false until each window fits inside the new uptime,
+and every bucket the ledger knows comes back `unknown` with `stateSince` at the
+boot time. For each bucket whose persisted state was not already `unknown` the
+reload files `<state> -> unknown` at boot, so the transitions list is
+continuous across the restart, and the first read with enough evidence records
+`unknown -> <state>` after it. The pre-restart state is not carried over: an
+empty ring is no evidence. A ledger row that cannot be read is skipped and
+logged, and never keeps the SDK backend from starting.
 
 ## Where things live
 
