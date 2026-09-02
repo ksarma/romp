@@ -1125,11 +1125,13 @@ def _judge_env(tier, auth="login", model=None):
     # the user's call), flip this off so clustered calls READ instead — reads beat no-cache 10:1.
     env["DISABLE_PROMPT_CACHING"] = "1"
     if tier == "index":
-        # The lever for a model without adaptive thinking (2026-09-01): no thinking for mechanical
-        # summarization. A model with it takes `--effort` in _judge_run instead — never this var,
-        # which the CLI drops for Fable, Mythos and any model it does not place (see the docstring).
-        if not _adaptive_thinking(model if model is not None else _index_model()):
-            env["MAX_THINKING_TOKENS"] = "0"
+        # No thinking for mechanical summarization (2026-09-01): the var is set UNCONDITIONALLY on the
+        # index tier. Where the CLI honors thinking:disabled it is the lever (Haiku, Sonnet/Opus 4.5 and
+        # older — and Sonnet/Opus 4.6+, which run adaptive thinking yet still honor it, so withholding
+        # it there traded a measured thinking-off path for unmeasured adaptive-low: PR #880 review);
+        # where the CLI drops it (Fable, Mythos, strangers) it is a harmless no-op and `--effort` in
+        # _judge_run is the lever that lands. Both ride together; neither can hurt the other.
+        env["MAX_THINKING_TOKENS"] = "0"
     if auth == "key" and wk:
         env["ANTHROPIC_API_KEY"] = wk
     return env

@@ -5994,16 +5994,16 @@ class JudgeEnv(unittest.TestCase):
     outright (its rejects_disabled_thinking capability), so the var was a silent no-op that ran full-cost
     thinking. TRIAGE keeps thinking on every model."""
 
-    def test_index_tier_disables_thinking_for_models_without_adaptive_thinking(self):
+    def test_index_tier_sets_thinking_off_for_every_model(self):
         self.assertEqual(jd._judge_env("index", model="haiku").get("MAX_THINKING_TOKENS"), "0",
                          "captioner/archiver on Haiku run with thinking off")
         self.assertEqual(jd._judge_env("index", model="claude-haiku-4-5").get("MAX_THINKING_TOKENS"), "0",
                          "a full Haiku id is the same family")
         for m in ("fable", "opus", "sonnet", "claude-opus-4-8", "claude-sonnet-5", "claude-mythos-5-1"):
-            # .get() rather than assertNotIn(..., env): the env is a copy of os.environ, and a failing
-            # assertNotIn prints the whole container — a developer's credentials included — into the log
-            self.assertIsNone(jd._judge_env("index", model=m).get("MAX_THINKING_TOKENS"),
-                              "%s has adaptive thinking — effort is the lever, never thinking-off" % m)
+            # the var rides the index tier UNCONDITIONALLY (PR #880 review): a harmless no-op where the CLI
+            # drops it (Fable, Mythos), the honored lever on 4.6+ Sonnet/Opus — effort lands beside it
+            self.assertEqual(jd._judge_env("index", model=m).get("MAX_THINKING_TOKENS"), "0",
+                             "%s: the var always rides the index tier" % m)
 
     def test_the_boundary_is_generational_not_per_family(self):
         # Sonnet 4.5 and Opus 4.5 — both offered by the gear's version submenu — carry no adaptive
@@ -6015,15 +6015,17 @@ class JudgeEnv(unittest.TestCase):
                   "claude-3-5-sonnet-20241022"):
             self.assertEqual(jd._judge_env("index", model=m).get("MAX_THINKING_TOKENS"), "0", m)
         for m in ("claude-sonnet-4-6", "claude-opus-4-6", "claude-opus-4-8", "claude-fable-5-1"):
-            self.assertIsNone(jd._judge_env("index", model=m).get("MAX_THINKING_TOKENS"), m)
+            # 4.6+ honors thinking:disabled too — withholding the var there traded a measured thinking-off
+            # path for unmeasured adaptive-low; it rides everywhere now, effort decides the rest
+            self.assertEqual(jd._judge_env("index", model=m).get("MAX_THINKING_TOKENS"), "0", m)
 
     def test_index_tier_with_no_model_resolves_the_tier_pick(self):
         # the tier's configured model decides (INDEX_MODEL is haiku out of the box); a bare
         # _judge_env("index") answers about that pick rather than assuming Haiku
         jd._state_cache.clear()
         self.assertEqual(jd._index_model(), jd.INDEX_MODEL)
-        self.assertEqual(jd._judge_env("index").get("MAX_THINKING_TOKENS"),
-                         "0" if "haiku" in jd.INDEX_MODEL else None)
+        self.assertEqual(jd._judge_env("index").get("MAX_THINKING_TOKENS"), "0",
+                         "the var rides the index tier whatever the pick resolves to")
 
     def test_every_tier_disables_prompt_caching(self):
         # One-shot judge calls never read the cache back — the per-call security mark re-rolls the
@@ -6173,13 +6175,14 @@ class IndexTierLever(unittest.TestCase):
     def _effort_of(self, cmd):
         return cmd[cmd.index("--effort") + 1] if "--effort" in cmd else None
 
-    def test_fable_index_model_gets_effort_low_and_no_env_var(self):
+    def test_fable_index_model_gets_effort_low_and_the_var_rides_along(self):
         cmd, env, _ = self._run("fable")
         self.assertEqual(self._effort_of(cmd), "low", "the default lever on an adaptive-thinking model")
         # .get() rather than assertNotIn(..., env), here and below: a failure must not print the
         # whole environment (a copy of os.environ, credentials included) into the log
-        self.assertIsNone(env.get("MAX_THINKING_TOKENS"),
-                          "the CLI drops thinking:disabled on Fable (full-cost thinking) — effort is the only lever there")
+        self.assertEqual(env.get("MAX_THINKING_TOKENS"), "0",
+                         "the var rides unconditionally on the index tier: a no-op where the CLI drops it (Fable), "
+                         "the honored lever on 4.6+ Sonnet/Opus — effort is what lands on Fable")
 
     def test_opus_and_sonnet_index_models_take_the_same_lever(self):
         for m in ("opus", "sonnet", "claude-opus-4-8", "claude-opus-5", "claude-sonnet-5", "claude-fable-5-1",
@@ -6187,7 +6190,7 @@ class IndexTierLever(unittest.TestCase):
             self.calls.clear()
             cmd, env, _ = self._run(m)
             self.assertEqual(self._effort_of(cmd), "low", m)
-            self.assertIsNone(env.get("MAX_THINKING_TOKENS"), m)
+            self.assertEqual(env.get("MAX_THINKING_TOKENS"), "0", "%s: the var always rides the index tier" % m)
 
     def test_haiku_index_model_keeps_thinking_off_and_passes_no_effort_flag(self):
         cmd, env, _ = self._run("haiku")
@@ -6217,7 +6220,7 @@ class IndexTierLever(unittest.TestCase):
         try:
             cmd, env, err = self._run("claude-mystery-9")
             self.assertEqual(self._effort_of(cmd), "low", "the CLI treats a stranger as adaptive: effort is the lever")
-            self.assertIsNone(env.get("MAX_THINKING_TOKENS"), "the var the CLI drops for such a model")
+            self.assertEqual(env.get("MAX_THINKING_TOKENS"), "0", "the var still rides (the CLI drops it — harmless)")
             self.assertIn("claude-mystery-9", err)
             self.assertEqual(err.count("not one I can place"), 1,
                              "announced once, though the predicate ran three times inside the one call")
@@ -6230,7 +6233,7 @@ class IndexTierLever(unittest.TestCase):
         jd._state_cache.clear()
         cmd, env, _ = self._run("fable")
         self.assertEqual(self._effort_of(cmd), "medium", "the gear's Indexing effort pick is the configurability")
-        self.assertIsNone(env.get("MAX_THINKING_TOKENS"))
+        self.assertEqual(env.get("MAX_THINKING_TOKENS"), "0", "…and the var rides regardless")
 
     def test_an_explicit_index_effort_also_reaches_haiku_but_the_env_var_stays(self):
         # the gear pick has always been passed regardless of model ("not every model accepts every
