@@ -29,7 +29,10 @@ teardown() { rm -rf "$TEST_DIR"; }
     [[ "$output" == *'"additionalContext"'* ]]
     [[ "$output" == *'"hookEventName": "SessionStart"'* ]]
     [[ "$output" == *'postal MCP tools'* ]]
-    [[ "$output" == *'DELEGATE'* ]]        # the lead-with-intent norm is present up front
+    # the declare-your-intent norm is present up front — as the tool's REQUIRED `kind` parameter, never
+    # the retired DELEGATE:/COORDINATE:/QUESTION: body prefix (2026-09-01: the two contradicted each other)
+    [[ "$output" == *'set `kind` to delegate, coordinate, or question'* ]]
+    [[ "$output" != *'DELEGATE'* ]]
     [[ "$output" == *'list_agents'* ]]     # the coordinate-before-editing norm is present up front
     [[ "$output" == *'romp-postal skill'* ]]   # points to the full guide, not inlined
 }

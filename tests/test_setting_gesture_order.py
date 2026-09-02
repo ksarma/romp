@@ -616,6 +616,10 @@ class StaleGestureAnswersTheDeliveringSocket(_Base):
                   "file-editing", True),
                  ({"type": "setUpdateMode", "mode": "auto"}, {"type": "setUpdateMode", "mode": "off"},
                   "update-mode", "auto"),
+                 # per-install (never propagated), but two dashboards on ONE kernel still race, so it
+                 # gt-gates and answers like the rest (2026-09-01)
+                 ({"type": "setThinkingSummaries", "enabled": True}, {"type": "setThinkingSummaries", "enabled": False},
+                  "thinking-summaries", True),
                  ({"type": "setIndexEffort", "effort": "high"}, {"type": "setIndexEffort", "effort": "low"},
                   "index-effort", "high"),
                  ({"type": "setDistillModel", "model": "haiku"}, {"type": "setDistillModel", "model": "triage"},
@@ -695,6 +699,90 @@ class WiringPins(unittest.TestCase):
         self.assertNotIn(".write_text(", src, "no raw write_text — a torn write must not tear the store")
         self.assertLess(src.index('fname + ".gt"'), src.index("_atomic_write(jd.STATE / fname,"),
                         "the sidecar publishes FIRST — a crash between the two errs toward stand-down")
+
+
+class ThinkingSummariesSetting(_Base):
+    """The thinking-summaries toggle (2026-09-01): a PER-INSTALL kernel setting — its own json under
+    STATE, off until this install says yes, never propagated (not in federation's KERNEL_SETTING
+    set) — that still rides the gesture-ordered door: two dashboards on one kernel can race, so a
+    stale stamp stands down loudly and the delivering socket hears settingStale, exactly like
+    _set_file_editing. The SDK backend reads the same file at every connect (_options), so the
+    store here IS the switch the sessions see."""
+
+    FILE = "thinking-summaries.json"
+
+    def test_absent_file_reads_off_and_never_writes(self):
+        self.assertFalse(km._thinking_summaries_on(), "a fresh install is OFF — shipping never turns it on")
+        self.assertFalse((km.jd.STATE / self.FILE).exists(), "reading must not create the file")
+
+    def test_set_persists_value_and_stamp_in_its_own_file(self):
+        self.assertEqual(km._set_thinking_summaries(True, gt=T_NEW), T_NEW)
+        d = json.loads((km.jd.STATE / self.FILE).read_text())
+        self.assertEqual((d["enabled"], d["gt"]), (True, T_NEW))
+        self.assertTrue(km._thinking_summaries_on())
+        self.assertEqual(km._set_thinking_summaries(False, gt=T_NEW + 1), T_NEW + 1)
+        self.assertFalse(km._thinking_summaries_on(), "OFF is a real value, not the absent default")
+
+    def test_a_stale_gesture_stands_down_loudly(self):
+        self.assertEqual(km._set_thinking_summaries(True, gt=T_NEW), T_NEW)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertIsNone(km._set_thinking_summaries(False, gt=T_OLD), "older stamp must not apply")
+        self.assertTrue(km._thinking_summaries_on(), "the newer ON survives the stale OFF")
+        for needle in ("thinking-summaries", str(T_OLD), str(T_NEW), "stood down"):
+            self.assertIn(needle, err.getvalue(), "the stand-down names the setting and both stamps")
+
+    def test_a_file_without_the_field_reads_as_zero(self):
+        (km.jd.STATE / self.FILE).write_text(json.dumps({"enabled": True}))
+        self.assertEqual(km._set_thinking_summaries(False, gt=1), 1, "gt 1 beats the absent field's 0")
+        self.assertFalse(km._thinking_summaries_on())
+
+    def test_the_dispatch_branch_hands_the_stamp_over_and_answers_the_socket(self):
+        sent = []
+        client = {"send": lambda s: sent.append(json.loads(s)), "alive": True}
+        with contextlib.redirect_stderr(io.StringIO()):
+            km.Handler._dispatch_ws(types.SimpleNamespace(), {"type": "setThinkingSummaries", "enabled": True,
+                                                              "gt": T_NEW}, client)
+            self.assertEqual([m for m in sent if m.get("type") == "settingStale"], [], "an applied gesture: no frame")
+            km.Handler._dispatch_ws(types.SimpleNamespace(), {"type": "setThinkingSummaries", "enabled": False,
+                                                              "gt": T_OLD}, client)
+        self.assertTrue(km._thinking_summaries_on(), "the store keeps the newer pick")
+        frames = [m for m in sent if m.get("type") == "settingStale"]
+        self.assertEqual(len(frames), 1)
+        self.assertEqual((frames[0]["setting"], frames[0]["storedGt"], frames[0]["kept"]),
+                         ("thinking-summaries", T_NEW, True))
+        self.assertEqual(self.propagated, [], "per-install: a thinking-summaries pick never fans out")
+
+    def test_write_failure_is_loud_none_and_applies_nothing(self):
+        self.assertEqual(km._set_thinking_summaries(True, gt=T_OLD), T_OLD)
+        import pathlib
+        orig = pathlib.Path.write_text
+
+        def failing(p, *a, **k):
+            raise OSError("simulated full disk")
+
+        pathlib.Path.write_text = failing
+        err = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(err):
+                self.assertIsNone(km._set_thinking_summaries(False, gt=T_NEW), "a failed write never raises")
+        finally:
+            pathlib.Path.write_text = orig
+        self.assertIn("thinking-summaries", err.getvalue(), "the refusal names the setting on stderr")
+        self.assertTrue(km._thinking_summaries_on(), "nothing applied — the store keeps the old value")
+        self.assertIn("OSError", km._set_thinking_summaries.__doc__ or "",
+                      "the docstring names the write-failure cause of None, like its siblings")
+
+    def test_the_setting_is_reported_but_not_broadcast(self):
+        import inspect
+        src = inspect.getsource(km.Handler._dispatch_ws)
+        self.assertIn('_set_thinking_summaries(bool(msg["enabled"]), gt=_gesture_ms(msg))', src,
+                      "the WS branch hands the gesture stamp to the store")
+        fed = Path(BIN).parent / "ui" / "webview" / "federation.ts"
+        self.assertNotIn("setThinkingSummaries", fed.read_text(),
+                         "per-install: NOT a KERNEL_SETTING — it must never queue for or reach another kernel")
+        km._set_thinking_summaries(True, gt=T_NEW)
+        self.assertIs(km._version_info()["thinkingSummaries"], True, "/version reports it so the gear fills")
 
 
 if __name__ == "__main__":
