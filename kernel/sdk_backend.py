@@ -5249,7 +5249,8 @@ class SdkBackend:
         """Can a ✕ on this session's queued bubble still win? False while a turn is running UN-HELD:
         there the input generator forwards a queued send to the CLI within milliseconds, and once it's
         inside the CLI no recall exists — so offering a cancel would be a lie that ends in "too late".
-        True when the queue is genuinely romp-held — the interrupt hold, the rewind hold — or when no
+        True when the queue is genuinely romp-held — the interrupt hold, the rewind hold, the rename
+        ping's feed-hold (while the ping's turn is in flight the drain releases nothing) — or when no
         turn is in flight (idle/connecting: entries sit in _pending until the client drains them).
         The kernel reads this to decide whether the queued bubble gets its ✕ at all; the loud
         unqueue-miss toast covers the races this gate can't (a click on a just-stale push)."""
@@ -5260,7 +5261,9 @@ class SdkBackend:
         with s._lock:
             if s.inflight <= 0:
                 return True
-            return bool(s._interrupted or (s._rewind_to and not getattr(s, "_rewind_armed", False)))
+            return bool(s._interrupted
+                        or getattr(s, "_ping_feeding", False)   # getattr: test doubles skip __init__
+                        or (s._rewind_to and not getattr(s, "_rewind_armed", False)))
 
     def send(self, sid: str, text: str) -> bool:
         s = self._ensure(sid)
