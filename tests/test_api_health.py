@@ -14,7 +14,9 @@ repo too), and a rebuilt timeline of the incident the design note backtested —
 data. State is redirected before the module loads.
 """
 import asyncio
+import ast
 import inspect
+import textwrap
 import json
 import os
 import stat
@@ -178,7 +180,16 @@ class IngestsTheRealBranches(unittest.TestCase):
         not attempt / max_retries (no field of the signal uses them; the one-shot sorted(msg.data)
         line shows they are there) and not the chat card's retry_info alternates."""
         fn = sb.SdkSession._ah_note_retry
-        src = inspect.getsource(fn).replace(fn.__doc__ or "", "")     # the code, not its docstring
+        # the code, not its docstring — cut by the docstring node's line range, not by text-replacing
+        # fn.__doc__: Python 3.13 dedents docstring constants at compile time, so __doc__ no longer
+        # matches the raw source and a replace() leaves the docstring (and its word "attempt") in place
+        raw = textwrap.dedent(inspect.getsource(fn))
+        lines = raw.splitlines()
+        first = ast.parse(raw).body[0].body[0]
+        if (isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant)
+                and isinstance(first.value.value, str)):
+            del lines[first.lineno - 1:first.end_lineno]
+        src = "\n".join(lines)
         self.assertIn('d.get("error_status")', src)
         self.assertIn('d.get("error")', src)
         for forbidden in ("attempt", "max_retries", "retry_info", "_pick(", "status_code"):
