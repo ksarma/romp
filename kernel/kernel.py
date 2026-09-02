@@ -10621,6 +10621,7 @@ def _sdk_problem_rows(limit=20, cap=400):
             rows += [("be", r) for r in be.problems(limit)]
         except Exception:
             pass   # a fake/older backend without a usable ring: the boot problems still ride
+    rows += [("ws", r) for r in _WS_DROPS]   # dropped dashboard sockets (_client_send): the same bell
     out = []
     for src, r in rows[-limit:]:
         txt = _sdk_problem_text(r.get("text"), cap)
@@ -27289,10 +27290,7 @@ def _send_to_app(app, msg):
     with _clients_lock:
         targets = [c for c in _clients if c["app"] == app]
     for c in targets:
-        try:
-            c["send"](s)
-        except Exception:
-            c["alive"] = False
+        _client_send(c, s)
 
 
 # WS heartbeat (the user 2026-06-29): the pusher DEDUPS — a quiet fleet sends no view frames for minutes — so a
@@ -27312,10 +27310,7 @@ def _keepalive_all():
     with _clients_lock:
         targets = list(_clients)
     for c in targets:
-        try:
-            c["send"](s)
-        except Exception:
-            c["alive"] = False
+        _client_send(c, s)
 
 
 def _heartbeat():
@@ -27347,10 +27342,7 @@ def _send_to_view(app, msg, wid):
     with _clients_lock:
         targets = [c for c in _clients if c["app"] == app and (c.get("wid") or "") == wid]
     for c in targets:
-        try:
-            c["send"](s)
-        except Exception:
-            c["alive"] = False
+        _client_send(c, s)
 
 
 def _reveal_chat_for(client, focus_msg):
@@ -27570,6 +27562,44 @@ def _dedup_sig(msg, s):
     return s
 
 
+# Dropped clients are LOUD (2026-09-02). _mk_ws_send raises when a client is WS_QUEUE_BYTES behind and every
+# caller caught that with a bare `c["alive"] = False` — so a dashboard being dropped every few minutes for a
+# day (~120 times, the flashing "may be stale" banner) left NO trace in the kernel log, and the shim logged
+# nothing on its side either; it was diagnosed as a network problem for weeks. One stderr line per drop,
+# naming the pane, the dashboard, how far behind it was and the frame that tipped it — and one row for the
+# dashboard's bell (rides _sdk_problem_rows → feed `sdkNotices`, the existing kernel-problems channel), so
+# the user is told rather than left to wonder why the pane reloaded. Latched per client: the sends after the
+# first failure in the same cycle raise too, and would otherwise log the one drop several times.
+_WS_DROPS = []           # {"seq", "t", "text"} rows, newest last, bounded — the bell's source
+_WS_DROP_SEQ = [0]
+
+
+def _client_send(c, s, key=None):
+    """Enqueue one wire string on client `c`. A failure marks the client dead and logs the drop (once).
+    Returns whether the frame was accepted."""
+    try:
+        c["send"](s)
+        return True
+    except Exception as e:
+        c["alive"] = False
+        if not c.get("dropLogged"):
+            c["dropLogged"] = True
+            try:
+                sys.stderr.write("ws drop: app=%s wid=%s slot=%s queued=%dB frame=%dB — %s\n"
+                                 % (c.get("app"), c.get("wid") or "-", _perf_slot(key) if key else "-",
+                                    int(c.get("qbytes") or 0), len(s), e))
+                if "bytes behind" in str(e):   # the kernel's own drop (a socket that simply died is not news)
+                    _WS_DROP_SEQ[0] += 1
+                    _WS_DROPS.append({"seq": _WS_DROP_SEQ[0], "t": time.time(),
+                                      "text": "The %s pane's live connection was dropped: it had %.1f MB of "
+                                              "updates waiting and had stopped reading them. It reconnects on "
+                                              "its own." % (c.get("app") or "?", int(c.get("qbytes") or 0) / 1e6)})
+                    del _WS_DROPS[:-20]
+            except Exception:
+                pass
+        return False
+
+
 def _send_client(c, key, msg, pre=None, sig=None):
     """Send a payload to ONE client only if it differs from what that client last received (per-client
     dedup, key = the slot e.g. ("chat", sid)) — so the periodic push re-sends nothing when unchanged.
@@ -27596,10 +27626,7 @@ def _send_client(c, key, msg, pre=None, sig=None):
         return
     c["sent"][key] = (sig, now)
     _perf("send", slot=_perf_slot(key), bytes=len(s), deduped=0)
-    try:
-        c["send"](s)
-    except Exception:
-        c["alive"] = False
+    _client_send(c, s, key)
 
 
 def _send_chat(c, m, ms, change_from, led_changed):
