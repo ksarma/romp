@@ -115,6 +115,17 @@ class AwaitingCount(unittest.TestCase):
         self.assertIn('"awaitingCount": ((_aw or {}).get("count") if isinstance((_aw or {}).get("count"), int) else None),',
                       src)
 
+    def test_every_other_surface_ships_the_same_count(self):
+        # T228: the one-count rule reaches the timeline lane and the goal-floored feed card too (the
+        # placeholder card already threaded it); each surface words itself from THIS number, never its own
+        src = inspect.getsource(km)
+        self.assertIn('"awaitingCount": ((_aw_bg or {}).get("count") if isinstance((_aw_bg or {}).get("count"), int) else None),',
+                      src, "the timeline lane payload")
+        self.assertIn('"count": await_count,', src, "the goal card's awaiting object")
+        self.assertIn('(_owned_why, "task", _owned_since, None, 1)', src, "one owned dispatch counts one")
+        self.assertIn('(_stamp_why, _stamp_kind, _stamp_since, _stamp_peers, (len(_stamp_peers) if _stamp_peers else None))', src,
+                      "a stamp counts the peers it names")
+
 
 if __name__ == "__main__":
     unittest.main()
