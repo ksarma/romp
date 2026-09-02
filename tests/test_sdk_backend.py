@@ -1429,6 +1429,51 @@ class AskArmedBeforePresent(unittest.TestCase):
         self.assertIsNone(sess._cur_ask_fut, "the armed future clears once the ask is answered")
 
 
+class OverlappingAsksAnswerInTurn(unittest.TestCase):
+    """Two asks presented concurrently on one session (the SDK dispatches every control request as its
+    own detached task) must each get THEIR OWN answer. Before the per-session lock, arming at the sites
+    let the second ask find the first's live future and share it — one click resolved both, so an Allow
+    given to tool B was applied to tool A silently (PR #875 review). Now the second ask is not even
+    PRESENTED until the first resolves, and the answers land on the asks they were given to."""
+
+    SID = "11111111-2222-3333-4444-777777777777"
+
+    def test_the_second_ask_waits_and_each_gets_its_own_answer(self):
+        import asyncio
+        presented = []                                    # askLive ids in presentation order
+
+        def notify(app, msg):
+            if msg.get("type") == "askLive":
+                presented.append(msg["id"])
+
+        d = tempfile.mkdtemp()
+        backend = sb.SdkBackend(d, "/bin/true", notify)
+        sess = sb.SdkSession(backend, {"sid": self.SID, "name": "n", "cwd": d})
+        backend.sessions[self.SID] = sess
+        qa = {"question": "First?", "header": "A", "multiSelect": False, "options": [{"label": "a1"}, {"label": "a2"}]}
+        qb = {"question": "Second?", "header": "B", "multiSelect": False, "options": [{"label": "b1"}, {"label": "b2"}]}
+
+        async def go():
+            sess.loop = asyncio.get_running_loop()
+            ta = asyncio.ensure_future(sess._ask_one(qa, 0, 1))
+            tb = asyncio.ensure_future(sess._ask_one(qb, 0, 1))
+            await asyncio.sleep(0)                        # both tasks start; only ONE may be presented
+            self.assertEqual(len(presented), 1, "the second ask waits for the first — never two live at once")
+            self.assertTrue(backend.on_ask(presented[0], "answer", 2), "answer the FIRST ask: option 2")
+            await asyncio.wait_for(ta, timeout=5)        # the first ask resolves and releases the lock…
+            for _ in range(10):                           # …and the second acquires it within a few loop hops
+                if len(presented) == 2:
+                    break
+                await asyncio.sleep(0)
+            self.assertEqual(len(presented), 2, "the second ask is presented only after the first resolved")
+            self.assertTrue(backend.on_ask(presented[1], "answer", 1), "answer the SECOND ask: option 1")
+            return await asyncio.wait_for(asyncio.gather(ta, tb), timeout=5)
+
+        ra, rb = asyncio.run(go())
+        self.assertEqual((ra, rb), ("a2", "b1"), "each ask got the answer given to IT — no shared future")
+        self.assertIsNone(sess._cur_ask_fut)
+
+
 # --- Runner + can_use_tool bridge (needs the SDK message classes) ---
 try:
     import claude_agent_sdk as _sdk
