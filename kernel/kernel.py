@@ -9955,6 +9955,27 @@ class TmuxBackend(sb.SessionBackend):
     def paste_buffer(self, name):
         self._run(["paste-buffer", "-b", "rompkernel", "-d", "-p", "-t", name])
 
+    # CHECKED variants of the three paste-critical primitives: the same argv as their forgiving twins,
+    # but the exit code is READ. _run/_fire swallow exec errors and ignore nonzero exits — right for the
+    # read-side chrome, fatal for the steps that ARE a delivery: a tmux server that died after
+    # _tmux_send's clear made set-buffer, paste-buffer and the submitting Enter silent no-ops while the
+    # send looked complete. tmux's exit codes are a sane contract for all three (verified on tmux 3.4:
+    # dead server → 1 "no server running" / "error connecting", dead session → 1 "can't find pane",
+    # missing buffer → 1 "no buffer"; success → 0). True iff tmux itself answered 0; an exec failure, a
+    # timeout, a missing tmux, or a nonzero exit all read as NOT done. Other callers keep the forgiving
+    # twins on purpose (_inject verifies its paste landed by re-reading the box).
+    def set_buffer_checked(self, text):
+        r = self._run(["set-buffer", "-b", "rompkernel", text])
+        return r is not None and r.returncode == 0
+
+    def paste_buffer_checked(self, name):
+        r = self._run(["paste-buffer", "-b", "rompkernel", "-d", "-p", "-t", name])
+        return r is not None and r.returncode == 0
+
+    def send_keys_checked(self, name, *keys, t=3):
+        r = self._run(["send-keys", "-t", name, *keys], t)
+        return r is not None and r.returncode == 0
+
     def kill_by_name(self, name, t=4):
         self._fire(["kill-session", "-t", name], t)
 
@@ -14560,7 +14581,8 @@ def _tmux_send(name, text, model_cmd=False, _async=True):
     Enter, the old TmuxBackend.send sequence (a 250ms gap lets the bracketed paste land before Enter
     submits). name = the tmux session name. Drives the chat composer, /compact, and the model/effort
     pickers. Runs in a daemon thread so the WS recv loop isn't blocked by the gaps. model_cmd: /model opens
-    a confirm that needs a second Enter."""
+    a confirm that needs a second Enter. A delivery step that tmux answers nonzero (set-buffer, paste-buffer,
+    the submitting Enter) aborts the send with a line on stderr — see the checked primitives."""
     if not name or not text:
         return
 
@@ -14580,8 +14602,19 @@ def _tmux_send(name, text, model_cmd=False, _async=True):
             sys.stderr.write("tmux send: %s holds input that would not clear — NOT pasting, the message "
                              "would have been concatenated onto it\n" % name)
             return
-        _TMUX.set_buffer(text)
-        _TMUX.paste_buffer(name)                                    # bracketed (-p), delete buf (-d)
+        # The three steps that ARE the delivery run CHECKED: the forgiving primitives swallow exec errors and
+        # ignore exit codes, so a tmux server or session that died after the clear made set-buffer,
+        # paste-buffer and the submitting Enter silent no-ops while the send looked complete — the message
+        # vanished with no trace. Any failure aborts here, loudly, in the same shape as the clear-guard
+        # refusal above (exit codes verified sane on tmux 3.4 — see the checked variants). Success-path
+        # sequencing and timing are unchanged.
+        if not _TMUX.set_buffer_checked(text):
+            sys.stderr.write("tmux send: %s's set-buffer failed — the message was never staged\n" % name)
+            return
+        if not _TMUX.paste_buffer_checked(name):                    # bracketed (-p), delete buf (-d)
+            sys.stderr.write("tmux send: %s's paste-buffer failed — the message never reached the input\n"
+                             % name)
+            return
         paths = _injected_img_paths(text)
         if paths:
             # Claude Code reads each pasted image PATH asynchronously and rewrites it to "[Image #N]" in the
@@ -14596,7 +14629,10 @@ def _tmux_send(name, text, model_cmd=False, _async=True):
             time.sleep(0.2)
         else:
             time.sleep(0.25)
-        _TMUX.send_keys(name, "Enter")
+        if not _TMUX.send_keys_checked(name, "Enter"):
+            sys.stderr.write("tmux send: %s's submitting Enter failed — the message was pasted but never "
+                             "submitted\n" % name)
+            return
         if model_cmd:
             time.sleep(0.85)
             _TMUX.send_keys(name, "Enter")                          # accept the hookless /model confirm
