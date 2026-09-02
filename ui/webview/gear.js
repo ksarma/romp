@@ -66,9 +66,9 @@ var GEAR_HTML =
   "<button id=rs-defaultdir-browse type=button style='flex:0 0 auto;cursor:pointer;background:var(--btn-bg, #2a2a2a);color:var(--fg, #ccc);border:1px solid var(--hairline, #3a3a3a);border-radius:5px;padding:3px 8px'>Browse…</button>" +
   '</div></span></div>' +
   "<div class='rs-row rs-sep' style='cursor:default'><span style='flex:1 1 auto'><b>Default backend</b>" +
-  '<span class=rs-sub>What the + button uses for a NEW session — tmux drives a terminal pane; SDK runs via the Agent SDK. Both kinds run side by side; this only sets the default.</span>' +
+  '<span class=rs-sub>What the + button uses for a NEW session — tmux drives a terminal pane; SDK runs via the Agent SDK; Codex runs an OpenAI Codex agent (docs/codex.md). All kinds run side by side; this only sets the default.</span>' +
   "<select id=rs-backend style='display:none'>" +
-  '<option value=sdk>SDK</option><option value=tmux>tmux (terminal)</option>' +
+  '<option value=sdk>SDK</option><option value=tmux>tmux (terminal)</option><option value=codex>Codex</option>' +
   '</select></span></div>' +
   "<label class='rs-row rs-sep'><input type=checkbox id=rs-autonudge>" +
   '<span><b>Auto Nudge</b><span class=rs-mixed id=rs-autonudge-split hidden></span>' +

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# romp — direct a fleet of Claude Code sessions; the dashboard is the front door
+# romp — direct your Claude Code and Codex sessions; the dashboard is the front door
 #
 # Usage (see `romp help`):
 #   romp                     # open the dashboard in your browser
@@ -624,12 +624,13 @@ if [[ "${1:-}" == "help" || "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
         printf '  %-28s %s\n' "$inv" "$*"
     }
     cat <<'EOF'
-romp — direct a fleet of Claude Code sessions; the dashboard is the front door
+romp — direct your Claude Code and Codex sessions; the dashboard is the front door
 
 Usage:
 EOF
     _romp_cmd "romp"                       -            "Open the dashboard in your browser (prints the link too)"
-    _romp_cmd "romp new <name>"            -            "Start a session (SDK; lives in the kernel, watch it on the dashboard)"
+    _romp_cmd "romp new <name>"            -            "Start a session (SDK by default; \`romp engine\` sets the machine default)"
+    _romp_cmd "romp new --codex <name>"    -            "Start it as an OpenAI Codex session (docs/codex.md)"
     _romp_cmd "romp new -t <name>"         -            "Start it as a terminal (tmux) session and attach (--detach: don't attach)"
     _romp_cmd "romp new -d <dir> <name>"   -            "Working directory for the new session (default: the current folder)"
     _romp_cmd "romp new -m <text> <name>"  -            "Start it AND deliver <text> as its first prompt (one command, idea to working)"
@@ -667,6 +668,7 @@ EOF
     _romp_cmd "romp interrupt <session>"   -            "Interrupt a session's current turn"
     _romp_cmd "romp end <session>"         -            "End a session"
     _romp_cmd "romp checkin <host>"        -            "Publish this machine to an attached hub (romp checkout withdraws)"
+    _romp_cmd "romp engine claude|codex"   -            "One switch: which vendor runs the judges + what new sessions default to"
     _romp_cmd "romp default-dir [PATH]"    -            "Default working dir for new sessions (no arg prints; \"\" clears)"
     _romp_cmd "romp debug [on|off|status]" -            "Judge debug mode (rejection rows carry full input+reply)"
     exit 0
@@ -1518,6 +1520,53 @@ fi
 # access rides tailnet device auth + TLS rather than a token in a URL.
 # See docs/guide.md#from-your-phone.
 
+# ── romp engine [claude|codex|status]: one switch for the machine's vendor posture ──────────────
+# Sets BOTH knobs together (docs/codex.md): which harness the JUDGES call (STATE/judge-engine —
+# read live per call, no restart) and which backend a NEW session defaults to
+# (STATE/default-backend — honored by `romp new` and the kernel's POST /new; the dashboard's
+# + dialog keeps its own per-create toggle). Running sessions are never touched.
+if [[ "${1:-}" == "engine" ]]; then
+    shift
+    _eng_state="${ROMP_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/romp}"
+    case "${1:-status}" in
+        claude)
+            mkdir -p "$_eng_state"
+            printf 'claude\n' > "$_eng_state/judge-engine"
+            printf 'sdk\n'    > "$_eng_state/default-backend"
+            if ! command -v claude >/dev/null 2>&1 && [ ! -x "$HOME/.local/bin/claude" ]; then
+                echo "[romp] note: no claude binary found — install Claude Code and sign in, or judges + new sessions will fail loudly" >&2
+            fi
+            echo "[romp] engine CLAUDE — judges run on Claude; new sessions default to the Claude Agent SDK"
+            echo "[romp] running sessions are unaffected; judges pick this up on their next call" ;;
+        codex)
+            mkdir -p "$_eng_state"
+            printf 'codex\n' > "$_eng_state/judge-engine"
+            printf 'codex\n' > "$_eng_state/default-backend"
+            _cx="$(command -v codex 2>/dev/null || true)"
+            [ -z "$_cx" ] && [ -x "$HOME/.local/bin/codex" ] && _cx="$HOME/.local/bin/codex"
+            # the bundled binary lives INSIDE codexvenv (no PATH entry point) — ccodex-setup links
+            # it out, but probe the venv too so this note never cries wolf on a bundled-only box
+            [ -z "$_cx" ] && _cx="$(ls -d "$_eng_state"/codexvenv/lib/python3.*/site-packages/codex_cli_bin/bin/codex 2>/dev/null | head -n1 || true)"
+            if [ -z "$_cx" ] || [ ! -x "$_cx" ]; then
+                echo "[romp] note: no codex binary found — run ccodex-setup, then: codex login" >&2
+            elif ! "$_cx" login status 2>&1 | grep -qi '^logged in'; then   # the status goes to STDERR; "Not logged in" must not match
+                echo "[romp] note: codex isn't logged in — run: codex login (or codex login --device-auth)" >&2
+            fi
+            echo "[romp] engine CODEX — judges run on Codex; new sessions default to the Codex backend"
+            echo "[romp] running sessions are unaffected; judges pick this up on their next call" ;;
+        status)
+            # `|| true`: an absent file under set -euo pipefail otherwise kills the script
+            # mid-substitution, printing nothing at all
+            _je="$(cat "$_eng_state/judge-engine" 2>/dev/null | tr -d '[:space:]' || true)"
+            _db="$(cat "$_eng_state/default-backend" 2>/dev/null | tr -d '[:space:]' || true)"
+            echo "judges:               ${_je:-claude}"
+            echo "new-session default:  ${_db:-sdk}" ;;
+        *)
+            echo "usage: romp engine [claude|codex|status]" >&2; exit 2 ;;
+    esac
+    exit 0
+fi
+
 # ── romp debug [on|off|status]: judge debug mode ────────────────────────────────
 # When on, every judge-failure row in judge-errors.jsonl carries the failing call's
 # full input + reply, and the feed joins those rows onto each card: the card modal
@@ -1648,6 +1697,7 @@ dir_arg=""
 model_arg=""
 effort_arg=""
 use_tmux=false
+use_codex=false
 msg_arg=""
 tag_arg=""
 
@@ -1657,10 +1707,11 @@ case "${1:-}" in
         while [[ $# -gt 0 ]]; do
             case "$1" in
                 -t|--tmux) use_tmux=true; shift ;;
+                --codex)   use_codex=true; shift ;;   # an OpenAI Codex session (docs/codex.md)
                 --detach)  detach=true; shift ;;
                 -d)        shift
                            if [[ $# -eq 0 || "$1" == -* ]]; then
-                               echo "usage: romp new [-t] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] <name>" >&2; exit 2
+                               echo "usage: romp new [-t|--codex] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] <name>" >&2; exit 2
                            fi
                            dir_arg="$1"; shift ;;
                 -m|--message) shift
@@ -1669,7 +1720,7 @@ case "${1:-}" in
                            # last two-step on the idea-to-working path). Empty text is a usage
                            # error, not a silent no-op.
                            if [[ $# -eq 0 || -z "$1" ]]; then
-                               echo "usage: romp new [-t] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] <name>" >&2; exit 2
+                               echo "usage: romp new [-t|--codex] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] <name>" >&2; exit 2
                            fi
                            msg_arg="$1"; shift ;;
                 --tag)     shift
@@ -1679,7 +1730,7 @@ case "${1:-}" in
                            # as the user's typed words. Rides POST /send's "tag" field — the
                            # kernel validates and appends the render-hint marker itself.
                            if [[ $# -eq 0 || -z "$1" || "$1" == -* ]]; then
-                               echo "usage: romp new [-t] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] <name>" >&2; exit 2
+                               echo "usage: romp new [-t|--codex] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] <name>" >&2; exit 2
                            fi
                            tag_arg="$1"; shift ;;
                 --model)   shift
@@ -1688,25 +1739,44 @@ case "${1:-}" in
                            # FULL id as the picker sends it (claude-fable-5) — the alias table
                            # stops at opus/sonnet/haiku and quietly resolved "fable" to Opus 5.
                            if [[ $# -eq 0 || -z "$1" || "$1" == -* ]]; then
-                               echo "usage: romp new [-t] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] <name>" >&2; exit 2
+                               echo "usage: romp new [-t|--codex] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] <name>" >&2; exit 2
                            fi
                            model_arg="$1"; shift ;;
                 --effort)  shift
                            # per-spawn effort (e.g. high, ultracode) — ultracode is per-session
                            # by design, never a machine default, so /new is its sanctioned door.
                            if [[ $# -eq 0 || -z "$1" || "$1" == -* ]]; then
-                               echo "usage: romp new [-t] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] <name>" >&2; exit 2
+                               echo "usage: romp new [-t|--codex] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] <name>" >&2; exit 2
                            fi
                            effort_arg="$1"; shift ;;
                 -*)        echo "romp new: unknown option: $1" >&2; exit 2 ;;
                 *)         if [[ -n "$session_arg" ]]; then
-                               echo "usage: romp new [-t] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] <name>" >&2; exit 2
+                               echo "usage: romp new [-t|--codex] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] <name>" >&2; exit 2
                            fi
                            session_arg="$1"; shift ;;
             esac
         done
         if [[ -z "$session_arg" ]]; then
-            echo "usage: romp new [-t] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] <name>" >&2; exit 2
+            echo "usage: romp new [-t|--codex] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] <name>" >&2; exit 2
+        fi
+        if $use_tmux && $use_codex; then
+            echo "romp new: --codex and -t are different session kinds — pick one" >&2; exit 2
+        fi
+        # The EFFECTIVE backend decides flag validity — the machine default (`romp engine`,
+        # STATE/default-backend) counts exactly like an explicit --codex. Resolved HERE, before
+        # any flag guard: validating against the flag alone let `romp new --model …` on an
+        # engine-codex machine sail past, create the Codex session, silently ignore the
+        # preference and warn only afterward (the user's audit, 2026-08-17).
+        # `|| true`: an absent file under set -euo pipefail otherwise kills the whole command.
+        _be="$(cat "${ROMP_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/romp}/default-backend" 2>/dev/null | tr -d '[:space:]' || true)"
+        case "$_be" in sdk|codex) ;; *) _be="sdk" ;; esac
+        $use_codex && _be="codex"
+        if [[ -n "$model_arg$effort_arg" && "$_be" == "codex" ]] && ! $use_tmux; then
+            # per-spawn model/effort ride /new for SDK sessions only; the codex spawn takes the
+            # account default and the pickers change it after. Refuse loudly (no silent drop),
+            # naming which door made this spawn Codex.
+            _why="--codex"; $use_codex || _why="this machine's \`romp engine codex\` default"
+            echo "romp new: --model/--effort need an SDK session, and $_why makes this a Codex one — set them from the dashboard instead" >&2; exit 2
         fi
         if [[ -n "$tag_arg" && -z "$msg_arg" ]]; then
             # a tag labels the -m text; without -m there is nothing to label
@@ -1802,7 +1872,9 @@ if [[ -n "$session_arg" ]] && ! $use_tmux && ! $resume; then
         echo "romp new: the kernel isn't running (no serve token). Start romp (the login service, or \`romp up\`), or use \`romp new -t $session_arg\` for a terminal session." >&2
         exit 1
     fi
-    _payload="$(python3 -c 'import json,sys; d={"name": sys.argv[1], "dir": sys.argv[2], "backend": "sdk"}; sys.argv[3] and d.update(model=sys.argv[3]); sys.argv[4] and d.update(effort=sys.argv[4]); print(json.dumps(d))' "$session_arg" "$_dir" "$model_arg" "$effort_arg")"
+    # $_be — the effective backend — was resolved at parse time (the `new` case), where the
+    # model/effort guards needed it; an explicit --codex already won there.
+    _payload="$(python3 -c 'import json,sys; d={"name": sys.argv[1], "dir": sys.argv[2], "backend": sys.argv[3]}; sys.argv[4] and d.update(model=sys.argv[4]); sys.argv[5] and d.update(effort=sys.argv[5]); print(json.dumps(d))' "$session_arg" "$_dir" "$_be" "$model_arg" "$effort_arg")"
     _resp="$(_romp_token_cfg | curl -sf -m 15 --config - -X POST "http://127.0.0.1:$_kport/new" \
                   -H 'Content-Type: application/json' -d "$_payload")" \
         || { echo "romp new: kernel not reachable on :$_kport (is romp running?). \`romp new -t $session_arg\` starts a terminal session without it." >&2; exit 1; }
@@ -1814,7 +1886,8 @@ if [[ -n "$session_arg" ]] && ! $use_tmux && ! $resume; then
         elif [[ "$_resp" == *'"existing"'* ]]; then
             echo "romp new: \"$session_arg\" is already running; see the dashboard (romp)"
         else
-            echo "romp new: started \"$session_arg\" (SDK session, working in $_dir)"
+            _kind="SDK"; [ "$_be" = "codex" ] && _kind="Codex"
+            echo "romp new: started \"$session_arg\" ($_kind session, working in $_dir)"
             echo "romp new: watch it on the dashboard: romp"
         fi
         # --model/--effort: report what the kernel APPLIED — it echoes them back (the same park-aware

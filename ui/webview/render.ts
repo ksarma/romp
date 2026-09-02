@@ -4272,7 +4272,7 @@ function showTabTip(tab: HTMLElement, s: Session): void {
   if (s.status.effort) rows.push(["Effort", s.status.effort]);
   // Backend is a plain labelled FIELD now, under the others (the user 2026-07-08 — no longer a coloured
   // "SDK backend" badge at the top of the tooltip; it reads as one of the session's config fields).
-  if (be === "sdk" || be === "tmux") rows.push(["Backend", be === "sdk" ? "SDK" : "tmux"]);
+  if (be === "sdk" || be === "tmux" || be === "codex") rows.push(["Backend", be === "sdk" ? "SDK" : be === "codex" ? "Codex" : "tmux"]);
   // Billing: whether this tab bills the API key or the Claude login — and WHICH login account (the
   // user 2026-08-09: shown whenever the backend reports it, one-auth machines included; only a tmux
   // session, whose CLI env romp does not control, reports nothing). No key material, ever.
@@ -6015,7 +6015,8 @@ function openPicker(pick = false, prompt?: string, allowNew = false) {
       return b;
     };
     beWrap.append(beLabel, mkBe("sdk", "SDK", "Runs via the Claude Agent SDK."),   // not "headless" — same full chat UI (the user 2026-07-12)
-                  mkBe("tmux", "tmux", "Drives a real terminal pane (tmux)."));   // SDK first — the de-facto default (the user 2026-07-02)
+                  mkBe("tmux", "tmux", "Drives a real terminal pane (tmux)."),   // SDK first — the de-facto default (the user 2026-07-02)
+                  mkBe("codex", "Codex", "Runs an OpenAI Codex agent (the host needs romp-codex-setup + codex login)."));
     // the billing row exists only for SDK sessions — re-decide on every backend toggle
     beWrap.addEventListener("click", () => syncPickerAuth());
     // per-session BILLING row (the user 2026-08-08): Login | API key buttons when the selected host
@@ -10013,9 +10014,16 @@ interface MetaChoice { label: string; value: string; sub?: string; sdkOnly?: boo
 // keeps its reference; the session picker appends its own "Default" (use-the-CLI-default) sentinel — not a model.
 const MODEL_CHOICES: { label: string; value: string; color?: number[] | null }[] = [];
 const EFFORT_CHOICES: { label: string; value: string; color?: number[] | null }[] = [];
+// A CODEX session's pickers speak Codex's vocabulary (the payload's codex section — models from
+// the app-server's own list, efforts the four Codex accepts). Empty until the codex backend has
+// run: an empty model menu beats offering another vendor's models (docs/codex.md).
+const CODEX_MODEL_CHOICES: { label: string; value: string; color?: number[] | null }[] = [];
+const CODEX_EFFORT_CHOICES: { label: string; value: string; color?: number[] | null }[] = [];
 fetch(kernelUrl("/models"), { cache: "no-store" }).then((r) => r.json()).then((d) => {
   if (Array.isArray(d.models)) { MODEL_CHOICES.length = 0; MODEL_CHOICES.push(...d.models, { label: "Default", value: "default" }); }
   if (Array.isArray(d.efforts)) { EFFORT_CHOICES.length = 0; EFFORT_CHOICES.push(...d.efforts); }
+  if (d.codex && Array.isArray(d.codex.models)) { CODEX_MODEL_CHOICES.length = 0; CODEX_MODEL_CHOICES.push(...d.codex.models); }
+  if (d.codex && Array.isArray(d.codex.efforts)) { CODEX_EFFORT_CHOICES.length = 0; CODEX_EFFORT_CHOICES.push(...d.codex.efforts); }
   if (d.commentDefaults) adoptCommentDefaults(d.commentDefaults);
 }).catch(() => { /* picker stays empty until it lands */ });
 // The kernel's default-comment settings, RAW ("session" = same as the session — the user 2026-08-29):
@@ -10131,12 +10139,24 @@ function prettyMode(m: string | undefined): string {
     case "auto": return "Auto";
     case "dontask": return "Don’t ask";
     case "bypasspermissions": return "Bypass";
+    case "sandboxed": return "Sandboxed";   // a Codex session's fixed posture (workspace-write)
     default: return "Normal";   // default / normal / unknown
   }
 }
 const META_CHOICES: Record<MetaKind, MetaChoice[]> = {
   mode: MODE_CHOICES, model: MODEL_CHOICES, effort: EFFORT_CHOICES, fast: FAST_CHOICES,
 };
+// The choices a menu offers depend on the session's BACKEND: a Codex session speaks Codex's
+// vocabulary (its own model list, the four efforts it accepts) — never Claude's, whose aliases
+// the codex backend refuses (docs/codex.md). Mode/fast never reach here for codex (see the
+// toggleMetaMenu guard / the fast badge's report gate).
+function metaChoices(kind: MetaKind, st: Status): MetaChoice[] {
+  if (st.backend === "codex") {
+    if (kind === "model") return CODEX_MODEL_CHOICES;
+    if (kind === "effort") return CODEX_EFFORT_CHOICES;
+  }
+  return META_CHOICES[kind];
+}
 // the live value of a meta kind for the active session
 function metaCurrent(kind: MetaKind, st: Status): string {
   return (kind === "model" ? st.model : kind === "effort" ? st.effort : kind === "fast" ? st.fast
@@ -10293,6 +10313,9 @@ function toggleMetaMenu(kind: MetaKind, btn: HTMLElement, forSid?: string | null
   // slash command there would answer the prompt instead (host guards this too)
   if (status.state === "needsInput" || status.state === "awaiting") return;
   const s = { status };
+  // a Codex session's mode is fixed (sandboxed, plans/codex-backend.md phase 1) — the badge is
+  // informational, and opening Claude's permission-mode cycle under it would offer four no-ops
+  if (kind === "mode" && s.status.backend === "codex") return;
   const menu = el("div", "meta-menu");
   menu.dataset.kind = kind;
   const pickValue = (value: string) => {
@@ -10306,9 +10329,10 @@ function toggleMetaMenu(kind: MetaKind, btn: HTMLElement, forSid?: string | null
   };
   let subEl: HTMLElement | null = null;
   const closeSub = () => { subEl?.remove(); subEl = null; };
-  // An sdkOnly entry is dropped on tmux rather than shown-and-refused: the backend cannot apply it, and
-  // a menu that lists a mode you can't have is worse than one that doesn't.
-  for (const c of META_CHOICES[kind].filter((c) => !c.sdkOnly || s.status.backend === "sdk")) {
+  // An sdkOnly entry is dropped on tmux rather than shown-and-refused: the backend cannot apply it,
+  // and a menu that lists a mode you can't have is worse than one that doesn't. Codex sessions read
+  // their own vocabulary via metaChoices (docs/codex.md) before the same filter.
+  for (const c of metaChoices(kind, s.status).filter((c) => !c.sdkOnly || s.status.backend === "sdk")) {
     const item = el("div", "meta-item" + (isCurrentMeta(kind, s.status, c.value) ? " current" : ""));
     item.tabIndex = 0;
     const rowIco = kind === "mode" ? el("span", "meta-ico mode-ico") : null;
