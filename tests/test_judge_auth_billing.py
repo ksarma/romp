@@ -152,10 +152,14 @@ class JudgeEnvBilling(_JudgeAuthBase):
     def test_the_existing_env_contract_survives(self):
         os.environ["TMUX"] = "sock,1,0"
         try:
-            env = jd._judge_env("index", "login")
+            env = jd._judge_env("index", "login", model="haiku")
             self.assertNotIn("TMUX", env)
             self.assertEqual(env.get("ROMP_SUMMARIZING"), "1")
+            # the index tier's thinking-off lever belongs to models without adaptive thinking (2026-09-01):
+            # an adaptive-thinking model takes `--effort` instead and never sees the env var — the billing
+            # plumbing is the same either way
             self.assertEqual(env.get("MAX_THINKING_TOKENS"), "0")
+            self.assertIsNone(jd._judge_env("index", "login", model="fable").get("MAX_THINKING_TOKENS"))
         finally:
             os.environ.pop("TMUX", None)
 
