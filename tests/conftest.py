@@ -45,6 +45,34 @@ def _dead_manager_port():
 # own resolution pop this var themselves (test_judge.py), as they always had to.
 os.environ["ROMP_CLAUDE_BIN"] = "/bin/false"
 
+# No test kernel may fetch the Models API (2026-09-02): the kernel's lazy _sdk() build (_sdk_locked)
+# fires the T222 catalog refresh, `_refresh_model_catalog("boot")` — an async GET to
+# api.anthropic.com on any credential the process carries: the manager-env key
+# sdk_backend.work_api_key claimed, else a bare ANTHROPIC_API_KEY, else an ANTHROPIC_AUTH_TOKEN
+# bearer. A DEFENSIVE floor: no test reached the network before this line (checked, not assumed —
+# the one in-process _sdk() driver, test_kernel_headless_ops' SdkSingleFlight, runs the refresh
+# inside the test process with the module loader mocked, and it stopped only because the mocked
+# module's work_api_key handed http.client a credential it rejects before a socket opens), but any
+# in-process _sdk() call is one exported key away from a real request no test asserts on, on a key
+# the test never chose. The kernel-SPAWNING tests floor it in their subprocess env
+# (test_gear_select_matrix, test_ship_reship, test_awaiting_box_sync); this floors every test,
+# whatever the developer's shell exports.
+# Set, not setdefault: "off" is the only value the switch recognises, so no outer intent is being
+# overridden. The catalog suite unsets the var inside its own tests — FetchAndFallback pops it in
+# setUp to drive the fetch against a local fake server; StalenessEvent and ModelsRoute set it in
+# setUp and pop it in tearDown — leaving it absent for every test after that module in a serial
+# run; hence the per-test re-assert below, on the same reasoning as the manager-port one
+# (tests/test_model_catalog_floor.py pins both). Those pops still win inside their own tests:
+# pytest fills every fixture, autouse included, in the item's setup phase, before runtest hands
+# the case to TestCase.run(), which is what calls setUp.
+os.environ["ROMP_MODEL_CATALOG"] = "off"
+
+
+@pytest.fixture(autouse=True)
+def _no_model_catalog_fetch():
+    os.environ["ROMP_MODEL_CATALOG"] = "off"
+    yield
+
 
 @pytest.fixture(autouse=True)
 def _stub_place_llm(monkeypatch):
