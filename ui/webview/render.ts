@@ -5063,6 +5063,25 @@ function showTabMenu(e: MouseEvent, id: string) {
     rename.addEventListener("click", (ev) => { ev.stopPropagation(); dismissTabMenu(); startTabRename(id); });
     menu.appendChild(rename);
   }
+  // Move to folder… sits with Rename (the user 2026-09-01: a subproject became its own repo and the
+  // session should follow it) — the same dress, the sub-line saying what a move KEEPS. The dialog does
+  // the rest (showMovePrompt); the kernel wraps the CLI's own relocation. SDK sessions only: a terminal
+  // session has no relocation primitive, so its row says so rather than failing after a click.
+  {
+    const sTm = sessions.get(id);
+    const isTmux = !!(sTm && sTm.status && sTm.status.backend === "tmux");
+    const mv = el("div", "ctx-item ctx-item-toggle" + (isTmux ? " ctx-item-off" : ""));
+    mv.appendChild(ctxIcon("folder", isTmux));
+    const bodyEl = el("span", "ctx-item-body");
+    const l = el("span", "ctx-item-label"); l.textContent = "Move to folder…"; bodyEl.appendChild(l);
+    const sb = el("span", "ctx-item-sub");
+    sb.textContent = isTmux ? "terminal sessions can't move — start a new one in that folder"
+                            : "the conversation, mail and history come along";
+    bodyEl.appendChild(sb);
+    mv.appendChild(bodyEl);
+    if (!isTmux) mv.addEventListener("click", (ev) => { ev.stopPropagation(); dismissTabMenu(); showMovePrompt(id); });
+    menu.appendChild(mv);
+  }
   // Colors join Rename in the AESTHETIC section (the user 2026-08-24, the final by-kind grouping:
   // [Rename + colors] / [feed, mail, bell, billing, Tags] / [Browse]). The swatch row itself is
   // unchanged (the user 2026-06-29): the identity palette as circles, the current one ringed,
@@ -6504,6 +6523,110 @@ function showConfirm(title: string, detail: string, buttons: Array<{ label: stri
   document.addEventListener("keydown", onKey, true);
   (actions.firstElementChild as HTMLElement | null)?.focus();
 }
+// ---- move session (the user 2026-09-01) ----
+// "Move to folder…" on the tab menu: the session's working directory follows a subproject that became
+// its own repo. The kernel wraps the CLI's own relocation (its set_cwd control request): conversation,
+// name, mailbox and history stay with the session; its tools, CLAUDE.md and project settings come from
+// the new folder from the next turn on. One small dialog on the confirm chrome: the path box prefilled
+// with the current folder, the owning kernel's verdict for what is typed (the create picker's dirComplete
+// op, asked with NEGATIVE reqIds so the picker's own completer never claims these answers), Move/Cancel.
+// Acknowledged at once (the button reads "Moving…"), CLOSED by the kernel's typed `moved`, and on a typed
+// `moveFailed` left open with the reason where the path is — never a silent nothing. A 90s backstop covers
+// a dormant session, which the kernel revives first (it waits up to 60s for that CLI to come up).
+let movePrompt: { sid: string; overlay: HTMLElement; input: HTMLInputElement; hint: HTMLElement;
+                  go: HTMLButtonElement; close: () => void; backstop?: number } | null = null;
+let moveDirReq = 0;
+
+function closeMovePrompt(): void {
+  if (!movePrompt) return;
+  if (movePrompt.backstop !== undefined) clearTimeout(movePrompt.backstop);
+  const p = movePrompt; movePrompt = null;
+  p.close();
+}
+
+function showMovePrompt(sid: string): void {
+  closeMovePrompt();
+  const sess = sessions.get(sid);
+  const overlay = el("div", "picker-overlay confirm-overlay"); overlay.id = "move-prompt";
+  const box = el("div", "picker-box confirm-box");
+  const h = el("div", "confirm-title"); h.textContent = `Move “${sess?.name || "session"}” to a folder`;
+  const d = el("div", "confirm-detail");
+  d.textContent = "The conversation, name, mail and history stay with the session. From its next turn on, its tools, CLAUDE.md and project settings come from the new folder.";
+  const input = document.createElement("input");
+  input.type = "text"; input.className = "fork-name move-dir"; input.value = sess?.cwd || "";
+  input.placeholder = "folder path (~ and $VARs expand)";
+  input.setAttribute("autocapitalize", "off"); input.setAttribute("autocomplete", "off");
+  input.setAttribute("autocorrect", "off"); input.setAttribute("spellcheck", "false");
+  const hint = el("div", "move-dir-hint");   // the kernel's one-line verdict for the typed path
+  const actions = el("div", "confirm-actions");
+  const cancel = el("button", "picker-action confirm-btn"); cancel.textContent = "Cancel";
+  const go = el("button", "picker-action confirm-btn") as HTMLButtonElement; go.textContent = "Move";
+  const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { e.stopPropagation(); closeMovePrompt(); } };
+  const close = () => { overlay.remove(); document.removeEventListener("keydown", onKey, true); };
+  movePrompt = { sid, overlay, input, hint, go, close };
+  const ask = () => {
+    if (!vscodeApi) return;
+    vscodeApi.postMessage({ type: "dirComplete", value: input.value.trim(), reqId: -(++moveDirReq), host: hostOf(sid) });
+  };
+  const start = () => {
+    const dir = input.value.trim();
+    if (!dir) { input.classList.add("bad"); input.focus(); return; }
+    // acknowledge the click before the round trip (the repo's button rule); the kernel's typed reply
+    // — moved / moveFailed — is what changes this dialog next
+    go.disabled = true; go.textContent = "Moving…"; input.disabled = true;
+    vscodeApi?.postMessage({ type: "moveSession", id: sid, dir });
+    if (movePrompt) movePrompt.backstop = window.setTimeout(
+      () => moveFailedLocal(sid, sess?.name || sid, "still waiting — the kernel has not answered; check the kernel log"), 90000);
+  };
+  cancel.addEventListener("click", closeMovePrompt);
+  go.addEventListener("click", start);
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); start(); } });
+  input.addEventListener("input", () => { input.classList.remove("bad"); ask(); });
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) closeMovePrompt(); });
+  actions.appendChild(cancel); actions.appendChild(go);
+  box.appendChild(h); box.appendChild(d); box.appendChild(input); box.appendChild(hint); box.appendChild(actions);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+  document.addEventListener("keydown", onKey, true);
+  input.focus(); input.select();
+  ask();   // vet the prefilled path straight away, like the picker does
+}
+
+// the owning kernel's verdict for the move dialog's path (a dirCompletions reply with our negative reqId)
+function onMoveDirCompletions(m: any): void {
+  if (!movePrompt || m.reqId !== -moveDirReq) return;   // a newer keystroke owns the field, or no dialog
+  const s = m.status || null;
+  // dirStatusHint's "can be created" verdict is the picker's offer; a move never creates, so a missing
+  // folder is simply not there
+  const said = s && !s.isDir && s.canCreate ? { text: "not found", cls: "bad", title: "A move goes to a folder that already exists." }
+                                             : dirStatusHint(s);
+  movePrompt.hint.textContent = said.text;
+  movePrompt.hint.title = said.title;
+  movePrompt.hint.className = "move-dir-hint" + (said.cls ? " " + said.cls : "");
+  movePrompt.input.classList.toggle("bad", said.cls === "bad");
+}
+
+// the kernel's typed outcome: `moved` closes the dialog (a parked move that lands later says so in a
+// toast, since the dialog may be long gone); `moveFailed` puts the reason where the path is
+function moveLanded(sid: string, name: string, cwd: string): void {
+  const s = sessions.get(sid);
+  if (s && cwd) s.cwd = cwd;   // the kernel's push carries the same; this keeps the statusline honest meanwhile
+  if (movePrompt && movePrompt.sid === sid) { closeMovePrompt(); return; }
+  warnToast(`“${name}” now works in ${cwd || "its new folder"}`);
+}
+
+function moveFailedLocal(sid: string, name: string, text: string): void {
+  const p = movePrompt;
+  if (p && p.sid === sid) {
+    if (p.backstop !== undefined) { clearTimeout(p.backstop); p.backstop = undefined; }
+    p.go.disabled = false; p.go.textContent = "Move"; p.input.disabled = false;
+    p.hint.textContent = text; p.hint.title = text; p.hint.className = "move-dir-hint bad";
+    p.input.classList.add("bad"); p.input.focus();
+    return;
+  }
+  warnToast(`Couldn’t move “${name}”: ${text}`);
+}
+
 // THE FORK MODAL (the user 2026-08-13): fork this conversation into a NEW parallel session — from just
 // before a given user message (the bubble's fork button) or from the tip (the palette command, uuid "").
 // One small dialog on the confirm chrome: a name box prefilled "<session>-fork" (editable), Fork/Cancel.
@@ -10899,9 +11022,9 @@ function updateStatusline() {
   // at the LEFT edge (justify only reaches the row holding the auto margin) — the user 2026-08-10, on a
   // phone, wanted the wrapped controls to stay clustered on the right.
   const right = el("span", "sl-right");
-  // The session's working directory (fixed at creation), leading the right-side cluster — just left of the
-  // mode/model/effort controls (the user 2026-06-23). Basename only; full path on hover. Empty (rare, no
-  // cwd) it's a zero-width spacer.
+  // The session's working directory (the current one — a tab-menu move changes it), leading the right-side
+  // cluster — just left of the mode/model/effort controls (the user 2026-06-23). Basename only; full path
+  // on hover. Empty (rare, no cwd) it's a zero-width spacer.
   const dir = el("span", "status-dir");
   if (s.cwd) {
     dir.appendChild(folderIcon());
@@ -12382,7 +12505,11 @@ window.addEventListener("message", (e: MessageEvent) => {
                      : [{ label: "Dismiss", value: "ok" }],
                 (v) => { if (v === "copy") navigator.clipboard?.writeText(copy); });
   }
-  else if (m.type === "dirCompletions") onDirCompletions(m);        // the owning kernel's path completions
+  else if (m.type === "dirCompletions") {                            // the owning kernel's path completions
+    // a NEGATIVE reqId is the move dialog's ask (showMovePrompt) — routed before the picker's handler,
+    // whose in-flight bookkeeping must not be flipped by an answer it never asked for
+    if (typeof m.reqId === "number" && m.reqId < 0) onMoveDirCompletions(m); else onDirCompletions(m);
+  }
   else if (m.type === "createDirMissing" && m.name) onCreateDirMissing(m);   // create it, or edit the path
   // The AUTHORITATIVE answer to a ✕ on a queued bubble (the user 2026-07-20). ok:false = the message
   // had already left romp's queue (handed to the CLI — no recall exists): toast the kernel's 'too late'
@@ -12507,6 +12634,11 @@ window.addEventListener("message", (e: MessageEvent) => {
   else if (m.type === "reviveFailed" && m.id) {
     // the kernel's loud revive failure → named, in that session's own pane + the dismissible toast
     reviveFailedLocal(String(m.id), String(m.name || m.id), String(m.text || "unknown error"));
+  }
+  else if (m.type === "moved" && m.id) moveLanded(String(m.id), String(m.name || m.id), String(m.cwd || ""));
+  else if (m.type === "moveFailed" && m.id) {
+    // the kernel's typed move refusal → the reason where the path was typed, or a toast if the dialog is gone
+    moveFailedLocal(String(m.id), String(m.name || m.id), String(m.text || "unknown error"));
   }
   else if (m.type === "focusComposer") { const ta = document.getElementById("composer-input") as HTMLTextAreaElement | null; ta?.focus(); }
   else if (m.type === "glowTurns") applyGlow(Array.isArray(m.groups) ? m.groups : [], Array.isArray(m.mids) ? m.mids : []);
