@@ -34065,6 +34065,35 @@ class Handler(BaseHTTPRequestHandler):
                     pass
                 return self._send(200, json.dumps({"rows": _fleet_usage(), "host": _self_host()}),
                                   "application/json", cache="no-cache")
+            if p == "/api-health":
+                # The API-health signal (docs/reference.md): per-(auth label, model family) attempt /
+                # response / give-up counts over rolling windows and a thrash/degraded/recovering state
+                # derived from them AT READ TIME by the SDK backend's aggregator (sdk_backend.ApiHealth).
+                # AUTHED, deliberately, and by the plain _authorize (a read, not a write): the exempt
+                # block above carries only bare counters — /healthz's frozen "ok", /busy's count,
+                # /version's no-paths report — and this payload names auth-source labels (salted
+                # digests) and model families. No paths, no key material, no error text ride it, but
+                # it is more than a probe needs. Boot identity REUSES /version's globals — one boot id
+                # per kernel life, never a third — so a reader correlates the two routes directly.
+                be = _sdk()
+                fn = getattr(be, "api_health_snapshot", None) if be else None
+                if fn is None:
+                    return self._send(503, json.dumps({"error": "the SDK backend is unavailable — no signal"}),
+                                      "application/json", cache="no-cache")
+                now = time.time()
+                out = fn(now, uptime_s=now - _STARTED)
+                out["bootId"] = _BOOT_ID
+                out["bootAt"] = int(_STARTED)
+                # coverage's kernel half: tmux-backed sessions have no SDK stream and sit outside
+                # the signal — the count says how much of the box the signal does not see. A null
+                # (never a silent 0) when the live enumeration fails.
+                try:
+                    out["coverage"]["tmuxSessionsUncovered"] = sum(
+                        1 for m in Sessions.live().values() if (m or {}).get("backend") == "tmux")
+                except Exception as e:
+                    sys.stderr.write("api-health: tmux coverage count failed: %s\n" % e)
+                    out["coverage"]["tmuxSessionsUncovered"] = None
+                return self._send(200, json.dumps(out), "application/json", cache="no-cache")
             if p == "/mcp":                                   # the MCP panel's data (the user 2026-08-05): `/mcp`
                 # in a romp session hits the CLI's INTERACTIVE panel, which an SDK session can't render — it
                 # just says "use a terminal". These are the SAME facts via the SDK's designed control request
