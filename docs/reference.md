@@ -105,10 +105,16 @@ keeps its own folder. What Claude Code keys by session id (its debug log, task
 store and file-history checkpoints) needs no move.
 
 A move never interrupts a turn: on a session mid-turn it is queued as a chip in
-the chat and fires the moment the turn ends, like a queued `/compact`. A closed
-session is revived first, in its old folder, then moved. Every refusal (a
-folder that does not exist, a path that is a file, a busy session that stayed
-busy) is reported where you asked.
+the chat and fires the moment the turn ends, like a queued `/compact`. If Claude
+Code reports a turn Romp could not see (one it started itself), the chip waits
+for that turn to end too; the chip can be cancelled like any queued item. A
+closed session is revived first, in its old folder, then moved. Only one move
+per session is in flight at a time; a second request while one is pending is
+refused. Every refusal (a folder that does not exist, a path that is a file, a
+move already pending) is reported where you asked. If Claude Code's reply to
+the move is lost, Romp settles the outcome by where the transcript is, the same
+check it runs after a restart that interrupted a move; a move it cannot settle
+is reported and left for the next kernel start, with nothing changed.
 
 The move is Claude Code's own relocation (the `set_cwd` control behind the
 interactive `/cd`), with Romp moving its own records alongside. It fires Claude

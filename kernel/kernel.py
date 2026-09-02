@@ -11025,7 +11025,8 @@ def _kernel_knows(sid):
 _FOREIGN_OP_VERB = {"sendMessage": "message", "askFollowUp": "reply", "askText": "answer",
                     "addCustomAsk": "answer", "answerAsk": "answer", "submitAsk": "answer",
                     "rewindSend": "edited message", "sendCommand": "command", "renameSession": "rename",
-                    "endSession": "end", "interrupt": "interrupt", "compactSession": "compact"}
+                    "endSession": "end", "interrupt": "interrupt", "compactSession": "compact",
+                    "moveSession": "move"}
 
 
 def _refuse_drive(client, op, sid, msg):
@@ -20561,7 +20562,8 @@ def _parked_md(op):
 # pressed meanwhile and _apply_pending_ops skips the sid, so nothing else reaches the CLI mid-move.
 _moving: set = set()
 _move_askers: dict = {}          # sid -> wid of the dashboard that asked for a PARKED move (failure lands there)
-_MOVE_BUSY_RETRIES = 3           # CLI-side `busy` rejections tolerated after romp's own idle check said go
+_MOVE_BUSY_RETRIES = 3           # CLI-side `busy` answers retried on the next pass without waiting for a turn end
+                                 # (the CLI's post-result window); after these, the op waits on turn_seq (_move_now)
 
 
 def _move_or_park(be, sid, path, client=None):
@@ -20591,12 +20593,18 @@ def _fire_move(be, sid, path, tries, wid):
 def _move_now(be, sid, path, tries, wid):
     """The move itself, on whatever thread called it: ask the backend, then report. "" → the session
     broadcast carries the new cwd (build_session reads _cwd_of) and the asker gets a typed `moved`;
-    "busy" → the CLI had a turn in flight that romp's idle check missed (the window between a
-    ResultMessage and the CLI's own idle bookkeeping) — the op goes BACK to the head of the queue, one
-    bounded retry per producer pass, up to _MOVE_BUSY_RETRIES before it fails loudly (a bounded retry
-    rather than a wait for the next ResultMessage, because an idle session never emits one — there is
-    no next turn end to key on); anything else → a typed moveFailed with the backend's reason verbatim.
-    Returns the backend's answer, for the synchronous callers (POST /move)."""
+    "busy" → the CLI has a turn in flight that romp's own idle check did not see, and the op goes BACK
+    to the head of the queue. Two shapes hide behind that answer, and the retry keys on the event each
+    one has:
+      * a turn the CLI started itself (a hook, a background task's notification): romp's inflight never
+        counted it, but it ENDS with a ResultMessage like any other, and that end is the cue — the parked
+        op carries the backend's turn_seq, and the producer pass fires it once that counter has moved;
+      * the CLI's own post-result bookkeeping window (sub-second, after a turn romp DID see end): no
+        further ResultMessage is coming, so the counter never moves — the first _MOVE_BUSY_RETRIES passes
+        therefore fire without waiting on it. Past those, the op waits for the event only, as a visible,
+        cancellable chip, instead of failing loudly while the CLI's turn is still running.
+    Anything else → a typed moveFailed with the backend's reason verbatim. Returns the backend's answer,
+    for the synchronous callers (POST /move)."""
     sid = str(sid)
     nm = _name_of(sid) or sid
     try:
@@ -20608,10 +20616,8 @@ def _move_now(be, sid, path, tries, wid):
     finally:
         _moving.discard(sid)
     if res == "busy":
-        if tries + 1 >= _MOVE_BUSY_RETRIES:
-            _move_failed(sid, nm, wid, "the session kept reporting a turn in flight — try again once it is quiet")
-            return res
-        _pending_ops.setdefault(sid, []).insert(0, ("cwd", path, tries + 1))   # head: it was already first
+        seq = be.turn_seq(sid) if hasattr(be, "turn_seq") else None      # the turn end this retry waits on
+        _pending_ops.setdefault(sid, []).insert(0, ("cwd", path, tries + 1, seq))   # head: it was already first
         _move_askers[sid] = wid
         _save_pending_ops()
         _mark_views_dirty()
@@ -21071,8 +21077,13 @@ def _apply_pending_ops():
                     # a parked move: fires on its own thread and CLAIMS _moving before this pass ends, so
                     # the ops behind it wait for the relocation to finish (the next pass skips the sid
                     # until then) — a send fed mid-move could make the CLI reject the move as busy
+                    tries = int(op[2]) if len(op) > 2 else 0
+                    seq = op[3] if len(op) > 3 else None
+                    if (seq is not None and tries >= _MOVE_BUSY_RETRIES and hasattr(be, "turn_seq")
+                            and be.turn_seq(sid) == seq):
+                        break      # the CLI still owns a turn romp cannot see: its ResultMessage is the cue (_move_now)
                     ops.pop(0)
-                    _fire_move(be, sid, op[1], int(op[2]) if len(op) > 2 else 0, _move_askers.pop(sid, ""))
+                    _fire_move(be, sid, op[1], tries, _move_askers.pop(sid, ""))
                     break
                 if op[0] == "send":
                     run = []                          # coalesce the leading run of sends → deliver them AT ONCE

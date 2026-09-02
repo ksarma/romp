@@ -12,6 +12,7 @@ import os
 import shutil
 import tempfile
 import threading
+import time
 import types
 import unittest
 from importlib.machinery import SourceFileLoader
@@ -162,13 +163,60 @@ class MoveOk(MoveBase):
         self.assertEqual(s.cwd, self.new)
 
     def test_same_folder_is_a_quiet_no_op(self):
+        # never a request and never the flag: a cwdPending EQUAL to cwd is a state the boot heal cannot
+        # read (both slugs are one slug → "under BOTH", a problem filed on every boot forever)
         s = self._wire([_ok(self.old, changed=False)])
+        claims = []
+        real = self.be._claim_cwd_pending
+        self.be._claim_cwd_pending = lambda *a: (claims.append(a), real(*a))[1]
         self.assertEqual(self.be.move(SID, self.old), "")
+        self.assertEqual(s.client._query.requests, [], "nothing to ask the CLI")
+        self.assertEqual(claims, [], "the two-phase flag is never written for a same-folder move")
+        reg = self._reg()
+        self.assertEqual(reg["cwd"], self.old)
+        self.assertNotIn("movedFrom", reg)
+        self.assertNotIn("cwdPending", reg)
+        self.assertFalse(s._move_settle_expected, "no request → nothing armed")
+
+    def test_the_clis_changed_false_disarms_and_drops_the_flag(self):
+        # the CLI resolved the target to where the session already is (a symlink, a case difference the
+        # canonicaliser missed): no relocation → no turn-less result, and nothing to record
+        s = self._wire([_ok(self.old, changed=False)])
+        self.assertEqual(self.be.move(SID, self.new), "")
         reg = self._reg()
         self.assertEqual(reg["cwd"], self.old)
         self.assertNotIn("movedFrom", reg)
         self.assertNotIn("cwdPending", reg)
         self.assertFalse(s._move_settle_expected, "changed:false emits no turn-less result — disarmed")
+
+    def test_two_concurrent_moves_send_one_request(self):
+        # the second asker (a dashboard and `romp move`, or a double click) must not race the first's
+        # rename and reg write: the two-phase flag is CLAIMED under the reg lock, and a claimed flag
+        # refuses the second call before any request goes out
+        gate = threading.Event()
+
+        class _Gated(_Query):
+            async def _send_control_request(self, req):
+                self.requests.append(dict(req))
+                await asyncio.get_running_loop().run_in_executor(None, gate.wait)
+                return _ok(req["path"])
+        s = self._wire([])
+        s.client = _Client(_Gated([]))
+        out = {}
+        ta = threading.Thread(target=lambda: out.__setitem__("a", self.be.move(SID, self.new)))
+        ta.start()
+        for _ in range(500):                         # until the first call has claimed the flag
+            if self._reg().get("cwdPending"):
+                break
+            time.sleep(0.01)
+        out["b"] = self.be.move(SID, self.new)       # the second asker, while the first is in flight
+        gate.set()
+        ta.join(10)
+        self.assertEqual(out.get("a"), "")
+        self.assertIn("already pending", out["b"])
+        self.assertEqual(len(s.client._query.requests), 1, "one set_cwd, not two")
+        self.assertEqual(self._reg()["cwd"], self.new)
+        self.assertNotIn("cwdPending", self._reg())
 
     def test_dormant_session_is_revived_first_then_moved(self):
         reg = self._reg()
@@ -210,8 +258,10 @@ class MoveRefusals(MoveBase):
         self._unchanged(s)
 
     def test_a_control_error_leaves_the_session_where_it_was(self):
-        # the CLI rolls its chdir back on a relocation failure; romp drops the flag and says why
+        # the CLI rolls its chdir back on a relocation failure — the transcript is still under the OLD
+        # slug, which is how romp knows nothing moved; it drops the flag and says why
         s = self._wire([RuntimeError("relocation failed: EXDEV")])
+        self._place(self.old, SID)
         res = self.be.move(SID, self.new)
         self.assertTrue(res.startswith("the move failed:"), res)
         self.assertIn("EXDEV", res)
@@ -256,9 +306,61 @@ class MoveRefusals(MoveBase):
         self.assertFalse(os.path.exists(sb.transcript_path(self.old, FORK_FSID)), "the others still moved")
 
 
+class LostReply(MoveBase):
+    """set_cwd's reply can be lost (a control error, a timeout) AFTER the CLI relocated — it moves first
+    and replies after. The transcript's location decides, exactly as the boot heal decides a kernel death
+    mid-move; dropping the flag blindly would leave romp deriving paths from the old folder."""
+
+    def test_a_lost_reply_after_the_cli_moved_stands(self):
+        self._record_history()
+        s = self._wire([RuntimeError("control request timed out")])
+        self._place(self.new, SID)                  # the CLI's half happened; only its reply was lost
+        self.assertEqual(self.be.move(SID, self.new), "")
+        reg = self._reg()
+        self.assertEqual(reg["cwd"], self.new)
+        self.assertEqual(reg["movedFrom"]["cwd"], self.old)
+        self.assertNotIn("cwdPending", reg)
+        self.assertEqual(self._names()[1], self.new)
+        self.assertEqual(s.cwd, self.new)
+        self.assertTrue(s._move_settle_expected, "the CLI's turn-less result is still coming — the arm stands")
+        self.assertTrue(os.path.exists(sb.transcript_path(self.new, EPISODE_FSID)), "prior episodes follow")
+        self.assertTrue(any("reply was lost" in m for m, p in self.logs))
+
+    def test_a_lost_reply_with_the_transcript_nowhere_is_uncertain_and_keeps_the_flag(self):
+        s = self._wire([RuntimeError("control request timed out")])
+        res = self.be.move(SID, self.new)
+        self.assertIn("uncertain", res)
+        self.assertIn("timed out", res)
+        reg = self._reg()
+        self.assertEqual(reg["cwd"], self.old, "nothing changed")
+        self.assertEqual(reg["cwdPending"], self.new, "the flag stays for the next boot's heal")
+        self.assertNotIn("movedFrom", reg)
+        self.assertFalse(s._move_settle_expected)
+        self.assertTrue(any("NEITHER" in m and p for m, p in self.logs), "said loudly")
+        # …and a second move is refused until it is settled, rather than racing a state nobody can read
+        s2 = self._wire([_ok(self.new)])
+        self.assertIn("already pending", self.be.move(SID, self.new))
+        self.assertEqual(s2.client._query.requests, [])
+
+
 class BootHeal(MoveBase):
     """A kernel that died between the CLI's `ok` and romp's reg write leaves cwdPending; the transcript's
     location settles it."""
+
+    def test_a_pending_move_to_the_same_folder_is_simply_cleared(self):
+        # a flag from before move() short-circuited the same-folder case: nothing moved, nothing to
+        # settle, and the location test would otherwise read "under BOTH" on every boot forever
+        reg = self._reg()
+        reg["cwdPending"] = self.old
+        reg["lastSid"] = SID
+        (Path(self.td) / "sdk" / (SID + ".json")).write_text(json.dumps(reg))
+        self._place(self.old, SID)
+        self.be._heal_cwd_pending(reg)
+        got = self._reg()
+        self.assertNotIn("cwdPending", got)
+        self.assertEqual(got["cwd"], self.old)
+        self.assertFalse(any(p for m, p in self.logs), "no problem filed — there was nothing to settle")
+        self.assertTrue(any("own folder" in m for m, p in self.logs))
 
     def _pending_reg(self):
         reg = self._reg()

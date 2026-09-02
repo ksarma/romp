@@ -45,6 +45,9 @@ class _FakeBackend:
     def busy(self, sid):
         return None
 
+    def turn_seq(self, sid):
+        return getattr(self, "seq", 0)
+
 
 def _sync_fire(be, sid, path, tries, wid):
     """_fire_move without the thread: the test wants the outcome on this thread."""
@@ -140,19 +143,48 @@ class MoveOps(unittest.TestCase):
         km._apply_pending_ops()
         self.assertEqual(self.be.models, [(SID, "opus")])
 
-    def test_a_cli_side_busy_reparks_at_the_head_with_a_bounded_retry(self):
-        self.be.answers = ["busy", "busy", "busy"]
+    def test_a_cli_side_busy_retries_then_waits_for_the_turn_end(self):
+        # the CLI has a turn romp cannot see. A few passes retry blind (the CLI's post-result window has
+        # no further event); past those, the cue is the turn's END — the backend's turn_seq moving —
+        # never a timer, and never a loud failure while the CLI's turn is still running
+        self.be.answers = ["busy", "busy", "busy", "busy"]
         km._pending_ops[SID] = [("cwd", self.dir, 0), ("send", "hello", "human")]
         km._apply_pending_ops()
-        self.assertEqual(km._pending_ops[SID][0], ("cwd", self.dir, 1), "back at the head, one retry counted")
+        self.assertEqual(km._pending_ops[SID][0], ("cwd", self.dir, 1, 0), "back at the head, carrying the turn count")
         km._apply_pending_ops()
-        self.assertEqual(km._pending_ops[SID][0], ("cwd", self.dir, 2))
         km._apply_pending_ops()
-        self.assertEqual(len(self.be.calls), 3)
-        self.assertEqual(km._pending_ops[SID], [("send", "hello", "human")], "the third busy gives up")
-        fails = [m for a, m, w in self.views if m["type"] == "moveFailed"]
-        self.assertEqual(len(fails), 1)
-        self.assertIn("kept reporting", fails[0]["text"])
+        self.assertEqual(len(self.be.calls), 3, "three passes retry without a cue")
+        self.assertEqual(km._pending_ops[SID][0], ("cwd", self.dir, 3, 0))
+        km._apply_pending_ops()
+        km._apply_pending_ops()
+        self.assertEqual(len(self.be.calls), 3, "no turn has ended (turn_seq unchanged) → it waits")
+        self.assertEqual(km._pending_ops[SID], [("cwd", self.dir, 3, 0), ("send", "hello", "human")],
+                         "a visible chip, the send still behind it")
+        self.assertEqual([m for a, m, w in self.views if m["type"] == "moveFailed"], [],
+                         "no loud failure while the CLI's turn runs")
+        self.be.seq = 1                              # the CLI's own turn ended: a ResultMessage was seen
+        km._apply_pending_ops()
+        self.assertEqual(len(self.be.calls), 4, "the turn end is the cue")
+        self.assertEqual(km._pending_ops[SID][0], ("cwd", self.dir, 4, 1), "busy again → waits on the NEXT turn end")
+        km._apply_pending_ops()
+        self.assertEqual(len(self.be.calls), 4)
+        self.be.seq = 2
+        km._apply_pending_ops()                      # answers exhausted → "" → moved
+        self.assertEqual(len(self.be.calls), 5)
+        self.assertEqual(km._pending_ops[SID], [("send", "hello", "human")])
+        self.assertEqual(self.views[-1][1]["type"], "moved")
+
+    def test_a_parked_retry_survives_a_kernel_restart_and_fires(self):
+        # a restart resets turn_seq to 0 and ends whatever turn the CLI owned: an op that waited on a
+        # higher count fires on the first pass
+        km._pending_ops[SID] = [("cwd", self.dir, 3, 7)]
+        km._apply_pending_ops()
+        self.assertEqual(len(self.be.calls), 1)
+        self.assertEqual(self.views[-1][1]["type"], "moved")
+
+    def test_a_foreign_move_is_refused_by_name(self):
+        self.assertEqual(km._FOREIGN_OP_VERB.get("moveSession"), "move",
+                         "a federated-board refusal names the move, not a generic action")
 
     def test_a_backend_refusal_is_a_typed_failure_with_its_words(self):
         self.be.answers = ["Couldn't find a directory at /srv/notes-api/web."]
@@ -252,7 +284,7 @@ class MoveRoute(unittest.TestCase):
         self.be.answers = ["busy"]
         code, resp = self._post({"target": "web", "dir": self.dir})
         self.assertEqual((code, resp), (200, {"ok": True, "id": SID, "queued": True, "dir": self.dir}))
-        self.assertEqual(km._pending_ops[SID][0], ("cwd", self.dir, 1))
+        self.assertEqual(km._pending_ops[SID][0], ("cwd", self.dir, 1, 0), "re-parked, carrying the turn count it waits on")
 
     def test_refusals_are_loud(self):
         code, resp = self._post({"target": "web"})

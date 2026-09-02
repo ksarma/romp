@@ -4417,6 +4417,7 @@ class SdkBackend:
         self._seed_writes: dict = {}              # tok → {sid, value, prior, priorTok}: set_model's optimistic
         #                                             writes to the SHARED sdk-defaults `model`, pending the
         #                                             CLI's verdict (see _seed_write_pending); under _defaults_lock
+        self._turn_seq: dict = {}                 # sid -> turns ended this kernel life (turn_seq; under _lock)
         self._reg_lock = threading.Lock()         # serializes _update_reg read-modify-writes (queue mirror
         #                                           writes come from kernel AND loop threads)
         self._pending_ask: dict[str, bool] = {}   # sid -> has an ask awaiting answer
@@ -6661,6 +6662,11 @@ class SdkBackend:
         if err:
             return err
         old = str(reg.get("cwd") or "")
+        if target == old:
+            # already there: nothing to ask the CLI and nothing to record. A flag written here would equal
+            # `cwd`, and the boot heal's location test cannot tell "pending == current" from "under BOTH
+            # slugs" — a kernel death inside that round trip left a flag it reported as a problem forever.
+            return ""
         if not reg.get("alive"):
             # dormant → revive in the OLD cwd (that is where the transcript is), then move like any live one
             self.resume(str(reg.get("name") or sid), sid)
@@ -6676,31 +6682,69 @@ class SdkBackend:
                 return "the session's CLI did not come up within %ds" % int(MOVE_CONNECT_WAIT)
         if self.busy(sid):
             return "busy"
-        self._update_reg(sid, cwdPending=target)
+        claim = self._claim_cwd_pending(sid, target)
+        if claim:
+            return claim
         s._move_settle_expected = True   # armed BEFORE the request — see _consume_move_settle
         r, err = self._set_cwd_request(s, target)
         if not err and isinstance(r, dict) and r.get("status") == "needs_trust":
             r, err = self._set_cwd_request(s, target, trust=str(r.get("directory") or target))
         ok = not err and isinstance(r, dict) and r.get("status") == "ok"
-        if not ok or r.get("changed") is False:
-            s._move_settle_expected = False   # no relocation → no turn-less result is coming
         if not ok:
-            self._update_reg_dropping(sid, ("cwdPending",))
             if err == _NO_CONTROL_SENDER:
+                s._move_settle_expected = False                 # nothing was sent
+                self._update_reg_dropping(sid, ("cwdPending",))
                 return err
-            if err:
-                return "the move failed: %s — the session stays in %s" % (err, old or "its folder")
             if isinstance(r, dict) and r.get("status") == "rejected":
+                s._move_settle_expected = False                 # the CLI answered: it did nothing
+                self._update_reg_dropping(sid, ("cwdPending",))
                 if r.get("reason") == "busy":
                     return "busy"
                 return str(r.get("message") or r.get("reason") or "the CLI rejected the move")
-            return "unexpected reply to set_cwd: %r" % (r,)
+            # No usable answer — a control error, a timeout, an unknown shape. The CLI relocates FIRST
+            # and replies after, so a lost reply can mean a move that happened: dropping the flag here
+            # would leave romp deriving the transcript path from the old folder while the file sits
+            # under the new one (a blind feed, and the next --resume writes to the wrong place). The
+            # transcript's location decides, exactly as the boot heal decides a kernel death mid-move.
+            why = err or ("unexpected reply to set_cwd: %r" % (r,))
+            self._heal_cwd_pending(read_reg(self.state_dir, sid) or {"sid": sid, "cwdPending": target, "cwd": old})
+            after = read_reg(self.state_dir, sid) or {}
+            if after.get("cwd") == target and not after.get("cwdPending"):
+                # it moved (and the CLI's turn-less result is still expected — the arm stands)
+                self._log("sdk %s: set_cwd's reply was lost (%s) but the transcript is under %s — the move stands"
+                          % (sid[:8], why, target))
+                return ""
+            s._move_settle_expected = False
+            if after.get("cwdPending"):
+                return ("the move's outcome is uncertain: %s — the transcript was not found under exactly one of "
+                        "%s and %s, so nothing was changed; the next kernel start re-checks (see the kernel log)"
+                        % (why, old or "its folder", target))
+            return "the move failed: %s — the session stays in %s" % (why, old or "its folder")
         new = r.get("cwd") if isinstance(r.get("cwd"), str) and r.get("cwd") else target
-        if new == old:
-            self._update_reg_dropping(sid, ("cwdPending",))   # already there — nothing to record
+        if r.get("changed") is False or new == old:
+            s._move_settle_expected = False                     # no relocation → no turn-less result is coming
+            self._update_reg_dropping(sid, ("cwdPending",))     # already there — nothing to record
             return ""
         self._finish_move(s, sid, old, new)
         return ""
+
+    def _claim_cwd_pending(self, sid: str, target: str) -> str:
+        """Set the two-phase flag ONLY when no move is pending. Two concurrent move() calls for one sid (a
+        dashboard and `romp move`, or a double click) must not both send set_cwd — the second would race
+        the first's rename and reg write. The check and the write are one step under _reg_lock. "" when
+        claimed; otherwise the reason, verbatim for the user's error card. A flag an earlier kernel left
+        unsettled (the boot heal's BOTH/NEITHER case) refuses too, and says where to look."""
+        with self._reg_lock:
+            reg = read_reg(self.state_dir, sid)
+            if reg is None:
+                return "romp has no record of this session"
+            pend = reg.get("cwdPending")
+            if pend:
+                return ("a move to %s is already pending for this session — in flight, or left unsettled by an "
+                        "earlier kernel (see the kernel log)" % pend)
+            reg["cwdPending"] = target
+            write_reg(self.state_dir, sid, reg)
+            return ""
 
     @staticmethod
     def _set_cwd_request(s, path: str, trust: str | None = None):
@@ -6768,6 +6812,14 @@ class SdkBackend:
         cur = str(reg.get("cwd") or "")
         fsid = str(reg.get("lastSid") or sid)
         if not sid or not pend:
+            return
+        if pend == cur:
+            # a move to the folder the session was already in, cut mid-flight (a reg from before move()
+            # short-circuited that case): nothing moved and nothing can be learned from the location
+            # test below — both slugs are ONE slug, so it would read "under BOTH" and file a problem
+            # on every boot for as long as the flag lived
+            self._log("boot reconcile: %s had a move to its own folder pending — nothing to settle; cleared" % sid[:8])
+            self._update_reg_dropping(sid, ("cwdPending",))
             return
         at_new = os.path.exists(transcript_path(pend, fsid))
         at_old = bool(cur) and os.path.exists(transcript_path(cur, fsid))
@@ -7833,6 +7885,16 @@ class SdkBackend:
 
     def _turn_completed(self, sid: str):
         """A turn's ResultMessage landed — the session is demonstrably able to finish turns again, so
-        re-arm the crash-resume budget (_heal_cut_session's one-resume-per-cut bound)."""
+        re-arm the crash-resume budget (_heal_cut_session's one-resume-per-cut bound), and count the
+        turn end (turn_seq — the event a parked move waits on after the CLI answered `busy`)."""
         with self._lock:
             self._heal_attempts.pop(sid, None)
+            self._turn_seq[sid] = self._turn_seq.get(sid, 0) + 1
+
+    def turn_seq(self, sid: str) -> int:
+        """How many of this session's turns have ENDED (ResultMessages seen) this kernel life. The kernel's
+        parked move keys its retry on this after the CLI answered `busy`: a turn the CLI knows about that
+        romp's inflight does not (one the CLI started itself — a hook, a background task's notification)
+        still ends with a ResultMessage, and that end is the event, not a timer."""
+        with self._lock:
+            return self._turn_seq.get(sid, 0)
