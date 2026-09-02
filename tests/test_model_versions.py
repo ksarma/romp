@@ -6,7 +6,9 @@ reference) plus a DEFAULT: the most recent version the user picked for that fami
 a viewer pref like colormap), else the family ALIAS itself (the seed table's head used to stand in
 for the alias, so a bare family click pinned every session to claude-fable-5 while the CLI's own
 `fable` alias moved on to Fable 5.1). The pick memory hooks the ONE choke point every set path flows
-through (_set_model_or_park). Synthetic only — hermetic temp STATE."""
+through (_set_model_or_park). The seed table is a SEED: ids a running session's CLI reports
+(reg.liveModelId) join the version lists, marked `learned`, until the catalog fetch folds them in.
+Synthetic only — hermetic temp STATE."""
 import json
 import os
 import tempfile
@@ -184,6 +186,82 @@ class ModelsRoute(_ModelsServer):
         self.assertEqual(be.calls, ["claude-opus-4-8", "opus"], "both reach the backend verbatim")
         rows = {m["value"]: m for m in self._models()["models"]}
         self.assertEqual(rows["opus"]["default"], "claude-opus-4-8", "the explicit pin survives the alias click")
+
+
+class LearnedVersions(_ModelsServer):
+    """The seed table is a SEED, not the catalog: a model id a running session's CLI actually reported
+    (reg.liveModelId, persisted by the SDK backend's _learn_model) joins its family's version list —
+    the CLI is the authoritative source for what it serves — and is marked so the pickers can say it
+    is new rather than hide a live model behind a stale menu."""
+
+    def _reg(self, sid, **fields):
+        d = jd.STATE / "sdk"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / (sid + ".json")).write_text(json.dumps({"sid": sid, "name": "web", "cwd": "/tmp", "alive": True, **fields}))
+
+    def test_a_reported_id_outside_the_seed_table_joins_its_family_marked_learned(self):
+        self._reg("11111111-2222-3333-4444-555555555501", liveModel="Opus 5.1", liveModelId="claude-opus-5-1")
+        rows = {m["value"]: m for m in self._models()["models"]}
+        vs = rows["opus"]["versions"]
+        self.assertEqual(vs[0], {"value": "claude-opus-5-1", "label": "Opus 5.1", "learned": True},
+                         "newest first — the learned 5.1 lands ahead of the seed's 5")
+        self.assertEqual([v["value"] for v in vs[1:]], [v["value"] for v in km.MODEL_VERSIONS["opus"]])
+        self.assertEqual(rows["opus"]["default"], "opus", "a learned id changes nothing about the alias default")
+
+    def test_a_learned_id_is_pickable_and_remembered_like_a_seed_one(self):
+        self._reg("11111111-2222-3333-4444-555555555501", liveModelId="claude-opus-5-1")
+        km._note_model_pick("claude-opus-5-1")
+        self.assertEqual(km._model_picks(), {"opus": "claude-opus-5-1"})
+        rows = {m["value"]: m for m in self._models()["models"]}
+        self.assertEqual(rows["opus"]["default"], "claude-opus-5-1")
+
+    def test_ids_the_seed_already_covers_or_that_are_not_first_party_add_nothing(self):
+        # a dated snapshot of a seed version shares its label → the seed's dateless alias covers it;
+        # a provider-prefixed id and a non-model string are not the shape the pickers send
+        self._reg("11111111-2222-3333-4444-555555555501", liveModelId="claude-opus-4-5-20251101")
+        self._reg("11111111-2222-3333-4444-555555555502", liveModelId="us.anthropic.claude-opus-4-8-v1:0")
+        self._reg("11111111-2222-3333-4444-555555555503", liveModelId="<synthetic>")
+        rows = {m["value"]: m for m in self._models()["models"]}
+        self.assertEqual([v["value"] for v in rows["opus"]["versions"]],
+                         [v["value"] for v in km.MODEL_VERSIONS["opus"]])
+
+    def test_a_context_tag_is_stripped_and_duplicates_collapse(self):
+        # the CLI spells a 1M-context variant with a [1m] tail; two sessions on the same id → one row
+        self._reg("11111111-2222-3333-4444-555555555501", liveModelId="claude-sonnet-5-1[1m]")
+        self._reg("11111111-2222-3333-4444-555555555502", liveModelId="claude-sonnet-5-1")
+        rows = {m["value"]: m for m in self._models()["models"]}
+        learned = [v for v in rows["sonnet"]["versions"] if v.get("learned")]
+        self.assertEqual(learned, [{"value": "claude-sonnet-5-1", "label": "Sonnet 5.1", "learned": True}])
+
+    def test_a_dated_snapshot_report_offers_the_dateless_alias(self):
+        # a CLI may report the dated snapshot it is running; the pickable value is the DATELESS
+        # alias — the snapshot retires, the alias follows the version
+        self._reg("11111111-2222-3333-4444-555555555501", liveModelId="claude-sonnet-5-1-20260901")
+        rows = {m["value"]: m for m in self._models()["models"]}
+        learned = [v for v in rows["sonnet"]["versions"] if v.get("learned")]
+        self.assertEqual(learned, [{"value": "claude-sonnet-5-1", "label": "Sonnet 5.1", "learned": True}])
+
+    def test_the_judge_tiers_accept_a_learned_version_the_gear_offers(self):
+        # the gear's judge/index/distill/comment selects are built from /models' versions, learned
+        # rows included — so the kernel must accept what it offered, and still refuse an id nobody
+        # has ever served (the setter is effect-only: assert the state file)
+        self._reg("11111111-2222-3333-4444-555555555501", liveModelId="claude-opus-5-1")
+        km._set_judge_model("claude-opus-5-1")
+        self.assertEqual(jd._state_str("judge-model", ""), "claude-opus-5-1", "offered → accepted")
+        km._set_judge_model("claude-opus-9-9")
+        self.assertEqual(jd._state_str("judge-model", ""), "claude-opus-5-1", "never served → refused, nothing changes")
+
+    def test_a_pin_whose_reporting_session_is_gone_survives_on_disk(self):
+        # the read filter hides a pin its family can't currently vouch for; the WRITE must not erase
+        # it — a later pick for another family merges into the raw file, so the pin resolves again
+        # the moment a session reports the id
+        (jd.STATE / km.MODEL_PICKS_FILE_NAME).write_text(json.dumps({"opus": "claude-opus-5-1"}))
+        self.assertEqual(km._model_picks(), {}, "no session vouches for it → hidden on read")
+        km._note_model_pick("claude-sonnet-4-6")
+        self.assertEqual(json.loads((jd.STATE / km.MODEL_PICKS_FILE_NAME).read_text()),
+                         {"opus": "claude-opus-5-1", "sonnet": "claude-sonnet-4-6"}, "still on disk")
+        self._reg("11111111-2222-3333-4444-555555555501", liveModelId="claude-opus-5-1")
+        self.assertEqual(km._model_picks(), {"opus": "claude-opus-5-1", "sonnet": "claude-sonnet-4-6"})
 
 
 class RoutedContextTag(unittest.TestCase):

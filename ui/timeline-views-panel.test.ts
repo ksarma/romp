@@ -470,6 +470,17 @@ test("the lane gear carries the SAME tag editor — the shared builders, never a
   assert.match(SRC, /this\._tagJoinMenu\(am, \[s\.id\], build\);/);
 });
 
+test("the lane model menu labels a family by its own label and marks a learned version as new", () => {
+  // the family row's text is the family label from /models — no version-table lookup — so the
+  // kernel's alias default ("fable") renders exactly as a pinned id did; ✓ matches the leading word
+  assert.match(SRC, /const item = menu\.createDiv\(\{ text: c\.label \}\);/);
+  assert.match(SRC, /return kind === 'effort' \? cur === value : cur\.startsWith\(value\);/);
+  // a version a running session's CLI reported that the seed table lacks (kernel /models `learned`)
+  // is offered AND marked — same treatment as the chat's meta-menu, inlined for the foreign document
+  assert.match(SRC, /if \(v\.learned\) \{[\s\S]{0,600}row\.createSpan\(\{ text: ' new' \}\)/);
+  assert.match(SRC, /if \(v\.learned\) \{[\s\S]{0,600}font-size:0\.82em;opacity:0\.6/, "the menu vocabulary's sub-line size and opacity");
+});
+
 test("the lane model menu exposes VERSIONS: submenu affordance, remembered default, keyboard (the user 2026-08-25)", () => {
   // families with >1 live version wear a side submenu — hover or ArrowRight reveals it, every
   // version directly pickable with the current-✓; clicking the family picks its remembered DEFAULT

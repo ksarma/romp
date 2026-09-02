@@ -30,7 +30,26 @@ test("caret faces RIGHT everywhere; the submenu side is measured with the right 
   assert.match(GEAR, /e\.key === 'romp:menu-echo' && e\.newValue/, "cross-pane dismissal adopted");
 });
 
-test("the kernel accepts version ids on every judge tier", () => {
-  assert.match(KERNEL, /_JUDGE_MODEL_VALUES = _MODEL_VALUES \| set\(_VERSION_FAMILY\)/);
-  assert.match(KERNEL, /_set_judge_state\("distill-model", v, _JUDGE_MODEL_VALUES \| \{"triage"\}\)/);
+test("the kernel accepts version ids — catalog AND learned — on every judge tier", () => {
+  // the gear's selects are built from /models' versions, learned rows included, so every tier
+  // validates against the LIVE set (_judge_model_values: the catalog half ∪ what running sessions'
+  // CLIs report) — the kernel never refuses a value it offered
+  assert.match(KERNEL, /_JUDGE_MODEL_VALUES = _MODEL_VALUES \| set\(_VERSION_FAMILY\)/, "the catalog half");
+  assert.match(KERNEL, /def _judge_model_values\(\):[\s\S]{0,700}return _JUDGE_MODEL_VALUES \| \{v\["value"\] for vs in _learned_versions\(\)\.values\(\) for v in vs\}/,
+    "…plus every learned id, computed per call");
+  for (const tier of ["judge-model", "index-model"]) {
+    assert.match(KERNEL, new RegExp(`_set_judge_state\\("${tier}", v, _judge_model_values\\(\\)\\)`), tier);
+  }
+  assert.match(KERNEL, /_set_judge_state\("distill-model", v, _judge_model_values\(\) \| \{"triage"\}\)/);
+  assert.match(KERNEL, /_set_judge_state\("comment-model", v, _judge_model_values\(\) \| \{"session", "default"\}\)/);
+  assert.ok(!/_set_judge_state\("[a-z]+-model", v, _JUDGE_MODEL_VALUES/.test(KERNEL),
+    "no tier validates against the catalog-only set — a learned pick would be refused there");
+});
+
+test("the gear's version rows mark a learned version as new, like the chat and timeline pickers", () => {
+  // the chat/timeline submenus wear the marker; the gear's judge/index/distill/comment selects
+  // render the same learned rows — the fail-loudly marker on every surface
+  assert.match(GEAR, /if \(v\.learned\) \{[\s\S]{0,600}tag\.textContent = ' new'/);
+  assert.match(GEAR, /if \(v\.learned\) \{[\s\S]{0,600}font-size:0\.82em;opacity:0\.6/, "the menu vocabulary's sub-line size and opacity");
+  assert.match(GEAR, /if \(v\.learned\) \{[\s\S]{0,600}r2\.title = /, "and says where the version came from");
 });

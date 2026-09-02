@@ -92,6 +92,19 @@ test("the pulse is exchange-scoped (T102): send-gesture latch, reply-record clea
   // the frame handler already repaints marks AND the open popover per frame — the live wire
   assert.match(RENDER, /applyCommentMarks\(sid\);\s*\n\s*if \(openCommentKey && openCommentKey\.sid === sid\) \{/);
 });
+test("a family click sends the kernel's alias default; a version the seed table lacks renders LOUDLY as new", () => {
+  // the family row's label is the family's OWN label — never a version-table lookup — so an alias
+  // default ("fable") renders the same as a pinned id did; the ✓ matches on the leading word
+  assert.match(RENDER, /item\.textContent = c\.label;/);
+  assert.match(RENDER, /return \(st\.model \|\| ""\)\.toLowerCase\(\)\.startsWith\(value\);/);
+  // a version a running session's CLI reported that no seed table lists (kernel /models `learned`)
+  // is offered AND marked, per the fail-loudly rule — a stale menu would hide a live model
+  assert.match(RENDER, /learned\?: boolean/);
+  assert.match(RENDER, /if \(v\.learned\) \{[\s\S]{0,600}el\("span", "meta-item-sub"\)/,
+    "the marker wears the menu vocabulary's sub-line size and opacity");
+  assert.match(RENDER, /if \(v\.learned\) \{[\s\S]{0,600}row\.title = /, "and says where the version came from");
+});
+
 test("the model meta-menu exposes VERSIONS: submenu, remembered default, keyboard (the user 2026-08-25)", () => {
   // families with >1 live version wear a side submenu (leftward — the menu anchors bottom-right):
   // hover or an arrow key reveals every version, each pickable with the current-✓; clicking the

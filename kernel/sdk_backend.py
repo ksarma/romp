@@ -1673,6 +1673,8 @@ class SdkSession:
         self.since = 0
         self.model = reg.get("liveModel") or ""   # seed from the last-known model so the badge/picker show on
         #                                           OPEN (even once eager-connected, before init/a turn reports)
+        self._model_id = reg.get("liveModelId") or ""   # the RAW id behind that name (claude-fable-5-1), the
+        #                                           kernel's learned-versions source (see _learn_model)
         _lc0 = reg.get("liveCtx")                 # context-window fill %, as the SDK reports it (see _ctx_pct).
         self._ctx: int | None = _lc0 if isinstance(_lc0, (int, float)) else None  # seeded from the last persisted
         #   value so the bar survives idle/restart; refreshed live from get_context_usage() on connect + each turn.
@@ -2138,14 +2140,19 @@ class SdkSession:
         tt = cu.get("totalTokens")
         if isinstance(tt, (int, float)) and int(tt) != self._ctx_tokens:
             self._ctx_tokens, changed = int(tt), True
-        pm = pretty_model(cu.get("model"))
+        raw = str(cu.get("model") or "").strip()
+        pm = pretty_model(raw)
         if pm and self._resolve_model_pending(pm):
             changed = True
         if pm and pm != self.model:
             self.model, changed = pm, True
+        if raw and raw != getattr(self, "_model_id", ""):   # getattr: __new__-built test doubles skip __init__
+            self._model_id, changed = raw, True
         upd = {}
         if self.model:
             upd["liveModel"] = self.model
+        if getattr(self, "_model_id", ""):
+            upd["liveModelId"] = self._model_id
         upd["modelPending"] = bool(self._model_pending)
         if self._ctx is not None:
             upd["liveCtx"] = self._ctx
@@ -2551,7 +2558,7 @@ class SdkSession:
         self.backend._rewind_resolved(self.sid, "failed")
         self.backend._poke()
 
-    def _learn_model(self, pm):
+    def _learn_model(self, pm, raw=""):
         """Record a freshly-observed display model (from the init message or an assistant turn). Updates the
         live value AND persists it to the registry as `liveModel`, so a DORMANT / post-restart session still
         shows its model via live_sessions' registry path — the registry's `model` field is the user's CHOSEN
@@ -2559,11 +2566,24 @@ class SdkSession:
         the effort too) goes blank whenever the session isn't actively running (the user 2026-06-24). Pokes a
         push so the badge updates promptly. No-op when unchanged, so it doesn't rewrite the reg every turn.
         Also resolves a pending /model switch: once the observed name reflects the chosen alias, the
-        switching-dots clear (the user 2026-07-03)."""
+        switching-dots clear (the user 2026-07-03).
+
+        `raw` is the id the CLI actually reported (claude-fable-5-1), persisted beside the name as
+        `liveModelId`: the kernel's version pickers are SEEDED from a table and completed from these —
+        the CLI is the authoritative source for what it serves, and a table alone went stale the day
+        Fable 5.1 shipped. Written whenever it is newly known, even under an unchanged name, so a
+        long-running session contributes its version without a model change."""
         if not pm:
             return
         cleared = self._resolve_model_pending(pm)
+        raw = (raw or "").strip()
         if pm == self.model:
+            if raw and raw != getattr(self, "_model_id", ""):   # getattr: __new__-built test doubles skip __init__
+                self._model_id = raw
+                try:
+                    self.backend._update_reg(self.sid, liveModelId=raw)
+                except Exception as e:
+                    self.backend._log("model learn (%s): registry write failed: %s" % (self.name, e))
             if cleared:
                 self.backend._poke()
             return
@@ -2584,8 +2604,12 @@ class SdkSession:
                 except Exception as e:
                     self.backend._log("model-fallback card (%s): %s" % (self.name, e), problem=True)
         self.model = pm
+        fields = {"liveModel": pm, "modelPending": bool(self._model_pending)}
+        if raw:
+            self._model_id = raw
+            fields["liveModelId"] = raw
         try:
-            self.backend._update_reg(self.sid, liveModel=pm, modelPending=bool(self._model_pending))
+            self.backend._update_reg(self.sid, **fields)
         except Exception as e:
             self.backend._log("model learn (%s): registry write failed: %s" % (self.name, e))
         self.backend._poke()
@@ -2655,7 +2679,7 @@ class SdkSession:
             self._fire_boot_settled()   # the CLI is up and streaming — its transcript catch-up burst
             #                             is over, so the boot-stagger slot (if any) frees NOW
             d = msg.data if isinstance(msg.data, dict) else {}
-            self._learn_model(pretty_model(d.get("model")))
+            self._learn_model(pretty_model(d.get("model")), raw=str(d.get("model") or ""))
             self.perm_mode = d.get("permissionMode") or self.perm_mode
             # Fast-mode truth rides the init payload — the AUTHORITATIVE re-assert behind set_fast's
             # optimistic flip, shared with the connect-time initialize response (_adopt_fast_state).
@@ -2843,7 +2867,7 @@ class SdkSession:
             # so an unguarded assign would CORRUPT the model badge to "<synthetic>". A real id always contains
             # "claude" (claude-opus-4-8, us.anthropic.claude-…); keep the last good one otherwise.
             if m and "claude" in m.lower():
-                self._learn_model(pretty_model(m))
+                self._learn_model(pretty_model(m), raw=str(m))
         elif isinstance(msg, ResultMessage):
             # total_cost_usd is CUMULATIVE per CLI process (the result event's totalCostUSD counter, beside
             # total_duration/lines) — fold only THIS turn's delta, or every result re-adds the whole

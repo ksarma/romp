@@ -580,6 +580,14 @@ function initGear(post) {
             r2.setAttribute('style', rowStyle);
             r2.tabIndex = 0;
             r2.appendChild(document.createTextNode(v.label));
+            if (v.learned) {
+              // LOUD, per the fail-loudly rule: a version no catalog list carries — a running session's
+              // CLI reported it (kernel /models `learned`) — says so, as the chat and timeline pickers do
+              var tag = document.createElement('span'); tag.textContent = ' new';
+              tag.setAttribute('style', 'font-size:0.82em;opacity:0.6;margin-left:4px;');
+              r2.appendChild(tag);
+              r2.title = "Reported by a running session's Claude Code; not yet in romp's version list";
+            }
             if (sel.value === v.value) {
               var c2 = document.createElement('span'); c2.textContent = '\u2713';
               c2.setAttribute('style', 'position:absolute;right:6px;top:50%;transform:translateY(-50%);background:var(--check-bg, #1EA1EB);color:#fff;border-radius:50%;width:13px;height:13px;font-size:9px;font-weight:900;display:inline-flex;align-items:center;justify-content:center;line-height:1;');

@@ -830,7 +830,10 @@ MODEL_CHOICES = [{"value": "fable", "label": "Fable"}, {"value": "opus", "label"
 # opus became Opus 5 — silently losing the legacy versions that remain live on the API). Newest
 # first; values are the API's DATELESS aliases, verified against the claude-api reference
 # 2026-08-25 (deprecated 4.1/4.0-era models excluded on purpose — they are retiring). This table is
-# the SEED the live catalog below grows. The catalog owns the LIST; the alias owns the DEFAULT:
+# the SEED the live catalog below grows, completed with the ids running sessions' CLIs actually
+# report ahead of it (_learned_versions) — the CLI is the authoritative source for what it serves,
+# and a table alone lagged a release the day Fable 5.1 shipped. The catalog owns the LIST; the alias
+# owns the DEFAULT:
 # clicking a family in a picker sends that family's DEFAULT — the most recent VERSION the user
 # picked for it (model-picks.json below), else the family ALIAS itself. The CLI resolves an alias
 # live, so a bare family click follows the family's newest release exactly as the CLI's own default
@@ -853,6 +856,7 @@ MODEL_VERSIONS = {
 _VERSION_FAMILY = {v["value"]: fam for fam, vs in MODEL_VERSIONS.items() for v in vs}
 MODEL_PICKS_FILE_NAME = "model-picks.json"   # {family: full-id} — a viewer pref all surfaces read, like colormap
 _model_picks_lock = threading.Lock()   # its read-modify-writes run on the WS-handler, producer AND SDK-loop threads
+_learned_announced = set()   # ids already announced on stderr as outside the catalog (once per process)
 
 # ── the LIVE model catalog (T222, the user 2026-09-01: romp must stop needing a hand edit when
 # Anthropic ships a model). The table above is the SEED and the loud fallback. The kernel queries the
@@ -1094,12 +1098,20 @@ def _note_unknown_model(mid):
     """The staleness EVENT: a claude-* version id reached a set path or the pick store and the merged
     list does not know it — exactly when a hand-updated table used to go quietly stale. Fires ONE
     refresh per unknown id per kernel life (dedup by id, never a clock); aliases, dated snapshots
-    and garbage never fire. Returns whether a refresh was started."""
+    and garbage never fire. Returns whether a refresh was started.
+    The id is marked asked only when its refresh actually STARTS: the refresh is single-flight, so a
+    sighting while one is inflight — the boot fetch, exactly when a running session's CLI first
+    reports a new release — starts nothing, and marking it then spent the id's one refresh on a
+    no-op. Unmarked, the next sighting after the inflight fetch lands (every /models read re-derives
+    the learned list) asks for real if the catalog still lacks the id; a catalog that caught up
+    short-circuits on _VERSION_FAMILY first."""
     mid = str(mid or "")
     if not _catalog_family(mid) or mid in _VERSION_FAMILY or mid in _catalog_asked:
         return False
-    _catalog_asked.add(mid)
-    return _refresh_model_catalog("unknown model id %s" % mid)
+    started = _refresh_model_catalog("unknown model id %s" % mid)
+    if started:
+        _catalog_asked.add(mid)
+    return started
 
 
 def _catalog_public_status():
@@ -1163,30 +1175,121 @@ def _model_id_label(value):
     return "%s %d" % (fam.capitalize(), maj) + (".%d" % minor if minor else "")
 
 
-def _model_picks():
-    """The per-family last-picked map. Only known version ids survive the read (a stale or hand-edited
-    entry falls back to the family alias rather than poisoning the default)."""
+def _learned_versions():
+    """{family: [{"value", "label", "learned": True}, …]} — every model id a session's CLI has actually
+    REPORTED (reg.liveModelId, persisted by the SDK backend's _learn_model from the init / assistant
+    `model` fields) that the CATALOG does not list — the seed table as the Models API fetch and its
+    cache have grown it (T222). The CLI is the authoritative source for what it serves; this is the
+    catalog's live lookahead, so a new release appears in the pickers the moment any session runs on
+    it, and each sighting is also T222's staleness EVENT (_note_unknown_model: one refresh per id per
+    kernel life, spent only when it actually starts), so the catalog catches up and the row's mark
+    drops. A dated snapshot of a known version shares its label and adds nothing (the dateless alias
+    covers it); provider-prefixed and synthetic ids are not the shape the pickers send and are
+    skipped. Reads the same reg files _thread_reg does. A first sighting is announced once on stderr —
+    and the pickers mark the row — so an unlisted model is LOUD, never a silent gap behind a stale
+    menu (the fail-loudly rule)."""
+    out = {}
+    fams = {c["value"] for c in MODEL_CHOICES}
+    with _catalog_lock:                          # the catalog is rebuilt in place on its own thread
+        known = set(_VERSION_FAMILY)
+        labels = {fam: {v["label"].lower() for v in vs} for fam, vs in MODEL_VERSIONS.items()}
+    try:
+        regs = sorted((jd.STATE / "sdk").glob("*.json"))
+    except OSError:
+        return out
+    for p in regs:
+        try:
+            reg = json.loads(p.read_text())
+        except (OSError, ValueError):
+            continue
+        mid = reg.get("liveModelId") if isinstance(reg, dict) else None
+        parts = _model_id_parts(mid)
+        if not parts or parts[0] not in fams:
+            continue
+        fam, maj, minor = parts
+        # the DATELESS alias is what the row offers: a CLI may report the -YYYYMMDD snapshot it runs,
+        # and a snapshot retires while the alias follows the version
+        value = "claude-%s-%d" % (fam, maj) + ("-%d" % minor if minor else "")
+        label = _model_id_label(value)
+        if value in known or label.lower() in labels.setdefault(fam, set()):
+            continue
+        labels[fam].add(label.lower())
+        out.setdefault(fam, []).append({"value": value, "label": label, "learned": True})
+        _note_unknown_model(value)               # the catalog lacks an id a CLI serves: refresh it (dedup by id)
+        if value not in _learned_announced:
+            _learned_announced.add(value)
+            sys.stderr.write("romp-kernel: model %s (%s) is not in the built-in version list — a running "
+                             "session's CLI reports it, so the pickers offer it marked new\n" % (value, label))
+    return out
+
+
+def _versions_catalog(learned=None):
+    """{family: versions} the pickers show — the CATALOG (the seed table as the Models API fetch and its
+    cache have grown it in place, T222) ∪ the LEARNED ids (what a running session's CLI reports that
+    the catalog does not list yet, marked), deduped by id, newest first by each id's own version tuple
+    (one ordering rule, the catalog's _version_key). The catalog owns the list; the learned rows are
+    its live lookahead until the next refresh folds them in."""
+    learned = _learned_versions() if learned is None else learned
+    with _catalog_lock:                          # snapshot: the catalog is rebuilt in place on its own thread
+        cat = {fam: [dict(v) for v in vs] for fam, vs in MODEL_VERSIONS.items()}
+    out = {}
+    for fam, rows in cat.items():
+        seen = {v["value"] for v in rows}
+        for v in learned.get(fam) or []:
+            if v["value"] not in seen:
+                seen.add(v["value"])
+                rows.append(dict(v))
+        rows.sort(key=lambda v: _version_key(v["value"]), reverse=True)
+        out[fam] = rows
+    return out
+
+
+def _version_family(value, learned=None):
+    """The family a VERSION id belongs to — a catalog id (the seed table, or one the Models API fetch
+    added to it), or one a session's CLI has reported (learned) — and '' for anything else: a family
+    alias, 'default', a never-seen id. This is what makes a value a pin the pick memory may record;
+    read at CALL time, so an id the catalog learned after boot is a pin from that moment on."""
+    v = str(value or "")
+    with _catalog_lock:
+        fam = _VERSION_FAMILY.get(v)
+    if fam:
+        return fam
+    for f, vs in (_learned_versions() if learned is None else learned).items():
+        if any(x["value"] == v for x in vs):
+            return f
+    return ""
+
+
+def _model_picks(learned=None):
+    """The per-family last-picked map. Only known version ids — catalog or learned — survive the read (a
+    stale or hand-edited entry falls back to the family alias rather than poisoning the default); a
+    pick NO list knows is the catalog's staleness event (T222): it may name a model newer than the
+    list, so it fires one refresh, and is honored the moment the catalog learns the id."""
     try:
         d = json.loads((jd.STATE / MODEL_PICKS_FILE_NAME).read_text())
-        if not isinstance(d, dict):
-            return {}
-        out = {}
-        for f, v in d.items():
-            if isinstance(v, str) and _VERSION_FAMILY.get(v) == f:
-                out[f] = v
-            elif isinstance(v, str):
-                _note_unknown_model(v)   # a pick this list doesn't know → the catalog staleness event (T222)
-        return out
     except Exception:
         return {}
+    if not isinstance(d, dict):
+        return {}
+    learned = _learned_versions() if learned is None else learned
+    out = {}
+    for f, v in d.items():
+        if not isinstance(v, str):
+            continue
+        if _version_family(v, learned) == f:
+            out[f] = v
+        else:
+            _note_unknown_model(v)   # a pick no list knows → the catalog staleness event (T222)
+    return out
 
 
 def _note_model_pick(value):
     """Record a version pick as its family's new default (write-on-change). Family shorthands and
     unknown strings record nothing — they are not version picks — so a bare family click (which
     carries the alias) can never downgrade an explicit legacy pin (an unknown claude-* id does fire
-    the catalog's staleness refresh: it may be a model newer than this list, T222)."""
-    fam = _VERSION_FAMILY.get(str(value or ""))
+    the catalog's staleness refresh: it may be a model newer than this list, T222). A version is a
+    catalog id (seed, or one the Models API fetch added) or a learned one (_version_family)."""
+    fam = _version_family(value)
     if not fam:
         _note_unknown_model(value)
         return
@@ -18687,10 +18790,10 @@ def _route_meta_command(be, sid, text, client=None, floating=False):
 
 
 def _vouched_model(value):
-    """A model value the kernel will stand behind persisting: a family alias, 'default', a catalog
-    version id, or any well-formed first-party id of a known family (the CLI validates the exact
-    version; romp's job is keeping the registry in step). A typo is none of these."""
-    if value in _MODEL_VALUES or value == "default" or _VERSION_FAMILY.get(value):
+    """A model value the kernel will stand behind persisting: a family alias, 'default', a catalog or
+    learned version id, or any well-formed first-party id of a known family (the CLI validates the
+    exact version; romp's job is keeping the registry in step). A typo is none of these."""
+    if value in _MODEL_VALUES or value == "default" or _version_family(value):
         return True
     if _model_id_clean(value) in _MODEL_VALUES:   # the CLI's own 1M-context spelling of a family (fable[1m])
         return True                                # — vouched like the tagged id below
@@ -25200,9 +25303,14 @@ def _set_judge_state(fname, value, allowed, allow_empty=False):
 
 # judge tiers accept VERSION ids too (the user 2026-08-25: the settings pickers mirror the
 # family+version submenus) — a version rides the SDK model param verbatim, like session picks
-_JUDGE_MODEL_VALUES = _MODEL_VALUES | set(_VERSION_FAMILY)
-def _set_judge_model(v):  _set_judge_state("judge-model", v, _JUDGE_MODEL_VALUES)
-def _set_index_model(v):  _set_judge_state("index-model", v, _JUDGE_MODEL_VALUES)
+_JUDGE_MODEL_VALUES = _MODEL_VALUES | set(_VERSION_FAMILY)   # the catalog half; _judge_model_values() adds the learned
+def _judge_model_values():
+    """What a judge tier may run — a family alias, a catalog version id, or a version some session's CLI
+    has reported (learned): the same list /models hands the gear's selects, so the kernel never refuses
+    a value it offered. Computed per call — the learned half is live."""
+    return _JUDGE_MODEL_VALUES | {v["value"] for vs in _learned_versions().values() for v in vs}
+def _set_judge_model(v):  _set_judge_state("judge-model", v, _judge_model_values())
+def _set_index_model(v):  _set_judge_state("index-model", v, _judge_model_values())
 def _set_judge_effort(v): _set_judge_state("judge-effort", v, _EFFORT_VALUES, allow_empty=True)
 def _set_index_effort(v): _set_judge_state("index-effort", v, _EFFORT_VALUES, allow_empty=True)
 # The distilling pair accepts extra sentinels (resolved by jd._distill_model/_distill_effort at call
@@ -25210,7 +25318,7 @@ def _set_index_effort(v): _set_judge_state("index-effort", v, _EFFORT_VALUES, al
 # staller did before the split (the user 2026-08-14) — and effort's "none" pins no-flag. "none" exists
 # because "" cannot: _state_str folds an empty file into the default, so an allow_empty pin here would
 # read back as "follow" (caught by test_distill_tier before it shipped).
-def _set_distill_model(v):  _set_judge_state("distill-model", v, _JUDGE_MODEL_VALUES | {"triage"})
+def _set_distill_model(v):  _set_judge_state("distill-model", v, _judge_model_values() | {"triage"})
 def _set_distill_effort(v): _set_judge_state("distill-effort", v, _EFFORT_VALUES | {"triage", "none"})
 # The default-COMMENT-THREAD trio (the user 2026-08-29, who wanted every new comment thread on one
 # model/effort/fast pick regardless of the session it branches from). Sentinel "session" — the shipped
@@ -25219,7 +25327,7 @@ def _set_distill_effort(v): _set_judge_state("distill-effort", v, _EFFORT_VALUES
 # (clear to the account default) so the setting speaks the create dialog's exact value space; fast is
 # "on" or the sentinel — a checkbox has no third state, and forcing a thread SLOW from a fast parent
 # stays a per-thread dialog pick, never a standing default.
-def _set_comment_model(v):  _set_judge_state("comment-model", v, _JUDGE_MODEL_VALUES | {"session", "default"})
+def _set_comment_model(v):  _set_judge_state("comment-model", v, _judge_model_values() | {"session", "default"})
 def _set_comment_effort(v): _set_judge_state("comment-effort", v, _EFFORT_VALUES | {"session"})
 def _set_comment_fast(v):   _set_judge_state("comment-fast", v, {"session", "on"})
 
@@ -31216,12 +31324,17 @@ class Handler(BaseHTTPRequestHandler):
                 # selectors wear the same colors the statusline badges do, for ANY pick — the badge
                 # colors only cover the current value, so the list is where the shared tint belongs)
                 _stops = cm.stops_for(_colormap())
-                # each family also carries its VERSIONS (newest first, the family's tint) and its
-                # DEFAULT — the last version the user picked for that family, else the family ALIAS
-                # (the user 2026-08-25: family click = remembered pick; the submenu holds the rest).
-                # The alias, never the list's head: the CLI resolves an alias live, and the head
-                # pinned every picker-set session to claude-fable-5 while `fable` moved on.
-                _picks = _model_picks()
+                # each family also carries its VERSIONS (newest first, the family's tint): the CATALOG
+                # — the seed table as the Models API fetch and its cache have grown it (T222) — plus
+                # every id a running session's CLI reports that the catalog lacks yet, those marked
+                # `learned`; and its DEFAULT — the last version the user picked for that family, else
+                # the family ALIAS (the user 2026-08-25: family click = remembered pick; the submenu
+                # holds the rest). The alias, never the list's head: the CLI resolves an alias live,
+                # and the head pinned every picker-set session to claude-fable-5 while `fable` moved
+                # on. The catalog owns the LIST, the alias the DEFAULT.
+                _learned = _learned_versions()
+                _picks = _model_picks(_learned)
+                _cat = _versions_catalog(_learned)
                 # a version the INSTALLED CLI has refused by minimum version says so on its own row
                 # (T222): the refusal is learned from the CLI's own error at the first attempt
                 # (sdk_backend.note_cli_model_block) and cleared by the first real reply on that
@@ -31231,7 +31344,7 @@ class Handler(BaseHTTPRequestHandler):
                     {"models": [dict(c, color=_model_color(c["value"], _stops),
                                      tone=_model_tone(c["value"]),
                                      versions=[_with_cli_block(dict(v), _blocks)
-                                               for v in MODEL_VERSIONS.get(c["value"]) or []],
+                                               for v in _cat.get(c["value"]) or []],
                                      default=_picks.get(c["value"]) or c["value"])
                                 for c in MODEL_CHOICES],
                      "efforts": [dict(c, color=_effort_color(c["value"], _stops), tone=_effort_tone(c["value"]))

@@ -10,6 +10,7 @@ Two layers:
     AskUserQuestion -> it surfaces as an askLive picker -> the UI answers ->
     PermissionResultAllow(updated_input={questions, answers}) goes back.
 """
+import asyncio
 import os
 import json
 import threading
@@ -1193,6 +1194,51 @@ class SetModelModePure(unittest.TestCase):
         self.assertEqual(reg["liveModel"], "Fable", "the dormant badge reflects the pick, not the stale prior")
         self.assertFalse(reg.get("modelPending"), "nothing is coming to resolve dots → resolve immediately, no trap")
         self.assertEqual(sb.model_label(reg["liveModel"], reg["model"]), "Fable")
+
+    def test_learn_model_persists_the_raw_id_beside_the_pretty_name(self):
+        # the pickers' version lists are seeded from a table and COMPLETED from what the CLI actually
+        # reports (the authoritative source for what it serves) — that needs the raw id, not just
+        # the badge text, persisted where the kernel reads regs (liveModelId)
+        sid = self.be.spawn("m", self.d)
+        sess = sb.SdkSession(self.be, sb.read_reg(self.d, sid))
+        sess._learn_model("Fable 5.1", raw="claude-fable-5-1")
+        reg = sb.read_reg(self.d, sid)
+        self.assertEqual((reg["liveModel"], reg["liveModelId"]), ("Fable 5.1", "claude-fable-5-1"))
+        # a pre-fix reg knows the NAME but not the id: the first report of an unchanged name still
+        # lands the id (otherwise a long-running session would never contribute its version)
+        sid2 = self.be.spawn("n", self.d)
+        sb.write_reg(self.d, sid2, {**sb.read_reg(self.d, sid2), "liveModel": "Fable 5"})
+        sess2 = sb.SdkSession(self.be, sb.read_reg(self.d, sid2))
+        self.assertEqual(sess2.model, "Fable 5")
+        sess2._learn_model("Fable 5", raw="claude-fable-5")
+        self.assertEqual(sb.read_reg(self.d, sid2)["liveModelId"], "claude-fable-5")
+        # the seeded id survives construction, so an unchanged report writes nothing new
+        sess3 = sb.SdkSession(self.be, sb.read_reg(self.d, sid2))
+        self.assertEqual(sess3._model_id, "claude-fable-5")
+
+    def test_refresh_context_persists_the_live_model_id(self):
+        # _do_refresh_context is the pre-turn source (get_context_usage answers on connect, before any
+        # init message), so an eager-connected session that never runs a turn still contributes its
+        # version to the pickers
+        sid = self.be.spawn("m", self.d)
+        sess = sb.SdkSession(self.be, sb.read_reg(self.d, sid))
+
+        class _Client:
+            async def get_context_usage(self):
+                return {"percentage": 41.6, "model": "claude-fable-5-1"}
+        sess.client = _Client()
+        asyncio.run(sess._do_refresh_context())
+        reg = sb.read_reg(self.d, sid)
+        self.assertEqual((reg["liveModelId"], reg["liveModel"], reg["liveCtx"]), ("claude-fable-5-1", "Fable 5.1", 42))
+        self.assertEqual(sess._model_id, "claude-fable-5-1")
+
+        # a [1m] variant is persisted as reported — the kernel's picker strips the tag on read
+        class _Client1m:
+            async def get_context_usage(self):
+                return {"percentage": 41.6, "model": "claude-fable-5-1[1m]"}
+        sess.client = _Client1m()
+        asyncio.run(sess._do_refresh_context())
+        self.assertEqual(sb.read_reg(self.d, sid)["liveModelId"], "claude-fable-5-1[1m]")
 
     def test_alias_label_and_model_reflects_alias(self):
         self.assertEqual(sb._alias_label("opus"), "Opus")

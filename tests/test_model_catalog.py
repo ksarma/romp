@@ -357,6 +357,44 @@ class StalenessEvent(unittest.TestCase):
         km._note_model_pick("claude-sonnet-7")          # the choke point every set surface flows through
         self.assertEqual(self.fired[-1], "unknown model id claude-sonnet-7")
 
+    def test_a_reported_id_the_catalog_lacks_fires_the_refresh(self):
+        # a running session's CLI reporting an id the catalog does not list is exactly the staleness
+        # the event names: the id joins the pickers marked `learned` at once AND the catalog is asked
+        # to catch up, once per id — after which the mark drops
+        _reg(jd.STATE, "11111111-2222-3333-4444-555555555501", liveModelId="claude-opus-5-1")
+        learned = km._learned_versions()
+        self.assertEqual([v["value"] for v in learned["opus"]], ["claude-opus-5-1"])
+        self.assertEqual(self.fired, ["unknown model id claude-opus-5-1"])
+        km._learned_versions()
+        self.assertEqual(len(self.fired), 1, "once per id per kernel life — every /models read re-derives the list")
+
+    def test_a_sighting_during_an_inflight_refresh_is_not_spent(self):
+        # the refresh is single-flight: an id first sighted WHILE one is inflight (the boot fetch —
+        # exactly when a running session's CLI first reports a new release) gets no refresh started
+        # for it. Its one refresh per kernel life must not be spent on that no-op: if the inflight
+        # fetch lands without the id (a failed fetch, a key that cannot see it), the next sighting is
+        # the id's own refresh. The REAL gate first, then the landing.
+        km._refresh_model_catalog = self._orig
+        os.environ.pop("ROMP_MODEL_CATALOG", None)
+        km._catalog_status["inflight"] = True
+        try:
+            self.assertFalse(km._note_unknown_model("claude-opus-9-9"), "inflight → nothing started")
+        finally:
+            km._catalog_status["inflight"] = False
+            os.environ["ROMP_MODEL_CATALOG"] = "off"
+        self.assertNotIn("claude-opus-9-9", km._catalog_asked, "nothing started, so nothing spent")
+        km._refresh_model_catalog = lambda reason, _async=True: (self.fired.append(reason), True)[1]
+        self.assertTrue(km._note_unknown_model("claude-opus-9-9"), "the next sighting asks for real")
+        self.assertEqual(self.fired, ["unknown model id claude-opus-9-9"])
+        self.assertFalse(km._note_unknown_model("claude-opus-9-9"), "…and THAT was the id's one refresh")
+
+
+def _reg(state, sid, **fields):
+    """A synthetic session reg under STATE/sdk — what _learned_versions reads liveModelId from."""
+    d = state / "sdk"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / (sid + ".json")).write_text(json.dumps({"sid": sid, "name": "web", "cwd": "/tmp", "alive": True, **fields}))
+
 
 class CliBlocks(unittest.TestCase):
     """A version the installed CLI refuses by minimum version says so on its /models row (T222)."""
@@ -459,6 +497,26 @@ class ModelsRoute(unittest.TestCase):
         self.assertEqual(rows["opus"]["versions"][0]["value"], "claude-opus-9-9", "the catalog's head leads the list")
         for fam in ("fable", "opus", "sonnet", "haiku"):
             self.assertEqual(rows[fam]["default"], fam, "%s: no pick → the alias" % fam)
+
+    def test_versions_are_the_catalog_union_the_learned_ids_deduped_by_id(self):
+        km._apply_model_catalog(km.merge_model_catalog(km._MODEL_SEED, FAKE_ROWS), "api")
+        _reg(jd.STATE, "11111111-2222-3333-4444-555555555501", liveModelId="claude-opus-9-9")   # the catalog knows it
+        _reg(jd.STATE, "11111111-2222-3333-4444-555555555502", liveModelId="claude-opus-5-1")   # the catalog lacks it
+        vs = {m["value"]: m for m in self._models()["models"]}["opus"]["versions"]
+        self.assertEqual([v["value"] for v in vs],
+                         ["claude-opus-9-9", "claude-opus-5-1", "claude-opus-5", "claude-opus-4-8",
+                          "claude-opus-4-7", "claude-opus-4-6", "claude-opus-4-5"],
+                         "one list, newest first, the learned id slotted by its own version tuple")
+        self.assertFalse(vs[0].get("learned"), "a reported id the catalog lists is the catalog's row — not doubled, not marked")
+        self.assertTrue(vs[1].get("learned"), "a reported id the catalog lacks joins, marked")
+        # the catalog catches up (the refresh the sighting fired lands): the mark drops, still one row
+        km._apply_model_catalog(km.merge_model_catalog(
+            km._MODEL_SEED, FAKE_ROWS + [{"id": "claude-opus-5-1", "display_name": "Claude Opus 5.1"}]), "api")
+        vs = {m["value"]: m for m in self._models()["models"]}["opus"]["versions"]
+        rows51 = [v for v in vs if v["value"] == "claude-opus-5-1"]
+        self.assertEqual(len(rows51), 1)
+        self.assertFalse(rows51[0].get("learned"), "the catalog owns the row now")
+        self.assertEqual(rows51[0]["label"], "Opus 5.1")
 
 
 def _free_port():

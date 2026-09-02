@@ -72,8 +72,10 @@ class JudgeSettings(unittest.TestCase):
         self.assertIn('default=_picks.get(c["value"]) or c["value"])', ksrc)
         # …each version row stamped with any CLI minimum-version refusal (T222, 2026-09-01: the live
         # catalog can list ids newer than the installed binary, so the row says so before a pick)
+        # …the versions from the CATALOG (the seed table as the Models API fetch grew it, T222) ∪ what
+        # running sessions' CLIs report (_versions_catalog), deduped by id, newest first
         self.assertIn('versions=[_with_cli_block(dict(v), _blocks)', ksrc)
-        self.assertIn('for v in MODEL_VERSIONS.get(c["value"]) or []]', ksrc)
+        self.assertIn('for v in _cat.get(c["value"]) or []],', ksrc)
 
     # ---- per-tier overrides honored + validated ----
     def test_judge_tiers_accept_version_ids(self):
