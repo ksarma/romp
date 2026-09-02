@@ -90,16 +90,16 @@ test('quietTick: a probe whose callback never fires cannot kill the chain (sched
 });
 
 test('quietTick: a double-fired probe callback evaluates once (http timeout + error both fire)', () => {
-  let applied = 0; let cb;
-  quietTick({ pending: () => ({ since: 0 }), fetchBusy: (c) => { cb = c; }, now: () => 1000,
+  let applied = 0; let cb; const park = { since: 0 };   // one park object, as the real pendingQuiet is
+  quietTick({ pending: () => park, fetchBusy: (c) => { cb = c; }, now: () => 1000,
               opts: QOPTS, log: () => {}, schedule: () => {}, apply: () => { applied++; } });
   cb(0); cb(0);
   assert.equal(applied, 1);
 });
 
 test('quietTick: a throwing evaluation is LOUD and leaves the refresh queued', () => {
-  let logged = ''; let applied = 0;
-  quietTick({ pending: () => ({ since: 0 }), fetchBusy: (c) => c(0), now: () => { throw new Error('boom'); },
+  let logged = ''; let applied = 0; const park = { since: 0 };
+  quietTick({ pending: () => park, fetchBusy: (c) => c(0), now: () => { throw new Error('boom'); },
               opts: QOPTS, log: (m) => { logged = m; }, schedule: () => {}, apply: () => { applied++; } });
   assert.match(logged, /stays queued/);
   assert.equal(applied, 0);
@@ -113,8 +113,31 @@ test('quietTick: a satisfied pending (an immediate restart won) neither probes n
 });
 
 test('quietTick: a quiet fleet applies through the injected apply', () => {
+  let applied = null; const park = { since: 0 };
+  quietTick({ pending: () => park, fetchBusy: (c) => c(0), now: () => 1000,
+              opts: QOPTS, log: () => {}, schedule: () => {}, apply: (g) => { applied = g; } });
+  assert.equal(applied && applied.reason, 'quiet');
+});
+
+// T224: the busy answer binds to the park that ISSUED the probe. quietTick used to read pendingQuiet
+// at RESPONSE time, so a probe issued for park A whose answer landed after A was cleared and park B
+// replaced it drove B's apply decision off A's count — a wrong-generation read (a stale busy:0 from
+// A applied B's refresh over in-flight turns; a stale busy count from A held B for nothing).
+test('quietTick: a stale answer from a replaced park is DROPPED loudly, never applied to the new park', () => {
+  const parkA = { since: 0, gen: 1 }, parkB = { since: 500, gen: 2 };
+  let current = parkA; let cb; let applied = 0; let logged = '';
+  quietTick({ pending: () => current, fetchBusy: (c) => { cb = c; }, now: () => 1000,
+              opts: QOPTS, log: (m) => { logged = m; }, schedule: () => {}, apply: () => { applied++; } });
+  current = parkB;            // park A cleared and replaced while A's probe was in flight
+  cb(0);                      // A's stale quiet answer lands
+  assert.equal(applied, 0, "park B's decision must not ride park A's answer");
+  assert.match(logged, /stale/i, 'the drop is on the record');
+});
+
+test('quietTick: the answer to the CURRENT park still applies exactly as before', () => {
+  const park = { since: 0 };
   let applied = null;
-  quietTick({ pending: () => ({ since: 0 }), fetchBusy: (c) => c(0), now: () => 1000,
+  quietTick({ pending: () => park, fetchBusy: (c) => c(0), now: () => 1000,
               opts: QOPTS, log: () => {}, schedule: () => {}, apply: (g) => { applied = g; } });
   assert.equal(applied && applied.reason, 'quiet');
 });
