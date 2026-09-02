@@ -1387,7 +1387,10 @@ def _model_pick_refused(sid, value):
 # alias-worthy exactly as the CLI's own 2.1.257 `migration_fable5_to_fable_alias` treats a user setting
 # of claude-fable-5 (its strings name the migration and the id; verified in the installed binary).
 _SEED_PINS = {"claude-fable-5": "fable", "claude-opus-5": "opus", "claude-sonnet-5": "sonnet",
-              "claude-haiku-4-5": "haiku"}
+              "claude-haiku-4-5": "haiku",
+              # fable's head moved to 5.1 on 2026-09-01 and every family click since wrote THAT id — the
+              # exact artefact this pass exists for, and the one the seed set first missed (PR #882 review)
+              "claude-fable-5-1": "fable"}
 MODEL_ALIAS_MIGRATION_MARKER = "model-alias-migration.done"   # STATE/…: stamped once the pass below ran clean
 
 

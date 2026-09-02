@@ -466,7 +466,7 @@ class AliasMigration(unittest.TestCase):
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
             n = km._model_alias_boot_pass()
-        self.assertEqual(n, 4, "defaults + the fable pick + regs a and d")
+        self.assertEqual(n, 5, "defaults + the fable pick + regs a, d and e")
         self.assertEqual(json.loads((jd.STATE / "sdk-defaults.json").read_text()), {"model": "fable", "effort": "xhigh"},
                          "the remembered default follows the alias; effort untouched")
         self.assertEqual(km._model_picks(), {"opus": "claude-opus-4-8"},
@@ -477,8 +477,8 @@ class AliasMigration(unittest.TestCase):
         self.assertEqual(self._read("b")["model"], "claude-opus-4-8", "an explicit legacy pin is deliberate")
         self.assertNotIn("model", self._read("c"), "a session on the account default stays that way")
         self.assertEqual(self._read("d")["model"], "sonnet", "every family's pre-fix head migrates, dead regs too")
-        self.assertEqual(self._read("e")["model"], "claude-fable-5-1",
-                         "a post-fix head was never a family-click artefact — an explicit pin, untouched")
+        self.assertEqual(self._read("e")["model"], "fable",
+                         "fable's 5.1 head: every family click since 2026-09-01 wrote it, so it migrates like the others")
         self.assertIn("model-alias", err.getvalue())
         self.assertIn("fable", err.getvalue(), "the stderr line names what moved")
 
@@ -525,10 +525,10 @@ class AliasMigration(unittest.TestCase):
         marker = jd.STATE / km.MODEL_ALIAS_MIGRATION_MARKER
         self.assertFalse(marker.exists(), "a state that never booted the fix carries no marker")
         with contextlib.redirect_stderr(io.StringIO()):
-            self.assertEqual(km._model_alias_boot_pass(), 4)
+            self.assertEqual(km._model_alias_boot_pass(), 5)
         rec = json.loads(marker.read_text())
         self.assertIsInstance(rec.get("t"), int, "stamped with the completion time")
-        self.assertEqual(rec.get("moved"), 4)
+        self.assertEqual(rec.get("moved"), 5)
         # a marker from a previous boot means SKIP ENTIRELY — even over state that looks migratable
         # (a head pinned on purpose after the fix looks exactly like pre-fix residue; the marker is
         # what tells them apart)
@@ -562,7 +562,7 @@ class AliasMigration(unittest.TestCase):
         with mock.patch.object(Path, "read_text", read_text), mock.patch.object(Path, "read_bytes", read_bytes), \
                 contextlib.redirect_stderr(err):
             n = km._model_alias_boot_pass()
-        self.assertEqual(n, 4, "everything readable still migrates")
+        self.assertEqual(n, 5, "everything readable still migrates")
         self.assertFalse((jd.STATE / km.MODEL_ALIAS_MIGRATION_MARKER).exists())
         self.assertIn("no marker written", err.getvalue())
         self.assertIn("locked.json", err.getvalue(), "the line names the file the next boot will retry")
@@ -578,7 +578,7 @@ class AliasMigration(unittest.TestCase):
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
             n = km._model_alias_boot_pass()
-        self.assertEqual(n, 4, "everything readable migrates")
+        self.assertEqual(n, 5, "everything readable migrates")
         self.assertTrue((jd.STATE / km.MODEL_ALIAS_MIGRATION_MARKER).exists(), "stamped — the pass is done")
         self.assertIn("broken.json", err.getvalue(), "the garbled file is NAMED")
         self.assertNotIn("no marker written", err.getvalue())
@@ -615,7 +615,7 @@ class AliasMigration(unittest.TestCase):
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
             n = km._model_alias_boot_pass()
-        self.assertEqual(n, 4, "the fable pick + regs a, d and z — everything readable migrates")
+        self.assertEqual(n, 5, "the fable pick + regs a, d, e and z — everything readable migrates")
         self.assertEqual(self._read("z")["model"], "opus", "a reg sorted AFTER the garbled one still migrates")
         self.assertEqual(self._read("a")["model"], "fable")
         self.assertTrue((jd.STATE / km.MODEL_ALIAS_MIGRATION_MARKER).exists(), "stamped — the pass is done")
