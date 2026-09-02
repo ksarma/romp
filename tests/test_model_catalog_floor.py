@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""The suite-wide model-catalog floor (tests/conftest.py, 2026-09-02): no test reaches the real
-Models API. Constructing the SDK backend fires the T222 catalog refresh — an async GET on whatever
-credential the process carries — so under pytest the switch is off for every test, and it STAYS off
-across a test that pops it (the catalog suite's own fetch tests do exactly that in setUp/tearDown,
-and a module-level pop would otherwise hold for the rest of the run). Synthetic throughout; the
-kernel is loaded only to prove the refresh is inert under the floor."""
+"""The suite-wide model-catalog floor (tests/conftest.py, 2026-09-02): no test kernel fetches the
+Models API. Constructing the SDK backend fires the T222 catalog refresh at every build — an async GET
+on any credential the process carries — so under pytest the switch is off for every test as a
+DEFENSIVE floor (the suite's own environment carries no credential, so the refresh stops short of the
+network even unfloored; a developer's exported key must not change that), and it STAYS off across a
+test that pops it (the catalog suite's own fetch tests do exactly that in setUp/tearDown, and a
+module-level pop would otherwise hold for the rest of the run). Synthetic throughout; the kernel is
+loaded only to prove the refresh is inert under the floor."""
 import os
 import tempfile
 import unittest

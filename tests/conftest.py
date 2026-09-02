@@ -45,12 +45,16 @@ def _dead_manager_port():
 # own resolution pop this var themselves (test_judge.py), as they always had to.
 os.environ["ROMP_CLAUDE_BIN"] = "/bin/false"
 
-# No test may reach the REAL Models API (2026-09-02): constructing the SDK backend fires the T222
-# catalog refresh (`_refresh_model_catalog("boot")`), an async GET to api.anthropic.com carrying
-# whatever credential the process has — the manager-env key sdk_backend.work_api_key claims, else a
-# bare ANTHROPIC_API_KEY — so an in-process backend construction (thread rows, user todos, judge
-# billing) run from a keyed shell makes a real request that no test asserts on, on a key the test
-# never chose. Upstream floors only its two kernel-SPAWNING tests inline; this floors every test.
+# No test kernel may fetch the Models API (2026-09-02): constructing the SDK backend fires the T222
+# catalog refresh (`_refresh_model_catalog("boot")`) at every build — an async GET to
+# api.anthropic.com on any credential the process carries: the manager-env key
+# sdk_backend.work_api_key claimed, else a bare ANTHROPIC_API_KEY, else an ANTHROPIC_AUTH_TOKEN
+# bearer. A DEFENSIVE floor: the suite's own environment carries none of those, so the refresh stops
+# short of the network even unfloored (checked, not assumed — no test here reached the API before
+# this line), but every in-process backend construction (thread rows, user todos, judge billing, any
+# future test) is one exported key away from a real request no test asserts on, on a key the test
+# never chose. Upstream floors only its two kernel-SPAWNING tests inline; this floors every test,
+# whatever the developer's shell exports.
 # Set, not setdefault: "off" is the only value the switch recognises, so no outer intent is being
 # overridden. The catalog suite pops the var in its own setUp for the tests that drive the fetch
 # against a local fake server, and pops it again in tearDown — hence the per-test re-assert below,

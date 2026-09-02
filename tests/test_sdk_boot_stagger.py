@@ -137,6 +137,24 @@ class ThreadsStayDormant(unittest.TestCase):
             be._boot_reconcile(regs)
         self.assertEqual(ensured, [tsid])
 
+    def test_a_persisted_todo_answer_alone_earns_the_resume_with_its_id_intact(self):
+        # the fork's id-carrying answer entry ({"text","todo"}, _queue_wire) under upstream's T223
+        # guard: the guard reads `queued` off the fork's _queue_texts, so a queue holding ONLY a dict
+        # entry is still a queue. A strings-only filter there would read it as empty, skip the
+        # thread as dormant, and strand the user's answer with its ask already marked answered.
+        d = tempfile.mkdtemp()
+        be = _backend(d)
+        ensured = []
+        be._ensure = lambda sid, on_boot_settled=None: (ensured.append(sid), on_boot_settled and on_boot_settled())[0]
+        tsid = "11111111-bbbb-0000-0000-00000000cafe"
+        answer = {"text": "Go with the cookie scheme", "todo": "ut-0badf00d"}
+        regs = [_reg(d, tsid, threadOf="11111111-bbbb-0000-0000-000000000000", queue=[answer])]
+        with mock.patch.object(sb.subprocess, "run", return_value=mock.Mock(stdout="")):
+            be._boot_reconcile(regs)
+        self.assertEqual(ensured, [tsid], "an id-carrying answer is a persisted queue too")
+        self.assertEqual(sb.read_reg(Path(d), tsid).get("queue"), [answer],
+                         "the entry reaches the spawn's seed in its persisted shape, id and all")
+
     def test_the_orphan_reap_still_covers_a_threads_leftover_cli(self):
         # the skip sits INSIDE the resume loop, after the reap built its sid list from every alive
         # reg — a dead kernel's thread CLI is still a zombie writer nobody manages

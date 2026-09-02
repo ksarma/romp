@@ -10,6 +10,7 @@ import threading
 import unittest
 import urllib.request
 from importlib.machinery import SourceFileLoader
+from unittest import mock
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
@@ -99,19 +100,28 @@ class ThreadRowsRoute(unittest.TestCase):
     def tearDown(self):
         km._session_rows, km._thread_rows = self._saved
 
+    # km.TOKEN, never os.environ: the kernel captures ROMP_SERVE_TOKEN once at import, and a sibling
+    # test module that exports a different value at ITS import leaves the process env disagreeing
+    # with the Handler these tests drive (nine 403s whenever the two files shared a run).
     def _get(self, path):
         req = urllib.request.Request("http://127.0.0.1:%d%s" % (self.port, path),
-                                     headers={"X-Romp-Token": os.environ["ROMP_SERVE_TOKEN"]})
+                                     headers={"X-Romp-Token": km.TOKEN})
         with urllib.request.urlopen(req, timeout=10) as r:
             return json.loads(r.read().decode())
 
     def _post(self, path, body):
         req = urllib.request.Request("http://127.0.0.1:%d%s" % (self.port, path), method="POST",
                                      data=json.dumps(body).encode(),
-                                     headers={"X-Romp-Token": os.environ["ROMP_SERVE_TOKEN"],
+                                     headers={"X-Romp-Token": km.TOKEN,
                                               "Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=10) as r:
             return json.loads(r.read().decode())
+
+    def test_the_helpers_present_the_token_the_handler_under_test_checks(self):
+        # a sibling module's later export must not turn this class red
+        with mock.patch.dict(os.environ, {"ROMP_SERVE_TOKEN": "a-sibling-modules-value"}):
+            rows = self._get("/sessions")
+        self.assertEqual([r["id"] for r in rows], [PARENT])
 
     def test_new_with_a_threads_name_opens_the_thread_never_a_namesake(self):
         # T223 (2026-09-01): a model-set sweep drove `romp new --model … <name>` over every reg,
