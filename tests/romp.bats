@@ -239,6 +239,47 @@ MOCK
     [[ "$output" == *"kernel isn't running"* ]]
 }
 
+@test "move: POST /move with target and dir; a relative dir is resolved against the caller's cwd; usage, queued and no-token are loud" {
+    _stub_curl
+    touch "$MOCK_LOG"
+    export ROMP_SERVE_TOKEN=testtok
+    run run_romp move exp-web /srv/notes-api/web
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"exp-web" now works in /srv/notes-api/web'* ]]
+    grep '/move' "$MOCK_LOG" | grep -q '"target": *"exp-web"'
+    grep '/move' "$MOCK_LOG" | grep -q '"dir": *"/srv/notes-api/web"'
+    # a relative folder means relative to where the caller stands, not to the kernel's default dir
+    run run_romp move exp-web sub/dir
+    [ "$status" -eq 0 ]
+    grep '/move' "$MOCK_LOG" | grep -q "\"dir\": *\"$WORK_DIR/sub/dir\""
+    # a mid-turn session parks the move: the CLI says so instead of claiming it happened
+    cat > "$MOCK_DIR/curl" << 'MOCK'
+#!/usr/bin/env bash
+echo "curl $*" >> "$MOCK_LOG"
+echo '{"ok": true, "id": "11111111-2222-3333-4444-555555555555", "queued": true, "dir": "/srv/notes-api/web"}'
+MOCK
+    chmod +x "$MOCK_DIR/curl"
+    run run_romp move exp-web /srv/notes-api/web
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"queued"* ]]
+    # a refusal rides the kernel's own words
+    cat > "$MOCK_DIR/curl" << 'MOCK'
+#!/usr/bin/env bash
+echo '{"ok": false, "error": "directory not found: /nowhere"}'
+MOCK
+    chmod +x "$MOCK_DIR/curl"
+    run run_romp move exp-web /nowhere
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"refused — directory not found: /nowhere"* ]]
+    run run_romp move only-one-arg
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"usage: romp move"* ]]
+    unset ROMP_SERVE_TOKEN
+    run run_romp move exp-web /srv/notes-api/web
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"kernel isn't running"* ]]
+}
+
 @test "color: POST /color with target and a literal hex; prints the new color" {
     _stub_curl
     touch "$MOCK_LOG"

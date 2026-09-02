@@ -155,6 +155,12 @@ to open it read-only. Revival works by picking the session, not by its name, so
 a new session that reuses an old name is a new session rather than the old one
 resumed.
 
+A session can also move to another folder. When the code it works on moves, say
+a subproject that became its own repository, right-click its tab and choose
+**Move to folder…** (or run `romp move <session> <dir>`): the conversation,
+name, mail and history stay with the session, and from the next turn on the
+agent works in the new folder and reads its `CLAUDE.md`.
+
 Search reaches inside sessions, not just across their names. As sessions run, a
 lightweight index judge writes each one a headline and an abstract of what it
 did, so searching for the work finds the session that did it, months later.

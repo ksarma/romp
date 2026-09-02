@@ -11,7 +11,7 @@ export const INTENT_OPS: ReadonlySet<string> = new Set([
   // explicit clicks that mutate kernel/session state
   "interrupt", "apiRetry", "rewindDelete",
   "setModel", "setEffort", "setMode", "setFast", "setAuth",
-  "renameSession", "endSession", "reviveSession",
+  "renameSession", "moveSession", "endSession", "reviveSession",
   "nodeOverride", "askClear", "undoClear", "cardMove", "cardNotify", "redistill",
   "answerAsk", "submitAsk", "toggleAsk", "navAsk", "cancelAsk",
   "setSessionFlag", "setSessionColor", "setGlobalRetryPaused", "setTimelineViews", "openTagsDialog",
