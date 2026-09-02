@@ -1293,60 +1293,52 @@ def _write_sdk_defaults(state_dir: Path, d: dict) -> None:
     os.replace(tmp, p)
 
 
+# The remembered `model` carries the IDENTITY of the write that put it there: `modelTok`, a fresh token
+# stamped by every writer of that key (fixer round 6, 2026-09-02). The store is shared across sessions
+# and a live set_model writes it BEFORE the CLI has ruled, so a refusal has to ask "is the value in the
+# store still MY write?" — and by value that question has no answer: another session's accepted pick of
+# the same id looks exactly like this session's pending one, a foreign pending write looks like a
+# baseline, and an id this session refused long ago is indistinguishable from the same id another
+# session accepted since. The token answers it exactly (SdkBackend._seed_write_*). Only `model` carries
+# one — effort/mode/auth have no live refusal path through this store.
+_TOKENED_DEFAULTS = frozenset({"model"})
+
+
+def _mint_write_tok() -> str:
+    return uuid.uuid4().hex
+
+
 def write_sdk_default(state_dir: Path, **fields) -> None:
     """Merge {model?, effort?} into the remembered defaults (atomic tmp+rename). Only non-None keys passed
-    are touched, so remembering a model never clobbers the remembered effort and vice-versa."""
+    are touched, so remembering a model never clobbers the remembered effort and vice-versa. A `model`
+    written here is SETTLED as it lands (a dormant session's pick, applied at its next connect; nothing
+    can refuse it now), and its fresh `modelTok` says so to any pending write it replaced: that write is
+    no longer the store's head, so its refusal leaves the store alone."""
     with _defaults_lock:
         d = read_sdk_defaults(state_dir)
         d.update({k: v for k, v in fields.items() if v is not None})
+        for k in _TOKENED_DEFAULTS:
+            if fields.get(k) is not None:
+                d[k + "Tok"] = _mint_write_tok()
         _write_sdk_defaults(state_dir, d)
 
 
 def swap_sdk_default(state_dir: Path, key: str, value):
-    """Write one remembered default and return what it REPLACED (None = the key was absent) — the read and
-    the write in ONE lock hold (fixer round 5, 2026-09-01). set_model used to read its snapshot, release,
-    and then take the lock to write: a writer on the other thread (a revert, another session's pick) could
-    land in between, and the snapshot described a value the write never replaced. The optimistic setter's
-    read-modify-write, with the prior handed back for the accepted-state bookkeeping."""
+    """Write one remembered default under a FRESH write token and return the (value, token) it REPLACED
+    (None, None = the key was absent) plus the token minted — the read and the write in ONE lock hold
+    (fixer round 5, 2026-09-01). set_model used to read its snapshot, release, and then take the lock to
+    write: a writer on the other thread (a revert, another session's pick) could land in between, and the
+    snapshot described a value the write never replaced. The optimistic setter's read-modify-write; the
+    prior pair is what SdkBackend._seed_write_refused puts back when this write is refused while it is
+    still the store's head."""
     with _defaults_lock:
         d = read_sdk_defaults(state_dir)
-        prior = d.get(key)
-        if value is not None:
-            d[key] = value
+        prior, prior_tok = d.get(key), d.get(key + "Tok")
+        tok = _mint_write_tok()
+        d[key] = value
+        d[key + "Tok"] = tok
         _write_sdk_defaults(state_dir, d)
-        return prior
-
-
-def restore_sdk_default(state_dir: Path, **fields) -> None:
-    """Put remembered defaults BACK to captured prior values — the revert half of write_sdk_default, for a
-    setter whose optimistic write the CLI then refused (set_model, review 2026-09-01). Here a None restores
-    ABSENCE: the key is removed, where write_sdk_default would skip it and leave the refused value in place."""
-    with _defaults_lock:
-        d = read_sdk_defaults(state_dir)
-        for k, v in fields.items():
-            if v is None:
-                d.pop(k, None)
-            else:
-                d[k] = v
-        _write_sdk_defaults(state_dir, d)
-
-
-def restore_sdk_default_if(state_dir: Path, key: str, held, prev) -> bool:
-    """The compare-and-swap form of restore_sdk_default (fixer round 4, 2026-09-01): put `key` back to
-    `prev` (None = absence) ONLY while the store still holds `held` — the value the reverting writer wrote.
-    The store is SHARED across sessions, so a refusal that lands after another session's accepted pick must
-    not roll that pick back: a writer whose evidence predates the diary stands down. Read fresh under the
-    lock; returns whether it wrote."""
-    with _defaults_lock:
-        d = read_sdk_defaults(state_dir)
-        if d.get(key) != held:
-            return False
-        if prev is None:
-            d.pop(key, None)
-        else:
-            d[key] = prev
-        _write_sdk_defaults(state_dir, d)
-        return True
+        return prior, prior_tok, tok
 
 
 def _cli_refusal(e: BaseException) -> bool:
@@ -1671,22 +1663,18 @@ class SdkSession:
         self._sub_lock = threading.Lock()            #   hooks mutate on the loop thread; snapshot() reads from the kernel thread
         #                                                (guards _subagents AND _bg_tasks)
         self.chosen_model = reg.get("model") or ""   # the alias the user picked (opus/sonnet/…); self.model is the display name
-        # The last model state the CLI ACCEPTED — the target every refused set_model reverts to (fixer round 5,
-        # 2026-09-01). `model` is the reg's value (None = absent; what --model launches with, so a value the
-        # reg holds at construction is asserted by the connect), `default` the shared sdk-defaults' `model`
-        # from this session's point of view. Moves only on a verdict: the CLI accepting a pick (_do_set_model),
-        # a connect reporting the model it launched with (the init message), a lost answer (the pick stands
-        # and the next connect asserts it) — and when a set_model finds a layer holding a value some OTHER
-        # writer left (another session's pick in the shared defaults), which is adopted as the baseline.
-        # `_model_unaccepted` holds every value this session wrote optimistically that the CLI has NOT
-        # accepted — pending or refused; only acceptance removes — so a snapshot can tell a foreign value
-        # from one of its own: the revert used to restore the last value WRITTEN, and with two picks in
-        # flight the second's snapshot held the first, so two refusals in a row wrote the first REFUSED id
-        # back into every layer. A refused value stays in the set on purpose: a layer still holding it (a
-        # set_model that read the layer before the revert put it back) must never adopt it as a baseline.
-        # Both under self._lock.
-        self._model_accepted = {"model": reg.get("model"), "default": None}
-        self._model_unaccepted: set = set()
+        # The last model the CLI ACCEPTED for THIS session — the target its own layers (chosen_model, the
+        # reg's `model`) revert to when a set_model is refused (fixer round 5, 2026-09-01). None = absent
+        # (the account default). The reg's value at construction is asserted by the connect (--model rides
+        # _options), so it starts here; it then moves only on a verdict: the CLI accepting a pick
+        # (_do_set_model), a connect reporting the model it launched with (the init message), a lost
+        # answer (the pick stands and the next connect asserts it). Every writer of those two layers is
+        # this session, so the last accepted value IS the baseline. The SHARED sdk-defaults `model` is a
+        # different matter — other sessions write it too — and is ruled per WRITE, by token, in
+        # SdkBackend._seed_write_* (fixer round 6, 2026-09-02): no per-session view of that layer exists
+        # here on purpose, because a by-value view of it was wrong three ways (see _seed_write_refused).
+        # Under self._lock.
+        self._model_accepted = reg.get("model")
         self._model_pending = ""                     # target ALIAS while a /model switch is resolving: the badge shows
         #   animated dots until the LIVE model actually reflects the pick (the user 2026-07-03: a switch stamped the
         #   chosen alias but left liveModel stale, and model_label PREFERS liveModel → the badge kept the OLD name).
@@ -1960,27 +1948,15 @@ class SdkSession:
             self.loop.call_soon_threadsafe(
                 lambda: asyncio.ensure_future(self._do_set_model(model, prev)))
 
-    # ---- the accepted model state (fixer round 5, 2026-09-01; see __init__) ----
-
-    def _model_written(self, cur_model, cur_default):
-        """set_model just wrote a pick optimistically (already in _model_unaccepted); `cur_*` are what the
-        reg and the defaults held at the write moment, captured in the same lock hold as each write. A
-        layer holding one of this session's own unaccepted writes says nothing new; any other value was
-        left by an accepted pick or by another writer (another session's pick in the shared defaults), and
-        is adopted as that layer's accepted baseline — what a revert of THIS write must put back."""
-        with self._lock:
-            if cur_model not in self._model_unaccepted:
-                self._model_accepted["model"] = cur_model
-            if cur_default not in self._model_unaccepted:
-                self._model_accepted["default"] = cur_default
+    # ---- the accepted model (fixer round 5, 2026-09-01; see __init__) ----
 
     def _model_accept(self, picked):
         """The CLI accepted `picked` (or a connect launched with it, or its answer was lost and the pick
-        stands): it is the accepted state of every layer from here on."""
+        stands): it is what this session's own layers revert to from here on. Says nothing about the
+        shared defaults — a connect vouches for the reg it launched from, and a write to the shared store
+        is settled by its own token (SdkBackend._seed_write_settled)."""
         with self._lock:
-            self._model_accepted["model"] = picked
-            self._model_accepted["default"] = picked
-            self._model_unaccepted.discard(picked)
+            self._model_accepted = picked
 
     def set_mode_live(self, mode, prev="default"):
         """Change the permission mode on a CONNECTED session via the SDK control channel. `prev` is
@@ -2151,20 +2127,32 @@ class SdkSession:
             #   the log and not the ring, that the answer was lost. If the CLI had in fact refused and the
             #   answer was lost, the next connect's --model fails LOUDLY through the launch-error path.
             # - A REFUSAL: revert, ring, and tell the kernel to forget the pin it recorded (below).
-            # Where the layers go BACK to is the last ACCEPTED state (_model_accepted; fixer round 5), never
-            # the values this pick's writes happened to replace — with two picks in flight the second's
-            # snapshot held the first, and two refusals in a row wrote the first REFUSED id back.
+            # Where this session's own layers go BACK to is the last ACCEPTED model (_model_accepted; fixer
+            # round 5), never the values this pick's writes happened to replace — with two picks in flight
+            # the second's snapshot held the first, and two refusals in a row wrote the first REFUSED id
+            # back. The SHARED defaults are unwound by this write's token (_seed_write_refused): the store
+            # goes back only where this write is still what it holds.
             picked = prev.get("picked") if prev else None
+            tok = prev.get("tok") if prev else None
+            refusal = _cli_refusal(e)
             with self._lock:
                 superseded = prev is not None and self.chosen_model != picked
             if superseded:
+                # Standing down from the SESSION's layers — the newer pick owns chosen_model and the reg.
+                # Not from the shared store: this write's node still sits under the newer pick's, so a
+                # refusal of THAT pick would unwind onto this refused id (the round-5 two-refusals case);
+                # spliced out here, the newer pick's unwind lands on what this write replaced. The store
+                # itself moves only if this write is somehow still its head (the newer write already
+                # unwound) — a refused value must not stay the seed just because it lost a race.
+                self.backend._seed_write_refused(tok)
                 self.backend._log("set_model (%s -> %s): the CLI answered (%s: %s) after a newer pick (%s) — "
                                   "standing down; the newer pick owns every layer"
                                   % (self.name, picked, type(e).__name__, e,
                                      self.chosen_model or "the account default"), problem=False)
-            elif not _cli_refusal(e):
+            elif not refusal:
                 if prev is not None:
                     self._model_accept(picked)   # the pick stands as the baseline the next connect asserts
+                    self.backend._seed_write_settled(tok)
                 self.backend._log("set_model (%s -> %s): the CLI's answer was lost (%s: %s) — not a refusal; "
                                   "the pick stands and the next connect asserts it"
                                   % (self.name, picked if prev else model, type(e).__name__, e), problem=False)
@@ -2175,10 +2163,16 @@ class SdkSession:
                 self.backend._log("set_model (%s -> %s) refused by the SDK: %s: %s — the switch did NOT apply; "
                                   "the model reverted to %s" % (self.name, model, type(e).__name__, e, back),
                                   problem=True)
-                # The kernel recorded a version as its family's pin BEFORE the CLI ruled (_note_model_pick
-                # at its choke point), and the revert above never reached that memory — so the family row
-                # kept sending the refused id and re-ringing this on every click. Class-level hook, the
-                # on_model_fallback idiom: the backend rules on the CLI's answer, the kernel owns the store.
+            # The kernel recorded a version as its family's pin BEFORE the CLI ruled (_note_model_pick at
+            # its choke point), and the revert never reached that memory — so the family row kept sending
+            # the refused id and re-ringing this on every click. Class-level hook, the on_model_fallback
+            # idiom: the backend rules on the CLI's answer, the kernel owns the store. Fired for a
+            # SUPERSEDED refusal too (fixer round 6, 2026-09-02): the CLI did rule on the id, and the pin
+            # it left in the kernel's memory is the refused id's, not the newer pick's — the newer pick
+            # recorded its own. The hook compares-and-swaps by value (_forget_model_pick(fam, only=id)),
+            # so a newer pin for the same family is never this refusal's to drop. A lost answer says
+            # nothing about the id and forgets nothing.
+            if superseded or refusal:
                 hook = getattr(type(self.backend), "on_model_refused", None)
                 if hook and picked:
                     try:
@@ -2188,6 +2182,7 @@ class SdkSession:
         else:
             if prev is not None:
                 self._model_accept(prev.get("picked"))   # the verdict that moves the accepted state
+                self.backend._seed_write_settled(prev.get("tok"))
         # Pull the real new name NOW rather than waiting for the next turn's assistant message — an idle
         # session the user switched but doesn't drive again would otherwise sit on the switching-dots
         # indefinitely (the user 2026-07-03). get_context_usage reports the current model, so this
@@ -2780,7 +2775,9 @@ class SdkSession:
             self._learn_model(pretty_model(d.get("model")), raw=str(d.get("model") or ""))
             # the connect launched with chosen_model (--model rides _options) and the CLI is up on it: the
             # verdict for a pick whose control request never resolved (its task died with the previous
-            # thread) — it is the accepted state now, so a later refused pick reverts to IT (fixer round 5)
+            # thread) — it is the accepted model now, so a later refused pick reverts to IT (fixer round 5).
+            # The reg's layer only: the connect says nothing about the SHARED defaults, which another
+            # session may have moved since (fixer round 6; the store is ruled per write, by token).
             if hasattr(self, "_model_accepted"):   # __new__-built test doubles skip __init__
                 self._model_accept(self.chosen_model or None)
             self.perm_mode = d.get("permissionMode") or self.perm_mode
@@ -3844,6 +3841,9 @@ class SdkBackend:
         self._log_cb = log
         self.sessions: dict[str, SdkSession] = {}
         self._lock = threading.Lock()
+        self._seed_writes: dict = {}              # tok → {sid, value, prior, priorTok}: set_model's optimistic
+        #                                             writes to the SHARED sdk-defaults `model`, pending the
+        #                                             CLI's verdict (see _seed_write_pending); under _defaults_lock
         self._reg_lock = threading.Lock()         # serializes _update_reg read-modify-writes (queue mirror
         #                                           writes come from kernel AND loop threads)
         self._pending_ask: dict[str, bool] = {}   # sid -> has an ask awaiting answer
@@ -5995,22 +5995,22 @@ class SdkBackend:
         verbatim. 'default' resets to the CLI default (set_model(None)).
 
         The writes below are OPTIMISTIC — they land before the CLI has accepted the value — and a live
-        refusal reverts every layer (_do_set_model, review 2026-09-01) to the session's last ACCEPTED
-        model state (_model_accepted; fixer round 5), not to whatever the writes replaced: with two picks
-        in flight the second's snapshot held the first, so two refusals in a row wrote the first REFUSED id
-        back. Each layer's write is a read-modify-write in ONE lock hold (swap_sdk_default, _swap_reg_model,
-        the session lock around chosen_model), the prior it replaced feeding the accepted-state bookkeeping
-        — a snapshot read outside the hold could describe a value the write never replaced. `prev` carries
-        the value written (`picked`) so the revert can compare-and-swap. A dormant session has no CLI to
-        refuse, and its value applies at the next connect."""
+        refusal reverts every layer (_do_set_model, review 2026-09-01). The session's OWN layers
+        (chosen_model, the reg) go back to its last ACCEPTED model (_model_accepted; fixer round 5), not
+        to whatever the writes replaced: with two picks in flight the second's snapshot held the first,
+        so two refusals in a row wrote the first REFUSED id back. The SHARED sdk-defaults `model` is
+        written under a fresh token (swap_sdk_default, one lock hold for the read and the write — a
+        snapshot read outside the hold could describe a value the write never replaced) and remembered
+        as a pending write (_seed_write_pending) until the CLI rules; its refusal unwinds exactly that
+        write by token (_seed_write_refused), never a by-value guess. `prev` carries the value written
+        (`picked`) for the session layers' compare-and-swap and the token (`tok`) for the store's. A
+        dormant session has no CLI to refuse, and its value applies at the next connect."""
         reg = read_reg(self.state_dir, sid)
         if not reg:
             return False
         s = self.sessions.get(sid)
         if s:
-            prev = {"picked": value}     # what the layers hold from here until the CLI rules — the revert's CAS value
             with s._lock:
-                s._model_unaccepted.add(value)
                 s.chosen_model = value
                 # PENDING: show switching-dots, NOT a premature/stale name, until the LIVE model reflects the
                 # pick (the user 2026-07-03). The old code stamped s.model = value.capitalize() ("Opus"), but
@@ -6021,10 +6021,10 @@ class SdkBackend:
                 already = _model_reflects_alias(s.model, value)
                 s._model_pending = "" if already else value
                 pending = bool(s._model_pending)
-            # remember as the seed for the NEXT new session (the user 2026-06-27)
-            cur_default = swap_sdk_default(self.state_dir, "model", value)
-            cur_model = self._swap_reg_model(sid, value, pending)
-            s._model_written(cur_model, cur_default)
+            # remember as the seed for the NEXT new session (the user 2026-06-27) — pending the CLI's verdict
+            tok = self._seed_write_pending(sid, value)
+            prev = {"picked": value, "tok": tok}   # what the layers hold until the CLI rules — the revert's CAS keys
+            self._update_reg(sid, model=value, modelPending=pending)
             s.set_model_live(None if value in ("", "default") else value, prev=prev)
         else:
             write_sdk_default(self.state_dir, model=value)   # the seed for the NEXT new session (the user 2026-06-27)
@@ -6038,24 +6038,26 @@ class SdkBackend:
 
     def _revert_model(self, sess: "SdkSession", prev: dict) -> str:
         """Undo set_model's optimistic writes after the CLI refused the value: chosen_model, the pending
-        marker, the reg's `model` and sdk-defaults' `model` go back to the session's last ACCEPTED state
-        (_model_accepted, fixer round 5: the CLI's last accepted pick, the model a connect launched with, or
-        the value another writer left in a shared layer — never a value this session wrote and the CLI
-        then refused; see __init__). A None there means the key was ABSENT, and absence is restored (a null
-        would read as a pick, and a leftover refused value is the poison this exists to remove). Locked RMW
-        on the reg, like _update_reg; the defaults file through the same atomic rename write_sdk_default
-        uses. Returns the model it went back to ("" for the account default), for the log line.
+        marker and the reg's `model` go back to the session's last ACCEPTED model (_model_accepted, fixer
+        round 5: the CLI's last accepted pick, or the model a connect launched with — never a value this
+        session wrote and the CLI then refused; see __init__). A None there means the key was ABSENT, and
+        absence is restored (a null would read as a pick, and a leftover refused value is the poison this
+        exists to remove). Locked RMW on the reg, like _update_reg. The SHARED sdk-defaults `model` is
+        unwound by this write's TOKEN (_seed_write_refused): back to what the write replaced, only while
+        the write is still what the store holds. Returns the model the session went back to ("" for the
+        account default), for the log line.
 
         COMPARE-AND-SWAP per layer (fixer round 4, 2026-09-01): a layer goes back only while it still
-        holds the refused value — `prev["picked"]`, what set_model wrote. A refusal that lands after a
-        newer accepted pick (this session's next pick; another session's pick in the SHARED defaults
-        store) must not roll that pick back: a writer whose evidence predates the diary stands down. The
-        compare and the assign of chosen_model sit in one hold of the session lock (round 5) — set_model
-        assigns it from the kernel thread under the same lock, so the swap cannot tear."""
+        holds the refused write — by value for the session's own layers (`prev["picked"]`, what set_model
+        wrote; every writer of those layers is this session), by token for the shared store (a value
+        compare cannot tell this write from another session's write of the same id). A refusal that lands
+        after a newer accepted pick (this session's next pick; another session's pick in the SHARED
+        defaults store) must not roll that pick back: a writer whose evidence predates the diary stands
+        down. The compare and the assign of chosen_model sit in one hold of the session lock (round 5) —
+        set_model assigns it from the kernel thread under the same lock, so the swap cannot tear."""
         picked = prev.get("picked")
         with sess._lock:
-            back_model = sess._model_accepted["model"]
-            back_default = sess._model_accepted["default"]
+            back_model = sess._model_accepted
             if sess.chosen_model == picked:
                 sess.chosen_model = back_model or ""
                 sess._model_pending = ""
@@ -6068,8 +6070,82 @@ class SdkBackend:
                     reg["model"] = back_model
                 reg["modelPending"] = False
                 write_reg(self.state_dir, sess.sid, reg)
-        restore_sdk_default_if(self.state_dir, "model", picked, back_default)
+        self._seed_write_refused(prev.get("tok"))
         return back_model or ""
+
+    # ---- the shared defaults' `model`, ruled per WRITE (fixer round 6, 2026-09-02) ----
+    # sdk-defaults.json seeds every NEW session, and every session's set_model writes it BEFORE the CLI has
+    # ruled on the value. A refusal must then put the store back — but only where the store still holds
+    # THIS write, and the round-5 code decided that by VALUE, from a per-session picture of the layer
+    # (`_model_accepted["default"]`, `_model_unaccepted`), which was wrong three ways: picking the value
+    # the store ALREADY held (another session's accepted pick — the common case) could not adopt it as the
+    # baseline, so a refusal restored a stale one over that session's pick; an id this session refused
+    # long ago stayed unadoptable even after another session accepted it; and another session's PENDING
+    # write, not yet ruled on, was adopted as a baseline — two cross-session refusals then seeded a refused
+    # id. Identity instead: every write of the key carries a fresh token (`modelTok`), and a live
+    # set_model's write is remembered here, by token, with the (value, token) pair it replaced, until the
+    # CLI rules. Pending writes form a chain — each one's prior is the write it landed on — and a verdict
+    # touches exactly its own node: accepted → the node goes (a newer write above it unwinds onto an
+    # accepted value); refused → the store goes back to the node's prior IF the write is still the head,
+    # and a newer node that replaced it now points past it (so ITS unwind never lands on a refused id).
+    # A write that is not the head and that no pending node replaced was written over by a settled writer
+    # (a dormant pick, another kernel, a hand edit): that writer holds the store, and the refusal leaves
+    # it alone. The chain lives in memory: after a kernel restart no verdict can reach a write made
+    # before it (the reconnect asserts the reg's model and a launch refusal is loud on its own path), and
+    # a token in the file that no node knows can never be matched — fail-safe. All under _defaults_lock.
+
+    def _seed_write_pending(self, sid: str, value: str) -> str:
+        """set_model's optimistic write of the shared `model`: land it under a fresh token and remember
+        what it replaced, until the session's own _do_set_model rules. Returns the token."""
+        prior, prior_tok, tok = swap_sdk_default(self.state_dir, "model", value)
+        with _defaults_lock:
+            self._seed_writes[tok] = {"sid": sid, "value": value, "prior": prior, "priorTok": prior_tok}
+        return tok
+
+    def _seed_write_settled(self, tok) -> None:
+        """The CLI accepted the write (or its answer was lost and the pick stands): nothing will unwind
+        it. Its node goes; a pending write above it keeps pointing at it, so that write's refusal
+        restores this ACCEPTED value."""
+        if tok is None:
+            return
+        with _defaults_lock:
+            self._seed_writes.pop(tok, None)
+
+    def _seed_write_refused(self, tok) -> bool:
+        """The CLI refused the write (or a newer pick of the same session superseded it): leave the store
+        as if the write had never happened. Head → back to the (value, token) it replaced, absence
+        included; a pending write that replaced it now points past it; not the head and not under a
+        pending write → stand down (a settled writer holds the store). Returns whether the file moved."""
+        if tok is None:
+            return False
+        with _defaults_lock:
+            node = self._seed_writes.pop(tok, None)
+            if node is None:
+                return False
+            for other in self._seed_writes.values():
+                if other["priorTok"] == tok:            # the write that landed on this one unwinds past it now
+                    other["prior"], other["priorTok"] = node["prior"], node["priorTok"]
+            d = read_sdk_defaults(self.state_dir)
+            if d.get("modelTok") != tok:                # a newer writer's, or an untokened file's: not ours to move
+                return False
+            if node["prior"] is None:
+                d.pop("model", None)
+            else:
+                d["model"] = node["prior"]
+            if node["priorTok"] is None:
+                d.pop("modelTok", None)
+            else:
+                d["modelTok"] = node["priorTok"]
+            _write_sdk_defaults(self.state_dir, d)
+            return True
+
+    def _seed_writes_dropped(self, sid: str) -> None:
+        """The session's thread died: every verdict its pending writes were waiting for died with it (a
+        stranded request is a lost answer at most, never a refusal), so the nodes are garbage. Drop
+        them; the store keeps whatever it holds — the reconnect asserts the reg's model."""
+        with _defaults_lock:
+            for t in [t for t, n in self._seed_writes.items() if n["sid"] == sid]:
+                self._seed_writes.pop(t, None)
 
     def _ack_cmd_chip(self, sid: str, command: str, disp: str, fsid) -> None:
         """Synthesize the INVOCATION atom the CLI never streams (it streams only the stdout confirmation)
@@ -6740,18 +6816,6 @@ class SdkBackend:
             reg.update(fields)
             write_reg(self.state_dir, sid, reg)
 
-    def _swap_reg_model(self, sid: str, value: str, pending: bool):
-        """_update_reg(model=…, modelPending=…) that hands back the `model` it REPLACED (None = absent) —
-        read and write in one _reg_lock hold (fixer round 5, 2026-09-01; swap_sdk_default's twin). set_model's
-        optimistic write, with the prior for the session's accepted-state bookkeeping (_model_written)."""
-        with self._reg_lock:
-            reg = read_reg(self.state_dir, sid) or {"sid": sid}
-            prior = reg.get("model")
-            reg["model"] = value
-            reg["modelPending"] = pending
-            write_reg(self.state_dir, sid, reg)
-            return prior
-
     def _record_launch_error(self, sess: SdkSession, exc: BaseException) -> None:
         """A session's CLI refused to start — persist WHY onto the session so the user is told, loudly,
         on the surface they were typing into. The reg is the right home: it outlives this thread (which
@@ -6833,6 +6897,7 @@ class SdkBackend:
                 self._update_reg(sess.sid, liveModel=_alias_label(sess.chosen_model), modelPending=False)
             except Exception as e:
                 self._log("session gone (%s): model-pending clear failed: %s" % (sess.name, e))
+        self._seed_writes_dropped(sess.sid)   # no verdict can reach its pending shared-model writes now
         if sess._effort_pending:          # an /effort reconnect that never landed before the thread died → clear the dots/notice
             sess._effort_pending = ""
             try:

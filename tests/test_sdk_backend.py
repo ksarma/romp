@@ -1476,12 +1476,20 @@ class SetModelModePure(unittest.TestCase):
         self.assertEqual(sb.read_reg(self.d, s2)["model"], "haiku")
         self.assertEqual(len(self.be.problems()), 1, "S1's refusal is still loud")
 
-    def test_a_real_refusal_tells_the_kernel_to_forget_the_pick_a_lost_or_superseded_one_does_not(self):
-        # (fixer round 4, 2026-09-01) the kernel records a version as its family's pin BEFORE the CLI
-        # rules (_set_model_or_park → _note_model_pick), and the revert never reached that memory: after
-        # a refusal the family row kept sending the refused id, re-ringing the problem on every click.
-        # The backend now tells the kernel through a class-level hook, the on_model_fallback idiom —
-        # on a REAL refusal only.
+    def test_a_refusal_tells_the_kernel_to_forget_the_pick_superseded_or_not_a_lost_answer_does_not(self):
+        """(fixer round 4, 2026-09-01) the kernel records a version as its family's pin BEFORE the CLI
+        rules (_set_model_or_park → _note_model_pick), and the revert never reached that memory: after a
+        refusal the family row kept sending the refused id, re-ringing the problem on every click. The
+        backend tells the kernel through a class-level hook, the on_model_fallback idiom — on a VERDICT.
+
+        The round-4 contract said a SUPERSEDED refusal forgets nothing ("the newer pick owns the memory").
+        Flipped deliberately (fixer round 6, 2026-09-02): the newer pick owns chosen_model and the reg, but
+        the pin the kernel recorded for the REFUSED id is its own — a pick in another family, or the same
+        family's pin when the newer pick is an alias — and the CLI did rule on it. Left in place, a family
+        click re-sent the refused id. Firing the hook is safe for the newer pick because the kernel's
+        forget compares-and-swaps by value (_forget_model_pick(fam, only=id)): a newer pin for the same
+        family is never this refusal's to drop (test_model_versions pins that side). A LOST answer still
+        forgets nothing — it says nothing about the id."""
         calls = []
         type(self.be).on_model_refused = staticmethod(lambda sid, value: calls.append((sid, value)))
         try:
@@ -1510,13 +1518,18 @@ class SetModelModePure(unittest.TestCase):
             self.assertTrue(self.be.set_model(sid2, "claude-fable-5-1"))
             asyncio.run(sess2._do_set_model(*sched2[0]))
             self.assertEqual(len(calls), 1, "a lost answer forgets nothing")
-            # a superseded refusal: no call either — the newer pick owns the memory
+            # a superseded refusal: the CLI ruled on the id, so its pin goes too — the newer pick (another
+            # family here) recorded its own pin, which this forget cannot reach (CAS by value, kernel side)
             sid3, sess3, sched3 = self._live()
             sess3.client = _Refusing()
+            rang = len(self.be.problems())
             self.assertTrue(self.be.set_model(sid3, "claude-fable-9-9"))
             self.assertTrue(self.be.set_model(sid3, "claude-sonnet-4-6"))
             asyncio.run(sess3._do_set_model(*sched3[0]))
-            self.assertEqual(len(calls), 1, "a superseded refusal stands down from the memory too")
+            self.assertEqual(calls[1:], [(sid3, "claude-fable-9-9")], "a superseded refusal forgets the refused id")
+            self.assertEqual(sess3.chosen_model, "claude-sonnet-4-6", "…and touches nothing the newer pick owns")
+            self.assertEqual(sb.read_reg(self.d, sid3)["model"], "claude-sonnet-4-6")
+            self.assertEqual(len(self.be.problems()), rang, "and rings nothing — the user already picked again")
         finally:
             del type(self.be).on_model_refused
 
@@ -1615,6 +1628,150 @@ class SetModelModePure(unittest.TestCase):
         self.assertEqual(sess.chosen_model, "claude-fable-5-1", "the connect made A the accepted model")
         self.assertEqual(sb.read_reg(self.d, sid)["model"], "claude-fable-5-1")
         self.assertEqual(sb.read_sdk_defaults(self.d).get("model"), "claude-fable-5-1")
+
+    # ── the SHARED defaults are ruled per write, by token (fixer round 6, 2026-09-02) ─────────────────
+    # sdk-defaults.json is one store for every session, and round 5 decided "is the value in it still my
+    # write?" by VALUE from a per-session picture of the layer (_model_accepted["default"], the set of this
+    # session's unaccepted writes). Three ways wrong, each reproduced below; the store now carries the
+    # identity of the write that set it (`modelTok`), and a refusal unwinds exactly its own write.
+    class _AcceptsAll:
+        """A CLI that accepts every set_model and reports the picked model."""
+        def __init__(self, live="claude-sonnet-5-2"):
+            self.live = live
+
+        async def set_model(self, model=None):
+            return None
+
+        async def get_context_usage(self):
+            return {"percentage": 3, "model": self.live}
+
+    def test_picking_the_value_the_shared_default_already_holds_then_being_refused_leaves_it_in_place(self):
+        # The most common pick of all: the value another session's ACCEPTED pick left in the shared
+        # defaults — a new session seeds from it, and picking it again is one click. Round 5 could not
+        # adopt it as the baseline (the value was in this session's own unaccepted set the moment it was
+        # picked), so the refusal restored a STALE baseline — None here, this session's own model with an
+        # init-accept — over the other session's pick.
+        sid, sess, sched = self._live()                                    # accepted opus; defaults = opus
+        other = self.be.spawn("two", self.d)
+        self.assertTrue(self.be.set_model(other, "claude-sonnet-5-2"))     # dormant: accepted where it stands
+        self.assertEqual(sb.read_sdk_defaults(self.d)["model"], "claude-sonnet-5-2")
+        sess.client = self._RefusesAll()
+        self.assertTrue(self.be.set_model(sid, "claude-sonnet-5-2"))       # the SAME value; this CLI refuses it
+        asyncio.run(sess._do_set_model(*sched[-1]))
+        self.assertEqual(sb.read_sdk_defaults(self.d).get("model"), "claude-sonnet-5-2",
+                         "the other session's accepted pick stays the seed")
+        self.assertEqual(sb.read_reg(self.d, sid)["model"], "opus", "this session's own layers revert")
+        self.assertEqual(sess.chosen_model, "opus")
+        self.assertEqual(sb.read_reg(self.d, other)["model"], "claude-sonnet-5-2")
+        # the same with the other session LIVE and its CLI accepting — its accepted pick, literally
+        s3, sess3, sched3 = self._live()
+        s4, sess4, sched4 = self._live()
+        sess4.client = self._AcceptsAll()
+        self.assertTrue(self.be.set_model(s4, "claude-sonnet-5-2"))
+        asyncio.run(sess4._do_set_model(*sched4[-1]))                      # accepted
+        sess3.client = self._RefusesAll()
+        self.assertTrue(self.be.set_model(s3, "claude-sonnet-5-2"))
+        asyncio.run(sess3._do_set_model(*sched3[-1]))                      # refused
+        self.assertEqual(sb.read_sdk_defaults(self.d).get("model"), "claude-sonnet-5-2")
+        self.assertEqual(sb.read_reg(self.d, s3)["model"], "opus")
+        self.assertEqual(sb.read_reg(self.d, s4)["model"], "claude-sonnet-5-2")
+
+    def test_an_id_this_session_once_refused_stays_when_another_session_has_since_accepted_it(self):
+        # Round 5 kept a refused id in the session's unaccepted set FOREVER, so the shared default holding
+        # it — put there later by another session whose CLI accepted it (a newer CLI, another account) —
+        # could never be adopted as a baseline, and this session's next refusal restored its own stale
+        # baseline over that accepted pick.
+        sid, sess, sched = self._live()                                    # accepted opus
+        sess.client = self._RefusesAll()
+        self.assertTrue(self.be.set_model(sid, "claude-fable-9-9"))        # X, refused here
+        asyncio.run(sess._do_set_model(*sched[-1]))
+        self.assertEqual(sb.read_sdk_defaults(self.d).get("model"), "opus")
+        other, sess2, sched2 = self._live()
+        sess2.client = self._AcceptsAll("claude-fable-9-9")
+        self.assertTrue(self.be.set_model(other, "claude-fable-9-9"))      # X again, on a CLI that takes it
+        asyncio.run(sess2._do_set_model(*sched2[-1]))
+        self.assertEqual(sb.read_sdk_defaults(self.d).get("model"), "claude-fable-9-9")
+        self.assertTrue(self.be.set_model(sid, "claude-sonnet-9-9"))       # Y, refused
+        asyncio.run(sess._do_set_model(*sched[-1]))
+        self.assertEqual(sb.read_sdk_defaults(self.d).get("model"), "claude-fable-9-9",
+                         "the other session's accepted X stands; this session's old refusal is not evidence")
+        self.assertEqual(sb.read_reg(self.d, sid)["model"], "opus")
+
+    def test_two_cross_session_refusals_never_seed_a_refused_id_in_either_order(self):
+        # Two live sessions pick concurrently: b's write lands on a's PENDING one. Round 5 adopted a's
+        # pending value as b's baseline (it was not in b's own unaccepted set), so when both were refused
+        # — a first, whose compare-and-swap stood down because b held the store — b's revert restored a's
+        # REFUSED id as the seed every new session launches with.
+        a, sa, qa = self._live()
+        b, sb_, qb = self._live()
+        sa.client = sb_.client = self._RefusesAll()
+        self.assertTrue(self.be.set_model(a, "claude-fable-9-9"))          # Va, pending
+        self.assertTrue(self.be.set_model(b, "claude-sonnet-9-9"))         # Vb on top of it
+        asyncio.run(sa._do_set_model(*qa[-1]))                             # Va refused — not the head: spliced out
+        self.assertEqual(sb.read_sdk_defaults(self.d).get("model"), "claude-sonnet-9-9", "b's write still pending")
+        asyncio.run(sb_._do_set_model(*qb[-1]))                            # Vb refused — head: back past Va
+        self.assertEqual(sb.read_sdk_defaults(self.d).get("model"), "opus", "neither refused id is the seed")
+        self.assertEqual((sb.read_reg(self.d, a)["model"], sb.read_reg(self.d, b)["model"]), ("opus", "opus"))
+        # the other order: b's refusal first unwinds onto a's pending Va (honest — a's verdict is still out),
+        # then a's refusal takes it back to opus
+        self.assertTrue(self.be.set_model(a, "claude-fable-9-9"))
+        self.assertTrue(self.be.set_model(b, "claude-sonnet-9-9"))
+        asyncio.run(sb_._do_set_model(*qb[-1]))
+        self.assertEqual(sb.read_sdk_defaults(self.d).get("model"), "claude-fable-9-9", "a's write, still pending")
+        asyncio.run(sa._do_set_model(*qa[-1]))
+        self.assertEqual(sb.read_sdk_defaults(self.d).get("model"), "opus")
+        self.assertEqual(len(self.be.problems()), 4, "every refusal rang once")
+        # and an ACCEPTED write under a refused one is what the refusal unwinds onto
+        sa.client = self._AcceptsAll("claude-fable-9-9")
+        self.assertTrue(self.be.set_model(a, "claude-fable-9-9"))
+        self.assertTrue(self.be.set_model(b, "claude-sonnet-9-9"))
+        asyncio.run(sa._do_set_model(*qa[-1]))                             # Va accepted
+        asyncio.run(sb_._do_set_model(*qb[-1]))                            # Vb refused
+        self.assertEqual(sb.read_sdk_defaults(self.d).get("model"), "claude-fable-9-9")
+        self.assertEqual(sb.read_reg(self.d, a)["model"], "claude-fable-9-9")
+        self.assertEqual(sb.read_reg(self.d, b)["model"], "opus")
+
+    def test_the_store_carries_the_writes_token_and_a_seed_never_does(self):
+        # every writer of `model` stamps a fresh token; the spawn seed copies the model alone
+        sid = self.be.spawn("m", self.d)
+        self.assertTrue(self.be.set_model(sid, "opus"))                    # dormant path
+        d = sb.read_sdk_defaults(self.d)
+        self.assertEqual(d["model"], "opus")
+        t0 = d.get("modelTok")
+        self.assertTrue(t0 and isinstance(t0, str))
+        s2 = self.be.spawn("n", self.d)
+        self.assertEqual(sb.read_reg(self.d, s2)["model"], "opus")
+        self.assertNotIn("modelTok", sb.read_reg(self.d, s2), "the token is the store's, not the session's")
+        sess = sb.SdkSession(self.be, sb.read_reg(self.d, sid))
+        self.be.sessions[sid] = sess
+        sess.set_model_live = lambda model, prev=None: None
+        self.assertTrue(self.be.set_model(sid, "claude-fable-9-9"))        # live path
+        d = sb.read_sdk_defaults(self.d)
+        self.assertTrue(d["modelTok"] and d["modelTok"] != t0, "a new write, a new token")
+        self.be.set_effort(sid, "low")
+        self.assertEqual(sb.read_sdk_defaults(self.d)["modelTok"], d["modelTok"], "an effort write leaves it alone")
+        self.assertNotIn("effortTok", sb.read_sdk_defaults(self.d), "only the model carries one")
+
+    def test_a_defaults_file_without_a_token_is_never_reverted(self):
+        # compat, fail-safe: a file an older kernel or a hand edit wrote carries no `modelTok` — no
+        # token, no match, and the revert leaves the store alone rather than guess
+        sid, sess, sched = self._live()                                    # accepted opus
+        sess.client = self._RefusesAll()
+        self.assertTrue(self.be.set_model(sid, "claude-fable-9-9"))
+        self.assertTrue(sb.read_sdk_defaults(self.d).get("modelTok"))
+        sb._defaults_path(self.d).write_text(json.dumps({"model": "claude-fable-9-9", "effort": "low"}))
+        asyncio.run(sess._do_set_model(*sched[-1]))                        # refused
+        self.assertEqual(sb.read_sdk_defaults(self.d), {"model": "claude-fable-9-9", "effort": "low"},
+                         "untokened: not this write's to move")
+        self.assertEqual(sb.read_reg(self.d, sid)["model"], "opus", "the session's own layers still revert")
+        self.assertEqual(sess.chosen_model, "opus")
+        # and a write whose verdict never came (the thread died) leaves no node behind to unwind later
+        sid2, sess2, sched2 = self._live()
+        self.assertTrue(self.be.set_model(sid2, "claude-sonnet-9-9"))
+        self.assertEqual(len(self.be._seed_writes), 1)
+        self.be._on_session_gone(sess2)
+        self.assertEqual(self.be._seed_writes, {}, "dropped with the thread; the store keeps the value")
+        self.assertEqual(sb.read_sdk_defaults(self.d).get("model"), "claude-sonnet-9-9")
 
     # ── snapshot and write in ONE lock hold; chosen_model compare-and-assign under the session lock ──
     def test_a_defaults_or_reg_read_taken_outside_the_store_lock_never_feeds_the_revert(self):

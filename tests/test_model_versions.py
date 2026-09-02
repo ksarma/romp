@@ -223,6 +223,23 @@ class PickMemory(unittest.TestCase):
         src = inspect.getsource(km._sdk_locked)
         self.assertIn("on_model_refused = staticmethod(_model_pick_refused)", src)
 
+    def test_a_superseded_refusals_forget_drops_only_the_refused_pin_the_newer_pick_survives(self):
+        # (fixer round 6, 2026-09-02) the backend now fires on_model_refused for a refusal the session's
+        # own NEWER pick superseded (test_sdk_backend flips the round-4 pin). Safe for the newer pick
+        # because this side compares-and-swaps by value: the newer pick's pin — same family or another —
+        # is untouched, and only the refused id's own pin goes.
+        sid = "11111111-2222-3333-4444-555555555555"
+        km._note_model_pick("claude-fable-9-9")             # A, refused later
+        km._note_model_pick("claude-sonnet-4-6")            # B, the newer pick, another family
+        km._model_pick_refused(sid, "claude-fable-9-9")     # A's refusal lands after B
+        self.assertEqual(km._model_picks(), {"sonnet": "claude-sonnet-4-6"},
+                         "A's pin goes — a family click no longer sends the refused id; B's stands")
+        km._note_model_pick("claude-fable-9-9")             # A again
+        km._note_model_pick("claude-fable-5-1")             # B in the SAME family: the pin is B now
+        km._model_pick_refused(sid, "claude-fable-9-9")
+        self.assertEqual(km._model_picks(), {"sonnet": "claude-sonnet-4-6", "fable": "claude-fable-5-1"},
+                         "the newer pick's pin survives its predecessor's refusal")
+
 
 class _ModelsServer(unittest.TestCase):
     """A kernel HTTP handler on a loopback port + a hermetic STATE, for the /models route tests."""
