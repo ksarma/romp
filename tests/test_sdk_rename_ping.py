@@ -80,6 +80,14 @@ class RenamePing(unittest.TestCase):
         def enqueue(self, text):
             self.sent.append(text)
 
+        def enqueue_if_empty(self, text):
+            # the real session's atomic gate: emptiness check + append under ONE lock hold
+            with self._lock:
+                if self._pending:
+                    return False
+                self.enqueue(text)
+                return True
+
     def test_settle_delivery_ships_the_dressed_ping_alone_and_once(self):
         self._write_history()
         self.be.rename(SID, "tests")
@@ -101,6 +109,40 @@ class RenamePing(unittest.TestCase):
         self.assertEqual(s.sent, [], "nothing fed beside a queued turn")
         self.assertEqual(sb.read_reg(Path(self.td.name), SID).get("renameNote"), "tests",
                          "the note survives for a later, empty-queue settle")
+
+    def test_a_send_racing_the_gate_cannot_queue_ahead_of_the_ping(self):
+        # the gate's TOCTOU (found 2026-08-26): the empty-queue check and the ping's enqueue held
+        # the session lock SEPARATELY, with the renameNote reg write between them — a send landing
+        # in that window queued AHEAD of the ping, and the CLI's pre-turn batching folded the
+        # user's words into the ping's machine record (the exact 2026-08-25 fold the gate exists
+        # to prevent). Deterministic interleave: the reg write IS the window, so a hook there
+        # plays the racing send. A real (unstarted) session — the race is in its lock discipline.
+        self._write_history()
+        self.be.rename(SID, "tests")
+        s = sb.SdkSession(self.be, {"sid": SID, "name": "web", "cwd": self.cwd,
+                                    "mode": "acceptEdits"})
+        orig, raced = self.be._update_reg, []
+
+        def racing_update(sid, **fields):
+            if "renameNote" in fields and not raced:
+                raced.append(True)
+                s.enqueue("the user's own racing words")   # a concurrent send() in the window
+            orig(sid, **fields)
+
+        self.be._update_reg = racing_update
+        try:
+            delivered = self.be._deliver_rename_ping(s)
+        finally:
+            self.be._update_reg = orig
+        pending = s.pending()
+        if delivered:
+            self.assertTrue(pending and pending[0].startswith(sb.RENAME_PING_HEAD),
+                            "a racing send must never queue AHEAD of the ping — that is the fold")
+            self.assertIn("the user's own racing words", pending,
+                          "…and the racing send itself is queued behind it, not lost")
+        else:
+            self.assertEqual(sb.read_reg(Path(self.td.name), SID).get("renameNote"), "tests",
+                             "an undelivered ping keeps its note for a later settle")
 
     def test_the_fold_gates_are_pinned_at_source(self):
         # the fold's mechanics live in async plumbing a unit test can't drive — pin the three gates

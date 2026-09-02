@@ -1848,6 +1848,23 @@ class SdkSession:
         if loop is not None and wake is not None:
             loop.call_soon_threadsafe(wake.set)
 
+    def enqueue_if_empty(self, text: str) -> bool:
+        """Enqueue `text` only when NOTHING is queued — the emptiness check and the append share
+        ONE lock hold. The rename ping's gate (found 2026-08-26): with the check and the enqueue
+        in separate holds, a send racing the gap between them queued AHEAD of the ping, and the
+        CLI's pre-turn batching folded the user's words into the ping's machine record — the
+        exact 2026-08-25 fold the empty-queue gate exists to prevent. Returns whether the text
+        was queued; False leaves the queue untouched."""
+        with self._lock:
+            if self._pending:
+                return False
+            self._pending.append(text)
+            loop, wake = self.loop, self._input_wake
+        self._persist_queue()
+        if loop is not None and wake is not None:
+            loop.call_soon_threadsafe(wake.set)
+        return True
+
     def pending(self) -> list[str]:
         """The queued user turns not yet started (oldest first); thread-safe. The kernel
         renders these as the chat's 'queued' indicator for this SDK session."""
@@ -6582,11 +6599,15 @@ class SdkBackend:
         note = reg.get("renameNote")
         if not note:
             return False
-        with s._lock:
-            if s._pending:
-                return False               # a queued turn would share the pre-turn window — hold the note
+        # ONE lock hold for the emptiness check AND the enqueue (enqueue_if_empty, found
+        # 2026-08-26): checking under the lock, then enqueueing after the reg write, left a
+        # window where a racing send queued AHEAD of the ping — folding the user's words into
+        # its pre-turn record, the very fold this gate guards. The note is spent only AFTER the
+        # ping is provably queued; a kernel death between the two re-pings at a later settle
+        # (a repeat of a true fact) instead of losing the note.
+        if not s.enqueue_if_empty("<!-- romp-injected --><!-- romp-system -->" + RENAME_NUDGE % note):
+            return False                   # a queued turn would share the pre-turn window — hold the note
         self._update_reg(s.sid, renameNote=None)
-        s.enqueue("<!-- romp-injected --><!-- romp-system -->" + RENAME_NUDGE % note)
         return True
 
     def _update_reg(self, sid: str, **fields):
