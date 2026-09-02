@@ -1341,6 +1341,35 @@ class ViewBuilder(unittest.TestCase):
         self.assertEqual(card["awaiting"]["why"], "Waiting on the 3 research agents it dispatched.")
         self.assertIsNone(card["blocked"], "an awaiting goal is not a live block")
 
+    def test_feed_awaiting_card_carries_the_live_snapshots_count(self):
+        # T228 (the user's one-count rule, 2026-09-02): the goal-floored card's awaiting object carries the
+        # same `count` the chat chip words itself from — one live subagent reads "Awaiting agent" on the
+        # chip AND on the card (the feed's spin caption / pill derive the word from awaiting.count). Before,
+        # only the no-open-goal placeholder card threaded the count; a goal card stayed a bare plural.
+        top = SID + ":top"
+        def gn(nid, text, parent, **kw):
+            d = {"id": nid, "text": text, "parentId": parent, "nodeComplete": False,
+                 "blocked": False, "cleared": False, "trail": [], "t": T0, "mt": T0}
+            d.update(kw); return d
+        (jd.GOALDIR / (SID + ".json")).write_text(json.dumps({
+            "rompUuid": SID, "seq": 1, "lastNode": top,
+            "nodes": {top: gn(top, "research the API", None, why="user asked for the research")},
+            "placements": {}, "status": {top: "working"}}))
+        saved = km._session_awaiting
+        try:
+            for n in (1, 3):
+                km._session_awaiting = lambda sid, path, idle, stamp=False, n=n: {
+                    "kind": "agents", "why": "%d background agent%s still working" % (n, "" if n == 1 else "s"),
+                    "since": T0, "count": n}
+                card = next(a for a in km.build_feed(NOW)["asks"] if a["itemId"] == top)
+                self.assertEqual(card["awaiting"]["kind"], "agents")
+                self.assertEqual(card["awaiting"]["count"], n, "the card's count is the snapshot's own")
+            km._session_awaiting = lambda sid, path, idle, stamp=False: {"kind": None, "why": "waiting on dispatched work", "since": None}
+            card = next(a for a in km.build_feed(NOW)["asks"] if a["itemId"] == top)
+            self.assertIsNone(card["awaiting"]["count"], "a source that cannot count ships None, never a guess")
+        finally:
+            km._session_awaiting = saved
+
     def _blocked_card_with_bg_task(self, since, owner="blocked", second_top=False):
         """A GENUINELY blocked top (ask at T0+100) on a session running a LIVE background task, end to
         end through the REAL machinery: the task's toolUseId is the fixture transcript's actual launch

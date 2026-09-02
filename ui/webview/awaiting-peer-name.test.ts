@@ -53,8 +53,8 @@ test("the chat pane names the peer: box in identity colour, pill with the colour
 });
 
 test("the kernel ships identities on every arm — the or-chain's hardcoded Nones are gone", () => {
-  assert.match(KERNEL, /\(_stamp_why, _stamp_kind, _stamp_since, _stamp_peers\)/, "the judge-stamp arm");
-  assert.match(KERNEL, /\(sess_awaiting_why, sess_awaiting_kind, sess_awaiting_since, sess_awaiting_peers\)/,
+  assert.match(KERNEL, /\(_stamp_why, _stamp_kind, _stamp_since, _stamp_peers, \(len\(_stamp_peers\) if _stamp_peers else None\)\)/, "the judge-stamp arm (identities + their count, T228)");
+  assert.match(KERNEL, /\(sess_awaiting_why, sess_awaiting_kind, sess_awaiting_since, sess_awaiting_peers, sess_awaiting_count\)/,
     "the session-snapshot arm");
   assert.match(KERNEL, /"awaitingPeers": \(\(_aw or \{\}\)\.get\("peers"\) or None\)/, "the chat status payload");
   assert.match(KERNEL, /"awaitingPeers": \(\(_aw_bg or \{\}\)\.get\("peers"\) or None\)/, "the timeline sessions payload");

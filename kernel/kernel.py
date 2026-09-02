@@ -21905,13 +21905,16 @@ def build_feed(now, tmux=None):
             await_kind = None                        # the winning why's KIND and SINCE ride beside it,
             await_since = None                       # mirroring the or-chain exactly (a kindless winner
             await_peers = None                       # stays kindless; since = the wait's own event time).
-            if col == "awaiting":                    # peers = structured identities, delegation arm only
-                for _w, _k, _s, _p in ((sess_awaiting_why, sess_awaiting_kind, sess_awaiting_since, sess_awaiting_peers),
-                                       (_stamp_why, _stamp_kind, _stamp_since, _stamp_peers),
-                                       (_deleg_why, "peer", _deleg_since, _deleg_peers),
-                                       (_owned_why, "task", _owned_since, None)):
+            await_count = None                       # how many are awaited — the SAME number the chat chip words itself
+            if col == "awaiting":                    # from (T228, the user's one-count rule): the live snapshot's own
+                # count, the peers a stamp or delegation names, one owned dispatch; None when the arm cannot know
+                for _w, _k, _s, _p, _n in ((sess_awaiting_why, sess_awaiting_kind, sess_awaiting_since, sess_awaiting_peers, sess_awaiting_count),
+                                           (_stamp_why, _stamp_kind, _stamp_since, _stamp_peers, (len(_stamp_peers) if _stamp_peers else None)),
+                                           (_deleg_why, "peer", _deleg_since, _deleg_peers, (len(_deleg_peers) if _deleg_peers else None)),
+                                           (_owned_why, "task", _owned_since, None, 1)):
                     if _w:
                         await_kind, await_since, await_peers = _k, _s, _p
+                        await_count = _n if isinstance(_n, int) and _n > 0 else None
                         break
             # The card's TIME reflects its CURRENT STATE, not when the goal was minted: a COMPLETED card
             # shows when it was completed, a BLOCKED card when it was blocked — the mt of the most-recent
@@ -22198,6 +22201,7 @@ def build_feed(now, tmux=None):
                 # when present the card wears the compact "Waiting on task" pill (expands to this list, like
                 # Sub-goals) instead of the boxed why; empty for subagent/overlay flavors, which keep the box.
                 "awaiting": ({"why": await_why, "kind": await_kind, "since": await_since,
+                              "count": await_count,   # the one number every surface words itself from (T228)
                               "peers": await_peers,   # delegation wait → [{name, host, sid, color}] for the identity-coloured box (the user 2026-08-23)
                               "tasks": _awaiting_task_descs(fsid, s["path"])} if col == "awaiting" else None),
                 "summary": nodes[nid].get("summary"),    # the distiller's key takeaway for a completed goal (modal) — the user 2026-06-17
@@ -24348,6 +24352,7 @@ def build_timeline(now, tmux=None, with_bars=True, live_only=False):
         sessions.append({
             "id": sid, "name": name, "live": live, "state": state, "awaitingBg": awaiting_bg,
             "awaitingKind": awaiting_kind,
+            "awaitingCount": ((_aw_bg or {}).get("count") if isinstance((_aw_bg or {}).get("count"), int) else None),   # the lane badge agrees in number (T228)
             "awaitingPeers": ((_aw_bg or {}).get("peers") or None),   # named identities for a peer wait (2026-08-26)
             # the live bg-task descriptions behind awaitingBg (the user 2026-07-13): the lane draws the
             # idle-but-waiting stretch as a thin dashed segment whose hover lists exactly what's pending

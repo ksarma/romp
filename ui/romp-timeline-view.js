@@ -441,6 +441,19 @@ function idleGaps(merged, gapCT, now) {
   return gaps;
 }
 
+// The awaited KIND worded to agree in NUMBER (T228, the user's one-count rule: a single awaited agent is
+// "agent", never "agents"). This is the RESOLVED twin of ui/webview/spin-caption.ts kindWord()/KIND_WORD —
+// this file runs standalone (Obsidian too) and cannot import it, so the table and the rule are mirrored
+// here byte for byte and timeline-awaiting.test.ts holds the two together. An unknown count (an older
+// kernel ships none) keeps the plural default each kind always wore; an unknown kind stays "agents".
+const KIND_WORD = { agents: 'agents', task: 'task', job: 'job', peer: 'peer', timer: 'timer' };
+function tlKindWord(kind, count) {
+  const base = KIND_WORD[kind || ''] || 'agents';
+  if (typeof count !== 'number' || !Number.isFinite(count)) return base;
+  if (count === 1) return base === 'agents' ? 'agent' : base;
+  return base === 'agents' ? base : base + 's';
+}
+
 function badgeFor(s) {
   if (!s || !s.live) return null;
   let m = null;
@@ -462,9 +475,9 @@ function badgeFor(s) {
   // s.awaitingBg why-field key stays as
   // the fallback (a remote host on an older kernel still reports state 'working' + the field).
   // (The LEGACY lane state 'awaiting' above means blocked-on-you — this name dodges that.)
-  // The KIND rides the label ('Awaiting job', the user 2026-08-15) — the enum values ARE the words;
-  // an older kernel ships no awaitingKind and the badge reads plain 'Awaiting' as before.
-  else if (s.state === 'awaitingBg' || s.awaitingBg) m = { label: 'Awaiting' + (s.awaitingKind ? ' ' + s.awaitingKind : ''), kind: 'awaitbg' };
+  // The KIND rides the label ('Awaiting job', the user 2026-08-15), worded by tlKindWord so one agent reads
+  // 'Awaiting agent' (T228); an older kernel ships no awaitingKind and the badge reads plain 'Awaiting' as before.
+  else if (s.state === 'awaitingBg' || s.awaitingBg) m = { label: 'Awaiting' + (s.awaitingKind ? ' ' + tlKindWord(s.awaitingKind, s.awaitingCount) : ''), kind: 'awaitbg' };   // agrees in number with the chip (T228)
   else if (s.state === 'ready' || s.state === 'waiting' || s.state === 'idle') m = { label: 'Ready', kind: 'ready' };
   if (!m) return null;
   return { label: m.label, bg: BADGE[m.kind].bg, fg: BADGE[m.kind].fg };
