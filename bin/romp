@@ -1870,7 +1870,11 @@ if [[ -n "$session_arg" ]] && ! $use_tmux && ! $resume; then
                   -H 'Content-Type: application/json' -d "$_payload")" \
         || { echo "romp new: kernel not reachable on :$_kport (is romp running?). \`romp new -t $session_arg\` starts a terminal session without it." >&2; exit 1; }
     if [[ "$_resp" == *'"ok": true'* || "$_resp" == *'"ok":true'* ]]; then
-        if [[ "$_resp" == *'"existing"'* ]]; then
+        if [[ "$_resp" == *'"thread": true'* || "$_resp" == *'"thread":true'* ]]; then
+            # a comment THREAD owns this name (T223): nothing was created — the ask landed on the
+            # thread itself, which has no tab; it is reached from its parent session's comments
+            echo "romp new: \"$session_arg\" is a comment thread (no tab) — nothing created; open it from its session's comments"
+        elif [[ "$_resp" == *'"existing"'* ]]; then
             echo "romp new: \"$session_arg\" is already running; see the dashboard (romp)"
         else
             echo "romp new: started \"$session_arg\" (SDK session, working in $_dir)"
@@ -1899,10 +1903,15 @@ if [[ -n "$session_arg" ]] && ! $use_tmux && ! $resume; then
         # session EXISTS by now (the /new above acked), so a failed send names the exact
         # retry command instead of pretending the spawn failed.
         if [[ -n "$msg_arg" ]]; then
+            # address the send by the ID the kernel just answered with, never by name: a comment
+            # thread's name resolves to no live session by design, so a by-name send to it used to
+            # ack ok and land nowhere (T223)
             _mpayload="$(python3 -c 'import json,sys
-d = {"name": sys.argv[1], "text": sys.argv[2]}
+r = json.loads(sys.argv[4]) if len(sys.argv) > 4 and sys.argv[4] else {}
+d = ({"id": r["id"]} if r.get("id") else {"name": sys.argv[1]})
+d["text"] = sys.argv[2]
 if len(sys.argv) > 3 and sys.argv[3]: d["tag"] = sys.argv[3]
-print(json.dumps(d))' "$session_arg" "$msg_arg" "$tag_arg")"
+print(json.dumps(d))' "$session_arg" "$msg_arg" "$tag_arg" "$_resp")"
             _mresp="$(_romp_token_cfg | curl -sf -m 10 --config - -X POST "http://127.0.0.1:$_kport/send" \
                           -H 'Content-Type: application/json' -d "$_mpayload")" \
                 || { echo "romp new: session is up but the message did NOT land (kernel send failed). Retry: romp send $session_arg '<text>'" >&2; exit 1; }

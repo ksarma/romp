@@ -180,6 +180,32 @@ MOCK
     grep '/send' "$MOCK_LOG" | grep 'ideabox' | grep -q 'look into the flaky test'
 }
 
+@test "new: a comment thread's name creates nothing, says so, and -m addresses the thread by id" {
+    # T223: /new answers a thread's name with the THREAD (thread:true + its id). The CLI must not
+    # call it "already running" (a thread has no tab), and a -m prompt must ride the returned id —
+    # a by-name /send to a thread resolved to no live session and acked while landing nowhere.
+    cat > "$MOCK_DIR/curl" << 'MOCK'
+#!/usr/bin/env bash
+echo "curl $*" >> "$MOCK_LOG"
+url=""
+for a in "$@"; do [[ "$a" == http* ]] && url="$a"; done
+if [[ "$url" == */new ]]; then
+  echo '{"ok": true, "id": "66666666-7777-8888-9999-000000000000", "existing": true, "thread": true, "parent": "11111111-2222-3333-4444-555555555555"}'
+else
+  echo '{"ok": true}'
+fi
+MOCK
+    chmod +x "$MOCK_DIR/curl"
+    touch "$MOCK_LOG"
+    export ROMP_SERVE_TOKEN=testtok
+    run run_romp new -m "one more question" web-comment-1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"comment thread"* ]]
+    [[ "$output" != *"already running"* ]]
+    grep '/send' "$MOCK_LOG" | grep -q '"id": "66666666-7777-8888-9999-000000000000"'
+    ! grep '/send' "$MOCK_LOG" | grep -q '"name": "web-comment-1"'
+}
+
 @test "fork: POST /fork with parent, new name and optional --at cut" {
     _stub_curl
     touch "$MOCK_LOG"

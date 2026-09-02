@@ -576,6 +576,71 @@ def append_retry_gave_up(state_dir: Path, sid: str, retries: int, kind: str = ""
         f.write(json.dumps(rec) + "\n")
 
 
+CLI_MODEL_BLOCKS_FILE = "cli-model-blocks.json"
+# The CLI's own refusal when a model id is valid on the API but newer than the installed binary
+# (verified live 2026-09-01 on 2.1.221 vs claude-fable-5-1): the ONLY shape this recognises, so a
+# different error can never be misfiled as a version block.
+_CLI_MIN_VERSION_RE = re.compile(
+    r"Claude Code (\S+) does not support this model; version (\S+) or newer is required")
+
+
+def _assistant_text(msg) -> str:
+    """The text blocks of an AssistantMessage joined — the error settle's own words."""
+    out = []
+    for b in (getattr(msg, "content", None) or []):
+        t = getattr(b, "text", None)
+        if isinstance(t, str):
+            out.append(t)
+        elif isinstance(b, dict) and isinstance(b.get("text"), str):
+            out.append(b["text"])
+    return "".join(out)
+
+
+def _rewrite_json(p: Path, obj) -> None:
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(p.suffix + ".tmp")
+    tmp.write_text(json.dumps(obj))
+    os.replace(tmp, p)
+
+
+def note_cli_model_block(state_dir, model_id, error_text) -> bool:
+    """Record that the INSTALLED CLI refused `model_id` by minimum version (T222): the live model
+    catalog can list ids newer than the binary — the API is the catalog's source, the CLI gates by
+    version — so the kernel's /models stamps the refusal on that version row the moment it is known,
+    not only after the next pick fails. Durable ({model: {needs, cli, t}} in STATE/cli-model-blocks.json)
+    and event-cleared by the first real reply on that model (clear_cli_model_block). Returns whether the
+    text was the version refusal; anything else records nothing."""
+    m = _CLI_MIN_VERSION_RE.search(error_text or "")
+    mid = str(model_id or "")
+    if not m or "claude" not in mid.lower():
+        return False
+    p = Path(state_dir) / CLI_MODEL_BLOCKS_FILE
+    try:
+        d = json.loads(p.read_text())
+        d = d if isinstance(d, dict) else {}
+    except Exception:
+        d = {}
+    d[mid] = {"needs": m.group(2), "cli": m.group(1), "t": int(time.time())}
+    _rewrite_json(p, d)
+    return True
+
+
+def clear_cli_model_block(state_dir, model_id) -> bool:
+    """A real reply on `model_id` proves the installed CLI serves it now — drop its block (the CLI was
+    updated; event-based, never a timer). Returns whether a block was removed."""
+    mid = str(model_id or "")
+    p = Path(state_dir) / CLI_MODEL_BLOCKS_FILE
+    try:
+        d = json.loads(p.read_text())
+    except Exception:
+        return False
+    if not isinstance(d, dict) or mid not in d:
+        return False
+    del d[mid]
+    _rewrite_json(p, d)
+    return True
+
+
 ORPHAN_REPLY_CAP = 8000   # text cap per orphan marker — a lost reply is worth keeping, but bound the file
 
 
@@ -2946,8 +3011,23 @@ class SdkSession:
                 if self.retrying and self.retry_count:
                     append_retry_gave_up(self.backend.state_dir, self.sid, self.retry_count,
                                          kind=str(msg.error))
+                # the installed CLI refusing a model by MINIMUM VERSION is worth remembering for every
+                # picker (T222): the model catalog can list ids newer than the binary
+                try:
+                    note_cli_model_block(self.backend.state_dir, self.chosen_model or self.model,
+                                         _assistant_text(msg))
+                except Exception:
+                    pass
             elif self.retrying and self.retry_count:   # first real output after a storm → durable recovery marker
                 append_retry_recovered(self.backend.state_dir, self.sid, self.retry_count)
+            if not getattr(msg, "error", None):
+                # a real reply on a model proves the CLI serves it — its block (if any) lifts on the event
+                try:
+                    for _mid in {str(getattr(msg, "model", None) or ""), str(self.chosen_model or "")}:
+                        if "claude" in _mid.lower():
+                            clear_cli_model_block(self.backend.state_dir, _mid)
+                except Exception:
+                    pass
             self.retrying = False                      # either way the storm is over (recovered, or settled in error)
             self.retry_count = 0
             self.retry_info = None
@@ -3935,6 +4015,9 @@ class SdkBackend:
                  log=None, reconcile: bool = False, todo_lost=None):
         self.state_dir = Path(state_dir)
         self.claude_bin = claude_bin
+        self.thread_wake_model = None      # kernel-installed: model_id -> replacement or None, consulted
+        #                                    ONLY when a comment THREAD is explicitly woken (T223 rider) —
+        #                                    the catalog lives in the kernel; the backend never imports it
         self._notify = notify              # notify(app, msg) -> push to clients (kernel._send_to_app)
         self._poke_cb = poke               # wake the kernel's producer/judges (optional)
         self._push_cb = push               # wake the kernel's PUSHER → immediate chat push (live tail)
@@ -4097,6 +4180,14 @@ class SdkBackend:
                     if r.get("effortPending") or r.get("modelPending"):
                         self._update_reg(sid, effortPending=False, modelPending=False)
                     queued = _queue_texts(r.get("queue"))
+                    if r.get("threadOf") and not queued:
+                        # a comment THREAD is never auto-resumed at boot (the user 2026-09-01: threads
+                        # persist on disk and come alive only on an explicit reply/branch; a deploy
+                        # boot resuming a cut thread turn put dormant threads back in RAM). Its
+                        # orphaned CLI was reaped above and its pending flags healed just now; only a
+                        # PERSISTED QUEUE — the user's own typed reply the CLI never started — earns
+                        # the resume, because delivering it IS honoring an explicit gesture.
+                        continue
                     # A cut turn is any MACHINE-ACTIVE last state, not just "working" (the user
                     # 2026-08-19, whose figure session sat blocked-on-you after every restart that
                     # landed mid-API-retry): "retrying" is a long-lived open-turn state — the CLI is
@@ -5330,6 +5421,23 @@ class SdkBackend:
                 _settled_now()
                 return None
             reg["sid"] = sid
+            if reg.get("threadOf") and reg.get("spawnedAt") and self.thread_wake_model is not None:
+                # A DORMANT comment thread (spawnedAt: it has run before — a fresh fork's FIRST connect
+                # keeps the model the dialog explicitly chose) registered on a SUPERSEDED full model
+                # id comes up on its family's newest at this explicit wake (T223 rider, the user
+                # 2026-09-01) — the one moment a dormant thread may be touched. Persisted with the
+                # label the popover reads, so the next wake needs no remap; no chat note (the model
+                # badge already shows what it runs on).
+                try:
+                    nm = self.thread_wake_model(reg.get("model") or "")
+                except Exception:
+                    nm = None
+                if nm and nm != reg.get("model"):
+                    self._log("thread %s wakes on %s (registered on superseded %s)"
+                              % (sid[:8], nm, reg.get("model")))
+                    reg["model"] = nm
+                    reg["liveModel"] = _alias_label(nm)
+                    self._update_reg(sid, model=nm, liveModel=_alias_label(nm))   # _reg_lock, not self._lock
             s = SdkSession(self, reg)
             s.on_boot_settled = on_boot_settled
             self.sessions[sid] = s

@@ -4639,6 +4639,74 @@ class DistillAtDone(unittest.TestCase):
         self.assertEqual(jd._distill_due_t(store, self.G, False), T0 + 300,
                          "no done events (pre-diary store) → the settle stamp, then mt")
 
+    def test_the_cited_span_is_located_and_stored_end_to_end(self):
+        # T218: the distiller returns QUOTE, the kernel locates it in the CITED atom's own text and
+        # stores the raw span + offset; an unfindable quote stores None (never a guess).
+        long_a = ("Shipped the widget end to end; the suite is GREEN across every case and the "
+                  "follow-ups are filed for the two edge shapes we deferred.")
+        records = [uline(T0, "build the widget", "u1", ps="typed"),
+                   aline(T0 + 10, long_a, "a1", "u1", stop="end_turn")]
+        segs = [sg for turn in build_session(records)["turns"] for sg in em.segments(turn)]
+        path = Path(self._td) / (SID + ".jsonl")
+        path.write_text("\n".join(json.dumps(r) for r in records) + "\n")
+        node = {"id": self.G, "text": "build the widget", "parentId": None, "nodeComplete": True,
+                "blocked": False, "cleared": False, "trail": [sg["id"] for sg in segs],
+                "t": T0, "mt": T0 + 30, "summary": None,
+                "log": [{"src": "planner", "kind": "done", "ev_t": T0 + 20, "at": T0 + 21}]}
+        jd.save_goals(SID, {"rompUuid": SID, "seq": 1, "placementsV": jd.PLACEMENTS_V, "lastNode": self.G,
+                            "placements": {}, "status": {self.G: "working"},
+                            "confirming": [self.G], "nodes": {self.G: node}})
+        jd.distill_llm = (lambda *a, **k:
+                          'BACKGROUND: b.\nTAKEAWAY: shipped it.\nSOURCE: m1\nQUOTE: "the suite is green across every case"')
+        self.assertEqual(jd._distill_session(SID, str(path), NOW), 1)
+        nd = jd.load_goals(SID)["nodes"][self.G]
+        self.assertEqual(nd["summaryQuote"], "the suite is GREEN across every case",
+                         "normalized (case-insensitive) match maps back to the atom's RAW span")
+        self.assertEqual(nd["summaryQuoteOff"], long_a.index("the suite is GREEN"))
+        # unfindable → honest None (re-arm a fresh distill by clearing the episode)
+        store = jd.load_goals(SID)
+        store["nodes"][self.G]["summary"] = None
+        store["nodes"][self.G]["distilledMt"] = 0
+        jd.save_goals(SID, store)
+        jd.distill_llm = (lambda *a, **k:
+                          'TAKEAWAY: shipped it again.\nSOURCE: m1\nQUOTE: "a sentence that never appeared"')
+        self.assertEqual(jd._distill_session(SID, str(path), NOW), 1)
+        nd = jd.load_goals(SID)["nodes"][self.G]
+        self.assertIsNone(nd["summaryQuote"], "unfindable stores None — the landing keeps today's behavior")
+
+    def test_per_paragraph_cites_store_aligned_end_to_end(self):
+        # T220: two takeaway paragraphs resting on two different messages — each cited with its own
+        # SOURCE k (+ a QUOTE for the first), stored aligned; the third (uncited) paragraph stays None.
+        a1 = ("Alpha wrapped end to end; the alpha suite is green across every case and both "
+              "follow-ups are filed under their own items.")
+        a2 = ("Beta shipped separately this afternoon; its bundle went out with the compat shim "
+              "and the rollout notes were posted to the thread.")
+        records = [uline(T0, "ship alpha and beta", "u1", ps="typed"),
+                   aline(T0 + 10, a1, "aa", "u1"),
+                   aline(T0 + 20, a2, "ab", "aa", stop="end_turn")]
+        segs = [sg for turn in build_session(records)["turns"] for sg in em.segments(turn)]
+        path = Path(self._td) / (SID + ".jsonl")
+        path.write_text("\n".join(json.dumps(r) for r in records) + "\n")
+        node = {"id": self.G, "text": "ship alpha and beta", "parentId": None, "nodeComplete": True,
+                "blocked": False, "cleared": False, "trail": [sg["id"] for sg in segs],
+                "t": T0, "mt": T0 + 30, "summary": None,
+                "log": [{"src": "planner", "kind": "done", "ev_t": T0 + 25, "at": T0 + 26}]}
+        jd.save_goals(SID, {"rompUuid": SID, "seq": 1, "placementsV": jd.PLACEMENTS_V, "lastNode": self.G,
+                            "placements": {}, "status": {self.G: "working"},
+                            "confirming": [self.G], "nodes": {self.G: node}})
+        jd.distill_llm = (lambda *a, **k:
+                          "TAKEAWAY: Alpha done.\n\nBeta done.\n\nStill open: the smoke pass.\n"
+                          'SOURCE: m2\nSOURCE 1: m1\nQUOTE 1: "the alpha suite is green"\nSOURCE 2: m2')
+        self.assertEqual(jd._distill_session(SID, str(path), NOW), 1)
+        nd = jd.load_goals(SID)["nodes"][self.G]
+        anchors = nd["summaryAnchors"]
+        self.assertEqual(len(anchors), 3, "aligned to the takeaway's three paragraphs")
+        self.assertEqual(anchors[0]["a"], "aa")
+        self.assertEqual(anchors[0]["q"], "the alpha suite is green", "paragraph 1's span, located in ITS atom")
+        self.assertEqual(anchors[1], {"a": "ab"})
+        self.assertIsNone(anchors[2], "the uncited leftover paragraph falls back to the whole-summary landing")
+        self.assertEqual(nd["summaryAnchor"], "ab", "the whole-summary citation stands beside them, unchanged")
+
     def test_a_confirming_top_distills_before_settle(self):
         path = self._write()
         jd.distill_llm = lambda *a, **k: "BACKGROUND: b.\nTAKEAWAY: shipped the widget.\nSOURCE: m1"
@@ -5095,14 +5163,14 @@ class SourceCitation(unittest.TestCase):
                          "only the substantive wrap-up is offered for citation")
 
     def test_split_source_strips_the_final_citation_line(self):
-        self.assertEqual(jd._split_source("The fix shipped.\nSOURCE: m3"), ("The fix shipped.", "m3"))
-        self.assertEqual(jd._split_source("The fix shipped.\n SOURCE: [m12] "), ("The fix shipped.", "m12"))
+        self.assertEqual(jd._split_source("The fix shipped.\nSOURCE: m3"), ("The fix shipped.", "m3", None))
+        self.assertEqual(jd._split_source("The fix shipped.\n SOURCE: [m12] "), ("The fix shipped.", "m12", None))
 
     def test_split_source_is_none_when_absent_or_not_final(self):
-        self.assertEqual(jd._split_source("No citation."), ("No citation.", None))
-        self.assertEqual(jd._split_source(""), ("", None))
+        self.assertEqual(jd._split_source("No citation."), ("No citation.", None, None))
+        self.assertEqual(jd._split_source(""), ("", None, None))
         body = "It mentions SOURCE: m2 mid-sentence and keeps going."
-        self.assertEqual(jd._split_source(body), (body, None),
+        self.assertEqual(jd._split_source(body), (body, None, None),
                          "only a citation anchored at the END of the reply is parsed off")
 
     def test_prompts_ask_for_the_source_line(self):
@@ -5146,10 +5214,12 @@ class SourceCitation(unittest.TestCase):
         # pre-decided next lever repeats the requirement as the LAST thing the model reads (recency), after
         # the section specs, so the trailing line is top-of-mind at generation time. Briefer-only: the
         # distiller was clean post-fix (0 cite-miss), so its working prompt is left untouched.
-        tail = jd.BLOCK_BRIEF_SYS[-260:]
-        self.assertIn("final line of your", tail, "the reminder rides at the very end of the briefer prompt")
+        tail = jd.BLOCK_BRIEF_SYS[-700:]           # the reminder grew QUOTE (T218) + per-paragraph cites (T220) — same recency lever
+        self.assertIn("your reply must end with", tail, "the reminder rides at the very end of the briefer prompt")
+        self.assertIn("SOURCE k: mN", tail, "…and offers the per-paragraph form (T220)")
         self.assertIn("SOURCE: mN", tail, "and it restates the exact required line")
         self.assertIn("Do not stop at the takeaway", tail, "hammering the observed miss: ending on the takeaway")
+        self.assertIn("QUOTE:", tail, "the supporting-span option rides the same end-reminder (T218)")
         # ADDITIVE, not a replacement: the detailed citation paragraph (which message to cite) still precedes it
         self.assertLess(jd.BLOCK_BRIEF_SYS.index("complete **only**"),
                         jd.BLOCK_BRIEF_SYS.rindex("SOURCE: mN"),

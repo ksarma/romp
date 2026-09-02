@@ -169,6 +169,59 @@ class MachineCutSuppression(unittest.TestCase):
                         "the notice belongs to the SECOND cut; the first stop is the user's")
 
 
+class MidToolUseCut(unittest.TestCase):
+    """T219 (the user 2026-09-01, who saw their own card claim they stopped a session a deploy
+    restart had cut): a restart cutting a turn MID-TOOL-USE writes TWO stop records back to back —
+    '[Request interrupted by user for tool use]' then '[Request interrupted by user]' — and only
+    THEN the resume notice. The first record's forward scan hits the second (a terminator) and,
+    before the fix, returned 'user stop' without consulting the notice or the backend's machineCut
+    stamp: blocked-on-you filed off a machine cut, twice on the live specimen. An adjacent stop
+    record settles NOTHING about the one before it — only a human message does — so the scan now
+    falls through to the stamp there, and the stamp decides."""
+
+    def _turns(self, atoms):
+        return [{"atoms": atoms}]
+
+    def _double_cut(self):
+        return [uatom(T0, "wire the thing"),
+                uatom(T0 + 60, "[Request interrupted by user for tool use]", author="human"),
+                intr(T0 + 63),
+                uatom(T0 + 80, sb.BOOT_RESUME_NUDGE, "romp")]
+
+    def test_a_mid_tool_use_restart_cut_is_no_user_stop(self):
+        # the stamp covers both records (the backend stamps the cut at/after the CLI writes them)
+        stop_t, human_t = km._interrupt_marks_atoms(self._double_cut(), cut_t=T0 + 64,
+                                                    cut_cause="restart")
+        self.assertEqual(stop_t, 0, "neither back-to-back record reads as the user's stop — "
+                                    "no blocked-on-you, no 'you stopped this' prose")
+
+    def test_the_notice_clears_both_twin_records_even_before_the_stamp_lands(self):
+        # the read-past-the-twin rule lets record #1's scan reach the notice just past record #2 —
+        # the notice covers its own cut's twins, so neither needs the stamp (the stamp remains the
+        # decider only inside the notice-not-yet-on-disk window, tested above)
+        atoms = self._double_cut()
+        stop_t, _ = km._interrupt_marks_atoms(atoms, cut_t=0.0, cut_cause="")
+        self.assertEqual(stop_t, 0, "the notice disowns both back-to-back records of its cut")
+
+    def test_a_genuine_double_stop_still_files(self):
+        # the user hammering Esc twice with NO machine cut behind it: still a real stop
+        atoms = [uatom(T0, "wire the thing"),
+                 uatom(T0 + 60, "[Request interrupted by user for tool use]", author="human"),
+                 intr(T0 + 63)]
+        stop_t, _ = km._interrupt_marks_atoms(atoms, cut_t=0.0, cut_cause="")
+        self.assertGreater(stop_t, 0, "no notice, no stamp → the user is driving, exactly as today")
+
+    def test_a_human_terminator_still_settles_without_the_stamp(self):
+        # the user SPOKE after the first record: the transcript answered — the stamp is never
+        # consulted, the stop tally keys on the record vs the newer human message as before
+        atoms = [uatom(T0, "wire the thing"),
+                 uatom(T0 + 60, "[Request interrupted by user for tool use]", author="human"),
+                 uatom(T0 + 90, "ok, take plan B"),
+                 intr(T0 + 120)]
+        stop_t, human_t = km._interrupt_marks_atoms(atoms, cut_t=T0 + 200, cut_cause="restart")
+        self.assertGreater(stop_t, 0)
+
+
 class _FeedHarness(unittest.TestCase):
     """Shared transcript + store + feed fixture for the tick-level classes below (no tests of its
     own): a temp project dir, a named session, redirected judge/kernel paths, and helpers to write

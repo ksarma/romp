@@ -104,6 +104,111 @@ class StaggerBoundsConcurrency(unittest.TestCase):
                         "the backstop path is LOUD, never silent")
 
 
+class ThreadsStayDormant(unittest.TestCase):
+    """Comment threads are never auto-resumed at boot (the user 2026-09-01: threads persist on disk
+    and come alive only on an explicit reply/branch). A cut thread turn or a persisted thread queue
+    stays lazy; top-level sessions with the same shape still resume."""
+
+    def test_boot_reconcile_skips_a_cut_thread_but_heals_its_flags(self):
+        d = tempfile.mkdtemp()
+        be = _backend(d)
+        ensured = []
+        be._ensure = lambda sid, on_boot_settled=None: (ensured.append(sid), on_boot_settled and on_boot_settled())[0]
+        regs = _cut_regs(d, 2)
+        tsid = "11111111-bbbb-0000-0000-00000000dead"
+        regs.append(_reg(d, tsid, threadOf="11111111-bbbb-0000-0000-000000000000", modelPending=True))
+        sb.append_state(Path(d), tsid, "working")     # a cut thread turn, no queue
+        with mock.patch.object(sb.subprocess, "run", return_value=mock.Mock(stdout="")):
+            be._boot_reconcile(regs)
+        self.assertEqual(sorted(ensured), sorted(r["sid"] for r in regs[:2]),
+                         "the two top-level cut sessions resume; the thread stays dormant")
+        self.assertFalse(sb.read_reg(Path(d), tsid).get("modelPending"),
+                         "the pending-flag heal still runs for a dormant thread")
+
+    def test_a_threads_persisted_queue_earns_the_resume(self):
+        # the user's own typed reply the CLI never started: delivering it honors an explicit gesture
+        d = tempfile.mkdtemp()
+        be = _backend(d)
+        ensured = []
+        be._ensure = lambda sid, on_boot_settled=None: (ensured.append(sid), on_boot_settled and on_boot_settled())[0]
+        tsid = "11111111-bbbb-0000-0000-00000000beef"
+        regs = [_reg(d, tsid, threadOf="11111111-bbbb-0000-0000-000000000000", queue=["a queued reply"])]
+        with mock.patch.object(sb.subprocess, "run", return_value=mock.Mock(stdout="")):
+            be._boot_reconcile(regs)
+        self.assertEqual(ensured, [tsid])
+
+    def test_the_orphan_reap_still_covers_a_threads_leftover_cli(self):
+        # the skip sits INSIDE the resume loop, after the reap built its sid list from every alive
+        # reg — a dead kernel's thread CLI is still a zombie writer nobody manages
+        import inspect
+        src = inspect.getsource(sb.SdkBackend._boot_reconcile)
+        reap, skip = 'lastsids = [str(r.get("lastSid")', 'if r.get("threadOf") and not queued:'
+        self.assertIn(reap, src)
+        self.assertIn(skip, src)
+        self.assertLess(src.index(reap), src.index(skip), "reap first over every alive reg, then the skip")
+
+
+class ThreadWakeRemap(unittest.TestCase):
+    """T223 rider: a thread registered on a superseded full model id comes up on the replacement the
+    kernel's hook names, persisted, at its explicit wake — and only threads, only when a hook is set."""
+
+    class _Rec:
+        made = []
+
+        def __init__(self, backend, reg):
+            self.reg = dict(reg)
+            self.thread = mock.Mock(is_alive=lambda: True)
+            self.on_boot_settled = None
+            ThreadWakeRemap._Rec.made.append(self.reg)
+
+        def start(self):
+            pass
+
+    def _wake(self, reg_extra, hook):
+        d = tempfile.mkdtemp()
+        be = _backend(d)
+        be.thread_wake_model = hook
+        sid = "11111111-bbbb-0000-0000-0000000000aa"
+        _reg(d, sid, model="claude-fable-5", **reg_extra)
+        self._Rec.made = []
+        with mock.patch.object(sb, "SdkSession", self._Rec):
+            be._ensure(sid)
+        return self._Rec.made[0]["model"], sb.read_reg(Path(d), sid).get("model")
+
+    THREAD = {"threadOf": "11111111-bbbb-0000-0000-000000000000", "spawnedAt": 1700000000}
+
+    def test_a_dormant_threads_superseded_id_remaps_and_persists(self):
+        spawned, on_disk = self._wake(dict(self.THREAD),
+                                      lambda m: "claude-fable-5-1" if m == "claude-fable-5" else None)
+        self.assertEqual((spawned, on_disk), ("claude-fable-5-1", "claude-fable-5-1"))
+
+    def test_the_label_the_popover_reads_is_refreshed_too(self):
+        d = tempfile.mkdtemp()
+        be = _backend(d)
+        be.thread_wake_model = lambda m: "claude-fable-5-1"
+        sid = "11111111-bbbb-0000-0000-0000000000ab"
+        _reg(d, sid, model="claude-fable-5", liveModel="Fable 5", **self.THREAD)
+        self._Rec.made = []
+        with mock.patch.object(sb, "SdkSession", self._Rec):
+            be._ensure(sid)
+        self.assertNotEqual(sb.read_reg(Path(d), sid).get("liveModel"), "Fable 5", "no stale label")
+
+    def test_a_fresh_forks_first_connect_keeps_the_dialogs_pick(self):
+        # no spawnedAt = it has never run: the model is the fork dialog's explicit choice, not a
+        # dormant registration to modernize
+        spawned, on_disk = self._wake({"threadOf": "11111111-bbbb-0000-0000-000000000000"},
+                                      lambda m: "claude-fable-5-1")
+        self.assertEqual((spawned, on_disk), ("claude-fable-5", "claude-fable-5"))
+
+    def test_a_top_level_session_is_never_remapped_here(self):
+        spawned, on_disk = self._wake({"spawnedAt": 1700000000}, lambda m: "claude-fable-5-1")
+        self.assertEqual((spawned, on_disk), ("claude-fable-5", "claude-fable-5"))
+
+    def test_no_hook_means_no_remap(self):
+        spawned, on_disk = self._wake(dict(self.THREAD), None)
+        self.assertEqual((spawned, on_disk), ("claude-fable-5", "claude-fable-5"))
+
+
 class FireBootSettled(unittest.TestCase):
     def _session(self, d=None):
         d = d or tempfile.mkdtemp()

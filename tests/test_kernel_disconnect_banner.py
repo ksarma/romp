@@ -31,7 +31,8 @@ class DisconnectBanner(unittest.TestCase):
         self.assertIn('postMessage({romp:"wsState",app:APP,state:s}', js)
         self.assertIn('ws.onopen=function(){lastRecv=Date.now();netState("up");', js)   # lastRecv stamp → heartbeat watchdog
         self.assertIn('ws.onclose=function(){netState("down");', js)   # reconnects on close (wsdown loader + retry follow)
-        self.assertIn("setTimeout(connect,1500);", js)
+        self.assertIn("setTimeout(connect,(restartAnnounced&&Date.now()-restartAnnounced<30000)?250:1500);",
+                      js, "T217: an ANNOUNCED death redials tight; the blind 1.5s stays for real drops")
         self.assertIn("ws.onerror=function(){try{ws.close();}catch(e){}};", js)
         # a RECONNECT no longer silently reloads (the user 2026-07-05): it PROMPTS via raiseStale, and the fresh
         # socket resyncs live. The old auto-reload-on-reopen is gone.
@@ -39,8 +40,10 @@ class DisconnectBanner(unittest.TestCase):
         # (test_pane_loader_reconnect.py owns that half)
         # …and ARMS the retire (freshPending) so the prompt clears itself when the resync frame lands
         # (the user 2026-08-01) — see test_the_connection_prompt_retires_when_the_resync_lands
-        self.assertIn('if(wasReconn){armStale("reconnect");freshPending=true;'
-                      'try{window.dispatchEvent(new Event("romp:wsup"));}catch(e){}}', js)
+        self.assertIn('if(wasReconn){var ann=restartAnnounced&&Date.now()-restartAnnounced<30000;'
+                      'restartAnnounced=0;', js)   # T217: the announced-restart latch spends inside the gate
+        self.assertIn('if(!ann)armStale("reconnect");', js)
+        self.assertIn('try{window.dispatchEvent(new Event("romp:wsup"));}catch(e){}}', js)
         self.assertNotIn("if(everConnected){location.reload();return;}", js,
                          "the silent auto-reload-on-reconnect is replaced by a reload PROMPT")
         self.assertNotIn("ws.onclose=function(){setTimeout(function(){location.reload();},1500);};", js,
@@ -140,7 +143,8 @@ class DisconnectBanner(unittest.TestCase):
         # and straight back down on nearly every dashboard open, since the resync lands within a beat.
         self.assertIn("staleTimer=setTimeout(function(){staleTimer=0;raiseStale(why);},1000)", js,
                       "a one-second arming window, not an immediate raise")
-        self.assertIn('if(wasReconn){armStale("reconnect");', js, "the reconnect ARMS it")
+        self.assertIn('if(!ann)armStale("reconnect");', js,
+                      "the reconnect ARMS it — except the one an ANNOUNCED restart already explained (T217)")
         self.assertNotIn("if(wasReconn){raiseStale();", js, "…and never raises it outright")
         self.assertIn("if(staleTimer){clearTimeout(staleTimer);staleTimer=0;}", js,
                       "a resync inside the window disarms it, so it never appears at all")

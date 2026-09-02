@@ -67,7 +67,10 @@ class JudgeSettings(unittest.TestCase):
         # the shared lists, each choice carrying its colormap tint (the user 2026-08-17) — and,
         # since the version submenus (the user 2026-08-25), each family's versions + default too
         self.assertIn('{"models": [dict(c, color=_model_color(c["value"], _stops),', ksrc)
-        self.assertIn('versions=[dict(v) for v in MODEL_VERSIONS.get(c["value"]) or []]', ksrc)
+        # …each version row stamped with any CLI minimum-version refusal (T222, 2026-09-01: the live
+        # catalog can list ids newer than the installed binary, so the row says so before a pick)
+        self.assertIn('versions=[_with_cli_block(dict(v), _blocks)', ksrc)
+        self.assertIn('for v in MODEL_VERSIONS.get(c["value"]) or []]', ksrc)
 
     # ---- per-tier overrides honored + validated ----
     def test_judge_tiers_accept_version_ids(self):
