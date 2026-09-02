@@ -127,6 +127,9 @@ class SidechainNeverLearns(unittest.TestCase):
         s.sid = SID
         s.name = "web"
         s.model = "Fable 5"
+        s._model_id = "claude-fable-5"                  # the id behind that name, as a reg-seeded session carries it
+        #                                                 (2026-09-01: a FIRST-known id is persisted even under an
+        #                                                 unchanged name — test_sdk_backend covers that write)
         s._model_pending = ""
         s.retrying = False
         s.retry_count = 0

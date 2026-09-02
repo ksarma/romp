@@ -30,7 +30,54 @@ test("caret faces RIGHT everywhere; the submenu side is measured with the right 
   assert.match(GEAR, /e\.key === 'romp:menu-echo' && e\.newValue/, "cross-pane dismissal adopted");
 });
 
-test("the kernel accepts version ids on every judge tier", () => {
-  assert.match(KERNEL, /_JUDGE_MODEL_VALUES = _MODEL_VALUES \| set\(_VERSION_FAMILY\)/);
-  assert.match(KERNEL, /_set_judge_state\("distill-model", v, _JUDGE_MODEL_VALUES \| \{"triage"\}, gt=gt\)/);
+test("the kernel accepts version ids — seed AND learned — on every judge tier", () => {
+  // the gear's selects are built from /models' versions, learned rows included, so every tier
+  // validates against the LIVE set (_judge_model_values: the seed half ∪ what running sessions'
+  // CLIs report) — the kernel never refuses a value it offered (review 2026-09-01)
+  assert.match(KERNEL, /_JUDGE_MODEL_VALUES = _MODEL_VALUES \| set\(_VERSION_FAMILY\)/, "the seed half");
+  assert.match(KERNEL, /def _judge_model_values\(\):[\s\S]{0,700}return _JUDGE_MODEL_VALUES \| \{v\["value"\] for vs in _learned_versions\(\)\.values\(\) for v in vs\}/,
+    "…plus every learned id, computed per call");
+  for (const tier of ["judge-model", "index-model"]) {
+    assert.match(KERNEL, new RegExp(`_set_judge_state\\("${tier}", v, _judge_model_values\\(\\), gt=gt\\)`), tier);
+  }
+  assert.match(KERNEL, /_set_judge_state\("distill-model", v, _judge_model_values\(\) \| \{"triage"\}, gt=gt\)/);
+  assert.match(KERNEL, /_set_judge_state\("comment-model", v, _judge_model_values\(\) \| \{"session", "default"\}, gt=gt\)/);
+  assert.ok(!/_set_judge_state\("[a-z]+-model", v, _JUDGE_MODEL_VALUES/.test(KERNEL),
+    "no tier validates against the seed-only set — a learned pick would be refused there");
+});
+
+test("the gear's version rows mark a learned version as new, like the chat and timeline pickers", () => {
+  // (review 2026-09-01) the chat/timeline submenus wore the marker; the gear's judge/index/distill/
+  // comment selects rendered the same learned rows bare — the fail-loudly marker on every surface
+  assert.match(GEAR, /if \(v\.learned\) \{[\s\S]{0,600}tag\.textContent = ' new'/);
+  assert.match(GEAR, /if \(v\.learned\) \{[\s\S]{0,600}font-size:0\.82em;opacity:0\.6/, "the menu vocabulary's sub-line size and opacity");
+  assert.match(GEAR, /if \(v\.learned\) \{[\s\S]{0,600}r2\.title = /, "and says where the version came from");
+});
+
+test("the gear's version submenu opens with a Latest row that sends the bare family alias", () => {
+  // the session pickers' floating gesture (review 2026-09-01), on the judge tiers too: a tier set
+  // to a version stays there until picked off it, and the family row sends the remembered pin —
+  // Latest is the row that sends the alias itself, so the tier follows the CLI's newest again
+  assert.match(GEAR, /latest\.appendChild\(document\.createTextNode\('Latest'\)\)/);
+  assert.match(GEAR, /latest\.addEventListener\('click', function \(e2\) \{ e2\.stopPropagation\(\); pick\(fam\.value\); \}\)/);
+  assert.match(GEAR, /sub\.appendChild\(latest\);[\s\S]{0,300}versions\.forEach\(function \(v\)/, "heads the submenu, ahead of the versions");
+});
+
+test("the gear's cached /models list re-reads on the kernel's models frame (fixer round 4, 2026-09-01)", () => {
+  // fillChoices caches the list after its first fetch and the family rows send `fam.default` from
+  // that cache at click time — so a pin or a Latest un-pin made anywhere (this dashboard's chat
+  // picker, another dashboard) left the gear's family rows sending a stale default. Event-keyed on
+  // the kernel's models frame, like the settingStale listener beside it; never a poll. The cache
+  // moving repaints the selects through the ONE painter fillChoices uses (fixer round 6, 2026-09-02:
+  // paintChoices, which hands each select its value back — the round-4 reason for not repainting),
+  // so a frame that lands before the page-load fill has painted still leaves populated pickers.
+  assert.match(GEAR, /if \(!m \|\| m\.type !== 'models'\) return;/);
+  const at = GEAR.indexOf("m.type !== 'models'");
+  const seg = GEAR.slice(at, at + 400);
+  assert.ok(seg.includes("fetch(ku('/models'), { cache: 'no-store' })"), "the same endpoint fillChoices reads");
+  assert.ok(seg.includes("if (d && Array.isArray(d.models) && adoptChoices(d)) paintChoices();"),
+    "replaces the cache the rows read at click time — through the rev gate — and repaints from it (gear-models-frame.test.ts runs both)");
+  assert.ok(!seg.includes("innerHTML"), "no second option writer: the painter is shared with fillChoices");
+  assert.ok(GEAR.includes("var held = sel.value;") && GEAR.includes("if (held) setShow(sel, held);"),
+    "the painter gives every select its value back — through the one off-list-aware write path, so a value the new list lacks is re-injected rather than blanked (gear-models-frame.test.ts runs it)");
 });

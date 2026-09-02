@@ -470,6 +470,71 @@ test("the lane gear carries the SAME tag editor — the shared builders, never a
   assert.match(SRC, /this\._tagJoinMenu\(am, \[s\.id\], build\);/);
 });
 
+test("the lane model menu labels a family by its own label and marks a learned version as new (2026-09-01)", () => {
+  // the family row's text is the family label from /models — no version-table lookup — so the
+  // kernel's alias default ("fable") renders exactly as a pinned id did; ✓ matches the leading word
+  assert.match(SRC, /const item = menu\.createDiv\(\{ text: c\.label \}\);/);
+  assert.match(SRC, /return kind === 'effort' \? cur === value : cur\.startsWith\(value\);/);
+  // a version a running session's CLI reported that the seed table lacks (kernel /models `learned`)
+  // is offered AND marked — same treatment as the chat's meta-menu, inlined for the foreign document
+  assert.match(SRC, /if \(v\.learned\) \{[\s\S]{0,600}row\.createSpan\(\{ text: ' new' \}\)/);
+  assert.match(SRC, /if \(v\.learned\) \{[\s\S]{0,600}font-size:0\.82em;opacity:0\.6/, "the menu vocabulary's sub-line size and opacity");
+});
+
+test("the lane version submenu opens with a Latest row that clears the family's pin through the command bridge (2026-09-01)", () => {
+  // the chat picker's floating gesture, on the lane menu: Latest sends "/model <family>" with the
+  // `floating` flag, which the kernel's sendCommand arm hands to _set_model_or_park to forget the
+  // family's remembered pin — the one gesture back to floating once a family is pinned
+  const BOOT = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "timeline-boot.ts"), "utf8");
+  const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
+  assert.match(SRC, /const pick = \(value, floating\) => \{/);
+  assert.match(SRC, /this\._sendCommand\(s\.name, '\/' \+ kind \+ ' ' \+ value, kind === 'model', floating \? \{ floating: true \} : null\);/);
+  assert.match(SRC, /const pinned = !!c\.default && c\.default !== c\.value;/);
+  assert.match(SRC, /latest\.createDiv\(\{ text: 'Latest' \}\);/);
+  assert.match(SRC, /pick\(c\.value, true\)/, "sends the ALIAS with the flag");
+  assert.match(SRC, /lsub\.setAttribute\('style', 'font-size:0\.82em;opacity:0\.6;'\);[\s\S]{0,1200}for \(const v of versions\)/,
+    "heads the submenu, ahead of the versions, wearing the sub-line vocabulary");
+  assert.match(SRC, /if \(!pinned && cur\) \{ const ck = latest\.createSpan\(\{ text: '✓' \}\)/, "✓ when unpinned and the lane runs the family");
+  // the bridge carries the flag in every host: the VS Code boot glue and the kernel's shell page
+  assert.match(SRC, /_sendCommand\(name, cmd, confirm, extra\) \{/);
+  assert.match(SRC, /window\.__rompTimelineSendCommand\(name, cmd, extra \|\| undefined\); return;/);
+  assert.match(BOOT, /__rompTimelineSendCommand: \(name: string, cmd: string, extra\?: Record<string, unknown>\) => post\(\{ type: "sendCommand", name, cmd, \.\.\.\(extra \|\| \{\}\) \}\)/);
+  assert.match(KERNEL, /window\.__rompTimelineSendCommand=function\(name,cmd,extra\)\{post\(Object\.assign\(\{type:"sendCommand",name:name,cmd:cmd\},extra\|\|\{\}\)\);\};/);
+  assert.match(KERNEL, /_route_meta_command\(be, sid, cmd, client, floating=bool\(msg\.get\("floating"\)\)\)/);
+});
+
+test("executed: the lane picker's /models list re-fetches IN PLACE on the kernel's models frame (fixer round 4, 2026-09-01)", async () => {
+  // the list was fetched once at load and never refreshed, so after a Latest un-pin the lane's next
+  // family click sent the stale pinned id and silently re-pinned. loadModelChoices is the one loader
+  // (page load is its first call); refreshModels — the frame's arm in both boots — calls it again,
+  // and the array keeps its reference so _openMetaMenu reads the fresh `default`.
+  const { loadModelChoices, MODEL_CHOICES } = requireCjs(VIEW_PATH);
+  const realFetch = (globalThis as any).fetch;
+  let served: any = { models: [{ label: "Fable", value: "fable", default: "claude-fable-5", versions: [] }], efforts: [{ label: "High", value: "high" }] };
+  (globalThis as any).fetch = async () => ({ json: async () => served });
+  try {
+    const ref = MODEL_CHOICES;
+    await loadModelChoices();
+    assert.equal(MODEL_CHOICES, ref, "same array — the menu builder's reference");
+    assert.equal(MODEL_CHOICES[0].default, "claude-fable-5", "pinned");
+    assert.deepEqual(MODEL_CHOICES[MODEL_CHOICES.length - 1], { label: "Default", value: "default" }, "the lane's own sentinel still appended");
+    served = { models: [{ label: "Fable", value: "fable", default: "fable", versions: [] }], efforts: [] };
+    const p: any = Object.create(TimelinePanel.prototype);
+    await p.refreshModels();                       // what the models frame calls
+    assert.equal(MODEL_CHOICES, ref);
+    assert.equal(MODEL_CHOICES[0].default, "fable", "un-pinned: the next family click sends the alias");
+    assert.equal(MODEL_CHOICES.length, 2);
+  } finally {
+    (globalThis as any).fetch = realFetch;
+  }
+  // both boots dispatch the frame to it — the VS Code glue and the kernel's inline browser twin
+  const BOOT = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "timeline-boot.ts"), "utf8");
+  const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
+  assert.match(BOOT, /if \(m\.type === "models" && panel\.refreshModels\) \{ panel\.refreshModels\(\); return true; \}/);
+  assert.match(KERNEL, /else if\(m\.type==="models"&&panel\.refreshModels\)panel\.refreshModels\(\);/);
+  assert.match(SRC, /^loadModelChoices\(\);$/m, "page load is the first call");
+});
+
 test("the lane model menu exposes VERSIONS: submenu affordance, remembered default, keyboard (the user 2026-08-25)", () => {
   // families with >1 live version wear a side submenu — hover or ArrowRight reveals it, every
   // version directly pickable with the current-✓; clicking the family picks its remembered DEFAULT

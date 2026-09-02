@@ -10,6 +10,8 @@ Two layers:
     AskUserQuestion -> it surfaces as an askLive picker -> the UI answers ->
     PermissionResultAllow(updated_input={questions, answers}) goes back.
 """
+import asyncio
+import inspect
 import os
 import json
 import threading
@@ -18,6 +20,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from importlib.machinery import SourceFileLoader
+from unittest import mock
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
@@ -449,14 +452,21 @@ class LiveTail(unittest.TestCase):
         self.assertEqual(cmds[0]["message"]["content"], [{"type": "text", "text": "/effort high"}])
         self.assertEqual(cmds[0]["author"], "human")
 
-    def test_set_effort_on_a_dormant_session_stays_quiet(self):
-        # no live thread → the value applies on the next connect; nothing to echo into (no _live entry)
+    def test_set_effort_on_a_dormant_session_still_leaves_the_acknowledging_chip(self):
+        # no live thread → the value applies on the next connect — but the pick is still acknowledged
+        # (review 2026-09-01, reversing this test's earlier "stays quiet" pin): the chip is what the
+        # composer's optimistic bubble retires against, and with nothing landing on a dormant session a
+        # typed "/effort low" sat as an unconfirmed dashed bubble and then vanished without a trace
         d = tempfile.mkdtemp()
         be = sb.SdkBackend(d, "/bin/true", lambda *a, **k: None)
         sid = "11111111-2222-3333-4444-666666666666"
         sb.write_reg(d, sid, {"sid": sid, "name": "n", "cwd": "/tmp", "alive": True})
         self.assertTrue(be.set_effort(sid, "low"))
-        self.assertEqual(be.live_atoms(sid), [])
+        cmds = [a for a in be.live_atoms(sid) if a.get("command") == "/effort"]
+        self.assertEqual(len(cmds), 1)
+        self.assertEqual(cmds[0]["message"]["content"], [{"type": "text", "text": "/effort low"}])
+        self.assertIsNone(cmds[0]["fsid"], "no live thread and no last resume target → none")
+        self.assertEqual(sb.read_reg(d, sid)["effort"], "low", "and the value still applies at the next connect")
 
     def _live_fast_session(self, d, sid, unlocked=False):
         """A constructed SdkSession whose thread READS alive (set_fast's gate) without spawning a CLI.
@@ -1205,6 +1215,27 @@ class SetModelModePure(unittest.TestCase):
         self.assertFalse(reg.get("modelPending"), "nothing is coming to resolve dots → resolve immediately, no trap")
         self.assertEqual(sb.model_label(reg["liveModel"], reg["model"]), "Fable")
 
+    def test_learn_model_persists_the_raw_id_beside_the_pretty_name(self):
+        # 2026-09-01: the pickers' version lists are seeded from a table and COMPLETED from what the
+        # CLI actually reports (the authoritative source for what it serves) — that needs the raw id,
+        # not just the badge text, persisted where the kernel reads regs (liveModelId).
+        sid = self.be.spawn("m", self.d)
+        sess = sb.SdkSession(self.be, sb.read_reg(self.d, sid))
+        sess._learn_model("Fable 5.1", raw="claude-fable-5-1")
+        reg = sb.read_reg(self.d, sid)
+        self.assertEqual((reg["liveModel"], reg["liveModelId"]), ("Fable 5.1", "claude-fable-5-1"))
+        # a pre-fix reg knows the NAME but not the id: the first report of an unchanged name still
+        # lands the id (otherwise a long-running session would never contribute its version)
+        sid2 = self.be.spawn("n", self.d)
+        sb.write_reg(self.d, sid2, {**sb.read_reg(self.d, sid2), "liveModel": "Fable 5"})
+        sess2 = sb.SdkSession(self.be, sb.read_reg(self.d, sid2))
+        self.assertEqual(sess2.model, "Fable 5")
+        sess2._learn_model("Fable 5", raw="claude-fable-5")
+        self.assertEqual(sb.read_reg(self.d, sid2)["liveModelId"], "claude-fable-5")
+        # the seeded id survives construction, so an unchanged report writes nothing new
+        sess3 = sb.SdkSession(self.be, sb.read_reg(self.d, sid2))
+        self.assertEqual(sess3._model_id, "claude-fable-5")
+
     def test_alias_label_and_model_reflects_alias(self):
         self.assertEqual(sb._alias_label("opus"), "Opus")
         self.assertEqual(sb._alias_label("claude-opus-4-8"), "Opus 4.8")
@@ -1216,6 +1247,732 @@ class SetModelModePure(unittest.TestCase):
         self.assertFalse(sb._model_reflects_alias("Fable 5", "opus"), "the OLD name does not reflect the new pick")
         self.assertTrue(sb._model_reflects_alias("anything", "default"), "default matches the resolved name")
         self.assertFalse(sb._model_reflects_alias("", "opus"), "no live name yet → not resolved")
+
+    def test_a_context_tagged_pick_resolves_its_pending_switch(self):
+        # (review, 2026-09-01) "/model fable[1m]" — the CLI's 1M-context spelling — routed through the
+        # setter, but the literal "fable[1m]" is never a substring of the pretty live name "Fable 5.1",
+        # so the switching-dots stuck until the thread died. The check reads through the tag.
+        self.assertTrue(sb._model_reflects_alias("Fable 5.1", "fable[1m]"))
+        self.assertTrue(sb._model_reflects_alias("Opus 4.8", "claude-opus-4-8[1m]"))
+        self.assertFalse(sb._model_reflects_alias("Fable 5.1", "opus[1m]"), "still the family that must match")
+        sess = sb.SdkSession(self.be, {"sid": "q", "name": "n", "cwd": self.d, "model": "fable[1m]"})
+        sess.model = "Opus 4.8"
+        sess._model_pending = "fable[1m]"
+        sess._learn_model("Fable 5.1", raw="claude-fable-5-1[1m]")
+        self.assertEqual(sess._model_pending, "", "the new name clears the tagged switch — dots stop")
+
+    def test_a_refused_set_model_reverts_every_layer_and_warns(self):
+        # (review, 2026-09-01) set_model PERSISTED before the CLI accepted — sdk-defaults.json (the seed
+        # for every future session), the reg (the reconnect's --model) and chosen_model — and a refusal
+        # only LOGGED, unlike _do_set_mode, which reverts every layer. A well-formed id the CLI's catalog
+        # rejects poisoned all three. The refusal now restores what was there and rings the problems.
+        sid = self.be.spawn("m", self.d)
+        self.assertTrue(self.be.set_model(sid, "opus"))                      # the prior, accepted pick
+        sess = sb.SdkSession(self.be, sb.read_reg(self.d, sid))
+        sess.model = "Opus 4.8"
+        self.be.sessions[sid] = sess
+
+        class _RefusingClient:
+            async def set_model(self, model=None):
+                raise Exception("Unknown model: %s" % model)   # the SDK's shape for a CLI error response (_cli_refusal)
+
+            async def get_context_usage(self):
+                return {"percentage": 3, "model": "claude-opus-4-8"}       # the CLI stayed where it was
+        sess.client = _RefusingClient()
+        scheduled = []
+        sess.set_model_live = lambda model, prev=None: scheduled.append((model, prev))   # the loop hop, stubbed
+        # a well-formed id of a known family that the CLI's catalog rejects (another family than the
+        # live one, so the switch is genuinely pending until the CLI answers)
+        self.assertTrue(self.be.set_model(sid, "claude-fable-9-9"))
+        self.assertEqual(sb.read_reg(self.d, sid)["model"], "claude-fable-9-9", "accepted optimistically, as before")
+        self.assertEqual(sess._model_pending, "claude-fable-9-9")
+        self.assertEqual(len(scheduled), 1)
+        asyncio.run(sess._do_set_model(*scheduled[0]))
+        reg = sb.read_reg(self.d, sid)
+        self.assertEqual(reg["model"], "opus", "the reg — the reconnect's --model — is back to the accepted pick")
+        self.assertEqual(sb.read_sdk_defaults(self.d).get("model"), "opus", "the seed for future sessions too")
+        self.assertEqual(sess.chosen_model, "opus")
+        self.assertEqual(sess._model_pending, "", "nothing is coming to resolve dots for a refused switch")
+        self.assertFalse(reg.get("modelPending"))
+        probs = [p["text"] for p in self.be.problems()]
+        self.assertEqual(len(probs), 1, "loud: the refusal rings the problems, the mode path's idiom")
+        self.assertIn("claude-fable-9-9", probs[0])
+        self.assertIn("did NOT apply", probs[0])
+        self.assertIn("opus", probs[0].rsplit("reverted", 1)[-1], "and names what it reverted to")
+
+    def test_a_refused_set_model_with_no_prior_pick_leaves_no_residue(self):
+        # the prior state may be ABSENT (a session on the account default, no remembered model):
+        # the revert removes the keys it wrote rather than parking a null or the refused value
+        sid = self.be.spawn("m", self.d)
+        self.assertNotIn("model", sb.read_reg(self.d, sid))
+        self.assertNotIn("model", sb.read_sdk_defaults(self.d))
+        sess = sb.SdkSession(self.be, sb.read_reg(self.d, sid))
+        self.be.sessions[sid] = sess
+
+        class _RefusingClient:
+            async def set_model(self, model=None):
+                raise Exception("Unknown model: %s" % model)
+
+            async def get_context_usage(self):
+                return {"percentage": 3, "model": "claude-fable-5-1"}
+        sess.client = _RefusingClient()
+        scheduled = []
+        sess.set_model_live = lambda model, prev=None: scheduled.append((model, prev))
+        self.assertTrue(self.be.set_model(sid, "claude-fable-9-9"))
+        asyncio.run(sess._do_set_model(*scheduled[0]))
+        self.assertNotIn("model", sb.read_reg(self.d, sid), "no pick before → no pick after")
+        self.assertNotIn("model", sb.read_sdk_defaults(self.d))
+        self.assertEqual(sess.chosen_model, "")
+        self.assertEqual(sb.read_reg(self.d, sid)["liveModel"], "Fable 5.1", "the badge shows what the CLI runs")
+
+    # ── refusal vs no-answer (fixer round 4, 2026-09-01) ──────────────────────────────────────────
+    # The installed SDK (claude_agent_sdk 0.2.132, _internal/query.py) raises a BARE Exception for
+    # two different worlds: the CLI ANSWERED a control request with an error (`Exception(response
+    # ["error"])`, built from the control_response frame — no cause), and the answer NEVER CAME
+    # (`Exception("Control request timeout: set_model") from TimeoutError` after fail_after; Query.close()
+    # cancels the reader without resolving pending requests, so a request stranded by a reconnect
+    # teardown ends the same way). A reader that dies re-raises ITS OWN typed error into every pending
+    # request; a disconnected client raises CLIConnectionError. Verified by probe against the
+    # installed package, 2026-09-01. The fakes below reproduce those exact shapes.
+
+    def _live(self, prior="opus", live="Opus 4.8"):
+        sid = self.be.spawn("m", self.d)
+        if prior:
+            self.assertTrue(self.be.set_model(sid, prior))
+        sess = sb.SdkSession(self.be, sb.read_reg(self.d, sid))
+        sess.model = live
+        self.be.sessions[sid] = sess
+        scheduled = []
+        sess.set_model_live = lambda model, prev=None: scheduled.append((model, prev))
+        return sid, sess, scheduled
+
+    def test_the_refusal_discriminator_matches_the_installed_sdks_shapes(self):
+        refusal = Exception("Unknown model: claude-fable-9-9")                 # control_response subtype=error
+        self.assertTrue(sb._cli_refusal(refusal))
+        self.assertTrue(sb._cli_refusal(Exception("Unknown error")), "the SDK's default text when the CLI's error is empty")
+        try:
+            raise Exception("Control request timeout: set_model") from TimeoutError()   # fail_after expired / stranded
+        except Exception as e:
+            self.assertFalse(sb._cli_refusal(e), "a timeout is no answer")
+        self.assertFalse(sb._cli_refusal(Exception("Control request timeout: set_model")),
+                         "…even read without its cause: the prefix alone says no answer")
+
+        class ProcessError(Exception):                                          # a typed SDK error the dying reader
+            pass                                                                # fans out to pending requests
+        self.assertFalse(sb._cli_refusal(ProcessError("exit 1")), "a reader death is no answer")
+        self.assertFalse(sb._cli_refusal(RuntimeError("stream broke")))
+
+    def test_a_lost_answer_is_not_a_refusal_the_pick_stands_and_nothing_rings(self):
+        # (fixer round 4, 2026-09-01) the reproduced strand: a model AND an effort picked while the
+        # session worked, both parked, replayed back-to-back at turn end — set_model's control request
+        # went to the OLD CLI and set_effort's reconnect tore that client down with the answer unread.
+        # The NEW connection came up with --model <new> (chosen_model rides _options) and ran it; 60s
+        # later the stranded request timed out and the revert flipped chosen_model, the reg and
+        # sdk-defaults back to the PREVIOUS model while the CLI ran the new one — the registry/argv
+        # divergence this branch exists to close, re-minted, plus a false "did NOT apply" problem and,
+        # for a cheaper prev, a false model-fallback card at the next reconnect.
+        sid, sess, scheduled = self._live()
+        logs = []
+        self.be._log_cb = logs.append
+
+        class _NeverAnswers:
+            async def set_model(self, model=None):
+                raise Exception("Control request timeout: set_model") from TimeoutError()
+
+            async def get_context_usage(self):
+                return {"percentage": 3, "model": "claude-fable-5-1"}    # the reconnect runs the pick
+        sess.client = _NeverAnswers()
+        self.assertTrue(self.be.set_model(sid, "fable"))
+        asyncio.run(sess._do_set_model(*scheduled[0]))
+        self.assertEqual(sess.chosen_model, "fable", "the pick stands — the next connect's _options asserts it")
+        self.assertEqual(sb.read_reg(self.d, sid)["model"], "fable", "the reg (the reconnect's --model) keeps the pick")
+        self.assertEqual(sb.read_sdk_defaults(self.d).get("model"), "fable", "so does the seed for future sessions")
+        self.assertEqual(self.be.problems(), [], "a lost answer is not a failed switch — nothing rings")
+        lost = [m for m in logs if "set_model" in m and "fable" in m]
+        self.assertEqual(len(lost), 1, "one line says the answer was lost")
+        self.assertNotIn("refused", lost[0])
+        self.assertNotIn("did NOT apply", lost[0])
+        self.assertIn("lost", lost[0])
+        # the same for a client that was already disconnected when the request was made (the SDK's
+        # typed CLIConnectionError), and for a reader death fanned out to the pending request
+        for exc in (type("CLIConnectionError", (Exception,), {})("Not connected. Call connect() first."),
+                    type("ProcessError", (Exception,), {})("Command failed with exit code 1")):
+            sid2, sess2, sched2 = self._live()
+
+            class _Typed:
+                async def set_model(self, model=None, _e=exc):
+                    raise _e
+
+                async def get_context_usage(self):
+                    return {"percentage": 3, "model": "claude-sonnet-4-6"}
+            sess2.client = _Typed()
+            self.assertTrue(self.be.set_model(sid2, "sonnet"))
+            asyncio.run(sess2._do_set_model(*sched2[0]))
+            self.assertEqual(sess2.chosen_model, "sonnet", type(exc).__name__)
+            self.assertEqual(sb.read_reg(self.d, sid2)["model"], "sonnet", type(exc).__name__)
+        self.assertEqual(self.be.problems(), [])
+
+    def test_a_refusal_landing_after_a_newer_pick_stands_down_entirely(self):
+        # (fixer round 4, 2026-09-01) same session, A then B: A's control request answers late with the
+        # CLI's error AFTER B was accepted. _revert_model wrote A's captured snapshots back
+        # unconditionally, so the ACCEPTED pick B rolled back to the pre-A model in every layer while
+        # the CLI ran B. Repo doctrine: a writer whose evidence predates the diary stands down.
+        sid, sess, scheduled = self._live()
+
+        class _Client:
+            def __init__(self):
+                self.b_done = asyncio.Event()
+                self.accepted = None
+
+            async def set_model(self, model=None):
+                if model == "claude-fable-9-9":          # pick A — the CLI answers with an error, late
+                    await self.b_done.wait()
+                    raise Exception("Unknown model: %s" % model)
+                self.accepted = model                    # pick B — accepted at once
+                self.b_done.set()
+
+            async def get_context_usage(self):
+                return {"percentage": 3, "model": "claude-sonnet-4-6"}
+        self.assertTrue(self.be.set_model(sid, "claude-fable-9-9"))     # A: prev = opus
+        self.assertTrue(self.be.set_model(sid, "sonnet"))               # B: prev = A
+        self.assertEqual(sb.read_reg(self.d, sid)["model"], "sonnet")
+
+        async def drive():
+            cl = _Client()
+            sess.client = cl
+            ta = asyncio.ensure_future(sess._do_set_model(*scheduled[0]))   # one task per pick, as set_model_live does
+            tb = asyncio.ensure_future(sess._do_set_model(*scheduled[1]))
+            await asyncio.gather(ta, tb)
+            return cl
+        cl = asyncio.run(drive())
+        self.assertEqual(cl.accepted, "sonnet")
+        self.assertEqual(sess.chosen_model, "sonnet", "B stands: the late refusal of A owns nothing any more")
+        self.assertEqual(sb.read_reg(self.d, sid)["model"], "sonnet")
+        self.assertEqual(sb.read_sdk_defaults(self.d).get("model"), "sonnet")
+        self.assertEqual(self.be.problems(), [], "a superseded refusal is not the user's problem — B applied")
+
+    def test_a_revert_leaves_a_layer_a_newer_writer_holds(self):
+        # (fixer round 4, 2026-09-01) the cross-session twin: sdk-defaults.json is SHARED. S1 picks X
+        # (later refused); S2 — dormant, no CLI to refuse — picks Y, which lands in the defaults as
+        # every set_model does. X's refusal then restored S1's captured default over Y. Each layer
+        # reverts only while it still holds the refused value (compare-and-swap).
+        s1, sess1, sched1 = self._live()
+        s2 = self.be.spawn("two", self.d)
+        self.assertTrue(self.be.set_model(s1, "claude-fable-9-9"))     # X: captures default = opus
+        self.assertTrue(self.be.set_model(s2, "haiku"))                # Y: defaults.model = haiku
+        self.assertEqual(sb.read_sdk_defaults(self.d).get("model"), "haiku")
+
+        class _Refusing:
+            async def set_model(self, model=None):
+                raise Exception("Unknown model: %s" % model)
+
+            async def get_context_usage(self):
+                return {"percentage": 3, "model": "claude-opus-4-8"}
+        sess1.client = _Refusing()
+        asyncio.run(sess1._do_set_model(*sched1[0]))
+        self.assertEqual(sess1.chosen_model, "opus", "S1's own layers revert — they still held X")
+        self.assertEqual(sb.read_reg(self.d, s1)["model"], "opus")
+        self.assertEqual(sb.read_sdk_defaults(self.d).get("model"), "haiku", "S2's newer default survives")
+        self.assertEqual(sb.read_reg(self.d, s2)["model"], "haiku")
+        self.assertEqual(len(self.be.problems()), 1, "S1's refusal is still loud")
+
+    def test_a_refusal_tells_the_kernel_to_forget_the_pick_superseded_or_not_a_lost_answer_does_not(self):
+        """(fixer round 4, 2026-09-01) the kernel records a version as its family's pin BEFORE the CLI
+        rules (_set_model_or_park → _note_model_pick), and the revert never reached that memory: after a
+        refusal the family row kept sending the refused id, re-ringing the problem on every click. The
+        backend tells the kernel through a class-level hook, the on_model_fallback idiom — on a VERDICT.
+
+        The round-4 contract said a SUPERSEDED refusal forgets nothing ("the newer pick owns the memory").
+        Flipped deliberately (fixer round 6, 2026-09-02): the newer pick owns chosen_model and the reg, but
+        the pin the kernel recorded for the REFUSED id is its own — a pick in another family, or the same
+        family's pin when the newer pick is an alias — and the CLI did rule on it. Left in place, a family
+        click re-sent the refused id. Firing the hook is safe for the newer pick because the kernel's
+        forget compares-and-swaps by value (_forget_model_pick(fam, only=id)): a newer pin for the same
+        family is never this refusal's to drop (test_model_versions pins that side). A LOST answer still
+        forgets nothing — it says nothing about the id."""
+        calls = []
+        type(self.be).on_model_refused = staticmethod(lambda sid, value: calls.append((sid, value)))
+        try:
+            sid, sess, scheduled = self._live()
+
+            class _Refusing:
+                async def set_model(self, model=None):
+                    raise Exception("Unknown model: %s" % model)
+
+                async def get_context_usage(self):
+                    return {"percentage": 3, "model": "claude-opus-4-8"}
+            sess.client = _Refusing()
+            self.assertTrue(self.be.set_model(sid, "claude-fable-9-9"))
+            asyncio.run(sess._do_set_model(*scheduled[0]))
+            self.assertEqual(calls, [(sid, "claude-fable-9-9")], "the refused id, as the kernel recorded it")
+            # a lost answer: no call
+            sid2, sess2, sched2 = self._live()
+
+            class _Lost:
+                async def set_model(self, model=None):
+                    raise Exception("Control request timeout: set_model") from TimeoutError()
+
+                async def get_context_usage(self):
+                    return {"percentage": 3, "model": "claude-fable-5-1"}
+            sess2.client = _Lost()
+            self.assertTrue(self.be.set_model(sid2, "claude-fable-5-1"))
+            asyncio.run(sess2._do_set_model(*sched2[0]))
+            self.assertEqual(len(calls), 1, "a lost answer forgets nothing")
+            # a superseded refusal: the CLI ruled on the id, so its pin goes too — the newer pick (another
+            # family here) recorded its own pin, which this forget cannot reach (CAS by value, kernel side)
+            sid3, sess3, sched3 = self._live()
+            sess3.client = _Refusing()
+            rang = len(self.be.problems())
+            self.assertTrue(self.be.set_model(sid3, "claude-fable-9-9"))
+            self.assertTrue(self.be.set_model(sid3, "claude-sonnet-4-6"))
+            asyncio.run(sess3._do_set_model(*sched3[0]))
+            self.assertEqual(calls[1:], [(sid3, "claude-fable-9-9")], "a superseded refusal forgets the refused id")
+            self.assertEqual(sess3.chosen_model, "claude-sonnet-4-6", "…and touches nothing the newer pick owns")
+            self.assertEqual(sb.read_reg(self.d, sid3)["model"], "claude-sonnet-4-6")
+            self.assertEqual(len(self.be.problems()), rang, "and rings nothing — the user already picked again")
+        finally:
+            del type(self.be).on_model_refused
+
+    def test_a_superseded_write_whose_answer_was_lost_forgets_nothing_and_drops_its_node(self):
+        # (fixer round 6 minors, 2026-09-02) the forget hook fired on `superseded or refusal`, and superseded
+        # is computed from chosen_model alone — so a superseded write whose answer was LOST (a timeout, a
+        # request stranded by a reconnect teardown) forgot the user's pin for it, against the contract the
+        # arm above pins: a lost answer says nothing about the id. The hook fires on a refusal alone. The
+        # superseded lost write's node goes the way a settled write's does (dropped ≡ settled, the
+        # dead-thread rule): the store keeps the newer pick, and the newer pick's own unwind lands on this
+        # write — a lost pick stands, it was never refused.
+        calls = []
+        type(self.be).on_model_refused = staticmethod(lambda sid, value: calls.append((sid, value)))
+        try:
+            sid, sess, sched = self._live()                                     # accepted: opus
+
+            class _LostThenRefuses:
+                async def set_model(self, model=None):
+                    if model == "claude-fable-9-9":
+                        raise Exception("Control request timeout: set_model") from TimeoutError()
+                    raise Exception("Unknown model: %s" % model)
+
+                async def get_context_usage(self):
+                    return {"percentage": 3, "model": "claude-opus-4-8"}
+            sess.client = _LostThenRefuses()
+            self.assertTrue(self.be.set_model(sid, "claude-fable-9-9"))         # A: a version pin
+            self.assertTrue(self.be.set_model(sid, "claude-sonnet-4-6"))        # B: the newer pick
+            rang = len(self.be.problems())
+            asyncio.run(sess._do_set_model(*sched[0]))                         # A's answer: lost, superseded by B
+            self.assertEqual(calls, [], "a lost answer forgets nothing, superseded or not")
+            self.assertEqual(sess.chosen_model, "claude-sonnet-4-6", "the newer pick owns the session's layers")
+            self.assertEqual(sb.read_reg(self.d, sid)["model"], "claude-sonnet-4-6")
+            self.assertEqual(sb.read_sdk_defaults(self.d).get("model"), "claude-sonnet-4-6", "the store keeps the newer write")
+            self.assertEqual(len(self.be.problems()), rang, "and rings nothing — the user already picked again")
+            nodes = {n["value"]: n for n in self.be._seed_writes.values()}
+            self.assertEqual(set(nodes), {"claude-sonnet-4-6"}, "A's node is dropped; B's stays pending")
+            self.assertEqual(nodes["claude-sonnet-4-6"]["prior"], "claude-fable-9-9",
+                             "B still points at A's write — lost, not refused, so it is what B unwinds onto")
+            asyncio.run(sess._do_set_model(*sched[1]))                         # B refused — the head
+            self.assertEqual(calls, [(sid, "claude-sonnet-4-6")], "B's refusal is a verdict: it forgets B alone")
+            self.assertEqual(sb.read_sdk_defaults(self.d).get("model"), "claude-fable-9-9")
+            self.assertEqual(sess.chosen_model, "opus", "the session's own layers go back to the last ACCEPTED model")
+            self.assertEqual(self.be._seed_writes, {})
+        finally:
+            del type(self.be).on_model_refused
+
+    # ── the revert target is the last ACCEPTED state (fixer round 5, 2026-09-01) ─────────────────────
+    class _RefusesAll:
+        """A CLI that answers every set_model with an error and keeps running Opus 4.8."""
+        async def set_model(self, model=None):
+            raise Exception("Unknown model: %s" % model)
+
+        async def get_context_usage(self):
+            return {"percentage": 3, "model": "claude-opus-4-8"}
+
+    def test_two_refusals_in_a_row_restore_the_accepted_model_never_the_first_refused_pick(self):
+        # (fixer round 5, 2026-09-01) A then B, BOTH refused. A's answer lands after B's optimistic writes
+        # and stands down (superseded) — right. But B's snapshot was captured AFTER A's writes, so it held
+        # A, and B's own refusal then compare-and-swapped A — a REFUSED id — back into chosen_model, the
+        # reg and the shared defaults: the poison the revert exists to remove, embedded by the revert. The
+        # revert restores the last state the CLI ACCEPTED (opus, before either pick), never the last state
+        # WRITTEN. First with NO accepted pick anywhere (a fresh store, a session on the account default):
+        # every layer returns to ABSENCE, never to A.
+        sid0, sess0, sched0 = self._live(prior="")
+        self.assertNotIn("model", sb.read_reg(self.d, sid0))
+        sess0.client = self._RefusesAll()
+        self.assertTrue(self.be.set_model(sid0, "claude-fable-9-9"))        # A
+        self.assertTrue(self.be.set_model(sid0, "claude-sonnet-9-9"))       # B, written over A
+
+        async def drive0():
+            await asyncio.gather(sess0._do_set_model(*sched0[0]), sess0._do_set_model(*sched0[1]))
+        asyncio.run(drive0())
+        self.assertEqual(sess0.chosen_model, "")
+        self.assertNotIn("model", sb.read_reg(self.d, sid0), "no accepted pick before → none after")
+        self.assertNotIn("model", sb.read_sdk_defaults(self.d))
+        self.assertEqual(len(self.be.problems()), 1, "B's refusal rings once; A's stood down")
+        # then with an accepted pick before A (opus, set while the session was dormant — the connect asserts
+        # it): every layer returns to opus
+        sid, sess, scheduled = self._live()                                 # accepted: opus
+        sess.client = self._RefusesAll()
+        self.assertTrue(self.be.set_model(sid, "claude-fable-9-9"))         # A
+        self.assertTrue(self.be.set_model(sid, "claude-sonnet-9-9"))        # B, written over A
+        self.assertEqual(sb.read_reg(self.d, sid)["model"], "claude-sonnet-9-9")
+
+        async def drive():
+            await asyncio.gather(sess._do_set_model(*scheduled[0]), sess._do_set_model(*scheduled[1]))
+        asyncio.run(drive())
+        self.assertEqual(sess.chosen_model, "opus", "not A — a refused id is never a revert target")
+        self.assertEqual(sb.read_reg(self.d, sid)["model"], "opus")
+        self.assertEqual(sb.read_sdk_defaults(self.d).get("model"), "opus")
+        self.assertFalse(sb.read_reg(self.d, sid).get("modelPending"))
+        probs = [p["text"] for p in self.be.problems()]
+        self.assertEqual(len(probs), 2, "one ring per session — B's refusal; A's stood down")
+        self.assertIn("opus", probs[1].rsplit("reverted", 1)[-1], "and names the ACCEPTED model it went back to")
+
+    def test_a_late_acceptance_becomes_the_revert_target_of_the_pick_after_it(self):
+        # the accepted state moves on ACCEPTANCE, whenever it lands: A accepted after B was already
+        # written, then B refused → B reverts to A (the CLI runs A), not to the pre-A model
+        sid, sess, scheduled = self._live()                                 # accepted: opus
+
+        class _Client:
+            async def set_model(self, model=None):
+                if model != "claude-fable-5-1":
+                    raise Exception("Unknown model: %s" % model)         # B refused; A accepted
+
+            async def get_context_usage(self):
+                return {"percentage": 3, "model": "claude-fable-5-1"}
+        sess.client = _Client()
+        self.assertTrue(self.be.set_model(sid, "claude-fable-5-1"))         # A
+        self.assertTrue(self.be.set_model(sid, "claude-sonnet-9-9"))        # B
+
+        async def drive():
+            await asyncio.gather(sess._do_set_model(*scheduled[0]), sess._do_set_model(*scheduled[1]))
+        asyncio.run(drive())
+        self.assertEqual(sess.chosen_model, "claude-fable-5-1")
+        self.assertEqual(sb.read_reg(self.d, sid)["model"], "claude-fable-5-1")
+        self.assertEqual(sb.read_sdk_defaults(self.d).get("model"), "claude-fable-5-1")
+
+    def test_a_connect_asserts_the_pick_whose_answer_died_with_its_thread(self):
+        # a pick written optimistically whose control request never resolved (the thread died) is what
+        # the NEXT connect launches with (--model rides _options); the CLI's init reporting it is the
+        # acceptance — so a later refused pick reverts to IT, not to the model accepted before it
+        sid, sess, scheduled = self._live()                                 # accepted: opus
+        self.assertTrue(self.be.set_model(sid, "claude-fable-5-1"))         # A — never driven: its task died
+
+        class _Sys:
+            def __init__(self, data): self.subtype = "init"; self.data = data
+
+        async def _noop(): pass
+        sess._do_refresh_context = _noop
+
+        async def connect():
+            sess._on_message(_Sys({"model": "claude-fable-5-1"}), _AssistantMessage, _ResultMessage, _Sys)
+            await asyncio.sleep(0)
+        asyncio.run(connect())
+        sess.client = self._RefusesAll()
+        self.assertTrue(self.be.set_model(sid, "claude-sonnet-9-9"))        # B, refused
+        asyncio.run(sess._do_set_model(*scheduled[1]))
+        self.assertEqual(sess.chosen_model, "claude-fable-5-1", "the connect made A the accepted model")
+        self.assertEqual(sb.read_reg(self.d, sid)["model"], "claude-fable-5-1")
+        self.assertEqual(sb.read_sdk_defaults(self.d).get("model"), "claude-fable-5-1")
+
+    # ── the SHARED defaults are ruled per write, by token (fixer round 6, 2026-09-02) ─────────────────
+    # sdk-defaults.json is one store for every session, and round 5 decided "is the value in it still my
+    # write?" by VALUE from a per-session picture of the layer (_model_accepted["default"], the set of this
+    # session's unaccepted writes). Three ways wrong, each reproduced below; the store now carries the
+    # identity of the write that set it (`modelTok`), and a refusal unwinds exactly its own write.
+    class _AcceptsAll:
+        """A CLI that accepts every set_model and reports the picked model."""
+        def __init__(self, live="claude-sonnet-5-2"):
+            self.live = live
+
+        async def set_model(self, model=None):
+            return None
+
+        async def get_context_usage(self):
+            return {"percentage": 3, "model": self.live}
+
+    def test_picking_the_value_the_shared_default_already_holds_then_being_refused_leaves_it_in_place(self):
+        # The most common pick of all: the value another session's ACCEPTED pick left in the shared
+        # defaults — a new session seeds from it, and picking it again is one click. Round 5 could not
+        # adopt it as the baseline (the value was in this session's own unaccepted set the moment it was
+        # picked), so the refusal restored a STALE baseline — None here, this session's own model with an
+        # init-accept — over the other session's pick.
+        sid, sess, sched = self._live()                                    # accepted opus; defaults = opus
+        other = self.be.spawn("two", self.d)
+        self.assertTrue(self.be.set_model(other, "claude-sonnet-5-2"))     # dormant: accepted where it stands
+        self.assertEqual(sb.read_sdk_defaults(self.d)["model"], "claude-sonnet-5-2")
+        sess.client = self._RefusesAll()
+        self.assertTrue(self.be.set_model(sid, "claude-sonnet-5-2"))       # the SAME value; this CLI refuses it
+        asyncio.run(sess._do_set_model(*sched[-1]))
+        self.assertEqual(sb.read_sdk_defaults(self.d).get("model"), "claude-sonnet-5-2",
+                         "the other session's accepted pick stays the seed")
+        self.assertEqual(sb.read_reg(self.d, sid)["model"], "opus", "this session's own layers revert")
+        self.assertEqual(sess.chosen_model, "opus")
+        self.assertEqual(sb.read_reg(self.d, other)["model"], "claude-sonnet-5-2")
+        # the same with the other session LIVE and its CLI accepting — its accepted pick, literally
+        s3, sess3, sched3 = self._live()
+        s4, sess4, sched4 = self._live()
+        sess4.client = self._AcceptsAll()
+        self.assertTrue(self.be.set_model(s4, "claude-sonnet-5-2"))
+        asyncio.run(sess4._do_set_model(*sched4[-1]))                      # accepted
+        sess3.client = self._RefusesAll()
+        self.assertTrue(self.be.set_model(s3, "claude-sonnet-5-2"))
+        asyncio.run(sess3._do_set_model(*sched3[-1]))                      # refused
+        self.assertEqual(sb.read_sdk_defaults(self.d).get("model"), "claude-sonnet-5-2")
+        self.assertEqual(sb.read_reg(self.d, s3)["model"], "opus")
+        self.assertEqual(sb.read_reg(self.d, s4)["model"], "claude-sonnet-5-2")
+
+    def test_an_id_this_session_once_refused_stays_when_another_session_has_since_accepted_it(self):
+        # Round 5 kept a refused id in the session's unaccepted set FOREVER, so the shared default holding
+        # it — put there later by another session whose CLI accepted it (a newer CLI, another account) —
+        # could never be adopted as a baseline, and this session's next refusal restored its own stale
+        # baseline over that accepted pick.
+        sid, sess, sched = self._live()                                    # accepted opus
+        sess.client = self._RefusesAll()
+        self.assertTrue(self.be.set_model(sid, "claude-fable-9-9"))        # X, refused here
+        asyncio.run(sess._do_set_model(*sched[-1]))
+        self.assertEqual(sb.read_sdk_defaults(self.d).get("model"), "opus")
+        other, sess2, sched2 = self._live()
+        sess2.client = self._AcceptsAll("claude-fable-9-9")
+        self.assertTrue(self.be.set_model(other, "claude-fable-9-9"))      # X again, on a CLI that takes it
+        asyncio.run(sess2._do_set_model(*sched2[-1]))
+        self.assertEqual(sb.read_sdk_defaults(self.d).get("model"), "claude-fable-9-9")
+        self.assertTrue(self.be.set_model(sid, "claude-sonnet-9-9"))       # Y, refused
+        asyncio.run(sess._do_set_model(*sched[-1]))
+        self.assertEqual(sb.read_sdk_defaults(self.d).get("model"), "claude-fable-9-9",
+                         "the other session's accepted X stands; this session's old refusal is not evidence")
+        self.assertEqual(sb.read_reg(self.d, sid)["model"], "opus")
+
+    def test_two_cross_session_refusals_never_seed_a_refused_id_in_either_order(self):
+        # Two live sessions pick concurrently: b's write lands on a's PENDING one. Round 5 adopted a's
+        # pending value as b's baseline (it was not in b's own unaccepted set), so when both were refused
+        # — a first, whose compare-and-swap stood down because b held the store — b's revert restored a's
+        # REFUSED id as the seed every new session launches with.
+        a, sa, qa = self._live()
+        b, sb_, qb = self._live()
+        sa.client = sb_.client = self._RefusesAll()
+        self.assertTrue(self.be.set_model(a, "claude-fable-9-9"))          # Va, pending
+        self.assertTrue(self.be.set_model(b, "claude-sonnet-9-9"))         # Vb on top of it
+        asyncio.run(sa._do_set_model(*qa[-1]))                             # Va refused — not the head: spliced out
+        self.assertEqual(sb.read_sdk_defaults(self.d).get("model"), "claude-sonnet-9-9", "b's write still pending")
+        asyncio.run(sb_._do_set_model(*qb[-1]))                            # Vb refused — head: back past Va
+        self.assertEqual(sb.read_sdk_defaults(self.d).get("model"), "opus", "neither refused id is the seed")
+        self.assertEqual((sb.read_reg(self.d, a)["model"], sb.read_reg(self.d, b)["model"]), ("opus", "opus"))
+        # the other order: b's refusal first unwinds onto a's pending Va (honest — a's verdict is still out),
+        # then a's refusal takes it back to opus
+        self.assertTrue(self.be.set_model(a, "claude-fable-9-9"))
+        self.assertTrue(self.be.set_model(b, "claude-sonnet-9-9"))
+        asyncio.run(sb_._do_set_model(*qb[-1]))
+        self.assertEqual(sb.read_sdk_defaults(self.d).get("model"), "claude-fable-9-9", "a's write, still pending")
+        asyncio.run(sa._do_set_model(*qa[-1]))
+        self.assertEqual(sb.read_sdk_defaults(self.d).get("model"), "opus")
+        self.assertEqual(len(self.be.problems()), 4, "every refusal rang once")
+        # and an ACCEPTED write under a refused one is what the refusal unwinds onto
+        sa.client = self._AcceptsAll("claude-fable-9-9")
+        self.assertTrue(self.be.set_model(a, "claude-fable-9-9"))
+        self.assertTrue(self.be.set_model(b, "claude-sonnet-9-9"))
+        asyncio.run(sa._do_set_model(*qa[-1]))                             # Va accepted
+        asyncio.run(sb_._do_set_model(*qb[-1]))                            # Vb refused
+        self.assertEqual(sb.read_sdk_defaults(self.d).get("model"), "claude-fable-9-9")
+        self.assertEqual(sb.read_reg(self.d, a)["model"], "claude-fable-9-9")
+        self.assertEqual(sb.read_reg(self.d, b)["model"], "opus")
+
+    def test_the_store_carries_the_writes_token_and_a_seed_never_does(self):
+        # every writer of `model` stamps a fresh token; the spawn seed copies the model alone
+        sid = self.be.spawn("m", self.d)
+        self.assertTrue(self.be.set_model(sid, "opus"))                    # dormant path
+        d = sb.read_sdk_defaults(self.d)
+        self.assertEqual(d["model"], "opus")
+        t0 = d.get("modelTok")
+        self.assertTrue(t0 and isinstance(t0, str))
+        s2 = self.be.spawn("n", self.d)
+        self.assertEqual(sb.read_reg(self.d, s2)["model"], "opus")
+        self.assertNotIn("modelTok", sb.read_reg(self.d, s2), "the token is the store's, not the session's")
+        sess = sb.SdkSession(self.be, sb.read_reg(self.d, sid))
+        self.be.sessions[sid] = sess
+        sess.set_model_live = lambda model, prev=None: None
+        self.assertTrue(self.be.set_model(sid, "claude-fable-9-9"))        # live path
+        d = sb.read_sdk_defaults(self.d)
+        self.assertTrue(d["modelTok"] and d["modelTok"] != t0, "a new write, a new token")
+        self.be.set_effort(sid, "low")
+        self.assertEqual(sb.read_sdk_defaults(self.d)["modelTok"], d["modelTok"], "an effort write leaves it alone")
+        self.assertNotIn("effortTok", sb.read_sdk_defaults(self.d), "only the model carries one")
+
+    def test_a_defaults_file_without_a_token_is_never_reverted(self):
+        # compat, fail-safe: a file an older kernel or a hand edit wrote carries no `modelTok` — no
+        # token, no match, and the revert leaves the store alone rather than guess
+        sid, sess, sched = self._live()                                    # accepted opus
+        sess.client = self._RefusesAll()
+        self.assertTrue(self.be.set_model(sid, "claude-fable-9-9"))
+        self.assertTrue(sb.read_sdk_defaults(self.d).get("modelTok"))
+        sb._defaults_path(self.d).write_text(json.dumps({"model": "claude-fable-9-9", "effort": "low"}))
+        asyncio.run(sess._do_set_model(*sched[-1]))                        # refused
+        self.assertEqual(sb.read_sdk_defaults(self.d), {"model": "claude-fable-9-9", "effort": "low"},
+                         "untokened: not this write's to move")
+        self.assertEqual(sb.read_reg(self.d, sid)["model"], "opus", "the session's own layers still revert")
+        self.assertEqual(sess.chosen_model, "opus")
+        # and a write whose verdict never came (the thread died) leaves no node behind to unwind later
+        sid2, sess2, sched2 = self._live()
+        self.assertTrue(self.be.set_model(sid2, "claude-sonnet-9-9"))
+        self.assertEqual(len(self.be._seed_writes), 1)
+        self.be._on_session_gone(sess2)
+        self.assertEqual(self.be._seed_writes, {}, "dropped with the thread; the store keeps the value")
+        self.assertEqual(sb.read_sdk_defaults(self.d).get("model"), "claude-sonnet-9-9")
+
+    def test_a_refusal_landing_between_the_shared_write_and_its_node_never_seeds_the_refused_id(self):
+        # (fixer round 6 minors, 2026-09-02) _seed_write_pending wrote the store under the lock, RELEASED it,
+        # and took it again to insert the node. A refusal for the write it replaced — on the SDK loop
+        # thread, through _revert_model — could run in that gap: it popped its own node and re-pointed only
+        # the nodes that EXISTED, so the new node was inserted afterwards still pointing at the refused
+        # (value, token); the head check stood down (the file's head was the new write). The new write's
+        # own refusal then restored the refused id under a token no node knew — unwindable by nothing, and
+        # the seed of every new session. Deterministic stand-in for "the other thread takes the lock the
+        # instant this one lets go": a lock whose RELEASE runs an armed action once — A's refusal — so it
+        # lands wherever the first release inside set_model falls. The write and the insert are one hold.
+        a, sa, qa = self._live()
+        b, sb_, qb = self._live()
+        sa.client = sb_.client = self._RefusesAll()
+        self.assertTrue(self.be.set_model(a, "claude-fable-9-9"))          # Va pending, the head
+
+        class _ReleaseRuns:
+            """_defaults_lock stand-in: the first release after arming runs the armed action."""
+            def __init__(self):
+                self._l, self.armed = threading.Lock(), None
+
+            def locked(self):
+                return self._l.locked()
+
+            def __enter__(self):
+                self._l.acquire()
+                return self
+
+            def __exit__(self, *exc):
+                self._l.release()
+                fn, self.armed = self.armed, None
+                if fn:
+                    fn()
+        lock = _ReleaseRuns()
+        lock.armed = lambda: asyncio.run(sa._do_set_model(*qa[-1]))       # Va refused, at the first release
+        with mock.patch.object(sb, "_defaults_lock", lock):
+            self.assertTrue(self.be.set_model(b, "claude-sonnet-9-9"))     # Vb on top of Va
+        self.assertIsNone(lock.armed, "the refusal ran inside b's set_model")
+        self.assertEqual(sb.read_sdk_defaults(self.d).get("model"), "claude-sonnet-9-9", "b's write is the head")
+        self.assertEqual(sb.read_reg(self.d, a)["model"], "opus", "a's own layers reverted")
+        (nb,) = self.be._seed_writes.values()
+        self.assertEqual((nb["value"], nb["prior"]), ("claude-sonnet-9-9", "opus"),
+                         "b's node points PAST the refused write: the refusal saw it")
+        asyncio.run(sb_._do_set_model(*qb[-1]))                            # Vb refused — the head: back to opus
+        self.assertEqual(sb.read_sdk_defaults(self.d).get("model"), "opus", "neither refused id is the seed")
+        self.assertEqual(self.be._seed_writes, {})
+        self.assertEqual(len(self.be.problems()), 2, "every refusal rang once")
+
+    # ── snapshot and write in ONE lock hold; chosen_model compare-and-assign under the session lock ──
+    def test_a_defaults_or_reg_read_taken_outside_the_store_lock_never_feeds_the_revert(self):
+        # (fixer round 5, 2026-09-01) set_model captured its snapshots (read_reg, read_sdk_defaults)
+        # OUTSIDE _reg_lock / _defaults_lock and only then took the locks to write — so a writer on the
+        # other thread (a revert, another session's pick) could land between the read and the write, and
+        # the snapshot described a world the write never replaced. Deterministic stand-in for that
+        # interleave: a read made WITHOUT the store lock held reports a phantom value. If any such read
+        # feeds the revert, the phantom lands in the store; a read-modify-write under one hold never sees it.
+        sid, sess, scheduled = self._live()                                 # accepted: opus
+        sess.client = self._RefusesAll()
+        real_defaults, real_reg = sb.read_sdk_defaults, sb.read_reg
+        be = self.be
+
+        def phantom_defaults(state_dir):
+            d = real_defaults(state_dir)
+            return d if sb._defaults_lock.locked() else {**d, "model": "phantom-unlocked-read"}
+
+        def phantom_reg(state_dir, s):
+            r = real_reg(state_dir, s)
+            return r if (r is None or be._reg_lock.locked()) else {**r, "model": "phantom-unlocked-read"}
+        with mock.patch.object(sb, "read_sdk_defaults", phantom_defaults), mock.patch.object(sb, "read_reg", phantom_reg):
+            self.assertTrue(self.be.set_model(sid, "claude-fable-9-9"))
+        self.assertEqual(sb.read_reg(self.d, sid)["model"], "claude-fable-9-9", "the optimistic write landed")
+        asyncio.run(sess._do_set_model(*scheduled[0]))
+        self.assertEqual(sb.read_sdk_defaults(self.d).get("model"), "opus", "the defaults snapshot was read under the lock")
+        self.assertEqual(sb.read_reg(self.d, sid)["model"], "opus", "so was the reg snapshot")
+        self.assertEqual(sess.chosen_model, "opus")
+
+    def test_chosen_model_is_written_only_under_the_session_lock(self):
+        # (fixer round 5, 2026-09-01) _revert_model compared and assigned sess.chosen_model with no lock
+        # while the kernel thread's set_model assigned it — a torn compare-and-swap. Both writers now hold
+        # the session's lock around the compare-and-assign; a property stand-in records any write made
+        # without it.
+        sid = self.be.spawn("m", self.d)
+        self.assertTrue(self.be.set_model(sid, "opus"))
+        unlocked = []
+
+        class _Guarded(sb.SdkSession):
+            @property
+            def chosen_model(self):
+                return self.__dict__.get("_chosen", "")
+
+            @chosen_model.setter
+            def chosen_model(self, v):
+                lk = self.__dict__.get("_lock")           # absent during __init__'s own seed (before the lock exists)
+                if lk is not None and not lk.locked():
+                    unlocked.append(v)
+                self.__dict__["_chosen"] = v
+        sess = _Guarded(self.be, sb.read_reg(self.d, sid))
+        sess.model = "Opus 4.8"
+        self.be.sessions[sid] = sess
+        scheduled = []
+        sess.set_model_live = lambda model, prev=None: scheduled.append((model, prev))
+        sess.client = self._RefusesAll()
+        self.assertTrue(self.be.set_model(sid, "claude-fable-9-9"))
+        self.assertEqual(sess.chosen_model, "claude-fable-9-9")
+        asyncio.run(sess._do_set_model(*scheduled[0]))
+        self.assertEqual(sess.chosen_model, "opus")
+        self.assertEqual(unlocked, [], "every write — the optimistic one and the revert — held the lock")
+        # the compare half of the revert's compare-and-swap sits in the SAME hold as its assign
+        src = inspect.getsource(sb.SdkBackend._revert_model)
+        hold = src.index("with sess._lock:")
+        self.assertLess(hold, src.index("sess.chosen_model == picked"), "the compare is inside the hold")
+        self.assertLess(src.index("sess.chosen_model == picked"), src.index("with self._reg_lock:"),
+                        "…and the hold is released before the reg lock (no nesting)")
+
+    def test_set_model_and_effort_on_a_dormant_session_leave_an_acknowledgment_chip(self):
+        # (review, 2026-09-01) a composer "/model X" on a LIVE session lands the synthesized command
+        # chip and the webview's optimistic bubble retires against it; on a DORMANT session nothing
+        # landed, so the dashed bubble sat as "unconfirmed" and vanished with no trace. The chip — and
+        # its durable gesture twin — are the acknowledgment, whatever the session's liveness.
+        sid = self.be.spawn("m", self.d)                  # a reg, no thread: dormant
+        self.assertTrue(self.be.set_model(sid, "fable"))
+        self.assertTrue(self.be.set_effort(sid, "high"))
+        chips = {a["command"]: a for a in self.be.live_atoms(sid) if a.get("command")}
+        self.assertEqual(set(chips), {"/model", "/effort"})
+        for cmd, disp in (("/model", "/model fable"), ("/effort", "/effort high")):
+            a = chips[cmd]
+            self.assertTrue(a["uuid"].startswith("cmd:"), a["uuid"])
+            self.assertEqual((a["type"], a["author"], a["_echo_text"]), ("user", "human", disp))
+            self.assertEqual(a["message"]["content"][0]["text"], disp, "the text the optimistic bubble retires against")
+            self.assertEqual(a["session_id"], sid)
+        gestures = [json.loads(l).get("cmdGesture") for l in (Path(self.d) / "states" / (sid + ".jsonl")).read_text().splitlines()]
+        self.assertEqual([g for g in gestures if g], ["/model fable", "/effort high"], "the durable twin, so the history keeps the gesture")
+        # the dormant resolution is unchanged: the badge shows the pick now, no dots
+        reg = sb.read_reg(self.d, sid)
+        self.assertEqual((reg["model"], reg["liveModel"], reg.get("modelPending")), ("fable", "Fable", False))
+
+    def test_refresh_context_persists_the_live_model_id(self):
+        # (review, 2026-09-01) the pin the liveModelId write was missing: _do_refresh_context is the
+        # pre-turn source (get_context_usage answers on connect, before any init message), so an
+        # eager-connected session that never runs a turn still contributes its version to the pickers
+        sid = self.be.spawn("m", self.d)
+        sess = sb.SdkSession(self.be, sb.read_reg(self.d, sid))
+
+        class _Client:
+            async def get_context_usage(self):
+                return {"percentage": 41.6, "model": "claude-fable-5-1"}
+        sess.client = _Client()
+        asyncio.run(sess._do_refresh_context())
+        reg = sb.read_reg(self.d, sid)
+        self.assertEqual((reg["liveModelId"], reg["liveModel"], reg["liveCtx"]), ("claude-fable-5-1", "Fable 5.1", 42))
+        self.assertEqual(sess._model_id, "claude-fable-5-1")
+        # a [1m] variant is persisted as reported — the kernel's picker strips the tag on read
+        class _Client1m:
+            async def get_context_usage(self):
+                return {"percentage": 41.6, "model": "claude-fable-5-1[1m]"}
+        sess.client = _Client1m()
+        asyncio.run(sess._do_refresh_context())
+        self.assertEqual(sb.read_reg(self.d, sid)["liveModelId"], "claude-fable-5-1[1m]")
 
     def test_learn_model_clears_pending_only_when_the_new_name_lands(self):
         sess = sb.SdkSession(self.be, {"sid": "p", "name": "n", "cwd": self.d, "model": "fable"})
