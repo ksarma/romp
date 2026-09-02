@@ -33956,6 +33956,15 @@ class Handler(BaseHTTPRequestHandler):
                 out = fn(now, uptime_s=now - _STARTED)
                 out["bootId"] = _BOOT_ID
                 out["bootAt"] = int(_STARTED)
+                # coverage's kernel half: tmux-backed sessions have no SDK stream and sit outside
+                # the signal — the count says how much of the box the signal does not see. A null
+                # (never a silent 0) when the live enumeration fails.
+                try:
+                    out["coverage"]["tmuxSessionsUncovered"] = sum(
+                        1 for m in Sessions.live().values() if (m or {}).get("backend") == "tmux")
+                except Exception as e:
+                    sys.stderr.write("api-health: tmux coverage count failed: %s\n" % e)
+                    out["coverage"]["tmuxSessionsUncovered"] = None
                 return self._send(200, json.dumps(out), "application/json", cache="no-cache")
             if p == "/mcp":                                   # the MCP panel's data (the user 2026-08-05): `/mcp`
                 # in a romp session hits the CLI's INTERACTIVE panel, which an SDK session can't render — it

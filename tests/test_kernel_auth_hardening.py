@@ -458,7 +458,7 @@ class _ApiHealthBackend:
 
     def api_health_snapshot(self, now=None, uptime_s=None):
         out = self.ah.snapshot(now, uptime_s=uptime_s)
-        out["coverage"].update({"sdkSessions": 1, "retrying": 1})
+        out["coverage"].update({"sdkSessionsLive": 1, "inTurn": 1, "retrying": 1})
         return out
 
 
@@ -556,6 +556,30 @@ class ApiHealthRouteGate(unittest.TestCase):
         status, body = _serve_get("/api-health", {"X-Romp-Token": TOK})
         self.assertEqual(status, 503)
         self.assertIn("error", json.loads(body))
+
+    def test_coverage_counts_the_tmux_sessions_the_signal_does_not_see(self):
+        # the kernel's half of `coverage`: tmux-backed sessions have no SDK stream; the backend's
+        # half (sdkSessionsLive / inTurn / retrying) arrives with the payload
+        saved = km.Sessions.live
+        km.Sessions.live = staticmethod(lambda: {"11111111-2222-3333-4444-555555555555": {"backend": "tmux"},
+                                                 "11111111-2222-3333-4444-666666666666": {"backend": "sdk"},
+                                                 "11111111-2222-3333-4444-777777777777": {"backend": "tmux"}})
+        try:
+            status, body = _serve_get("/api-health", {"X-Romp-Token": TOK})
+        finally:
+            km.Sessions.live = saved
+        self.assertEqual(status, 200)
+        cov = json.loads(body)["coverage"]
+        self.assertEqual(cov["tmuxSessionsUncovered"], 2)
+        self.assertEqual((cov["sdkSessionsLive"], cov["inTurn"], cov["retrying"]), (1, 1, 1))
+        # …and a failed enumeration is a visible null, never a silent zero
+        km.Sessions.live = staticmethod(lambda: (_ for _ in ()).throw(RuntimeError("no tmux")))
+        try:
+            status, body = _serve_get("/api-health", {"X-Romp-Token": TOK})
+        finally:
+            km.Sessions.live = saved
+        self.assertEqual(status, 200)
+        self.assertIsNone(json.loads(body)["coverage"]["tmuxSessionsUncovered"])
 
 
 if __name__ == "__main__":
