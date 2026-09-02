@@ -295,6 +295,48 @@ class BusyDrainWriteGate(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(self.spy.refreshed, 1, "an explicit ?token= arms it too")
 
+    # ── T224: a REFUSED drain is the one event the gate exists for — it must read LOUDLY ──
+    def _refusals(self):
+        return km._DRAIN_REFUSED
+
+    def test_a_refused_drain_logs_once_per_episode_and_counts_every_request(self):
+        import io, contextlib
+        km._DRAIN_REFUSED.update(count=0, episode=False, lastT=0)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            _serve_get("/busy?drain=1")
+            _serve_get("/busy?drain=1")
+            _serve_get("/busy?drain=1")
+        self.assertEqual(self._refusals()["count"], 3, "every refused request counts")
+        self.assertTrue(self._refusals()["episode"])
+        self.assertEqual(err.getvalue().count("REFUSED a drain hold"), 1,
+                         "one loud line per refusal EPISODE — an old manager hammering a new "
+                         "kernel is one event, not a storm")
+
+    def test_an_armed_drain_ends_the_episode_and_a_later_refusal_logs_again(self):
+        import io, contextlib
+        km._DRAIN_REFUSED.update(count=0, episode=False, lastT=0)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            _serve_get("/busy?drain=1")                                  # refused → episode opens
+            _serve_get("/busy?drain=1", headers={"X-Romp-Token": TOK})   # armed → episode closes, recovery line
+            _serve_get("/busy?drain=1")                                  # refused again → a NEW episode
+        self.assertFalse(self._refusals()["episode"] is None)
+        self.assertEqual(err.getvalue().count("REFUSED a drain hold"), 2,
+                         "the successful arm re-arms the notice: a second episode is new information")
+        self.assertIn("armed again", err.getvalue(), "the recovery is on the record too")
+
+    def test_the_refusal_facts_ride_the_version_route(self):
+        km._DRAIN_REFUSED.update(count=0, episode=False, lastT=0)
+        import io, contextlib
+        with contextlib.redirect_stderr(io.StringIO()):
+            _serve_get("/busy?drain=1")
+        status, body = _serve_get("/version?token=" + TOK)
+        self.assertEqual(status, 200)
+        facts = json.loads(body).get("drainRefused")
+        self.assertEqual(facts.get("count"), 1, "the counter rides /version like the parse counters")
+        self.assertTrue(facts.get("episode"))
+
     def test_the_bare_busy_read_stays_exempt_and_never_arms(self):
         status, body = _serve_get("/busy")
         self.assertEqual(status, 200, "the count is a healthz-style probe — no token needed")

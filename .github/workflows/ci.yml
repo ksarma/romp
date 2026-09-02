@@ -101,6 +101,22 @@ jobs:
       - name: Run bats
         run: bats --print-output-on-failure tests/*.bats
 
+  manager:
+    # T224: the manager<->kernel handshake proof (tests/manager-*.test.js: restart coalescing, the
+    # quiet-window chain, the drain-lease refusal notices) existed only by hand until now - node's
+    # built-in runner, no deps, its own job so a failure names itself. No continue-on-error: a red
+    # handshake is a red build.
+    name: manager (node --test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Manager handshake tests
+        run: node --test tests/manager-*.test.js
+
   vscode-extension:
     name: vscode-extension (typecheck + test + build)
     runs-on: ubuntu-latest

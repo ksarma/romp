@@ -68,7 +68,10 @@ class DrainLease(unittest.TestCase):
 
     def test_the_kernel_route_and_the_deploy_paths_ride_the_gate(self):
         ksrc = open(os.path.join(os.path.dirname(HERE), "kernel", "kernel.py")).read()
-        self.assertIn('q.get("drain", [""])[0] == "1" and self._write_token_ok(q)', ksrc,
+        # T224 split the gate into branches so a REFUSED drain can be counted and said loudly; the
+        # arm still sits under the explicit-token check and nowhere else
+        self.assertIn('if q.get("drain", [""])[0] == "1":\n                        if self._write_token_ok(q):\n'
+                      '                            be.refresh_drain_hold()', ksrc,
                       "/busy?drain=1 refreshes the lease in the same round-trip that reads the count — "
                       "but the arm is a WRITE, gated on an explicit token (the behavioral pins live "
                       "in tests/test_kernel_auth_hardening.py::BusyDrainWriteGate); the READ stays exempt")

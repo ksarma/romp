@@ -560,6 +560,8 @@ def _version_info():
             # counters, no paths — safe for the auth-exempt route. Deploy verification reads the live
             # fold rate here instead of trusting an offline replay number (T210).
             "parse": dict(em._ASM_STATS),
+            "drainRefused": dict(_DRAIN_REFUSED),   # T224: refused /busy?drain=1 arms — count, open
+            #                                          episode, last time; the silent degrade made visible
             # T222: where the model pickers' version list came from (seed / cache / api), when, what
             # the API added beyond the shipped seed, and the last refresh failure — so a stale list
             # is a visible fact in `romp version`, never a guess
@@ -26320,6 +26322,41 @@ def _broadcast_restarting(budget_s=0.8):
         pass
 
 
+# ── the REFUSED drain, said loudly (T224, the user 2026-09-02) ────────────────────────────────────
+# The /busy?drain=1 write gate (PR 868) refuses a token-less arm and still serves the exempt count —
+# the right degrade, but a SILENT one: an old hand-run manager against a new kernel polled every 3s,
+# was refused every time, believed turn starts were held, and nothing on the kernel side said a word.
+# One line per refusal EPISODE (latched — a misconfigured manager hammering us is one event, not a
+# storm), a running count, and re-arm on the next SUCCESSFUL arm (the event that ends the episode),
+# so a second refusal episode is new information said again. The facts ride /version beside the
+# parse counters — bare numbers, safe for the auth-exempt route — so `romp version` shows them.
+_DRAIN_REFUSED = {"count": 0, "episode": False, "lastT": 0}
+
+
+def _note_drain_refused():
+    try:
+        _DRAIN_REFUSED["count"] += 1
+        _DRAIN_REFUSED["lastT"] = int(time.time())
+        if not _DRAIN_REFUSED["episode"]:
+            _DRAIN_REFUSED["episode"] = True
+            sys.stderr.write("romp-kernel: REFUSED a drain hold — /busy?drain=1 arrived without a valid "
+                             "serve token (an old manager, or a drive-by client): new turn starts are NOT "
+                             "held while it polls; the exempt count still answers. Said once per refusal "
+                             "episode; the running count rides /version as drainRefused.\n")
+    except Exception:
+        pass
+
+
+def _note_drain_armed():
+    try:
+        if _DRAIN_REFUSED["episode"]:
+            _DRAIN_REFUSED["episode"] = False
+            sys.stderr.write("romp-kernel: drain hold armed again after %d refused request(s) — the "
+                             "refusal episode above is over\n" % _DRAIN_REFUSED["count"])
+    except Exception:
+        pass
+
+
 def _push_all(tmux=None):
     with _clients_lock:
         clients = list(_clients)
@@ -30882,8 +30919,13 @@ class Handler(BaseHTTPRequestHandler):
                 n = be.busy_count() if be and hasattr(be, "busy_count") else 0
                 draining = False
                 if be is not None and hasattr(be, "refresh_drain_hold"):
-                    if q.get("drain", [""])[0] == "1" and self._write_token_ok(q):
-                        be.refresh_drain_hold()
+                    if q.get("drain", [""])[0] == "1":
+                        if self._write_token_ok(q):
+                            be.refresh_drain_hold()
+                            _note_drain_armed()
+                        else:
+                            _note_drain_refused()    # T224: the one event the gate exists for —
+                            #                          read LOUDLY, once per episode (see the helper)
                     draining = be.drain_holding()
                 return self._send(200, json.dumps({"busy": n, "draining": draining}),
                                   "application/json", cache="no-cache")
