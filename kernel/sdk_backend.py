@@ -1481,6 +1481,21 @@ def write_sdk_default(state_dir: Path, **fields) -> None:
         _write_sdk_defaults(state_dir, d)
 
 
+def _swap_sdk_default_locked(state_dir: Path, key: str, value):
+    """swap_sdk_default's body, for a caller that already holds _defaults_lock and has more to do under
+    the same hold (SdkBackend._seed_write_pending inserts the write's node before letting go — fixer
+    round 6 minors, 2026-09-02: with the swap and the insert in two holds, a refusal of the write this
+    one replaced could run between them, re-point only the nodes that existed, and leave the new node
+    pointing at the refused pair). Callers hold _defaults_lock."""
+    d = read_sdk_defaults(state_dir)
+    prior, prior_tok = d.get(key), d.get(key + "Tok")
+    tok = _mint_write_tok()
+    d[key] = value
+    d[key + "Tok"] = tok
+    _write_sdk_defaults(state_dir, d)
+    return prior, prior_tok, tok
+
+
 def swap_sdk_default(state_dir: Path, key: str, value):
     """Write one remembered default under a FRESH write token and return the (value, token) it REPLACED
     (None, None = the key was absent) plus the token minted — the read and the write in ONE lock hold
@@ -1490,13 +1505,7 @@ def swap_sdk_default(state_dir: Path, key: str, value):
     prior pair is what SdkBackend._seed_write_refused puts back when this write is refused while it is
     still the store's head."""
     with _defaults_lock:
-        d = read_sdk_defaults(state_dir)
-        prior, prior_tok = d.get(key), d.get(key + "Tok")
-        tok = _mint_write_tok()
-        d[key] = value
-        d[key + "Tok"] = tok
-        _write_sdk_defaults(state_dir, d)
-        return prior, prior_tok, tok
+        return _swap_sdk_default_locked(state_dir, key, value)
 
 
 def _cli_refusal(e: BaseException) -> bool:
@@ -2311,16 +2320,22 @@ class SdkSession:
                 superseded = prev is not None and self.chosen_model != picked
             if superseded:
                 # Standing down from the SESSION's layers — the newer pick owns chosen_model and the reg.
-                # Not from the shared store: this write's node still sits under the newer pick's, so a
-                # refusal of THAT pick would unwind onto this refused id (the round-5 two-refusals case);
-                # spliced out here, the newer pick's unwind lands on what this write replaced. The store
-                # itself moves only if this write is somehow still its head (the newer write already
-                # unwound) — a refused value must not stay the seed just because it lost a race.
-                self.backend._seed_write_refused(tok)
-                self.backend._log("set_model (%s -> %s): the CLI answered (%s: %s) after a newer pick (%s) — "
+                # Not from the shared store: this write's node still sits under the newer pick's. A REFUSAL
+                # splices it out — a refusal of THAT pick would otherwise unwind onto this refused id (the
+                # round-5 two-refusals case); spliced, the newer pick's unwind lands on what this write
+                # replaced — and moves the store only if this write is somehow still its head (the newer
+                # write already unwound): a refused value must not stay the seed just because it lost a
+                # race. A LOST answer says nothing about the id (fixer round 6 minors, 2026-09-02): its node
+                # goes the way a settled write's does, and the newer pick's unwind lands on THIS write — a
+                # lost pick stands, as a thread's death leaves it standing (_seed_writes_dropped).
+                if refusal:
+                    self.backend._seed_write_refused(tok)
+                else:
+                    self.backend._seed_write_settled(tok)
+                self.backend._log("set_model (%s -> %s): %s (%s: %s) after a newer pick (%s) — "
                                   "standing down; the newer pick owns every layer"
-                                  % (self.name, picked, type(e).__name__, e,
-                                     self.chosen_model or "the account default"), problem=False)
+                                  % (self.name, picked, "the CLI answered" if refusal else "the CLI's answer was lost",
+                                     type(e).__name__, e, self.chosen_model or "the account default"), problem=False)
             elif not refusal:
                 if prev is not None:
                     self._model_accept(picked)   # the pick stands as the baseline the next connect asserts
@@ -2343,8 +2358,10 @@ class SdkSession:
             # it left in the kernel's memory is the refused id's, not the newer pick's — the newer pick
             # recorded its own. The hook compares-and-swaps by value (_forget_model_pick(fam, only=id)),
             # so a newer pin for the same family is never this refusal's to drop. A lost answer says
-            # nothing about the id and forgets nothing.
-            if superseded or refusal:
+            # nothing about the id and forgets nothing — superseded or not (fixer round 6 minors,
+            # 2026-09-02: gated on `superseded or refusal`, this fired for a superseded write whose answer
+            # was LOST, and forgot a pin the CLI never ruled on).
+            if refusal:
                 hook = getattr(type(self.backend), "on_model_refused", None)
                 if hook and picked:
                     try:
@@ -6376,9 +6393,15 @@ class SdkBackend:
 
     def _seed_write_pending(self, sid: str, value: str) -> str:
         """set_model's optimistic write of the shared `model`: land it under a fresh token and remember
-        what it replaced, until the session's own _do_set_model rules. Returns the token."""
-        prior, prior_tok, tok = swap_sdk_default(self.state_dir, "model", value)
+        what it replaced, until the session's own _do_set_model rules. Returns the token. The write and
+        its node land in ONE hold of the lock (fixer round 6 minors, 2026-09-02): in two, a refusal of the
+        write this one replaced — on the loop thread, through _revert_model — could run between them, pop
+        its node and re-point only the nodes that EXISTED, and this node was then inserted still pointing
+        at the refused pair (the head check stood down: the file's head was this write). This write's own
+        refusal then restored the refused id under a token no node knew — unwindable by nothing, and the
+        seed of every new session."""
         with _defaults_lock:
+            prior, prior_tok, tok = _swap_sdk_default_locked(self.state_dir, "model", value)
             self._seed_writes[tok] = {"sid": sid, "value": value, "prior": prior, "priorTok": prior_tok}
         return tok
 
@@ -6392,10 +6415,11 @@ class SdkBackend:
             self._seed_writes.pop(tok, None)
 
     def _seed_write_refused(self, tok) -> bool:
-        """The CLI refused the write (or a newer pick of the same session superseded it): leave the store
-        as if the write had never happened. Head → back to the (value, token) it replaced, absence
-        included; a pending write that replaced it now points past it; not the head and not under a
-        pending write → stand down (a settled writer holds the store). Returns whether the file moved."""
+        """The CLI refused the write (a refusal a newer pick of the same session superseded included):
+        leave the store as if the write had never happened. Head → back to the (value, token) it
+        replaced, absence included; a pending write that replaced it now points past it; not the head
+        and not under a pending write → stand down (a settled writer holds the store). Returns whether
+        the file moved."""
         if tok is None:
             return False
         with _defaults_lock:

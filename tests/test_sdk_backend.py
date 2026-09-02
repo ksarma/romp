@@ -1533,6 +1533,49 @@ class SetModelModePure(unittest.TestCase):
         finally:
             del type(self.be).on_model_refused
 
+    def test_a_superseded_write_whose_answer_was_lost_forgets_nothing_and_drops_its_node(self):
+        # (fixer round 6 minors, 2026-09-02) the forget hook fired on `superseded or refusal`, and superseded
+        # is computed from chosen_model alone — so a superseded write whose answer was LOST (a timeout, a
+        # request stranded by a reconnect teardown) forgot the user's pin for it, against the contract the
+        # arm above pins: a lost answer says nothing about the id. The hook fires on a refusal alone. The
+        # superseded lost write's node goes the way a settled write's does (dropped ≡ settled, the
+        # dead-thread rule): the store keeps the newer pick, and the newer pick's own unwind lands on this
+        # write — a lost pick stands, it was never refused.
+        calls = []
+        type(self.be).on_model_refused = staticmethod(lambda sid, value: calls.append((sid, value)))
+        try:
+            sid, sess, sched = self._live()                                     # accepted: opus
+
+            class _LostThenRefuses:
+                async def set_model(self, model=None):
+                    if model == "claude-fable-9-9":
+                        raise Exception("Control request timeout: set_model") from TimeoutError()
+                    raise Exception("Unknown model: %s" % model)
+
+                async def get_context_usage(self):
+                    return {"percentage": 3, "model": "claude-opus-4-8"}
+            sess.client = _LostThenRefuses()
+            self.assertTrue(self.be.set_model(sid, "claude-fable-9-9"))         # A: a version pin
+            self.assertTrue(self.be.set_model(sid, "claude-sonnet-4-6"))        # B: the newer pick
+            rang = len(self.be.problems())
+            asyncio.run(sess._do_set_model(*sched[0]))                         # A's answer: lost, superseded by B
+            self.assertEqual(calls, [], "a lost answer forgets nothing, superseded or not")
+            self.assertEqual(sess.chosen_model, "claude-sonnet-4-6", "the newer pick owns the session's layers")
+            self.assertEqual(sb.read_reg(self.d, sid)["model"], "claude-sonnet-4-6")
+            self.assertEqual(sb.read_sdk_defaults(self.d).get("model"), "claude-sonnet-4-6", "the store keeps the newer write")
+            self.assertEqual(len(self.be.problems()), rang, "and rings nothing — the user already picked again")
+            nodes = {n["value"]: n for n in self.be._seed_writes.values()}
+            self.assertEqual(set(nodes), {"claude-sonnet-4-6"}, "A's node is dropped; B's stays pending")
+            self.assertEqual(nodes["claude-sonnet-4-6"]["prior"], "claude-fable-9-9",
+                             "B still points at A's write — lost, not refused, so it is what B unwinds onto")
+            asyncio.run(sess._do_set_model(*sched[1]))                         # B refused — the head
+            self.assertEqual(calls, [(sid, "claude-sonnet-4-6")], "B's refusal is a verdict: it forgets B alone")
+            self.assertEqual(sb.read_sdk_defaults(self.d).get("model"), "claude-fable-9-9")
+            self.assertEqual(sess.chosen_model, "opus", "the session's own layers go back to the last ACCEPTED model")
+            self.assertEqual(self.be._seed_writes, {})
+        finally:
+            del type(self.be).on_model_refused
+
     # ── the revert target is the last ACCEPTED state (fixer round 5, 2026-09-01) ─────────────────────
     class _RefusesAll:
         """A CLI that answers every set_model with an error and keeps running Opus 4.8."""
@@ -1772,6 +1815,53 @@ class SetModelModePure(unittest.TestCase):
         self.be._on_session_gone(sess2)
         self.assertEqual(self.be._seed_writes, {}, "dropped with the thread; the store keeps the value")
         self.assertEqual(sb.read_sdk_defaults(self.d).get("model"), "claude-sonnet-9-9")
+
+    def test_a_refusal_landing_between_the_shared_write_and_its_node_never_seeds_the_refused_id(self):
+        # (fixer round 6 minors, 2026-09-02) _seed_write_pending wrote the store under the lock, RELEASED it,
+        # and took it again to insert the node. A refusal for the write it replaced — on the SDK loop
+        # thread, through _revert_model — could run in that gap: it popped its own node and re-pointed only
+        # the nodes that EXISTED, so the new node was inserted afterwards still pointing at the refused
+        # (value, token); the head check stood down (the file's head was the new write). The new write's
+        # own refusal then restored the refused id under a token no node knew — unwindable by nothing, and
+        # the seed of every new session. Deterministic stand-in for "the other thread takes the lock the
+        # instant this one lets go": a lock whose RELEASE runs an armed action once — A's refusal — so it
+        # lands wherever the first release inside set_model falls. The write and the insert are one hold.
+        a, sa, qa = self._live()
+        b, sb_, qb = self._live()
+        sa.client = sb_.client = self._RefusesAll()
+        self.assertTrue(self.be.set_model(a, "claude-fable-9-9"))          # Va pending, the head
+
+        class _ReleaseRuns:
+            """_defaults_lock stand-in: the first release after arming runs the armed action."""
+            def __init__(self):
+                self._l, self.armed = threading.Lock(), None
+
+            def locked(self):
+                return self._l.locked()
+
+            def __enter__(self):
+                self._l.acquire()
+                return self
+
+            def __exit__(self, *exc):
+                self._l.release()
+                fn, self.armed = self.armed, None
+                if fn:
+                    fn()
+        lock = _ReleaseRuns()
+        lock.armed = lambda: asyncio.run(sa._do_set_model(*qa[-1]))       # Va refused, at the first release
+        with mock.patch.object(sb, "_defaults_lock", lock):
+            self.assertTrue(self.be.set_model(b, "claude-sonnet-9-9"))     # Vb on top of Va
+        self.assertIsNone(lock.armed, "the refusal ran inside b's set_model")
+        self.assertEqual(sb.read_sdk_defaults(self.d).get("model"), "claude-sonnet-9-9", "b's write is the head")
+        self.assertEqual(sb.read_reg(self.d, a)["model"], "opus", "a's own layers reverted")
+        (nb,) = self.be._seed_writes.values()
+        self.assertEqual((nb["value"], nb["prior"]), ("claude-sonnet-9-9", "opus"),
+                         "b's node points PAST the refused write: the refusal saw it")
+        asyncio.run(sb_._do_set_model(*qb[-1]))                            # Vb refused — the head: back to opus
+        self.assertEqual(sb.read_sdk_defaults(self.d).get("model"), "opus", "neither refused id is the seed")
+        self.assertEqual(self.be._seed_writes, {})
+        self.assertEqual(len(self.be.problems()), 2, "every refusal rang once")
 
     # ── snapshot and write in ONE lock hold; chosen_model compare-and-assign under the session lock ──
     def test_a_defaults_or_reg_read_taken_outside_the_store_lock_never_feeds_the_revert(self):

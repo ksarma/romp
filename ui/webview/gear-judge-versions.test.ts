@@ -78,6 +78,6 @@ test("the gear's cached /models list re-reads on the kernel's models frame (fixe
   assert.ok(seg.includes("if (d && Array.isArray(d.models) && adoptChoices(d)) paintChoices();"),
     "replaces the cache the rows read at click time — through the rev gate — and repaints from it (gear-models-frame.test.ts runs both)");
   assert.ok(!seg.includes("innerHTML"), "no second option writer: the painter is shared with fillChoices");
-  assert.ok(GEAR.includes("var held = sel.value;") && GEAR.includes("if (held) sel.value = held;"),
-    "the painter gives every select its value back");
+  assert.ok(GEAR.includes("var held = sel.value;") && GEAR.includes("if (held) setShow(sel, held);"),
+    "the painter gives every select its value back — through the one off-list-aware write path, so a value the new list lacks is re-injected rather than blanked (gear-models-frame.test.ts runs it)");
 });

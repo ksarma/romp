@@ -14,21 +14,32 @@ const GEAR = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", 
 const tick = () => new Promise((r) => setImmediate(r));
 
 // A <select> stand-in with the spec's value semantics the paint relies on (fixer round 6, 2026-09-02):
-// setting innerHTML resets the value; assigning a value selects it only if an option carries it, else
-// "". The round-5 tests passed NULL selects (fillChoices guards each with `if (jm) …`), which is exactly
-// why they could not see the pickers left empty — nothing was there to be empty.
-type Sel = { innerHTML: string; value: string; options: string[] };
+// rewriting the options selects the FIRST one (the selectedness setting algorithm); assigning a value
+// selects it only if an option carries it, else NOTHING — selectedIndex -1, value "" (the round-6 minor:
+// the repaint handed a held value straight back and blanked the select when the new list lacked it);
+// appendChild adds an option the way setShow's off-list injection does. `values` is the option values in
+// order, for the assertions. The round-5 tests passed NULL selects (fillChoices guards each with
+// `if (jm) …`), which is exactly why they could not see the pickers left empty — nothing was there to be empty.
+type Opt = { value: string; textContent: string };
+type Sel = { innerHTML: string; value: string; options: Opt[]; values: string[]; appendChild(o: Opt): void };
 function sel(): Sel {
   const s: any = { _html: "", _v: "" };
-  Object.defineProperty(s, "innerHTML", { get() { return s._html; }, set(h: string) { s._html = h; s._v = ""; } });
-  Object.defineProperty(s, "options", { get() { return [...s._html.matchAll(/value="([^"]*)"/g)].map((m) => m[1]); } });
-  Object.defineProperty(s, "value", { get() { return s._v; }, set(v: string) { s._v = s.options.includes(v) ? v : ""; } });
+  const parse = (): Opt[] =>
+    [...s._html.matchAll(/<option value="([^"]*)">([^<]*)<\/option>/g)].map((m) => ({ value: m[1], textContent: m[2] }));
+  Object.defineProperty(s, "innerHTML", { get() { return s._html; }, set(h: string) { s._html = h; const o = parse(); s._v = o.length ? o[0].value : ""; } });
+  Object.defineProperty(s, "options", { get: parse });
+  Object.defineProperty(s, "values", { get() { return parse().map((o) => o.value); } });
+  Object.defineProperty(s, "value", { get() { return s._v; }, set(v: string) { s._v = parse().some((o) => o.value === v) ? v : ""; } });
+  s.appendChild = (o: Opt) => { s._html += '<option value="' + o.value + '">' + o.textContent + "</option>"; };
   return s as Sel;
 }
+// the one document call the block makes: setShow's injected <option>
+const DOC = { createElement: (tag: string): Opt => { assert.equal(tag, "option"); return { value: "", textContent: "" }; } };
 const SELECTS = ["jm", "im", "je", "ie", "dm", "de", "cmm", "cme"] as const;
 
 // The block, evaluated with the closure variables it reads passed in: `window` (the listener's target),
-// `fetch`/`ku` (the read), and the eight <select>s — real stand-ins by default, or null (the guards).
+// `document` (the injected option), `fetch`/`ku` (the read), and the eight <select>s — real stand-ins by
+// default, or null (the guards).
 function lift(withSelects = true) {
   const start = GEAR.indexOf("  var choices = null");
   const at = GEAR.indexOf("m.type !== 'models'", start);
@@ -43,9 +54,9 @@ function lift(withSelects = true) {
     return new Promise<any>((res) => pending.push((d: any) => res({ json: async () => d })));
   };
   const S: Record<(typeof SELECTS)[number], Sel | null> = Object.fromEntries(SELECTS.map((k) => [k, withSelects ? sel() : null])) as any;
-  const fn = new Function("window", "fetch", "ku", ...SELECTS,
+  const fn = new Function("window", "document", "fetch", "ku", ...SELECTS,
     src + "\n  return { fillChoices: fillChoices, choices: function () { return choices; } };");
-  const api = fn(win, fetchStub, (p: string) => p, ...SELECTS.map((k) => S[k]));
+  const api = fn(win, DOC, fetchStub, (p: string) => p, ...SELECTS.map((k) => S[k]));
   const frame = (rev: number) => listeners.forEach((l) => l({ data: { type: "models", rev } }));
   return { api, listeners, pending, frame, S };
 }
@@ -126,12 +137,12 @@ test("executed: when the frame's re-read overtakes the page-load fill, every pic
   await first; await tick();
   assert.equal(api.choices().models[0].default, "fable", "the newer list is the cache");
   for (const k of SELECTS) assert.ok(S[k]!.innerHTML.length > 0, `${k} is painted`);
-  assert.deepEqual(S.jm!.options, ["fable", "claude-fable-5"], "family + version options, from the list that won");
-  assert.deepEqual(S.je!.options, ["", "high"]);
-  assert.deepEqual(S.dm!.options, ["triage", "fable", "claude-fable-5"], "the distilling sentinel leads");
-  assert.deepEqual(S.de!.options, ["triage", "none", "high"]);
-  assert.deepEqual(S.cmm!.options, ["session", "default", "fable", "claude-fable-5"], "the comment sentinels lead");
-  assert.deepEqual(S.cme!.options, ["session", "high"]);
+  assert.deepEqual(S.jm!.values, ["fable", "claude-fable-5"], "family + version options, from the list that won");
+  assert.deepEqual(S.je!.values, ["", "high"]);
+  assert.deepEqual(S.dm!.values, ["triage", "fable", "claude-fable-5"], "the distilling sentinel leads");
+  assert.deepEqual(S.de!.values, ["triage", "none", "high"]);
+  assert.deepEqual(S.cmm!.values, ["session", "default", "fable", "claude-fable-5"], "the comment sentinels lead");
+  assert.deepEqual(S.cme!.values, ["session", "high"]);
   // a later modal open (fill → fillChoices) is a cache hit and the pickers stay painted
   assert.equal((await api.fillChoices()).models[0].default, "fable");
   assert.equal(pending.length, 2, "no third fetch");
@@ -153,8 +164,8 @@ test("executed: a frame's repaint keeps the value each select held while the mod
   pending[1](list(2, "fable", V2));
   await tick(); await tick();
   assert.equal(api.choices().models[0].default, "fable", "the cache moved");
-  assert.deepEqual(S.jm!.options, ["fable", "claude-fable-5", "claude-fable-5-1"], "…and so did the options");
-  assert.deepEqual(S.cmm!.options, ["session", "default", "fable", "claude-fable-5", "claude-fable-5-1"]);
+  assert.deepEqual(S.jm!.values, ["fable", "claude-fable-5", "claude-fable-5-1"], "…and so did the options");
+  assert.deepEqual(S.cmm!.values, ["session", "default", "fable", "claude-fable-5", "claude-fable-5-1"]);
   assert.equal(S.jm!.value, "claude-fable-5", "the pinned version the user had selected is still selected");
   assert.equal(S.je!.value, "high");
   assert.equal(S.dm!.value, "fable");
@@ -168,4 +179,41 @@ test("executed: a frame's repaint keeps the value each select held while the mod
   assert.equal(api.choices().rev, 4);
   assert.equal(S.jm!.innerHTML, html);
   assert.equal(S.jm!.value, "claude-fable-5");
+});
+
+test("executed: a repaint keeps a held value the new list LACKS — as a marked off-list option, never a blank select", async () => {
+  // (fixer round 6 minors, 2026-09-02) the painter handed the held value straight back after the rewrite,
+  // and per the spec a select assigned a value none of its options carries deselects everything — value
+  // "", the version menu's label read from it empty. So a stored value fill() had injected (the kernel's
+  // truth, ahead of this page's list) or a learned version that has since left the list went BLANK on the
+  // next frame. The held value is re-injected the way fill() injects it: marked, selected, once.
+  const V = [{ value: "claude-fable-5", label: "Fable 5" }, { value: "claude-fable-5-1", label: "Fable 5.1" }];
+  const { api, pending, frame, S } = lift();
+  const first = api.fillChoices();
+  pending[0](list(1, "fable", V));
+  await first;
+  // fill(): the stored judge model is one this list lacks → setShow injected it, marked, and selected it
+  S.jm!.appendChild({ value: "claude-fable-6", textContent: "claude-fable-6 — not in this kernel's list" });
+  S.jm!.value = "claude-fable-6";
+  S.im!.value = "claude-fable-5-1";                      // a learned version, picked
+  S.je!.value = "high";
+  frame(2);
+  pending[1](list(2, "fable", V.slice(0, 1)));           // the learned 5.1 left the list
+  await tick(); await tick();
+  assert.equal(S.jm!.value, "claude-fable-6", "the stored value the kernel holds is still selected");
+  assert.deepEqual(S.jm!.values, ["fable", "claude-fable-5", "claude-fable-6"], "…re-injected after the rewrite, last");
+  assert.match(S.jm!.options[2].textContent, /not in this kernel's list/, "…and marked as off-list");
+  assert.equal(S.im!.value, "claude-fable-5-1", "so is the version that left the list");
+  assert.deepEqual(S.im!.values, ["fable", "claude-fable-5", "claude-fable-5-1"]);
+  assert.equal(S.je!.value, "high", "an in-list value is given back plainly");
+  assert.deepEqual(S.je!.values, ["", "high"], "nothing injected for it");
+  // the next repaint injects the off-list value once more — never a second copy
+  frame(3);
+  pending[2](list(3, "fable", V.slice(0, 1)));
+  await tick(); await tick();
+  assert.deepEqual(S.jm!.values, ["fable", "claude-fable-5", "claude-fable-6"]);
+  assert.equal(S.jm!.value, "claude-fable-6");
+  // a select nobody has picked on holds its first option; a repaint leaves it there, injecting nothing
+  assert.equal(S.dm!.value, "triage");
+  assert.deepEqual(S.dm!.values, ["triage", "fable", "claude-fable-5"]);
 });

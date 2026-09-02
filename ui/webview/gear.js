@@ -829,12 +829,32 @@ function initGear(post) {
     choices = d || { models: [], efforts: [] };
     return true;
   }
+  // The ONE write path for kernel-backed selects — fill()'s (the user 2026-09-01, whose stored distill
+  // pick displayed as the default) and paintChoices' (fixer round 6 minors, 2026-09-02): a value the
+  // option list doesn't carry is INJECTED as a marked option and selected — the row shows the truth (an
+  // off-list value, named) rather than silently falling to its first option or, on a repaint, to NOTHING:
+  // per the spec a select assigned a value none of its options carries deselects every option (value ''),
+  // so a repaint that handed the held value straight back left the select blank, and the version menu's
+  // label with it, whenever the value was one fill() had injected or a learned version that has since
+  // left the list. Values are validated at write time by the kernel, so an injection here means THIS
+  // page's list is behind the store — worth seeing, never worth hiding.
+  function setShow(sel, val) {
+    if (!sel) return;
+    if (val && !Array.prototype.some.call(sel.options, function (o) { return o.value === val; })) {
+      var o = document.createElement('option');
+      o.value = val;
+      o.textContent = val + " — not in this kernel's list";
+      sel.appendChild(o);
+    }
+    sel.value = val;
+  }
   // Write every select's <option>s from the CURRENT list — whichever response won — and give each select
-  // back the value it held, when the list still offers it (fixer round 6, 2026-09-02). Rewriting a
-  // select's options resets it to its first option, which is why the round-4 listener never repainted;
-  // but round 5 also made the page-load fill skip its paint when the frame's re-read had applied a newer
-  // list first, and every later fill() then short-circuited on the cache — eight empty pickers for the
-  // life of the page. The paint keys on the list, not on which fetch carried it.
+  // back the value it held, through setShow: plainly when the list still offers it, as a marked off-list
+  // option when it no longer does (fixer round 6, 2026-09-02). Rewriting a select's options resets it to
+  // its first option, which is why the round-4 listener never repainted; but round 5 also made the
+  // page-load fill skip its paint when the frame's re-read had applied a newer list first, and every later
+  // fill() then short-circuited on the cache — eight empty pickers for the life of the page. The paint
+  // keys on the list, not on which fetch carried it.
   function paintChoices() {
     var mo = (choices.models || []).map(function (m) {
       var vs = (m.versions || []).map(function (v) { return '<option value="' + v.value + '">' + v.label + '</option>'; }).join('');
@@ -846,7 +866,7 @@ function initGear(post) {
       if (!sel) return;
       var held = sel.value;
       sel.innerHTML = html;
-      if (held) sel.value = held;
+      if (held) setShow(sel, held);   // a held value the new list lacks stays, marked — never a blank select
     }
     put(jm, mo); put(im, mo);
     put(je, eo); put(ie, eo);
@@ -947,21 +967,8 @@ function initGear(post) {
       mark.hidden = false;
     });
   }
-  // fill()'s ONE write path for kernel-backed selects (the user 2026-09-01, whose stored distill
-  // pick displayed as the default): a stored value the option list doesn't carry is INJECTED as a
-  // marked option and selected — the row shows the truth (an off-list value, named) rather than
-  // silently falling to its first option. Values are validated at write time by the kernel, so an
-  // injection here means THIS page's list is behind the store — worth seeing, never worth hiding.
-  function setShow(sel, val) {
-    if (!sel) return;
-    if (val && !Array.prototype.some.call(sel.options, function (o) { return o.value === val; })) {
-      var o = document.createElement('option');
-      o.value = val;
-      o.textContent = val + " — not in this kernel's list";
-      sel.appendChild(o);
-    }
-    sel.value = val;
-  }
+  // setShow — fill()'s write path for every kernel-backed select below — sits beside paintChoices, which
+  // shares it.
   function fill() { fillChoices().then(function () { return fetch(ku('/version'), { cache: 'no-store' }); }).then(function (r) { return r.json(); }).then(function (v) {
     // ONE /tunnels fetch feeds every cross-machine comparison: the autoNudge box and the select marks.
     // A failed /tunnels leaves the local answers standing, unmarked — same fallback as before.
