@@ -90,6 +90,54 @@ test("wired and vocabulary-clean: esbuild entries, no federation import, no flee
   }
 });
 
+// executed: the shell's relay arms, EXTRACTED from kernel.py's landing shell (the file-view.test.ts
+// flag-algebra idiom) and run against a shimmed window/document — a `pane:"pane"` click drives the
+// Files branch and never touches the feed's flags; the same click without `pane` still takes the feed route
+test("the shell's viewFile relay, executed: pane:'pane' brings the Files pane forward and forwards identity; the feed route is untouched", () => {
+  const start = KERNEL.indexOf("if(m.romp==='browseFiles')");
+  const stop = KERNEL.indexOf("// One id per dashboard", start);
+  assert.ok(start >= 0 && stop > start, "arm anchors not found — re-anchor this extraction");
+  let arms = KERNEL.slice(start, stop).trimEnd();
+  assert.ok(arms.endsWith("}});"));
+  arms = arms.slice(0, -3);
+  const armsFn = new Function("window", "document", "m", arms) as (w: unknown, d: unknown, m: unknown) => void;
+  const run = (m: unknown) => {
+    const toggles: Array<[string, boolean]> = [], tabs: string[] = [];
+    const posted: Record<string, unknown[]> = { "f-files": [], "f-feed": [], "f-chat": [] };
+    const win: any = { __rompPaneToggle: (p: string, on: boolean) => toggles.push([p, on]), __rompMobileTab: (t: string) => tabs.push(t) };
+    const doc = {
+      body: { classList: { contains: (c: string) => c === "po-feed" } },   // feed on, files off
+      getElementById: (id: string) => (id in posted ? { contentWindow: { postMessage: (x: unknown) => posted[id].push(x) } } : null),
+    };
+    armsFn(win, doc, m);
+    return { toggles, tabs, posted, pend: win.__rompFeedWasOffViewPend };
+  };
+  const identity = { name: "web", color: { bg: "#123456", fg: "#ffffff" } };
+  const pane = run({ romp: "viewFile", pane: "pane", path: "/repo/notes-api/src/app.py", sid: SID, identity });
+  assert.deepEqual(pane.toggles, [["files", true]], "the Files pane comes forward; the feed is not touched");
+  assert.deepEqual(pane.tabs, ["files"]);
+  assert.deepEqual(pane.posted["f-files"], [{ romp: "viewFile", path: "/repo/notes-api/src/app.py", sid: SID, identity }]);
+  assert.deepEqual(pane.posted["f-feed"], [], "nothing reaches the feed");
+  assert.equal(pane.pend, undefined, "the feed's was-off stash is never armed by the Files route");
+  // a remote session's file: the prefixed sid rides through untouched (files.ts hands it to fileUrl, host-routed)
+  const remote = run({ romp: "viewFile", pane: "pane", path: "/repo/notes-api/README.md", sid: "TESTHOST:" + SID2, identity: { name: "TESTHOST:api", color: null } });
+  assert.equal((remote.posted["f-files"][0] as any).sid, "TESTHOST:" + SID2);
+  // no identity on the relay (an older chat bundle): the forward carries null, and files.ts falls to the stub
+  const bare = run({ romp: "viewFile", pane: "pane", path: "/repo/notes-api/README.md", sid: SID });
+  assert.equal((bare.posted["f-files"][0] as any).identity, null);
+  // the feed route: a click with pane:"feed" (or none) takes the else branch exactly as before
+  for (const m of [{ romp: "viewFile", pane: "feed", path: "/p", sid: SID }, { romp: "viewFile", path: "/p", sid: SID }]) {
+    const feed = run(m);
+    assert.deepEqual(feed.posted["f-feed"], [{ romp: "viewFile", path: "/p", sid: SID }]);
+    assert.deepEqual(feed.posted["f-files"], []);
+    assert.deepEqual(feed.tabs, ["feed"]);
+    assert.equal(feed.pend, false, "the feed pane was on, so nothing is stashed — but the stash IS written by this route");
+  }
+  // the quote-seed forward: the chat frame gets the message whole
+  const seed = run({ type: "editorSelection", text: "the auth check", sid: SID, src: "src/app.py:12" });
+  assert.deepEqual(seed.posted["f-chat"], [{ type: "editorSelection", text: "the auth check", sid: SID, src: "src/app.py:12" }]);
+});
+
 // ── executed: the pure half ──────────────────────────────────────────────────────────────────────
 
 test("rememberRecent: most recent first, one row per path + session, capped", () => {

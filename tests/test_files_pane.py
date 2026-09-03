@@ -92,5 +92,92 @@ class Plumbing(unittest.TestCase):
         self.assertNotIn("fleet", css.lower(), "no fleet vocabulary in the new sheet")
 
 
+class Shell(unittest.TestCase):
+    """The dashboard grows a sixth pane: the far-right column after Waiting, OFF by default (the viewFile
+    relay brings it forward when a click routes there), with its own gutter, grow var, and every
+    hand-written pane list in the landing JS extended — focus ring, Alt+Arrow columns, Esc wiring, the
+    Log's pane names, the mobile tab map, the pane controller. One label, "Files", from _PANE_ORDER."""
+
+    def setUp(self):
+        self.html = km._landing()
+
+    def test_the_pane_is_in_the_one_ordering_last(self):
+        self.assertEqual(km._PANE_ORDER[-1], ("files", "Files"))
+        self.assertIn("<div class=rail-btn data-pane=files>Files</div>", self.html)
+        self.assertIn("<button data-pane=files>Files</button>", self.html)
+
+    def test_the_column_sits_after_waiting_with_its_gutter_and_grow_var(self):
+        self.assertIn('<div class=gv id=gv-d></div><div class=pane id=files-pane><iframe id=f-files src=/files></iframe></div>',
+                      self.html.replace('"\n            "', ""))
+        self.assertLess(self.html.index("id=waiting-pane"), self.html.index("id=gv-d"))
+        self.assertLess(self.html.index("id=gv-d"), self.html.index("id=files-pane"))
+        self.assertLess(self.html.index("id=files-pane"), self.html.index("id=gh"), "before the timeline band")
+        self.assertIn("#files-pane{flex:var(--g-files,40) 1 0}", self.html)
+        self.assertIn("body:not(.po-files) #files-pane{display:none}", self.html)
+        self.assertIn("body:not(.po-files) #gv-d,body:not(.po-chat):not(.po-fleet):not(.po-feed):not(.po-waiting) #gv-d{display:none}", self.html)
+
+    def test_off_by_default_and_toggled_by_the_controller(self):
+        self.assertIn("<body class='po-chat po-feed po-timeline'>", self.html)   # not po-files
+        self.assertIn("po={chat:true,fleet:false,feed:true,timeline:true,waiting:false,files:false}", self.html)
+        self.assertIn("po={chat:false,fleet:false,feed:false,timeline:false,waiting:false,files:false}", self.html)   # the ?panes= reset
+        self.assertIn("document.body.classList.toggle('po-files',!!po.files)", self.html)
+        self.assertIn("files:'Files pane'", self.html)   # the rail tooltip's words
+
+    def test_every_pane_list_in_the_landing_js_names_it(self):
+        self.assertIn("'f-files':'files-pane'", km._LANDING_FOCUS_JS)
+        self.assertIn("var COLS=['f-chat','f-fleet','f-feed','f-waiting','f-files']", km._LANDING_FOCUS_JS)
+        self.assertIn("['f-chat','f-fleet','f-feed','f-waiting','f-files','f-timeline'].forEach", self.html)   # Esc wiring
+        self.assertIn("files:'Files'", km._LANDING_ERRS_JS)   # the Log's connection-lost label
+        self.assertIn("files:document.getElementById('f-files')", km._LANDING_MOBILE_JS)
+        self.assertIn("var PANES=['chat-pane','fleet-pane','feed-pane','waiting-pane','files-pane'];", self.html)
+        self.assertIn("grow={chat:60,fleet:34,feed:40,waiting:34,files:40}", self.html)
+        self.assertIn("id==='waiting-pane'?'waiting':'files'", self.html)
+        self.assertIn("gutter('gv-d',function(){var c=document.body.classList;return c.contains('po-waiting')?'waiting-pane':"
+                      "c.contains('po-feed')?'feed-pane':c.contains('po-fleet')?'fleet-pane':'chat-pane';},'files-pane');", self.html)
+
+    def test_mobile_tab_and_the_palette_command(self):
+        self.assertIn("#chat-pane,#fleet-pane,#feed-pane,#waiting-pane,#files-pane,#tl-pane{display:contents!important}", self.html)
+        self.assertIn("#f-chat.m-on,#f-fleet.m-on,#f-feed.m-on,#f-waiting.m-on,#f-files.m-on{display:block}", self.html)
+        pal = (UI / "palette-main.ts").read_text()
+        self.assertIn('["files", "files", "Files"]', pal)
+        self.assertIn('"f-files"', pal)
+
+
+class Relay(unittest.TestCase):
+    """The shell's viewFile relay gains a `pane` branch: a click routed to the Files pane brings that pane
+    forward (desktop toggle + phone tab) and forwards the click, identity included, into #f-files — with
+    none of the feed route's was-off stash, viewFileOpened ack or viewFileClosed restore, because the
+    pane stays up. The feed route is untouched, and a message without `pane` still goes to the feed."""
+
+    def test_the_pane_branch_brings_the_files_pane_forward_and_forwards_the_identity(self):
+        js = km._LANDING_SETTINGS_JS
+        head = "if(m.romp==='viewFile'&&m.pane==='pane'){var ff=document.getElementById('f-files');"
+        self.assertIn(head, js)
+        branch = js.split(head)[1].split("else if(m.romp==='viewFile')")[0]
+        # the feed route's own comment block sits between the two branches and names its machinery; the CODE
+        # of this branch must not
+        branch = "\n".join(l for l in branch.splitlines() if not l.lstrip().startswith("//"))
+        self.assertIn("window.__rompPaneToggle&&window.__rompPaneToggle('files',true)", branch)
+        self.assertIn("window.__rompMobileTab&&window.__rompMobileTab('files')", branch)
+        self.assertIn("postMessage({romp:'viewFile',path:m.path,sid:m.sid,identity:m.identity||null},'*')", branch)
+        for tok in ("__rompFeedWasOff", "viewFileOpened", "viewFileClosed", "'f-feed'"):
+            self.assertNotIn(tok, branch, tok + " belongs to the feed route")
+
+    def test_the_feed_route_is_the_else_branch_and_unchanged(self):
+        js = km._LANDING_SETTINGS_JS
+        self.assertLess(js.index("if(m.romp==='viewFile'&&m.pane==='pane')"), js.index("else if(m.romp==='viewFile'){var vf="))
+        feed = js.split("else if(m.romp==='viewFile'){var vf=document.getElementById('f-feed');")[1].split("if(m.romp==='viewFileOpened')")[0]
+        self.assertIn("window.__rompFeedWasOffViewPend=!document.body.classList.contains('po-feed');", feed)
+        self.assertIn("window.__rompMobileTab&&window.__rompMobileTab('feed')", feed)
+        self.assertIn("postMessage({romp:'viewFile',path:m.path,sid:m.sid},'*')", feed)
+
+    def test_the_quote_seed_forward_sits_in_the_same_listener(self):
+        # file-view.ts composerWindow posts editorSelection UP from a pane without a composer; the shell
+        # forwards it whole into the chat frame (the executed pins live in file-view.test.ts)
+        js = km._LANDING_SETTINGS_JS
+        self.assertIn("if(m.type==='editorSelection'&&typeof m.text==='string'){var fc=document.getElementById('f-chat');", js)
+        self.assertIn("fc&&fc.contentWindow&&fc.contentWindow.postMessage(m,'*')", js)
+
+
 if __name__ == "__main__":
     unittest.main()

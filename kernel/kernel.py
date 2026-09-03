@@ -31348,16 +31348,16 @@ col.style.setProperty('--tl',Math.max(48,Math.min(mx,px))+'px');}
 function up(){document.body.classList.remove('drag','dragh');
 window.removeEventListener('mousemove',mv);window.removeEventListener('mouseup',up);}
 window.addEventListener('mousemove',mv);window.addEventListener('mouseup',up);});
-// ── pane gutters (chat|fleet|feed|waiting, fixed order) sized by flex-grow. gv-a is always chat|fleet; gv-b's left
+// ── pane gutters (chat|fleet|feed|waiting|files, fixed order) sized by flex-grow. gv-a is always chat|fleet; gv-b's left
 // neighbour is fleet when shown else chat (so it's the chat|feed gutter when fleet is off); gv-c's left neighbour
-// is the rightmost shown of feed/fleet/chat. On grab we normalise every visible pane's grow to its px width so
-// the drag shifts only that pair; grows persist.
-var PANES=['chat-pane','fleet-pane','feed-pane','waiting-pane'];
-var GK='romp-pane-grow',grow={chat:60,fleet:34,feed:40,waiting:34};
+// is the rightmost shown of feed/fleet/chat; gv-d's the rightmost shown of waiting/feed/fleet/chat. On grab we
+// normalise every visible pane's grow to its px width so the drag shifts only that pair; grows persist.
+var PANES=['chat-pane','fleet-pane','feed-pane','waiting-pane','files-pane'];
+var GK='romp-pane-grow',grow={chat:60,fleet:34,feed:40,waiting:34,files:40};
 try{var g=JSON.parse(localStorage.getItem(GK)||'null');if(g)grow=Object.assign(grow,g);}catch(e){}
 function setGrow(k,v){grow[k]=v;row.style.setProperty('--g-'+k,v);}
 for(var k in grow)setGrow(k,grow[k]);
-function key(id){return id==='chat-pane'?'chat':id==='fleet-pane'?'fleet':id==='feed-pane'?'feed':'waiting';}
+function key(id){return id==='chat-pane'?'chat':id==='fleet-pane'?'fleet':id==='feed-pane'?'feed':id==='waiting-pane'?'waiting':'files';}
 function shown(id){var p=document.getElementById(id);return p&&getComputedStyle(p).display!=='none';}
 // a pane re-shown from the rail gets a grow comparable to the panes already visible, so it never slots back
 // in as a sliver after the others were dragged to extreme widths (grows are stored as px). Timeline is the
@@ -31377,6 +31377,7 @@ window.addEventListener('mousemove',mv);window.addEventListener('mouseup',up);})
 gutter('gv-a',function(){return 'chat-pane';},'fleet-pane');
 gutter('gv-b',function(){return document.body.classList.contains('po-fleet')?'fleet-pane':'chat-pane';},'feed-pane');
 gutter('gv-c',function(){var c=document.body.classList;return c.contains('po-feed')?'feed-pane':c.contains('po-fleet')?'fleet-pane':'chat-pane';},'waiting-pane');
+gutter('gv-d',function(){var c=document.body.classList;return c.contains('po-waiting')?'waiting-pane':c.contains('po-feed')?'feed-pane':c.contains('po-fleet')?'fleet-pane':'chat-pane';},'files-pane');
 tf&&tf.addEventListener('load',function(){autosize();
 try{new ResizeObserver(autosize).observe(tf.contentDocument.body);}catch(e){}});
 window.addEventListener('resize',autosize);
@@ -31391,8 +31392,8 @@ window.addEventListener('romp-panes',autosize);   // re-fit when the Timeline to
 # all EVENT-based (no polling). Re-wires on every iframe (re)load; chat is the default focus on open. Inert on
 # mobile (one pane at a time; .pane is display:contents).
 _LANDING_FOCUS_JS = """
-(function(){var PANE={'f-chat':'chat-pane','f-fleet':'fleet-pane','f-feed':'feed-pane','f-waiting':'waiting-pane','f-timeline':'tl-pane'};   // Fleet is its own pane
-var COLS=['f-chat','f-fleet','f-feed','f-waiting'];   // the side-by-side column panes, left->right (Fleet = the Outline; waiting = Waiting on you)
+(function(){var PANE={'f-chat':'chat-pane','f-fleet':'fleet-pane','f-feed':'feed-pane','f-waiting':'waiting-pane','f-files':'files-pane','f-timeline':'tl-pane'};   // Fleet is its own pane
+var COLS=['f-chat','f-fleet','f-feed','f-waiting','f-files'];   // the side-by-side column panes, left->right (Fleet = the Outline; waiting = Waiting on you; files = the file viewer)
 var TL='f-timeline';                       // the timeline is a bottom BAND under the columns
 var curFocus='f-chat', lastCol='f-chat';   // for Shift-Up out of the timeline: return to the last column used
 // The active pane gets a focus RING (.pane-focused). Same-origin iframes, so the shell sets it directly on
@@ -31591,7 +31592,7 @@ if(m&&m.romp==='notify'&&m.text)window.__rompNotify(m.kind||'error',m.text,
 var st={};
 function shown(k){return document.body.classList.contains('po-'+k);}
 function liveDown(){for(var k in st){if(st[k]==='down'&&shown(k))return true;}return false;}
-var PN={chat:'Chat',feed:'Feed',timeline:'Sessions',fleet:'Outline',waiting:'Waiting'};   // timeline key stays internal; the pane outgrew the name (filter, tags, lane controls — the user 2026-08-24)
+var PN={chat:'Chat',feed:'Feed',timeline:'Sessions',fleet:'Outline',waiting:'Waiting',files:'Files'};   // timeline key stays internal; the pane outgrew the name (filter, tags, lane controls — the user 2026-08-24)
 window.addEventListener('message',function(e){var m=e&&e.data;if(!m||m.romp!=='wsState')return;
 var s=(m.state==='up')?'up':'down',prev=st[m.app];st[m.app]=s;
 if(s==='down'&&prev!=='down'&&shown(m.app))
@@ -31634,7 +31635,7 @@ else{var nt=document.getElementById('rnet-back');
 if(nt&&!nt.hidden&&window.__rompCloseNet){window.__rompCloseNet();closed=true;}}}}
 if(closed){e.preventDefault();e.stopPropagation();}}
 document.addEventListener('keydown',onEsc,true);
-['f-chat','f-fleet','f-feed','f-waiting','f-timeline'].forEach(function(id){var f=document.getElementById(id);if(!f)return;
+['f-chat','f-fleet','f-feed','f-waiting','f-files','f-timeline'].forEach(function(id){var f=document.getElementById(id);if(!f)return;
 var wire=function(){try{if(f.contentDocument)f.contentDocument.addEventListener('keydown',onEsc,true);}catch(e){}};
 f.addEventListener('load',wire);wire();});
 })();
@@ -32070,6 +32071,15 @@ if(m.romp==='browseClosed'&&(window.__rompFeedWasOff||window.__rompFeedWasOffVie
 // for (m.sid beats the active tab there). The chat-hosted viewer posts to its own window and never gets here.
 if(m.type==='editorSelection'&&typeof m.text==='string'){var fc=document.getElementById('f-chat');
   try{fc&&fc.contentWindow&&fc.contentWindow.postMessage(m,'*');}catch(e){}}
+// A chat file-link click routed to the FILES pane (fileLinkPane "pane", 2026-09-03: the viewer as its own
+// column) posts viewFile up with pane:'pane'; the shell brings that pane forward and forwards the click
+// with the session's identity the chat resolved (name + colour — the pane has no session list to name
+// the file's session by; files.ts caches it for the viewer's chip). The pane STAYS up — nothing to put
+// back — so none of the feed route's was-off / ack / restore machinery below applies to this branch.
+if(m.romp==='viewFile'&&m.pane==='pane'){var ff=document.getElementById('f-files');
+  try{window.__rompPaneToggle&&window.__rompPaneToggle('files',true);}catch(e){}
+  try{window.__rompMobileTab&&window.__rompMobileTab('files');}catch(e){}   // phone: one pane at a time
+  try{ff&&ff.contentWindow&&ff.contentWindow.postMessage({romp:'viewFile',path:m.path,sid:m.sid,identity:m.identity||null},'*');}catch(e){}}
 // A chat file-link click with the cards-pane preference set (fileLinkPane — gear.js; the user
 // 2026-08-20) posts viewFile up instead of opening in-document; the shell forwards it to the FEED
 // pane, whose initFileView (file-view.ts) opens the viewer there. The GATE lives at the click site
@@ -32081,7 +32091,7 @@ if(m.type==='editorSelection'&&typeof m.text==='string'){var fc=document.getElem
 // real open sends and a lost message or a dirty-edit veto never does. An armed-at-send flag left a
 // viewFile lost to a mid-reload iframe cocked, and a later open/close cycle consumed it and hid a
 // pane the user was using. A lost message now costs only a pane left forward, never a surprise hide.
-if(m.romp==='viewFile'){var vf=document.getElementById('f-feed');
+else if(m.romp==='viewFile'){var vf=document.getElementById('f-feed');
   window.__rompFeedWasOffViewPend=!document.body.classList.contains('po-feed');
   if(window.__rompFeedWasOffViewPend){try{window.__rompPaneToggle&&window.__rompPaneToggle('feed',true);}catch(e){}}
   try{window.__rompMobileTab&&window.__rompMobileTab('feed');}catch(e){}   // phone: one pane at a time
@@ -32807,7 +32817,7 @@ function kbOpen(){var vv=window.visualViewport;return vv?(window.innerHeight-vv.
 function barfit(){try{document.documentElement.style.setProperty('--mtabs-h',(kbOpen()?0:(bar.offsetHeight||0))+'px');}catch(e){}}
 barfit();window.addEventListener('resize',barfit);window.addEventListener('orientationchange',barfit);
 if(window.visualViewport){window.visualViewport.addEventListener('resize',barfit);}
-var F={chat:document.getElementById('f-chat'),fleet:document.getElementById('f-fleet'),feed:document.getElementById('f-feed'),waiting:document.getElementById('f-waiting'),timeline:document.getElementById('f-timeline')};
+var F={chat:document.getElementById('f-chat'),fleet:document.getElementById('f-fleet'),feed:document.getElementById('f-feed'),waiting:document.getElementById('f-waiting'),files:document.getElementById('f-files'),timeline:document.getElementById('f-timeline')};
 var B=bar.querySelectorAll('button'),KT='romp-mobile-tab';
 function show(p){if(!F[p])return;document.body.setAttribute('data-tab',p);for(var k in F)F[k].classList.toggle('m-on',k===p);
 for(var i=0;i<B.length;i++)B[i].classList.toggle('on',B[i].getAttribute('data-pane')===p);
@@ -33025,18 +33035,19 @@ _STALE_JS = (
 # key,to?) so the legacy toggleFleet postMessage (_LANDING_FLEET_JS) routes through the same path.
 _LANDING_COLLAPSE_JS = """
 (function(){
-  var PK='romp-panes',po={chat:true,fleet:false,feed:true,timeline:true,waiting:false};
+  var PK='romp-panes',po={chat:true,fleet:false,feed:true,timeline:true,waiting:false,files:false};
   try{var s=JSON.parse(localStorage.getItem(PK)||'null');if(s)po=Object.assign(po,s);}catch(e){}
   var qp=new URLSearchParams(location.search).get('panes');
-  if(qp!==null){po={chat:false,fleet:false,feed:false,timeline:false,waiting:false};qp.split(',').forEach(function(k){k=k.trim();if(k in po)po[k]=true;});}
+  if(qp!==null){po={chat:false,fleet:false,feed:false,timeline:false,waiting:false,files:false};qp.split(',').forEach(function(k){k=k.trim();if(k in po)po[k]=true;});}
   function saveP(){try{localStorage.setItem(PK,JSON.stringify(po));}catch(e){}}
-  var LBL={chat:'chat',fleet:'fleet',feed:'feed',timeline:'timeline',waiting:'Waiting pane'};
+  var LBL={chat:'chat',fleet:'fleet',feed:'feed',timeline:'timeline',waiting:'Waiting pane',files:'Files pane'};
   function apply(){
     document.body.classList.toggle('po-chat',!!po.chat);
     document.body.classList.toggle('po-fleet',!!po.fleet);
     document.body.classList.toggle('po-feed',!!po.feed);
     document.body.classList.toggle('po-timeline',!!po.timeline);
     document.body.classList.toggle('po-waiting',!!po.waiting);
+    document.body.classList.toggle('po-files',!!po.files);
     Array.prototype.forEach.call(document.querySelectorAll('.rail-btn[data-pane]'),function(b){
       var k=b.getAttribute('data-pane');b.classList.toggle('on',!!po[k]);
       // tooltip carries the pane command's CURRENT binding (hover discoverability, the user 2026-08-10) —
@@ -33289,7 +33300,8 @@ _REFRESH_SVG = (
 # is a band, not a column). BOTH the desktop rail buttons and the mobile #mtabs buttons render
 # from this one constant — reorder here and both surfaces move together; a second hardcoded list
 # is the bug this replaces. Keys stay internal (timeline/fleet); labels are the user-facing names.
-_PANE_ORDER = (("chat", "Chat"), ("timeline", "Sessions"), ("fleet", "Outline"), ("feed", "Feed"), ("waiting", "Waiting"))
+_PANE_ORDER = (("chat", "Chat"), ("timeline", "Sessions"), ("fleet", "Outline"), ("feed", "Feed"), ("waiting", "Waiting"),
+               ("files", "Files"))
 
 
 def _rail_buttons_html():
@@ -33689,16 +33701,18 @@ def _landing():
             # the host heading's size without its lowercase-italic host vocabulary
             ".ru-tip-acct{font:400 10px 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;"
             "color:#9aa0a6;margin:0 0 4px}"
-            # the four TOP panes flex-grow by a per-pane var (resized by the gutters, persisted); toggling one
-            # off hides it AND the now-orphaned gutters. Fixed order: chat, fleet, feed, waiting. Timeline is the band.
-            "#chat-pane{flex:var(--g-chat,60) 1 0}#fleet-pane{flex:var(--g-fleet,34) 1 0}#feed-pane{flex:var(--g-feed,40) 1 0}#waiting-pane{flex:var(--g-waiting,34) 1 0}"
-            "body:not(.po-chat) #chat-pane{display:none}body:not(.po-fleet) #fleet-pane{display:none}body:not(.po-feed) #feed-pane{display:none}body:not(.po-waiting) #waiting-pane{display:none}"
+            # the five TOP panes flex-grow by a per-pane var (resized by the gutters, persisted); toggling one
+            # off hides it AND the now-orphaned gutters. Fixed order: chat, fleet, feed, waiting, files. Timeline is the band.
+            "#chat-pane{flex:var(--g-chat,60) 1 0}#fleet-pane{flex:var(--g-fleet,34) 1 0}#feed-pane{flex:var(--g-feed,40) 1 0}#waiting-pane{flex:var(--g-waiting,34) 1 0}#files-pane{flex:var(--g-files,40) 1 0}"
+            "body:not(.po-chat) #chat-pane{display:none}body:not(.po-fleet) #fleet-pane{display:none}body:not(.po-feed) #feed-pane{display:none}body:not(.po-waiting) #waiting-pane{display:none}body:not(.po-files) #files-pane{display:none}"
             ".row>.gv{flex:0 0 7px}"
             # gv-a sits chat|fleet (only when both shown); gv-b sits (fleet|chat)|feed — the chat|feed gutter when fleet off;
-            # gv-c sits (feed|fleet|chat)|waiting — shown when waiting is on and anything sits to its left.
+            # gv-c sits (feed|fleet|chat)|waiting — shown when waiting is on and anything sits to its left;
+            # gv-d sits (waiting|feed|fleet|chat)|files — the same rule, one column further right.
             "body:not(.po-chat) #gv-a,body:not(.po-fleet) #gv-a{display:none}"
             "body:not(.po-feed) #gv-b,body:not(.po-chat):not(.po-fleet) #gv-b{display:none}"
             "body:not(.po-waiting) #gv-c,body:not(.po-chat):not(.po-fleet):not(.po-feed) #gv-c{display:none}"
+            "body:not(.po-files) #gv-d,body:not(.po-chat):not(.po-fleet):not(.po-feed):not(.po-waiting) #gv-d{display:none}"
             # ── timeline BOTTOM BAND (the user 2026-06-25): a full-width band UNDER the pane row, shown only when
             # po-timeline (the rail's Timeline toggle); the gh gutter above it resizes it (auto-fits otherwise).
             # Band + gutter both hide when the toggle is off, so the pane row fills the height.
@@ -33757,11 +33771,11 @@ def _landing():
             ".pane.pane-focused::after{display:none}"
             # the Outline (fleet) rides the tab bar like every other pane (the user 2026-07-11, who couldn't
             # access the outline view in the mobile UI — it was desktop-only before)
-            "#chat-pane,#fleet-pane,#feed-pane,#waiting-pane,#tl-pane{display:contents!important}"
+            "#chat-pane,#fleet-pane,#feed-pane,#waiting-pane,#files-pane,#tl-pane{display:contents!important}"
             # reset the desktop iframe absolute-fill (the bare `iframe` reset below re-flows them as tab panes)
             ".pane>iframe{position:static;inset:auto;width:100%;height:100%}"
             "iframe{position:static;display:none;width:100%;height:100%;border:0}"
-            "#f-chat.m-on,#f-fleet.m-on,#f-feed.m-on,#f-waiting.m-on{display:block}"
+            "#f-chat.m-on,#f-fleet.m-on,#f-feed.m-on,#f-waiting.m-on,#f-files.m-on{display:block}"
             "#f-timeline{flex:1 1 auto;min-height:0}#f-timeline.m-on{display:block}"
             "body[data-tab=timeline] .row{display:none}"    # timeline tab active → collapse the chat/feed row so the band fills
             # compact text-only switcher, FIXED to the visible viewport bottom so nothing can sit below it.
@@ -33960,6 +33974,10 @@ def _landing():
             # column, OFF by default like the Outline (the feature itself is off by default)
             "<div class=gv id=gv-c></div>"
             "<div class=pane id=waiting-pane><iframe id=f-waiting src=/waiting></iframe></div>"
+            # "Files" (2026-09-03): the file viewer as its own column, far right, OFF by default — the
+            # shell's viewFile relay brings it forward when a chat file-link click routes here
+            "<div class=gv id=gv-d></div>"
+            "<div class=pane id=files-pane><iframe id=f-files src=/files></iframe></div>"
             "</div>"
             # the timeline BOTTOM BAND: full-width below the pane row, with a row-resize gutter above it. Both
             # are hidden (CSS) unless po-timeline (the rail's Timeline toggle).
