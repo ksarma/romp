@@ -24231,6 +24231,9 @@ def build_feed(now, tmux=None):
     bg_services = {}          # session name -> live SERVICE descs (judge-classified, _bg_split) → the neutral chip
     _ut_map = {}              # sid -> OPEN user-todo count (plans/user-todos.md): the feed-card marker's data,
     #                           riding the payload the way working[]/bgServices do; built behind the ended gate
+    _ut_rows = []             # …and the SAME reads as rows — {sid, name, color, todos} per session with open
+    #                           todos, for the "Waiting on you" pane (app=waiting). Built in the one loop
+    #                           beside _ut_map so the badge's count and the pane's list agree by construction.
     alive = _alive_sessions(now, tmux)               # hard filter: living sessions only
     wmap = _wait_for_graph(now, {s["sid"] for s in alive})   # per-session 'waiting on a live peer' (the user 2026-06-22)
     _stalls = _stalled_goals()                       # goals romp's nudge gate is holding → the card's Stalled section
@@ -24586,6 +24589,7 @@ def build_feed(now, tmux=None):
             _ut_open = []
         if _ut_open:
             _ut_map[fsid] = len(_ut_open)
+            _ut_rows.append({"sid": fsid, "name": name, "color": color, "todos": _ut_open})
         # THE IDLE-ESCALATION FLOOR (the spec's one earned card move): when the session has settled
         # idle with open todos and nothing else dispatched, the todo IS its frontier — the focus card
         # floors to needs-input, perm_top's own family. A READ-SIDE floor, never a judge verdict (the
@@ -25312,6 +25316,16 @@ def build_feed(now, tmux=None):
             # the badge's todo half. Sorted so the serialized payload is byte-stable across builds
             # when nothing changed (_send_client dedups on the bytes — the firstSeen lesson).
             "userTodos": {k: _ut_map[k] for k in sorted(_ut_map)},
+            # the same open todos as ROWS for the "Waiting on you" pane (ui/webview/waiting.ts): one
+            # {sid, name, color, todos:[{id, text, createdT, detail?}]} per session with open todos,
+            # sorted by sid — store values only (no ages, no `now`), so the bytes hold across builds
+            # when nothing changed. Rides _feed_parts' `rest` → a delta client gets it under `top`;
+            # federation prefixes each row's sid+name (OBJ_SID) and concatenates across hosts.
+            "userTodoRows": sorted(_ut_rows, key=lambda r: r["sid"]),
+            # THIS kernel's feature switch, so the pane can tell "off here" from "nothing waiting"
+            # (both ship [] rows). Per host after federation: mergeHostFeeds keeps the LOCAL frame's
+            # scalar, and the pane shows the off-notice for the local machine only.
+            "userTodosOn": _user_todos_on(),
             "views": _views_client(),   # the rendered views blob — the outline + feed tag mounts read it (2026-08-25)
             # usage-limit-down latch (judge-limit.json): analysis is paused because the account
             # cannot bill judge calls — the dashboard must SAY so, never fail quietly into retries
