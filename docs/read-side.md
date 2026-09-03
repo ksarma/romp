@@ -67,8 +67,16 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   frame's `now` is rewritten to the time of the serve. The rewrite matters because
   the pusher builds only while a client is connected: after a night with no
   dashboard open, the cached build's clock is a night old, and the pane would
-  anchor every age and tint on it. The shim re-sends `ready` on every reconnect,
-  so a reconnecting pane resyncs at once rather than on the pusher's next cycle.
+  anchor every age and tint on it. The pane anchors its live clock on that `now`
+  paired with the moment the frame arrived from the wire (federation stamps the
+  merged frame with `nowAt`), never on the moment a frame is handed to it: the
+  merged frame is re-emitted on a view-order write, on a remote host's frame and
+  on a detach, and an anchor taken then moved every age back by the quiet period.
+  The shim re-sends `ready` on a reconnect once the bundle has sent its own, so a
+  reconnecting pane resyncs at once rather than on the pusher's next cycle; a
+  redial that completes before the bundle has loaded sends nothing, and the
+  bundle's own `ready` lifts the hold. A `ready` on a socket that is already
+  ready is a re-base: the frame is served again rather than deduped.
   The kernel dedups per client. A client
   that announces `?caps=feedDelta` on its socket (the kernel-served feed page does)
   then receives `{type:"feedDelta"}` frames: changed cards by `itemId`, removed
