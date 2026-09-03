@@ -27,6 +27,10 @@ os.environ.pop("ROMP_STATE_DIR", None)
 os.environ.setdefault("ROMP_SERVE_TOKEN", "testtok")
 km = SourceFileLoader("romp_kernel_chatfold", os.path.join(BIN, "romp-kernel")).load_module()
 jd = km.jd                                      # the kernel's OWN judge module (a second load would rebind nothing)
+# a SECOND kernel instance for the deep replay: its fold cache is cleared before every build (always the
+# full path) while the first keeps folding fold on fold — the assembly replay's emi/emr arrangement
+kmr = SourceFileLoader("romp_kernel_chatfold_ref", os.path.join(BIN, "romp-kernel")).load_module()
+MODS = (km, kmr)
 
 SID = "11111111-2222-3333-4444-555555555555"
 
@@ -73,31 +77,34 @@ class Sess:
         self.tpath.write_text("")
         names = td / "names"; names.mkdir()
         (names / SID).write_text("web\t%s\t#abcdef\n" % str(self.cdir))
-        self.saved = (jd.NAMES, jd.PROJECTS, jd.CAPDIR, jd.ARCHDIR, jd.GOALDIR, jd.STATE,
-                      km.NAMES, km._tmux_sessions, km._GLOBAL_CLAUDE_MD)
-        jd.NAMES, jd.PROJECTS = names, proj
-        jd.CAPDIR, jd.ARCHDIR, jd.GOALDIR = td / "captions", td / "archive", td / "goals"
-        jd.STATE = td
-        km.NAMES = names
-        km._GLOBAL_CLAUDE_MD = td / "no-global-claude.md"
+        self.saved = [(m.jd.NAMES, m.jd.PROJECTS, m.jd.CAPDIR, m.jd.ARCHDIR, m.jd.GOALDIR, m.jd.STATE,
+                       m.NAMES, m._tmux_sessions, m._GLOBAL_CLAUDE_MD, m._msg_summaries) for m in MODS]
         self.now = int(__import__("time").time())        # discovery keys on the real clock
         self.t = self.now - 3 * 86400
         state = "working" if working else "idle"
         self.tm = {SID: {"state": state, "since": self.now - 100, "model": "", "effort": "",
                          "context": None, "compactPct": None, "color": None}}
-        km._tmux_sessions = lambda: self.tm
-        km._chat_fold.clear()
-        km._parse_cache.clear()
-        km._PATH_LINK_CACHE.clear()                     # keyed (sid, uuid): fixtures reuse both across tests
-        km._SPACE_PATH_CACHE.clear()
-        jd._discover_cache.clear() if isinstance(jd._discover_cache, dict) else None
+        for m in MODS:                                   # both kernel instances see the same synthetic world
+            m.jd.NAMES, m.jd.PROJECTS = names, proj
+            m.jd.CAPDIR, m.jd.ARCHDIR, m.jd.GOALDIR = td / "captions", td / "archive", td / "goals"
+            m.jd.STATE = td
+            m.NAMES = names
+            m._GLOBAL_CLAUDE_MD = td / "no-global-claude.md"
+            m._tmux_sessions = lambda: self.tm
+            m._chat_fold.clear()
+            m._parse_cache.clear()
+            m._PATH_LINK_CACHE.clear()                  # keyed (sid, uuid): fixtures reuse both across tests
+            m._SPACE_PATH_CACHE.clear()
+            m._postal_index_memo[0] = None
+            m.jd._discover_cache.clear() if isinstance(m.jd._discover_cache, dict) else None
         self.n = 0
         self.last = None
 
     def close(self):
-        (jd.NAMES, jd.PROJECTS, jd.CAPDIR, jd.ARCHDIR, jd.GOALDIR, jd.STATE,
-         km.NAMES, km._tmux_sessions, km._GLOBAL_CLAUDE_MD) = self.saved
-        km._chat_fold.clear()
+        for m, sv in zip(MODS, self.saved):
+            (m.jd.NAMES, m.jd.PROJECTS, m.jd.CAPDIR, m.jd.ARCHDIR, m.jd.GOALDIR, m.jd.STATE,
+             m.NAMES, m._tmux_sessions, m._GLOBAL_CLAUDE_MD, m._msg_summaries) = sv
+            m._chat_fold.clear()
         self.td.cleanup()
 
     def uid(self):
@@ -130,8 +137,8 @@ class Sess:
         self.tpath.write_text("".join(json.dumps(r) + "\n" for r in recs))
         os.utime(self.tpath, None)
 
-    def build(self):
-        return km.build_session(SID, self.now, self.tm)
+    def build(self, mod=None):
+        return (mod or km).build_session(SID, self.now, self.tm)
 
 
 def _dump(m):
@@ -288,6 +295,190 @@ class Gates(_Fold):
         self.assertEqual(km._chat_fold_get(SID)["n"], 3, "every ended turn before the last is sealed")
 
 
+ROMP_AUTO = "<!-- romp-injected --><!-- romp-auto -->Where does this stand? If nothing is blocking you, keep going."
+ROMP_RESTART = ("<!-- romp-injected --><!-- romp-system -->[romp] The romp kernel restarted and cut this "
+                "session's in-flight turn; the session has been resumed with its history intact.")
+
+
+class Seams(_Fold):
+    def _cut_turn(self, i):
+        """A turn cut by a kernel restart: prompt, a tool call in flight, the CLI's stop record, its
+        synthetic settle reply — the shape every restart mints."""
+        s = self.s
+        u = s.uid(); recs = [uline(s.tick(), "step %d: reindex the notes" % i, u, s.last)]
+        a = s.uid(); recs.append(aline(s.tick(), "Reindexing.", a, u, tools=("Bash",), stop="tool_use"))
+        m = s.uid(); recs.append(uline(s.tick(), "[Request interrupted by user]", m, a))
+        z = s.uid(); recs.append(aline(s.tick(), "No response requested.", z, m, model="<synthetic>"))
+        s.last = z
+        return recs
+
+    def test_an_undecided_seam_is_never_sealed_and_its_cause_lands_later(self):
+        # T0-T1 normal; T2 is cut; T3 opens with a romp auto-nudge (not a decider); the fold must hold the
+        # boundary BEFORE T2 through every build — including the one where T2 stops being the first tail
+        # turn — so that when the restart notice lands in T4 the marker is stamped and the settle dropped
+        s = self.s
+        self.grow(2)
+        s.append(self._cut_turn(2))
+        self.equiv("cut turn is last")
+        def romp_turn(text, reply):                       # a romp-injected prompt and the agent's reply: one ended turn
+            u_ = s.uid(); s.append([uline(s.tick(), text, u_, s.last)])
+            a_ = s.uid(); s.append([aline(s.tick(), reply, a_, u_)]); s.last = a_
+        romp_turn(ROMP_AUTO, "Still on the reindex.")
+        self.equiv("nudge turn after the cut")
+        self.assertLessEqual(km._chat_fold_get(SID)["n"], 2, "the undecided seam holds the boundary before its turn")
+        romp_turn(ROMP_AUTO, "Nothing new yet.")          # a second non-deciding turn: the seam stays undecided
+        self.equiv("a second nudge turn")
+        self.assertLessEqual(km._chat_fold_get(SID)["n"], 2, "…and keeps holding it while more non-deciding turns land")
+        romp_turn(ROMP_RESTART, "Resuming where I left off.")
+        inc = self.equiv("restart notice landed")
+        marker = next(ev for ev in inc["events"] if ev.get("interruptMarker"))
+        self.assertEqual(marker.get("interruptCause"), "restart")
+        self.assertTrue(marker.get("settleUuids"))
+        self.assertFalse(any(ev.get("interruptSettle") for ev in inc["events"]), "the machine cut's settle line is dropped")
+        s.append(s.turn(6))
+        self.equiv("decided seam seals with the next turn")
+        self.assertGreaterEqual(km._chat_fold_get(SID)["n"], 4, "once decided, the seam's turn seals like any other")
+
+
+class PostalCards(_Fold):
+    MID = "1788400000.100_1.TESTHOST"
+    PEER = "22222222-3333-4444-5555-666666666666"
+
+    def _log(self):
+        d = jd.STATE / "timeline"; d.mkdir(exist_ok=True)
+        (d / "messages.jsonl").write_text(json.dumps({"ev": "sent", "id": self.MID, "from": "api", "from_id": self.PEER,
+                                                      "to_id": SID, "body": "the api tests are green now",
+                                                      "kind": "coordinate", "t": self.s.t}) + "\n")
+
+    def test_a_caption_rewritten_after_the_seal_refreshes_the_card(self):
+        # the judge writes a LIVE caption under an id it later overwrites with the final one: a card
+        # sealed complete between the two must not keep the live gloss forever
+        s = self.s
+        self._log()
+        caps = {self.MID: "peer: tests green (live)"}
+        for m in MODS:
+            m._msg_summaries = lambda caps=caps: dict(caps)
+        self.grow(1)
+        u = s.uid(); s.append([uline(s.tick(), "<!-- romp-msg-id: %s -->\nthe api tests are green now" % self.MID, u, s.last)])
+        a = s.uid(); s.append([aline(s.tick(), "Noted, thanks.", a, u)]); s.last = a
+        s.append(s.turn(2))
+        inc = self.equiv("card sealed with the live caption")
+        card = next(ev for ev in inc["events"] if ev.get("kind") == "postal-service")
+        self.assertEqual(card.get("summary"), "peer: tests green (live)")
+        caps[self.MID] = "peer: api tests green"          # the FINAL caption lands
+        for m in MODS:
+            m._judge_gen[0] += 1
+        n0 = km._CHAT_FOLD_STATS.get("g:postal", 0)
+        inc2 = self.equiv("caption rewritten")
+        self.assertGreater(km._CHAT_FOLD_STATS.get("g:postal", 0), n0)
+        card2 = next(ev for ev in inc2["events"] if ev.get("kind") == "postal-service")
+        self.assertEqual(card2.get("summary"), "peer: api tests green")
+
+
+class TaskOutputs(_Fold):
+    def test_a_notification_whose_output_file_grows_after_the_seal_demotes(self):
+        s = self.s
+        out = s.cdir / "nightly.out"
+        out.write_text("line 1\n")
+        note = ("<task-notification>\n<status>completed</status>\n<summary>nightly check</summary>\n"
+                "<output-file>%s</output-file>\n<tool-use-id>toolu_bg_1</tool-use-id>\n</task-notification>" % out)
+        self.grow(1)
+        u = s.uid(); s.append([uline(s.tick(), note, u, s.last)])
+        a = s.uid(); s.append([aline(s.tick(), "The nightly check passed.", a, u)]); s.last = a
+        s.append(s.turn(2))
+        inc = self.equiv("notification sealed")
+        card = next(ev for ev in inc["events"] if ev.get("taskOutputs"))
+        self.assertIn("line 1", card["taskOutputs"]["toolu_bg_1"]["output"])
+        self.assertTrue(km._chat_fold_get(SID)["task_outs"], "the sealed card's output file is remembered")
+        with open(out, "a") as f:
+            f.write("line 2\n")
+        os.utime(out, None)
+        n0 = km._CHAT_FOLD_STATS.get("g:task-output", 0)
+        inc2 = self.equiv("output grew")
+        self.assertGreater(km._CHAT_FOLD_STATS.get("g:task-output", 0), n0)
+        card2 = next(ev for ev in inc2["events"] if ev.get("taskOutputs"))
+        self.assertIn("line 2", card2["taskOutputs"]["toolu_bg_1"]["output"])
+        out.unlink()                                     # …and a vanished file renders differently too
+        self.equiv("output vanished")
+
+
+class DeepReplay(_Fold):
+    def test_record_by_record_fold_on_fold_equals_a_full_build_at_every_step(self):
+        # the folding kernel is never reset (fold on fold, deep chains); the reference kernel clears its
+        # fold cache before every build — two module instances, one synthetic world
+        s = self.s
+        recs = []
+        for i in range(6):
+            recs += s.turn(i)
+        s.last = None
+        recs += self.__class__._interleave(self, recs)
+        f0 = km._CHAT_FOLD_STATS["fold"]
+        for i, r in enumerate(recs):
+            s.append([r])
+            inc = s.build(km)
+            kmr._chat_fold.clear()
+            ref = s.build(kmr)
+            self.assertEqual(_dump(ref), _dump(inc), "fold-on-fold diverged from full at record %d" % (i + 1))
+        self.assertGreater(km._CHAT_FOLD_STATS["fold"] - f0, len(recs) // 2, "the chain must actually fold")
+
+    @staticmethod
+    def _interleave(self, recs):
+        # a nudge, a cut turn and its late restart notice, in the same stream
+        s = self.s
+        s.last = recs[-1]["uuid"]
+        extra = []
+        n_ = s.uid(); extra.append(uline(s.tick(), ROMP_AUTO, n_, s.last)); s.last = n_
+        u = s.uid(); extra.append(uline(s.tick(), "step 6: reindex", u, s.last))
+        a = s.uid(); extra.append(aline(s.tick(), "Reindexing.", a, u, tools=("Bash",), stop="tool_use"))
+        m = s.uid(); extra.append(uline(s.tick(), "[Request interrupted by user]", m, a))
+        z = s.uid(); extra.append(aline(s.tick(), "No response requested.", z, m, model="<synthetic>"))
+        n2 = s.uid(); extra.append(uline(s.tick(), ROMP_AUTO, n2, z)); s.last = n2
+        r_ = s.uid(); extra.append(uline(s.tick(), ROMP_RESTART, r_, s.last)); s.last = r_   # decides the seam
+        extra += s.turn(7)
+        extra += s.turn(8)
+        return extra
+
+
+class Fallback(_Fold):
+    def test_a_gate_check_failure_counts_once_drops_the_entry_and_builds_in_full(self):
+        self.grow(3)
+        class Boom(dict):                             # read only by the gate check (the parse writes it)
+            def get(self, *a, **k):
+                raise RuntimeError("boom")
+        saved = km._parse_mode
+        km._parse_mode = Boom(saved)
+        try:
+            fb0, g0 = km._CHAT_FOLD_STATS["fallback"], km._CHAT_FOLD_STATS.get("g:fallback", 0)
+            self.s.append(self.s.turn(3))
+            inc = self.s.build()
+        finally:
+            km._parse_mode = saved
+        self.assertEqual(km._CHAT_FOLD_STATS["fallback"], fb0 + 1)
+        self.assertEqual(km._CHAT_FOLD_STATS.get("g:fallback", 0), g0, "a fallback is never also a demote")
+        km._chat_fold.clear()
+        self.assertEqual(_dump(self.s.build()), _dump(inc), "the fallback build is a correct full build")
+
+
+class DeltaSend(_Fold):
+    def test_a_fold_build_ships_as_a_tail_from_the_first_changed_index(self):
+        self.grow(2)
+        m1 = self.s.build()
+        sent = []
+        c = {"send": lambda body: sent.append(json.loads(body)), "sent": {}, "echat": {}}
+        km._send_chat(c, m1, None, 0, False)
+        self.assertEqual(sent[-1]["type"], "session")
+        self.s.append(self.s.turn(2))
+        m2 = self.s.build()                              # a fold: the prefix dicts are m1's
+        change_from = km._chat_diff(m1["events"], m2["events"])
+        self.assertGreater(change_from, 0)
+        km._send_chat(c, m2, None, change_from, False)
+        tail = sent[-1]
+        self.assertEqual(tail["type"], "chatTail")
+        self.assertEqual(tail["from"], change_from)
+        self.assertEqual(len(tail["events"]), len(m2["events"]) - change_from)
+        self.assertTrue(any(ev.get("md", "").startswith("step 2") for ev in tail["events"]))
+
+
 class Diff(unittest.TestCase):
     def test_chat_diff_takes_the_identity_path_before_comparing(self):
         class Bomb(dict):
@@ -338,7 +529,7 @@ class Wiring(unittest.TestCase):
 
     def test_perf_line_carries_the_fold_fields(self):
         src = inspect.getsource(km)
-        self.assertIn('fold=_chat_fold_last.get("fold", 0)', src)
+        self.assertIn('fold=_chat_fold_last_info().get("fold", 0)', src)
 
 
 if __name__ == "__main__":
