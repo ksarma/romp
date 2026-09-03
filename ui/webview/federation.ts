@@ -52,7 +52,9 @@ function dashboardWid(): string {
 // message type) so a new message type that reuses these field names is covered automatically:
 const SCALAR_ID = ["id", "sid"]; //               a single session id
 const ARRAY_ID = ["order", "names", "working", "awaiting", "stateUnknown"]; // an array of session ids
-const OBJ_SID = ["asks", "items", "ledgers", "sessions"]; //  an array of objects keyed by `.sid`
+// (userTodoRows: the "Waiting on you" pane's per-session rows — sid+name prefixed; the todo ids inside
+// stay bare, like ledger node ids: every op names them beside the routed sid)
+const OBJ_SID = ["asks", "items", "ledgers", "sessions", "userTodoRows"]; //  an array of objects keyed by `.sid`
 const OBJ_ID = ["tabs"]; //                       an array of objects keyed by `.id`
 
 // Gear settings the KERNEL acts on, which each kernel stores its own copy of: they describe how romp
@@ -362,6 +364,11 @@ export function mergeHostFeeds(perHost: Record<string, any>, hostSeq: readonly s
   // pane. Kept undefined until then so the loader holds, exactly like the single-kernel path.
   let anyLedgers = false;
   const ledgers: any[] = [];
+  // `userTodoRows` drives the "Waiting on you" pane the same way (waiting.ts gates its loader on the
+  // key being an ARRAY, so a frame from a kernel that predates the pane reads "not built yet", never
+  // "nothing waiting"). Same rule as ledgers: present only once some host has actually sent it.
+  let anyTodoRows = false;
+  const todoRows: any[] = [];
   // dismissed/undo chrome spans hosts: the count SUMS and undo is possible when ANY kernel can undo —
   // clearing a remote card must light the local Undo button (the clear routed to that kernel).
   let dismissed = 0, anyDismissed = false, canUndo = false;
@@ -400,6 +407,7 @@ export function mergeHostFeeds(perHost: Record<string, any>, hostSeq: readonly s
     if (f.userTodos && typeof f.userTodos === "object" && !Array.isArray(f.userTodos))
       Object.assign(merged.userTodos, f.userTodos);   // sid-keyed open user-todo counts, keys pre-prefixed (the quiet card marker; a host too old to send it contributes nothing)
     if (Array.isArray(f.ledgers)) { anyLedgers = true; ledgers.push(...f.ledgers); }
+    if (Array.isArray(f.userTodoRows)) { anyTodoRows = true; todoRows.push(...f.userTodoRows); }   // sid+name pre-prefixed (OBJ_SID); ops route back by the sid's prefix
     if (typeof f.dismissedCount === "number") { anyDismissed = true; dismissed += f.dismissedCount; }
     if (f.canUndoClear) canUndo = true;
   }
@@ -408,6 +416,10 @@ export function mergeHostFeeds(perHost: Record<string, any>, hostSeq: readonly s
   merged.order = applyViewOrder(merged.order, view);
   if (anyLedgers) merged.ledgers = ledgers;
   else delete merged.ledgers;
+  if (anyTodoRows) merged.userTodoRows = todoRows;
+  else delete merged.userTodoRows;
+  // `userTodosOn` stays the LOCAL frame's scalar (the spread above): the switch is per install, so the
+  // pane shows "off on this machine" for the local kernel only and lists remote rows regardless.
   if (anyDismissed) merged.dismissedCount = dismissed;
   if ("canUndoClear" in merged || canUndo) merged.canUndoClear = canUndo;
   if (syncs.length) merged.syncNotices = syncs;

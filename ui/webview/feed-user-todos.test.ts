@@ -62,3 +62,39 @@ test("a host too old to send the map contributes nothing and breaks nothing", ()
   }, ["", "TESTHOST"]);
   assert.deepEqual(merged.userTodos, {});
 });
+
+// ── the "Waiting on you" pane's rows (userTodoRows, waiting.ts) ride the same frame ──────────────
+// One {sid, name, color, todos} per session with open todos. sid+name are host-prefixed inbound
+// (OBJ_SID), so the pane's ops route back to the owning kernel by the sid's prefix; the todo ids
+// inside stay bare (every op names them beside the routed sid). Merged by concatenation, and —
+// like ledgers — present only once some host actually sent the key: the pane gates its loader on
+// the key being an array, so a frame from a kernel that predates the pane must never read as
+// "nothing waiting".
+test("federation: userTodoRows get sid+name prefixed inbound, todo ids untouched", () => {
+  const pre: any = prefixInbound("TESTHOST", { type: "feed", userTodoRows: [
+    { sid: "11111111-2222", name: "web", color: null, todos: [{ id: "ut-0a0a0a0a", text: "Need the port", createdT: 1 }] },
+  ] });
+  assert.deepEqual(pre.userTodoRows, [
+    { sid: "TESTHOST:11111111-2222", name: "TESTHOST:web", color: null, todos: [{ id: "ut-0a0a0a0a", text: "Need the port", createdT: 1 }] },
+  ]);
+});
+
+test("federation: userTodoRows concatenate across hosts; userTodosOn is the LOCAL kernel's alone", () => {
+  const merged: any = mergeHostFeeds({
+    "": { type: "feed", asks: [], userTodosOn: false, userTodoRows: [] },
+    "TESTHOST": { type: "feed", asks: [], userTodosOn: true,
+                  userTodoRows: [{ sid: "TESTHOST:33333333-4444", name: "TESTHOST:api", color: null, todos: [{ id: "ut-0b0b0b0b", text: "Need the auth decision", createdT: 2 }] }] },
+  }, ["", "TESTHOST"]);
+  assert.deepEqual(merged.userTodoRows.map((r: any) => r.sid), ["TESTHOST:33333333-4444"]);
+  assert.equal(merged.userTodosOn, false, "the switch is per install: the pane says 'off here' for the local kernel only");
+});
+
+test("federation: no host has sent userTodoRows → the key is ABSENT, so the pane's loader holds", () => {
+  const merged: any = mergeHostFeeds({
+    "": { type: "feed", asks: [] },
+    "TESTHOST": { type: "feed", asks: [] },
+  }, ["", "TESTHOST"]);
+  assert.ok(!("userTodoRows" in merged), "an older kernel's frame must read 'not built', never 'nothing waiting'");
+  const some: any = mergeHostFeeds({ "": { type: "feed", asks: [], userTodoRows: [] } }, [""]);
+  assert.deepEqual(some.userTodoRows, [], "…while an honest empty [] from a current kernel comes through as []");
+});
