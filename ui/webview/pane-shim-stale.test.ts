@@ -2,8 +2,14 @@
 // inlines into every pane page (kernel.py _shim); its template is lifted from the kernel source here,
 // rendered as the feed page renders it, and executed in a sandbox with a fake WebSocket, a fake clock and
 // a fake shell. The rule under test: after a reconnect, the "what you see may be stale" prompt is raised
-// by a KEEPALIVE arriving before the resync frame, or by the reconnected socket CLOSING before it, and by
-// nothing else; the first non-keepalive frame retires it. Synthetic only (TESTHOST, no session data).
+// by the SECOND KEEPALIVE arriving before the resync frame (one full heartbeat period, bracketed by two
+// kernel heartbeats on this socket with no resync between them — a single keepalive can be a beat that
+// was already queued when the socket was accepted), or by the reconnected socket CLOSING before it, and
+// by nothing else — no timer (every scenario runs the pending timers afterwards and asserts nothing
+// fired, and asserts no timer is armed on open); the first non-keepalive frame retires it; a keepalive
+// never reaches the bundle. Also run here: the close breadcrumbs (one `wsclose` per socket that OPENED;
+// the redials an outage refused coalesced into one `wsconnfail` row on the next open) and the cap on
+// queued breadcrumbs. Synthetic only (TESTHOST, no session data).
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -31,6 +37,7 @@ class Harness {
   timers: Array<() => void> = [];
   visibility: Array<() => void> = [];
   now = 1_000_000;
+  win: any;                    // the sandbox window (the shim hangs __rompLocalSend on it)
   constructor(js: string) {
     const h = this;
     class FakeWS {
@@ -64,6 +71,7 @@ class Harness {
       clearTimeout: () => {}, setInterval: () => 0,
     };
     sandbox.window.window = sandbox.window;
+    this.win = sandbox.window;
     vm.runInNewContext(js, sandbox);
   }
   get ws() { return this.sockets[this.sockets.length - 1]; }
@@ -71,13 +79,20 @@ class Harness {
   stale() { return this.posted.filter((m) => m.romp === "wsStale" && !m.build).length; }
   fresh() { return this.posted.filter((m) => m.romp === "wsFresh").length; }
   diags(what: string) { return this.sent.filter((m) => m.type === "clientDiag" && m.what === what); }
+  kaReachedBundle() { return this.toBundle.some((m) => m && m.type === "ka"); }
   /** connect, deliver the first frame, then drop the socket and let the redial run: a RECONNECTED socket */
   reconnected(): any {
     this.ws.open(); this.ws.msg({ type: "feed", asks: [] });
     this.ws.close(); this.runTimers();
     assert.equal(this.sockets.length, 2, "the close redialed");
     this.ws.open();
+    assert.equal(this.timers.length, 0, "no timer is armed on open");
     return this.ws;
+  }
+  /** the end of every scenario: whatever timers are pending fire, and the prompt count must not move */
+  settles(expectStale: number) {
+    this.runTimers();
+    assert.equal(this.stale(), expectStale, "nothing raises the prompt later — no timer does");
   }
 }
 
@@ -89,30 +104,52 @@ test("the socket announces the page's capability and a reconnect re-sends the co
   h.reconnected();
   assert.deepEqual(h.sent.filter((m) => m.type === "ready"), [{ type: "ready" }], "ready rides the reconnect, once");
   assert.equal(new Harness(shimJs("chat", "")).ws.url.includes("caps="), false, "a page with no caps announces nothing");
+  h.settles(0);
 });
 
-test("resync first: a normal reconnect shows nothing, and the next keepalive is silent too", () => {
+test("resync first: a normal reconnect shows nothing, later keepalives are silent, and no timer is armed", () => {
   const h = FEED();
   const ws = h.reconnected();
   assert.equal(h.stale(), 0, "arming shows nothing");
   ws.msg({ type: "feed", asks: [] });
   assert.equal(h.stale(), 0);
   assert.equal(h.fresh(), 1, "the resync retires the (never shown) prompt");
-  ws.msg({ type: "ka", dv: 0 });
-  assert.equal(h.stale(), 0, "a keepalive after the resync is just a keepalive");
+  ws.msg({ type: "ka", dv: 0 }); ws.msg({ type: "ka", dv: 0 });
+  assert.equal(h.stale(), 0, "keepalives after the resync are just keepalives");
   assert.equal(h.toBundle.filter((m) => m.type === "feed").length, 2, "both frames reached the bundle");
+  assert.equal(h.kaReachedBundle(), false, "a keepalive never reaches the bundle");
+  h.settles(0);
 });
 
-test("keepalive first: the kernel is alive and has not resynced this socket, so the prompt is raised", () => {
+test("one keepalive, then the resync: nothing shows — a single beat can be one already queued when the socket was accepted", () => {
   const h = FEED();
   const ws = h.reconnected();
   ws.msg({ type: "ka", dv: 0 });
-  assert.equal(h.stale(), 1);
+  assert.equal(h.stale(), 0, "a single keepalive is not the event");
+  assert.equal(h.fresh(), 0, "…and it does not retire the arm either: it is not a resync");
+  ws.msg({ type: "feed", asks: [] });
+  assert.equal(h.stale(), 0);
+  assert.equal(h.fresh(), 1, "the resync retires it");
+  ws.msg({ type: "ka", dv: 0 });
+  assert.equal(h.stale(), 0, "the count died with the arm");
+  assert.equal(h.kaReachedBundle(), false);
+  h.settles(0);
+});
+
+test("two keepalives with no resync between them: the kernel is alive, talking to this socket and has not resynced it — raised", () => {
+  const h = FEED();
+  const ws = h.reconnected();
+  ws.msg({ type: "ka", dv: 0 });
+  assert.equal(h.stale(), 0);
+  ws.msg({ type: "ka", dv: 0 });
+  assert.equal(h.stale(), 1, "the second heartbeat is the event");
   assert.equal(h.diags("stale-raise")[0].data.why, "reconnect");
   ws.msg({ type: "ka", dv: 0 });
   assert.equal(h.stale(), 1, "raised once, not per keepalive");
   ws.msg({ type: "feed", asks: [] });
   assert.equal(h.fresh(), 1, "the late resync still retires it");
+  assert.equal(h.kaReachedBundle(), false);
+  h.settles(1);
 });
 
 test("the reconnected socket closing before its resync raises; the foreground path's own close does not", () => {
@@ -121,18 +158,24 @@ test("the reconnected socket closing before its resync raises; the foreground pa
   ws.close();
   assert.equal(h.stale(), 1);
   h.runTimers(); h.ws.open();   // the breadcrumb was queued on the dead socket; it flushes on the redial
+  assert.equal(h.timers.length, 0, "no timer is armed on open");
   assert.equal(h.diags("stale-raise")[0].data.why, "reconnect-closed");
+  h.settles(1);
   // foreground fast-path: a quiet socket is closed by the pane itself — no raise for that close; the
-  // reconnect it forces arms with why=foreground, and a keepalive before the resync raises as usual
+  // reconnect it forces arms with why=foreground, and two keepalives before the resync raise as usual
   const g = FEED();
   g.ws.open(); g.ws.msg({ type: "feed", asks: [] });
   g.now += 31_000;
   for (const f of g.visibility) f();
   assert.equal(g.stale(), 0, "closing a quiet socket is not a raise");
   g.runTimers(); g.ws.open();
+  assert.equal(g.timers.length, 0, "no timer is armed on open");
+  g.ws.msg({ type: "ka", dv: 0 });
+  assert.equal(g.stale(), 0);
   g.ws.msg({ type: "ka", dv: 0 });
   assert.equal(g.stale(), 1);
   assert.equal(g.diags("stale-raise")[0].data.why, "foreground");
+  g.settles(1);
 });
 
 test("an announced restart's reconnect skips the arm once (T217); a second reconnect arms as always", () => {
@@ -140,15 +183,16 @@ test("an announced restart's reconnect skips the arm once (T217); a second recon
   h.ws.open(); h.ws.msg({ type: "feed", asks: [] });
   h.ws.msg({ type: "restarting" });
   h.ws.close(); h.runTimers(); h.ws.open();
-  h.ws.msg({ type: "ka", dv: 0 });
+  h.ws.msg({ type: "ka", dv: 0 }); h.ws.msg({ type: "ka", dv: 0 });
   assert.equal(h.stale(), 0, "the announced restart explained this reconnect");
   h.ws.msg({ type: "feed", asks: [] });
   h.ws.close(); h.runTimers(); h.ws.open();
-  h.ws.msg({ type: "ka", dv: 0 });
+  h.ws.msg({ type: "ka", dv: 0 }); h.ws.msg({ type: "ka", dv: 0 });
   assert.equal(h.stale(), 1, "the latch was one-shot");
+  h.settles(1);
 });
 
-test("every close leaves a wsclose breadcrumb with the code, the socket's age and the quiet gap", () => {
+test("every close of a socket that OPENED leaves a wsclose breadcrumb with the code, the socket's age and the quiet gap", () => {
   const h = FEED();
   h.ws.open(); h.now += 4_000; h.ws.msg({ type: "feed", asks: [] }); h.now += 2_500;
   h.ws.close();
@@ -158,4 +202,41 @@ test("every close leaves a wsclose breadcrumb with the code, the socket's age an
   assert.equal(rows.length, 1, "…and delivered on the reconnect");
   assert.equal(rows[0].surface, "pane-shim");
   assert.deepEqual(rows[0].data, { app: "feed", code: 1006, reason: "", wasClean: false, sinceOpenMs: 6_500, quietMs: 2_500, everConnected: true });
+  assert.equal(h.diags("wsconnfail").length, 0, "no handshake failed");
+});
+
+test("the redials an outage refuses leave ONE coalesced row on the next open, never a wsclose each", () => {
+  const h = FEED();
+  h.ws.open(); h.ws.msg({ type: "feed", asks: [] });
+  h.now += 1_000;
+  h.ws.close();                                    // the real drop: this socket had opened
+  const t0 = h.now;
+  for (let i = 0; i < 2400; i++) {                 // an hour of 1.5 s redials, every handshake refused
+    h.runTimers();                                 // the redial dials a new socket…
+    h.now += 1_500;
+    h.ws.close();                                  // …which the browser closes (1006) without it ever opening
+  }
+  h.runTimers(); h.ws.open();                      // the kernel is back
+  const closes = h.diags("wsclose");
+  assert.equal(closes.length, 1, "one wsclose: the socket that opened");
+  assert.equal(closes[0].data.sinceOpenMs, 1_000, "with ITS timings, not the outage's");
+  const fails = h.diags("wsconnfail");
+  assert.equal(fails.length, 1, "the refused handshakes are one row");
+  assert.deepEqual(fails[0].data, { app: "feed", attempts: 2400, firstFailMs: h.now - (t0 + 1_500) });
+  assert.deepEqual(h.sent.slice(-1), [{ type: "ready" }], "…delivered ahead of the handshake");
+  assert.equal(h.sent.filter((m) => m.type === "clientDiag").length, 2, "nothing else piled up");
+});
+
+test("queued breadcrumbs are capped while the socket is down; other queued messages are untouched", () => {
+  const h = FEED();                                // never opened yet: everything queues
+  for (let i = 0; i < 30; i++) h.win.__rompLocalSend({ type: "clientDiag", surface: "pane-shim", what: "probe", data: { i } });
+  h.win.__rompLocalSend({ type: "activeTab", id: "TESTSID" });
+  h.win.__rompLocalSend({ type: "clientDiag", surface: "pane-shim", what: "probe", data: { i: 30 } });
+  assert.equal(h.sent.length, 0, "nothing goes up before the open");
+  h.ws.open();
+  const diag = h.sent.filter((m) => m.type === "clientDiag");
+  assert.equal(diag.length, 20, "at most DIAG_QUEUE_MAX breadcrumbs ride the reconnect");
+  assert.deepEqual(diag.map((m) => m.data.i), [...Array(20).keys()], "the oldest are kept: the rows about the drop that started it");
+  assert.equal(h.sent.filter((m) => m.type === "activeTab").length, 1, "a non-diagnostic message is never dropped");
+  assert.equal(h.sent.length, 21);
 });

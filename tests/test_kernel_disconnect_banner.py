@@ -92,8 +92,16 @@ class DisconnectBanner(unittest.TestCase):
         self.assertIn('pendingWhy="foreground";', js)
         # …and every CLOSE leaves one too, with the close code/reason and the socket's age (2026-09-02): a
         # kernel-side drop (1006, no reason), a clean restart and a proxy timeout were indistinguishable
-        self.assertIn('what:"wsclose",data:{app:APP,code:ev?ev.code:-1,reason:(ev&&ev.reason)||"",wasClean:!!(ev&&ev.wasClean),'
+        self.assertIn('if(openSock===this){try{send({type:"clientDiag",surface:"pane-shim",what:"wsclose",data:{app:APP,code:ev?ev.code:-1,'
+                      'reason:(ev&&ev.reason)||"",wasClean:!!(ev&&ev.wasClean),'
                       'sinceOpenMs:openT?Date.now()-openT:-1,quietMs:lastRecv?Date.now()-lastRecv:-1,everConnected:everConnected}', js)
+        # …for a socket that OPENED. A handshake that never opened fires onclose too — every redial of an
+        # outage, ~19k in 8 h — and those are counted and reported as ONE row on the next open, never queued
+        # one by one; queued breadcrumbs are capped besides (the 2026-09-03 review). pane-shim-stale.test.ts
+        # runs both.
+        self.assertIn('else{if(!failedConnects)firstFailT=Date.now();failedConnects++;}', js)
+        self.assertIn('if(failedConnects){send({type:"clientDiag",surface:"pane-shim",what:"wsconnfail",data:{app:APP,attempts:failedConnects,firstFailMs:Date.now()-firstFailT}});failedConnects=0;firstFailT=0;}', js)
+        self.assertIn('if(m&&m.type==="clientDiag"){if(queuedDiag>=DIAG_QUEUE_MAX)return;queuedDiag++;}', js)
 
     def test_shim_reconnect_loop_cannot_die(self):
         # The retry chain used to hang entirely off onclose, and the watchdog only ever closed OPEN
@@ -149,14 +157,15 @@ class DisconnectBanner(unittest.TestCase):
         # …and the prompt is ARMED, not shown (the user 2026-08-01): raising it at once made it flash up
         # and straight back down on nearly every dashboard open, since the resync lands within a beat.
         # The arm is EVENT-keyed (2026-09-02; it was a 1s timer, which fired a beat before the resync on
-        # nearly every reconnect once frames grew): it raises on a KEEPALIVE arriving while the resync is
-        # still pending — the kernel is alive and talking to this socket and has not resynced it — or on
-        # the reconnected socket CLOSING again before its resync. Nothing else raises it.
-        self.assertIn('function armStale(why){stalePending=why;}', js, "arming records the path, shows nothing")
+        # nearly every reconnect once frames grew): it raises on the SECOND KEEPALIVE arriving while the
+        # resync is still pending — one full heartbeat period on this socket with the kernel alive, talking
+        # to it, and not resyncing it; a single keepalive can be a beat queued at accept, ahead of the resync
+        # frame (2026-09-03) — or on the reconnected socket CLOSING again before its resync. Nothing else.
+        self.assertIn('function armStale(why){stalePending=why;staleKa=0;}', js, "arming records the path, shows nothing")
         self.assertNotIn("setTimeout(function(){staleTimer=0;raiseStale(why);},1000)", js, "the timer is gone")
         self.assertNotIn("staleTimer", js)
-        self.assertIn('if(stalePending){var sw=stalePending;stalePending="";raiseStale(sw);}', js,
-                      "a keepalive on the reconnected socket, resync still pending → raise")
+        self.assertIn('if(stalePending&&++staleKa>=2){var sw=stalePending;stalePending="";raiseStale(sw);}', js,
+                      "the second keepalive on the reconnected socket, resync still pending → raise")
         self.assertIn('if(stalePending&&openSock===this){var cw=stalePending;stalePending="";raiseStale(cw+"-closed");}', js,
                       "the reconnected socket closing before its resync → raise")
         self.assertIn('if(!ann)armStale(pendingWhy||"reconnect");', js,
