@@ -26,7 +26,7 @@ Auxiliary inputs the file adapter may read (same category as the transcript):
                                transcript lost to an API-errored try; judge parse only)
   timeline/messages.jsonl   -> peer rompUuid for a postal atom (join on the msg id)
 """
-import json, os, re, sys, time, hashlib, threading
+import copy, json, os, re, sys, time, hashlib, threading
 from datetime import datetime
 from pathlib import Path
 
@@ -262,8 +262,39 @@ def _scan_bg_tasks(path, want_all=False):
     Returns [{id,status,summary,command,outputFile}] (+ type on agent/workflow rows; + endT — the
     transcript time its result LANDED — on rows a notification has terminal-marked, so the awaiting-stamp
     lift can tell a return that ENDED a stamped wait from one the stamping judge had already seen)."""
-    tasks, order = {}, []
-    dispatch = {}   # tool_use id -> the launching Agent/Task/Workflow block's own words (see docstring)
+    state = _bg_fresh(want_all)
+    for o in _read_jsonl(path):
+        if isinstance(o, dict):
+            _bg_step(state, o)
+    return _bg_finish(state, want_all)
+
+
+def _bg_fresh(want_all=False):
+    """A fresh pairing state. `all`: keep every task's row (the launch-ordered history view); otherwise a
+    task that reaches a terminal status is dropped from the state at once — the running-only view can
+    never show it again (no branch below ever returns an existing task to "running"), so a long-lived
+    transcript's fold state stays the size of its in-flight work, not its history. `done` is that view's
+    tombstone set: transcripts DO replay records — a duplicate async ack (same tool-use id, even the same
+    uuid) can land after the terminal notification — and with the row gone such a replay would pass the
+    `tid not in tasks` creation guards and resurrect the task as running, where a retained row ignored it.
+    The tombstone keeps that answer while releasing the row and its prompt text."""
+    return {"tasks": {}, "order": [], "dispatch": {}, "all": bool(want_all), "done": set()}
+
+
+def _bg_forget_terminal(state, tid):
+    if not state["all"] and state["tasks"].get(tid, {}).get("status") != "running":
+        state["done"].add(tid)
+        state["tasks"].pop(tid, None)
+        try:
+            state["order"].remove(tid)
+        except ValueError:
+            pass
+
+
+def _bg_step(state, o):
+    """One transcript record of the pairing — see _scan_bg_tasks. Returns the state (the fold_records
+    contract)."""
+    tasks, order, dispatch, done = state["tasks"], state["order"], state["dispatch"], state["done"]
 
     def _mark(note, end_t=None):
         # a notification keyed by its INNER <tool-use-id> (the string/queue shapes have no wrapper block)
@@ -275,137 +306,156 @@ def _scan_bg_tasks(path, want_all=False):
                               summary=note["summary"] or tasks[tid]["summary"])
             if end_t:                      # WHEN the result landed — the awaiting-stamp lift keys the
                 tasks[tid]["endT"] = end_t  # "returned after the stamp was written" test on it (2026-08-16)
+            _bg_forget_terminal(state, tid)
 
-    try:
-        with open(path, errors="replace") as f:
-            for line in f:
-                if '"type"' not in line:
+    t = o.get("type")
+    c = (o.get("message") or {}).get("content")
+    if t == "assistant" and isinstance(c, list):
+        for b in c:
+            if not (isinstance(b, dict) and b.get("type") == "tool_use"):
+                continue
+            inp = b.get("input") or {}
+            if b.get("name") in ("Agent", "Task", "Workflow") and b.get("id") \
+                    and b["id"] not in tasks and b["id"] not in done:
+                # remember the dispatch's own words — consumed by its async ack below, or
+                # right here when an explicit run_in_background rides the input (the dominant
+                # real Agent shape, which registers via the launch branch below instead). A
+                # replayed launch record for a task already registered or already returned can
+                # never be consumed (both creation paths refuse the id), so it is not captured.
+                dispatch[b["id"]] = {
+                    "desc": str(inp.get("description") or "").strip(),
+                    "detail": _clip_detail(inp.get("prompt") or inp.get("script")
+                                           or ("script: " + str(inp["scriptPath"])
+                                               if inp.get("scriptPath") else "")),
+                    "type": "local_workflow" if b.get("name") == "Workflow" else "local_agent"}
+            # The THIRD durable launch shape: a Monitor tool_use. A non-persistent monitor is
+            # dispatched background work exactly like a backgrounded Bash — a session idle
+            # behind one read as plain 'ready', its goal stamps could lift only by the 6h
+            # backstop, and the nudge gates couldn't see the wait. A PERSISTENT monitor is
+            # skipped: a session-length subscription (a log tail) never returns, so counting it
+            # would hold "awaiting" forever — it is furniture, not awaited work.
+            is_mon = b.get("name") == "Monitor"
+            if is_mon and inp.get("persistent"):
+                continue
+            if not (inp.get("run_in_background") or is_mon):
+                continue
+            tid = b.get("id")
+            if tid and tid not in tasks and tid not in done:
+                tasks[tid] = {"id": tid, "status": "running", "t": parse_z(o.get("timestamp")),
+                              "summary": (inp.get("description") or b.get("name") or "Background task"),
+                              "command": inp.get("command") or (inp.get("ws") or {}).get("url", ""),
+                              "outputFile": ""}
+                d = dispatch.pop(tid, None)
+                if d:   # an Agent/Task/Workflow with an explicit run_in_background lands
+                        # HERE, not at its ack (tid already registered) — same enrichment
+                    tasks[tid]["command"] = tasks[tid]["command"] or d["detail"]
+                    tasks[tid]["type"] = d["type"]
+                if is_mon:
+                    tasks[tid]["monitor"] = True
+                    # its recorded lifetime ceiling → the deadline consumers expire on
+                    # (see _bg_expired); the harness clamps timeout_ms to [1s, 1h]
+                    tmo = inp.get("timeout_ms")
+                    tmo = float(tmo) if isinstance(tmo, (int, float)) else 300000.0
+                    if tasks[tid]["t"]:
+                        tasks[tid]["deadline"] = tasks[tid]["t"] + min(max(tmo, 1000.0), 3600000.0) / 1000.0
+                order.append(tid)
+    elif t == "user" and isinstance(c, list):
+        tur = o.get("toolUseResult")
+        tur = tur if isinstance(tur, dict) else {}
+        async_launch = bool(tur.get("isAsync")) or tur.get("status") == "async_launched"
+        for b in c:
+            if isinstance(b, dict) and b.get("type") == "tool_result":
+                tid = b.get("tool_use_id")
+                if not async_launch:
+                    # the tool_use's ONE result has landed synchronously — a remembered Agent/Task/Workflow
+                    # dispatch can no longer be acked async, so its words are dead weight in the state
+                    dispatch.pop(tid, None)
+                if async_launch and tid and tid not in tasks and tid not in done:
+                    # an async Agent/Workflow dispatch ack — the durable "this work is now
+                    # running" record; the gist prefers the ack's own words, the launching
+                    # tool_use fills what the ack omits (see docstring). Acks carry the ask
+                    # too (prompt / scriptPath) — the fallback when the launch predates the
+                    # transcript tail or the block went unseen.
+                    d = dispatch.pop(tid, {})
+                    wf = tur.get("workflowName")
+                    tasks[tid] = {"id": tid, "status": "running", "t": parse_z(o.get("timestamp")),
+                                  "summary": (tur.get("description") or tur.get("summary")
+                                              or d.get("desc")
+                                              or ("workflow " + str(wf) if wf else "Background agent")),
+                                  "command": d.get("detail")
+                                             or _clip_detail(tur.get("prompt")
+                                                             or ("script: " + str(tur["scriptPath"])
+                                                                 if tur.get("scriptPath") else "")),
+                                  "outputFile": tur.get("outputFile") or ""}
+                    if tur.get("taskType") or d.get("type"):
+                        tasks[tid]["type"] = tur.get("taskType") or d["type"]
+                    order.append(tid)
                     continue
-                try:
-                    o = json.loads(line)
-                except Exception:
+                if async_launch and tid in tasks and not b.get("is_error") \
+                        and tasks[tid]["status"] == "running":
+                    # the ack of a launch the assistant branch already registered (explicit
+                    # run_in_background): the ack still owns outputFile/taskType — fill what
+                    # the launch row lacks, never overwrite what it has
+                    tk = tasks[tid]
+                    tk["outputFile"] = tk["outputFile"] or tur.get("outputFile") or ""
+                    if tur.get("taskType"):
+                        tk["type"] = tur["taskType"]
+                    if not tk["command"]:
+                        tk["command"] = _clip_detail(tur.get("prompt") or "")
                     continue
-                t = o.get("type")
-                c = (o.get("message") or {}).get("content")
-                if t == "assistant" and isinstance(c, list):
-                    for b in c:
-                        if not (isinstance(b, dict) and b.get("type") == "tool_use"):
-                            continue
-                        inp = b.get("input") or {}
-                        if b.get("name") in ("Agent", "Task", "Workflow") and b.get("id"):
-                            # remember the dispatch's own words — consumed by its async ack below, or
-                            # right here when an explicit run_in_background rides the input (the dominant
-                            # real Agent shape, which registers via the launch branch below instead)
-                            dispatch[b["id"]] = {
-                                "desc": str(inp.get("description") or "").strip(),
-                                "detail": _clip_detail(inp.get("prompt") or inp.get("script")
-                                                       or ("script: " + str(inp["scriptPath"])
-                                                           if inp.get("scriptPath") else "")),
-                                "type": "local_workflow" if b.get("name") == "Workflow" else "local_agent"}
-                        # The THIRD durable launch shape: a Monitor tool_use. A non-persistent monitor is
-                        # dispatched background work exactly like a backgrounded Bash — a session idle
-                        # behind one read as plain 'ready', its goal stamps could lift only by the 6h
-                        # backstop, and the nudge gates couldn't see the wait. A PERSISTENT monitor is
-                        # skipped: a session-length subscription (a log tail) never returns, so counting it
-                        # would hold "awaiting" forever — it is furniture, not awaited work.
-                        is_mon = b.get("name") == "Monitor"
-                        if is_mon and inp.get("persistent"):
-                            continue
-                        if not (inp.get("run_in_background") or is_mon):
-                            continue
-                        tid = b.get("id")
-                        if tid and tid not in tasks:
-                            tasks[tid] = {"id": tid, "status": "running", "t": parse_z(o.get("timestamp")),
-                                          "summary": (inp.get("description") or b.get("name") or "Background task"),
-                                          "command": inp.get("command") or (inp.get("ws") or {}).get("url", ""),
-                                          "outputFile": ""}
-                            d = dispatch.pop(tid, None)
-                            if d:   # an Agent/Task/Workflow with an explicit run_in_background lands
-                                    # HERE, not at its ack (tid already registered) — same enrichment
-                                tasks[tid]["command"] = tasks[tid]["command"] or d["detail"]
-                                tasks[tid]["type"] = d["type"]
-                            if is_mon:
-                                tasks[tid]["monitor"] = True
-                                # its recorded lifetime ceiling → the deadline consumers expire on
-                                # (see _bg_expired); the harness clamps timeout_ms to [1s, 1h]
-                                tmo = inp.get("timeout_ms")
-                                tmo = float(tmo) if isinstance(tmo, (int, float)) else 300000.0
-                                if tasks[tid]["t"]:
-                                    tasks[tid]["deadline"] = tasks[tid]["t"] + min(max(tmo, 1000.0), 3600000.0) / 1000.0
-                            order.append(tid)
-                elif t == "user" and isinstance(c, list):
-                    tur = o.get("toolUseResult")
-                    tur = tur if isinstance(tur, dict) else {}
-                    async_launch = bool(tur.get("isAsync")) or tur.get("status") == "async_launched"
-                    for b in c:
-                        if isinstance(b, dict) and b.get("type") == "tool_result":
-                            tid = b.get("tool_use_id")
-                            if async_launch and tid and tid not in tasks:
-                                # an async Agent/Workflow dispatch ack — the durable "this work is now
-                                # running" record; the gist prefers the ack's own words, the launching
-                                # tool_use fills what the ack omits (see docstring). Acks carry the ask
-                                # too (prompt / scriptPath) — the fallback when the launch predates the
-                                # transcript tail or the block went unseen.
-                                d = dispatch.pop(tid, {})
-                                wf = tur.get("workflowName")
-                                tasks[tid] = {"id": tid, "status": "running", "t": parse_z(o.get("timestamp")),
-                                              "summary": (tur.get("description") or tur.get("summary")
-                                                          or d.get("desc")
-                                                          or ("workflow " + str(wf) if wf else "Background agent")),
-                                              "command": d.get("detail")
-                                                         or _clip_detail(tur.get("prompt")
-                                                                         or ("script: " + str(tur["scriptPath"])
-                                                                             if tur.get("scriptPath") else "")),
-                                              "outputFile": tur.get("outputFile") or ""}
-                                if tur.get("taskType") or d.get("type"):
-                                    tasks[tid]["type"] = tur.get("taskType") or d["type"]
-                                order.append(tid)
-                                continue
-                            if async_launch and tid in tasks and not b.get("is_error") \
-                                    and tasks[tid]["status"] == "running":
-                                # the ack of a launch the assistant branch already registered (explicit
-                                # run_in_background): the ack still owns outputFile/taskType — fill what
-                                # the launch row lacks, never overwrite what it has
-                                tk = tasks[tid]
-                                tk["outputFile"] = tk["outputFile"] or tur.get("outputFile") or ""
-                                if tur.get("taskType"):
-                                    tk["type"] = tur["taskType"]
-                                if not tk["command"]:
-                                    tk["command"] = _clip_detail(tur.get("prompt") or "")
-                                continue
-                            note = _parse_task_notification(_result_text(b.get("content")))
-                            if tid in tasks and note:      # its result landed → mark it done; the keep-filter drops it
-                                if tasks[tid].get("monitor") and not note.get("has_status"):
-                                    continue               # a wrapped monitor EVENT — not a terminal (see _mark)
-                                tasks[tid].update(status=note["status"], outputFile=note["output_file"],
-                                                  summary=note["summary"] or tasks[tid]["summary"])
-                                et = parse_z(o.get("timestamp"))
-                                if et:                     # the return's moment (see _mark)
-                                    tasks[tid]["endT"] = et
-                            elif tid in tasks and note is None and b.get("is_error") \
-                                    and tasks[tid]["status"] == "running":
-                                # the LAUNCH's own ack errored (refused permission, bad input) → nothing ever
-                                # started, and no notification will ever come. Without this, the phantom
-                                # reads "running" forever and holds awaiting/nudge gates open on nothing.
-                                tasks[tid]["status"] = "failed"
-                                et = parse_z(o.get("timestamp"))
-                                if et:
-                                    tasks[tid]["endT"] = et
-                elif t == "user" and isinstance(c, str):
-                    _mark(_parse_task_notification(c), parse_z(o.get("timestamp")))
-                elif t == "queue-operation" and o.get("operation") == "enqueue":
-                    _mark(_parse_task_notification(o.get("content") or ""), parse_z(o.get("timestamp")))
-    except OSError:
-        return []
+                note = _parse_task_notification(_result_text(b.get("content")))
+                if tid in tasks and note:      # its result landed → mark it done; the keep-filter drops it
+                    if tasks[tid].get("monitor") and not note.get("has_status"):
+                        continue               # a wrapped monitor EVENT — not a terminal (see _mark)
+                    tasks[tid].update(status=note["status"], outputFile=note["output_file"],
+                                      summary=note["summary"] or tasks[tid]["summary"])
+                    et = parse_z(o.get("timestamp"))
+                    if et:                     # the return's moment (see _mark)
+                        tasks[tid]["endT"] = et
+                    _bg_forget_terminal(state, tid)
+                elif tid in tasks and note is None and b.get("is_error") \
+                        and tasks[tid]["status"] == "running":
+                    # the LAUNCH's own ack errored (refused permission, bad input) → nothing ever
+                    # started, and no notification will ever come. Without this, the phantom
+                    # reads "running" forever and holds awaiting/nudge gates open on nothing.
+                    tasks[tid]["status"] = "failed"
+                    et = parse_z(o.get("timestamp"))
+                    if et:
+                        tasks[tid]["endT"] = et
+                    _bg_forget_terminal(state, tid)
+    elif t == "user" and isinstance(c, str):
+        _mark(_parse_task_notification(c), parse_z(o.get("timestamp")))
+    elif t == "queue-operation" and o.get("operation") == "enqueue":
+        _mark(_parse_task_notification(o.get("content") or ""), parse_z(o.get("timestamp")))
+    return state
+
+
+def _bg_finish(state, want_all=False):
+    """The scan's answer from a pairing state — row COPIES, so a holder of one answer is never changed by
+    the next fold step (fold_records deep-copies the cached state before folding, and a caller scribbling
+    on its rows must not reach the cache either)."""
+    tasks, order = state["tasks"], state["order"]
     if want_all:
         # EVERY task the transcript knows, launch-ordered, each carrying its launch `t` and its CURRENT
         # status (still "running", or the terminal status its notification reported). The awaiting-stamp
         # lift (_lift_spent_awaiting) needs the RETURNED ones too: "this goal's dispatches have all come
         # back" is precisely the event that ends a wait, and the running-only view cannot express it.
-        return [tasks[tid] for tid in order]
-    keep = [tasks[tid] for tid in order if tasks[tid]["status"] == "running"]
+        return [dict(tasks[tid]) for tid in order]
+    keep = [dict(tasks[tid]) for tid in order if tasks[tid]["status"] == "running"]
     keep.reverse()
     return keep[:60]
+
+
+def scan_bg_tasks_cached(path, cache, want_all=False):
+    """_scan_bg_tasks folded append-incrementally through `cache` (fold_records): a changed transcript
+    steps only its appended records instead of re-pairing the whole file — the kernel's chat box, awaiting
+    source and awaiting-stamp lift, and the judge's settled gate, all asked per push per session, and
+    each re-walked a working session's entire transcript on every streamed record (measured live
+    2026-09-02: four such readers over one 180 MB transcript held the push loop at a full core). `cache`
+    is the caller's dict (the kernel keeps a running-only and an every-task cache; the judge its own), so
+    the two views never invalidate each other and a test's `.clear()` still forces a re-fold."""
+    state = fold_records(cache, path, lambda: _bg_fresh(want_all), _bg_step)
+    return _bg_finish(state, want_all)
 
 
 def _read_jsonl(path):
@@ -518,6 +568,74 @@ def _read_jsonl_incremental(path):
             _JSONL_CACHE.pop(next(iter(_JSONL_CACHE)))   # oldest-used first; hot entries survive any cold flood
         _JSONL_CACHE[path] = (st.st_mtime, st.st_size, offset, tail, records)
     return records
+
+
+def fold_records(cache, path, init, step):
+    """Fold a JSONL file's records into a carried state, APPEND-INCREMENTALLY (issue 903, 2026-09-03):
+    the states/transcript readers re-read their whole file behind an (mtime,size) key that every append
+    invalidates — O(file) per push for every working session. _read_jsonl_incremental already serves the
+    parsed records of a growing file incrementally (the parse reads the same list, so this adds no I/O),
+    and its contract — a grown file returns a NEW list whose prefix objects are the SAME — is the
+    identity gate here: when the cached prefix is intact, only the appended records run through `step`;
+    a rewrite (prefix identity lost, a shrink, a same-size-new-mtime) re-folds from record 0. `init()`
+    makes a fresh state; `step(state, record)` returns the next state (mutate-and-return is fine: the
+    cached state is deep-copied before folding onto it, so a state a caller was handed never changes
+    under it). Returns the state; [] records (a missing or unreadable file) fold to init().
+
+    Lives here (moved from the kernel, 2026-09-03) so the judge's readers can fold too — the
+    background-task pairing below is shared by both."""
+    recs = _read_jsonl_incremental(path)
+    key = str(path)
+    hit = cache.get(key)
+    if hit is not None:
+        n0, last0, state0 = hit
+        if n0 == len(recs) and (n0 == 0 or recs[-1] is last0):
+            return _fold_eof_fragment(key, state0, step)   # unchanged records; a newline-less tail may still sit past them
+        if 0 < n0 < len(recs) and recs[n0 - 1] is last0:
+            state, start = copy.deepcopy(state0), n0
+        else:
+            state, start = init(), 0
+    else:
+        state, start = init(), 0
+    for r in recs[start:]:
+        if isinstance(r, dict):
+            state = step(state, r)
+    if len(cache) > 256:                                  # bounded by the session count; never unbounded
+        cache.clear()
+    cache[key] = (len(recs), recs[-1] if recs else None, state)
+    return _fold_eof_fragment(key, state, step)
+
+
+def _trailing_record(path):
+    """The complete JSON record sitting past _read_jsonl_incremental's consumed offset WITHOUT its newline
+    yet, or None. The incremental reader leaves such a line unconsumed by design (a writer caught
+    mid-append must not enter the cache torn); the readers folded here used to walk the text to EOF and
+    saw a final newline-less record — so the fold reads it provisionally (see _fold_eof_fragment)."""
+    with _JSONL_CACHE_LOCK:
+        hit = _JSONL_CACHE.get(path)
+    if hit is None or hit[1] <= hit[2]:                   # nothing past the consumed offset (the common case)
+        return None
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(hit[2])
+            frag = fh.read(hit[1] - hit[2]).strip()
+        if not frag or b"\n" in frag:
+            return None
+        o = json.loads(frag.decode("utf-8", "replace"))
+    except (OSError, ValueError):
+        return None
+    return o if isinstance(o, dict) else None
+
+
+def _fold_eof_fragment(key, state, step):
+    """fold_records' answer with a newline-less final record folded in PROVISIONALLY: applied to a copy,
+    never to the cached state, so the record is folded for good exactly once — when its newline lands and
+    the incremental reader serves it as a record. Keeps the old whole-file readers' answer (they saw that
+    final line) without giving up the cache's torn-write safety."""
+    frag = _trailing_record(key)
+    if frag is None:
+        return state
+    return step(copy.deepcopy(state), frag)
 
 
 def _is_tool_result(r):

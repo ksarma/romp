@@ -5919,26 +5919,15 @@ def _session_closed(session):
     return bool(last.get("ended")) or any(a["type"] == "idle" for a in last["atoms"])
 
 
-_BG_SCAN_CACHE = {}                       # path -> ((mtime, size), running tasks) — mirrors the kernel's _bg_scan_cached
+_BG_SCAN_CACHE = {}                       # path -> em.fold_records entry (running tasks) — mirrors the kernel's _bg_scan_cached
 
 
 def _bg_unresolved(path):
     """The transcript's still-RUNNING background launches (em._scan_bg_tasks pairing), mtime+size-cached.
     The DURABLE awaited-work source: the pairing lives in the transcript, so unlike any live backend
     snapshot it survives a kernel restart and covers tmux CLIs whose tasks outlive the kernel."""
-    try:
-        st = os.stat(path)
-        key = (st.st_mtime, st.st_size)
-    except OSError:
-        return []
-    hit = _BG_SCAN_CACHE.get(path)
-    if hit and hit[0] == key:
-        tasks = hit[1]
-    else:
-        tasks = em._scan_bg_tasks(path)
-        if len(_BG_SCAN_CACHE) > 256:     # bounded by fleet size; a wholesale clear on overflow is fine
-            _BG_SCAN_CACHE.clear()
-        _BG_SCAN_CACHE[path] = (key, tasks)
+    # folds append-incrementally since 2026-09-03: a changed transcript steps only its appended records
+    tasks = em.scan_bg_tasks_cached(path, _BG_SCAN_CACHE)
     # expiry is applied OUTSIDE the cache with a fresh now: a monitor whose CLI died mid-watch has no
     # terminal record, and an idle transcript never busts the mtime key — a cached verdict would say
     # "running" forever (see em._bg_expired)

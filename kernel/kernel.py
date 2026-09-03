@@ -261,37 +261,8 @@ def _interrupt_cause(nxt_atom):
 _machine_cut_cache = {}   # str(path) -> (records seen, last record, (t, cause)) — see _fold_records
 
 
-def _fold_records(cache, path, init, step):
-    """Fold a JSONL file's records into a carried state, APPEND-INCREMENTALLY (issue 903, 2026-09-03):
-    the states/transcript readers below re-read their whole file behind an (mtime,size) key that every
-    append invalidates — O(file) per push for every working session. em._read_jsonl_incremental already
-    serves the parsed records of a growing file incrementally (the parse reads the same list, so this adds
-    no I/O), and its contract — a grown file returns a NEW list whose prefix objects are the SAME — is the
-    identity gate here: when the cached prefix is intact, only the appended records run through `step`;
-    a rewrite (prefix identity lost, a shrink, a same-size-new-mtime) re-folds from record 0. `init()`
-    makes a fresh state; `step(state, record)` returns the next state (mutate-and-return is fine: the
-    cached state is deep-copied before folding onto it, so a state a caller was handed never changes
-    under it). Returns the state; [] records (a missing or unreadable file) fold to init()."""
-    recs = em._read_jsonl_incremental(path)
-    key = str(path)
-    hit = cache.get(key)
-    if hit is not None:
-        n0, last0, state0 = hit
-        if n0 == len(recs) and (n0 == 0 or recs[-1] is last0):
-            return state0
-        if 0 < n0 < len(recs) and recs[n0 - 1] is last0:
-            state, start = copy.deepcopy(state0), n0
-        else:
-            state, start = init(), 0
-    else:
-        state, start = init(), 0
-    for r in recs[start:]:
-        if isinstance(r, dict):
-            state = step(state, r)
-    if len(cache) > 256:                                  # bounded by the session count; never unbounded
-        cache.clear()
-    cache[key] = (len(recs), recs[-1] if recs else None, state)
-    return state
+_fold_records = em.fold_records   # moved to event_model (2026-09-03) so the judge folds the same way;
+#                                   the kernel's readers below are unchanged callers
 
 
 def _last_machine_cut(sid):
@@ -17216,21 +17187,10 @@ def _sdk_spawned_at(sid):
 def _bg_scan_cached(path):
     """The mtime+size-cached _scan_bg_tasks result for a transcript — the task META only (no output tails;
     callers that show output read it fresh, a running task's log grows independently of the transcript).
-    Shared by the chat box (_bg_tasks) and the awaiting source (_session_awaiting source 0.75)."""
-    try:
-        st = os.stat(path)
-        key = (st.st_mtime, st.st_size)
-    except OSError:
-        key = None
-    hit = _bgtasks_cache.get(path)
-    if hit is not None and key is not None and hit[0] == key:
-        return hit[1]
-    scan = _scan_bg_tasks(path)
-    if key is not None:
-        if len(_bgtasks_cache) > 256:
-            _bgtasks_cache.clear()
-        _bgtasks_cache[path] = (key, scan)
-    return scan
+    Shared by the chat box (_bg_tasks) and the awaiting source (_session_awaiting source 0.75).
+    Folds append-incrementally since 2026-09-03 (em.fold_records): a streaming session no longer re-
+    pairs its whole transcript per record."""
+    return em.scan_bg_tasks_cached(path, _bgtasks_cache, want_all=False)
 
 
 _bgall_cache = {}             # path -> ((mtime,size), [every task, launch-ordered])
@@ -17240,21 +17200,9 @@ def _bg_scan_all_cached(path):
     """Every background task the transcript records (launch-ordered, each with its launch `t` and current
     status), mtime+size cached like _bg_scan_cached. Its own cache: the running-only view is read on every
     push, this one only by the awaiting-stamp lift, and sharing one entry would make each invalidate the
-    other's shape."""
-    try:
-        st = os.stat(path)
-        key = (st.st_mtime, st.st_size)
-    except OSError:
-        key = None
-    hit = _bgall_cache.get(path)
-    if hit is not None and key is not None and hit[0] == key:
-        return hit[1]
-    scan = _scan_bg_tasks(path, want_all=True)
-    if key is not None:
-        if len(_bgall_cache) > 256:
-            _bgall_cache.clear()
-        _bgall_cache[path] = (key, scan)
-    return scan
+    other's shape.
+    Folds append-incrementally since 2026-09-03 (em.fold_records), like _bg_scan_cached."""
+    return em.scan_bg_tasks_cached(path, _bgall_cache, want_all=True)
 
 
 def _bg_tasks(path, spawned_at=None, live=None):
@@ -24211,23 +24159,12 @@ def _state_intervals(sid, want, now):
     'compacting' → cross-hatch), from states/<sid>.jsonl: an entry runs until the next transition
     (or `now` if still in it). `want` is a single state or any collection of them (the awaiting band
     passes both needs-input states). Forward-only — periods predating the log don't appear. File-based
-    port of the obsidian timeline's stateIntervals (the kernel reads states/, never tmux)."""
+    port of the obsidian timeline's stateIntervals (the kernel reads states/, never tmux).
+    Folds the states log append-incrementally since 2026-09-03 (_fold_records): every timeline
+    rebuild used to re-read and re-parse the whole file, twice per session (once per `want`); the
+    intervals themselves are cheap."""
     want = {want} if isinstance(want, str) else set(want)
-    try:
-        text = (jd.STATE / "states" / (sid + ".jsonl")).read_text(errors="replace")
-    except OSError:
-        return []
-    ev = []
-    for line in text.splitlines():
-        if not line:
-            continue
-        try:
-            o = json.loads(line)
-        except Exception:
-            continue
-        if o.get("t") and o.get("state"):
-            ev.append((o["t"], o["state"]))
-    ev.sort()
+    ev = sorted(_fold_records(_state_ev_cache, jd.STATE / "states" / (sid + ".jsonl"), list, _state_ev_step))
     cutoff, out = now - TL_HORIZON, []
     for i, (t, st) in enumerate(ev):
         if st not in want:
@@ -24237,6 +24174,15 @@ def _state_intervals(sid, want, now):
             continue
         out.append([max(t, cutoff), end])
     return out
+
+
+_state_ev_cache = {}          # states path -> _fold_records entry over its (t, state) transitions
+
+
+def _state_ev_step(ev, o):
+    if o.get("t") and o.get("state"):
+        ev.append((o["t"], o["state"]))
+    return ev
 
 
 _ACCT_CACHE = {"mtime": -1.0, "val": "", "label": ""}
@@ -24826,6 +24772,28 @@ def _msg_summaries():
     return _msg_sum_cache["map"]
 
 
+_postal_log_cache = {}        # messages.jsonl -> _fold_records entry; every timeline rebuild used to re-parse the whole log
+
+
+def _postal_log_fresh():
+    return {"sent": {}, "execd": {}, "ended": set()}
+
+
+def _postal_log_step(state, o):
+    """One messages.jsonl row of _postal_messages' fold: sent rows by id, exec receipts, ended ids."""
+    sent, execd, ended = state["sent"], state["execd"], state["ended"]
+    if o.get("ev") == "sent" and o.get("id"):
+        sent[o["id"]] = o
+    elif o.get("ev") == "exec" and o.get("id"):
+        execd[o["id"]] = (o.get("t"), o.get("dmid"))   # dmid: the recipient-side delivery mid (relayed mail)
+    elif o.get("ev") == "unexec" and o.get("id"):    # a drain that CLAIMED the mail then rolled back
+        execd.pop(o["id"], None)                     # (postal restore) — it never reached the recipient
+    elif o.get("ev") in ("recall", "bounced") and o.get("id"):
+        ended.add(o["id"])                           # terminally ended: recalled by the sender, or the
+        #                                              bus refused/destroyed it — it can never land now
+    return state
+
+
 def _postal_messages(now, alive_sids, id2name, live_sids=None):
     """Inter-session connectors for the timeline, from the postal log (timeline/messages.jsonl): each
     'sent' row joined to its 'exec' by id → a [sent,exec] arrow between two lanes. File-based (the old
@@ -24835,25 +24803,10 @@ def _postal_messages(now, alive_sids, id2name, live_sids=None):
     host's lane by bare sid, and a connector whose far end matches nothing is dropped by the view's
     lane lookup, exactly like before. `live_sids` = the TRUE live set for the pending flag's
     recipient-liveness leg (alive_sids is the broader LANE set); None skips that leg."""
-    try:
-        lines = (jd.STATE / "timeline" / "messages.jsonl").read_text(errors="replace").splitlines()
-    except OSError:
+    log = _fold_records(_postal_log_cache, jd.STATE / "timeline" / "messages.jsonl", _postal_log_fresh, _postal_log_step)
+    sent, execd, ended = log["sent"], log["execd"], log["ended"]
+    if not sent:
         return []
-    sent, execd, ended = {}, {}, set()
-    for ln in lines:
-        try:
-            o = json.loads(ln)
-        except Exception:
-            continue
-        if o.get("ev") == "sent" and o.get("id"):
-            sent[o["id"]] = o
-        elif o.get("ev") == "exec" and o.get("id"):
-            execd[o["id"]] = (o.get("t"), o.get("dmid"))   # dmid: the recipient-side delivery mid (relayed mail)
-        elif o.get("ev") == "unexec" and o.get("id"):    # a drain that CLAIMED the mail then rolled back
-            execd.pop(o["id"], None)                     # (postal restore) — it never reached the recipient
-        elif o.get("ev") in ("recall", "bounced") and o.get("id"):
-            ended.add(o["id"])                           # terminally ended: recalled by the sender, or the
-            #                                              bus refused/destroyed it — it can never land now
     cutoff, out = now - TL_HORIZON, []
     msgsum = _msg_summaries()                           # {id: Haiku caption} → the timeline shows it over the raw body
     tanchors = _thread_anchors(alive_sids)              # {tid: (parent sid, anchorT, name)} — thread mail's home
