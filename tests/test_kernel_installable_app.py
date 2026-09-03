@@ -122,7 +122,7 @@ class InstallMetas(unittest.TestCase):
     def test_panes_are_not_install_targets(self):
         # the iframes live INSIDE the installed shell; a manifest on any of them would offer
         # "Add to Home Screen" for a bare pane
-        for page in (km._chat_page(), km._feed_page(), km._timeline_page(), km._fleet_page()):
+        for page in (km._chat_page(), km._feed_page(), km._timeline_page(), km._fleet_page(), km._waiting_page()):
             self.assertNotIn("rel=manifest", page)
             self.assertNotIn("apple-mobile-web-app-capable", page)
 

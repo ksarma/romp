@@ -4447,7 +4447,7 @@ def _conserve_tick(now):
     if not be or not hasattr(be, "conserve_close"):
         return
     with _clients_lock:
-        viewer = any(c.get("alive", True) and c.get("app") in ("chat", "fleet", "timeline", "feed")
+        viewer = any(c.get("alive", True) and c.get("app") in ("chat", "fleet", "timeline", "feed", "waiting")
                      for c in _clients)
     if viewer:
         _conserve_last_viewer[0] = now
@@ -29359,7 +29359,7 @@ def _push(targets, connect=False, tmux=None):
     # chat client is open — previously the fleet rode app=feed and got ledgers only as a side effect of a chat
     # build (want_chat), so opening the fleet alone showed an empty/loading screen until a chat push happened.
     want_fleet = any(c["app"] == "fleet" for c in targets)
-    want_feed = any(c["app"] in ("feed", "fleet", "chat") for c in targets)   # fleet rides the feed payload; chat needs feed["working"]
+    want_feed = any(c["app"] in ("feed", "fleet", "waiting", "chat") for c in targets)   # fleet + the Waiting-on-you pane ride the feed payload; chat needs feed["working"]
     want_tl = any(c["app"] == "timeline" for c in targets)
     chat_clients = [c for c in targets if c["app"] == "chat"]
     try:
@@ -29576,7 +29576,7 @@ def _push(targets, connect=False, tmux=None):
     global _feed_wire, _bars_wire
     feed_ms = feed_sig = feed_parts = bars = bars_ms = bars_sig = None
     for c in targets:
-        if c["app"] in ("feed", "fleet"):   # the feed pane AND the Fleet view both ride the feed payload (Fleet reads feed.ledgers)
+        if c["app"] in ("feed", "fleet", "waiting"):   # the feed pane, the Fleet view AND the Waiting-on-you pane ride the feed payload (Fleet reads feed.ledgers; waiting reads feed.userTodoRows)
             if feed_ms is None:
                 w = _feed_wire                           # tuple snapshot — rebound whole, never mutated (torn reads)
                 if w is not None and w[0] is feed_src and w[1] == feed.get("ledgers"):
@@ -31155,6 +31155,37 @@ def _fleet_page():
             "<script>%s</script><script src=/dist/federation.js?v=%d></script>"   # multi-kernel manager: after the shim
             "<script src=/dist/fleet.js?v=%d></script></body></html>"
             % (v, THEME_CSS, fleet_css, _pane_spin("fleet-list"), _shim("fleet", v, caps=READY_GATE_CAP), v, v))
+
+
+# "Waiting on you" — every session's open USER TODOS (plans/user-todos.md) across every attached machine,
+# one row each, with Reply / Dismiss / open-session, so the person the sessions work for answers them from
+# one place instead of visiting each transcript's split card. Fed by app=waiting: it rides the feed payload
+# (build_feed's userTodoRows + userTodosOn) with the feed pane's own caps — deltas, and the ready hold so a
+# frame can never land before the bundle listens. ui/webview/waiting.ts renders it; it loads the chat's
+# styles.css for the .ut-* row / button / reply-modal dress the split card wears, so the two surfaces cannot
+# drift. Its layout CSS lives in ui/webview/waiting-pane.css — ONE file, read live here and bundled into
+# the VS Code VSIX by vscode-extension/esbuild.js. Browser shell only for now: the VS Code extension's
+# panel mirror is a separate change (UPSTREAM.md).
+def _waiting_page():
+    try:
+        waiting_css = (UI / "webview" / "waiting-pane.css").read_text()
+    except OSError:
+        return ("<!DOCTYPE html><html><body style='font-family:Inter,system-ui,-apple-system,sans-serif;color:#999;"
+                "background:#1e1e1e;padding:12px'>romp's Waiting on you pane needs the ui/ modules "
+                "(webview/waiting-pane.css).</body></html>")
+    v = _dist_ver()
+    return ("<!DOCTYPE html><html lang=en><head><meta charset=UTF-8>"
+            "<meta name=viewport content='width=device-width,initial-scale=1'>"
+            "<link rel=icon type=image/svg+xml href=/media/romp-swirl-glyph.svg><title>Romp · waiting on you</title>"
+            # the chat's stylesheet provides the .ut-* dress; waiting-pane.css (in the <style> AFTER it)
+            # owns the page layout so the chat rules don't fight this page.
+            "<link href=/dist/styles.css?v=%d rel=stylesheet>"
+            "<style>%s\n%s</style></head><body>"
+            "<div id=waiting-head></div><div id=waiting-list></div>%s"
+            "<script>%s</script><script src=/dist/federation.js?v=%d></script>"   # multi-kernel manager: after the shim
+            "<script src=/dist/waiting.js?v=%d></script></body></html>"
+            % (v, THEME_CSS, waiting_css, _pane_spin("waiting-list"),
+               _shim("waiting", v, caps=FEED_DELTA_CAP + "," + READY_GATE_CAP), v, v))
 
 
 # The romp-tl-* wrapper styles live in ui/webview/timeline-pane.css — ONE file, read live here (like the
@@ -34756,6 +34787,9 @@ class Handler(BaseHTTPRequestHandler):
             if p == "/fleet":
                 _client_seen[0] = time.time()
                 return self._send(200, _fleet_page(), "text/html; charset=utf-8", cache="no-cache")
+            if p == "/waiting":
+                _client_seen[0] = time.time()
+                return self._send(200, _waiting_page(), "text/html; charset=utf-8", cache="no-cache")
             if p == "/sw.js":
                 # the push service worker (see _SW_JS). Behind the gate on purpose: the browser's
                 # register() fetch is same-origin and carries the cookie, and only an authed shell
@@ -36105,11 +36139,13 @@ class Handler(BaseHTTPRequestHandler):
                 client.get("sent", {}).pop(("feed",), None)
             client["ready"] = True
             client["readySeen"] = True
-            served = client.get("app") in ("feed", "fleet") and _send_feed_now(client)
+            served = client.get("app") in ("feed", "fleet", "waiting") and _send_feed_now(client)
             # The connect push serves the pusher-warmed caches for everything else. A feed client that was
             # just served skips it: the push could add nothing for that pane (its warmed cache IS what was
             # served), and a feed-only push re-serializes the wire cache ledger-less for the pusher to redo.
-            if not (served and client.get("app") == "feed"):
+            # The Waiting-on-you pane is a feed client in this sense too: it reads the frame's userTodoRows
+            # and needs no ledgers, so the served frame is all the push could give it.
+            if not (served and client.get("app") in ("feed", "waiting")):
                 self._push_one(client)
             # The tab order rides the connect push (chat clients, through the _tab_list_tmux collapse
             # guard). This handler used to send a SECOND tabOrder built from a raw _tmux_sessions() read,

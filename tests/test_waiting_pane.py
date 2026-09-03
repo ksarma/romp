@@ -171,5 +171,40 @@ class FeedRows(_Sandbox):
         self.assertIn('"userTodosOn": _user_todos_on()', src)
 
 
+class Plumbing(unittest.TestCase):
+    """app=waiting is a feed client to the kernel: it is in the feed send set, the send loop, the `ready`
+    serve (and, needing no ledgers, the feed-only connect-push skip) and the conserve-memory viewer list
+    (or an open Waiting-on-you pane alone would read as a closed dashboard and park every session)."""
+
+    def test_waiting_is_in_the_feed_send_set_and_loop(self):
+        self.assertIn('want_feed = any(c["app"] in ("feed", "fleet", "waiting", "chat") for c in targets)', SRC)
+        self.assertIn('if c["app"] in ("feed", "fleet", "waiting"):', SRC)
+
+    def test_ready_serves_the_cached_frame_and_skips_the_ledgerless_connect_push(self):
+        self.assertIn('served = client.get("app") in ("feed", "fleet", "waiting") and _send_feed_now(client)', SRC)
+        self.assertIn('if not (served and client.get("app") in ("feed", "waiting")):', SRC)
+
+    def test_an_open_waiting_pane_counts_as_a_viewer_for_conserve_memory(self):
+        self.assertIn('c.get("app") in ("chat", "fleet", "timeline", "feed", "waiting")', SRC)
+
+    def test_the_page_rides_the_feed_pane_caps_and_the_shared_dress(self):
+        page = km._waiting_page()
+        self.assertIn('_shim("waiting", v, caps=FEED_DELTA_CAP + "," + READY_GATE_CAP)', SRC)
+        self.assertIn("app=waiting", page)
+        self.assertIn("/dist/styles.css", page)                     # the split card's .ut-* dress
+        self.assertIn("<div id=waiting-head></div><div id=waiting-list></div>", page)
+        self.assertIn("/dist/federation.js", page)
+        self.assertIn("/dist/waiting.js", page)
+        self.assertLess(page.index("/dist/federation.js"), page.index("/dist/waiting.js"), "manager before the bundle")
+        self.assertIn('_pane_spin("waiting-list")', SRC)
+        self.assertIn('if p == "/waiting":', SRC)
+        self.assertIn("_waiting_page()", SRC)
+        # the sheet is read live, like fleet-pane.css; a missing one fails loudly on the page, never blank
+        css = (Path(BIN).parent / "ui" / "webview" / "waiting-pane.css").read_text()
+        self.assertIn(css.splitlines()[-1], page)
+        with mock.patch.object(Path, "read_text", side_effect=OSError("gone")):
+            self.assertIn("needs the ui/ modules", km._waiting_page())
+
+
 if __name__ == "__main__":
     unittest.main()
