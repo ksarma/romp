@@ -18653,24 +18653,31 @@ def _ask_poll():
     webview renders the active tab. (Queued messages are read event-based from the transcript by _pending_queued.)"""
     while True:
         try:
-            with _clients_lock:
-                chat_clients = [c for c in _clients if c["app"] == "chat" and _client_ready(c)]
-            if chat_clients:
-                for sid in list(Sessions.live()):
-                    # the owning backend resolves the live ask: tmux SCRAPES its pane, the SDK reads the ask it
-                    # stored in _emit_ask (no pane). One uniform call — no backend fork here.
-                    ask = Sessions.backend_for(sid).current_ask(sid)
-                    if _suppress_kernel_driven_ask(sid, ask):
-                        ask = None                     # romp's own /model picker mid-switch — not the human's
-                    payload = ({"type": "askLive", "id": sid, "ask": ask} if ask
-                               else {"type": "askLiveClear", "id": sid})
-                    for c in chat_clients:
-                        _send_client(c, ("asklive", sid), payload)
-                with _clients_lock:
-                    _clients[:] = [c for c in _clients if c.get("alive", True)]
+            _ask_poll_once()
         except Exception:
             sys.stderr.write("ask poll: %s\n" % traceback.format_exc())
         time.sleep(1.2)
+
+
+def _ask_poll_once():
+    """One tick of _ask_poll: the live ask (or its clearing) for every live session, to every chat client
+    that is listening — a held one (READY_GATE_CAP, _client_ready) gets nothing, like every other push path."""
+    with _clients_lock:
+        chat_clients = [c for c in _clients if c["app"] == "chat" and _client_ready(c)]
+    if not chat_clients:
+        return
+    for sid in list(Sessions.live()):
+        # the owning backend resolves the live ask: tmux SCRAPES its pane, the SDK reads the ask it
+        # stored in _emit_ask (no pane). One uniform call — no backend fork here.
+        ask = Sessions.backend_for(sid).current_ask(sid)
+        if _suppress_kernel_driven_ask(sid, ask):
+            ask = None                     # romp's own /model picker mid-switch — not the human's
+        payload = ({"type": "askLive", "id": sid, "ask": ask} if ask
+                   else {"type": "askLiveClear", "id": sid})
+        for c in chat_clients:
+            _send_client(c, ("asklive", sid), payload)
+    with _clients_lock:
+        _clients[:] = [c for c in _clients if c.get("alive", True)]
 
 
 def _captions(fsid):
@@ -29516,7 +29523,7 @@ _built_timeline = [None, None, 0.0, 0.0]          # [fleet_sig, payload, built_a
 # build is never re-serialized cycle after cycle (~357KB + ~1.65MB per cycle measured on a quiet fleet).
 # TUPLES, rebound whole — a concurrent connect push on a WS thread snapshots the ref and can never see a
 # torn entry; the identity keys stay alive because these tuples (and the build caches above) hold them.
-_feed_wire = None   # (feed_src, ledgers, wire_feed, ms, sig, parts) — parts = _feed_parts(wire_feed)
+_feed_wire = None   # (feed_src, ledgers, wire_feed, body, sig, parts) — body = _feed_body(wire_feed): the frame's serialization MINUS its top-level `now`; _feed_ms splices the clock in at send time (a raw send of it ships a frame with no `now`, which the pane anchors every age on); parts = _feed_parts(wire_feed)
 _bars_wire = None   # (timeline, warming, bars, ms, sig)
 # Each build is intrinsically ~1-1.6s (re-segments every session); the IDEAL is a per-session lane/card cache
 # (only the changed session rebuilds), but that's a big refactor of build_feed/build_timeline. Interim cap: a

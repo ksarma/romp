@@ -194,5 +194,6 @@ class ModelPickerFlashSuppression(unittest.TestCase):
 
     def test_ask_poll_wires_the_suppression(self):
         import inspect
-        src = inspect.getsource(km._ask_poll)
+        src = inspect.getsource(km._ask_poll_once)   # the tick's body (the loop in _ask_poll only calls it)
         self.assertIn("_suppress_kernel_driven_ask(sid, ask)", src)
+        self.assertIn("_ask_poll_once()", inspect.getsource(km._ask_poll))

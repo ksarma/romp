@@ -729,6 +729,41 @@ class ReadyGate(unittest.TestCase):
                 km._clients[:] = [x for x in km._clients if x is not c]
             km._PENDING_REVEAL[0] = saved
 
+    def test_the_ask_poll_and_the_parked_create_retry_skip_a_held_chat_pane(self):
+        # The two pusher-side paths that reach chat clients outside _push — the live-ask poll and the
+        # lag-parked comment creates — carry the same gate; the 2026-09-03 review found it unpinned on both
+        # (and on _push_session_now: test_kernel_opening.py). A held pane gets nothing; a ready one gets it.
+        held, sent_h = _client(caps=("readyGate",), app="chat"); held["ready"] = False; held["wid"] = "w8"
+        live, sent_l = _client(caps=(), app="chat"); live["wid"] = "w9"
+        class _Stub:
+            def current_ask(self, sid):
+                return {"kind": "single", "header": "Backend", "question": "Which backend?", "options": [{"label": "tmux"}]}
+        saved = (km.Sessions.live, km.Sessions.backend_for, km._comment_create, km._comments_frame, list(km._parked_creates))
+        with km._clients_lock:
+            km._clients.extend([held, live])
+        try:
+            km.Sessions.live = lambda: [SID]
+            km.Sessions.backend_for = lambda sid: _Stub()
+            km._ask_poll_once()
+            self.assertEqual(sent_h, [], "the live ask never reaches a page whose bundle is not listening")
+            self.assertEqual([json.loads(x)["type"] for x in sent_l], ["askLive"], "…and reaches the one that is")
+            km._parked_creates[:] = [{"sid": SID, "uuid": "11111111-2222-3333-4444-777777777777", "exact": "the cap", "text": "Why?",
+                                      "name": "", "model": "", "effort": "", "fast": "", "color": "", "tries": 0}]
+            km._comment_create = lambda *a, **k: (None, "t1")
+            km._comments_frame = lambda sid, tmux=None: {"type": "comments", "id": sid, "threads": []}
+            km._retry_parked_creates()
+            self.assertEqual(km._parked_creates, [], "the create landed")
+            self.assertEqual(sent_h, [], "nor does its ack")
+            self.assertEqual([json.loads(x)["type"] for x in sent_l][1:], ["comments", "commentCreated"])
+            held["ready"] = True                                  # the bundle's `ready`: the next tick lands
+            km._ask_poll_once()
+            self.assertEqual([json.loads(x)["type"] for x in sent_h], ["askLive"])
+        finally:
+            with km._clients_lock:
+                km._clients[:] = [x for x in km._clients if x is not held and x is not live]
+            km.Sessions.live, km.Sessions.backend_for, km._comment_create, km._comments_frame = saved[:4]
+            km._parked_creates[:] = saved[4]
+
     def test_a_client_that_never_announced_is_ready_from_accept(self):
         # federation's remote relays (federation.ts routes `ready` to the local kernel only), the VS Code
         # extension's pipes, an older dashboard: none race the bundle, none send `ready` on this socket
