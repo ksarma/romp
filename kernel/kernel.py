@@ -35832,11 +35832,16 @@ class Handler(BaseHTTPRequestHandler):
             # deduped against one this page may never have rendered (the 2026-09-03 review: a redial that
             # completed before the bundle had loaded said `ready` for it, the frame went to a page with no
             # listener, and the bundle's own `ready` then got nothing — blank pane until the board changed).
-            # Exactly one `ready` arrives per socket in normal operation, so the healthy path is unchanged.
-            if client.get("ready") is True:
+            # "Already ready" means a `ready` was SEEN on this socket (readySeen), not that the hold is
+            # lifted: a socket that never announced the hold is ready from accept, and its one ordinary
+            # `ready` (the VS Code pipes; the Outline page) must not read as a re-base — that re-served
+            # the full frame the pusher had just delivered (the 2026-09-03 round-4 review). Exactly one
+            # `ready` arrives per socket in normal operation, so the healthy path is unchanged.
+            if client.get("readySeen"):
                 client.pop("efeed", None)
                 client.get("sent", {}).pop(("feed",), None)
             client["ready"] = True
+            client["readySeen"] = True
             served = client.get("app") in ("feed", "fleet") and _send_feed_now(client)
             # The connect push serves the pusher-warmed caches for everything else. A feed client that was
             # just served skips it: the push could add nothing for that pane (its warmed cache IS what was

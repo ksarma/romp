@@ -502,16 +502,24 @@ class ReadyHandshake(unittest.TestCase):
             _served_fresh(self, sent[1], f, t1)
             self.assertIs(c["efeed"], parts, "…and the delta stream re-bases on what was served")
             self.assertEqual(h.pushed, [], "a served feed client skips the connect push both times")
-            # a client that never announced the hold carries no `ready` flag at accept: its first `ready` is
-            # the ordinary handshake, not a re-base (nothing to forget), and it is served once
+            # a client that never announced the hold is READY FROM ACCEPT (the accept path's own
+            # assignment, mirrored here) — the VS Code pipes, the Outline page. Its one ordinary `ready`
+            # is the handshake, not a re-base: the frame the pusher already delivered is NOT re-served
+            # (round 4 of the 2026-09-03 review caught the first cut re-basing on it, one redundant full
+            # frame per connect). Only a SECOND `ready` on the same socket re-bases.
             c2, sent2 = _client(caps=())
-            self.assertNotIn("ready", c2)
-            h._dispatch_ws({"type": "ready"}, c2)
-            self.assertEqual(len(sent2), 1)
+            c2["ready"] = km.READY_GATE_CAP not in c2["caps"]
             self.assertIs(c2["ready"], True)
+            km._send_feed(c2, f, ms, km._dedup_sig(f, ms), parts)   # the pusher's cycle landed first
+            self.assertEqual(len(sent2), 1)
+            h._dispatch_ws({"type": "ready"}, c2)
+            self.assertEqual(len(sent2), 1, "the first `ready` of a never-announcing socket re-serves nothing")
+            self.assertIs(c2["readySeen"], True)
+            h._dispatch_ws({"type": "ready"}, c2)
+            self.assertEqual(len(sent2), 2, "…its second `ready` is the re-base")
             i = KSRC.index('if msg and msg.get("type") == "ready":')
             handler = KSRC[i:KSRC.index("_consume_pending_reveal(client)", i)]
-            self.assertLess(handler.index('if client.get("ready") is True:'), handler.index('client["ready"] = True'),
+            self.assertLess(handler.index('if client.get("readySeen"):'), handler.index('client["ready"] = True'),
                             "the re-base is decided from the flag BEFORE the handler sets it")
         finally:
             _restore(saved)
