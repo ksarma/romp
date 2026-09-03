@@ -4161,8 +4161,9 @@ function applyTabOrder(o: any, tabs?: any, report?: OrderReport) {
   // federation the merged order only omits an id when its OWNING host affirmatively reported it gone
   // (per-host slices persist across down/detached hosts), so this never fires on a tunnel blip.
   const inKernel = new Set<string>(kernelOrder);
+  const omitted = new Set(order.filter((id) => kernelListed.has(id) && !inKernel.has(id)));   // all of them first: no fallback onto one going in the same breath
   for (const id of order.slice()) {
-    if (kernelListed.has(id) && !inKernel.has(id)) dismissSession(id);
+    if (omitted.has(id)) dismissSession(id, "omitted", omitted);
   }
   const next = reconcileTabOrder(kernelOrder, order, (id) => sessions.has(id) || tabMeta.has(id),
                                  (id) => kernelListed.has(id));
@@ -4639,7 +4640,7 @@ function renderTabs() {
     const label = el("span", "tab-label");
     label.replaceChildren(...hostNameNodes(s.name, id));   // remote "host:" prefix renders as quiet metadata
     // ...and the whole tab dims when that host is unreachable, so a disconnected session reads as one at
-    // a glance rather than only on inspection (the user 2026-07-29). The struck "host:" carries the why.
+    // a glance rather than only on inspection (the user 2026-07-29). The marked "host:" carries the why.
     if (hostIsDown(id)) { tab.classList.add("host-off"); tab.title = hostDownNote(id); }
     if (s.status.faded && id !== activeId && s.color) {
       const full = s.color.bg;
@@ -5563,7 +5564,7 @@ function dropProvisional(): { queued: string[]; draft: string } {
     const ta = document.getElementById("composer-input") as HTMLTextAreaElement | null;
     draft = (activeId === id && ta) ? ta.value : (drafts.get(id) ?? "");
     pendingSent.delete(id);                // the optimistic bubbles belong to a tab that is going away
-    dismissSession(id);                    // drops it from sessions/order/views and reselects
+    dismissSession(id, "close");           // drops it from sessions/order/views and reselects
   }
   return { queued, draft };
 }
@@ -11791,6 +11792,7 @@ function setActive(id: string, anchor?: string, anchorT?: number, anchorKind?: s
   // Stash the leaving tab's draft; show the entering tab's own (usually empty).
   const ta = document.getElementById("composer-input") as HTMLTextAreaElement | null;
   if (ta && activeId !== id) {
+    clearComposerNote();   // a real switch binds the box to `id` — a note about the last hand-over is stale (T236)
     if (activeId) {
       if (ta.value) drafts.set(activeId, ta.value); else drafts.delete(activeId);
       // A citation chip is a "reply to this card right now" intent — switching tabs abandons it, so drop the
@@ -11910,13 +11912,17 @@ function upsert(msg: any) {
   }
   if ("ledger" in msg) ledgers.set(msg.id, msg.ledger ?? null);
   if (!existed) order.push(msg.id);
-  if (!activeId) activeId = msg.id;
+  if (composerNoteSid === msg.id) clearComposerNote();   // the torn-down session is back — tab and kept draft with it (T236)
+  const adopted = !activeId;
+  if (adopted) { activeId = msg.id; loadComposerFor(msg.id, true); }   // adopted as the only tab → its draft too (T236: the once-per-page restore below never covers a session that LEFT and came back)
   if (wantActive && msg.id === wantActive) { wantActive = null; setActive(msg.id); }   // restore persisted tab on arrival
   renderTabs();                                   // a new id appended to `order` above → strip repaints in kernel order
   // Active tab: a content refresh appends + preserves scroll (appendActive); a new tab or a fork
   // lands at the bottom/anchor (showActive). This is what keeps new pushes from snapping to bottom.
   if (msg.id === activeId) {
-    if (existed && !forked && !firstBuild) {
+    // an ADOPTION is a first show even for a payload this page already held: the no-active-tab state hid
+    // every view, and appendActive never re-reveals one (T236 harness: a tab active over "No session open")
+    if (existed && !forked && !firstBuild && !adopted) {
       appendActive();
     } else {
       showActive();
@@ -12181,10 +12187,10 @@ function closeTabLocally(id: string): void {
   // (and the kernel never knew the id): its ✕ is a plain local discard — tab, draft, and all.
   if (isProvisionalId(id)) {
     if (id === provisionalId) cancelProvisional();
-    else { failedProvisionals.delete(id); dismissSession(id); }
+    else { failedProvisionals.delete(id); dismissSession(id, "close"); }
     return;
   }
-  dismissSession(id);
+  dismissSession(id, "close");
   closingTabs.set(id, Date.now());
 }
 
@@ -12198,28 +12204,127 @@ function closeTabLocally(id: string): void {
 // event — is both the regression above (the ✕ path runs through here microseconds after recording the
 // close) and wrong under federation, where a `closed` ack can predate stale merged frames that still list
 // the id: the moment nothing suppresses it, the strip re-draws the swirl placeholder.
-function dismissSession(id: string): void {
+// WHY a session is leaving the panel — the one fact that decides what happens to its composer state
+// (T236, the user 2026-09-03: an unsent draft typed into one session's box turned up in another's after
+// a remote host dropped off). "close" is the user's own ✕ / End; "end" is the owning kernel's `closed`
+// frame — the session actually ended. Both are GENUINE ends and clear the draft (the user 2026-08-04).
+// "hostDrop" is federation's synthetic `closed` for every session of a host that left the mesh — the
+// session still exists on its kernel; "omitted" is a kernel tabOrder push that stopped carrying an id it
+// used to (applyTabOrder's teardown) — an absence, not a report of an end. Neither is the user's close,
+// so the draft (and citations, edit pill, attachments) is STASHED under the session's stable id and comes
+// back with the session. Deleting it here, as every teardown once did, is what lost the user's text.
+type DismissWhy = "close" | "end" | "hostDrop" | "omitted";
+
+// The active box's live text, filed under ITS OWN id. The input handler keeps `drafts` current on every
+// keystroke, but a box filled programmatically (a slash pick, a history recall) can be ahead of it — so
+// a teardown stashes explicitly before anything is cleared or the box changes hands.
+function stashActiveDraft(id: string): void {
+  const ta = document.getElementById("composer-input") as HTMLTextAreaElement | null;
+  if (!ta || activeId !== id) return;
+  if (ta.value) drafts.set(id, ta.value); else drafts.delete(id);
+}
+
+// Bind the composer to `id`: its draft into the box (unless `keepTyped` and the box already holds live
+// typing — the never-clobber rule restoreActiveDraftOnce follows), then its citation chips, attachment
+// thumbnails and staged stack. setActive paints the same set inline (pinned there); this is the loader
+// for the two OTHER ways the box changes hands — the active tab's teardown and the `!activeId` adoption
+// of an arriving session — which used to load less (on adoption, no draft at all: a session that LEFT
+// and came back as the only tab showed an empty box over a kept draft).
+function loadComposerFor(id: string | null, keepTyped = false): void {
+  const ta = document.getElementById("composer-input") as HTMLTextAreaElement | null;
+  if (ta) {
+    if (!(keepTyped && ta.value)) ta.value = (id && drafts.get(id)) || "";
+    growComposer(ta);
+  }
+  renderComposerChips(id);
+  renderComposerFiles(id);
+  renderStagedStrip(id);
+}
+
+// The line above the box after the ACTIVE tab was torn down under the user (T236): whose box went away,
+// why, and — for a host drop or an omission — that the unsent draft is kept. The tab strip alone did not
+// carry this (the report proves it: the user kept typing). One note at a time; it retires on the exact
+// events that make it stale — an explicit tab switch (setActive re-binds the box), the session's own
+// return (its next session frame), or its ✕ — never a timer.
+let composerNoteSid: string | null = null;
+function renderComposerNote(sid: string, why: DismissWhy, name: string): void {
+  const box = document.getElementById("composer");
+  if (!box) return;
+  clearComposerNote();
+  const note = el("div", "composer-note");
+  note.id = "composer-note";
+  const msg = el("span", "composer-note-msg");
+  const who = el("span", "composer-note-name");
+  who.replaceChildren(...hostNameNodes(name, sid));   // the same "host:" + name the tab wore
+  let tail: string;
+  if (why === "hostDrop") tail = "’s host disconnected — your unsent draft is kept and comes back with it.";
+  else if (why === "omitted") tail = " is no longer listed by romp — your unsent draft is kept and comes back with it.";
+  else {
+    const next = activeId ? (sessions.get(activeId)?.name || tabMeta.get(activeId)?.name || "") : "";
+    tail = next ? ` ended — the box below is “${next}”’s now.` : " ended.";
+  }
+  msg.append(who, document.createTextNode(tail));
+  const x = el("button", "composer-chip-x");
+  x.setAttribute("aria-label", "Dismiss");
+  x.title = "dismiss";
+  x.textContent = "✕";
+  x.addEventListener("click", () => clearComposerNote());
+  note.append(msg, x);
+  box.insertBefore(note, box.firstChild);
+  composerNoteSid = sid;
+}
+function clearComposerNote(): void {
+  document.getElementById("composer-note")?.remove();
+  composerNoteSid = null;
+}
+
+// `doomed`: the other ids the same teardown is about to run through (applyTabOrder hands over every id its
+// push omitted); a host drop needs no list — every session on that host is going. The fallback must skip
+// them: landing on a sibling that is dismissed a moment later re-binds the box twice and leaves the note
+// naming the sibling, not the box the user was typing in.
+function dismissSession(id: string, why: DismissWhy, doomed?: ReadonlySet<string>): void {
   if (peekId === id) peekId = null;   // its tab is going — the peek goes with it
+  const wasActive = activeId === id;
+  const name = sessions.get(id)?.name || tabMeta.get(id)?.name || id;   // read before the maps forget it
+  if (wasActive) stashActiveDraft(id);   // FIRST: what is on screen belongs to this id, whatever happens next
   sessions.delete(id);
   liveAsks.delete(id);
   ledgers.delete(id);
-  // ALL of the closed session's composer context goes with it — the draft, the reply-context citation
-  // chip, and any pending edit pill (the user 2026-08-04). Deleting from the maps is not enough when the
-  // closed session was ACTIVE: the shared chip strip above the composer still shows its chip until
-  // someone repaints it, and that stale chip's ✕ targets the dead id (whose map entry is gone), so the
-  // click early-returns and the chip can't even be dismissed — hence the repaint below.
-  drafts.delete(id); composerCitations.delete(id); composerEdits.delete(id); composerFiles.delete(id); persistDrafts();
+  if (why === "close" || why === "end") {
+    // ALL of the closed session's composer context goes with it — the draft, the reply-context citation
+    // chip, and any pending edit pill (the user 2026-08-04). Deleting from the maps is not enough when the
+    // closed session was ACTIVE: the shared chip strip above the composer still shows its chip until
+    // someone repaints it, and that stale chip's ✕ targets the dead id (whose map entry is gone), so the
+    // click early-returns and the chip can't even be dismissed — hence the repaint below.
+    drafts.delete(id); composerCitations.delete(id); composerEdits.delete(id); composerFiles.delete(id); persistDrafts();
+  } else {
+    persistDrafts();   // a host drop / omission KEEPS it all (see DismissWhy) — the stash above may have updated the copy
+  }
   const v = views.get(id);
   if (v) { v.el.remove(); views.delete(id); }
   const oi = order.indexOf(id); if (oi >= 0) order.splice(oi, 1);
-  const mi = mru.indexOf(id); if (mi >= 0) mru.splice(mi, 1);
+  const mi = mru.indexOf(id); if (mi >= 0) mru.splice(mi, 1);   // before the fallback read below — never the dead id
   renderTabs();                          // tab removed from `order` above → repaint without it
-  if (activeId === id) {
-    activeId = mru[0] || null; // MRU: return to the previously-active tab, not the positional neighbor
-    const ta = document.getElementById("composer-input") as HTMLTextAreaElement | null;
-    if (ta) { ta.value = (activeId && drafts.get(activeId)) || ""; growComposer(ta); }
-    renderComposerChips(activeId);   // the strip was showing the CLOSED session's chip — swap in the new active tab's (usually none)
-    renderComposerFiles(activeId);   // same for its attachment thumbnails
+  if (wasActive) {
+    // MRU: return to the previously-active tab, not the positional neighbor — one still on the strip (the
+    // dead id left `mru` above; an id `order` no longer carries would bind the box to a tab nobody can see,
+    // and the next keystroke would file under it) and not one this same teardown takes next.
+    const home = hostOf(id);   // "" for a local id, and then no sibling rule: every local tab would "share" it
+    const goingToo = (x: string) => (doomed?.has(x) ?? false) || (why === "hostDrop" && !!home && hostOf(x) === home);
+    // …and with no recency left (the user only ever looked at this one tab), the first tab still on the
+    // strip: leaving activeId null with tabs showing read "No session open" under a visible strip, and
+    // handed the box to whichever session frame happened to arrive next (the harness caught both, T236).
+    activeId = mru.find((x) => order.includes(x) && !goingToo(x)) || order.find((x) => !goingToo(x)) || null;
+    loadComposerFor(activeId);   // the strip was showing the CLOSED session's chip/thumbnails/draft — swap in the new active tab's (usually none)
+    // The box just changed hands under the user. Their own ✕ is the one case they already know; for every
+    // other reason BLUR it — a keystroke a moment later must not land in the survivor's session unnoticed
+    // (the T236 report: the continuation of A's draft surfaced in B's box) — and say above it whose box
+    // went away. An explicit tab click is what binds the box to a session again.
+    if (why !== "close") {
+      const ta = document.getElementById("composer-input") as HTMLTextAreaElement | null;
+      if (ta) ta.blur();
+      renderComposerNote(id, why, name);
+    }
     showActive();
   }
 }
@@ -12637,7 +12742,7 @@ window.addEventListener("message", (e: MessageEvent) => {
       }
     }
   }
-  else if (m.type === "closed") dismissSession(m.id);   // a session died on its own (or the kernel confirms our close)
+  else if (m.type === "closed") dismissSession(m.id, m.hostDrop === true ? "hostDrop" : "end");   // a session died on its own (or the kernel confirms our close) — or its HOST dropped (federation's stand-in, stamped: not an end)
   // any payload that rebuilt transcript DOM must get its highlights re-applied (marks live IN that DOM)
   if (m && m.id && (m.type === "session" || m.type === "chatTail" || m.type === "chatHead" || m.type === "chatEpisode"))
     applyCommentMarks(String(m.id));
