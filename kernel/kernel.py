@@ -11,7 +11,7 @@ zero protocol change at switchover. WS is hand-rolled on the stdlib socket (no d
 
 Run:  bin/romp-kernel   → opens http://127.0.0.1:29855
 """
-import json, os, queue, random, re, signal, socket, sys, time, threading, traceback, base64, bisect, errno, hashlib, hmac, struct, subprocess, shutil, shlex, http.client, uuid, tempfile, stat
+import json, os, queue, random, re, signal, socket, sys, time, threading, traceback, base64, bisect, errno, hashlib, hmac, struct, subprocess, shutil, shlex, http.client, uuid, tempfile, stat, gzip
 from pathlib import Path
 from datetime import datetime, timezone
 from importlib.machinery import SourceFileLoader
@@ -33,6 +33,45 @@ CHAT_VIEW = ROOT / "vscode-extension"               # the tuned UI, current in t
 DIST = (Path(os.environ["ROMP_DIST_DIR"]) if os.environ.get("ROMP_DIST_DIR")
         else CHAT_VIEW / "dist")                 # bundles built from ui/webview sources (the human's tuned render layer)
 MEDIA = CHAT_VIEW / "media"
+
+# /dist + /media bodies, each with its validator and (for text types) a gzip made once.
+_DIST_GZIP_MIN = 1024                       # under this, the gzip framing costs more than it saves
+_DIST_GZIP_SUFFIX = (".js", ".css", ".svg", ".map", ".json")
+_dist_body_cache = {}                       # str(path) -> (key, plain, gz, etag_plain, etag_gz)
+
+
+def _dist_body(fp, accept_encoding):
+    """(body, content_encoding, etag) for one static bundle.
+
+    The etag is (mtime_ns, size) — it moves on every rebuild exactly like the ?v= stamp the urls already
+    carry, so no-cache's "never serve a stale body" guarantee is untouched. It just gives the revalidation
+    no-cache asks for something to MATCH: without a validator the browser had nothing to send and re-fetched
+    the whole bundle every open (measured: 2.2MB of dist per dashboard load, uncompressed).
+
+    gzip is computed ONCE per (path, mtime, size) and held beside the plain bytes. The kernel is a single
+    process serving every pane, so compressing ~750KB per request would relocate the cost rather than remove
+    it. Encoding-specific etags plus Vary keep an intermediary from crossing the two forms."""
+    st = fp.stat()
+    key = (st.st_mtime_ns, st.st_size)
+    hit = _dist_body_cache.get(str(fp))
+    if hit is None or hit[0] != key:
+        plain = fp.read_bytes()
+        gz = None
+        if fp.suffix.lower() in _DIST_GZIP_SUFFIX and len(plain) >= _DIST_GZIP_MIN:
+            try:
+                gz = gzip.compress(plain, 6, mtime=0)   # 6 is the knee: ~4x on these bundles, cheap to hold
+            except Exception:
+                gz = None                               # never let a compression failure cost the asset
+        tag = '"%x-%x"' % key
+        hit = (key, plain, gz, tag, tag[:-1] + '-gz"')
+        if len(_dist_body_cache) > 64:                  # bounded like the other per-path caches
+            _dist_body_cache.clear()
+        _dist_body_cache[str(fp)] = hit
+    _, plain, gz, tag_plain, tag_gz = hit
+    if gz is not None and "gzip" in accept_encoding.lower():
+        return gz, "gzip", tag_gz
+    return plain, "", tag_plain
+
 UI = ROOT / "ui"                             # the browser UI: timeline view + webview sources (served/built from here)
 NAMES = jd.STATE / "names"
 PORT = int(os.environ.get("ROMP_KERNEL_PORT", "29855"))   # the manager/extension default; env still overrides. Renumbered from 7433 (the user 2026-07-24), which an LLM had picked — so a twin-prompted project plausibly binds it — and whose nearest IANA neighbour is 7443. 29855 was drawn at random from the ports absent from /etc/services, minus common dev defaults, below the 49152 ephemeral floor.
@@ -32708,8 +32747,17 @@ class Handler(BaseHTTPRequestHandler):
                       "map": "application/json", "ttf": "font/ttf", "woff": "font/woff",
                       "woff2": "font/woff2", "png": "image/png"}.get(fp.suffix.lstrip("."), "text/plain")
                 # no-cache: the ?v= url already busts on rebuild; this makes the browser revalidate even
-                # when it reuses a url, so a same-name rebuild can never serve a stale body.
-                return self._send(200, fp.read_bytes(), ct + "; charset=utf-8", cache="no-cache")
+                # when it reuses a url, so a same-name rebuild can never serve a stale body. The ETag is
+                # what makes that revalidation cheap: no-cache without a validator meant the browser had
+                # nothing to offer and re-downloaded the bundle on every open. Same freshness rule, one
+                # 304 instead of 750KB.
+                body, enc, tag = _dist_body(fp, self.headers.get("Accept-Encoding") or "")
+                hdrs = {"ETag": tag, "Vary": "Accept-Encoding"}
+                if (self.headers.get("If-None-Match") or "") == tag:
+                    return self._send(304, b"", ct + "; charset=utf-8", cache="no-cache", headers=hdrs)
+                if enc:
+                    hdrs["Content-Encoding"] = enc
+                return self._send(200, body, ct + "; charset=utf-8", cache="no-cache", headers=hdrs)
             return self._send(404, "not found", "text/plain")
         except (BrokenPipeError, ConnectionResetError):
             pass
