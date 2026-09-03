@@ -8737,10 +8737,55 @@ def _comment_thread_row_created(tsid):
     return _comment_created_memo.get(tsid)
 
 
+def _thread_turn_open(tsid, reg, state):
+    """Is the thread's reply still being WORKED ON? The transcript decides, with the chat's own working
+    predicate (_session_working over the event model's turns: the last turn has not ENDED — no end_turn
+    stop, no interrupt, not idle at its tail). The backend's live `state` is only the fallback when the
+    transcript cannot be read (pre-fork, unreadable): it can flap to ""/waiting between the records of
+    one turn and linger "working" for a push after the final record — neither is the landing event
+    (T237, the user 2026-09-03: the mark went yellow while the thread had only started responding)."""
+    if reg.get("forkOf"):
+        return True                                 # the fork hasn't landed: the first reply is ahead
+    busy_state = state in ("working", "retrying", "compacting")
+    try:
+        path = _thread_transcript_path(reg, tsid)
+        session = _parse(path, tsid, int(time.time())) if path else None   # the real (mtime-cached) parse — _parse_cached never parses
+    except Exception:
+        session = None
+    turns = (session or {}).get("turns") or []
+    if not turns:
+        return busy_state                           # nothing to read yet: the backend's word is all there is
+    if turns[-1].get("ended"):
+        return False                                # the end_turn / interrupt record IS the landing, whatever the backend still says
+    if busy_state:
+        return True                                 # mid-turn: tool calls, intermediate text — the reply is still coming
+    return bool(_session_working(turns))            # backend quiet on an unended turn: the chat's own read (idle-terminated / suspended → dead, not owed)
+
+
+def _agent_landed_after(events, msgs, seen):
+    """Agent content newer than the read watermark, read from the projection the popover RENDERS: the
+    events when it has them (assistant/tool events after the cut), else the msgs projection; both
+    empty (the popover holds its loader) → nothing is unread."""
+    if events:
+        for e in events:
+            if e.get("kind") in ("assistant", "tool") and int(em.parse_z(e.get("ts")) or 0) > seen:
+                return True
+        return False
+    return any(m["who"] == "agent" and m["t"] > seen for m in msgs)
+
+
 def _comments_frame(sid, tmux=None):
     """The chat pane's {type:"comments"} frame for parent session `sid`, or None when it has never
     had a thread. Built per push for sessions WITH a store (few) — _send_client's dedup keeps an
-    unchanged frame off the wire."""
+    unchanged frame off the wire.
+
+    Two per-thread bits carry the mark's colour, and the kernel is their ONE truth (T237, the user
+    2026-09-03, twice): `unread` — yellow — means "a FINISHED reply you have not seen": the thread's
+    turn has ended (_thread_turn_open false) AND agent content newer than lastSeenT exists in the
+    projection the popover renders. `replyOwed` — the green in-flight wash — means a reply is still
+    owed: the thread has no exchange yet, the user's message is the newest, or the turn is in progress.
+    Neither is a client-side latch or a timer: an intermediate record of a multi-record turn flips
+    nothing; the end_turn record flips both in the same frame the popover can show the reply."""
     p = _comments_path(sid)
     if not p.exists():
         return None
@@ -8779,9 +8824,11 @@ def _comments_frame(sid, tmux=None):
         msgs = [] if status == "promoted" else _thread_messages(
             tsid, str(th.get("cutUuid") or ""), floor_t=(0 if th.get("cutUuid") else int(th.get("createdT") or 0)))
         seen = int(th.get("lastSeenT") or 0)
-        unread = any(m["who"] == "agent" and m["t"] > seen for m in msgs)
         events = [] if status == "promoted" else _thread_events(tsid, str(th.get("cutUuid") or ""), now, tmux)
         reg = _thread_reg(tsid)
+        turn_open = status == "open" and _thread_turn_open(tsid, reg, state)
+        unread = (not turn_open) and _agent_landed_after(events, msgs, seen)
+        reply_owed = status == "open" and (turn_open or not msgs or msgs[-1]["who"] == "you")
         # (T102: the push-count settle — settledPushes — is RETIRED. The client's pulse is exchange-
         # scoped now: latched at the send gesture, cleared by the reply RECORD arriving in msgs; the
         # frame's msgs already carry that event, so no per-push counter rides here anymore.)
@@ -8806,7 +8853,8 @@ def _comments_frame(sid, tmux=None):
                         "name": th.get("name") or "", "color": th.get("color") or "",
                         "exact": str(th.get("exact") or "")[:500], "status": status,
                         "createdT": th.get("createdT") or 0, "state": state, "error": err,
-                        "unread": unread, "promotedName": th.get("promotedName") or "",
+                        "unread": unread, "replyOwed": reply_owed,   # yellow / green — see the docstring (T237)
+                        "promotedName": th.get("promotedName") or "",
                         "model": (reg.get("liveModel") or reg.get("model") or "") if reg else "",
                         "effort": (reg.get("effort") or "") if reg else "",
                         "sinceEpoch": since_ms,

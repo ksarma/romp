@@ -17,7 +17,8 @@ export type CommentThread = {
   createdT: number;
   state: string;              // the thread session's live state ("working"/"waiting"/…, "" when dormant)
   error?: string;             // the thread CLI's launch error, when it could not start
-  unread: boolean;            // an agent reply newer than the read watermark
+  unread: boolean;            // a FINISHED agent reply newer than the read watermark — yellow (kernel truth, T237)
+  replyOwed?: boolean;        // a reply is still owed (no exchange yet / user's message newest / turn in progress) — the green wash (kernel truth, T237; absent on an older kernel)
   sinceEpoch?: number;        // ms epoch the thread's current state began — the popover chip's timer
   mode?: string;              // the thread's permission mode — the popover statusline's Auto badge
   fast?: string;              // fast-mode state ("on"/"off"/"cooldown"; "" = unknown → no badge)

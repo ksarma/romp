@@ -50,7 +50,7 @@ import { initStrip, fmtReset } from "./strip";
 import { apiErrorReason } from "./api-error-reason";
 import { mathBlock, mathInline } from "./math";
 import { setTip, pruneTip } from "./tip";
-import { agentCount, replyOwed, threadsByAnchor, threadBusy, threadStuck, findAnchorRange, sliceRanges, prunePending, type CommentThread } from "./comments";
+import { replyOwed, threadsByAnchor, threadBusy, threadStuck, findAnchorRange, sliceRanges, prunePending, type CommentThread } from "./comments";
 import { dragSlotIndex } from "./dragslot";
 
 for (const [name, lang] of Object.entries({
@@ -6614,8 +6614,13 @@ function dropSynthThread(sid: string, uuid: string): void {
 const cmtInterrupted = new Set<string>();
 const commentInFlight = (th: CommentThread): boolean => {
   if (th.status !== "open" || !!th.error || threadStuck(th.state)) return false;
-  if (cmtAwaitBase.has(th.tid)) return true;
-  return replyOwed(th) && !cmtInterrupted.has(th.tid);
+  if (cmtAwaitBase.has(th.tid)) return true;    // the pre-round-trip instant only: from the send click until a frame carries it
+  // the kernel is the one truth for "a reply is still owed" (T237): it reads the thread's transcript with
+  // the chat's own turn-end, so an intermediate record of a multi-record turn, a state flap between
+  // records, or a frame that lost a client latch can no longer drop the green wash to yellow while the
+  // thread is still responding. An older kernel ships no bit → the msgs-derived fallback.
+  const owed = typeof th.replyOwed === "boolean" ? th.replyOwed : replyOwed(th);
+  return owed && !cmtInterrupted.has(th.tid);
 };
 const commentDrafts = new Map<string, string>();                    // draft key → unsent popover text
 // The popover-boot hold (fillCommentMsgs): tid → when the loader first held the list. Held until the
@@ -7320,10 +7325,10 @@ function commentSendFromPop(pop: HTMLElement): void {
     // so its never-listed tid unwraps through the standard sweep the moment the real thread lands
     const synth: CommentThread = { tid: "pending:" + create.uuid, anchorUuid: create.uuid,
       exact: create.exact, status: "open", createdT: Date.now() / 1000, state: "working",
-      unread: false, promotedName: "", msgs: [], name: nm || "comment", color: create.color || "" };
+      unread: false, replyOwed: true, promotedName: "", msgs: [], name: nm || "comment", color: create.color || "" };
     const cur0 = commentThreads.get(create.sid) || [];
     commentThreads.set(create.sid, [...cur0.filter((t) => t.tid !== synth.tid), synth]);
-    cmtAwaitBase.set(synth.tid, 0);   // the SEND gesture latches the pulse — before any kernel round-trip (T102)
+    cmtAwaitBase.set(synth.tid, 0);   // the SEND gesture latches the pulse — before any kernel round-trip (T102); cleared once a frame carries the send (T237)
     applyCommentMarks(create.sid);
     vscodeApi.postMessage({ type: "commentCreate", id: create.sid, uuid: create.uuid, exact: create.exact,
       text, name: nm, model: create.model || "", effort: create.effort || "",
@@ -7336,7 +7341,7 @@ function commentSendFromPop(pop: HTMLElement): void {
   const cur = openCommentThread();
   if (!cur) return;
   vscodeApi.postMessage({ type: "commentReply", id: cur.sid, tid: cur.th.tid, text });
-  cmtAwaitBase.set(cur.th.tid, agentCount(cur.th));   // a follow-up RE-LATCHES at its own send, until ITS reply (T102)
+  cmtAwaitBase.set(cur.th.tid, cur.th.msgs.length);   // a follow-up RE-LATCHES at its own send — until a frame carries that send; then the kernel's replyOwed owns it (T102 → T237)
   cmtInterrupted.delete(cur.th.tid);                  // a fresh send re-owes a reply — the stop tombstone retires (T138)
   cur.th.state = "working";                     // optimistic: the pulse rides the SEND, not the
   applyCommentMarks(cur.sid);                   // round-trip (the kernel's next frame confirms)
@@ -12715,26 +12720,33 @@ window.addEventListener("message", (e: MessageEvent) => {
     // clear (the latch side never re-derives from state), so the boot-flap class T102 removed
     // cannot re-green anything. Leaving "open" (or erroring) still clears immediately.
     for (const t of threads) {
+      // the gesture latch covers ONLY the pre-round-trip instant (T237): once a frame's projection carries
+      // the send (its message count grew past the count at the click), the kernel's replyOwed owns the wash
       const base = cmtAwaitBase.get(t.tid);
-      if (base !== undefined && ((agentCount(t) > base && !threadBusy(t.state)) || t.status !== "open" || !!t.error)) cmtAwaitBase.delete(t.tid);
+      if (base !== undefined && (t.msgs.length > base || t.status !== "open" || !!t.error)) cmtAwaitBase.delete(t.tid);
     }
+    // prune latches only for tids NO session's thread list knows (T237): this frame lists ONE session's
+    // threads, and pruning against it dropped every other session's latch — and any tid a frame
+    // momentarily lacked — leaving a fresh comment's mark plain yellow while it was still "opening"
+    const knownTids = new Set<string>();
+    commentThreads.forEach((list) => list.forEach((t) => knownTids.add(t.tid)));
     for (const k of Array.from(cmtAwaitBase.keys()))
-      if (!k.startsWith("pending:") && !threads.some((t) => t.tid === k)) cmtAwaitBase.delete(k);
+      if (!k.startsWith("pending:") && !knownTids.has(k)) cmtAwaitBase.delete(k);
     const live = new Set(threads.filter((t) => t.status !== "promoted").map((t) => t.tid));
     for (const k of Array.from(commentPending.keys())) if (!live.has(k)) commentPending.delete(k);
     for (const k of Array.from(commentDrafts.keys())) if (!k.startsWith("new:") && !live.has(k)) commentDrafts.delete(k);
     if (pendingAdoptTid && threads.some((t) => t.tid === pendingAdoptTid)) adoptCommentThread(sid, pendingAdoptTid);
-    applyCommentMarks(sid);
     if (openCommentKey && openCommentKey.sid === sid) {
-      // reading IS seeing: a reply that lands while its popover is open must not dot the mark
+      // reading IS seeing: a reply that lands while its popover is open must not dot the mark — the
+      // watermark advances BEFORE the marks paint (T237), so it never wears yellow for it, not even one tick
       const th = threads.find((t) => t.tid === openCommentKey!.tid);
       if (th && th.unread) {
         th.unread = false;
         vscodeApi?.postMessage({ type: "commentSeen", id: sid, tid: th.tid });
-        applyCommentMarks(sid);
       }
-      renderCommentPopover();
     }
+    applyCommentMarks(sid);
+    if (openCommentKey && openCommentKey.sid === sid) renderCommentPopover();
   }
   // the create ack names the new thread: adopt exactly it (never a guess). The kernel sends the
   // frame first; if this ack somehow beat it, park the tid and the next frame adopts. The draft is

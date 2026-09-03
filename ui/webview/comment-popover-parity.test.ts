@@ -90,7 +90,8 @@ test("the pulse is exchange-scoped (T102): send-gesture latch, reply-record clea
   assert.doesNotMatch(RENDER, /settleConfirmed|commentBusyLatch/);
   assert.match(RENDER, /const cmtAwaitBase = new Map<string, number>\(\);/);
   // the frame handler already repaints marks AND the open popover per frame — the live wire
-  assert.match(RENDER, /applyCommentMarks\(sid\);\s*\n\s*if \(openCommentKey && openCommentKey\.sid === sid\) \{/);
+  // T237: the open popover's seen-stamp now runs BEFORE the paint, so the paint is followed by the re-render only
+  assert.match(RENDER, /applyCommentMarks\(sid\);\s*\n\s*if \(openCommentKey && openCommentKey\.sid === sid\) renderCommentPopover\(\);/);
 });
 test("a family click sends the kernel's alias default; a version the seed table lacks renders LOUDLY as new", () => {
   // the family row's label is the family's OWN label — never a version-table lookup — so an alias
