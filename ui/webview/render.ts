@@ -11914,7 +11914,12 @@ function upsert(msg: any) {
   }
   if ("ledger" in msg) ledgers.set(msg.id, msg.ledger ?? null);
   if (!existed) order.push(msg.id);
-  if (composerNoteSid === msg.id) clearComposerNote();   // the torn-down session is back — tab and kept draft with it (T236)
+  // The torn-down session is BACK while its hand-over note still holds the box: the user has done nothing
+  // since (a click into the box, a tab switch or the ✕ would have retired it), so put them back exactly
+  // where they were — its tab active, its kept draft in the box. Merely retiring the note here left the
+  // fallback tab active with the box unheld, and the next blind keystroke landed there after all (the
+  // T236 harness, omission path: the tab is re-listed within seconds). setActive clears the note.
+  if (composerNoteSid === msg.id) setActive(msg.id);
   const adopted = !activeId;
   if (adopted) { activeId = msg.id; loadComposerFor(msg.id, true); }   // adopted as the only tab → its draft too (T236: the once-per-page restore below never covers a session that LEFT and came back)
   if (wantActive && msg.id === wantActive) { wantActive = null; setActive(msg.id); }   // restore persisted tab on arrival
@@ -12288,8 +12293,9 @@ function clearComposerNote(): void {
 // printable keystroke nobody claimed, Enter from the bare area) stand down instead of dropping the cursor
 // into the survivor's box — the harness showed the blur alone was not enough: the first printable key
 // re-focused the box and the continuation of A's draft landed in B's anyway (T236). The keystroke is
-// swallowed and the note flashes: the eye goes to the line that explains it. A CLICK into the box (its
-// pointerdown), a tab switch or the note's ✕ ends the hold — every one a deliberate act.
+// swallowed and the note flashes: the eye goes to the line that explains it. The box gaining focus (a click,
+// Tab, any other route the user takes into it), a tab switch or the note's ✕ ends the hold — every one a
+// deliberate act.
 function composerNoteHolds(): boolean {
   if (!composerNoteSid) return false;
   flashComposerNote();
@@ -12301,6 +12307,7 @@ function flashComposerNote(): void {
   n.classList.remove("composer-note-flash");
   void n.offsetWidth;   // restart the one-shot animation
   n.classList.add("composer-note-flash");
+  n.addEventListener("animationend", () => n.classList.remove("composer-note-flash"), { once: true });   // one-shot: the class leaves on the animation's own end
 }
 
 // `doomed`: the other ids the same teardown is about to run through (applyTabOrder hands over every id its
@@ -13234,7 +13241,11 @@ function setupComposer() {
     return false;
   };
   ta.addEventListener("focus", () => { if (slashSid !== (activeId || "")) loadCmds(activeId || ""); });   // pre-warm the cache before "/"
-  ta.addEventListener("pointerdown", () => { if (composerNoteSid) clearComposerNote(); });   // a CLICK into the box is the deliberate re-bind the note asked for (T236)
+  // The box GAINING FOCUS is the deliberate re-bind the note asked for (T236): the teardown blurred it, showActive
+  // never focuses it, and the two type-from-anywhere defaults stand down while the note holds — so any focus now
+  // is the user's own act (a click, Tab, Enter over a selection, Quote, a citation seed, a slash pick, an edit
+  // recall). Retiring on pointerdown alone left the note over a box they were typing in by any other route.
+  ta.addEventListener("focus", () => { if (composerNoteSid) clearComposerNote(); });
   ta.addEventListener("blur", () => window.setTimeout(closeSlash, 120));   // close when leaving (a row's mousedown keeps focus, so it fires only on a real leave)
   window.addEventListener("resize", positionSlash);
 

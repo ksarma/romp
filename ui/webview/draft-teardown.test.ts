@@ -80,12 +80,13 @@ function model() {
       sessions.add(id);
       if (!order.includes(id)) order.push(id);
       if (!activeId) { activeId = id; if (!composer) composer = drafts.get(id) ?? ""; touchMru(id); }   // the adoption goes through the draft load
-      if (note && note.sid === id) note = null;   // it is back, draft and all
+      if (note && note.sid === id) activate(id);  // back while the note still holds → the user did nothing since → back on it, draft and all
     },
     activate,
-    focus() { focused = true; },
-    // a CLICK into the box: focus, and the deliberate re-bind that retires the note (its pointerdown)
-    clickBox() { focused = true; note = null; },
+    // the box gaining focus — by a click, Tab, Enter over a selection, a slash pick… — is the deliberate re-bind
+    // that retires the note (render.ts: the composer's focus listener)
+    focus() { focused = true; note = null; },
+    clickBox() { this.focus(); },
     // the "type from anywhere" default: a printable key with no owner drops the cursor into the box and
     // inserts — unless the hand-over note holds the box, when the key is swallowed and the note flashes
     typeAnywhere(text: string) {
@@ -120,10 +121,17 @@ test("(i) a draft under a remote session survives its host dropping, and is back
   assert.equal(m.hasDraft("hostA:web"), true, "a host drop is not a close — the draft is stashed, not deleted");
   assert.equal(m.draft("hostA:web"), "half a thought");
   assert.deepEqual(m.tabs(), ["hostB:tests"]);
-  // the host comes back: its session frame re-adds the tab, and activating it shows the draft again
+  // the host comes back: its session frame re-adds the tab — and, the note still holding, re-activates it
   m.arrive("hostA:web");
-  m.activate("hostA:web");
+  assert.equal(m.activeId, "hostA:web");
   assert.equal(m.composer, "half a thought", "the returning session's box holds what was typed into it");
+  // …whereas a return AFTER the user moved on (they clicked into the survivor's box → the note is gone)
+  // stays where they are; the draft waits on its tab
+  m.hostDrop(["hostA:web"]); m.clickBox();
+  m.arrive("hostA:web");
+  assert.equal(m.activeId, "hostB:tests");
+  m.activate("hostA:web");
+  assert.equal(m.composer, "half a thought");
 });
 
 test("(ii) typing after an active-tab teardown never lands under another session without an explicit switch", () => {
@@ -145,15 +153,28 @@ test("(ii) typing after an active-tab teardown never lands under another session
   assert.equal(m.focused, false);
   assert.equal(m.hasDraft("hostB:api"), false, "still nothing under the survivor");
   assert.ok(m.note && m.note.sid === "hostA:web", "the note stays up until a deliberate act");
-  // clicking INTO the box IS that act: the note retires and typing is the survivor's own draft
-  m.clickBox(); m.type("for api");
-  assert.equal(m.note, null);
-  assert.equal(m.draft("hostB:api"), "for api");
-  // an explicit switch to another tab binds the box there
+  // an explicit switch to another tab IS a deliberate act: the note retires and the box is that tab's
   m.activate("hostB:tests");
-  m.type("for tests");
+  assert.equal(m.note, null, "the switch retires the note");
+  m.focus(); m.type("for tests");
   assert.equal(m.draft("hostB:tests"), "for tests", "typed AFTER an explicit switch → that tab's own draft");
   assert.equal(m.draft("hostA:web"), "dear hostA");
+});
+
+test("(ii-c) a click into the box — or any other route into it — ends the hold, and typing is the survivor's own", () => {
+  const m = model();
+  m.arrive("hostB:tests"); m.arrive("hostA:web");
+  m.activate("hostA:web"); m.focus(); m.type("dear hostA");
+  m.hostDrop(["hostA:web"]);
+  m.typeAnywhere("x");
+  assert.equal(m.flashes, 1);
+  m.clickBox();
+  assert.equal(m.note, null, "focus by the user's own hand retires the note");
+  m.type("for tests");
+  assert.equal(m.draft("hostB:tests"), "for tests");
+  assert.equal(m.draft("hostA:web"), "dear hostA");
+  m.typeAnywhere("!");                                    // no hold any more — the default is back
+  assert.equal(m.draft("hostB:tests"), "for tests!");
 });
 
 test("(ii-b) an omission teardown of the active tab gets the same blur + note, and keeps the draft", () => {
@@ -168,9 +189,12 @@ test("(ii-b) an omission teardown of the active tab gets the same blur + note, a
   assert.ok(m.note && m.note.sid === "api" && m.note.why === "omitted");
   assert.equal(m.draft("api"), "typed into api", "an omission is not the user's close — stash, don't delete");
   m.arrive("api");                                        // it is listed again (a boot-partial push caught up)
-  assert.equal(m.note, null, "the note retires when the session is back");
-  m.activate("api");
-  assert.equal(m.composer, "typed into api");
+  assert.equal(m.note, null, "the note retires when the session is back…");
+  assert.equal(m.activeId, "api", "…by putting the user back on it: nothing happened in between");
+  assert.equal(m.composer, "typed into api", "with the kept draft in the box");
+  m.typeAnywhere("!");                                    // the blind keystroke the harness typed → into ITS box
+  assert.equal(m.draft("api"), "typed into api!");
+  assert.equal(m.hasDraft("web"), false);
 });
 
 test("(iii) a genuine end still clears the draft — the user's ✕ and the owning kernel's closed frame alike", () => {
@@ -293,8 +317,13 @@ test("while the note holds the box, the type-from-anywhere defaults stand down; 
   // bare-area Enter: stands down before focusComposerOrAsk
   assert.match(RENDER, /if \(ae && ae !== document\.body\) return;\s*\n\s*if \(composerNoteHolds\(\)\) return;/);
   assert.match(RENDER, /function composerNoteHolds\(\): boolean \{\s*\n\s*if \(!composerNoteSid\) return false;\s*\n\s*flashComposerNote\(\);\s*\n\s*return true;/);
-  // the deliberate act: a pointerdown in the box
-  assert.match(RENDER, /ta\.addEventListener\("pointerdown", \(\) => \{ if \(composerNoteSid\) clearComposerNote\(\); \}\);/);
+  // the deliberate act: the box gaining focus, by any route
+  assert.match(RENDER, /ta\.addEventListener\("focus", \(\) => \{ if \(composerNoteSid\) clearComposerNote\(\); \}\);/);
+  // the flash is one-shot in every mode: the class leaves on animationend, and the sheet has no reduced-motion freeze
+  assert.match(RENDER, /n\.addEventListener\("animationend", \(\) => n\.classList\.remove\("composer-note-flash"\), \{ once: true \}\);/);
+  const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "styles.css"), "utf8");
+  assert.match(CSS, /\.composer-note-flash \{ animation: composer-note-flash 0\.7s ease-out; \}/);
+  assert.doesNotMatch(CSS, /prefers-reduced-motion: reduce\) \{ \.composer-note-flash/);
   // the note says so
   assert.match(RENDER, /hint\.textContent = " Click the box to type here\.";/);
 });
@@ -302,8 +331,8 @@ test("while the note holds the box, the type-from-anywhere defaults stand down; 
 test("the note retires on the exact events: an explicit switch, the session's return, or its ✕", () => {
   // setActive: a real switch re-binds the box → the note is stale
   assert.match(RENDER, /function setActive\(id: string[\s\S]*?if \(ta && activeId !== id\) \{[\s\S]*?clearComposerNote\(\);/);
-  // the session frame: the torn-down session is back
-  assert.match(RENDER, /if \(composerNoteSid === msg\.id\) clearComposerNote\(\);/);
+  // the session frame: the torn-down session is back while the note still holds → back on it (setActive retires the note)
+  assert.match(RENDER, /if \(composerNoteSid === msg\.id\) setActive\(msg\.id\);/);
   // its own ✕
   assert.match(RENDER, /function renderComposerNote\(sid: string, why: DismissWhy, name: string\): void \{[\s\S]*?x\.addEventListener\("click", \(\) => clearComposerNote\(\)\);/);
 });

@@ -900,9 +900,8 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
 .composer-note-name { color: var(--fg); }
 .composer-note-hint { opacity: 0.75; }
 /* a keystroke swallowed while the note holds the box (render.ts composerNoteHolds) — one accent wash, fading */
-.composer-note-flash { animation: composer-note-flash 0.7s ease-out; }
+.composer-note-flash { animation: composer-note-flash 0.7s ease-out; }   /* a colour fade, not motion — no reduced-motion override (render.ts removes the class on animationend) */
 @keyframes composer-note-flash { from { background: color-mix(in srgb, var(--accent) 30%, transparent); } to { background: transparent; } }
-@media (prefers-reduced-motion: reduce) { .composer-note-flash { animation: none; background: color-mix(in srgb, var(--accent) 18%, transparent); } }
 .composer-file { position: relative; display: inline-flex; align-items: center; cursor: pointer; }
 .composer-file-img { display: block; height: 46px; max-width: 96px; object-fit: cover; border-radius: 6px;
   border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
