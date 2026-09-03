@@ -18273,7 +18273,11 @@ _chat_fold_lock = threading.Lock()               # the dict ops only — builds 
 _CHAT_FOLD_MAX = 256
 _CHAT_FOLD_STATS = {"full": 0, "fold": 0, "bypass": 0, "fallback": 0}   # + g:<reason>; /version "chatfold"
 _chat_fold_warned = [False]
-_chat_fold_last = {}                             # the last build's {fold, k, n, prefix, tail} for the perf line
+_chat_fold_last = threading.local()              # per THREAD: the last build's {fold, k, n, prefix, why} for the perf line
+
+
+def _chat_fold_last_info():
+    return getattr(_chat_fold_last, "info", None) or {}
 
 
 def _chat_fold_get(sid):
@@ -18293,11 +18297,17 @@ def _chat_fold_put(sid, entry):
         _chat_fold[sid] = entry
 
 
+def _chat_fold_count(key):
+    """One counter increment under the cache lock — the pusher, the WS handlers and the backends all build."""
+    with _chat_fold_lock:
+        _CHAT_FOLD_STATS[key] = _CHAT_FOLD_STATS.get(key, 0) + 1
+        return _CHAT_FOLD_STATS[key]
+
+
 def _chat_fold_demote(reason):
     """Count WHY a build could not reuse its cached prefix (g:<reason>) — the hit-rate diagnosis
     this cache lives or dies by, mirroring event_model._asm_demote."""
-    k = "g:" + reason
-    _CHAT_FOLD_STATS[k] = _CHAT_FOLD_STATS.get(k, 0) + 1
+    _chat_fold_count("g:" + reason)
 
 
 def _chat_turn_fp(turn):
@@ -18341,6 +18351,15 @@ def _chat_postal_relevant(ev):
     if k == "user":
         return bool(em.POSTAL_RE.findall(ev.get("md") or ""))
     return False
+
+
+def _chat_stat_key(path):
+    """(mtime, size) of a file, or None when it is missing — the task-output gate's identity."""
+    try:
+        st = os.stat(path)
+        return (st.st_mtime, st.st_size)
+    except OSError:
+        return None
 
 
 def _chat_postal_key():
@@ -20996,7 +21015,7 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
     _seams_sig = json.dumps((_bs_store or {}).get("seams") or [], sort_keys=True, default=str)
     _pk = _chat_postal_key()
     if path_override:
-        _CHAT_FOLD_STATS["bypass"] += 1
+        _chat_fold_count("bypass")
     elif _n_pref > 0:
         try:
             _fe = _chat_fold_get(sid)
@@ -21050,14 +21069,23 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
                         if _ot in _tail_texts or any(dt.startswith(_ot) or _ot.startswith(dt) for dt in _tail_texts):
                             _fold_why = "orphan"      # a new reply retires an interleaved orphan in the prefix
                             break
-            if _fold_why is None and _fe["postal_pending"] and (_pk != _fe["postal_key"] or _judge_gen[0] != _fe["judge_gen"]):
-                # a card without its caption yet, or ids the log could not resolve: re-hydrate just those raw
-                # events against the current index; a different card means the prefix must be rebuilt
+            if _fold_why is None and _fe["postal_raw"] and (_pk != _fe["postal_key"] or _judge_gen[0] != _fe["judge_gen"]):
+                # re-hydrate just the sealed RAW postal events against the current index and captions; a
+                # different card means the prefix must be rebuilt. Every card, not only the pending ones
+                # (review find 2026-09-03): the judge writes a LIVE caption under an id it later overwrites
+                # with the final one, and a peer's colour can change — a card sealed complete was frozen
                 _cards = _hydrate_postal(list(_fe["postal_raw"]), _postal_index(), sid)
                 if _cards != _fe["postal_cards"]:
                     _fold_why = "postal"
                 else:
                     _fe["postal_key"], _fe["judge_gen"] = _pk, _judge_gen[0]
+            if _fold_why is None and _fe["task_outs"]:
+                # a sealed task-notification card carries its output file's tail: a file that grew, appeared
+                # or vanished since the seal renders differently (review find 2026-09-03), so re-stat each
+                for _of, _key in _fe["task_outs"]:
+                    if _chat_stat_key(_of) != _key:
+                        _fold_why = "task-output"
+                        break
             if _fold_why is None and _fe["pl_pending"]:
                 # unresolved path tokens are retried on every build BY DESIGN (a mention precedes the file):
                 # retry exactly those, and rebuild if one now resolves
@@ -21073,14 +21101,15 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
             _fold_ok = _fold_why is None
         except Exception:
             _fold_ok, _fold_why = False, "fallback"
-            _CHAT_FOLD_STATS["fallback"] += 1
-            if not _chat_fold_warned[0] or _CHAT_FOLD_STATS["fallback"] in (10, 100, 1000):
+            with _chat_fold_lock:
+                _chat_fold.pop(sid, None)             # the entry the check choked on is not trusted again
+            if _chat_fold_count("fallback") in (1, 10, 100, 1000) or not _chat_fold_warned[0]:
                 _chat_fold_warned[0] = True
                 sys.stderr.write("chat fold: gate check failed (%s) — rebuilding in full (stats %r)\n"
                                  % (traceback.format_exc().strip().splitlines()[-1], dict(_CHAT_FOLD_STATS)))
     if _fold_ok:
         _fk = _fe["n"]
-        _CHAT_FOLD_STATS["fold"] += 1
+        _chat_fold_count("fold")
         events = list(_fe["events"])              # a NEW list of the SAME dicts — never written into (see above)
         _pref_len = len(events)
         uuid2seg, seg_anchors, seg_trig, seg_work = (dict(_fe["seg"][0]), dict(_fe["seg"][1]),
@@ -21089,13 +21118,13 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
         last_t, last_model = _fe["last_t"], _fe["last_model"]
         _disk_texts = set(_fe["disk_texts"])
     elif not path_override:
-        _CHAT_FOLD_STATS["full"] += 1
-        if _fold_why not in (None, "cold"):
+        _chat_fold_count("full")
+        if _fold_why not in (None, "cold", "fallback"):     # fallback is its own counter, never also a g:
             _chat_fold_demote(_fold_why)
     for _i in range(_fk, len(_turns)):
         _disk_texts |= _texts_of_turn(_i)
-    _chat_fold_last.update({"fold": int(_fold_ok), "k": _fk, "n": len(_turns), "prefix": _pref_len,
-                            "why": _fold_why or ""})
+    _chat_fold_last.info = {"fold": int(_fold_ok), "k": _fk, "n": len(_turns), "prefix": _pref_len,
+                            "why": _fold_why or ""}
     # per-turn seg maps for the turns this build reshapes (the prefix's came with the entry)
     _seg_by_turn = {}                         # turn index → its (uuid2seg, seg_anchors, seg_trig, seg_work) items
     for _ti in range(_fk, len(_turns)):
@@ -21431,9 +21460,14 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
                 _b = next((_i for _i in range(_pref_len, len(events)) if _turn_of(events[_i]) >= _np),
                           len(events))
                 _open = _chat_seam_open_at(events[:_b], _pref_len)   # an undecided seam holds the boundary
-                if _open is None or _turn_of(events[_open]) <= _fk:
+                if _open is None:
                     break
-                _np = _turn_of(events[_open])
+                _np = _turn_of(events[_open])   # may equal _fk: the next pass then finds _b == _pref_len and no
+                #                                 marker, and the entry is re-committed UNCHANGED. (Review find
+                #                                 2026-09-03: a `<= _fk: break` here sealed a marker whose turn had
+                #                                 just stopped being last — the common case, since the notice
+                #                                 that decides a kernel-restart seam lands after a nudge or a
+                #                                 peer's mail — and its cause was then never stamped.)
             if _np > _fk and _b > _pref_len or (_fold_ok and _np == _fk):
                 _newpart = events[_pref_len:_b]
                 _newids = {id(_e) for _e in _newpart}
@@ -21446,8 +21480,13 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
                 _raw_new = [_e for _e in _raw_tail if _raw_turn.get(id(_e), _fk) < _np]
                 _praw = (list(_fe["postal_raw"]) if _fold_ok else []) + [_e for _e in _raw_new if _chat_postal_relevant(_e)]
                 _pcards = _hydrate_postal(list(_praw), _postal_index(), sid) if _praw else []
-                _ppend = any(not (_c.get("kind") == "postal-service" and _c.get("summary")) for _c in _pcards)
                 _plp = list(_fe["pl_pending"]) if _fold_ok else []
+                _touts = list(_fe["task_outs"]) if _fold_ok else []
+                for _e in _newpart:
+                    for _r in (_e.get("reminders") or []) if _e.get("kind") == "user" else ():
+                        _note = _parse_task_notification("<task-notification>%s</task-notification>" % _r)
+                        if _note and _note.get("tool_use_id") and _note.get("output_file"):
+                            _touts.append((_note["output_file"], _chat_stat_key(_note["output_file"])))
                 for _i in range(_pref_len, _b):
                     _e = events[_i]
                     if _e.get("kind") in ("user", "assistant") and _e.get("uuid") and _e.get("md"):
@@ -21478,14 +21517,14 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
                     "orphan_uuids": {_o["uuid"] for _o in orphans[:_cur[3]] if _o.get("uuid")},
                     "orphan_texts": [_o["text"].strip() for _o in orphans[:_cur[3]] if (_o.get("text") or "").strip()],
                     "open_tools": _open_tools, "skill_unfilled": _skill_unf,
-                    "postal_raw": _praw, "postal_cards": _pcards, "postal_pending": _ppend,
-                    "postal_key": _pk, "judge_gen": _judge_gen[0], "pl_pending": _plp})
-            _chat_fold_last["prefix_next"] = _b
+                    "postal_raw": _praw, "postal_cards": _pcards,
+                    "postal_key": _pk, "judge_gen": _judge_gen[0], "pl_pending": _plp,
+                    "task_outs": _touts})
+            _chat_fold_last.info["prefix_next"] = _b
         except Exception:
-            _CHAT_FOLD_STATS["fallback"] += 1
             with _chat_fold_lock:
                 _chat_fold.pop(sid, None)
-            if not _chat_fold_warned[0] or _CHAT_FOLD_STATS["fallback"] in (10, 100, 1000):
+            if _chat_fold_count("fallback") in (1, 10, 100, 1000) or not _chat_fold_warned[0]:
                 _chat_fold_warned[0] = True
                 sys.stderr.write("chat fold: commit failed (%s) — this session rebuilds in full until it succeeds (stats %r)\n"
                                  % (traceback.format_exc().strip().splitlines()[-1], dict(_CHAT_FOLD_STATS)))
@@ -27949,9 +27988,9 @@ def _push(targets, connect=False, tmux=None):
                     _perf("chatbuild", sid=str(s["sid"])[:8], cached=0, active=int(is_active),
                           ms=round((time.monotonic() - _t0) * 1000, 1),
                           events=(len(m.get("events") or []) if m else 0),
-                          fold=_chat_fold_last.get("fold", 0), k=_chat_fold_last.get("k", 0),
-                          prefix=_chat_fold_last.get("prefix", 0),   # events reused from the sealed prefix
-                          why=_chat_fold_last.get("why", ""))         # the demote reason on a full build
+                          fold=_chat_fold_last_info().get("fold", 0), k=_chat_fold_last_info().get("k", 0),
+                          prefix=_chat_fold_last_info().get("prefix", 0),   # events reused from the sealed prefix
+                          why=_chat_fold_last_info().get("why", ""))         # the demote reason on a full build
                 if not m:
                     continue
                 _note_chat_divergence(s["sid"], m.get("name") or "",
@@ -27991,7 +28030,9 @@ def _push(targets, connect=False, tmux=None):
                     _built_chat.pop(sid, None)
                     _prev_chat_events.pop(sid, None)
                     _prev_chat_ledger.pop(sid, None)
-                    with _chat_fold_lock:
+            with _chat_fold_lock:                        # …and every fold entry for a sid no longer shown,
+                for sid in list(_chat_fold):             # including ones _built_chat never held (thread sids,
+                    if sid not in shown_sids:            # loadOlder / connect-push builds)
                         _chat_fold.pop(sid, None)
             _retry_parked_creates()   # lag-parked comment creates ride every pusher cycle (T106)
             # COMMENT THREADS: one {type:"comments"} frame per session that has ever had one (its
