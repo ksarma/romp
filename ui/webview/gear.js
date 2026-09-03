@@ -160,8 +160,8 @@ var GEAR_HTML =
   "<div class='rs-row rs-jrow'><b>Indexing model <span class=rs-mixed hidden></span></b><span class=rs-sub>The model the indexing judges use — captioner + archiver (high-volume, low-stakes summarization). Haiku by default for cost. Follows to every connected machine's kernel.</span><select id=rs-indexmodel></select></div>" +
   "<div class='rs-row rs-jrow'><b>Indexing effort <span class=rs-mixed hidden></span></b><span class=rs-sub>Thinking effort for the indexing judges. Default keeps this high-volume work cheap: effort low on models with adaptive thinking (Fable, Opus 4.6 and later, Sonnet 4.6 and later); Haiku, Sonnet 4.5 and Opus 4.5 have none, so they run with thinking off and no flag. Follows to every connected machine's kernel.</span><select id=rs-indexeffort></select></div>" +
   '<div class=rs-sec>Updates & debug</div>' +
-  "<div class='rs-row' style='cursor:default'><span style='flex:1 1 auto'><b>Automatic updates <span class=rs-mixed hidden></span></b>" +
-  '<span class=rs-sub>romp watches for new tagged releases (every 6 hours) AND new commits on main (origin polled every few minutes, plus a restart offer when updated code sits on disk unbooted) — one banner covers both, and acting on it converges every attached machine. Check and ask (the default) offers the banner with an Update button; Install automatically converges by itself, restarting at the next quiet moment; Off never checks. Kernel-side setting.</span>' +
+  "<div class='rs-row' style='cursor:default'><span style='flex:1 1 auto'><b>Updates and update notices <span class=rs-mixed hidden></span></b>" +
+  '<span class=rs-sub>romp watches for new tagged releases (every 6 hours) AND new commits on main (origin polled every few minutes, plus a restart offer when updated code sits on disk unbooted) — one banner covers both, and acting on it converges every attached machine. Check and ask (the default) shows that banner with an Update button; Install automatically converges by itself, restarting at the next quiet moment; Off stops the checks and the banners about new commits and releases — romp keeps running what it has until you restart it yourself. The separate reload prompt (“A newer romp build is available”) is not an update notice and stays on: it means this page is running older code than the kernel. Kernel-side setting.</span>' +
   "<select id=rs-updates style='display:none'>" +
   '<option value=ask>Check and ask</option><option value=auto>Install automatically</option><option value=off>Off</option>' +
   '</select></span></div>' +
@@ -777,7 +777,7 @@ function initGear(post) {
   // it in plain words and re-read the kernel's actual values if the modal is up. No polling.
   var STALE_LABELS = { 'auto-nudge': 'Auto Nudge', 'compact-suggest': 'Suggest /compact',
     'file-editing': 'File editing',
-    'update-mode': 'Automatic updates', 'judge-model': 'Triage model', 'judge-effort': 'Triage effort',
+    'update-mode': 'Updates and update notices', 'judge-model': 'Triage model', 'judge-effort': 'Triage effort',
     'index-model': 'Indexing model', 'index-effort': 'Indexing effort',
     'distill-model': 'Distilling model', 'distill-effort': 'Distilling effort',
     'comment-model': 'Comment model', 'comment-effort': 'Comment effort',
