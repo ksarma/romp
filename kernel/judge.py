@@ -4429,11 +4429,34 @@ def rollup_status(store, session_closed, now=None):
     # TOP-LEVEL with their own provenance intact, and the empty container leaves the store. This is
     # what un-strands the asks the provenance audit measured (every dead chain ended at a promptless
     # container): once the child is a top again, its promptUuid/origin evidence is reachable by the
-    # mint-time trace and the closer's nominations. Idempotent by construction (no umbrellas remain
-    # after one pass) and self-healing like the lift above: a save-rebase republishing a stale
-    # parentId is re-dissolved on the very next rollup. Diary-less container removal follows the
-    # born-done backlog self-heal precedent — an umbrella has no verdicts of its own to preserve.
-    _umbrellas = {k for k, v in nodes.items() if isinstance(v, dict) and v.get("umbrella")}
+    # mint-time trace and the closer's nominations. Idempotent by construction (no undissolved
+    # umbrellas remain after one pass) and self-healing like the lift above: a save-rebase
+    # republishing a stale parentId is re-dissolved on the very next rollup. Diary-less container
+    # removal follows the born-done backlog self-heal precedent — an umbrella has no verdicts of
+    # its own to preserve.
+    #
+    # THE SWEEP YIELDS TO THE USER'S UNDO: archives keep their containers, so UndoClear can pull a
+    # pre-T101 umbrella back into the live store — and the sweep was eating the card the user had
+    # JUST restored, promoting its children in its place. The un-clear is NEWER information than
+    # the standing purge (a writer whose evidence predates the diary stands down): a container
+    # whose latest clear-family diary row is the user's undo-restore (the reopen/undo=True row
+    # _mark_nodes_cleared's dual-write and the unclear override replay both record) is SPARED — it
+    # stays the card the user asked back for, until they clear it again. A flag-CLEARED container
+    # is spared too: it is already off the board and the compactor archives it whole; dissolving
+    # it in that window would promote its children out of the user's seal. Peer-adopted and
+    # legacy copies carry neither mark and dissolve as before.
+    def _undo_restored(v):
+        latest = ""
+        latest_t = -1
+        for e in (v.get("log") or []):
+            k = e.get("kind")
+            if k == "clear" or (k == "reopen" and e.get("undo")):
+                et = int(e.get("ev_t") or 0)
+                if et >= latest_t:                      # ties go to the later row (append order):
+                    latest_t, latest = et, k            # the restore that popped a same-second clear wins
+        return latest == "reopen"
+    _umbrellas = {k for k, v in nodes.items() if isinstance(v, dict) and v.get("umbrella")
+                  and not v.get("cleared") and not _undo_restored(v)}
     if _umbrellas:
         _uparent = {k: nodes[k].get("parentId") for k in _umbrellas}
         def _solid_parent(uid):
@@ -7309,6 +7332,49 @@ def _mirror_mint_ctx(session, store, fsid, path, latest_seg, now):
     return ctx
 
 
+def _latch_ask_anchors(fsid, session, store):
+    """LATCH the ask-unit exemption's anchor verdict durably on the node. The kernel's
+    _pure_delegation_top must decide "is this promptUuid-anchored top the dictated ask?" by
+    resolving the anchor RECORD — but it reads the CACHED parse only (build_feed's cold-start
+    contract) and fails open on doubt, so a machine-anchored coordination card would flap
+    shown→hidden on every restart/cache-cold beat: cache temperature, not new information (the
+    cards-move-on-new-information rule). The verdict is a fact about a record that never changes
+    once readable, so resolve it ONCE from the judge's own WARM parse and stamp `askAnchor` on the
+    node: 'human' (the dictated ask), 'machine' (a peer mail, the agent's own atom, romp
+    bookkeeping — _human_prompt_record, the one definition of 'dictated'), or 'absent' (the
+    stitched chain no longer holds the uuid: rewound/compacted/pre-/clear — durable doubt, which
+    keeps failing open exactly as the per-beat read did, just stably). The write rides the planner
+    apply path (_plan_session's end-of-pass rollup+save) — judge-side, the goal store's normal
+    writer; build_feed stays read-only. Only the tops the exemption actually consults are latched:
+    parentless, promptUuid-bearing, no origin (a courier top's evidence is T105's userAsk, never
+    its mail anchor), not itself a tracker. A parse with NO atoms at all latches nothing — a
+    missing/unreadable transcript is no evidence of absence, and 'absent' must never be minted
+    from one. Returns the number latched; the caller's unconditional save persists them."""
+    cands = [nd for nd in store.get("nodes", {}).values()
+             if isinstance(nd, dict) and nd.get("parentId") is None and nd.get("promptUuid")
+             and not isinstance(nd.get("origin"), dict)
+             and not isinstance(nd.get("handoff"), dict)
+             and not nd.get("askAnchor")]
+    if not cands:
+        return 0
+    by_uuid = {}
+    for turn in session.get("turns") or []:
+        for a in turn.get("atoms") or []:
+            if a.get("uuid"):
+                by_uuid[a["uuid"]] = a
+    if not by_uuid:
+        return 0
+    n = 0
+    for nd in cands:
+        a = by_uuid.get(nd["promptUuid"])
+        if a is None:
+            nd["askAnchor"] = "absent"
+        else:
+            nd["askAnchor"] = "human" if _human_prompt_record(a, fsid) else "machine"
+        n += 1
+    return n
+
+
 def _plan_session(fsid, path, now):
     """Advance ONE session's goal tree: place its un-placed planner UNITS oldest-first (each sees the prior
     tree's open menu) and GROUP after every placement (the user 2026-06-17: planner + grouper are both
@@ -7796,6 +7862,9 @@ def _plan_session(fsid, path, now):
         #   segment's chain liveness, not about anchor suitability.
         _group_store(store, fsid, now)
         save_goals(fsid, store)
+    _latch_ask_anchors(fsid, session, store)          # durable ask-unit anchor verdicts — no LLM,
+    #                                                   idempotent (latched nodes skip), persisted
+    #                                                   by the save just below
     rollup_status(store, _session_settled(fsid, path, session, store))
     save_goals(fsid, store)
     return placed
@@ -8276,6 +8345,29 @@ def _merge_nodes(store, dupe_id, surv_id, t, why):
         surv["promptUuid"] = dupe["promptUuid"]
     if not surv.get("userAsk") and dupe.get("userAsk"):
         surv["userAsk"] = dupe["userAsk"]
+    # THE DELEGATION IDENTITY RIDES THE MERGE: origin, links, askRef. A dispatch's msgId must stay
+    # JOINABLE on the surviving node — apply_courier's idempotency scan, run_propagate's back-link,
+    # and its dismissal arm all key on origin/links — so dropping them stranded the sender's
+    # non-quiet tracker FOREVER (no recipient node carried the msgId, and the reply sweep defers to
+    # a back-link that could no longer fire); a dropped askRef reopened duplicate minting for the
+    # next dispatch of the same ask. The survivor keeps its own birth when it has one — origin
+    # means "BORN from that delegation" and stays truthful — and the dupe's origin then rides
+    # links[], the same additional-dispatch shape the ask dedupe writes; links union by msgId;
+    # askRef fills only a lack, like quote/promptUuid above.
+    do = dupe.get("origin")
+    if isinstance(do, dict):
+        if not isinstance(surv.get("origin"), dict):
+            surv["origin"] = do
+        elif do.get("msgId") and all(not (isinstance(l, dict) and l.get("msgId") == do["msgId"])
+                                     for l in surv.get("links") or []):
+            surv.setdefault("links", []).append(
+                {k: do[k] for k in ("peer", "goalId", "msgId", "peerHost") if k in do})
+    for l in dupe.get("links") or []:
+        if isinstance(l, dict) and all(not (isinstance(s, dict) and s.get("msgId") == l.get("msgId"))
+                                       for s in surv.get("links") or []):
+            surv.setdefault("links", []).append(l)
+    if not isinstance(surv.get("askRef"), dict) and isinstance(dupe.get("askRef"), dict):
+        surv["askRef"] = dupe["askRef"]
     surv["t"] = min(surv.get("t") or t, dupe.get("t") or t)
     surv["mt"] = t
     # chained merges keep every tombstone: the dupe's own mergedFrom rides along, so an id merged
@@ -11978,6 +12070,18 @@ def _postal_from(mid):
     return _postal_row(mid)[:2]
 
 
+def _ask_stamp_text(user_ask):
+    """The `userAsk` text as STAMPED on a minted top: the chain-proven record's raw text shaped by
+    _ask_head — or, when that leaves NOTHING (an image-only / attachment-only dictated prompt whose
+    record carries no text), the '(user message)' placeholder _seg_label already uses for a
+    titleless prompt. Always non-empty for a dict record: skipping the stamp on empty text leaves
+    an askRef-bearing top with NO dictation evidence the ask-unit exemption accepts, so a
+    fully-fanned image ask renders NOWHERE while the dedupe keeps linking later dispatches into
+    that invisible top. ONE definition shared by the stamp and the dedupe's identity cross-check —
+    the compare only holds if both sides shape alike."""
+    return _ask_head(str(user_ask.get("text") or "")) or "(user message)"
+
+
 def apply_courier(store, seg_id, seg_t, text, origin, prompt_uuid=None, frame=None, user_ask=None):
     """Plant a top-level goal in the recipient's tree for a delegating message, with origin
     provenance. Idempotent by seg_id and origin.msgId (one planted goal per message). Returns nid.
@@ -11990,12 +12094,44 @@ def apply_courier(store, seg_id, seg_t, text, origin, prompt_uuid=None, frame=No
     `user_ask` (the user 2026-08-26, T105): the ROOT human prompt record the chain trace proved
     ({"text","sid"}) — the frame is an INTERMEDIARY's restatement one hop up, and a manager's
     dispatch speaks implementation nouns, so the writers also need the root. Stored shaped
-    (_ask_head). A non-dict truthy (tests stub the trace with literal True) stores nothing."""
+    (_ask_head). A non-dict truthy (tests stub the trace with literal True) stores nothing.
+
+    ASK-IDENTITY DEDUPE: msgId idempotency alone lets one ask fanned N times to the SAME recipient
+    mint N near-duplicate tops — every dispatch carries a fresh msgId. The trace's `askRef` (the
+    proof node's (sender sid, goal id), riding user_ask) is the ask's stable identity: it is
+    STAMPED on the minted top, and a later dispatch of the same ask finds the standing VISIBLE top
+    (_node_carded) and LINKS instead — placements point at it, and a links[] backref carries the
+    new msgId so run_propagate still ends that dispatch's sender-side tracker off the one card.
+    Stub-True traces carry no askRef and mint exactly as before (the stubbed suites' contract);
+    each recipient session still gets its own card — the dedupe never reaches across stores. Two
+    hardenings on the dedupe: goal ids RECYCLE after a sender store reset (sid:gN, per-store seq),
+    so it also cross-checks the standing top's own userAsk text against the incoming record (one
+    shaping, _ask_stamp_text) — the same ask still links, a recycled id over different dictation
+    mints its own card (a mismatch fails toward the mint, the recoverable side); and the
+    standing-card test honors the rollup's done-confirming window: a done-verdict-filed top whose
+    settle is pending still renders in Working, so the dispatch links into it rather than minting
+    a twin beside the doneConfirming cue."""
     nodes, placements = store["nodes"], store["placements"]
     mid = origin.get("msgId")
     if mid:
         for nid, nd in nodes.items():
             if isinstance(nd.get("origin"), dict) and nd["origin"].get("msgId") == mid:
+                placements[seg_id] = nid
+                return nid
+            if any(isinstance(l, dict) and l.get("msgId") == mid for l in (nd.get("links") or [])):
+                placements[seg_id] = nid               # an ask-dedupe link already carries this message
+                return nid
+    ref = user_ask.get("askRef") if isinstance(user_ask, dict) else None
+    if isinstance(ref, dict) and ref.get("peer") and ref.get("goalId"):
+        conf = frozenset(store.get("confirming") or ())
+        for nid, nd in nodes.items():
+            r = nd.get("askRef")
+            if (isinstance(r, dict) and r.get("peer") == ref["peer"]
+                    and r.get("goalId") == ref["goalId"] and _node_carded(nodes, nid, conf)
+                    and (nd.get("userAsk") or {}).get("text") == _ask_stamp_text(user_ask)):
+                if mid and origin.get("peer") and origin.get("goalId"):
+                    nd.setdefault("links", []).append(
+                        {"peer": origin["peer"], "goalId": origin["goalId"], "msgId": mid})
                 placements[seg_id] = nid
                 return nid
     store["seq"] = store.get("seq", 0) + 1
@@ -12005,9 +12141,11 @@ def apply_courier(store, seg_id, seg_t, text, origin, prompt_uuid=None, frame=No
                "trail": [seg_id], "t": seg_t, "origin": origin, "promptUuid": prompt_uuid, "log": []}
     if frame:
         payload["frame"] = frame
-    if isinstance(user_ask, dict) and str(user_ask.get("text") or "").strip():
-        payload["userAsk"] = {"text": _ask_head(str(user_ask["text"])), "sid": user_ask.get("sid"),
+    if isinstance(user_ask, dict):
+        payload["userAsk"] = {"text": _ask_stamp_text(user_ask), "sid": user_ask.get("sid"),
                               **({"host": str(user_ask["host"])} if user_ask.get("host") else {})}
+    if isinstance(ref, dict) and ref.get("peer") and ref.get("goalId"):
+        payload["askRef"] = {"peer": ref["peer"], "goalId": ref["goalId"]}
     nodes[nid] = GuardedNode(payload)
     placements[seg_id] = nid
     store["lastNode"] = nid                            # the delegation is now the active focus
@@ -12127,10 +12265,19 @@ def _plant_handoff_track(store, parent_id, text, peer_sid, peer_name, t, mid, tr
         _xh = _xnd.get("handoff") if isinstance(_xnd, dict) else None
         if (isinstance(_xh, dict) and _xh.get("peer") == peer_sid and not _xnd.get("nodeComplete")
                 and not _xnd.get("cleared") and _xnd.get("text") == label[:120]
-                and _xnd.get("parentId") == parent_id):
+                and _xnd.get("parentId") == parent_id
+                and _postal_row(_xh.get("msgId"))[3] == _postal_row(mid)[3]):
             return _xnid                               # byte-identical OPEN twin (2026-08-28: an ext
             #                                            mailer double-minted the same delegation in one
-            #                                            minute under two mids) — reuse, never duplicate
+            #                                            minute under two mids) — reuse, never duplicate.
+            #                                            The label is the judge's RENDERING, which can
+            #                                            collapse two real dispatches into one string —
+            #                                            so sameness is confirmed against the messages'
+            #                                            RECORDED bodies (the authoritative postal rows):
+            #                                            equal or both-unrecorded reads as the
+            #                                            double-mint; differing bodies are two real
+            #                                            dispatches, each keeping its own tracker (the
+            #                                            fan-out contract, test_chain_rooted_minting)
     if tracked:
         handoff["tracked"] = True
     nodes[nid] = GuardedNode({"id": nid, "text": label[:120], "parentId": parent_id,
@@ -12168,13 +12315,34 @@ def _lift_handoff_children(store, hid):
     return moved
 
 
+def _human_prompt_record(a, sender):
+    """The {"text","sid"} record when atom `a` IS a human-dictated prompt record, else None. The
+    ONE definition of 'dictated' (factored out of _session_user_prompt_record so the kernel's
+    ask-unit exemption reads the SAME rule against its own cached parse instead of growing a
+    second one): author 'human' minus the CLI's interrupt artifacts — the board audit's rule — and
+    an attachment record (a queued_command wrapping what the user dictated mid-turn) exactly when
+    it carries no postal or romp-injected marker. Everything else — mail, romp's own lines, the
+    agent's assistant atoms, machine input — is None."""
+    if a.get("author") == "human":
+        if em.is_interrupt_record(a):
+            return None
+        c = (a.get("message") or {}).get("content")
+        # human prompt records carry content as a plain string; block lists ride _atom_text
+        txt = c if isinstance(c, str) else (_atom_text(a) or str(a.get("text") or ""))
+        return {"text": txt, "sid": sender}
+    if a.get("type") == "attachment":
+        txt = _atom_text(a) or str(a.get("text") or "")
+        if em.postal_pairs(txt) or NUDGE_MARKER_RE.search(txt):
+            return None
+        return {"text": txt, "sid": sender} if txt.strip() else None
+    return None
+
+
 def _session_user_prompt_record(sender, path, uuid, now):
     """The HUMAN prompt record behind `uuid` in the sender's session — {"text","sid"}, always
     truthy — or None. Read from the CACHED stitched parse (parsed_session: fork-aware,
-    author-stamped with the SDK-human channel applied), so the courier pays no extra parse. author
-    'human' minus the CLI's interrupt artifacts is the rule the board audit used; an attachment
-    record (a queued_command wrapping what the user dictated mid-turn) counts as human exactly when
-    it carries no postal or romp-injected marker. Everything else — mail, romp's own lines, machine
+    author-stamped with the SDK-human channel applied), so the courier pays no extra parse. The
+    record rule is _human_prompt_record above; everything else — mail, romp's own lines, machine
     input, a record the stitched chain no longer holds — is None. The record carries the atom's RAW
     text (markers and all; shape it with _ask_head at the point of use): returning the record
     instead of True is T105 — the prose writers anchor at the ROOT ask, so the trace must carry the
@@ -12187,23 +12355,42 @@ def _session_user_prompt_record(sender, path, uuid, now):
         for a in turn.get("atoms") or []:
             if a.get("uuid") != uuid:
                 continue
-            if a.get("author") == "human":
-                if em.is_interrupt_record(a):
-                    return None
-                c = (a.get("message") or {}).get("content")
-                # human prompt records carry content as a plain string; block lists ride _atom_text
-                txt = c if isinstance(c, str) else (_atom_text(a) or str(a.get("text") or ""))
-                return {"text": txt, "sid": sender}
-            if a.get("type") == "attachment":
-                txt = _atom_text(a) or str(a.get("text") or "")
-                if em.postal_pairs(txt) or NUDGE_MARKER_RE.search(txt):
-                    return None
-                return {"text": txt, "sid": sender} if txt.strip() else None
-            return None
+            return _human_prompt_record(a, sender)
     return None
 
 
-def _delegate_user_rooted(sender, link_id, paths, now, _depth=0, _seen=None):
+def _node_carded(live, nid, confirming=()):
+    """Does `nid` currently RENDER on a visible card in its session's LIVE store? The trace's
+    `carded` and the mint's ask-identity dedupe both key on this: bare live-membership says True
+    for a user-CLEARED ask still awaiting the compactor, for a node sealed under a complete/cleared
+    ancestor (the fold displays that subtree done — the sealed-open leak), and for a DANGLING node
+    whose parent a rewind swept (the feed walks top subtrees, so it renders on none) — and the
+    courier would then link the fan-out into a card that renders nowhere, the exact no-card hole
+    T101's fallback exists to close. Visibility here reuses the store's own seal/reach rules: in
+    the live store, not itself cleared/complete (open_menu's self-seal), no complete/cleared
+    ancestor (_sealed_above, the closer channels' shared seal), and the parent chain lands on a
+    LIVE top (_top_of, cycle-safe) — a walk that dead-ends at a missing node or a cycle renders
+    nowhere. Pure over the passed nodes dict: the cleared flag is the store's own dual-written
+    record, so no journal read here.
+
+    `confirming`: the rollup's done-confirming export — tops whose done verdict is filed with only
+    the settle pending. Their column still reads Working (the steady doneConfirming cue), so bare
+    nodeComplete would call a VISIBLY RENDERING card dead and a same-ask dispatch would mint a
+    twin beside it. A top in the window stays carded; a genuinely SETTLED completion (out of the
+    export) stays uncarded — the sealed-open trade holds. Callers thread their store's own export;
+    the default () keeps pure-dict callers exact."""
+    nd = live.get(nid)
+    if not isinstance(nd, dict) or nd.get("cleared"):
+        return False
+    if nd.get("nodeComplete") and nid not in confirming:
+        return False
+    if _sealed_above(live, nid):
+        return False
+    top = _top_of(live, nid)
+    return top in live and live[top].get("parentId") is None
+
+
+def _delegate_user_rooted(sender, link_id, paths, now, _depth=0, _seen=None, _fb=None):
     """MINT-TIME chain trace (the user 2026-08-25 ~19:4x, who wants team-internal cards not
     CREATED rather than foldable behind a lens): the ROOT HUMAN PROMPT RECORD ({"text","sid"},
     always truthy; record-not-boolean is T105) when the SENDER's linked goal traces
@@ -12219,39 +12406,127 @@ def _delegate_user_rooted(sender, link_id, paths, now, _depth=0, _seen=None):
     recipient — is bounded by what surfaces regardless of this trace: the SENDER-side tracking
     node (planted either way, with the parked cue and the report-back closure), and every
     needs-you state (the hard-block floor + placeholder synthesize a board card from the live
-    prompt with zero goal nodes; interrupt only when the human is the bottleneck)."""
+    prompt with zero goal nodes; interrupt only when the human is the bottleneck).
+
+    `carded`: the record also says whether the ask still RENDERS ON A VISIBLE CARD a tracking
+    node can plant under — _node_carded, not bare live-membership, which reads True for a
+    user-cleared ask awaiting the compactor, an ask sealed under a done/cleared ancestor, and a
+    dangling node whose parent a rewind swept (all three link into a card that renders nowhere:
+    the no-card hole). Uncarded — archive-only proof, or any of those live-but-invisible shapes —
+    is where T101's mint fallback fires, because "the recipient card IS the ask's card"; the
+    answer is deliberately identical on both sides of the compaction boundary (a cleared card
+    mints alike live and archived — the compactor is bookkeeping, never a mint event). Rides up
+    origin hops unchanged: it reports on the ask node itself, wherever in the local chain it lives.
+
+    THE HOP STAND-DOWN + `askRef`: a climb that passes a LIVE, VISIBLE userAsk-bearing top
+    short-circuits carded:True — that top IS the ask's card at this hop, so re-dispatching onward
+    must file under it, never re-mint at every origin-hop level. And the record carries `askRef`,
+    the proof node's (sender sid, goal id) — the ask's stable identity across dispatches and hops
+    — which apply_courier stamps on the minted top and dedupes on, so one ask fanned N times to
+    one recipient stays ONE card there."""
+    # THE SHARED FALLBACK SLOT `fb`: EVERY carded:False record — T126's stored userAsk-on-node
+    # proof AND an uncarded human prompt record — is captured into a one-slot holder THREADED
+    # ACROSS THE RECURSION, never returned mid-climb, so it wins only when the WHOLE climb — every
+    # origin hop and container-sibling included — exhausts. Returning it inline from an origin-hop
+    # callsite (`rec = _delegate_user_rooted(...); if rec: return rec`) takes an INNER frame's
+    # uncarded record as a final answer and preempts carded evidence the OUTER climb would still
+    # reach above the origin-hop node — minting a standalone recipient top for an ask that STILL
+    # renders on a visible card (the pre-T101 duplicate-card hole) and skewing askRef with the hop
+    # level the walk happened to stop at (_walk_root_record's dedupe key). The TRUE-ORIGIN shape
+    # (the origin kernel's own ask node carries promptUuid; stored userAsk lives only on
+    # courier-planted mid-chain nodes) is the MORE common flavor, so the prompt-record arm is
+    # demoted alongside the stored-proof arm. This is a deliberate contract change from T126,
+    # which treated every prompt record as decisive: now ONLY a CARDED record is decisive
+    # mid-climb — a carded-hop stand-down or a carded human record — everything carded:False rides
+    # `fb` and returns at exhaustion, so the exhausted-climb mint keeps firing with the same record
+    # it always returned.
+    #
+    # PRECEDENCE INSIDE THE SLOT: a two-rank ladder, not bare first-seen across arms — an UNCARDED
+    # HUMAN PROMPT RECORD (rank 1) REPLACES a held STORED PROOF (rank 0); within a rank the slot
+    # stays first-seen. Why: the prompt record is the chain's ROOT evidence read from the
+    # authoritative source (the session transcript), while a stored proof is the courier-written
+    # COPY of a walk — the copy must not shadow the original just because a hop visited it first.
+    # And the root node's identity is hop-invariant, so preferring it keeps askRef
+    # (apply_courier's dedupe key) stable across fan children whose climbs stop at different
+    # copies. RESIDUAL, documented not fixed: an ALL-stored-proof climb (no prompt record, nothing
+    # carded — the ask cleared everywhere) can still hand two fan children different first-seen
+    # askRef keys when their hops traverse DIFFERENT proof nodes with divergent askRef stamps; no
+    # rank choice unifies that (the candidate keys live in different stores), and askRef
+    # propagation makes the shape rare — a courier-planted proof carries the root's own key.
     if not link_id or _depth >= 8:
-        return None
+        return _fb[0][1] if (_depth == 0 and _fb) else None
     seen = _seen if _seen is not None else set()
+    fb = _fb if _fb is not None else []               # the top frame owns the slot; inner frames share it
+
+    def _fb_offer(rank, rec):                         # the two-rank ladder above: replace weaker, keep first-seen peers
+        if not fb:
+            fb.append((rank, rec))
+        elif fb[0][0] < rank:
+            fb[0] = (rank, rec)
+
+    sstore = load_goals(sender)
+    live = sstore.get("nodes") or {}
+    conf = frozenset(sstore.get("confirming") or ())  # the rollup's done-confirming window: a
+    #                                                   settle-pending top still renders in Working,
+    #                                                   so it still counts as carded
     nodes = dict(load_goal_archive(sender).get("nodes") or {})
-    nodes.update(load_goals(sender).get("nodes") or {})
+    nodes.update(live)
     x, last = link_id, None
     while x is not None and (sender, x) not in seen:
         seen.add((sender, x))
         nd = nodes.get(x)
         if not isinstance(nd, dict):
-            return None
+            return fb[0][1] if (_depth == 0 and fb) else None
         ua = nd.get("userAsk")
         if isinstance(ua, dict) and str(ua.get("text") or "").strip():
-            # KERNEL-PROVED ROOT ON THE NODE (the user 2026-08-27, T126): only apply_courier writes
-            # userAsk, from a record either walked locally at mint or walked at RELAY time by the
-            # kernel that held the evidence — so a chain reaching such a node is resolved. This is
-            # the arm that lets a walked-remote chain RE-DELEGATE onward: the planted top's own
-            # promptUuid is the mail segment (refused as a human record) and its origin hop is
-            # cross-host (refused as a foreign read); the stored proof is the surviving evidence.
-            return {"text": ua["text"], "sid": ua.get("sid"),
-                    **({"host": ua["host"]} if ua.get("host") else {})}
+            if _node_carded(live, x, conf):
+                # the hop stand-down (docstring above): a visible chain-proven ask top at THIS hop
+                # is the ask's card — carded, whatever the root's own node has become upstream
+                rec = {"text": str(ua["text"]), "sid": ua.get("sid"), "carded": True,
+                       **({"host": ua["host"]} if ua.get("host") else {})}
+                if isinstance(nd.get("askRef"), dict):
+                    rec["askRef"] = dict(nd["askRef"])
+                return rec
+            if not fb:
+                # KERNEL-PROVED ROOT ON THE NODE (the user 2026-08-27, T126): only apply_courier
+                # writes userAsk, from a record either walked locally at mint or walked at RELAY
+                # time by the kernel that held the evidence — so a chain reaching such a node is
+                # resolved even when its card is gone. This is the arm that lets a walked-remote
+                # chain RE-DELEGATE onward: the planted top's own promptUuid is the mail segment
+                # (refused as a human record) and its origin hop is cross-host (refused as a
+                # foreign read); the stored proof is the surviving evidence. UNCARDED at this hop,
+                # so it yields to any deeper walkable evidence (the carded/askRef discipline
+                # above) and returns only when the climb exhausts — carded:False, exactly where
+                # T101's mint fallback fires. CAPTURED into the shared `fb` slot at STORED rank
+                # (rank 0 — a later prompt record replaces it, a later stored proof does not),
+                # never returned inline: a carded record ANYWHERE — this frame or any OUTER one
+                # still to climb — must still win over it.
+                proof = {"text": str(ua["text"]), "sid": ua.get("sid"), "carded": False,
+                         **({"host": ua["host"]} if ua.get("host") else {})}
+                if isinstance(nd.get("askRef"), dict):
+                    proof["askRef"] = dict(nd["askRef"])
+                _fb_offer(0, proof)
         o = nd.get("origin")
         if (isinstance(o, dict) and o.get("peer") and o.get("goalId")
                 and not o.get("peerHost") and o["peer"] in paths):
-            rec = _delegate_user_rooted(o["peer"], o["goalId"], paths, now, _depth + 1, seen)
-            if rec:
-                return rec
+            rec = _delegate_user_rooted(o["peer"], o["goalId"], paths, now, _depth + 1, seen, fb)
+            if rec:                                    # ONLY a decisive inner record short-circuits;
+                return rec                             # a demoted inner fallback rides `fb` instead
         pu = nd.get("promptUuid")
         if pu and sender in paths:
             rec = _session_user_prompt_record(sender, paths[sender], pu, now)
             if rec:
-                return rec
+                rec["askRef"] = {"peer": sender, "goalId": x}
+                if _node_carded(live, x, conf):
+                    rec["carded"] = True                # a carded human record is decisive — the
+                    return rec                          # ask's own node still renders its card
+                # UNCARDED: the record is root evidence but its card is gone — the TRUE-ORIGIN
+                # twin of the stored-proof demotion above. Returning it here would preempt carded
+                # evidence the OUTER climb still reaches (the duplicate-mint hole in its most
+                # common shape); it rides `fb` at PROMPT rank instead, replacing any stored copy,
+                # and the climb keeps walking toward a card that still renders.
+                rec["carded"] = False
+                _fb_offer(1, rec)
         last = nd
         x = nd.get("parentId")
     # CONTAINER-SIBLING RESCUE (the user 2026-08-26, T101): live umbrellas dissolve now, but
@@ -12274,14 +12549,19 @@ def _delegate_user_rooted(sender, link_id, paths, now, _depth=0, _seen=None):
             if pu and sender in paths:
                 rec = _session_user_prompt_record(sender, paths[sender], pu, now)
                 if rec:
-                    return rec
+                    rec["askRef"] = {"peer": sender, "goalId": cid}
+                    if _node_carded(live, cid, conf):   # the rescue reads archived history — almost never carded
+                        rec["carded"] = True
+                        return rec
+                    rec["carded"] = False               # rescue twin of the prompt-record demotion:
+                    _fb_offer(1, rec)                   # uncarded rides fb, a later sibling may still be carded
             o = cd.get("origin")
             if (isinstance(o, dict) and o.get("peer") and o.get("goalId")
                     and not o.get("peerHost") and o["peer"] in paths):
-                rec = _delegate_user_rooted(o["peer"], o["goalId"], paths, now, _depth + 1, seen)
-                if rec:
-                    return rec
-    return None
+                rec = _delegate_user_rooted(o["peer"], o["goalId"], paths, now, _depth + 1, seen, fb)
+                if rec:                                # container twin of the fix: same discipline —
+                    return rec                         # only a decisive record returns, the proof rides `fb`
+    return fb[0][1] if (_depth == 0 and fb) else None
 
 
 def _presumed_closed(sid, now):
@@ -12696,15 +12976,34 @@ def run_courier(now=None, sessions_cap=PLAN_SESSIONS, concurrency=CONCURRENCY, v
             # by the kernel that held its evidence, not the uncertainty T101 quiets on.
             wired = None if rooted else _postal_row(mid)[4]
             # THE ASK IS THE CARD UNIT (the user 2026-08-26, T101): a dispatch whose chain roots to
-            # an ask that ALREADY HAS A CARD — link_id resolved to the sender's ask node — LINKS
-            # instead of minting: the tracking node below plants under that ask (fan-out lives
-            # INSIDE the ask card, per-dispatch progress one click down), and the recipient gets NO
-            # standalone top (one ask fanned to three workers used to mint three near-duplicate
-            # cards). Only a rooted dispatch with NO resolvable ask node still mints the recipient
-            # top — there the recipient card IS the ask's card, the fallback that keeps every user
-            # ask carded somewhere. Linking alone never moves the ask card's column: planting a
-            # tracking child writes no verdict on the ask.
-            mint_recipient = (rooted or wired) and not link_id
+            # an ask that ALREADY HAS A CARD LINKS instead of minting: the tracking node below
+            # plants under the linked goal (fan-out lives INSIDE the ask card, per-dispatch
+            # progress one click down), and the recipient gets NO standalone top (one ask fanned to
+            # three workers used to mint three near-duplicate cards). Only a rooted dispatch with
+            # NO resolvable ask node still mints the recipient top — there the recipient card IS
+            # the ask's card, the fallback that keeps every user ask carded somewhere. Linking
+            # alone never moves the ask card's column: planting a tracking child writes no verdict
+            # on the ask.
+            #
+            # "Has a card" is the TRACE's answer, not the link's: as `rooted and not link_id` this
+            # could never be true — the trace returns None without a link (its own no-link pin), so
+            # `rooted` implied `link_id` and the local-walk leg of the mint below was dead code
+            # (only the relay-walked record ever reached it). The record's `carded` says whether
+            # the ask still RENDERS ON A VISIBLE CARD (_node_carded — live, uncleared/unsealed,
+            # reachable from a live top; bare live-membership would link into cleared/dangling
+            # cards that render nowhere): visible proof links; uncarded proof — archived, cleared,
+            # sealed, or dangling alike — mints. A truthy NON-dict (tests stub the trace with
+            # literal True, the same shape apply_courier tolerates) carries no node evidence, so it
+            # falls back to the link itself — the stubbed suites' contract. A genuinely link-less
+            # dispatch stays quiet either way: no link, no chain, no proof (uncertainty quiets,
+            # the 2026-08-25 verdict).
+            #
+            # The WIRED arm (T126, the walked-at-relay root above) answers only when the local
+            # walk resolves nothing: the origin kernel's stamped proof licenses the mint exactly
+            # like a local root, and a local link still wins — with a link the tracker plants
+            # under it and the recipient stays quiet, the same link-over-mint rule as ever.
+            carded = rooted.get("carded") if isinstance(rooted, dict) else bool(link_id)
+            mint_recipient = (bool(rooted) and not carded) or (not rooted and bool(wired) and not link_id)
             # Mint the sender's precise '↪ delegated to <recipient>' tracking node (the user 2026-06-22) and
             # point B's goal at IT — so run_propagate checks off only the handed-off piece, never the sender's
             # broader linked goal. Saved to the sender's tree before planting G on the recipient's.
