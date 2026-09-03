@@ -218,7 +218,7 @@ function hostLine(h: string): HTMLElement {
   swirl.src = "/media/romp-swirl-glyph.svg"; swirl.alt = "";
   const txt = el("span", "");
   txt.textContent = pendingDead.includes(h)
-    ? "can’t reach " + h + " — its rows return when it reconnects"
+    ? "can’t reach " + h + ": its rows return when it reconnects"
     : "loading rows from " + h + "…";
   line.append(swirl, txt);
   return line;
@@ -240,7 +240,7 @@ function render(): void {
     // the switch is off HERE: say so, with the gear one click away — the kernel's own refusal copy
     // (_USER_TODOS_OFF_WARN) says the same thing when an op is tried while off
     const n = el("div", "wt-notice");
-    const t = el("span", ""); t.textContent = "User todos are off on this machine — turn them on in the gear.";
+    const t = el("span", ""); t.textContent = "User todos are off on this machine. Turn them on in the gear.";
     const b = el("button", "ut-btn"); b.dataset.act = "gear"; b.textContent = "Open the gear";
     b.title = "opens the dashboard settings, where the User todos switch is";
     n.append(t, b);

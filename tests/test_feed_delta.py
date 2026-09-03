@@ -478,7 +478,7 @@ class ReadyHandshake(unittest.TestCase):
         handler = KSRC[i:KSRC.index("_consume_pending_reveal(client)", i)]
         self.assertNotIn('"tabOrder"', handler)
         self.assertNotIn("_ordered_alive(", handler)
-        self.assertIn('served = client.get("app") in ("feed", "fleet") and _send_feed_now(client)', handler)
+        self.assertIn('served = client.get("app") in ("feed", "fleet", "waiting") and _send_feed_now(client)', handler)
 
     def test_a_second_ready_on_a_ready_client_re_serves_the_frame(self):
         # A `ready` on a client that is ALREADY ready is a re-base request, needFullFeed's twin. The 2026-09-03
@@ -623,9 +623,11 @@ class ShimAnnouncesForTheFeedPage(unittest.TestCase):
         self.assertIn('var CAPS="";', km._shim("chat", 5), "the default announces nothing")
         # every kernel-served pane page opens its socket from the shim, before its bundle has loaded
         self.assertIn('_shim("feed", v, caps=FEED_DELTA_CAP + "," + READY_GATE_CAP)', KSRC)
+        # the Waiting on you pane (2026-09-03) rides the feed frame with the feed page's caps: deltas + the hold
+        self.assertIn('_shim("waiting", v, caps=FEED_DELTA_CAP + "," + READY_GATE_CAP)', KSRC)
         for app in ("chat", "fleet", "timeline"):
             self.assertIn('_shim("%s", v, caps=READY_GATE_CAP)' % app, KSRC, app)
-        self.assertEqual(KSRC.count("_shim("), 5, "the definition and the four panes — a fifth caller must announce too")
+        self.assertEqual(KSRC.count("_shim("), 6, "the definition and the five panes — a sixth caller must announce too")
 
 
 def _connect(port, query):

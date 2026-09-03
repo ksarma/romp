@@ -31,7 +31,7 @@ test("the switch is read per frame and per HOST: the local kernel's scalar only"
 
 test("three loud states, never a blank: loader / nothing waiting / off on this machine", () => {
   assert.match(SRC, /"Nothing is waiting on you"/);
-  assert.match(SRC, /"User todos are off on this machine — turn them on in the gear\."/);
+  assert.match(SRC, /"User todos are off on this machine\. Turn them on in the gear\."/);
   // the empty wordmark never shows while the switch is off (both states ship [] rows — they must read differently)
   assert.match(SRC, /\} else if \(localOn !== false\) \{/);
   assert.match(SRC, /if \(localOn === false\) \{/);
@@ -41,7 +41,7 @@ test("three loud states, never a blank: loader / nothing waiting / off on this m
   // a host whose rows are pending / unreachable is named, like the feed's per-host strip
   assert.match(SRC, /pendingHosts = Array\.isArray\(m\.pendingHosts\)/);
   assert.match(SRC, /pendingDead = Array\.isArray\(m\.pendingDead\)/);
-  assert.match(SRC, /"can’t reach " \+ h \+ " — its rows return when it reconnects"/);
+  assert.match(SRC, /"can’t reach " \+ h \+ ": its rows return when it reconnects"/);
   assert.match(SRC, /"loading rows from " \+ h \+ "…"/);
 });
 
