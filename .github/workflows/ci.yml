@@ -73,7 +73,8 @@ jobs:
         # T230b: a hung test used to be 15 minutes of silence (five jobs since 2026-08-27, a
         # process-global time.sleep patch consumed by a foreign thread). pytest-timeout turns the
         # NEXT stall into a named failure with every thread's stack: thread method = guaranteed
-        # termination (the process ends; the test is the bottom MainThread frame) - the signal
+        # termination (the process ends; the dump's bottom frame is the blocked primitive, and the
+        # hung test is the lowest tests/ frame above the _pytest/runner frames) - the signal
         # method cannot interrupt a C call. 600 s strictly exceeds the slowest legitimate test
         # (~122 s, leak-scaled) and the 300 s child timeout in test_session_move_live. Its timer
         # waits on an Event, so it can never itself consume a patched sleep. --durations names the

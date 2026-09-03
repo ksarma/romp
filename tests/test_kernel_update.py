@@ -270,9 +270,20 @@ class CheckLoop(Fresh):
         def converge_pass():
             converges.append(1)                        # stubbed: the real one spawns node + rglobs ui/
             raise RuntimeError("boom")                 # …nor a dying dist converge any of them
+
+        # T230c: FAST-FAIL if the loop ever regresses to the shared time.sleep. Without this guard the
+        # test blocked in a real 300 s sleep until the 600 s CI backstop, whose os._exit then swallowed
+        # this pin's own named failure (reproduced: `F` + the timeout dump, the message nowhere).
+        # Main-thread-only, a plain function (never a recording mock a foreign sleeper could fill).
+        main = threading.get_ident()
+
+        def guard(s):
+            if threading.get_ident() == main:
+                raise AssertionError("the update-check loop must wait on its own seam, not the shared time.sleep")
         with mock.patch.object(km, "_update_check", side_effect=release_pass), \
              mock.patch.object(km, "_main_drift_check", side_effect=drift_pass), \
              mock.patch.object(km, "_dist_converge_check", side_effect=converge_pass), \
+             mock.patch.object(km.time, "sleep", guard), \
              mock.patch.object(km, "_CHECK_LOOP_STOP", Stop()):
             km._update_check_loop()                    # RETURNS on the stop event
         self.assertEqual(len(releases), 1, "the six-hour stride: one release check across two fast rounds")
@@ -293,6 +304,9 @@ class CheckLoop(Fresh):
         # 15-minute job. Deterministic, no timing: a spinning foreign sleeper runs throughout; the
         # shared sleep is a PLAIN guard (never a recording mock the spinner would fill) that raises
         # only on the MAIN thread — so a loop reaching time.sleep fails in milliseconds, never hangs.
+        # The seam patch deliberately has NO create=True (T230c): an absent or RENAMED seam then
+        # fails as an AttributeError in under a second — still red-first and named — where create=True
+        # would have minted a dead attribute and let the loop wait on the real Event to the backstop.
         import threading
         stop = threading.Event()
         main = threading.get_ident()
@@ -328,7 +342,7 @@ class CheckLoop(Fresh):
                  mock.patch.object(km, "_main_drift_check", side_effect=drift_pass), \
                  mock.patch.object(km, "_dist_converge_check"), \
                  mock.patch.object(km.time, "sleep", guard), \
-                 mock.patch.object(km, "_CHECK_LOOP_STOP", Stub(), create=True):
+                 mock.patch.object(km, "_CHECK_LOOP_STOP", Stub()):
                 km._update_check_loop()               # returns — the stop event is the loop's exit
         finally:
             stop.set()
