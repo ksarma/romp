@@ -133,3 +133,15 @@ class StagingStraysNeverDiscovered(unittest.TestCase):
         (jd.NAMES / "99999999-8888-7777-6666-555555555555.tmp").write_text("changed\t/x\t\t\n")
         self.assertEqual(fp1, jd._discover_fingerprint(),
                          "staging churn is invisible to the discovery fingerprint")
+
+
+class ModelsRouteConsultsCodexOnlyWhenOptedIn(unittest.TestCase):
+    """GET /models spawns `codex app-server` through model_catalog(); on the default (Claude) path it
+    must not be consulted at all (PR #885 review: every dashboard load spawned or failed to spawn it)."""
+
+    def test_the_gate_reads_opt_in_state_not_readiness(self):
+        src = open(os.path.join(ROOT, "kernel", "kernel.py")).read()
+        self.assertIn('if cx and (_default_backend() == "codex" or _judge_engine_name() == "codex"', src)
+        self.assertIn("or bool(cx.live_sessions())):", src)
+        self.assertNotIn("if cx:\n                    try:\n                        cx_models = cx.model_catalog()", src)
+        self.assertIn("def _judge_engine_name():", src)

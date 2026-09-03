@@ -8670,6 +8670,17 @@ def _codex_ready():
         return False
 
 
+def _judge_engine_name():
+    """Which vendor runs the judges — `romp engine` writes STATE/judge-engine ("claude" | "codex");
+    absent/unknown → claude. Read here (not through the judge module) so the /models handler can gate
+    its Codex consult without importing the judge."""
+    try:
+        v = (jd.STATE / "judge-engine").read_text().strip()
+    except OSError:
+        return "claude"
+    return v if v in ("claude", "codex") else "claude"
+
+
 def _default_backend():
     """The machine default for a NEW session when the caller names none — `romp engine` writes
     STATE/default-backend ("sdk" | "codex"); absent/unknown → sdk, the long-standing default.
@@ -31245,7 +31256,12 @@ class Handler(BaseHTTPRequestHandler):
                 # vendor's models); efforts are the four Codex accepts — max/ultracode are Claude-only.
                 cx = _codex()
                 cx_models = []
-                if cx:
+                # Codex is consulted ONLY where this machine opted in — the Codex default backend, the
+                # Codex judge engine, or a live Codex session. model_catalog() builds the client, which
+                # SPAWNS `codex app-server`; unconditional, every dashboard load spawned (or repeatedly
+                # failed to spawn) it on every install, the opposite of off-by-default (PR #885 review).
+                if cx and (_default_backend() == "codex" or _judge_engine_name() == "codex"
+                           or bool(cx.live_sessions())):
                     try:
                         cx_models = cx.model_catalog()
                     except Exception:

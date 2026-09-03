@@ -111,47 +111,9 @@ servers from `~/.codex/config.toml`).
 
 ## Installing romp
 
-This repo is the distribution — the installer takes any repo and directory, and
-checks out the newest romp release tag:
+Install romp itself as described in [install.md](install.md). Then, in a new
+terminal, the two setup steps above (`romp-codex-setup`, `codex login`) — and
+`romp engine codex` if the machine should run Codex-only. `romp` opens the
+dashboard; a machine that never runs these steps is unaffected and defaults to
+Claude Code.
 
-    curl -fsSL https://raw.githubusercontent.com/lczh/romp/main/bootstrap.sh | \
-      ROMP_REPO=https://github.com/lczh/romp.git ROMP_DIR=$HOME/romp bash
-
-Releases from v1.2.2 onward are SSH-signed; with a trust root configured,
-verification is a hard gate (recommended — see
-[Release signature trust](install.md#release-signature-trust)). Without one,
-verification is attempted and its outcome noted, never a dead end.
-
-Then, in a new terminal, the two setup steps above (`romp-codex-setup`,
-`codex login`) — and `romp engine codex` if the machine should run
-Codex-only. `romp` opens the dashboard.
-
-## Updates
-
-Installed machines learn about new releases on their own: the kernel checks
-this repo's tags at boot and every few hours, and the dashboard offers the
-update as a banner — one click fetches the release, reinstalls, and restarts.
-Updates follow the same rule as installs: with a trust root configured,
-`git verify-tag` at Git's **full** trust level is a hard gate — a bad or
-unknown signature stops before any code moves, never falling back — and
-without one, verification is attempted and its outcome noted in the update
-log; see [Release signature trust](install.md#release-signature-trust).
-The gear's **Updates** setting picks the behavior: *Check and ask* (default),
-*Install automatically*, or *Off*.
-
-Cutting a release (for whoever maintains this repo) is handled by the release
-script. It derives and validates the GitHub repository from the remote that receives
-the tag, runs the test and macOS gates, creates a signed annotated tag using Git's
-configured signing key, verifies it locally, and publishes the matching release:
-
-    scripts/release.sh patch       # or minor, major, or an explicit X.Y.Z
-
-The maintainer must configure `user.signingKey` (and `gpg.format ssh` plus an
-allowed-signers file when using SSH signing) before running the script, and upload the
-same public signing key to GitHub and publish its fingerprint independently for installers.
-The historical `v1.0.0`, `v1.1.0`, and `v1.2.0` tags are unsigned; cut a newer signed
-stable release rather than weakening verification.
-
-romp versions on its own line (v1.0.0 and up); upstream romp's tags stay
-behind it and are never pushed here, so the updater always resolves the
-newest romp release.
