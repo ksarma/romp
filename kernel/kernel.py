@@ -27618,10 +27618,15 @@ _WS_DROP_TTL_S = 3600.0  # …and none older than this: a drop is news for an ho
 
 def _note_ws_drop(c, e, frame_len, key=None):
     """Log one client's drop, once: the stderr line and — for the kernel's OWN drop (a client that fell
-    WS_QUEUE_BYTES behind; a socket that simply died is not news) — the bell row."""
+    WS_QUEUE_BYTES behind; a socket that simply died is not news) — the bell row. `key` is the push slot
+    that tipped the budget; the raise site (_mk_ws_send) has none of its own and reads the one _client_send
+    left on the client for the length of its call (`curSlot`), so the line names the frame — a direct
+    one-shot `client["send"]` finds it unset and the line reads `slot=-`, honestly."""
     if c.get("dropLogged"):
         return
     c["dropLogged"] = True
+    if key is None:
+        key = c.get("curSlot")
     try:
         sys.stderr.write("ws drop: app=%s wid=%s slot=%s queued=%dB frame=%dB — %s\n"
                          % (c.get("app"), c.get("wid") or "-", _perf_slot(key) if key else "-",
@@ -27646,7 +27651,9 @@ def _client_ready(c):
 
 def _client_send(c, s, key=None):
     """Enqueue one wire string on client `c`. A failure marks the client dead and logs the drop (once —
-    _mk_ws_send has usually logged it already, at the raise). Returns whether the frame was accepted."""
+    _mk_ws_send has usually logged it already, at the raise, naming the slot it finds in `curSlot`; see
+    _note_ws_drop). Returns whether the frame was accepted."""
+    c["curSlot"] = key
     try:
         c["send"](s)
         return True
@@ -27654,6 +27661,8 @@ def _client_send(c, s, key=None):
         c["alive"] = False
         _note_ws_drop(c, e, len(s), key)
         return False
+    finally:
+        c.pop("curSlot", None)
 
 
 def _send_client(c, key, msg, pre=None, sig=None):
