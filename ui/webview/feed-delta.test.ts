@@ -52,7 +52,7 @@ test("ledgers upsert by sid; a `ledgers` key in the delta means the client holds
   const b = { ...base(), ledgers: undefined as any };
   delete (b as any).ledgers;
   const out = applyFeedDelta(b, { type: "feedDelta", ledgers: [], removeLedgers: [] });
-  assert.deepEqual(out.ledgers, [], "the Fleet's 'the build ran' gate reads the key's presence");
+  assert.deepEqual(out.ledgers, [], "the Outline pane's 'the build ran' gate reads the key's presence");
   const out2 = applyFeedDelta(base(), { type: "feedDelta",
     ledgers: [{ sid: "TESTSID", name: "web", ledger: { tops: ["x"] }, status: { state: "waiting" } }] });
   assert.equal(out2.ledgers.length, 1); assert.deepEqual(out2.ledgers[0].status, { state: "waiting" });
@@ -105,14 +105,20 @@ test("the kernel announces the capability on the feed page's socket only, and th
   assert.match(KERNEL, /msg\.get\("type"\) == "needFullFeed"/);
 });
 
-test("the recency tint is computed client-side from `t`; trgb is gone from the wire and the types", () => {
-  assert.equal(/\.trgb\b|trgb[?]?:/.test(FEED), false, "no reader or type of a per-card colour remains");
-  assert.equal(KERNEL.includes('"trgb"'), false, "no builder ships one");
-  assert.match(FEED, /card\.style\.background = cardTint\(hostNow - it\.t\);/);
-  assert.match(FEED, /card\.style\.background = cardTint\(hostNow - g\.t\);/);
-  assert.match(FEED, /meta\.style\.color = ageTint\(hostNow - node\.last\);/);
-  // the 15s tick moves the wash too — the host no longer reposts for the fade
+test("the recency tint is computed client-side from `t` on a live clock; deltas never carry trgb, full frames still do for older bundles", () => {
+  assert.equal(/\.trgb\b|trgb[?]?:/.test(FEED), false, "no reader or type of a per-card colour remains — present or absent on the wire, it is ignored");
+  assert.ok(KERNEL.includes('"trgb": list(cm.age_rgb('), "full frames keep the tint: an older bundle destructures it unguarded");
+  assert.match(KERNEL, /def _strip_trgb\(card\):/);
+  assert.match(KERNEL, /cards = \{a\["itemId"\]: json\.dumps\(_strip_trgb\(a\), default=str\)/, "deltas are built from tint-less cards");
+  assert.match(KERNEL, /stable\["asks"\] = \[_strip_trgb\(a\) for a in stable\["asks"\]\]/, "…and the dedup signature ignores the tint");
+  assert.match(FEED, /card\.style\.background = cardTint\(nowSec\(\) - it\.t\);/);
+  assert.match(FEED, /card\.style\.background = cardTint\(nowSec\(\) - g\.t\);/);
+  assert.match(FEED, /stampAge\(meta, node\.last, "paren", true, nowSec\(\), relAge, ageTint\);/);
+  // the 15s tick moves the wash too — the host no longer reposts for the fade (feed-age.test.ts pins the rest)
   assert.match(FEED, /if \(it\) card\.style\.background = cardTint\(now - it\.t\);/);
+  // a colourless card's border falls back to the age ramp — it used to read the removed trgb destructure
+  assert.match(FEED, /setCardChannels\(card, \(it\.color && hexToRgb\(it\.color\.bg\)\) \|\| ageRgb\(nowSec\(\) - it\.t\)\);/);
+  assert.match(FEED, /setCardChannels\(card, \(g\.color && hexToRgb\(g\.color\.bg\)\) \|\| ageRgb\(nowSec\(\) - g\.t\)\);/);
   // the ramp is the kernel's age_rgb: same stops, log scale, 2 min bright … 96 h dark
   assert.deepEqual(ageRgb(0), ageRgb(120), "clamped below 2 min");
   assert.deepEqual(ageRgb(345600), ageRgb(10 * 345600), "clamped above 96 h");

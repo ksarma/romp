@@ -10,18 +10,25 @@ dropped, the drop was silent, the reconnect resynced with another full frame, an
 flashed on every cycle — ~300 raises a day, almost all on the feed pane.
 
 Pinned here: a client that announced FEED_DELTA_CAP gets a {type:"feedDelta"} once it holds a full frame;
-a clock-only tick sends nothing; removals ride the delta; a 2-card change is a small fraction of the full
-frame; a client that did not announce keeps receiving full frames; a fresh socket gets the cached full frame
-AT ONCE (not on the next change); needFullFeed re-bases; `trgb` is off the wire; a dropped client is LOUD.
+a clock-only tick (a `now` step, a `trgb` step) sends nothing on EITHER path; removals ride the delta —
+cards and ledgers, including a ledger removed across a ledger-less build in between; a 2-card change is a
+small fraction of the full frame; a client that did not announce keeps receiving full frames, `trgb`
+included (an older bundle destructures it unguarded); deltas never carry `trgb`; the `ready` handshake is
+served the cached full frame at once, and nothing arrives before it; needFullFeed re-bases; the ready
+handler emits no tab order of its own (the connect push's guarded one is the only source).
 
 Synthetic only: the notes-api demo world, TESTHOST, placeholder ids.
 """
-import io
+import base64
 import json
 import os
-import sys
+import socket
+import struct
 import tempfile
+import threading
+import time
 import unittest
+from http.server import ThreadingHTTPServer
 from importlib.machinery import SourceFileLoader
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -34,28 +41,39 @@ os.environ["XDG_STATE_HOME"] = tempfile.mkdtemp()
 os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XDG floor
 km = SourceFileLoader("romp_kernel_feeddelta", os.path.join(BIN, "romp-kernel")).load_module()
 
+KSRC = open(os.path.join(BIN, "romp-kernel"), encoding="utf-8").read()
 SID = "11111111-2222-3333-4444-555555555555"
+SID_B = "11111111-2222-3333-4444-666666666666"
 NOW = 1781100000
 
 
-def _card(i, **over):
+def _card(i, now=NOW, **over):
+    # `trgb` is the kernel's age tint for the card at build time `now` — it STEPS with the clock, which is
+    # exactly what the dedup and the delta path must see through
+    t = NOW - i * 60
     c = {"itemId": "%s:g%d" % (SID, i), "sid": SID, "name": "web", "color": {"bg": "#123456", "fg": "#ffffff"},
-         "text": "Synthetic goal %d on the notes-api board" % i, "t": NOW - i * 60, "live": True,
+         "text": "Synthetic goal %d on the notes-api board" % i, "t": t, "live": True,
+         "trgb": list(km.cm.age_rgb(now - t)),
          "turnId": "%s:g%d" % (SID, i), "column": "working", "summary": "s" * 400, "blockSummary": None,
          "tree": [{"id": "%s:g%d.%d" % (SID, i, j), "text": "step %d" % j, "status": "done",
-                   "t": NOW - i * 60, "last": NOW - i * 60, "children": []} for j in range(6)]}
+                   "t": t, "last": t, "trgb": list(km.cm.age_rgb(now - t)), "children": []} for j in range(6)]}
     c.update(over)
     return c
 
 
+def _ledger(sid=SID, name="web", state="working"):
+    return {"sid": sid, "name": name, "color": None, "status": {"state": state}, "ledger": {"tops": ["t" * 3000]}}
+
+
 def _feed(n=300, now=NOW, build_id=1, asks=None, ledgers=True):
-    f = {"type": "feed", "asks": asks if asks is not None else [_card(i) for i in range(n)],
+    f = {"type": "feed", "asks": asks if asks is not None else [_card(i, now=now) for i in range(n)],
          "now": now, "buildId": build_id, "order": [SID], "working": ["web"], "awaiting": [],
          "sessions": [{"sid": SID, "name": "web", "color": None}], "userTodos": {}, "views": {},
          "clearNotices": [], "syncNotices": [], "sdkNotices": [], "selfHost": "TESTHOST"}
-    if ledgers:
-        f["ledgers"] = [{"sid": SID, "name": "web", "color": None, "status": {"state": "working"},
-                         "ledger": {"tops": ["t" * 3000]}}]
+    if ledgers is True:
+        f["ledgers"] = [_ledger()]
+    elif ledgers:
+        f["ledgers"] = list(ledgers)
     return f
 
 
@@ -74,6 +92,20 @@ def _send(c, feed):
     ms, sig, parts = _wire(feed)
     km._send_feed(c, feed, ms, sig, parts)
     return ms
+
+
+def _warm(feed):
+    """Install `feed` as the kernel's built + wire-cached frame; returns the saved state for the finally."""
+    saved = (km._feed_wire, list(km._built_feed))
+    ms, sig, parts = _wire(feed)
+    km._feed_wire = (feed, feed.get("ledgers"), feed, ms, sig, parts)
+    km._built_feed[:] = [None, feed, 0.0, 0.0]
+    return saved, ms, parts
+
+
+def _restore(saved):
+    km._feed_wire = saved[0]
+    km._built_feed[:] = saved[1]
 
 
 class DeltaStream(unittest.TestCase):
@@ -96,12 +128,13 @@ class DeltaStream(unittest.TestCase):
     def test_a_clock_only_tick_sends_nothing(self):
         c, sent = _client()
         _send(c, _feed())
-        _send(c, _feed(now=NOW + 60, build_id=2))
+        # an hour later every card's tint has stepped and `now` moved — nothing else did
+        _send(c, _feed(now=NOW + 3600, build_id=2))
         self.assertEqual(len(sent), 1, "nothing changed but the clock → nothing on the wire")
         # …and the client's held base advanced anyway, so the next change diffs against the newest build
-        asks = [_card(i) for i in range(300)]
-        asks[0] = _card(0, text="moved on")
-        _send(c, _feed(asks=asks, now=NOW + 120, build_id=3))
+        asks = [_card(i, now=NOW + 7200) for i in range(300)]
+        asks[0] = _card(0, now=NOW + 7200, text="moved on")
+        _send(c, _feed(asks=asks, now=NOW + 7200, build_id=3))
         self.assertEqual([a["itemId"] for a in json.loads(sent[-1])["asks"]], ["%s:g0" % SID])
 
     def test_removals_and_ledger_changes_ride_the_delta(self):
@@ -166,12 +199,9 @@ class DeltaStream(unittest.TestCase):
         self.assertEqual(json.loads(sent[-1])["type"], "feedDelta")
 
     def test_needfullfeed_rebases_with_the_cached_full_frame(self):
-        saved = (km._feed_wire, list(km._built_feed))
+        f = _feed()
+        saved, ms, parts = _warm(f)
         try:
-            f = _feed()
-            ms, sig, parts = _wire(f)
-            km._feed_wire = (f, f.get("ledgers"), f, ms, sig, parts)
-            km._built_feed[:] = [None, f, 0.0, 0.0]
             c, sent = _client()
             _send(c, f)
             c.pop("efeed", None); c["sent"].pop(("feed",), None)   # what the needFullFeed handler does
@@ -181,26 +211,65 @@ class DeltaStream(unittest.TestCase):
             _send(c, _feed(asks=asks, build_id=2))
             self.assertEqual(json.loads(sent[-1])["type"], "feedDelta", "the stream re-bases from the full frame")
         finally:
-            km._feed_wire = saved[0]; km._built_feed[:] = saved[1]
+            _restore(saved)
+
+
+class TintOnFullFramesOnly(unittest.TestCase):
+    """`trgb` stays on FULL frames — an older bundle (a stale tab; a federated dashboard on a host running
+    the previous build) destructures `it.trgb` unguarded and would throw on the first card without it — but
+    it is a function of the clock, so it is excluded from the dedup signature and from deltas: a colour
+    step is not a change and never re-sends the board (it did, on every step: 5.76 MB a push)."""
+
+    def test_full_frames_carry_trgb_and_deltas_never_do(self):
+        legacy, lsent = _client(caps=())
+        _send(legacy, _feed())
+        full = json.loads(lsent[-1])
+        self.assertEqual(full["asks"][5]["trgb"], list(km.cm.age_rgb(NOW - full["asks"][5]["t"])))
+        self.assertIn("trgb", full["asks"][5]["tree"][0], "tree nodes too, as before")
+        delta, dsent = _client()
+        _send(delta, _feed())
+        asks = [_card(i) for i in range(300)]
+        asks[5] = _card(5, text="changed")
+        _send(delta, _feed(asks=asks, build_id=2))
+        d = json.loads(dsent[-1])
+        self.assertEqual(d["type"], "feedDelta")
+        self.assertNotIn("trgb", d["asks"][0])
+        self.assertTrue(all("trgb" not in n for n in d["asks"][0]["tree"]))
+
+    def test_a_colour_step_alone_sends_nothing_on_either_path(self):
+        for caps in ((), ("feedDelta",)):
+            c, sent = _client(caps=caps)
+            _send(c, _feed())
+            _send(c, _feed(now=NOW + 3600, build_id=2))        # every tint stepped, nothing else
+            self.assertEqual(len(sent), 1, "caps=%r: a colour step is not a change" % (caps,))
+
+    def test_the_dedup_signature_ignores_the_tint_and_nothing_else(self):
+        a = _feed(); b = _feed(now=NOW + 3600, build_id=2)
+        self.assertNotEqual(a["asks"][9]["trgb"], b["asks"][9]["trgb"], "the fixture steps the tint")
+        self.assertEqual(km._dedup_sig(a, json.dumps(a)), km._dedup_sig(b, json.dumps(b)))
+        c = _feed(build_id=3); c["asks"][9]["tree"][0]["text"] = "a real change"
+        self.assertNotEqual(km._dedup_sig(a, json.dumps(a)), km._dedup_sig(c, json.dumps(c)))
+        self.assertNotIn('"trgb"', km._feed_parts(a)[0]["%s:g9" % SID])
+
+    def test_every_builder_still_ships_the_tint_on_full_frames(self):
+        self.assertEqual(KSRC.count('"trgb": list(cm.age_rgb('), 8,
+                         "the eight card/node builders compute it as before (build_feed, the placeholders, quarantine)")
 
 
 class ConnectTimeFrame(unittest.TestCase):
     def test_a_fresh_socket_is_served_the_cached_frame_at_once(self):
-        saved = (km._feed_wire, list(km._built_feed))
+        f = _feed()
+        saved, ms, parts = _warm(f)
         try:
-            f = _feed()
-            ms, sig, parts = _wire(f)
-            km._feed_wire = (f, f.get("ledgers"), f, ms, sig, parts)
-            km._built_feed[:] = [None, f, 0.0, 0.0]
             c, sent = _client()
             self.assertTrue(km._send_feed_now(c))
             self.assertEqual(sent, [ms], "the cached wire form, byte for byte — no build, no wait")
             self.assertIs(c["efeed"], parts, "…and it is the delta stream's base")
             # the pusher's next cycle then has nothing to add
-            km._send_feed(c, f, ms, sig, parts)
+            km._send_feed(c, f, ms, km._dedup_sig(f, ms), parts)
             self.assertEqual(len(sent), 1)
         finally:
-            km._feed_wire = saved[0]; km._built_feed[:] = saved[1]
+            _restore(saved)
 
     def test_a_cold_kernel_has_nothing_cached_and_says_so(self):
         saved = (km._feed_wire, list(km._built_feed))
@@ -211,7 +280,7 @@ class ConnectTimeFrame(unittest.TestCase):
             self.assertFalse(km._send_feed_now(c))
             self.assertEqual(sent, [])
         finally:
-            km._feed_wire = saved[0]; km._built_feed[:] = saved[1]
+            _restore(saved)
 
     def test_a_newer_build_than_the_wire_cache_is_serialized_fresh(self):
         # with no feed pane open the pusher never refreshes _feed_wire; chat clients keep _built_feed warm
@@ -226,16 +295,7 @@ class ConnectTimeFrame(unittest.TestCase):
             self.assertEqual(json.loads(sent[-1])["buildId"], 2)
             self.assertIs(km._feed_wire[0], new, "…and cached for the next socket")
         finally:
-            km._feed_wire = saved[0]; km._built_feed[:] = saved[1]
-
-    def test_the_ws_handler_serves_feed_and_fleet_sockets_on_connect_and_parses_caps(self):
-        src = open(os.path.join(BIN, "romp-kernel"), encoding="utf-8").read()
-        i = src.index("            _clients.append(client)\n        # A feed/fleet client gets the cached feed frame AT ONCE")
-        self.assertIn('        if app in ("feed", "fleet"):\n            _send_feed_now(client)\n        try:\n            while client["alive"]:',
-                      src[i:i + 1200])
-        self.assertIn('caps = (q.get("caps") or [""])[0]', src)
-        self.assertIn('"caps": set(x for x in caps.split(",") if x)}', src)
-        self.assertIn('if msg and msg.get("type") == "needFullFeed":', src)
+            _restore(saved)
 
 
 class ShimAnnouncesForTheFeedPage(unittest.TestCase):
@@ -245,13 +305,7 @@ class ShimAnnouncesForTheFeedPage(unittest.TestCase):
         self.assertIn('+(CAPS?"&caps="+encodeURIComponent(CAPS):"")', feed)
         for app in ("chat", "fleet", "timeline"):
             self.assertIn('var CAPS="";', km._shim(app, 5), app)
-        self.assertIn('_shim("feed", v, caps=FEED_DELTA_CAP)', open(os.path.join(BIN, "romp-kernel"), encoding="utf-8").read())
-
-
-class TintOffTheWire(unittest.TestCase):
-    def test_no_builder_ships_trgb(self):
-        src = open(os.path.join(BIN, "romp-kernel"), encoding="utf-8").read()
-        self.assertNotIn('"trgb"', src, "the per-card age colour is computed by the client (age-color.ts ageRgb)")
+        self.assertIn('_shim("feed", v, caps=FEED_DELTA_CAP)', KSRC)
 
 
 if __name__ == "__main__":

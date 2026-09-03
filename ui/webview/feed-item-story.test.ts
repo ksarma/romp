@@ -24,7 +24,7 @@ test("the kernel ships a non-done node's verdict log, compacted with per-row anc
 test("a non-done node renders the gist line — newest event in outcome words + age — and toggles the history", () => {
   assert.match(FEED, /const nodeLogOpen = new Set<string>\(\);/);
   assert.match(FEED, /if \(!repeat && node\.status !== "done" && !node\.cleared && node\.log && node\.log\.length\) \{/);
-  assert.match(FEED, /logPhrase\(last\) \+ " · " \+ relAge\(hostNow - logRowT\(last\)\)/);
+  assert.match(FEED, /logPhrase\(last\) \+ " · " \+ relAge\(nowSec\(\) - logRowT\(last\)\)/);
   // the toggle is keyed (itemId:nodeId) and re-renders — state survives pushes, never a dead-end
   assert.match(FEED, /if \(opened\) nodeLogOpen\.delete\(nodeKey\); else nodeLogOpen\.add\(nodeKey\); render\(\);/);
 });

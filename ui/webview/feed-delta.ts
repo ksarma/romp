@@ -25,7 +25,7 @@ export function applyFeedDelta(base: any, d: FeedDelta): any {
   if (d.buildId !== undefined) out.buildId = d.buildId;
   out.asks = upsertById(Array.isArray(base?.asks) ? base.asks : [], d.asks || [], d.removeAsks || [], "itemId");
   if (Array.isArray(d.ledgers)) {
-    // present ⇒ the client holds a ledgers list after this (the Fleet's "the build ran" gate reads the key)
+    // present ⇒ the client holds a ledgers list after this (the Outline pane's "the build ran" gate reads the key)
     out.ledgers = upsertById(Array.isArray(base?.ledgers) ? base.ledgers : [], d.ledgers, d.removeLedgers || [], "sid");
   } else if (Array.isArray(base?.ledgers)) {
     out.ledgers = base.ledgers;

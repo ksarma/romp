@@ -23517,7 +23517,7 @@ def _provisional_card(s, name, color, fsid, live, now, store=None):
         text = pre + g if g else prompt[:140].strip()
     t = held.get("t", lt["t"])
     return {"itemId": "provisional:" + fsid, "sid": fsid, "name": name, "color": color, "text": text,
-            "t": t, "live": live,
+            "t": t, "live": live, "trgb": list(cm.age_rgb(now - t, _colormap())),
             "turnId": None, "origin": None, "followupPending": None,
             "summary": None, "blockSummary": None, "background": None,
             "blocked": None, "column": "working",
@@ -23553,7 +23553,7 @@ def _awaiting_card(s, name, color, fsid, live, now, why, kind=None, since=None):
     # the headline. The task list rides `awaiting` for the pill, so the headline needn't repeat every task.
     text = (why[:1].upper() + why[1:]) if why else "Waiting on a background task"
     return {"itemId": "awaiting:" + fsid, "sid": fsid, "name": name, "color": color, "text": text,
-            "t": t, "live": live,
+            "t": t, "live": live, "trgb": list(cm.age_rgb(now - t, _colormap())),
             "turnId": None, "origin": None, "followupPending": None,
             "summary": None, "blockSummary": None, "background": None,
             "blocked": None, "column": "working",
@@ -23617,7 +23617,7 @@ def _blocked_placeholder(s, name, color, fsid, live, now, perm_state, since):
     if not text:
         text = "Awaiting your input" if perm_state == "picker" else "Awaiting your approval"
     return {"itemId": "blocked:" + fsid, "sid": fsid, "name": name, "color": color, "text": text,
-            "t": t, "live": live,
+            "t": t, "live": live, "trgb": list(cm.age_rgb(now - t, _colormap())),
             "turnId": None, "origin": None, "followupPending": None,
             "summary": None, "blockSummary": None, "background": None,
             "blocked": {"state": perm_state,
@@ -23649,7 +23649,7 @@ def _user_todo_placeholder(s, name, color, fsid, live, now, todos):
     if len(todos) > 1:
         text += "  (+%d more)" % (len(todos) - 1)
     return {"itemId": "usertodo:" + fsid, "sid": fsid, "name": name, "color": color, "text": text,
-            "t": newest, "live": live,
+            "t": newest, "live": live, "trgb": list(cm.age_rgb(now - newest, _colormap())),
             "turnId": None, "origin": None, "followupPending": None,
             "summary": None, "blockSummary": None, "background": None,
             "blocked": {"state": "userTodos", "count": len(todos),
@@ -24244,7 +24244,7 @@ def build_feed(now, tmux=None):
                         # (newest mt in its subtree, _fsubmax), so a replied-to / re-touched node freshens in
                         # the modal tree just as its card does — not pinned to the mint `t` (the user
                         # 2026-07-01). `t` stays the mint time (the node's nav-time fallback).
-                        "t": nd["t"], "last": _fsubmax(nid),
+                        "t": nd["t"], "last": _fsubmax(nid), "trgb": list(cm.age_rgb(now - _fsubmax(nid), _colormap())),
                         # mt = last-modified (the segment the planner applied done / block) → a blocked or
                         # done node deep-links to WHERE IT RESOLVED, not where it was minted. Falls back to
                         # t for never-modified nodes (open work, derived done). (the user 2026-06-16.)
@@ -24821,6 +24821,7 @@ def build_feed(now, tmux=None):
             card = {
                 "itemId": nid, "sid": fsid, "name": name, "color": color, "text": card_text,
                 "t": disp_t, "live": live,
+                "trgb": list(cm.age_rgb(now - disp_t, _colormap())),
                 "turnId": nid, "origin": origin,
                 **({"handoffTo": handoff_to} if handoff_to else {}),
                 **({"delegTracked": _tracked_peers} if _tracked_peers else {}),
@@ -25043,6 +25044,7 @@ def build_feed(now, tmux=None):
             "itemId": item_id, "sid": ph["toId"], "name": ph["toName"], "color": _name_color(ph["toId"]),
             "text": "Hand-off parked for %s (offline)" % ph["toName"],
             "t": ph["t"], "live": False,
+            "trgb": list(cm.age_rgb(now - ph["t"], _colormap())),
             "turnId": item_id, "origin": None,
             "followupPending": None, "waitingOn": None,
             "summary": None, "blockSummary": None, "background": None, "summaryAnchorUuid": None, "warns": None,
@@ -25884,6 +25886,7 @@ def _quarantine_cards(now, cleared):
             "color": _name_color(rec.get("toId") or ""),
             "text": "New message",
             "t": t, "live": False,
+            "trgb": list(cm.age_rgb(now - t, _colormap())),
             "turnId": item_id, "origin": None,
             "followupPending": None, "waitingOn": None,
             "summary": None, "blockSummary": None, "background": None, "summaryAnchorUuid": None, "warns": None,
@@ -27541,22 +27544,49 @@ def _segment_of_uuid(sid, uuid, now):
 # up from the chat file's: a payload MAY carry the clock, but everything the dedup compares must not.
 _DEDUP_VOLATILE = ("now", "buildId")
 
-# A deduped view used to have to FADE: the feed coloured each card by age against the payload's `now`, so a
+# A deduped view used to have to FADE: the feed coloured each card by the kernel-computed `trgb` tint, so a
 # client that received nothing for many minutes held its colours frozen, and this repost (one a minute
-# instead of ~30) kept the fade moving. Since 2026-09-02 the feed computes the tint client-side from each
-# card's `t` (age-color.ts) and the delta path (_send_feed) never reposts — an unchanged board costs nothing.
-# The repost stays for the legacy full-frame path (_send_client's volatile-keyed payloads: full feed frames
-# to clients that did not announce deltas, the timeline bars), whose consumers were written against it.
+# instead of ~30) kept the fade moving. Since 2026-09-02 the feed bundle computes the tint client-side from
+# each card's `t` on a live clock (age-color.ts, feed-age.ts) and the delta path (_send_feed) never reposts —
+# an unchanged board costs a delta client nothing. The repost stays for the legacy full-frame path
+# (_send_client's volatile-keyed payloads: full feed frames to clients that did not announce deltas, the
+# timeline bars), whose consumers were written against it. Full frames still CARRY `trgb` — an older bundle
+# destructures it unguarded (a stale tab; a federated dashboard on a host running the previous build) — but
+# the tint is excluded from the dedup signature (_dedup_sig) and from deltas (_feed_parts): a colour step
+# is not a change, and never re-sends the board (it used to, on every step: 5.76 MB a push).
 _DEDUP_REPOST_S = 60.0
 
 
+def _strip_trgb(card):
+    """A feed card minus its clock-derived `trgb` tint — at the top level and in every sub-goal node — for the
+    delta path and the dedup signature. The tint is a function of (`t`, the clock), so it steps on every build
+    with nothing having happened; a full frame still carries it for older bundles (see _DEDUP_REPOST_S)."""
+    if not isinstance(card, dict):
+        return card
+    out = dict(card)                      # C-level copies + a pop: ~4 ms for 600 cards x 24 nodes, vs 13 ms as comprehensions
+    out.pop("trgb", None)
+    tree = out.get("tree")
+    if isinstance(tree, list) and tree:
+        nodes = []
+        for n in tree:
+            if isinstance(n, dict) and "trgb" in n:
+                n = dict(n)
+                del n["trgb"]
+            nodes.append(n)
+        out["tree"] = nodes
+    return out
+
+
 def _dedup_sig(msg, s):
-    """The string a payload is DEDUPED on: its serialization minus the always-ticking fields above.
+    """The string a payload is DEDUPED on: its serialization minus the always-ticking fields above — and, for
+    a feed frame, minus every card's `trgb` (_strip_trgb), so a colour step never re-sends the board.
     Falls back to the full serialization `s` when the payload carries none of them, so a payload that is
     already clock-invariant (chat) keeps comparing its cached serialization with no extra work."""
     if isinstance(msg, dict) and any(k in msg for k in _DEDUP_VOLATILE):
-        return json.dumps({k: v for k, v in msg.items() if k not in _DEDUP_VOLATILE},
-                          sort_keys=True, default=str)
+        stable = {k: v for k, v in msg.items() if k not in _DEDUP_VOLATILE}
+        if msg.get("type") == "feed" and isinstance(stable.get("asks"), list):
+            stable["asks"] = [_strip_trgb(a) for a in stable["asks"]]
+        return json.dumps(stable, sort_keys=True, default=str)
     return s
 
 
@@ -27688,7 +27718,8 @@ def _send_chat(c, m, ms, change_from, led_changed):
 # for ledgers (by sid), and the small top-level fields whole when any of them changed. Nothing changed →
 # nothing sent, exactly as before. A client that has not announced, or has not yet received a full frame on
 # this socket, gets the full {type:"feed"} frame — the legacy path, kept for every consumer that reads it
-# (the Fleet pane, older bundles, anything relaying frames).
+# (the Outline pane, the VS Code extension's pipes, federation's remote sockets, older bundles). Full frames
+# still carry each card's `trgb`; deltas never do (an older bundle reads it, a delta client colours from `t`).
 #
 # The parts below are computed ONCE per build and shared by every client (the 2026-08-10 CPU discipline):
 # per-card and per-ledger serializations keyed by id, plus the rest of the frame minus the clock fields.
@@ -27704,9 +27735,10 @@ _FEED_KEYED = (("asks", "itemId"), ("ledgers", "sid"))
 
 def _feed_parts(feed):
     """Per-item serializations of a feed frame: ({itemId: json}, {sid: json} or None when the build carried
-    no ledgers, {the other top-level fields}, their json). `default=str` matches the full frame's dumps
-    fallbacks so a value the full frame can carry never breaks the delta."""
-    cards = {a["itemId"]: json.dumps(a, default=str) for a in (feed.get("asks") or [])}
+    no ledgers, {the other top-level fields}, their json). Cards are serialized minus `trgb` (_strip_trgb):
+    a delta client colours from `t` on its own clock, and the tint must never read as a change. `default=str`
+    matches the full frame's dumps fallbacks so a value the full frame can carry never breaks the delta."""
+    cards = {a["itemId"]: json.dumps(_strip_trgb(a), default=str) for a in (feed.get("asks") or [])}
     leds = ({l["sid"]: json.dumps(l, default=str) for l in feed["ledgers"]}
             if isinstance(feed.get("ledgers"), list) else None)
     rest = {k: v for k, v in feed.items()
