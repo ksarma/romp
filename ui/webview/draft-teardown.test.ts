@@ -39,6 +39,7 @@ function model() {
   let composer = "";                        // #composer-input's value
   let focused = false;                      // document.activeElement === the textarea
   let note: { sid: string; why: Why } | null = null;   // the line above the box (#composer-note)
+  let flashes = 0;                          // swallowed keystrokes that pulsed the note
   const touchMru = (id: string) => { const i = mru.indexOf(id); if (i >= 0) mru.splice(i, 1); mru.unshift(id); };
   // setActive's composer half: stash the leaving tab's text, show the entering tab's own
   const activate = (id: string) => {
@@ -83,6 +84,17 @@ function model() {
     },
     activate,
     focus() { focused = true; },
+    // a CLICK into the box: focus, and the deliberate re-bind that retires the note (its pointerdown)
+    clickBox() { focused = true; note = null; },
+    // the "type from anywhere" default: a printable key with no owner drops the cursor into the box and
+    // inserts — unless the hand-over note holds the box, when the key is swallowed and the note flashes
+    typeAnywhere(text: string) {
+      if (focused) { this.type(text); return; }
+      if (note) { flashes++; return; }
+      focused = true;
+      this.type(text);
+    },
+    get flashes() { return flashes; },
     // a keystroke: only a focused textarea receives one; the input handler files under the ACTIVE id
     type(text: string) {
       if (!focused) return;
@@ -126,14 +138,19 @@ test("(ii) typing after an active-tab teardown never lands under another session
   m.type(" …and more");                                   // keystrokes with no focus go nowhere
   assert.equal(m.hasDraft("hostB:api"), false, "nothing was filed under the survivor");
   assert.equal(m.draft("hostA:web"), "dear hostA", "the original text is intact under its own id");
-  // clicking INTO the blurred box is a deliberate act: the note above it names whose box went away, the
-  // active tab is the survivor's — typing now is the survivor's own draft, and the note stays (still true)
-  m.focus(); m.type("for api");
-  assert.equal(m.draft("hostB:api"), "for api");
-  assert.ok(m.note && m.note.sid === "hostA:web");
-  // an explicit switch to another tab is the event that retires it
-  m.activate("hostB:tests");
+  // the harness caught the leak the blur alone left open: a printable key "nobody claimed" re-focused the
+  // box and inserted. While the note holds, that default stands down — swallowed, the note flashes.
+  m.typeAnywhere("c");
+  assert.equal(m.flashes, 1);
+  assert.equal(m.focused, false);
+  assert.equal(m.hasDraft("hostB:api"), false, "still nothing under the survivor");
+  assert.ok(m.note && m.note.sid === "hostA:web", "the note stays up until a deliberate act");
+  // clicking INTO the box IS that act: the note retires and typing is the survivor's own draft
+  m.clickBox(); m.type("for api");
   assert.equal(m.note, null);
+  assert.equal(m.draft("hostB:api"), "for api");
+  // an explicit switch to another tab binds the box there
+  m.activate("hostB:tests");
   m.type("for tests");
   assert.equal(m.draft("hostB:tests"), "for tests", "typed AFTER an explicit switch → that tab's own draft");
   assert.equal(m.draft("hostA:web"), "dear hostA");
@@ -268,6 +285,18 @@ test("an active tab torn down under the user: stash first, prune the fallback, b
   assert.match(fn, /const home = hostOf\(id\);[^\n]*\n\s*const goingToo = \(x: string\) => \(doomed\?\.has\(x\) \?\? false\) \|\| \(why === "hostDrop" && !!home && hostOf\(x\) === home\);[\s\S]*?activeId = mru\.find\(\(x\) => order\.includes\(x\) && !goingToo\(x\)\) \|\| order\.find\(\(x\) => !goingToo\(x\)\) \|\| null;[\s\S]*?loadComposerFor\(activeId\);/);
   // …and, unless the user themself clicked ✕, the box is blurred and the note names what went away
   assert.match(fn, /if \(why !== "close"\) \{[\s\S]*?ta\.blur\(\);[\s\S]*?renderComposerNote\(id, why, name\);/);
+});
+
+test("while the note holds the box, the type-from-anywhere defaults stand down; a click into the box ends the hold", () => {
+  // the printable-key default: no focus steal into the survivor's box + flash (the handler stays preventDefault-free, as pinned by composer-citation.test.ts)
+  assert.match(RENDER, /if \(composerNoteHolds\(\)\) return;[^\n]*\n\s*ta\.focus\(\{ preventScroll: true \}\);/);
+  // bare-area Enter: stands down before focusComposerOrAsk
+  assert.match(RENDER, /if \(ae && ae !== document\.body\) return;\s*\n\s*if \(composerNoteHolds\(\)\) return;/);
+  assert.match(RENDER, /function composerNoteHolds\(\): boolean \{\s*\n\s*if \(!composerNoteSid\) return false;\s*\n\s*flashComposerNote\(\);\s*\n\s*return true;/);
+  // the deliberate act: a pointerdown in the box
+  assert.match(RENDER, /ta\.addEventListener\("pointerdown", \(\) => \{ if \(composerNoteSid\) clearComposerNote\(\); \}\);/);
+  // the note says so
+  assert.match(RENDER, /hint\.textContent = " Click the box to type here\.";/);
 });
 
 test("the note retires on the exact events: an explicit switch, the session's return, or its ✕", () => {

@@ -186,7 +186,8 @@ test("Enter with a live transcript selection drops into the message box with the
   // and re-seeding at Enter makes the chip exactly what's selected at that moment
   assert.match(RENDER, /const q = transcriptSelection\(\);\s*\n\s*if \(q && activeId\) \{\s*\n\s*e\.preventDefault\(\);\s*\n\s*seedTranscriptQuote\(activeId, q\.text, q\.uuid\);\s*\n\s*focusComposer\(\);\s*\n\s*return;/);
   // the bare-area fallback (Enter with no selection — the user 2026-06-26) survives untouched below it
-  assert.match(RENDER, /if \(ae && ae !== document\.body\) return;\s*\n\s*if \(focusComposerOrAsk\(\)\) e\.preventDefault\(\);/);
+  // (T236: while the hand-over note holds the box, this default stands down — see draft-teardown.test.ts)
+  assert.match(RENDER, /if \(ae && ae !== document\.body\) return;\s*\n\s*if \(composerNoteHolds\(\)\) return;[^\n]*\n\s*if \(focusComposerOrAsk\(\)\) e\.preventDefault\(\);/);
 });
 
 test("closing a session clears its composer reply context — chip, draft, and edit pill (the user 2026-08-04)", () => {

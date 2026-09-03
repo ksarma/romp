@@ -5408,6 +5408,7 @@ window.addEventListener("keydown", (e) => {
     // default: Enter always lands you in the box unless you're already on a tab or in the box.
     const ae = document.activeElement;
     if (ae && ae !== document.body) return;
+    if (composerNoteHolds()) return;               // the box just changed hands under the user — a click re-binds it, not a key (T236)
     if (focusComposerOrAsk()) e.preventDefault();   // the picker card if one's up, else the message box
   }
 });
@@ -5432,6 +5433,7 @@ window.addEventListener("keydown", (e) => {
   if (document.getElementById("romp-fileview") || document.getElementById("romp-filebrowse")
       || document.getElementById("romp-lightbox")) return;   // full-pane surfaces own their keys
   if (document.querySelector("#rsettings:not([hidden]), #ra-back:not([hidden]), #rkeys-back, .meta-menu")) return;   // the pane's own modals + meta menus own their keys (a letter typed there must never land in the draft)
+  if (composerNoteHolds()) return;   // the box just changed hands under the user — no focus steal, the note flashes; a click re-binds (T236). Nothing to cancel either: a key on the bare body has nothing to insert into.
   ta.focus({ preventScroll: true });   // the native keystroke lands in the box; the chip survives (a collapse never clears it)
 });
 // Cmd/Ctrl+O and Cmd/Ctrl+Shift+O — the in-PAGE fallback, from anywhere including the composer, the
@@ -12264,6 +12266,11 @@ function renderComposerNote(sid: string, why: DismissWhy, name: string): void {
     tail = next ? ` ended — the box below is “${next}”’s now.` : " ended.";
   }
   msg.append(who, document.createTextNode(tail));
+  if (activeId) {   // a survivor owns the box now — say what re-binds typing to it (the keys alone will not, see composerNoteHolds)
+    const hint = el("span", "composer-note-hint");
+    hint.textContent = " Click the box to type here.";
+    msg.appendChild(hint);
+  }
   const x = el("button", "composer-chip-x");
   x.setAttribute("aria-label", "Dismiss");
   x.title = "dismiss";
@@ -12276,6 +12283,24 @@ function renderComposerNote(sid: string, why: DismissWhy, name: string): void {
 function clearComposerNote(): void {
   document.getElementById("composer-note")?.remove();
   composerNoteSid = null;
+}
+// While the note is up, the box has NO keyboard owner: the two "type from anywhere" defaults below (a
+// printable keystroke nobody claimed, Enter from the bare area) stand down instead of dropping the cursor
+// into the survivor's box — the harness showed the blur alone was not enough: the first printable key
+// re-focused the box and the continuation of A's draft landed in B's anyway (T236). The keystroke is
+// swallowed and the note flashes: the eye goes to the line that explains it. A CLICK into the box (its
+// pointerdown), a tab switch or the note's ✕ ends the hold — every one a deliberate act.
+function composerNoteHolds(): boolean {
+  if (!composerNoteSid) return false;
+  flashComposerNote();
+  return true;
+}
+function flashComposerNote(): void {
+  const n = document.getElementById("composer-note");
+  if (!n) return;
+  n.classList.remove("composer-note-flash");
+  void n.offsetWidth;   // restart the one-shot animation
+  n.classList.add("composer-note-flash");
 }
 
 // `doomed`: the other ids the same teardown is about to run through (applyTabOrder hands over every id its
@@ -13209,6 +13234,7 @@ function setupComposer() {
     return false;
   };
   ta.addEventListener("focus", () => { if (slashSid !== (activeId || "")) loadCmds(activeId || ""); });   // pre-warm the cache before "/"
+  ta.addEventListener("pointerdown", () => { if (composerNoteSid) clearComposerNote(); });   // a CLICK into the box is the deliberate re-bind the note asked for (T236)
   ta.addEventListener("blur", () => window.setTimeout(closeSlash, 120));   // close when leaving (a row's mousedown keeps focus, so it fires only on a real leave)
   window.addEventListener("resize", positionSlash);
 

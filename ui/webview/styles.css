@@ -898,6 +898,11 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
 #composer-note { flex: 1 1 100%; display: flex; align-items: center; gap: 6px; padding: 0 0 6px 2px; font-size: 12px; line-height: 1.4; color: var(--dim, #9a9a9a); }
 .composer-note-msg { flex: 1 1 auto; min-width: 0; }
 .composer-note-name { color: var(--fg); }
+.composer-note-hint { opacity: 0.75; }
+/* a keystroke swallowed while the note holds the box (render.ts composerNoteHolds) — one accent wash, fading */
+.composer-note-flash { animation: composer-note-flash 0.7s ease-out; }
+@keyframes composer-note-flash { from { background: color-mix(in srgb, var(--accent) 30%, transparent); } to { background: transparent; } }
+@media (prefers-reduced-motion: reduce) { .composer-note-flash { animation: none; background: color-mix(in srgb, var(--accent) 18%, transparent); } }
 .composer-file { position: relative; display: inline-flex; align-items: center; cursor: pointer; }
 .composer-file-img { display: block; height: 46px; max-width: 96px; object-fit: cover; border-radius: 6px;
   border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
