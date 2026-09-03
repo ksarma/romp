@@ -473,6 +473,11 @@ class Wiring(unittest.TestCase):
 
     def test_the_gear_offers_the_three_modes_and_posts_the_pick(self):
         self.assertIn("id=rs-updates", self.gear)
+        # the row says what Off does (the user 2026-09-03, who wanted to turn off the notices about
+        # new romp commits and could not tell that this switch is where): Off is the notices-off
+        # setting, and the build-reload prompt is named as the one thing it does not cover
+        self.assertIn("Off stops the checks and the banners about new commits and releases", self.gear)
+        self.assertIn("is not an update notice and stays on", self.gear)
         for opt in ("value=ask", "value=auto", "value=off"):
             self.assertIn(opt, self.gear)
         # the post is gesture-stamped (2026-08-29): setUpdateMode rides federation's queued
