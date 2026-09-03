@@ -24717,18 +24717,35 @@ def _spend_windows(keyed_only=False):
         keys = {time.strftime("%Y-%m-%dT%H", time.localtime(now - i * 3600)) for i in range(hrs + 1)}
         return _sum(v for k, v in hours.items() if k in keys)
 
-    month = time.strftime("%Y-%m")
+    def _rolling_days(n):
+        # the recorder keys day buckets by LOCAL strftime date — build the key set the same way, so
+        # the window is "the last n local dates through today" on this host regardless of its zone
+        keys = {time.strftime("%Y-%m-%d", time.localtime(now - i * 86400)) for i in range(n + 1)}
+        return _sum(v for k, v in days.items() if k in keys), keys
+
+    month = time.strftime("%Y-%m", time.localtime(now))   # explicit clock: the frozen-clock tests govern it
     # day/week are the API-key cell's windows (the user 2026-08-13: pay-per-token has no reset windows,
     # so "one day / one week / one month" is the honest read; the hour ledger holds 192h = 8 days, so
     # both fit). fiveHour/sevenDay stay emitted for ONE release: a remote host on an older kernel still
-    # sums its cell from them (version skew), and the strip reads day||fiveHour meanwhile. month stays
-    # calendar month-to-date — it matches the bill.
+    # sums its cell from them (version skew), and the strip reads day||fiveHour meanwhile.
+    # `month` is a ROLLING 30 local days (T235, the user 2026-09-03: "1 month" beside "1 hour / 1 day /
+    # 1 week" promises a rolling window, and on the 3rd the old calendar month-to-date read LOWER than
+    # the week — a superset window that reads lower is the label lying). The bill-tracking figure keeps
+    # its own honest key, `monthToDate` (calendar month so far; the month BUDGET, a bill-cycle cap,
+    # attaches HERE and never to the rolling window). The days ledger keeps 90 days, so the rolling
+    # month is exact once the ledger is old enough; a younger ledger says so (`since`) rather than
+    # reading as a silently short window.
+    rolling_month, month_keys = _rolling_days(30)
     win = {"fiveHour": _rolling(5), "sevenDay": _rolling(7 * 24),
            "hour": _rolling(1),   # the last hour, same rolling bucket math as day (the user 2026-08-15)
            "day": _rolling(24), "week": _rolling(7 * 24),
-           "month": _sum(v for k, v in days.items() if isinstance(k, str) and k.startswith(month))}
+           "month": rolling_month,
+           "monthToDate": _sum(v for k, v in days.items() if isinstance(k, str) and k.startswith(month))}
+    oldest = min((k for k in days if isinstance(k, str) and len(k) == 10), default=None)
+    if oldest and oldest > min(month_keys):
+        win["month"]["since"] = oldest          # the ledger is younger than the window — say how far it reaches
     for k, v in _spend_budgets().items():
-        win[k]["budget"] = v
+        win["monthToDate" if k == "month" else k]["budget"] = v
     return win
 
 
@@ -30099,15 +30116,26 @@ function fmtUsd(v){return '$'+String(Math.round(v));}   // whole dollars everywh
 // pay-per-token has no reset windows (the user 2026-08-13): the key's story is 1 hour (the user
 // 2026-08-15) / 1 day / 1 week / 1 month.
 // fiveHour/sevenDay fallbacks remain readable from older remote kernels (version skew) via day||fiveHour.
-var SPEND_WINS=[['hour','1 hour'],['day','1 day'],['week','1 week'],['month','1 month']];
+// 'month' is a ROLLING 30 days (T235, 2026-09-03: a superset window must never read lower than the
+// week — it did, three days into a month, while month meant calendar-to-date); the bill figure sits
+// on its own row directly under it so it is still one glance away.
+var SPEND_WINS=[['hour','1 hour'],['day','1 day'],['week','1 week'],['month','1 month'],['monthToDate','this month']];
 // The per-host SPEND detail for the rich hover: plain NUMBERS per window (dollars, tokens, turns).
 // No bars anywhere for spend (the user 2026-08-08: the spend bar graphs told you nothing. The old
 // hover scaled each window's bar to the largest window, a shape with no meaning, and the budget-fill
 // tracks die with it): the numbers are the information, so the numbers are the rendering.
 function spendDet(u,det){var sp=u&&u.spend;if(!sp||!det)return;
 if(typeof u.spendAt==='number')det._spendAt=u.spendAt;   // the spend's OWN last-record moment
-SPEND_WINS.forEach(function(w){var seg=sp[w[0]];if(!seg||typeof seg.usd!=='number')return;
-(det._spend=det._spend||{})[w[0]]={label:w[1],usd:seg.usd,tok:seg.tok||0,turns:seg.turns||0};});
+// VERSION SKEW (one release, T235): an older kernel ships only a CALENDAR 'month' and no monthToDate.
+// Summing that into the rolling "1 month" would mix two different windows in one number, so that
+// host's calendar figure is filed under "this month" (which is what it IS) and its share is LEFT OUT
+// of the rolling row, which then says how many machines it does not count — the honest option.
+var legacy=(sp.month&&typeof sp.month.usd==='number'&&!sp.monthToDate);
+if(legacy){det._spendLegacyMonth=true;}
+SPEND_WINS.forEach(function(w){var k=w[0];if(legacy&&k==='monthToDate')k='month';else if(legacy&&k==='month')return;
+var seg=sp[k];if(!seg||typeof seg.usd!=='number')return;
+var row=(det._spend=det._spend||{})[w[0]]={label:w[1],usd:seg.usd,tok:seg.tok||0,turns:seg.turns||0};
+if(w[0]==='month'&&typeof seg.since==='string')row.since=seg.since;});   // a ledger younger than the window says so
 if(u.spendSeries&&u.spendSeries.usd)det._spendSeries=u.spendSeries;}   // $/hour, for the hover graph (the user 2026-08-13)
 // One payload's WINDOW detail for the hover (used/elapsed/reset per window). Detail only, no markup:
 // the rail no longer draws each account's own bars (they aggregate, below), but the tip still tells
@@ -30292,12 +30320,14 @@ return h;}
 // The ONE API-spend section for the whole hover (the user 2026-08-13): every host's windows summed —
 // one shared key is one number — plus the summed $/hour over the last 7 days as an area graph. A host
 // that ships no series (an older kernel) still joins the window sums; the graph adds only contributors.
-function fleetSpendHTML(sets){var sum={},series=null,hosts=0,per=[];
+function fleetSpendHTML(sets){var sum={},series=null,hosts=0,per=[],legacyN=0;
 sets.forEach(function(e){var sp=e.det&&e.det._spend;if(!sp)return;hosts++;
 if(sp.week&&typeof sp.week.usd==='number')per.push({host:e.host,usd:sp.week.usd});
 SPEND_WINS.forEach(function(w){var v=sp[w[0]];if(!v)return;
 var t=(sum[w[0]]=sum[w[0]]||{label:w[1],usd:0,tok:0,turns:0});
-t.usd+=v.usd;t.tok+=v.tok;t.turns+=v.turns;});
+t.usd+=v.usd;t.tok+=v.tok;t.turns+=v.turns;
+if(v.since&&(!t.since||v.since<t.since))t.since=v.since;});   // the OLDEST reach among hosts caveats the sum
+if(e.det._spendLegacyMonth)legacyN++;
 var ss=e.det._spendSeries;
 if(ss&&ss.usd){if(!series){series={h0:ss.h0,usd:ss.usd.slice()};}
 else{var off=ss.h0-series.h0;   // align on the base hour — hosts' polls may straddle an hour edge
@@ -30310,7 +30340,12 @@ if(!ks.length)return '';
 var sAt=0;sets.forEach(function(e){var a=e.det&&e.det._spendAt;if(typeof a==='number'&&a>sAt)sAt=a;});
 var h='<div class="ru-tip-win ru-tip-fleetspend"><div class=ru-tip-name><span>API spend'+(hosts>1?' \u00b7 '+hosts+' machines':'')+'</span></div>'
 +ks.map(function(k){var v=sum[k];
-return '<div class=ru-tip-row><span class=ru-tip-k>'+esc(v.label)+'</span>'
+// the rolling month's caveats ride its label: a ledger younger than 30 days ("since <date>"), and
+// the machines whose older build could contribute only a calendar month (left out, counted)
+var lab=v.label;
+if(k==='month'&&v.since)lab+=' \u00b7 since '+esc(v.since);
+if(k==='month'&&legacyN)lab+=' \u00b7 '+legacyN+' machine'+(legacyN>1?'s':'')+' not counted (older build)';
+return '<div class=ru-tip-row><span class=ru-tip-k>'+lab+'</span>'
 +'<span class=ru-tip-v>'+fmtUsd(v.usd)+' \u00b7 '+fmtTok(v.tok)+' tok \u00b7 '+(v.turns||0)+' turns</span></div>';}).join('');
 // every machine in the sum, BY NAME (the user 2026-08-13: a host with no login \u2014 the devbox \u2014 vanished
 // from the hover entirely when the per-host spend rows collapsed into this one section; '3 machines'

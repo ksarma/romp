@@ -129,7 +129,9 @@ export function apiCell(usage: any): ApiCell | null {
   }
   if (!segs.length) return null;
   const lines = ["API-key spend"];
-  for (const [key, label] of [["day", "1 day"], ["week", "1 week"], ["month", "1 month"]] as const) {
+  // '1 month' is ROLLING 30 days (T235); 'this month' is the calendar figure the bill accrues — an older
+  // kernel ships only a calendar `month`, which the hover files under "this month" (the same skew rule)
+  for (const [key, label] of [["day", "1 day"], ["week", "1 week"], ["month", "1 month"], ["monthToDate", "this month"]] as const) {
     const seg = sp[key];
     if (!seg || typeof seg.usd !== "number") continue;
     const turns = seg.turns || 0;
