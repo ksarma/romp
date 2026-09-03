@@ -1,5 +1,5 @@
 /* The "Waiting on you" pane's layout styles (ui/webview/waiting.ts), shared by both hosts the way
-   fleet-pane.css is: bin/romp-kernel reads this file live for the /waiting page, and
+   the Outline pane's sheet is: bin/romp-kernel reads this file live for the /waiting page, and
    vscode-extension/esbuild.js bundles it to dist/waiting-pane.css. The .ut-* row / button / detail /
    reply-modal rules come from the chat's styles.css (linked before this file), so a row here wears
    exactly the split card's dress; these rules own the page layout and the two things a cross-session
@@ -12,7 +12,7 @@ font-size:13px;display:flex;flex-direction:column;overflow:hidden}
 border-bottom:1px solid var(--vscode-editorHoverWidget-border,rgba(255,255,255,0.12))}
 #waiting-head .wt-count{font-weight:400;color:var(--vscode-descriptionForeground,#9a9a9a)}
 #waiting-list{flex:1 1 auto;min-height:0;overflow-y:auto;padding:4px 0}
-/* the three loud states share one quiet, centered treatment (the fleet's .fl-empty) */
+/* the three loud states share one quiet, centered treatment (the Outline pane's .fl-empty) */
 .wt-empty,.wt-notice{opacity:.7;text-align:center;padding:26px 14px;line-height:1.5}
 .wt-notice{opacity:.85}
 /* the off-notice's action: the gear, as a plain button in the row's own button dress */

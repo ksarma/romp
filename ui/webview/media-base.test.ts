@@ -42,7 +42,7 @@ test("the timeline view routes every asset through its mediaUrl helper", () => {
 });
 
 test("stylesheet media url()s are relative to the emitted dist css, never absolute", () => {
-  for (const f of ["styles.css", "feed.css", "fleet-pane.css", "timeline-pane.css"]) {
+  for (const f of ["styles.css", "feed.css", "fleet-pane.css", "waiting-pane.css", "timeline-pane.css"]) {
     const src = read("ui", "webview", f);
     assert.ok(!src.includes("url(/media/"), `${f}: absolute url(/media/...) breaks in the VS Code webview`);
   }
