@@ -59,6 +59,19 @@ test("the anchor is the served frame's clock: a frame stamped at the serve gives
   assert.equal(rel(staleNow - cardT), "1h ago", "anchored on the build it would read 1 h old — for the rest of the morning");
 });
 
+test("the anchor is a (now, nowAt) pair that travels with the frame: a re-emit after a quiet hour reads the same live clock as the arrival", () => {
+  // federation re-emits the merged frame on a view-order write, on every remote host's frame and on a detach,
+  // and the pane sets its clock from whatever frame it is handed. The pair pins the anchor to the WIRE arrival:
+  // the same stored frame, re-emitted an hour later, anchors identically. Anchored on the emit instead, every
+  // age and tint went back by the quiet period (the 2026-09-03 review: "1m ago" → "<1m ago" on a tab drag).
+  const T = 1_000_000, arrivedMs = 5_000_000, hourLater = arrivedMs + 3_600_000;
+  const anchor = (m: { now: number; nowAt?: number }, handledMs: number) =>
+    liveNow(m.now, typeof m.nowAt === "number" ? m.nowAt : handledMs, handledMs);   // feed.ts's rule, pinned below
+  assert.equal(anchor({ now: T, nowAt: arrivedMs }, arrivedMs), T, "at the arrival");
+  assert.equal(anchor({ now: T, nowAt: arrivedMs }, hourLater), T + 3600, "the re-emit keeps the hour");
+  assert.equal(anchor({ now: T }, hourLater), T, "a frame with no pair anchors on the handling — the old rule, and the bug on a re-emit");
+});
+
 test("an unstamped element is left alone", () => {
   const plain = mk(); plain.textContent = "Blocked";       // a question node's meta carries no age
   assert.equal(paintAge(plain, 5, rel, tint), false);
@@ -70,10 +83,12 @@ test("an unstamped element is left alone", () => {
 test("feed.ts reads the clock only through nowSec(), stamps every age-bearing element, and the tick repaints them all", () => {
   assert.match(FEED, /import \{ liveNow, refreshAges, stampAge \} from "\.\/feed-age";/);
   assert.match(FEED, /function nowSec\(\): number \{ return liveNow\(hostNow, hostNowAt, Date\.now\(\)\); \}/);
-  assert.match(FEED, /hostNow = typeof m\.now === "number" \? m\.now : Math\.floor\(Date\.now\(\) \/ 1000\);\n\s*hostNowAt = Date\.now\(\);/,
-    "the payload's clock is recorded with WHEN it landed");
-  assert.equal((FEED.match(/\bhostNow\b/g) || []).length, 3,
-    "hostNow is declared, recorded and read by nowSec() — nothing else reads it raw (a raw read is a frozen age)");
+  assert.match(FEED, /if \(typeof m\.now === "number"\) \{\n\s*hostNow = m\.now;\n\s*hostNowAt = typeof m\.nowAt === "number" \? m\.nowAt : Date\.now\(\);/,
+    "the payload's clock is recorded with when THAT FRAME ARRIVED (federation's `nowAt`) — never with when this handler ran");
+  assert.equal((FEED.match(/hostNowAt = Date\.now\(\)/g) || []).length, 2,
+    "the bare arrival time anchors only a frame with no `nowAt` (no federation layer) or no `now` at all (an older kernel)");
+  assert.equal((FEED.match(/\bhostNow\b/g) || []).length, 4,
+    "hostNow is declared, recorded (with and without a kernel clock) and read by nowSec() — nothing else reads it raw (a raw read is a frozen age)");
   // the stamps: ask card, group card, sub-goal row (parenthesized, tinted), the modal (tinted), the log rows
   assert.match(FEED, /stampAge\(a\._time, it\.t, "plain", false, nowSec\(\), relAge, ageTint\);/);
   assert.match(FEED, /stampAge\(a\._time, g\.t, "plain", false, nowSec\(\), relAge, ageTint\);/);

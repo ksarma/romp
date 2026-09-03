@@ -662,6 +662,11 @@ function setWorkDot(nameEl: HTMLElement | null, state: DotState | boolean) {
 // The kernel's clock: `now` on the last payload, and WHEN it landed (local ms). Every age reads nowSec(),
 // which adds the local time elapsed since — a delta client hears nothing from a quiet board, so a clock
 // that only moved on payloads froze every age and tint until the next change (feed-age.ts has the story).
+// "When it landed" is the WIRE arrival, which the payload carries as `nowAt` (federation stamps it when
+// the frame arrives and re-emits the merged frame on a view-order write, a remote host's frame, a detach):
+// anchoring on the time this handler runs moved every age back by the quiet period on each re-emit (the
+// 2026-09-03 review). A payload with no `nowAt` (the VS Code pipe hands frames straight to this pane) is
+// arriving now, and anchors here.
 let hostNow = Math.floor(Date.now() / 1000);
 let hostNowAt = Date.now();
 function nowSec(): number { return liveNow(hostNow, hostNowAt, Date.now()); }
@@ -5150,8 +5155,13 @@ function applyFeedPayload(m: any): void {
     // event: the session left the tab list), rather than leaving the board silently pinned to nothing
     if (feedOnlySid && !sessionsMeta.some((s) => s.sid === feedOnlySid)) setFeedOnly(null);
   }
-  hostNow = typeof m.now === "number" ? m.now : Math.floor(Date.now() / 1000);
-  hostNowAt = Date.now();
+  if (typeof m.now === "number") {
+    hostNow = m.now;
+    hostNowAt = typeof m.nowAt === "number" ? m.nowAt : Date.now();   // the pair travels together: the frame's clock, and when THAT frame arrived
+  } else {
+    hostNow = Math.floor(Date.now() / 1000);   // an older kernel's frame carries no clock: the browser's own, from here
+    hostNowAt = Date.now();
+  }
   mirrorBadges(incomingAsks, Array.isArray(m.clearNotices) ? m.clearNotices : [],
     Array.isArray(m.sdkNotices) ? m.sdkNotices : [],
     Array.isArray(m.syncNotices) ? m.syncNotices : []);   // card trouble chips + /clear drops + SDK failures + fleet syncs also log in the shell's bell (chips stay on the cards)
