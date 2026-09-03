@@ -618,6 +618,9 @@ def _version_info():
             # the chat-payload fold's counters (issue 903) — the same shape as "parse", read by
             # `romp version` beside it: fold/full/bypass/fallback plus g:<reason> demotes
             "chatfold": dict(_CHAT_FOLD_STATS),
+            "postalUnresolved": {"ids": len(_POSTAL_UNRESOLVED["seen"]),   # T234: unresolved postal ids
+                                 "warned": _POSTAL_UNRESOLVED["warned"],    # (distinct pairs seen, lines
+                                 "suppressed": _POSTAL_UNRESOLVED["suppressed"]},   # written, repeats held)
             "drainRefused": dict(_DRAIN_REFUSED),   # T224: refused /busy?drain=1 arms — count (lifetime
             #                                          total), episodeCount (the current/last episode),
             #                                          open episode, last time; the silent degrade made visible
@@ -17844,6 +17847,23 @@ def _postal_addressed_to(rec, sid):
     return not to or not sid or to == sid
 
 
+# T234 (the user 2026-09-03): an unresolved postal id is a fact stated ONCE per (session, id) per kernel
+# life. The writer below used to fire on EVERY build - 20k to 116k journal lines per hour for 30+ hours,
+# the same pairs every pusher cycle - burying real signal (a kill event had to be filtered out of it).
+# Fail-loud stays: the FIRST sighting of a pair logs; repeats are counted, never printed; a NEW pair logs
+# again. `seen` is bounded (a wraparound re-warns each pair once - rare and still bounded); `warned` and
+# `suppressed` ride /version beside the other runtime counters, so the volume is visible without the log.
+_POSTAL_UNRESOLVED = {"seen": set(), "warned": 0, "suppressed": 0}
+_POSTAL_UNRESOLVED_CAP = 5000
+
+
+def _POSTAL_UNRESOLVED_RESET():
+    """Test seam: a fresh kernel life for the once-per-pair warning."""
+    _POSTAL_UNRESOLVED["seen"].clear()
+    _POSTAL_UNRESOLVED["warned"] = 0
+    _POSTAL_UNRESOLVED["suppressed"] = 0
+
+
 def _hydrate_postal(events, index, sid=None):
     """Replace postal traffic with clean cards: a send_message tool (or `romp mail send` Bash) → an
     OUTGOING card; a user event (or a MAIL READER's output — see _reads_mail) carrying romp-msg-id
@@ -17923,9 +17943,22 @@ def _hydrate_postal(events, index, sid=None):
                 ev["mids"] = _mids                       # every id, so any arc into this turn can match
                 # Fail LOUDLY (CLAUDE.md): a logged id that will not resolve is a real inconsistency
                 # between the message log and this session's view of it, and it used to pass in silence.
-                sys.stderr.write("postal hydrate: %d of %d message id(s) unresolved on %s (%s)\n"
-                                 % (len(ids) - len(cards), len(ids), ev.get("uuid") or "?",
-                                    ",".join(m for m in _mids if m not in {c["mid"] for c in cards})))
+                # ...but ONCE per (session, id) per kernel life (T234) - the same pairs recur on every
+                # build; a repeat is a count, a NEW pair is news.
+                _unres = [m for m in _mids if m not in {c["mid"] for c in cards}]
+                _skey = sid or ev.get("uuid") or "?"
+                _new = [m for m in _unres if (_skey, m) not in _POSTAL_UNRESOLVED["seen"]]
+                if _new:
+                    if len(_POSTAL_UNRESOLVED["seen"]) >= _POSTAL_UNRESOLVED_CAP:
+                        _POSTAL_UNRESOLVED["seen"].clear()           # bounded: wrap, re-warn once
+                    _POSTAL_UNRESOLVED["seen"].update((_skey, m) for m in _new)
+                    _POSTAL_UNRESOLVED["warned"] += 1
+                    sys.stderr.write("postal hydrate: %d of %d message id(s) unresolved on %s (%s) - said "
+                                     "once per id; repeats are counted on /version postalUnresolved\n"
+                                     % (len(ids) - len(cards), len(ids), ev.get("uuid") or "?",
+                                        ",".join(_unres)))
+                else:
+                    _POSTAL_UNRESOLVED["suppressed"] += 1
         out.append(ev)
     return out
 
