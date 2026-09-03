@@ -360,7 +360,8 @@ class ReadyHandshake(unittest.TestCase):
     could land on a page with nobody listening and be lost — and the later `ready` push then sent nothing,
     because the dedup believed the client had it (9 of 25 headless loads sat on the loader until the next
     board change). The ready handler serves the cached frame at once, with no build; the shim re-sends
-    `ready` on every reconnect."""
+    `ready` on a reconnect once the bundle has sent its own (before that, the bundle's own lifts the hold),
+    and a `ready` on a client that is already ready is a re-base: the frame is served again."""
 
     def test_a_held_socket_hears_nothing_from_the_pusher_until_ready_then_the_cached_frame_at_once(self):
         f = _feed(n=40)
@@ -467,7 +468,7 @@ class ReadyHandshake(unittest.TestCase):
     def test_the_ready_handler_emits_no_tab_order_of_its_own(self):
         # The connect push's tabOrder goes through the _tab_list_tmux collapse guard; the handler used to
         # send a SECOND one from a raw _tmux_sessions() read — an omitted id is an authoritative teardown
-        # on the client (tabs, drafts) — and the shim now re-sends `ready` on every reconnect.
+        # on the client (tabs, drafts) — and the shim now re-sends `ready` on a reconnect.
         h = self._handler()
         c, sent = _client(caps=(), app="chat")
         h._dispatch_ws({"type": "ready"}, c)
@@ -478,6 +479,42 @@ class ReadyHandshake(unittest.TestCase):
         self.assertNotIn('"tabOrder"', handler)
         self.assertNotIn("_ordered_alive(", handler)
         self.assertIn('served = client.get("app") in ("feed", "fleet") and _send_feed_now(client)', handler)
+
+    def test_a_second_ready_on_a_ready_client_re_serves_the_frame(self):
+        # A `ready` on a client that is ALREADY ready is a re-base request, needFullFeed's twin. The 2026-09-03
+        # review: a redial that completed before the bundle had loaded said `ready` for it, the frame went to a
+        # page with no listener, and the bundle's own `ready` was then deduped against it (same signature, under
+        # 60 s) — blank pane until the board changed. The shim no longer re-sends before the bundle's own; the
+        # kernel no longer trusts the dedup slot across a second `ready` either.
+        f = _feed()
+        saved, ms, parts = _warm(f)
+        try:
+            h = self._handler()
+            c, sent = _client(caps=("feedDelta", "readyGate"))
+            c["ready"] = False                                    # held at accept
+            t0 = time.time()
+            h._dispatch_ws({"type": "ready"}, c)
+            self.assertEqual(len(sent), 1)
+            _served_fresh(self, sent[0], f, t0)
+            t1 = time.time()
+            h._dispatch_ws({"type": "ready"}, c)
+            self.assertEqual(len(sent), 2, "the second `ready` re-serves the frame instead of deduping it")
+            _served_fresh(self, sent[1], f, t1)
+            self.assertIs(c["efeed"], parts, "…and the delta stream re-bases on what was served")
+            self.assertEqual(h.pushed, [], "a served feed client skips the connect push both times")
+            # a client that never announced the hold carries no `ready` flag at accept: its first `ready` is
+            # the ordinary handshake, not a re-base (nothing to forget), and it is served once
+            c2, sent2 = _client(caps=())
+            self.assertNotIn("ready", c2)
+            h._dispatch_ws({"type": "ready"}, c2)
+            self.assertEqual(len(sent2), 1)
+            self.assertIs(c2["ready"], True)
+            i = KSRC.index('if msg and msg.get("type") == "ready":')
+            handler = KSRC[i:KSRC.index("_consume_pending_reveal(client)", i)]
+            self.assertLess(handler.index('if client.get("ready") is True:'), handler.index('client["ready"] = True'),
+                            "the re-base is decided from the flag BEFORE the handler sets it")
+        finally:
+            _restore(saved)
 
     def test_the_ws_handler_pushes_nothing_at_accept_and_parses_caps(self):
         i = KSRC.index("    def _ws(self):")

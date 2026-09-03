@@ -8,8 +8,11 @@
 // by nothing else — no timer (every scenario runs the pending timers afterwards and asserts nothing
 // fired, and asserts no timer is armed on open); the first non-keepalive frame retires it; a keepalive
 // never reaches the bundle. Also run here: the close breadcrumbs (one `wsclose` per socket that OPENED;
-// the redials an outage refused coalesced into one `wsconnfail` row on the next open) and the cap on
-// queued breadcrumbs. Synthetic only (TESTHOST, no session data).
+// the redials an outage refused coalesced into one `wsconnfail` row on the next open), the cap on
+// queued breadcrumbs, and the reconnect's `ready` re-send — only once the BUNDLE has sent its own (the
+// 2026-09-03 review: a redial that completed before feed.js had loaded said `ready` for it, the kernel
+// served the frame to a page with no listener, and the bundle's own `ready` was then deduped against it).
+// Synthetic only (TESTHOST, no session data).
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -80,9 +83,12 @@ class Harness {
   fresh() { return this.posted.filter((m) => m.romp === "wsFresh").length; }
   diags(what: string) { return this.sent.filter((m) => m.type === "clientDiag" && m.what === what); }
   kaReachedBundle() { return this.toBundle.some((m) => m && m.type === "ka"); }
-  /** connect, deliver the first frame, then drop the socket and let the redial run: a RECONNECTED socket */
+  readys() { return this.sent.filter((m) => m.type === "ready").length; }
+  /** the bundle has loaded and installed its listener: its own connect handshake goes through the shim's send() */
+  bundleReady() { this.win.__rompLocalSend({ type: "ready" }); }
+  /** connect, the bundle loads, deliver the first frame, then drop the socket and let the redial run: a RECONNECTED socket */
   reconnected(): any {
-    this.ws.open(); this.ws.msg({ type: "feed", asks: [] });
+    this.ws.open(); this.bundleReady(); this.ws.msg({ type: "feed", asks: [] });
     this.ws.close(); this.runTimers();
     assert.equal(this.sockets.length, 2, "the close redialed");
     this.ws.open();
@@ -102,8 +108,37 @@ test("the socket announces the page's capability and a reconnect re-sends the co
   const h = FEED();
   assert.match(h.ws.url, /\/ws\?app=feed.*&caps=feedDelta/);
   h.reconnected();
-  assert.deepEqual(h.sent.filter((m) => m.type === "ready"), [{ type: "ready" }], "ready rides the reconnect, once");
+  assert.equal(h.readys(), 2, "the bundle's own at load, and one re-sent on the reconnect");
+  assert.deepEqual(h.sent.slice(-1), [{ type: "ready" }], "the re-send is the reconnect's last word");
   assert.equal(new Harness(shimJs("chat", "")).ws.url.includes("caps="), false, "a page with no caps announces nothing");
+  h.settles(0);
+});
+
+test("a reconnect BEFORE the bundle's ready sends none — the bundle's own lifts the hold — and a reconnect after it re-sends", () => {
+  const h = FEED();
+  h.ws.open();                                     // the socket opens before feed.js has run…
+  h.ws.close(); h.runTimers(); h.ws.open();        // …drops mid-load, and the redial opens, still before feed.js
+  assert.equal(h.readys(), 0, "nothing says `ready` for a bundle that has not loaded: the kernel keeps holding");
+  assert.equal(h.sockets.length, 2);
+  h.bundleReady();                                 // feed.js installs its listener and sends its handshake
+  assert.equal(h.readys(), 1, "the bundle's own handshake, once");
+  h.ws.msg({ type: "feed", asks: [] });            // served on it
+  h.ws.close(); h.runTimers(); h.ws.open();        // a later drop
+  assert.equal(h.readys(), 2, "…and from then on a reconnect re-sends it");
+  assert.deepEqual(h.sent.slice(-1), [{ type: "ready" }]);
+  h.settles(0);
+});
+
+test("a bundle `ready` queued while the socket was down rides the flush alone — the reconnect adds no second", () => {
+  const h = FEED();
+  h.ws.open(); h.ws.close();                       // opened, then dropped before the bundle had loaded
+  h.bundleReady();                                 // the bundle finishes loading during the outage: its handshake queues
+  assert.equal(h.readys(), 0, "queued: the socket is down");
+  h.runTimers(); h.ws.open();
+  assert.equal(h.readys(), 1, "the queued handshake goes up, and the reconnect does not add another");
+  h.ws.msg({ type: "feed", asks: [] });            // served on it: the resync this reconnect's arm was waiting for
+  h.ws.close(); h.runTimers(); h.ws.open();
+  assert.equal(h.readys(), 2, "a reconnect with nothing queued re-sends as usual");
   h.settles(0);
 });
 
@@ -207,7 +242,7 @@ test("every close of a socket that OPENED leaves a wsclose breadcrumb with the c
 
 test("the redials an outage refuses leave ONE coalesced row on the next open, never a wsclose each", () => {
   const h = FEED();
-  h.ws.open(); h.ws.msg({ type: "feed", asks: [] });
+  h.ws.open(); h.bundleReady(); h.ws.msg({ type: "feed", asks: [] });
   h.now += 1_000;
   h.ws.close();                                    // the real drop: this socket had opened
   const t0 = h.now;

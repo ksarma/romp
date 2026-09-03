@@ -45,8 +45,14 @@ class DisconnectBanner(unittest.TestCase):
         self.assertIn('if(!ann)armStale(pendingWhy||"reconnect");', js)
         self.assertIn('try{window.dispatchEvent(new Event("romp:wsup"));}catch(e){}}', js)
         # …and re-sends the bundle's connect handshake, so the kernel's connect push resyncs this socket
-        # at once instead of on the pusher's next cycle (2026-09-02)
-        self.assertIn('send({type:"ready"});', js)
+        # at once instead of on the pusher's next cycle (2026-09-02) — ONLY once the bundle has sent its own
+        # and the flush did not just carry it (the 2026-09-03 review: a redial that completed before the
+        # bundle had loaded said `ready` for it, and the frame went to a page with no listener); sent raw so
+        # the shim's re-send never counts as the bundle's (pane-shim-stale.test.ts runs both rules)
+        self.assertIn('if(bundleReady&&!flushedReady)ws.send(JSON.stringify({type:"ready"}));', js)
+        self.assertIn('if(m&&m.type==="ready")bundleReady=true;', js)
+        self.assertIn('if(m&&m.type==="ready")readyQueued=true;', js)
+        self.assertNotIn('send({type:"ready"});', js, "the unconditional re-send is gone")
         self.assertNotIn("if(everConnected){location.reload();return;}", js,
                          "the silent auto-reload-on-reconnect is replaced by a reload PROMPT")
         self.assertNotIn("ws.onclose=function(){setTimeout(function(){location.reload();},1500);};", js,

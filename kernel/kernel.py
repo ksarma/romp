@@ -30373,6 +30373,7 @@ def _shim(app, v=0, caps=""):
     # gets the full frames it always did, from accept.
     return """
 (function(){var queue=[],ws=null,everConnected=false;
+var bundleReady=false,readyQueued=false;   // the BUNDLE's own {type:"ready"} has passed through send() on this page / is waiting in `queue` for an open — the reconnect re-send below keys on both
 var queuedDiag=0,DIAG_QUEUE_MAX=20;   // clientDiag rows waiting in `queue` for a reconnect, capped (an outage must not pile up breadcrumbs); other queued messages are untouched
 var failedConnects=0,firstFailT=0;   // handshakes that never OPENED since the last open: reported as ONE wsconnfail row on the next open, never one wsclose per redial
 // This pane's DASHBOARD id. ?wid= when the host supplies one (the VS Code extension builds its own pane
@@ -30468,15 +30469,21 @@ ws=new WebSocket(proto+location.host+"/ws?app=%s"+(wid?"&wid="+encodeURIComponen
 // socket dropped (the pane's romp loader) needs the socket's RETURN as its event to come back down. The
 // first connect deliberately doesn't fire it — nothing is waiting on it, and the loader must stay up until
 // real content lands.
-ws.onopen=function(){lastRecv=Date.now();openT=lastRecv;openSock=this;netState("up");var wasReconn=everConnected;everConnected=true;for(var i=0;i<queue.length;i++)ws.send(queue[i]);queue=[];queuedDiag=0;
+ws.onopen=function(){lastRecv=Date.now();openT=lastRecv;openSock=this;netState("up");var wasReconn=everConnected;everConnected=true;for(var i=0;i<queue.length;i++)ws.send(queue[i]);queue=[];queuedDiag=0;var flushedReady=readyQueued;readyQueued=false;
 if(failedConnects){send({type:"clientDiag",surface:"pane-shim",what:"wsconnfail",data:{app:APP,attempts:failedConnects,firstFailMs:Date.now()-firstFailT}});failedConnects=0;firstFailT=0;}   // the redials that never opened since the last open, as ONE row: how many, and how long ago the first failed
 if(wasReconn){var ann=restartAnnounced&&Date.now()-restartAnnounced<30000;restartAnnounced=0;   // one-shot: spent here
 if(!ann)armStale(pendingWhy||"reconnect");   // T217: an ANNOUNCED restart's reconnect skips the arm — the resync lands in a beat and the flash was pure noise; a restart that never comes back stays loud through the disconnected state itself, and a SECOND reconnect arms as always
 pendingWhy="";freshPending=true;
-// a reconnect re-sends the bundle's connect handshake: the kernel's connect push (its "ready" handler)
-// serves every pane its full state from cache, so the resync lands NOW rather than on the pusher's next
-// cycle — the bundle sent "ready" once at load, and nothing re-sent it for a new socket (2026-09-02)
-send({type:"ready"});
+// a reconnect re-sends the bundle's connect handshake — the kernel's `ready` handler serves every pane its
+// state from cache, so the resync lands NOW rather than on the pusher's next cycle; the bundle sent "ready"
+// once at load and nothing re-sent it for a new socket (2026-09-02). ONLY once the bundle has sent its own,
+// and not when the flush above just carried it: a redial that completes before the bundle's listener exists
+// must send nothing, or the kernel lifts its hold and serves the frame to a page with nobody listening, the
+// bundle's own `ready` is then deduped against it, and the pane sits blank until the board next changes (the
+// 2026-09-03 review: 3/3 headless loads with the first socket dropped mid-load). Before the bundle's first
+// `ready`, its own — queued here or sent later — lifts the hold. Sent raw, not through send(): the re-send
+// is the shim's, and must not count as the bundle's.
+if(bundleReady&&!flushedReady)ws.send(JSON.stringify({type:"ready"}));
 try{window.dispatchEvent(new Event("romp:wsup"));}catch(e){}}};
 ws.onmessage=function(ev){lastRecv=Date.now();var msg;try{msg=JSON.parse(ev.data);}catch(e){return;}
 if(msg&&msg.type==="ka"){if(LOADEDV&&msg.dv&&msg.dv>LOADEDV)raiseBuild();
@@ -30509,7 +30516,9 @@ if(stalePending&&openSock===this){var cw=stalePending;stalePending="";raiseStale
 try{window.dispatchEvent(new Event("romp:wsdown"));}catch(e){}
 setTimeout(connect,(restartAnnounced&&Date.now()-restartAnnounced<30000)?250:1500);};   // announced death → tight redial (the frame is the event; the blind 1.5s stays for unannounced drops)
 ws.onerror=function(){try{ws.close();}catch(e){}};}
-function send(m){var s=JSON.stringify(m);if(ws&&ws.readyState===1){ws.send(s);return;}
+function send(m){var s=JSON.stringify(m);if(m&&m.type==="ready")bundleReady=true;   // the bundle's listener is installed: from here a reconnect may re-send its handshake (onopen)
+if(ws&&ws.readyState===1){ws.send(s);return;}
+if(m&&m.type==="ready")readyQueued=true;   // …and this one waits for the open, so that open must not add a second
 if(m&&m.type==="clientDiag"){if(queuedDiag>=DIAG_QUEUE_MAX)return;queuedDiag++;}   // breadcrumbs waiting for a reconnect are capped; everything else queues as before
 queue.push(s);}
 window.__rompLocalSend=send;window.__rompApp=APP;   // federation.ts (the multi-kernel manager) routes local sends + knows the app through these
@@ -35805,12 +35814,21 @@ class Handler(BaseHTTPRequestHandler):
             _mark_views_dirty()
             return
         if msg and msg.get("type") == "ready":
-            # The bundle is listening (it sends `ready` at load, and the shim re-sends it on every
-            # reconnect). Lift the hold FIRST — a held client (READY_GATE_CAP) has received nothing from
-            # the push paths until now — then a feed/Outline client is served the CACHED feed frame at
-            # once, with no build (_send_feed_now — the frame the delta stream then bases on, stamped with
-            # the time it is served). Measured 2026-09-02: a reconnecting feed pane waited 7-24 s for its
-            # first frame from the pusher's next cycle.
+            # The bundle is listening (it sends `ready` at load, and the shim re-sends it on a reconnect
+            # once the bundle has sent its own). Lift the hold FIRST — a held client (READY_GATE_CAP) has
+            # received nothing from the push paths until now — then a feed/Outline client is served the
+            # CACHED feed frame at once, with no build (_send_feed_now — the frame the delta stream then
+            # bases on, stamped with the time it is served). Measured 2026-09-02: a reconnecting feed pane
+            # waited 7-24 s for its first frame from the pusher's next cycle.
+            # A `ready` on a client that is ALREADY ready is a re-base request, needFullFeed's twin: forget
+            # the frame we believe it holds and the dedup slot, so the frame is served again rather than
+            # deduped against one this page may never have rendered (the 2026-09-03 review: a redial that
+            # completed before the bundle had loaded said `ready` for it, the frame went to a page with no
+            # listener, and the bundle's own `ready` then got nothing — blank pane until the board changed).
+            # Exactly one `ready` arrives per socket in normal operation, so the healthy path is unchanged.
+            if client.get("ready") is True:
+                client.pop("efeed", None)
+                client.get("sent", {}).pop(("feed",), None)
             client["ready"] = True
             served = client.get("app") in ("feed", "fleet") and _send_feed_now(client)
             # The connect push serves the pusher-warmed caches for everything else. A feed client that was
@@ -35822,7 +35840,7 @@ class Handler(BaseHTTPRequestHandler):
             # guard). This handler used to send a SECOND tabOrder built from a raw _tmux_sessions() read,
             # bypassing that guard — and the client treats an omitted id as an authoritative teardown
             # (tabs, drafts). Harmless while `ready` came once per page load; the shim now re-sends it on
-            # every reconnect (the 2026-09-03 review).
+            # a reconnect (the 2026-09-03 review).
             # a push tap parked a reveal for this window's chat pane → deliver it now, AFTER the
             # ready push, so the tab it names already exists on the client (ordered socket)
             _consume_pending_reveal(client)
@@ -36541,8 +36559,11 @@ class Handler(BaseHTTPRequestHandler):
         # the pane on its loader until the next board change (the 2026-09-03 review reproduced it in real
         # browsers; removing only the accept-time push left the pusher's 0.5 s cycle to lose the frame the
         # same way). The ready handler serves the cached feed frame at once (_send_feed_now); the shim
-        # re-sends `ready` on every reconnect, so a reconnected socket — a new client dict, held again —
-        # resyncs the moment it can render. Keepalives still flow to a held client: the shim consumes them.
+        # re-sends `ready` on a reconnect once the bundle has sent its own, so a reconnected socket — a new
+        # client dict, held again — resyncs the moment it can render, and a redial that completes BEFORE
+        # the bundle has loaded sends nothing: the bundle's own `ready` lifts the hold (a re-send there
+        # served the frame to a page with no listener — the 2026-09-03 review). Keepalives still flow to a
+        # held client: the shim consumes them.
         try:
             while client["alive"]:
                 # one COMPLETE message per iteration — fragments reassembled, pings answered inline

@@ -2,8 +2,8 @@
 WHOLE strip as placeholders up front (no one-by-one pop-in). The one emit site — the periodic/connect _push,
 through the _tab_list_tmux collapse guard — sends a `tabs` list of {id, name, color} alongside the sid `order`.
 The WS 'ready' handler used to send a second tabOrder from a raw liveness read; it is gone (2026-09-03: the
-shim re-sends `ready` on every reconnect, and an omitted id is an authoritative teardown on the client), so a
-fresh chat client's strip comes from the connect push's guarded frame.
+shim re-sends `ready` on a reconnect once the bundle has sent its own, and an omitted id is an authoritative
+teardown on the client), so a fresh chat client's strip comes from the connect push's guarded frame.
 """
 import inspect
 import os
