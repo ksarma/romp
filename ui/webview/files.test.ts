@@ -30,13 +30,55 @@ test("the pane hosts the shared viewer and takes the shell's relay WHOLE: its ow
   assert.match(SRC, /initFileBrowse\(\(m\) => vscodeApi\?\.postMessage\(m\)\);/, "the browser opens here too");
   assert.match(VIEW, /onRelay\?: \(m: \{ path: string; sid\?: unknown; identity\?: unknown \}\) => void\): void \{/);
   const relayBranch = VIEW.split('if (m.romp === "viewFile"')[1].split("} else if")[0];
-  assert.ok(relayBranch.indexOf("if (onRelay) { onRelay(m); return; }") < relayBranch.indexOf("viaRelay = true;"),
+  const guard = "if (onRelay) { onRelay(m); return; }";
+  // presence first: indexOf's -1 for an ABSENT guard is less than any index, so the ordering check alone
+  // stayed green with the dispatch deleted (the 2026-09-03 review)
+  assert.ok(relayBranch.indexOf(guard) >= 0, "the dispatch guard is present");
+  assert.ok(relayBranch.indexOf("viaRelay = true;") >= 0, "the feed's arm is present");
+  assert.ok(relayBranch.indexOf(guard) < relayBranch.indexOf("viaRelay = true;"),
     "a document's own contract takes the message before the feed's arms run");
   const code = SRC.replace(/^\s*\/\/.*$/gm, "");   // the header names the feed's contract to say the pane has none; the code must not touch it
   assert.doesNotMatch(code, /viaRelay|viewFileOpened|viewFileClosed|__rompFeedWasOff/, "none of the feed route's restore machinery");
   // not a feed consumer: no frame parsing of any kind
   assert.doesNotMatch(SRC, /m\.type === "feed"|feedDelta|userTodoRows|ledgers|\.asks\b|needFullFeed/);
   assert.match(SRC, /vscodeApi\?\.postMessage\(\{ type: "ready" \}\)/, "the ready handshake lifts the shim's hold");
+});
+
+// executed: the relay branch of initFileView's listener, EXTRACTED from file-view.ts (plain JS inside the
+// TS listener, so it runs as written) with the feed's arms — openFileView, viaRelay, the shell ack — stubbed.
+// With onRelay the message is taken whole and the function RETURNS before any of them; without it the feed
+// route runs exactly as before. Deleting the guard turns the first case into the second.
+test("the relay guard, executed: onRelay takes the message and short-circuits the feed's arms; no onRelay, the feed route", () => {
+  const branch = VIEW.split('if (m.romp === "viewFile"')[1].split("} else if")[0];
+  const body = 'var viaRelay = false; (function () { if (m.romp === "viewFile"' + branch + "} })(); return viaRelay;";
+  const fn = new Function("m", "onRelay", "openFileView", "window", body) as
+    (m: unknown, onRelay: ((m: unknown) => void) | undefined, open: (p: string, sid: string | null) => boolean, w: unknown) => boolean;
+  const run = (m: unknown, onRelay: ((m: unknown) => void) | undefined, verdict = true) => {
+    const opened: Array<[string, string | null]> = [], posted: unknown[] = [];
+    const win = { parent: { postMessage: (x: unknown) => posted.push(x) } };   // embedded: parent !== window
+    const viaRelay = fn(m, onRelay, (p, sid) => { opened.push([p, sid]); return verdict; }, win);
+    return { opened, posted, viaRelay };
+  };
+  const identity = { name: "web", color: { bg: "#123456", fg: "#ffffff" } };
+  const msg = { romp: "viewFile", path: "/repo/notes-api/src/app.py", sid: SID, identity };
+  const taken: unknown[] = [];
+  const pane = run(msg, (m) => taken.push(m));
+  assert.deepEqual(taken, [msg], "the pane's contract gets the message WHOLE — identity included");
+  assert.deepEqual(pane.opened, [], "the feed's open never runs");
+  assert.equal(pane.viaRelay, false, "…nor its relay flag");
+  assert.deepEqual(pane.posted, [], "…nor its viewFileOpened ack");
+  const feed = run(msg, undefined);
+  assert.deepEqual(feed.opened, [["/repo/notes-api/src/app.py", SID]], "no contract of its own: the feed route opens");
+  assert.equal(feed.viaRelay, true);
+  assert.deepEqual(feed.posted, [{ romp: "viewFileOpened" }], "and acks the shell so it arms its pane restore");
+  const veto = run(msg, undefined, false);
+  assert.equal(veto.viaRelay, false, "a dirty-edit veto opens nothing and earns no ack");
+  assert.deepEqual(veto.posted, []);
+  const junk: unknown[] = [];
+  run({ romp: "viewFile", path: "" }, (m) => junk.push(m));
+  run({ romp: "viewFile", path: 42 }, (m) => junk.push(m));
+  run({ type: "fileSaved", reqId: 1 }, (m) => junk.push(m));
+  assert.deepEqual(junk, [], "the outer guard still filters: no path, no relay");
 });
 
 test("the session chip resolves from what the relay carried, cached per sid, else the kernel's stub", () => {
