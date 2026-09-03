@@ -46,14 +46,17 @@ class _OneShotInbox:
         self._srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self._srv.bind(self.path)
         self._srv.listen(1)
+        self._srv.settimeout(5.0)                      # can-never-trap backstop: a never-connected inbox's
+        #                                                accept() returns instead of parking the thread
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
     def _run(self):
         try:
             conn, _ = self._srv.accept()
-        except OSError:
+        except OSError:                                # includes the timeout (socket.timeout is an OSError)
             return
+        conn.settimeout(5.0)
         buf = b""
         while True:
             chunk = conn.recv(4096)
@@ -68,10 +71,17 @@ class _OneShotInbox:
         return self.got
 
     def close(self):
+        # shutdown BEFORE close wakes a parked accept() (a bare close leaves it blocked until the
+        # listener's timeout), then join so no capture thread outlives its test (T230b hygiene)
+        try:
+            self._srv.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
         try:
             self._srv.close()
         except OSError:
             pass
+        self._thread.join(timeout=1.0)
 
 
 class SocketRegistry(unittest.TestCase):
