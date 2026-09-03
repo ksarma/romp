@@ -11384,6 +11384,40 @@ def _free_port():
         s.close()
 
 
+def _fresh_ports(n, avoid, host, attempts=32):
+    """`n` DISTINCT free ports, none of them in `avoid` — the enforced version of "the next dial is not
+    the same doomed argv" (T230a). A bare _free_port() per slot only made that LIKELY: Linux bind(0)
+    draws from ~14k ephemeral ports, so the collided number came back verbatim about 1 draw in 14,000
+    (CI run 33696143887: the reminted rk_port equalled the one that failed to bind) and the supervisor
+    re-dialed the identical argv with its backoff thrown away. `attempts` is a DRAW COUNT, never a
+    clock: an OS allocator spreads bind(0) across ~14k ephemeral ports (a released port recurred once
+    in ~60k draws when measured), so 32 draws exhaust only when the allocator keeps returning avoided
+    or duplicate ports — a degenerate one, or a stubbed one — and never because time passed. Do not
+    add a sleep here. Exhausting it (or an OSError from the allocator) logs ports-remint-failed for
+    `host` and raises RuntimeError; the caller leaves its old ports in place."""
+    avoid = set(avoid)
+    drew, out = [], []
+    for _ in range(attempts):
+        try:
+            p = _free_port()
+        except OSError as e:
+            # EMFILE / EADDRNOTAVAIL: the allocator itself failed. Same contract as exhaustion —
+            # a dial-log record and ONE exception class for the caller's failure arm (review find:
+            # a bare OSError escaped that arm, aborted the rest of the supervisor pass, and left
+            # no trace of the failed remint)
+            _tunnel_log(host, "ports-remint-failed", avoid=sorted(avoid), drew=drew, error=str(e))
+            raise RuntimeError("could not draw fresh ports for %s: %s" % (host, e)) from e
+        drew.append(p)
+        if p in avoid or p in out:
+            continue
+        out.append(p)
+        if len(out) == n:
+            return out
+    _tunnel_log(host, "ports-remint-failed", avoid=sorted(avoid), drew=drew, attempts=attempts)
+    raise RuntimeError("could not draw %d fresh ports for %s in %d attempts (avoiding %s)"
+                       % (n, host, attempts, sorted(avoid)))
+
+
 def _port_open(port):
     import socket
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -12210,12 +12244,28 @@ def _remint_forward_ports(r):
     """Give this row fresh local/reverse forward ports after a bind failure, so the next dial is not the
     same doomed argv (the user 2026-07-29). The ports were minted ONCE by _free_port and then persisted,
     so a collision — a corpse of ours, another kernel, or an unrelated process that grabbed the number out
-    of the ephemeral range — wedged every future dial identically and forever. Caller holds _remotes_lock."""
+    of the ephemeral range — wedged every future dial identically and forever. Caller holds _remotes_lock.
+
+    ENFORCED, not probable (T230a): no new port equals ANY old one — the whole old set, not just the
+    same slot (rk/rb are -R listeners bound on the hub, so the collided number is as likely as any other
+    to come back in a different slot), plus every other attached row's persisted ports. The old set
+    deliberately keeps STALE rk/rb on a row whose sharing was turned off (checkin_set never pops them):
+    a harmless over-constraint — do not trim it. The new ports are mutually distinct (two -L forwards on
+    one port are a doomed argv too; per remint about 1 in 2,400 — 6/14,116 — that two of four bare draws
+    coincide). The draw bound is a loop count, reachable only with a degenerate allocator. All ports are
+    drawn BEFORE the row is touched: a RuntimeError from _fresh_ports leaves the old ports in place."""
     old = {k: r.get(k) for k in ("local_port", "bus_port", "rk_port", "rb_port") if r.get(k)}
-    r["local_port"] = _free_port()
-    r["bus_port"] = _free_port()
+    # every OTHER attached row's persisted ports join the avoid set: a peer waiting out its backoff
+    # has its -L port UNBOUND, so a bare draw could hand it to this row and doom the peer's next dial
+    # (review find; the caller holds _remotes_lock, so the walk is consistent)
+    taken = set(old.values())
+    for other in _remotes.values():
+        if other is not r:
+            taken |= {other.get(k) for k in ("local_port", "bus_port", "rk_port", "rb_port") if other.get(k)}
+    fresh = _fresh_ports(4 if r.get("checkin") else 2, taken, r["host"])
+    r["local_port"], r["bus_port"] = fresh[0], fresh[1]
     if r.get("checkin"):
-        r["rk_port"], r["rb_port"] = _free_port(), _free_port()
+        r["rk_port"], r["rb_port"] = fresh[2], fresh[3]
         r.pop("_handshook", None)        # the hub must be re-told the new ports
     r["_peer_notified"] = None           # bus_port moved: the local bus is holding a stale endpoint
     new = {k: r.get(k) for k in ("local_port", "bus_port", "rk_port", "rb_port") if r.get(k)}
@@ -14386,11 +14436,24 @@ def _tunnel_supervisor():
                                         fails=r.get("fails", 0))
                             probe_ssh = err      # the ssh probe runs below, OUTSIDE this lock
                             if _forward_bind_failed(err):
-                                r["detail"] = ("a forwarded port was already taken, so the tunnel could "
-                                               "not open — romp is retrying on fresh ports")
-                                _remint_forward_ports(r)
-                                r["fails"], r["next_try"] = 0, 0   # a NEW argv deserves a fresh ladder
                                 probe_ssh = None                   # cause already known; don't ask twice
+                                try:
+                                    _remint_forward_ports(r)
+                                except RuntimeError:
+                                    # the ports could not be moved (a degenerate allocator, or the
+                                    # allocator erred — see _fresh_ports): say so, mark the row, and
+                                    # keep the backoff ladder — the next dial IS the same argv, so it
+                                    # must not be hammered; CONTAINED here so one row's failure never
+                                    # aborts the pass tail for every other row (T230a review)
+                                    r["status"] = "error"
+                                    r["detail"] = ("a forwarded port was already taken and "
+                                                   "fresh ports could not be found — the same ports retry "
+                                                   "under backoff; see tunnel-dials.jsonl")
+                                else:
+                                    # the detail claims fresh ports only once the row HOLDS them
+                                    r["detail"] = ("a forwarded port was already taken, so the tunnel could "
+                                                   "not open — romp is retrying on fresh ports")
+                                    r["fails"], r["next_try"] = 0, 0   # a NEW argv deserves a fresh ladder
                         # BACK OFF re-spawns (exponential — see _tunnel_backoff) so an unreachable host
                         # isn't hammered every tick: repeated ssh attempts can trip the remote sshd's
                         # rate-limit (the user 2026-06-30). It never stops dialing (the user 2026-07-29);
