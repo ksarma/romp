@@ -216,9 +216,9 @@ class Shell(unittest.TestCase):
         self.html = km._landing()
 
     def test_the_pane_is_in_the_one_ordering_last(self):
-        self.assertEqual(km._PANE_ORDER[-1], ("waiting", "Waiting on you"))
-        self.assertIn("<div class=rail-btn data-pane=waiting>Waiting on you</div>", self.html)
-        self.assertIn("<button data-pane=waiting>Waiting on you</button>", self.html)
+        self.assertEqual(km._PANE_ORDER[-1], ("waiting", "Waiting"))
+        self.assertIn("<div class=rail-btn data-pane=waiting>Waiting</div>", self.html)
+        self.assertIn("<button data-pane=waiting>Waiting</button>", self.html)
 
     def test_the_column_sits_after_feed_with_its_gutter_and_grow_var(self):
         self.assertIn('<div class=gv id=gv-c></div><div class=pane id=waiting-pane><iframe id=f-waiting src=/waiting></iframe></div>',
@@ -235,13 +235,13 @@ class Shell(unittest.TestCase):
         self.assertIn("po={chat:true,fleet:false,feed:true,timeline:true,waiting:false}", self.html)
         self.assertIn("po={chat:false,fleet:false,feed:false,timeline:false,waiting:false}", self.html)   # the ?panes= reset
         self.assertIn("document.body.classList.toggle('po-waiting',!!po.waiting)", self.html)
-        self.assertIn("waiting:'Waiting on you pane'", self.html)   # the rail tooltip's words
+        self.assertIn("waiting:'Waiting pane'", self.html)   # the rail tooltip's words
 
     def test_every_pane_list_in_the_landing_js_names_it(self):
         self.assertIn("'f-waiting':'waiting-pane'", km._LANDING_FOCUS_JS)
         self.assertIn("var COLS=['f-chat','f-fleet','f-feed','f-waiting']", km._LANDING_FOCUS_JS)
         self.assertIn("['f-chat','f-fleet','f-feed','f-waiting','f-timeline'].forEach", self.html)   # Esc wiring
-        self.assertIn("waiting:'Waiting on you'", km._LANDING_ERRS_JS)   # the Log's connection-lost label
+        self.assertIn("waiting:'Waiting'", km._LANDING_ERRS_JS)   # the Log's connection-lost label
         self.assertIn("waiting:document.getElementById('f-waiting')", km._LANDING_MOBILE_JS)
         self.assertIn("var PANES=['chat-pane','fleet-pane','feed-pane','waiting-pane'];", self.html)
         self.assertIn("grow={chat:60,fleet:34,feed:40,waiting:34}", self.html)
@@ -252,7 +252,7 @@ class Shell(unittest.TestCase):
         self.assertIn("#chat-pane,#fleet-pane,#feed-pane,#waiting-pane,#tl-pane{display:contents!important}", self.html)
         self.assertIn("#f-chat.m-on,#f-fleet.m-on,#f-feed.m-on,#f-waiting.m-on{display:block}", self.html)
         pal = (Path(BIN).parent / "ui" / "webview" / "palette-main.ts").read_text()
-        self.assertIn('["waiting", "waiting", "Waiting on you"]', pal)
+        self.assertIn('["waiting", "waiting", "Waiting"]', pal)
         self.assertIn('"f-waiting"', pal)
 
 

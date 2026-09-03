@@ -45,13 +45,14 @@ let pendingDead: string[] = [];
 // the kernel's clock and when its frame landed (feed-age.ts): every age is the kernel's, never the browser's
 let hostNow = Math.floor(Date.now() / 1000), hostNowAt = Date.now();
 const openDetail = new Set<string>();   // detail folds open, keyed sid|todo id — survives every re-render
+const armedDismiss = new Set<string>(); // Dismiss buttons showing "Really dismiss?", same key — also survives
+//   a re-render (the review's 2026-09-03 finding: the board rebuilds on ANY session's feed push, so the
+//   arm state cannot live only on the DOM node the way render.ts's chat card can, or a push landing in the
+//   arm window silently reverts the confirm to a re-arm)
 
 function el(tag: string, cls?: string): HTMLElement { const e = document.createElement(tag); if (cls) e.className = cls; return e; }
 function nowSec(): number { return liveNow(hostNow, hostNowAt, Date.now()); }
 function foldKey(sid: string, tid: string): string { return sid + "|" + tid; }
-function isCoarsePointer(): boolean {
-  try { return window.matchMedia("(pointer:coarse)").matches; } catch { return false; }
-}
 // the feed's own age words: sub-minute reads "<1m ago" (a counting label is churn without information)
 function relAge(sec: number): string {
   const s = Math.max(0, sec);
@@ -195,13 +196,12 @@ function rowEl(w: Waiting, now: number): HTMLElement {
   reply.title = "answer this — your reply goes straight to the session";
   const dis = el("button", "ut-btn ut-dismiss");
   dis.dataset.act = "utdismiss"; dis.dataset.tid = w.todo.id; dis.dataset.sid = w.sid;
-  dis.textContent = "Dismiss";
+  dis.dataset.key = key;
+  // armed state comes from the set, not this fresh node, so a feed push mid-arm keeps "Really dismiss?"
+  const armed = armedDismiss.has(key);
+  if (armed) dis.classList.add("armed");
+  dis.textContent = armed ? "Really dismiss?" : "Dismiss";
   dis.title = "clear this without a reply (for moot or stale asks)";
-  // arm-state disarm on pointer-out — FINE POINTERS ONLY: on a coarse pointer the pointer "leaves" the
-  // instant the finger lifts, which would disarm between the arming tap and the confirming one; there
-  // the arm holds until a tap anywhere ELSE cancels it (wired at arm time in the utdismiss handler)
-  if (!isCoarsePointer())
-    dis.addEventListener("pointerleave", () => { dis.classList.remove("armed"); dis.textContent = "Dismiss"; });
   line.append(sess, txt, age, reply, dis);
   item.appendChild(line);
   if (hint) {
@@ -334,31 +334,26 @@ onExternalSettingsChange((s) => { applyTheme(document, s); render(); });
     // Dismiss arms then confirms in place (render.ts's utdismiss, lifted): clearing an ask the agent
     // still waits on deserves a second click, but is light enough to skip a modal.
     utdismiss: (x) => {
-      const tid = x.dataset.tid, sid = x.dataset.sid;
-      if (!tid || !sid) return;
-      if (!x.classList.contains("armed")) {
-        x.classList.add("armed"); x.textContent = "Really dismiss?";
-        // coarse pointers have no hover, so the pointerleave disarm never wires there: hold the arm
-        // until the next tap anywhere ELSE cancels it (pointerdown, so the arming tap cannot self-cancel;
-        // a press ON the button keeps the listener — it is the confirming tap or a scroll)
-        if (isCoarsePointer()) {
-          const disarm = (ev: Event) => {
-            if (ev.target === x) return;
-            document.removeEventListener("pointerdown", disarm, true);
-            (x as any)._utDisarm = undefined;
-            x.classList.remove("armed"); x.textContent = "Dismiss";
-          };
-          (x as any)._utDisarm = disarm;
-          document.addEventListener("pointerdown", disarm, true);
-        }
+      const tid = x.dataset.tid, sid = x.dataset.sid, key = x.dataset.key;
+      if (!tid || !sid || !key) return;
+      if (!armedDismiss.has(key)) {           // first tap: ARM (state in the set, so a re-render keeps it)
+        armedDismiss.add(key); render();
         return;
       }
-      const stale = (x as any)._utDisarm;
-      if (stale) { document.removeEventListener("pointerdown", stale, true); (x as any)._utDisarm = undefined; }
+      armedDismiss.delete(key);               // second tap: confirm
       vscodeApi?.postMessage({ type: "userTodoDismiss", id: sid, todoId: tid });
       dropTodo(sid, tid);
     },
   });
+  // A tap anywhere that is NOT an armed Dismiss button disarms — one persistent listener, so it survives
+  // every re-render (a per-node listener would die with the rebuilt row). Covers both pointer kinds: the
+  // arming tap is on the button (target is the armed .ut-dismiss), so it never self-cancels.
+  document.addEventListener("pointerdown", (ev) => {
+    if (!armedDismiss.size) return;
+    const t = ev.target as HTMLElement | null;
+    if (t && t.closest(".ut-dismiss.armed")) return;
+    armedDismiss.clear(); render();
+  }, true);
 })();
 
 // keep every "Xm ago" honest between frames: a quiet board sends a delta client nothing, so the ages

@@ -31555,7 +31555,7 @@ if(m&&m.romp==='notify'&&m.text)window.__rompNotify(m.kind||'error',m.text,
 var st={};
 function shown(k){return document.body.classList.contains('po-'+k);}
 function liveDown(){for(var k in st){if(st[k]==='down'&&shown(k))return true;}return false;}
-var PN={chat:'Chat',feed:'Feed',timeline:'Sessions',fleet:'Outline',waiting:'Waiting on you'};   // timeline key stays internal; the pane outgrew the name (filter, tags, lane controls — the user 2026-08-24)
+var PN={chat:'Chat',feed:'Feed',timeline:'Sessions',fleet:'Outline',waiting:'Waiting'};   // timeline key stays internal; the pane outgrew the name (filter, tags, lane controls — the user 2026-08-24)
 window.addEventListener('message',function(e){var m=e&&e.data;if(!m||m.romp!=='wsState')return;
 var s=(m.state==='up')?'up':'down',prev=st[m.app];st[m.app]=s;
 if(s==='down'&&prev!=='down'&&shown(m.app))
@@ -32988,7 +32988,7 @@ _LANDING_COLLAPSE_JS = """
   var qp=new URLSearchParams(location.search).get('panes');
   if(qp!==null){po={chat:false,fleet:false,feed:false,timeline:false,waiting:false};qp.split(',').forEach(function(k){k=k.trim();if(k in po)po[k]=true;});}
   function saveP(){try{localStorage.setItem(PK,JSON.stringify(po));}catch(e){}}
-  var LBL={chat:'chat',fleet:'fleet',feed:'feed',timeline:'timeline',waiting:'Waiting on you pane'};
+  var LBL={chat:'chat',fleet:'fleet',feed:'feed',timeline:'timeline',waiting:'Waiting pane'};
   function apply(){
     document.body.classList.toggle('po-chat',!!po.chat);
     document.body.classList.toggle('po-fleet',!!po.fleet);
@@ -33247,7 +33247,7 @@ _REFRESH_SVG = (
 # is a band, not a column). BOTH the desktop rail buttons and the mobile #mtabs buttons render
 # from this one constant — reorder here and both surfaces move together; a second hardcoded list
 # is the bug this replaces. Keys stay internal (timeline/fleet); labels are the user-facing names.
-_PANE_ORDER = (("chat", "Chat"), ("timeline", "Sessions"), ("fleet", "Outline"), ("feed", "Feed"), ("waiting", "Waiting on you"))
+_PANE_ORDER = (("chat", "Chat"), ("timeline", "Sessions"), ("fleet", "Outline"), ("feed", "Feed"), ("waiting", "Waiting"))
 
 
 def _rail_buttons_html():

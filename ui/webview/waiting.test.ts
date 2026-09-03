@@ -75,12 +75,22 @@ test("one row per todo, OLDEST first; the age is the kernel's clock on the recen
   assert.match(SRC, /function foldKey\(sid: string, tid: string\): string \{ return sid \+ "\|" \+ tid; \}/);
 });
 
-test("click-safe: delegated on the stable #waiting-list; Dismiss arms then confirms; coarse-pointer disarm", () => {
+test("click-safe: delegated on the stable #waiting-list; Dismiss arm survives a re-render; a tap elsewhere disarms", () => {
   assert.match(SRC, /const list = document\.getElementById\("waiting-list"\);\s*\n\s*if \(!list\) return;\s*\n\s*delegate\(list, \{/);
   for (const act of ["open", "gear", "uttoggle", "utreply", "utdismiss"]) assert.match(SRC, new RegExp("\\n    " + act + ": "), act);
-  assert.match(SRC, /x\.classList\.add\("armed"\); x\.textContent = "Really dismiss\?";/);
-  assert.match(SRC, /document\.addEventListener\("pointerdown", disarm, true\);/);
-  assert.match(SRC, /if \(!isCoarsePointer\(\)\)\s*\n\s*dis\.addEventListener\("pointerleave"/);
+  // the armed state lives in a Set keyed like openDetail, NOT on the DOM node, so a feed push that rebuilds
+  // the list mid-arm keeps "Really dismiss?" (the 2026-09-03 review: the board re-renders on ANY session's
+  // push, so a node-only arm reverted the confirm to a re-arm). rowEl paints the button from the Set.
+  assert.match(SRC, /const armedDismiss = new Set<string>\(\);/);
+  assert.match(SRC, /const armed = armedDismiss\.has\(key\);\s*\n\s*if \(armed\) dis\.classList\.add\("armed"\);/);
+  assert.match(SRC, /dis\.textContent = armed \? "Really dismiss\?" : "Dismiss";/);
+  // first tap ARMS via the Set + re-render; second tap confirms; both branches key on the Set, not the node
+  assert.match(SRC, /if \(!armedDismiss\.has\(key\)\) \{/);
+  assert.match(SRC, /armedDismiss\.add\(key\); render\(\);/);
+  assert.match(SRC, /armedDismiss\.delete\(key\);/);
+  assert.match(SRC, /vscodeApi\?\.postMessage\(\{ type: "userTodoDismiss"/);
+  // one persistent document listener disarms on a tap that is not on an armed button — survives re-renders
+  assert.match(SRC, /if \(t && t\.closest\("\.ut-dismiss\.armed"\)\) return;\s*\n\s*armedDismiss\.clear\(\); render\(\);/);
   // a row the user acted on leaves the STATE, not just the DOM, so a re-render before the next frame agrees
   assert.match(SRC, /function dropTodo\(sid: string, tid: string\): void \{/);
   assert.equal((SRC.match(/dropTodo\(sid, (todoId|tid)\)/g) || []).length, 2, "after Reply and after Dismiss");

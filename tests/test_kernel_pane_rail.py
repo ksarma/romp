@@ -38,7 +38,7 @@ class PaneRailTest(unittest.TestCase):
         # controls); the data-pane key stays 'timeline', the fleet/Outline precedent
         self.assertIn("<div class=rail-btn data-pane=timeline>Sessions</div>", self.html)
         # "Waiting on you" (2026-09-03): the cross-session open-user-todos pane, last in the rail
-        self.assertIn("<div class=rail-btn data-pane=waiting>Waiting on you</div>", self.html)
+        self.assertIn("<div class=rail-btn data-pane=waiting>Waiting</div>", self.html)
         # Chat before Timeline before Outline(fleet) before Feed before Waiting on you in the rail (fixed user-chosen order)
         idxs = [self.html.index("data-pane=" + k) for k in ("chat", "timeline", "fleet", "feed", "waiting")]
         self.assertEqual(idxs, sorted(idxs), "rail order must be Chat, Timeline, Outline, Feed, Waiting on you")

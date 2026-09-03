@@ -137,7 +137,7 @@ installMenuEcho();
   // Pane toggles. The Outline pane's INTERNAL key stays 'fleet' (the pane controller's API);
   // the command speaks the user-facing name. [key, command slug, title words]
   const panes: Array<[string, string, string]> = [["chat", "chat", "chat"], ["timeline", "timeline", "timeline"],
-    ["fleet", "outline", "outline"], ["feed", "feed", "feed"], ["waiting", "waiting", "Waiting on you"]];
+    ["fleet", "outline", "outline"], ["feed", "feed", "feed"], ["waiting", "waiting", "Waiting"]];
   for (const [key, label, words] of panes) {
     registerCommand({
       id: "pane." + label, title: "Show or hide the " + words + " pane",
