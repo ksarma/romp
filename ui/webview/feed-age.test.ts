@@ -81,6 +81,11 @@ test("feed.ts reads the clock only through nowSec(), stamps every age-bearing el
   assert.match(FEED, /stampAge\(ageEl, it\.t, "plain", true, nowSec\(\), relAge, ageTint\);/);
   assert.match(FEED, /stampAge\(ageEl, grp\.t, "plain", true, nowSec\(\), relAge, ageTint\);/);
   assert.match(FEED, /stampAge\(when, rt, "plain", false, nowSec\(\), relAge, ageTint\);/);
+  // …and the collapsed history gist's "· Xm ago": one text with the age baked in froze at render time while
+  // the sub-goal row above it kept counting (the 2026-09-03 review)
+  assert.match(FEED, /gist\.textContent = \(opened \? "▾ " : "▸ "\) \+ logPhrase\(last\) \+ " · ";\n/);
+  assert.match(FEED, /stampAge\(gistAge, logRowT\(last\), "plain", false, nowSec\(\), relAge, ageTint\);/);
+  assert.doesNotMatch(FEED, /logPhrase\(last\) \+ " · " \+ relAge\(/, "the gist's age is no longer built into a text the tick cannot reach");
   // the wash is recomputed from the live clock at render…
   assert.match(FEED, /card\.style\.background = cardTint\(nowSec\(\) - it\.t\);/);
   assert.match(FEED, /card\.style\.background = cardTint\(nowSec\(\) - g\.t\);/);

@@ -3021,7 +3021,12 @@ function renderTreeNode(box: HTMLElement, it: AskItem, node: AskTreeNode, byId: 
     const opened = nodeLogOpen.has(nodeKey);
     const gist = el("div", "ftree-log-gist" + (opened ? " open" : ""));
     gist.style.paddingLeft = ((depth + 1) * TREE_INDENT_EM) + "em";
-    gist.textContent = (opened ? "▾ " : "▸ ") + logPhrase(last) + " · " + relAge(nowSec() - logRowT(last));
+    gist.textContent = (opened ? "▾ " : "▸ ") + logPhrase(last) + " · ";
+    // the age is its own stamped span, so the 15 s tick moves it with every other age on the board (built
+    // into the one text it froze at render time while the row above it kept counting — the 2026-09-03 review)
+    const gistAge = el("span", "ftree-log-gist-age");
+    stampAge(gistAge, logRowT(last), "plain", false, nowSec(), relAge, ageTint);
+    gist.appendChild(gistAge);
     gist.title = opened ? "collapse this item's history" : "expand this item's history";
     gist.onclick = (ev) => { ev.stopPropagation(); if (opened) nodeLogOpen.delete(nodeKey); else nodeLogOpen.add(nodeKey); render(); };
     box.appendChild(gist);
