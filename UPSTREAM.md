@@ -97,6 +97,8 @@ it independently) · **declined** · **keep-private**.
 | Upstream bats suites collide on FIXED ports on shared CI runners (`Address already in use` — the red check the maintainer reran past on his #897 merge); the fork already moved one such port (the romp-manager-ensure.bats hunk in fork commit `2b9c5e48`, deliberately left out of the busy-drain offer) | fork commit `2b9c5e48` (partial: one file); a general free-port helper is not yet built | candidate | Flake class, not a logic bug: bats files bind fixed ports, and two suites (or two runners on one box) collide. Offer shape: a shared free-port helper in the bats support lib + migrate the fixed binds; the fork’s single-port move is the precedent. Test-only. |
 
 
+| To-do card false alarm: `_fold_tasks` folded a BACKGROUND-AGENT `TaskCreate` (the Task tool's `{agent_hint, prompt}` shape, no `subject`, result is an agent id not "Task #N") into the checklist as a phantom pending task, so a session that only launched background agents tripped the card's "can't read the task store" error whenever the store was unresolvable | branch `todofix`: `kernel/kernel.py` (`_fold_tasks` guard), `tests/test_kernel.py` | candidate | Upstream ships the same `_fold_tasks` and the same error card, so the same false alarm. One guard: a create with no `subject` and a `prompt`/`agent_hint` is a background task, not a to-do — it does not fold. Repro: personality-1's overnight pipeline (the user 2026-09-03). ~3 lines + a test; ports as-is. |
+
 When offering: work from a branch cut off the upstream default, carrying only that change —
 never a fork branch with fork-only commits tangled in.
 

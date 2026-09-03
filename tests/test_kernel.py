@@ -387,6 +387,45 @@ class ViewBuilder(unittest.TestCase):
             (km._read_task_store, km._fold_tasks) = saved
         self.assertNotIn("todo", kinds, "authoritative-empty store → no card (the fold does not override it)")
 
+    def test_fold_ignores_background_agent_taskcreate(self):
+        # A background-agent TaskCreate (the Task tool's {agent_hint, prompt} shape, no subject; its
+        # result is an agent id, not "Task #N") is NOT a to-do checklist item. Folding it as a pending
+        # task gave personality-1's overnight-pipeline session a phantom open task, which tripped the
+        # card's "can't read the task store" error whenever the store was unresolvable (the user
+        # 2026-09-03). Only a checklist create (a `subject`) folds.
+        def _tu(name, inp, rid=None):
+            return {"type": "tool_use", "id": rid or name, "name": name, "input": inp}
+        def _tr(rid, text):
+            return {"type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": rid, "content": text}]}}
+        def _asst(*blocks):
+            return {"type": "assistant", "message": {"content": list(blocks)}}
+        # a session that ONLY launched background agents → no checklist at all
+        bg = {"turns": [{"atoms": [
+            _asst(_tu("TaskCreate", {"agent_hint": "overnight pipeline", "prompt": "run the thing"}, "a1")),
+            _tr("a1", "Started background task b00hae0h5"),
+            _asst(_tu("TaskStop", {"taskId": "b00hae0h5"})),
+        ]}]}
+        self.assertIsNone(km._fold_tasks(bg), "background-agent tasks are not a to-do checklist")
+        # a mixed session keeps the real checklist item and drops the background one
+        mixed = {"turns": [{"atoms": [
+            _asst(_tu("TaskCreate", {"subject": "vet the pairs"}, "c1")),
+            _tr("c1", "Task #1 created"),
+            _asst(_tu("TaskCreate", {"agent_hint": "bg", "prompt": "go"}, "c2")),
+            _tr("c2", "Started background task deadbeef"),
+        ]}]}
+        folded = km._fold_tasks(mixed)
+        self.assertEqual([t["subject"] for t in folded], ["vet the pairs"], "only the checklist create folds")
+        # and the card raises NO error for a background-only session with an unresolvable store
+        saved = (km._read_task_store, jd.parsed_session)
+        km._read_task_store = lambda fsid, fold=None: None            # store unresolvable, as in the repro
+        jd.parsed_session = lambda sid, paths, now: bg
+        try:
+            kinds = [e["kind"] for e in km.build_session(SID, NOW)["events"]]
+        finally:
+            (km._read_task_store, jd.parsed_session) = saved
+        self.assertNotIn("todo", kinds, "background-only session → no phantom to-do card, no error")
+
     def test_fully_completed_store_drops_the_todo_card(self):
         # a done list is not a live to-do (the user 2026-06-10). At `track`'s screenshot time the store was
         # already all-completed, so the store-based card is correctly ABSENT — not a stale "3/5".
