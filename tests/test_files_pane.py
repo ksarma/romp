@@ -106,6 +106,20 @@ class Plumbing(unittest.TestCase):
         for app in ("chat", "feed", "fleet", "waiting", "timeline"):
             self.assertNotIn("noStale", km._shim(app, 1, caps=km.FEED_DELTA_CAP + "," + km.READY_GATE_CAP).split("var NOSTALE")[0])
 
+    def test_the_editor_chunk_derives_from_the_pages_own_bundle_tag(self):
+        # file-view.ts loads its CodeMirror chunk from a URL rewritten off the page's running bundle
+        # <script src>. The Files page's bundle must be one that derivation recognizes, or every Edit in the
+        # pane rejects with the raw "no bundle script tag" error and falls to the textarea (the 2026-09-03
+        # review). The pattern is lifted from the source and run against the tags this page emits.
+        view = (UI / "file-view.ts").read_text()
+        m = re.search(r"\.find\(\(u\) => /(.+?)/\.test\(u\)\)", view)
+        self.assertIsNotNone(m, "the derivation's find literal is where the pin expects it")
+        pat = re.compile(m.group(1))
+        srcs = re.findall(r"<script src=([^ >]+)", km._files_page())
+        self.assertTrue(srcs)
+        hits = [s for s in srcs if pat.search("http://TESTHOST:1" + s)]   # the browser's absolute .src
+        self.assertEqual(hits, [s for s in srcs if s.startswith("/dist/files.js?v=")], "the bundle, and only the bundle")
+
     def test_the_pane_resident_variant_lives_only_in_the_pane_sheet(self):
         # the modal variant is mirrored byte-equal in styles.css and feed.css (fileview-parity.test.ts);
         # the pane's override must not enter either, or the mirrors drift

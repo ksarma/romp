@@ -607,18 +607,20 @@ export function openFileView(path: string, sid?: string | null): boolean {
   // The editing substrate is CodeMirror 6 (the user 2026-08-22), living in its OWN lazily-loaded
   // bundle so people who never edit download nothing (the main bundles import none of it — the
   // contract is the window global the chunk registers). The URL derives from the page's own running
-  // bundle script — same directory, same ?v= cache token — so it resolves on the kernel pages and
-  // the VS Code webview alike, and a rebuilt kernel always serves a matching chunk. A failed load
-  // rejects ONCE and clears the latch so a later attempt retries fresh.
+  // bundle script — render.js (chat), feed.js (feed) or files.js (the Files pane; 2026-09-03, when a
+  // pattern naming only the first two sent every Edit there to the textarea with a raw error) — same
+  // directory, same ?v= cache token — so it resolves on the kernel pages and the VS Code webview
+  // alike, and a rebuilt kernel always serves a matching chunk. A failed load rejects ONCE and clears
+  // the latch so a later attempt retries fresh.
   let edChunk: Promise<{ mount: (host: HTMLElement, opts: object) => { value(): string; focus(): void; destroy(): void } }> | null = null;
   const editorChunk = () => edChunk || (edChunk = new Promise((res, rej) => {
     const w = window as any;
     if (w.__rompEditor) return res(w.__rompEditor);
     const self = Array.from(document.querySelectorAll("script[src]"))
-      .map((n) => (n as HTMLScriptElement).src).find((u) => /\/(render|feed)\.js/.test(u));
+      .map((n) => (n as HTMLScriptElement).src).find((u) => /\/(render|feed|files)\.js/.test(u));
     if (!self) return rej(new Error("no bundle script tag to derive the editor chunk URL from"));
     const sc = document.createElement("script");
-    sc.src = self.replace(/\/(render|feed)\.js/, "/editor-chunk.js");
+    sc.src = self.replace(/\/(render|feed|files)\.js/, "/editor-chunk.js");
     sc.onload = () => { const e = (window as any).__rompEditor; e ? res(e) : rej(new Error("editor chunk loaded but did not register")); };
     sc.onerror = () => { edChunk = null; rej(new Error("the editor bundle failed to load")); };
     document.head.appendChild(sc);
