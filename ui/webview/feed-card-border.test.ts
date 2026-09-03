@@ -30,11 +30,13 @@ test("setCardChannels writes --card-r/g/b and clears the inline border-color (CS
 });
 
 test("a real AskItem card sets its channels from the session colour, recency tint as fallback", () => {
-  assert.match(FEED, /setCardChannels\(card, \(it\.color && hexToRgb\(it\.color\.bg\)\) \|\| \[r, g, b\]\);/);
+  // the fallback is the card's age on the shared ramp, from the live clock — the kernel's `trgb` is not read
+  // (a dangling `[r, g, b]` here after the trgb read left survived esbuild and threw on a colourless card, 2026-09-03)
+  assert.match(FEED, /setCardChannels\(card, \(it\.color && hexToRgb\(it\.color\.bg\)\) \|\| ageRgb\(nowSec\(\) - it\.t\)\);/);
 });
 
 test("an AskGroup (multi-session) card sets its channels from the group session colour, recency tint as fallback", () => {
-  assert.match(FEED, /setCardChannels\(card, \(g\.color && hexToRgb\(g\.color\.bg\)\) \|\| \[r, gg, b\]\);/);
+  assert.match(FEED, /setCardChannels\(card, \(g\.color && hexToRgb\(g\.color\.bg\)\) \|\| ageRgb\(nowSec\(\) - g\.t\)\);/);
 });
 
 test("the border colour is CSS-driven from the channels: 0.5α at rest", () => {

@@ -1,6 +1,9 @@
 """TABS-FIRST (the user 2026-06-26): the tabOrder push carries name+color per tab so the client can paint the
-WHOLE strip as placeholders up front (no one-by-one pop-in). Both emit sites — the periodic/connect _push and
-the WS 'ready' handler — send a `tabs` list of {id, name, color} alongside the sid `order`.
+WHOLE strip as placeholders up front (no one-by-one pop-in). The one emit site — the periodic/connect _push,
+through the _tab_list_tmux collapse guard — sends a `tabs` list of {id, name, color} alongside the sid `order`.
+The WS 'ready' handler used to send a second tabOrder from a raw liveness read; it is gone (2026-09-03: the
+shim re-sends `ready` on a reconnect once the bundle has sent its own, and an omitted id is an authoritative
+teardown on the client), so a fresh chat client's strip comes from the connect push's guarded frame.
 """
 import inspect
 import os
@@ -28,11 +31,15 @@ class TabsFirst(unittest.TestCase):
         self.assertIn('{"type": "tabOrder", "order": tab_order, "tabs": tab_meta, "views": _views_client()}', src,
                       "and ships it as the tabs field alongside the sid order")
 
-    def test_connect_ready_handler_also_sends_tabs(self):
+    def test_connect_ready_handler_sends_no_tab_order_of_its_own(self):
+        # the connect push (_push_one → _push, guarded) is the ONLY tabOrder source; the handler's own,
+        # unguarded frame is gone (tests/test_feed_delta.py ReadyHandshake runs the handler)
         text = open(KPATH).read()
-        self.assertIn('{"type": "tabOrder", "order": _o, "tabs": _tabs, "views": _views_client()}', text,
-                      "the WS 'ready' connect push also carries name+color tabs")
-        self.assertIn('_tabs = [{"id": s["sid"], "name": s.get("name", ""), "color": _name_color(s["sid"])}', text)
+        self.assertNotIn('{"type": "tabOrder", "order": _o, "tabs": _tabs, "views": _views_client()}', text)
+        i = text.index('if msg and msg.get("type") == "ready":')
+        handler = text[i:text.index("_consume_pending_reveal(client)", i)]   # the handler's body, up to the parked-reveal step
+        self.assertNotIn('"tabOrder"', handler, "no frame of that type from the handler itself (the comment may name it)")
+        self.assertIn("self._push_one(client)", handler, "the guarded push still runs on `ready`")
 
     def test_name_color_shape_matches_the_client_color_type(self):
         # _name_color returns {bg,fg} or None — exactly the render.ts Color the placeholder applies.

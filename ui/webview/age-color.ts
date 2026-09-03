@@ -2,7 +2,9 @@
 // (extracted 2026-07-27 from fleet.ts, which had copied it verbatim from render.ts; the feed's
 // age-provenance popover made a third copy imminent, so the copy became a module). render.ts still
 // carries its own twin, entangled with its live `settings` object — KEEP THE TWO IN SYNC, and both
-// in sync with bin/romp_colormap.py (the kernel computes trgb tints from the same stops).
+// in sync with kernel/colormap.py — the kernel used to compute a per-card `trgb` tint from the same stops
+// and ship it in every feed frame; since 2026-09-02 the feed computes it here (ageRgb) from the card's
+// `t`, because a colour that ticks with the clock re-sent the whole board on every colour step.
 export const COLORMAPS: Record<string, Array<[number, number, number]>> = {
   aurora: [[84, 178, 4], [0, 180, 115], [35, 175, 156], [66, 169, 176], [25, 168, 201], [14, 164, 227], [74, 155, 241], [113, 145, 244], [144, 136, 240]],   // romp green→teal→blue→purple at CONSTANT lightness — the default
   hawaii: [[140, 2, 115], [146, 46, 85], [151, 78, 62], [155, 111, 40], [156, 150, 28], [137, 189, 74], [107, 212, 142], [103, 233, 213], [179, 242, 253]],
@@ -54,6 +56,11 @@ function hslToRgb(h: number, s: number, l: number): [number, number, number] {
     return p;
   };
   return [Math.round(hk(h + 1 / 3) * 255), Math.round(hk(h) * 255), Math.round(hk(h - 1 / 3) * 255)];
+}
+/** The recency ramp colour for an age, as [r,g,b] — kernel/colormap.py's age_rgb, byte-for-byte the
+ *  stops and the log scale, on the viewer's selected colormap. The feed's card wash and age tints. */
+export function ageRgb(ageSecs: number): [number, number, number] {
+  return ramp(recencyV(ageSecs));
 }
 export function ageColorReadable(ageSecs: number): string {
   const v = recencyV(ageSecs);

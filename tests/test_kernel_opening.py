@@ -173,6 +173,18 @@ class PushSessionNow(_Base):
         km._push_session_now(SID)
         self.assertNotIn(SID, km._prev_chat_events)
 
+    def test_a_held_chat_pane_receives_nothing_until_its_bundle_says_ready(self):
+        # a page that announced the ready gate and whose bundle has not said `ready` yet (READY_GATE_CAP;
+        # the 2026-09-03 review found this gate unpinned): the strip and the payload would land on a page
+        # with no listener, and the dedup slots they wrote would then swallow the connect push's copies —
+        # so the targeted push skips it, exactly as the pusher's cycle does
+        self.client["ready"] = False
+        km._push_session_now(SID)
+        self.assertEqual(self.sent, [], "nothing to a page whose bundle is not listening")
+        self.client["ready"] = True
+        km._push_session_now(SID)
+        self.assertEqual([m["type"] for m in self.sent], ["tabOrder", "session"], "…and the same push lands once it is")
+
 
 if __name__ == "__main__":
     unittest.main()

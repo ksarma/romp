@@ -37,7 +37,7 @@ test("BOTTOM bar = age + Follow up + Check status + Continue + Clear in one row,
 
 test("the root goal reads larger; node times are parenthesized and pulled in (fit-content)", () => {
   assert.match(FEED, /\(depth === 0 \? " ftree-root" : ""\)/);
-  assert.match(FEED, /"\(" \+ relAge\(hostNow - node\.last\) \+ "\)"/);
+  assert.match(FEED, /stampAge\(meta, node\.last, "paren", true, nowSec\(\), relAge, ageTint\);/);   // "paren" = "(Xm ago)"
   assert.match(CSS, /\.ftree-node\.ftree-root \.ftree-text \{[^}]*font-size/);
   assert.match(CSS, /\.ftree \{[^}]*width: fit-content/);
 });
@@ -54,8 +54,10 @@ test("on a phone the tree row wraps so the reply text keeps a full line, not a 1
 });
 
 test("the age is recency-tinted in both modal variants (ask / group)", () => {
-  assert.match(FEED, /ageEl\.style\.color = "rgb\(" \+ it\.trgb\.join\(","\) \+ "\)"/);
-  assert.match(FEED, /ageEl\.style\.color = "rgb\(" \+ grp\.trgb\.join\(","\) \+ "\)"/);
+  // computed from the card's age on the shared ramp, on the live clock, since 2026-09-02 — never read
+  // from the wire (a stamped, tinted age: feed-age.ts)
+  assert.match(FEED, /stampAge\(ageEl, it\.t, "plain", true, nowSec\(\), relAge, ageTint\);/);
+  assert.match(FEED, /stampAge\(ageEl, grp\.t, "plain", true, nowSec\(\), relAge, ageTint\);/);
 });
 
 test("modal marks: not-yet-done is a hollow RING the size of the ✓ disc; derived done is the OUTLINED ✓", () => {

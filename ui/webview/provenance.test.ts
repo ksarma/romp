@@ -104,10 +104,10 @@ test("a group's story is the fold: earliest member start, the member count, the 
 });
 
 test("the feed wires the popover beside every age write — card, group card, both modal headers", () => {
-  assert.match(FEED, /wireAgeTip\(a\._time, \(\) => provenanceRows\(it, hostNow, PROV_FMT\)\);/);
-  assert.match(FEED, /wireAgeTip\(a\._time, \(\) => provenanceGroupRows\(g\.members\.map\(rootStart\), g\.t, hostNow, PROV_FMT\)\);/);
-  assert.match(FEED, /wireAgeTip\(ageEl, \(\) => provenanceRows\(it, hostNow, PROV_FMT\)\);/);
-  assert.match(FEED, /wireAgeTip\(ageEl, \(\) => provenanceGroupRows\(grp\.members\.map\(rootStart\), grp\.t, hostNow, PROV_FMT\)\);/);
+  assert.match(FEED, /wireAgeTip\(a\._time, \(\) => provenanceRows\(it, nowSec\(\), PROV_FMT\)\);/);
+  assert.match(FEED, /wireAgeTip\(a\._time, \(\) => provenanceGroupRows\(g\.members\.map\(rootStart\), g\.t, nowSec\(\), PROV_FMT\)\);/);
+  assert.match(FEED, /wireAgeTip\(ageEl, \(\) => provenanceRows\(it, nowSec\(\), PROV_FMT\)\);/);
+  assert.match(FEED, /wireAgeTip\(ageEl, \(\) => provenanceGroupRows\(grp\.members\.map\(rootStart\), grp\.t, nowSec\(\), PROV_FMT\)\);/);
   // …with the same vocabulary the card itself renders in
   assert.match(FEED, /const PROV_FMT: ProvFmt = \{ rel: relAge, clock: clockHM, phrase: logPhrase \};/);
 });
@@ -116,8 +116,8 @@ test("every timed line wears its own recency colour — time AND text, the chat 
   // the user 2026-07-27: colour the timestamps and their items the way the chat tab hover does. The
   // feed tints the whole row (and the when cell explicitly, beating its dim class) from the SHARED
   // age-color ramp; the un-timed remainder row keeps the panel's dim default (t: 0 guards it).
-  assert.match(FEED, /import \{ ageColorReadable \} from "\.\/age-color";/);
-  assert.match(FEED, /if \(r\.t > 0\) \{ const c = ageColorReadable\(hostNow - r\.t\); row\.style\.color = c; w\.style\.color = c; \}/);
+  assert.match(FEED, /import \{ ageColorReadable, ageRgb \} from "\.\/age-color";/);
+  assert.match(FEED, /if \(r\.t > 0\) \{ const c = ageColorReadable\(nowSec\(\) - r\.t\); row\.style\.color = c; w\.style\.color = c; \}/);
 });
 
 test("the popover is aligned, styled in the feed's own vocabulary, and can never eat a click", () => {

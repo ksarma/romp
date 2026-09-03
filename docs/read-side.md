@@ -54,6 +54,66 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   **same served UI** over the **same protocol**, so the two front ends stay
   consistent by construction. Keeping the WS protocol stable is the compatibility
   contract.
+- **The feed is pushed as one full frame, then as deltas.** A pane's socket
+  receives nothing until the pane's bundle says it is listening. Every
+  kernel-served pane page announces `readyGate` on its socket, because the pane
+  shim opens the socket before the bundle has loaded and has no inbound buffer;
+  the kernel then holds every push to that socket (pusher cycles, broadcasts, a
+  reveal) until the bundle sends `ready`. A socket that does not announce
+  (federation's remote relays, the VS Code extension's pipes, an older page) is
+  served from accept, as it always was. Keepalives and the restart notice reach
+  every socket, held or not: the shim consumes both itself. On `ready`, a feed
+  socket receives the cached `{type:"feed"}` frame at once, with no build, and the
+  frame's `now` is rewritten to the time of the serve. The rewrite matters because
+  the pusher builds only while a client is connected: after a night with no
+  dashboard open, the cached build's clock is a night old, and the pane would
+  anchor every age and tint on it. The pane anchors its live clock on that `now`
+  paired with the moment the frame arrived from the wire (federation stamps the
+  merged frame with `nowAt`), never on the moment a frame is handed to it: the
+  merged frame is re-emitted on a view-order write, on a remote host's frame and
+  on a detach, and an anchor taken then moved every age back by the quiet period.
+  The shim re-sends `ready` on a reconnect once the bundle has sent its own, so a
+  reconnecting pane resyncs at once rather than on the pusher's next cycle; a
+  redial that completes before the bundle has loaded sends nothing, and the
+  bundle's own `ready` lifts the hold. A `ready` on a socket that is already
+  ready is a re-base: the frame is served again rather than deduped.
+  The kernel dedups per client. A client
+  that announces `?caps=feedDelta` on its socket (the kernel-served feed page does)
+  then receives `{type:"feedDelta"}` frames: changed cards by `itemId`, removed
+  ids, the same for ledgers by `sid`, and the small top-level fields whole under
+  `top` when any changed — and an unchanged board sends such a client nothing at
+  all. Every other consumer — the Outline pane, the VS Code extension's pipes,
+  federation's remote sockets, an older bundle — stays on the full-frame path,
+  which keeps its 60 s repost of the unchanged frame. `federation.ts` applies a
+  delta onto the last full frame it holds for the host and re-emits a merged full
+  frame, so every consumer still sees whole `feed` frames; a delta it cannot
+  apply gets a `needFullFeed` and a re-base. A build that carries no `ledgers`
+  says nothing about ledgers: the client keeps the ones it holds, and so does the
+  kernel's record of them. Card age colours are computed client-side from `t` on
+  a live clock (`age-color.ts`, `feed-age.ts`: the payload's `now` plus the local
+  time since it landed, so a quiet board's ages and tints keep moving), never
+  read from the wire. Full frames still carry the per-card `trgb` for older
+  bundles that destructure it; deltas omit it, and the kernel's dedup signature
+  ignores it, so a colour step is never a change (it used to re-send the whole
+  board on every step: 5.76 MB a push on a board of about 660 cards, measured
+  2026-09-02).
+- **Liveness is a keepalive, and staleness is event-keyed.** The kernel sends a
+  `ka` frame to every socket every 10 s; the pane shim force-closes a socket that
+  has gone 30 s without any frame. After a reconnect the shim raises the "what you
+  see may be stale" prompt only on the SECOND `ka` arriving before the resync
+  frame — one full heartbeat period, bracketed by two kernel heartbeats on that
+  socket with no resync between them (a single `ka` can be a beat that was already
+  queued when the socket was accepted) — or on the reconnected socket closing
+  again before its resync; the first non-keepalive frame retires the prompt. A
+  client that falls 16 MB behind is dropped by the kernel, loudly: one `ws drop:`
+  line in the kernel log, logged where the drop is decided so every send path is
+  covered and naming the push slot whose frame tipped the budget when a push did,
+  and a row in the dashboard's bell (at most five drop rows, none older
+  than an hour, so they never crowd out a backend problem). Every close of a socket
+  that opened leaves a `wsclose` breadcrumb (code, reason, socket age) in
+  `client-diag.jsonl`; the redials an outage refuses are counted and reported as
+  one `wsconnfail` row on the next open, and at most 20 breadcrumbs wait in the
+  shim's queue for it.
 - **Both judge tiers run continuously for any live session — no connection gate.**
   The kernel runs the index tier (captioner + archiver) AND the triage tier
   (planner → closer → courier → grouper → consolidator → distiller) in parallel,

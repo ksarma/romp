@@ -172,7 +172,7 @@ class ShimSeam(unittest.TestCase):
     def test_the_announced_reconnect_skips_the_stale_arm_once(self):
         self.assertIn("var ann=restartAnnounced&&Date.now()-restartAnnounced<30000;restartAnnounced=0;",
                       self.js, "the latch is one-shot: spent at the reconnect that consumes it")
-        self.assertIn('if(!ann)armStale("reconnect");', self.js)
+        self.assertIn('if(!ann)armStale(pendingWhy||"reconnect");', self.js)
         self.assertIn("freshPending=true;", self.js,
                       "…and the resync bookkeeping still runs, so the retire path is intact")
 
@@ -180,7 +180,7 @@ class ShimSeam(unittest.TestCase):
         # a restart that comes back SILENT re-raises through the keepalive watchdog's forced close →
         # second reconnect → latch already spent → armStale as always; and one that never comes back
         # stays loud through the disconnected state itself
-        self.assertIn('armStale("foreground")', self.js, "the foreground fast-path still arms")
+        self.assertIn('pendingWhy="foreground"', self.js, "the foreground fast-path still arms (through its reconnect)")
         self.assertIn("staleDiag(\"watchdog-close\",\"quiet\")", self.js, "the quiet watchdog still closes")
 
     def test_a_drop_over_content_shows_the_badge_not_the_sheet(self):

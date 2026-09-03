@@ -4558,7 +4558,9 @@ class ViewBuilder(unittest.TestCase):
         self.assertEqual(comp[0]["text"], "Fix the feed flicker")
         self.assertEqual(comp[0]["tree"][0]["status"], "done")
         self.assertTrue(any(a["column"] == "needs_input" for a in d["asks"]), "the blocked goal is a BLOCKED card")
-        # card tint is the recency colormap (age → hawaii ramp), not a flat session color
+        # card tint is the recency colormap (age → hawaii ramp), not a flat session color. It rides FULL
+        # frames only (an older bundle destructures it); the delta path and the dedup signature strip it,
+        # because a colour that ticks with the clock is not a change (tests/test_feed_delta.py).
         self.assertEqual(comp[0]["trgb"], list(km.cm.age_rgb(NOW - comp[0]["t"])))
         self.assertNotEqual(comp[0]["trgb"], km._rgb(comp[0]["color"]), "not the flat session color")
 
