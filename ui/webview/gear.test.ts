@@ -50,6 +50,43 @@ test("the gear posts kernel ops through ONE shared channel (never re-acquires th
     assert.ok(GEAR.includes(`'${op}'`), `gear must post ${op}`);
 });
 
+test("EVERY queued-class kernel setting is emitted with its gesture time (completeness-pinned to federation's own set)", () => {
+  // federation queues KERNEL_SETTING sends per host across a down socket and flushes them on
+  // reconnect (federation-send-queue.test.ts), and the kernel orders applies by `gt`, standing
+  // stale stamps down — so the stamp must be minted at the CLICK, inside the message literal
+  // itself, never at send or flush time (a late flush must carry the original gesture's time).
+  // This pin reads federation.ts's ACTUAL KERNEL_SETTING set rather than enumerating literals:
+  // an earlier six-literal enumeration let three members (setJudgeEffort, setIndexEffort,
+  // setUpdateMode) ship unstamped, and an unstamped member is WORSE than the pre-gt world — its
+  // stale flush takes the no-stamp compat path, records a forged-fresh arrival stamp, and the
+  // judge tiers fan that stamp mesh-wide over genuinely newer gestures. Adding a member without
+  // a stamped emitter goes red here: zero emitters found, or an emitter literal without gt.
+  const FED = read("ui", "webview", "federation.ts");
+  const setSrc = FED.match(/const KERNEL_SETTING = new Set\(\[([\s\S]*?)\]\)/);
+  assert.ok(setSrc, "federation.ts's KERNEL_SETTING set located");
+  const members = Array.from(setSrc![1].matchAll(/"([A-Za-z]+)"/g)).map((m) => m[1]);
+  assert.ok(members.length >= 9, `the set parsed (${members.length} members)`);
+  // scan every webview source that could emit one (the gear, the file viewer's consent post,
+  // the feed's judge-limit switch, and any future emitter under ui/webview)
+  const srcDir = path.join(ROOT, "ui", "webview");
+  const sources = fs.readdirSync(srcDir)
+    .filter((f) => (f.endsWith(".ts") || f.endsWith(".js")) && !f.endsWith(".test.ts") && f !== "federation.ts")
+    .map((f) => ({ f, text: fs.readFileSync(path.join(srcDir, f), "utf8") }));
+  for (const type of members) {
+    let emitters = 0;
+    for (const { f, text } of sources) {
+      const re = new RegExp(`\\{\\s*type:\\s*['"]${type}['"][^}]*\\}`, "g");
+      for (const lit of text.match(re) || []) {
+        emitters++;
+        assert.match(lit, /\bgt:\s*Date\.now\(\)/,
+          `${f} must stamp the gesture time inside the ${type} message literal itself: ${lit}`);
+      }
+    }
+    assert.ok(emitters >= 1,
+      `a stamped emitter exists for ${type} — a queued setting nobody stamps rides the compat path with a forged-fresh stamp`);
+  }
+});
+
 test("model/effort options are written exactly once — the single-flight /models fetch (2026-08-30)", () => {
   // The user's "my Distilling pick keeps resetting": fillChoices memoized its RESULT, so a settings
   // open racing the page-load fetch fired a second /models fetch, and whichever resolved last
@@ -147,8 +184,9 @@ test("the /compact suggestion is a real settings checkbox beside Auto Nudge (the
   assert.ok(GEAR.indexOf("id=rs-autonudge") < at && at < GEAR.indexOf("id=rs-conserve"),
     "…directly after Auto Nudge, where the user asked for it");
   assert.ok(/csg\.addEventListener\('change'/.test(GEAR)
-    && GEAR.includes("post({ type: 'setCompactSuggest', enabled: csg.checked })"),
-    "the click posts the kernel's designed setCompactSuggest message");
+    && GEAR.includes("post({ type: 'setCompactSuggest', enabled: csg.checked, gt: Date.now() })"),
+    "the click posts the kernel's designed setCompactSuggest message — gesture-stamped, like "
+    + "every kernel-side setting the gear emits");
   assert.ok(GEAR.includes("csg.checked = !!v.compactSuggest"),
     "…and the box always shows the kernel's persisted answer, never a page default");
   assert.ok(GEAR.includes("['compactSuggest', csg]"),

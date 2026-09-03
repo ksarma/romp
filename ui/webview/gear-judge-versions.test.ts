@@ -38,10 +38,10 @@ test("the kernel accepts version ids — catalog AND learned — on every judge 
   assert.match(KERNEL, /def _judge_model_values\(\):[\s\S]{0,700}return _JUDGE_MODEL_VALUES \| \{v\["value"\] for vs in _learned_versions\(\)\.values\(\) for v in vs\}/,
     "…plus every learned id, computed per call");
   for (const tier of ["judge-model", "index-model"]) {
-    assert.match(KERNEL, new RegExp(`_set_judge_state\\("${tier}", v, _judge_model_values\\(\\)\\)`), tier);
+    assert.match(KERNEL, new RegExp(`_set_judge_state\\("${tier}", v, _judge_model_values\\(\\), gt=gt\\)`), tier);
   }
-  assert.match(KERNEL, /_set_judge_state\("distill-model", v, _judge_model_values\(\) \| \{"triage"\}\)/);
-  assert.match(KERNEL, /_set_judge_state\("comment-model", v, _judge_model_values\(\) \| \{"session", "default"\}\)/);
+  assert.match(KERNEL, /_set_judge_state\("distill-model", v, _judge_model_values\(\) \| \{"triage"\}, gt=gt\)/);
+  assert.match(KERNEL, /_set_judge_state\("comment-model", v, _judge_model_values\(\) \| \{"session", "default"\}, gt=gt\)/);
   assert.ok(!/_set_judge_state\("[a-z]+-model", v, _JUDGE_MODEL_VALUES/.test(KERNEL),
     "no tier validates against the catalog-only set — a learned pick would be refused there");
 });
