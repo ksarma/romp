@@ -729,6 +729,10 @@ const LANE_TOGGLES = [
 // on load so _openMetaMenu keeps its reference; the lane picker appends its own 'Default' sentinel (not a model).
 const MODEL_CHOICES = [];
 const EFFORT_CHOICES = [];
+// A CODEX lane's menus speak Codex's vocabulary (the payload's codex section) — never Claude's,
+// whose aliases the codex backend refuses. Empty until the codex backend has run (docs/codex.md).
+const CODEX_MODEL_CHOICES = [];
+const CODEX_EFFORT_CHOICES = [];
 // Loaded once at page load and RE-LOADED on the kernel's {type:"models"} frame (TimelinePanel.refreshModels,
 // the frame's arm in both boots): the pick memory moved — a version pinned, a family un-pinned by Latest, a
 // refused pin dropped, from any surface or dashboard — or the catalog grew, and a family's `default` is
@@ -746,6 +750,8 @@ function loadModelChoices() {
       if (typeof d.rev === 'number') { if (d.rev < modelChoicesRev) return; modelChoicesRev = d.rev; }
       if (Array.isArray(d.models)) { MODEL_CHOICES.length = 0; for (const m of d.models) MODEL_CHOICES.push(m); MODEL_CHOICES.push({ label: 'Default', value: 'default' }); }
       if (Array.isArray(d.efforts)) { EFFORT_CHOICES.length = 0; for (const e of d.efforts) EFFORT_CHOICES.push(e); }
+      if (d.codex && Array.isArray(d.codex.models)) { CODEX_MODEL_CHOICES.length = 0; for (const m of d.codex.models) CODEX_MODEL_CHOICES.push(m); }
+      if (d.codex && Array.isArray(d.codex.efforts)) { CODEX_EFFORT_CHOICES.length = 0; for (const e of d.codex.efforts) CODEX_EFFORT_CHOICES.push(e); }
     }).catch(() => {});
   } catch (e) {}
   return Promise.resolve();
@@ -2614,7 +2620,12 @@ class TimelinePanel {
       this.draw();
     };
     const closeSub = () => { if (menu._sub) { menu._sub.remove(); menu._sub = null; } };
-    for (const c of (kind === 'model' ? MODEL_CHOICES : EFFORT_CHOICES)) {
+    // a CODEX lane's pickers speak its own vocabulary (docs/codex.md) — those choices carry no
+    // versions, so the family submenus below simply never arm for them
+    const choices = s.backend === 'codex'
+      ? (kind === 'model' ? CODEX_MODEL_CHOICES : CODEX_EFFORT_CHOICES)
+      : (kind === 'model' ? MODEL_CHOICES : EFFORT_CHOICES);
+    for (const c of choices) {
       const cur = isCurrentMeta(kind, s, c.value);
       const versions = kind === 'model' ? (c.versions || []) : [];
       const item = menu.createDiv({ text: c.label });

@@ -60,6 +60,7 @@ GONEDIR  = STATE / "gone"                # session-death markers {t, by[, endedA
                                          #   read by a CLOSED list: _cli_epoch, run_close's death-pending drain, and the writers'
                                          #   own idempotence check (2026-08-13; the reader list is test-pinned so it cannot creep)
 SDKDIR   = STATE / "sdk"                 # the SDK backend's per-session registry — lastSid tracks the CURRENT transcript fsid
+CODEXDIR = STATE / "codex"               # the Codex backend's root (plans/codex-backend.md): registry.json +
 # Judge scratch cwd (the user 2026-07-20): every one-shot `claude -p` judge call writes a transcript
 # under the project dir of its CWD. With cwd=/tmp those piled into the SHARED -private-tmp project
 # dir (~4,600/day, 51k files) mixed with anything else ever run from /tmp — unprunable without
@@ -106,7 +107,7 @@ def _rebind_state(path):
     save_goals wrote synthetic fixtures into the live goals/ and the triage pass then stormed
     judge-errors.jsonl over those orphans every pass forever (the user 2026-06-24). A test must call this
     instead of assigning jd.STATE alone. Not used in production (STATE is bound once at import)."""
-    global STATE, NAMES, CAPDIR, ARCHDIR, GOALDIR, GOALARCHDIR, STATESDIR, PCACHE, MESSAGES, ERRORS, USAGE, SDKDIR, EPIDIR, GONEDIR, JUDGE_AUTH
+    global STATE, NAMES, CAPDIR, ARCHDIR, GOALDIR, GOALARCHDIR, STATESDIR, PCACHE, MESSAGES, ERRORS, USAGE, SDKDIR, EPIDIR, GONEDIR, JUDGE_AUTH, CODEXDIR
     global JUDGE_SCRATCH
     STATE = path
     JUDGE_SCRATCH = str(STATE / "judge-scratch")   # state-rooted now, so it rebinds with the rest
@@ -118,6 +119,7 @@ def _rebind_state(path):
     global JUDGE_LIMIT
     JUDGE_LIMIT = STATE / "judge-limit.json"
     SDKDIR = STATE / "sdk"
+    CODEXDIR = STATE / "codex"
     EPIDIR = STATE / "episodes"
     _lastsid_memo.clear()   # sdk-registry reads are mtime-memoized per sid — a rebind must not serve the old root's values
     _episode_memo.clear()   # ...and so are the episode-log reads
@@ -165,6 +167,9 @@ def _triage_model():  return _state_str("judge-model", TRIAGE_MODEL)   # gear "T
 def _index_model():   return _state_str("index-model", INDEX_MODEL)    # gear "Indexing model" → STATE/index-model
 def _triage_effort(): return _state_str("judge-effort", "")   # "" → pass NO --effort (the long-standing default)
 def _index_effort():  return _state_str("index-effort", "")
+def _judge_engine():  return _state_str("judge-engine", "claude")   # "claude" | "codex" — which model
+#   harness runs the judges (docs/codex.md §judges). "codex" lets a machine with no Claude login keep
+#   the board thinking: every judge becomes a one-shot `codex exec` billing the machine's codex login.
 INDEX_EFFORT_DEFAULT = "low"   # the index tier's cost lever on models that take --effort (2026-09-01; see _judge_env)
 
 
@@ -1080,6 +1085,68 @@ def _limit_clear():
         pass
 
 
+def _judge_codex_bin():
+    """The codex binary for engine-"codex" judge calls — the claude one's resolution ladder (env
+    override, PATH, the standard user spot) plus the BUNDLED binary inside codexvenv: openai-codex
+    ships it at site-packages/codex_cli_bin/bin/codex with no PATH entry point (2026-08-14
+    proofread). romp-codex-setup links it to ~/.local/bin, but a kernel started over non-login ssh may
+    not have that dir on PATH — the same failure mode _judge_claude_bin's docstring records."""
+    import glob
+    p = (os.environ.get("ROMP_CODEX_BIN") or shutil.which("codex")
+         or os.path.expanduser("~/.local/bin/codex"))
+    if os.path.exists(p):
+        return p
+    for c in sorted(glob.glob(str(STATE / "codexvenv" / "lib" / "python3.*" /
+                                  "site-packages" / "codex_cli_bin" / "bin" / "codex"))):
+        return c
+    return p
+# Hard wall-clock cap on ONE judge call (perl alarm → SIGALRM, logged as "empty stdout (exit -14)").
+# Was 45s until 2026-07-27, when an API slow patch killed a burst of healthy-but-slow calls across four
+# sessions in one morning and the coerce floor minted a card titled with the user's raw message head from
+# the wreckage. A slow call that lands beats a killed one on both cost and heal latency (the kill burns
+# the tokens AND leaves the pass to re-run next tick), so be permissive (the user 2026-07-27): the alarm
+# guards a truly hung exec, not a slow model. The subprocess timeout below it is the backstop for a perl
+# that never ran; it tracks this constant so the two can't drift apart.
+
+def _judge_cmd_codex(model, effort, outpath):
+    """The `codex exec` argv for ONE judge call when STATE/judge-engine is "codex" (docs/codex.md).
+    The same isolation goals as the claude argv, by different means: --ephemeral (no session files —
+    the scratch-pruning problem doesn't exist), an invocation-local custom permission profile that
+    grants only Codex's minimal runtime paths plus READ access to the scratch workspace (the built-in
+    `:read-only` profile deliberately grants read access to the whole host), --skip-git-repo-check +
+    -C scratch (never the user's repo), the prompt on stdin (exec has no separate system-prompt flag
+    — system + user are concatenated), and the reply written to `outpath` via -o (the final agent
+    message alone; no event-stream parsing).
+    Model: only an explicit gpt-* override is passed — a ChatGPT-plan account 400-refuses every
+    non-default model (probed live 2026-08-14), so the account's default is THE default and a
+    claude alias (the other engine's vocabulary, incl. the classify arms') is ignored rather than
+    sent to certain failure."""
+    judge_permissions = (
+        'permissions.romp_judge={ filesystem = { ":minimal" = "read", '
+        '":workspace_roots" = { "." = "read" } }, network = { enabled = false } }'
+    )
+    cmd = ["perl", "-e", "alarm %d; exec @ARGV" % CALL_ALARM_S, _judge_codex_bin(), "exec",
+           "--ephemeral", "--ignore-user-config", "--ignore-rules", "--strict-config",
+           "--skip-git-repo-check", "-c", judge_permissions,
+           "-c", 'default_permissions="romp_judge"', "--color", "never",
+           "-C", JUDGE_SCRATCH, "-o", outpath]
+    if model and str(model).startswith("gpt"):
+        cmd += ["-m", model]
+    if effort:
+        cmd += ["-c", "model_reasoning_effort=%s" % effort]
+    return cmd
+
+def _codex_effort(effort, tier):
+    """Map a judge effort onto what codex accepts for the plan-account model family: low/medium/
+    high/xhigh pass through; minimal/none 400 there (probed) → low; max/ultracode are Claude-only →
+    xhigh/None. No explicit effort: index-tier work is mechanical → low (the cost lever, standing in
+    for the claude path's MAX_THINKING_TOKENS=0); triage keeps the model's default reasoning."""
+    m = {"low": "low", "medium": "medium", "high": "high", "xhigh": "xhigh",
+         "minimal": "low", "none": "low", "max": "xhigh"}
+    if effort:
+        return m.get(effort)
+    return "low" if tier == "index" else None
+
 def _judge_env(tier, auth="login", model=None):
     """The subprocess env for ONE judge call. Drops the TMUX vars (so the child isn't taken for a live
     pane) and trips the Stop-hook recursion guard. For the INDEX tier it also applies the cost lever the
@@ -1190,6 +1257,7 @@ def _judge_run(model, sys_prompt, user, effort=None, judge=None, tier="triage", 
     except Exception:
         pass
     fsid = getattr(_judge_ctx, "fsid", None)
+    engine = _judge_engine()                          # "claude" | "codex" (docs/codex.md §judges)
     auth = _judge_auth(fsid)                          # this call bills what the judged session bills
     try:
         # RATE-LIMIT GATE (the user 2026-07-07), scoped to the calls it can actually starve (the user
@@ -1263,6 +1331,48 @@ def _judge_run(model, sys_prompt, user, effort=None, judge=None, tier="triage", 
     sent = time.time()                                # literal wall-clock: the prompt goes to the API now
     rid = _active_begin(judge or tier, fsid, sent)    # live bar starts NOW (deregistered in finally below)
     try:
+        if engine == "codex":
+            # docs/codex.md §Running the judges on Codex — the same bracket (pause skip, debug stash,
+            # live bar), a different one-shot engine. The reply lands in a temp file (-o); `codex exec`
+            # reports no token usage, so the usage row keeps the call's bracket + engine for the
+            # timeline and counts, and leaves tokens/cost null (absent, not faked).
+            os.makedirs(JUDGE_SCRATCH, exist_ok=True)
+            outp = os.path.join(JUDGE_SCRATCH, "codex-%d-%d.out" % (os.getpid(), rid))
+            try:
+                try:
+                    # another vendor's process has no use for the Anthropic key (_judge_env re-injects
+                    # it for key-billed sessions); strip it from the child's environment (PR #885 review)
+                    cenv = {k: v for k, v in env.items() if k != "ANTHROPIC_API_KEY"}
+                    p = subprocess.run(_judge_cmd_codex(model, _codex_effort(effort, tier), outp),
+                                       input=(sys_prompt or "") + "\n\n" + (user or ""),
+                                       capture_output=True, text=True, cwd=JUDGE_SCRATCH, env=cenv,
+                                       timeout=CALL_ALARM_S + 5)
+                except Exception as e:
+                    _log_judge_error(judge or tier, fsid, "call", note=type(e).__name__)
+                    return ""
+                recv = time.time()
+                try:
+                    with open(outp, "r", encoding="utf-8") as f:
+                        reply = f.read().strip()
+                except OSError:
+                    reply = ""
+                if not reply:
+                    # dead/refused call — the -o file is the only success signal; record the evidence
+                    _log_judge_error(judge or tier, fsid, "call",
+                                     note="codex empty reply (exit %s): %s"
+                                          % (getattr(p, "returncode", "?"),
+                                             ((p.stderr or "") + (p.stdout or "")).strip()[-200:] or "no output"))
+                    return ""
+                _judge_ctx.last["reply"] = _mid_elide(reply)
+                _log_judge_usage(judge or tier, tier, (model if str(model).startswith("gpt") else "codex-default"),
+                                 fsid, {"duration_ms": int((recv - sent) * 1000)}, sent, recv)
+                _auth_down_clear(fsid)                # a successful billed call clears either engine's latch
+                return reply
+            finally:
+                try:
+                    os.unlink(outp)
+                except OSError:
+                    pass
         try:
             _ensure_judge_scratch()                     # 0700 and ours; recreate per call (a purge/rm mid-run)
         except OSError as e:
@@ -5352,6 +5462,44 @@ _namefp_memo = {}    # names/ entry -> (its mtime, resolved project dir or None)
 #                      the number of live names/ entries, never by uptime.
 
 
+def _codex_rows(cutoff, seen):
+    """Discovery rows for Codex sessions — (fsid=STABLE SID, materialized path, anchor sid, name),
+    read from the Codex backend's registry (plans/codex-backend.md). The names/ loop above skips
+    these naturally (no <sid>.jsonl under the Claude roots); this is the ONE extra fact the read
+    side needs. Dead sessions keep discovering like dead tmux/SDK ones do — history stays browsable;
+    the WINDOW cutoff is what ages them out. No forks: a Codex thread id is stable across resumes.
+
+    The identity slot is the STABLE SID, never the app-server thread id: liveness
+    (CodexBackend.live_sessions) keys on the SID, so a TID here meant live Codex rows never joined
+    the alive set, the picker offered a not-running TID row, and reviving it shelled
+    `romp resume <TID>` through the tmux path — the TID rides only in the transcript PATH, which
+    is the one place it means anything to a reader (the v1.3.13 audit's P1, executed)."""
+    try:
+        reg = json.loads((CODEXDIR / "registry.json").read_text())
+    except Exception:
+        return []
+    rows = []
+    for sid, r in sorted(reg.items()):
+        if not isinstance(r, dict):
+            continue                      # the corrupt-row shape the migrations survive must
+        #                                   not kill every cold discover() one call later (the
+        #                                   r39 verification, executed: feed/picker/judge all
+        #                                   share this walk)
+        tid, cwd = r.get("tid"), r.get("cwd") or ""
+        if not tid or not cwd:
+            continue
+        p = CODEXDIR / "projects" / re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(cwd)) / (tid + ".jsonl")
+        ps = str(p)
+        try:
+            mt = p.stat().st_mtime
+        except OSError:
+            continue
+        if mt >= cutoff and ps not in seen:
+            seen.add(ps)
+            rows.append((sid, p, sid, r.get("name", "")))
+    return rows
+
+
 def _discover_fingerprint():
     """A cheap structural signature of the transcript namespace that changes EXACTLY when discover()'s
     output would: a session ADDED/RENAMED (a names/ entry's set or mtime changes) or a FORK appearing (a
@@ -5373,7 +5521,7 @@ def _discover_fingerprint():
     MTIME is re-stat'd every call without exception: that is the fork signal this whole fingerprint exists to
     catch, and caching it would blind discover() to new forks."""
     try:
-        entries = sorted(NAMES.iterdir())
+        entries = sorted(e for e in NAMES.iterdir() if not e.name.endswith(".tmp"))
     except OSError:
         return None
     fp = []
@@ -5404,6 +5552,12 @@ def _discover_fingerprint():
         live = {row[0] for row in fp}                           # walk → evict it, so the memo stays bounded
         for name in [k for k in _namefp_memo if k not in live]:  # by the sessions that currently EXIST
             del _namefp_memo[name]
+    # the Codex namespace: a session add/rename/kill rewrites registry.json (its mtime is the
+    # signal) — the same add-not-append semantics as the Claude roots above.
+    try:
+        fp.append(("codex-reg", (CODEXDIR / "registry.json").stat().st_mtime))
+    except OSError:
+        pass
     return tuple(fp)
 
 
@@ -5483,6 +5637,8 @@ def _discover_impl(now, window=None, forks=True):
 
     for f in sorted(NAMES.iterdir()):
         sid = f.name
+        if sid.endswith(".tmp"):
+            continue                      # a writer's staging file, never a session
         try:
             parts = f.read_text().rstrip("\n").split("\t")
         except Exception:
@@ -5521,6 +5677,7 @@ def _discover_impl(now, window=None, forks=True):
                 t = _custom_title(path_str); title_memo[path_str] = t
             if t == name:
                 seen.add(path_str); out.append((stem, Path(path_str), sid, name))
+    out.extend(_codex_rows(cutoff, seen))   # Codex sessions join discovery (docs/codex.md)
     return out
 
 

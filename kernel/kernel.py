@@ -1598,7 +1598,12 @@ def _session_backend(sid, tm):
     if tm and tm.get("backend"):
         return tm["backend"]
     be = _sdk()
-    return "sdk" if (be and be.owns(sid)) else "tmux"
+    if be and be.owns(sid):
+        return "sdk"
+    cx = _codex()
+    if cx is not None and cx.owns(sid):
+        return "codex"                        # a Codex-backed session (docs/codex.md)
+    return "tmux"
 
 
 def _open_leaf_bullets(nodes, subs, cap=12, indent="  "):
@@ -8032,7 +8037,35 @@ def _create_sdk_session(nm, cwd, auth="", prefs=None, client=None, env=None):
     return sid, extra
 
 
+def _create_codex_session(nm, cwd, client=None):
+    return _create_codex_session_inner(nm, cwd, client=client)
+
+
+def _create_codex_session_inner(nm, cwd, client=None):
+    """Create + open a new Codex-backed session — the same ACK-FAST shape as _create_sdk_session
+    (focus first, dirty-mark wake, one direct push; never a synchronous fleet build here). spawn()
+    starts the app-server thread, touches the materialized transcript (so discover() lists it
+    immediately) and writes the shared names/ identity file. Focus rides _reveal_chat_for — the
+    v1.3.6 merge renamed _reveal_chat and this caller kept the old name, so every Codex create
+    raised NameError AFTER spawning (an orphan session + a failed /new; the user's audit,
+    2026-08-19, ruff's sole F821)."""
+    bg, fg = _pick_identity_color()
+    sid = _codex().spawn(nm, cwd, bg, fg)
+    if client is not None:
+        # like _create_sdk_session/_fork_session: a client-less caller (POST /new — a headless
+        # `romp new`) reveals to NOBODY; None fell through to the legacy every-window broadcast,
+        # the retired chats-kept-jumping bug (the adversarial check, 2026-08-19)
+        _reveal_chat_for(client, {"type": "focus", "id": sid})
+    _mark_views_dirty()
+    _push_session_now(sid)
+    return sid
+
+
 def _fork_session(parent_sid, cut_msg_uuid, new_name, now=None, client=None):
+    return _fork_session_inner(parent_sid, cut_msg_uuid, new_name, now=now, client=client)
+
+
+def _fork_session_inner(parent_sid, cut_msg_uuid, new_name, now=None, client=None):
     """Fork `parent_sid`'s conversation into a NEW parallel session named `new_name` — from just BEFORE
     user message `cut_msg_uuid` when given (the chat's fork button; same _rewind_target resolution and
     guards as the edit/delete rewind, so "before this message" means the same thing everywhere), the
@@ -9244,6 +9277,73 @@ def _sdk_locked():
             _sdk_backend = False
             _mark_boot("reconcileDone")            # unavailable = the reconcile phase is over too
     return _sdk_backend or None
+
+
+# --- optional Codex session backend (plans/codex-backend.md) ------------------------------------------
+# A THIRD SessionBackend that drives OpenAI Codex threads via `codex app-server` and materializes
+# Claude-shaped transcripts under STATE/codex/projects/ (judge._codex_rows discovers them). Built
+# lazily like _sdk(); an absent dependency is a loud refusal at creation, never a silent tmux fallback.
+CODEX_SETUP_HINT = ("Session not created: the Codex backend isn't installed. "
+                    "Run romp-codex-setup, then try again.")
+
+_codex_backend = None   # None = not built yet, False = module unavailable, else the CodexBackend
+_codex_lock = threading.Lock()
+
+
+def _codex():
+    """The CodexBackend singleton, or None when the MODULE is unavailable. Like _sdk(), the backend
+    object existing is not proof it can run a session (the openai-codex dep or `codex login` may be
+    missing) — gate CREATION on _codex_ready(); per-session failures surface via launch_error."""
+    global _codex_backend
+    with _codex_lock:
+        if _codex_backend is None:
+            try:
+                cxmod = SourceFileLoader("romp_codex_backend", str(HERE / "codex_backend.py")).load_module()
+                _codex_backend = cxmod.CodexBackend(
+                    jd.STATE, notify=_send_to_app,
+                    poke=_producer_wake.set, push=_pusher_wake.set,
+                    push_session=_push_session_now,
+                    codex_bin=shutil.which("codex"),   # None → the SDK's bundled binary resolver
+                    log=lambda m: sys.stderr.write("codex-backend: %s\n" % m))
+            except Exception:
+                sys.stderr.write("codex-backend unavailable: %s\n" % traceback.format_exc())
+                _codex_backend = False
+        return _codex_backend or None
+
+
+def _codex_ready():
+    """Can the Codex backend RUN a session right now (dep importable, app-server up, logged in)?
+    The truthful gate for session creation — same contract as _sdk_ready()."""
+    be = _codex()
+    if not be:
+        return False
+    try:
+        return bool(be.available())
+    except Exception:
+        return False
+
+
+def _judge_engine_name():
+    """Which vendor runs the judges — `romp engine` writes STATE/judge-engine ("claude" | "codex");
+    absent/unknown → claude. Read here (not through the judge module) so the /models handler can gate
+    its Codex consult without importing the judge."""
+    try:
+        v = (jd.STATE / "judge-engine").read_text().strip()
+    except OSError:
+        return "claude"
+    return v if v in ("claude", "codex") else "claude"
+
+
+def _default_backend():
+    """The machine default for a NEW session when the caller names none — `romp engine` writes
+    STATE/default-backend ("sdk" | "codex"); absent/unknown → sdk, the long-standing default.
+    The dashboard's + dialog always names a backend (its own toggle), so this governs the
+    headless paths: `romp new` and POST /new."""
+    try:
+        v = (jd.STATE / "default-backend").read_text().strip()
+    except OSError:
+        return "sdk"
+    return v if v in ("sdk", "codex") else "sdk"
 
 
 # ── SDK problems → the dashboard's error center (the user 2026-07-28) ─────────────────────────────────────
@@ -10473,9 +10573,18 @@ def _revive_session(sid, client=None):
     ok, detail = False, ""
     _commands_for_cwd(_cwd_of(sid))   # pre-warm the slash-command list — a revival predicts a composer (the user 2026-08-13)
     try:
+        cx = _codex()
         if be and be.owns(sid):
             ok = bool(be.resume(name, sid) and be.connect(sid))
             detail = "" if ok else "the SDK backend could not resume it (see the kernel log)"
+        elif cx is not None and cx._session(sid) is not None:
+            # a DEAD Codex session: owns() is live-only by design, so the tmux fallback would build
+            # `claude --resume` for it — resume it through the Codex backend instead (docs/codex.md)
+            if not _codex_ready():
+                detail = (getattr(cx, "_client_err", "") or CODEX_SETUP_HINT)
+            else:
+                ok = bool(cx.resume(name, sid, cwd=_cwd_of(sid)))
+                detail = "" if ok else "the Codex backend could not resume it (see the kernel log)"
         else:
             cwd = _cwd_of(sid)
             workdir = cwd if cwd and os.path.isdir(cwd) else os.path.expanduser("~")
@@ -11067,7 +11176,12 @@ class Sessions:
     def backend_for(sid):
         be = _sdk()
         sid = str(sid)
-        return be if (be and be.owns(sid)) else _TMUX
+        if be and be.owns(sid):
+            return be
+        cx = _codex()
+        if cx is not None and cx.owns(sid):
+            return cx                          # the Codex backend owns it (docs/codex.md)
+        return _TMUX
 
     @staticmethod
     def live():
@@ -11109,6 +11223,19 @@ class Sessions:
                                 "bgTasks": st.get("bgTasks") or []}
             except Exception:
                 sys.stderr.write("sdk live_sessions merge: %s\n" % traceback.format_exc())
+        cx = _codex()
+        if cx:
+            try:
+                for sid, st in cx.live_sessions().items():
+                    # the Codex backend reports the fields it truly has; everything Claude-only
+                    # (fast, auth, compaction %) stays absent rather than faked (plan doc)
+                    out[sid] = {"state": st.get("state", ""), "since": _num(str(st.get("since") or "")),
+                                "model": st.get("model", ""), "effort": st.get("effort", ""),
+                                "context": st.get("context") if isinstance(st.get("context"), (int, float)) else None,
+                                "compactPct": None, "color": (st.get("color") or None),
+                                "mode": st.get("mode", ""), "backend": "codex"}
+            except Exception:
+                sys.stderr.write("codex live_sessions merge: %s\n" % traceback.format_exc())
         _unify_model_labels(out)
         return out
 
@@ -11165,6 +11292,13 @@ def _rename_session(sid, name):
         if live != name:
             _TMUX.rename_by_name(live, name)
     else:
+        cx = _codex()
+        if cx is not None and cx._session(sid) is not None:
+            try:
+                cx.rename(sid, name)                   # the Codex registry's durable name (docs/codex.md)
+            except Exception as e:
+                sys.stderr.write("codex rename '%s': %s\n" % (sid, e))
+                return None
         _set_name(sid, name)                           # dead tab → names file directly
     return name
 
@@ -17988,7 +18122,9 @@ def _parse(path, sid, now):
         cands.append(anchor)
     session = em.parse_session(path, rompuuid=sid, candidate_files=cands,
                                postal_log=str(jd.MESSAGES), now=now,
-                               sdk_human=bool(_be and _be.owns(sid)),   # SDK session: composer input is promptSource "sdk"
+                               # SDK/Codex session: composer input arrives programmatic (promptSource "sdk"),
+                               # so the unmarked prompt is the HUMAN — same flag for both backends
+                               sdk_human=bool((_be and _be.owns(sid)) or ((_cx := _codex()) and _cx.owns(sid))),
                                states=str(states) if states.exists() else None,   # idle transitions → idle atoms (see above)
                                leaf_override=cut or None)   # pending bare rollback → render the cut conversation NOW
     if key is not None:
@@ -32133,6 +32269,22 @@ class Handler(BaseHTTPRequestHandler):
                 # (sdk_backend.note_cli_model_block) and cleared by the first real reply on that
                 # model — so every picker shows the reason before the next pick, not only after it
                 _blocks = _cli_model_blocks()
+                # the codex section rides along untinted: what a CODEX session's pickers offer
+                # (docs/codex.md) — models from the app-server's own list via the backend (the
+                # authoritative source; [] until the backend runs, so no picker ever shows another
+                # vendor's models); efforts are the four Codex accepts — max/ultracode are Claude-only.
+                cx = _codex()
+                cx_models = []
+                # Codex is consulted ONLY where this machine opted in — the Codex default backend, the
+                # Codex judge engine, or a live Codex session. model_catalog() builds the client, which
+                # SPAWNS `codex app-server`; unconditional, every dashboard load spawned (or repeatedly
+                # failed to spawn) it on every install, the opposite of off-by-default (PR #885 review).
+                if cx and (_default_backend() == "codex" or _judge_engine_name() == "codex"
+                           or bool(cx.live_sessions())):
+                    try:
+                        cx_models = cx.model_catalog()
+                    except Exception:
+                        pass
                 return self._send(200, json.dumps(
                     # `rev` is the pick memory's revision — the models frame's counter (_models_changed),
                     # read here BEFORE the picks so a payload never carries a rev newer than its list: a
@@ -32147,6 +32299,9 @@ class Handler(BaseHTTPRequestHandler):
                                 for c in MODEL_CHOICES],
                      "efforts": [dict(c, color=_effort_color(c["value"], _stops), tone=_effort_tone(c["value"]))
                                  for c in EFFORT_CHOICES],
+                     "codex": {"models": cx_models,
+                               "efforts": [{"value": v, "label": v}
+                                           for v in ("low", "medium", "high", "xhigh")]},
                      # the create dialog's pre-read (the user 2026-08-29): what a new comment thread
                      # gets when the dialog is left untouched — RAW ("session" = same as the session),
                      # so the dialog shows the effective default and a pick stays a deviation
@@ -32707,7 +32862,23 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(200, json.dumps({"ok": True, "id": th[0], "existing": True,
                                                        "thread": True, "parent": th[1], **extra}),
                                       "application/json")
-                if (b.get("backend") or "sdk") == "sdk":
+                be_req = (b.get("backend") or _default_backend())
+                if be_req == "codex":             # parity with the WS op: same gate, same loud refusal
+                    if not _codex_ready():
+                        cxbe = _codex()
+                        why = (getattr(cxbe, "_client_err", "") or CODEX_SETUP_HINT) if cxbe else CODEX_SETUP_HINT
+                        return self._send(200, json.dumps({"ok": False, "error": why}),
+                                          "application/json")
+                    sid = _create_codex_session(nm, cwd)
+                    if not sid:
+                        return self._send(200, json.dumps({"ok": False,
+                                                           "error": "the Codex session could not "
+                                                                    "be created — is the codex "
+                                                                    "app-server running?"}),
+                                          "application/json")
+                    return self._send(200, json.dumps({"ok": True, "id": sid, "dir": cwd}),
+                                      "application/json")
+                if be_req == "sdk":
                     if not _sdk_ready():          # see _sdk_ready — a built backend is not a working one
                         return self._send(200, json.dumps({"ok": False, "error": SDK_SETUP_HINT}),
                                           "application/json")
@@ -32715,6 +32886,11 @@ class Handler(BaseHTTPRequestHandler):
                     sid, extra = _create_sdk_session(nm, cwd, auth=(a if a in ("login", "key") else ""),
                                                      prefs=b,   # pins ride the FIRST connect — see the def
                                                      env=env_req)   # env is born into the spawn's reg
+                    if not sid:
+                        return self._send(200, json.dumps({"ok": False,
+                                                           "error": (extra or {}).get("error")
+                                                           or "the session could not be created"}),
+                                          "application/json")
                     return self._send(200, json.dumps({"ok": True, "id": sid, "dir": cwd, **extra}),
                                       "application/json")
                 if env_req is not None:
@@ -33792,6 +33968,28 @@ class Handler(BaseHTTPRequestHandler):
                         # NEVER silently fall back to tmux (the user asked for SDK and got a mystery tmux
                         # session on a remote host without the venv, 2026-07-02). Say what's missing.
                         client["send"](json.dumps({"type": "warn", "text": SDK_SETUP_HINT}))
+                elif msg.get("backend") == "codex":   # an OpenAI Codex thread (plans/codex-backend.md)
+                    if _codex_ready():
+                        try:
+                            _create_codex_session(nm, cwd, client=client)
+                        except Exception as e:
+                            # the generic dispatcher handler logs to stderr only — the picker's
+                            # "Opening…" cue got no answer (the r28 verification). stderr FIRST:
+                            # a raising send must not erase the error from every record.
+                            sys.stderr.write("codex create '%s' failed: %s\n" % (nm, e))
+                            try:
+                                client["send"](json.dumps({"type": "warn",
+                                                           "text": "creating the Codex session "
+                                                                   "failed: %s" % e}))
+                            except Exception:
+                                pass
+                    else:
+                        # same rule as SDK: the user asked for Codex — refuse loudly, never a
+                        # mystery tmux session. _codex_ready is False for a missing dep, a dead
+                        # app-server, or a machine with no `codex login`.
+                        be = _codex()
+                        why = (getattr(be, "_client_err", "") or CODEX_SETUP_HINT) if be else CODEX_SETUP_HINT
+                        client["send"](json.dumps({"type": "warn", "text": why}))
                 else:
                     threading.Thread(target=_spawn_session, args=(nm, cwd), daemon=True).start()
         elif msg and msg.get("type") == "cancelCreate" and msg.get("name"):
