@@ -172,6 +172,28 @@ class PlantDedupe(unittest.TestCase):
                                     "1788299060.000003_3.TESTHOST")
         self.assertNotEqual(a, c, "different work still plants its own mirror")
 
+    def test_twins_with_differing_recorded_bodies_stay_apart(self):
+        # The label is the judge's RENDERING, which can collapse two REAL dispatches into one
+        # string — so the reuse also checks the messages' recorded bodies (the authoritative
+        # postal rows). Differing bodies are two dispatches, each keeping its own tracker (the
+        # fan-out contract, test_chain_rooted_minting); the ext mailer's same-minute twins carry
+        # the SAME body and still fold.
+        msgs, mid2 = jd.MESSAGES, "1788299030.000002_2.TESTHOST"
+        with tempfile.TemporaryDirectory() as td:
+            jd.MESSAGES = Path(td) / "messages.jsonl"
+            jd.MESSAGES.write_text("\n".join(json.dumps(r) for r in [
+                {"t": T0, "ev": "sent", "id": MID, "from": "web", "from_id": DEAD,
+                 "to_id": RCP, "kind": "delegate", "body": "check the vault warning in the deploy log"},
+                {"t": T0 + 30, "ev": "sent", "id": mid2, "from": "web", "from_id": DEAD,
+                 "to_id": RCP, "kind": "delegate", "body": "check the vault warning in the backup job"}]) + "\n")
+            try:
+                st = {"rompUuid": DEAD, "seq": 0, "nodes": {}, "placements": {}, "status": {}}
+                a = jd._plant_handoff_track(st, None, "check the vault warning", RCP, "api", T0, MID)
+                b = jd._plant_handoff_track(st, None, "check the vault warning", RCP, "api", T0 + 30, mid2)
+                self.assertNotEqual(a, b, "one judged label over two recorded bodies is two dispatches")
+            finally:
+                jd.MESSAGES = msgs
+
 
 if __name__ == "__main__":
     unittest.main()

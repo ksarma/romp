@@ -829,10 +829,18 @@ MODEL_CHOICES = [{"value": "fable", "label": "Fable"}, {"value": "opus", "label"
 # Every version a family can pin (the user 2026-08-25: shorthand aliases resolve to the NEWEST —
 # opus became Opus 5 — silently losing the legacy versions that remain live on the API). Newest
 # first; values are the API's DATELESS aliases, verified against the claude-api reference
-# 2026-08-25 (deprecated 4.1/4.0-era models excluded on purpose — they are retiring). Clicking a
-# family in a picker sends that family's DEFAULT: the most recent version the user picked for it
-# (model-picks.json below), else the newest. Full ids ride every set path verbatim already — the
-# alias table stops at the family names, so a version pick needs no new transport.
+# 2026-08-25 (deprecated 4.1/4.0-era models excluded on purpose — they are retiring). This table is
+# the SEED the live catalog below grows, completed with the ids running sessions' CLIs actually
+# report ahead of it (_learned_versions) — the CLI is the authoritative source for what it serves,
+# and a table alone lagged a release the day Fable 5.1 shipped. The catalog owns the LIST; the alias
+# owns the DEFAULT:
+# clicking a family in a picker sends that family's DEFAULT — the most recent VERSION the user
+# picked for it (model-picks.json below), else the family ALIAS itself. The CLI resolves an alias
+# live, so a bare family click follows the family's newest release exactly as the CLI's own default
+# does. (Before this the default fell to this table's head, which pinned every picker-set session
+# to claude-fable-5 while `fable` moved on; see _model_alias_boot_pass for the state that left
+# behind.) Full ids ride every set path verbatim already — the CLI's alias table stops at the
+# family names, so a version pick needs no new transport.
 MODEL_VERSIONS = {
     "fable":  [{"value": "claude-fable-5-1", "label": "Fable 5.1"},   # verified live 2026-09-01 (Models API + CLI 2.1.257)
                {"value": "claude-fable-5", "label": "Fable 5"}],
@@ -848,6 +856,14 @@ MODEL_VERSIONS = {
 }
 _VERSION_FAMILY = {v["value"]: fam for fam, vs in MODEL_VERSIONS.items() for v in vs}
 MODEL_PICKS_FILE_NAME = "model-picks.json"   # {family: full-id} — a viewer pref all surfaces read, like colormap
+_model_picks_lock = threading.Lock()   # its read-modify-writes run on the WS-handler, producer AND SDK-loop threads
+_learned_announced = set()   # ids already announced on stderr as outside the catalog (once per process)
+# Bumps on every pick-memory change and every catalog growth; rides the models frame (_models_changed) AND
+# the /models payload, so a picker can drop a response older than one it has applied. Seeded from the clock
+# rather than 0: the counter is per process, and a kernel restart must never hand a page that kept its
+# high-water mark a LOWER rev, or that page would ignore every re-read until the count caught up — a silent
+# stale list. Milliseconds leave room for one bump per ms across a restart.
+_models_rev = [int(time.time() * 1000)]
 
 # ── the LIVE model catalog (T222, the user 2026-09-01: romp must stop needing a hand edit when
 # Anthropic ships a model). The table above is the SEED and the loud fallback. The kernel queries the
@@ -863,6 +879,10 @@ MODEL_PICKS_FILE_NAME = "model-picks.json"   # {family: full-id} — a viewer pr
 MODEL_CATALOG_FILE_NAME = "model-catalog.json"
 MODELS_API_URL = os.environ.get("ROMP_MODELS_URL") or "https://api.anthropic.com/v1/models"
 _MODEL_SEED = {fam: [dict(v) for v in vs] for fam, vs in MODEL_VERSIONS.items()}   # the shipped table, frozen
+# THE one grammar for a first-party model id (family, then the version's numeric parts — a -YYYYMMDD
+# snapshot date is just a long last part, which _catalog_family refuses and _model_id_parts drops).
+# The catalog's helpers and the pick memory's id helpers all read it; a second regex of this name
+# would shadow it.
 _MODEL_ID_RE = re.compile(r"^claude-(fable|opus|sonnet|haiku)-(\d+(?:-\d+)*)$")
 _catalog_lock = threading.Lock()
 _catalog_status = {"source": "seed", "fetchedAt": None, "lastError": None, "added": [], "inflight": False}
@@ -1068,7 +1088,11 @@ def _refresh_model_catalog(reason, _async=True):
                 sys.stderr.write("model catalog (%s): %d new version id(s) joined the pickers: %s\n"
                                  % (reason, len(added), ", ".join(added)))
                 try:
-                    _push_soon()                          # pickers re-read /models on the next frame
+                    # the models frame: every open picker re-reads /models on it (chat/comment, the
+                    # timeline lanes, the gear). Nothing re-reads the choice lists on its own after
+                    # page load — a session-list push (the line this replaced) told the pickers
+                    # nothing, so an open dashboard kept the page-load list until a reload
+                    _models_changed()
                 except Exception:
                     pass
         finally:
@@ -1085,12 +1109,20 @@ def _note_unknown_model(mid):
     """The staleness EVENT: a claude-* version id reached a set path or the pick store and the merged
     list does not know it — exactly when a hand-updated table used to go quietly stale. Fires ONE
     refresh per unknown id per kernel life (dedup by id, never a clock); aliases, dated snapshots
-    and garbage never fire. Returns whether a refresh was started."""
+    and garbage never fire. Returns whether a refresh was started.
+    The id is marked asked only when its refresh actually STARTS: the refresh is single-flight, so a
+    sighting while one is inflight — the boot fetch, exactly when a running session's CLI first
+    reports a new release — starts nothing, and marking it then spent the id's one refresh on a
+    no-op. Unmarked, the next sighting after the inflight fetch lands (every /models read re-derives
+    the learned list) asks for real if the catalog still lacks the id; a catalog that caught up
+    short-circuits on _VERSION_FAMILY first."""
     mid = str(mid or "")
     if not _catalog_family(mid) or mid in _VERSION_FAMILY or mid in _catalog_asked:
         return False
-    _catalog_asked.add(mid)
-    return _refresh_model_catalog("unknown model id %s" % mid)
+    started = _refresh_model_catalog("unknown model id %s" % mid)
+    if started:
+        _catalog_asked.add(mid)
+    return started
 
 
 def _catalog_public_status():
@@ -1123,40 +1155,349 @@ def _with_cli_block(version, blocks):
     return version
 
 
-def _model_picks():
-    """The per-family last-picked map. Only known version ids survive the read (a stale or hand-edited
-    entry falls back to the family's newest rather than poisoning the default)."""
+def _model_id_clean(value):
+    """The id without a trailing [1m]-style context tag, lower-cased — what the pickers send back."""
+    return re.sub(r"\[[^\]]*\]$", "", str(value or "").strip().lower())
+
+
+def _model_id_parts(value):
+    """('fable', 5, 1) for 'claude-fable-5-1' — and for the [1m]-tagged and -YYYYMMDD-dated spellings a
+    CLI reports (the tag is stripped, the date dropped: the version is what precedes it); None for
+    anything that is not a first-party VERSION id of a picker family (a provider-prefixed id, a family
+    alias, a -fast variant, '<synthetic>'). Reads the catalog's one id grammar (_MODEL_ID_RE)."""
+    m = _MODEL_ID_RE.match(_model_id_clean(value))
+    if not m:
+        return None
+    nums = m.group(2).split("-")
+    if len(nums[-1]) >= 8:                       # a dated snapshot: claude-opus-4-5-20251101 → (4, 5)
+        nums = nums[:-1]
+    if not 1 <= len(nums) <= 2:                  # major[.minor] only — three numeric parts is no version
+        return None
+    return (m.group(1), int(nums[0]), int(nums[1]) if len(nums) > 1 else 0)
+
+
+def _model_id_label(value):
+    """The badge label for a first-party id — the SDK backend's pretty_model rule: 'Fable 5.1'; '' for
+    anything that is not one (a module-level helper never raises on junk)."""
+    parts = _model_id_parts(value)
+    if not parts:
+        return ""
+    fam, maj, minor = parts
+    return "%s %d" % (fam.capitalize(), maj) + (".%d" % minor if minor else "")
+
+
+def _learned_versions():
+    """{family: [{"value", "label", "learned": True}, …]} — every model id a session's CLI has actually
+    REPORTED (reg.liveModelId, persisted by the SDK backend's _learn_model from the init / assistant
+    `model` fields) that the CATALOG does not list — the seed table as the Models API fetch and its
+    cache have grown it (T222). The CLI is the authoritative source for what it serves; this is the
+    catalog's live lookahead, so a new release appears in the pickers the moment any session runs on
+    it, and each sighting is also T222's staleness EVENT (_note_unknown_model: one refresh per id per
+    kernel life, spent only when it actually starts), so the catalog catches up and the row's mark
+    drops. A dated snapshot of a known version shares its label and adds nothing (the dateless alias
+    covers it); provider-prefixed and synthetic ids are not the shape the pickers send and are
+    skipped. Reads the same reg files _thread_reg does. A first sighting is announced once on stderr —
+    and the pickers mark the row — so an unlisted model is LOUD, never a silent gap behind a stale
+    menu (the fail-loudly rule)."""
+    out = {}
+    fams = {c["value"] for c in MODEL_CHOICES}
+    with _catalog_lock:                          # the catalog is rebuilt in place on its own thread
+        known = set(_VERSION_FAMILY)
+        labels = {fam: {v["label"].lower() for v in vs} for fam, vs in MODEL_VERSIONS.items()}
+    try:
+        regs = sorted((jd.STATE / "sdk").glob("*.json"))
+    except OSError:
+        return out
+    for p in regs:
+        try:
+            reg = json.loads(p.read_text())
+        except (OSError, ValueError):
+            continue
+        mid = reg.get("liveModelId") if isinstance(reg, dict) else None
+        parts = _model_id_parts(mid)
+        if not parts or parts[0] not in fams:
+            continue
+        fam, maj, minor = parts
+        # the DATELESS alias is what the row offers: a CLI may report the -YYYYMMDD snapshot it runs,
+        # and a snapshot retires while the alias follows the version
+        value = "claude-%s-%d" % (fam, maj) + ("-%d" % minor if minor else "")
+        label = _model_id_label(value)
+        if value in known or label.lower() in labels.setdefault(fam, set()):
+            continue
+        labels[fam].add(label.lower())
+        out.setdefault(fam, []).append({"value": value, "label": label, "learned": True})
+        _note_unknown_model(value)               # the catalog lacks an id a CLI serves: refresh it (dedup by id)
+        if value not in _learned_announced:
+            _learned_announced.add(value)
+            sys.stderr.write("romp-kernel: model %s (%s) is not in the built-in version list — a running "
+                             "session's CLI reports it, so the pickers offer it marked new\n" % (value, label))
+    return out
+
+
+def _versions_catalog(learned=None):
+    """{family: versions} the pickers show — the CATALOG (the seed table as the Models API fetch and its
+    cache have grown it in place, T222) ∪ the LEARNED ids (what a running session's CLI reports that
+    the catalog does not list yet, marked), deduped by id, newest first by each id's own version tuple
+    (one ordering rule, the catalog's _version_key). The catalog owns the list; the learned rows are
+    its live lookahead until the next refresh folds them in."""
+    learned = _learned_versions() if learned is None else learned
+    with _catalog_lock:                          # snapshot: the catalog is rebuilt in place on its own thread
+        cat = {fam: [dict(v) for v in vs] for fam, vs in MODEL_VERSIONS.items()}
+    out = {}
+    for fam, rows in cat.items():
+        seen = {v["value"] for v in rows}
+        for v in learned.get(fam) or []:
+            if v["value"] not in seen:
+                seen.add(v["value"])
+                rows.append(dict(v))
+        rows.sort(key=lambda v: _version_key(v["value"]), reverse=True)
+        out[fam] = rows
+    return out
+
+
+def _version_family(value, learned=None):
+    """The family a VERSION id belongs to — a catalog id (the seed table, or one the Models API fetch
+    added to it), or one a session's CLI has reported (learned) — and '' for anything else: a family
+    alias, 'default', a never-seen id. This is what makes a value a pin the pick memory may record;
+    read at CALL time, so an id the catalog learned after boot is a pin from that moment on."""
+    v = str(value or "")
+    with _catalog_lock:
+        fam = _VERSION_FAMILY.get(v)
+    if fam:
+        return fam
+    for f, vs in (_learned_versions() if learned is None else learned).items():
+        if any(x["value"] == v for x in vs):
+            return f
+    return ""
+
+
+def _model_picks(learned=None):
+    """The per-family last-picked map. Only known version ids — catalog or learned — survive the read (a
+    stale or hand-edited entry falls back to the family alias rather than poisoning the default); a
+    pick NO list knows is the catalog's staleness event (T222): it may name a model newer than the
+    list, so it fires one refresh, and is honored the moment the catalog learns the id."""
     try:
         d = json.loads((jd.STATE / MODEL_PICKS_FILE_NAME).read_text())
-        if not isinstance(d, dict):
-            return {}
-        out = {}
-        for f, v in d.items():
-            if isinstance(v, str) and _VERSION_FAMILY.get(v) == f:
-                out[f] = v
-            elif isinstance(v, str):
-                _note_unknown_model(v)   # a pick this list doesn't know → the catalog staleness event (T222)
-        return out
     except Exception:
         return {}
+    if not isinstance(d, dict):
+        return {}
+    learned = _learned_versions() if learned is None else learned
+    out = {}
+    for f, v in d.items():
+        if not isinstance(v, str):
+            continue
+        if _version_family(v, learned) == f:
+            out[f] = v
+        else:
+            _note_unknown_model(v)   # a pick no list knows → the catalog staleness event (T222)
+    return out
+
+
+def _models_changed():
+    """The pick memory MOVED — a version pinned, a family un-pinned (Latest), a refused pin dropped — or the
+    version LIST grew (the catalog fetch added ids, T222), so every open picker's cached /models list is
+    stale, and its `default` is what a family click SENDS. Tell every client that hosts a picker now with a
+    models frame (the palette frame's idiom; each re-fetches /models on it) — event-keyed on the change
+    itself, never a poll. A counter rides it so a client can tell frames apart, and the same counter stamps
+    the /models payload so a late response never overwrites a newer one. (Without it, after Latest
+    un-pinned a family on the kernel the same tab's next family click sent the STALE pinned id and silently
+    re-pinned; a second dashboard's pick moved the default without the first tab knowing.) The FEED app is
+    on the list because the settings gear lives in the feed bundle (feed.ts requires gear.js; the shell's
+    rail gear and VS Code's settings command both open it in the feed pane). The feed shim and the VS Code
+    pipe hand every non-keepalive frame to the window as a message; feed.ts's own listener ignores a type
+    it does not know."""
+    _models_rev[0] += 1
+    frame = {"type": "models", "rev": _models_rev[0]}
+    for app in ("chat", "timeline", "feed"):
+        _send_to_app(app, frame)
 
 
 def _note_model_pick(value):
     """Record a version pick as its family's new default (write-on-change). Family shorthands and
-    unknown strings record nothing — they are not version picks (an unknown claude-* id does fire
-    the catalog's staleness refresh: it may be a model newer than this list)."""
-    fam = _VERSION_FAMILY.get(str(value or ""))
+    unknown strings record nothing — they are not version picks — so a bare family click (which
+    carries the alias) can never downgrade an explicit legacy pin (an unknown claude-* id does fire
+    the catalog's staleness refresh: it may be a model newer than this list, T222). A version is a
+    catalog id (seed, or one the Models API fetch added) or a learned one (_version_family)."""
+    fam = _version_family(value)
     if not fam:
         _note_unknown_model(value)
         return
-    picks = _model_picks()
-    if picks.get(fam) == value:
-        return
-    picks[fam] = value
+    # Merge into the RAW file, never the filtered read: an entry the read filter hides (one the
+    # catalog cannot vouch for right now) is not erased by another family's write — it resolves
+    # again the moment the catalog learns the id.
+    with _model_picks_lock:
+        try:
+            picks = json.loads((jd.STATE / MODEL_PICKS_FILE_NAME).read_text())
+        except Exception:
+            picks = {}
+        picks = picks if isinstance(picks, dict) else {}
+        if picks.get(fam) == value:
+            return
+        picks[fam] = value
+        try:
+            _atomic_write(jd.STATE / MODEL_PICKS_FILE_NAME, json.dumps(picks))
+        except Exception:
+            sys.stderr.write("model-picks save: %s\n" % traceback.format_exc())
+            return
+    _models_changed()
+
+
+def _forget_model_pick(fam, only=None):
+    """Drop a family's remembered pin, so /models falls back to the alias and a family click follows the
+    CLI's newest again — the version submenu's "Latest" row, an explicit user gesture carried as
+    `floating` on the set op. Merges into the RAW file like _note_model_pick (other families' pins,
+    vouched-for or not, stay); a family with no pin is a no-op. `only` drops the pin only while it still
+    holds that exact id — the refusal path's compare-and-swap, so a late refusal never drops a NEWER pin
+    the user has since accepted."""
+    with _model_picks_lock:
+        try:
+            picks = json.loads((jd.STATE / MODEL_PICKS_FILE_NAME).read_text())
+        except Exception:
+            return
+        if not isinstance(picks, dict) or fam not in picks:
+            return
+        if only is not None and picks.get(fam) != only:
+            return                                   # a newer pin — not this writer's to drop
+        picks.pop(fam, None)
+        try:
+            _atomic_write(jd.STATE / MODEL_PICKS_FILE_NAME, json.dumps(picks))
+        except Exception:
+            sys.stderr.write("model-picks save: %s\n" % traceback.format_exc())
+            return
+    _models_changed()
+
+
+def _model_pick_refused(sid, value):
+    """The SDK backend's on_model_refused hook: the CLI ANSWERED a set_model with an error, so `value` —
+    recorded as its family's pin at the choke point, BEFORE the CLI ruled — is an id the CLI will not
+    run. Forget it, but only while it is still the pin (a newer accepted pick for the family is not this
+    refusal's to touch); the forget emits the models frame, so every picker's family row stops sending
+    the refused id instead of re-ringing the problem on each click. An alias or an unknown string was
+    never a pin: no-op."""
+    fam = _version_family(value)
+    if fam:
+        _forget_model_pick(fam, only=value)
+
+
+# The id a bare family click RECORDED before the alias became the default — each family's seed head as
+# it stood then, frozen here on purpose (the table above moves; this must not). A stored model equal to
+# one of these is, in nearly every case, that artefact rather than a deliberate pin: a version-submenu
+# pick of the same id was indistinguishable from a family click, and the migration treats the head as
+# alias-worthy exactly as the CLI's own 2.1.257 `migration_fable5_to_fable_alias` treats a user setting
+# of claude-fable-5 (its strings name the migration and the id; verified in the installed binary).
+_SEED_PINS = {"claude-fable-5": "fable", "claude-opus-5": "opus", "claude-sonnet-5": "sonnet",
+              "claude-haiku-4-5": "haiku",
+              # fable's head moved to 5.1 on 2026-09-01 and every family click since wrote THAT id — the
+              # exact artefact this pass exists for, and the one the seed set first missed (PR #882 review)
+              "claude-fable-5-1": "fable"}
+MODEL_ALIAS_MIGRATION_MARKER = "model-alias-migration.done"   # STATE/…: stamped once the pass below ran clean
+
+
+def _model_alias_boot_pass():
+    """ONE-TIME state migration at kernel boot, marker-gated like _rewind_migration_bg: every stored
+    model equal to a PRE-FIX seed head (_SEED_PINS) becomes its family alias, in the three places the
+    pin lived —
+    - sdk-defaults.json's remembered model (what the next NEW session seeds from);
+    - model-picks.json, where a head recorded as a family's pick is DROPPED: that store holds version
+      ids only, and an absent pick is exactly how /models falls to the alias;
+    - every session reg's `model` — what _options hands the CLI as --model on the next reconnect, so
+      the session follows the CLI's newest from then on. Dead regs too: a revival launches from the
+      same field. A LIVE session is not re-pointed mid-turn (no set_model fires here); the rewrite is
+      picked up by its next reconnect, exactly as a set_model on a dormant session is.
+    WHY ONCE, AND WHY A MARKER: the head ids are not retired — three of the four are the CURRENT
+    releases, exactly what a user pins from the version submenu against a future .1 — so after the fix
+    a stored head is a deliberate pin, indistinguishable from pre-fix residue by value alone. Without a
+    completion record the pass would re-run at every restart and undo those picks, against the "an
+    explicit pin stands" guarantee. The marker (STATE/model-alias-migration.done, {"t","moved"}) is
+    what tells the two apart: absent → the state predates the fix and the pass runs; present → it ran,
+    and every head found from then on is the user's. The way BACK to floating for a pinned family is a
+    picker gesture, never a boot pass: the version submenu's "Latest" row (_set_model_or_park
+    `floating`) forgets the pin and sends the alias.
+    Stamped only after a CLEAN pass — "returned" is not "succeeded": a store or reg the pass could not
+    READ is one it did not migrate, so no marker is written and the pass re-arms at the next boot (an
+    absent file is nothing to migrate). Two failures are not one: a read the OS refused is TRANSIENT —
+    the file is there, this boot could not open it — and withholds the marker; a file json.loads cannot
+    parse is PERMANENT garbage — it holds no pin ANY reader can see (read_reg, read_sdk_defaults and the
+    picks loader all return None/{} over it), so retrying over it could never migrate anything, and
+    counting it a failure would withhold the marker forever and re-float every deliberate post-fix pin
+    at every boot without ever naming the file. Garbage is named loudly, by path, and treated as
+    nothing to migrate; the marker still lands. Loud (one stderr line naming what moved, nothing when
+    nothing did) and blind to any non-head value — an explicit legacy pin, or a post-fix head such as
+    claude-fable-5-1, stands. Runs before the SDK backend constructs, which is when regs become
+    chosen_model (main()'s ordering, pinned by test); a rewrite lost to a concurrent write during a
+    restart handoff simply recurs at the next boot, since no marker lands until the pass completes.
+    Returns the number of rewrites; 0 without a word once the marker exists."""
+    marker = jd.STATE / MODEL_ALIAS_MIGRATION_MARKER
+    if marker.exists():
+        return 0
+    n = 0
+    moved = []
+    fails = 0
+
+    def _load(p):
+        # a dict (or whatever the file holds) — None for an ABSENT file (nothing to migrate), for one the
+        # OS would not let us READ (transient: counted, named, withholds the marker so the next boot
+        # retries) and for one that is not JSON (permanent: named, nothing to migrate, never counted).
+        # Read as BYTES and let json.loads decode: read_text() decodes, and a file holding non-UTF-8
+        # bytes raises UnicodeDecodeError there — a ValueError, not an OSError — which would escape both
+        # arms, abort the whole pass at that file and re-arm it every boot. Decoding belongs to the parse
+        # arm: a file no reader can decode holds no pin any reader can see, exactly like one that is not
+        # JSON.
+        nonlocal fails
+        try:
+            data = p.read_bytes()
+        except FileNotFoundError:
+            return None
+        except OSError as e:
+            fails += 1
+            sys.stderr.write("romp-kernel: model-alias migration: could not read %s (%s) — retrying next "
+                             "boot\n" % (p, e))
+            return None
+        try:
+            return json.loads(data)
+        except ValueError as e:              # json's own errors and UnicodeDecodeError alike
+            sys.stderr.write("romp-kernel: model-alias migration: %s is not JSON (%s) — no reader can see a "
+                             "pin in it, so there is nothing there to migrate; left as is\n" % (p, e))
+            return None
+    p = jd.STATE / "sdk-defaults.json"
+    d = _load(p)
+    if isinstance(d, dict) and d.get("model") in _SEED_PINS:
+        d["model"] = _SEED_PINS[d["model"]]
+        _atomic_write(p, json.dumps(d))
+        n += 1
+        moved.append("sdk-defaults model → %s" % d["model"])
+    p = jd.STATE / MODEL_PICKS_FILE_NAME
+    d = _load(p)
+    if isinstance(d, dict):
+        stale = sorted(f for f, v in d.items() if v in _SEED_PINS)
+        if stale:
+            for f in stale:
+                d.pop(f)
+            _atomic_write(p, json.dumps(d))
+            n += len(stale)
+            moved.append("model-picks dropped %s" % ", ".join(stale))
     try:
-        _atomic_write(jd.STATE / MODEL_PICKS_FILE_NAME, json.dumps(picks))
-    except Exception:
-        sys.stderr.write("model-picks save: %s\n" % traceback.format_exc())
+        regs = sorted((jd.STATE / "sdk").glob("*.json"))
+    except OSError:
+        regs = []
+    for rp in regs:
+        reg = _load(rp)
+        if isinstance(reg, dict) and reg.get("model") in _SEED_PINS:
+            reg["model"] = _SEED_PINS[reg["model"]]
+            _atomic_write(rp, json.dumps(reg))
+            n += 1
+            moved.append("session %s → %s" % (reg.get("name") or rp.stem, reg["model"]))
+    if n:
+        sys.stderr.write("romp-kernel: model-alias migration: %s (a session takes the alias at its "
+                         "next reconnect)\n" % "; ".join(moved))
+    if fails:
+        sys.stderr.write("romp-kernel: model-alias migration could not read %d file(s) — no marker "
+                         "written, retrying next boot\n" % fails)
+    else:
+        jd.STATE.mkdir(parents=True, exist_ok=True)
+        _atomic_write(marker, json.dumps({"t": int(time.time()), "moved": n}))
+    return n
 # "ultracode" tops the ladder (the user 2026-08-04): the CLI's own /effort offers it — xhigh effort plus
 # standing dynamic-workflow orchestration, per session. tmux delivers the literal "/effort ultracode"; the
 # SDK backend maps it to effort=xhigh + the `ultracode` settings key (the CLI's documented per-session
@@ -1234,7 +1575,8 @@ def _name_of(sid):
 def _cwd_of(sid):
     """The session's working directory from the names registry (2nd tab field: name\\tcwd\\tbg\\tfg), or "".
     Written at launch for BOTH backends (tmux romp launcher + SDK write_name), so it's available before any
-    transcript exists. The directory is fixed at creation — there's no SDK call to relocate a session."""
+    transcript exists — and REWRITTEN by a move (SdkBackend.move, the CLI's set_cwd control request), so
+    this is the current directory, not the launch one; every transcript path derives from it."""
     parts = _names_parts(sid)
     return parts[1] if parts and len(parts) > 1 else ""
 
@@ -2864,6 +3206,98 @@ def _nudge_text(count, stalled=False):
 _autonudge_cache = {}   # str(path) -> ((mtime_ns,size), dict)
 
 
+# ── kernel settings: gesture-time ordering (2026-08-29) ──────────────────────────────────────────
+# A setting message can reach this kernel long after the click that made it: federation queues
+# KERNEL_SETTING sends per host while a socket is down and flushes them on reconnect
+# (ui/webview/federation.ts sendRemote/flushPending), and that queue is latest-per-TAB — a frozen
+# dashboard tab (a backgrounded phone, a throttled browser tab) re-dials hours later and flushes a
+# pick the user has since superseded from another device. This kernel used to apply whatever
+# arrived, and the judge tiers RE-PROPAGATE what they apply (_propagate_judge_settings), so one
+# stale flush could walk the whole mesh back to an hours-old pick — and with every kernel then
+# agreeing, the gear's mixed-marks disagreement surface showed nothing. The writer's evidence
+# predated the store's newer state, so it stands down at the write moment (the standing card rule,
+# applied to settings). Ordering is enforced HERE, at the authoritative store, so every path is
+# covered at once: live sends, queue flushes, racing dashboards, and the propagation legs.
+#   - Every dashboard gesture carries `gt`: epoch ms captured ONCE where the message is built (the
+#     gear's change handlers, the file viewer's consent post, the feed's judge-limit switch), so a
+#     queued flush delivers the ORIGINAL gesture's time, never its send time.
+#   - Each setting's store persists the last-APPLIED gt beside the value (auto-nudge.json /
+#     file-editing.json gain a "gt" field; the bare judge-tier stores gain a `<name>.gt` sidecar);
+#     an arriving stamp older-or-equal to it stands down — no apply, no propagation, one loud
+#     stderr line naming both stamps.
+#   - A message with NO stamp (an older dashboard, a direct HTTP caller) applies as it always did
+#     and records its arrival time, so stamped and unstamped writers still order against each other.
+# Clock skew: cross-device wall clocks (NTP) are the ordering source. Gestures contend at human
+# timescales — the flush that motivated this arrived hours late, and a two-dashboard race is
+# seconds apart — so sub-second NTP skew is immaterial; equal stamps keep the STORED value (stand
+# down) for determinism.
+
+def _gesture_ms(msg):
+    """The gesture stamp riding `msg` (epoch ms), or None when the sender didn't stamp one."""
+    gt = msg.get("gt") if isinstance(msg, dict) else None
+    return int(gt) if isinstance(gt, (int, float)) and gt > 0 else None
+
+
+def _gt_int(v):
+    """A stored stamp, defensively: anything unreadable orders as 0, so it never blocks an apply."""
+    try:
+        return int(v or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _setting_stale(name, gt, applied_gt):
+    """True when gesture `gt` must stand down against the store's last-applied stamp — loudly.
+    (The one QUIET case — an equal stamp carrying the same value, the gesture's own echo — is
+    decided by the callers through _gesture_echo BEFORE this check, so it never reaches here.)
+    A stand-down is also recorded on THIS thread (_pop_stale_notice) so the WS branch that
+    delivered the gesture can answer its own socket with a settingStale frame: the stderr line
+    alone left the refusing kernel's verdict invisible to the dashboard that made the gesture
+    (the open gear kept showing the refused pick, and with the mesh AGREEING on the kept value
+    the mixed marks showed nothing). Every check clears the previous verdict first, so a popped
+    notice is always the CURRENT call's."""
+    _stale_seen.last = None
+    if gt is None or gt > applied_gt:
+        return False
+    _stale_seen.last = {"setting": name, "storedGt": applied_gt}
+    sys.stderr.write("setting %s: stale gesture stood down (gesture %d <= applied %d) — "
+                     "no apply, no propagation\n" % (name, gt, applied_gt))
+    return True
+
+
+def _gesture_echo(gt, applied_gt, same_value):
+    """The gesture's own ECHO: an equal stamp carrying the value the store already holds. A judge
+    pick reaches every remote kernel twice with one gt — the dashboard's broadcast and the origin
+    kernel's fan-out — and whichever copy lands second is not stale news, it is the same news
+    again: nothing to apply, no settingStale toast for the user's own pick, no stand-down line on
+    every ordinary pick in a mesh (PR #879 review). Callers return None on True, BEFORE the
+    _setting_stale check, which keeps its loud verdict for an equal stamp carrying a DIFFERENT
+    value (determinism under identical clocks, never a coin flip)."""
+    return gt is not None and gt == applied_gt and bool(same_value)
+
+
+_stale_seen = threading.local()   # per-thread: the last _setting_stale stand-down (the WS reply seam)
+
+
+def _pop_stale_notice():
+    """The current thread's last stand-down verdict, consumed. The gt-gated setters run
+    synchronously on the thread that dispatched the message, so this is exact — no id plumbing."""
+    d = getattr(_stale_seen, "last", None)
+    _stale_seen.last = None
+    return d
+
+
+# ONE lock for every gt-gated setting's read-check-write span (2026-08-29): the stores read the
+# stamp, check _setting_stale, then write, on a ThreadingHTTPServer — with no lock, two
+# near-simultaneous flushes of one setting (two dashboards flushing on a host's recovery) could
+# both pass the check against the same stored stamp and then land in SOCKET order, the exact
+# inversion the gesture-time mechanism exists to prevent. The critical sections are tiny (a stat
+# + small read, a compare, an atomic write), so one module-level lock covers them all;
+# _set_auto_nudge is the one exception — its file doubles as the nudge ledger, whose other
+# writers already serialize on _NUDGE_LOCK, so it keeps that lock across the same span.
+_SETTINGS_LOCK = threading.RLock()
+
+
 # ONE lock for the nudge ledger's read-modify-write spans (2026-08-19 audit: a live episode
 # record vanished with no state-visible writer — the ledger's writers run on the producer tick,
 # judge callbacks, and WS handlers concurrently, and two overlapping dict(read)…write() spans
@@ -2989,10 +3423,27 @@ def _write_auto_nudge(d):
     _atomic_write(jd.STATE / "auto-nudge.json", json.dumps(d))
 
 
-def _set_auto_nudge(enabled):
-    d = dict(_auto_nudge_data())
-    d["enabled"] = bool(enabled)
-    _write_auto_nudge(d)
+def _set_auto_nudge(enabled, gt=None):
+    """Returns the applied gesture stamp (epoch ms), or None when a stale `gt` stood down —
+    see the gesture-time ordering block above _NUDGE_LOCK — or the store write failed (OSError:
+    loud on stderr, nothing applied). The catch lives HERE, like _set_update_mode's and
+    _set_judge_state's: a raised OSError reaches the WS reader loop, which classifies it as a
+    socket failure and re-raises into a silent pass — a full-disk gear toggle tearing the whole
+    dashboard WebSocket down with zero log output."""
+    with _NUDGE_LOCK:
+        d = dict(_auto_nudge_data())
+        if _gesture_echo(gt, _gt_int(d.get("gt")), bool(d.get("enabled")) == bool(enabled)):
+            return None                                # the same pick again: quietly nothing to do
+        if _setting_stale("auto-nudge", gt, _gt_int(d.get("gt"))):
+            return None
+        d["enabled"] = bool(enabled)
+        d["gt"] = gt if gt is not None else int(time.time() * 1000)
+        try:
+            _write_auto_nudge(d)
+        except OSError as e:
+            sys.stderr.write("setting auto-nudge: write failed (%s) — nothing applied\n" % e)
+            return None
+        return d["gt"]
 
 
 def _compact_suggest_on():
@@ -3003,10 +3454,27 @@ def _compact_suggest_on():
     return bool(_auto_nudge_data().get("compactSuggestEnabled"))
 
 
-def _set_compact_suggest(enabled):
-    d = dict(_auto_nudge_data())
-    d["compactSuggestEnabled"] = bool(enabled)
-    _write_auto_nudge(d)
+def _set_compact_suggest(enabled, gt=None):
+    """Returns the applied gesture stamp (epoch ms), or None when a stale `gt` stood down or the
+    store write failed (OSError: loud on stderr, nothing applied, nothing ticked) —
+    _set_auto_nudge's contract exactly (same blob, same _NUDGE_LOCK), but the
+    stamp is PER SETTING (`compactSuggestGt`): the two checkboxes share a file, not a clock, so a
+    queued compact-suggest flush can never stand down against a newer auto-nudge gesture or steal
+    authority from one (the gesture-time ordering block above _gesture_ms)."""
+    with _NUDGE_LOCK:
+        d = dict(_auto_nudge_data())
+        if _gesture_echo(gt, _gt_int(d.get("compactSuggestGt")), bool(d.get("compactSuggestEnabled")) == bool(enabled)):
+            return None
+        if _setting_stale("compact-suggest", gt, _gt_int(d.get("compactSuggestGt"))):
+            return None
+        d["compactSuggestEnabled"] = bool(enabled)
+        d["compactSuggestGt"] = gt if gt is not None else int(time.time() * 1000)
+        try:
+            _write_auto_nudge(d)
+        except OSError as e:
+            sys.stderr.write("setting compact-suggest: write failed (%s) — nothing applied\n" % e)
+            return None
+        return d["compactSuggestGt"]
 
 
 def _file_editing_on():
@@ -3024,8 +3492,32 @@ def _file_editing_on():
         return False
 
 
-def _set_file_editing(enabled):
-    _atomic_write(jd.STATE / "file-editing.json", json.dumps({"enabled": bool(enabled)}))
+def _set_file_editing(enabled, gt=None):
+    """Returns the applied gesture stamp (epoch ms), or None when a stale `gt` stood down —
+    see the gesture-time ordering block above _NUDGE_LOCK — or the store write failed (OSError:
+    loud on stderr, nothing applied; caught HERE like _set_update_mode's, because a raised OSError
+    reads as a socket failure to the WS reader loop and silently tears the connection down).
+    A file without the field (written before the mechanism) reads as gt 0, so any stamped gesture
+    applies over it. The whole read-check-write span holds _SETTINGS_LOCK: without it, two racing
+    flushes could both check against the same stored stamp and land in socket order (see the
+    lock's own comment)."""
+    with _SETTINGS_LOCK:
+        try:
+            prev = json.loads((jd.STATE / "file-editing.json").read_text())
+        except Exception:
+            prev = None
+        prev_gt = _gt_int(prev.get("gt")) if isinstance(prev, dict) else 0
+        if _gesture_echo(gt, prev_gt, isinstance(prev, dict) and bool(prev.get("enabled")) == bool(enabled)):
+            return None
+        if _setting_stale("file-editing", gt, prev_gt):
+            return None
+        stamp = gt if gt is not None else int(time.time() * 1000)
+        try:
+            _atomic_write(jd.STATE / "file-editing.json", json.dumps({"enabled": bool(enabled), "gt": stamp}))
+        except OSError as e:
+            sys.stderr.write("setting file-editing: write failed (%s) — nothing applied\n" % e)
+            return None
+        return stamp
 
 
 # ── automatic updates of THIS machine (the user 2026-08-09) ───────────────────────────────────────
@@ -3058,9 +3550,38 @@ def _update_mode():
         return "ask"
 
 
-def _set_update_mode(mode):
-    if mode in _UPDATE_MODES:
-        _atomic_write(jd.STATE / "update-mode.json", json.dumps({"mode": mode}))
+def _update_mode_gt():
+    """Last-applied gesture stamp for the update mode — a file without the field (written before
+    the mechanism), or no file at all, reads as 0, so any stamped gesture applies over it."""
+    try:
+        d = json.loads((jd.STATE / "update-mode.json").read_text())
+        return _gt_int(d.get("gt")) if isinstance(d, dict) else 0
+    except (OSError, ValueError):
+        return 0
+
+
+def _set_update_mode(mode, gt=None):
+    """Returns the applied gesture stamp (epoch ms); None when the mode is invalid, a stale `gt`
+    stood down, or the write failed (loud — nothing applied). setUpdateMode rides federation's
+    queued KERNEL_SETTING class like the rest of the gear, so it is gt-gated exactly like
+    _set_file_editing: a frozen tab's hours-late flush must not silently revert how this machine
+    self-updates at boot (ask/auto/off). Value + stamp live in one json, read-check-write under
+    _SETTINGS_LOCK; an unstamped set (older dashboard, direct caller) applies as it always did
+    and records its arrival time."""
+    if mode not in _UPDATE_MODES:
+        return None
+    with _SETTINGS_LOCK:
+        if _gesture_echo(gt, _update_mode_gt(), _update_mode() == mode):
+            return None
+        if _setting_stale("update-mode", gt, _update_mode_gt()):
+            return None
+        stamp = gt if gt is not None else int(time.time() * 1000)
+        try:
+            _atomic_write(jd.STATE / "update-mode.json", json.dumps({"mode": mode, "gt": stamp}))
+        except OSError as e:
+            sys.stderr.write("setting update-mode: write failed (%s) — nothing applied\n" % e)
+            return None
+        return stamp
 
 
 def _semver(tag):
@@ -4466,9 +4987,12 @@ def _log_nudge_event(sid, gid, t, count, verdict="fired", ev_t=None, parked_s=No
         pass
 
 
-def _working_top_goal(sid):
-    """A TOP-level goal of `sid` whose rolled-up status is 'working' (not blocked/completed/cleared), or
-    None — the 'orphaned' goal Auto Nudge follows up on."""
+def _open_top_goal(sid):
+    """A TOP-level goal of `sid` that is still OPEN — rolled-up status 'working' OR 'blocked' (parked on the
+    user) — or None. The working-note expiry keys on this: a session waiting on the user has not finished,
+    and the worktree, branch and files it published still belong to it (parked sessions were observed with
+    their notes lifted while they still held exactly those). Was _working_top_goal ('working' only), whose
+    sole caller was that expiry."""
     try:
         store = jd.load_goals(sid)
     except Exception:
@@ -4480,7 +5004,7 @@ def _working_top_goal(sid):
             continue
         if nd.get("cleared") or nid in cleared:
             continue
-        if status.get(nid, "working") == "working":
+        if status.get(nid, "working") in ("working", "blocked"):
             return nid
     return None
 
@@ -4539,13 +5063,74 @@ def _open_leaves_for_nudge(nodes, top_id):
             if nid != top_id and not isinstance(nodes.get(nid, {}).get("handoff"), dict)]
 
 
-def _pure_delegation_top(nodes, top_id):
+def _dictated_prompt_uuid(sid, path, pu):
+    """Does a node's stored promptUuid name a HUMAN-DICTATED prompt record in the session's own
+    transcript? True / False / None(unknown) — the ask-unit exemption's discriminator. promptUuid
+    alone proves nothing: it is the g200 LANDABLE-ANCHOR field, stamped on essentially every minted
+    top (_seg_anchor hands a peer/system/AUTONOMOUS segment's mint the segment head — often the
+    agent's own assistant atom — and apply_courier stamps the delegate MAIL's anchor), so only the
+    RECORD it names can say whether the top is the dictated ask. The rule is
+    jd._human_prompt_record — the same author-'human'-minus-interrupts / unmarked-attachment
+    classification the T101/T105 trace uses (_session_user_prompt_record, _user_ask_text's quote
+    gate) — read against the CACHED parse only (_parse_cached never parses, preserving build_feed's
+    cold-start contract; the anchors fill in a beat later the same way the dots do). None when the
+    verdict cannot be reached: no path threaded, no cached parse yet, or the uuid absent from the
+    stitched chain (a rewound/compacted record) — the caller decides what doubt means."""
+    if not (pu and path):
+        return None
+    ps = _parse_cached(str(path))
+    if not ps:
+        return None
+    for turn in ps.get("turns") or []:
+        for a in turn.get("atoms") or []:
+            if a.get("uuid") == pu:
+                return jd._human_prompt_record(a, str(sid or "")) is not None
+    return None
+
+
+def _pure_delegation_top(nodes, top_id, sid=None, path=None):
     """True if EVERY leaf in top_id's subtree is a courier handoff-tracking node — the whole top is just work
     handed to PEERS, nothing this session does itself. Such a top is pure peer-coordination and is NOT an
     inbox card (the user 2026-06-23): consistent with _all_outstanding_delegated already treating
     delegated-only work as not-needs-you. Unlike that (which weighs only OPEN leaves for the nudge gate), this
     weighs ALL leaves — a delegation stays coordination even after it completes — so the card is suppressed in
-    every column. A top with ANY own-work leaf still shows."""
+    every column. A top with ANY own-work leaf still shows.
+
+    THE ASK-UNIT EXEMPTION: T101 made the dictated ask itself host the fan-out — the courier plants
+    its tracking nodes UNDER the ask and mints NO recipient tops — so an ask fully fanned to
+    workers is exactly this all-leaves-are-handoffs shape, and suppressing it left the user's ask
+    with no card ANYWHERE (T101's own rule: one ask fanned to two workers = ONE card with two
+    handoff children). A top IS the ask only on real dictation evidence:
+      - T105's chain-proven `userAsk` record — the ONLY evidence a courier-planted top (`origin`)
+        can carry: its promptUuid is the delegate MAIL's anchor by construction (g200), never the
+        dictated prompt, so a bare anchor there would re-show every mid-chain coordination top;
+      - a promptUuid that PROVABLY resolves to a human-dictated record (_dictated_prompt_uuid
+        above; callers thread sid+path). A resolved machine anchor — an autonomous segment's head,
+        a peer mail — is not the ask and the suppression stands. An UNRESOLVABLE anchor fails OPEN
+        (exempt): suppressing on doubt re-opens the no-card-anywhere hole this exemption closes,
+        and a shown coordination card is recoverable noise where a hidden ask is not.
+    A top that is ITSELF a handoff tracker never qualifies: the parentless '↪ delegated' record
+    stays suppressed as before.
+
+    THE LATCH OUTRANKS THE CACHE: `askAnchor` is the judge's durable verdict on this exact
+    question, filed from a WARM parse by the planner pass (jd._latch_ask_anchors) —
+    'human'/'absent' exempt, 'machine' suppresses, and NEITHER is ever re-derived here: re-deriving
+    per build from _parse_cached would make the verdict flap with cache temperature (a
+    machine-anchored coordination card re-shown on every restart/cold beat with no new
+    information — the cards-move-on-new-information rule). Only an UNLATCHED node still reads the
+    cached parse below — the fail-open on doubt — and the judge latches it on its next pass, so
+    that flap happens at most once per node ever, not per beat."""
+    root = nodes.get(top_id) or {}
+    if not isinstance(root.get("handoff"), dict):
+        if isinstance(root.get("userAsk"), dict):
+            return False
+        pu = root.get("promptUuid")
+        if pu and not isinstance(root.get("origin"), dict):
+            latch = root.get("askAnchor")
+            if latch in ("human", "absent"):
+                return False                          # the dictated ask (or durable doubt) — stable
+            if latch != "machine" and _dictated_prompt_uuid(sid, path, pu) is not False:
+                return False                          # unlatched → the cached-parse read, fail-open
     children = {}
     for nid, nd in nodes.items():
         children.setdefault(nd.get("parentId"), []).append(nid)
@@ -6846,14 +7431,16 @@ def _set_working_note(sid, text):
 
 def _clear_done_working_notes(now, tmux):
     """Event-based expiry of the set_working ownership note (the user 2026-06-24): once a session is IDLE
-    with NO working top goal left — its work is done (only done / blocked-on-you / cleared remains) — its
-    @romp-working claim is moot, so clear it. Peers reading list_agents then stop coordinating against a
-    finished session instead of waking it to ask "do you still own this?". Keyed on the completion EVENT
-    (idle + no working top goal), NOT a time heuristic. A session still WORKING — or idle with a goal still
-    WORKING (orphaned/stalled, the auto-nudge case) — keeps its note; it still owns that in-flight work.
-    (A session parked blocked-on-YOU also has its note lifted: it isn't actively editing, and it re-publishes
-    on resume — consistent with Part 1 flagging idle notes stale.) Runs every pusher tick, independent of the
-    auto-nudge toggle; a no-op (one tmux read) unless some session has published a note."""
+    with NO open top goal left — its work is done (only done / cleared remains) — its @romp-working claim
+    is moot, so clear it. Peers reading list_agents then stop coordinating against a finished session
+    instead of waking it to ask "do you still own this?". Keyed on the completion EVENT (idle + no open top
+    goal), NOT a time heuristic. A session still WORKING — or idle with a goal still WORKING (orphaned/
+    stalled, the auto-nudge case) — keeps its note; it still owns that in-flight work. So does a session
+    parked BLOCKED on the user: it has not finished, and the worktree, branch and files its note names are
+    still its own — the first cut lifted those notes too, and parked sessions were then observed with their
+    claims gone from list_agents while they still held them, which is the interference the contract "a peer
+    with no note holds nothing" exists to prevent. Runs every pusher tick, independent of the auto-nudge
+    toggle; a no-op (one tmux read) unless some session has published a note."""
     notes = _working_notes()
     if not notes:
         return
@@ -6869,9 +7456,9 @@ def _clear_done_working_notes(now, tmux):
             continue
         if not turns or _session_working(turns):         # still working per the event model → keep its claim
             continue
-        if _working_top_goal(sid):                        # an OPEN working top goal remains → still its work
+        if _open_top_goal(sid):                           # working OR blocked top remains → still its work
             continue
-        _set_working_note(sid, "")                        # idle + nothing working → lift the stale claim
+        _set_working_note(sid, "")                        # idle + nothing open → lift the stale claim
 
 
 def _chat_tab_sessions(now, tmux):
@@ -7068,8 +7655,9 @@ def _expand_dir(raw):
 
 
 def _resolve_create_dir(raw, create=False):
-    """Resolve a UI-supplied new-session directory → (path, error). ~ and $VAR are expanded; the path must
-    be an existing directory (the session's cwd is fixed at creation, so a bad path can't be fixed later —
+    """Resolve a UI-supplied session directory → (path, error) — for a NEW session and for a move
+    (moveSession / POST /move, the one later fix for a wrong pick). ~ and $VAR are expanded; the path must
+    be an existing directory (a session launched into a bad path is a real session nothing can find —
     reject it up front), and it is canonicalized — symlinks and trailing slash via realpath, on-disk
     casing via _true_case — because the string, not just the directory, is load-bearing (see
     _true_case). Empty/None → the kernel default, no error.
@@ -7325,19 +7913,68 @@ def _pick_identity_color(now=None):
     return bgs[i], fgs[i]
 
 
+_ENV_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")   # the shell-identifier alphabet
+
+# sdk_backend.ENV_RESERVED_NAMES' kernel-side mirror: the identity env the SDK spawn owns
+# (options.env — `romp end self` resolves through ROMP_SID), which a same-named user var would
+# silently shadow or be shadowed by. Same lockstep contract as the validator below.
+_ENV_RESERVED_NAMES = ("ROMP_SID", "ROMP_SESSION_NAME")
+
+
+def _env_error(env):
+    """Why POST /new's "env" is not a valid per-session env payload — "" when it is. The kernel-side
+    mirror of sdk_backend.env_request_error (that module loads lazily inside _sdk(), so the handler
+    can't import it at the door): a dict of NAME → string-value pairs, names in the shell-identifier
+    alphabet — the payload lands in the per-sid flag-settings file the CLI reads at launch, where a
+    name outside it would be written silently and exported never. The first offender is NAMED and the
+    whole request refused (fail-loudly, the user 2026-07-03): a skipped var is a session quietly
+    running without the env it was asked to have. The backend validates AGAIN: spawn backs this
+    door with its loud ValueError, but set_env re-checks and refuses with a silent False its
+    callers discard — so on the existing:true path drift between the two copies would be a 200
+    with an env echo and nothing applied. This copy MUST stay in lockstep with
+    sdk_backend.env_request_error, pinned by test_session_env's ValidatorLockstep."""
+    if not isinstance(env, dict):
+        return "env must be an object of NAME: value pairs"
+    for k, v in env.items():
+        if not isinstance(k, str) or not _ENV_NAME_RE.match(k):
+            return "env: bad name %r — names match [A-Za-z_][A-Za-z0-9_]*" % (k,)
+        if k in _ENV_RESERVED_NAMES:
+            return ("env: %s is reserved — romp sets the session's identity env "
+                    "(ROMP_SID, ROMP_SESSION_NAME) itself" % k)
+        if not isinstance(v, str):
+            return "env: the value for %r must be a string" % (k,)
+        if "\x00" in v:
+            # NUL only — newlines and other control bytes are legitimate env content. An execve
+            # envp entry is a NUL-terminated C string, so this value is unfulfillable BY DEFINITION:
+            # accepted, it bakes into the reg a var the CLI can only truncate or throw on, either
+            # way diverging from what /new echoed as applied.
+            return "env: the value for %r contains a NUL byte — no process environment can carry one" % (k,)
+    return ""
+
+
 def _apply_new_session_prefs(sid, body):
-    """POST /new's optional per-spawn "model"/"effort" (the user 2026-08-14): applied through the SAME
+    """POST /new's optional per-spawn "model"/"effort" (the user 2026-08-14) and "env": applied through the SAME
     park-aware setters as the dashboard's setModel/setEffort ops, and echoed back so the caller can be
-    loud when a kernel ignores them. Values pass through VERBATIM — full model ids as the picker sends
-    them (claude-fable-5), never a short alias: the CLI alias table stops at opus/sonnet/haiku and
-    quietly resolved "fable" to Opus 5 (observed live 2026-08-14). Runs on the idempotent existing:true
+    loud when a kernel ignores them. Values pass through VERBATIM — a family alias (fable: the CLI
+    resolves it live, so it follows the family's newest release) or a full version id (claude-fable-5,
+    a deliberate pin), whichever the caller sends. (A note here once claimed the CLI resolved "fable"
+    to Opus 5 and so required full ids; that is not reproducible on any installed CLI from 2.1.224 on
+    — each resolves `fable` to the Fable family's newest — and was most likely a misread server-side
+    fallback.) Runs on the idempotent existing:true
     open too, so a nightly re-brief re-asserts them on the standing session — ultracode is per-session
     by design (never a write_sdk_default seed), and a headless script has no WS, so this is the
-    sanctioned door."""
+    sanctioned door. On a FRESH spawn the env was already born into the reg (_create_sdk_session), so
+    the env leg here is the unchanged re-assert set_env skips the reconnect for — the echo still comes
+    back. The handler validated env at the door and refused non-SDK targets, so the hasattr guard is only
+    the backstop for direct callers."""
     out = {}
     m = str((body or {}).get("model") or "").strip()
     e = str((body or {}).get("effort") or "").strip()
-    if not (m or e):
+    ev = (body or {}).get("env")
+    ev = ev if isinstance(ev, dict) else None
+    # an EXPLICIT {} is asked (the clear-all declaration — set_env replaces, so {} clears);
+    # only an absent/non-dict env is "not asked".
+    if not (m or e) and ev is None:
         return out
     try:
         be = Sessions.backend_for(str(sid))
@@ -7351,11 +7988,14 @@ def _apply_new_session_prefs(sid, body):
     if e:
         _set_effort_or_park(be, str(sid), e)
         out["effort"] = e
+    if ev is not None and hasattr(be, "set_env"):
+        _set_env_or_park(be, str(sid), dict(ev))
+        out["env"] = dict(ev)
     _push_soon()
     return out
 
 
-def _create_sdk_session(nm, cwd, auth="", prefs=None, client=None):
+def _create_sdk_session(nm, cwd, auth="", prefs=None, client=None, env=None):
     """Create + open a new SDK-backed session, ACK-FAST (the user 2026-07-14, who asked why it took so long
     to open a new SDK session). spawn() is file writes and connect() is threaded (~0.4s to a booting
     CLI) — the 7-10s the user waited was the handler's inline _push_all(): a new session invalidates the
@@ -7384,7 +8024,10 @@ def _create_sdk_session(nm, cwd, auth="", prefs=None, client=None):
     push."""
     bg, fg = _pick_identity_color()   # fleet-aware: only the kernel sees BOTH backends' live sessions
     _commands_for_cwd(cwd)   # pre-warm the slash-command list — a new session predicts a composer (the user 2026-08-13)
-    sid = _sdk().spawn(nm, cwd, bg, fg, auth=auth)
+    # env rides the SPAWN (the reg is born with it), not the prefs pass behind it: the prefs pass
+    # runs pre-connect (pure reg writes), so its env leg sees the reg already carrying this env and
+    # skips the set — the echo still comes back through `extra`.
+    sid = _sdk().spawn(nm, cwd, bg, fg, auth=auth, env=env)
     extra = _apply_new_session_prefs(sid, prefs or {})
     _sdk().connect(sid)    # eager-connect so the model lists immediately, not only after the 1st message
     if client is not None:
@@ -8598,14 +9241,24 @@ def _sdk_locked():
             # store names no signed-in account — the same authority the usage bars trust, so the
             # pick can never sit in the UI as applied fact on a box that demonstrably cannot apply it
             _sdk_backend.login_ok = lambda: bool(_claude_account())
-            # a dormant comment thread registered on a superseded full model id comes up on its
-            # family's newest at its next EXPLICIT wake (T223 rider) — the catalog is the kernel's,
-            # so the backend consults this hook instead of importing it
-            _sdk_backend.thread_wake_model = _family_newest_model
+            # NO thread-wake model remap. The T223 rider installed _family_newest_model as the
+            # backend's wake hook, so a dormant comment thread registered on a superseded full id came
+            # up on its family's newest at its next explicit wake — built for the artefact where a
+            # FAMILY click wrote the head's full id into the reg, an accidental pin. With the alias as
+            # the family default a full id in reg.model is a DELIBERATE pin (the version submenu writes
+            # the pick verbatim, the create dialog sends a pinned family's id, the marker-gated
+            # _model_alias_boot_pass treats every post-migration head as the user's; the way back to
+            # floating is the Latest gesture), so the remap would override only deliberate pins. The
+            # backend's hook stays at its None default and its consult in _ensure stays inert;
+            # _family_newest_model stays as a helper. Pinned in tests/test_thread_rows.py
+            # (ThreadWakePinsStand).
             # silent mid-turn model swaps mint a completed card (the user 2026-08-23) — the backend
             # observes the transition; the judge store owns the card; the kernel wires the two
             type(_sdk_backend).on_model_fallback = staticmethod(
                 lambda sid, frm, to: (jd.mint_fallback_card(sid, frm, to), _push_soon()))
+            # a version the CLI REFUSED must leave the pick memory too: the backend rules on the CLI's
+            # answer, the kernel owns model-picks.json — the same wiring shape
+            type(_sdk_backend).on_model_refused = staticmethod(_model_pick_refused)
             # The judge parses the SAME cut world the display parse does (jd._PENDING_CUT_FN): during
             # an armed bare rollback the planner must not see — and mint from — the deleted tail.
             # getattr-guarded like every other backend probe (a test fake without the affordance
@@ -9273,7 +9926,8 @@ def _kernel_knows(sid):
 _FOREIGN_OP_VERB = {"sendMessage": "message", "askFollowUp": "reply", "askText": "answer",
                     "addCustomAsk": "answer", "answerAsk": "answer", "submitAsk": "answer",
                     "rewindSend": "edited message", "sendCommand": "command", "renameSession": "rename",
-                    "endSession": "end", "interrupt": "interrupt", "compactSession": "compact"}
+                    "endSession": "end", "interrupt": "interrupt", "compactSession": "compact",
+                    "moveSession": "move"}
 
 
 def _refuse_drive(client, op, sid, msg):
@@ -9323,7 +9977,7 @@ def _drive(msg, client):
     t = msg.get("type")
     ID_OPS = ("sendMessage", "rewindSend", "rewindDelete", "interrupt", "compactSession", "dismissDialog", "answerAsk", "navAsk", "toggleAsk", "submitAsk",
               "addCustomAsk", "cancelAsk", "askText", "cancelQueued", "dismissEcho", "apiRetry", "setModel", "setEffort", "setMode", "setFast",
-              "setAuth", "endSession", "renameSession", "stopTask", "rewindFiles", "mcpAction", "forkSession",
+              "setAuth", "endSession", "renameSession", "moveSession", "stopTask", "rewindFiles", "mcpAction", "forkSession",
               "commentCreate", "commentReply", "commentResolve", "commentDelete", "commentSeen", "commentPromote",
               "commentMerge")
     if t in ID_OPS and msg.get("id"):
@@ -9353,8 +10007,13 @@ def _drive(msg, client):
         return True                                       # consumed: refused, reported, and recorded
     be = Sessions.backend_for(sid)
     if t == "sendMessage" and msg.get("text"):
-
-        _send_or_park(be, sid, str(msg["text"]), echo="human"); _push_soon()  # idle → instant echo; SDK busy → queued bubble forwarded mid-turn + folded (but a SLASH COMMAND parks to fire alone at turn end — mid-turn it would land as text, not execute); tmux busy → held + merged at turn end
+        # a typed "/model X" / "/effort X" / "/fast X" is a SETTING, not a message: it takes the kernel's
+        # own setter — registry, sdk-defaults, pick memory and the reconnect's --model all follow — never
+        # the CLI as literal text (see _route_meta_command). Everything else is the CLI's.
+        if _route_meta_command(be, sid, str(msg["text"]), client):
+            _push_soon()
+        else:
+            _send_or_park(be, sid, str(msg["text"]), echo="human"); _push_soon()  # idle → instant echo; SDK busy → queued bubble forwarded mid-turn + folded (but a SLASH COMMAND parks to fire alone at turn end — mid-turn it would land as text, not execute); tmux busy → held + merged at turn end
     elif t == "rewindSend" and msg.get("uuid") and msg.get("text"):
         # Edit a past message (SDK sessions): rewind the conversation to just before it and send the
         # edited text as the branch's next turn. NO optimistic kernel echo — the edit lands mid-chat
@@ -9388,13 +10047,9 @@ def _drive(msg, client):
         _compact_or_park(be, sid)                        # parked → queued chip; quiet → now + the instant cue
     elif t == "sendCommand" and msg.get("cmd"):
         cmd = str(msg["cmd"]).strip()                     # the timeline lane menu sends "/model X" / "/effort X"
-        if cmd.startswith("/model "):
-            _set_model_or_park(be, sid, cmd[len("/model "):].strip())   # mid-compaction → parked as a queued command
-        elif cmd.startswith("/effort "):
-            _set_effort_or_park(be, sid, cmd[len("/effort "):].strip())   # mid-compaction → parked as a queued command
-        elif cmd.startswith("/fast "):
-            _set_fast_or_park(be, sid, cmd[len("/fast "):].strip())   # mid-compaction → parked as a queued command
-        else:
+        # /model, /effort, /fast → the setters (mid-compaction → parked); `floating` is the lane
+        # submenu's Latest row (forget the family's pin)
+        if not _route_meta_command(be, sid, cmd, client, floating=bool(msg.get("floating"))):
             _send_or_park(be, sid, cmd)   # mid-compaction → parked as a queued command
     elif t == "askFollowUp":
         iid = str(msg.get("itemId") or "")
@@ -9556,7 +10211,9 @@ def _drive(msg, client):
         # manual Retry-now button and the dashboard tick's redundant asks, both idempotent against it).
         _fire_api_retry(sid, be, manual=bool(msg.get("manual")))
     elif t == "setModel" and msg.get("value"):
-        _set_model_or_park(be, sid, str(msg["value"])); _push_soon()   # mid-compaction → parked as a queued command
+        # mid-compaction → parked as a queued command; `floating` is the version submenu's Latest row —
+        # forget the family's remembered pin and send the alias
+        _set_model_or_park(be, sid, str(msg["value"]), floating=bool(msg.get("floating"))); _push_soon()
     elif t == "setEffort" and msg.get("value"):
         _set_effort_or_park(be, sid, str(msg["value"])); _push_soon()   # tmux: /effort; SDK: reconnect with --effort; mid-compaction → parked
     elif t == "setFast" and msg.get("value") in ("on", "off"):
@@ -9692,6 +10349,18 @@ def _drive(msg, client):
             client["send"](json.dumps({"type": "warn", "text": _thread_name_refusal(new, _thread_names())}))
         elif be.rename(sid, new):                         # live → tmux rename hook / SDK reg; dead → names file
             client["send"](json.dumps({"type": "renamed", "id": sid, "name": new}))
+    elif t == "moveSession" and msg.get("dir"):
+        # Move the session's working directory (the user 2026-09-01: a subproject was promoted to its own
+        # repo and the session should follow it). The dir is resolved and canonicalised HERE like a
+        # new-session dir (~ / $VAR, must exist, realpath + true case — the string is load-bearing), then
+        # the op goes through the same park-or-fire gate as every drive op: mid-turn it waits as a queued
+        # chip for the turn's end, idle it fires now. Every refusal is a typed moveFailed to the asker.
+        raw = str(msg["dir"]).strip()
+        path, derr = _resolve_create_dir(raw) if raw else (None, "pick a folder to move the session to")
+        if derr:
+            client["send"](json.dumps({"type": "moveFailed", "id": sid, "name": _name_of(sid) or sid, "text": derr}))
+        else:
+            _move_or_park(be, sid, path, client)
     else:
         return False    # recognized type but a required field is missing (e.g. sendMessage w/o text) → no-op
     return True
@@ -10064,6 +10733,27 @@ class TmuxBackend(sb.SessionBackend):
     def paste_buffer(self, name):
         self._run(["paste-buffer", "-b", "rompkernel", "-d", "-p", "-t", name])
 
+    # CHECKED variants of the three paste-critical primitives: the same argv as their forgiving twins,
+    # but the exit code is READ. _run/_fire swallow exec errors and ignore nonzero exits — right for the
+    # read-side chrome, fatal for the steps that ARE a delivery: a tmux server that died after
+    # _tmux_send's clear made set-buffer, paste-buffer and the submitting Enter silent no-ops while the
+    # send looked complete. tmux's exit codes are a sane contract for all three (verified on tmux 3.4:
+    # dead server → 1 "no server running" / "error connecting", dead session → 1 "can't find pane",
+    # missing buffer → 1 "no buffer"; success → 0). True iff tmux itself answered 0; an exec failure, a
+    # timeout, a missing tmux, or a nonzero exit all read as NOT done. Other callers keep the forgiving
+    # twins on purpose (_inject verifies its paste landed by re-reading the box).
+    def set_buffer_checked(self, text):
+        r = self._run(["set-buffer", "-b", "rompkernel", text])
+        return r is not None and r.returncode == 0
+
+    def paste_buffer_checked(self, name):
+        r = self._run(["paste-buffer", "-b", "rompkernel", "-d", "-p", "-t", name])
+        return r is not None and r.returncode == 0
+
+    def send_keys_checked(self, name, *keys, t=3):
+        r = self._run(["send-keys", "-t", name, *keys], t)
+        return r is not None and r.returncode == 0
+
     def kill_by_name(self, name, t=4):
         self._fire(["kill-session", "-t", name], t)
 
@@ -10177,6 +10867,13 @@ class TmuxBackend(sb.SessionBackend):
 
     def rename(self, sid, new_name):
         return _rename_session(str(sid), new_name) is not None   # live → tmux rename hook; dead → names file
+
+    def move(self, sid, cwd):
+        # No relocation primitive exists for a TUI session: /cd is interactive and romp would have to
+        # type it blind, with no answer to read and no transcript move to verify. The ABC default's
+        # honest refusal, worded for the terminal case so the user learns what to do instead.
+        return ("this session runs in a terminal (tmux), which has no way to move a running session — "
+                "start a new session in that folder instead")
 
     # chat tail — the kernel-side input echo store (_tmux_echo) is tmux's live_atoms; queued msgs are folded
     # event-based from the transcript's queue-operation records.
@@ -10507,6 +11204,8 @@ class Sessions:
                                 "connected": bool(st.get("connected")),   # SDK handshake up → the opening-chip override stands down (fresh sessions have no transcript yet)
                                 "spawning": bool(st.get("spawning")),   # spawn/handshake in flight NOW — the ONLY window the opening chip covers (a dormant created session must read ready, the user 2026-08-13)
                                 "context": ctx if isinstance(ctx, (int, float)) else None, "compactPct": None,
+                                "ctxOver": bool(st.get("ctxOver")),   # context% is CLAMPED at 100 — this says the CLI
+                                #   reported 100+ (tokens exceed the CURRENT model's window, e.g. after a 1M→200k switch)
                                 "ctxTokens": st.get("ctxTokens"),   # raw totalTokens (SDK only) — the
                                 #   compaction-suggestion thresholds key on true tokens (2026-08-30)
                                 "fast": st.get("fast", ""),   # fast-mode state from the CLI's init ("on"/"off"/"cooldown"; "" = unknown → no badge)
@@ -14694,7 +15393,8 @@ def _tmux_send(name, text, model_cmd=False, _async=True):
     Enter, the old TmuxBackend.send sequence (a 250ms gap lets the bracketed paste land before Enter
     submits). name = the tmux session name. Drives the chat composer, /compact, and the model/effort
     pickers. Runs in a daemon thread so the WS recv loop isn't blocked by the gaps. model_cmd: /model opens
-    a confirm that needs a second Enter."""
+    a confirm that needs a second Enter. A delivery step that tmux answers nonzero (set-buffer, paste-buffer,
+    the submitting Enter) aborts the send with a line on stderr — see the checked primitives."""
     if not name or not text:
         return
 
@@ -14714,8 +15414,19 @@ def _tmux_send(name, text, model_cmd=False, _async=True):
             sys.stderr.write("tmux send: %s holds input that would not clear — NOT pasting, the message "
                              "would have been concatenated onto it\n" % name)
             return
-        _TMUX.set_buffer(text)
-        _TMUX.paste_buffer(name)                                    # bracketed (-p), delete buf (-d)
+        # The three steps that ARE the delivery run CHECKED: the forgiving primitives swallow exec errors and
+        # ignore exit codes, so a tmux server or session that died after the clear made set-buffer,
+        # paste-buffer and the submitting Enter silent no-ops while the send looked complete — the message
+        # vanished with no trace. Any failure aborts here, loudly, in the same shape as the clear-guard
+        # refusal above (exit codes verified sane on tmux 3.4 — see the checked variants). Success-path
+        # sequencing and timing are unchanged.
+        if not _TMUX.set_buffer_checked(text):
+            sys.stderr.write("tmux send: %s's set-buffer failed — the message was never staged\n" % name)
+            return
+        if not _TMUX.paste_buffer_checked(name):                    # bracketed (-p), delete buf (-d)
+            sys.stderr.write("tmux send: %s's paste-buffer failed — the message never reached the input\n"
+                             % name)
+            return
         paths = _injected_img_paths(text)
         if paths:
             # Claude Code reads each pasted image PATH asynchronously and rewrites it to "[Image #N]" in the
@@ -14730,7 +15441,10 @@ def _tmux_send(name, text, model_cmd=False, _async=True):
             time.sleep(0.2)
         else:
             time.sleep(0.25)
-        _TMUX.send_keys(name, "Enter")
+        if not _TMUX.send_keys_checked(name, "Enter"):
+            sys.stderr.write("tmux send: %s's submitting Enter failed — the message was pasted but never "
+                             "submitted\n" % name)
+            return
         if model_cmd:
             time.sleep(0.85)
             _TMUX.send_keys(name, "Enter")                          # accept the hookless /model confirm
@@ -15306,7 +16020,24 @@ def _session_stamp_read(sid):
         mkey = (mst.st_mtime_ns, mst.st_size)
     except OSError:
         mkey = None                                    # no postal log yet is normal
-    key = (gkey, okey, mkey)
+    # The ask-unit discriminator reads the SAME transcript the feed does: discover hands build_feed
+    # the registry's lastSid file for a /cleared or resume-forked SDK session, while
+    # _sdk_transcript_path names the ANCHOR file — dead after a fork — so the chip's suppression
+    # call would answer from a transcript the feed no longer reads (the feed suppresses a
+    # machine-anchored top; the chip lights 'waiting on peers' for it — one fact, two answers).
+    # Same project dir, lastSid stem — the exact resolution discover applies.
+    _stamp_path = _sdk_transcript_path(sid)
+    _last = jd._sdk_last_sid(sid)
+    if _last:
+        _stamp_path = _stamp_path.with_name(_last + ".jsonl")
+    _stamp_path = str(_stamp_path)
+    # …and the discriminator's remaining cache-temperature input joins the KEY. A LATCHED verdict
+    # (askAnchor) rides the goal store, so the goals mtime/size above already re-reads on every
+    # latch write — that part is store-keyed and temperature-blind by design. Only a NOT-YET-
+    # LATCHED node still derives from _parse_cached, so the resolved path + its warmth are keyed
+    # too: without them the chip serves a cold-beat fail-open long after the feed's fresh per-build
+    # read has warmed, and holds it until an unrelated store/postal write.
+    key = (gkey, okey, mkey, _stamp_path, _parse_cached(_stamp_path) is not None)
     hit = _SESSION_STAMP_CACHE.get(sid)
     if hit and hit[0] == key:
         return hit[1]
@@ -15358,7 +16089,8 @@ def _session_stamp_read(sid):
         for tid, td_ in nodes.items():
             if td_.get("parentId") is not None or td_.get("nodeComplete") or td_.get("cleared"):
                 continue
-            if not _all_outstanding_delegated(nodes, tid) or _pure_delegation_top(nodes, tid):
+            if not _all_outstanding_delegated(nodes, tid) \
+                    or _pure_delegation_top(nodes, tid, sid=sid, path=_stamp_path):
                 continue
             for x in _open_leaves(nodes, tid):
                 h = nodes.get(x, {}).get("handoff")
@@ -18123,7 +18855,8 @@ def _alias_reflects(live_pretty, alias):
         return False
     if not alias or alias == "default":
         return True
-    a = alias.lower()
+    a = re.sub(r"\[[^\]]*\]$", "", alias.lower().strip())   # fable[1m] → fable: the CLI's context tag is
+    #                                                          never part of the pretty name
     a = a.split("-")[1] if a.startswith("claude-") and "-" in a else a   # claude-opus-4-8 → opus
     return a in live_pretty.lower()
 
@@ -18322,7 +19055,7 @@ def _save_pending_ops():
         sys.stderr.write("pending-ops save: %s\n" % traceback.format_exc())
 
 
-_pending_ops = _load_pending_ops()   # sid -> [("send", text, echo) | ("model", v) | ("effort", v) | ("fast", v) | ("compact",), …] in park order
+_pending_ops = _load_pending_ops()   # sid -> [("send", text, echo) | ("model", v) | ("effort", v) | ("fast", v) | ("env", {…}) | ("cwd", path, busy_retries) | ("compact",), …] in park order
 
 
 _PATH_UNRESOLVED = object()   # _compacting_now's "no path was passed" sentinel — None is a real value (no transcript)
@@ -18452,7 +19185,7 @@ def _ops_gate(sid):
     escape hatch), and it is what a user reaches for when they want the storm to stop, not the queue."""
     sid = str(sid)
     return (_compacting_now(sid) or _working_now(sid) or bool(_pending_ops.get(sid))
-            or _limit_hold(sid) is not None)
+            or sid in _moving or _limit_hold(sid) is not None)   # a move in flight holds the queue too
 
 
 def _park_op(sid, op):
@@ -18461,7 +19194,7 @@ def _park_op(sid, op):
     earlier parked op of the same kind IN PLACE — its queue position stands, its value updates — so the
     chat shows one "/model …" chip carrying the latest pick. Messages always append."""
     q = _pending_ops.setdefault(str(sid), [])
-    if op[0] in ("model", "effort", "fast"):
+    if op[0] in ("model", "effort", "fast", "env", "cwd"):
         for i, o in enumerate(q):
             if o[0] == op[0]:
                 q[i] = op
@@ -18484,7 +19217,99 @@ def _parked_md(op):
         return op[1]                     # the typed slash command IS the bubble (so the running-/compact fold matches it too)
     if op[0] == "compact":
         return "/compact"
+    if op[0] == "env":
+        # a dict payload, rendered as the sorted NAME list it was asked as — NAMES ONLY: env values can
+        # be secrets, and this string is the visible chat chip (PR #889 review). Sorted so the bubble
+        # and the ✕ handshake agree byte-for-byte across the park's disk round-trip.
+        return "/env " + " ".join(sorted(op[1])) if op[1] else "/env (cleared)"
+    if op[0] == "cwd":
+        # a parked MOVE (moveSession): plain words, not a slash command — nothing the user could type
+        # does this, so a "/cd" chip would advertise a command the composer does not have
+        return "move to " + _tilde(op[1])
     return "/%s %s" % (op[0], op[1])
+
+
+# ── moving a session's working directory (the user 2026-09-01) ─────────────────────────────────
+# A move rides the drive-op FIFO like /compact: parked as ("cwd", <canonical path>, <busy retries>)
+# while the session is not quiet, fired when it is. The backend's move() is a BLOCKING round trip
+# (set_cwd's control response) — it runs on its own thread so neither the WS handler nor the producer
+# tick waits on it, and `_moving` holds the session's queue for the duration: _ops_gate parks anything
+# pressed meanwhile and _apply_pending_ops skips the sid, so nothing else reaches the CLI mid-move.
+_moving: set = set()
+_move_askers: dict = {}          # sid -> wid of the dashboard that asked for a PARKED move (failure lands there)
+_MOVE_BUSY_RETRIES = 3           # CLI-side `busy` answers retried on the next pass without waiting for a turn end
+                                 # (the CLI's post-result window); after these, the op waits on turn_seq (_move_now)
+
+
+def _move_or_park(be, sid, path, client=None):
+    """Park-or-fire for a move, the same gate every drive op takes (_ops_gate): mid-turn, compacting,
+    behind an existing queue, or under an account hold it parks as a visible "move to …" chip and
+    fires at the turn's end (_apply_pending_ops); quiet, it fires now."""
+    sid = str(sid)
+    wid = (client or {}).get("wid") or ""
+    if _ops_gate(sid):
+        _park_op(sid, ("cwd", path, 0))
+        _move_askers[sid] = wid
+        return None
+    return _fire_move(be, sid, path, 0, wid)
+
+
+def _fire_move(be, sid, path, tries, wid):
+    """Run the backend's blocking move on its own thread (returned, so a test can join it). `_moving`
+    is claimed synchronously, before the thread starts, so a producer tick landing in between cannot
+    fire the op behind this one."""
+    sid = str(sid)
+    _moving.add(sid)
+    th = threading.Thread(target=_move_now, args=(be, sid, path, tries, wid), name="romp-move", daemon=True)
+    th.start()
+    return th
+
+
+def _move_now(be, sid, path, tries, wid):
+    """The move itself, on whatever thread called it: ask the backend, then report. "" → the session
+    broadcast carries the new cwd (build_session reads _cwd_of) and the asker gets a typed `moved`;
+    "busy" → the CLI has a turn in flight that romp's own idle check did not see, and the op goes BACK
+    to the head of the queue. Two shapes hide behind that answer, and the retry keys on the event each
+    one has:
+      * a turn the CLI started itself (a hook, a background task's notification): romp's inflight never
+        counted it, but it ENDS with a ResultMessage like any other, and that end is the cue — the parked
+        op carries the backend's turn_seq, and the producer pass fires it once that counter has moved;
+      * the CLI's own post-result bookkeeping window (sub-second, after a turn romp DID see end): no
+        further ResultMessage is coming, so the counter never moves — the first _MOVE_BUSY_RETRIES passes
+        therefore fire without waiting on it. Past those, the op waits for the event only, as a visible,
+        cancellable chip, instead of failing loudly while the CLI's turn is still running.
+    Anything else → a typed moveFailed with the backend's reason verbatim. Returns the backend's answer,
+    for the synchronous callers (POST /move)."""
+    sid = str(sid)
+    nm = _name_of(sid) or sid
+    try:
+        try:
+            res = be.move(sid, path) if hasattr(be, "move") else \
+                "this session's backend has no way to move a running session"
+        except Exception as e:
+            res = "%s: %s" % (type(e).__name__, str(e)[:200])
+    finally:
+        _moving.discard(sid)
+    if res == "busy":
+        seq = be.turn_seq(sid) if hasattr(be, "turn_seq") else None      # the turn end this retry waits on
+        _pending_ops.setdefault(sid, []).insert(0, ("cwd", path, tries + 1, seq))   # head: it was already first
+        _move_askers[sid] = wid
+        _save_pending_ops()
+        _mark_views_dirty()
+        return res
+    if res:
+        _move_failed(sid, nm, wid, res)
+        return res
+    _commands_for_cwd(_cwd_of(sid))          # the new folder's slash commands warm before the next "/"
+    _mark_views_dirty()                       # the cwd lives in names/ — no sig sees it; rebuild past the sig
+    _push_soon()
+    _send_to_view("chat", {"type": "moved", "id": sid, "name": nm, "cwd": _tilde(_cwd_of(sid))}, wid)
+    return res
+
+
+def _move_failed(sid, nm, wid, text):
+    sys.stderr.write("move '%s' (%s): %s\n" % (nm, sid, text))
+    _send_to_view("chat", {"type": "moveFailed", "id": sid, "name": nm, "text": text}, wid)
 
 
 def _cancel_miss_text(md):
@@ -18657,10 +19482,18 @@ def _compact_request(who):
     return {"ok": True, "queued": _compact_or_park(Sessions.backend_for(sid), sid)}
 
 
-def _set_model_or_park(be, sid, value):
+def _set_model_or_park(be, sid, value, floating=False):
     """Apply a model change now — or park it in the sid's FIFO op queue while the session compacts. Either
     way, the pick is ACCEPTED now: stamp the shared pending signal (_mark_model_pending) so chat + timeline
-    both show switching-dots immediately, from whichever surface the click came from (the user 2026-07-03)."""
+    both show switching-dots immediately, from whichever surface the click came from (the user 2026-07-03).
+    `value` is a family alias (a bare family click — the CLI resolves it live) or an explicit version id
+    (a submenu pick, remembered as the family's pin); both ride to the backend verbatim. `floating` is the
+    version submenu's "Latest" row: the value is a family alias AND the family's remembered pin is
+    forgotten, so the family follows the CLI's newest again — the one picker gesture back from a pin (the
+    family row sends the pin, the version rows pin, and a typed bare alias leaves the memory alone by
+    design). Meaningless on a non-alias value."""
+    if floating and value in _MODEL_VALUES:
+        _forget_model_pick(value)
     _mark_model_pending(sid, value)
     _note_model_pick(value)          # a version pick becomes its family's remembered default (2026-08-25)
     if _ops_gate(sid):
@@ -18677,6 +19510,17 @@ def _set_effort_or_park(be, sid, value):
         _park_op(sid, ("effort", value))
     else:
         be.set_effort(sid, value)
+
+
+def _set_env_or_park(be, sid, value):
+    """Apply a per-session env change (POST /new's "env", the spawn-time slice) now — or park it while
+    the session compacts, in the same FIFO as /model and /effort: a CHANGE applies by reconnecting
+    (env is connect-time, like effort), which mid-compaction would derail the compaction exactly the
+    way an effort switch would. An unchanged re-assert is a no-op inside set_env either way."""
+    if _ops_gate(sid):
+        _park_op(sid, ("env", value))
+    else:
+        be.set_env(sid, value)
 
 
 def _set_auth_or_park(be, sid, value):
@@ -18701,6 +19545,51 @@ def _set_fast_or_park(be, sid, value):
         _park_op(sid, ("fast", value))
         return True
     return be.set_fast(sid, value)
+
+
+def _route_meta_command(be, sid, text, client=None, floating=False):
+    """A "/model X", "/effort X" or "/fast on|off" — typed into the chat composer or sent by the timeline
+    lane menu — goes through the kernel's OWN setters (_set_*_or_park), never to the CLI as literal text.
+    `floating` rides the lane menu's "Latest" row to _set_model_or_park (forget the family's pin).
+    The CLI would execute the text (verified on 2.1.257), but that path bypasses romp: the registry,
+    sdk-defaults.json, the pick memory and the reconnect's --model all kept the OLD value, so a switch
+    typed into the composer silently reverted at the next reconnect or restart. The setters are also
+    what parks the change mid-compaction. Returns True when it took the command. Anything else —
+    another slash command, a bare "/model" (the CLI's own picker), plain text that merely contains one
+    — is the caller's to send verbatim: the CLI owns what executes. A refused fast toggle is told to
+    the client (fail loudly): a dormant SDK session has no live CLI to apply it, and the typed text
+    used to at least draw the CLI's own refusal."""
+    head, _, rest = (text or "").strip().partition(" ")
+    value = rest.strip()
+    # ONE token, and one the kernel can vouch for: the setters PERSIST their value — set_model's lands
+    # in sdk-defaults.json as the seed for every future session — so a typo ("/model opsu"), a
+    # multiline message that merely opens with the command, or a fast value outside on/off is not
+    # ours to swallow: it stays the CLI's, verbatim, and the user sees the CLI's own error.
+    if not value or len(value.split()) != 1:
+        return False
+    if head == "/model" and _vouched_model(value):
+        _set_model_or_park(be, sid, value, floating=floating)     # mid-compaction → parked as a queued command
+    elif head == "/effort" and value in _EFFORT_VALUES:
+        _set_effort_or_park(be, sid, value)    # mid-compaction → parked as a queued command
+    elif head == "/fast" and value in ("on", "off"):
+        if not _set_fast_or_park(be, sid, value) and client:   # mid-compaction → parked
+            client["send"](json.dumps({"type": "warn",
+                                       "text": "Couldn't toggle fast mode — the session isn't connected right now."}))
+    else:
+        return False
+    return True
+
+
+def _vouched_model(value):
+    """A model value the kernel will stand behind persisting: a family alias, 'default', a catalog or
+    learned version id, or any well-formed first-party id of a known family (the CLI validates the
+    exact version; romp's job is keeping the registry in step). A typo is none of these."""
+    if value in _MODEL_VALUES or value == "default" or _version_family(value):
+        return True
+    if _model_id_clean(value) in _MODEL_VALUES:   # the CLI's own 1M-context spelling of a family (fable[1m])
+        return True                                # — vouched like the tagged id below
+    parts = _model_id_parts(value)
+    return bool(parts and parts[0] in _MODEL_VALUES)
 
 
 def _deliver_send_batch(be, sid, run):
@@ -18741,12 +19630,26 @@ def _apply_pending_ops():
         if not ops:
             _pending_ops.pop(sid, None)
             continue
+        if sid in _moving:
+            continue                                  # a move is mid-flight: its relocation must finish first
         if _compacting_now(sid) or _working_now(sid) or _limit_hold(sid):
             continue                                  # …or the account can't serve a request yet
         try:
             be = Sessions.backend_for(sid)
             while ops:
                 op = ops[0]
+                if op[0] == "cwd":
+                    # a parked move: fires on its own thread and CLAIMS _moving before this pass ends, so
+                    # the ops behind it wait for the relocation to finish (the next pass skips the sid
+                    # until then) — a send fed mid-move could make the CLI reject the move as busy
+                    tries = int(op[2]) if len(op) > 2 else 0
+                    seq = op[3] if len(op) > 3 else None
+                    if (seq is not None and tries >= _MOVE_BUSY_RETRIES and hasattr(be, "turn_seq")
+                            and be.turn_seq(sid) == seq):
+                        break      # the CLI still owns a turn romp cannot see: its ResultMessage is the cue (_move_now)
+                    ops.pop(0)
+                    _fire_move(be, sid, op[1], tries, _move_askers.pop(sid, ""))
+                    break
                 if op[0] == "send":
                     run = []                          # coalesce the leading run of sends → deliver them AT ONCE
                     while ops and ops[0][0] == "send":
@@ -18781,6 +19684,9 @@ def _apply_pending_ops():
                     ops.pop(0)
                 elif op[0] == "auth":
                     be.set_auth(sid, op[1])
+                    ops.pop(0)
+                elif op[0] == "env":
+                    be.set_env(sid, op[1])
                     ops.pop(0)
                 else:
                     ops.pop(0)                        # unknown op kind → drop, never wedge the queue
@@ -20372,6 +21278,10 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
                   "modelPending": _model_pending_now(sid, tm),   # switching-dots on the model badge until the pick lands, from EITHER surface (the user 2026-07-03)
                   "effortPending": bool(tm.get("effortPending")),   # switching-dots on the effort badge while the /effort reconnect applies (SDK-only; the user 2026-07-06)
                   "ctx": str(tm["context"]) if tm["context"] is not None else "",
+                  # the % above is clamped at 100 — ctxOver says the CLI reported 100+ (tokens exceed
+                  # the CURRENT model's window, e.g. right after a 1M→200k model switch), so the
+                  # battery can say "over this model's window" instead of a silent 100% (2026-09-02)
+                  "ctxOver": bool(tm.get("ctxOver")),
                   # model name + effort tinted on the GLOBAL colormap by capability/effort rank (the user
                   # 2026-07-02): the statusline meta buttons just apply these (mirrors ctxColor). None = default.
                   "modelColor": _model_color(tm["model"], cm.stops_for(_colormap())),
@@ -20394,8 +21304,14 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
     # effect + this session's model / cwd / branch / permission-mode / version (NOT the harness prompt —
     # see _claudemd_docs). Only when there's a real transcript to describe AND something to show.
     meta = _session_meta(sess["path"])
-    scwd = _cwd_of(sid) or meta.get("cwd") or ""    # the session's fixed dir — known even before the first turn
-    docs = _claudemd_docs(meta.get("cwd") or scwd)
+    # The registry's dir FIRST (known before the first turn), the transcript's stamp only as a fallback:
+    # a move (SdkBackend.move) rewrites the registry at once, while the transcript keeps stamping the old
+    # cwd until the model's next turn — so the card would name the old folder for as long as the session
+    # sat idle after the move. And the per-record `cwd` stamp is the CLI's TRACKED cwd, which a shell
+    # `cd` inside a Bash tool call also moves (with no transcript move behind it), so it never was the
+    # session's project directory — only the registry (and the CLI's own `relocated` record) is.
+    scwd = _cwd_of(sid) or meta.get("cwd") or ""
+    docs = _claudemd_docs(scwd)
     # The WORKTREE the session actually works in (the user 2026-08-13): the repo convention here puts real
     # work on per-session worktrees beside the registered clone, so the registered dir's branch read 'main'
     # forever and the real location showed nowhere. The newest write-tool file_path names the tree — the
@@ -20407,7 +21323,7 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
     work_tree = ({"dir": _tilde(_wt_top), "branch": _wt_br}
                  if _wt_top and os.path.realpath(_wt_top) != os.path.realpath(_reg_top or "/nonexistent")
                  else None)
-    sysinfo = {"kind": "system", "model": last_model, "cwd": _tilde(meta.get("cwd") or scwd),
+    sysinfo = {"kind": "system", "model": last_model, "cwd": _tilde(scwd),
                # branch from the transcript if present (normalized: a detached stamp says 'HEAD', not a
                # branch), else derived straight from the folder so it shows on open (the user 2026-06-24) —
                # works for a never-run session of EITHER backend.
@@ -20457,7 +21373,7 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
     _kids = (_be_fk.fork_children().get(sid) if _be_fk and hasattr(_be_fk, "fork_children") else None) or None
     return {"type": "session", "id": sid, "name": sess["name"], "color": _name_color(sid),
             "branch": branch, "branches": _kids,
-            "cwd": _tilde(_cwd_of(sid) or meta.get("cwd") or ""),   # fixed-at-creation dir; lane tab shows it (the user 2026-06-22)
+            "cwd": _tilde(_cwd_of(sid) or meta.get("cwd") or ""),   # the CURRENT dir (a move rewrites it); lane tab shows it (the user 2026-06-22)
             # git branch as a TOP-LEVEL session field, NOT just inside the head system event: the status-bar
             # branch + tab tooltip must show for EVERY session, but the system event lives at events[0] and the
             # WIRE_TAIL window ships only the last 250 events — so on any session with >250 events the head
@@ -21909,8 +22825,8 @@ def build_feed(now, tmux=None):
             col = status.get(nid, "working")
             if col == "cleared" or nid in cleared:
                 continue
-            if _pure_delegation_top(nodes, nid):         # whole top is just peer handoffs → coordination, not an inbox card
-                continue
+            if _pure_delegation_top(nodes, nid, sid=fsid, path=s["path"]):   # whole top is just peer
+                continue                                 # handoffs → coordination, not an inbox card
             # AWAITING floor (event-based, the user 2026-06-22): a session paused on dispatched/delegated
             # work is a WORKING flavor, never needs-input. Floor a working OR stale-blocked top to awaiting
             # from (a) the session-level awaiting signal (live subagents / SDK states overlay),
@@ -25030,6 +25946,19 @@ def _dedup_sig(msg, s):
     return s
 
 
+def _client_reset_chat_base(client):
+    """Forget every session tail we believe this client holds. Both suppressors must go: the echat
+    entries (their absence is what routes _send_chat down its full-session path) AND the ("chat", sid)
+    dedup slots (_DEDUP_REPOST_S would otherwise eat the re-send as unchanged for 60s). The needFull
+    handler does this per-sid; `ready` does it for the whole client — a renderer that just evaluated
+    holds NOTHING, whatever this socket was sent before its listener existed (the stuck-« opening … »
+    class, the user 2026-09-02)."""
+    client.get("echat", {}).clear()
+    snt = client.get("sent", {})
+    for k in [k for k in snt if isinstance(k, tuple) and k and k[0] == "chat"]:
+        snt.pop(k, None)
+
+
 def _send_client(c, key, msg, pre=None, sig=None):
     """Send a payload to ONE client only if it differs from what that client last received (per-client
     dedup, key = the slot e.g. ("chat", sid)) — so the periodic push re-sends nothing when unchanged.
@@ -25194,29 +26123,79 @@ def _set_colormap(name):
 # _triage_effort / _index_effort read these on the judge's NEXT pass; no restart). Models validate against the
 # shared MODEL_CHOICES; efforts against EFFORT_CHOICES, with "" clearing the file back to the default (no
 # --effort). Ignore anything else, so a stale/garbage value can't reach `claude --model`.
-def _set_judge_state(fname, value, allowed, allow_empty=False):
-    if value in allowed or (allow_empty and value == ""):
+def _set_judge_state(fname, value, allowed, allow_empty=False, gt=None):
+    """Returns the applied gesture stamp (epoch ms); None in exactly three cases, all of which
+    the callers' `_jgt is not None` gates convert into NO propagation:
+      - the value is invalid (not in `allowed`) — refused before the ordering check, so a
+        refused value never burns its stamp;
+      - a stale `gt` stood down (the gesture-time ordering block above _SETTINGS_LOCK);
+      - the store could not be written (OSError) — loud on stderr, and deliberately still
+        unpropagated: a value the LOCAL store never took must not fan out to the mesh
+        (consistency over delivery — the mesh converging on a value its origin doesn't hold
+        would be the stale-flush revert in a new costume; the next applied change re-fans).
+    The stamp lives in a `<fname>.gt` sidecar because these stores are bare values other readers
+    (jd._state_str) parse raw — an absent sidecar reads as 0, so pre-existing picks yield to any
+    stamped one. The read-check-write span holds _SETTINGS_LOCK (racing flushes must land in
+    gesture order, not socket order), and both files publish via _atomic_write, SIDECAR FIRST: a
+    crash between the two leaves the new stamp guarding the old value, which errs safe — a
+    legitimate re-send stands down once and the next change heals — where value-first left the
+    new value guarded by the OLD stamp, letting a later stale gesture invert the ordering."""
+    if not (value in allowed or (allow_empty and value == "")):
+        return None
+    with _SETTINGS_LOCK:
+        if _gesture_echo(gt, _judge_state_gt(fname), jd._state_str(fname, "") == value):
+            return None
+        if _setting_stale(fname, gt, _judge_state_gt(fname)):
+            return None
+        stamp = gt if gt is not None else int(time.time() * 1000)
         try:
             jd.STATE.mkdir(parents=True, exist_ok=True)
-            (jd.STATE / fname).write_text(value)
-        except OSError:
-            pass
+            _atomic_write(jd.STATE / (fname + ".gt"), str(stamp))
+        except OSError as e:
+            sys.stderr.write("setting %s: could not write the gesture stamp (%s) — nothing "
+                             "applied, nothing propagated\n" % (fname, e))
+            return None
+        try:
+            _atomic_write(jd.STATE / fname, value)
+        except OSError as e:
+            # rollback is impossible (the sidecar already published), so be LOUD about the exact
+            # half-applied state: the stamp advanced without its value, which only ever errs
+            # toward one extra stand-down — change the setting again to heal both files.
+            sys.stderr.write("setting %s: HALF-APPLIED — stamp %d landed but the value write "
+                             "failed (%s); the store keeps its previous value guarded by the new "
+                             "stamp. Not applied for the judges, not propagated; the next change "
+                             "heals it.\n" % (fname, stamp, e))
+            return None
+    return stamp
+
+
+def _judge_state_gt(fname):
+    """Last-applied gesture stamp for a judge-tier store — absent or garbled orders as 0."""
+    try:
+        return _gt_int((jd.STATE / (fname + ".gt")).read_text().strip())
+    except Exception:
+        return 0
 
 
 # judge tiers accept VERSION ids too (the user 2026-08-25: the settings pickers mirror the
 # family+version submenus) — a version rides the SDK model param verbatim, like session picks
-_JUDGE_MODEL_VALUES = _MODEL_VALUES | set(_VERSION_FAMILY)
-def _set_judge_model(v):  _set_judge_state("judge-model", v, _JUDGE_MODEL_VALUES)
-def _set_index_model(v):  _set_judge_state("index-model", v, _JUDGE_MODEL_VALUES)
-def _set_judge_effort(v): _set_judge_state("judge-effort", v, _EFFORT_VALUES, allow_empty=True)
-def _set_index_effort(v): _set_judge_state("index-effort", v, _EFFORT_VALUES, allow_empty=True)
+_JUDGE_MODEL_VALUES = _MODEL_VALUES | set(_VERSION_FAMILY)   # the catalog half; _judge_model_values() adds the learned
+def _judge_model_values():
+    """What a judge tier may run — a family alias, a catalog version id, or a version some session's CLI
+    has reported (learned): the same list /models hands the gear's selects, so the kernel never refuses
+    a value it offered. Computed per call — the learned half is live."""
+    return _JUDGE_MODEL_VALUES | {v["value"] for vs in _learned_versions().values() for v in vs}
+def _set_judge_model(v, gt=None):  return _set_judge_state("judge-model", v, _judge_model_values(), gt=gt)
+def _set_index_model(v, gt=None):  return _set_judge_state("index-model", v, _judge_model_values(), gt=gt)
+def _set_judge_effort(v, gt=None): return _set_judge_state("judge-effort", v, _EFFORT_VALUES, allow_empty=True, gt=gt)
+def _set_index_effort(v, gt=None): return _set_judge_state("index-effort", v, _EFFORT_VALUES, allow_empty=True, gt=gt)
 # The distilling pair accepts extra sentinels (resolved by jd._distill_model/_distill_effort at call
 # time): "triage" (the default) means FOLLOW the triage pick live — exactly what the distiller/briefer/
 # staller did before the split (the user 2026-08-14) — and effort's "none" pins no-flag. "none" exists
 # because "" cannot: _state_str folds an empty file into the default, so an allow_empty pin here would
 # read back as "follow" (caught by test_distill_tier before it shipped).
-def _set_distill_model(v):  _set_judge_state("distill-model", v, _JUDGE_MODEL_VALUES | {"triage"})
-def _set_distill_effort(v): _set_judge_state("distill-effort", v, _EFFORT_VALUES | {"triage", "none"})
+def _set_distill_model(v, gt=None):  return _set_judge_state("distill-model", v, _judge_model_values() | {"triage"}, gt=gt)
+def _set_distill_effort(v, gt=None): return _set_judge_state("distill-effort", v, _EFFORT_VALUES | {"triage", "none"}, gt=gt)
 # The default-COMMENT-THREAD trio (the user 2026-08-29, who wanted every new comment thread on one
 # model/effort/fast pick regardless of the session it branches from). Sentinel "session" — the shipped
 # default — means SAME AS THE SESSION: resolved to the empty override at create time
@@ -25224,9 +26203,9 @@ def _set_distill_effort(v): _set_judge_state("distill-effort", v, _EFFORT_VALUES
 # (clear to the account default) so the setting speaks the create dialog's exact value space; fast is
 # "on" or the sentinel — a checkbox has no third state, and forcing a thread SLOW from a fast parent
 # stays a per-thread dialog pick, never a standing default.
-def _set_comment_model(v):  _set_judge_state("comment-model", v, _JUDGE_MODEL_VALUES | {"session", "default"})
-def _set_comment_effort(v): _set_judge_state("comment-effort", v, _EFFORT_VALUES | {"session"})
-def _set_comment_fast(v):   _set_judge_state("comment-fast", v, {"session", "on"})
+def _set_comment_model(v, gt=None):  return _set_judge_state("comment-model", v, _judge_model_values() | {"session", "default"}, gt=gt)
+def _set_comment_effort(v, gt=None): return _set_judge_state("comment-effort", v, _EFFORT_VALUES | {"session"}, gt=gt)
+def _set_comment_fast(v, gt=None):   return _set_judge_state("comment-fast", v, {"session", "on"}, gt=gt)
 
 
 # The four judge-tier settings PROPAGATE: a pick made here follows to every linked kernel (the user
@@ -25237,7 +26216,10 @@ def _set_comment_fast(v):   _set_judge_state("comment-fast", v, {"session", "on"
 # machine's judges. The receiving kernel's /judge-settings route applies WITHOUT re-propagating, so
 # the machines converge in one hop from the machine the user touched and can never ping-pong. A
 # machine reachable only through a relay holds no admin path from here; it adopts when the pick is
-# made from (or forwarded via) the machine that owns its tunnel.
+# made from (or forwarded via) the machine that owns its tunnel. Every fan-out body carries the
+# ORIGIN gesture's `gt` (the WS handlers forward the stamp the local store just applied), so a
+# stale pick can never win at any receiver by arriving via this second hop — each receiver's
+# _apply_judge_settings orders by it exactly as the first hop did.
 
 _JUDGE_SETTING_FIELDS = (("judgeModel", _set_judge_model), ("indexModel", _set_index_model),
                          ("judgeEffort", _set_judge_effort), ("indexEffort", _set_index_effort),
@@ -25248,25 +26230,13 @@ _JUDGE_SETTING_FIELDS = (("judgeModel", _set_judge_model), ("indexModel", _set_i
                          ("commentModel", _set_comment_model), ("commentEffort", _set_comment_effort),
                          ("commentFast", _set_comment_fast))
 
-# field -> its STATE file, for the per-field PICK STAMPS below (the user 2026-08-30, whose distill
-# pick kept "resetting": authority between kernels must be per field and per pick time, never
-# whichever machine spoke last).
-_JUDGE_SETTING_FILES = {"judgeModel": "judge-model", "indexModel": "index-model",
-                        "judgeEffort": "judge-effort", "indexEffort": "index-effort",
-                        "distillModel": "distill-model", "distillEffort": "distill-effort",
-                        "commentModel": "comment-model", "commentEffort": "comment-effort",
-                        "commentFast": "comment-fast"}
-
-
-def _setting_stamp(field):
-    """WHEN a kernel-side setting was last picked = its STATE file's mtime. The write IS the pick
-    event (every setter writes the file at pick time), and a propagated apply preserves the ORIGIN's
-    stamp via utime below — so the stamp is the pick's own event time on every machine, and recency
-    comparisons stay honest across hops. None = never picked here."""
-    try:
-        return (jd.STATE / _JUDGE_SETTING_FILES[field]).stat().st_mtime
-    except (OSError, KeyError):
-        return None
+# The per-field PICK STAMPS this leg carried from 2026-08-30 (each field's STATE-file mtime in a
+# body "stamps" dict, preserved by utime at the receiver — the distill-pick stomp fix) are
+# superseded by the gesture stamp: one clock decides every write. Two recency clocks deciding the
+# same write would fight, and mtime only guarded THIS hop — a stale WS flush was still applied
+# locally at a fresh mtime and then fanned out as the newest pick. The body-level `gt` covers the
+# same stomp (older-or-equal never overwrites newer, a refused value never steals recency, a
+# stampless body keeps the legacy apply) at both hops, decided in the setter under one lock.
 
 
 def _apply_judge_settings(body):
@@ -25274,36 +26244,17 @@ def _apply_judge_settings(body):
     never reaches the state files or `claude --model`), and answer with the CURRENT values —
     the ack shows what actually landed, since an invalid value is deliberately ignored. The
     distill pair answers RAW ("triage" = following the triage pick), matching /version: the
-    gear shows the user's choice, not its resolution."""
+    gear shows the user's choice, not its resolution. A body-level `gt` (the origin gesture's
+    stamp, forwarded by every propagation leg) covers each field the body carries: a field
+    whose stored stamp is newer stands down individually (_setting_stale) — and the ack then
+    shows the newer value still standing."""
     _dm_before = jd._distill_model()
-    # Per-field PICK AUTHORITY (the user 2026-08-30, whose Distilling pick "continually gets reset"):
-    # a propagated body stamps each field with its pick time, and an OLDER (or same-moment) value
-    # never overwrites a newer local pick — the stomp was any later-arriving propagation replacing a
-    # fresher pick wholesale. A stampless body (an older kernel, a manual curl) keeps the legacy
-    # apply-unconditionally behavior; the protection needs both ends on this code. An applied
-    # stamped field keeps the ORIGIN's pick time (utime) so recency survives re-fans, and the stamp
-    # is copied only when the value actually LANDED (a rejected/garbage value must not steal the
-    # newer time onto the old content).
-    stamps = body.get("stamps") if isinstance(body, dict) and isinstance(body.get("stamps"), dict) else {}
+    _gt = _gesture_ms(body)
     for key, setter in _JUDGE_SETTING_FIELDS:
         if isinstance(body, dict) and key in body:
-            st = stamps.get(key)
-            try:
-                st = float(st) if st is not None else None
-            except (TypeError, ValueError):
-                st = None
-            if st is not None:
-                local = _setting_stamp(key)
-                if local is not None and local >= st:
-                    continue                          # older never overwrites newer (the fix's whole point)
-            setter(str(body.get(key) or ""))
-            if st is not None:
-                try:
-                    p = jd.STATE / _JUDGE_SETTING_FILES[key]
-                    if p.exists() and p.read_text().strip() == str(body.get(key) or "").strip():
-                        os.utime(p, (st, st))
-                except OSError:
-                    pass
+            setter(str(body.get(key) or ""), gt=_gt)
+    _pop_stale_notice()   # HTTP legs have no delivering dashboard socket — discard the verdict so
+    #                       no later message handled on a kept-alive connection's thread inherits it
     if jd._distill_model() != _dm_before:
         # Switching the distill tier's EFFECTIVE model is a discrete recovery event (the user
         # 2026-08-18, who pointed the tier away from an outage-scoped model and expected the failed
@@ -25336,12 +26287,6 @@ def _propagate_judge_settings(body):
     itself never blocks on the machines. A miss is LOUD (a machine that missed the pick would
     silently run its judges on another model forever) but not retried — the next change re-fans,
     and /judge-settings with {"propagate": true} re-syncs on demand."""
-    # Every fanned field carries its PICK STAMP (the local STATE file's mtime — the pick event
-    # itself, or the origin's preserved time on a re-fan), so the receiving side can refuse an
-    # older value over a newer pick (the user 2026-08-30). Computed once, at fan time.
-    body = dict(body)
-    _st = {f: _setting_stamp(f) for f in body if f in _JUDGE_SETTING_FILES}
-    body["stamps"] = {f: t for f, t in _st.items() if t is not None}
     with _remotes_lock:
         rows = [dict(r) for r in _remotes.values()
                 if r.get("status") == "up" and r.get("local_port") and r.get("token")]
@@ -25359,6 +26304,36 @@ def _reply(c, msg):
         c["send"](json.dumps(msg))
     except Exception:
         c["alive"] = False
+
+
+def _setting_kept_value(name):
+    """The value a stood-down gesture lost to — read at reply time only (one cheap store read on
+    the stand-down path, never on the apply path). Booleans stay booleans; the gear words them."""
+    if name == "auto-nudge":
+        return bool(_auto_nudge_data().get("enabled"))
+    if name == "compact-suggest":
+        return _compact_suggest_on()
+    if name == "file-editing":
+        return _file_editing_on()
+    if name == "update-mode":
+        return _update_mode()
+    return jd._state_str(name, "")   # the judge-tier stores are bare value files
+
+
+def _tell_stale_gesture(client):
+    """A gt-gated setter just refused: if that refusal was a stale STAND-DOWN (recorded on this
+    thread by _setting_stale), answer the DELIVERING socket with a small settingStale frame — the
+    same targeted _reply idiom the saveFile acks use, never a broadcast. Without it the refusal
+    was one kernel stderr line: the dashboard that made the gesture kept displaying the refused
+    pick as applied (the gear fills only on open), and with the mesh AGREEING on the kept value
+    the mixed marks showed nothing. The gear toasts the frame and re-fills if open — event-keyed,
+    the frame IS the deciding event; no polling. A refusal for any other cause (invalid value,
+    OSError) records no notice and sends nothing."""
+    st = _pop_stale_notice()
+    if not st:
+        return
+    _reply(client, {"type": "settingStale", "setting": st["setting"],
+                    "storedGt": st["storedGt"], "kept": _setting_kept_value(st["setting"])})
 
 
 # ---- pasted-image hydration + dropped-file handling (ported from the old TS kernel chat-view/src/
@@ -27520,12 +28495,16 @@ _CHAT_MOBILE_CSS = (
     "#tabbar #tabs{display:none}"                       # the wrapping multi-row tab strip
     "#tabbar-resize{display:none}"                      # nothing to resize under the mobile header
     "#mhdr{display:flex;align-items:stretch;gap:6px;width:100%}"
+    # the chip's surfaces read the chrome tokens where the dark value is byte-identical
+    # (--btn-bg → #2a2a2a, --hairline → #3a3a3a — the #mlist pattern below), so the light theme
+    # re-skins them for free; the text colors have no byte-identical token and take light-block
+    # overrides instead (the user 2026-09-02: the chip stayed a dark slab on the light chat page)
     "#mcur{flex:1 1 auto;min-width:0;display:flex;align-items:center;gap:8px;cursor:pointer;"
-    "background:#2a2a2a;color:#dddddd;border:1px solid #3a3a3a;border-radius:6px;padding:7px 10px;"
+    "background:var(--btn-bg,#2a2a2a);color:#dddddd;border:1px solid var(--hairline,#3a3a3a);border-radius:6px;padding:7px 10px;"
     "font:600 13px 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}"
     # colored session: the identity color reads as the NAME (bold) on the same grey chip as the +/madd
     # button, with a hairline color border, not the color as a fill (the user 2026-07-22).
-    "#mcur.colored{background:#2a2a2a;color:var(--cbg);border-color:var(--cbg)}"
+    "#mcur.colored{background:var(--btn-bg,#2a2a2a);color:var(--cbg);border-color:var(--cbg)}"
     "#mcur .nm{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:700}"
     # the working cue is the SAME gold status dot desktop uses (the tab's .tab-dot), not a text bullet
     "#mcur .wd{flex:0 0 auto;width:7px;height:7px;border-radius:50%;background:var(--st-working-bg,#e0b020)}"
@@ -27533,7 +28512,7 @@ _CHAT_MOBILE_CSS = (
     "#mcur .cv{flex:0 0 auto;opacity:.6;font-size:11px}"
     "#mtag-slot{flex:0 0 auto;display:flex;align-items:center;gap:5px}"   # T161: the tag control's slot, sized by the shared button's own inline metrics
     "#madd{flex:0 0 auto;width:36px;display:flex;align-items:center;justify-content:center;cursor:pointer;"
-    "background:#2a2a2a;color:#bbbbbb;border:1px solid #3a3a3a;border-radius:6px;font-size:16px;line-height:1}"
+    "background:var(--btn-bg,#2a2a2a);color:#bbbbbb;border:1px solid var(--hairline,#3a3a3a);border-radius:6px;font-size:16px;line-height:1}"
     # the mobile session picker IS a dropdown (T226 review): its card + hairline read the menu tokens
     # (dark: --menu-bg → #252526 and --hairline → #3a3a3a, byte-identical to the literals they replace)
     "#mlist{display:none;position:absolute;left:8px;right:8px;top:100%;margin-top:4px;z-index:200;"
@@ -27547,6 +28526,11 @@ _CHAT_MOBILE_CSS = (
     "body.theme-light .mrow .nm{color:var(--menu-fg)}"
     "body.theme-light .mrow .mclose{color:var(--text-muted)}"
     "body.theme-light .mrow.active{background:var(--accent-wash)}"
+    # the trigger chip's text tiers (its surfaces already re-skin through --btn-bg/--hairline above);
+    # the .colored restatement outweighs the plain override so the identity color keeps the name
+    "body.theme-light #mcur{color:var(--menu-fg)}"
+    "body.theme-light #mcur.colored{color:var(--cbg)}"
+    "body.theme-light #madd{color:var(--text-muted)}"
     ".mrow{display:flex;align-items:center;gap:9px;padding:10px 12px;cursor:pointer;"
     "border-bottom:1px solid #ffffff12;font:600 13px 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}"
     ".mrow:last-child{border-bottom:0}"
@@ -27883,6 +28867,7 @@ else if(m.type==="hover"&&panel.setHover)panel.setHover(m);
 // this inline copy serves the browser, that one the VS Code webview. net-popover-known.test.ts's sibling
 // timeline-boot.test.ts pins the pair.
 else if(m.type==="revealEvent"&&panel.revealEvent)panel.revealEvent(m.sid,m.t,m.id);
+else if(m.type==="models"&&panel.refreshModels)panel.refreshModels();
 else if(m.type==="tagEditFailed"&&panel.tagEditFailed)panel.tagEditFailed(m);
 else if(m.type==="openViewsDialog"&&panel._openViewsDialog)panel._openViewsDialog(null);});
 window.__rompTimelineOpenExternal=function(url){try{var u=new URL(url);if(u.protocol==="vscode:"){var q=u.searchParams;
@@ -27890,7 +28875,7 @@ post({type:"deepLink",session:q.get("session"),anchor:q.get("anchor")||undefined
 if(window.parent!==window)window.parent.postMessage({romp:"reveal",pane:"chat"},"*");return;}}catch(e){}window.open(url,"_blank");};
 window.__rompTimelineWriteOrder=function(order){if(window.__rompWriteOrder)window.__rompWriteOrder(order);};
 window.__rompTimelineCompact=function(name){post({type:"compact",name:name});};
-window.__rompTimelineSendCommand=function(name,cmd){post({type:"sendCommand",name:name,cmd:cmd});};
+window.__rompTimelineSendCommand=function(name,cmd,extra){post(Object.assign({type:"sendCommand",name:name,cmd:cmd},extra||{}));};
 window.__rompTimelineSetFlag=function(id,flag,value){post({type:"setSessionFlag",id:id,flag:flag,value:!!value});};
 window.__rompTimelineSetViews=function(views){post({type:"setTimelineViews",views:views});};
 window.__rompTimelineEditTag=function(edit){post({type:"editTag",edit:edit});};
@@ -29374,7 +30359,11 @@ _LANDING_MOBILE_JS = """
 function fit(){try{var vv=window.visualViewport;
 var coarse=window.matchMedia&&matchMedia('(pointer: coarse)').matches;
 var h=(!coarse||!vv)?window.innerHeight:Math.round(vv.height*(vv.scale||1));
-if(h)document.documentElement.style.setProperty('--app-h',h+'px');}catch(e){}}
+if(h)document.documentElement.style.setProperty('--app-h',h+'px');
+// iOS ignores interactive-widget and reveals a focused input by SCROLLING this overflow:hidden page
+// (a UA scroll bypasses the clamp) — the shell then sits a keyboard-height up until dragged back
+// (the user 2026-09-02). The layout must never scroll: undo any stray offset on the same events.
+if(window.scrollY||document.documentElement.scrollTop)window.scrollTo(0,0);}catch(e){}}
 fit();window.addEventListener('resize',fit);window.addEventListener('orientationchange',fit);
 // iOS Safari collapses/expands its toolbars AS YOU SCROLL, and the visible height changes with them
 // without a window resize; the visual viewport's own scroll event is where that settles. pageshow covers
@@ -29909,7 +30898,17 @@ def _landing():
             # safe-area padding-bottom became a dead slab below the Chat/Feed/Timeline labels; cover also drew
             # the top edge under the status bar with no top inset (clipped chat tab bar). The default viewport
             # auto-insets clear of the status bar AND the nav bar and zeroes every env() inset.
-            "<meta name=viewport content='width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no'>"
+            # interactive-widget=resizes-content (the user 2026-09-02, whose composer tap scrolled the
+            # whole page up behind the keyboard): without it browsers default to resizes-visual — the
+            # soft keyboard PANS the visual viewport while innerHeight stands still, so the UA slides
+            # the shell up to reveal the input and fit() (below) re-lays the shrunken --app-h into a
+            # window whose visible band now starts a keyboard-height down; the composer ends up
+            # off-screen until the user drags it back. With resizes-content the LAYOUT viewport
+            # shrinks (innerHeight, 100dvh and vv.height agree, offsetTop stays 0), the iframes
+            # shrink with --app-h, and the flex-footer composer lands right above the keyboard.
+            # Android Chrome 108+ honors it; engines that don't (iOS Safari) ignore the token and
+            # keep today's behavior plus fit()'s stray-scroll reset.
+            "<meta name=viewport content='width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,interactive-widget=resizes-content'>"
             # …EXCEPT installed on an iOS home screen (plans/ios-app.md; the user 2026-08-07): standalone
             # mode has no browser chrome keeping #mtabs off the home indicator, and iOS only populates
             # env(safe-area-inset-*) under cover. navigator.standalone is iOS-only and standalone-only,
@@ -30031,6 +31030,12 @@ def _landing():
             # the rail's network (⧉) action opens a shell-native popover anchored by the rail to manage
             # federated remote kernels (attach a host from ~/.ssh/config, see status, detach).
             ".rail-act.on{color:var(--accent)}"   # the network icon glows accent-blue while a remote is connected
+            # the master bell says OFF the way every other bell in the app does — a slash through
+            # the glyph (the feed card bell, the timeline lane bell) — never color alone: the light
+            # theme's rail recolor happened to equalize the two colors and on/off rendered
+            # pixel-identical (the user 2026-09-02)
+            ".bell-slash{display:none}"
+            "#rail-bell:not(.on) .bell-slash,#mbell:not(.on) .bell-slash{display:block}"
             # Per-node fleet colour on the network glyph (the user 2026-07-29). The nodes carry their own
             # fill, so they override the icon's currentColor: accent = connected and on this build,
             # grey = attached but not answering (romp is dialing), red = needs you (drift, no kernel, or
@@ -30480,9 +31485,13 @@ def _landing():
             "body.theme-light .pane-rail{background:#E7DED2;border-top-color:#DCD2C4}"
             "body.theme-light .rail-btn{color:#5D574E}"
             "body.theme-light .rail-btn:hover{color:#C2410C;background:rgba(0,0,0,0.05)}"
-            "body.theme-light .rail-btn.on{background:rgba(194,65,12,0.10);border-color:rgba(194,65,12,0.35)}"
+            "body.theme-light .rail-btn.on{color:var(--accent);background:rgba(194,65,12,0.10);border-color:rgba(194,65,12,0.35)}"
             "body.theme-light .rail-act{color:#5D574E}"
             "body.theme-light .rail-act:hover{color:#1F1E1D;background:rgba(0,0,0,0.06)}"
+            # the light rail recolors above outspecify the bare `.on` rules ((0,2,1) beats (0,2,0)),
+            # which silenced the bell's and the network glyph's on-state entirely in the light theme
+            # (the user 2026-09-02) — restate `.on` at the winning specificity
+            "body.theme-light .rail-act.on{color:var(--accent)}"
             "body.theme-light .gv{background:linear-gradient(90deg,transparent 3px,rgba(0,0,0,0.14) 3px,rgba(0,0,0,0.14) 4px,transparent 4px)}"
             "body.theme-light .gh{background:linear-gradient(180deg,transparent 3px,rgba(0,0,0,0.14) 3px,rgba(0,0,0,0.14) 4px,transparent 4px)}"
             "body.theme-light .gv::after,body.theme-light .gh::after{background:rgba(0,0,0,0.22)}"
@@ -30595,7 +31604,8 @@ def _landing():
             "<svg viewBox='0 0 16 16' width='18' height='18'>"
             "<path d='M8 2 C5.7 2 4.3 3.8 4.3 6.2 L4.3 9 L3 11.2 L13 11.2 L11.7 9 L11.7 6.2 C11.7 3.8 10.3 2 8 2 Z'"
             " fill='none' stroke='currentColor' stroke-width='1.2' stroke-linejoin='round'/>"
-            "<path d='M6.5 13 A1.7 1.7 0 0 0 9.5 13' fill='none' stroke='currentColor' stroke-width='1.2'/></svg></div>"
+            "<path d='M6.5 13 A1.7 1.7 0 0 0 9.5 13' fill='none' stroke='currentColor' stroke-width='1.2'/>"
+            "<line class='bell-slash' x1='2.8' y1='2.2' x2='13.2' y2='13.8' stroke='currentColor' stroke-width='1.2' stroke-linecap='round'/></svg></div>"
             "<div class=rail-act id=rail-gear data-keycmd=settings.open title=Settings aria-label=Settings>⛭</div>"   # ⛭ (gear-without-hub): the bigger, bolder gear the user prefers (restored 2026-06-29)
             "</div>"   # /.rail-acts
             "</div>"   # /.pane-rail (bottom bar)
@@ -30637,7 +31647,8 @@ def _landing():
             "<svg viewBox='0 0 16 16' width='18' height='18'>"
             "<path d='M8 2 C5.7 2 4.3 3.8 4.3 6.2 L4.3 9 L3 11.2 L13 11.2 L11.7 9 L11.7 6.2 C11.7 3.8 10.3 2 8 2 Z'"
             " fill='none' stroke='currentColor' stroke-width='1.2' stroke-linejoin='round'/>"
-            "<path d='M6.5 13 A1.7 1.7 0 0 0 9.5 13' fill='none' stroke='currentColor' stroke-width='1.2'/></svg></button>"
+            "<path d='M6.5 13 A1.7 1.7 0 0 0 9.5 13' fill='none' stroke='currentColor' stroke-width='1.2'/>"
+            "<line class='bell-slash' x1='2.8' y1='2.2' x2='13.2' y2='13.8' stroke='currentColor' stroke-width='1.2' stroke-linecap='round'/></svg></button>"
             # settings wears the desktop rail's OWN gear glyph, ⛭ (U+26ED), not the outlined star it had.
             "<button class=mact data-act=settings data-keycmd=settings.open aria-label=Settings title=Settings>⛭</button>"
             "</nav>"
@@ -31241,10 +32252,18 @@ class Handler(BaseHTTPRequestHandler):
                 # selectors wear the same colors the statusline badges do, for ANY pick — the badge
                 # colors only cover the current value, so the list is where the shared tint belongs)
                 _stops = cm.stops_for(_colormap())
-                # each family also carries its VERSIONS (newest first, the family's tint) and its
-                # DEFAULT — the last version the user picked for that family, else the newest (the
-                # user 2026-08-25: family click = remembered pick; the submenu holds the rest).
-                _picks = _model_picks()
+                # each family also carries its VERSIONS (newest first, the family's tint): the CATALOG
+                # — the seed table as the Models API fetch and its cache have grown it (T222) — plus
+                # every id a running session's CLI reports that the catalog lacks yet, those marked
+                # `learned`; and its DEFAULT — the last version the user picked for that family, else
+                # the family ALIAS (the user 2026-08-25: family click = remembered pick; the submenu
+                # holds the rest). The alias, never the list's head: the CLI resolves an alias live,
+                # and the head pinned every picker-set session to claude-fable-5 while `fable` moved
+                # on. The catalog owns the LIST, the alias the DEFAULT.
+                _rev = _models_rev[0]
+                _learned = _learned_versions()
+                _picks = _model_picks(_learned)
+                _cat = _versions_catalog(_learned)
                 # a version the INSTALLED CLI has refused by minimum version says so on its own row
                 # (T222): the refusal is learned from the CLI's own error at the first attempt
                 # (sdk_backend.note_cli_model_block) and cleared by the first real reply on that
@@ -31267,13 +32286,16 @@ class Handler(BaseHTTPRequestHandler):
                     except Exception:
                         pass
                 return self._send(200, json.dumps(
-                    {"models": [dict(c, color=_model_color(c["value"], _stops),
+                    # `rev` is the pick memory's revision — the models frame's counter (_models_changed),
+                    # read here BEFORE the picks so a payload never carries a rev newer than its list: a
+                    # picker keeps the highest rev it applied and drops a response that lands late with a
+                    # lower one (two overlapping fetches can resolve out of order)
+                    {"rev": _rev,
+                     "models": [dict(c, color=_model_color(c["value"], _stops),
                                      tone=_model_tone(c["value"]),
                                      versions=[_with_cli_block(dict(v), _blocks)
-                                               for v in MODEL_VERSIONS.get(c["value"]) or []],
-                                     default=_picks.get(c["value"])
-                                         or ((MODEL_VERSIONS.get(c["value"]) or [{}])[0].get("value")
-                                             or c["value"]))
+                                               for v in _cat.get(c["value"]) or []],
+                                     default=_picks.get(c["value"]) or c["value"])
                                 for c in MODEL_CHOICES],
                      "efforts": [dict(c, color=_effort_color(c["value"], _stops), tone=_effort_tone(c["value"]))
                                  for c in EFFORT_CHOICES],
@@ -31703,8 +32725,11 @@ class Handler(BaseHTTPRequestHandler):
                 # in by a local tool while the account is rate-limited — or while the session compacts —
                 # waits its turn instead of buying a red API-error card. ok:true still means ACCEPTED,
                 # which is all it ever meant on this route. No optimistic echo: an external/postal send
-                # isn't a human composer bubble.
-                _send_or_park(Sessions.backend_for(sid), sid, body["text"])
+                # isn't a human composer bubble. A typed /model, /effort or /fast takes the setters,
+                # exactly as the composer's does — same door, same registry.
+                be = Sessions.backend_for(sid)
+                if not _route_meta_command(be, sid, body["text"]):
+                    _send_or_park(be, sid, body["text"])
                 return self._send(200, json.dumps({"ok": True}), "application/json")
             if u.path in ("/fork-comment", "/fork-promote"):
                 # Parallel review dispatch (the user 2026-08-31, via the Obsidian track-changes
@@ -31775,7 +32800,8 @@ class Handler(BaseHTTPRequestHandler):
                 # backend — without a browser. Body: {"name": ..., "dir": ..., "backend": "sdk"|"tmux"},
                 # plus optional "model"/"effort" (full ids/levels, applied park-aware and echoed back;
                 # also applied on the existing:true open, so a re-brief re-asserts them — see
-                # _apply_new_session_prefs).
+                # _apply_new_session_prefs) and optional "env" (a NAME→value map of per-session env
+                # vars, the user 2026-08-17: born into the SDK spawn, re-asserted the same way).
                 # Same validation and the same no-silent-fallback rule as the WS op: when the SDK
                 # backend is unavailable, say so (ok:false + reason), never hand back a mystery tmux
                 # session. An already-live name is a success (idempotent open), not an error.
@@ -31787,6 +32813,20 @@ class Handler(BaseHTTPRequestHandler):
                 if not nm or not NAME_RE.match(nm):
                     return self._send(400, json.dumps({"ok": False, "error":
                         "session names use letters, digits, . _ - only"}), "application/json")
+                # env is validated HERE, before anything is created: a bad payload refuses the WHOLE
+                # request (fail-loudly) — never a session spawned quietly missing the env it asked for.
+                # Absent and null mean "not asked" (the model/effort empty-skip contract). An EXPLICIT
+                # {} is the clear-all declaration: set_env is replace-not-merge (a re-run declares the
+                # full env the session should have), and {} is that contract's limiting case — the only
+                # way to remove a spawn-time var from a running session. Every OTHER value goes through
+                # the validator, so falsy junk (false, 0, "", []) 400s instead of being silently
+                # swallowed as "not asked" while the caller reads ok:true as the env applying.
+                env_req = (b or {}).get("env")
+                if env_req is not None:
+                    eerr = _env_error(env_req)
+                    if eerr:
+                        return self._send(400, json.dumps({"ok": False, "error": eerr}),
+                                          "application/json")
                 # mkdir:true makes a missing dir (the WS op's "create it" answer, available headlessly too)
                 cwd, derr = _resolve_create_dir(b.get("dir"), create=bool(b.get("mkdir")))
                 if derr:
@@ -31795,6 +32835,18 @@ class Handler(BaseHTTPRequestHandler):
                                       "application/json")
                 live = _live_names(_tmux_sessions())
                 if nm in live:
+                    if env_req is not None:
+                        # env rides the per-sid flag-settings file, which only the SDK backend hands
+                        # its CLI — a live tmux session can't take it, and dropping it silently would
+                        # leave this machine believing an env the session never saw.
+                        try:
+                            _envbe = Sessions.backend_for(live[nm])
+                        except Exception:
+                            _envbe = None
+                        if not hasattr(_envbe, "set_env"):
+                            return self._send(200, json.dumps({"ok": False, "error":
+                                'per-session env needs an SDK session — "%s" runs on tmux, whose CLI '
+                                "reads the tmux server's environment" % nm}), "application/json")
                     extra = _apply_new_session_prefs(live[nm], b)
                     return self._send(200, json.dumps({"ok": True, "id": live[nm], "existing": True, **extra}),
                                       "application/json")
@@ -31832,7 +32884,8 @@ class Handler(BaseHTTPRequestHandler):
                                           "application/json")
                     a = (b or {}).get("auth")
                     sid, extra = _create_sdk_session(nm, cwd, auth=(a if a in ("login", "key") else ""),
-                                                     prefs=b)   # pins ride the FIRST connect — see the def
+                                                     prefs=b,   # pins ride the FIRST connect — see the def
+                                                     env=env_req)   # env is born into the spawn's reg
                     if not sid:
                         return self._send(200, json.dumps({"ok": False,
                                                            "error": (extra or {}).get("error")
@@ -31840,6 +32893,10 @@ class Handler(BaseHTTPRequestHandler):
                                           "application/json")
                     return self._send(200, json.dumps({"ok": True, "id": sid, "dir": cwd, **extra}),
                                       "application/json")
+                if env_req is not None:
+                    return self._send(200, json.dumps({"ok": False, "error":
+                        "per-session env needs the SDK backend — a tmux session's CLI reads the "
+                        "tmux server's environment"}), "application/json")
                 threading.Thread(target=_spawn_session, args=(nm, cwd), daemon=True).start()
                 return self._send(200, json.dumps({"ok": True, "pending": True, "dir": cwd}),
                                   "application/json")
@@ -31928,6 +32985,46 @@ class Handler(BaseHTTPRequestHandler):
                 _mark_views_dirty()
                 return self._send(200, json.dumps({"ok": True, "id": tsid, "name": nm}),
                                   "application/json")
+            if u.path == "/move":
+                # Headless move (`romp move`, the user 2026-09-01): the moveSession WS op as a one-shot
+                # POST, sibling of /rename. Body: {"target": <live name or sid>, "dir": <folder>}. The dir
+                # is resolved like a new-session dir (must exist; canonicalised). A quiet session moves
+                # NOW and the reply carries the outcome; a busy one parks the move behind its turn and
+                # the reply says so (queued: true) — the CLI cannot tell whether that later fires, so it
+                # reports the park honestly rather than waiting on a turn of unknown length. Loud errors.
+                try:
+                    b = json.loads(raw_body or b"{}")
+                except Exception:
+                    b = {}
+                target = str((b or {}).get("target") or "").strip()
+                raw_dir = str((b or {}).get("dir") or "").strip()
+                if not target or not raw_dir:
+                    return self._send(400, json.dumps({"ok": False, "error": "target and dir required"}),
+                                      "application/json")
+                path, derr = _resolve_create_dir(raw_dir)
+                if derr:
+                    return self._send(200, json.dumps({"ok": False, "error": derr}), "application/json")
+                live = _live_names(_tmux_sessions())
+                tsid = live.get(target) or ""
+                if not tsid and re.fullmatch(r"[0-9a-fA-F-]{32,36}", target):
+                    tsid = target
+                if not tsid or not _kernel_knows(tsid):
+                    return self._send(200, json.dumps({"ok": False, "error":
+                        'no live session named "%s" (a dormant one can be moved by sid)' % target}),
+                                      "application/json")
+                be = Sessions.backend_for(tsid)
+                if _ops_gate(tsid):
+                    _park_op(tsid, ("cwd", path, 0))
+                    return self._send(200, json.dumps({"ok": True, "id": tsid, "queued": True, "dir": path}),
+                                      "application/json")
+                _moving.add(tsid)
+                res = _move_now(be, tsid, path, 0, "")   # synchronous here: the reply IS the outcome
+                if res == "busy":
+                    return self._send(200, json.dumps({"ok": True, "id": tsid, "queued": True, "dir": path}),
+                                      "application/json")
+                if res:
+                    return self._send(200, json.dumps({"ok": False, "error": res}), "application/json")
+                return self._send(200, json.dumps({"ok": True, "id": tsid, "dir": path}), "application/json")
             if u.path == "/color":
                 # Headless recolor (`romp color`, the user 2026-08-23 via the manager/worker workflow:
                 # a manager keeps its whole worker group one identity color): the setSessionColor WS op
@@ -32461,7 +33558,8 @@ class Handler(BaseHTTPRequestHandler):
                 # Applies via the validated setters, answers with the CURRENT four values.
                 # {"propagate": true} additionally fans the pick out from THIS machine (the manual /
                 # scripted re-sync); forwarded bodies never carry it, so propagation is one hop and
-                # can never ping-pong around the mesh.
+                # can never ping-pong around the mesh. A body-level `gt` is kept in the forward —
+                # the origin gesture's stamp orders the apply at every receiver (_setting_stale).
                 try:
                     body = json.loads(raw_body or b"{}")
                 except Exception:
@@ -32533,6 +33631,16 @@ class Handler(BaseHTTPRequestHandler):
             _mark_views_dirty()
             return
         if msg and msg.get("type") == "ready":
+            # `ready` = the render bundle JUST evaluated, so this renderer holds NOTHING — but this
+            # socket may already have been served: the pusher fires from the moment the WS opens
+            # (the inline shim dials during HTML parse), while the 1.4MB bundle can still be
+            # downloading/evaluating, so the first full session frames can land in a document with
+            # no message listener and vanish. echat then believes the client holds those tails and
+            # every later push is a delta the client drops — the tab stuck on « opening … » until
+            # its socket died (the user 2026-09-02; duplicating the browser tab always recovered
+            # because cached bundles win the race). Same repair as needFull above, client-wide;
+            # ready is posted once per renderer life, so this cannot loop.
+            _client_reset_chat_base(client)
             self._push_one(client)
             # Push the SHARED, STABLE tab order so the UI honors it on connect/reload. Without this
             # the webview only learns the order from a live drag, loses it on every reload, and falls
@@ -32643,19 +33751,30 @@ class Handler(BaseHTTPRequestHandler):
             _set_conserve(bool(msg.get("enabled")))
             _push_soon()
         elif msg and msg.get("type") == "setAutoNudge" and msg.get("enabled") is not None:
-            _set_auto_nudge(bool(msg["enabled"]))   # feed gear → server-side Auto Nudge on/off
+            # feed gear → server-side Auto Nudge on/off; a stale gesture stamp stands down (no
+            # apply), and the dashboard that made the losing gesture hears it
+            if _set_auto_nudge(bool(msg["enabled"]), gt=_gesture_ms(msg)) is None:
+                _tell_stale_gesture(client)
         elif msg and msg.get("type") == "setCompactSuggest" and msg.get("enabled") is not None:
-            _set_compact_suggest(bool(msg["enabled"]))   # T208 opt-in — kernel-side like autoNudge
-            # act immediately on turn-on (don't wait 4s) — but skip the dead-wait sweep: the
-            # death transition has ONE observer (the pusher's tick; see _auto_nudge_tick), and
-            # this WS thread racing its prev-swap could spend a transition uncorroborated
-            _auto_nudge_tick(int(time.time()), _tmux_sessions(), run_dead_wait=False)
+            # T208 opt-in — kernel-side like autoNudge, gt-gated like every queued setting. Only a
+            # real apply acts immediately on turn-on (don't wait 4s) — a stood-down toggle is not
+            # new information — and the tick skips the dead-wait sweep: the death transition has
+            # ONE observer (the pusher's tick; see _auto_nudge_tick), and this WS thread racing
+            # its prev-swap could spend a transition uncorroborated
+            if _set_compact_suggest(bool(msg["enabled"]), gt=_gesture_ms(msg)) is not None:
+                _auto_nudge_tick(int(time.time()), _tmux_sessions(), run_dead_wait=False)
+            else:
+                _tell_stale_gesture(client)
         elif msg and msg.get("type") == "setUpdateMode" and msg.get("mode") in _UPDATE_MODES:
-            _set_update_mode(str(msg["mode"]))      # feed gear → how romp handles new releases at boot
+            # feed gear → how romp handles new releases at boot; gt-gated like every queued setting
+            if _set_update_mode(str(msg["mode"]), gt=_gesture_ms(msg)) is None:
+                _tell_stale_gesture(client)
         elif msg and msg.get("type") == "setFileEditing" and msg.get("enabled") is not None:
             # The viewer's Edit consent popup (the user 2026-08-22) — a kernel-side setting like
             # setAutoNudge, broadcast by federation.ts KERNEL_SETTING so one yes answers the mesh.
-            _set_file_editing(bool(msg["enabled"]))
+            # A stale gesture stamp stands down (a queued flush must not undo a newer choice).
+            if _set_file_editing(bool(msg["enabled"]), gt=_gesture_ms(msg)) is None:
+                _tell_stale_gesture(client)
         elif msg and msg.get("type") == "askClear" and msg.get("itemId"):
             # a cleared card drops any composer citation chip pointing INTO it (the user 2026-07-01) — the
             # goal is gone, so following up on it makes no sense. Chips can cite a SUB-goal of the card
@@ -33131,42 +34250,76 @@ class Handler(BaseHTTPRequestHandler):
             _set_colormap(str(msg["name"]))    # recency colormap chooser → recolours the feed on next push
         elif msg and msg.get("type") == "setPalette" and msg.get("name"):
             _set_palette(str(msg["name"]))     # gear "Session colors" → remap the fleet onto the chosen set
+        # The judge-tier picks below share one shape: apply through the validated setter with the
+        # message's gesture stamp (_gesture_ms — a stale stamp stands down; see _setting_stale),
+        # and only an APPLIED pick fans out, carrying the applied stamp `_jgt` so it orders the
+        # same way at every receiver. A stood-down or invalid pick propagates NOTHING — the
+        # re-propagation leg is exactly how one stale flush used to revert the whole mesh — and a
+        # STOOD-DOWN one additionally answers the delivering socket (_tell_stale_gesture) so the
+        # dashboard that made the losing gesture hears it.
         elif msg and msg.get("type") == "setJudgeModel" and msg.get("model"):
-            _set_judge_model(str(msg["model"]))     # gear "Triage model" dropdown → the judge uses it next pass
-            threading.Thread(target=_propagate_judge_settings,   # …and every linked kernel's judges with it
-                             args=({"judgeModel": str(msg["model"])},), daemon=True).start()
+            _jgt = _set_judge_model(str(msg["model"]), gt=_gesture_ms(msg))   # gear "Triage model" dropdown → the judge uses it next pass
+            if _jgt is not None:
+                threading.Thread(target=_propagate_judge_settings,   # …and every linked kernel's judges with it
+                                 args=({"judgeModel": str(msg["model"]), "gt": _jgt},), daemon=True).start()
+            else:
+                _tell_stale_gesture(client)
         elif msg and msg.get("type") == "setIndexModel" and msg.get("model"):
-            _set_index_model(str(msg["model"]))     # gear "Indexing model" dropdown
-            threading.Thread(target=_propagate_judge_settings,
-                             args=({"indexModel": str(msg["model"])},), daemon=True).start()
+            _jgt = _set_index_model(str(msg["model"]), gt=_gesture_ms(msg))   # gear "Indexing model" dropdown
+            if _jgt is not None:
+                threading.Thread(target=_propagate_judge_settings,
+                                 args=({"indexModel": str(msg["model"]), "gt": _jgt},), daemon=True).start()
+            else:
+                _tell_stale_gesture(client)
         elif msg and msg.get("type") == "setJudgeEffort":
-            _set_judge_effort(str(msg.get("effort") or ""))   # gear "Triage effort" ("" = default/none)
-            threading.Thread(target=_propagate_judge_settings,
-                             args=({"judgeEffort": str(msg.get("effort") or "")},), daemon=True).start()
+            _jgt = _set_judge_effort(str(msg.get("effort") or ""), gt=_gesture_ms(msg))   # gear "Triage effort" ("" = default/none)
+            if _jgt is not None:
+                threading.Thread(target=_propagate_judge_settings,
+                                 args=({"judgeEffort": str(msg.get("effort") or ""), "gt": _jgt},), daemon=True).start()
+            else:
+                _tell_stale_gesture(client)
         elif msg and msg.get("type") == "setIndexEffort":
-            _set_index_effort(str(msg.get("effort") or ""))   # gear "Indexing effort"
-            threading.Thread(target=_propagate_judge_settings,
-                             args=({"indexEffort": str(msg.get("effort") or "")},), daemon=True).start()
+            _jgt = _set_index_effort(str(msg.get("effort") or ""), gt=_gesture_ms(msg))   # gear "Indexing effort"
+            if _jgt is not None:
+                threading.Thread(target=_propagate_judge_settings,
+                                 args=({"indexEffort": str(msg.get("effort") or ""), "gt": _jgt},), daemon=True).start()
+            else:
+                _tell_stale_gesture(client)
         elif msg and msg.get("type") == "setDistillModel" and msg.get("model"):
-            _set_distill_model(str(msg["model"]))   # gear "Distilling model" ("triage" = follow the triage pick)
-            threading.Thread(target=_propagate_judge_settings,
-                             args=({"distillModel": str(msg["model"])},), daemon=True).start()
+            _jgt = _set_distill_model(str(msg["model"]), gt=_gesture_ms(msg))   # gear "Distilling model" ("triage" = follow the triage pick)
+            if _jgt is not None:
+                threading.Thread(target=_propagate_judge_settings,
+                                 args=({"distillModel": str(msg["model"]), "gt": _jgt},), daemon=True).start()
+            else:
+                _tell_stale_gesture(client)
         elif msg and msg.get("type") == "setDistillEffort" and msg.get("effort"):
-            _set_distill_effort(str(msg["effort"]))   # gear "Distilling effort" ("triage" = follow; "none" = pinned no-flag)
-            threading.Thread(target=_propagate_judge_settings,
-                             args=({"distillEffort": str(msg["effort"])},), daemon=True).start()
+            _jgt = _set_distill_effort(str(msg["effort"]), gt=_gesture_ms(msg))   # gear "Distilling effort" ("triage" = follow; "none" = pinned no-flag)
+            if _jgt is not None:
+                threading.Thread(target=_propagate_judge_settings,
+                                 args=({"distillEffort": str(msg["effort"]), "gt": _jgt},), daemon=True).start()
+            else:
+                _tell_stale_gesture(client)
         elif msg and msg.get("type") == "setCommentModel" and msg.get("model"):
-            _set_comment_model(str(msg["model"]))   # gear "Comment model" ("session" = same as the session)
-            threading.Thread(target=_propagate_judge_settings,
-                             args=({"commentModel": str(msg["model"])},), daemon=True).start()
+            _jgt = _set_comment_model(str(msg["model"]), gt=_gesture_ms(msg))   # gear "Comment model" ("session" = same as the session)
+            if _jgt is not None:
+                threading.Thread(target=_propagate_judge_settings,
+                                 args=({"commentModel": str(msg["model"]), "gt": _jgt},), daemon=True).start()
+            else:
+                _tell_stale_gesture(client)
         elif msg and msg.get("type") == "setCommentEffort" and msg.get("effort"):
-            _set_comment_effort(str(msg["effort"]))   # gear "Comment effort"
-            threading.Thread(target=_propagate_judge_settings,
-                             args=({"commentEffort": str(msg["effort"])},), daemon=True).start()
+            _jgt = _set_comment_effort(str(msg["effort"]), gt=_gesture_ms(msg))   # gear "Comment effort"
+            if _jgt is not None:
+                threading.Thread(target=_propagate_judge_settings,
+                                 args=({"commentEffort": str(msg["effort"]), "gt": _jgt},), daemon=True).start()
+            else:
+                _tell_stale_gesture(client)
         elif msg and msg.get("type") == "setCommentFast" and msg.get("fast"):
-            _set_comment_fast(str(msg["fast"]))     # gear "Fast comment threads" ("on" / "session")
-            threading.Thread(target=_propagate_judge_settings,
-                             args=({"commentFast": str(msg["fast"])},), daemon=True).start()
+            _jgt = _set_comment_fast(str(msg["fast"]), gt=_gesture_ms(msg))     # gear "Fast comment threads" ("on" / "session")
+            if _jgt is not None:
+                threading.Thread(target=_propagate_judge_settings,
+                                 args=({"commentFast": str(msg["fast"]), "gt": _jgt},), daemon=True).start()
+            else:
+                _tell_stale_gesture(client)
 
     def _ws(self):
         key = self.headers.get("Sec-WebSocket-Key")
@@ -33634,6 +34787,10 @@ def main():
             sys.stderr.write("romp-kernel: re-armed %d given-up summary line(s) at startup\n" % _n)   # promised this since 07-03; now wired)
     except Exception:
         sys.stderr.write("startup rearm: %s\n" % traceback.format_exc())
+    try:                                                      # a stored model pinned to a family's PRE-FIX seed
+        _model_alias_boot_pass()                              # head (claude-fable-5) → the family alias, so the
+    except Exception:                                         # next reconnect follows the CLI's newest.
+        sys.stderr.write("model-alias migration: %s\n" % traceback.format_exc())   # MUST precede _sdk: regs → chosen_model there
     _write_palette_mirror()                                   # keep bin/romp's palette-colors mirror current across code updates
     _boot_warm()                                              # pre-parse the live fleet during the reconnect gap (fast first paint)
     threading.Thread(target=_sdk, daemon=True).start()        # construct the SDK backend NOW so its boot

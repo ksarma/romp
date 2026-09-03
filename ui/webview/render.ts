@@ -229,7 +229,7 @@ interface TodoTask { id: string; subject: string; activeForm?: string; status: s
 
 type ChipState = "working" | "ready" | "needsInput" | "awaiting" | "awaitingBg" | "idle" | "closed" | "compacting" | "clearing" | "blocked" | "retrying" | "interrupting" | "opening";   // needsInput = a live permission/picker prompt (on YOU) — renamed from the legacy "awaiting" (2026-08-15), which stays accepted for OLDER REMOTE KERNELS across federation; awaitingBg = idle main thread waiting on background work it dispatched (the user 2026-07-13)
 type PeerIdent = { name: string; host?: string; sid?: string; color?: { bg: string; fg: string } | null };   // a named peer behind a peer-kind wait (kernel _peer_identity, 2026-08-26)
-interface Status { state: ChipState; sinceEpoch: number | null; awaitingWhy?: string | null; awaitingKind?: string | null; awaitingPeers?: PeerIdent[] | null; awaitingTasks?: string[]; awaitingTaskIds?: string[]; awaitingCount?: number | null; effort?: string; model?: string; modelPending?: boolean; effortPending?: boolean; mode?: string; fast?: string; auth?: string; authLive?: string; authPending?: boolean; authBoth?: boolean; authAcct?: string; ctx?: string; ctxColor?: number[]; modelColor?: number[]; effortColor?: number[]; modelTone?: number[]; effortTone?: number[]; ctxTone?: number[]; faded?: boolean; backend?: string; apiTooLong?: boolean; apiSpendLimit?: boolean; apiModelLimit?: boolean; apiAuthErr?: boolean; apiRefusal?: boolean; retrySuppressed?: boolean; retryNextAt?: number | null; retryTries?: number | null; }   // awaitingWhy/awaitingTasks = what an awaitingBg session is waiting on (kernel _session_awaiting's phrasing + the live awaited task descriptions) — the #bg-tasks box renders it when no tracked tasks claim the box (renderAwaitWhy; the user 2026-08-13, who moved it out of the statusline the same day PR #350 put it there)   // retrySuppressed = the user interrupted this thread's API-error storm → romp's auto-retry stays OFF for it until a successful turn re-arms (the user 2026-07-06). backend = "tmux" | "sdk"; apiTooLong = the "blocked" is a "prompt is too long" error (on you → red tab) vs a transient API error (amber/retrying); apiSpendLimit = a monthly spend cap (on you → raise it; NEVER auto-retried — retrying can't fix it, the user 2026-07-14); apiModelLimit = this session's MODEL is out of allowance (on you → switch model or add credits; not auto-retried either, the user 2026-08-01); apiRefusal = the model's safeguards refused the prompt itself (on you → rewrite it or drop the thread; never auto-retried — a refusal is deterministic on the same input, so a retry just manufactures the same refusal, the user 2026-08-15); ctxColor = the GLOBAL colormap's RGB for the context%, computed server-side; modelColor/effortColor = the same map's RGB tint for the model name + effort (by capability/effort rank), server-computed; modelPending = a /model switch is resolving → the badge shows switching-dots until the new name lands (server-driven, event-based, the user 2026-07-03); fast = the CLI's fast-mode state ("on"/"off"/"cooldown", from the SDK init's fast_mode_state; absent = unknown/unavailable → no fast badge)
+interface Status { state: ChipState; sinceEpoch: number | null; awaitingWhy?: string | null; awaitingKind?: string | null; awaitingPeers?: PeerIdent[] | null; awaitingTasks?: string[]; awaitingTaskIds?: string[]; awaitingCount?: number | null; effort?: string; model?: string; modelPending?: boolean; effortPending?: boolean; mode?: string; fast?: string; auth?: string; authLive?: string; authPending?: boolean; authBoth?: boolean; authAcct?: string; ctx?: string; ctxOver?: boolean; ctxColor?: number[]; modelColor?: number[]; effortColor?: number[]; modelTone?: number[]; effortTone?: number[]; ctxTone?: number[]; faded?: boolean; backend?: string; apiTooLong?: boolean; apiSpendLimit?: boolean; apiModelLimit?: boolean; apiAuthErr?: boolean; apiRefusal?: boolean; retrySuppressed?: boolean; retryNextAt?: number | null; retryTries?: number | null; }   // awaitingWhy/awaitingTasks = what an awaitingBg session is waiting on (kernel _session_awaiting's phrasing + the live awaited task descriptions) — the #bg-tasks box renders it when no tracked tasks claim the box (renderAwaitWhy; the user 2026-08-13, who moved it out of the statusline the same day PR #350 put it there)   // retrySuppressed = the user interrupted this thread's API-error storm → romp's auto-retry stays OFF for it until a successful turn re-arms (the user 2026-07-06). backend = "tmux" | "sdk"; apiTooLong = the "blocked" is a "prompt is too long" error (on you → red tab) vs a transient API error (amber/retrying); apiSpendLimit = a monthly spend cap (on you → raise it; NEVER auto-retried — retrying can't fix it, the user 2026-07-14); apiModelLimit = this session's MODEL is out of allowance (on you → switch model or add credits; not auto-retried either, the user 2026-08-01); apiRefusal = the model's safeguards refused the prompt itself (on you → rewrite it or drop the thread; never auto-retried — a refusal is deterministic on the same input, so a retry just manufactures the same refusal, the user 2026-08-15); ctxColor = the GLOBAL colormap's RGB for the context%, computed server-side; modelColor/effortColor = the same map's RGB tint for the model name + effort (by capability/effort rank), server-computed; modelPending = a /model switch is resolving → the badge shows switching-dots until the new name lands (server-driven, event-based, the user 2026-07-03); fast = the CLI's fast-mode state ("on"/"off"/"cooldown", from the SDK init's fast_mode_state; absent = unknown/unavailable → no fast badge)
 interface Color { bg: string; fg: string; }
 // A run_in_background task surfaced in the #bg-tasks box (the kernel's _bg_tasks): a one-line summary +
 // status, expandable to the command + its output. status = running | completed | failed. For a dispatched
@@ -4301,7 +4301,7 @@ function showTabTip(tab: HTMLElement, s: Session): void {
   if (s.status.ctx) {
     const cr = el("div", "tab-tip-row tab-tip-ctx");          // extra vertical room — the battery bar is tall
     const ck = el("span", "tab-tip-k"); ck.textContent = "Context"; cr.appendChild(ck);
-    const bar = ctxBar(); setCtxBar(bar, s.status.ctx, s.status.state === "compacting", pickTone(s.status.ctxColor, s.status.ctxTone));
+    const bar = ctxBar(); setCtxBar(bar, s.status.ctx, s.status.state === "compacting", pickTone(s.status.ctxColor, s.status.ctxTone), s.status.ctxOver);
     cr.appendChild(bar); tip.appendChild(cr);
   }
   // ledger rows, LABELLED + aligned with the rows above (the user 2026-06-23 v3): the summary, then Recent.
@@ -4893,6 +4893,25 @@ function showTabMenu(e: MouseEvent, id: string) {
     rename.addEventListener("click", (ev) => { ev.stopPropagation(); dismissTabMenu(); startTabRename(id); });
     menu.appendChild(rename);
   }
+  // Move to folder… sits with Rename (the user 2026-09-01: a subproject became its own repo and the
+  // session should follow it) — the same dress, the sub-line saying what a move KEEPS. The dialog does
+  // the rest (showMovePrompt); the kernel wraps the CLI's own relocation. SDK sessions only: a terminal
+  // session has no relocation primitive, so its row says so rather than failing after a click.
+  {
+    const sTm = sessions.get(id);
+    const isTmux = !!(sTm && sTm.status && sTm.status.backend === "tmux");
+    const mv = el("div", "ctx-item ctx-item-toggle" + (isTmux ? " ctx-item-off" : ""));
+    mv.appendChild(ctxIcon("folder", isTmux));
+    const bodyEl = el("span", "ctx-item-body");
+    const l = el("span", "ctx-item-label"); l.textContent = "Move to folder…"; bodyEl.appendChild(l);
+    const sb = el("span", "ctx-item-sub");
+    sb.textContent = isTmux ? "terminal sessions can't move — start a new one in that folder"
+                            : "the conversation, mail, goals and history stay with the session";
+    bodyEl.appendChild(sb);
+    mv.appendChild(bodyEl);
+    if (!isTmux) mv.addEventListener("click", (ev) => { ev.stopPropagation(); dismissTabMenu(); showMovePrompt(id); });
+    menu.appendChild(mv);
+  }
   // Colors join Rename in the AESTHETIC section (the user 2026-08-24, the final by-kind grouping:
   // [Rename + colors] / [feed, mail, bell, billing, Tags] / [Browse]). The swatch row itself is
   // unchanged (the user 2026-06-29): the identity palette as circles, the current one ringed,
@@ -5328,7 +5347,7 @@ const NAV_SCROLL_STEP = 60;
 function isTypingTarget(t: EventTarget | null): boolean {
   const elm = t as HTMLElement | null;
   if (!elm || typeof elm.tagName !== "string") return false;
-  return elm.tagName === "TEXTAREA" || elm.tagName === "INPUT" || elm.isContentEditable === true;
+  return elm.tagName === "TEXTAREA" || elm.tagName === "INPUT" || elm.tagName === "SELECT" || elm.isContentEditable === true;   // SELECT: type-ahead in a dropdown is typing too
 }
 window.addEventListener("keydown", (e) => {
   if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
@@ -5372,6 +5391,29 @@ window.addEventListener("keydown", (e) => {
     if (ae && ae !== document.body) return;
     if (focusComposerOrAsk()) e.preventDefault();   // the picker card if one's up, else the message box
   }
+});
+// SELECT → TYPE → ⌘⏎ (the user 2026-09-02): a transcript selection already seeded the reply chip
+// (selectionchange), so the natural next act is just TYPING — the first printable keystroke drops
+// the cursor into the message box with the chip attached, no mouse round-trip, and ⌘⏎ stages as
+// ever. (Not selection-gated: a printable keystroke nobody claimed means "type" from anywhere —
+// the same two-state default as bare-area Enter above.) Bubble phase on window = every capture
+// handler (shell chords, overlays) and element handler (live-ask card, focused tab, slash menu)
+// has already spoken; we take only keystrokes nobody claimed. NEVER preventDefault: focusing
+// during keydown lets the NATIVE keystroke insert into the newly focused box, so the composer's
+// own input bookkeeping (draft, slash menu) sees ordinary typing.
+window.addEventListener("keydown", (e) => {
+  if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;   // chords are not typing (shift stays: capitals)
+  if (e.isComposing || e.keyCode === 229) return;   // IME mid-composition — a focus steal aborts the composition
+  if (e.key.length !== 1 || e.key === " ") return;  // printable only; Space stays a toggle/scroll key
+  const ta = document.getElementById("composer-input") as HTMLTextAreaElement | null;
+  if (!ta || ta.disabled || document.activeElement === ta) return;   // no box / read-only session / already typing (covers key repeat)
+  if (isTypingTarget(e.target) || isTypingTarget(document.activeElement)) return;
+  if (activeId && liveAsks.has(activeId)) return;   // digits belong to the live-ask card's number keys
+  if (ctxMenuEl || document.querySelector(".picker-overlay")) return;   // an open menu / #picker / #confirm owns the keys
+  if (document.getElementById("romp-fileview") || document.getElementById("romp-filebrowse")
+      || document.getElementById("romp-lightbox")) return;   // full-pane surfaces own their keys
+  if (document.querySelector("#rsettings:not([hidden]), #ra-back:not([hidden]), #rkeys-back, .meta-menu")) return;   // the pane's own modals + meta menus own their keys (a letter typed there must never land in the draft)
+  ta.focus({ preventScroll: true });   // the native keystroke lands in the box; the chip survives (a collapse never clears it)
 });
 // Cmd/Ctrl+O and Cmd/Ctrl+Shift+O — the in-PAGE fallback, from anywhere including the composer, the
 // way Obsidian's quick switcher opens over the editor (the user 2026-08-08). Inside the romp shell
@@ -6335,6 +6377,110 @@ function showConfirm(title: string, detail: string, buttons: Array<{ label: stri
   document.addEventListener("keydown", onKey, true);
   (actions.firstElementChild as HTMLElement | null)?.focus();
 }
+// ---- move session (the user 2026-09-01) ----
+// "Move to folder…" on the tab menu: the session's working directory follows a subproject that became
+// its own repo. The kernel wraps the CLI's own relocation (its set_cwd control request): conversation,
+// name, mailbox and history stay with the session; its tools, CLAUDE.md and project settings come from
+// the new folder from the next turn on. One small dialog on the confirm chrome: the path box prefilled
+// with the current folder, the owning kernel's verdict for what is typed (the create picker's dirComplete
+// op, asked with NEGATIVE reqIds so the picker's own completer never claims these answers), Move/Cancel.
+// Acknowledged at once (the button reads "Moving…"), CLOSED by the kernel's typed `moved`, and on a typed
+// `moveFailed` left open with the reason where the path is — never a silent nothing. A 90s backstop covers
+// a dormant session, which the kernel revives first (it waits up to 60s for that CLI to come up).
+let movePrompt: { sid: string; overlay: HTMLElement; input: HTMLInputElement; hint: HTMLElement;
+                  go: HTMLButtonElement; close: () => void; backstop?: number } | null = null;
+let moveDirReq = 0;
+
+function closeMovePrompt(): void {
+  if (!movePrompt) return;
+  if (movePrompt.backstop !== undefined) clearTimeout(movePrompt.backstop);
+  const p = movePrompt; movePrompt = null;
+  p.close();
+}
+
+function showMovePrompt(sid: string): void {
+  closeMovePrompt();
+  const sess = sessions.get(sid);
+  const overlay = el("div", "picker-overlay confirm-overlay"); overlay.id = "move-prompt";
+  const box = el("div", "picker-box confirm-box");
+  const h = el("div", "confirm-title"); h.textContent = `Move “${sess?.name || "session"}” to a folder`;
+  const d = el("div", "confirm-detail");
+  d.textContent = "The conversation, name, mail and history stay with the session. From its next turn on, its tools, CLAUDE.md and project settings come from the new folder.";
+  const input = document.createElement("input");
+  input.type = "text"; input.className = "fork-name move-dir"; input.value = sess?.cwd || "";
+  input.placeholder = "folder path (~ and $VARs expand)";
+  input.setAttribute("autocapitalize", "off"); input.setAttribute("autocomplete", "off");
+  input.setAttribute("autocorrect", "off"); input.setAttribute("spellcheck", "false");
+  const hint = el("div", "move-dir-hint");   // the kernel's one-line verdict for the typed path
+  const actions = el("div", "confirm-actions");
+  const cancel = el("button", "picker-action confirm-btn"); cancel.textContent = "Cancel";
+  const go = el("button", "picker-action confirm-btn") as HTMLButtonElement; go.textContent = "Move";
+  const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { e.stopPropagation(); closeMovePrompt(); } };
+  const close = () => { overlay.remove(); document.removeEventListener("keydown", onKey, true); };
+  movePrompt = { sid, overlay, input, hint, go, close };
+  const ask = () => {
+    if (!vscodeApi) return;
+    vscodeApi.postMessage({ type: "dirComplete", value: input.value.trim(), reqId: -(++moveDirReq), host: hostOf(sid) });
+  };
+  const start = () => {
+    const dir = input.value.trim();
+    if (!dir) { input.classList.add("bad"); input.focus(); return; }
+    // acknowledge the click before the round trip (the repo's button rule); the kernel's typed reply
+    // — moved / moveFailed — is what changes this dialog next
+    go.disabled = true; go.textContent = "Moving…"; input.disabled = true;
+    vscodeApi?.postMessage({ type: "moveSession", id: sid, dir });
+    if (movePrompt) movePrompt.backstop = window.setTimeout(
+      () => moveFailedLocal(sid, sess?.name || sid, "still waiting — the kernel has not answered; check the kernel log"), 90000);
+  };
+  cancel.addEventListener("click", closeMovePrompt);
+  go.addEventListener("click", start);
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); start(); } });
+  input.addEventListener("input", () => { input.classList.remove("bad"); ask(); });
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) closeMovePrompt(); });
+  actions.appendChild(cancel); actions.appendChild(go);
+  box.appendChild(h); box.appendChild(d); box.appendChild(input); box.appendChild(hint); box.appendChild(actions);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+  document.addEventListener("keydown", onKey, true);
+  input.focus(); input.select();
+  ask();   // vet the prefilled path straight away, like the picker does
+}
+
+// the owning kernel's verdict for the move dialog's path (a dirCompletions reply with our negative reqId)
+function onMoveDirCompletions(m: any): void {
+  if (!movePrompt || m.reqId !== -moveDirReq) return;   // a newer keystroke owns the field, or no dialog
+  const s = m.status || null;
+  // dirStatusHint's "can be created" verdict is the picker's offer; a move never creates, so a missing
+  // folder is simply not there
+  const said = s && !s.isDir && s.canCreate ? { text: "not found", cls: "bad", title: "A move goes to a folder that already exists." }
+                                             : dirStatusHint(s);
+  movePrompt.hint.textContent = said.text;
+  movePrompt.hint.title = said.title;
+  movePrompt.hint.className = "move-dir-hint" + (said.cls ? " " + said.cls : "");
+  movePrompt.input.classList.toggle("bad", said.cls === "bad");
+}
+
+// the kernel's typed outcome: `moved` closes the dialog (a parked move that lands later says so in a
+// toast, since the dialog may be long gone); `moveFailed` puts the reason where the path is
+function moveLanded(sid: string, name: string, cwd: string): void {
+  const s = sessions.get(sid);
+  if (s && cwd) s.cwd = cwd;   // the kernel's push carries the same; this keeps the statusline honest meanwhile
+  if (movePrompt && movePrompt.sid === sid) { closeMovePrompt(); return; }
+  warnToast(`“${name}” now works in ${cwd || "its new folder"}`);
+}
+
+function moveFailedLocal(sid: string, name: string, text: string): void {
+  const p = movePrompt;
+  if (p && p.sid === sid) {
+    if (p.backstop !== undefined) { clearTimeout(p.backstop); p.backstop = undefined; }
+    p.go.disabled = false; p.go.textContent = "Move"; p.input.disabled = false;
+    p.hint.textContent = text; p.hint.title = text; p.hint.className = "move-dir-hint bad";
+    p.input.classList.add("bad"); p.input.focus();
+    return;
+  }
+  warnToast(`Couldn’t move “${name}”: ${text}`);
+}
+
 // THE FORK MODAL (the user 2026-08-13): fork this conversation into a NEW parallel session — from just
 // before a given user message (the bubble's fork button) or from the tip (the palette command, uuid "").
 // One small dialog on the confirm chrome: a name box prefilled "<session>-fork" (editable), Fork/Cancel.
@@ -7351,20 +7497,50 @@ function renderCommentPopover(): void {
           closeMetaMenu();
           const menu = el("div", "meta-menu");
           for (const c of META_CHOICES[kind]) {
+            // a PINNED model family (its /models default is a version, not the alias) — see the Latest row below
+            const pinnedTo = kind === "model" ? (c.default || "") : "";
+            const pinned = !!pinnedTo && pinnedTo !== c.value;
             const cur = kind === "fast"
               ? c.value === ((effVal || st?.fast || "off").toLowerCase() === "on" ? "on" : "off")
-              : effVal ? (c.value === effVal || !!c.versions?.some((v) => v.value === effVal))
+              : effVal ? (pinned ? effVal === pinnedTo : (c.value === effVal || !!c.versions?.some((v) => v.value === effVal)))
               : (st ? isCurrentMeta(kind, st, c.value) : false);
             const item = el("div", "meta-item" + (cur ? " current" : ""));
             item.textContent = c.label;
             item.addEventListener("click", (ev) => {
               ev.stopPropagation();
-              if (pendingCommentAnchor) pendingCommentAnchor[kind] = c.value;
+              // a model family sends its remembered DEFAULT — the pinned version, else the alias —
+              // exactly as the chat statusline and the timeline lane do (this dialog sent the bare
+              // alias, so the same click floated here and pinned there)
+              if (pendingCommentAnchor) pendingCommentAnchor[kind] = kind === "model" ? (c.default || c.value) : c.value;
               closeMetaMenu();
               document.getElementById("cmt-pop")?.remove();   // full rebuild shows the pick
               renderCommentPopover();
             });
             menu.appendChild(item);
+            if (pinned) {
+              // This menu is FLAT — no submenu, so no Latest row — and once a family carried a pin the
+              // family row launched on the pin and nothing here launched on the alias. The family row
+              // names the pin it launches on, and a "<Family> · Latest" row beside it sends the bare
+              // alias: a per-thread launch pref, never the family's memory (an alias records nothing at
+              // the kernel's choke point, so no floating flag rides it).
+              const pinSub = el("div", "meta-item-sub");
+              pinSub.textContent = modelChoiceLabel(pinnedTo).label;
+              item.appendChild(pinSub);
+              const latest = el("div", "meta-item" + (effVal === c.value ? " current" : ""));
+              const lh = el("div");
+              lh.textContent = c.label + " · Latest";
+              const ls = el("div", "meta-item-sub");
+              ls.textContent = "follows the newest " + c.label;
+              latest.append(lh, ls);
+              latest.addEventListener("click", (ev) => {
+                ev.stopPropagation();
+                if (pendingCommentAnchor) pendingCommentAnchor[kind] = c.value;
+                closeMetaMenu();
+                document.getElementById("cmt-pop")?.remove();
+                renderCommentPopover();
+              });
+              menu.appendChild(latest);
+            }
           }
           document.body.appendChild(menu);
           const r2 = btn.getBoundingClientRect();
@@ -10007,7 +10183,9 @@ type MetaKind = "mode" | "model" | "effort" | "fast";
 // One dropdown entry. `sub` is the second line for a choice whose consequence is not obvious from its
 // label; `sdkOnly` drops the entry on a tmux session, whose backend cannot apply it.
 interface MetaChoice { label: string; value: string; sub?: string; sdkOnly?: boolean; color?: number[] | null;
-  versions?: { label: string; value: string }[]; default?: string }   // model families only (the user 2026-08-25)
+  versions?: { label: string; value: string; learned?: boolean }[]; default?: string }   // model families only (the
+  // user 2026-08-25). `default` is the family's remembered version pin, else the family ALIAS; `learned`
+  // marks a version the catalog lacks — a running session's CLI reported it (kernel /models).
 // Model + effort choices come from the kernel's /models — the ONE list shared with the timeline lanes and the
 // judge-tier settings (the user 2026-07-02, who wanted one shared code path, not hardcoded in multiple places), so
 // the client holds no model literals (mirrors paletteColors above). Populated in place on load so META_CHOICES
@@ -10019,13 +10197,28 @@ const EFFORT_CHOICES: { label: string; value: string; color?: number[] | null }[
 // run: an empty model menu beats offering another vendor's models (docs/codex.md).
 const CODEX_MODEL_CHOICES: { label: string; value: string; color?: number[] | null }[] = [];
 const CODEX_EFFORT_CHOICES: { label: string; value: string; color?: number[] | null }[] = [];
-fetch(kernelUrl("/models"), { cache: "no-store" }).then((r) => r.json()).then((d) => {
-  if (Array.isArray(d.models)) { MODEL_CHOICES.length = 0; MODEL_CHOICES.push(...d.models, { label: "Default", value: "default" }); }
-  if (Array.isArray(d.efforts)) { EFFORT_CHOICES.length = 0; EFFORT_CHOICES.push(...d.efforts); }
-  if (d.codex && Array.isArray(d.codex.models)) { CODEX_MODEL_CHOICES.length = 0; CODEX_MODEL_CHOICES.push(...d.codex.models); }
-  if (d.codex && Array.isArray(d.codex.efforts)) { CODEX_EFFORT_CHOICES.length = 0; CODEX_EFFORT_CHOICES.push(...d.codex.efforts); }
-  if (d.commentDefaults) adoptCommentDefaults(d.commentDefaults);
-}).catch(() => { /* picker stays empty until it lands */ });
+// Loaded at page load and RE-LOADED on the kernel's {type:"models"} frame — the pick memory moved (a
+// version pinned, a family un-pinned by Latest, a refused pin dropped; from this tab, another dashboard,
+// or the kernel itself) or the catalog grew. A family's `default` is what its row SENDS, so a list
+// fetched once went stale the moment anything changed it: after Latest un-pinned a family, this tab's
+// next family click sent the old pinned id and silently re-pinned. Refilled IN PLACE so META_CHOICES
+// keeps its reference; event-keyed on the frame, never a poll.
+// A response is applied only if it is not OLDER than one already applied: its `rev` is the pick memory's
+// revision — the same counter the models frame carries — and two fetches can overlap (a frame during the
+// page-load fetch; two quick frames) and resolve out of order, so without the check the STALE list won
+// until the next change. A payload without a rev (an older kernel) always applies.
+let modelChoicesRev = -1;
+function loadModelChoices(): void {
+  fetch(kernelUrl("/models"), { cache: "no-store" }).then((r) => r.json()).then((d) => {
+    if (typeof d.rev === "number") { if (d.rev < modelChoicesRev) return; modelChoicesRev = d.rev; }
+    if (Array.isArray(d.models)) { MODEL_CHOICES.length = 0; MODEL_CHOICES.push(...d.models, { label: "Default", value: "default" }); }
+    if (Array.isArray(d.efforts)) { EFFORT_CHOICES.length = 0; EFFORT_CHOICES.push(...d.efforts); }
+    if (d.codex && Array.isArray(d.codex.models)) { CODEX_MODEL_CHOICES.length = 0; CODEX_MODEL_CHOICES.push(...d.codex.models); }
+    if (d.codex && Array.isArray(d.codex.efforts)) { CODEX_EFFORT_CHOICES.length = 0; CODEX_EFFORT_CHOICES.push(...d.codex.efforts); }
+    if (d.commentDefaults) adoptCommentDefaults(d.commentDefaults);
+  }).catch(() => { /* picker stays as it was until it lands */ });
+}
+loadModelChoices();
 // The kernel's default-comment settings, RAW ("session" = same as the session — the user 2026-08-29):
 // what a new comment thread launches on when the dialog is left untouched. Pre-read so the create
 // dialog SHOWS the effective default and a pick stays a deviation; the kernel re-resolves at create,
@@ -10072,6 +10265,13 @@ const MODE_ICONS: Record<string, string> = {
   bypasspermissions: '<path d="M8 2 L13 4 V8 C13 11.4 10.8 13.2 8 14 C5.2 13.2 3 11.4 3 8 V4 Z"/><path d="M3.2 13 L12.8 3"/>',
   dontask: '<path d="M3 3.5 H13 V10 H8.5 L5.5 12.8 V10 H3 Z"/><path d="M3.2 12.6 L12.8 2.6"/>',
 };
+// the modes that REMOVE the gate rather than move it read in a red hue on the yatharth themes
+// (the user 2026-08-31) — CSS-scoped to .chat-theme-yatharth so classic renders untouched
+function riskyMode(mode: string | undefined): boolean {
+  const k = (mode || "").toLowerCase().replace(/[\u2019' -]/g, "");
+  return k === "bypasspermissions" || k === "bypass" || k === "dontask";
+}
+
 function modeIconSvg(mode: string | undefined): string {
   // accepts wire values AND display labels (metaButton receives prettyMode's text)
   const raw = (mode || "default").toLowerCase().replace(/[\u2019' -]/g, "");
@@ -10207,6 +10407,7 @@ function metaButton(kind: MetaKind, text: string, forSid?: string | null): HTMLE
     const ico = el("span", "meta-ico mode-ico");
     ico.innerHTML = modeIconSvg(text);   // refreshed by the sync loop below from st.mode
     btn.appendChild(ico);
+    btn.classList.toggle("mode-risky", riskyMode(text));   // kept live by the sync loop
   }
   const label = el("span", "meta-label");
   label.textContent = text;
@@ -10267,6 +10468,7 @@ function syncMetaControls(meta: HTMLElement, st: Status, forSid?: string | null)
     if (kind === "mode") {
       const ico = b.querySelector(".mode-ico") as HTMLElement | null;
       if (ico) ico.innerHTML = modeIconSvg(st.mode);
+      b.classList.toggle("mode-risky", riskyMode(st.mode));
     }
     // A switching MODEL shows animated dots, not the stale/premature name (the user 2026-07-03): the
     // server drives it (st.modelPending) — event-based, cleared the instant the new model actually lands —
@@ -10318,9 +10520,11 @@ function toggleMetaMenu(kind: MetaKind, btn: HTMLElement, forSid?: string | null
   if (kind === "mode" && s.status.backend === "codex") return;
   const menu = el("div", "meta-menu");
   menu.dataset.kind = kind;
-  const pickValue = (value: string) => {
+  const pickValue = (value: string, floating = false) => {
     if (vscodeApi) {
-      vscodeApi.postMessage({ type: kind === "model" ? "setModel" : kind === "effort" ? "setEffort" : kind === "fast" ? "setFast" : "setMode", id: opSid, value });
+      const op: Record<string, unknown> = { type: kind === "model" ? "setModel" : kind === "effort" ? "setEffort" : kind === "fast" ? "setFast" : "setMode", id: opSid, value };
+      if (floating) op.floating = true;   // the submenu's Latest row: the kernel forgets the family's pin
+      vscodeApi.postMessage(op);
       const was = metaCurrent(kind, s.status);
       metaPending.set(`${opSid}:${kind}`, { was, until: Date.now() + 20_000 });
       btn.classList.add("meta-pending");
@@ -10337,6 +10541,7 @@ function toggleMetaMenu(kind: MetaKind, btn: HTMLElement, forSid?: string | null
     item.tabIndex = 0;
     const rowIco = kind === "mode" ? el("span", "meta-ico mode-ico") : null;
     if (rowIco) rowIco.innerHTML = modeIconSvg(c.value);
+    if (kind === "mode" && riskyMode(c.value)) item.classList.add("mode-risky");
     // model/effort rows wear THEIR OWN rank color (the user 2026-08-31: a picker whose rows are
     // all default-gray codes nothing) — the same /models-fed color+tone the badges use
     if (kind === "model" || kind === "effort") {
@@ -10368,11 +10573,40 @@ function toggleMetaMenu(kind: MetaKind, btn: HTMLElement, forSid?: string | null
     const openSub = versions.length > 1 ? () => {
       closeSub();
       const sub = el("div", "meta-menu meta-sub");
+      // "Latest" heads the submenu: the one gesture back to floating once a family carries a pin — the
+      // family row sends the pin, the rows below pin, and a typed "/model fable" leaves the pick memory
+      // alone by design. It sends the ALIAS with the `floating` flag, which the kernel's setModel arm
+      // hands to _set_model_or_park to forget the family's remembered pin, so the family follows the
+      // CLI's newest release again. An explicit user gesture, so it may move state. ✓ when the family
+      // is unpinned and the session runs it.
+      const pinned = !!c.default && c.default !== c.value;
+      const latest = el("div", "meta-item" + (!pinned && isCurrentMeta(kind, s.status, c.value) ? " current" : ""));
+      latest.tabIndex = 0;
+      const lhead = el("div");
+      lhead.textContent = "Latest";
+      const lsub = el("div", "meta-item-sub");
+      lsub.textContent = pinned ? "unpins — follows the newest " + c.label : "follows the newest " + c.label;
+      latest.append(lhead, lsub);
+      latest.addEventListener("click", (e) => { e.stopPropagation(); pickValue(c.value, true); });
+      latest.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); pickValue(c.value, true); }
+        else if (e.key === "ArrowLeft") { e.preventDefault(); closeSub(); item.focus(); }
+      });
+      sub.appendChild(latest);
       for (const v of versions) {
         const cur = (s.status.model || "").toLowerCase() === v.label.toLowerCase();
         const row = el("div", "meta-item" + (cur ? " current" : ""));
         row.tabIndex = 0;
         row.textContent = v.label;
+        if (v.learned) {
+          // LOUD, per the fail-loudly rule: this version is in no catalog list — a running session's CLI
+          // reported it (kernel /models `learned`) — so the row says so instead of a stale menu hiding
+          // a live model. The marker wears the menu vocabulary's sub-line size and opacity.
+          const tag = el("span", "meta-item-sub");
+          tag.textContent = " new";
+          row.appendChild(tag);
+          row.title = "Reported by a running session's Claude Code; not yet in romp's version list";
+        }
         row.addEventListener("click", (e) => { e.stopPropagation(); pickValue(v.value); });
         row.addEventListener("keydown", (e) => {
           if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); pickValue(v.value); }
@@ -10443,7 +10677,7 @@ function ctxBar(): HTMLElement {
   });
   return bar;
 }
-function setCtxBar(bar: HTMLElement, ctxStr: string | undefined, compacting = false, ctxColor?: number[]) {
+function setCtxBar(bar: HTMLElement, ctxStr: string | undefined, compacting = false, ctxColor?: number[], ctxOver = false) {
   // Compacting: hide the fill/% (the number is about to be wrong anyway) and run
   // the scanning bar instead, mirroring the timeline's battery. No ctx% needed.
   bar.classList.toggle("ctx-compacting", compacting);
@@ -10477,8 +10711,13 @@ function setCtxBar(bar: HTMLElement, ctxStr: string | undefined, compacting = fa
   const fillBg = (ctxColor && ctxColor.length === 3) ? `rgb(${ctxColor.join(",")})`
     : ctxFallbackColor(pct);   // theme-aware pair; fills stay un-re-encoded (see tabCtxGauge's note)
   if (fill) { fill.style.width = pct + "%"; fill.style.background = fillBg; }
-  if (txt) txt.textContent = pct + "%";
-  bar.title = `context ${pct}% used — click to /compact`;
+  // ctxOver: the kernel clamps the CLI's "0-100+" percentage at 100 — past it the tokens exceed the
+  // CURRENT model's window (a 1M→200k model switch does this instantly). Say so: a silent 100% right
+  // after picking a smaller model reads as a broken gauge (the user 2026-09-02).
+  if (txt) txt.textContent = ctxOver ? "100%+" : pct + "%";
+  bar.title = ctxOver
+    ? "context exceeds this model's window — the next turn compacts or trims; click to /compact now"
+    : `context ${pct}% used — click to /compact`;
 }
 
 const CHIP_LABEL: Record<ChipState, string> = {
@@ -10624,9 +10863,9 @@ function updateStatusline() {
   // at the LEFT edge (justify only reaches the row holding the auto margin) — the user 2026-08-10, on a
   // phone, wanted the wrapped controls to stay clustered on the right.
   const right = el("span", "sl-right");
-  // The session's working directory (fixed at creation), leading the right-side cluster — just left of the
-  // mode/model/effort controls (the user 2026-06-23). Basename only; full path on hover. Empty (rare, no
-  // cwd) it's a zero-width spacer.
+  // The session's working directory (the current one — a tab-menu move changes it), leading the right-side
+  // cluster — just left of the mode/model/effort controls (the user 2026-06-23). Basename only; full path
+  // on hover. Empty (rare, no cwd) it's a zero-width spacer.
   const dir = el("span", "status-dir");
   if (s.cwd) {
     dir.appendChild(folderIcon());
@@ -10655,7 +10894,7 @@ function updateStatusline() {
   syncMetaControls(meta, s.status);
   right.appendChild(meta);
   const bar = ctxBar();
-  setCtxBar(bar, s.status.ctx, s.status.state === "compacting", pickTone(s.status.ctxColor, s.status.ctxTone));
+  setCtxBar(bar, s.status.ctx, s.status.state === "compacting", pickTone(s.status.ctxColor, s.status.ctxTone), s.status.ctxOver);
   right.appendChild(bar);
   // stop/interrupt button — at the FAR RIGHT of the statusline (the user 2026-08-28; it sat
   // beside the state chip on the left before), riding inside the right cluster so a wrapped
@@ -11101,8 +11340,9 @@ function renderComposerFiles(id: string | null): void {
   if (sendBtn) {
     const held = !!id && sendOnShip.has(id);
     sendBtn.classList.toggle("send-held", held);
-    if (held) sendBtn.setAttribute("title", "sends when the upload finishes");
-    else if (sendBtn.getAttribute("title") === "sends when the upload finishes") sendBtn.removeAttribute("title");
+    // through the styled tip, not a native title: the button already wears setTip("Send (Enter)"),
+    // and a native title beside it showed BOTH boxes while a hold was armed (2026-09-02)
+    setTip(sendBtn, held ? "Send (Enter)\nsends when the upload finishes" : "Send (Enter)");
   }
   strip.replaceChildren();
   const paths = (id ? composerFiles.get(id) : undefined) || [];
@@ -11628,11 +11868,19 @@ function upsert(msg: any) {
   // fork by the ABSENCE of any shared event uuid instead.
   const forked = !!(existed && msg.events && msg.events.length && prev && prev.events.length
                     && !sharesAnyUuid(msg.events, prev.events));
+  // A view that never held an event is a PLACEHOLDER (a fork's provisional tab, a revive's stub):
+  // the payload that fills it is the tab's FIRST content-bearing build, not an append onto a
+  // transcript someone is reading. The append path measured "was the reader at the bottom?"
+  // against a one-line placeholder that cannot overflow, landed the whole arriving history at
+  // scrollTop 0, and the never-yank rule then held the top forever (the user 2026-09-02: an
+  // opened or forked session sat at the top after its context loaded). A first build takes the
+  // showActive branch below, where landActive pins the bottom exactly like a brand-new tab.
+  const firstBuild = !!(existed && prev && !prev.events.length && msg.events && msg.events.length);
   // Preserve the reader's position across ANY active-tab rebuild (fork OR slid tail-window): capture whether
   // they were at the bottom + their anchor turn BEFORE we drop/rebuild the DOM, so a push never SNAPS a
   // scrolled-up reader down (the user 2026-07-06). Only a genuinely-at-bottom reader follows new content.
   let _scrollContent: HTMLElement | null = null, _scrollAnchor: { uuid: string; y: number } | null = null, _wasNear = true;
-  if (msg.id === activeId && !(existed && !forked)) {   // only the rebuild branch (appendActive preserves on its own)
+  if (msg.id === activeId && !(existed && !forked && !firstBuild)) {   // only the rebuild branch (appendActive preserves on its own)
     _scrollContent = document.getElementById("content");
     const _v0 = views.get(msg.id);
     _wasNear = !_scrollContent || !_v0 || !_v0.shown || nearBottom(_scrollContent);
@@ -11650,7 +11898,7 @@ function upsert(msg: any) {
   // Active tab: a content refresh appends + preserves scroll (appendActive); a new tab or a fork
   // lands at the bottom/anchor (showActive). This is what keeps new pushes from snapping to bottom.
   if (msg.id === activeId) {
-    if (existed && !forked) {
+    if (existed && !forked && !firstBuild) {
       appendActive();
     } else {
       showActive();
@@ -11676,7 +11924,7 @@ function upsert(msg: any) {
 function update(msg: any) {
   retryCmtCreates(String(msg.id || ""));   // ditto for the delta path (T106)
   const s = sessions.get(msg.id);
-  if (!s) return;
+  if (!s) { requestFullSession(msg.id); return; }   // a delta with no base is PROOF of desync (see chatTail)
   s.events = msg.events || s.events;
   const before = awaitKey(s.status);
   s.status = msg.status || s.status;
@@ -11715,10 +11963,23 @@ function requestFullSession(id: string): void {
   awaitingFull.add(id);
   vscodeApi?.postMessage({ type: "needFull", id });
 }
+// A reconnect mints a FRESH kernel-side client (its echat starts empty, so full frames are already
+// guaranteed) — but an ask parked against the dead socket would gag the new socket's repair path
+// forever (awaitingFull only clears when the reply lands, and the dead socket's never will).
+window.addEventListener("romp:wsup", () => awaitingFull.clear());
 
 function chatTail(msg: any) {
   const s = sessions.get(msg.id);
-  if (!s) return;                                  // no base yet → ignore; a full session must arrive first
+  if (!s) {
+    // A delta for a session we hold NO base for is PROOF of desync, not noise to ignore: the full
+    // frame was sent while this document had no message listener yet (the pusher fires from the
+    // moment the socket opens; the 1.4MB bundle can still be evaluating), and the kernel's echat
+    // advances on SEND — so deltas are all it will ever volunteer, and the tab sat on the
+    // « opening … » placeholder forever (the user 2026-09-02; a duplicated browser tab won the
+    // race via cached bundles, a reload only sometimes). Ask for the base instead of waiting.
+    requestFullSession(msg.id);
+    return;
+  }
   // msg.from is a GLOBAL transcript index; the resident events are the tail [headFrom, …) → map to local.
   const from = (msg.from | 0) - (s.headFrom || 0);
   // The kernel's coordinate space ends at ITS OWN events — our injected optimistic tail is not in it.
@@ -11875,7 +12136,7 @@ function awaitKey(st: Status | undefined): string {
 
 function statusOnly(msg: any) {
   const s = sessions.get(msg.id);
-  if (!s) return;
+  if (!s) { requestFullSession(msg.id); return; }   // a delta with no base is PROOF of desync (see chatTail)
   const before = awaitKey(s.status);
   s.status = msg.status || s.status;
   renderTabs();                          // status-only push → repaint the chip; order is untouched
@@ -12073,7 +12334,11 @@ window.addEventListener("message", (e: MessageEvent) => {
                      : [{ label: "Dismiss", value: "ok" }],
                 (v) => { if (v === "copy") navigator.clipboard?.writeText(copy); });
   }
-  else if (m.type === "dirCompletions") onDirCompletions(m);        // the owning kernel's path completions
+  else if (m.type === "dirCompletions") {                            // the owning kernel's path completions
+    // a NEGATIVE reqId is the move dialog's ask (showMovePrompt) — routed before the picker's handler,
+    // whose in-flight bookkeeping must not be flipped by an answer it never asked for
+    if (typeof m.reqId === "number" && m.reqId < 0) onMoveDirCompletions(m); else onDirCompletions(m);
+  }
   else if (m.type === "createDirMissing" && m.name) onCreateDirMissing(m);   // create it, or edit the path
   // The AUTHORITATIVE answer to a ✕ on a queued bubble (the user 2026-07-20). ok:false = the message
   // had already left romp's queue (handed to the CLI — no recall exists): toast the kernel's 'too late'
@@ -12107,6 +12372,9 @@ window.addEventListener("message", (e: MessageEvent) => {
   // The identity palette changed (gear → Session colors): refresh the right-click menu's swatch set so a
   // menu opened after the switch offers the NEW palette (the kernel remaps + repaints sessions itself).
   else if (m.type === "palette" && Array.isArray(m.colors)) paletteColors = m.colors;
+  // The kernel's pick memory moved (a pin, a Latest un-pin, a refused pin dropped) or its catalog grew:
+  // re-read /models so the family rows send the fresh default — the models-list twin of the palette frame.
+  else if (m.type === "models") loadModelChoices();
   else if (m.type === "sessionList") {
     // Whose list is this? federation stamps the source host; a local reply carries none. A reply for a
     // host the picker has since switched away from is dropped rather than painted over the current one
@@ -12195,6 +12463,11 @@ window.addEventListener("message", (e: MessageEvent) => {
   else if (m.type === "reviveFailed" && m.id) {
     // the kernel's loud revive failure → named, in that session's own pane + the dismissible toast
     reviveFailedLocal(String(m.id), String(m.name || m.id), String(m.text || "unknown error"));
+  }
+  else if (m.type === "moved" && m.id) moveLanded(String(m.id), String(m.name || m.id), String(m.cwd || ""));
+  else if (m.type === "moveFailed" && m.id) {
+    // the kernel's typed move refusal → the reason where the path was typed, or a toast if the dialog is gone
+    moveFailedLocal(String(m.id), String(m.name || m.id), String(m.text || "unknown error"));
   }
   else if (m.type === "focusComposer") { const ta = document.getElementById("composer-input") as HTMLTextAreaElement | null; ta?.focus(); }
   else if (m.type === "glowTurns") applyGlow(Array.isArray(m.groups) ? m.groups : [], Array.isArray(m.mids) ? m.mids : []);
@@ -12378,7 +12651,7 @@ setInterval(() => {
   const meta = document.getElementById("spinner-meta");
   if (meta) syncMetaControls(meta, s.status);
   const bar = document.getElementById("ctx-bar");
-  if (bar) setCtxBar(bar, s.status.ctx, s.status.state === "compacting", pickTone(s.status.ctxColor, s.status.ctxTone));
+  if (bar) setCtxBar(bar, s.status.ctx, s.status.state === "compacting", pickTone(s.status.ctxColor, s.status.ctxTone), s.status.ctxOver);
 }, 1000);
 
 // the last message we delivered per session — so a Ctrl+C interrupt can put it back

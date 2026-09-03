@@ -55,7 +55,10 @@ var GEAR_HTML =
   '<span class=rs-sub id=rs-login-acct>…</span>' +
   "<div id=rs-login-flow style='margin-top:6px'>" +
   "<button id=rs-login-btn type=button style='cursor:pointer;background:var(--btn-bg, #2a2a2a);color:var(--fg, #ccc);border:1px solid var(--hairline, #3a3a3a);border-radius:5px;padding:3px 10px'>Log in to Claude Code</button>" +
-  "<span id=rs-login-state class=rs-sub style='margin-left:8px'></span>" +
+  // rs-note, NOT rs-sub: this is a live inline status ("starting the login flow…"), not the row's
+  // description — as an rs-sub it floated a SECOND hover popover under the Account row, stacked on
+  // rs-login-acct's (the user 2026-09-02, who saw two tooltips stacked; even empty it painted a box)
+  "<span id=rs-login-state class=rs-note style='margin-left:8px'></span>" +
   '</div></span></div>' +
   '<div class=rs-sec>Sessions</div>' +
   "<div class='rs-row' style='cursor:default'><span style='flex:1 1 auto'><b>Default directory</b>" +
@@ -133,11 +136,11 @@ var GEAR_HTML =
   '</span></div>' +
   "<div class='rs-row rs-sep' style='cursor:default'><span style='flex:1 1 auto'><b>Colormap</b>" +
   '<span class=rs-sub>One ramp for the whole dashboard — feed recency, usage, and context bars. Brightest = newest / highest.</span>' +
-  "<div id=rs-cmap><button id=rs-cmap-btn type=button title='Pick the recency colormap'></button>" +
+  "<div id=rs-cmap><button id=rs-cmap-btn type=button aria-label='Pick the recency colormap'></button>" +
   '<div id=rs-cmap-list hidden></div></div></span></div>' +
   "<div class='rs-row rs-sep' style='cursor:default'><span style='flex:1 1 auto'><b>Session colors</b>" +
   '<span class=rs-sub>The palette sessions draw their identity color from — tabs, cards, lanes. Switching recolors every session to the same slot in the new set.</span>' +
-  "<div id=rs-pal><button id=rs-pal-btn type=button title='Pick the session palette'></button>" +
+  "<div id=rs-pal><button id=rs-pal-btn type=button aria-label='Pick the session palette'></button>" +
   '<div id=rs-pal-list hidden></div></div></span></div>' +
   '<div class=rs-sec>Keyboard shortcuts</div>' + SHORTCUT_ROWS +
   '<div class=rs-sec>Judges</div>' +
@@ -146,7 +149,7 @@ var GEAR_HTML =
   "<div class='rs-row rs-jrow'><b>Distilling model <span class=rs-mixed hidden></span></b><span class=rs-sub>The model for the judges that write the prose you read on cards — distiller, briefer, staller. Follow triage (the default) keeps them on the triage pick; pinning a model here lets the copy you read run richer than the placement judges. Follows to every connected machine's kernel.</span><select id=rs-distillmodel></select></div>" +
   "<div class='rs-row rs-jrow'><b>Distilling effort <span class=rs-mixed hidden></span></b><span class=rs-sub>Thinking effort for the distilling judges. Follow triage (the default) rides the triage effort; Default pins no effort flag. Follows to every connected machine's kernel.</span><select id=rs-distilleffort></select></div>" +
   "<div class='rs-row rs-jrow'><b>Indexing model <span class=rs-mixed hidden></span></b><span class=rs-sub>The model the indexing judges use — captioner + archiver (high-volume, low-stakes summarization). Haiku by default for cost. Follows to every connected machine's kernel.</span><select id=rs-indexmodel></select></div>" +
-  "<div class='rs-row rs-jrow'><b>Indexing effort <span class=rs-mixed hidden></span></b><span class=rs-sub>Thinking effort for the indexing judges. Default = none (indexing runs with thinking disabled as a cost lever; leave Default unless you know you want it). Follows to every connected machine's kernel.</span><select id=rs-indexeffort></select></div>" +
+  "<div class='rs-row rs-jrow'><b>Indexing effort <span class=rs-mixed hidden></span></b><span class=rs-sub>Thinking effort for the indexing judges. Default keeps this high-volume work cheap: effort low on models with adaptive thinking (Fable, Opus 4.6 and later, Sonnet 4.6 and later); Haiku, Sonnet 4.5 and Opus 4.5 have none, so they run with thinking off and no flag. Follows to every connected machine's kernel.</span><select id=rs-indexeffort></select></div>" +
   '<div class=rs-sec>Updates & debug</div>' +
   "<div class='rs-row' style='cursor:default'><span style='flex:1 1 auto'><b>Automatic updates <span class=rs-mixed hidden></span></b>" +
   '<span class=rs-sub>romp watches for new tagged releases (every 6 hours) AND new commits on main (origin polled every few minutes, plus a restart offer when updated code sits on disk unbooted) — one banner covers both, and acting on it converges every attached machine. Check and ask (the default) offers the banner with an Update button; Install automatically converges by itself, restarting at the next quiet moment; Off never checks. Kernel-side setting.</span>' +
@@ -434,13 +437,18 @@ function initGear(post) {
   // Each attached kernel keeps its own copy, so the post goes to all of them
   // (federation.ts KERNEL_SETTING) — which is also what resolves a split box:
   // the click picks one answer and every machine takes it.
+  // Every KERNEL_SETTING post carries `gt`: epoch ms minted HERE, at the click. Federation queues
+  // these per host while a socket is down and flushes them on reconnect, so a delayed copy must
+  // carry the ORIGINAL gesture's time — the kernel orders applies by it and stands a stale flush
+  // down instead of walking the mesh back to an hours-old pick (a frozen tab's flush did exactly
+  // that). Stamp in the message literal, never at send/flush time.
   if (an) an.addEventListener('change', function () {
     clearAutoNudgeSplit();
-    post({ type: 'setAutoNudge', enabled: an.checked });
+    post({ type: 'setAutoNudge', enabled: an.checked, gt: Date.now() });
   });
-  if (fe) fe.addEventListener('change', function () { post({ type: 'setFileEditing', enabled: fe.checked }); });
+  if (fe) fe.addEventListener('change', function () { post({ type: 'setFileEditing', enabled: fe.checked, gt: Date.now() }); });
   if (cvm) cvm.addEventListener('change', function () { post({ type: 'setConserve', enabled: cvm.checked }); });
-  if (csg) csg.addEventListener('change', function () { post({ type: 'setCompactSuggest', enabled: csg.checked }); });
+  if (csg) csg.addEventListener('change', function () { post({ type: 'setCompactSuggest', enabled: csg.checked, gt: Date.now() }); });
   // ── the in-dashboard LOGIN flow (T157): the dashboard is already on the phone over Tailscale,
   // so streaming the CLI's paste-code OAuth URL here IS the phone login. The code input is a pure
   // pass-through to the kernel's PTY — nothing is stored or logged on any side.
@@ -513,7 +521,7 @@ function initGear(post) {
   });
   if (lgI) lgI.addEventListener('keydown', function (e) { if (e.key === 'Enter' && lgSend) lgSend.click(); });
   if (lgX) lgX.addEventListener('click', function () { lgModal(false); post({ type: 'loginCancel' }); if (lgTimer) { clearTimeout(lgTimer); lgTimer = null; } lgRender({ login: { state: '' } }); });
-  if (upm) upm.addEventListener('change', function () { post({ type: 'setUpdateMode', mode: upm.value }); });
+  if (upm) upm.addEventListener('change', function () { post({ type: 'setUpdateMode', mode: upm.value, gt: Date.now() }); });
   // The judge MODEL pickers mirror the session pickers (the user 2026-08-25): families top-level,
   // clicking a family sends its /models `default` (the user's remembered version), hover or
   // ArrowRight reveals a side submenu of versions. The native select stays (hidden) as the VALUE
@@ -575,11 +583,39 @@ function initGear(post) {
           if (sub) { sub.remove(); sub = null; }
           sub = document.createElement('div');
           sub.setAttribute('style', MSTYLE + 'z-index:1002;');
+          // "Latest" heads the submenu — the session pickers' floating gesture, on the judge tiers
+          // too: the family row sends the remembered pin and the rows below pin, so this is the row
+          // that sends the bare alias, and the tier follows the CLI's newest again
+          var latest = document.createElement('div');
+          latest.setAttribute('style', rowStyle);
+          latest.tabIndex = 0;
+          latest.appendChild(document.createTextNode('Latest'));
+          if (sel.value === fam.value) {
+            var c0 = document.createElement('span'); c0.textContent = '\u2713';
+            c0.setAttribute('style', 'position:absolute;right:6px;top:50%;transform:translateY(-50%);background:var(--check-bg, #1EA1EB);color:#fff;border-radius:50%;width:13px;height:13px;font-size:9px;font-weight:900;display:inline-flex;align-items:center;justify-content:center;line-height:1;');
+            latest.appendChild(c0);
+          }
+          latest.addEventListener('mouseenter', function () { latest.style.background = 'var(--menu-hover, rgba(255,255,255,0.09))'; });
+          latest.addEventListener('mouseleave', function () { latest.style.background = 'transparent'; });
+          latest.addEventListener('click', function (e2) { e2.stopPropagation(); pick(fam.value); });
+          latest.addEventListener('keydown', function (e2) {
+            if (e2.key === 'Enter' || e2.key === ' ') { e2.preventDefault(); e2.stopPropagation(); pick(fam.value); }
+            else if (e2.key === 'ArrowLeft') { e2.preventDefault(); sub.remove(); sub = null; row.focus(); }
+          });
+          sub.appendChild(latest);
           versions.forEach(function (v) {
             var r2 = document.createElement('div');
             r2.setAttribute('style', rowStyle);
             r2.tabIndex = 0;
             r2.appendChild(document.createTextNode(v.label));
+            if (v.learned) {
+              // LOUD, per the fail-loudly rule: a version no catalog list carries — a running session's
+              // CLI reported it (kernel /models `learned`) — says so, as the chat and timeline pickers do
+              var tag = document.createElement('span'); tag.textContent = ' new';
+              tag.setAttribute('style', 'font-size:0.82em;opacity:0.6;margin-left:4px;');
+              r2.appendChild(tag);
+              r2.title = "Reported by a running session's Claude Code; not yet in romp's version list";
+            }
             if (sel.value === v.value) {
               var c2 = document.createElement('span'); c2.textContent = '\u2713';
               c2.setAttribute('style', 'position:absolute;right:6px;top:50%;transform:translateY(-50%);background:var(--check-bg, #1EA1EB);color:#fff;border-radius:50%;width:13px;height:13px;font-size:9px;font-weight:900;display:inline-flex;align-items:center;justify-content:center;line-height:1;');
@@ -640,12 +676,12 @@ function initGear(post) {
     versionMenu(cmm, [{ value: 'session', label: 'Same as the session', versions: [] },
                       { value: 'default', label: 'Default', versions: [] }]);
   });
-  if (jm) jm.addEventListener('change', function () { post({ type: 'setJudgeModel', model: jm.value }); });
-  if (im) im.addEventListener('change', function () { post({ type: 'setIndexModel', model: im.value }); });
-  if (je) je.addEventListener('change', function () { post({ type: 'setJudgeEffort', effort: je.value }); });
-  if (ie) ie.addEventListener('change', function () { post({ type: 'setIndexEffort', effort: ie.value }); });
-  if (dm) dm.addEventListener('change', function () { post({ type: 'setDistillModel', model: dm.value }); });
-  if (de) de.addEventListener('change', function () { post({ type: 'setDistillEffort', effort: de.value }); });
+  if (jm) jm.addEventListener('change', function () { post({ type: 'setJudgeModel', model: jm.value, gt: Date.now() }); });
+  if (im) im.addEventListener('change', function () { post({ type: 'setIndexModel', model: im.value, gt: Date.now() }); });
+  if (je) je.addEventListener('change', function () { post({ type: 'setJudgeEffort', effort: je.value, gt: Date.now() }); });
+  if (ie) ie.addEventListener('change', function () { post({ type: 'setIndexEffort', effort: ie.value, gt: Date.now() }); });
+  if (dm) dm.addEventListener('change', function () { post({ type: 'setDistillModel', model: dm.value, gt: Date.now() }); });
+  if (de) de.addEventListener('change', function () { post({ type: 'setDistillEffort', effort: de.value, gt: Date.now() }); });
   // Fast is an Opus-only research preview (render.ts fastAvailable, the same rule): a pinned
   // non-Opus comment model makes the box a dead control, so it disables — and a model pick that
   // strands a checked box also unchecks it, visibly, as part of the user's own gesture (never a
@@ -658,12 +694,12 @@ function initGear(post) {
     cmf.disabled = !can;
     if (!can && cmf.checked && fromModelPick) {
       cmf.checked = false;
-      post({ type: 'setCommentFast', fast: 'session' });
+      post({ type: 'setCommentFast', fast: 'session', gt: Date.now() });
     }
   }
-  if (cmm) cmm.addEventListener('change', function () { post({ type: 'setCommentModel', model: cmm.value }); cmtFastGate(true); });
-  if (cme) cme.addEventListener('change', function () { post({ type: 'setCommentEffort', effort: cme.value }); });
-  if (cmf) cmf.addEventListener('change', function () { post({ type: 'setCommentFast', fast: cmf.checked ? 'on' : 'session' }); });
+  if (cmm) cmm.addEventListener('change', function () { post({ type: 'setCommentModel', model: cmm.value, gt: Date.now() }); cmtFastGate(true); });
+  if (cme) cme.addEventListener('change', function () { post({ type: 'setCommentEffort', effort: cme.value, gt: Date.now() }); });
+  if (cmf) cmf.addEventListener('change', function () { post({ type: 'setCommentFast', fast: cmf.checked ? 'on' : 'session', gt: Date.now() }); });
   // feed-colormap preview bar: a horizontal gradient of the SELECTED map's stops (mirrors render.ts COLORMAPS).
   var CMAPS = { aurora: [[84, 178, 4], [0, 180, 115], [35, 175, 156], [66, 169, 176], [25, 168, 201], [14, 164, 227], [74, 155, 241], [113, 145, 244], [144, 136, 240]],
     hawaii: [[140, 2, 115], [146, 46, 85], [151, 78, 62], [155, 111, 40], [156, 150, 28], [137, 189, 74], [107, 212, 142], [103, 233, 213], [179, 242, 253]],
@@ -714,35 +750,154 @@ function initGear(post) {
       dd.value = m.path; dd.dispatchEvent(new Event('change'));
     }
   });
+  // A stood-down gesture must be visible to the dashboard that made it (2026-08-29). When a
+  // settings gesture loses the ordering race (a frozen tab's queued flush, or a click here that a
+  // newer pick elsewhere outranks), the kernel answers the DELIVERING socket with a settingStale
+  // frame — without it the refusal was one kernel stderr line: this modal kept displaying the
+  // refused pick as applied (fill() runs only on open), and with every kernel AGREEING on the
+  // kept value the mixed marks show nothing. Event-keyed: the frame IS the deciding event — toast
+  // it in plain words and re-read the kernel's actual values if the modal is up. No polling.
+  var STALE_LABELS = { 'auto-nudge': 'Auto Nudge', 'compact-suggest': 'Suggest /compact',
+    'file-editing': 'File editing',
+    'update-mode': 'Automatic updates', 'judge-model': 'Triage model', 'judge-effort': 'Triage effort',
+    'index-model': 'Indexing model', 'index-effort': 'Indexing effort',
+    'distill-model': 'Distilling model', 'distill-effort': 'Distilling effort',
+    'comment-model': 'Comment model', 'comment-effort': 'Comment effort',
+    'comment-fast': 'Fast comment threads' };
+  // Dismissal is the warn-toast FAMILY treatment (the user 2026-08-25: a notice with no visible
+  // way out gets in the way — worst on touch, and this toast's mint site is a frozen phone tab
+  // flushing on recovery): a visible ✕ in the chip-✕ dress, the whole toast still click-dismisses,
+  // Escape clears the stack, and the fade precedes the auto-remove. COPIED from the family home
+  // (render.ts warnToast + styles.css .warn-toast-x) because the gear is its own document, loaded
+  // by panes that ship only this sheet — keep the two in step (setting-stale.test.ts pins this copy).
+  function staleToast(text) {
+    var box = document.getElementById('rs-stale-toasts');
+    if (!box) {   // created once; dismissal delegated to the STABLE container (click-safe rule)
+      box = document.createElement('div'); box.id = 'rs-stale-toasts';
+      box.addEventListener('click', function (e2) {
+        var t = e2.target;
+        while (t && t !== box && !(t.classList && t.classList.contains('rs-stale-toast'))) t = t.parentNode;
+        if (t && t !== box) t.remove();
+      });
+      // Escape clears the stack, additively — never stopPropagation: clearing a toast is
+      // noise-removal, not a key any other surface loses (family rule, render.ts warnToast)
+      document.addEventListener('keydown', function (e2) {
+        if (e2.key === 'Escape') Array.prototype.slice.call(box.children).forEach(function (w) { w.remove(); });
+      });
+      document.body.appendChild(box);
+    }
+    var t = document.createElement('div');
+    t.className = 'rs-stale-toast'; t.setAttribute('role', 'status'); t.title = 'click to dismiss';
+    var txt = document.createElement('span');
+    txt.className = 'rs-stale-toast-msg'; txt.textContent = text;
+    var x = document.createElement('button');
+    x.className = 'rs-stale-toast-x'; x.setAttribute('aria-label', 'Dismiss'); x.title = 'dismiss (Esc)';
+    x.textContent = '✕';   // clicks bubble to the container's delegated dismiss, like the family's
+    t.appendChild(txt); t.appendChild(x);
+    box.appendChild(t);
+    setTimeout(function () { t.classList.add('fade'); }, 11000);   // the family fade first…
+    setTimeout(function () { t.remove(); }, 12000);   // …then the self-clearing backstop; a click/Esc dismisses sooner
+  }
+  window.addEventListener('message', function (e) {
+    var m = e.data;
+    if (!m || m.type !== 'settingStale') return;
+    var label = STALE_LABELS[m.setting] || String(m.setting || 'A setting');
+    var kept = m.kept === true ? 'on' : m.kept === false ? 'off'
+      : (typeof m.kept === 'string' && m.kept ? m.kept : '');
+    staleToast(label + ' changed more recently somewhere else — keeping the newer choice'
+      + (kept ? ' (' + kept + ')' : '') + '.');
+    if (!p.hidden) fill();   // the open modal re-reads the kernel's values so it stops showing the refused pick
+  });
   // The model/effort <option>s come from /models — the same single source the
   // chat + timeline pickers use. Cached after the first successful fetch.
-  var choices = null;
-  var choicesP = null;   // the single-flight promise — options are written exactly once per page
+  var choices = null, choicesRev = -1;   // the list, and the highest /models `rev` applied to it
+  // A /models response is applied only if it is not OLDER than one already applied: its `rev` is the
+  // pick memory's revision — the models frame's counter — and the frame's re-read can overlap the first
+  // fill, or two quick frames each other, with the responses landing out of order; without the check the
+  // STALE list won until the next change. A payload without a rev (an older kernel) always applies.
+  // Returns whether `choices` moved.
+  function adoptChoices(d) {
+    if (d && typeof d.rev === 'number') { if (d.rev < choicesRev) return false; choicesRev = d.rev; }
+    choices = d || { models: [], efforts: [] };
+    return true;
+  }
+  // The ONE write path for kernel-backed selects — fill()'s (the user 2026-09-01, whose stored distill
+  // pick displayed as the default) and paintChoices': a value the option list doesn't carry is INJECTED
+  // as a marked option and selected — the row shows the truth (an off-list value, named) rather than
+  // silently falling to its first option or, on a repaint, to NOTHING: per the spec a select assigned a
+  // value none of its options carries deselects every option (value ''), so a repaint that handed the
+  // held value straight back would leave the select blank, and the version menu's label with it,
+  // whenever the value was one fill() had injected or a learned version that has since left the list.
+  // Values are validated at write time by the kernel, so an injection here means THIS page's list is
+  // behind the store — worth seeing, never worth hiding.
+  function setShow(sel, val) {
+    if (!sel) return;
+    if (val && !Array.prototype.some.call(sel.options, function (o) { return o.value === val; })) {
+      var o = document.createElement('option');
+      o.value = val;
+      o.textContent = val + " — not in this kernel's list";
+      sel.appendChild(o);
+    }
+    sel.value = val;
+  }
+  // Write every select's <option>s from the CURRENT list — whichever response won — and give each select
+  // back the value it held, through setShow: plainly when the list still offers it, as a marked off-list
+  // option when it no longer does. Rewriting a select's options resets it to its first option, which is
+  // why a re-read alone could never repaint; and a page-load fill that skipped its paint because the
+  // frame's re-read had applied a newer list first left every later fill() short-circuiting on the cache
+  // — eight empty pickers for the life of the page. The paint keys on the list, not on which fetch
+  // carried it.
+  function paintChoices() {
+    var mo = (choices.models || []).map(function (m) {
+      var vs = (m.versions || []).map(function (v) { return '<option value="' + v.value + '">' + v.label + '</option>'; }).join('');
+      return '<option value="' + m.value + '">' + m.label + '</option>' + vs;   // versions ride as options too — the hidden select stays the value holder for any pick
+    }).join('');
+    var eff = (choices.efforts || []).map(function (m) { return '<option value="' + m.value + '">' + m.label + '</option>'; }).join('');
+    var eo = '<option value="">Default</option>' + eff;
+    function put(sel, html) {
+      if (!sel) return;
+      var held = sel.value;
+      sel.innerHTML = html;
+      if (held) setShow(sel, held);   // a held value the new list lacks stays, marked — never a blank select
+    }
+    put(jm, mo); put(im, mo);
+    put(je, eo); put(ie, eo);
+    // the distilling pair leads with the follow-triage sentinel — its default, so a fresh kernel
+    // shows "Follow triage" rather than a model nobody picked. Its Default (no effort flag) is the
+    // stored sentinel "none", never "" — an empty state file reads back as the default ("follow").
+    put(dm, '<option value="triage">Follow triage</option>' + mo);
+    put(de, '<option value="triage">Follow triage</option><option value="none">Default</option>' + eff);
+    // the comment pair leads with the same-as-the-session sentinel — its default, so a fresh
+    // kernel shows the inherit behavior, not a model nobody picked; "default" = the account default
+    put(cmm, '<option value="session">Same as the session</option><option value="default">Default</option>' + mo);
+    put(cme, '<option value="session">Same as the session</option>' + eff);
+  }
+  // The promise is the memo, not the list: a settings open racing the page-load fetch used to fire a
+  // SECOND /models fetch, and whichever resolved last rewrote every select's options after fill() had
+  // set their values. One live fetch per page; a failed one clears the memo for retry.
+  var choicesP = null;
   function fillChoices() {
     if (choicesP) return choicesP;
     choicesP = fetch(ku('/models'), { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (d) {
-      choices = d || { models: [], efforts: [] };
-      var mo = (choices.models || []).map(function (m) {
-        var vs = (m.versions || []).map(function (v) { return '<option value="' + v.value + '">' + v.label + '</option>'; }).join('');
-        return '<option value="' + m.value + '">' + m.label + '</option>' + vs;   // versions ride as options too — the hidden select stays the value holder for any pick
-      }).join('');
-      var eff = (choices.efforts || []).map(function (m) { return '<option value="' + m.value + '">' + m.label + '</option>'; }).join('');
-      var eo = '<option value="">Default</option>' + eff;
-      if (jm) jm.innerHTML = mo; if (im) im.innerHTML = mo;
-      if (je) je.innerHTML = eo; if (ie) ie.innerHTML = eo;
-      // the distilling pair leads with the follow-triage sentinel — its default, so a fresh kernel
-      // shows "Follow triage" rather than a model nobody picked. Its Default (no effort flag) is the
-      // stored sentinel "none", never "" — an empty state file reads back as the default ("follow").
-      if (dm) dm.innerHTML = '<option value="triage">Follow triage</option>' + mo;
-      if (de) de.innerHTML = '<option value="triage">Follow triage</option><option value="none">Default</option>' + eff;
-      // the comment pair leads with the same-as-the-session sentinel — its default, so a fresh
-      // kernel shows the inherit behavior, not a model nobody picked; "default" = the account default
-      if (cmm) cmm.innerHTML = '<option value="session">Same as the session</option><option value="default">Default</option>' + mo;
-      if (cme) cme.innerHTML = '<option value="session">Same as the session</option>' + eff;
+      adoptChoices(d);   // a frame's re-read may have applied a NEWER list while this one was in flight: paint from whichever won
+      paintChoices();
       return choices;
     }).catch(function () { choicesP = null; return null; });   // retry on the next open, never a second live fetch
     return choicesP;
   }
+  // The kernel's models frame: the pick memory moved — a version pinned, a family un-pinned by Latest, a
+  // refused pin dropped, from any surface or dashboard — or the catalog grew, so the cached list's
+  // `default` (what a family row SENDS, read from `choices` at click time) is stale. Re-read on the
+  // event, like the browseResult listener above; never a poll. The list moving repaints the selects too
+  // (paintChoices keeps their values), so a frame that lands before the page-load fill has painted still
+  // leaves populated pickers. The frame reaches this document because the kernel sends it to the FEED
+  // app too (the gear lives in the feed bundle).
+  window.addEventListener('message', function (e) {
+    var m = e.data;
+    if (!m || m.type !== 'models') return;
+    fetch(ku('/models'), { cache: 'no-store' }).then(function (r) { return r.json(); })
+      .then(function (d) { if (d && Array.isArray(d.models) && adoptChoices(d)) paintChoices(); }).catch(function () {});
+  });
   function lv() { var t = document.querySelector('script[src*="feed.js"]');
     var m = t && t.getAttribute('src').match(/[?&]v=(\d+)/); return m ? +m[1] : 0; }
   function clearAutoNudgeSplit() {
@@ -804,21 +959,8 @@ function initGear(post) {
       mark.hidden = false;
     });
   }
-  // fill()'s ONE write path for kernel-backed selects (the user 2026-09-01, whose stored distill
-  // pick displayed as the default): a stored value the option list doesn't carry is INJECTED as a
-  // marked option and selected — the row shows the truth (an off-list value, named) rather than
-  // silently falling to its first option. Values are validated at write time by the kernel, so an
-  // injection here means THIS page's list is behind the store — worth seeing, never worth hiding.
-  function setShow(sel, val) {
-    if (!sel) return;
-    if (val && !Array.prototype.some.call(sel.options, function (o) { return o.value === val; })) {
-      var o = document.createElement('option');
-      o.value = val;
-      o.textContent = val + " — not in this kernel's list";
-      sel.appendChild(o);
-    }
-    sel.value = val;
-  }
+  // setShow — fill()'s write path for every kernel-backed select below — sits beside paintChoices, which
+  // shares it.
   function fill() { fillChoices().then(function () { return fetch(ku('/version'), { cache: 'no-store' }); }).then(function (r) { return r.json(); }).then(function (v) {
     // ONE /tunnels fetch feeds every cross-machine comparison: the autoNudge box and the select marks.
     // A failed /tunnels leaves the local answers standing, unmarked — same fallback as before.
@@ -936,17 +1078,17 @@ function initGear(post) {
     var segs = raSegments(), judgeTot = segs.reduce(function (a, s) { return a + raVal(s); }, 0);
     var maxV = Math.max(sessTot, judgeTot, 1);
     var W = 480, H = 250, top = 24, bot = 30, chartH = H - top - bot, baseY = top + chartH, barW = 92, cx1 = W * 0.30, cx2 = W * 0.70;
-    function rect(x, y, w, h, fill, title) { return '<rect x="' + x + '" y="' + y + '" width="' + w + '" height="' + Math.max(h, 0) + '" fill="' + fill + '" rx="2"><title>' + raEsc(title) + '</title></rect>'; }
+    function rect(x, y, w, h, fill, title) { return '<rect x="' + x + '" y="' + y + '" width="' + w + '" height="' + Math.max(h, 0) + '" style="fill:' + fill + '" rx="2"><title>' + raEsc(title) + '</title></rect>'; }
     var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" preserveAspectRatio="xMidYMid meet">';
-    svg += '<line x1="6" y1="' + baseY + '" x2="' + (W - 6) + '" y2="' + baseY + '" stroke="#3a3a3a"/>';
+    svg += '<line x1="6" y1="' + baseY + '" x2="' + (W - 6) + '" y2="' + baseY + '" style="stroke:var(--hairline, #3a3a3a)"/>';
     var sh = sessTot / maxV * chartH;
-    svg += rect(cx1 - barW / 2, baseY - sh, barW, sh, '#7d8590', 'sessions · ' + fmtTok(sess.in) + ' in / ' + fmtTok(sess.out || 0) + ' out · ' + fmtUsd(sess.cost || 0));
-    svg += '<text x="' + cx1 + '" y="' + (baseY - sh - 6) + '" text-anchor="middle" fill="#ddd" font-size="12">' + raFmt(sessTot) + '</text>';
-    svg += '<text x="' + cx1 + '" y="' + (baseY + 18) + '" text-anchor="middle" fill="#9aa0a6" font-size="12">Sessions</text>';
+    svg += rect(cx1 - barW / 2, baseY - sh, barW, sh, 'var(--text-faint, #7d8590)', 'sessions · ' + fmtTok(sess.in) + ' in / ' + fmtTok(sess.out || 0) + ' out · ' + fmtUsd(sess.cost || 0));
+    svg += '<text x="' + cx1 + '" y="' + (baseY - sh - 6) + '" text-anchor="middle" style="fill:var(--text-bright, #ddd)" font-size="12">' + raFmt(sessTot) + '</text>';
+    svg += '<text x="' + cx1 + '" y="' + (baseY + 18) + '" text-anchor="middle" style="fill:var(--text-muted, #9aa0a6)" font-size="12">Sessions</text>';
     var cum = 0; segs.forEach(function (s) { var st = raVal(s), h = st / maxV * chartH, y = baseY - cum - h; cum += h;
       svg += rect(cx2 - barW / 2, y, barW, h, s.color, s.label + ' · ' + fmtTok(s.in) + ' in / ' + fmtTok(s.out) + ' out · ' + s.calls + ' calls · ' + fmtUsd(s.cost || 0)); });
-    svg += '<text x="' + cx2 + '" y="' + (baseY - cum - 6) + '" text-anchor="middle" fill="#ddd" font-size="12">' + raFmt(judgeTot) + '</text>';
-    svg += '<text x="' + cx2 + '" y="' + (baseY + 18) + '" text-anchor="middle" fill="#9aa0a6" font-size="12">Judges</text>';
+    svg += '<text x="' + cx2 + '" y="' + (baseY - cum - 6) + '" text-anchor="middle" style="fill:var(--text-bright, #ddd)" font-size="12">' + raFmt(judgeTot) + '</text>';
+    svg += '<text x="' + cx2 + '" y="' + (baseY + 18) + '" text-anchor="middle" style="fill:var(--text-muted, #9aa0a6)" font-size="12">Judges</text>';
     svg += '</svg>'; raChart.innerHTML = svg;
     var lg = segs.map(function (s) { return '<span class=ra-li><span class=ra-sw style="background:' + s.color + '"></span>' + raEsc(s.label) + ' <b>' + raFmt(raVal(s)) + '</b></span>'; }).join('');
     raLegend.innerHTML = '<span class=ra-li><span class="ra-sw" style="background:#7d8590"></span>sessions <b>' + raFmt(sessTot) + '</b></span>' + lg;

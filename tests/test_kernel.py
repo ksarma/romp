@@ -2469,40 +2469,59 @@ class ViewBuilder(unittest.TestCase):
             km._tmux_send, jd.optimistic_followup = saved_send, saved_fu
         return sent, restore
 
-    def test_working_top_goal_picks_only_a_working_top(self):
-        g1, g2, g3, sub = SID + ":g1", SID + ":g2", SID + ":g3", SID + ":s1"
+    def test_open_top_goal_picks_a_working_top(self):
+        g1, g2, sub = SID + ":g1", SID + ":g2", SID + ":s1"
+        def n(nid, parent, done, blocked, cleared):
+            return {"id": nid, "text": nid, "parentId": parent, "nodeComplete": done,
+                    "blocked": blocked, "cleared": cleared, "trail": [], "t": T0}
+        self._goal_store({g1: n(g1, None, True, False, False), g2: n(g2, None, False, False, False),
+                          sub: n(sub, g2, False, False, False)},
+                         {g1: "completed", g2: "working"})
+        self.assertEqual(km._open_top_goal(SID), g2, "a working TOP goal qualifies, not done tops or subs")
+
+    def test_open_top_goal_counts_a_blocked_top_as_open(self):
+        # the working-note expiry's predicate: a top goal parked on the user is OPEN (the session has not
+        # finished), while done and cleared tops are not
+        g1, g2, sub = SID + ":g1", SID + ":g2", SID + ":s1"
         def n(nid, parent, done, blocked, cleared):
             return {"id": nid, "text": nid, "parentId": parent, "nodeComplete": done,
                     "blocked": blocked, "cleared": cleared, "trail": [], "t": T0}
         self._goal_store({g1: n(g1, None, True, False, False), g2: n(g2, None, False, True, False),
-                          g3: n(g3, None, False, False, False), sub: n(sub, g3, False, False, False)},
-                         {g1: "completed", g2: "blocked", g3: "working"})
-        self.assertEqual(km._working_top_goal(SID), g3, "only a working TOP goal (not done/blocked/sub) qualifies")
+                          sub: n(sub, g2, False, False, False)},
+                         {g1: "completed", g2: "blocked", sub: "working"})
+        self.assertEqual(km._open_top_goal(SID), g2, "a blocked top is still open work (done/sub skipped)")
+        self._goal_store({g1: n(g1, None, True, False, False), g2: n(g2, None, False, False, True)},
+                         {g1: "completed", g2: "working"})
+        self.assertIsNone(km._open_top_goal(SID), "done + cleared → nothing open")
 
-    def test_working_top_goal_none_when_cleared(self):
+    def test_open_top_goal_none_when_cleared(self):
         g = SID + ":g1"
         self._goal_store({g: {"id": g, "text": "x", "parentId": None, "nodeComplete": False,
                               "blocked": False, "cleared": True, "trail": [], "t": T0}}, {g: "working"})
-        self.assertIsNone(km._working_top_goal(SID), "a cleared goal is not nudge-worthy")
+        self.assertIsNone(km._open_top_goal(SID), "a cleared goal is not open work")
 
     # ── working-note auto-expire (the user 2026-06-24): lift a stale set_working claim once a session goes
-    #    idle with no working top goal, so peers stop coordinating against a finished session ──
+    #    idle with no open top goal, so peers stop coordinating against a finished session ──
+    STORE = object()                                     # _stub_expire top_goal: keep the real predicate
+
     def _stub_expire(self, notes, working, top_goal):
         # stub the deps of _clear_done_working_notes; returns (cleared_calls, restore_fn). cleared_calls
-        # records every _set_working_note(sid, text) the pass makes.
+        # records every _set_working_note(sid, text) the pass makes. top_goal=self.STORE leaves
+        # _open_top_goal unstubbed, reading the goal store the test wrote with _goal_store.
         cleared = []
         saved = (km._working_notes, km._alive_sessions, km._set_working_note,
-                 km._session_working, km._working_top_goal, jd.parsed_session)
+                 km._session_working, km._open_top_goal, jd.parsed_session)
         km._working_notes = lambda: dict(notes)
         km._alive_sessions = lambda now, tmux: [{"sid": SID, "path": str(self.tpath)}]
         km._set_working_note = lambda sid, text: cleared.append((sid, text))
         km._session_working = lambda turns: working
-        km._working_top_goal = lambda sid: top_goal
+        if top_goal is not self.STORE:
+            km._open_top_goal = lambda sid: top_goal
         jd.parsed_session = lambda sid, paths, now: {"turns": [{"atoms": [], "ended": True}]}
 
         def restore():
             (km._working_notes, km._alive_sessions, km._set_working_note,
-             km._session_working, km._working_top_goal, jd.parsed_session) = saved
+             km._session_working, km._open_top_goal, jd.parsed_session) = saved
         return cleared, restore
 
     def test_working_note_cleared_when_idle_and_done(self):
@@ -2526,6 +2545,30 @@ class ViewBuilder(unittest.TestCase):
         try:
             km._clear_done_working_notes(NOW, {SID: {"state": "idle"}})
             self.assertEqual(cleared, [], "idle but a working top goal remains (orphaned/stalled) → still its work")
+        finally:
+            restore()
+
+    def test_working_note_kept_while_a_top_goal_is_blocked_on_the_user(self):
+        # a BLOCKED (parked-on-you) top goal is open work: the session has not finished and the worktree its
+        # note names is still its own. Runs the real _open_top_goal over the store, so this fails if a blocked
+        # top ever stops counting as open (the previous, working-only predicate lifted this note).
+        g1, g2 = SID + ":g1", SID + ":g2"
+        def n(nid, done, blocked):
+            return {"id": nid, "text": nid, "parentId": None, "nodeComplete": done, "blocked": blocked,
+                    "cleared": False, "trail": [], "t": T0}
+        self._goal_store({g1: n(g1, True, False), g2: n(g2, False, True)}, {g1: "completed", g2: "blocked"})
+        cleared, restore = self._stub_expire({SID: "feed.ts"}, working=False, top_goal=self.STORE)
+        try:
+            km._clear_done_working_notes(NOW, {SID: {"state": "idle"}})
+            self.assertEqual(cleared, [], "parked on the user is not done → the claim stands")
+        finally:
+            restore()
+        # …and the same session, once the answer lands and that goal completes, does have its note lifted
+        self._goal_store({g1: n(g1, True, False), g2: n(g2, True, False)}, {g1: "completed", g2: "completed"})
+        cleared, restore = self._stub_expire({SID: "feed.ts"}, working=False, top_goal=self.STORE)
+        try:
+            km._clear_done_working_notes(NOW, {SID: {"state": "idle"}})
+            self.assertEqual(cleared, [(SID, "")], "all top goals done → the claim is lifted")
         finally:
             restore()
 
@@ -6182,6 +6225,18 @@ class ViewBuilder(unittest.TestCase):
         self.assertEqual(st["state"], "needsInput", "permission -> the needs-input chip (renamed 2026-08-15)")
         self.assertEqual(st["model"], "Opus 4.8")
         self.assertEqual(st["ctx"], "20")
+        self.assertFalse(st["ctxOver"], "tmux sessions never report a window overflow")
+
+    def test_chat_status_carries_ctx_overflow(self):
+        """The context % is clamped at 100 kernel-side; ctxOver carries the CLI's '100+' truth (tokens
+        exceed the CURRENT model's window, e.g. right after a 1M→200k model switch) so the battery says
+        'over this model's window' instead of a silent 100% (the user 2026-09-02)."""
+        km._tmux_sessions = lambda: {SID: {"state": "working", "since": NOW - 5, "model": "Haiku 4.5",
+                                           "effort": "max", "context": 100, "compactPct": None,
+                                           "color": None, "ctxOver": True}}
+        st = km.build_session(SID, NOW)["status"]
+        self.assertEqual(st["ctx"], "100")
+        self.assertTrue(st["ctxOver"], "the overflow flag rides beside the clamped %")
 
 
 class CrossPane(unittest.TestCase):

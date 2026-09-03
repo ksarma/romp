@@ -34,14 +34,27 @@ These are for scripting and for agents rather than daily use:
 | `romp sessions [--json]` | The fleet with each session's state, identity colours, directory and backend |
 | `romp mail …` | The postal service from the shell (below) |
 | `romp send <session> [--tag <label>] <text>` | Hand a session a message, on either backend. Anything a script, cron job, or launcher composes SHOULD carry a tag (one word, letters/digits/dashes, up to 24 chars): the chat then renders it as machine-sent under that label instead of as the user's typed words. Raw POST /send callers pass it as the JSON `tag` field (`{name, text, tag}` — a malformed tag fails the whole send, loudly); `--tag` is the CLI's equivalent. Both resolve to the `<!-- romp-tag: <label> -->` marker in the delivered text |
+| `romp new --env NAME=VALUE <name>` | A per-session env var for the SDK session, repeatable; a re-run against a running `<name>` replaces the whole set — vars not re-named are dropped |
+| `romp new --no-env <name>` | Clear a running SDK session's per-session env (declares the empty set) |
 | `romp interrupt <session>` | Interrupt whatever turn a session is taking |
 | `romp compact <session> [--wait] [--timeout <s>]` | Compact a session's context in place (Claude's `/compact`: summarize the history, keep the session's name, id, mailbox, and watches) — the alternative to ending and recreating a long-lived session, and the external hand a session needs since it cannot `/compact` itself mid-turn. Quiet session → compacts now; open turn → queued, fires alone the moment the turn ends (the same safe path the chat's compact button uses). `--wait` blocks until the compaction has started and cleared, polling the kernel's own `compacting` signal on the `/sessions` rows (also the field to point a `romp watch` predicate at for scripted recycling); exits 1 honestly on timeout. A remote session's compaction is requested on its own kernel — `--wait` can't follow it from here and says so |
 | `romp end <session>` | End a session |
+| `romp move <session> <dir>` | Move an SDK session's working directory to `<dir>` (the folder must already exist); the conversation, name, mail and history stay with the session. Quiet session → moves now; open turn → queued, fires when the turn ends. See [Moving a session to another folder](#moving-a-session-to-another-folder) |
 | `romp checkin <host>` / `romp checkout <host>` | Publish this machine to an attached hub, or withdraw it |
 | `romp default-dir [PATH]` | The default working directory for new sessions; no argument prints it, `""` clears it |
 | `romp debug [on\|off\|status]` | Judge debug mode, where rejection rows carry the full input and reply |
 | `romp resume <id> [--name <n>] [--detach]` | Resume one exact conversation by UUID |
 | `romp refresh --quiet` | Refresh at the next quiet window instead — waits for sessions to finish their turns (15-min backstop) |
+
+`--env` gives one session its own environment, so two sessions in the same
+directory can run with different toggles (a `FEATURE_FLAG=1`, a `CLAUDE_CODE_*`
+switch) without editing the directory's `.claude/settings*.json`, which reaches
+every session there and outlives them all. Re-running `romp new --env` against
+a running session declares its full per-session env: any var you don't name
+again is dropped, and `romp new --no-env <name>` declares the empty set — it
+clears them all. Keep real secrets out of it: each value is copied into
+per-session files and the session registry under `~/.local/state/romp/`. Keys
+and credentials stay in `service.env` or the `apiKeyHelper`.
 
 Two things to know before building on `romp sessions --json`. **`waiting` means
 at rest**, the ordinary state of a session that has finished its turn, so
@@ -59,6 +72,52 @@ the text under `caption`. A record's own `id` field is not the session's: it
 identifies the turn within it. There is no `summaries/` directory; an older
 layout had one, and reading it fails silently, since a missing directory just
 yields nothing rather than an error.
+
+### Moving a session to another folder
+
+A session's working directory can change after it starts, so when a subproject
+moves to its own repository, the session working on it can follow. Right-click
+the session's tab and choose **Move to folder…**, or run `romp move <session>
+<dir>`. The folder must already exist. Terminal (tmux) sessions cannot be
+moved; start a new one in the folder instead.
+
+What moves with the session:
+
+- The conversation. Claude Code moves the transcript, with the tool-results,
+  subagent and workflow files beside it, into the new folder's project
+  directory under `~/.claude/projects/`; Romp moves the session's earlier
+  transcripts (its `/clear` episodes and resume forks) the same way, so history
+  and search keep working.
+- The session's name, colour, mailbox, goals, cards and captions, all keyed by
+  the session id rather than the folder.
+- What the agent sees. Claude Code tells the model where it now is and loads
+  the new folder's `CLAUDE.md`; from the next turn on, permission rules, hooks,
+  skills and project MCP servers come from the new folder.
+
+What does not move, because Claude Code keys it by folder rather than by
+session: the old project's auto-memory (`~/.claude/projects/<old
+folder>/memory/`), the old folder's entry in `~/.claude.json` (its allowed
+tools, MCP approvals and trust), and the old repository's
+`.claude/settings.local.json`. A comment thread opened on the session also
+keeps its own folder. What Claude Code keys by session id (its debug log, task
+store and file-history checkpoints) needs no move.
+
+A move never interrupts a turn: on a session mid-turn it is queued as a chip in
+the chat and fires the moment the turn ends, like a queued `/compact`. If Claude
+Code reports a turn Romp could not see (one it started itself), the chip waits
+for that turn to end too; the chip can be cancelled like any queued item. A
+closed session is revived first, in its old folder, then moved. Only one move
+per session is in flight at a time; a second request while one is pending is
+refused. Every refusal (a folder that does not exist, a path that is a file, a
+move already pending) is reported where you asked. If Claude Code's reply to
+the move is lost, Romp settles the outcome by where the transcript is, the same
+check it runs after a restart that interrupted a move; a move it cannot settle
+is reported and left for the next kernel start, with nothing changed.
+
+The move is Claude Code's own relocation (the `set_cwd` control behind the
+interactive `/cd`), with Romp moving its own records alongside. It fires Claude
+Code's `CwdChanged` hook, not `SessionStart`; Romp registers no `CwdChanged`
+hook, so nothing on Romp's side re-runs.
 
 ## The Romp Postal Service
 

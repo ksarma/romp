@@ -13,7 +13,7 @@ test("typed-text ops are intent — losing them loses the user's words", () => {
 
 test("explicit state-changing picks are intent", () => {
   for (const t of ["setModel", "setEffort", "setMode", "setFast", "interrupt", "endSession",
-    "nodeOverride", "askClear", "answerAsk", "submitAsk", "renameSession"]) {
+    "nodeOverride", "askClear", "answerAsk", "submitAsk", "renameSession", "moveSession"]) {
     assert.ok(intentOp(t), `${t} must survive a reconnect`);
   }
 });

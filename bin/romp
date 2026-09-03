@@ -634,8 +634,10 @@ EOF
     _romp_cmd "romp new -t <name>"         -            "Start it as a terminal (tmux) session and attach (--detach: don't attach)"
     _romp_cmd "romp new -d <dir> <name>"   -            "Working directory for the new session (default: the current folder)"
     _romp_cmd "romp new -m <text> <name>"  -            "Start it AND deliver <text> as its first prompt (one command, idea to working)"
-    _romp_cmd "romp new --model <id> <name>" -          "Model for the SDK session, as a FULL id (e.g. claude-fable-5); re-asserted if <name> already runs"
+    _romp_cmd "romp new --model <id> <name>" -          "Model for the SDK session: a family alias (fable — follows the newest) or a full id (claude-fable-5 — a pin); re-asserted if <name> already runs"
     _romp_cmd "romp new --effort <level> <name>" -      "Reasoning effort for the SDK session (e.g. high, ultracode); re-asserted if <name> already runs"
+    _romp_cmd "romp new --env NAME=VALUE <name>" -      "Per-session env var for the SDK session (repeatable; toggles, never secrets); a re-run on a running <name> replaces the whole set"
+    _romp_cmd "romp new --no-env <name>"   -            "Clear a running SDK session's per-session env (declares the empty set)"
     _romp_cmd "romp resume [<id>]"         -            "Resume a past conversation (full-screen picker; or an exact UUID)"
     _romp_cmd "romp status"                romp-manager "Show manager + kernel status"
     _romp_cmd "romp refresh"               romp-manager "Restart the postal bus + all romp kernels (picks up new code — run after an update)"
@@ -658,6 +660,7 @@ EOF
     _romp_cmd "romp sessions [--json]"     -            "List the fleet with each session's state, colours and backend"
     _romp_cmd "romp fork <parent> <name>"  -            "Branch a session into a new parallel one (parent untouched; --at <uuid> picks the cut)"
     _romp_cmd "romp rename <session> <name>" -          "Rename a session (uuid-keyed: mailboxes, goals and history all follow)"
+    _romp_cmd "romp move <session> <dir>"   -           "Move an SDK session's working directory (its conversation follows; mid-turn it waits for the turn to end)"
     _romp_cmd "romp color <session> [<#hex|slot>]" -    "Recolor a session's identity swatch (palette hex or slot number; no color arg reads bg/fg)"
     _romp_cmd "romp tag [<name>] [--add ...]" -         "Session tags: bare lists them; <name> with --add/--remove/--color/--delete merges one (a tagged session leaves the no-tags view); --host <kernel> edits an attached kernel's tag; --rename renames"
     _romp_cmd "romp watch-pr <n> [--repo o/r]" -        "One mail here when the PR lands or fails — the kernel owns the watch, so it survives restarts (replaces the mortal shell loop)"
@@ -867,6 +870,44 @@ if [[ "${1:-}" == "rename" ]]; then
     fi
     _err="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("error") or sys.argv[1])' "$_resp" 2>/dev/null || printf '%s' "$_resp")"
     echo "romp rename: refused — $_err" >&2
+    exit 1
+fi
+
+# Move a session's working directory (the user 2026-09-01: a subproject promoted to its own repo, and
+# the session should follow it): the kernel's POST /move, the sibling of `romp rename`. The session
+# keeps its conversation, name, mailbox and history; Claude's tools, CLAUDE.md and project settings
+# come from the new folder from the next turn on. SDK sessions only — a terminal (tmux) session has
+# no relocation primitive and the kernel says so. A relative dir is resolved against THIS shell's
+# cwd here (the kernel would otherwise resolve it against its own default directory, which is not
+# where the caller stands); `~` is the shell's to expand, and the kernel canonicalises the rest.
+if [[ "${1:-}" == "move" ]]; then
+    shift
+    _mv_usage="usage: romp move <session> <dir>"
+    if [[ $# -ne 2 || "$1" == -* || "$2" == -* || -z "$2" ]]; then echo "$_mv_usage" >&2; exit 2; fi
+    _mv_dir="$2"
+    [[ "$_mv_dir" != /* && "$_mv_dir" != "~"* && "$_mv_dir" != '$'* ]] && _mv_dir="$PWD/$_mv_dir"
+    _tok="$(_romp_token)"
+    _kport="${ROMP_KERNEL_PORT:-29855}"
+    if [[ -z "$_tok" ]]; then
+        echo "romp move: the kernel isn't running (no serve token). Start romp (the login service, or \`romp up\`) first." >&2
+        exit 1
+    fi
+    _payload="$(python3 -c 'import json,sys; print(json.dumps({"target": sys.argv[1], "dir": sys.argv[2]}))' "$1" "$_mv_dir")"
+    # -m 90: a quiet session's move answers in a second or two, but a DORMANT one is revived first and
+    # its CLI has to come up before the request can go out (the kernel waits up to 60s for that)
+    _resp="$(_romp_token_cfg | curl -sf -m 90 --config - -X POST "http://127.0.0.1:$_kport/move" \
+                  -H 'Content-Type: application/json' -d "$_payload")" \
+        || { echo "romp move: kernel not reachable on :$_kport (is romp running?)" >&2; exit 1; }
+    if [[ "$_resp" == *'"ok": true'* || "$_resp" == *'"ok":true'* ]]; then
+        if [[ "$_resp" == *'"queued": true'* || "$_resp" == *'"queued":true'* ]]; then
+            echo "romp move: \"$1\" is mid-turn — the move is queued and fires when the turn ends (watch: romp sessions)"
+        else
+            echo "romp move: \"$1\" now works in $_mv_dir"
+        fi
+        exit 0
+    fi
+    _err="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("error") or sys.argv[1])' "$_resp" 2>/dev/null || printf '%s' "$_resp")"
+    echo "romp move: refused — $_err" >&2
     exit 1
 fi
 
@@ -1696,6 +1737,8 @@ detach=false
 dir_arg=""
 model_arg=""
 effort_arg=""
+env_args=()
+no_env=false
 use_tmux=false
 use_codex=false
 msg_arg=""
@@ -1711,7 +1754,7 @@ case "${1:-}" in
                 --detach)  detach=true; shift ;;
                 -d)        shift
                            if [[ $# -eq 0 || "$1" == -* ]]; then
-                               echo "usage: romp new [-t|--codex] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] <name>" >&2; exit 2
+                               echo "usage: romp new [-t|--codex] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] [--env NAME=VALUE] [--no-env] <name>" >&2; exit 2
                            fi
                            dir_arg="$1"; shift ;;
                 -m|--message) shift
@@ -1720,7 +1763,7 @@ case "${1:-}" in
                            # last two-step on the idea-to-working path). Empty text is a usage
                            # error, not a silent no-op.
                            if [[ $# -eq 0 || -z "$1" ]]; then
-                               echo "usage: romp new [-t|--codex] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] <name>" >&2; exit 2
+                               echo "usage: romp new [-t|--codex] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] [--env NAME=VALUE] [--no-env] <name>" >&2; exit 2
                            fi
                            msg_arg="$1"; shift ;;
                 --tag)     shift
@@ -1730,34 +1773,62 @@ case "${1:-}" in
                            # as the user's typed words. Rides POST /send's "tag" field — the
                            # kernel validates and appends the render-hint marker itself.
                            if [[ $# -eq 0 || -z "$1" || "$1" == -* ]]; then
-                               echo "usage: romp new [-t|--codex] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] <name>" >&2; exit 2
+                               echo "usage: romp new [-t|--codex] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] [--env NAME=VALUE] [--no-env] <name>" >&2; exit 2
                            fi
                            tag_arg="$1"; shift ;;
                 --model)   shift
                            # per-spawn model, riding POST /new (the user 2026-08-14: the nightly
                            # optimizer must always run fable, and a headless script has no WS).
-                           # FULL id as the picker sends it (claude-fable-5) — the alias table
-                           # stops at opus/sonnet/haiku and quietly resolved "fable" to Opus 5.
+                           # VERBATIM: a family alias (fable — the CLI resolves it live, so it
+                           # follows the family's newest) or a full id (claude-fable-5, a pin). A
+                           # note here once said the CLI resolved "fable" to Opus 5 and so required
+                           # full ids; that is not reproducible on any installed CLI.
                            if [[ $# -eq 0 || -z "$1" || "$1" == -* ]]; then
-                               echo "usage: romp new [-t|--codex] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] <name>" >&2; exit 2
+                               echo "usage: romp new [-t|--codex] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] [--env NAME=VALUE] [--no-env] <name>" >&2; exit 2
                            fi
                            model_arg="$1"; shift ;;
                 --effort)  shift
                            # per-spawn effort (e.g. high, ultracode) — ultracode is per-session
                            # by design, never a machine default, so /new is its sanctioned door.
                            if [[ $# -eq 0 || -z "$1" || "$1" == -* ]]; then
-                               echo "usage: romp new [-t|--codex] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] <name>" >&2; exit 2
+                               echo "usage: romp new [-t|--codex] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] [--env NAME=VALUE] [--no-env] <name>" >&2; exit 2
                            fi
                            effort_arg="$1"; shift ;;
+                --env)     shift
+                           # per-session env var, repeatable — rides POST /new into the kernel's
+                           # per-sid flag-settings payload, so two sessions in the SAME directory
+                           # can run with different environments (the user 2026-08-17; before this,
+                           # env came only from directory settings, which hit every session there).
+                           # NAME=VALUE, split on the FIRST '=' (values may carry '='); an empty
+                           # VALUE is meaningful (explicitly setting empty), but a missing '=' or a
+                           # NAME outside [A-Za-z_][A-Za-z0-9_]* is a usage error, never a silent
+                           # skip. Toggles only (FEATURE_FLAG=1, CLAUDE_CODE_*) — real secrets stay
+                           # in service.env / the apiKeyHelper, since this payload is copied into
+                           # per-sid files and the session registry.
+                           if [[ $# -eq 0 || -z "$1" || "$1" == -* ]]; then
+                               echo "usage: romp new [-t] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] [--env NAME=VALUE] [--no-env] <name>" >&2; exit 2
+                           fi
+                           if [[ "$1" != *=* || ! "${1%%=*}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+                               echo "romp new: --env expects NAME=VALUE with NAME matching [A-Za-z_][A-Za-z0-9_]* (got: $1)" >&2; exit 2
+                           fi
+                           env_args+=("$1"); shift ;;
+                --no-env)  shift
+                           # the explicit EMPTY declaration: set_env is replace-not-merge (a re-run
+                           # declares the full env the session should have), and this is that
+                           # contract's limiting case — without it a debugging var set at spawn
+                           # could never be removed from a running session (only overwritten, which
+                           # presence-checked consumers still see). Sends "env": {}; any --env
+                           # entries alongside simply fill the declaration.
+                           no_env=true ;;
                 -*)        echo "romp new: unknown option: $1" >&2; exit 2 ;;
                 *)         if [[ -n "$session_arg" ]]; then
-                               echo "usage: romp new [-t|--codex] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] <name>" >&2; exit 2
+                               echo "usage: romp new [-t|--codex] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] [--env NAME=VALUE] [--no-env] <name>" >&2; exit 2
                            fi
                            session_arg="$1"; shift ;;
             esac
         done
         if [[ -z "$session_arg" ]]; then
-            echo "usage: romp new [-t|--codex] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] <name>" >&2; exit 2
+            echo "usage: romp new [-t|--codex] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] [--env NAME=VALUE] [--no-env] <name>" >&2; exit 2
         fi
         if $use_tmux && $use_codex; then
             echo "romp new: --codex and -t are different session kinds — pick one" >&2; exit 2
@@ -1790,10 +1861,11 @@ case "${1:-}" in
             # prompt is the SDK path's job. Refuse loudly rather than dropping the text.
             echo "romp new: -m needs the default (SDK) session — with -t you type into the terminal yourself" >&2; exit 2
         fi
-        if [[ -n "$model_arg$effort_arg" ]] && $use_tmux; then
-            # per-spawn model/effort ride the kernel's /new (SDK); a terminal session picks them
-            # inside Claude itself. Refuse loudly rather than dropping the flags (no silent divergence).
-            echo "romp new: --model/--effort need the default (SDK) session — with -t, pick them inside Claude itself" >&2; exit 2
+        if [[ -n "$model_arg$effort_arg" || ${#env_args[@]} -gt 0 ]] || $no_env && $use_tmux; then
+            # per-spawn model/effort/env ride the kernel's /new (SDK); a terminal session picks
+            # model/effort inside Claude itself and takes env from the tmux server's environment.
+            # Refuse loudly rather than dropping the flags (no silent divergence).
+            echo "romp new: --model/--effort/--env need the default (SDK) session — with -t, pick model/effort inside Claude itself (env comes from the tmux environment)" >&2; exit 2
         fi
         ;;
     resume|--resume)
@@ -1874,8 +1946,19 @@ if [[ -n "$session_arg" ]] && ! $use_tmux && ! $resume; then
     fi
     # $_be — the effective backend — was resolved at parse time (the `new` case), where the
     # model/effort guards needed it; an explicit --codex already won there.
-    _payload="$(python3 -c 'import json,sys; d={"name": sys.argv[1], "dir": sys.argv[2], "backend": sys.argv[3]}; sys.argv[4] and d.update(model=sys.argv[4]); sys.argv[5] and d.update(effort=sys.argv[5]); print(json.dumps(d))' "$session_arg" "$_dir" "$_be" "$model_arg" "$effort_arg")"
-    _resp="$(_romp_token_cfg | curl -sf -m 15 --config - -X POST "http://127.0.0.1:$_kport/new" \
+    # env pairs ride as trailing argv (argv[6:]) — the builder splits each on the FIRST '=' only, so
+    # values carrying '=' survive; a repeated NAME keeps the LAST value, like re-exporting in a shell.
+    # argv[5] is the --no-env flag: it sends the EXPLICIT empty declaration ("env": {}) — absent still
+    # means "don't touch", so a plain `romp new` never carries an env key at all.
+    _noenv=""; if $no_env; then _noenv=1; fi
+    _payload="$(python3 -c 'import json,sys; d={"name": sys.argv[1], "dir": sys.argv[2], "backend": sys.argv[3]}; sys.argv[4] and d.update(model=sys.argv[4]); sys.argv[5] and d.update(effort=sys.argv[5]); env=dict(kv.split("=",1) for kv in sys.argv[7:]); (env or sys.argv[6]) and d.update(env=env); print(json.dumps(d))' "$session_arg" "$_dir" "$_be" "$model_arg" "$effort_arg" "$_noenv" ${env_args[@]+"${env_args[@]}"})"
+    # No -f here: the kernel answers a bad /new payload with a 400 whose JSON body NAMES the
+    # problem (reserved env names, bad session names — every validation refusal), and -f discards
+    # exactly that body (exit 22), masking it as the connection-failure message below. Without -f
+    # curl still exits nonzero on a real connection failure, so the || branch keeps meaning
+    # "not reachable", and a 4xx body falls through to the same ok-check + refusal print the
+    # kernel's 200 ok:false replies take.
+    _resp="$(_romp_token_cfg | curl -s -m 15 --config - -X POST "http://127.0.0.1:$_kport/new" \
                   -H 'Content-Type: application/json' -d "$_payload")" \
         || { echo "romp new: kernel not reachable on :$_kport (is romp running?). \`romp new -t $session_arg\` starts a terminal session without it." >&2; exit 1; }
     if [[ "$_resp" == *'"ok": true'* || "$_resp" == *'"ok":true'* ]]; then
@@ -1890,16 +1973,22 @@ if [[ -n "$session_arg" ]] && ! $use_tmux && ! $resume; then
             echo "romp new: started \"$session_arg\" ($_kind session, working in $_dir)"
             echo "romp new: watch it on the dashboard: romp"
         fi
-        # --model/--effort: report what the kernel APPLIED — it echoes them back (the same park-aware
-        # setters as the dashboard pickers, re-asserted even on an already-running session). An ack
-        # WITHOUT the echo means an older kernel dropped the ask — say so loudly instead of letting
-        # this machine and the session quietly diverge.
-        if [[ -n "$model_arg$effort_arg" ]]; then
-            _applied="$(python3 -c 'import json,sys; r=json.loads(sys.argv[1]); print(", ".join("%s %s" % (k, r[k]) for k in ("model","effort") if r.get(k)))' "$_resp" 2>/dev/null || true)"
-            if [[ -n "$_applied" ]]; then
-                echo "romp new: applied $_applied"
-            else
-                echo "romp new: WARNING — the kernel did not acknowledge --model/--effort (older kernel?); set them from the dashboard" >&2
+        # --model/--effort/--env: report what the kernel APPLIED — it echoes them back (the same
+        # park-aware setters as the dashboard pickers, re-asserted even on an already-running
+        # session; env is born into the spawn and re-asserted through set_env). An ack missing an
+        # asked key's echo means an older kernel dropped THAT ask — say so loudly instead of letting
+        # this machine and the session quietly diverge. Per-asked-key, not all-or-nothing: a kernel
+        # can echo model/effort while dropping env (the self-hosting window between merging this
+        # code and `romp refresh`), and the aggregate check read that partial ack as full success.
+        # An env echo of {} is the clear-all ack ("env cleared"), so the dropped check keys on the
+        # echo's PRESENCE (is None), never its truthiness.
+        if [[ -n "$model_arg$effort_arg$_noenv" || ${#env_args[@]} -gt 0 ]]; then
+            _applied="$(python3 -c 'import json,sys; r=json.loads(sys.argv[1]); parts=["%s %s" % (k, r[k]) for k in ("model","effort") if r.get(k)]; e=r.get("env"); e is None or parts.append("env " + (",".join("%s=%s" % kv for kv in sorted(e.items())) or "cleared")); print(", ".join(parts))' "$_resp" 2>/dev/null || true)"
+            [[ -n "$_applied" ]] && echo "romp new: applied $_applied"
+            _envask="${env_args[*]-}$_noenv"
+            _dropped="$(python3 -c 'import json,sys; r=json.loads(sys.argv[1]); print("/".join("--"+k for k,a in (("model",sys.argv[2]),("effort",sys.argv[3]),("env",sys.argv[4])) if a and r.get(k) is None))' "$_resp" "$model_arg" "$effort_arg" "$_envask" 2>/dev/null || echo "--model/--effort/--env")"
+            if [[ -n "$_dropped" ]]; then
+                echo "romp new: WARNING — the kernel did not acknowledge $_dropped (older kernel?); model/effort can be set from the dashboard" >&2
             fi
         fi
         # -m: deliver the first prompt through the same kernel route `romp send` uses, so one

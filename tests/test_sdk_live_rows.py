@@ -104,9 +104,22 @@ class ListingCompleteness(unittest.TestCase):
             rows = {r["sid"] for r in sb.list_regs(self.be.state_dir)}
         finally:
             sb.os.scandir = saved
-            sb._REG_SERVE_WARNED.discard("\x00scan")
+            for k in [k for k in sb._REG_SERVE_WARNED if str(k).startswith("\x00scan")]:
+                sb._REG_SERVE_WARNED.discard(k)
         self.assertIn(self.SID, rows, "a transient enumeration failure must not blank the listing")
         self.assertIn(self.SID, {r["sid"] for r in sb.list_regs(self.be.state_dir)}, "healed scan is live")
+
+    def test_a_missing_dir_is_empty_truth_never_another_roots_rows(self):
+        # scandir RAISES FileNotFoundError on a missing sdk/ dir — it does not yield [] — so the
+        # transient-fault arm above misread "not created yet" as a failed scan and served the
+        # module cache's rows: a process holding backends over SEVERAL state roots (this suite)
+        # listed one root's sessions under another. A missing dir took its regs with it: the
+        # honest answer is [], and the last-good contract is untouched for real faults.
+        warm = {r["sid"] for r in sb.list_regs(self.be.state_dir)}
+        self.assertIn(self.SID, warm, "cache warmed from this root")
+        fresh = tempfile.mkdtemp()                # a state root whose sdk/ dir does not exist yet
+        self.assertEqual(sb.list_regs(fresh), [],
+                         "a never-written root lists empty — never another root's cached rows")
 
     def test_a_healed_stat_blip_unlatches_the_incident_log(self):
         # review find 2026-09-01: the once-per-incident latch only cleared on the re-READ path, but
@@ -159,6 +172,49 @@ class ListingCompleteness(unittest.TestCase):
         finally:
             stop.set()
             t.join()
+
+
+class FaultServeRootScope(unittest.TestCase):
+    """The whole-listing fault serve is ROOT-SCOPED: _REG_CACHE is a module global keyed by
+    absolute reg path and shared by every backend in the process, so the OSError arm's 'serve every
+    last good row' handed a PermissionError on ONE root the cached rows of every OTHER root — the
+    same cross-root session resurrection the missing-dir arm closed, still open for every
+    non-FileNotFoundError enumeration fault (PermissionError, EMFILE, transient I/O). The last-good
+    purpose is untouched: a fault on this root still serves THIS root's cached rows. Synthetic;
+    hermetic roots."""
+
+    SID_A = "aaaaaaaa-2222-3333-4444-555555555555"
+    SID_B = "bbbbbbbb-2222-3333-4444-555555555555"
+
+    def setUp(self):
+        self.root_a, self.root_b = tempfile.mkdtemp(), tempfile.mkdtemp()
+        sb.write_reg(self.root_a, self.SID_A, {"sid": self.SID_A, "name": "web", "alive": True})
+        sb.write_reg(self.root_b, self.SID_B, {"sid": self.SID_B, "name": "api", "alive": True})
+
+    def tearDown(self):
+        for k in [k for k in sb._REG_SERVE_WARNED if str(k).startswith("\x00scan")]:
+            sb._REG_SERVE_WARNED.discard(k)
+
+    def test_a_fault_on_one_root_serves_only_that_roots_rows(self):
+        self.assertIn(self.SID_A, {r["sid"] for r in sb.list_regs(self.root_a)}, "cache warm: A")
+        self.assertIn(self.SID_B, {r["sid"] for r in sb.list_regs(self.root_b)}, "cache warm: B")
+        saved = sb.os.scandir
+        sdk_a = os.path.join(self.root_a, "sdk")
+
+        def faulty(p):
+            if str(p) == sdk_a:
+                raise PermissionError("mode bits blinked")   # any non-FileNotFoundError fault
+            return saved(p)
+
+        sb.os.scandir = faulty
+        try:
+            rows = {r["sid"] for r in sb.list_regs(self.root_a)}
+        finally:
+            sb.os.scandir = saved
+        self.assertIn(self.SID_A, rows, "this root's last good rows still serve through the fault")
+        self.assertNotIn(self.SID_B, rows, "another root's cached rows never resurrect here")
+        self.assertEqual({r["sid"] for r in sb.list_regs(self.root_a)}, {self.SID_A},
+                         "the healed scan is the fresh truth again")
 
 
 if __name__ == "__main__":

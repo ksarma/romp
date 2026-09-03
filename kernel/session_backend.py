@@ -16,7 +16,7 @@ A conformance test asserts SdkBackend implements every abstract method, so the d
 Method groups:
   liveness/identity — owns, live_sessions
   control           — send, interrupt, set_model, set_mode, set_effort, set_fast
-  lifecycle         — spawn, resume, connect, kill, rename
+  lifecycle         — spawn, resume, move, connect, kill, rename
   coordination      — working_note, set_working_note, wake   (backend-agnostic; tmux used @romp-working +
                       send-keys, the SDK now gets a store + an enqueue-wake so it has both too)
   chat tail         — pending_queued, live_atoms, prune_live
@@ -163,6 +163,17 @@ class SessionBackend(ABC):
     @abstractmethod
     def resume(self, name: str, sid: str, cwd: str | None = None) -> bool:
         """Revive a DEAD session by sid (resumes its conversation)."""
+
+    def move(self, sid: str, cwd: str) -> str:
+        """Move a session's working directory to `cwd` — its conversation, transcript and identity
+        follow it (the user 2026-09-01, who wanted a session to follow a subproject promoted to its own
+        repo). "" on success; "busy" when a turn is in flight (the kernel parks the op and retries at
+        turn end); any other string is the reason it did not happen, shown to the user verbatim. SDK-only
+        control (the CLI's `set_cwd` control request — see SdkBackend.move): a backend with no relocation
+        primitive romp can drive inherits this refusal, worded for no backend in particular, so a new
+        backend never reads as movable by omission (TmuxBackend.move spells out the terminal case)."""
+        return ("this session's backend has no way to move a running session — "
+                "start a new session in that folder instead")
 
     @abstractmethod
     def kill(self, sid: str) -> bool: ...
