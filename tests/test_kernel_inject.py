@@ -4,6 +4,8 @@ pastes a message, and CLEARS the prompt Claude Code restores on interrupt — so
 longer concatenate a recalled prompt with the new message. Self-contained: drives the tmux helpers with a
 fake subprocess so it doesn't share test_kernel.py's setUp.
 """
+import contextlib
+import io
 import os
 import unittest
 from unittest import mock
@@ -124,6 +126,28 @@ class Inject(unittest.TestCase):
         km._tmux_send("", "hello", _async=False)
         km._tmux_send("sess", "", _async=False)
         self.assertEqual(self.calls, [])
+
+    def test_inject_aborts_when_tmux_answers_set_buffer_nonzero(self):
+        # a tmux server that died AFTER the clear: set-buffer exits 1 and reaches no pane. The real
+        # TmuxBackend reads that exit code (argv-level, through the subprocess stub) and the send stops
+        # there — no paste onto a buffer that was never staged, no Enter into an empty box, stderr names it.
+        self.box_lines = []
+
+        def rec(args, **kw):
+            self.calls.append(list(args))
+            if args[1:2] == ["set-buffer"]:
+                return _Res("", returncode=1)
+            if args[:2] == ["tmux", "capture-pane"]:
+                return _Res(_pane(self.box_lines))
+            return _Res("")
+        err = io.StringIO()
+        with mock.patch.object(km.subprocess, "run", side_effect=rec), contextlib.redirect_stderr(err):
+            km._tmux_send("sess", "hello", _async=False)
+        cmds = self._cmds()
+        self.assertTrue(any(c[:1] == ["set-buffer"] for c in cmds), "set-buffer was attempted")
+        self.assertEqual([c for c in cmds if c[:1] == ["paste-buffer"]], [], "nothing is pasted")
+        self.assertNotIn(["send-keys", "-t", "sess", "Enter"], cmds, "and nothing is submitted")
+        self.assertIn("set-buffer failed", err.getvalue())
 
 
 if __name__ == "__main__":

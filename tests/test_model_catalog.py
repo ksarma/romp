@@ -230,6 +230,21 @@ class FetchAndFallback(unittest.TestCase):
         jd.STATE = self._state
         self.td.cleanup()
 
+    def _clients(self):
+        """Fake dashboard clients on the kernel's client list — one per app that hosts a picker — so the
+        models frame's fan-out can be asserted (the test_model_versions idiom)."""
+        got = []
+        fakes = [{"app": app, "wid": "w-" + app, "alive": True,
+                  "send": (lambda s, a=app: got.append((a, json.loads(s))))} for app in ("chat", "timeline", "feed")]
+        with km._clients_lock:
+            km._clients.extend(fakes)
+
+        def drop():
+            with km._clients_lock:
+                km._clients[:] = [c for c in km._clients if c not in fakes]
+        self.addCleanup(drop)
+        return got
+
     def _refresh(self, reason="test"):
         err = io.StringIO()
         with redirect_stderr(err):
@@ -286,6 +301,25 @@ class FetchAndFallback(unittest.TestCase):
         self.assertIn("no API credential", km._catalog_status["lastError"])
         self.assertIn("no API credential the kernel can use", log)
         self.assertEqual(km.MODEL_VERSIONS["fable"][0]["value"], "claude-fable-5-1", "seed still serves")
+
+    def test_a_fetch_that_adds_ids_tells_every_open_picker_to_re_read_models(self):
+        # the refresh used to call _push_soon() here, its comment claiming the pickers re-read /models
+        # on the next frame — but nothing re-reads the choice lists after page load, so an open
+        # dashboard kept the page-load list until a reload. The event the pickers DO act on is the
+        # models frame (chat/comment loadModelChoices, the timeline's refreshModels, the gear's
+        # adoptChoices/paintChoices): the fetch that grows the list emits it, with the rev the payload carries.
+        got = self._clients()
+        rev0 = km._models_rev[0]
+        started, _ = self._refresh("boot")
+        self.assertTrue(started)
+        frames = [(a, f) for a, f in got if f.get("type") == "models"]
+        self.assertEqual(sorted(a for a, _ in frames), ["chat", "feed", "timeline"],
+                         "one frame to every app that hosts a picker")
+        self.assertTrue(all(f["rev"] > rev0 for _, f in frames), "the frame carries a rev newer than before")
+        self.assertEqual({f["rev"] for _, f in frames}, {km._models_rev[0]}, "the /models payload's counter")
+        got.clear()
+        self._refresh("boot")                    # the same rows again: nothing joined, so nothing rings
+        self.assertEqual([f for _, f in got if f.get("type") == "models"], [], "a fetch that adds nothing is silent")
 
     def test_the_cache_serves_when_the_api_later_dies(self):
         # a dead API never blanks a picker: the previous fetch's rows install at boot from the cache
@@ -357,6 +391,44 @@ class StalenessEvent(unittest.TestCase):
         km._note_model_pick("claude-sonnet-7")          # the choke point every set surface flows through
         self.assertEqual(self.fired[-1], "unknown model id claude-sonnet-7")
 
+    def test_a_reported_id_the_catalog_lacks_fires_the_refresh(self):
+        # a running session's CLI reporting an id the catalog does not list is exactly the staleness
+        # the event names: the id joins the pickers marked `learned` at once AND the catalog is asked
+        # to catch up, once per id — after which the mark drops
+        _reg(jd.STATE, "11111111-2222-3333-4444-555555555501", liveModelId="claude-opus-5-1")
+        learned = km._learned_versions()
+        self.assertEqual([v["value"] for v in learned["opus"]], ["claude-opus-5-1"])
+        self.assertEqual(self.fired, ["unknown model id claude-opus-5-1"])
+        km._learned_versions()
+        self.assertEqual(len(self.fired), 1, "once per id per kernel life — every /models read re-derives the list")
+
+    def test_a_sighting_during_an_inflight_refresh_is_not_spent(self):
+        # the refresh is single-flight: an id first sighted WHILE one is inflight (the boot fetch —
+        # exactly when a running session's CLI first reports a new release) gets no refresh started
+        # for it. Its one refresh per kernel life must not be spent on that no-op: if the inflight
+        # fetch lands without the id (a failed fetch, a key that cannot see it), the next sighting is
+        # the id's own refresh. The REAL gate first, then the landing.
+        km._refresh_model_catalog = self._orig
+        os.environ.pop("ROMP_MODEL_CATALOG", None)
+        km._catalog_status["inflight"] = True
+        try:
+            self.assertFalse(km._note_unknown_model("claude-opus-9-9"), "inflight → nothing started")
+        finally:
+            km._catalog_status["inflight"] = False
+            os.environ["ROMP_MODEL_CATALOG"] = "off"
+        self.assertNotIn("claude-opus-9-9", km._catalog_asked, "nothing started, so nothing spent")
+        km._refresh_model_catalog = lambda reason, _async=True: (self.fired.append(reason), True)[1]
+        self.assertTrue(km._note_unknown_model("claude-opus-9-9"), "the next sighting asks for real")
+        self.assertEqual(self.fired, ["unknown model id claude-opus-9-9"])
+        self.assertFalse(km._note_unknown_model("claude-opus-9-9"), "…and THAT was the id's one refresh")
+
+
+def _reg(state, sid, **fields):
+    """A synthetic session reg under STATE/sdk — what _learned_versions reads liveModelId from."""
+    d = state / "sdk"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / (sid + ".json")).write_text(json.dumps({"sid": sid, "name": "web", "cwd": "/tmp", "alive": True, **fields}))
+
 
 class CliBlocks(unittest.TestCase):
     """A version the installed CLI refuses by minimum version says so on its /models row (T222)."""
@@ -406,7 +478,10 @@ class CliBlocks(unittest.TestCase):
 
 
 class ModelsRoute(unittest.TestCase):
-    """GET /models serves the MERGED list plus any CLI block — every picker reads this one route."""
+    """GET /models serves the MERGED list plus any CLI block — every picker reads this one route. The
+    catalog owns the version LIST; the alias owns the DEFAULT."""
+
+    SID = "11111111-2222-3333-4444-555555555555"
 
     @classmethod
     def setUpClass(cls):
@@ -446,7 +521,55 @@ class ModelsRoute(unittest.TestCase):
         self.assertEqual(opus[0]["cliNeeds"], "2.1.251")
         self.assertIn("needs CLI ≥ 2.1.251", opus[0]["label"])
         self.assertEqual(rows["fable"]["versions"][0], {"value": "claude-fable-5-1", "label": "Fable 5.1"})
-        self.assertEqual(rows["fable"]["default"], "claude-fable-5-1", "no pin → family-newest is 5.1")
+        self.assertEqual(rows["fable"]["default"], "fable",
+                         "no pin → the family ALIAS, which the CLI resolves to its newest live — never the list's head")
+
+    def test_a_family_default_is_the_alias_even_when_the_catalog_knows_a_newer_head(self):
+        # the catalog may lead a family with an id newer than the seed knew, and a bare family click
+        # STILL sends the alias — a pinned head was the bug (every picker-set session stayed on
+        # claude-fable-5 while `fable` moved on)
+        km._apply_model_catalog(km.merge_model_catalog(km._MODEL_SEED, FAKE_ROWS), "api")
+        rows = {m["value"]: m for m in self._models()["models"]}
+        self.assertEqual(rows["opus"]["versions"][0]["value"], "claude-opus-9-9", "the catalog's head leads the list")
+        for fam in ("fable", "opus", "sonnet", "haiku"):
+            self.assertEqual(rows[fam]["default"], fam, "%s: no pick → the alias" % fam)
+
+    def test_versions_are_the_catalog_union_the_learned_ids_deduped_by_id(self):
+        km._apply_model_catalog(km.merge_model_catalog(km._MODEL_SEED, FAKE_ROWS), "api")
+        _reg(jd.STATE, "11111111-2222-3333-4444-555555555501", liveModelId="claude-opus-9-9")   # the catalog knows it
+        _reg(jd.STATE, "11111111-2222-3333-4444-555555555502", liveModelId="claude-opus-5-1")   # the catalog lacks it
+        vs = {m["value"]: m for m in self._models()["models"]}["opus"]["versions"]
+        self.assertEqual([v["value"] for v in vs],
+                         ["claude-opus-9-9", "claude-opus-5-1", "claude-opus-5", "claude-opus-4-8",
+                          "claude-opus-4-7", "claude-opus-4-6", "claude-opus-4-5"],
+                         "one list, newest first, the learned id slotted by its own version tuple")
+        self.assertFalse(vs[0].get("learned"), "a reported id the catalog lists is the catalog's row — not doubled, not marked")
+        self.assertTrue(vs[1].get("learned"), "a reported id the catalog lacks joins, marked")
+        # the catalog catches up (the refresh the sighting fired lands): the mark drops, still one row
+        km._apply_model_catalog(km.merge_model_catalog(
+            km._MODEL_SEED, FAKE_ROWS + [{"id": "claude-opus-5-1", "display_name": "Claude Opus 5.1"}]), "api")
+        vs = {m["value"]: m for m in self._models()["models"]}["opus"]["versions"]
+        rows51 = [v for v in vs if v["value"] == "claude-opus-5-1"]
+        self.assertEqual(len(rows51), 1)
+        self.assertFalse(rows51[0].get("learned"), "the catalog owns the row now")
+        self.assertEqual(rows51[0]["label"], "Opus 5.1")
+
+    def test_a_catalog_id_is_pickable_as_a_pin_and_a_refusal_forgets_it(self):
+        # an id only the catalog knows (no seed row, no session reporting it) is a version the pick
+        # memory may record — read at call time, so it counts from the moment the catalog learned it —
+        # and the CLI refusing it forgets the pin like any other (the on_model_refused hook)
+        km._apply_model_catalog(km.merge_model_catalog(km._MODEL_SEED, FAKE_ROWS), "api")
+        self.assertTrue(km._vouched_model("claude-opus-9-9"), "the composer's /model vouches for a catalog id")
+        self.assertEqual(km._version_family("claude-opus-9-9"), "opus")
+        km._note_model_pick("claude-opus-9-9")
+        self.assertEqual(km._model_picks(), {"opus": "claude-opus-9-9"})
+        rows = {m["value"]: m for m in self._models()["models"]}
+        self.assertEqual(rows["opus"]["default"], "claude-opus-9-9", "the family row sends the pin")
+        self.assertEqual(rows["sonnet"]["default"], "sonnet", "other families: still the alias")
+        km._model_pick_refused(self.SID, "claude-opus-9-9")       # the backend's hook, on the CLI's error
+        rows = {m["value"]: m for m in self._models()["models"]}
+        self.assertEqual(rows["opus"]["default"], "opus", "forgotten → the alias again")
+        self.assertEqual(km._model_picks(), {})
 
 
 def _free_port():

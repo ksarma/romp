@@ -8,7 +8,10 @@ and a landed-but-unpruned echo never re-delivers (the scan is the duplicate guar
 import json
 import os
 import tempfile
+import threading
 import unittest
+from pathlib import Path
+from unittest import mock
 from importlib.machinery import SourceFileLoader
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -105,6 +108,74 @@ class Redelivery(unittest.TestCase):
         self.be._mark_dropped_echoes(SID, ["still queued text"])
         self.assertEqual(self._reg_queue(), ["still queued text", "lost text"],
                          "the surviving queue keeps its place; the re-delivery lands behind it")
+
+
+class BootDeliversARefedSend(unittest.TestCase):
+    """The boot half, end to end. SdkBackend.__init__ lists the registries ONCE, runs the echo
+    reseed — whose re-delivery arm above puts a lost human send back into a registry's queue ON
+    DISK — and then hands the SAME listing to _boot_reconcile. A row listed before that write
+    still shows the old queue, so a session whose only reason to resume was the re-queued text
+    read an empty queue in the sweep and stayed dormant: re-queued, but delivered only at the next
+    spawn or boot. The sweep must decide from the registry as it is on disk. SYNTHETIC; no SDK."""
+
+    def setUp(self):
+        self.td = tempfile.mkdtemp()
+        self.state = Path(self.td)
+        os.environ["CLAUDE_CONFIG_DIR"] = os.path.join(self.td, "claude")
+        self.cwd = os.path.join(self.td, "proj")
+        os.makedirs(self.cwd, exist_ok=True)
+        tp = sb.transcript_path(self.cwd, SID)
+        os.makedirs(os.path.dirname(tp), exist_ok=True)
+        open(tp, "w").close()                          # an empty transcript: the text never landed
+
+    def tearDown(self):
+        os.environ.pop("CLAUDE_CONFIG_DIR", None)
+
+    def _boot(self, echoes, queue=(), **reg_extra):
+        """Construct the backend the way the kernel does (reconcile=True) over one alive registry
+        whose turn FINISHED ('waiting' tail — not a cut), and wait for the sweep to end. Returns the
+        sids the sweep resumed. Waits on the sweep's own completion, never on a sleep."""
+        sb.write_reg(self.state, SID, {"sid": SID, "alive": True, "cwd": self.cwd, "lastSid": SID,
+                                       "queue": list(queue), "echoes": echoes, **reg_extra})
+        sb.append_state(self.state, SID, "waiting")
+        ensured, done = [], threading.Event()
+        real = sb.SdkBackend._boot_reconcile
+
+        def swept(be, regs):
+            try:
+                real(be, regs)
+            finally:
+                done.set()
+
+        with mock.patch.object(sb.SdkBackend, "_boot_reconcile", swept), \
+             mock.patch.object(sb.SdkBackend, "_ensure",
+                               lambda be, sid, on_boot_settled=None:
+                               (ensured.append(sid), on_boot_settled and on_boot_settled())[0]), \
+             mock.patch.object(sb.subprocess, "run", return_value=mock.Mock(stdout="")):
+            sb.SdkBackend(self.td, "/bin/true", lambda *a, **k: None, reconcile=True)
+            self.assertTrue(done.wait(10), "the boot sweep ran to its end")
+        return ensured
+
+    def _reg_queue(self):
+        return (sb.read_reg(self.state, SID) or {}).get("queue") or []
+
+    def test_a_re_queued_send_earns_the_resume_the_same_boot(self):
+        ensured = self._boot([{"t": 100, "text": "typed just before the restart", "author": "human"}])
+        self.assertEqual(self._reg_queue(), ["typed just before the restart"],
+                         "the reseed re-queued the lost send (the half that already worked)")
+        self.assertEqual(ensured, [SID], "…and the same boot's sweep resumes the session to deliver it")
+
+    def test_a_dormant_threads_re_queued_reply_earns_the_resume_too(self):
+        # a comment thread is never auto-resumed at boot EXCEPT for a queued reply of the user's own
+        # — and a re-queued reply is exactly that
+        ensured = self._boot([{"t": 100, "text": "a reply the thread never started", "author": "human"}],
+                             threadOf="11111111-2222-3333-4444-000000000000")
+        self.assertEqual(self._reg_queue(), ["a reply the thread never started"])
+        self.assertEqual(ensured, [SID])
+
+    def test_a_finished_session_with_nothing_re_queued_stays_lazy(self):
+        # the resume is keyed on the re-queued text, not on every alive registry
+        self.assertEqual(self._boot([]), [])
 
 
 if __name__ == "__main__":

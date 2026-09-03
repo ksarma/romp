@@ -49,20 +49,23 @@ test("dispatchFrame routes kernel frames to the panel", () => {
     applyBars: (m: any) => calls.push(["applyBars", m.type]),
     setActiveChat: (a: any) => calls.push(["setActiveChat", a]),
     setHover: (m: any) => calls.push(["setHover", m.type]),
+    refreshModels: () => calls.push(["refreshModels"]),   // the kernel's models frame: the pick memory moved
   };
   assert.equal(dispatchFrame(panel, { type: "data", data: { lanes: [] } }), true);
   assert.equal(dispatchFrame(panel, { type: "bars" }), true);
   assert.equal(dispatchFrame(panel, { type: "activeChat", activeChat: "s1" }), true);
   assert.equal(dispatchFrame(panel, { type: "hover", sid: "s1" }), true);
+  assert.equal(dispatchFrame(panel, { type: "models", rev: 3 }), true);
   assert.equal(dispatchFrame(panel, { type: "ka" }), false);
   assert.equal(dispatchFrame(null, { type: "data" }), false);
-  assert.deepEqual(calls.map((c) => c[0]), ["update", "applyBars", "setActiveChat", "setHover"]);
+  assert.deepEqual(calls.map((c) => c[0]), ["update", "applyBars", "setActiveChat", "setHover", "refreshModels"]);
 });
 
 test("dispatchFrame tolerates a panel without the optional methods", () => {
   const panel = { update: () => {} };
   assert.equal(dispatchFrame(panel, { type: "bars" }), false);
   assert.equal(dispatchFrame(panel, { type: "hover" }), false);
+  assert.equal(dispatchFrame(panel, { type: "models" }), false);
 });
 
 test("openExternalMessage unwraps a vscode:// deep link into the kernel deepLink op", () => {

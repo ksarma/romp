@@ -65,12 +65,20 @@ class JudgeSettings(unittest.TestCase):
         ksrc = inspect.getsource(km)
         self.assertIn('if p == "/models":', ksrc)
         # the shared lists, each choice carrying its colormap tint (the user 2026-08-17) — and,
-        # since the version submenus (the user 2026-08-25), each family's versions + default too
-        self.assertIn('{"models": [dict(c, color=_model_color(c["value"], _stops),', ksrc)
+        # since the version submenus (the user 2026-08-25), each family's versions + default too:
+        # the default is the family's remembered pin, else its ALIAS — never the list's head, which
+        # pinned every picker-set session to the head id while the CLI's alias moved on
+        # (the payload leads with `rev`, the pick memory's revision, so a picker can drop a /models
+        # response older than one it applied — the models frame's counter)
+        self.assertIn('{"rev": _rev,', ksrc)
+        self.assertIn('"models": [dict(c, color=_model_color(c["value"], _stops),', ksrc)
+        self.assertIn('default=_picks.get(c["value"]) or c["value"])', ksrc)
         # …each version row stamped with any CLI minimum-version refusal (T222, 2026-09-01: the live
         # catalog can list ids newer than the installed binary, so the row says so before a pick)
+        # …the versions from the CATALOG (the seed table as the Models API fetch grew it, T222) ∪ what
+        # running sessions' CLIs report (_versions_catalog), deduped by id, newest first
         self.assertIn('versions=[_with_cli_block(dict(v), _blocks)', ksrc)
-        self.assertIn('for v in MODEL_VERSIONS.get(c["value"]) or []]', ksrc)
+        self.assertIn('for v in _cat.get(c["value"]) or []],', ksrc)
 
     # ---- per-tier overrides honored + validated ----
     def test_judge_tiers_accept_version_ids(self):

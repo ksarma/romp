@@ -146,7 +146,7 @@ var GEAR_HTML =
   "<div class='rs-row rs-jrow'><b>Distilling model <span class=rs-mixed hidden></span></b><span class=rs-sub>The model for the judges that write the prose you read on cards — distiller, briefer, staller. Follow triage (the default) keeps them on the triage pick; pinning a model here lets the copy you read run richer than the placement judges. Follows to every connected machine's kernel.</span><select id=rs-distillmodel></select></div>" +
   "<div class='rs-row rs-jrow'><b>Distilling effort <span class=rs-mixed hidden></span></b><span class=rs-sub>Thinking effort for the distilling judges. Follow triage (the default) rides the triage effort; Default pins no effort flag. Follows to every connected machine's kernel.</span><select id=rs-distilleffort></select></div>" +
   "<div class='rs-row rs-jrow'><b>Indexing model <span class=rs-mixed hidden></span></b><span class=rs-sub>The model the indexing judges use — captioner + archiver (high-volume, low-stakes summarization). Haiku by default for cost. Follows to every connected machine's kernel.</span><select id=rs-indexmodel></select></div>" +
-  "<div class='rs-row rs-jrow'><b>Indexing effort <span class=rs-mixed hidden></span></b><span class=rs-sub>Thinking effort for the indexing judges. Default = none (indexing runs with thinking disabled as a cost lever; leave Default unless you know you want it). Follows to every connected machine's kernel.</span><select id=rs-indexeffort></select></div>" +
+  "<div class='rs-row rs-jrow'><b>Indexing effort <span class=rs-mixed hidden></span></b><span class=rs-sub>Thinking effort for the indexing judges. Default keeps this high-volume work cheap: effort low on models with adaptive thinking (Fable, Opus 4.6 and later, Sonnet 4.6 and later); Haiku, Sonnet 4.5 and Opus 4.5 have none, so they run with thinking off and no flag. Follows to every connected machine's kernel.</span><select id=rs-indexeffort></select></div>" +
   '<div class=rs-sec>Updates & debug</div>' +
   "<div class='rs-row' style='cursor:default'><span style='flex:1 1 auto'><b>Automatic updates <span class=rs-mixed hidden></span></b>" +
   '<span class=rs-sub>romp watches for new tagged releases (every 6 hours) AND new commits on main (origin polled every few minutes, plus a restart offer when updated code sits on disk unbooted) — one banner covers both, and acting on it converges every attached machine. Check and ask (the default) offers the banner with an Update button; Install automatically converges by itself, restarting at the next quiet moment; Off never checks. Kernel-side setting.</span>' +
@@ -580,11 +580,39 @@ function initGear(post) {
           if (sub) { sub.remove(); sub = null; }
           sub = document.createElement('div');
           sub.setAttribute('style', MSTYLE + 'z-index:1002;');
+          // "Latest" heads the submenu — the session pickers' floating gesture, on the judge tiers
+          // too: the family row sends the remembered pin and the rows below pin, so this is the row
+          // that sends the bare alias, and the tier follows the CLI's newest again
+          var latest = document.createElement('div');
+          latest.setAttribute('style', rowStyle);
+          latest.tabIndex = 0;
+          latest.appendChild(document.createTextNode('Latest'));
+          if (sel.value === fam.value) {
+            var c0 = document.createElement('span'); c0.textContent = '\u2713';
+            c0.setAttribute('style', 'position:absolute;right:6px;top:50%;transform:translateY(-50%);background:var(--check-bg, #1EA1EB);color:#fff;border-radius:50%;width:13px;height:13px;font-size:9px;font-weight:900;display:inline-flex;align-items:center;justify-content:center;line-height:1;');
+            latest.appendChild(c0);
+          }
+          latest.addEventListener('mouseenter', function () { latest.style.background = 'var(--menu-hover, rgba(255,255,255,0.09))'; });
+          latest.addEventListener('mouseleave', function () { latest.style.background = 'transparent'; });
+          latest.addEventListener('click', function (e2) { e2.stopPropagation(); pick(fam.value); });
+          latest.addEventListener('keydown', function (e2) {
+            if (e2.key === 'Enter' || e2.key === ' ') { e2.preventDefault(); e2.stopPropagation(); pick(fam.value); }
+            else if (e2.key === 'ArrowLeft') { e2.preventDefault(); sub.remove(); sub = null; row.focus(); }
+          });
+          sub.appendChild(latest);
           versions.forEach(function (v) {
             var r2 = document.createElement('div');
             r2.setAttribute('style', rowStyle);
             r2.tabIndex = 0;
             r2.appendChild(document.createTextNode(v.label));
+            if (v.learned) {
+              // LOUD, per the fail-loudly rule: a version no catalog list carries — a running session's
+              // CLI reported it (kernel /models `learned`) — says so, as the chat and timeline pickers do
+              var tag = document.createElement('span'); tag.textContent = ' new';
+              tag.setAttribute('style', 'font-size:0.82em;opacity:0.6;margin-left:4px;');
+              r2.appendChild(tag);
+              r2.title = "Reported by a running session's Claude Code; not yet in romp's version list";
+            }
             if (sel.value === v.value) {
               var c2 = document.createElement('span'); c2.textContent = '\u2713';
               c2.setAttribute('style', 'position:absolute;right:6px;top:50%;transform:translateY(-50%);background:var(--check-bg, #1EA1EB);color:#fff;border-radius:50%;width:13px;height:13px;font-size:9px;font-weight:900;display:inline-flex;align-items:center;justify-content:center;line-height:1;');
@@ -779,33 +807,94 @@ function initGear(post) {
   });
   // The model/effort <option>s come from /models — the same single source the
   // chat + timeline pickers use. Cached after the first successful fetch.
-  var choices = null;
-  var choicesP = null;   // the single-flight promise — options are written exactly once per page
+  var choices = null, choicesRev = -1;   // the list, and the highest /models `rev` applied to it
+  // A /models response is applied only if it is not OLDER than one already applied: its `rev` is the
+  // pick memory's revision — the models frame's counter — and the frame's re-read can overlap the first
+  // fill, or two quick frames each other, with the responses landing out of order; without the check the
+  // STALE list won until the next change. A payload without a rev (an older kernel) always applies.
+  // Returns whether `choices` moved.
+  function adoptChoices(d) {
+    if (d && typeof d.rev === 'number') { if (d.rev < choicesRev) return false; choicesRev = d.rev; }
+    choices = d || { models: [], efforts: [] };
+    return true;
+  }
+  // The ONE write path for kernel-backed selects — fill()'s (the user 2026-09-01, whose stored distill
+  // pick displayed as the default) and paintChoices': a value the option list doesn't carry is INJECTED
+  // as a marked option and selected — the row shows the truth (an off-list value, named) rather than
+  // silently falling to its first option or, on a repaint, to NOTHING: per the spec a select assigned a
+  // value none of its options carries deselects every option (value ''), so a repaint that handed the
+  // held value straight back would leave the select blank, and the version menu's label with it,
+  // whenever the value was one fill() had injected or a learned version that has since left the list.
+  // Values are validated at write time by the kernel, so an injection here means THIS page's list is
+  // behind the store — worth seeing, never worth hiding.
+  function setShow(sel, val) {
+    if (!sel) return;
+    if (val && !Array.prototype.some.call(sel.options, function (o) { return o.value === val; })) {
+      var o = document.createElement('option');
+      o.value = val;
+      o.textContent = val + " — not in this kernel's list";
+      sel.appendChild(o);
+    }
+    sel.value = val;
+  }
+  // Write every select's <option>s from the CURRENT list — whichever response won — and give each select
+  // back the value it held, through setShow: plainly when the list still offers it, as a marked off-list
+  // option when it no longer does. Rewriting a select's options resets it to its first option, which is
+  // why a re-read alone could never repaint; and a page-load fill that skipped its paint because the
+  // frame's re-read had applied a newer list first left every later fill() short-circuiting on the cache
+  // — eight empty pickers for the life of the page. The paint keys on the list, not on which fetch
+  // carried it.
+  function paintChoices() {
+    var mo = (choices.models || []).map(function (m) {
+      var vs = (m.versions || []).map(function (v) { return '<option value="' + v.value + '">' + v.label + '</option>'; }).join('');
+      return '<option value="' + m.value + '">' + m.label + '</option>' + vs;   // versions ride as options too — the hidden select stays the value holder for any pick
+    }).join('');
+    var eff = (choices.efforts || []).map(function (m) { return '<option value="' + m.value + '">' + m.label + '</option>'; }).join('');
+    var eo = '<option value="">Default</option>' + eff;
+    function put(sel, html) {
+      if (!sel) return;
+      var held = sel.value;
+      sel.innerHTML = html;
+      if (held) setShow(sel, held);   // a held value the new list lacks stays, marked — never a blank select
+    }
+    put(jm, mo); put(im, mo);
+    put(je, eo); put(ie, eo);
+    // the distilling pair leads with the follow-triage sentinel — its default, so a fresh kernel
+    // shows "Follow triage" rather than a model nobody picked. Its Default (no effort flag) is the
+    // stored sentinel "none", never "" — an empty state file reads back as the default ("follow").
+    put(dm, '<option value="triage">Follow triage</option>' + mo);
+    put(de, '<option value="triage">Follow triage</option><option value="none">Default</option>' + eff);
+    // the comment pair leads with the same-as-the-session sentinel — its default, so a fresh
+    // kernel shows the inherit behavior, not a model nobody picked; "default" = the account default
+    put(cmm, '<option value="session">Same as the session</option><option value="default">Default</option>' + mo);
+    put(cme, '<option value="session">Same as the session</option>' + eff);
+  }
+  // The promise is the memo, not the list: a settings open racing the page-load fetch used to fire a
+  // SECOND /models fetch, and whichever resolved last rewrote every select's options after fill() had
+  // set their values. One live fetch per page; a failed one clears the memo for retry.
+  var choicesP = null;
   function fillChoices() {
     if (choicesP) return choicesP;
     choicesP = fetch(ku('/models'), { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (d) {
-      choices = d || { models: [], efforts: [] };
-      var mo = (choices.models || []).map(function (m) {
-        var vs = (m.versions || []).map(function (v) { return '<option value="' + v.value + '">' + v.label + '</option>'; }).join('');
-        return '<option value="' + m.value + '">' + m.label + '</option>' + vs;   // versions ride as options too — the hidden select stays the value holder for any pick
-      }).join('');
-      var eff = (choices.efforts || []).map(function (m) { return '<option value="' + m.value + '">' + m.label + '</option>'; }).join('');
-      var eo = '<option value="">Default</option>' + eff;
-      if (jm) jm.innerHTML = mo; if (im) im.innerHTML = mo;
-      if (je) je.innerHTML = eo; if (ie) ie.innerHTML = eo;
-      // the distilling pair leads with the follow-triage sentinel — its default, so a fresh kernel
-      // shows "Follow triage" rather than a model nobody picked. Its Default (no effort flag) is the
-      // stored sentinel "none", never "" — an empty state file reads back as the default ("follow").
-      if (dm) dm.innerHTML = '<option value="triage">Follow triage</option>' + mo;
-      if (de) de.innerHTML = '<option value="triage">Follow triage</option><option value="none">Default</option>' + eff;
-      // the comment pair leads with the same-as-the-session sentinel — its default, so a fresh
-      // kernel shows the inherit behavior, not a model nobody picked; "default" = the account default
-      if (cmm) cmm.innerHTML = '<option value="session">Same as the session</option><option value="default">Default</option>' + mo;
-      if (cme) cme.innerHTML = '<option value="session">Same as the session</option>' + eff;
+      adoptChoices(d);   // a frame's re-read may have applied a NEWER list while this one was in flight: paint from whichever won
+      paintChoices();
       return choices;
     }).catch(function () { choicesP = null; return null; });   // retry on the next open, never a second live fetch
     return choicesP;
   }
+  // The kernel's models frame: the pick memory moved — a version pinned, a family un-pinned by Latest, a
+  // refused pin dropped, from any surface or dashboard — or the catalog grew, so the cached list's
+  // `default` (what a family row SENDS, read from `choices` at click time) is stale. Re-read on the
+  // event, like the browseResult listener above; never a poll. The list moving repaints the selects too
+  // (paintChoices keeps their values), so a frame that lands before the page-load fill has painted still
+  // leaves populated pickers. The frame reaches this document because the kernel sends it to the FEED
+  // app too (the gear lives in the feed bundle).
+  window.addEventListener('message', function (e) {
+    var m = e.data;
+    if (!m || m.type !== 'models') return;
+    fetch(ku('/models'), { cache: 'no-store' }).then(function (r) { return r.json(); })
+      .then(function (d) { if (d && Array.isArray(d.models) && adoptChoices(d)) paintChoices(); }).catch(function () {});
+  });
   function lv() { var t = document.querySelector('script[src*="feed.js"]');
     var m = t && t.getAttribute('src').match(/[?&]v=(\d+)/); return m ? +m[1] : 0; }
   function clearAutoNudgeSplit() {
@@ -867,21 +956,8 @@ function initGear(post) {
       mark.hidden = false;
     });
   }
-  // fill()'s ONE write path for kernel-backed selects (the user 2026-09-01, whose stored distill
-  // pick displayed as the default): a stored value the option list doesn't carry is INJECTED as a
-  // marked option and selected — the row shows the truth (an off-list value, named) rather than
-  // silently falling to its first option. Values are validated at write time by the kernel, so an
-  // injection here means THIS page's list is behind the store — worth seeing, never worth hiding.
-  function setShow(sel, val) {
-    if (!sel) return;
-    if (val && !Array.prototype.some.call(sel.options, function (o) { return o.value === val; })) {
-      var o = document.createElement('option');
-      o.value = val;
-      o.textContent = val + " — not in this kernel's list";
-      sel.appendChild(o);
-    }
-    sel.value = val;
-  }
+  // setShow — fill()'s write path for every kernel-backed select below — sits beside paintChoices, which
+  // shares it.
   function fill() { fillChoices().then(function () { return fetch(ku('/version'), { cache: 'no-store' }); }).then(function (r) { return r.json(); }).then(function (v) {
     // ONE /tunnels fetch feeds every cross-machine comparison: the autoNudge box and the select marks.
     // A failed /tunnels leaves the local answers standing, unmarked — same fallback as before.
