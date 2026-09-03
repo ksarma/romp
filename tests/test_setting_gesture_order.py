@@ -128,6 +128,30 @@ class GestureOrderAtTheStore(_Base):
         self.assertEqual(km._set_judge_model("fable", gt=T_NEW + 1), T_NEW + 1, "any newer stamp applies")
         self.assertEqual((km.jd.STATE / "judge-model").read_text(), "fable")
 
+    def test_an_equal_stamp_with_the_same_value_is_a_silent_echo(self):
+        # a judge pick reaches a remote kernel twice with one gt (dashboard broadcast + the origin
+        # kernel's fan-out); the second copy is the gesture's own echo — no stand-down line, no
+        # settingStale notice — while an equal stamp carrying a DIFFERENT value still stands down loudly
+        km._set_judge_model("opus", gt=T_NEW)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertIsNone(km._set_judge_model("opus", gt=T_NEW), "nothing to apply")
+        self.assertEqual(err.getvalue(), "", "the echo is silent")
+        self.assertIsNone(km._pop_stale_notice(), "…and leaves no settingStale notice for the socket")
+        self.assertEqual((km.jd.STATE / "judge-model").read_text(), "opus")
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertIsNone(km._set_judge_model("fable", gt=T_NEW))
+        self.assertIn("stale gesture stood down", err.getvalue(), "a differing equal-stamp gesture is still loud")
+        self.assertIsNotNone(km._pop_stale_notice())
+        # the same rule on a boolean setter
+        self.assertEqual(km._set_auto_nudge(False, gt=T_NEW), T_NEW)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertIsNone(km._set_auto_nudge(False, gt=T_NEW))
+        self.assertEqual(err.getvalue(), "")
+        self.assertIsNone(km._pop_stale_notice())
+
     def test_auto_nudge_and_file_editing_order_the_same_way(self):
         self.assertEqual(km._set_auto_nudge(False, gt=T_NEW), T_NEW)
         with contextlib.redirect_stderr(io.StringIO()):

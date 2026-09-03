@@ -3242,6 +3242,8 @@ def _gt_int(v):
 
 def _setting_stale(name, gt, applied_gt):
     """True when gesture `gt` must stand down against the store's last-applied stamp — loudly.
+    (The one QUIET case — an equal stamp carrying the same value, the gesture's own echo — is
+    decided by the callers through _gesture_echo BEFORE this check, so it never reaches here.)
     A stand-down is also recorded on THIS thread (_pop_stale_notice) so the WS branch that
     delivered the gesture can answer its own socket with a settingStale frame: the stderr line
     alone left the refusing kernel's verdict invisible to the dashboard that made the gesture
@@ -3255,6 +3257,17 @@ def _setting_stale(name, gt, applied_gt):
     sys.stderr.write("setting %s: stale gesture stood down (gesture %d <= applied %d) — "
                      "no apply, no propagation\n" % (name, gt, applied_gt))
     return True
+
+
+def _gesture_echo(gt, applied_gt, same_value):
+    """The gesture's own ECHO: an equal stamp carrying the value the store already holds. A judge
+    pick reaches every remote kernel twice with one gt — the dashboard's broadcast and the origin
+    kernel's fan-out — and whichever copy lands second is not stale news, it is the same news
+    again: nothing to apply, no settingStale toast for the user's own pick, no stand-down line on
+    every ordinary pick in a mesh (PR #879 review). Callers return None on True, BEFORE the
+    _setting_stale check, which keeps its loud verdict for an equal stamp carrying a DIFFERENT
+    value (determinism under identical clocks, never a coin flip)."""
+    return gt is not None and gt == applied_gt and bool(same_value)
 
 
 _stale_seen = threading.local()   # per-thread: the last _setting_stale stand-down (the WS reply seam)
@@ -3413,6 +3426,8 @@ def _set_auto_nudge(enabled, gt=None):
     dashboard WebSocket down with zero log output."""
     with _NUDGE_LOCK:
         d = dict(_auto_nudge_data())
+        if _gesture_echo(gt, _gt_int(d.get("gt")), bool(d.get("enabled")) == bool(enabled)):
+            return None                                # the same pick again: quietly nothing to do
         if _setting_stale("auto-nudge", gt, _gt_int(d.get("gt"))):
             return None
         d["enabled"] = bool(enabled)
@@ -3442,6 +3457,8 @@ def _set_compact_suggest(enabled, gt=None):
     authority from one (the gesture-time ordering block above _gesture_ms)."""
     with _NUDGE_LOCK:
         d = dict(_auto_nudge_data())
+        if _gesture_echo(gt, _gt_int(d.get("compactSuggestGt")), bool(d.get("compactSuggestEnabled")) == bool(enabled)):
+            return None
         if _setting_stale("compact-suggest", gt, _gt_int(d.get("compactSuggestGt"))):
             return None
         d["compactSuggestEnabled"] = bool(enabled)
@@ -3483,7 +3500,10 @@ def _set_file_editing(enabled, gt=None):
             prev = json.loads((jd.STATE / "file-editing.json").read_text())
         except Exception:
             prev = None
-        if _setting_stale("file-editing", gt, _gt_int(prev.get("gt")) if isinstance(prev, dict) else 0):
+        prev_gt = _gt_int(prev.get("gt")) if isinstance(prev, dict) else 0
+        if _gesture_echo(gt, prev_gt, isinstance(prev, dict) and bool(prev.get("enabled")) == bool(enabled)):
+            return None
+        if _setting_stale("file-editing", gt, prev_gt):
             return None
         stamp = gt if gt is not None else int(time.time() * 1000)
         try:
@@ -3545,6 +3565,8 @@ def _set_update_mode(mode, gt=None):
     if mode not in _UPDATE_MODES:
         return None
     with _SETTINGS_LOCK:
+        if _gesture_echo(gt, _update_mode_gt(), _update_mode() == mode):
+            return None
         if _setting_stale("update-mode", gt, _update_mode_gt()):
             return None
         stamp = gt if gt is not None else int(time.time() * 1000)
@@ -25682,6 +25704,8 @@ def _set_judge_state(fname, value, allowed, allow_empty=False, gt=None):
     if not (value in allowed or (allow_empty and value == "")):
         return None
     with _SETTINGS_LOCK:
+        if _gesture_echo(gt, _judge_state_gt(fname), jd._state_str(fname, "") == value):
+            return None
         if _setting_stale(fname, gt, _judge_state_gt(fname)):
             return None
         stamp = gt if gt is not None else int(time.time() * 1000)
