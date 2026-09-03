@@ -697,6 +697,24 @@ export class FederationManager {
     if (m && m.type === "session" && typeof m.id === "string") {
       (this.perHostSids[host] ||= new Set()).add(m.id);
     }
+    // A kernel's `closed` frame is ITS OWN report that the session is gone — the one other writer allowed
+    // to touch the per-host store (T233, the user 2026-09-03). The 2026-08-02 rule below forbids
+    // ARRANGEMENT writes on a re-emit (a stale pane pruning another pane's drag); a `closed` frame is new
+    // information about EXISTENCE from the owning host, exactly the evidence class absorbHostReport acts
+    // on. Without this, every synthetic re-emit between the kill and that host's next tabOrder push (a
+    // view-order storage event, a host attach or drop) re-served the stored slice WITH the dead id, and
+    // past the chat's 15s close backstop that read as a refused close — the false "Couldn't close X"
+    // toast. Fold it out of the slices, hand the pane its teardown frame, then re-emit a merged order
+    // without it: that re-emit CONFIRMS the close (absence) but, flagged synthetic, can never toast.
+    if (m && m.type === "closed" && typeof m.id === "string") {
+      const gone = m.id;
+      if (this.perHostOrder[host]) this.perHostOrder[host] = this.perHostOrder[host].filter((x) => x !== gone);
+      if (this.perHostTabs[host]) this.perHostTabs[host] = this.perHostTabs[host].filter((t: any) => !(t && t.id === gone));
+      this.perHostSids[host]?.delete(gone);
+      window.dispatchEvent(new MessageEvent("message", { data: m }));
+      this.emitMergedOrder();
+      return;
+    }
     if (m && m.type === "tabOrder") {
       const prevOrder = this.perHostOrder[host] || [];
       const prevTabs = this.perHostTabs[host] || [];
@@ -709,7 +727,7 @@ export class FederationManager {
       if (host === LOCAL && m.views && typeof m.views === "object") this.localViews = m.views;
       this.ensureHost(host);
       this.absorbHostReport(host, prevOrder, prevTabs);   // a host just reported its sessions → the one
-      this.emitMergedOrder();                             //   moment the stored arrangement may be touched
+      this.emitMergedOrder(true, host);                   //   moment the stored arrangement may be touched
       return;
     }
     if (m && m.type === "feed") {
@@ -822,11 +840,19 @@ export class FederationManager {
   // holding a stale session list pruned the very tab another pane had just moved). Only an inbound
   // tabOrder push mutates the store, in absorbHostReport below, because only a host's own report is
   // evidence about what exists.
-  private emitMergedOrder(): void {
+  private emitMergedOrder(fresh = false, freshHost: string = LOCAL): void {
     const order = mergeHostOrder(this.perHostOrder, this.hostSeq, this.view());
     const tabs = this.hostSeq.flatMap((h) => this.perHostTabs[h] || []);
     this.publishPending();
-    window.dispatchEvent(new MessageEvent("message", { data: { type: "tabOrder", order, tabs, views: this.localViews ?? undefined } }));
+    const data: any = { type: "tabOrder", order, tabs, views: this.localViews ?? undefined };
+    // Provenance for the chat's close backstop (T233): a FRESH emission is driven by one host's own
+    // tabOrder push and names that host (`freshHost`) — only ITS ids are that kernel's current word; the
+    // other hosts' slices ride along from the store. A SYNTHETIC re-emit (a view-order storage event, a
+    // host attach or drop, a `closed` fold) is re-served entirely from the store and says `reemit` — it
+    // confirms a close by absence like any order, but is never evidence that a kernel still has a tab.
+    if (fresh) data.freshHost = freshHost;
+    else data.reemit = true;
+    window.dispatchEvent(new MessageEvent("message", { data }));
   }
 
   // Fold a host's OWN report — the one moment with fresh evidence about what exists — into the stored

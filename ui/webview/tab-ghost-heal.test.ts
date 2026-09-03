@@ -114,7 +114,7 @@ test("a create placeholder the kernel has never listed still survives unrelated 
 test("applyTabOrder dismisses kernel-owned omissions BEFORE reconciling, then records add-only", () => {
   // the drop loop sits between ackClosingTabs and the reconcile, and dismissSession is the shared teardown
   assert.match(RENDER,
-    /ackClosingTabs\(kernelOrder\);[\s\S]{0,700}?for \(const id of order\.slice\(\)\) \{\s*\n\s*if \(kernelListed\.has\(id\) && !inKernel\.has\(id\)\) dismissSession\(id\);\s*\n\s*\}/,
+    /ackClosingTabs\(kernelOrder, report\);[\s\S]{0,700}?for \(const id of order\.slice\(\)\) \{\s*\n\s*if \(kernelListed\.has\(id\) && !inKernel\.has\(id\)\) dismissSession\(id\);\s*\n\s*\}/,
     "kernel-owned tabs the push stopped carrying get the closed-event teardown");
   // the reconcile passes the kernelListed predicate, so the pure model enforces the same rule
   assert.match(RENDER,

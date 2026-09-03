@@ -4098,13 +4098,25 @@ function commitTabOrder() {
 // Settle the just-closed tabs against the kernel's authoritative list. Gone from it → the close landed, stop
 // suppressing. STILL in it past the backstop → it didn't land; say so plainly (a session left open while its
 // tab is hidden is exactly the silent-wrong-state we'd rather surface) and let the tab come back.
-function ackClosingTabs(kernelOrder: readonly string[]): void {
+// `report` is the frame's provenance under federation (federation.ts emitMergedOrder): `reemit` marks a
+// synthetic re-emission served from the manager's STORED per-host slices (a view-order storage event, a
+// host attach or drop), `freshHost` names the one host whose own push drove a fresh emission. A frame the
+// kernel sent directly (VS Code, a single-kernel page) carries neither.
+type OrderReport = { reemit?: boolean; freshHost?: string } | undefined;
+function ackClosingTabs(kernelOrder: readonly string[], report?: OrderReport): void {
   if (!closingTabs.size) return;
   const live = new Set(kernelOrder);
   const now = Date.now();
   for (const [id, ts] of Array.from(closingTabs)) {
     if (!live.has(id)) { closingTabs.delete(id); continue; }       // the kernel dropped it → confirmed
     if (now - ts < CLOSE_ACK_MS) continue;                         // still in flight; the shutdown runs behind us
+    // Past the backstop, only a FRESH report from the OWNING kernel may call the close refused (T233, the
+    // user 2026-09-03: a session the kernel had killed within the same second toasted "Couldn't close"
+    // because a federation re-emit re-served a stored slice still carrying the id 15s later). A re-emit
+    // is never new evidence, and another host's push says nothing about this id's kernel — both keep the
+    // suppression and wait for the owner's own word; the backstop stays the honest path for a close that
+    // genuinely did not take.
+    if (report && (report.reemit || (typeof report.freshHost === "string" && hostOf(id) !== report.freshHost))) continue;
     closingTabs.delete(id);
     warnToast(`Couldn't close “${tabMeta.get(id)?.name || id}” — romp still has it open.`);
   }
@@ -4121,7 +4133,7 @@ function ackClosingTabs(kernelOrder: readonly string[]): void {
 // looking alive). Add-only, never pruned: dropping an entry would hand a late stale `session` frame the
 // never-listed keep and re-mint the ghost. Client-minted ids (the create placeholder) never enter it.
 const kernelListed = new Set<string>();
-function applyTabOrder(o: any, tabs?: any) {
+function applyTabOrder(o: any, tabs?: any, report?: OrderReport) {
   // name+color per tab → renderTabs paints placeholders for tabs whose session hasn't arrived yet (tabs-first).
   // The payload is the kernel's AUTHORITATIVE current tab set, so REBUILD (not merge) — a closed tab drops out
   // and never lingers as a stale placeholder. Absent tabs (older kernel) → keep what we have.
@@ -4143,7 +4155,7 @@ function applyTabOrder(o: any, tabs?: any) {
   }
   // Adopt the kernel order verbatim, keeping any just-arrived tab the push doesn't carry yet (see tab-order.ts).
   const kernelOrder = Array.isArray(o) ? o.filter((x: any) => typeof x === "string") : [];
-  ackClosingTabs(kernelOrder);
+  ackClosingTabs(kernelOrder, report);
   // A kernel-owned tab the push no longer carries gets the SAME teardown the `closed` event runs — the
   // session map, its view, drafts and the active-tab reselect all go, not just the strip entry. Under
   // federation the merged order only omits an id when its OWNING host affirmatively reported it gone
@@ -12483,7 +12495,10 @@ window.addEventListener("message", (e: MessageEvent) => {
   else if (m.type === "ledger") setLedger(m.id, m.ledger ?? null);
   else if (m.type === "working") { workingSet = new Set(Array.isArray(m.names) ? m.names : []); refreshPostalDots(); }
   else if (m.type === "imgData" && typeof m.path === "string") onImgData(m.path, typeof m.url === "string" ? m.url : null, typeof m.sid === "string" ? m.sid : null);
-  else if (m.type === "tabOrder") { captureViews(m.views || null); applyTabOrder(m.order, m.tabs); }
+  else if (m.type === "tabOrder") {
+    captureViews(m.views || null);
+    applyTabOrder(m.order, m.tabs, { reemit: m.reemit === true, freshHost: typeof m.freshHost === "string" ? m.freshHost : undefined });
+  }
   else if (m.type === "renamed" && m.id && typeof m.name === "string") {
     notePendingMeta(pendingTabMeta, m.id, { name: m.name });   // kernel truth — hold it against a push built pre-rename
     const s = sessions.get(m.id);
