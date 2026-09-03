@@ -395,8 +395,15 @@ changes no store semantics when it comes.
 A feed strip or column for todos (the marker + escalation carry it); idle check-in turns
 (rejected outright, not deferred); numeric counts on tabs; editing a todo's text (withdraw and
 re-add); priorities, deadlines, or ordering beyond creation time; per-todo Web Push (the badge
-and the existing needs-input push cover the phone); a cross-session todo digest pane; the
-judge mootness suggestion (deferred above).
+and the existing needs-input push cover the phone); the judge mootness suggestion (deferred
+above).
+
+The cross-session todo digest pane, deferred here in v1, shipped 2026-09-03 as the **"Waiting
+on you" pane** (`ui/webview/waiting.ts`, app `waiting`): build_feed ships the open todos as
+`userTodoRows` beside the count map (same read, same gates), plus `userTodosOn` so the pane can
+tell "off on this machine" from "nothing waiting"; the pane reuses `userTodoAnswer` /
+`userTodoDismiss` unchanged and never reads `asks`, so the placeholder card and the badge stand.
+Browser shell only; the VS Code extension's panel mirror is a separate change.
 
 ## Open questions
 

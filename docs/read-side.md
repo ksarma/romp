@@ -78,8 +78,8 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   bundle's own `ready` lifts the hold. A `ready` on a socket that is already
   ready is a re-base: the frame is served again rather than deduped.
   The kernel dedups per client. A client
-  that announces `?caps=feedDelta` on its socket (the kernel-served feed page does)
-  then receives `{type:"feedDelta"}` frames: changed cards by `itemId`, removed
+  that announces `?caps=feedDelta` on its socket (the kernel-served feed and
+  Waiting on you pages do) then receives `{type:"feedDelta"}` frames: changed cards by `itemId`, removed
   ids, the same for ledgers by `sid`, and the small top-level fields whole under
   `top` when any changed — and an unchanged board sends such a client nothing at
   all. Every other consumer — the Outline pane, the VS Code extension's pipes,

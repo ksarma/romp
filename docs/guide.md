@@ -16,6 +16,9 @@ complementary views of what the agents are doing:
   chat.
 - **[The outline](#the-outline)** lists every session with its tasks, for
   reviewing what a session has done and searching across all of them.
+- **[Waiting on you](#waiting-on-you)** lists every request a session has
+  flagged for you, across all your sessions and machines, with Reply and
+  Dismiss on each.
 
 ### The chat
 
@@ -80,6 +83,18 @@ beneath. Open the outline to review what a session has worked through, or to
 find past work: the search box reaches every session, live or closed.
 
 ![The outline: each session's tasks as a tree](assets/guide/outline.png){ width="100%" }
+
+### Waiting on you
+
+One list of every request a session has flagged for you, oldest first, across
+every session and every attached machine: a decision it needs, a credential, a
+pick between two designs. Each row names its session and shows how long the
+request has waited. Reply sends your answer straight into that session, waking
+it if it has gone quiet; Dismiss clears the request without a reply. The pane is
+off by default, like the outline; turn it on from the bottom bar. Sessions flag
+requests only where the gear's **User todos** switch is on, and the switch is
+per machine: while it is off on this one, the pane says so and still lists the
+other machines' requests.
 
 ## Automatic nudges
 

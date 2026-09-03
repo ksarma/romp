@@ -46,7 +46,10 @@ or withdraw a request, nothing is listed, and nothing is handed back on resume. 
 earlier stay stored and reappear when you turn it back on; the kernel's log says how many are
 waiting. Every filing, answer, dismissal and withdrawal is also appended to `user-todos-log.jsonl`
 beside the store under Romp's state directory, one line per event and never rewritten, so the list
-can be rebuilt if the store is ever lost.
+can be rebuilt if the store is ever lost. The **Waiting on you** pane (bottom bar, off by default)
+collects every open request across all sessions and attached machines into one list with the same
+Reply and Dismiss; because the switch is per machine, the pane says when it is off on this one and
+still lists the other machines' requests.
 
 These are for scripting and for agents rather than daily use:
 
