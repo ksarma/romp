@@ -26,6 +26,15 @@ update` starts a session called "update".
 | `romp version` | Version report across the moving parts |
 | `romp help` | The same list, from the terminal |
 
+**Update notices.** Romp watches for new tagged releases and, on a checkout that tracks
+`main`, for new commits, and offers each one once as a banner with an Update button. The gear's
+**Updates and update notices** control (under *Updates & debug*) decides what happens: *Check and
+ask* shows the banner, *Install automatically* converges on its own at the next quiet moment, and
+*Off* stops both the checks and the banners, so a machine whose owner merges to `main` all day
+hears nothing about it and keeps running what it has until they restart Romp themselves. The
+reload prompt that reads "A newer romp build is available" is separate and stays on in every
+mode: it means the page you are looking at runs older code than the kernel, and a reload fixes it.
+
 These are for scripting and for agents rather than daily use:
 
 | Command | What it does |
