@@ -53,6 +53,9 @@ class FakeBackend:
     def set_effort(self, sid, v):
         self.calls.append(("set_effort", sid, v)); return True
 
+    def set_fast(self, sid, v):
+        self.calls.append(("set_fast", sid, v)); return True
+
     def rename(self, sid, n):
         self.calls.append(("rename", sid, n)); return True
 
@@ -149,6 +152,75 @@ class KernelWiring(unittest.TestCase):
         self._route({"type": "setModel", "id": "sid-sdk", "value": "opus"})
         self.assertIn(("set_model", "sid-sdk", "opus"), self.be.calls)
         self.assertFalse(any(c == ("send", "sid-sdk", "/model opus") for c in self.be.calls))
+
+    def test_a_typed_slash_model_effort_fast_routes_through_the_setters_not_literal_text(self):
+        # THE BUG: the chat composer's "/model X" went to the backend as literal text; the CLI
+        # executed it, but romp's registry, sdk-defaults.json and the reconnect's --model still said
+        # the OLD model — so the user's switch silently reverted at the next reconnect. The composer
+        # now takes the same door the timeline's sendCommand does (set_model & co).
+        self._route({"type": "sendMessage", "id": "sid-sdk", "text": "/model claude-fable-5-1"})
+        self._route({"type": "sendMessage", "id": "sid-sdk", "text": " /effort high "})
+        self._route({"type": "sendMessage", "id": "sid-sdk", "text": "/fast on"})
+        self.assertIn(("set_model", "sid-sdk", "claude-fable-5-1"), self.be.calls)
+        self.assertIn(("set_effort", "sid-sdk", "high"), self.be.calls)
+        self.assertIn(("set_fast", "sid-sdk", "on"), self.be.calls)
+        self.assertEqual([c for c in self.be.calls if c[0] == "send"], [], "none of them reach the CLI as text")
+        # …and the version pick lands in the shared pick memory exactly as a menu click would
+        self._route({"type": "sendMessage", "id": "sid-sdk", "text": "/model claude-opus-4-8"})
+        self.assertEqual(km._model_picks().get("opus"), "claude-opus-4-8")
+
+    def test_other_slash_commands_and_plain_text_still_go_through_verbatim(self):
+        # only the three the kernel has a setter for are intercepted; the CLI owns everything else,
+        # and a bare "/model" (no value) is the CLI's own picker, not a set
+        for text in ("/compact", "/model", "/clear", "hi /model opus", "/models please"):
+            self._route({"type": "sendMessage", "id": "sid-sdk", "text": text})
+            self.assertIn(("send", "sid-sdk", text), self.be.calls, text)
+        self.assertEqual([c for c in self.be.calls if c[0] in ("set_model", "set_effort", "set_fast")], [])
+
+    def test_a_setter_takes_only_a_value_it_can_vouch_for_the_rest_stays_the_clis(self):
+        # the composer can type ANYTHING, and set_model persists its value as the seed for every
+        # future session — so a typo, a multiline message that merely starts with the command, or a
+        # fast value outside on/off must NOT be swallowed: it goes to the CLI verbatim, whose own
+        # error the user then sees (as before the routing existed)
+        for text in ("/model opsu", "/model opus\nnow refactor the parser", "/model opus please",
+                     "/effort turbo", "/effort high\nand hurry", "/fast maybe", "/fast on off"):
+            self._route({"type": "sendMessage", "id": "sid-sdk", "text": text})
+            self.assertIn(("send", "sid-sdk", text), self.be.calls, text)
+        self.assertEqual([c for c in self.be.calls if c[0] in ("set_model", "set_effort", "set_fast")], [])
+        # what IS vouched for: a family alias, 'default', a catalog version id, and any well-formed
+        # first-party id (the CLI validates the exact version; romp keeps the registry)
+        for v in ("fable", "default", "claude-opus-4-8", "claude-opus-4-1"):
+            self._route({"type": "sendMessage", "id": "sid-sdk", "text": "/model " + v})
+            self.assertIn(("set_model", "sid-sdk", v), self.be.calls, v)
+        self._route({"type": "sendMessage", "id": "sid-sdk", "text": "/effort ultracode"})
+        self.assertIn(("set_effort", "sid-sdk", "ultracode"), self.be.calls)
+        # the CLI's own 1M-context spelling of a family is vouched for like the tagged id
+        self._route({"type": "sendMessage", "id": "sid-sdk", "text": "/model fable[1m]"})
+        self.assertIn(("set_model", "sid-sdk", "fable[1m]"), self.be.calls)
+
+    def test_the_floating_flag_clears_the_pin_from_both_picker_doors(self):
+        # the submenu's "Latest" row: the chat/comment pickers post setModel with `floating`, the
+        # timeline lane menu sends its "/model X" command with the same flag — both forget the
+        # family's remembered pin and send the alias, so the family follows the CLI's newest again.
+        # A plain alias (no flag) keeps leaving the memory alone.
+        picks = km.jd.STATE / km.MODEL_PICKS_FILE_NAME
+        picks.unlink(missing_ok=True)
+        # the timeline keys sendCommand by session NAME (_sid_of resolves it through the live map)
+        self._route({"type": "setModel", "id": "sid-sdk", "value": "claude-sonnet-4-6"})
+        self.assertTrue(self._route({"type": "sendCommand", "name": "sid-sdk", "cmd": "/model claude-opus-4-8"}))
+        self.assertEqual(km._model_picks(), {"sonnet": "claude-sonnet-4-6", "opus": "claude-opus-4-8"})
+        self._route({"type": "setModel", "id": "sid-sdk", "value": "sonnet"})
+        self._route({"type": "sendCommand", "name": "sid-sdk", "cmd": "/model opus"})
+        self.assertEqual(km._model_picks(), {"sonnet": "claude-sonnet-4-6", "opus": "claude-opus-4-8"},
+                         "a bare alias send never downgrades a pin (the standing design)")
+        self._route({"type": "setModel", "id": "sid-sdk", "value": "sonnet", "floating": True})
+        self.assertEqual(km._model_picks(), {"opus": "claude-opus-4-8"})
+        self._route({"type": "sendCommand", "name": "sid-sdk", "cmd": "/model opus", "floating": True})
+        self.assertEqual(km._model_picks(), {})
+        self.assertEqual([c for c in self.be.calls if c[0] == "set_model"][-2:],
+                         [("set_model", "sid-sdk", "sonnet"), ("set_model", "sid-sdk", "opus")],
+                         "the alias itself is what reaches the backend")
+        picks.unlink(missing_ok=True)
 
     def test_setmodel_mid_compaction_parks_as_a_queued_command(self):
         # the user 2026-07-01: switching the model while a compaction ran broke the compaction — the
