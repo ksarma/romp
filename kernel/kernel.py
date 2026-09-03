@@ -3773,6 +3773,14 @@ _UPDATE_CHECK_EVERY_S = 6 * 3600
 # tree LOUDLY — peers' uncommitted work is never discarded — and the restart rides the manager's
 # quiet window, whose chain is silent-death-proof since the same day's fix).
 _MAIN_CHECK_EVERY_S = 300
+# T230b (the user 2026-09-03): the update-check loop's cadence wait is a loop-PRIVATE seam, never the
+# process-global time.sleep. Event.wait does not route through time.sleep, so nothing a test (or any
+# other thread) does to the shared sleep can touch this loop - and the loop gains a real exit event.
+# Never set by the kernel: zero runtime change. Five CI jobs since 08-27 hung silently because the
+# loop's only exit was a SystemExit raised out of a patched time.sleep on its 2nd call, and a leaked
+# heartbeat thread sleeping in the same window consumed that call; the loop then spun forever on a
+# no-op sleep with pytest printing nothing until the 15-minute cap.
+_CHECK_LOOP_STOP = threading.Event()
 _CONVERGE_COOLDOWN_S = float(os.environ.get("ROMP_CONVERGE_COOLDOWN", "1500"))   # min gap between AUTO converges (25 min → ≤2-3 restarts/hour on a hot main)
 _LAST_AUTO_CONVERGE = [0.0]   # when the last auto converge fired (module state; a restart resets it, which is fine — the restart WAS the converge)              # one ls-remote — cheap enough to notice a merge within minutes
 _MAIN_DRIFT = ["", ""]                 # [origin sha a notice fired for, checkout sha one fired for]
@@ -4233,7 +4241,8 @@ def _update_check_loop():
             _main_drift_check()
         except Exception:
             sys.stderr.write("main drift pass: %s\n" % traceback.format_exc())
-        time.sleep(_MAIN_CHECK_EVERY_S)
+        if _CHECK_LOOP_STOP.wait(_MAIN_CHECK_EVERY_S):
+            return                                    # the loop's own exit event (T230b) - see the seam
 
 
 def _auto_update_remotes_on():

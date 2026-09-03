@@ -63,9 +63,17 @@ jobs:
         # cryptography: the kernel's Web Push soft dependency (plans/ios-app.md). Installed here
         # so tests/test_kernel_webpush.py's crypto layers RUN in CI instead of skipping — the
         # kernel itself still degrades loudly without it (that path has its own test).
-        run: python -m pip install --upgrade pip pytest cryptography
+        run: python -m pip install --upgrade pip pytest pytest-timeout cryptography
       - name: Run pytest
-        run: python -m pytest -q
+        # T230b: a hung test used to be 15 minutes of silence (five jobs since 2026-08-27, a
+        # process-global time.sleep patch consumed by a foreign thread). pytest-timeout turns the
+        # NEXT stall into a named failure with every thread's stack: thread method = guaranteed
+        # termination (the process ends; the test is the bottom MainThread frame) - the signal
+        # method cannot interrupt a C call. 600 s strictly exceeds the slowest legitimate test
+        # (~122 s, leak-scaled) and the 300 s child timeout in test_session_move_live. Its timer
+        # waits on an Event, so it can never itself consume a patched sleep. --durations names the
+        # slowest tests on every run so a creeping one is visible before it stalls.
+        run: python -m pytest -q --durations=10 --timeout=600 --timeout-method=thread
 
   shell:
     name: Shell (bats, ${{ matrix.os }})
