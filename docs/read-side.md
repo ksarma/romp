@@ -54,12 +54,22 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   **same served UI** over the **same protocol**, so the two front ends stay
   consistent by construction. Keeping the WS protocol stable is the compatibility
   contract.
-- **The feed is pushed as one full frame, then as deltas.** A feed socket receives
-  the cached `{type:"feed"}` frame when its bundle sends `ready` — the bundle's
-  own signal that it is listening (the shim connects before the bundle has loaded
-  and has no inbound buffer, so a frame pushed at accept could be lost); the pane
-  shim re-sends `ready` on every reconnect, so a reconnecting pane resyncs at once
-  rather than on the pusher's next cycle. The kernel dedups per client. A client
+- **The feed is pushed as one full frame, then as deltas.** A pane's socket
+  receives nothing until the pane's bundle says it is listening. Every
+  kernel-served pane page announces `readyGate` on its socket, because the pane
+  shim opens the socket before the bundle has loaded and has no inbound buffer;
+  the kernel then holds every push to that socket (pusher cycles, broadcasts, a
+  reveal) until the bundle sends `ready`. A socket that does not announce
+  (federation's remote relays, the VS Code extension's pipes, an older page) is
+  served from accept, as it always was. Keepalives and the restart notice reach
+  every socket, held or not: the shim consumes both itself. On `ready`, a feed
+  socket receives the cached `{type:"feed"}` frame at once, with no build, and the
+  frame's `now` is rewritten to the time of the serve. The rewrite matters because
+  the pusher builds only while a client is connected: after a night with no
+  dashboard open, the cached build's clock is a night old, and the pane would
+  anchor every age and tint on it. The shim re-sends `ready` on every reconnect,
+  so a reconnecting pane resyncs at once rather than on the pusher's next cycle.
+  The kernel dedups per client. A client
   that announces `?caps=feedDelta` on its socket (the kernel-served feed page does)
   then receives `{type:"feedDelta"}` frames: changed cards by `itemId`, removed
   ids, the same for ledgers by `sid`, and the small top-level fields whole under
@@ -89,7 +99,8 @@ completed); the feed just paints columns. (Reflected in `docs/judges.md`.)
   again before its resync; the first non-keepalive frame retires the prompt. A
   client that falls 16 MB behind is dropped by the kernel, loudly: one `ws drop:`
   line in the kernel log, logged where the drop is decided so every send path is
-  covered, and a row in the dashboard's bell (at most five drop rows, none older
+  covered and naming the push slot whose frame tipped the budget when a push did,
+  and a row in the dashboard's bell (at most five drop rows, none older
   than an hour, so they never crowd out a backend problem). Every close of a socket
   that opened leaves a `wsclose` breadcrumb (code, reason, socket age) in
   `client-diag.jsonl`; the redials an outage refuses are counted and reported as
