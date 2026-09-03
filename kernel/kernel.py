@@ -2086,10 +2086,19 @@ def _sessions(now, window=None, forks=True):
 
 def _path_of(sid, now=None):
     """The transcript path for a sid (discover-cached → cheap), or None. Lets the sid-keyed backend API
-    resolve a session's transcript without the caller threading the path through (e.g. pending_queued)."""
+    resolve a session's transcript without the caller threading the path through (e.g. pending_queued).
+    Inside a pusher cycle the answer is memoized on the cycle's scope (_live_scope.paths, opened by
+    _pusher_cycle, thread-confined like its liveness snapshot): the parked-op drain asks for a held sid's
+    path in up to three gates per cycle, and each ask was a discover fingerprint (review find, #904)."""
+    memo = getattr(_live_scope, "paths", None)
+    if memo is not None and sid in memo:
+        return memo[sid]
     now = int(time.time()) if now is None else now
     s = next((s for s in _sessions(now) if s["sid"] == sid), None)
-    return s["path"] if s else None
+    p = s["path"] if s else None
+    if memo is not None:
+        memo[sid] = p
+    return p
 
 
 def _has_tmux():
@@ -9411,7 +9420,7 @@ def _sdk_locked():
                 sys.stderr.write("model catalog boot: %s\n" % traceback.format_exc())
             _sdk_backend = sbmod.SdkBackend(
                 jd.STATE, _claude_bin(), _send_to_app,
-                poke=_producer_wake.set, push=_pusher_wake.set,
+                poke=_wake_kernel, push=_pusher_wake.set,   # poke = the turn END: judges AND parked-op delivery
                 push_session=_push_session_now,   # targeted one-session push for per-session chip events (connect)
                 mcp_config=(str(_SDK_MCP) if _SDK_MCP.exists() else None),
                 append_prompt_path=(str(_SDK_PROMPT) if _SDK_PROMPT.exists() else None),
@@ -9485,7 +9494,7 @@ def _codex():
                 cxmod = SourceFileLoader("romp_codex_backend", str(HERE / "codex_backend.py")).load_module()
                 _codex_backend = cxmod.CodexBackend(
                     jd.STATE, notify=_send_to_app,
-                    poke=_producer_wake.set, push=_pusher_wake.set,
+                    poke=_wake_kernel, push=_pusher_wake.set,
                     push_session=_push_session_now,
                     codex_bin=shutil.which("codex"),   # None → the SDK's bundled binary resolver
                     log=lambda m: sys.stderr.write("codex-backend: %s\n" % m))
@@ -19372,7 +19381,7 @@ _PATH_UNRESOLVED = object()   # _compacting_now's "no path was passed" sentinel 
 def _compacting_now(sid, tm=None, path=_PATH_UNRESOLVED):
     """Is this session compacting RIGHT NOW — the same corroborated signal the chip uses (_compacting:
     live/optimistic state, disproved by resumed work or a compact_boundary, 180s optimistic cap), read
-    from the CACHED parse only so it's cheap enough for the WS handler and the producer tick. `tm` lets
+    from the CACHED parse only so it's cheap enough for the WS handler and the pusher's drain. `tm` lets
     a caller already holding the session's live() meta pass it in — _session_rows exposes this per row,
     and refetching would pay one full Sessions.live() merge PER ROW on a polled route (review find,
     2026-08-30). `path` is the same hoist for the transcript path: the default _path_of resolves
@@ -19408,7 +19417,7 @@ def _working_now(sid):
     — the CACHED parse below LAGS a just-started turn (transcript-not-yet-written), which raced the drive-op
     gate: a /compact pressed while a turn was truly in flight saw 'not working', skipped the FIFO, and fired
     immediately, out of press-order (the user 2026-07-14). tmux has no such signal (busy→None) → the cached
-    event-model parse, unchanged. Both are cheap enough for the WS handler + producer tick."""
+    event-model parse, unchanged. Both are cheap enough for the WS handler + the pusher's drain."""
     try:
         be = Sessions.backend_for(sid)
         b = be.busy(sid) if be is not None else None
@@ -19435,7 +19444,8 @@ def _limit_hold(sid):
 
     RELEASE is read from the event, never a timer romp invents:
       - a rate window carries the API's own resetsAt, and _usage().limited goes false the moment that
-        stamp passes, so the producer tick drains the queue within one pass of the reset;
+        stamp passes, so the pusher cycle that delivers parked ops drains the queue within one cycle
+      (its 0.5 s backstop) of the reset;
       - a spend cap has no readable reset (it lifts when the user raises it), so the hold rides the
         retry-pause _auto_pause_on_spend_limit engaged and lifts when that lifts: the user resumes it, or
         _auto_resume_retry sees a session serve a request again.
@@ -19540,13 +19550,49 @@ def _parked_md(op):
 # ── moving a session's working directory (the user 2026-09-01) ─────────────────────────────────
 # A move rides the drive-op FIFO like /compact: parked as ("cwd", <canonical path>, <busy retries>)
 # while the session is not quiet, fired when it is. The backend's move() is a BLOCKING round trip
-# (set_cwd's control response) — it runs on its own thread so neither the WS handler nor the producer
-# tick waits on it, and `_moving` holds the session's queue for the duration: _ops_gate parks anything
+# (set_cwd's control response) — it runs on its own thread so neither the WS handler nor the pusher's
+# drain waits on it, and `_moving` holds the session's queue for the duration: _ops_gate parks anything
 # pressed meanwhile and _apply_pending_ops skips the sid, so nothing else reaches the CLI mid-move.
 _moving: set = set()
 _move_askers: dict = {}          # sid -> wid of the dashboard that asked for a PARKED move (failure lands there)
-_MOVE_BUSY_RETRIES = 3           # CLI-side `busy` answers retried on the next pass without waiting for a turn end
-                                 # (the CLI's post-result window); after these, the op waits on turn_seq (_move_now)
+_MOVE_BUSY_RETRIES = 3           # CLI-side `busy` answers retried without waiting for a turn end (the CLI's
+                                 # post-result window); after these, the op waits on turn_seq (_move_now). Each
+                                 # retry first waits out _MOVE_BUSY_RETRY_S (_hold_drain — see there for why).
+_MOVE_BUSY_RETRY_S = 3.0         # the spacing between those retries: the judge producer's pass cadence, which
+                                 # spaced them by accident until the drain moved to the pusher (2026-09-03)
+_TMUX_PROMPT_HOLD_S = 3.0        # after the drain hands a turn-opening op to a backend with NO authoritative
+                                 # busy() (tmux), how long that sid's queue holds before the op behind may fire
+_drain_hold: dict = {}           # sid -> time.monotonic() deadline; _apply_pending_ops skips the sid until then
+
+
+def _hold_drain(sid, seconds):
+    """Hold ONE sid's parked queue for `seconds` — the two places the drain must NOT run again at its own
+    cadence, made explicit (2026-09-03). The drain rides the pusher cycle, which any client push, any SDK
+    stream atom of any session, and the drain's own deliveries wake — so "the next cycle" can be
+    milliseconds away. Two consumers need more than that and have NO event to key on:
+      * a move the CLI answered `busy` (_move_now): the CLI's post-result bookkeeping window is sub-second
+        and emits nothing when it closes; the _MOVE_BUSY_RETRIES exist to outlast it, and back-to-back
+        cycles would burn all three inside it, leaving the op waiting on a turn_seq that never moves;
+      * a send / command / compact just handed to a tmux session (TmuxBackend has no busy(); _working_now
+        falls to the cached transcript parse): the keystrokes have landed but the transcript has not
+        recorded the prompt, so the gate reads idle for a moment and the op behind would fire into the
+        opening turn — the mis-delivery the SEND-ends-the-drain contract exists to prevent.
+    Both are the judge producer's old 3 s cadence made explicit, which spaced them by accident before. An
+    honest clock, named as one: the tmux half retires when TmuxBackend gains an authoritative busy() from
+    the hook-maintained session state; the SDK and Codex backends need neither hold (_after_turn_opening)."""
+    _drain_hold[str(sid)] = time.monotonic() + seconds
+
+
+def _after_turn_opening(be, sid):
+    """The drain just handed `sid` an op that OPENS a turn (a send batch, a typed command, a /compact). A
+    backend with an authoritative busy() (SDK, Codex) closed the working gate synchronously inside send(),
+    so the op behind waits for the turn's end by itself; one without (tmux) gets the hold — _hold_drain."""
+    try:
+        authoritative = be.busy(sid) is not None
+    except Exception:
+        authoritative = False
+    if not authoritative:
+        _hold_drain(sid, _TMUX_PROMPT_HOLD_S)
 
 
 def _move_or_park(be, sid, path, client=None):
@@ -19564,7 +19610,7 @@ def _move_or_park(be, sid, path, client=None):
 
 def _fire_move(be, sid, path, tries, wid):
     """Run the backend's blocking move on its own thread (returned, so a test can join it). `_moving`
-    is claimed synchronously, before the thread starts, so a producer tick landing in between cannot
+    is claimed synchronously, before the thread starts, so a pusher cycle landing in between cannot
     fire the op behind this one."""
     sid = str(sid)
     _moving.add(sid)
@@ -19581,9 +19627,9 @@ def _move_now(be, sid, path, tries, wid):
     one has:
       * a turn the CLI started itself (a hook, a background task's notification): romp's inflight never
         counted it, but it ENDS with a ResultMessage like any other, and that end is the cue — the parked
-        op carries the backend's turn_seq, and the producer pass fires it once that counter has moved;
+        op carries the backend's turn_seq, and the pusher cycle fires it once that counter has moved;
       * the CLI's own post-result bookkeeping window (sub-second, after a turn romp DID see end): no
-        further ResultMessage is coming, so the counter never moves — the first _MOVE_BUSY_RETRIES passes
+        further ResultMessage is coming, so the counter never moves — the first _MOVE_BUSY_RETRIES cycles
         therefore fire without waiting on it. Past those, the op waits for the event only, as a visible,
         cancellable chip, instead of failing loudly while the CLI's turn is still running.
     Anything else → a typed moveFailed with the backend's reason verbatim. Returns the backend's answer,
@@ -19596,14 +19642,18 @@ def _move_now(be, sid, path, tries, wid):
                 "this session's backend has no way to move a running session"
         except Exception as e:
             res = "%s: %s" % (type(e).__name__, str(e)[:200])
+        if res == "busy":
+            # re-park and hold BEFORE `_moving` releases the queue (review find, #904): a drain cycle landing
+            # between the release and the re-park would fire the op behind the move, or burn a retry
+            seq = be.turn_seq(sid) if hasattr(be, "turn_seq") else None  # the turn end this retry waits on
+            _pending_ops.setdefault(sid, []).insert(0, ("cwd", path, tries + 1, seq))   # head: it was already first
+            _move_askers[sid] = wid
+            _hold_drain(sid, _MOVE_BUSY_RETRY_S)   # the retry waits out the CLI's post-result window (_hold_drain)
     finally:
         _moving.discard(sid)
     if res == "busy":
-        seq = be.turn_seq(sid) if hasattr(be, "turn_seq") else None      # the turn end this retry waits on
-        _pending_ops.setdefault(sid, []).insert(0, ("cwd", path, tries + 1, seq))   # head: it was already first
-        _move_askers[sid] = wid
         _save_pending_ops()
-        _mark_views_dirty()
+        _mark_views_dirty()                    # the chip re-renders now; the hold, not the wake, spaces the retry
         return res
     if res:
         _move_failed(sid, nm, wid, res)
@@ -19638,13 +19688,16 @@ def _cancel_parked(sid, park, md):
     would remove the WRONG op — re-locate by md. Returns None on success; when the op is GONE (it
     already ran / was delivered) returns the 'too late' text for the caller to toast — a silent miss
     read as a successful cancel while the message got answered anyway (the user 2026-07-20). Persists +
-    wakes the pusher like every queue mutation."""
+    wakes the pusher like every queue mutation. LOGGED — sid and op kind, never the body, which is user
+    text — so an emptied queue can be told apart from one that was never delivered: the 2026-09-03
+    diagnosis of a parked /clear that vanished had to infer this ✕ by elimination."""
     sid = str(sid)
     ops = _pending_ops.get(sid) or []
     if not (0 <= park < len(ops)) or (md and _parked_md(ops[park]) != md):
         park = next((j for j, op in enumerate(ops) if _parked_md(op) == md), -1) if md else -1
         if park < 0:
             return _cancel_miss_text(md)
+    sys.stderr.write("parked-op cancel: %s %s\n" % (sid, ops[park][0]))
     ops.pop(park)
     if not ops:
         _pending_ops.pop(sid, None)
@@ -19730,18 +19783,24 @@ def _send_or_park(be, sid, text, echo=None):
     open, even on a forwards_sends backend (the user 2026-08-13): the CLI only EXECUTES a slash command
     arriving as a fresh top-level prompt — forwarded into a running turn it lands as plain user text, the
     model politely replies to it, and the setting never changes. Parked as a ("command",) op, it fires ALONE
-    at turn end (never folded into a send batch, which would bury it as text the same way)."""
+    at turn end (never folded into a send batch, which would bury it as text the same way).
+
+    Returns True when PARKED, False when handed over now, so a route can tell its caller which: POST
+    /send answers `queued` and `romp send` prints it. An agent sending ITSELF a slash command from inside
+    its own turn otherwise read 'ok' and had no way to know the command was waiting for that turn to end
+    (2026-09-03, a /clear that then never fired)."""
     cmd = _is_slash_command(text)
     op = ("command", text, echo) if cmd else ("send", text, echo)
     if _compacting_now(sid) or _pending_ops.get(sid) or _limit_hold(sid):
         _park_op(sid, op)
-        return
+        return True
     if _working_now(sid) and (cmd or not _forwards_sends(be)):
         _park_op(sid, op)
-        return
+        return True
     be.send(sid, text)
     if echo:
         _optimistic_echo(sid, text, author=echo)
+    return False
 
 
 def _compact_or_park(be, sid):
@@ -19855,7 +19914,7 @@ def _set_fast_or_park(be, sid, value):
     return be.set_fast(sid, value)
 
 
-def _route_meta_command(be, sid, text, client=None, floating=False):
+def _route_meta_command(be, sid, text, client=None, floating=False, state=None):
     """A "/model X", "/effort X" or "/fast on|off" — typed into the chat composer or sent by the timeline
     lane menu — goes through the kernel's OWN setters (_set_*_or_park), never to the CLI as literal text.
     `floating` rides the lane menu's "Latest" row to _set_model_or_park (forget the family's pin).
@@ -19866,7 +19925,9 @@ def _route_meta_command(be, sid, text, client=None, floating=False):
     another slash command, a bare "/model" (the CLI's own picker), plain text that merely contains one
     — is the caller's to send verbatim: the CLI owns what executes. A refused fast toggle is told to
     the client (fail loudly): a dormant SDK session has no live CLI to apply it, and the typed text
-    used to at least draw the CLI's own refusal."""
+    used to at least draw the CLI's own refusal. `state`, when given, receives {"queued": bool} — whether
+    the setter PARKED the change (they park under _ops_gate, read here) — so POST /send answers `queued`
+    for a meta command exactly as for a text send (2026-09-03: a parked /model read as plain 'ok')."""
     head, _, rest = (text or "").strip().partition(" ")
     value = rest.strip()
     # ONE token, and one the kernel can vouch for: the setters PERSIST their value — set_model's lands
@@ -19875,16 +19936,23 @@ def _route_meta_command(be, sid, text, client=None, floating=False):
     # ours to swallow: it stays the CLI's, verbatim, and the user sees the CLI's own error.
     if not value or len(value.split()) != 1:
         return False
+    gate = _ops_gate(sid)                  # the setters park under exactly this gate; read here so `state` can say so
     if head == "/model" and _vouched_model(value):
         _set_model_or_park(be, sid, value, floating=floating)     # mid-compaction → parked as a queued command
+        parked = gate
     elif head == "/effort" and value in _EFFORT_VALUES:
         _set_effort_or_park(be, sid, value)    # mid-compaction → parked as a queued command
+        parked = gate
     elif head == "/fast" and value in ("on", "off"):
-        if not _set_fast_or_park(be, sid, value) and client:   # mid-compaction → parked
+        took = _set_fast_or_park(be, sid, value)                  # mid-compaction → parked
+        parked = bool(took) and gate
+        if not took and client:
             client["send"](json.dumps({"type": "warn",
                                        "text": "Couldn't toggle fast mode — the session isn't connected right now."}))
     else:
         return False
+    if state is not None:
+        state["queued"] = parked
     return True
 
 
@@ -19922,7 +19990,7 @@ def _deliver_send_batch(be, sid, run):
 
 
 def _apply_pending_ops():
-    """Producer tick: FIFO-deliver parked ops once the session is QUIET (neither compacting nor an open
+    """Pusher cycle: FIFO-deliver parked ops once the session is QUIET (neither compacting nor an open
     turn) — in exactly the order they were parked, which is exactly the order the chat rendered their
     queued bubbles (the user 2026-07-02: what you see is what runs). SEQUENTIAL by construction (the user
     2026-07-02, compact-mid-turn): settings ops (model/effort) apply instantly and delivery continues,
@@ -19931,24 +19999,42 @@ def _apply_pending_ops():
     is delivered together, not one turn each (_deliver_send_batch — the user 2026-07-17, who wanted them sent all at
     once; the SDK folds the run into one turn, tmux merges it). Event-gated throughout (_compacting
     + the event-model open-turn signal, both off cached parses refreshed by turn-end pokes, plus
-    _limit_hold's account gate — a queue held by a usage limit drains on the pass after the API's own
+    _limit_hold's account gate — a queue held by a usage limit drains on the cycle after the API's own
     reset stamp passes, so the whole sequence goes in at the reset in the order it was typed); a dead
-    session's queue is dropped (fails once, logged), never retried."""
+    session's queue is dropped (fails once, logged), never retried.
+
+    WHO runs this (2026-09-03): the pusher cycle (_pusher_cycle_jobs), woken by the backends' turn-end poke
+    (_wake_kernel), by /tick, by every park / cancel / move, and by its own 0.5 s backstop — NOT the tail
+    of the judge producer's pass, where it lived before. A judge pass can run for hours (one session's
+    closer sweep, alarm-killed turn after turn, held a pass for 6h22m), and for all that time no parked op
+    in ANY session could fire: a typed /clear parked mid-turn sat as a queued chip until the user cancelled
+    it. Delivery keys on the settle event now; the judges' progress is irrelevant to it. Two proofs the
+    gates hold at this cadence: SdkBackend.send enqueues under the session lock synchronously and busy()
+    reads inflight>0 or the pending queue, so the working gate is closed before a delivered send returns;
+    and _fire_move claims _moving before its thread starts, so the sid is skipped until the relocation
+    ends. Only a REAL mutation saves the mirror and wakes the pusher: a cycle that delivers nothing (a cwd
+    op waiting on its turn_seq) must not re-wake the thread it runs on, or the backstop becomes a hot loop.
+    Two sids are skipped for a while even when quiet — a move the CLI answered busy, and a tmux session
+    just handed a turn-opening op — because their next step has no event to wait for (_hold_drain)."""
     for sid, ops in list(_pending_ops.items()):
         if not ops:
             _pending_ops.pop(sid, None)
             continue
         if sid in _moving:
             continue                                  # a move is mid-flight: its relocation must finish first
+        if _drain_hold.get(sid, 0.0) > time.monotonic():
+            continue                                  # a CLI-side window is still open for this sid (_hold_drain)
+        _drain_hold.pop(sid, None)
         if _compacting_now(sid) or _working_now(sid) or _limit_hold(sid):
             continue                                  # …or the account can't serve a request yet
+        changed = False                               # a real mutation below → save the mirror + wake the pusher
         try:
             be = Sessions.backend_for(sid)
             while ops:
                 op = ops[0]
                 if op[0] == "cwd":
-                    # a parked move: fires on its own thread and CLAIMS _moving before this pass ends, so
-                    # the ops behind it wait for the relocation to finish (the next pass skips the sid
+                    # a parked move: fires on its own thread and CLAIMS _moving before this cycle ends, so
+                    # the ops behind it wait for the relocation to finish (the next cycle skips the sid
                     # until then) — a send fed mid-move could make the CLI reject the move as busy
                     tries = int(op[2]) if len(op) > 2 else 0
                     seq = op[3] if len(op) > 3 else None
@@ -19956,13 +20042,16 @@ def _apply_pending_ops():
                             and be.turn_seq(sid) == seq):
                         break      # the CLI still owns a turn romp cannot see: its ResultMessage is the cue (_move_now)
                     ops.pop(0)
+                    changed = True
                     _fire_move(be, sid, op[1], tries, _move_askers.pop(sid, ""))
                     break
+                changed = True                        # every arm below pops at least one op
                 if op[0] == "send":
                     run = []                          # coalesce the leading run of sends → deliver them AT ONCE
                     while ops and ops[0][0] == "send":
                         run.append(ops.pop(0))
                     _deliver_send_batch(be, sid, run)
+                    _after_turn_opening(be, sid)
                     break                             # the delivered turn must END before any op behind it fires
                 elif op[0] == "command":
                     # a typed slash command fires ALONE as its own fresh top-level prompt — folded into a
@@ -19975,11 +20064,13 @@ def _apply_pending_ops():
                     if op[1].strip().split()[0] == "/compact":
                         _mark_compacting(sid)         # a TYPED /compact gets the same instant cue as the button's op
                     ops.pop(0)
+                    _after_turn_opening(be, sid)
                     break                             # its turn must end before anything behind it fires
                 elif op[0] == "compact":
                     be.send(sid, "/compact")
                     _mark_compacting(sid)
                     ops.pop(0)
+                    _after_turn_opening(be, sid)
                     break                             # the compaction must finish first
                 elif op[0] == "model":
                     be.set_model(sid, op[1])
@@ -20001,10 +20092,12 @@ def _apply_pending_ops():
         except Exception:
             sys.stderr.write("pending ops apply: %s\n" % traceback.format_exc())
             _pending_ops.pop(sid, None)               # a dead session's queue is dropped, never retried
+            changed = True
         if not _pending_ops.get(sid):
             _pending_ops.pop(sid, None)
-        _save_pending_ops()               # every delivery/drop shrinks the disk mirror too
-        _mark_views_dirty()               # the queue shrank (in-memory) → rebuild past the sig so chips retire
+        if changed:
+            _save_pending_ops()           # every delivery/drop shrinks the disk mirror too
+            _mark_views_dirty()           # the queue shrank (in-memory) → rebuild past the sig so chips retire
 
 
 # ── the chat's pinned "system context" card (the user 2026-06-19) ──────────────────────────────────
@@ -28112,6 +28205,17 @@ def _mark_views_dirty():
     _pusher_wake.set()
 
 
+def _wake_kernel():
+    """The backends' turn-end POKE: wake BOTH loops. The producer runs a judge pass; the pusher runs the
+    cycle that delivers parked ops (_apply_pending_ops) and pushes what changed. Until 2026-09-03 the poke
+    reached only the producer, and parked-op delivery sat at the tail of the judge pass — so one session's
+    wedged closer sweep held every parked op in every session hostage for hours, and a typed /clear parked
+    mid-turn never fired. The settle is the event a parked op waits for; it must wake the thread that
+    delivers."""
+    _producer_wake.set()
+    _pusher_wake.set()
+
+
 def _producer_sig(browser):
     """A cheap fingerprint that changes iff there's new work to push: each discovered transcript's mtime,
     each session's names-file mtime (so a RENAME — which touches no transcript — still re-pushes the new
@@ -28717,7 +28821,6 @@ def _producer():
             _judge_gen[0] += 1     # a judge pass may have changed goal/caption state WITHOUT touching any
                                    # transcript → bump the generation so the chat-build cache re-builds the
                                    # background tabs once, keeping their Fleet status/ledger fresh (≤ this cadence).
-            _apply_pending_ops()      # FIFO-deliver everything parked during a compaction that has now ended
             try:                      # sessions with ARMED TIMERS need a LIVE CLI (the user 2026-08-28:
                 _sbe = _sdk()         # crons/wakeups never fired on dormant sessions — the CLI's scheduler
                 if _sbe and _sdk_ready():   # is in-process; see SdkBackend.ensure_scheduled)
@@ -28736,6 +28839,8 @@ def _producer():
         # for (e.g. a segment closing mid-turn) and a safety net if a poke is ever missed. A pass is cheap
         # when nothing changed (cached parses, no LLM calls), so a short backstop is harmless and keeps the
         # timeline/feed snappy. (the user 2026-06-19: 20s → 3s.)
+        # Parked-op delivery is NOT here (2026-09-03): it rides the pusher cycle, woken by the settle itself,
+        # so a long pass — a judge stage stuck on one session — can never hold a user's queued input.
         _producer_wake.wait(3)
 
 
@@ -28759,6 +28864,8 @@ def _pusher_cycle():
     #                                       however deep it hides (_bg_live_norm, _compacting_now,
     #                                       build_feed's per-session gates) — see _live_scope
     try:
+        _live_scope.paths = {}                  # …and the cycle's sid→path memo (_path_of): the parked-op drain
+        #                                         otherwise resolves a held sid's path once per gate per cycle
         _live_scope.names = _names_snapshot()   # …and the cycle's NAMES snapshot, same idiom: the name/
         #                                       cwd/color helpers otherwise re-read the registry per path
         #                                       token and per postal card (~38% of pusher wall, py-spy
@@ -28768,9 +28875,14 @@ def _pusher_cycle():
     finally:
         _live_scope.snapshot = None
         _live_scope.names = None
+        _live_scope.paths = None
 
 
 def _pusher_cycle_jobs(now, tmux, any_client):
+    try:                                  # parked ops deliver on the settle EVENT this cycle was woken for
+        _apply_pending_ops()              # (_wake_kernel, /tick, a park/cancel/move, the 0.5 s backstop) —
+    except Exception:                     # FIRST, so a delivered op's echo / retired chip rides this push;
+        sys.stderr.write("pending-ops: %s\n" % traceback.format_exc())   # never behind a judge pass (2026-09-03)
     if any_client:
         _push_all(tmux=tmux)
     # (the WS keepalive lives on its own _heartbeat thread — NOT here — so a slow push can't starve it)
@@ -33269,7 +33381,12 @@ class Handler(BaseHTTPRequestHandler):
                         return self._send(200, json.dumps({"ok": False, "error":   # pretend it was delivered
                             "the remote kernel for this session (%s) isn't answering — message not delivered"
                             % r.get("host", "?")}), "application/json")
-                    return self._send(200, json.dumps({"ok": True}), "application/json")
+                    if isinstance(res, dict) and res.get("ok") is False:
+                        return self._send(200, json.dumps(res), "application/json")   # its refusal, verbatim
+                    # the far kernel's `queued` rides through (an older remote without the field reads False)
+                    return self._send(200, json.dumps({"ok": True, "queued": bool(isinstance(res, dict)
+                                                                                  and res.get("queued"))}),
+                                      "application/json")
                 # PARKS like a composer send (the user 2026-07-24), through the same FIFO: a message handed
                 # in by a local tool while the account is rate-limited — or while the session compacts —
                 # waits its turn instead of buying a red API-error card. ok:true still means ACCEPTED,
@@ -33277,9 +33394,15 @@ class Handler(BaseHTTPRequestHandler):
                 # isn't a human composer bubble. A typed /model, /effort or /fast takes the setters,
                 # exactly as the composer's does — same door, same registry.
                 be = Sessions.backend_for(sid)
-                if not _route_meta_command(be, sid, body["text"]):
-                    _send_or_park(be, sid, body["text"])
-                return self._send(200, json.dumps({"ok": True}), "application/json")
+                meta = {}
+                if _route_meta_command(be, sid, body["text"], state=meta):
+                    queued = bool(meta.get("queued"))              # a parked /model, /effort or /fast says so too
+                else:
+                    queued = bool(_send_or_park(be, sid, body["text"]))
+                # `queued` says which arm it took (the /compact route's shape): a sender that IS the
+                # target's open turn — an agent running `romp send <self> /clear` from its own Bash tool —
+                # read 'ok' otherwise and could not know the command waits for that turn to end (2026-09-03).
+                return self._send(200, json.dumps({"ok": True, "queued": queued}), "application/json")
             if u.path in ("/fork-comment", "/fork-promote"):
                 # Parallel review dispatch (the user 2026-08-31, via the Obsidian track-changes
                 # plugin): /fork-comment forks the target as a transcript-comment-style thread and

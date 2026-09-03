@@ -1526,6 +1526,13 @@ print(json.dumps(d))' "$_who" "$_when")"
                   -H 'Content-Type: application/json' -d "$_payload")" \
         || { echo "romp $_verb: kernel not reachable on :$_kport (is romp running?)" >&2; exit 1; }
     if [[ "$_resp" == *'"ok": true'* || "$_resp" == *'"ok":true'* ]]; then
+        if [[ "$_verb" == "send" && ( "$_resp" == *'"queued": true'* || "$_resp" == *'"queued":true'* ) ]]; then
+            # the kernel PARKED it (a turn is open / compacting / the account is limit-held) and delivers it
+            # when the session is quiet. Said out loud so a sender inside that very turn — an agent sending
+            # itself a slash command — knows the command has NOT run yet.
+            echo "romp send: queued ($_who) — delivers when the session is quiet"
+            exit 0
+        fi
         echo "romp $_verb: ok ($_who)"
         exit 0
     fi
@@ -2009,7 +2016,12 @@ print(json.dumps(d))' "$session_arg" "$msg_arg" "$tag_arg" "$_resp")"
                           -H 'Content-Type: application/json' -d "$_mpayload")" \
                 || { echo "romp new: session is up but the message did NOT land (kernel send failed). Retry: romp send $session_arg '<text>'" >&2; exit 1; }
             if [[ "$_mresp" == *'"ok": true'* || "$_mresp" == *'"ok":true'* ]]; then
-                echo "romp new: first prompt delivered"
+                if [[ "$_mresp" == *'"queued": true'* || "$_mresp" == *'"queued":true'* ]]; then
+                    # the kernel PARKED it (the fresh session is not quiet yet): it delivers when it is
+                    echo "romp new: first prompt queued — delivers when the session is quiet"
+                else
+                    echo "romp new: first prompt delivered"
+                fi
             else
                 echo "romp new: session is up but the kernel refused the message: $_mresp. Retry: romp send $session_arg '<text>'" >&2
                 exit 1
