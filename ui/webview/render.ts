@@ -913,26 +913,38 @@ document.addEventListener("click", (e) => {
 //     who reads the transcript while a file is up) → hand the open to the SHELL instead, which
 //     brings the feed pane forward and forwards viewFile into it; the feed's initFileView opens the
 //     viewer there, so the chat stays readable and interactive under no modal.
+//   • Web dashboard, Files-pane preference set (fileLinkPane: "pane", 2026-09-03) → the same relay,
+//     aimed at the FILES pane: the viewer as its own column, which stays up beside the chat and the
+//     feed instead of covering either (ui/webview/files.ts).
 //
-// The route decision is fileLinkRoute, pure so the branch is testable: the preference relays ONLY
-// when a shell exists to relay to (framed — openBrowse's exact gate). Standalone /chat has no shell
-// and no feed pane, so the preference quietly means "here", the in-document modal. The gate lives at
-// THIS end deliberately: the shell forwards whatever arrives (browseFiles' contract), so a message
-// never sent is a click that opens in place — no setting check shell-side can swallow a click.
-function fileLinkRoute(pane: unknown, framed: boolean): "shell" | "here" {
-  return pane === "feed" && framed ? "shell" : "here";
+// The route decision is fileLinkRoute, pure so the branch is testable: it names the TARGET — "feed",
+// "pane", or "here" (the in-document modal) — and a preference relays ONLY when a shell exists to
+// relay to (framed — openBrowse's exact gate). Standalone /chat has no shell and no other pane, so
+// either preference quietly means "here". The gate lives at THIS end deliberately: the shell forwards
+// whatever arrives (browseFiles' contract), so a message never sent is a click that opens in place —
+// no setting check shell-side can swallow a click.
+function fileLinkRoute(pane: unknown, framed: boolean): "feed" | "pane" | "here" {
+  return framed && (pane === "feed" || pane === "pane") ? pane : "here";
 }
 function openPath(path: string, sid?: string | null): void {
   if (!vscodeApi) return;
   if (location.protocol === "http:" || location.protocol === "https:") {
-    if (fileLinkRoute(settings.fileLinkPane, window.parent !== window) === "shell") {
+    const route = fileLinkRoute(settings.fileLinkPane, window.parent !== window);
+    if (route !== "here") {
       // Fire-and-forget by nature: postMessage to a live parent never throws, so there is no
       // catchable failure here and no honest in-document fallback to offer. The one real loss mode
       // is a stale shell page from before this relay existed — it has no viewFile arm and WILL
       // swallow the click until it reloads (a known limitation). The shell arms its pane-restore
       // only on the feed's viewFileOpened ack, so a swallowed or lost message can never leave a
       // stale armed flag behind either.
-      window.parent.postMessage({ romp: "viewFile", path, sid: sid || activeId || null }, "*");
+      // The message names its target pane and carries the session's IDENTITY (name + colour, the
+      // tab set's own — nameOf's ladder) for the Files pane, which has no session list to resolve a
+      // title-bar chip from; the feed resolves its own and ignores it. Looked up, never invented: a
+      // sid neither list names sends null, and the receiving resolver falls to the kernel's stub.
+      const to = sid || activeId || null;
+      const s = to ? (sessions.get(to) ?? tabMeta.get(to)) : undefined;
+      window.parent.postMessage({ romp: "viewFile", path, sid: to, pane: route,
+        identity: s && s.name ? { name: s.name, color: s.color ?? null } : null }, "*");
       return;
     }
     openFileView(path, sid || activeId || null);

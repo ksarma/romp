@@ -38,18 +38,21 @@ test("openPath routes by HOST: the in-pane viewer modal on the web, the editor i
 // stays readable while the file is up. The GATE lives here at the click site, not in the shell:
 // the shell forwards whatever arrives (browseFiles' contract), so a message that is never sent is
 // a click that opens in place — no message can be silently swallowed by a shell-side setting check.
-test("fileLinkRoute: the cards-pane preference relays only when framed; everything else opens here", () => {
-  const fileLinkRoute = (pane: unknown, framed: boolean): "shell" | "here" =>
-    pane === "feed" && framed ? "shell" : "here";
-  assert.equal(fileLinkRoute("feed", true), "shell", "setting=feed & framed → hand the open to the shell");
+test("fileLinkRoute: a pane preference relays only when framed, naming its target; everything else opens here", () => {
+  const fileLinkRoute = (pane: unknown, framed: boolean): "feed" | "pane" | "here" =>
+    framed && (pane === "feed" || pane === "pane") ? pane : "here";
+  assert.equal(fileLinkRoute("feed", true), "feed", "setting=feed & framed → hand the open to the shell, for the feed");
+  assert.equal(fileLinkRoute("pane", true), "pane", "setting=pane & framed → the shell, for the Files pane (2026-09-03)");
   assert.equal(fileLinkRoute("feed", false), "here", "standalone /chat: no shell, no feed pane — open in place");
+  assert.equal(fileLinkRoute("pane", false), "here", "standalone /chat: no Files pane either — open in place");
   assert.equal(fileLinkRoute("chat", true), "here", "the default: exactly the pre-setting behavior");
   assert.equal(fileLinkRoute(undefined, true), "here", "an unset store reads as the default");
   assert.equal(fileLinkRoute("purple", true), "here", "a foreign stored value falls to the default");
-  // replica ↔ source, and the wiring: openPath consults it with the LIVE framed bit and posts up
-  assert.match(RENDER, /return pane === "feed" && framed \? "shell" : "here";/);
-  assert.match(RENDER, /if \(fileLinkRoute\(settings\.fileLinkPane, window\.parent !== window\) === "shell"\) \{/);
-  assert.match(RENDER, /window\.parent\.postMessage\(\{ romp: "viewFile", path, sid: sid \|\| activeId \|\| null \}, "\*"\);/);
+  // replica ↔ source, and the wiring: openPath consults it with the LIVE framed bit and posts up, the
+  // message naming its target pane and carrying the session's identity for the Files pane's chip
+  assert.match(RENDER, /return framed && \(pane === "feed" \|\| pane === "pane"\) \? pane : "here";/);
+  assert.match(RENDER, /const route = fileLinkRoute\(settings\.fileLinkPane, window\.parent !== window\);\n\s*if \(route !== "here"\) \{/);
+  assert.match(RENDER, /const to = sid \|\| activeId \|\| null;\n\s*const s = to \? \(sessions\.get\(to\) \?\? tabMeta\.get\(to\)\) : undefined;\n\s*window\.parent\.postMessage\(\{ romp: "viewFile", path, sid: to, pane: route,\n\s*identity: s && s\.name \? \{ name: s\.name, color: s\.color \?\? null \} : null \}, "\*"\);/);
 });
 
 test("every file-link surface in the chat goes through openPath — no direct openFile posts left", () => {

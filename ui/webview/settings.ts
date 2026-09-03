@@ -17,7 +17,7 @@ export interface RompSettings {
   defaultDir: string;        // default working directory PREFILLED in the new-session field (the user 2026-06-22). A session starts there; the tab menu's "Move to folder…" can change it later. Empty → the kernel's serve dir. ~ / $VAR expanded server-side.
   showBranch: boolean;       // chat bottom-bar: show the session's git branch (if any) beside the dir (the user 2026-06-23). OFF by default (the user 2026-08-10, trimming the statusline for narrow panes; an explicit stored true keeps showing it).
   tabCtx: TabCtxMode;        // chat tabs: WHEN the context gauge shows beside each session name (the user 2026-08-08) — "over50" (default: only once half full, so quiet tabs stay clean), "always", or "never".
-  fileLinkPane: FileLinkPane; // where a chat file-link click opens on the WEB (the user 2026-08-20): "chat" (default, upstream's design — the viewer over the pane you clicked) or "feed" (relay the open into the Feed pane so the transcript stays readable while the file is up). Read at click time (render.ts openPath); VS Code (host editor) and standalone /chat (no shell to relay to) are unaffected.
+  fileLinkPane: FileLinkPane; // where a chat file-link click opens on the WEB (the user 2026-08-20): "chat" (default, upstream's design — the viewer over the pane you clicked), "feed" (relay the open into the Feed pane so the transcript stays readable while the file is up) or "pane" (the Files pane, 2026-09-03 — the viewer as its own column, which stays up). Read at click time (render.ts openPath); VS Code (host editor) and standalone /chat (no shell to relay to) are unaffected.
   chatScheme: ChatScheme;    // chat TEXT scheme (the user 2026-08-24): raises body-text contrast without collapsing the tool-dimmer-than-prose hierarchy. A scheme = a text-tier variable set (styles.css body.scheme-*); "default" applies nothing — today's values exactly.
   chatTabTheme: ChatTabTheme;   // LEGACY, derived (2026-08-28): the chat TAB STRIP's appearance (T113). Now computed from `theme` on every load/save ("classic" -> classic strip, anything else -> the yatharth strip) so older panes/extension builds keep working; never set it directly.
   theme: Theme;   // the OVERALL dashboard theme (the user 2026-08-27, promoting the tab-strip setting): "classic" = the pre-720 dark look; "yatharth" = dark + the contributed strip aesthetic (what chatTabTheme:"yatharth" was); "yatharth-light" = the warm light theme (body.theme-light + the yatharth strip). Migration: a store written before `theme` existed seeds it from chatTabTheme.
@@ -41,11 +41,11 @@ export function chatScheme(v: unknown): ChatScheme {
 // on every tab is clutter while nothing is filling up — it should appear only when it has news.
 export type TabCtxMode = "always" | "over50" | "never";
 // Which pane a chat file-link click opens the viewer in, on the web. tabCtxMode's normalization
-// idiom: only the literal "feed" is the opt-in — anything else a store might hold reads as the
-// default, so a corrupt entry may cost the preference, never the click.
-export type FileLinkPane = "chat" | "feed";
+// idiom: only the literals "feed" and "pane" (the Files pane, 2026-09-03) are opt-ins — anything else
+// a store might hold reads as the default, so a corrupt entry may cost the preference, never the click.
+export type FileLinkPane = "chat" | "feed" | "pane";
 export function fileLinkPane(v: unknown): FileLinkPane {
-  return v === "feed" ? "feed" : "chat";
+  return v === "feed" || v === "pane" ? v : "chat";
 }
 // The gauge shipped for a few hours as a boolean toggle (2026-08-08) — normalize a stored
 // true/false (or anything else unrecognized) into the mode enum: false was an explicit "hide"
