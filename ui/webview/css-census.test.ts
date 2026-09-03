@@ -37,6 +37,7 @@ const EXACT: Record<string, number> = {
   "strip.css": 8,
   "fleet-pane.css": 9,
   "waiting-pane.css": 0,   // every colour resolves through a token with the literal as its fallback (2026-09-03)
+  "files-pane.css": 0,     // same rule from day one (2026-09-03): the Files pane's sheet holds no bare hex
   "timeline-pane.css": 10,
 };
 
@@ -53,7 +54,7 @@ test("no literal modal dims outside var() fallbacks — except gear's pinned #ra
   // shadow) as literals, so gear.css keeps exactly that one; every other dim in these sheets
   // resolves through var(--overlay-dim, ...) with the literal as its standalone fallback.
   assert.equal(rawDims(read("gear.css")).length, 1, "gear.css: only the vocab-pinned analytics dim");
-  for (const f of ["strip.css", "fleet-pane.css", "waiting-pane.css", "timeline-pane.css"]) {
+  for (const f of ["strip.css", "fleet-pane.css", "waiting-pane.css", "files-pane.css", "timeline-pane.css"]) {
     assert.equal(rawDims(read(f)).length, 0, f + " has no bare 0.55 dim literal");
   }
 });

@@ -4447,7 +4447,7 @@ def _conserve_tick(now):
     if not be or not hasattr(be, "conserve_close"):
         return
     with _clients_lock:
-        viewer = any(c.get("alive", True) and c.get("app") in ("chat", "fleet", "timeline", "feed", "waiting")
+        viewer = any(c.get("alive", True) and c.get("app") in ("chat", "fleet", "timeline", "feed", "waiting", "files")
                      for c in _clients)
     if viewer:
         _conserve_last_viewer[0] = now
@@ -28033,6 +28033,18 @@ FEED_DELTA_CAP = "feedDelta"   # the capability a client announces (ws ?caps=fee
 # held client — the shim consumes both itself.
 READY_GATE_CAP = "readyGate"
 
+# A client that announces THIS cap has no live kernel-pushed view: its content is fetched over HTTP on
+# demand and its socket carries keepalives and request/response replies only (the Files pane, app=files).
+# The shim reads it off CAPS and never arms its "connection lost — what you see may be stale" prompt for
+# the page. Every other pane's arm retires on the kernel's connect-time push — the first non-keepalive
+# frame after a reconnect — and a page that gets no such push held its arm until the second keepalive
+# raised the shell's shared banner, dashboard-wide, after every unannounced reconnect (the 2026-09-03
+# review), for a file a dropped socket cannot make stale. Nothing kernel-side consults it: the socket
+# already gets nothing built for it (_push names the apps it serves). It is the PAGE's declaration,
+# carried on the ws URL like the others so a reconnect keeps it without the bundle re-announcing. The
+# build-drift prompt is a separate raise (raiseBuild) and stands for such a page.
+NO_STALE_CAP = "noStale"
+
 # Fields of the feed frame that are collections keyed by an id, sent as upserts/removals: (key, id field).
 _FEED_KEYED = (("asks", "itemId"), ("ledgers", "sid"))
 
@@ -30638,6 +30650,12 @@ var failedConnects=0,firstFailT=0;   // handshakes that never OPENED since the l
 var wid=new URLSearchParams(location.search).get("wid")||"";
 try{if(!wid)wid=window.sessionStorage.getItem("romp:wid")||"";}catch(e){}
 var APP="%s";var LOADEDV=%d;var CAPS="%s";var lastRecv=0;var STALE_MS=30000;   // watchdog: no frame (incl. keepalive) for this long → the socket is dead → reconnect
+// NO_STALE_CAP: this page has no live kernel-pushed view — its content is fetched on demand and its socket carries
+// keepalives and request/response replies only (the Files pane) — so the "what you see may be stale" prompt below
+// (armStale/clearStale) is never armed for it: the retire keys on a resync frame, and none is ever coming, so the
+// second keepalive raised the shell's shared banner after every unannounced reconnect (the 2026-09-03 review).
+// The build prompt (raiseBuild) is untouched: new code is not delivered by any frame, whatever the page.
+var NOSTALE=CAPS.split(",").indexOf("%s")>=0;
 var connT=0;   // when the current socket's connect() attempt started — the progress watchdog's reference point
 // Tell the shell this pane's WS state so it can show ONE "disconnected" banner (the user 2026-06-27): a real
 // network drop used to blind-reload into a dead page, leaving the pane silently frozen with no explanation.
@@ -30663,6 +30681,7 @@ function selfStale(){selfBar("romp lost the live connection, so what you see may
 // the first non-keepalive frame after a reconnect — the event, not a timer. A BUILD prompt is untouched:
 // new code is not delivered by a resync, so only a reload can answer that one.
 function clearStale(){stalePending="";   // armed but never shown → nothing to see
+if(NOSTALE)return;   // never armed here (NO_STALE_CAP): nothing to retire, and a peer pane's prompt is not this page's to retract
 if(window.parent!==window){try{window.parent.postMessage({romp:"wsFresh"},"*");}catch(e){}}
 else{var b=document.getElementById("romp-stale-self");if(b&&b.dataset.kind==="conn")b.remove();}}
 // A pane the user cannot SEE never interrupts them about ITS OWN staleness (the user 2026-08-15: the
@@ -30703,7 +30722,7 @@ if(window.parent!==window){try{window.parent.postMessage({romp:"wsStale"},"*");}
 // last opened (the close rule applies to a socket that OPENED and armed, never to the one the foreground
 // path itself closes).
 var stalePending="",staleKa=0,pendingWhy="",openSock=null,openT=0;
-function armStale(why){stalePending=why;staleKa=0;}
+function armStale(why){if(NOSTALE)return;stalePending=why;staleKa=0;}   // NO_STALE_CAP: no pushed view to go stale — see NOSTALE above
 // BUILD drift (the user 2026-07-13): the keepalive carries the kernel's current dist token (dv); a page whose
 // baked LOADEDV is older is running outdated code against newer kernel state — prompt a reload (never auto).
 // In the dashboard the raise routes to the shell's #rstale banner (build:1 → its BUILDMSG); standalone pages
@@ -30799,7 +30818,7 @@ document.addEventListener("visibilitychange",function(){if(document.visibilitySt
 if(!ws||ws.readyState!==1||Date.now()-lastRecv>STALE_MS){pendingWhy="foreground";freshPending=true;
 try{if(ws&&ws.readyState<=1)ws.close();}catch(e){}   // OPEN or stuck-CONNECTING both die here → onclose retries
 if(!ws||ws.readyState===3)connect();}});})();
-""" % (app, int(v), caps, app, app)
+""" % (app, int(v), caps, NO_STALE_CAP, app, app)
 
 
 # On a narrow / touch viewport the chat's session tabs wrap into several rows and eat vertical space.
@@ -31188,6 +31207,44 @@ def _waiting_page():
                _shim("waiting", v, caps=FEED_DELTA_CAP + "," + READY_GATE_CAP), v, v))
 
 
+# "Files" — the file VIEWER as its own column of the dashboard (the user 2026-09-03: a file opened over the
+# chat or the feed covers what the person was reading and goes the moment they look away; a pane keeps the
+# file up beside the chat and the feed, and holds a recent-files list when nothing is open). The viewer is
+# REQUEST/RESPONSE, not a feed consumer: bytes come over HTTP /file (fileUrl, host-routed for a remote
+# session's file), and its WS ops — saveFile → fileSaved/fileSaveFailed, fileGitLink, listDir → dirListing —
+# answer the SENDING client. So app=files needs none of the feed-frame plumbing (want_feed, the send loop,
+# the ready fast-serve): _push builds nothing for it, and its socket carries keepalives and its own replies.
+# What it does need: this page (the chat's styles.css for the viewer's dress; files-pane.css read live for
+# the layout and the pane-resident variant; NO _pane_spin — an empty pane is not a loading state), the shim
+# with the ready hold and the stale opt-out (NO_STALE_CAP: no pushed view, so no reconnect may raise the
+# shell's shared "what you see may be stale" prompt for it — the 2026-09-03 review), federation.js after it
+# (so a host:sid op routes to the owning kernel through the fake acquireVsCodeApi), then ui/webview/files.ts,
+# and a seat in the conserve-memory viewer list (or an open Files pane alone reads as a closed dashboard). The
+# shell's viewFile relay brings the pane forward and forwards a chat file-link click into it when fileLinkPane
+# is "pane" (render.ts openPath). Browser shell only for now: the VS Code extension's panel mirror is a
+# separate change (UPSTREAM.md).
+def _files_page():
+    try:
+        files_css = (UI / "webview" / "files-pane.css").read_text()
+    except OSError:
+        return ("<!DOCTYPE html><html><body style='font-family:Inter,system-ui,-apple-system,sans-serif;color:#999;"
+                "background:#1e1e1e;padding:12px'>romp's Files pane needs the ui/ modules "
+                "(webview/files-pane.css).</body></html>")
+    v = _dist_ver()
+    return ("<!DOCTYPE html><html lang=en><head><meta charset=UTF-8>"
+            "<meta name=viewport content='width=device-width,initial-scale=1'>"
+            "<link rel=icon type=image/svg+xml href=/media/romp-swirl-glyph.svg><title>Romp · files</title>"
+            # the chat's stylesheet provides the viewer's dress (.fileview-*, the file browser, the code
+            # palette); files-pane.css (in the <style> AFTER it) owns the page layout and the pane-resident
+            # variant keyed on body.fileview-pane, so the two mirrored viewer sheets stay byte-equal.
+            "<link href=/dist/styles.css?v=%d rel=stylesheet>"
+            "<style>%s\n%s</style></head><body class=fileview-pane>"
+            "<div id=files-empty></div>"
+            "<script>%s</script><script src=/dist/federation.js?v=%d></script>"   # multi-kernel manager: after the shim
+            "<script src=/dist/files.js?v=%d></script></body></html>"
+            % (v, THEME_CSS, files_css, _shim("files", v, caps=READY_GATE_CAP + "," + NO_STALE_CAP), v, v))
+
+
 # The romp-tl-* wrapper styles live in ui/webview/timeline-pane.css — ONE file, read live here (like the
 # view JS itself) and bundled into the VS Code VSIX by vscode-extension/esbuild.js, so the two hosts cannot drift.
 
@@ -31312,16 +31369,16 @@ col.style.setProperty('--tl',Math.max(48,Math.min(mx,px))+'px');}
 function up(){document.body.classList.remove('drag','dragh');
 window.removeEventListener('mousemove',mv);window.removeEventListener('mouseup',up);}
 window.addEventListener('mousemove',mv);window.addEventListener('mouseup',up);});
-// ── pane gutters (chat|fleet|feed|waiting, fixed order) sized by flex-grow. gv-a is always chat|fleet; gv-b's left
+// ── pane gutters (chat|fleet|feed|waiting|files, fixed order) sized by flex-grow. gv-a is always chat|fleet; gv-b's left
 // neighbour is fleet when shown else chat (so it's the chat|feed gutter when fleet is off); gv-c's left neighbour
-// is the rightmost shown of feed/fleet/chat. On grab we normalise every visible pane's grow to its px width so
-// the drag shifts only that pair; grows persist.
-var PANES=['chat-pane','fleet-pane','feed-pane','waiting-pane'];
-var GK='romp-pane-grow',grow={chat:60,fleet:34,feed:40,waiting:34};
+// is the rightmost shown of feed/fleet/chat; gv-d's the rightmost shown of waiting/feed/fleet/chat. On grab we
+// normalise every visible pane's grow to its px width so the drag shifts only that pair; grows persist.
+var PANES=['chat-pane','fleet-pane','feed-pane','waiting-pane','files-pane'];
+var GK='romp-pane-grow',grow={chat:60,fleet:34,feed:40,waiting:34,files:40};
 try{var g=JSON.parse(localStorage.getItem(GK)||'null');if(g)grow=Object.assign(grow,g);}catch(e){}
 function setGrow(k,v){grow[k]=v;row.style.setProperty('--g-'+k,v);}
 for(var k in grow)setGrow(k,grow[k]);
-function key(id){return id==='chat-pane'?'chat':id==='fleet-pane'?'fleet':id==='feed-pane'?'feed':'waiting';}
+function key(id){return id==='chat-pane'?'chat':id==='fleet-pane'?'fleet':id==='feed-pane'?'feed':id==='waiting-pane'?'waiting':'files';}
 function shown(id){var p=document.getElementById(id);return p&&getComputedStyle(p).display!=='none';}
 // a pane re-shown from the rail gets a grow comparable to the panes already visible, so it never slots back
 // in as a sliver after the others were dragged to extreme widths (grows are stored as px). Timeline is the
@@ -31341,6 +31398,7 @@ window.addEventListener('mousemove',mv);window.addEventListener('mouseup',up);})
 gutter('gv-a',function(){return 'chat-pane';},'fleet-pane');
 gutter('gv-b',function(){return document.body.classList.contains('po-fleet')?'fleet-pane':'chat-pane';},'feed-pane');
 gutter('gv-c',function(){var c=document.body.classList;return c.contains('po-feed')?'feed-pane':c.contains('po-fleet')?'fleet-pane':'chat-pane';},'waiting-pane');
+gutter('gv-d',function(){var c=document.body.classList;return c.contains('po-waiting')?'waiting-pane':c.contains('po-feed')?'feed-pane':c.contains('po-fleet')?'fleet-pane':'chat-pane';},'files-pane');
 tf&&tf.addEventListener('load',function(){autosize();
 try{new ResizeObserver(autosize).observe(tf.contentDocument.body);}catch(e){}});
 window.addEventListener('resize',autosize);
@@ -31355,8 +31413,8 @@ window.addEventListener('romp-panes',autosize);   // re-fit when the Timeline to
 # all EVENT-based (no polling). Re-wires on every iframe (re)load; chat is the default focus on open. Inert on
 # mobile (one pane at a time; .pane is display:contents).
 _LANDING_FOCUS_JS = """
-(function(){var PANE={'f-chat':'chat-pane','f-fleet':'fleet-pane','f-feed':'feed-pane','f-waiting':'waiting-pane','f-timeline':'tl-pane'};   // Fleet is its own pane
-var COLS=['f-chat','f-fleet','f-feed','f-waiting'];   // the side-by-side column panes, left->right (Fleet = the Outline; waiting = Waiting on you)
+(function(){var PANE={'f-chat':'chat-pane','f-fleet':'fleet-pane','f-feed':'feed-pane','f-waiting':'waiting-pane','f-files':'files-pane','f-timeline':'tl-pane'};   // Fleet is its own pane
+var COLS=['f-chat','f-fleet','f-feed','f-waiting','f-files'];   // the side-by-side column panes, left->right (Fleet = the Outline; waiting = Waiting on you; files = the file viewer)
 var TL='f-timeline';                       // the timeline is a bottom BAND under the columns
 var curFocus='f-chat', lastCol='f-chat';   // for Shift-Up out of the timeline: return to the last column used
 // The active pane gets a focus RING (.pane-focused). Same-origin iframes, so the shell sets it directly on
@@ -31555,7 +31613,7 @@ if(m&&m.romp==='notify'&&m.text)window.__rompNotify(m.kind||'error',m.text,
 var st={};
 function shown(k){return document.body.classList.contains('po-'+k);}
 function liveDown(){for(var k in st){if(st[k]==='down'&&shown(k))return true;}return false;}
-var PN={chat:'Chat',feed:'Feed',timeline:'Sessions',fleet:'Outline',waiting:'Waiting'};   // timeline key stays internal; the pane outgrew the name (filter, tags, lane controls — the user 2026-08-24)
+var PN={chat:'Chat',feed:'Feed',timeline:'Sessions',fleet:'Outline',waiting:'Waiting',files:'Files'};   // timeline key stays internal; the pane outgrew the name (filter, tags, lane controls — the user 2026-08-24)
 window.addEventListener('message',function(e){var m=e&&e.data;if(!m||m.romp!=='wsState')return;
 var s=(m.state==='up')?'up':'down',prev=st[m.app];st[m.app]=s;
 if(s==='down'&&prev!=='down'&&shown(m.app))
@@ -31598,7 +31656,7 @@ else{var nt=document.getElementById('rnet-back');
 if(nt&&!nt.hidden&&window.__rompCloseNet){window.__rompCloseNet();closed=true;}}}}
 if(closed){e.preventDefault();e.stopPropagation();}}
 document.addEventListener('keydown',onEsc,true);
-['f-chat','f-fleet','f-feed','f-waiting','f-timeline'].forEach(function(id){var f=document.getElementById(id);if(!f)return;
+['f-chat','f-fleet','f-feed','f-waiting','f-files','f-timeline'].forEach(function(id){var f=document.getElementById(id);if(!f)return;
 var wire=function(){try{if(f.contentDocument)f.contentDocument.addEventListener('keydown',onEsc,true);}catch(e){}};
 f.addEventListener('load',wire);wire();});
 })();
@@ -32028,6 +32086,21 @@ if(m.romp==='browseFiles'){var bf=document.getElementById('f-feed');
 if(m.romp==='browseClosed'&&(window.__rompFeedWasOff||window.__rompFeedWasOffView)){
   window.__rompFeedWasOff=false;window.__rompFeedWasOffView=false;
   try{window.__rompPaneToggle&&window.__rompPaneToggle('feed',false);}catch(e){}}
+// A passage selected in a viewer hosted by a pane with NO composer (the Files pane, the feed) posts up in
+// the editorSelection shape the chat already handles (file-view.ts composerWindow); the shell forwards it
+// whole into the chat pane, whose composer seeds the labeled quote chip for the session the file was opened
+// for (m.sid beats the active tab there). The chat-hosted viewer posts to its own window and never gets here.
+if(m.type==='editorSelection'&&typeof m.text==='string'){var fc=document.getElementById('f-chat');
+  try{fc&&fc.contentWindow&&fc.contentWindow.postMessage(m,'*');}catch(e){}}
+// A chat file-link click routed to the FILES pane (fileLinkPane "pane", 2026-09-03: the viewer as its own
+// column) posts viewFile up with pane:'pane'; the shell brings that pane forward and forwards the click
+// with the session's identity the chat resolved (name + colour — the pane has no session list to name
+// the file's session by; files.ts caches it for the viewer's chip). The pane STAYS up — nothing to put
+// back — so none of the feed route's was-off / ack / restore machinery below applies to this branch.
+if(m.romp==='viewFile'&&m.pane==='pane'){var ff=document.getElementById('f-files');
+  try{window.__rompPaneToggle&&window.__rompPaneToggle('files',true);}catch(e){}
+  try{window.__rompMobileTab&&window.__rompMobileTab('files');}catch(e){}   // phone: one pane at a time
+  try{ff&&ff.contentWindow&&ff.contentWindow.postMessage({romp:'viewFile',path:m.path,sid:m.sid,identity:m.identity||null},'*');}catch(e){}}
 // A chat file-link click with the cards-pane preference set (fileLinkPane — gear.js; the user
 // 2026-08-20) posts viewFile up instead of opening in-document; the shell forwards it to the FEED
 // pane, whose initFileView (file-view.ts) opens the viewer there. The GATE lives at the click site
@@ -32039,7 +32112,7 @@ if(m.romp==='browseClosed'&&(window.__rompFeedWasOff||window.__rompFeedWasOffVie
 // real open sends and a lost message or a dirty-edit veto never does. An armed-at-send flag left a
 // viewFile lost to a mid-reload iframe cocked, and a later open/close cycle consumed it and hid a
 // pane the user was using. A lost message now costs only a pane left forward, never a surprise hide.
-if(m.romp==='viewFile'){var vf=document.getElementById('f-feed');
+else if(m.romp==='viewFile'){var vf=document.getElementById('f-feed');
   window.__rompFeedWasOffViewPend=!document.body.classList.contains('po-feed');
   if(window.__rompFeedWasOffViewPend){try{window.__rompPaneToggle&&window.__rompPaneToggle('feed',true);}catch(e){}}
   try{window.__rompMobileTab&&window.__rompMobileTab('feed');}catch(e){}   // phone: one pane at a time
@@ -32765,7 +32838,7 @@ function kbOpen(){var vv=window.visualViewport;return vv?(window.innerHeight-vv.
 function barfit(){try{document.documentElement.style.setProperty('--mtabs-h',(kbOpen()?0:(bar.offsetHeight||0))+'px');}catch(e){}}
 barfit();window.addEventListener('resize',barfit);window.addEventListener('orientationchange',barfit);
 if(window.visualViewport){window.visualViewport.addEventListener('resize',barfit);}
-var F={chat:document.getElementById('f-chat'),fleet:document.getElementById('f-fleet'),feed:document.getElementById('f-feed'),waiting:document.getElementById('f-waiting'),timeline:document.getElementById('f-timeline')};
+var F={chat:document.getElementById('f-chat'),fleet:document.getElementById('f-fleet'),feed:document.getElementById('f-feed'),waiting:document.getElementById('f-waiting'),files:document.getElementById('f-files'),timeline:document.getElementById('f-timeline')};
 var B=bar.querySelectorAll('button'),KT='romp-mobile-tab';
 function show(p){if(!F[p])return;document.body.setAttribute('data-tab',p);for(var k in F)F[k].classList.toggle('m-on',k===p);
 for(var i=0;i<B.length;i++)B[i].classList.toggle('on',B[i].getAttribute('data-pane')===p);
@@ -32983,18 +33056,19 @@ _STALE_JS = (
 # key,to?) so the legacy toggleFleet postMessage (_LANDING_FLEET_JS) routes through the same path.
 _LANDING_COLLAPSE_JS = """
 (function(){
-  var PK='romp-panes',po={chat:true,fleet:false,feed:true,timeline:true,waiting:false};
+  var PK='romp-panes',po={chat:true,fleet:false,feed:true,timeline:true,waiting:false,files:false};
   try{var s=JSON.parse(localStorage.getItem(PK)||'null');if(s)po=Object.assign(po,s);}catch(e){}
   var qp=new URLSearchParams(location.search).get('panes');
-  if(qp!==null){po={chat:false,fleet:false,feed:false,timeline:false,waiting:false};qp.split(',').forEach(function(k){k=k.trim();if(k in po)po[k]=true;});}
+  if(qp!==null){po={chat:false,fleet:false,feed:false,timeline:false,waiting:false,files:false};qp.split(',').forEach(function(k){k=k.trim();if(k in po)po[k]=true;});}
   function saveP(){try{localStorage.setItem(PK,JSON.stringify(po));}catch(e){}}
-  var LBL={chat:'chat',fleet:'fleet',feed:'feed',timeline:'timeline',waiting:'Waiting pane'};
+  var LBL={chat:'chat',fleet:'fleet',feed:'feed',timeline:'timeline',waiting:'Waiting pane',files:'Files pane'};
   function apply(){
     document.body.classList.toggle('po-chat',!!po.chat);
     document.body.classList.toggle('po-fleet',!!po.fleet);
     document.body.classList.toggle('po-feed',!!po.feed);
     document.body.classList.toggle('po-timeline',!!po.timeline);
     document.body.classList.toggle('po-waiting',!!po.waiting);
+    document.body.classList.toggle('po-files',!!po.files);
     Array.prototype.forEach.call(document.querySelectorAll('.rail-btn[data-pane]'),function(b){
       var k=b.getAttribute('data-pane');b.classList.toggle('on',!!po[k]);
       // tooltip carries the pane command's CURRENT binding (hover discoverability, the user 2026-08-10) —
@@ -33247,7 +33321,8 @@ _REFRESH_SVG = (
 # is a band, not a column). BOTH the desktop rail buttons and the mobile #mtabs buttons render
 # from this one constant — reorder here and both surfaces move together; a second hardcoded list
 # is the bug this replaces. Keys stay internal (timeline/fleet); labels are the user-facing names.
-_PANE_ORDER = (("chat", "Chat"), ("timeline", "Sessions"), ("fleet", "Outline"), ("feed", "Feed"), ("waiting", "Waiting"))
+_PANE_ORDER = (("chat", "Chat"), ("timeline", "Sessions"), ("fleet", "Outline"), ("feed", "Feed"), ("waiting", "Waiting"),
+               ("files", "Files"))
 
 
 def _rail_buttons_html():
@@ -33647,16 +33722,18 @@ def _landing():
             # the host heading's size without its lowercase-italic host vocabulary
             ".ru-tip-acct{font:400 10px 'Inter',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;"
             "color:#9aa0a6;margin:0 0 4px}"
-            # the four TOP panes flex-grow by a per-pane var (resized by the gutters, persisted); toggling one
-            # off hides it AND the now-orphaned gutters. Fixed order: chat, fleet, feed, waiting. Timeline is the band.
-            "#chat-pane{flex:var(--g-chat,60) 1 0}#fleet-pane{flex:var(--g-fleet,34) 1 0}#feed-pane{flex:var(--g-feed,40) 1 0}#waiting-pane{flex:var(--g-waiting,34) 1 0}"
-            "body:not(.po-chat) #chat-pane{display:none}body:not(.po-fleet) #fleet-pane{display:none}body:not(.po-feed) #feed-pane{display:none}body:not(.po-waiting) #waiting-pane{display:none}"
+            # the five TOP panes flex-grow by a per-pane var (resized by the gutters, persisted); toggling one
+            # off hides it AND the now-orphaned gutters. Fixed order: chat, fleet, feed, waiting, files. Timeline is the band.
+            "#chat-pane{flex:var(--g-chat,60) 1 0}#fleet-pane{flex:var(--g-fleet,34) 1 0}#feed-pane{flex:var(--g-feed,40) 1 0}#waiting-pane{flex:var(--g-waiting,34) 1 0}#files-pane{flex:var(--g-files,40) 1 0}"
+            "body:not(.po-chat) #chat-pane{display:none}body:not(.po-fleet) #fleet-pane{display:none}body:not(.po-feed) #feed-pane{display:none}body:not(.po-waiting) #waiting-pane{display:none}body:not(.po-files) #files-pane{display:none}"
             ".row>.gv{flex:0 0 7px}"
             # gv-a sits chat|fleet (only when both shown); gv-b sits (fleet|chat)|feed — the chat|feed gutter when fleet off;
-            # gv-c sits (feed|fleet|chat)|waiting — shown when waiting is on and anything sits to its left.
+            # gv-c sits (feed|fleet|chat)|waiting — shown when waiting is on and anything sits to its left;
+            # gv-d sits (waiting|feed|fleet|chat)|files — the same rule, one column further right.
             "body:not(.po-chat) #gv-a,body:not(.po-fleet) #gv-a{display:none}"
             "body:not(.po-feed) #gv-b,body:not(.po-chat):not(.po-fleet) #gv-b{display:none}"
             "body:not(.po-waiting) #gv-c,body:not(.po-chat):not(.po-fleet):not(.po-feed) #gv-c{display:none}"
+            "body:not(.po-files) #gv-d,body:not(.po-chat):not(.po-fleet):not(.po-feed):not(.po-waiting) #gv-d{display:none}"
             # ── timeline BOTTOM BAND (the user 2026-06-25): a full-width band UNDER the pane row, shown only when
             # po-timeline (the rail's Timeline toggle); the gh gutter above it resizes it (auto-fits otherwise).
             # Band + gutter both hide when the toggle is off, so the pane row fills the height.
@@ -33715,11 +33792,11 @@ def _landing():
             ".pane.pane-focused::after{display:none}"
             # the Outline (fleet) rides the tab bar like every other pane (the user 2026-07-11, who couldn't
             # access the outline view in the mobile UI — it was desktop-only before)
-            "#chat-pane,#fleet-pane,#feed-pane,#waiting-pane,#tl-pane{display:contents!important}"
+            "#chat-pane,#fleet-pane,#feed-pane,#waiting-pane,#files-pane,#tl-pane{display:contents!important}"
             # reset the desktop iframe absolute-fill (the bare `iframe` reset below re-flows them as tab panes)
             ".pane>iframe{position:static;inset:auto;width:100%;height:100%}"
             "iframe{position:static;display:none;width:100%;height:100%;border:0}"
-            "#f-chat.m-on,#f-fleet.m-on,#f-feed.m-on,#f-waiting.m-on{display:block}"
+            "#f-chat.m-on,#f-fleet.m-on,#f-feed.m-on,#f-waiting.m-on,#f-files.m-on{display:block}"
             "#f-timeline{flex:1 1 auto;min-height:0}#f-timeline.m-on{display:block}"
             "body[data-tab=timeline] .row{display:none}"    # timeline tab active → collapse the chat/feed row so the band fills
             # compact text-only switcher, FIXED to the visible viewport bottom so nothing can sit below it.
@@ -33918,6 +33995,10 @@ def _landing():
             # column, OFF by default like the Outline (the feature itself is off by default)
             "<div class=gv id=gv-c></div>"
             "<div class=pane id=waiting-pane><iframe id=f-waiting src=/waiting></iframe></div>"
+            # "Files" (2026-09-03): the file viewer as its own column, far right, OFF by default — the
+            # shell's viewFile relay brings it forward when a chat file-link click routes here
+            "<div class=gv id=gv-d></div>"
+            "<div class=pane id=files-pane><iframe id=f-files src=/files></iframe></div>"
             "</div>"
             # the timeline BOTTOM BAND: full-width below the pane row, with a row-resize gutter above it. Both
             # are hidden (CSS) unless po-timeline (the rail's Timeline toggle).
@@ -34799,6 +34880,9 @@ class Handler(BaseHTTPRequestHandler):
             if p == "/waiting":
                 _client_seen[0] = time.time()
                 return self._send(200, _waiting_page(), "text/html; charset=utf-8", cache="no-cache")
+            if p == "/files":
+                _client_seen[0] = time.time()
+                return self._send(200, _files_page(), "text/html; charset=utf-8", cache="no-cache")
             if p == "/sw.js":
                 # the push service worker (see _SW_JS). Behind the gate on purpose: the browser's
                 # register() fetch is same-origin and carries the cookie, and only an authed shell

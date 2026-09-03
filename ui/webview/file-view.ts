@@ -232,6 +232,21 @@ registerFileViewAction({
 // ever commented — sweep it on load.
 try { localStorage.removeItem("romp:fileviewComments"); } catch { /* storage may be denied */ }
 
+// Where a quote seed lands (2026-09-03, with the Files pane): the composer in THIS document when there
+// is one (the chat-hosted viewer posts to its own window, and render.ts's editorSelection handler owns
+// the chip end to end); otherwise the SHELL, when this document is framed by one. The Files pane and
+// the feed host the viewer without a composer, and the shell forwards the seed into the chat pane (the
+// editorSelection arm in kernel.py's landing shell). Before this, a selection in the feed-hosted viewer
+// was dead air by design. No composer and no shell (a VS Code webview's cross-origin parent throws; a
+// standalone pane has none) → null, and the gesture stands down without a fresh read. Presence is the
+// DOM id, the Back button's import-free idiom (render.ts's inRompShell keys on the same node).
+function composerWindow(): Window | null {
+  if (document.getElementById("composer-input")) return window;
+  try { if (window.parent !== window && window.parent.document.getElementById("chat-pane")) return window.parent; }
+  catch { /* a cross-origin parent (VS Code) is not the romp shell */ }
+  return null;
+}
+
 export function closeFileView(): void {
   const wrap = document.getElementById("romp-fileview");
   if (!wrap) return;
@@ -551,11 +566,12 @@ export function openFileView(path: string, sid?: string | null): boolean {
   let seedSeq = 0;                                 // last gesture wins if two fresh reads race
   box.addEventListener("mouseup", () => {
     if (editing) return;   // CodeMirror selections are edit gestures, not quotes
-    // No chip target in THIS document → no seed (the no-sink gating, re-expressed for the chip era):
-    // the feed-hosted viewer (the file browser's document) has no composer and no editorSelection
-    // handler, so the post would be dead air and the label's fresh read dead work. Presence is the
-    // DOM id — the Back button's import-free idiom (the browser may not even be loaded here).
-    if (!document.getElementById("composer-input")) return;
+    // No chip target reachable → no seed (the no-sink gating, re-expressed for the chip era): the post
+    // would be dead air and the label's fresh read dead work. The target is this document's composer
+    // (the chat-hosted viewer) or, from a pane without one — the Files pane, the feed — the shell,
+    // which forwards the seed into the chat pane (composerWindow above).
+    const seedTarget = composerWindow();
+    if (!seedTarget) return;
     // RENDERED media has no honest text to quote — an <img>/iframe body owns its own selection
     // surface; the SVG SOURCE view is a real text view and quotes like any other (renderBody's
     // media gate, same rule).
@@ -576,8 +592,8 @@ export function openFileView(path: string, sid?: string | null): boolean {
       .catch(() => viewText())
       .then((doc) => {
         if (seq !== seedSeq) return;
-        try { window.postMessage({ type: "editorSelection", text: picked, sid: sid || undefined, src: quoteSrcLabel(path, doc, picked) }, "*"); }
-        catch { /* messaging our own window cannot really fail */ }
+        try { seedTarget.postMessage({ type: "editorSelection", text: picked, sid: sid || undefined, src: quoteSrcLabel(path, doc, picked) }, "*"); }
+        catch { /* messaging our own window or the same-origin shell cannot really fail */ }
       });
   });
 
@@ -591,18 +607,20 @@ export function openFileView(path: string, sid?: string | null): boolean {
   // The editing substrate is CodeMirror 6 (the user 2026-08-22), living in its OWN lazily-loaded
   // bundle so people who never edit download nothing (the main bundles import none of it — the
   // contract is the window global the chunk registers). The URL derives from the page's own running
-  // bundle script — same directory, same ?v= cache token — so it resolves on the kernel pages and
-  // the VS Code webview alike, and a rebuilt kernel always serves a matching chunk. A failed load
-  // rejects ONCE and clears the latch so a later attempt retries fresh.
+  // bundle script — render.js (chat), feed.js (feed) or files.js (the Files pane; 2026-09-03, when a
+  // pattern naming only the first two sent every Edit there to the textarea with a raw error) — same
+  // directory, same ?v= cache token — so it resolves on the kernel pages and the VS Code webview
+  // alike, and a rebuilt kernel always serves a matching chunk. A failed load rejects ONCE and clears
+  // the latch so a later attempt retries fresh.
   let edChunk: Promise<{ mount: (host: HTMLElement, opts: object) => { value(): string; focus(): void; destroy(): void } }> | null = null;
   const editorChunk = () => edChunk || (edChunk = new Promise((res, rej) => {
     const w = window as any;
     if (w.__rompEditor) return res(w.__rompEditor);
     const self = Array.from(document.querySelectorAll("script[src]"))
-      .map((n) => (n as HTMLScriptElement).src).find((u) => /\/(render|feed)\.js/.test(u));
+      .map((n) => (n as HTMLScriptElement).src).find((u) => /\/(render|feed|files)\.js/.test(u));
     if (!self) return rej(new Error("no bundle script tag to derive the editor chunk URL from"));
     const sc = document.createElement("script");
-    sc.src = self.replace(/\/(render|feed)\.js/, "/editor-chunk.js");
+    sc.src = self.replace(/\/(render|feed|files)\.js/, "/editor-chunk.js");
     sc.onload = () => { const e = (window as any).__rompEditor; e ? res(e) : rej(new Error("editor chunk loaded but did not register")); };
     sc.onerror = () => { edChunk = null; rej(new Error("the editor bundle failed to load")); };
     document.head.appendChild(sc);
@@ -956,13 +974,18 @@ function pdfBlock(objUrl: string, path: string): HTMLElement {
  *  openPath); the sid rides along so a remote session's file still resolves against the host that
  *  owns it. A REAL open answers the shell with viewFileOpened — the shell arms its pane-restore
  *  flag only on that ack, so a lost relay (or a dirty-edit veto, which opens nothing) can never
- *  leave a stale armed flag behind. */
-export function initFileView(poster: (m: Record<string, unknown>) => void): void {
+ *  leave a stale armed flag behind. That ack and viaRelay are the FEED's contract; a document with
+ *  a relay contract of its own passes `onRelay` and takes the relayed message whole instead (the
+ *  Files pane, 2026-09-03: it caches the identity the relay carries, keeps its recent list, and
+ *  owes the shell no pane restore, since the pane stays up). */
+export function initFileView(poster: (m: Record<string, unknown>) => void,
+                             onRelay?: (m: { path: string; sid?: unknown; identity?: unknown }) => void): void {
   post = poster;
   window.addEventListener("message", (e: MessageEvent) => {
     const m = e.data;
     if (!m) return;
     if (m.romp === "viewFile" && typeof m.path === "string" && m.path) {
+      if (onRelay) { onRelay(m); return; }   // this document's own contract (the Files pane) — not the feed's
       // gated on the verdict: a dirty-edit veto keeps the PREVIOUS viewer, which must not be
       // re-tagged as relay-opened (a false announce on ITS close) and earns no ack (arm-on-ack —
       // the shell must not arm a restore for an open that never happened)

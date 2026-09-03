@@ -38,18 +38,21 @@ test("openPath routes by HOST: the in-pane viewer modal on the web, the editor i
 // stays readable while the file is up. The GATE lives here at the click site, not in the shell:
 // the shell forwards whatever arrives (browseFiles' contract), so a message that is never sent is
 // a click that opens in place — no message can be silently swallowed by a shell-side setting check.
-test("fileLinkRoute: the cards-pane preference relays only when framed; everything else opens here", () => {
-  const fileLinkRoute = (pane: unknown, framed: boolean): "shell" | "here" =>
-    pane === "feed" && framed ? "shell" : "here";
-  assert.equal(fileLinkRoute("feed", true), "shell", "setting=feed & framed → hand the open to the shell");
+test("fileLinkRoute: a pane preference relays only when framed, naming its target; everything else opens here", () => {
+  const fileLinkRoute = (pane: unknown, framed: boolean): "feed" | "pane" | "here" =>
+    framed && (pane === "feed" || pane === "pane") ? pane : "here";
+  assert.equal(fileLinkRoute("feed", true), "feed", "setting=feed & framed → hand the open to the shell, for the feed");
+  assert.equal(fileLinkRoute("pane", true), "pane", "setting=pane & framed → the shell, for the Files pane (2026-09-03)");
   assert.equal(fileLinkRoute("feed", false), "here", "standalone /chat: no shell, no feed pane — open in place");
+  assert.equal(fileLinkRoute("pane", false), "here", "standalone /chat: no Files pane either — open in place");
   assert.equal(fileLinkRoute("chat", true), "here", "the default: exactly the pre-setting behavior");
   assert.equal(fileLinkRoute(undefined, true), "here", "an unset store reads as the default");
   assert.equal(fileLinkRoute("purple", true), "here", "a foreign stored value falls to the default");
-  // replica ↔ source, and the wiring: openPath consults it with the LIVE framed bit and posts up
-  assert.match(RENDER, /return pane === "feed" && framed \? "shell" : "here";/);
-  assert.match(RENDER, /if \(fileLinkRoute\(settings\.fileLinkPane, window\.parent !== window\) === "shell"\) \{/);
-  assert.match(RENDER, /window\.parent\.postMessage\(\{ romp: "viewFile", path, sid: sid \|\| activeId \|\| null \}, "\*"\);/);
+  // replica ↔ source, and the wiring: openPath consults it with the LIVE framed bit and posts up, the
+  // message naming its target pane and carrying the session's identity for the Files pane's chip
+  assert.match(RENDER, /return framed && \(pane === "feed" \|\| pane === "pane"\) \? pane : "here";/);
+  assert.match(RENDER, /const route = fileLinkRoute\(settings\.fileLinkPane, window\.parent !== window\);\n\s*if \(route !== "here"\) \{/);
+  assert.match(RENDER, /const to = sid \|\| activeId \|\| null;\n\s*const s = to \? \(sessions\.get\(to\) \?\? tabMeta\.get\(to\)\) : undefined;\n\s*window\.parent\.postMessage\(\{ romp: "viewFile", path, sid: to, pane: route,\n\s*identity: s && s\.name \? \{ name: s\.name, color: s\.color \?\? null \} : null \}, "\*"\);/);
 });
 
 test("every file-link surface in the chat goes through openPath — no direct openFile posts left", () => {
@@ -254,7 +257,7 @@ test("selecting in the viewer seeds the composer's editor chip — the editorSel
   // mouseup posts to our OWN window (the browseFiles precedent — no import cycle with render.ts),
   // and render.ts's existing editorSelection handler owns the chip end to end
   assert.match(VIEW, /box\.addEventListener\("mouseup", \(\) => \{/);
-  assert.match(VIEW, /window\.postMessage\(\{ type: "editorSelection", text: picked, sid: sid \|\| undefined, src: quoteSrcLabel\(path, doc, picked\) \}, "\*"\);/);
+  assert.match(VIEW, /seedTarget\.postMessage\(\{ type: "editorSelection", text: picked, sid: sid \|\| undefined, src: quoteSrcLabel\(path, doc, picked\) \}, "\*"\);/);
   // a collapsed or out-of-viewer selection seeds nothing, and CodeMirror selections are edits
   assert.match(VIEW, /if \(!sel \|\| sel\.isCollapsed \|\| !sel\.anchorNode \|\| !box\.contains\(sel\.anchorNode\)\) return;/);
   assert.match(VIEW, /if \(editing\) return;/);
@@ -280,18 +283,47 @@ test("the label's line is minted against a FRESH read, and a failed re-read fall
   assert.match(VIEW, /if \(seq !== seedSeq\) return;/, "two racing reads: the last gesture wins");
 });
 
-test("the FEED-hosted viewer stays inert: no editorSelection listener there, and no review layer anywhere", () => {
-  // the feed document has no composer and no editorSelection handler — so the seed gesture itself
-  // stands down there (the fork's no-sink gating, re-expressed for the chip era: no real target,
-  // no post, and no dead-work fresh read per selection). Presence is the DOM id, the Back button's
-  // import-free idiom.
-  assert.match(VIEW, /if \(!document\.getElementById\("composer-input"\)\) return;/);
+test("a viewer whose document has no composer seeds THROUGH the shell: the Files pane and the feed reach the chat's chip", () => {
+  // Until 2026-09-03 the seed gated on a composer in the SAME document, so the feed-hosted viewer (the
+  // file browser's document) was dead air by design. The Files pane hosts the viewer without a composer
+  // too, and a pane that cannot quote is a step down from the chat modal — so the TARGET is resolved:
+  // this window when it holds the composer, else the same-origin shell, which forwards the unchanged
+  // message into the chat pane. No composer and no shell (VS Code's cross-origin parent, a standalone
+  // pane) still stands the gesture down before the fresh read (the no-sink gating).
+  assert.match(VIEW, /function composerWindow\(\): Window \| null \{\n\s*if \(document\.getElementById\("composer-input"\)\) return window;\n\s*try \{ if \(window\.parent !== window && window\.parent\.document\.getElementById\("chat-pane"\)\) return window\.parent; \}\n\s*catch \{[^}]*\}\n\s*return null;\n\}/);
+  assert.match(VIEW, /const seedTarget = composerWindow\(\);\n\s*if \(!seedTarget\) return;/);
+  // the shell's arm: the SAME message, forwarded whole into the chat frame — sid intact, so the chip
+  // lands in the session the file was opened for (the 2026-08-19 routing rule holds across documents)
+  const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
+  assert.match(KERNEL, /if\(m\.type==='editorSelection'&&typeof m\.text==='string'\)\{var fc=document\.getElementById\('f-chat'\);\n\s*try\{fc&&fc\.contentWindow&&fc\.contentWindow\.postMessage\(m,'\*'\);\}catch\(e\)\{\}\}/);
+  // …and the chat's existing window-message handler is the receiver: nothing new listens in feed.ts
+  assert.match(RENDER, /else if \(m\.type === "editorSelection" && typeof m\.text === "string" && m\.text\.trim\(\)\) \{/);
   assert.doesNotMatch(FEED, /editorSelection/);
   // the review layer is gone from every module and both sheets, and the orphaned store is swept
   for (const source of [VIEW, RENDER, FEED, CHAT_CSS, FEED_CSS]) {
     assert.doesNotMatch(source, /setCommentSink|buildReviewMessage|fv-hl|fileview-submit/);
   }
   assert.match(VIEW, /localStorage\.removeItem\("romp:fileviewComments"\)/);
+});
+
+// executed: composerWindow's ladder, lifted from the source (a hand copy would drift), run against
+// shimmed window/document pairs for each hosting situation
+test("composerWindow, executed: own composer → the same-origin shell's chat pane → nothing", () => {
+  const m = VIEW.match(/function composerWindow\(\): Window \| null \{[\s\S]*?\n\}/);
+  assert.ok(m, "composerWindow found");
+  const body = m![0].replace(/^function composerWindow\(\): Window \| null /, "");
+  const run = new Function("window", "document", "return (function()" + body + ")();") as (w: unknown, d: unknown) => unknown;
+  const doc = (ids: string[]) => ({ getElementById: (id: string) => (ids.includes(id) ? {} : null) });
+  const self: any = {}; self.parent = self;
+  assert.equal(run(self, doc(["composer-input"])), self, "the chat document: its own window");
+  const shell = { document: doc(["chat-pane"]) };
+  const framed = { parent: shell };
+  assert.equal(run(framed, doc([])), shell, "a pane inside the shell: the shell, which forwards into the chat");
+  assert.equal(run(framed, doc(["composer-input"])), framed, "a composer at hand always wins over the relay");
+  assert.equal(run({ parent: { get document() { throw new Error("cross-origin"); } } }, doc([])), null,
+    "VS Code's cross-origin parent is not the shell — the gesture stands down");
+  assert.equal(run({ parent: { document: doc([]) } }, doc([])), null, "a same-origin parent that is not the shell");
+  assert.equal(run(self, doc([])), null, "unframed and composer-less: nowhere to seed");
 });
 
 test("it waits with the romp loader and fails with the kernel's own words, never a blank pane", () => {
@@ -693,17 +725,18 @@ test("a 200 image renders ONE <img> at an object URL; the quote gesture stays of
 // .svg's XML unquotable. ──
 test("the quote seed gates off RENDERED media only — the SVG Source view is a text view like any other", () => {
   // executed: the seed offer across the view states (the no-target gate holds throughout —
-  // composerHere plays the role the old comment sink did: no real target, no gesture)
-  const seedable = (composerHere: boolean, isImage: boolean, isPdf: boolean, srcView: boolean): boolean =>
-    composerHere && !((isImage || isPdf) && !srcView);
+  // a reachable composer (own document, or the chat's through the shell) plays the role the old
+  // comment sink did: no real target, no gesture)
+  const seedable = (target: boolean, isImage: boolean, isPdf: boolean, srcView: boolean): boolean =>
+    target && !((isImage || isPdf) && !srcView);
   assert.equal(seedable(true, true, false, true), true, "SVG Source view: the selection seeds a chip");
   assert.equal(seedable(true, true, false, false), false, "the img view has no honest text to quote");
   assert.equal(seedable(true, false, true, false), false, "the PDF iframe owns its own surface");
-  assert.equal(seedable(false, true, false, true), false, "no composer in this document still gates everything off");
+  assert.equal(seedable(false, true, false, true), false, "no composer reachable still gates everything off");
   assert.equal(seedable(true, false, false, false), true, "plain text views are untouched");
   // source: the media arm of the mouseup gate carves out the Source view, sitting AFTER the
   // no-target gate (whose pin lives in the feed-inert test above)
-  assert.match(VIEW, /if \(!document\.getElementById\("composer-input"\)\) return;\n(\s*\/\/[^\n]*\n)*\s*if \(\(isImage \|\| isPdf\) && !\(svgSource && svgText !== null\)\) return;/);
+  assert.match(VIEW, /if \(!seedTarget\) return;\n(\s*\/\/[^\n]*\n)*\s*if \(\(isImage \|\| isPdf\) && !\(svgSource && svgText !== null\)\) return;/);
   // anchoring reads the text THE VIEW SHOWS — the Source view's decoded XML, never the text
   // pipeline's null — so a quote on the XML earns its path:line label (viewText, pinned with the
   // fresh-read test above); renderBody's Source arm builds those text nodes through codeBlock
@@ -906,7 +939,8 @@ test("the title bar carries a session chip resolved from the sid — never inven
     "between the path and the actions");
   // the signatures every opener and the relay pin depend on are exactly as they were
   assert.match(VIEW, /export function openFileView\(path: string, sid\?: string \| null\): boolean \{/);
-  assert.match(VIEW, /export function initFileView\(poster: \(m: Record<string, unknown>\) => void\): void \{/);
+  // (the optional onRelay — the Files pane's own relay contract, 2026-09-03 — leaves the poster's shape alone)
+  assert.match(VIEW, /export function initFileView\(poster: \(m: Record<string, unknown>\) => void,\n\s*onRelay\?: \(m: \{ path: string; sid\?: unknown; identity\?: unknown \}\) => void\): void \{/);
 });
 
 test("both hosting documents register a resolver beside their initFileView boot", () => {

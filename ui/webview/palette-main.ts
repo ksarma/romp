@@ -137,7 +137,7 @@ installMenuEcho();
   // Pane toggles. The Outline pane's INTERNAL key stays 'fleet' (the pane controller's API);
   // the command speaks the user-facing name. [key, command slug, title words]
   const panes: Array<[string, string, string]> = [["chat", "chat", "chat"], ["timeline", "timeline", "timeline"],
-    ["fleet", "outline", "outline"], ["feed", "feed", "feed"], ["waiting", "waiting", "Waiting"]];
+    ["fleet", "outline", "outline"], ["feed", "feed", "feed"], ["waiting", "waiting", "Waiting"], ["files", "files", "Files"]];
   for (const [key, label, words] of panes) {
     registerCommand({
       id: "pane." + label, title: "Show or hide the " + words + " pane",
@@ -216,7 +216,7 @@ installMenuEcho();
   // render.ts's own window-capture Cmd+O handler stands down inside the shell (inRompShell),
   // so a keystroke in the chat document lands here exactly once.
   document.addEventListener("keydown", onKey, true);
-  ["f-chat", "f-fleet", "f-feed", "f-waiting", "f-timeline"].forEach((id) => {
+  ["f-chat", "f-fleet", "f-feed", "f-waiting", "f-files", "f-timeline"].forEach((id) => {
     const f = pane(id);
     if (!f) return;
     const wire = () => {

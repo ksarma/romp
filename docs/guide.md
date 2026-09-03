@@ -4,8 +4,8 @@ This guide covers how to use Romp and how its back end works.
 
 ## The Romp user interface
 
-Romp gathers all your Claude Code sessions into one interface, with four
-complementary views of what the agents are doing:
+Romp gathers all your Claude Code sessions into one interface, with six
+complementary panes:
 
 - **[The chat](#the-chat)** is the regular interface for talking to a coding
   agent, with features that make a long session easier to scan.
@@ -19,6 +19,8 @@ complementary views of what the agents are doing:
 - **[Waiting on you](#waiting-on-you)** lists every request a session has
   flagged for you, across all your sessions and machines, with Reply and
   Dismiss on each.
+- **[Files](#files)** holds the file viewer in a column of its own, so a file
+  stays open beside the chat and the feed.
 
 ### The chat
 
@@ -97,6 +99,17 @@ off by default, like the outline; turn it on from the bottom bar. Sessions flag
 requests only where the gear's **User todos** switch is on, and the switch is
 per machine: while it is off on this one, the pane says so and still lists the
 other machines' requests.
+
+### Files
+
+The Files pane holds the file viewer in a column of its own, beside the chat
+and the feed, so an open file covers neither. Set the gear's **File links open
+in** to **The Files pane** and a file link clicked in the chat opens here; the
+pane comes forward on its own and stays up until you close the file. Selecting
+a passage in it puts the quote in the chat's composer, as it does from the
+viewer over the chat. When no file is open, the pane lists the files most
+recently open here; click one to open it again. The pane is off by default;
+the bottom bar turns it on.
 
 ## Automatic nudges
 

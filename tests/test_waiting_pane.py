@@ -185,7 +185,7 @@ class Plumbing(unittest.TestCase):
         self.assertIn('if not (served and client.get("app") in ("feed", "waiting")):', SRC)
 
     def test_an_open_waiting_pane_counts_as_a_viewer_for_conserve_memory(self):
-        self.assertIn('c.get("app") in ("chat", "fleet", "timeline", "feed", "waiting")', SRC)
+        self.assertIn('c.get("app") in ("chat", "fleet", "timeline", "feed", "waiting", "files")', SRC)
 
     def test_the_page_rides_the_feed_pane_caps_and_the_shared_dress(self):
         page = km._waiting_page()
@@ -215,8 +215,8 @@ class Shell(unittest.TestCase):
     def setUp(self):
         self.html = km._landing()
 
-    def test_the_pane_is_in_the_one_ordering_last(self):
-        self.assertEqual(km._PANE_ORDER[-1], ("waiting", "Waiting"))
+    def test_the_pane_is_in_the_one_ordering_after_feed(self):
+        self.assertEqual(km._PANE_ORDER[-2], ("waiting", "Waiting"))   # the Files pane (2026-09-03) sits after it
         self.assertIn("<div class=rail-btn data-pane=waiting>Waiting</div>", self.html)
         self.assertIn("<button data-pane=waiting>Waiting</button>", self.html)
 
@@ -232,25 +232,25 @@ class Shell(unittest.TestCase):
 
     def test_off_by_default_and_toggled_by_the_controller(self):
         self.assertIn("<body class='po-chat po-feed po-timeline'>", self.html)   # not po-waiting
-        self.assertIn("po={chat:true,fleet:false,feed:true,timeline:true,waiting:false}", self.html)
-        self.assertIn("po={chat:false,fleet:false,feed:false,timeline:false,waiting:false}", self.html)   # the ?panes= reset
+        self.assertIn("po={chat:true,fleet:false,feed:true,timeline:true,waiting:false,files:false}", self.html)
+        self.assertIn("po={chat:false,fleet:false,feed:false,timeline:false,waiting:false,files:false}", self.html)   # the ?panes= reset
         self.assertIn("document.body.classList.toggle('po-waiting',!!po.waiting)", self.html)
         self.assertIn("waiting:'Waiting pane'", self.html)   # the rail tooltip's words
 
     def test_every_pane_list_in_the_landing_js_names_it(self):
         self.assertIn("'f-waiting':'waiting-pane'", km._LANDING_FOCUS_JS)
-        self.assertIn("var COLS=['f-chat','f-fleet','f-feed','f-waiting']", km._LANDING_FOCUS_JS)
-        self.assertIn("['f-chat','f-fleet','f-feed','f-waiting','f-timeline'].forEach", self.html)   # Esc wiring
+        self.assertIn("var COLS=['f-chat','f-fleet','f-feed','f-waiting','f-files']", km._LANDING_FOCUS_JS)
+        self.assertIn("['f-chat','f-fleet','f-feed','f-waiting','f-files','f-timeline'].forEach", self.html)   # Esc wiring
         self.assertIn("waiting:'Waiting'", km._LANDING_ERRS_JS)   # the Log's connection-lost label
         self.assertIn("waiting:document.getElementById('f-waiting')", km._LANDING_MOBILE_JS)
-        self.assertIn("var PANES=['chat-pane','fleet-pane','feed-pane','waiting-pane'];", self.html)
-        self.assertIn("grow={chat:60,fleet:34,feed:40,waiting:34}", self.html)
-        self.assertIn("id==='feed-pane'?'feed':'waiting'", self.html)
+        self.assertIn("var PANES=['chat-pane','fleet-pane','feed-pane','waiting-pane','files-pane'];", self.html)
+        self.assertIn("grow={chat:60,fleet:34,feed:40,waiting:34,files:40}", self.html)
+        self.assertIn("id==='feed-pane'?'feed':id==='waiting-pane'?'waiting':'files'", self.html)
         self.assertIn("gutter('gv-c',", self.html)
 
     def test_mobile_tab_and_the_palette_command(self):
-        self.assertIn("#chat-pane,#fleet-pane,#feed-pane,#waiting-pane,#tl-pane{display:contents!important}", self.html)
-        self.assertIn("#f-chat.m-on,#f-fleet.m-on,#f-feed.m-on,#f-waiting.m-on{display:block}", self.html)
+        self.assertIn("#chat-pane,#fleet-pane,#feed-pane,#waiting-pane,#files-pane,#tl-pane{display:contents!important}", self.html)
+        self.assertIn("#f-chat.m-on,#f-fleet.m-on,#f-feed.m-on,#f-waiting.m-on,#f-files.m-on{display:block}", self.html)
         pal = (Path(BIN).parent / "ui" / "webview" / "palette-main.ts").read_text()
         self.assertIn('["waiting", "waiting", "Waiting"]', pal)
         self.assertIn('"f-waiting"', pal)

@@ -627,7 +627,10 @@ class ShimAnnouncesForTheFeedPage(unittest.TestCase):
         self.assertIn('_shim("waiting", v, caps=FEED_DELTA_CAP + "," + READY_GATE_CAP)', KSRC)
         for app in ("chat", "fleet", "timeline"):
             self.assertIn('_shim("%s", v, caps=READY_GATE_CAP)' % app, KSRC, app)
-        self.assertEqual(KSRC.count("_shim("), 6, "the definition and the five panes — a sixth caller must announce too")
+        # the Files pane (2026-09-03) is request/response, never a feed consumer: no deltas — the hold, plus
+        # the stale opt-out (NO_STALE_CAP: no pushed view ever resyncs it, so its arm could only ever raise)
+        self.assertIn('_shim("files", v, caps=READY_GATE_CAP + "," + NO_STALE_CAP)', KSRC)
+        self.assertEqual(KSRC.count("_shim("), 7, "the definition and the six panes — a seventh caller must announce too")
 
 
 def _connect(port, query):

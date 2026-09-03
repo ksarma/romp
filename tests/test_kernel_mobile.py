@@ -35,7 +35,7 @@ class LandingShell(unittest.TestCase):
         # explicitly desktop-only (#fleet-pane display:none!important, no tab, no switcher entry).
         html = km._landing()
         self.assertIn(">Outline</button>", html)                       # the tab exists, labeled Outline
-        self.assertIn("#f-chat.m-on,#f-fleet.m-on,#f-feed.m-on,#f-waiting.m-on{display:block}", html)   # ...and shows as the active pane
+        self.assertIn("#f-chat.m-on,#f-fleet.m-on,#f-feed.m-on,#f-waiting.m-on,#f-files.m-on{display:block}", html)   # ...and shows as the active pane
         self.assertNotIn("#fleet-pane{display:none!important}", html)  # the desktop-only exclusion is gone
         self.assertIn("fleet:document.getElementById('f-fleet')", km._LANDING_MOBILE_JS)
         # the chat header's Fleet pill / the fleet's back-to-chat (toggleFleet) is a tab switch on mobile
@@ -92,6 +92,12 @@ class LandingShell(unittest.TestCase):
         self.assertIn("window.__rompMobileTab&&window.__rompMobileTab('chat')", closed)
         self.assertLess(closed.index("__rompMobileTab"), closed.index("__rompFeedWasOffView"),
                         "the return precedes (and is not conditioned on) the pane-restore check")
+        # the FILES route (fileLinkPane "pane", 2026-09-03) switches the phone to the Files tab and has NO
+        # return trip: the pane stays up with the file (closing the viewer shows its recent list), so the
+        # user leaves it the way they leave any tab
+        pane = js.split("if(m.romp==='viewFile'&&m.pane==='pane')")[1].split("else if(m.romp==='viewFile')")[0]
+        self.assertIn("window.__rompMobileTab&&window.__rompMobileTab('files')", pane)
+        self.assertNotIn("viewFileClosed", pane)
 
     def test_mobile_bar_reservation_collapses_while_the_keyboard_is_open(self):
         # the user 2026-07-22: focusing the composer opened the keyboard and left a dead black band between

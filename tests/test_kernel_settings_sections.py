@@ -82,9 +82,11 @@ class SettingsSectionsTest(unittest.TestCase):
         self.assertTrue(h.index(">Chat<") < h.index("id=rs-filelink") < h.index(">Feed<"))
         self.assertIn("<option value=chat>The pane you clicked</option>", h)
         self.assertIn("<option value=feed>The Feed pane</option>", h)
+        # the third value (2026-09-03): the Files pane, the viewer as its own column
+        self.assertIn("<option value=pane>The Files pane</option>", h)
         # a webview-local pref (the rs-backend route): persisted in romp:settings, no kernel op
         self.assertIn("s.fileLinkPane = fl.value", h)
-        self.assertIn("fl.value = s.fileLinkPane === 'feed' ? 'feed' : 'chat'", h)
+        self.assertIn("fl.value = s.fileLinkPane === 'feed' || s.fileLinkPane === 'pane' ? s.fileLinkPane : 'chat'", h)
         self.assertIn("fileLinkPane: 'chat'", h)   # the stored default is today's behavior
 
     def test_the_sdk_backend_is_labelled_plain_sdk(self):

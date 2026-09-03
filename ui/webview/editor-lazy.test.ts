@@ -31,10 +31,33 @@ test("the chunk is its own esbuild entry, and no main-bundle source imports Code
 });
 
 test("file-view loads the chunk from its own bundle's URL (same dir, same ?v= token), latch cleared on failure", () => {
-  assert.match(VIEW, /\.find\(\(u\) => \/\\\/\(render\|feed\)\\\.js\/\.test\(u\)\)/);
-  assert.match(VIEW, /sc\.src = self\.replace\(\/\\\/\(render\|feed\)\\\.js\/, "\/editor-chunk\.js"\);/);
+  assert.match(VIEW, /\.find\(\(u\) => \/\\\/\(render\|feed\|files\)\\\.js\/\.test\(u\)\)/);
+  assert.match(VIEW, /sc\.src = self\.replace\(\/\\\/\(render\|feed\|files\)\\\.js\/, "\/editor-chunk\.js"\);/);
   assert.match(VIEW, /sc\.onerror = \(\) => \{ edChunk = null; rej\(/,
     "a failed load clears the latch so a later edit retries fresh");
+});
+
+// executed: the derivation's two literals, lifted from the source and run against each hosting page's
+// script tags as its _*_page emits them (the shim is inline — no src — and federation.js precedes the
+// bundle). The Files pane loads /dist/files.js, which the pattern did not name: every Edit there rejected
+// with the raw "no bundle script tag" error and fell to the textarea (the 2026-09-03 review).
+test("the derivation recognizes every hosting page's bundle — render.js, feed.js, files.js — and nothing else", () => {
+  const find = VIEW.match(/\.find\(\(u\) => (\/[^\n]+?\/)\.test\(u\)\)/);
+  const repl = VIEW.match(/sc\.src = self\.replace\((\/[^\n]+?\/), "\/editor-chunk\.js"\);/);
+  assert.ok(find && repl, "the find and replace literals sit where the pins above expect them");
+  const findRe = new Function("return " + find![1])() as RegExp;
+  const replRe = new Function("return " + repl![1])() as RegExp;
+  assert.equal(String(findRe), String(replRe), "one pattern finds the bundle and rewrites it");
+  const derive = (srcs: string[]) => { const self = srcs.find((u) => findRe.test(u)); return self ? self.replace(replRe, "/editor-chunk.js") : null; };
+  const K = "http://TESTHOST:29855/dist/", V = "?v=1725300000";
+  assert.equal(derive([K + "federation.js" + V, K + "files.js" + V]), K + "editor-chunk.js" + V, "the Files pane (_files_page)");
+  assert.equal(derive([K + "federation.js" + V, K + "feed.js" + V]), K + "editor-chunk.js" + V, "the feed (_feed_page)");
+  assert.equal(derive([K + "federation.js" + V, K + "palette-main.js" + V, K + "render.js" + V]), K + "editor-chunk.js" + V, "the chat (_chat_page)");
+  // the VS Code webview's resource URI keeps its directory the same way
+  const R = "https://file+.vscode-resource.vscode-cdn.net/ext/dist/";
+  assert.equal(derive([R + "render.js"]), R + "editor-chunk.js");
+  assert.equal(derive([K + "federation.js" + V]), null, "federation.js alone is no hosting bundle — and 'fed' is not feed");
+  assert.equal(derive([K + "files-pane.css" + V, K + "waiting.js" + V]), null, "the Waiting pane hosts no viewer");
 });
 
 test("the chunk wait wears the romp loader, and a failed load falls back LOUDLY to the textarea", () => {

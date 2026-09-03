@@ -40,6 +40,8 @@ test("fileLinkPane defaults to chat; a foreign stored value reads as the default
   assert.equal(DEFAULT_SETTINGS.fileLinkPane, "chat");
   store["romp:settings"] = JSON.stringify({ fileLinkPane: "feed" });
   assert.equal(loadSettings().fileLinkPane, "feed", "the opt-in round-trips");
+  store["romp:settings"] = JSON.stringify({ fileLinkPane: "pane" });
+  assert.equal(loadSettings().fileLinkPane, "pane", "the Files pane opt-in (2026-09-03) round-trips too");
   store["romp:settings"] = JSON.stringify({ fileLinkPane: "purple" });
   assert.equal(loadSettings().fileLinkPane, "chat", "a corrupt entry may cost the preference, never the click");
   delete store["romp:settings"];
