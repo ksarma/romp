@@ -39,7 +39,12 @@ jobs:
     # Every job is time-boxed. Without this a test that BLOCKS (waiting on a tmux
     # server, a socket, a prompt that never comes) burns the 6h default before
     # anyone finds out, and a required check that hangs blocks merges silently.
-    timeout-minutes: 15
+    # T230b follow-up (the review's catch): the job cap must EXCEED the pytest phase plus the
+    # 600 s per-test timeout plus setup, or a stall that begins late in the run is killed by
+    # this cap first - the identical silence the per-test timeout exists to end. Measured pytest
+    # phases run 160-300 s, so 15 min left ~100 s of headroom; 25 min = 300 + 600 + setup, with
+    # margin for a slow runner.
+    timeout-minutes: 25
     strategy:
       # One red cell must not hide the others: a 3.10-only break and a
       # macOS-only break look identical if the matrix stops at the first.
