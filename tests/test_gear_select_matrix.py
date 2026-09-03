@@ -197,7 +197,7 @@ class ServedMatrix(unittest.TestCase):
         driver = os.path.join(self.lab, "driver.mjs")
         with open(driver, "w") as f:
             f.write(DRIVER)
-        p = subprocess.run(["node", driver], capture_output=True, text=True, timeout=600,
+        p = subprocess.run(["node", driver], capture_output=True, text=True, timeout=300,
                            env=dict(os.environ, EXT_PKG=os.path.join(EXT, "package.json"), CFG=cfg))
         if p.returncode == 3:
             raise unittest.SkipTest("no playwright browser on this box — the matrix needs one (CI installs none)")

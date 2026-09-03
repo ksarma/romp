@@ -71,8 +71,10 @@ class _OneShotInbox:
         return self.got
 
     def close(self):
-        # shutdown BEFORE close wakes a parked accept() (a bare close leaves it blocked until the
-        # listener's timeout), then join so no capture thread outlives its test (T230b hygiene)
+        # shutdown THEN close, adjacent and in this order - load-bearing (T230c): on the timed-out
+        # listener, shutdown alone makes poll() report the socket readable but accept4() returns
+        # EAGAIN and CPython's accept loop keeps spinning until the timeout; it is the CLOSE that
+        # ends it. Then join so no capture thread outlives its test (T230b hygiene).
         try:
             self._srv.shutdown(socket.SHUT_RDWR)
         except OSError:
