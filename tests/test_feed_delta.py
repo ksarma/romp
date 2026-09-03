@@ -214,6 +214,59 @@ class DeltaStream(unittest.TestCase):
             _restore(saved)
 
 
+class LedgerRemovals(unittest.TestCase):
+    """The ledger half of the delta contract, kernel side (the 2026-09-03 review found it unpinned, and
+    found removals LOST across a ledger-less build: the pusher attaches `ledgers` only when a chat or
+    Outline client is in the push, so a feed-only connect push — every page load, every shim reconnect's
+    `ready` — carries none; recording that as 'holds no ledgers' made the next ledger-bearing build re-send
+    the whole set and drop the removals in between)."""
+
+    def test_a_ledger_that_left_rides_as_a_removal(self):
+        c, sent = _client()
+        _send(c, _feed(ledgers=[_ledger(), _ledger(SID_B, "api")]))
+        _send(c, _feed(build_id=2, ledgers=[_ledger()]))
+        d = json.loads(sent[-1])
+        self.assertEqual(d["removeLedgers"], [SID_B])
+        self.assertEqual(d["ledgers"], [], "the surviving ledger did not change, so it does not ride")
+        self.assertNotIn("asks", d)
+
+    def test_a_removal_survives_a_ledger_less_build_in_between(self):
+        c, sent = _client()
+        _send(c, _feed(ledgers=[_ledger(), _ledger(SID_B, "api")]))
+        _send(c, _feed(build_id=2, ledgers=False))          # a feed-only connect push: says nothing about ledgers
+        self.assertEqual(len(sent), 1, "a build with no `ledgers` key sends nothing when nothing else changed")
+        self.assertEqual(sorted(c["efeed"][1]), sorted([SID, SID_B]),
+                         "…and the recorded base keeps the ledgers the client still holds")
+        _send(c, _feed(build_id=3, ledgers=[_ledger()]))     # session B ended meanwhile
+        d = json.loads(sent[-1])
+        self.assertEqual(d["removeLedgers"], [SID_B], "the removal is not lost across the ledger-less build")
+        self.assertEqual(d["ledgers"], [], "and the whole set is NOT re-sent")
+
+    def test_a_client_whose_full_frame_had_no_ledgers_gets_the_set_whole_once(self):
+        c, sent = _client()
+        _send(c, _feed(ledgers=False))                         # its full frame carried none: it holds none
+        _send(c, _feed(build_id=2, ledgers=[_ledger(), _ledger(SID_B, "api")]))
+        d = json.loads(sent[-1])
+        self.assertEqual(sorted(l["sid"] for l in d["ledgers"]), sorted([SID, SID_B]))
+        self.assertNotIn("removeLedgers", d)
+        _send(c, _feed(build_id=3, ledgers=[_ledger(), _ledger(SID_B, "api")]))
+        self.assertEqual(len(sent), 2, "unchanged after that → nothing")
+
+    def test_a_deduped_ready_frame_leaves_the_base_alone(self):
+        # the served frame is the delta base — and a frame the dedup swallowed served nothing
+        f = _feed(ledgers=[_ledger(), _ledger(SID_B, "api")])
+        saved, ms, parts = _warm(f)
+        try:
+            c, sent = _client()
+            _send(c, f)                                       # the pusher's full frame, ledgers and all
+            base = c["efeed"]
+            self.assertFalse(km._send_feed_now(c), "the same frame again is deduped")
+            self.assertIs(c["efeed"], base)
+            self.assertEqual(len(sent), 1)
+        finally:
+            _restore(saved)
+
+
 class TintOnFullFramesOnly(unittest.TestCase):
     """`trgb` stays on FULL frames — an older bundle (a stale tab; a federated dashboard on a host running
     the previous build) destructures `it.trgb` unguarded and would throw on the first card without it — but
@@ -254,6 +307,163 @@ class TintOnFullFramesOnly(unittest.TestCase):
     def test_every_builder_still_ships_the_tint_on_full_frames(self):
         self.assertEqual(KSRC.count('"trgb": list(cm.age_rgb('), 8,
                          "the eight card/node builders compute it as before (build_feed, the placeholders, quarantine)")
+
+
+def _client_frame(text):
+    """One masked client text frame, as a browser sends it."""
+    data = text.encode("utf-8"); n = len(data); mask = os.urandom(4)
+    if n < 126:
+        hdr = bytes([0x81, 0x80 | n])
+    elif n < 65536:
+        hdr = bytes([0x81, 0x80 | 126]) + struct.pack(">H", n)
+    else:
+        hdr = bytes([0x81, 0x80 | 127]) + struct.pack(">Q", n)
+    return hdr + mask + bytes(b ^ mask[i % 4] for i, b in enumerate(data))
+
+
+def _read_frame(s, buf):
+    """One server frame (unmasked) → (opcode, payload, leftover)."""
+    def need(n):
+        nonlocal buf
+        while len(buf) < n:
+            chunk = s.recv(1 << 20)
+            if not chunk:
+                raise RuntimeError("socket closed")
+            buf += chunk
+    need(2)
+    ln = buf[1] & 0x7F; off = 2
+    if ln == 126:
+        need(4); ln = struct.unpack(">H", buf[2:4])[0]; off = 4
+    elif ln == 127:
+        need(10); ln = struct.unpack(">Q", buf[2:10])[0]; off = 10
+    need(off + ln)
+    return buf[0] & 0x0F, buf[off:off + ln], buf[off + ln:]
+
+
+class ReadyHandshake(unittest.TestCase):
+    """The first frame waits for the bundle's `ready` (2026-09-03 review): the shim connects before
+    federation.js and feed.js have loaded and has no inbound buffer, so a frame pushed at socket accept
+    could land on a page with nobody listening and be lost — and the later `ready` push then sent nothing,
+    because the dedup believed the client had it (9 of 25 headless loads sat on the loader until the next
+    board change). The ready handler serves the cached frame at once, with no build; the shim re-sends
+    `ready` on every reconnect."""
+
+    def test_a_connecting_socket_receives_nothing_until_ready_then_the_cached_frame_at_once(self):
+        f = _feed(n=40)
+        saved, ms, parts = _warm(f)
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), km.Handler)
+        port = srv.server_address[1]
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        s = None
+        try:
+            key = base64.b64encode(os.urandom(16)).decode()
+            req = ("GET /ws?app=feed&wid=w7&caps=feedDelta&token=%s HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n"
+                   "Origin: http://127.0.0.1:%d\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+                   "Sec-WebSocket-Key: %s\r\nSec-WebSocket-Version: 13\r\n\r\n") % (km.TOKEN, port, port, key)
+            s = socket.create_connection(("127.0.0.1", port), timeout=10)
+            s.sendall(req.encode())
+            buf = b""
+            while b"\r\n\r\n" not in buf:
+                chunk = s.recv(65536)
+                self.assertTrue(chunk, "closed during the handshake")
+                buf += chunk
+            head, buf = buf.split(b"\r\n\r\n", 1)
+            self.assertTrue(head.startswith(b"HTTP/1.1 101"), head[:80])
+            # the kernel has registered the client (it appends AFTER the handshake); give any accept-time
+            # push a moment it does not need — the old code enqueued its frame right after the append
+            deadline = time.time() + 5
+            client = None
+            while client is None and time.time() < deadline:
+                with km._clients_lock:
+                    client = next((c for c in km._clients if c.get("wid") == "w7"), None)
+                if client is None:
+                    time.sleep(0.005)
+            self.assertIsNotNone(client, "the socket was accepted")
+            time.sleep(0.05)
+            self.assertEqual(client["qbytes"], 0, "nothing is pushed at accept")
+            self.assertNotIn("efeed", client)
+            self.assertEqual(buf, b"", "nothing arrived before `ready`")
+            s.sendall(_client_frame(json.dumps({"type": "ready"})))
+            op, payload, buf = _read_frame(s, buf)
+            self.assertEqual(op, 0x1)
+            self.assertEqual(payload.decode("utf-8"), ms, "the cached wire form, byte for byte — no build, no wait")
+            self.assertIs(client["efeed"], parts, "…and it is the delta stream's base")
+        finally:
+            if s is not None:
+                s.close()
+            srv.shutdown(); srv.server_close()
+            _restore(saved)
+
+    def _handler(self):
+        class _FakeHandler:
+            _dispatch_ws = km.Handler._dispatch_ws
+            def __init__(self):
+                self.pushed = []
+            def _push_one(self, client):
+                self.pushed.append(client)
+        return _FakeHandler()
+
+    def test_the_ready_handler_serves_a_feed_client_from_cache_and_skips_the_connect_push(self):
+        f = _feed()
+        saved, ms, parts = _warm(f)
+        try:
+            h = self._handler()
+            c, sent = _client()
+            h._dispatch_ws({"type": "ready"}, c)
+            self.assertEqual(sent, [ms])
+            self.assertIs(c["efeed"], parts)
+            self.assertEqual(h.pushed, [], "the push could add nothing for this pane: its warmed cache IS what was served")
+        finally:
+            _restore(saved)
+
+    def test_a_cold_kernel_falls_to_the_connect_push(self):
+        saved = (km._feed_wire, list(km._built_feed))
+        try:
+            km._feed_wire = None; km._built_feed[:] = [None, None, 0.0, 0.0]
+            h = self._handler()
+            c, sent = _client()
+            h._dispatch_ws({"type": "ready"}, c)
+            self.assertEqual(sent, [], "nothing cached to serve")
+            self.assertEqual(h.pushed, [c], "so the connect push builds it")
+        finally:
+            _restore(saved)
+
+    def test_an_outline_client_is_served_and_still_gets_its_connect_push(self):
+        # the Outline pane needs `ledgers`, which only the connect push's session build attaches
+        f = _feed()
+        saved, ms, parts = _warm(f)
+        try:
+            h = self._handler()
+            c, sent = _client(caps=(), app="fleet")
+            h._dispatch_ws({"type": "ready"}, c)
+            self.assertEqual(sent, [ms])
+            self.assertEqual(h.pushed, [c])
+        finally:
+            _restore(saved)
+
+    def test_the_ready_handler_emits_no_tab_order_of_its_own(self):
+        # The connect push's tabOrder goes through the _tab_list_tmux collapse guard; the handler used to
+        # send a SECOND one from a raw _tmux_sessions() read — an omitted id is an authoritative teardown
+        # on the client (tabs, drafts) — and the shim now re-sends `ready` on every reconnect.
+        h = self._handler()
+        c, sent = _client(caps=(), app="chat")
+        h._dispatch_ws({"type": "ready"}, c)
+        self.assertEqual(h.pushed, [c], "the guarded push is the only tab-order source")
+        self.assertEqual([json.loads(x).get("type") for x in sent], [], "no frame from the handler itself")
+        i = KSRC.index('if msg and msg.get("type") == "ready":')
+        handler = KSRC[i:KSRC.index("_consume_pending_reveal(client)", i)]
+        self.assertNotIn('"tabOrder"', handler)
+        self.assertNotIn("_ordered_alive(", handler)
+        self.assertIn('served = client.get("app") in ("feed", "fleet") and _send_feed_now(client)', handler)
+
+    def test_the_ws_handler_pushes_nothing_at_accept_and_parses_caps(self):
+        i = KSRC.index("    def _ws(self):")
+        accept = KSRC[i:KSRC.index('while client["alive"]:', i)]
+        self.assertNotIn("_send_feed_now(", accept, "the first frame waits for `ready`")
+        self.assertIn("Nothing is pushed at accept.", accept)
+        self.assertIn('caps = (q.get("caps") or [""])[0]', accept)
+        self.assertIn('"caps": set(x for x in caps.split(",") if x)}', accept)
+        self.assertIn('if msg and msg.get("type") == "needFullFeed":', KSRC)
 
 
 class ConnectTimeFrame(unittest.TestCase):

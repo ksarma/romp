@@ -27644,17 +27644,19 @@ def _send_client(c, key, msg, pre=None, sig=None):
     ROMP_PERF=1 logs every send AND every dedup hit. That asymmetry is the point: a payload carrying a
     field that ticks with the clock looks perfectly normal from the outside — the UI just feels slow —
     and the only visible symptom is this dedup never hitting. Finding the last one took a hand-written
-    WebSocket client; the log makes the next one obvious."""
+    WebSocket client; the log makes the next one obvious.
+
+    Returns whether a frame went out (False: deduped, or the client is dead)."""
     s = pre if pre is not None else json.dumps(msg)
     sig = sig if sig is not None else _dedup_sig(msg, s)
     prev = c.setdefault("sent", {}).get(key)
     now = time.time()
     if prev is not None and prev[0] == sig and (now - prev[1]) < _DEDUP_REPOST_S:
         _perf("send", slot=_perf_slot(key), bytes=len(s), deduped=1)
-        return
+        return False
     c["sent"][key] = (sig, now)
     _perf("send", slot=_perf_slot(key), bytes=len(s), deduped=0)
-    _client_send(c, s, key)
+    return _client_send(c, s, key)
 
 
 def _send_chat(c, m, ms, change_from, led_changed):
@@ -27757,7 +27759,7 @@ def _feed_delta(prev, cur, feed):
     gone = [k for k in pcards if k not in cards]
     lup, lgone, led_reset = [], [], False
     if leds is not None:
-        if pleds is None:                       # the client never held ledgers → this build's set, whole
+        if pleds is None:                       # the client never held ledgers (its full frame had none) → this build's set, whole
             lup, led_reset = list(leds.values()), True
         else:
             lup = [s for k, s in leds.items() if pleds.get(k) != s]
@@ -27784,11 +27786,16 @@ def _send_feed(c, feed, ms, sig, parts):
     """Send the feed to ONE client: a delta when it announced FEED_DELTA_CAP and holds a frame from this
     socket, else the full frame through _send_client (per-client dedup + the once-a-minute repost that path
     keeps for legacy consumers). Either way the client's held parts are recorded, so a client that announces
-    later, or whose first frame was the connect-time one (see _ws), rebases from what it actually holds."""
+    later, or whose first frame was the `ready`-time one (see _send_feed_now), rebases from what it actually
+    holds. A build that carries NO `ledgers` key says nothing about ledgers (the pusher attaches them only
+    when a chat or Outline client is in the push, so a feed-only connect push never has them): on the delta
+    path the client keeps the ledgers it holds (feed-delta.ts applies the same keep-base rule), so the
+    recorded base carries the previous ledger set forward. Recording None there made the next ledger-bearing
+    build re-send the whole set and lose every removal in between (the 2026-09-03 review)."""
     prev = c.get("efeed")
     if prev is not None and FEED_DELTA_CAP in (c.get("caps") or ()):
         s = _feed_delta(prev, parts, feed)
-        c["efeed"] = parts
+        c["efeed"] = parts if (parts[1] is not None or prev[1] is None) else (parts[0], prev[1], parts[2], parts[3])
         if s is None:
             _perf("send", slot="feed", bytes=len(ms), deduped=1)
             return
@@ -27819,12 +27826,15 @@ def _feed_wire_now():
 
 
 def _send_feed_now(c):
-    """Serve client `c` the cached feed frame immediately (a fresh socket, or one that asked for a re-base).
-    Returns whether a frame was sent; a cold kernel has nothing cached and the pusher serves it instead."""
+    """Serve client `c` the cached feed frame immediately (its `ready` handshake, or a re-base it asked for),
+    with no build and no wait. Returns whether a frame was sent; a cold kernel has nothing cached, and the
+    connect push serves it instead. The recorded delta base moves only when a frame actually goes out: a
+    frame the per-client dedup swallowed changes nothing the client holds."""
     w = _feed_wire_now()
     if w is None:
         return False
-    _send_client(c, ("feed",), w[2], pre=w[3], sig=w[4])
+    if not _send_client(c, ("feed",), w[2], pre=w[3], sig=w[4]):
+        return False
     c["efeed"] = w[5]
     return True
 
@@ -35703,19 +35713,21 @@ class Handler(BaseHTTPRequestHandler):
             _mark_views_dirty()
             return
         if msg and msg.get("type") == "ready":
-            self._push_one(client)
-            # Push the SHARED, STABLE tab order so the UI honors it on connect/reload. Without this
-            # the webview only learns the order from a live drag, loses it on every reload, and falls
-            # back to ordering tabs by session STATE — so they drift on their own (worse now that the
-            # heartbeat auto-reloads). _ordered_alive is the same order chat tabs + timeline lanes use.
-            try:
-                _alive = _ordered_alive(int(time.time()), _tmux_sessions())
-                _o = [s["sid"] for s in _alive]
-                # name+color per tab → the client paints the whole strip as placeholders up front (tabs-first)
-                _tabs = [{"id": s["sid"], "name": s.get("name", ""), "color": _name_color(s["sid"])} for s in _alive]
-                client["send"](json.dumps({"type": "tabOrder", "order": _o, "tabs": _tabs, "views": _views_client()}))
-            except Exception:
-                pass
+            # The bundle is listening (it sends `ready` at load, and the shim re-sends it on every
+            # reconnect): a feed/Outline client is served the CACHED feed frame first, at once, with no
+            # build (_send_feed_now — the frame the delta stream then bases on). Measured 2026-09-02: a
+            # reconnecting feed pane waited 7-24 s for its first frame from the pusher's next cycle.
+            served = client.get("app") in ("feed", "fleet") and _send_feed_now(client)
+            # The connect push serves the pusher-warmed caches for everything else. A feed client that was
+            # just served skips it: the push could add nothing for that pane (its warmed cache IS what was
+            # served), and a feed-only push re-serializes the wire cache ledger-less for the pusher to redo.
+            if not (served and client.get("app") == "feed"):
+                self._push_one(client)
+            # The tab order rides the connect push (chat clients, through the _tab_list_tmux collapse
+            # guard). This handler used to send a SECOND tabOrder built from a raw _tmux_sessions() read,
+            # bypassing that guard — and the client treats an omitted id as an authoritative teardown
+            # (tabs, drafts). Harmless while `ready` came once per page load; the shim now re-sends it on
+            # every reconnect (the 2026-09-03 review).
             # a push tap parked a reveal for this window's chat pane → deliver it now, AFTER the
             # ready push, so the tab it names already exists on the client (ordered socket)
             _consume_pending_reveal(client)
@@ -36397,9 +36409,9 @@ class Handler(BaseHTTPRequestHandler):
         # Capabilities the client ANNOUNCES (comma-separated). The one today is FEED_DELTA_CAP: a page whose
         # bundle can apply {type:"feedDelta"} says so on its ws URL (the shim adds it for the kernel-served
         # feed page — see _shim's `caps`). Announced on the URL rather than in a first message because it
-        # has to be known at connect time (the connect-time frame below is the delta stream's base) and it
+        # has to be known before the first frame (the `ready`-time frame is the delta stream's base) and it
         # has to survive every reconnect without the bundle re-announcing. Anything that does not announce
-        # — the VS Code extension's pipes, federation's remote sockets, the Fleet pane, an older bundle —
+        # — the VS Code extension's pipes, federation's remote sockets, the Outline pane, an older bundle —
         # keeps receiving the full {type:"feed"} frame it always did.
         caps = (q.get("caps") or [""])[0]
         self.send_response(101)
@@ -36423,13 +36435,14 @@ class Handler(BaseHTTPRequestHandler):
             client["active"] = active                  # active-tab-first streaming (the user 2026-06-24)
         with _clients_lock:
             _clients.append(client)
-        # A feed/fleet client gets the cached feed frame AT ONCE, before its first message is even read.
-        # Measured 2026-09-02: a reconnecting feed pane waited 7-24 s for its first frame, because the
-        # bundle sends {type:"ready"} (the connect push) only on page load — a shim reconnect got nothing
-        # until the pusher's next cycle reached it, and the stale banner sat there meanwhile. The cached
-        # wire form costs one enqueue; the pusher's next cycle then dedups against it (or sends a delta).
-        if app in ("feed", "fleet"):
-            _send_feed_now(client)
+        # Nothing is pushed at accept. The first frame waits for the client's {type:"ready"} — the bundle's
+        # own signal that its listener is installed. The shim connects before federation.js and feed.js
+        # have loaded and has no inbound buffer, so a frame enqueued here can land on a page with nobody
+        # listening and be lost — and the later `ready` push then sends nothing, because the dedup believes
+        # the client has it (the 2026-09-03 review reproduced the pane sitting on its loader until the next
+        # board change, in 9 of 25 headless loads). The ready handler serves the cached feed frame at once
+        # (_send_feed_now); the shim re-sends `ready` on every reconnect, so a reconnecting pane resyncs the
+        # moment it can render.
         try:
             while client["alive"]:
                 # one COMPLETE message per iteration — fragments reassembled, pings answered inline
