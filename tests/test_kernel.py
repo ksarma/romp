@@ -6658,7 +6658,7 @@ class ServeSecurity(unittest.TestCase):
         self.assertNotIn("nav-typing", html)                           # the typing/dimming logic is gone
         # the wiring: maps each iframe id → its pane, toggles pane-focused exclusively, defaults to chat.
         # Fleet is its OWN pane now (the user 2026-06-24), so f-fleet maps to fleet-pane, not the chat pane.
-        self.assertIn("var PANE={'f-chat':'chat-pane','f-fleet':'fleet-pane','f-feed':'feed-pane','f-timeline':'tl-pane'}", html)
+        self.assertIn("var PANE={'f-chat':'chat-pane','f-fleet':'fleet-pane','f-feed':'feed-pane','f-waiting':'waiting-pane','f-timeline':'tl-pane'}", html)
         self.assertIn("classList.toggle('pane-focused'", html)
         self.assertIn("d.addEventListener('pointerdown',emit,true)", html)
         self.assertIn("d.addEventListener('focusin',emit,true)", html)
@@ -6748,6 +6748,28 @@ class ServeSecurity(unittest.TestCase):
         self.assertIn("window.addEventListener('romp:wsdown',function(){if(ready()){badge(true);}else{show();}});", body)   # T217: content → badge; empty pane → the sheet
         self.assertIn('dispatchEvent(new Event("romp:wsdown"))', body)            # shim fires it on close
         self.assertIn("function show(){o.classList.remove('gone')", body)         # kept in the DOM, not removed
+
+    def test_waiting_page_served(self):
+        # "Waiting on you" (2026-09-03): /waiting serves the cross-session open-user-todos view, rendered by
+        # dist/waiting.js. It connects as its OWN app (app=waiting) and rides the feed payload with the feed
+        # pane's caps — deltas + the ready hold — reading userTodoRows; the chat's styles.css supplies the
+        # split card's .ut-* dress so the two surfaces cannot drift; waiting-pane.css is read live.
+        import urllib.request
+        with urllib.request.urlopen("http://127.0.0.1:%d/waiting?token=testtok" % self.port, timeout=5) as r:
+            self.assertEqual(r.status, 200)
+            body = r.read().decode("utf-8", "replace")
+        self.assertIn("id=waiting-head", body)
+        self.assertIn("id=waiting-list", body)
+        self.assertIn("/dist/styles.css", body)
+        self.assertIn("/dist/federation.js", body)
+        self.assertIn("/dist/waiting.js", body)
+        self.assertIn("app=waiting", body)
+        self.assertIn('var CAPS="feedDelta,readyGate"', body)   # the feed pane's caps: deltas + the ready hold
+        self.assertIn("#waiting-list{flex:1 1 auto", body, "waiting-pane.css is inlined live")
+        self.assertNotIn("rel=manifest", body)   # a pane, not an install target
+        # the romp loader over the empty list until the first frame's rows land (the loading-state rule)
+        self.assertIn("document.getElementById('waiting-list')", body)
+        self.assertIn("window.addEventListener('romp:wsdown',function(){if(ready()){badge(true);}else{show();}});", body)
 
     def test_landing_fleet_is_its_own_pane_toggled_from_the_rail(self):
         # Fleet is its OWN pane now (the user 2026-06-24): the old .show-fleet SWAP (Fleet living inside the

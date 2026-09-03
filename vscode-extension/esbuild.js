@@ -41,6 +41,8 @@ const webview = {
     "../ui/webview/feed.css",
     "../ui/webview/fleet.ts",
     "../ui/webview/fleet-pane.css",      // fleet page layout — the kernel reads the same file live
+    "../ui/webview/waiting.ts",          // the "Waiting on you" pane (kernel /waiting; the VS Code mirror is a separate change)
+    "../ui/webview/waiting-pane.css",    // its page layout — the kernel reads the same file live
     "../ui/webview/timeline-main.ts",    // VS Code timeline view: boot glue + ui/romp-timeline-view.js inlined
     "../ui/webview/timeline-pane.css",   // timeline wrapper styles — the kernel reads the same file live
     "../ui/webview/strip.css",           // the romp strip (VS Code-only bottom rail stand-in)
