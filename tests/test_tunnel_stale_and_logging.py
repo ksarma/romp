@@ -143,6 +143,93 @@ class ForwardBindFailure(unittest.TestCase):
         self.assertNotIn("_handshook", r, "the hub must be told the new ports")
 
 
+    # ── T230a: the remint must ENFORCE "not the same doomed argv", never just make it likely ──
+    # Linux bind(0) draws from ~14k ephemeral ports, so a bare _free_port() per slot hands the collided
+    # number straight back about 1/14,000 draws (CI run 33696143887: `52025 == 52025`), and the live
+    # supervisor then re-dials the identical argv with its backoff ladder thrown away. Both pins are
+    # deterministic — a stubbed allocator, no OS draw — and restore the stub via addCleanup: this
+    # module object (romp_kernel_stale) is shared with two sibling test files.
+
+    def _stub_ports(self, seq):
+        it = iter(seq)
+        saved = km._free_port
+        km._free_port = lambda: next(it)
+        self.addCleanup(setattr, km, "_free_port", saved)
+
+    def test_reminting_never_hands_back_any_old_port_and_keeps_the_new_ones_distinct(self):
+        # the allocator returns the four OLD ports first, scrambled across slots, then fresh ones:
+        # every slot must land on a fresh port — avoiding the whole old set, not just its own slot
+        self._stub_ports([52025, 51001, 51000, 52026, 61001, 61002, 61003, 61004, 61005, 61006])
+        r = {"host": "TESTHOST", "local_port": 51000, "bus_port": 51001, "checkin": True,
+             "rk_port": 52025, "rb_port": 52026, "_handshook": 999, "_peer_notified": (True, "trusted")}
+        km._remint_forward_ports(r)
+        new = [r["local_port"], r["bus_port"], r["rk_port"], r["rb_port"]]
+        self.assertFalse(set(new) & {51000, 51001, 52025, 52026}, "an old port came back: %r" % new)
+        self.assertEqual(len(set(new)), 4, "two forwards on one port are a doomed argv too: %r" % new)
+        self.assertNotIn("_handshook", r)
+        self.assertIsNone(r["_peer_notified"])
+
+    def test_an_allocator_that_cannot_move_the_ports_fails_loudly_and_leaves_the_row_intact(self):
+        # a degenerate allocator (the same port forever) exhausts the DRAW bound: RuntimeError, the
+        # old ports untouched (atomic), and a ports-remint-failed record appended to the dial log
+        self._stub_ports([52025] * 200)
+        before = len(km.TUNNEL_LOG.read_text().splitlines()) if km.TUNNEL_LOG.exists() else 0
+        r = {"host": "TESTHOST", "local_port": 51000, "bus_port": 51001, "checkin": True,
+             "rk_port": 52025, "rb_port": 52026, "_handshook": 999}
+        with self.assertRaises(RuntimeError):
+            km._remint_forward_ports(r)
+        self.assertEqual((r["local_port"], r["bus_port"], r["rk_port"], r["rb_port"]),
+                         (51000, 51001, 52025, 52026), "a failed remint changes nothing")
+        self.assertEqual(r.get("_handshook"), 999, "no re-handshake was armed for ports that never moved")
+        appended = [json.loads(x) for x in km.TUNNEL_LOG.read_text().splitlines()[before:] if x.strip()]
+        self.assertTrue(any(x.get("event") == "ports-remint-failed" and x.get("host") == "TESTHOST"
+                            for x in appended), appended)
+
+
+    def test_an_allocator_error_is_a_failed_remint_too_logged_and_in_one_exception_class(self):
+        # EMFILE/EADDRNOTAVAIL from bind(0) used to escape the supervisor's failure arm (RuntimeError
+        # only), abort the rest of the pass and leave no dial-log trace of the failed remint
+        def boom():
+            raise OSError(24, "Too many open files")
+        saved = km._free_port
+        km._free_port = boom
+        self.addCleanup(setattr, km, "_free_port", saved)
+        before = len(km.TUNNEL_LOG.read_text().splitlines()) if km.TUNNEL_LOG.exists() else 0
+        r = {"host": "TESTHOST", "local_port": 51000, "bus_port": 51001}
+        with self.assertRaises(RuntimeError):
+            km._remint_forward_ports(r)
+        self.assertEqual((r["local_port"], r["bus_port"]), (51000, 51001))
+        appended = [json.loads(x) for x in km.TUNNEL_LOG.read_text().splitlines()[before:] if x.strip()]
+        self.assertTrue(any(x.get("event") == "ports-remint-failed" and "open files" in str(x.get("error"))
+                            for x in appended), appended)
+
+    def test_reminting_avoids_every_other_attached_rows_ports(self):
+        # a peer waiting out its backoff has its -L port unbound — a bare draw could hand it over
+        self._stub_ports([61001, 61002, 61003, 61004, 61005])
+        peer = {"host": "PEERHOST", "local_port": 61001, "bus_port": 61003}
+        km._remotes["PEERHOST"] = peer
+        self.addCleanup(km._remotes.pop, "PEERHOST", None)
+        r = {"host": "TESTHOST", "local_port": 51000, "bus_port": 51001}
+        km._remint_forward_ports(r)
+        self.assertEqual((r["local_port"], r["bus_port"]), (61002, 61004))
+
+    def test_the_supervisor_claims_fresh_ports_only_after_it_holds_them(self):
+        # the row's detail said "retrying on fresh ports" BEFORE the remint ran, so on the loud path
+        # it claimed fresh ports while re-dialing old ones (T230a review); a failed remint must also
+        # keep the backoff ladder — the next dial IS the same argv
+        import inspect
+        src = inspect.getsource(km._tunnel_supervisor)
+        self.assertLess(src.index("_remint_forward_ports(r)"), src.index("retrying on fresh ports"))
+        self.assertIn("except RuntimeError", src, "the loud path is CONTAINED — one row never aborts the pass")
+        self.assertIn("fresh ports could not be found", src)
+        self.assertIn('r["status"] = "error"', src, "the row is marked, not left claiming a retry on fresh ports")
+        detail = src.index("retrying on fresh ports")
+        reset = src.index('r["fails"], r["next_try"] = 0, 0', detail)   # the reset that FOLLOWS the detail
+        self.assertLess(reset - detail, 400, "the ladder reset sits in the success arm, right after the detail")
+        self.assertNotIn('r["fails"], r["next_try"] = 0, 0',
+                         src[src.index("except RuntimeError"):detail], "the failure arm keeps the ladder")
+
+
 class DialLog(unittest.TestCase):
     def test_every_dial_and_death_is_appended_with_its_reason(self):
         km._tunnel_log("TESTHOST", "dial", pid=4242, fails=0, argv=["ssh", "-N", "--", "TESTHOST"])
