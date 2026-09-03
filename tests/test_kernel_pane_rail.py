@@ -37,9 +37,11 @@ class PaneRailTest(unittest.TestCase):
         # the LABEL is Sessions (the user 2026-08-24: the pane outgrew "Timeline" — filter, tags, lane
         # controls); the data-pane key stays 'timeline', the fleet/Outline precedent
         self.assertIn("<div class=rail-btn data-pane=timeline>Sessions</div>", self.html)
-        # Chat before Timeline before Outline(fleet) before Feed in the rail (fixed user-chosen order)
-        idxs = [self.html.index("data-pane=" + k) for k in ("chat", "timeline", "fleet", "feed")]
-        self.assertEqual(idxs, sorted(idxs), "rail order must be Chat, Timeline, Outline, Feed")
+        # "Waiting on you" (2026-09-03): the cross-session open-user-todos pane, last in the rail
+        self.assertIn("<div class=rail-btn data-pane=waiting>Waiting on you</div>", self.html)
+        # Chat before Timeline before Outline(fleet) before Feed before Waiting on you in the rail (fixed user-chosen order)
+        idxs = [self.html.index("data-pane=" + k) for k in ("chat", "timeline", "fleet", "feed", "waiting")]
+        self.assertEqual(idxs, sorted(idxs), "rail order must be Chat, Timeline, Outline, Feed, Waiting on you")
         # the old per-pane strips + the show-fleet swap + the timeline minimize bar are gone
         self.assertNotIn("pane-strip", self.html)
         self.assertNotIn("strip-toggle", self.html)
@@ -47,13 +49,14 @@ class PaneRailTest(unittest.TestCase):
         self.assertNotIn("tl-collapse", self.html)
         self.assertNotIn("cc-tl", self.html)
 
-    def test_three_top_panes_in_fixed_order_then_the_timeline_band(self):
-        # the TOP row is chat | gv-a | fleet | gv-b | feed; the timeline is the bottom band (gh + #tl-pane) AFTER
-        # the row closes — so the DOM order is row panes first, then the gh gutter, then #tl-pane.
-        order = ["id=chat-pane", "id=gv-a", "id=fleet-pane", "id=gv-b", "id=feed-pane", "id=gh", "id=tl-pane"]
+    def test_four_top_panes_in_fixed_order_then_the_timeline_band(self):
+        # the TOP row is chat | gv-a | fleet | gv-b | feed | gv-c | waiting; the timeline is the bottom band
+        # (gh + #tl-pane) AFTER the row closes — so the DOM order is row panes first, then the gh gutter,
+        # then #tl-pane. (The fourth column, "Waiting on you", joined 2026-09-03 — far right, after Feed.)
+        order = ["id=chat-pane", "id=gv-a", "id=fleet-pane", "id=gv-b", "id=feed-pane", "id=gv-c", "id=waiting-pane",
+                 "id=gh", "id=tl-pane"]
         idxs = [self.html.index(tok) for tok in order]
         self.assertEqual(idxs, sorted(idxs), "row panes, then the gh gutter, then the timeline band")
-        self.assertNotIn("id=gv-c", self.html)                   # no 4th-pane gutter
         # the pane rail is the BOTTOM BAR (the user 2026-07-05): LAST child of .col, AFTER the timeline band —
         # no longer the first child of .row. So its markup falls after #tl-pane.
         self.assertGreater(self.html.index("class=pane-rail"), self.html.index("id=tl-pane"),
@@ -62,10 +65,12 @@ class PaneRailTest(unittest.TestCase):
         self.assertIn("body:not(.po-chat) #chat-pane{display:none}", self.html)
         self.assertIn("body:not(.po-fleet) #fleet-pane{display:none}", self.html)
         self.assertIn("body:not(.po-feed) #feed-pane{display:none}", self.html)
+        self.assertIn("body:not(.po-waiting) #waiting-pane{display:none}", self.html)
         self.assertIn("body:not(.po-timeline) #gh,body:not(.po-timeline) #tl-pane{display:none}", self.html)
 
     def test_default_layout_is_chat_feed_timeline(self):
-        # default: Chat + Feed + Timeline on, Fleet off (the user 2026-06-25; inlined on <body> for first paint)
+        # default: Chat + Feed + Timeline on, Fleet off (the user 2026-06-25; inlined on <body> for first paint);
+        # Waiting on you off too (2026-09-03) — the feature it shows is itself off by default
         self.assertIn("<body class='po-chat po-feed po-timeline'>", self.html)
 
     def test_gutters_show_only_between_two_visible_panes(self):
@@ -74,6 +79,8 @@ class PaneRailTest(unittest.TestCase):
         # gv-b sits (fleet|chat)|feed → it doubles as the chat|feed gutter when fleet is off, so it hides only
         # when feed is off OR neither chat nor fleet is on (feed would then be the lone pane)
         self.assertIn("body:not(.po-feed) #gv-b,body:not(.po-chat):not(.po-fleet) #gv-b{display:none}", self.html)
+        # gv-c sits (feed|fleet|chat)|waiting → hides when waiting is off OR nothing sits to its left
+        self.assertIn("body:not(.po-waiting) #gv-c,body:not(.po-chat):not(.po-fleet):not(.po-feed) #gv-c{display:none}", self.html)
 
     def test_lit_rail_button_is_the_romp_accent(self):
         # the shell defines the accent locally (it loads no styles.css) and the ON toggle uses it
@@ -83,7 +90,8 @@ class PaneRailTest(unittest.TestCase):
     def test_rail_drives_a_persisted_pane_controller_exposed_for_the_legacy_toggle(self):
         # the controller toggles po-* from the rail, persists the set, and exposes __rompPaneToggle so the
         # legacy {romp:'toggleFleet'} postMessage routes through the same path
-        self.assertIn("var PK='romp-panes',po={chat:true,fleet:false,feed:true,timeline:true}", self.html)
+        self.assertIn("var PK='romp-panes',po={chat:true,fleet:false,feed:true,timeline:true,waiting:false}", self.html)
+        self.assertIn("document.body.classList.toggle('po-waiting',!!po.waiting)", self.html)
         self.assertIn("window.__rompPaneToggle=togglePane", self.html)
         self.assertIn("togglePane(b.getAttribute('data-pane'))", self.html)
         self.assertIn("document.body.classList.toggle('po-chat',!!po.chat)", self.html)
@@ -93,13 +101,16 @@ class PaneRailTest(unittest.TestCase):
     def test_panes_are_resizable_by_flex_grow_persisted_per_pane(self):
         # each pane grows by a per-pane var the gutters write; the drag normalises visible panes to their px
         # widths first (so it shifts only the pair it sits between) and persists the grows across reloads
-        self.assertIn("#chat-pane{flex:var(--g-chat,60) 1 0}#fleet-pane{flex:var(--g-fleet,34) 1 0}#feed-pane{flex:var(--g-feed,40) 1 0}", self.html)
+        self.assertIn("#chat-pane{flex:var(--g-chat,60) 1 0}#fleet-pane{flex:var(--g-fleet,34) 1 0}#feed-pane{flex:var(--g-feed,40) 1 0}#waiting-pane{flex:var(--g-waiting,34) 1 0}", self.html)
         self.assertNotIn("--g-timeline", self.html)              # timeline is the fixed-height band, not a row grow
         self.assertIn("var GK='romp-pane-grow'", self.html)
         self.assertIn("setGrow(key(id),document.getElementById(id).offsetWidth)", self.html)
         self.assertIn("localStorage.setItem(GK,JSON.stringify(grow))", self.html)
         # gv-b picks its left neighbour live: fleet when shown, else chat (so it's the chat|feed gutter too)
         self.assertIn("document.body.classList.contains('po-fleet')?'fleet-pane':'chat-pane'", self.html)
+        # gv-c picks the rightmost shown of feed / fleet / chat
+        self.assertIn("gutter('gv-c',function(){var c=document.body.classList;return c.contains('po-feed')?'feed-pane':c.contains('po-fleet')?'fleet-pane':'chat-pane';},'waiting-pane');", self.html)
+        self.assertIn("var PANES=['chat-pane','fleet-pane','feed-pane','waiting-pane'];", self.html)
 
     def test_timeline_is_the_rail_toggled_bottom_band(self):
         # the timeline is a full-width BAND below the pane row (the user 2026-06-25), toggled by the rail's
@@ -192,7 +203,7 @@ class PaneRailTest(unittest.TestCase):
         # mobile shows one pane at a time via the bottom tab bar, not the rail; the desktop po-* pane-hiding
         # must NOT leak in (the tab bar governs), so chat/feed/timeline panes are forced back to display:contents
         self.assertIn(".gv,.gh,.pane-rail{display:none}", self.html)
-        self.assertIn("#chat-pane,#fleet-pane,#feed-pane,#tl-pane{display:contents!important}", self.html)
+        self.assertIn("#chat-pane,#fleet-pane,#feed-pane,#waiting-pane,#tl-pane{display:contents!important}", self.html)
         # the Outline (fleet) is a mobile TAB now, no longer desktop-only (the user 2026-07-11)
         self.assertNotIn("#fleet-pane{display:none!important}", self.html)
         self.assertIn("body[data-tab=timeline] .row{display:none}", self.html)   # timeline tab → band fills

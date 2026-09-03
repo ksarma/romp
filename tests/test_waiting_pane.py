@@ -206,5 +206,55 @@ class Plumbing(unittest.TestCase):
             self.assertIn("needs the ui/ modules", km._waiting_page())
 
 
+class Shell(unittest.TestCase):
+    """The dashboard grows a fifth pane: the far-right column after Feed, OFF by default (the feature it
+    shows is off by default), with its own gutter, grow var, and every hand-written pane list in the
+    landing JS extended — focus ring, Alt+Arrow columns, Esc wiring, the Log's pane names, the mobile
+    tab map, the pane controller. One label, "Waiting on you", from _PANE_ORDER (parity test)."""
+
+    def setUp(self):
+        self.html = km._landing()
+
+    def test_the_pane_is_in_the_one_ordering_last(self):
+        self.assertEqual(km._PANE_ORDER[-1], ("waiting", "Waiting on you"))
+        self.assertIn("<div class=rail-btn data-pane=waiting>Waiting on you</div>", self.html)
+        self.assertIn("<button data-pane=waiting>Waiting on you</button>", self.html)
+
+    def test_the_column_sits_after_feed_with_its_gutter_and_grow_var(self):
+        self.assertIn('<div class=gv id=gv-c></div><div class=pane id=waiting-pane><iframe id=f-waiting src=/waiting></iframe></div>',
+                      self.html.replace('"\n            "', ""))
+        self.assertLess(self.html.index("id=feed-pane"), self.html.index("id=gv-c"))
+        self.assertLess(self.html.index("id=gv-c"), self.html.index("id=waiting-pane"))
+        self.assertLess(self.html.index("id=waiting-pane"), self.html.index("id=gh"), "before the timeline band")
+        self.assertIn("#waiting-pane{flex:var(--g-waiting,34) 1 0}", self.html)
+        self.assertIn("body:not(.po-waiting) #waiting-pane{display:none}", self.html)
+        self.assertIn("body:not(.po-waiting) #gv-c,body:not(.po-chat):not(.po-fleet):not(.po-feed) #gv-c{display:none}", self.html)
+
+    def test_off_by_default_and_toggled_by_the_controller(self):
+        self.assertIn("<body class='po-chat po-feed po-timeline'>", self.html)   # not po-waiting
+        self.assertIn("po={chat:true,fleet:false,feed:true,timeline:true,waiting:false}", self.html)
+        self.assertIn("po={chat:false,fleet:false,feed:false,timeline:false,waiting:false}", self.html)   # the ?panes= reset
+        self.assertIn("document.body.classList.toggle('po-waiting',!!po.waiting)", self.html)
+        self.assertIn("waiting:'Waiting on you pane'", self.html)   # the rail tooltip's words
+
+    def test_every_pane_list_in_the_landing_js_names_it(self):
+        self.assertIn("'f-waiting':'waiting-pane'", km._LANDING_FOCUS_JS)
+        self.assertIn("var COLS=['f-chat','f-fleet','f-feed','f-waiting']", km._LANDING_FOCUS_JS)
+        self.assertIn("['f-chat','f-fleet','f-feed','f-waiting','f-timeline'].forEach", self.html)   # Esc wiring
+        self.assertIn("waiting:'Waiting on you'", km._LANDING_ERRS_JS)   # the Log's connection-lost label
+        self.assertIn("waiting:document.getElementById('f-waiting')", km._LANDING_MOBILE_JS)
+        self.assertIn("var PANES=['chat-pane','fleet-pane','feed-pane','waiting-pane'];", self.html)
+        self.assertIn("grow={chat:60,fleet:34,feed:40,waiting:34}", self.html)
+        self.assertIn("id==='feed-pane'?'feed':'waiting'", self.html)
+        self.assertIn("gutter('gv-c',", self.html)
+
+    def test_mobile_tab_and_the_palette_command(self):
+        self.assertIn("#chat-pane,#fleet-pane,#feed-pane,#waiting-pane,#tl-pane{display:contents!important}", self.html)
+        self.assertIn("#f-chat.m-on,#f-fleet.m-on,#f-feed.m-on,#f-waiting.m-on{display:block}", self.html)
+        pal = (Path(BIN).parent / "ui" / "webview" / "palette-main.ts").read_text()
+        self.assertIn('["waiting", "waiting", "Waiting on you"]', pal)
+        self.assertIn('"f-waiting"', pal)
+
+
 if __name__ == "__main__":
     unittest.main()
