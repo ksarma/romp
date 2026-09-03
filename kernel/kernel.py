@@ -18401,9 +18401,10 @@ def _parked_md(op):
     if op[0] == "compact":
         return "/compact"
     if op[0] == "env":
-        # a dict payload, rendered as the NAME=VALUE list it was asked as (sorted: the bubble and the
-        # ✕ handshake must agree byte-for-byte across the park's disk round-trip)
-        return "/env " + " ".join("%s=%s" % kv for kv in sorted(op[1].items()))
+        # a dict payload, rendered as the sorted NAME list it was asked as — NAMES ONLY: env values can
+        # be secrets, and this string is the visible chat chip (PR #889 review). Sorted so the bubble
+        # and the ✕ handshake agree byte-for-byte across the park's disk round-trip.
+        return "/env " + " ".join(sorted(op[1])) if op[1] else "/env (cleared)"
     return "/%s %s" % (op[0], op[1])
 
 

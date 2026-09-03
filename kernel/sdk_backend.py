@@ -1458,8 +1458,12 @@ def flag_settings_path(state_dir, sid: str, *, ultracode: bool = False, fast: bo
     p = os.path.join(d, "%s.json" % sid)
     try:
         os.makedirs(d, exist_ok=True)
-        with open(p, "w") as f:
+        # 0600, the serve-token treatment: the env block can carry secrets, and a default-umask file is
+        # world-readable on a shared host (PR #889 review). Created private, then written.
+        fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
             f.write(json.dumps(keys) + "\n")
+        os.chmod(p, 0o600)   # a pre-existing file keeps its old mode through O_CREAT — tighten it too
     except OSError as e:
         # no settings file → the session still launches, just without these keys — and the Log says
         # so (fail-loudly, the user 2026-07-03): for env especially, a silent drop here leaves the
