@@ -89,6 +89,15 @@ def report():
                             "  fallbacks=%d" % pa["fallback"] if pa.get("fallback") else "",
                             ("  demotes: " + gates) if gates else "",
                             "  ts-repair=%d" % pa["ts-repair"] if pa.get("ts-repair") else ""))
+        cf = k.get("chatfold") or {}                     # absent on kernels older than the chat fold
+        if cf.get("fold", 0) + cf.get("full", 0) + cf.get("fallback", 0) > 0:
+            rate = 100.0 * cf.get("fold", 0) / max(1, cf.get("fold", 0) + cf.get("full", 0))
+            gates = ", ".join("%s %d" % (g[2:], n) for g, n in sorted(cf.items())
+                              if g.startswith("g:") and n)
+            lines.append("chat     fold %.0f%% (%d fold / %d full)%s%s"
+                         % (rate, cf.get("fold", 0), cf.get("full", 0),
+                            "  fallbacks=%d" % cf["fallback"] if cf.get("fallback") else "",
+                            ("  demotes: " + gates) if gates else ""))
     elif kind == "stale":
         lines.append("kernel   running at %s but predates /version — `romp refresh` to populate" % k)
     else:
