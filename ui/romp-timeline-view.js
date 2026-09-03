@@ -729,12 +729,28 @@ const LANE_TOGGLES = [
 // on load so _openMetaMenu keeps its reference; the lane picker appends its own 'Default' sentinel (not a model).
 const MODEL_CHOICES = [];
 const EFFORT_CHOICES = [];
-try {
-  if (typeof fetch !== 'undefined') fetch('/models', { cache: 'no-store' }).then((r) => r.json()).then((d) => {
-    if (Array.isArray(d.models)) { MODEL_CHOICES.length = 0; for (const m of d.models) MODEL_CHOICES.push(m); MODEL_CHOICES.push({ label: 'Default', value: 'default' }); }
-    if (Array.isArray(d.efforts)) { EFFORT_CHOICES.length = 0; for (const e of d.efforts) EFFORT_CHOICES.push(e); }
-  }).catch(() => {});
-} catch (e) {}
+// Loaded once at page load and RE-LOADED on the kernel's {type:"models"} frame (TimelinePanel.refreshModels,
+// the frame's arm in both boots): the pick memory moved — a version pinned, a family un-pinned by Latest, a
+// refused pin dropped, from any surface or dashboard — or the catalog grew, and a family's `default` is
+// what its row SENDS, so a list fetched once went stale the moment anything changed it (after Latest
+// un-pinned a family, the lane's next family click sent the old pinned id and silently re-pinned). Refilled
+// IN PLACE so _openMetaMenu's reference holds. Event-keyed on the frame, never a poll. A response is applied
+// only if it is not OLDER than one already applied: its `rev` is the pick memory's revision — the frame's
+// counter — and two overlapping fetches (a frame during the page-load fetch; two quick frames) can resolve
+// out of order, so without the check the STALE list won until the next change. A payload without a rev (an
+// older kernel) always applies.
+let modelChoicesRev = -1;
+function loadModelChoices() {
+  try {
+    if (typeof fetch !== 'undefined') return fetch('/models', { cache: 'no-store' }).then((r) => r.json()).then((d) => {
+      if (typeof d.rev === 'number') { if (d.rev < modelChoicesRev) return; modelChoicesRev = d.rev; }
+      if (Array.isArray(d.models)) { MODEL_CHOICES.length = 0; for (const m of d.models) MODEL_CHOICES.push(m); MODEL_CHOICES.push({ label: 'Default', value: 'default' }); }
+      if (Array.isArray(d.efforts)) { EFFORT_CHOICES.length = 0; for (const e of d.efforts) EFFORT_CHOICES.push(e); }
+    }).catch(() => {});
+  } catch (e) {}
+  return Promise.resolve();
+}
+loadModelChoices();
 // Is this menu entry the lane's CURRENT value? Effort matches exactly; the model var holds a display
 // name ("Opus 4.8"), so match on the leading word — same rule as the chat view's isCurrentMeta.
 function isCurrentMeta(kind, s, value) {
@@ -2524,11 +2540,13 @@ class TimelinePanel {
   // one Enter only OPENS the dialog and the model never changes. The extra Enter accepts the default
   // "Yes". /effort and /compact apply directly (no cache-invalidation confirmation), so they don't pass
   // it. The extra Enter is harmless even if a build skips the dialog (an empty composer submit is a no-op).
-  _sendCommand(name, cmd, confirm) {
+  _sendCommand(name, cmd, confirm, extra) {
     if (!name || !cmd) return;
     try {
+      // `extra` is op flags for the kernel bridge (the Latest row's `{ floating: true }`); the direct
+      // tmux paste below has no kernel to carry them to, so it sends the bare command
       if (typeof window !== 'undefined' && typeof window.__rompTimelineSendCommand === 'function') {
-        window.__rompTimelineSendCommand(name, cmd); return;
+        window.__rompTimelineSendCommand(name, cmd, extra || undefined); return;
       }
       const cp = require('child_process'), tmux = this._tmuxPath();
       const env = Object.assign({}, process.env, { LANG: 'en_US.UTF-8', LC_ALL: 'en_US.UTF-8', LC_CTYPE: 'en_US.UTF-8' });
@@ -2547,6 +2565,9 @@ class TimelinePanel {
   }
 
   _closeMetaMenu() { if (this._metaMenu) { if (this._metaMenu._sub) this._metaMenu._sub.remove(); this._metaMenu.remove(); this._metaMenu = null; } }
+  // the kernel's models frame: the pick memory moved or the catalog grew → re-read /models so the lane
+  // picker's family rows send the fresh default (see loadModelChoices). Returns the fetch promise for the tests.
+  refreshModels() { return loadModelChoices(); }
 
   // Where a drop-down should live and be measured: the tip's host document (the topmost same-origin
   // window — in the web shell that's the whole page, so a menu taller than the timeline band gets the
@@ -2583,8 +2604,10 @@ class TimelinePanel {
     menu.dataset.rompMenu = '1';   // the echo writers skip in-menu presses (T213)
     menu._kind = kind; menu._sid = s.id;
     const h = this._menuHost(anchorEl.getBoundingClientRect());
-    const pick = (value) => {
-      this._sendCommand(s.name, '/' + kind + ' ' + value, kind === 'model');
+    const pick = (value, floating) => {
+      // `floating` is the version submenu's Latest row: the flag rides the command to the kernel,
+      // which forgets the family's remembered pin
+      this._sendCommand(s.name, '/' + kind + ' ' + value, kind === 'model', floating ? { floating: true } : null);
       const now = (typeof Date !== 'undefined' && Date.now) ? Date.now() : 0;
       this._metaPending[s.id + ':' + kind] = { was: (kind === 'model' ? s.model : s.effort) || '', until: now + 20000 };
       this._closeMetaMenu();
@@ -2607,12 +2630,40 @@ class TimelinePanel {
         closeSub();
         const sub = document.body.createDiv();
         sub.setAttribute('style', 'position:fixed;z-index:1002;min-width:96px;' + MENU_STYLE);
-    sub.dataset.rompMenu = '1';   // the echo writers skip in-menu presses (T213)
+        sub.dataset.rompMenu = '1';   // the echo writers skip in-menu presses (T213) — the Latest row rides inside
+        // "Latest" heads the submenu: the one gesture back to floating once a family carries a pin —
+        // the family row sends the pin, the rows below pin, and a typed alias leaves the pick memory
+        // alone by design. It sends the alias with the `floating` flag, which the kernel's sendCommand
+        // arm hands to _set_model_or_park to forget the family's remembered pin, so the family follows
+        // the CLI's newest release again. ✓ when unpinned and current.
+        const pinned = !!c.default && c.default !== c.value;
+        const latest = sub.createDiv();
+        latest.setAttribute('style', 'padding:4px 22px 4px 8px;border-radius:4px;cursor:pointer;position:relative;white-space:nowrap;');
+        latest.setAttribute('tabindex', '0');
+        latest.createDiv({ text: 'Latest' });
+        const lsub = latest.createDiv({ text: pinned ? 'unpins — follows the newest ' + c.label : 'follows the newest ' + c.label });
+        lsub.setAttribute('style', 'font-size:0.82em;opacity:0.6;');
+        if (!pinned && cur) { const ck = latest.createSpan({ text: '✓' }); ck.setAttribute('style', MENU_CHECK_STYLE); }
+        latest.addEventListener('mouseenter', () => { latest.style.background = HOVER_BG; });
+        latest.addEventListener('mouseleave', () => { latest.style.background = 'transparent'; });
+        latest.addEventListener('click', (e) => { e.stopPropagation(); pick(c.value, true); });
+        latest.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); pick(c.value, true); }
+          else if (e.key === 'ArrowLeft') { e.preventDefault(); closeSub(); item.focus(); }
+        });
         for (const v of versions) {
           const cv = ((s.model || '').toLowerCase() === v.label.toLowerCase());
           const row = sub.createDiv({ text: v.label });
           row.setAttribute('style', 'padding:4px 22px 4px 8px;border-radius:4px;cursor:pointer;position:relative;white-space:nowrap;');
           row.setAttribute('tabindex', '0');
+          if (v.learned) {
+            // LOUD, per the fail-loudly rule: this version is in no catalog list — a running session's
+            // CLI reported it (kernel /models `learned`) — so the row says so instead of a stale menu
+            // hiding a live model. The chat's .meta-item-sub treatment, inlined for a foreign document.
+            const tag = row.createSpan({ text: ' new' });
+            tag.setAttribute('style', 'font-size:0.82em;opacity:0.6;margin-left:4px;');
+            row.setAttribute('title', "Reported by a running session's Claude Code; not yet in romp's version list");
+          }
           if (cv) { const ck = row.createSpan({ text: '✓' }); ck.setAttribute('style', MENU_CHECK_STYLE); }
           row.addEventListener('mouseenter', () => { row.style.background = HOVER_BG; });
           row.addEventListener('mouseleave', () => { row.style.background = 'transparent'; });
@@ -5020,4 +5071,4 @@ class TimelinePanel {
   body(s) { return s ? '<div class="b">' + s + '</div>' : ''; }
 }
 
-module.exports = { TimelinePanel, badgeFor, roundedPath, crossX, workAnchorOf, idleGaps, fmtSpan, dotLit, barLit, interpNow, shouldReanchorEdge, reanchorEdge, isFreshNowSample, barEndT, dragAxis, stripRompMarks, collapseRepeat, reqText, menuTop, offsetRect, viewVisible, viewLabel, viewMoreCount, viewToggleMember, viewTagUnion, lensAll, lensToggle, lensVisible, lensLabel, timelineLens };
+module.exports = { TimelinePanel, badgeFor, roundedPath, crossX, workAnchorOf, idleGaps, fmtSpan, dotLit, barLit, interpNow, shouldReanchorEdge, reanchorEdge, isFreshNowSample, barEndT, dragAxis, stripRompMarks, collapseRepeat, reqText, menuTop, offsetRect, viewVisible, viewLabel, viewMoreCount, viewToggleMember, viewTagUnion, lensAll, lensToggle, lensVisible, lensLabel, timelineLens, loadModelChoices, MODEL_CHOICES };

@@ -831,3 +831,82 @@ class SupersedeKeysOnWriteTime(unittest.TestCase):
     def test_job_stamps_never_yield_to_mail(self):
         got = km._goal_awaiting_stamp_full(self._nodes(100, 120, kind="job"), "g1", answered_at=150)
         self.assertIsNotNone(got, "peer-scoped: a slurm wait keeps standing through unrelated mail")
+
+
+class ForkedSessionChipMatchesFeed(unittest.TestCase):
+    """The chip and the card read the SAME fact. build_feed resolves a session's transcript via
+    discover — the registry's lastSid file for a /cleared or resume-forked SDK session — while
+    _session_stamp_read resolved _sdk_transcript_path, the DEAD anchor file, so the chip's
+    ask-unit discriminator (_pure_delegation_top's anchor resolve) answered from a transcript the
+    feed no longer reads: the feed suppressed a machine-anchored coordination top while the chip
+    lit 'waiting on peers' for it. One fact, two answers. The stamp cache also keys on the
+    resolved path + parse warmth: a not-yet-latched node's verdict is the only
+    cache-temperature-dependent input left (a LATCHED askAnchor rides the goal store, whose mtime
+    is already in the key), and without the temperature key the chip served a cold-beat fail-open
+    long after the feed's fresh read had warmed."""
+
+    FSID = "aa110001-2222-4333-8444-000000000001"
+    FORK = "aa110001-2222-4333-8444-000000000002"
+    PEER = "aa110001-2222-4333-8444-000000000003"
+
+    def setUp(self):
+        self.td = tempfile.TemporaryDirectory()
+        td = Path(self.td.name)
+        self._saved = (km.jd.STATE, km.jd.GOALDIR, km.jd.SDKDIR, km.NAMES, km._tmux_sessions,
+                       km._states_awaiting_overlay, km._name_of, km._parse_cached)
+        km.jd.STATE = td
+        km.jd.GOALDIR = td / "goals"
+        km.jd.GOALDIR.mkdir(parents=True)
+        km.jd.SDKDIR = td / "sdk"
+        km.jd.SDKDIR.mkdir()
+        km.NAMES = td / "names"
+        km.NAMES.mkdir()
+        cwd = str(td / "proj")
+        (km.NAMES / self.FSID).write_text("web\t%s\n" % cwd)
+        (km.jd.SDKDIR / (self.FSID + ".json")).write_text(json.dumps({"lastSid": self.FORK}))
+        self.fork_path = str(km.jd._proj_dir(cwd) / (self.FORK + ".jsonl"))
+        km.jd._lastsid_memo.clear()
+        km._SESSION_STAMP_CACHE.clear()
+        km._states_awaiting_overlay = lambda sid: None
+        km._name_of = lambda s: "probe" if s == self.PEER else None
+        km._tmux_sessions = lambda: {self.FSID: {"state": "", "since": None,
+                                                 "subagents": [], "bgTasks": []}}
+        # the WARM parse lives at the lastSid file — the anchor file is dead (no parse, ever)
+        self._machine = {"turns": [{"atoms": [
+            {"uuid": "a9", "type": "assistant",
+             "message": {"role": "assistant",
+                         "content": [{"type": "text", "text": "wrapping up the sweep"}]}}]}]}
+        km._parse_cached = lambda p: self._machine if str(p) == self.fork_path else None
+
+    def tearDown(self):
+        (km.jd.STATE, km.jd.GOALDIR, km.jd.SDKDIR, km.NAMES, km._tmux_sessions,
+         km._states_awaiting_overlay, km._name_of, km._parse_cached) = self._saved
+        km._SESSION_STAMP_CACHE.clear()
+        km.jd._lastsid_memo.clear()
+        self.td.cleanup()
+
+    def _seed(self):
+        top = _node("g1")
+        top["promptUuid"] = "a9"                       # machine-anchored coordination top, unlatched
+        h = _node("h1", parent="g1")
+        h["handoff"] = {"peer": self.PEER, "msgId": "1787000000.00001_00001.TESTHOST"}
+        nodes = {"g1": top, "h1": h}
+        (km.jd.GOALDIR / (self.FSID + ".json")).write_text(json.dumps({
+            "rompUuid": self.FSID, "seq": 1, "placements": {}, "status": {}, "nodes": nodes}))
+        return nodes
+
+    def test_the_chip_reads_the_forked_transcript_like_the_feed(self):
+        nodes = self._seed()
+        self.assertTrue(km._pure_delegation_top(nodes, "g1", sid=self.FSID, path=self.fork_path),
+                        "feed side: the warm lastSid parse proves a machine anchor — suppressed")
+        self.assertEqual(km._session_stamp_read(self.FSID)[2], (),
+                         "chip side answers identically: no peers lit for a suppressed card")
+
+    def test_the_stamp_cache_re_reads_when_the_parse_warms(self):
+        self._seed()
+        km._parse_cached = lambda p: None              # cold beat: both surfaces fail open (shown)
+        self.assertEqual(km._session_stamp_read(self.FSID)[2], (self.PEER,),
+                         "cold: unlatched fail-open, the same answer the feed's cold read gives")
+        km._parse_cached = lambda p: self._machine if str(p) == self.fork_path else None
+        self.assertEqual(km._session_stamp_read(self.FSID)[2], (),
+                         "the warm parse is new information — the cached chip must not outlive it")

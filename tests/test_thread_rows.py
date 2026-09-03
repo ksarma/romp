@@ -10,6 +10,7 @@ import threading
 import unittest
 import urllib.request
 from importlib.machinery import SourceFileLoader
+from unittest import mock
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
@@ -273,11 +274,35 @@ class ThreadRowsRoute(unittest.TestCase):
         self.assertEqual(t.get("parent"), PARENT, "the parent sid rides for reply resolution")
 
 
-class ThreadWakeModel(unittest.TestCase):
-    """T223 rider (the user 2026-09-01): a thread registered on a superseded FULL id comes up on its
-    family's newest at its next explicit wake; bare aliases auto-track and are left alone."""
+class ThreadWakePinsStand(unittest.TestCase):
+    """A dormant comment thread wakes on the model its reg holds — PINS STAND. The T223 rider had the
+    backend's `_ensure` consult a kernel-installed hook (`SdkBackend.thread_wake_model`) that re-points a
+    dormant thread registered on a SUPERSEDED full id to its family's newest at its next explicit wake.
+    That targeted the artefact where a FAMILY click wrote the head's full id into the reg — an
+    accidental pin. With the alias as the family default a full id in reg.model is a DELIBERATE one: the
+    version submenu writes the pick verbatim, the create dialog sends a pinned family's id, and the
+    marker-gated boot pass treats every post-migration head as the user's (the way back to floating is
+    the Latest gesture, never a pass). With no accidental heads left to heal, the remap would override
+    only deliberate pins — so the kernel wires no wake hook, and a thread pinned to a legacy version
+    comes up ON that version; a thread on an alias floats as before. The backend's consult in `_ensure`
+    stays as it is (inert with no hook installed)."""
+
+    THREAD = {"threadOf": PARENT, "spawnedAt": 1700000000}   # has run before: dormant, not a fresh fork
+
+    class _Rec:
+        made = []
+
+        def __init__(self, backend, reg):
+            self.reg = dict(reg)
+            self.thread = mock.Mock(is_alive=lambda: True)
+            self.on_boot_settled = None
+            ThreadWakePinsStand._Rec.made.append(self.reg)
+
+        def start(self):
+            pass
 
     def setUp(self):
+        # a catalog in which claude-fable-5 IS superseded — the one shape a wake remap would act on
         self._saved = {fam: [dict(v) for v in vs] for fam, vs in km.MODEL_VERSIONS.items()}
         km.MODEL_VERSIONS["fable"][:] = [{"value": "claude-fable-5-1", "label": "Fable 5.1"},
                                          {"value": "claude-fable-5", "label": "Fable 5"},
@@ -287,20 +312,46 @@ class ThreadWakeModel(unittest.TestCase):
         for fam, vs in self._saved.items():
             km.MODEL_VERSIONS[fam][:] = vs
 
-    def test_superseded_full_id_remaps_to_family_newest(self):
-        self.assertEqual(km._family_newest_model("claude-fable-5"), "claude-fable-5-1")
+    @staticmethod
+    def _kernel_wired_hook():
+        """The wake hook exactly as the kernel installs it on the backend it builds, read off
+        `_sdk_locked`'s source (building the real backend in-process runs a boot reconcile — this
+        file's first test says why not) and resolved against the kernel module: None when the kernel
+        wires none. So the wake below runs under whatever hook the kernel would give a live backend."""
+        import inspect
+        import re
+        m = re.search(r"thread_wake_model\s*=\s*(\w+)", inspect.getsource(km._sdk_locked))
+        return getattr(km, m.group(1)) if m else None
 
-    def test_newest_alias_and_unknown_remap_to_nothing(self):
-        self.assertIsNone(km._family_newest_model("claude-fable-5-1"), "already newest")
-        self.assertIsNone(km._family_newest_model("claude-fable-4"), "an id the catalog never listed is not ours")
-        self.assertIsNone(km._family_newest_model("fable"), "a bare alias auto-tracks — untouched")
-        self.assertIsNone(km._family_newest_model("claude-opus-4-5-20251101"), "a dated snapshot is not a version")
-        self.assertIsNone(km._family_newest_model(""))
+    def _wake(self, model):
+        """Wake a dormant thread registered on `model` through a hermetic backend INSTANCE wired the
+        kernel's way; returns (the model the spawned session got, the model the reg holds after)."""
+        from pathlib import Path
+        sb = SourceFileLoader("romp_sdk_backend_rows", os.path.join(BIN, "romp_sdk_backend.py")).load_module()
+        root = Path(tempfile.mkdtemp())
+        be = sb.SdkBackend(root, "/bin/true", lambda *a, **k: None, log=lambda *a, **k: None)
+        be.thread_wake_model = self._kernel_wired_hook()
+        sb.write_reg(root, TSID, {"sid": TSID, "name": "web-comment-1", "cwd": "/tmp", "alive": True,
+                                  "lastSid": TSID, "model": model, **self.THREAD})
+        self._Rec.made = []
+        with mock.patch.object(sb, "SdkSession", self._Rec):
+            be._ensure(TSID)
+        return self._Rec.made[0]["model"], sb.read_reg(root, TSID).get("model")
 
-    def test_the_backend_hook_is_installed_at_build(self):
+    def test_a_dormant_thread_pinned_to_a_legacy_version_wakes_on_it(self):
+        self.assertEqual(self._wake("claude-fable-5"), ("claude-fable-5", "claude-fable-5"),
+                         "a full id in the reg is the user's pin — it stands at the wake, on disk too")
+
+    def test_a_dormant_thread_on_an_alias_wakes_floating(self):
+        self.assertEqual(self._wake("fable"), ("fable", "fable"),
+                         "an alias auto-tracks in the CLI; nothing to do at the wake")
+
+    def test_the_kernel_wires_no_wake_remap(self):
         import inspect
         src = inspect.getsource(km._sdk_locked)
-        self.assertIn("thread_wake_model = _family_newest_model", src)
+        self.assertNotIn("thread_wake_model = _family_newest_model", src,
+                         "the remap would re-point deliberate pins")
+        self.assertIsNone(self._kernel_wired_hook(), "no hook at all: the backend's consult stays inert")
 
 
 class ThreadRowsBuilder(unittest.TestCase):
