@@ -28033,6 +28033,18 @@ FEED_DELTA_CAP = "feedDelta"   # the capability a client announces (ws ?caps=fee
 # held client — the shim consumes both itself.
 READY_GATE_CAP = "readyGate"
 
+# A client that announces THIS cap has no live kernel-pushed view: its content is fetched over HTTP on
+# demand and its socket carries keepalives and request/response replies only (the Files pane, app=files).
+# The shim reads it off CAPS and never arms its "connection lost — what you see may be stale" prompt for
+# the page. Every other pane's arm retires on the kernel's connect-time push — the first non-keepalive
+# frame after a reconnect — and a page that gets no such push held its arm until the second keepalive
+# raised the shell's shared banner, dashboard-wide, after every unannounced reconnect (the 2026-09-03
+# review), for a file a dropped socket cannot make stale. Nothing kernel-side consults it: the socket
+# already gets nothing built for it (_push names the apps it serves). It is the PAGE's declaration,
+# carried on the ws URL like the others so a reconnect keeps it without the bundle re-announcing. The
+# build-drift prompt is a separate raise (raiseBuild) and stands for such a page.
+NO_STALE_CAP = "noStale"
+
 # Fields of the feed frame that are collections keyed by an id, sent as upserts/removals: (key, id field).
 _FEED_KEYED = (("asks", "itemId"), ("ledgers", "sid"))
 
@@ -30638,6 +30650,12 @@ var failedConnects=0,firstFailT=0;   // handshakes that never OPENED since the l
 var wid=new URLSearchParams(location.search).get("wid")||"";
 try{if(!wid)wid=window.sessionStorage.getItem("romp:wid")||"";}catch(e){}
 var APP="%s";var LOADEDV=%d;var CAPS="%s";var lastRecv=0;var STALE_MS=30000;   // watchdog: no frame (incl. keepalive) for this long → the socket is dead → reconnect
+// NO_STALE_CAP: this page has no live kernel-pushed view — its content is fetched on demand and its socket carries
+// keepalives and request/response replies only (the Files pane) — so the "what you see may be stale" prompt below
+// (armStale/clearStale) is never armed for it: the retire keys on a resync frame, and none is ever coming, so the
+// second keepalive raised the shell's shared banner after every unannounced reconnect (the 2026-09-03 review).
+// The build prompt (raiseBuild) is untouched: new code is not delivered by any frame, whatever the page.
+var NOSTALE=CAPS.split(",").indexOf("%s")>=0;
 var connT=0;   // when the current socket's connect() attempt started — the progress watchdog's reference point
 // Tell the shell this pane's WS state so it can show ONE "disconnected" banner (the user 2026-06-27): a real
 // network drop used to blind-reload into a dead page, leaving the pane silently frozen with no explanation.
@@ -30663,6 +30681,7 @@ function selfStale(){selfBar("romp lost the live connection, so what you see may
 // the first non-keepalive frame after a reconnect — the event, not a timer. A BUILD prompt is untouched:
 // new code is not delivered by a resync, so only a reload can answer that one.
 function clearStale(){stalePending="";   // armed but never shown → nothing to see
+if(NOSTALE)return;   // never armed here (NO_STALE_CAP): nothing to retire, and a peer pane's prompt is not this page's to retract
 if(window.parent!==window){try{window.parent.postMessage({romp:"wsFresh"},"*");}catch(e){}}
 else{var b=document.getElementById("romp-stale-self");if(b&&b.dataset.kind==="conn")b.remove();}}
 // A pane the user cannot SEE never interrupts them about ITS OWN staleness (the user 2026-08-15: the
@@ -30703,7 +30722,7 @@ if(window.parent!==window){try{window.parent.postMessage({romp:"wsStale"},"*");}
 // last opened (the close rule applies to a socket that OPENED and armed, never to the one the foreground
 // path itself closes).
 var stalePending="",staleKa=0,pendingWhy="",openSock=null,openT=0;
-function armStale(why){stalePending=why;staleKa=0;}
+function armStale(why){if(NOSTALE)return;stalePending=why;staleKa=0;}   // NO_STALE_CAP: no pushed view to go stale — see NOSTALE above
 // BUILD drift (the user 2026-07-13): the keepalive carries the kernel's current dist token (dv); a page whose
 // baked LOADEDV is older is running outdated code against newer kernel state — prompt a reload (never auto).
 // In the dashboard the raise routes to the shell's #rstale banner (build:1 → its BUILDMSG); standalone pages
@@ -30799,7 +30818,7 @@ document.addEventListener("visibilitychange",function(){if(document.visibilitySt
 if(!ws||ws.readyState!==1||Date.now()-lastRecv>STALE_MS){pendingWhy="foreground";freshPending=true;
 try{if(ws&&ws.readyState<=1)ws.close();}catch(e){}   // OPEN or stuck-CONNECTING both die here → onclose retries
 if(!ws||ws.readyState===3)connect();}});})();
-""" % (app, int(v), caps, app, app)
+""" % (app, int(v), caps, NO_STALE_CAP, app, app)
 
 
 # On a narrow / touch viewport the chat's session tabs wrap into several rows and eat vertical space.
@@ -31197,11 +31216,13 @@ def _waiting_page():
 # the ready fast-serve): _push builds nothing for it, and its socket carries keepalives and its own replies.
 # What it does need: this page (the chat's styles.css for the viewer's dress; files-pane.css read live for
 # the layout and the pane-resident variant; NO _pane_spin — an empty pane is not a loading state), the shim
-# with the ready hold alone, federation.js after it (so a host:sid op routes to the owning kernel through the
-# fake acquireVsCodeApi), then ui/webview/files.ts, and a seat in the conserve-memory viewer list (or an open
-# Files pane alone reads as a closed dashboard). The shell's viewFile relay brings the pane forward and
-# forwards a chat file-link click into it when fileLinkPane is "pane" (render.ts openPath). Browser shell
-# only for now: the VS Code extension's panel mirror is a separate change (UPSTREAM.md).
+# with the ready hold and the stale opt-out (NO_STALE_CAP: no pushed view, so no reconnect may raise the
+# shell's shared "what you see may be stale" prompt for it — the 2026-09-03 review), federation.js after it
+# (so a host:sid op routes to the owning kernel through the fake acquireVsCodeApi), then ui/webview/files.ts,
+# and a seat in the conserve-memory viewer list (or an open Files pane alone reads as a closed dashboard). The
+# shell's viewFile relay brings the pane forward and forwards a chat file-link click into it when fileLinkPane
+# is "pane" (render.ts openPath). Browser shell only for now: the VS Code extension's panel mirror is a
+# separate change (UPSTREAM.md).
 def _files_page():
     try:
         files_css = (UI / "webview" / "files-pane.css").read_text()
@@ -31221,7 +31242,7 @@ def _files_page():
             "<div id=files-empty></div>"
             "<script>%s</script><script src=/dist/federation.js?v=%d></script>"   # multi-kernel manager: after the shim
             "<script src=/dist/files.js?v=%d></script></body></html>"
-            % (v, THEME_CSS, files_css, _shim("files", v, caps=READY_GATE_CAP), v, v))
+            % (v, THEME_CSS, files_css, _shim("files", v, caps=READY_GATE_CAP + "," + NO_STALE_CAP), v, v))
 
 
 # The romp-tl-* wrapper styles live in ui/webview/timeline-pane.css — ONE file, read live here (like the

@@ -167,7 +167,8 @@ class DisconnectBanner(unittest.TestCase):
         # resync is still pending — one full heartbeat period on this socket with the kernel alive, talking
         # to it, and not resyncing it; a single keepalive can be a beat queued at accept, ahead of the resync
         # frame (2026-09-03) — or on the reconnected socket CLOSING again before its resync. Nothing else.
-        self.assertIn('function armStale(why){stalePending=why;staleKa=0;}', js, "arming records the path, shows nothing")
+        self.assertIn('function armStale(why){if(NOSTALE)return;stalePending=why;staleKa=0;}', js,
+                      "arming records the path, shows nothing (NOSTALE: a page with no pushed view never arms — test_files_pane)")
         self.assertNotIn("setTimeout(function(){staleTimer=0;raiseStale(why);},1000)", js, "the timer is gone")
         self.assertNotIn("staleTimer", js)
         self.assertIn('if(stalePending&&++staleKa>=2){var sw=stalePending;stalePending="";raiseStale(sw);}', js,

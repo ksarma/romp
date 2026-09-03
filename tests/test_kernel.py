@@ -6788,7 +6788,7 @@ class ServeSecurity(unittest.TestCase):
         self.assertIn("/dist/files.js", body)
         self.assertLess(body.index("/dist/federation.js"), body.index("/dist/files.js"), "manager before the bundle")
         self.assertIn("app=files", body)
-        self.assertIn('var CAPS="readyGate"', body)
+        self.assertIn('var CAPS="readyGate,noStale"', body)   # the ready hold + the stale opt-out (no pushed view)
         self.assertNotIn('var CAPS="feedDelta', body)
         self.assertIn("body.fileview-pane #romp-fileview{", body, "files-pane.css is inlined live")
         self.assertNotIn("id=pane-spin", body)

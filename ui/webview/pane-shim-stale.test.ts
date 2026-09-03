@@ -20,14 +20,18 @@ import * as path from "node:path";
 import * as vm from "node:vm";
 
 const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
+// the cap a page with no kernel-pushed view announces (the Files pane): the template bakes the constant's
+// value into the shim's CAPS check, so the test reads it from the kernel source rather than restating it
+const NO_STALE_CAP = (KERNEL.match(/^NO_STALE_CAP = "(\w+)"$/m) || [])[1] || "";
 
 function shimJs(app: string, caps: string): string {
   const def = KERNEL.indexOf("def _shim(app, v=0, caps=\"\"):");
   assert.ok(def > 0, "the shim renderer exists with its caps parameter");
   const start = KERNEL.indexOf('return """', def) + 'return """'.length;
-  const end = KERNEL.indexOf('""" % (app, int(v), caps, app, app)', start);
+  const end = KERNEL.indexOf('""" % (app, int(v), caps, NO_STALE_CAP, app, app)', start);
   assert.ok(end > start, "the template's format tuple is the one the test substitutes");
-  const args = [app, "5", caps, app, app];
+  assert.ok(NO_STALE_CAP, "the no-stale cap constant exists");
+  const args = [app, "5", caps, NO_STALE_CAP, app, app];
   let i = 0;
   return KERNEL.slice(start, end).replace(/%[sd]/g, () => args[i++]).replace(/%%/g, "%");
 }
@@ -274,4 +278,64 @@ test("queued breadcrumbs are capped while the socket is down; other queued messa
   assert.deepEqual(diag.map((m) => m.data.i), [...Array(20).keys()], "the oldest are kept: the rows about the drop that started it");
   assert.equal(h.sent.filter((m) => m.type === "activeTab").length, 1, "a non-diagnostic message is never dropped");
   assert.equal(h.sent.length, 21);
+});
+
+// ── the Files pane: a page with NO live kernel-pushed view opts out of the arm ──────────────────────
+// app=files (2026-09-03) is a viewer, not a feed consumer: its file comes over HTTP on demand and its socket
+// carries keepalives and request/response replies only, so the kernel sends it NOTHING on a connect. The
+// "first non-keepalive frame" that retires every other pane's arm never comes, and the arm's second
+// keepalive raised the shell's shared "connection lost — what you see may be stale" banner dashboard-wide
+// after every unannounced reconnect (the 2026-09-03 review), for a file a dropped socket cannot make stale.
+// The page announces NO_STALE_CAP; the shim reads it from CAPS and neither arms nor retires. Run, not
+// grepped, against the same harness — and the contrast (the same page shape WITHOUT the cap) still raises.
+const FILES = (caps: string) => new Harness(shimJs("files", caps));
+
+test("the cap is the kernel's NO_STALE_CAP, announced by the Files page alone, read off CAPS by the shim", () => {
+  assert.equal(NO_STALE_CAP, "noStale");
+  assert.match(KERNEL, /_shim\("files", v, caps=READY_GATE_CAP \+ "," \+ NO_STALE_CAP\)/);
+  assert.equal(KERNEL.match(/_shim\("\w+", v, caps=[^)]*NO_STALE_CAP/g)!.length, 1, "no other pane page passes it");
+  assert.ok(shimJs("files", "readyGate,noStale").includes('var NOSTALE=CAPS.split(",").indexOf("noStale")>=0;'));
+});
+
+test("a page announcing the no-stale cap never arms: no keepalive count, no close, no foreground path raises, nothing is retired", () => {
+  const h = FILES("readyGate," + NO_STALE_CAP);
+  assert.match(h.ws.url, /\/ws\?app=files.*&caps=readyGate%2CnoStale/, "the cap rides the ws URL like the others");
+  h.ws.open(); h.bundleReady();                    // no connect-time frame: the kernel builds nothing for this page
+  h.ws.close(); h.runTimers(); h.ws.open();        // an UNANNOUNCED reconnect
+  assert.equal(h.sockets.length, 2);
+  assert.equal(h.readys(), 2, "the ready re-send is untouched: the hold still lifts on a reconnect");
+  h.ws.msg({ type: "ka", dv: 0 }); h.ws.msg({ type: "ka", dv: 0 }); h.ws.msg({ type: "ka", dv: 0 });
+  assert.equal(h.stale(), 0, "keepalives with no resync between them are not the event here: no resync was ever coming");
+  assert.equal(h.diags("stale-raise").length, 0);
+  h.ws.msg({ type: "fileSaved", reqId: 1, mtimeNs: "1" });   // an op reply: request/response, not a resync
+  assert.equal(h.toBundle.filter((m) => m.type === "fileSaved").length, 1, "replies still reach the bundle");
+  assert.equal(h.fresh(), 0, "…and retire nothing: the page never armed, and a peer pane's prompt is not its to retract");
+  h.ws.close();                                    // the reconnected socket dying before any frame
+  assert.equal(h.stale(), 0, "the close rule needs an arm too");
+  h.runTimers(); h.ws.open();
+  // the foreground fast-path: a quiet socket is closed by the pane and the reconnect it forces would arm with
+  // why=foreground on any other page
+  h.ws.msg({ type: "fileSaved", reqId: 2, mtimeNs: "2" });
+  h.now += 31_000;
+  for (const f of h.visibility) f();
+  h.runTimers(); h.ws.open();
+  h.ws.msg({ type: "ka", dv: 0 }); h.ws.msg({ type: "ka", dv: 0 });
+  assert.equal(h.stale(), 0);
+  assert.equal(h.fresh(), 0);
+  // BUILD drift is a separate raise and still stands: new code is not delivered by any frame, only a reload
+  h.ws.msg({ type: "ka", dv: 9 });
+  const raises = h.posted.filter((m) => m.romp === "wsStale");   // field checks: the sandbox realm's objects fail deepEqual on their prototype
+  assert.equal(raises.length, 1, "the newer-build prompt is untouched");
+  assert.equal(raises[0].build, 1, "…and it is the build raise, not the connection one");
+  h.settles(0);
+  // the contrast: the same page shape WITHOUT the cap, the same sequence — raised on the second keepalive.
+  // The opt-out is the cap the page announces, not its app name.
+  const g = FILES("readyGate");
+  g.ws.open(); g.bundleReady(); g.ws.close(); g.runTimers(); g.ws.open();
+  g.ws.msg({ type: "ka", dv: 0 });
+  assert.equal(g.stale(), 0);
+  g.ws.msg({ type: "ka", dv: 0 });
+  assert.equal(g.stale(), 1, "without the cap the arm and its second-keepalive raise are exactly the feed's");
+  assert.equal(g.diags("stale-raise")[0].data.why, "reconnect");
+  g.settles(1);
 });

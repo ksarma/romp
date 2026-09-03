@@ -9,7 +9,8 @@ Sessions, Outline, Feed and Waiting, with the gear's "File links open in" gainin
   only where a live pane must count: the conserve-memory viewer list.
 - the /files page: the chat's styles.css for the viewer's dress, files-pane.css read live for the
   layout and the pane-resident variant (body.fileview-pane), NO romp loader (an empty pane is not a
-  loading state), the shim with the ready hold alone, federation.js before files.js.
+  loading state), the shim with the ready hold and the stale opt-out (NO_STALE_CAP — a page with no
+  kernel-pushed view never arms the shared "view may be stale" prompt), federation.js before files.js.
 - the shell: a sixth pane after Waiting, default OFF, with its gutter, grow var, focus/Esc/mobile
   wiring and the _PANE_ORDER label "Files"; the viewFile relay's `pane` branch, which brings the
   pane forward and forwards the click (identity included) into it — with none of the feed route's
@@ -18,6 +19,7 @@ Sessions, Outline, Feed and Waiting, with the gear's "File links open in" gainin
 SYNTHETIC fixtures only (the notes-api demo world); no session data is minted here.
 """
 import os
+import re
 import tempfile
 import unittest
 from importlib.machinery import SourceFileLoader
@@ -59,12 +61,12 @@ class Plumbing(unittest.TestCase):
     def test_an_open_files_pane_counts_as_a_viewer_for_conserve_memory(self):
         self.assertIn('c.get("app") in ("chat", "fleet", "timeline", "feed", "waiting", "files")', SRC)
 
-    def test_the_page_carries_the_hold_alone_the_shared_dress_and_no_loader(self):
+    def test_the_page_carries_the_hold_and_the_stale_opt_out_the_shared_dress_and_no_loader(self):
         page = km._files_page()
-        self.assertIn('_shim("files", v, caps=READY_GATE_CAP)', SRC)
+        self.assertIn('_shim("files", v, caps=READY_GATE_CAP + "," + NO_STALE_CAP)', SRC)
         self.assertNotIn('_shim("files", v, caps=FEED_DELTA_CAP', SRC)
         self.assertIn("app=files", page)
-        self.assertIn('var CAPS="readyGate"', page)
+        self.assertIn('var CAPS="readyGate,noStale";', page)
         self.assertIn("/dist/styles.css", page)                     # the viewer's .fileview-* dress
         self.assertIn("<body class=fileview-pane>", page)           # keys the pane-resident variant
         self.assertIn("<div id=files-empty></div>", page)
@@ -80,6 +82,29 @@ class Plumbing(unittest.TestCase):
         self.assertIn(css.splitlines()[-1], page)
         with mock.patch.object(Path, "read_text", side_effect=OSError("gone")):
             self.assertIn("needs the ui/ modules", km._files_page())
+
+    def test_the_page_opts_out_of_the_stale_prompt_and_only_this_page_does(self):
+        """The shim arms the "connection lost — what you see may be stale" prompt on an unannounced reconnect
+        and retires it on the kernel's connect-time push: the first non-keepalive frame. app=files gets no
+        such push (nothing is built for it — the Plumbing pins above), so its arm never cleared and the
+        second keepalive raised the shell's shared banner dashboard-wide after every unannounced reconnect
+        (the 2026-09-03 review) — for a file fetched over HTTP on demand, which a dropped socket cannot make
+        stale. The page announces NO_STALE_CAP; the shim reads it from CAPS and neither arms nor retires
+        (the executed state machine is pane-shim-stale.test.ts). The build-drift prompt is a separate
+        raise and stands. Every other pane has a live pushed view and keeps the arm."""
+        self.assertEqual(km.NO_STALE_CAP, "noStale")
+        page = km._files_page()
+        self.assertIn('var NOSTALE=CAPS.split(",").indexOf("noStale")>=0;', page, "the shim reads the cap off CAPS")
+        self.assertIn("function armStale(why){if(NOSTALE)return;stalePending=why;staleKa=0;}", page)
+        self.assertIn('function clearStale(){stalePending="";   // armed but never shown → nothing to see\nif(NOSTALE)return;', page)
+        self.assertIn("function raiseBuild(){if(buildRaised)return;buildRaised=true;", page, "the build prompt is not gated")
+        self.assertIn("&caps=", km._shim("files", 1, caps=km.NO_STALE_CAP), "the cap rides the ws URL like the others")
+        # the one page that passes it; the other pane pages keep the arm exactly as they were
+        shims = re.findall(r'_shim\("(\w+)", v, caps=([^)]*)\)', SRC)
+        self.assertEqual([app for app, caps in shims if "NO_STALE_CAP" in caps], ["files"])
+        self.assertEqual(sorted(app for app, caps in shims), ["chat", "feed", "files", "fleet", "timeline", "waiting"])
+        for app in ("chat", "feed", "fleet", "waiting", "timeline"):
+            self.assertNotIn("noStale", km._shim(app, 1, caps=km.FEED_DELTA_CAP + "," + km.READY_GATE_CAP).split("var NOSTALE")[0])
 
     def test_the_pane_resident_variant_lives_only_in_the_pane_sheet(self):
         # the modal variant is mirrored byte-equal in styles.css and feed.css (fileview-parity.test.ts);
