@@ -32028,6 +32028,12 @@ if(m.romp==='browseFiles'){var bf=document.getElementById('f-feed');
 if(m.romp==='browseClosed'&&(window.__rompFeedWasOff||window.__rompFeedWasOffView)){
   window.__rompFeedWasOff=false;window.__rompFeedWasOffView=false;
   try{window.__rompPaneToggle&&window.__rompPaneToggle('feed',false);}catch(e){}}
+// A passage selected in a viewer hosted by a pane with NO composer (the Files pane, the feed) posts up in
+// the editorSelection shape the chat already handles (file-view.ts composerWindow); the shell forwards it
+// whole into the chat pane, whose composer seeds the labeled quote chip for the session the file was opened
+// for (m.sid beats the active tab there). The chat-hosted viewer posts to its own window and never gets here.
+if(m.type==='editorSelection'&&typeof m.text==='string'){var fc=document.getElementById('f-chat');
+  try{fc&&fc.contentWindow&&fc.contentWindow.postMessage(m,'*');}catch(e){}}
 // A chat file-link click with the cards-pane preference set (fileLinkPane — gear.js; the user
 // 2026-08-20) posts viewFile up instead of opening in-document; the shell forwards it to the FEED
 // pane, whose initFileView (file-view.ts) opens the viewer there. The GATE lives at the click site
