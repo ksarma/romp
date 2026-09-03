@@ -229,7 +229,7 @@ interface TodoTask { id: string; subject: string; activeForm?: string; status: s
 
 type ChipState = "working" | "ready" | "needsInput" | "awaiting" | "awaitingBg" | "idle" | "closed" | "compacting" | "clearing" | "blocked" | "retrying" | "interrupting" | "opening";   // needsInput = a live permission/picker prompt (on YOU) — renamed from the legacy "awaiting" (2026-08-15), which stays accepted for OLDER REMOTE KERNELS across federation; awaitingBg = idle main thread waiting on background work it dispatched (the user 2026-07-13)
 type PeerIdent = { name: string; host?: string; sid?: string; color?: { bg: string; fg: string } | null };   // a named peer behind a peer-kind wait (kernel _peer_identity, 2026-08-26)
-interface Status { state: ChipState; sinceEpoch: number | null; awaitingWhy?: string | null; awaitingKind?: string | null; awaitingPeers?: PeerIdent[] | null; awaitingTasks?: string[]; awaitingTaskIds?: string[]; awaitingCount?: number | null; effort?: string; model?: string; modelPending?: boolean; effortPending?: boolean; mode?: string; fast?: string; auth?: string; authLive?: string; authPending?: boolean; authBoth?: boolean; authAcct?: string; ctx?: string; ctxColor?: number[]; modelColor?: number[]; effortColor?: number[]; modelTone?: number[]; effortTone?: number[]; ctxTone?: number[]; faded?: boolean; backend?: string; apiTooLong?: boolean; apiSpendLimit?: boolean; apiModelLimit?: boolean; apiAuthErr?: boolean; apiRefusal?: boolean; retrySuppressed?: boolean; retryNextAt?: number | null; retryTries?: number | null; }   // awaitingWhy/awaitingTasks = what an awaitingBg session is waiting on (kernel _session_awaiting's phrasing + the live awaited task descriptions) — the #bg-tasks box renders it when no tracked tasks claim the box (renderAwaitWhy; the user 2026-08-13, who moved it out of the statusline the same day PR #350 put it there)   // retrySuppressed = the user interrupted this thread's API-error storm → romp's auto-retry stays OFF for it until a successful turn re-arms (the user 2026-07-06). backend = "tmux" | "sdk"; apiTooLong = the "blocked" is a "prompt is too long" error (on you → red tab) vs a transient API error (amber/retrying); apiSpendLimit = a monthly spend cap (on you → raise it; NEVER auto-retried — retrying can't fix it, the user 2026-07-14); apiModelLimit = this session's MODEL is out of allowance (on you → switch model or add credits; not auto-retried either, the user 2026-08-01); apiRefusal = the model's safeguards refused the prompt itself (on you → rewrite it or drop the thread; never auto-retried — a refusal is deterministic on the same input, so a retry just manufactures the same refusal, the user 2026-08-15); ctxColor = the GLOBAL colormap's RGB for the context%, computed server-side; modelColor/effortColor = the same map's RGB tint for the model name + effort (by capability/effort rank), server-computed; modelPending = a /model switch is resolving → the badge shows switching-dots until the new name lands (server-driven, event-based, the user 2026-07-03); fast = the CLI's fast-mode state ("on"/"off"/"cooldown", from the SDK init's fast_mode_state; absent = unknown/unavailable → no fast badge)
+interface Status { state: ChipState; sinceEpoch: number | null; awaitingWhy?: string | null; awaitingKind?: string | null; awaitingPeers?: PeerIdent[] | null; awaitingTasks?: string[]; awaitingTaskIds?: string[]; awaitingCount?: number | null; effort?: string; model?: string; modelPending?: boolean; effortPending?: boolean; mode?: string; fast?: string; auth?: string; authLive?: string; authPending?: boolean; authBoth?: boolean; authAcct?: string; ctx?: string; ctxOver?: boolean; ctxColor?: number[]; modelColor?: number[]; effortColor?: number[]; modelTone?: number[]; effortTone?: number[]; ctxTone?: number[]; faded?: boolean; backend?: string; apiTooLong?: boolean; apiSpendLimit?: boolean; apiModelLimit?: boolean; apiAuthErr?: boolean; apiRefusal?: boolean; retrySuppressed?: boolean; retryNextAt?: number | null; retryTries?: number | null; }   // awaitingWhy/awaitingTasks = what an awaitingBg session is waiting on (kernel _session_awaiting's phrasing + the live awaited task descriptions) — the #bg-tasks box renders it when no tracked tasks claim the box (renderAwaitWhy; the user 2026-08-13, who moved it out of the statusline the same day PR #350 put it there)   // retrySuppressed = the user interrupted this thread's API-error storm → romp's auto-retry stays OFF for it until a successful turn re-arms (the user 2026-07-06). backend = "tmux" | "sdk"; apiTooLong = the "blocked" is a "prompt is too long" error (on you → red tab) vs a transient API error (amber/retrying); apiSpendLimit = a monthly spend cap (on you → raise it; NEVER auto-retried — retrying can't fix it, the user 2026-07-14); apiModelLimit = this session's MODEL is out of allowance (on you → switch model or add credits; not auto-retried either, the user 2026-08-01); apiRefusal = the model's safeguards refused the prompt itself (on you → rewrite it or drop the thread; never auto-retried — a refusal is deterministic on the same input, so a retry just manufactures the same refusal, the user 2026-08-15); ctxColor = the GLOBAL colormap's RGB for the context%, computed server-side; modelColor/effortColor = the same map's RGB tint for the model name + effort (by capability/effort rank), server-computed; modelPending = a /model switch is resolving → the badge shows switching-dots until the new name lands (server-driven, event-based, the user 2026-07-03); fast = the CLI's fast-mode state ("on"/"off"/"cooldown", from the SDK init's fast_mode_state; absent = unknown/unavailable → no fast badge)
 interface Color { bg: string; fg: string; }
 // A run_in_background task surfaced in the #bg-tasks box (the kernel's _bg_tasks): a one-line summary +
 // status, expandable to the command + its output. status = running | completed | failed. For a dispatched
@@ -4301,7 +4301,7 @@ function showTabTip(tab: HTMLElement, s: Session): void {
   if (s.status.ctx) {
     const cr = el("div", "tab-tip-row tab-tip-ctx");          // extra vertical room — the battery bar is tall
     const ck = el("span", "tab-tip-k"); ck.textContent = "Context"; cr.appendChild(ck);
-    const bar = ctxBar(); setCtxBar(bar, s.status.ctx, s.status.state === "compacting", pickTone(s.status.ctxColor, s.status.ctxTone));
+    const bar = ctxBar(); setCtxBar(bar, s.status.ctx, s.status.state === "compacting", pickTone(s.status.ctxColor, s.status.ctxTone), s.status.ctxOver);
     cr.appendChild(bar); tip.appendChild(cr);
   }
   // ledger rows, LABELLED + aligned with the rows above (the user 2026-06-23 v3): the summary, then Recent.
@@ -5328,7 +5328,7 @@ const NAV_SCROLL_STEP = 60;
 function isTypingTarget(t: EventTarget | null): boolean {
   const elm = t as HTMLElement | null;
   if (!elm || typeof elm.tagName !== "string") return false;
-  return elm.tagName === "TEXTAREA" || elm.tagName === "INPUT" || elm.isContentEditable === true;
+  return elm.tagName === "TEXTAREA" || elm.tagName === "INPUT" || elm.tagName === "SELECT" || elm.isContentEditable === true;   // SELECT: type-ahead in a dropdown is typing too
 }
 window.addEventListener("keydown", (e) => {
   if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
@@ -5372,6 +5372,29 @@ window.addEventListener("keydown", (e) => {
     if (ae && ae !== document.body) return;
     if (focusComposerOrAsk()) e.preventDefault();   // the picker card if one's up, else the message box
   }
+});
+// SELECT → TYPE → ⌘⏎ (the user 2026-09-02): a transcript selection already seeded the reply chip
+// (selectionchange), so the natural next act is just TYPING — the first printable keystroke drops
+// the cursor into the message box with the chip attached, no mouse round-trip, and ⌘⏎ stages as
+// ever. (Not selection-gated: a printable keystroke nobody claimed means "type" from anywhere —
+// the same two-state default as bare-area Enter above.) Bubble phase on window = every capture
+// handler (shell chords, overlays) and element handler (live-ask card, focused tab, slash menu)
+// has already spoken; we take only keystrokes nobody claimed. NEVER preventDefault: focusing
+// during keydown lets the NATIVE keystroke insert into the newly focused box, so the composer's
+// own input bookkeeping (draft, slash menu) sees ordinary typing.
+window.addEventListener("keydown", (e) => {
+  if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;   // chords are not typing (shift stays: capitals)
+  if (e.isComposing || e.keyCode === 229) return;   // IME mid-composition — a focus steal aborts the composition
+  if (e.key.length !== 1 || e.key === " ") return;  // printable only; Space stays a toggle/scroll key
+  const ta = document.getElementById("composer-input") as HTMLTextAreaElement | null;
+  if (!ta || ta.disabled || document.activeElement === ta) return;   // no box / read-only session / already typing (covers key repeat)
+  if (isTypingTarget(e.target) || isTypingTarget(document.activeElement)) return;
+  if (activeId && liveAsks.has(activeId)) return;   // digits belong to the live-ask card's number keys
+  if (ctxMenuEl || document.querySelector(".picker-overlay")) return;   // an open menu / #picker / #confirm owns the keys
+  if (document.getElementById("romp-fileview") || document.getElementById("romp-filebrowse")
+      || document.getElementById("romp-lightbox")) return;   // full-pane surfaces own their keys
+  if (document.querySelector("#rsettings:not([hidden]), #ra-back:not([hidden]), #rkeys-back, .meta-menu")) return;   // the pane's own modals + meta menus own their keys (a letter typed there must never land in the draft)
+  ta.focus({ preventScroll: true });   // the native keystroke lands in the box; the chip survives (a collapse never clears it)
 });
 // Cmd/Ctrl+O and Cmd/Ctrl+Shift+O — the in-PAGE fallback, from anywhere including the composer, the
 // way Obsidian's quick switcher opens over the editor (the user 2026-08-08). Inside the romp shell
@@ -10111,6 +10134,13 @@ const MODE_ICONS: Record<string, string> = {
   bypasspermissions: '<path d="M8 2 L13 4 V8 C13 11.4 10.8 13.2 8 14 C5.2 13.2 3 11.4 3 8 V4 Z"/><path d="M3.2 13 L12.8 3"/>',
   dontask: '<path d="M3 3.5 H13 V10 H8.5 L5.5 12.8 V10 H3 Z"/><path d="M3.2 12.6 L12.8 2.6"/>',
 };
+// the modes that REMOVE the gate rather than move it read in a red hue on the yatharth themes
+// (the user 2026-08-31) — CSS-scoped to .chat-theme-yatharth so classic renders untouched
+function riskyMode(mode: string | undefined): boolean {
+  const k = (mode || "").toLowerCase().replace(/[\u2019' -]/g, "");
+  return k === "bypasspermissions" || k === "bypass" || k === "dontask";
+}
+
 function modeIconSvg(mode: string | undefined): string {
   // accepts wire values AND display labels (metaButton receives prettyMode's text)
   const raw = (mode || "default").toLowerCase().replace(/[\u2019' -]/g, "");
@@ -10234,6 +10264,7 @@ function metaButton(kind: MetaKind, text: string, forSid?: string | null): HTMLE
     const ico = el("span", "meta-ico mode-ico");
     ico.innerHTML = modeIconSvg(text);   // refreshed by the sync loop below from st.mode
     btn.appendChild(ico);
+    btn.classList.toggle("mode-risky", riskyMode(text));   // kept live by the sync loop
   }
   const label = el("span", "meta-label");
   label.textContent = text;
@@ -10294,6 +10325,7 @@ function syncMetaControls(meta: HTMLElement, st: Status, forSid?: string | null)
     if (kind === "mode") {
       const ico = b.querySelector(".mode-ico") as HTMLElement | null;
       if (ico) ico.innerHTML = modeIconSvg(st.mode);
+      b.classList.toggle("mode-risky", riskyMode(st.mode));
     }
     // A switching MODEL shows animated dots, not the stale/premature name (the user 2026-07-03): the
     // server drives it (st.modelPending) — event-based, cleared the instant the new model actually lands —
@@ -10362,6 +10394,7 @@ function toggleMetaMenu(kind: MetaKind, btn: HTMLElement, forSid?: string | null
     item.tabIndex = 0;
     const rowIco = kind === "mode" ? el("span", "meta-ico mode-ico") : null;
     if (rowIco) rowIco.innerHTML = modeIconSvg(c.value);
+    if (kind === "mode" && riskyMode(c.value)) item.classList.add("mode-risky");
     // model/effort rows wear THEIR OWN rank color (the user 2026-08-31: a picker whose rows are
     // all default-gray codes nothing) — the same /models-fed color+tone the badges use
     if (kind === "model" || kind === "effort") {
@@ -10497,7 +10530,7 @@ function ctxBar(): HTMLElement {
   });
   return bar;
 }
-function setCtxBar(bar: HTMLElement, ctxStr: string | undefined, compacting = false, ctxColor?: number[]) {
+function setCtxBar(bar: HTMLElement, ctxStr: string | undefined, compacting = false, ctxColor?: number[], ctxOver = false) {
   // Compacting: hide the fill/% (the number is about to be wrong anyway) and run
   // the scanning bar instead, mirroring the timeline's battery. No ctx% needed.
   bar.classList.toggle("ctx-compacting", compacting);
@@ -10531,8 +10564,13 @@ function setCtxBar(bar: HTMLElement, ctxStr: string | undefined, compacting = fa
   const fillBg = (ctxColor && ctxColor.length === 3) ? `rgb(${ctxColor.join(",")})`
     : ctxFallbackColor(pct);   // theme-aware pair; fills stay un-re-encoded (see tabCtxGauge's note)
   if (fill) { fill.style.width = pct + "%"; fill.style.background = fillBg; }
-  if (txt) txt.textContent = pct + "%";
-  bar.title = `context ${pct}% used — click to /compact`;
+  // ctxOver: the kernel clamps the CLI's "0-100+" percentage at 100 — past it the tokens exceed the
+  // CURRENT model's window (a 1M→200k model switch does this instantly). Say so: a silent 100% right
+  // after picking a smaller model reads as a broken gauge (the user 2026-09-02).
+  if (txt) txt.textContent = ctxOver ? "100%+" : pct + "%";
+  bar.title = ctxOver
+    ? "context exceeds this model's window — the next turn compacts or trims; click to /compact now"
+    : `context ${pct}% used — click to /compact`;
 }
 
 const CHIP_LABEL: Record<ChipState, string> = {
@@ -10709,7 +10747,7 @@ function updateStatusline() {
   syncMetaControls(meta, s.status);
   right.appendChild(meta);
   const bar = ctxBar();
-  setCtxBar(bar, s.status.ctx, s.status.state === "compacting", pickTone(s.status.ctxColor, s.status.ctxTone));
+  setCtxBar(bar, s.status.ctx, s.status.state === "compacting", pickTone(s.status.ctxColor, s.status.ctxTone), s.status.ctxOver);
   right.appendChild(bar);
   // stop/interrupt button — at the FAR RIGHT of the statusline (the user 2026-08-28; it sat
   // beside the state chip on the left before), riding inside the right cluster so a wrapped
@@ -11155,8 +11193,9 @@ function renderComposerFiles(id: string | null): void {
   if (sendBtn) {
     const held = !!id && sendOnShip.has(id);
     sendBtn.classList.toggle("send-held", held);
-    if (held) sendBtn.setAttribute("title", "sends when the upload finishes");
-    else if (sendBtn.getAttribute("title") === "sends when the upload finishes") sendBtn.removeAttribute("title");
+    // through the styled tip, not a native title: the button already wears setTip("Send (Enter)"),
+    // and a native title beside it showed BOTH boxes while a hold was armed (2026-09-02)
+    setTip(sendBtn, held ? "Send (Enter)\nsends when the upload finishes" : "Send (Enter)");
   }
   strip.replaceChildren();
   const paths = (id ? composerFiles.get(id) : undefined) || [];
@@ -11682,11 +11721,19 @@ function upsert(msg: any) {
   // fork by the ABSENCE of any shared event uuid instead.
   const forked = !!(existed && msg.events && msg.events.length && prev && prev.events.length
                     && !sharesAnyUuid(msg.events, prev.events));
+  // A view that never held an event is a PLACEHOLDER (a fork's provisional tab, a revive's stub):
+  // the payload that fills it is the tab's FIRST content-bearing build, not an append onto a
+  // transcript someone is reading. The append path measured "was the reader at the bottom?"
+  // against a one-line placeholder that cannot overflow, landed the whole arriving history at
+  // scrollTop 0, and the never-yank rule then held the top forever (the user 2026-09-02: an
+  // opened or forked session sat at the top after its context loaded). A first build takes the
+  // showActive branch below, where landActive pins the bottom exactly like a brand-new tab.
+  const firstBuild = !!(existed && prev && !prev.events.length && msg.events && msg.events.length);
   // Preserve the reader's position across ANY active-tab rebuild (fork OR slid tail-window): capture whether
   // they were at the bottom + their anchor turn BEFORE we drop/rebuild the DOM, so a push never SNAPS a
   // scrolled-up reader down (the user 2026-07-06). Only a genuinely-at-bottom reader follows new content.
   let _scrollContent: HTMLElement | null = null, _scrollAnchor: { uuid: string; y: number } | null = null, _wasNear = true;
-  if (msg.id === activeId && !(existed && !forked)) {   // only the rebuild branch (appendActive preserves on its own)
+  if (msg.id === activeId && !(existed && !forked && !firstBuild)) {   // only the rebuild branch (appendActive preserves on its own)
     _scrollContent = document.getElementById("content");
     const _v0 = views.get(msg.id);
     _wasNear = !_scrollContent || !_v0 || !_v0.shown || nearBottom(_scrollContent);
@@ -11704,7 +11751,7 @@ function upsert(msg: any) {
   // Active tab: a content refresh appends + preserves scroll (appendActive); a new tab or a fork
   // lands at the bottom/anchor (showActive). This is what keeps new pushes from snapping to bottom.
   if (msg.id === activeId) {
-    if (existed && !forked) {
+    if (existed && !forked && !firstBuild) {
       appendActive();
     } else {
       showActive();
@@ -11730,7 +11777,7 @@ function upsert(msg: any) {
 function update(msg: any) {
   retryCmtCreates(String(msg.id || ""));   // ditto for the delta path (T106)
   const s = sessions.get(msg.id);
-  if (!s) return;
+  if (!s) { requestFullSession(msg.id); return; }   // a delta with no base is PROOF of desync (see chatTail)
   s.events = msg.events || s.events;
   const before = awaitKey(s.status);
   s.status = msg.status || s.status;
@@ -11769,10 +11816,23 @@ function requestFullSession(id: string): void {
   awaitingFull.add(id);
   vscodeApi?.postMessage({ type: "needFull", id });
 }
+// A reconnect mints a FRESH kernel-side client (its echat starts empty, so full frames are already
+// guaranteed) — but an ask parked against the dead socket would gag the new socket's repair path
+// forever (awaitingFull only clears when the reply lands, and the dead socket's never will).
+window.addEventListener("romp:wsup", () => awaitingFull.clear());
 
 function chatTail(msg: any) {
   const s = sessions.get(msg.id);
-  if (!s) return;                                  // no base yet → ignore; a full session must arrive first
+  if (!s) {
+    // A delta for a session we hold NO base for is PROOF of desync, not noise to ignore: the full
+    // frame was sent while this document had no message listener yet (the pusher fires from the
+    // moment the socket opens; the 1.4MB bundle can still be evaluating), and the kernel's echat
+    // advances on SEND — so deltas are all it will ever volunteer, and the tab sat on the
+    // « opening … » placeholder forever (the user 2026-09-02; a duplicated browser tab won the
+    // race via cached bundles, a reload only sometimes). Ask for the base instead of waiting.
+    requestFullSession(msg.id);
+    return;
+  }
   // msg.from is a GLOBAL transcript index; the resident events are the tail [headFrom, …) → map to local.
   const from = (msg.from | 0) - (s.headFrom || 0);
   // The kernel's coordinate space ends at ITS OWN events — our injected optimistic tail is not in it.
@@ -11929,7 +11989,7 @@ function awaitKey(st: Status | undefined): string {
 
 function statusOnly(msg: any) {
   const s = sessions.get(msg.id);
-  if (!s) return;
+  if (!s) { requestFullSession(msg.id); return; }   // a delta with no base is PROOF of desync (see chatTail)
   const before = awaitKey(s.status);
   s.status = msg.status || s.status;
   renderTabs();                          // status-only push → repaint the chip; order is untouched
@@ -12435,7 +12495,7 @@ setInterval(() => {
   const meta = document.getElementById("spinner-meta");
   if (meta) syncMetaControls(meta, s.status);
   const bar = document.getElementById("ctx-bar");
-  if (bar) setCtxBar(bar, s.status.ctx, s.status.state === "compacting", pickTone(s.status.ctxColor, s.status.ctxTone));
+  if (bar) setCtxBar(bar, s.status.ctx, s.status.state === "compacting", pickTone(s.status.ctxColor, s.status.ctxTone), s.status.ctxOver);
 }, 1000);
 
 // the last message we delivered per session — so a Ctrl+C interrupt can put it back

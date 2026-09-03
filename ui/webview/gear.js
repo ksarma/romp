@@ -55,7 +55,10 @@ var GEAR_HTML =
   '<span class=rs-sub id=rs-login-acct>…</span>' +
   "<div id=rs-login-flow style='margin-top:6px'>" +
   "<button id=rs-login-btn type=button style='cursor:pointer;background:var(--btn-bg, #2a2a2a);color:var(--fg, #ccc);border:1px solid var(--hairline, #3a3a3a);border-radius:5px;padding:3px 10px'>Log in to Claude Code</button>" +
-  "<span id=rs-login-state class=rs-sub style='margin-left:8px'></span>" +
+  // rs-note, NOT rs-sub: this is a live inline status ("starting the login flow…"), not the row's
+  // description — as an rs-sub it floated a SECOND hover popover under the Account row, stacked on
+  // rs-login-acct's (the user 2026-09-02, who saw two tooltips stacked; even empty it painted a box)
+  "<span id=rs-login-state class=rs-note style='margin-left:8px'></span>" +
   '</div></span></div>' +
   '<div class=rs-sec>Sessions</div>' +
   "<div class='rs-row' style='cursor:default'><span style='flex:1 1 auto'><b>Default directory</b>" +
@@ -133,11 +136,11 @@ var GEAR_HTML =
   '</span></div>' +
   "<div class='rs-row rs-sep' style='cursor:default'><span style='flex:1 1 auto'><b>Colormap</b>" +
   '<span class=rs-sub>One ramp for the whole dashboard — feed recency, usage, and context bars. Brightest = newest / highest.</span>' +
-  "<div id=rs-cmap><button id=rs-cmap-btn type=button title='Pick the recency colormap'></button>" +
+  "<div id=rs-cmap><button id=rs-cmap-btn type=button aria-label='Pick the recency colormap'></button>" +
   '<div id=rs-cmap-list hidden></div></div></span></div>' +
   "<div class='rs-row rs-sep' style='cursor:default'><span style='flex:1 1 auto'><b>Session colors</b>" +
   '<span class=rs-sub>The palette sessions draw their identity color from — tabs, cards, lanes. Switching recolors every session to the same slot in the new set.</span>' +
-  "<div id=rs-pal><button id=rs-pal-btn type=button title='Pick the session palette'></button>" +
+  "<div id=rs-pal><button id=rs-pal-btn type=button aria-label='Pick the session palette'></button>" +
   '<div id=rs-pal-list hidden></div></div></span></div>' +
   '<div class=rs-sec>Keyboard shortcuts</div>' + SHORTCUT_ROWS +
   '<div class=rs-sec>Judges</div>' +
@@ -1075,17 +1078,17 @@ function initGear(post) {
     var segs = raSegments(), judgeTot = segs.reduce(function (a, s) { return a + raVal(s); }, 0);
     var maxV = Math.max(sessTot, judgeTot, 1);
     var W = 480, H = 250, top = 24, bot = 30, chartH = H - top - bot, baseY = top + chartH, barW = 92, cx1 = W * 0.30, cx2 = W * 0.70;
-    function rect(x, y, w, h, fill, title) { return '<rect x="' + x + '" y="' + y + '" width="' + w + '" height="' + Math.max(h, 0) + '" fill="' + fill + '" rx="2"><title>' + raEsc(title) + '</title></rect>'; }
+    function rect(x, y, w, h, fill, title) { return '<rect x="' + x + '" y="' + y + '" width="' + w + '" height="' + Math.max(h, 0) + '" style="fill:' + fill + '" rx="2"><title>' + raEsc(title) + '</title></rect>'; }
     var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" preserveAspectRatio="xMidYMid meet">';
-    svg += '<line x1="6" y1="' + baseY + '" x2="' + (W - 6) + '" y2="' + baseY + '" stroke="#3a3a3a"/>';
+    svg += '<line x1="6" y1="' + baseY + '" x2="' + (W - 6) + '" y2="' + baseY + '" style="stroke:var(--hairline, #3a3a3a)"/>';
     var sh = sessTot / maxV * chartH;
-    svg += rect(cx1 - barW / 2, baseY - sh, barW, sh, '#7d8590', 'sessions · ' + fmtTok(sess.in) + ' in / ' + fmtTok(sess.out || 0) + ' out · ' + fmtUsd(sess.cost || 0));
-    svg += '<text x="' + cx1 + '" y="' + (baseY - sh - 6) + '" text-anchor="middle" fill="#ddd" font-size="12">' + raFmt(sessTot) + '</text>';
-    svg += '<text x="' + cx1 + '" y="' + (baseY + 18) + '" text-anchor="middle" fill="#9aa0a6" font-size="12">Sessions</text>';
+    svg += rect(cx1 - barW / 2, baseY - sh, barW, sh, 'var(--text-faint, #7d8590)', 'sessions · ' + fmtTok(sess.in) + ' in / ' + fmtTok(sess.out || 0) + ' out · ' + fmtUsd(sess.cost || 0));
+    svg += '<text x="' + cx1 + '" y="' + (baseY - sh - 6) + '" text-anchor="middle" style="fill:var(--text-bright, #ddd)" font-size="12">' + raFmt(sessTot) + '</text>';
+    svg += '<text x="' + cx1 + '" y="' + (baseY + 18) + '" text-anchor="middle" style="fill:var(--text-muted, #9aa0a6)" font-size="12">Sessions</text>';
     var cum = 0; segs.forEach(function (s) { var st = raVal(s), h = st / maxV * chartH, y = baseY - cum - h; cum += h;
       svg += rect(cx2 - barW / 2, y, barW, h, s.color, s.label + ' · ' + fmtTok(s.in) + ' in / ' + fmtTok(s.out) + ' out · ' + s.calls + ' calls · ' + fmtUsd(s.cost || 0)); });
-    svg += '<text x="' + cx2 + '" y="' + (baseY - cum - 6) + '" text-anchor="middle" fill="#ddd" font-size="12">' + raFmt(judgeTot) + '</text>';
-    svg += '<text x="' + cx2 + '" y="' + (baseY + 18) + '" text-anchor="middle" fill="#9aa0a6" font-size="12">Judges</text>';
+    svg += '<text x="' + cx2 + '" y="' + (baseY - cum - 6) + '" text-anchor="middle" style="fill:var(--text-bright, #ddd)" font-size="12">' + raFmt(judgeTot) + '</text>';
+    svg += '<text x="' + cx2 + '" y="' + (baseY + 18) + '" text-anchor="middle" style="fill:var(--text-muted, #9aa0a6)" font-size="12">Judges</text>';
     svg += '</svg>'; raChart.innerHTML = svg;
     var lg = segs.map(function (s) { return '<span class=ra-li><span class=ra-sw style="background:' + s.color + '"></span>' + raEsc(s.label) + ' <b>' + raFmt(raVal(s)) + '</b></span>'; }).join('');
     raLegend.innerHTML = '<span class=ra-li><span class="ra-sw" style="background:#7d8590"></span>sessions <b>' + raFmt(sessTot) + '</b></span>' + lg;
