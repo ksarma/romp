@@ -65,8 +65,11 @@ const OBJ_ID = ["tabs"]; //                       an array of objects keyed by `
 // routeOutbound rather than routed. setFileEditing is the viewer's edit opt-in (the user 2026-08-22:
 // one consent popup answers for the mesh — every kernel's save route gates on its own copy, so the
 // broadcast is what makes the one yes reach them all). Deliberately NOT here: setDefaultDir (a path on
-// one machine, meaningless on another) and setColormap/setPalette (the viewer's display prefs, which the
-// local kernel persists for this browser).
+// one machine, meaningless on another), setColormap/setPalette (the viewer's display prefs, which the
+// local kernel persists for this browser), and the PER-INSTALL gear rows (Thinking summaries, User
+// todos: each kernel's answer is its own — their sub-copy says "this kernel keeps its own copy" — so
+// their ops post to the local kernel only, are never queued for or broadcast to another, and are not
+// named anywhere in this file; two tests pin that absence).
 const KERNEL_SETTING = new Set(["setAutoNudge", "setJudgeModel", "setIndexModel",
                                 "setJudgeEffort", "setIndexEffort", "setUpdateMode",
                                 "setDistillModel", "setDistillEffort", "setFileEditing",

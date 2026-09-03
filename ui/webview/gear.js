@@ -86,6 +86,10 @@ var GEAR_HTML =
   '<span><b>Thinking summaries</b>' +
   '<span class=rs-sub>For every new SDK session, ask the API for reasoning summaries and show them in the chat, folded to two lines (click to expand). Compact transcript still hides them. If thinking was turned off for this install, this turns adaptive thinking on as well. A running session picks the change up at its next reconnect: an effort or billing switch, the first fast-mode opt-in, or a kernel restart. Switching the model applies live and does not reconnect. Off by default; this kernel keeps its own copy.</span>' +
   '</span></label>' +
+  "<label class='rs-row'><input type=checkbox id=rs-usertodos>" +
+  '<span><b>User todos</b>' +
+  '<span class=rs-sub>Let a session flag a decision or an input it needs from you and keep working meanwhile. Each open request is listed under Waiting on you on the card at the bottom of that session\u2019s transcript, with Reply and Dismiss. Off by default, and per machine: this kernel keeps its own copy.</span>' +
+  '</span></label>' +
   "<label class='rs-row'><input type=checkbox id=rs-fileedit>" +
   '<span><b>File editing</b><span class=rs-mixed hidden></span>' +
   '<span class=rs-sub>Let the file viewer’s Edit save straight to disk on the file’s machine. Off by default; the viewer asks the first time. A session working in the edited folder is told, and a save always refuses when the file changed underneath you. Applies on every connected machine’s kernel.</span>' +
@@ -237,6 +241,7 @@ function initGear(post) {
     cmf = document.getElementById('rs-cmtfast'),
     fe = document.getElementById('rs-fileedit'),
     ths = document.getElementById('rs-thinksum'),
+    utd = document.getElementById('rs-usertodos'),
     ans = document.getElementById('rs-autonudge-split'), asub = document.getElementById('rs-autonudge-sub');
   function load() { try { return Object.assign({ compact: true, colormap: 'aurora', subgoals: true, debug: false, backend: 'sdk', defaultDir: '', showBranch: false, tabCtx: 'over50', fileLinkPane: 'chat', collapseGaps: true, activeOnly: true }, JSON.parse(localStorage.getItem('romp:settings') || 'null')); } catch (e) { return { compact: true, colormap: 'aurora', subgoals: true, debug: false, backend: 'sdk', defaultDir: '', showBranch: false, tabCtx: 'over50', fileLinkPane: 'chat', collapseGaps: true, activeOnly: true }; } }
   // mirrors settings.ts tabCtxMode (this file can't import the TS module): the gauge shipped for a
@@ -448,6 +453,9 @@ function initGear(post) {
   // reaches another machine. Stamped with the gesture time all the same (two dashboards on one
   // kernel still race, and the kernel orders every setting by `gt`; see the block below).
   if (ths) ths.addEventListener('change', function () { post({ type: 'setThinkingSummaries', enabled: ths.checked, gt: Date.now() }); });
+  // User todos (2026-09-03) is the same per-install class: the LOCAL kernel's answer, never a
+  // KERNEL_SETTING, stamped with the gesture time all the same.
+  if (utd) utd.addEventListener('change', function () { post({ type: 'setUserTodos', enabled: utd.checked, gt: Date.now() }); });
   // Auto Nudge / judge tiers are SERVER-SIDE (the kernel runs them): post the
   // change; the controls re-initialize from /version on every open (fill()).
   // Each attached kernel keeps its own copy, so the post goes to all of them
@@ -781,7 +789,8 @@ function initGear(post) {
     'index-model': 'Indexing model', 'index-effort': 'Indexing effort',
     'distill-model': 'Distilling model', 'distill-effort': 'Distilling effort',
     'comment-model': 'Comment model', 'comment-effort': 'Comment effort',
-    'comment-fast': 'Fast comment threads', 'thinking-summaries': 'Thinking summaries' };
+    'comment-fast': 'Fast comment threads', 'thinking-summaries': 'Thinking summaries',
+    'user-todos': 'User todos' };
   // Dismissal is the warn-toast FAMILY treatment (the user 2026-08-25: a notice with no visible
   // way out "gets in the way" — worst on touch, and this toast's mint site is a frozen phone tab
   // flushing on recovery): a visible ✕ in the chip-✕ dress, the whole toast still click-dismisses,
@@ -988,6 +997,7 @@ function initGear(post) {
       fillMixedMarks(v, rows);
     }).catch(function () { fillAutoNudge(v.autoNudge, []); fillMixedMarks(v, []); });
     if (ths) ths.checked = !!v.thinkingSummaries;   // per-install opt-in: this kernel's persisted answer is authoritative
+    if (utd) utd.checked = !!v.userTodos;   // per-install switch (default off): the kernel's persisted answer is authoritative
     if (fe) fe.checked = !!v.fileEditing;   // the kernel's persisted opt-in is authoritative (see the viewer's consent popup)
     if (cvm) cvm.checked = !!v.conserveMemory;   // T148: the kernel's persisted conserve flag is authoritative
     if (csg) csg.checked = !!v.compactSuggest;   // T208+: the kernel's persisted opt-in is authoritative

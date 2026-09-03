@@ -41,6 +41,15 @@ test("the kernel ships only fixed store values on the field — never a per-buil
   assert.doesNotMatch(helper, /time\.time\(\)/, "no build-time clock reaches the payload");
 });
 
+test("the feature switch (2026-09-03) needs no client gate: the kernel ships no rows while it is off", () => {
+  // _open_user_todos is the one gated read — the session field, the split-card event, the tab glyph
+  // and the feed marker all derive from it — so "renders only with open todos" below IS the off
+  // behavior. Pinned at the kernel seam (user-todos-switch.test.ts holds the gear + federation pins).
+  const helper = KERNEL.slice(KERNEL.indexOf("def _open_user_todos(sid):"), KERNEL.indexOf("def _user_todo_session_ended"));
+  assert.match(helper, /if not _user_todos_on\(\):\n        return \[\]/);
+  assert.ok(!/userTodos_on|_user_todos_on|userTodosEnabled/.test(RENDER), "no switch logic in the renderer");
+});
+
 test("both sections auto-hide when empty", () => {
   const body = RENDER.slice(RENDER.indexOf("function renderTodo"));
   assert.match(body, /else if \(ev\.tasks\.length\) \{/); // the agent's plan renders only with tasks

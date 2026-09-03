@@ -11,11 +11,16 @@ Pinned here:
 - register echoes the kernel-minted id back to the agent, with the withdraw contract in the
   same breath;
 - every failure is LOUD: no session identity, no text, an unreachable kernel, an unknown or
-  already-cleared id — never a silent success.
+  already-cleared id — never a silent success;
+- the per-install SWITCH (the user 2026-09-03, OFF by default): while the kernel's
+  user-todos-enabled.json does not say yes, tools/list omits both tools and a call anyway is
+  refused plainly, before any post — read from the file per call, because the bus is its own
+  long-lived process and a gear flip must land without a restart (Switch).
 
 The veil on the DESCRIPTIONS (no romp machinery named) is scanned by test_injected_voice.py.
 SYNTHETIC fixtures only.
 """
+import json
 import os
 import tempfile
 import unittest
@@ -28,6 +33,16 @@ os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel's export outranks the XD
 pm = SourceFileLoader("romp_postal_ut", os.path.join(BIN, "romp-postal-service")).load_module()
 
 SID = "11111111-2222-3333-4444-555555555555"
+
+
+def _switch(on):
+    """Write the kernel's per-install switch file the way _set_user_todos does (or remove it)."""
+    p = pm.USER_TODOS_SWITCH
+    if on is None:
+        p.unlink(missing_ok=True)
+        return
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({"enabled": bool(on), "gt": 1}))
 
 
 class ToolSurface(unittest.TestCase):
@@ -66,9 +81,11 @@ class Dispatch(unittest.TestCase):
         pm.my_name = lambda: "api"
         pm.my_id = lambda: SID
         pm._heartbeat = lambda *a, **k: None
+        _switch(True)                                # the switch is OFF by default (2026-09-03): these pin ON
 
     def tearDown(self):
         pm._kernel_post, pm.my_name, pm.my_id, pm._heartbeat = self._saved
+        _switch(None)
 
     # ── add_user_todo ──────────────────────────────────────────────────────────────────────────
     def test_register_posts_to_the_kernel_as_the_calling_session(self):
@@ -133,6 +150,89 @@ class Dispatch(unittest.TestCase):
         out, err = pm._mcp_call("withdraw_user_todo", {"id": "ut-9f2c1a34"})
         self.assertTrue(err)
         self.assertEqual(self.posts, [])
+
+
+class Switch(unittest.TestCase):
+    """The per-install switch, bus side (the user 2026-09-03). The kernel writes
+    STATE/user-todos-enabled.json = {"enabled": bool, "gt": ms}; the bus reads THAT file (never
+    user-todos.json, which is the todo store) on every tools/list and every call."""
+
+    def setUp(self):
+        self._saved = (pm._kernel_post, pm.my_name, pm.my_id, pm._heartbeat)
+        self.posts = []
+        pm._kernel_post = lambda path, body, timeout=4.0: (self.posts.append((path, body))
+                                                           or {"ok": True, "todoId": "ut-9f2c1a34"})
+        pm.my_name = lambda: "api"
+        pm.my_id = lambda: SID
+        pm._heartbeat = lambda *a, **k: None
+        _switch(None)
+
+    def tearDown(self):
+        pm._kernel_post, pm.my_name, pm.my_id, pm._heartbeat = self._saved
+        _switch(None)
+
+    def test_the_switch_reads_the_kernels_file_not_the_store(self):
+        self.assertEqual(pm.USER_TODOS_SWITCH.name, "user-todos-enabled.json")
+        self.assertEqual(pm.USER_TODOS_SWITCH.parent, pm.STATE.parent, "the kernel's STATE dir")
+        self.assertNotEqual(pm.USER_TODOS_SWITCH.name, "user-todos.json", "that file is the todo STORE")
+
+    def test_absent_garbled_or_false_all_read_off(self):
+        self.assertFalse(pm._user_todos_on(), "no file = the shipped default, OFF")
+        _switch(False)
+        self.assertFalse(pm._user_todos_on())
+        pm.USER_TODOS_SWITCH.write_text("not json")
+        self.assertFalse(pm._user_todos_on(), "a garbled file must not turn the feature on")
+        pm.USER_TODOS_SWITCH.write_text(json.dumps(["enabled"]))
+        self.assertFalse(pm._user_todos_on())
+        _switch(True)
+        self.assertTrue(pm._user_todos_on())
+
+    def test_the_tools_list_omits_both_tools_while_off_and_offers_them_while_on(self):
+        names_off = {t["name"] for t in pm._tools_offered()}
+        self.assertNotIn("add_user_todo", names_off)
+        self.assertNotIn("withdraw_user_todo", names_off)
+        self.assertEqual(names_off, {t["name"] for t in pm.MCP_TOOLS} - set(pm.USER_TODO_TOOLS),
+                         "every OTHER tool is still offered")
+        _switch(True)
+        self.assertEqual(pm._tools_offered(), pm.MCP_TOOLS, "on: the full list, same objects")
+
+    def test_the_list_is_read_per_call_no_restart_needed(self):
+        # the bus is a separate long-lived process: a gear flip must land on the next list/call
+        self.assertNotIn("add_user_todo", {t["name"] for t in pm._tools_offered()})
+        _switch(True)
+        self.assertIn("add_user_todo", {t["name"] for t in pm._tools_offered()})
+        _switch(False)
+        self.assertNotIn("add_user_todo", {t["name"] for t in pm._tools_offered()})
+
+    def test_the_stdio_server_answers_tools_list_from_the_gated_list(self):
+        import inspect
+        src = inspect.getsource(pm.mcp)
+        self.assertIn('"tools": _tools_offered()', src, "tools/list goes through the gate")
+        self.assertNotIn('"tools": MCP_TOOLS}', src, "…never the raw constant")
+
+    def test_a_call_anyway_is_refused_plainly_before_any_post(self):
+        # a session that connected while the switch was on still holds the tool
+        out, err = pm._mcp_call("add_user_todo", {"text": "Need the auth-scheme decision"})
+        self.assertTrue(err)
+        self.assertIn("turned off on this machine", out)
+        self.assertIn("will NOT see it", out, "the agent must not believe the need was filed")
+        out, err = pm._mcp_call("withdraw_user_todo", {"id": "ut-9f2c1a34"})
+        self.assertTrue(err)
+        self.assertIn("turned off on this machine", out)
+        self.assertEqual(self.posts, [], "nothing reached the kernel")
+
+    def test_the_refusals_keep_the_veil(self):
+        # the same vocabulary rule the descriptions ride (test_injected_voice.py sweeps the live
+        # branches; the OFF branches are rendered there too) — pinned here at the source of the text
+        for text in (pm.USER_TODOS_OFF_ADD, pm.USER_TODOS_OFF_WITHDRAW):
+            for word in ("romp", "card", "board", "goal", "gear", "nudge", "cleared", "dismissal"):
+                self.assertNotIn(word, text.lower(), "%r names machinery the agent cannot see" % word)
+
+    def test_on_the_call_goes_through_as_before(self):
+        _switch(True)
+        out, err = pm._mcp_call("add_user_todo", {"text": "Need the auth-scheme decision"})
+        self.assertFalse(err)
+        self.assertEqual([p[0] for p in self.posts], ["/usertodo"])
 
 
 if __name__ == "__main__":

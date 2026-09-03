@@ -35,6 +35,19 @@ hears nothing about it and keeps running what it has until they restart Romp the
 reload prompt that reads "A newer romp build is available" is separate and stays on in every
 mode: it means the page you are looking at runs older code than the kernel, and a reload fixes it.
 
+**User todos.** A session can flag a decision or an input it needs from you and keep working
+meanwhile. Each open request is listed under *Waiting on you* on the card at the bottom of that
+session's transcript, with Reply and Dismiss, and a session that resumes after a restart or a
+compaction is handed its open requests back so it can withdraw the ones that no longer apply. The
+feature is off by default. The gear's **User todos** checkbox (under *Sessions*) turns it on for
+one machine at a time: each kernel keeps its own copy, and the choice does not spread to other
+attached machines. While it is off, sessions on that machine are not offered the tools that flag
+or withdraw a request, nothing is listed, and nothing is handed back on resume. Requests flagged
+earlier stay stored and reappear when you turn it back on; the kernel's log says how many are
+waiting. Every filing, answer, dismissal and withdrawal is also appended to `user-todos-log.jsonl`
+beside the store under Romp's state directory, one line per event and never rewritten, so the list
+can be rebuilt if the store is ever lost.
+
 These are for scripting and for agents rather than daily use:
 
 | Command | What it does |
