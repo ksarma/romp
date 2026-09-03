@@ -20597,8 +20597,13 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
                     if not isinstance(b, dict):
                         continue
                     if b.get("type") == "thinking":
+                        # `encrypted` means OPAQUE — nothing to show but the placeholder: a signature and
+                        # no text. A block with a signature AND text is a summary (the SDK's display
+                        # "summarized", requested when the thinking-summaries toggle is on) and renders
+                        # its text; the old signature-only rule hid every summary (2026-09-01).
                         events.append({"kind": "thinking", "text": b.get("thinking", ""),
-                                       "encrypted": bool(b.get("signature")), "uuid": a.get("uuid"), "ts": ts})
+                                       "encrypted": bool(b.get("signature")) and not (b.get("thinking") or "").strip(),
+                                       "uuid": a.get("uuid"), "ts": ts})
                     elif b.get("type") == "text" and b.get("text", "").strip():
                         txt = b["text"]
                         if a.get("command"):             # a slash command's OUTPUT (command:True on the synthetic
