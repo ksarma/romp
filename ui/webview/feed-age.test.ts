@@ -46,6 +46,19 @@ test("a quiet board's ages advance: every stamped element repaints from the live
   assert.equal(cardTime.style.color, "", "…and an untinted stamp stays untinted");
 });
 
+test("the anchor is the served frame's clock: a frame stamped at the serve gives true ages, a frame carrying its build's clock does not", () => {
+  // The kernel serves a connecting pane its CACHED frame, built while some client was last connected — hours
+  // earlier after a client-less night — and a quiet board sends a delta client nothing afterwards, so the
+  // pane's clock is only as good as the `now` on that one frame. The kernel therefore stamps the served
+  // frame with the time of the SERVE (_send_feed_now); this is the arithmetic that stamp keeps honest.
+  const built = 1_000_000, serve = built + 10 * 3600, landedMs = 5_000_000;   // a card touched 1 h before the build
+  const cardT = built - 3600;
+  const freshNow = liveNow(serve, landedMs, landedMs + 300_000);              // stamped at the serve, 5 min later
+  assert.equal(rel(freshNow - cardT), "11h ago", "the card is 11 h old and reads so");
+  const staleNow = liveNow(built, landedMs, landedMs + 300_000);              // the build's clock, as the pane once got it
+  assert.equal(rel(staleNow - cardT), "1h ago", "anchored on the build it would read 1 h old — for the rest of the morning");
+});
+
 test("an unstamped element is left alone", () => {
   const plain = mk(); plain.textContent = "Blocked";       // a question node's meta carries no age
   assert.equal(paintAge(plain, 5, rel, tint), false);

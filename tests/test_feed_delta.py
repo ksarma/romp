@@ -13,9 +13,11 @@ Pinned here: a client that announced FEED_DELTA_CAP gets a {type:"feedDelta"} on
 a clock-only tick (a `now` step, a `trgb` step) sends nothing on EITHER path; removals ride the delta —
 cards and ledgers, including a ledger removed across a ledger-less build in between; a 2-card change is a
 small fraction of the full frame; a client that did not announce keeps receiving full frames, `trgb`
-included (an older bundle destructures it unguarded); deltas never carry `trgb`; the `ready` handshake is
-served the cached full frame at once, and nothing arrives before it; needFullFeed re-bases; the ready
-handler emits no tab order of its own (the connect push's guarded one is the only source).
+included (an older bundle destructures it unguarded); deltas never carry `trgb`; a page that announced READY_GATE_CAP is HELD — the real pusher cycle and every other
+push path send it nothing — until its bundle's `ready`, which is served the cached full frame at once,
+stamped with the clock as of the serve (a frame built hours earlier must not anchor the pane's ages hours
+in the past); a socket that did not announce is ready from accept; needFullFeed re-bases; the ready handler
+emits no tab order of its own (the connect push's guarded one is the only source).
 
 Synthetic only: the notes-api demo world, TESTHOST, placeholder ids.
 """
@@ -95,12 +97,23 @@ def _send(c, feed):
 
 
 def _warm(feed):
-    """Install `feed` as the kernel's built + wire-cached frame; returns the saved state for the finally."""
+    """Install `feed` as the kernel's built + wire-cached frame (recent, so a pusher cycle serves it rather than
+    rebuilding); returns the saved state for the finally."""
     saved = (km._feed_wire, list(km._built_feed))
     ms, sig, parts = _wire(feed)
-    km._feed_wire = (feed, feed.get("ledgers"), feed, ms, sig, parts)
-    km._built_feed[:] = [None, feed, 0.0, 0.0]
+    km._feed_wire = (feed, feed.get("ledgers"), feed, km._feed_body(feed), sig, parts)
+    km._built_feed[:] = [None, feed, time.time(), time.time()]
     return saved, ms, parts
+
+
+def _served_fresh(test, wire, feed, t0):
+    """The served wire string is `feed` with its `now` replaced by the clock at the serve (t0 = just before)."""
+    got = json.loads(wire)
+    test.assertGreaterEqual(got["now"], int(t0), "the served `now` is the serve-time clock, not the build's")
+    test.assertLessEqual(got["now"], int(time.time()) + 1)
+    test.assertNotEqual(got["now"], feed["now"], "the fixture's build clock is far in the past")
+    exp = dict(feed); del exp["now"]; del got["now"]
+    test.assertEqual(got, exp, "…and every other byte of the frame is the cached one")
 
 
 def _restore(saved):
@@ -348,49 +361,52 @@ class ReadyHandshake(unittest.TestCase):
     board change). The ready handler serves the cached frame at once, with no build; the shim re-sends
     `ready` on every reconnect."""
 
-    def test_a_connecting_socket_receives_nothing_until_ready_then_the_cached_frame_at_once(self):
+    def test_a_held_socket_hears_nothing_from_the_pusher_until_ready_then_the_cached_frame_at_once(self):
         f = _feed(n=40)
         saved, ms, parts = _warm(f)
         srv = ThreadingHTTPServer(("127.0.0.1", 0), km.Handler)
         port = srv.server_address[1]
         threading.Thread(target=srv.serve_forever, daemon=True).start()
-        s = None
+        s = s2 = None
         try:
-            key = base64.b64encode(os.urandom(16)).decode()
-            req = ("GET /ws?app=feed&wid=w7&caps=feedDelta&token=%s HTTP/1.1\r\nHost: 127.0.0.1:%d\r\n"
-                   "Origin: http://127.0.0.1:%d\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
-                   "Sec-WebSocket-Key: %s\r\nSec-WebSocket-Version: 13\r\n\r\n") % (km.TOKEN, port, port, key)
-            s = socket.create_connection(("127.0.0.1", port), timeout=10)
-            s.sendall(req.encode())
-            buf = b""
-            while b"\r\n\r\n" not in buf:
-                chunk = s.recv(65536)
-                self.assertTrue(chunk, "closed during the handshake")
-                buf += chunk
-            head, buf = buf.split(b"\r\n\r\n", 1)
-            self.assertTrue(head.startswith(b"HTTP/1.1 101"), head[:80])
+            s, buf = _connect(port, "app=feed&wid=w7&caps=feedDelta,readyGate")
             # the kernel has registered the client (it appends AFTER the handshake); give any accept-time
             # push a moment it does not need — the old code enqueued its frame right after the append
-            deadline = time.time() + 5
-            client = None
-            while client is None and time.time() < deadline:
-                with km._clients_lock:
-                    client = next((c for c in km._clients if c.get("wid") == "w7"), None)
-                if client is None:
-                    time.sleep(0.005)
-            self.assertIsNotNone(client, "the socket was accepted")
+            client = _registered("w7")
             time.sleep(0.05)
             self.assertEqual(client["qbytes"], 0, "nothing is pushed at accept")
+            self.assertFalse(client["ready"], "the page announced READY_GATE_CAP: held until its bundle says so")
+            # The bundle is still loading; the pusher's cycles run meanwhile — the REAL _push_all → _push,
+            # and the broadcast paths. The 2026-09-03 review reproduced the first frame lost to exactly
+            # these cycles (real browsers, the bundle 350 ms slower) after the accept-time push was removed.
+            for _ in range(3):
+                km._push_all()
+            km._send_to_app("feed", {"type": "syncNotice"})
+            km._send_to_view("feed", {"type": "syncNotice"}, "w7")
+            time.sleep(0.05)
+            self.assertEqual(client["qbytes"], 0, "…and nothing from any push path: nobody is listening yet")
             self.assertNotIn("efeed", client)
+            self.assertNotIn("sent", client)
+            s.settimeout(0.3)
+            with self.assertRaises((socket.timeout, TimeoutError)):
+                s.recv(1)
+            s.settimeout(10)
             self.assertEqual(buf, b"", "nothing arrived before `ready`")
+            t0 = time.time()
             s.sendall(_client_frame(json.dumps({"type": "ready"})))
             op, payload, buf = _read_frame(s, buf)
             self.assertEqual(op, 0x1)
-            self.assertEqual(payload.decode("utf-8"), ms, "the cached wire form, byte for byte — no build, no wait")
+            self.assertTrue(client["ready"])
+            _served_fresh(self, payload.decode("utf-8"), f, t0)   # the cached frame, no build, no wait
             self.assertIs(client["efeed"], parts, "…and it is the delta stream's base")
+            # a socket that did NOT announce the hold — a relay, a pipe, an older page — is ready from accept
+            s2, _ = _connect(port, "app=feed&wid=w8")
+            c2 = _registered("w8")
+            self.assertTrue(c2["ready"])
         finally:
-            if s is not None:
-                s.close()
+            for sock in (s, s2):
+                if sock is not None:
+                    sock.close()
             srv.shutdown(); srv.server_close()
             _restore(saved)
 
@@ -409,8 +425,12 @@ class ReadyHandshake(unittest.TestCase):
         try:
             h = self._handler()
             c, sent = _client()
+            c["ready"] = False                                   # held at accept (READY_GATE_CAP)
+            t0 = time.time()
             h._dispatch_ws({"type": "ready"}, c)
-            self.assertEqual(sent, [ms])
+            self.assertTrue(c["ready"], "the hold lifts on the bundle's own event")
+            self.assertEqual(len(sent), 1)
+            _served_fresh(self, sent[0], f, t0)
             self.assertIs(c["efeed"], parts)
             self.assertEqual(h.pushed, [], "the push could add nothing for this pane: its warmed cache IS what was served")
         finally:
@@ -435,8 +455,10 @@ class ReadyHandshake(unittest.TestCase):
         try:
             h = self._handler()
             c, sent = _client(caps=(), app="fleet")
+            t0 = time.time()
             h._dispatch_ws({"type": "ready"}, c)
-            self.assertEqual(sent, [ms])
+            self.assertEqual(len(sent), 1)
+            _served_fresh(self, sent[0], f, t0)
             self.assertEqual(h.pushed, [c])
         finally:
             _restore(saved)
@@ -460,10 +482,15 @@ class ReadyHandshake(unittest.TestCase):
         i = KSRC.index("    def _ws(self):")
         accept = KSRC[i:KSRC.index('while client["alive"]:', i)]
         self.assertNotIn("_send_feed_now(", accept, "the first frame waits for `ready`")
-        self.assertIn("Nothing is pushed at accept.", accept)
+        self.assertIn("Nothing is pushed at accept", accept)
         self.assertIn('caps = (q.get("caps") or [""])[0]', accept)
         self.assertIn('"caps": set(x for x in caps.split(",") if x)}', accept)
+        self.assertIn('client["ready"] = READY_GATE_CAP not in client["caps"]', accept, "the hold is decided at accept")
         self.assertIn('if msg and msg.get("type") == "needFullFeed":', KSRC)
+        i = KSRC.index('if msg and msg.get("type") == "ready":')
+        handler = KSRC[i:KSRC.index("_consume_pending_reveal(client)", i)]
+        self.assertLess(handler.index('client["ready"] = True'), handler.index("_send_feed_now(client)"),
+                        "the hold lifts BEFORE the frame is served")
 
 
 class ConnectTimeFrame(unittest.TestCase):
@@ -472,11 +499,44 @@ class ConnectTimeFrame(unittest.TestCase):
         saved, ms, parts = _warm(f)
         try:
             c, sent = _client()
+            t0 = time.time()
             self.assertTrue(km._send_feed_now(c))
-            self.assertEqual(sent, [ms], "the cached wire form, byte for byte — no build, no wait")
+            self.assertEqual(len(sent), 1)
+            _served_fresh(self, sent[0], f, t0)   # the cached frame — no build, no wait
             self.assertIs(c["efeed"], parts, "…and it is the delta stream's base")
             # the pusher's next cycle then has nothing to add
             km._send_feed(c, f, ms, km._dedup_sig(f, ms), parts)
+            self.assertEqual(len(sent), 1)
+        finally:
+            _restore(saved)
+
+    def test_the_served_frame_carries_the_clock_of_the_serve_not_of_the_build(self):
+        # The pusher builds only while a client is connected, so after a client-less stretch the cached
+        # build's `now` is that stretch old — and the pane anchors every age and tint on the `now` it is
+        # handed (feed-age.ts liveNow), with nothing to correct it on a board that then stays unchanged
+        # (the 2026-09-03 review: a card last touched 11 h ago read "1h ago" all morning). The fixture's
+        # build clock is 2026-06 (NOW); the serve is today.
+        f = _feed(n=5)
+        saved, ms, parts = _warm(f)
+        try:
+            c, sent = _client()
+            t0 = time.time()
+            self.assertTrue(km._send_feed_now(c))
+            got = json.loads(sent[0])
+            self.assertGreater(got["now"] - f["now"], 3600, "built at T, served much later: the frame says so")
+            self.assertAlmostEqual(got["now"], t0, delta=2)
+            card_t = got["asks"][3]["t"]                       # what the pane computes for the card's age…
+            self.assertAlmostEqual(got["now"] - card_t, time.time() - card_t, delta=2,
+                                   msg="…is the card's TRUE age, not its age as of the build")
+            # the stamp is a splice, not a re-serialization: the cached body is `now`-less and reused
+            body = km._feed_wire[3]
+            self.assertNotIn('"now"', body)
+            self.assertEqual(km._feed_ms(body, 7), '{"now": 7, ' + body[1:])
+            self.assertEqual(json.loads(km._feed_ms(body, 7))["now"], 7)
+            self.assertEqual(km._feed_ms("{}", 7), '{"now": 7}')
+            # the dedup never compared `now`, so the stamp changes no dedup outcome: the same frame again
+            # is swallowed whatever the clock says
+            self.assertFalse(km._send_feed_now(c))
             self.assertEqual(len(sent), 1)
         finally:
             _restore(saved)
@@ -498,7 +558,7 @@ class ConnectTimeFrame(unittest.TestCase):
         try:
             old = _feed(build_id=1); new = _feed(build_id=2, asks=[_card(0, text="newest")])
             ms, sig, parts = _wire(old)
-            km._feed_wire = (old, old.get("ledgers"), old, ms, sig, parts)
+            km._feed_wire = (old, old.get("ledgers"), old, km._feed_body(old), sig, parts)
             km._built_feed[:] = [None, new, 0.0, 0.0]
             c, sent = _client()
             self.assertTrue(km._send_feed_now(c))
@@ -509,13 +569,141 @@ class ConnectTimeFrame(unittest.TestCase):
 
 
 class ShimAnnouncesForTheFeedPage(unittest.TestCase):
-    def test_only_the_feed_page_announces_the_capability(self):
-        feed = km._shim("feed", 5, caps=km.FEED_DELTA_CAP)
-        self.assertIn('var CAPS="feedDelta";', feed)
+    def test_only_the_feed_page_announces_the_delta_capability_and_every_pane_announces_the_hold(self):
+        feed = km._shim("feed", 5, caps=km.FEED_DELTA_CAP + "," + km.READY_GATE_CAP)
+        self.assertIn('var CAPS="feedDelta,readyGate";', feed)
         self.assertIn('+(CAPS?"&caps="+encodeURIComponent(CAPS):"")', feed)
+        self.assertIn('var CAPS="readyGate";', km._shim("chat", 5, caps=km.READY_GATE_CAP))
+        self.assertIn('var CAPS="";', km._shim("chat", 5), "the default announces nothing")
+        # every kernel-served pane page opens its socket from the shim, before its bundle has loaded
+        self.assertIn('_shim("feed", v, caps=FEED_DELTA_CAP + "," + READY_GATE_CAP)', KSRC)
         for app in ("chat", "fleet", "timeline"):
-            self.assertIn('var CAPS="";', km._shim(app, 5), app)
-        self.assertIn('_shim("feed", v, caps=FEED_DELTA_CAP)', KSRC)
+            self.assertIn('_shim("%s", v, caps=READY_GATE_CAP)' % app, KSRC, app)
+        self.assertEqual(KSRC.count("_shim("), 5, "the definition and the four panes — a fifth caller must announce too")
+
+
+def _connect(port, query):
+    """A real browser-style client socket to the kernel's /ws?`query`; returns (socket, leftover bytes)."""
+    key = base64.b64encode(os.urandom(16)).decode()
+    req = ("GET /ws?%s&token=%s HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nOrigin: http://127.0.0.1:%d\r\n"
+           "Upgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: %s\r\n"
+           "Sec-WebSocket-Version: 13\r\n\r\n") % (query, km.TOKEN, port, port, key)
+    s = socket.create_connection(("127.0.0.1", port), timeout=10)
+    s.sendall(req.encode())
+    buf = b""
+    while b"\r\n\r\n" not in buf:
+        chunk = s.recv(65536)
+        if not chunk:
+            raise RuntimeError("closed during the handshake")
+        buf += chunk
+    head, buf = buf.split(b"\r\n\r\n", 1)
+    if not head.startswith(b"HTTP/1.1 101"):
+        raise RuntimeError(head[:80])
+    return s, buf
+
+
+def _registered(wid, deadline_s=5):
+    """The kernel's client dict for the socket that connected with `wid` (it registers AFTER the handshake)."""
+    deadline = time.time() + deadline_s
+    while time.time() < deadline:
+        with km._clients_lock:
+            client = next((c for c in km._clients if c.get("wid") == wid), None)
+        if client is not None:
+            return client
+        time.sleep(0.005)
+    raise AssertionError("the socket %s was not registered" % wid)
+
+
+class ReadyGate(unittest.TestCase):
+    """A page that announced READY_GATE_CAP is HELD: `ready` False at accept, and every push path skips it —
+    the pusher's _push, the app/view broadcasts, a reveal — until the bundle's `ready` flips it. The
+    2026-09-03 review found the first frame still lost after the accept-time push was removed: the pusher's
+    next 0.5 s cycle sent the full frame to a socket whose page had not run feed.js yet, and the frame the
+    bundle's `ready` then asked for was deduped against it, with no repost on the delta path."""
+
+    def _handler(self):
+        class _FakeHandler:
+            _dispatch_ws = km.Handler._dispatch_ws
+            def __init__(self):
+                self.pushed = []
+            def _push_one(self, client):
+                self.pushed.append(client)
+        return _FakeHandler()
+
+    def test_every_push_path_skips_a_held_client_and_ready_serves_it(self):
+        f = _feed()
+        saved, ms, parts = _warm(f)
+        c, sent = _client(caps=("feedDelta", "readyGate"))
+        c["ready"] = False                                        # what accept records for the announcing page
+        with km._clients_lock:
+            km._clients.append(c)
+        try:
+            km._push([c])                                         # the pusher's cycle, through the real _push
+            km._send_to_app("feed", {"type": "syncNotice"})
+            km._send_to_view("feed", {"type": "syncNotice"}, "w1")
+            self.assertEqual(sent, [], "nobody is listening on that page yet")
+            self.assertNotIn("efeed", c); self.assertNotIn("sent", c)
+            h = self._handler()
+            t0 = time.time()
+            h._dispatch_ws({"type": "ready"}, c)
+            self.assertTrue(c["ready"])
+            self.assertEqual(len(sent), 1)
+            _served_fresh(self, sent[0], f, t0)
+            self.assertIs(c["efeed"], parts)
+            km._send_to_app("feed", {"type": "syncNotice"})
+            self.assertEqual(json.loads(sent[-1])["type"], "syncNotice", "…and the broadcasts reach it now")
+            km._push([c])
+            self.assertEqual(len(sent), 2, "the pusher's next cycle adds nothing: the served frame is its base")
+        finally:
+            with km._clients_lock:
+                km._clients[:] = [x for x in km._clients if x is not c]
+            _restore(saved)
+
+    def test_a_reveal_aimed_at_a_held_chat_pane_parks_and_lands_at_its_ready(self):
+        # a targeted send to a page that is not listening is lost the same way; the reveal already had a
+        # parking slot for "its chat pane has not connected yet", and a held pane is exactly "not yet"
+        saved = km._PENDING_REVEAL[0]
+        c, sent = _client(caps=("readyGate",), app="chat")
+        c["wid"] = "w5"; c["ready"] = False
+        with km._clients_lock:
+            km._clients.append(c)
+        try:
+            km._PENDING_REVEAL[0] = None
+            self.assertFalse(km._reveal_request(SID, "w5"), "not delivered to a page with no listener…")
+            self.assertEqual(sent, [])
+            self.assertEqual(km._PENDING_REVEAL[0], {"sid": SID, "wid": "w5"}, "…parked")
+            h = self._handler()
+            h._dispatch_ws({"type": "ready"}, c)
+            self.assertEqual(h.pushed, [c], "a chat pane gets its connect push")
+            self.assertEqual([json.loads(x)["id"] for x in sent], [SID], "the parked reveal lands after it")
+            self.assertIsNone(km._PENDING_REVEAL[0])
+            c2, sent2 = _client(caps=(), app="chat"); c2["wid"] = "w6"
+            with km._clients_lock:
+                km._clients.append(c2)
+            try:
+                self.assertTrue(km._reveal_request(SID, "w6"), "a ready pane is delivered to at once, as before")
+                self.assertEqual(len(sent2), 1)
+            finally:
+                with km._clients_lock:
+                    km._clients[:] = [x for x in km._clients if x is not c2]
+        finally:
+            with km._clients_lock:
+                km._clients[:] = [x for x in km._clients if x is not c]
+            km._PENDING_REVEAL[0] = saved
+
+    def test_a_client_that_never_announced_is_ready_from_accept(self):
+        # federation's remote relays (federation.ts routes `ready` to the local kernel only), the VS Code
+        # extension's pipes, an older dashboard: none race the bundle, none send `ready` on this socket
+        for c in ({"app": "feed", "alive": True, "wid": "", "qbytes": 0, "caps": set()},
+                  {"app": "feed", "alive": True, "wid": "", "qbytes": 0, "caps": {"feedDelta"}, "ready": True},
+                  {"app": "chat", "alive": True, "wid": "w1", "qbytes": 0}):
+            self.assertTrue(km._client_ready(c), c)
+        self.assertFalse(km._client_ready({"app": "feed", "ready": False, "caps": {"readyGate"}}))
+        # the keepalive and the restart notice never ask: the shim consumes both without the bundle
+        src = KSRC[KSRC.index("def _keepalive_all("):KSRC.index("def _heartbeat(")]
+        self.assertNotIn("_client_ready", src)
+        src = KSRC[KSRC.index("def _broadcast_restarting("):KSRC.index("def _push_all(")]
+        self.assertNotIn("_client_ready", src)
 
 
 if __name__ == "__main__":

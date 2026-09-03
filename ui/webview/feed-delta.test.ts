@@ -95,10 +95,11 @@ test("a feedDelta that reaches the pane unapplied is loud and asks for a full fr
   assert.ok(i < FEED.indexOf('if (m.type === "feed") {'), "checked before the full-frame branch");
 });
 
-test("the kernel announces the capability on the feed page's socket only, and the wire vocabulary matches", () => {
+test("the kernel announces the delta capability on the feed page's socket only, the hold on every pane's, and the wire vocabulary matches", () => {
   assert.match(KERNEL, /FEED_DELTA_CAP = "feedDelta"/);
-  assert.match(KERNEL, /_shim\("feed", v, caps=FEED_DELTA_CAP\)/);
-  assert.match(KERNEL, /_shim\("fleet", v\)/); assert.match(KERNEL, /_shim\("chat", v\)/); assert.match(KERNEL, /_shim\("timeline", v\)/);
+  assert.match(KERNEL, /READY_GATE_CAP = "readyGate"/);
+  assert.match(KERNEL, /_shim\("feed", v, caps=FEED_DELTA_CAP \+ "," \+ READY_GATE_CAP\)/);
+  for (const app of ["fleet", "chat", "timeline"]) assert.match(KERNEL, new RegExp(`_shim\\("${app}", v, caps=READY_GATE_CAP\\)`), app);
   // the delta's keys, as the kernel writes them — the client reads exactly these
   for (const k of ['"asks":[', '"removeAsks":', '"ledgers":[', '"removeLedgers":', '"top":']) assert.ok(KERNEL.includes(k), k);
   assert.match(KERNEL, /_FEED_KEYED = \(\("asks", "itemId"\), \("ledgers", "sid"\)\)/);

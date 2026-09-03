@@ -9864,7 +9864,7 @@ def _retry_parked_creates():
         if not err:
             fr = _comments_frame(pk["sid"])
             with _clients_lock:
-                targets = [c for c in _clients if c.get("app") == "chat"]
+                targets = [c for c in _clients if c.get("app") == "chat" and _client_ready(c)]
             for c in targets:
                 try:
                     if fr:
@@ -18654,7 +18654,7 @@ def _ask_poll():
     while True:
         try:
             with _clients_lock:
-                chat_clients = [c for c in _clients if c["app"] == "chat"]
+                chat_clients = [c for c in _clients if c["app"] == "chat" and _client_ready(c)]
             if chat_clients:
                 for sid in list(Sessions.live()):
                     # the owning backend resolves the live ask: tmux SCRAPES its pane, the SDK reads the ask it
@@ -27297,7 +27297,7 @@ def _send_to_app(app, msg):
     so a feed/timeline click drives the chat (e.g. focus a tab + scroll to a transcript anchor)."""
     s = json.dumps(msg)
     with _clients_lock:
-        targets = [c for c in _clients if c["app"] == app]
+        targets = [c for c in _clients if c["app"] == app and _client_ready(c)]
     for c in targets:
         _client_send(c, s)
 
@@ -27349,7 +27349,7 @@ def _send_to_view(app, msg, wid):
         return _send_to_app(app, msg)
     s = json.dumps(msg)
     with _clients_lock:
-        targets = [c for c in _clients if c["app"] == app and (c.get("wid") or "") == wid]
+        targets = [c for c in _clients if c["app"] == app and (c.get("wid") or "") == wid and _client_ready(c)]
     for c in targets:
         _client_send(c, s)
 
@@ -27637,6 +27637,13 @@ def _note_ws_drop(c, e, frame_len, key=None):
         pass
 
 
+def _client_ready(c):
+    """Whether the push paths may send to client `c`: a page that announced READY_GATE_CAP is held until its
+    bundle's `ready` (see the cap); every other client — a relay, a pipe, an older page, a fixture built by
+    hand — is ready from accept. The keepalive and the restart notice do not ask: the shim consumes both."""
+    return c.get("ready", True)
+
+
 def _client_send(c, s, key=None):
     """Enqueue one wire string on client `c`. A failure marks the client dead and logs the drop (once —
     _mk_ws_send has usually logged it already, at the raise). Returns whether the frame was accepted."""
@@ -27752,6 +27759,21 @@ def _send_chat(c, m, ms, change_from, led_changed):
 # a dict-of-strings compare when it is not.
 FEED_DELTA_CAP = "feedDelta"   # the capability a client announces (ws ?caps=feedDelta) to opt into deltas
 
+# A client that announces THIS cap is HELD: the pusher sends it nothing until its bundle's {type:"ready"}
+# arrives (the client dict's `ready` flag — False at accept, True in the ready handler; _client_ready is the
+# gate every push path consults). Every kernel-served pane page announces it through its shim, which opens
+# the socket before federation.js and feed.js have been fetched and has no inbound buffer: a frame that
+# landed first was dispatched to a window with no listener and lost, and the bundle's later `ready` frame
+# was then deduped against it, leaving the pane on its loader until the board next changed (the 2026-09-03
+# review, in real browsers: 1 of 40 loopback loads, most loads with the bundle 350 ms slower — removing the
+# accept-time push alone left the pusher's next cycle to lose the frame the same way). Announced rather than
+# assumed of every socket because the sockets whose page the kernel cannot see never race and would
+# otherwise receive nothing: federation's remote relays (federation.ts routes `ready` to the local kernel
+# only and sends nothing on a remote open), the VS Code extension's pipes (which buffer for their webview
+# themselves), an older dashboard federating this kernel. Keepalives and the restart notice still reach a
+# held client — the shim consumes both itself.
+READY_GATE_CAP = "readyGate"
+
 # Fields of the feed frame that are collections keyed by an id, sent as upserts/removals: (key, id field).
 _FEED_KEYED = (("asks", "itemId"), ("ledgers", "sid"))
 
@@ -27767,6 +27789,22 @@ def _feed_parts(feed):
     rest = {k: v for k, v in feed.items()
             if k not in ("type", "asks", "ledgers") and k not in _DEDUP_VOLATILE}
     return cards, leds, rest, json.dumps(rest, sort_keys=True, default=str)
+
+
+def _feed_body(feed):
+    """A full feed frame serialized WITHOUT its top-level `now` — the form the wire cache (_feed_wire) keeps.
+    _feed_ms splices a clock in front of it, so the string a client receives says when it was SENT: the
+    cached frame is served long after it was built (_send_feed_now), and re-serializing 5 MB of cards to
+    move one number is not an option. Key order is not part of the wire contract (JSON.parse ignores it):
+    the client reads `now` wherever it sits."""
+    return json.dumps({k: v for k, v in feed.items() if k != "now"})
+
+
+def _feed_ms(body, now):
+    """The wire string for a cached feed `body` (_feed_body) at clock `now`: one concatenation, no dumps."""
+    if body == "{}":
+        return '{"now": %s}' % json.dumps(now)
+    return '{"now": %s, ' % json.dumps(now) + body[1:]
 
 
 def _feed_delta(prev, cur, feed):
@@ -27829,10 +27867,12 @@ def _send_feed(c, feed, ms, sig, parts):
 
 
 def _feed_wire_now():
-    """The freshest feed frame the kernel can serve WITHOUT a build, as a _feed_wire tuple, or None on a cold
-    kernel. The pusher refreshes _feed_wire only while a feed/fleet client is connected, so with none open
-    it can lag the latest build (which chat clients keep warm through _cached_feed); in that case the latest
-    build is serialized here (ledger-less — the pusher attaches those on its next cycle) and cached."""
+    """The freshest feed frame the kernel can serve WITHOUT a build, as a _feed_wire tuple — (the cached build
+    it was made from, the ledgers attached, the frame, its body minus `now` (_feed_body), its dedup signature,
+    its delta parts) — or None on a cold kernel. The pusher refreshes _feed_wire only while a feed/fleet
+    client is connected, so with none open it can lag the latest build (which chat clients keep warm through
+    _cached_feed); in that case the latest build is serialized here (ledger-less — the pusher attaches those
+    on its next cycle) and cached."""
     global _feed_wire
     w = _feed_wire
     built = _built_feed[1]
@@ -27840,21 +27880,26 @@ def _feed_wire_now():
         return w
     if built is None:
         return None
-    ms = json.dumps(built)
-    w = (built, None, built, ms, _dedup_sig(built, ms), _feed_parts(built))
+    body = _feed_body(built)
+    w = (built, None, built, body, _dedup_sig(built, body), _feed_parts(built))
     _feed_wire = w
     return w
 
 
 def _send_feed_now(c):
     """Serve client `c` the cached feed frame immediately (its `ready` handshake, or a re-base it asked for),
-    with no build and no wait. Returns whether a frame was sent; a cold kernel has nothing cached, and the
-    connect push serves it instead. The recorded delta base moves only when a frame actually goes out: a
-    frame the per-client dedup swallowed changes nothing the client holds."""
+    with no build and no wait — stamped with the clock as of NOW. The cached body is the last build's, and
+    the pusher builds only while a client is connected, so after a client-less stretch that build's own
+    `now` is the whole stretch old; the pane anchors every age and tint on the `now` it is handed
+    (feed-age.ts) and, on the delta path, hears nothing more from a board that then stays unchanged (the
+    2026-09-03 review: an 11 h old card read "1h ago" all morning). The dedup signature never included
+    `now`, so the stamp changes no dedup outcome. Returns whether a frame was sent; a cold kernel has
+    nothing cached, and the connect push serves it instead. The recorded delta base moves only when a frame
+    actually goes out: a frame the per-client dedup swallowed changes nothing the client holds."""
     w = _feed_wire_now()
     if w is None:
         return False
-    if not _send_client(c, ("feed",), w[2], pre=w[3], sig=w[4]):
+    if not _send_client(c, ("feed",), w[2], pre=_feed_ms(w[3], int(time.time())), sig=w[4]):
         return False
     c["efeed"] = w[5]
     return True
@@ -29042,6 +29087,7 @@ def _push(targets, connect=False, tmux=None):
     the pusher-warmed feed/timeline WITHOUT rebuilding, so a reload is instant (the user 2026-06-25).
     `tmux` lets the periodic pusher hand down its cycle's ONE liveness snapshot (see _pusher_cycle);
     other callers (connect pushes, ad-hoc _push_all) leave it None and pay their own read."""
+    targets = [c for c in targets if _client_ready(c)]   # a page whose bundle has not said `ready` is held (READY_GATE_CAP)
     if not targets:
         return
     now = int(time.time())
@@ -29273,12 +29319,13 @@ def _push(targets, connect=False, tmux=None):
             if feed_ms is None:
                 w = _feed_wire                           # tuple snapshot — rebound whole, never mutated (torn reads)
                 if w is not None and w[0] is feed_src and w[1] == feed.get("ledgers"):
-                    feed, feed_ms, feed_sig, feed_parts = w[2], w[3], w[4], w[5]
+                    feed, feed_body, feed_sig, feed_parts = w[2], w[3], w[4], w[5]
                 else:
-                    feed_ms = json.dumps(feed)
-                    feed_sig = _dedup_sig(feed, feed_ms)
+                    feed_body = _feed_body(feed)         # minus `now`: the cached serve stamps its own (_send_feed_now)
+                    feed_sig = _dedup_sig(feed, feed_body)
                     feed_parts = _feed_parts(feed)       # the delta path's per-item forms, once per build too
-                    _feed_wire = (feed_src, feed.get("ledgers"), feed, feed_ms, feed_sig, feed_parts)
+                    _feed_wire = (feed_src, feed.get("ledgers"), feed, feed_body, feed_sig, feed_parts)
+                feed_ms = _feed_ms(feed_body, feed.get("now"))   # this build's clock; one concat per cycle, no dumps
             _send_feed(c, feed, feed_ms, feed_sig, feed_parts)
         elif c["app"] == "timeline" and timeline is not None:
             if bars_ms is None:
@@ -29343,7 +29390,7 @@ def _push_session_now(sid):
     push-architecture rule, 2026-07-05): callers sit on WS-handler / spawn / backend threads."""
     sid = str(sid)
     with _clients_lock:
-        targets = [c for c in _clients if c["app"] == "chat" and c.get("alive", True)]
+        targets = [c for c in _clients if c["app"] == "chat" and c.get("alive", True) and _client_ready(c)]
     if not targets:
         return
     try:
@@ -30028,8 +30075,8 @@ def _reveal_request(sid, wid):
     """POST /reveal: aim the focus at the dashboard whose wid asked. Its chat pane already
     connected → deliver now; not yet (the cold-start norm — the shell's fetch beats the iframe's
     WS) → park for _consume_pending_reveal. Returns whether it was delivered immediately."""
-    with _clients_lock:
-        targets = [c for c in _clients if c["app"] == "chat" and (c.get("wid") or "") == wid]
+    with _clients_lock:                          # a held chat pane (READY_GATE_CAP) is "not yet": parked, delivered at its `ready`
+        targets = [c for c in _clients if c["app"] == "chat" and (c.get("wid") or "") == wid and _client_ready(c)]
     delivered = False
     for c in targets:
         try:
@@ -30311,8 +30358,10 @@ def _shim(app, v=0, caps=""):
     # pane sat silent through rebuilds).
     # `caps` = the wire capabilities the page's BUNDLE has (comma-separated), announced on the ws URL so the
     # kernel can send it a leaner stream: the feed page passes FEED_DELTA_CAP (its federation layer applies
-    # {type:"feedDelta"} frames). The kernel serves page and bundle from one dist, so it is the kernel's
-    # knowledge to assert; a page that passes nothing gets the full frames it always did.
+    # {type:"feedDelta"} frames), and every pane passes READY_GATE_CAP (this shim opens the socket before the
+    # bundle has loaded, so the kernel must hold its frames until the bundle's `ready`). The kernel serves
+    # page and bundle from one dist, so it is the kernel's knowledge to assert; a page that passes nothing
+    # gets the full frames it always did, from accept.
     return """
 (function(){var queue=[],ws=null,everConnected=false;
 var queuedDiag=0,DIAG_QUEUE_MAX=20;   // clientDiag rows waiting in `queue` for a reconnect, capped (an outage must not pile up breadcrumbs); other queued messages are untouched
@@ -30776,7 +30825,7 @@ def _chat_page():
             "<style>%s\n%s</style></head><body>%s%s<script>%s</script>"
             "<script src=/dist/federation.js?v=%d></script>"   # multi-kernel manager: after the shim, before the bundle
             "<script src=/dist/render.js?v=%d></script><script>%s</script></body></html>"
-            % (v, THEME_CSS, _CHAT_MOBILE_CSS, _chat_body(), _pane_spin("content", "live-ask"), _shim("chat", v), v, v, _CHAT_MOBILE_JS))
+            % (v, THEME_CSS, _CHAT_MOBILE_CSS, _chat_body(), _pane_spin("content", "live-ask"), _shim("chat", v, caps=READY_GATE_CAP), v, v, _CHAT_MOBILE_JS))
 
 
 # Settings gear (WEB KERNEL ONLY — kernel-injected, never in the shared feed.ts). A ⚙ in the corner
@@ -30802,7 +30851,7 @@ def _feed_page():
             "<script src=/dist/feed.js?v=%d></script></body></html>"   # feed.js builds + wires the gear modal itself
             % (v, v, THEME_CSS,
                '<div id="feed-head"></div><div id="feed-list"></div><div id="feed-foot"></div>',
-               _pane_spin("feed-list"), _shim("feed", v, caps=FEED_DELTA_CAP), v, v))
+               _pane_spin("feed-list"), _shim("feed", v, caps=FEED_DELTA_CAP + "," + READY_GATE_CAP), v, v))
 
 
 # Fleet — a BY-SESSION view that MIRRORS the ledger box (the user 2026-06-23): each session, then its goal
@@ -30833,7 +30882,7 @@ def _fleet_page():
             "<div id=fleet-list></div><div id=fleet-foot></div>%s"
             "<script>%s</script><script src=/dist/federation.js?v=%d></script>"   # multi-kernel manager: after the shim
             "<script src=/dist/fleet.js?v=%d></script></body></html>"
-            % (v, THEME_CSS, fleet_css, _pane_spin("fleet-list"), _shim("fleet", v), v, v))
+            % (v, THEME_CSS, fleet_css, _pane_spin("fleet-list"), _shim("fleet", v, caps=READY_GATE_CAP), v, v))
 
 
 # The romp-tl-* wrapper styles live in ui/webview/timeline-pane.css — ONE file, read live here (like the
@@ -30909,7 +30958,7 @@ def _timeline_page():
             "<script>var module={exports:{}};(function(module,exports){\n%s\n})(module,module.exports);"
             "var TimelinePanel=module.exports.TimelinePanel;"
             "window.__rompConnectTimeline(new TimelinePanel(document.getElementById('host')));"
-            "</script></body></html>") % (THEME_CSS, tl_css, _shim("timeline", v), v, _TIMELINE_BOOT, view_js))
+            "</script></body></html>") % (THEME_CSS, tl_css, _shim("timeline", v, caps=READY_GATE_CAP), v, _TIMELINE_BOOT, view_js))
 
 
 def _chat_body():
@@ -35748,9 +35797,12 @@ class Handler(BaseHTTPRequestHandler):
             return
         if msg and msg.get("type") == "ready":
             # The bundle is listening (it sends `ready` at load, and the shim re-sends it on every
-            # reconnect): a feed/Outline client is served the CACHED feed frame first, at once, with no
-            # build (_send_feed_now — the frame the delta stream then bases on). Measured 2026-09-02: a
-            # reconnecting feed pane waited 7-24 s for its first frame from the pusher's next cycle.
+            # reconnect). Lift the hold FIRST — a held client (READY_GATE_CAP) has received nothing from
+            # the push paths until now — then a feed/Outline client is served the CACHED feed frame at
+            # once, with no build (_send_feed_now — the frame the delta stream then bases on, stamped with
+            # the time it is served). Measured 2026-09-02: a reconnecting feed pane waited 7-24 s for its
+            # first frame from the pusher's next cycle.
+            client["ready"] = True
             served = client.get("app") in ("feed", "fleet") and _send_feed_now(client)
             # The connect push serves the pusher-warmed caches for everything else. A feed client that was
             # just served skips it: the push could add nothing for that pane (its warmed cache IS what was
@@ -36462,6 +36514,9 @@ class Handler(BaseHTTPRequestHandler):
         q = queue.Queue()
         client = {"app": app, "wid": wid, "alive": True, "qbytes": 0, "qlock": threading.Lock(),
                   "caps": set(x for x in caps.split(",") if x)}
+        # Held until its bundle says `ready` when the page announced it will (READY_GATE_CAP — every kernel-
+        # served pane does); ready from accept otherwise (a relay, a pipe, an older page: nothing to wait for).
+        client["ready"] = READY_GATE_CAP not in client["caps"]
         client["send"] = _mk_ws_send(q, self.connection, client)
         threading.Thread(target=_ws_sender, args=(q, self.connection, lock, client),
                          daemon=True, name="ws-send").start()
@@ -36469,14 +36524,16 @@ class Handler(BaseHTTPRequestHandler):
             client["active"] = active                  # active-tab-first streaming (the user 2026-06-24)
         with _clients_lock:
             _clients.append(client)
-        # Nothing is pushed at accept. The first frame waits for the client's {type:"ready"} — the bundle's
-        # own signal that its listener is installed. The shim connects before federation.js and feed.js
-        # have loaded and has no inbound buffer, so a frame enqueued here can land on a page with nobody
-        # listening and be lost — and the later `ready` push then sends nothing, because the dedup believes
-        # the client has it (the 2026-09-03 review reproduced the pane sitting on its loader until the next
-        # board change, in 9 of 25 headless loads). The ready handler serves the cached feed frame at once
-        # (_send_feed_now); the shim re-sends `ready` on every reconnect, so a reconnecting pane resyncs the
-        # moment it can render.
+        # Nothing is pushed at accept, and a client that announced READY_GATE_CAP is held out of every push
+        # path too (_push, _send_to_app, _send_to_view, … — _client_ready) until its {type:"ready"}, the
+        # bundle's own signal that its listener is installed. The shim connects before federation.js and
+        # feed.js have loaded and has no inbound buffer, so a frame that lands first is dispatched to a page
+        # with nobody listening and lost — and the later `ready` frame was then deduped against it, leaving
+        # the pane on its loader until the next board change (the 2026-09-03 review reproduced it in real
+        # browsers; removing only the accept-time push left the pusher's 0.5 s cycle to lose the frame the
+        # same way). The ready handler serves the cached feed frame at once (_send_feed_now); the shim
+        # re-sends `ready` on every reconnect, so a reconnected socket — a new client dict, held again —
+        # resyncs the moment it can render. Keepalives still flow to a held client: the shim consumes them.
         try:
             while client["alive"]:
                 # one COMPLETE message per iteration — fragments reassembled, pings answered inline
