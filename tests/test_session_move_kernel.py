@@ -201,6 +201,14 @@ class MoveOps(unittest.TestCase):
             km._apply_pending_ops()
             self.assertEqual(len(self.be.calls), 2, "…then the retry fires")
 
+    def test_the_busy_repark_lands_before_the_move_hold_is_released(self):
+        # review find on #904: with `_moving` released first, a drain cycle in the gap could fire the op
+        # behind the move or burn a retry; the re-park and its hold come first, the release last
+        import inspect
+        src = inspect.getsource(km._move_now)
+        self.assertLess(src.index('insert(0, ("cwd"'), src.index("_moving.discard(sid)"))
+        self.assertLess(src.index("_hold_drain(sid, _MOVE_BUSY_RETRY_S)"), src.index("_moving.discard(sid)"))
+
     def test_a_parked_retry_survives_a_kernel_restart_and_fires(self):
         # a restart resets turn_seq to 0 and ends whatever turn the CLI owned: an op that waited on a
         # higher count fires on the first pass

@@ -2067,10 +2067,19 @@ def _sessions(now, window=None, forks=True):
 
 def _path_of(sid, now=None):
     """The transcript path for a sid (discover-cached → cheap), or None. Lets the sid-keyed backend API
-    resolve a session's transcript without the caller threading the path through (e.g. pending_queued)."""
+    resolve a session's transcript without the caller threading the path through (e.g. pending_queued).
+    Inside a pusher cycle the answer is memoized on the cycle's scope (_live_scope.paths, opened by
+    _pusher_cycle, thread-confined like its liveness snapshot): the parked-op drain asks for a held sid's
+    path in up to three gates per cycle, and each ask was a discover fingerprint (review find, #904)."""
+    memo = getattr(_live_scope, "paths", None)
+    if memo is not None and sid in memo:
+        return memo[sid]
     now = int(time.time()) if now is None else now
     s = next((s for s in _sessions(now) if s["sid"] == sid), None)
-    return s["path"] if s else None
+    p = s["path"] if s else None
+    if memo is not None:
+        memo[sid] = p
+    return p
 
 
 def _has_tmux():
@@ -19595,13 +19604,16 @@ def _move_now(be, sid, path, tries, wid):
                 "this session's backend has no way to move a running session"
         except Exception as e:
             res = "%s: %s" % (type(e).__name__, str(e)[:200])
+        if res == "busy":
+            # re-park and hold BEFORE `_moving` releases the queue (review find, #904): a drain cycle landing
+            # between the release and the re-park would fire the op behind the move, or burn a retry
+            seq = be.turn_seq(sid) if hasattr(be, "turn_seq") else None  # the turn end this retry waits on
+            _pending_ops.setdefault(sid, []).insert(0, ("cwd", path, tries + 1, seq))   # head: it was already first
+            _move_askers[sid] = wid
+            _hold_drain(sid, _MOVE_BUSY_RETRY_S)   # the retry waits out the CLI's post-result window (_hold_drain)
     finally:
         _moving.discard(sid)
     if res == "busy":
-        seq = be.turn_seq(sid) if hasattr(be, "turn_seq") else None      # the turn end this retry waits on
-        _pending_ops.setdefault(sid, []).insert(0, ("cwd", path, tries + 1, seq))   # head: it was already first
-        _move_askers[sid] = wid
-        _hold_drain(sid, _MOVE_BUSY_RETRY_S)   # the retry waits out the CLI's post-result window (see _hold_drain)
         _save_pending_ops()
         _mark_views_dirty()                    # the chip re-renders now; the hold, not the wake, spaces the retry
         return res
@@ -28589,6 +28601,8 @@ def _pusher_cycle():
     #                                       however deep it hides (_bg_live_norm, _compacting_now,
     #                                       build_feed's per-session gates) — see _live_scope
     try:
+        _live_scope.paths = {}                  # …and the cycle's sid→path memo (_path_of): the parked-op drain
+        #                                         otherwise resolves a held sid's path once per gate per cycle
         _live_scope.names = _names_snapshot()   # …and the cycle's NAMES snapshot, same idiom: the name/
         #                                       cwd/color helpers otherwise re-read the registry per path
         #                                       token and per postal card (~38% of pusher wall, py-spy
@@ -28598,6 +28612,7 @@ def _pusher_cycle():
     finally:
         _live_scope.snapshot = None
         _live_scope.names = None
+        _live_scope.paths = None
 
 
 def _pusher_cycle_jobs(now, tmux, any_client):
@@ -33103,6 +33118,8 @@ class Handler(BaseHTTPRequestHandler):
                         return self._send(200, json.dumps({"ok": False, "error":   # pretend it was delivered
                             "the remote kernel for this session (%s) isn't answering — message not delivered"
                             % r.get("host", "?")}), "application/json")
+                    if isinstance(res, dict) and res.get("ok") is False:
+                        return self._send(200, json.dumps(res), "application/json")   # its refusal, verbatim
                     # the far kernel's `queued` rides through (an older remote without the field reads False)
                     return self._send(200, json.dumps({"ok": True, "queued": bool(isinstance(res, dict)
                                                                                   and res.get("queued"))}),
