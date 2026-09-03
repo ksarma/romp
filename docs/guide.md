@@ -31,7 +31,9 @@ passage, and repeat ‚Äî each staged note remembers its quote and its place. **‚è
 everything you staged along with whatever is in the box, so the session applies the lot
 in one pass, and you never copy a line out of the document by hand. The line in each
 label is checked against the file at the moment you select, so numbers that moved under
-you are caught rather than quietly carried.
+you are caught rather than quietly carried. When several sessions work in the same
+repository, or in worktrees of it, the viewer's title bar says which one you opened the
+file from: a chip with the session's name, in the same color as its tab.
 
 ### The feed
 
