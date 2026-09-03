@@ -11,7 +11,7 @@ zero protocol change at switchover. WS is hand-rolled on the stdlib socket (no d
 
 Run:  bin/romp-kernel   → opens http://127.0.0.1:29855
 """
-import json, os, queue, random, re, signal, socket, sys, time, threading, traceback, base64, bisect, errno, hashlib, hmac, struct, subprocess, shutil, shlex, http.client, uuid, tempfile, stat, gzip
+import json, os, queue, random, re, signal, socket, sys, time, threading, traceback, base64, bisect, errno, hashlib, hmac, struct, subprocess, shutil, shlex, http.client, uuid, tempfile, stat, gzip, copy
 from pathlib import Path
 from datetime import datetime, timezone
 from importlib.machinery import SourceFileLoader
@@ -258,7 +258,40 @@ def _interrupt_cause(nxt_atom):
     return None
 
 
-_machine_cut_cache = {}   # str(path) -> ((mtime_ns, size), (t, cause))
+_machine_cut_cache = {}   # str(path) -> (records seen, last record, (t, cause)) — see _fold_records
+
+
+def _fold_records(cache, path, init, step):
+    """Fold a JSONL file's records into a carried state, APPEND-INCREMENTALLY (issue 903, 2026-09-03):
+    the states/transcript readers below re-read their whole file behind an (mtime,size) key that every
+    append invalidates — O(file) per push for every working session. em._read_jsonl_incremental already
+    serves the parsed records of a growing file incrementally (the parse reads the same list, so this adds
+    no I/O), and its contract — a grown file returns a NEW list whose prefix objects are the SAME — is the
+    identity gate here: when the cached prefix is intact, only the appended records run through `step`;
+    a rewrite (prefix identity lost, a shrink, a same-size-new-mtime) re-folds from record 0. `init()`
+    makes a fresh state; `step(state, record)` returns the next state (mutate-and-return is fine: the
+    cached state is deep-copied before folding onto it, so a state a caller was handed never changes
+    under it). Returns the state; [] records (a missing or unreadable file) fold to init()."""
+    recs = em._read_jsonl_incremental(path)
+    key = str(path)
+    hit = cache.get(key)
+    if hit is not None:
+        n0, last0, state0 = hit
+        if n0 == len(recs) and (n0 == 0 or recs[-1] is last0):
+            return state0
+        if 0 < n0 < len(recs) and recs[n0 - 1] is last0:
+            state, start = copy.deepcopy(state0), n0
+        else:
+            state, start = init(), 0
+    else:
+        state, start = init(), 0
+    for r in recs[start:]:
+        if isinstance(r, dict):
+            state = step(state, r)
+    if len(cache) > 256:                                  # bounded by the session count; never unbounded
+        cache.clear()
+    cache[key] = (len(recs), recs[-1] if recs else None, state)
+    return state
 
 
 def _last_machine_cut(sid):
@@ -271,29 +304,12 @@ def _last_machine_cut(sid):
     per session on EVERY push, and these files reach ~1MB / 4k lines on a long-lived session, so an
     uncached scan would add megabytes of reading per push cycle to a loop that is already CPU-bound."""
     p = jd.STATE / "states" / ("%s.jsonl" % sid)
-    try:
-        st = p.stat(); key = (st.st_mtime_ns, st.st_size)
-    except OSError:
-        return 0.0, ""
-    hit = _machine_cut_cache.get(str(p))
-    if hit is not None and hit[0] == key:
-        return hit[1]
-    t, cause = 0.0, ""
-    try:
-        with open(p, errors="replace") as f:
-            for line in f:
-                if '"machineCut"' not in line:
-                    continue
-                try:
-                    o = json.loads(line)
-                except Exception:
-                    continue
-                if isinstance(o, dict) and o.get("machineCut"):
-                    t, cause = float(o.get("t") or 0), str(o["machineCut"])
-    except OSError:
-        return 0.0, ""
-    _machine_cut_cache[str(p)] = (key, (t, cause))
-    return t, cause
+
+    def step(state, o):
+        if o.get("machineCut"):
+            return (float(o.get("t") or 0), str(o["machineCut"]))   # the NEWEST row decides
+        return state
+    return _fold_records(_machine_cut_cache, p, lambda: (0.0, ""), step)
 
 
 def _machine_cut_cause(users, i, cut_t=0.0, cut_cause=""):
@@ -16019,44 +16035,24 @@ def _pending_queued(path):
     DISPLAY — an unresolved entry is a bubble that never leaves, the bug this whole pass exists to end,
     while an over-resolved one self-heals at the next record — and the case is vanishingly rare besides
     (live corpus: one such remove in 305, and it is where a credited dequeue had already taken the entry)."""
-    try:
-        st = os.stat(path)
-        key = (st.st_mtime, st.st_size)
-    except OSError:
-        key = None
-    hit = _queued_parse_cache.get(path)
-    if hit is not None and key is not None and hit[0] == key:
-        return hit[1]
-    pending = []
-    try:
-        with open(path, errors="replace") as f:
-            for line in f:
-                if '"queue-operation"' not in line:          # fast skip: most lines aren't queue ops
-                    continue
-                try:
-                    o = json.loads(line)
-                except Exception:
-                    continue
-                if o.get("type") != "queue-operation":
-                    continue
-                op = o.get("operation")
-                content = o.get("content") if isinstance(o.get("content"), str) else None
-                if op == "enqueue":
-                    pending.append(content or "")
-                elif op == "popAll":                         # the whole queue recalled — nothing is left owed
-                    pending.clear()
-                elif op == "remove" and content is not None and content in pending:
-                    pending.remove(content)                  # that entry only; the rest keep their places
-                elif op in ("dequeue", "remove") and pending:
-                    del pending[0]                           # anonymous resolution: the oldest is the one taken
-    except OSError:
-        return []
-    out = [t.strip() for t in pending if _genuine_queued(t)]
-    if key is not None:
-        if len(_queued_parse_cache) > 256:                   # bounded by fleet size; never unbounded
-            _queued_parse_cache.clear()
-        _queued_parse_cache[path] = (key, out)
-    return out
+    # A queue LEDGER: a dequeue resolves the OLDEST entry, which can predate any window, so this folds
+    # append-incrementally over the whole record list (_fold_records) with the pending list carried.
+    def step(pending, o):
+        if o.get("type") != "queue-operation":
+            return pending
+        op = o.get("operation")
+        content = o.get("content") if isinstance(o.get("content"), str) else None
+        if op == "enqueue":
+            pending.append(content or "")
+        elif op == "popAll":                                 # the whole queue recalled — nothing is left owed
+            pending.clear()
+        elif op == "remove" and content is not None and content in pending:
+            pending.remove(content)                          # that entry only; the rest keep their places
+        elif op in ("dequeue", "remove") and pending:
+            del pending[0]                                   # anonymous resolution: the oldest is the one taken
+        return pending
+    pending = _fold_records(_queued_parse_cache, path, list, step)
+    return [t.strip() for t in pending if _genuine_queued(t)]
 
 
 # ── Idle-queue drive: wake signals stuck in an idle SDK CLI's queue (the user 2026-08-18) ──
@@ -16091,7 +16087,7 @@ _WAKE_DRIVE_FLOOR_S = 60.0    # ~400x the delivering regime's p90 (0.126s); a ro
 _AGENT_TASK_ID_RE = re.compile(r"<task-id>([^<]*)</task-id>")
 _AGENT_ID_SHAPE_RE = re.compile(r"a[0-9a-f]{16}")   # background-agent ids; monitor/cron/bash ids are
 #                                                     9-char base36, so the classes cannot collide
-_wake_tail_cache = {}         # path -> ((mtime, size), (entries, mark))
+_wake_tail_cache = {}         # path -> (records seen, last record, (tail, n)) — see _fold_records
 
 
 def _wake_ts_epoch(ts):
@@ -16136,87 +16132,65 @@ def _undelivered_wake_tail(path):
     otherwise-shaped id keeps wrapper=True — under-delivering is the original bug; the carve-out is
     only for the one class the CLI provably owns. Cached by (mtime, size) like _pending_queued,
     since the drive tick asks every push cycle."""
-    try:
-        st = os.stat(path)
-        key = (st.st_mtime, st.st_size)
-    except OSError:
-        return [], None
-    hit = _wake_tail_cache.get(path)
-    if hit is not None and hit[0] == key:
-        return hit[1]
-    tail = []
-    try:
-        with open(path, errors="replace") as f:
-            for pos, line in enumerate(f):
-                if '"queue-operation"' in line:              # cheap prefilter; the parse verifies
-                    try:
-                        o = json.loads(line)
-                    except Exception:
-                        continue
-                    if o.get("type") != "queue-operation":
-                        continue
-                    op = o.get("operation")
-                    if op == "enqueue":
-                        text = o.get("content") if isinstance(o.get("content"), str) else ""
-                        w = bool(em.SYSTEM_WRAPPER_RE.match(text))
-                        if w:
-                            m = _AGENT_TASK_ID_RE.search(text)
-                            if m and _AGENT_ID_SHAPE_RE.fullmatch(m.group(1)):
-                                w = False                    # an agent completion notice — the CLI's own
-                        #                                      to deliver, in every regime (see docstring)
-                        tail.append({"pos": pos, "ts": str(o.get("timestamp") or ""), "text": text,
-                                     "wrapper": w})
-                    elif op == "remove":
-                        c = o.get("content") if isinstance(o.get("content"), str) else None
-                        if c is not None:
-                            i = next((i for i, e in enumerate(tail) if e["text"] == c), None)
-                            if i is not None:                # content-addressed single-item discard —
-                                del tail[i]                  # the CLI's call on THAT entry only
-                        elif tail:
-                            del tail[0]                      # content-less: the oldest, as _pending_queued folds
-                    elif op == "popAll":                     # the whole queue recalled at once: every entry is
-                        tail.clear()                         # withdrawn, so nothing here is owed a turn any more
-                        #                                      (unhandled until 2026-08-26 — a recalled queue kept
-                        #                                      reading as undriven signals, one session holding 12)
-                    #      a `dequeue` clears nothing — its delivery evidence is the user record it produces
-                    continue
-                if not tail:
-                    continue                                 # nothing pending → nothing to resolve (fast path)
-                if '"user"' not in line:
-                    continue                                 # cheap prefilter for delivery-evidence records
-                try:
-                    o = json.loads(line)
-                except Exception:
-                    continue
-                if o.get("type") == "user" and not o.get("isMeta"):
-                    mc = (o.get("message") or {}).get("content")
-                    if isinstance(mc, str):
-                        utext = mc
-                    elif isinstance(mc, list):
-                        utext = "\n".join(str(b.get("text") or "") for b in mc
-                                          if isinstance(b, dict) and b.get("type") == "text")
-                    else:
-                        utext = ""
-                    if utext:                                # delivered = the record CARRIES the text
-                        budget = {}
-                        kept = []
-                        for e in tail:
-                            t = e["text"]
-                            if t and t in utext:
-                                if t not in budget:
-                                    budget[t] = utext.count(t)
-                                if budget[t] > 0:
-                                    budget[t] -= 1
-                                    continue                 # cleared: one entry per carried copy
-                            kept.append(e)
-                        tail = kept
-    except OSError:
-        return [], None
-    out = (tail, (tail[-1]["pos"], tail[-1]["ts"]) if tail else None)
-    if len(_wake_tail_cache) > 256:                          # bounded by the session count; never unbounded
-        _wake_tail_cache.clear()
-    _wake_tail_cache[path] = (key, out)
-    return out
+    # A per-entry LEDGER (an enqueue is resolved by a much later record), so it folds append-incrementally
+    # over the whole record list (_fold_records) with the pending tail carried. `pos` is the entry's
+    # RECORD index (was: line index) — the drive compares marks only against positions this same fold
+    # hands out later, and both are monotone within an unrewritten file.
+    def step(state, o):
+        tail, n = state
+        pos = n
+        n += 1
+        if o.get("type") == "queue-operation":
+            op = o.get("operation")
+            if op == "enqueue":
+                text = o.get("content") if isinstance(o.get("content"), str) else ""
+                w = bool(em.SYSTEM_WRAPPER_RE.match(text))
+                if w:
+                    m = _AGENT_TASK_ID_RE.search(text)
+                    if m and _AGENT_ID_SHAPE_RE.fullmatch(m.group(1)):
+                        w = False                            # an agent completion notice — the CLI's own
+                tail.append({"pos": pos, "ts": str(o.get("timestamp") or ""), "text": text,
+                             "wrapper": w})
+            elif op == "remove":
+                c = o.get("content") if isinstance(o.get("content"), str) else None
+                if c is not None:
+                    i = next((i for i, e in enumerate(tail) if e["text"] == c), None)
+                    if i is not None:                        # content-addressed single-item discard —
+                        del tail[i]                          # the CLI's call on THAT entry only
+                elif tail:
+                    del tail[0]                              # content-less: the oldest, as _pending_queued folds
+            elif op == "popAll":                             # the whole queue recalled at once: every entry is
+                tail.clear()                                 # withdrawn, so nothing here is owed a turn any more
+            #      a `dequeue` clears nothing — its delivery evidence is the user record it produces
+            return (tail, n)
+        if not tail:
+            return (tail, n)                                 # nothing pending → nothing to resolve (fast path)
+        if o.get("type") == "user" and not o.get("isMeta"):
+            mc = (o.get("message") or {}).get("content")
+            if isinstance(mc, str):
+                utext = mc
+            elif isinstance(mc, list):
+                utext = "\n".join(str(b.get("text") or "") for b in mc
+                                  if isinstance(b, dict) and b.get("type") == "text")
+            else:
+                utext = ""
+            if utext:                                        # delivered = the record CARRIES the text
+                budget = {}
+                kept = []
+                for e in tail:
+                    t = e["text"]
+                    if t and t in utext:
+                        if t not in budget:
+                            budget[t] = utext.count(t)
+                        if budget[t] > 0:
+                            budget[t] -= 1
+                            continue                         # cleared: one entry per carried copy
+                    kept.append(e)
+                tail = kept
+        return (tail, n)
+    tail, _n = _fold_records(_wake_tail_cache, path, lambda: ([], 0), step)
+    tail = [dict(e) for e in tail]                           # callers get their own copies of the carried entries
+    return (tail, (tail[-1]["pos"], tail[-1]["ts"]) if tail else None)
 
 
 _api_err_cache = {}           # path -> ((mtime, size), err|None)
@@ -17050,30 +17024,48 @@ def _session_retrying(sid, tm):
             "networkDown": info.get("networkDown"), "rateLimitType": info.get("rateLimitType")}
 
 
+_states_notes_cache = {}      # str(states path) -> (records seen, last record, the five note lists) — see _fold_records
+_NOTE_KEYS = ("recoveries", "gaveups", "orphans", "efforts", "gestures")
+
+
+def _states_notes(sid):
+    """The five durable-note lists build_session interleaves (retriesRecovered / retriesGaveUp /
+    orphanReply / effortApplied / cmdGesture rows of states/<sid>.jsonl), read in ONE append-incremental
+    fold (issue 903, 2026-09-03) instead of five uncached whole-file scans per build. Each reader below
+    hands out copies of its list; the shapes are unchanged."""
+    p = jd.STATE / "states" / ("%s.jsonl" % sid)
+
+    def step(state, o):
+        t = o.get("t")
+        if not t:
+            return state
+        n = o.get("retriesRecovered")
+        if isinstance(n, int) and n > 0:
+            state["recoveries"].append({"t": int(t), "retries": n})
+        n = o.get("retriesGaveUp")
+        if isinstance(n, int) and n > 0:
+            state["gaveups"].append({"t": int(t), "retries": n, "errorKind": str(o.get("errorKind") or "")})
+        orq = o.get("orphanReply")
+        if isinstance(orq, dict) and (orq.get("text") or "").strip():
+            state["orphans"].append({"t": int(t), "uuid": str(orq.get("uuid") or ""), "text": orq["text"]})
+        v = o.get("effortApplied")
+        if isinstance(v, str) and v:
+            state["efforts"].append({"t": int(t), "effort": v})
+        v = o.get("cmdGesture")
+        if isinstance(v, str) and v:
+            state["gestures"].append({"t": int(t), "cmd": v})
+        return state
+    return _fold_records(_states_notes_cache, p, lambda: {k: [] for k in _NOTE_KEYS}, step)
+
+
 def _retry_recoveries(sid):
     """Durable recovery markers from states/<sid>.jsonl — {"t":…,"retriesRecovered":N} lines the SDK backend
     writes when a stalled api_retry turn resumes real output (append_retry_recovered). Returns
     [{"t":epoch,"retries":N}, …] oldest first, so build_session can interleave a persistent "Recovered after N
     retries" note at the recovered turn. SDK-only — tmux has no api_retry signal, so its state files carry no
     such records and this is []."""
-    p = jd.STATE / "states" / ("%s.jsonl" % sid)
-    out = []
-    try:
-        with open(p, errors="replace") as f:
-            for line in f:
-                if '"retriesRecovered"' not in line:       # cheap prefilter — most lines are plain state records
-                    continue
-                try:
-                    o = json.loads(line)
-                except Exception:
-                    continue
-                n = o.get("retriesRecovered")
-                if isinstance(n, int) and n > 0 and o.get("t"):
-                    out.append({"t": int(o["t"]), "retries": n})
-    except OSError:
-        return []
-    out.sort(key=lambda r: r["t"])
-    return out
+    return sorted((dict(r) for r in _states_notes(sid)["recoveries"]), key=lambda r: r["t"])   # one folded pass serves
+    #                                                                                  all five; oldest first
 
 
 def _retry_gaveups(sid):
@@ -17082,24 +17074,8 @@ def _retry_gaveups(sid):
     instead of output (append_retry_gave_up; the user 2026-07-25: the note used to read "Recovered after
     10 retries" over a turn that produced nothing). Twin of _retry_recoveries, so build_session can
     interleave a persistent "gave up after N retries" note right where the storm died."""
-    p = jd.STATE / "states" / ("%s.jsonl" % sid)
-    out = []
-    try:
-        with open(p, errors="replace") as f:
-            for line in f:
-                if '"retriesGaveUp"' not in line:          # cheap prefilter — most lines are plain state records
-                    continue
-                try:
-                    o = json.loads(line)
-                except Exception:
-                    continue
-                n = o.get("retriesGaveUp")
-                if isinstance(n, int) and n > 0 and o.get("t"):
-                    out.append({"t": int(o["t"]), "retries": n, "errorKind": str(o.get("errorKind") or "")})
-    except OSError:
-        return []
-    out.sort(key=lambda r: r["t"])
-    return out
+    return sorted((dict(r) for r in _states_notes(sid)["gaveups"]), key=lambda r: r["t"])   # one folded pass serves
+    #                                                                                  all five; oldest first
 
 
 def _atom_md(a):
@@ -17119,24 +17095,8 @@ def _orphan_replies(sid):
     SDK backend writes (append_orphan_reply) when retire_live_work drops a live assistant reply the transcript
     never kept (a reply the user watched stream on an API-errored try). Returns [{"t","uuid","text"}, …] oldest
     first, so build_session can interleave the lost text back at its timestamp, DEDUP'd against the disk. SDK-only."""
-    p = jd.STATE / "states" / ("%s.jsonl" % sid)
-    out = []
-    try:
-        with open(p, errors="replace") as f:
-            for line in f:
-                if '"orphanReply"' not in line:            # cheap prefilter — most lines are plain state records
-                    continue
-                try:
-                    o = json.loads(line)
-                except Exception:
-                    continue
-                orq = o.get("orphanReply")
-                if isinstance(orq, dict) and (orq.get("text") or "").strip() and o.get("t"):
-                    out.append({"t": int(o["t"]), "uuid": str(orq.get("uuid") or ""), "text": orq["text"]})
-    except OSError:
-        return []
-    out.sort(key=lambda r: r["t"])
-    return out
+    return sorted((dict(r) for r in _states_notes(sid)["orphans"]), key=lambda r: r["t"])   # one folded pass serves
+    #                                                                                  all five; oldest first
 
 
 def _effort_changes(sid):
@@ -17144,24 +17104,8 @@ def _effort_changes(sid):
     backend writes when an /effort reconnect lands (append_effort_applied). Returns [{"t":epoch,"effort":str}, …]
     oldest first, so build_session can interleave a persistent "effort set to X" note at the moment it took
     effect. SDK-only — tmux applies /effort in-band (a real command turn), so it needs no synthetic marker."""
-    p = jd.STATE / "states" / ("%s.jsonl" % sid)
-    out = []
-    try:
-        with open(p, errors="replace") as f:
-            for line in f:
-                if '"effortApplied"' not in line:          # cheap prefilter — most lines are plain state records
-                    continue
-                try:
-                    o = json.loads(line)
-                except Exception:
-                    continue
-                v = o.get("effortApplied")
-                if isinstance(v, str) and v and o.get("t"):
-                    out.append({"t": int(o["t"]), "effort": v})
-    except OSError:
-        return []
-    out.sort(key=lambda r: r["t"])
-    return out
+    return sorted((dict(r) for r in _states_notes(sid)["efforts"]), key=lambda r: r["t"])   # one folded pass serves
+    #                                                                                  all five; oldest first
 
 
 def _cmd_gestures(sid):
@@ -17171,24 +17115,8 @@ def _cmd_gestures(sid):
     chip once prune_live retires the synthesized live one (the user 2026-08-14: the user's side of the history
     keeps what they did; the applied note keeps that it happened). SDK-only — tmux commands are real
     transcript turns already."""
-    p = jd.STATE / "states" / ("%s.jsonl" % sid)
-    out = []
-    try:
-        with open(p, errors="replace") as f:
-            for line in f:
-                if '"cmdGesture"' not in line:             # cheap prefilter — most lines are plain state records
-                    continue
-                try:
-                    o = json.loads(line)
-                except Exception:
-                    continue
-                v = o.get("cmdGesture")
-                if isinstance(v, str) and v and o.get("t"):
-                    out.append({"t": int(o["t"]), "cmd": v})
-    except OSError:
-        return []
-    out.sort(key=lambda r: r["t"])
-    return out
+    return sorted((dict(r) for r in _states_notes(sid)["gestures"]), key=lambda r: r["t"])   # one folded pass serves
+    #                                                                                  all five; oldest first
 
 
 # ── background-task box (the user 2026-06-26) ───────────────────────────────────────────────────────
