@@ -5350,6 +5350,29 @@ def _compact_suggest_tick(sid, tm, now):
     if not _st or now - _st < idle_s:
         return False                                   # not settled long enough — the crossing stays
     #                                                    armed; a later tick re-checks the same gate
+    with _NUDGE_LOCK:                                  # CLAIM BEFORE SEND (the double-send race,
+        # 2026-09-01): the check above releases the lock before the fire-time gates, and this tick
+        # has two concurrent entry points (the pusher's periodic pass and the setCompactSuggest
+        # handler's act-now re-tick) — latching only after the send let two entries pass the same
+        # unlatched check and inject the suggestion twice into one session. The latch write IS
+        # the claim: a fresh read under the lock re-derives what is still due (a concurrent entry
+        # may have claimed it in the gap), the winner latches and sends, the loser stands down
+        # right here. Same direction as the nudge machinery's own bookkeeping (_mark_auto_nudged
+        # records only after its send, so a failed send retries), inverted at this seam because
+        # the send must be single-shot — and the failure arm below rolls the claim back under the
+        # lock, so "never latch a fire that never went out" still holds durably: the next tick
+        # retries the same crossing.
+        d = dict(_auto_nudge_data())                   # fresh read — a concurrent writer's blob is
+        cs = dict(d.get("compactSuggested") or {})     # not clobbered
+        held = [t for t in [int(x) for x in cs.get(sid, [])] if tokens >= t]
+        due = [t for t in due if t not in held]
+        if not due:
+            return False                               # a concurrent entry already claimed this fire
+        cs[sid] = held + due
+        #                                                BOTH thresholds latch when found past both —
+        #                                                one message, never two in a tick
+        d["compactSuggested"] = cs
+        _write_auto_nudge(d)
     try:
         # the marker tail its sibling injectors carry (T207, the user 2026-08-31, who saw the
         # bare send render as their own blue bubble and ruled it must read system-injected):
@@ -5367,15 +5390,13 @@ def _compact_suggest_tick(sid, tm, now):
             "<!-- romp-injected -->")
     except Exception:
         sys.stderr.write("compact-suggest send (%s): %s\n" % (sid, traceback.format_exc()))
+        with _NUDGE_LOCK:                              # the claimed fire never went out — roll the
+            d = dict(_auto_nudge_data())               # claim back so the next tick retries
+            cs = dict(d.get("compactSuggested") or {})
+            cs[sid] = [t for t in [int(x) for x in cs.get(sid, [])] if t not in due]
+            d["compactSuggested"] = cs
+            _write_auto_nudge(d)
         return False
-    with _NUDGE_LOCK:                                  # latch AFTER the send went out, fresh read —
-        d = dict(_auto_nudge_data())                   # a concurrent writer's blob is not clobbered
-        cs = dict(d.get("compactSuggested") or {})
-        cs[sid] = [t for t in [int(x) for x in cs.get(sid, [])] if tokens >= t] + due
-        #                                                BOTH thresholds latch when found past both —
-        #                                                one message, never two in a tick
-        d["compactSuggested"] = cs
-        _write_auto_nudge(d)
     _log_nudge_event(sid, sid, now, 0, verdict="compact-suggested", ev_t=tokens)
     return True
 
