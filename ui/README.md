@@ -1,7 +1,8 @@
-# ui/ — the front-end source (all five panes)
+# ui/ — the front-end source (all six panes)
 
-The web UI the kernel serves: **chat**, **feed**, **fleet**, **timeline**, and
-**waiting** (the "Waiting on you" pane).
+The web UI the kernel serves: **chat**, **feed**, **fleet**, **timeline**,
+**waiting** (the "Waiting on you" pane), and **files** (the file viewer's own
+pane).
 One set of sources renders everywhere — a browser tab on the kernel's port and
 the VS Code/Cursor webviews (`vscode-extension/`) run the same bundles, so the
 two hosts cannot drift.
@@ -10,7 +11,8 @@ two hosts cannot drift.
 
 - **`webview/`** — the pane sources: `render.ts` (chat), `feed.ts` + `feed.css`
   (feed), `fleet.ts` + `fleet-pane.css` (fleet), `waiting.ts` +
-  `waiting-pane.css` (waiting on you), `timeline-main.ts` +
+  `waiting-pane.css` (waiting on you), `files.ts` + `files-pane.css` (the
+  Files pane; the viewer itself is the shared `file-view.ts`), `timeline-main.ts` +
   `timeline-pane.css` (timeline boot glue), plus shared pieces (`styles.css`,
   `actions.ts` click-safety helpers, `federation.ts` multi-kernel merge,
   `settings.ts`, `compact.ts`, …). Node tests sit beside their sources
