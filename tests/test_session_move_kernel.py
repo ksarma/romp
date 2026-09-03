@@ -73,12 +73,18 @@ class MoveOps(unittest.TestCase):
             mock.patch.object(km, "_cwd_of", lambda sid: self.dir),
             mock.patch.object(km, "_send_to_view", lambda app, msg, wid: self.views.append((app, msg, wid))),
             mock.patch.object(km, "_fire_move", _sync_fire),
+            # the retry spacing and the tmux prompt hold are a separate axis (their own tests below and in
+            # tests/test_kernel_parked_ops_liveness.py); off, so back-to-back _apply_pending_ops calls here
+            # stand for successive cycles
+            mock.patch.object(km, "_MOVE_BUSY_RETRY_S", 0.0),
+            mock.patch.object(km, "_TMUX_PROMPT_HOLD_S", 0.0),
         ]
         for p in self._patches:
             p.start()
         km._pending_ops.clear()
         km._moving.clear()
         km._move_askers.clear()
+        km._drain_hold.clear()
 
     def tearDown(self):
         for p in self._patches:
@@ -86,6 +92,7 @@ class MoveOps(unittest.TestCase):
         km._pending_ops.clear()
         km._moving.clear()
         km._move_askers.clear()
+        km._drain_hold.clear()
 
     def test_idle_session_moves_now_and_the_asker_hears_moved(self):
         handled = km._drive({"type": "moveSession", "id": SID, "dir": self.dir + "/"}, self.client)
@@ -173,6 +180,26 @@ class MoveOps(unittest.TestCase):
         self.assertEqual(len(self.be.calls), 5)
         self.assertEqual(km._pending_ops[SID], [("send", "hello", "human")])
         self.assertEqual(self.views[-1][1]["type"], "moved")
+
+    def test_a_cli_side_busy_repark_holds_the_retry_for_the_window(self):
+        # the drain runs on the pusher now (2026-09-03), which any push or stream atom wakes — so cycles can
+        # be milliseconds apart and the three retries would burn inside the sub-second post-result window
+        # they exist to outlast. The re-park holds the sid for _MOVE_BUSY_RETRY_S (the producer's old
+        # cadence, made explicit); the chip still re-renders at once.
+        with mock.patch.object(km, "_MOVE_BUSY_RETRY_S", 3.0):
+            self.be.answers = ["busy", "busy"]
+            km._pending_ops[SID] = [("cwd", self.dir, 0)]
+            before = km._views_dirty[0]
+            km._apply_pending_ops()                                  # fires → busy → re-parked at the head
+            self.assertEqual(km._pending_ops[SID][0], ("cwd", self.dir, 1, 0), "back at the head, carrying the try")
+            self.assertEqual(len(self.be.calls), 1)
+            self.assertGreater(km._views_dirty[0], before, "the chip re-renders now")
+            km._apply_pending_ops()                                  # back-to-back, as a woken cycle would
+            self.assertEqual(len(self.be.calls), 1, "no retry inside the post-result window")
+            self.assertIn(SID, km._drain_hold)
+            km._drain_hold.clear()                                   # the window passed
+            km._apply_pending_ops()
+            self.assertEqual(len(self.be.calls), 2, "…then the retry fires")
 
     def test_a_parked_retry_survives_a_kernel_restart_and_fires(self):
         # a restart resets turn_seq to 0 and ends whatever turn the CLI owned: an op that waited on a
