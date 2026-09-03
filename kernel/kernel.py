@@ -10621,7 +10621,13 @@ def _sdk_problem_rows(limit=20, cap=400):
             rows += [("be", r) for r in be.problems(limit)]
         except Exception:
             pass   # a fake/older backend without a usable ring: the boot problems still ride
-    rows += [("ws", r) for r in _WS_DROPS]   # dropped dashboard sockets (_client_send): the same bell
+    # dropped dashboard sockets (_note_ws_drop) ride the same bell — a FEW, and RECENT: at most
+    # _WS_DROP_BELL_ROWS of them, none older than _WS_DROP_TTL_S, merged by time with the rest. Appended
+    # last and sliced positionally, twenty drops in a kernel's life hid every later backend problem
+    # (the 2026-09-03 review).
+    cutoff = time.time() - _WS_DROP_TTL_S
+    rows += [("ws", r) for r in _WS_DROPS if float(r.get("t") or 0) >= cutoff][-_WS_DROP_BELL_ROWS:]
+    rows.sort(key=lambda sr: float(sr[1].get("t") or 0))   # stable: same-t rows keep boot → backend → ws order
     out = []
     for src, r in rows[-limit:]:
         txt = _sdk_problem_text(r.get("text"), cap)
@@ -27177,8 +27183,11 @@ def _mk_ws_send(q, sock, client):
                 except OSError:
                     pass
                 # Raise: every caller already treats an exception from send as "mark this client dead".
-                raise OSError("ws client %s is %d bytes behind — dropping"
-                              % (client.get("app"), client["qbytes"]))
+                # Logged HERE, once per client (_note_ws_drop), so the drop is loud whichever of the ~60
+                # direct callers' frames tipped the budget — not only the push paths' (_client_send).
+                e = OSError("ws client %s is %d bytes behind — dropping" % (client.get("app"), client["qbytes"]))
+                _note_ws_drop(client, e, len(s))
+                raise e
             client["qbytes"] += len(s)
         q.put(s)                               # unbounded; the byte budget above is the real bound
     return send
@@ -27596,35 +27605,47 @@ def _dedup_sig(msg, s):
 # nothing on its side either; it was diagnosed as a network problem for weeks. One stderr line per drop,
 # naming the pane, the dashboard, how far behind it was and the frame that tipped it — and one row for the
 # dashboard's bell (rides _sdk_problem_rows → feed `sdkNotices`, the existing kernel-problems channel), so
-# the user is told rather than left to wonder why the pane reloaded. Latched per client: the sends after the
-# first failure in the same cycle raise too, and would otherwise log the one drop several times.
+# the user is told rather than left to wonder why the pane reloaded. Logged at the RAISE site (_note_ws_drop
+# from _mk_ws_send), so every caller is covered — the ~60 one-shot `client["send"]` replies included, not
+# only the push/keepalive paths that go through _client_send (the 2026-09-03 review found the gap). Latched
+# per client: the sends after the first failure in the same cycle raise too, and would otherwise log the one
+# drop several times.
 _WS_DROPS = []           # {"seq", "t", "text"} rows, newest last, bounded — the bell's source
 _WS_DROP_SEQ = [0]
+_WS_DROP_BELL_ROWS = 5   # at most this many drop rows in the bell at once: they must not crowd a backend problem out
+_WS_DROP_TTL_S = 3600.0  # …and none older than this: a drop is news for an hour, then it is the log's business
+
+
+def _note_ws_drop(c, e, frame_len, key=None):
+    """Log one client's drop, once: the stderr line and — for the kernel's OWN drop (a client that fell
+    WS_QUEUE_BYTES behind; a socket that simply died is not news) — the bell row."""
+    if c.get("dropLogged"):
+        return
+    c["dropLogged"] = True
+    try:
+        sys.stderr.write("ws drop: app=%s wid=%s slot=%s queued=%dB frame=%dB — %s\n"
+                         % (c.get("app"), c.get("wid") or "-", _perf_slot(key) if key else "-",
+                            int(c.get("qbytes") or 0), int(frame_len), e))
+        if "bytes behind" in str(e):
+            _WS_DROP_SEQ[0] += 1
+            _WS_DROPS.append({"seq": _WS_DROP_SEQ[0], "t": time.time(),
+                              "text": "The %s pane's live connection was dropped: it had %.1f MB of "
+                                      "updates waiting and had stopped reading them. It reconnects on "
+                                      "its own." % (c.get("app") or "?", int(c.get("qbytes") or 0) / 1e6)})
+            del _WS_DROPS[:-20]
+    except Exception:
+        pass
 
 
 def _client_send(c, s, key=None):
-    """Enqueue one wire string on client `c`. A failure marks the client dead and logs the drop (once).
-    Returns whether the frame was accepted."""
+    """Enqueue one wire string on client `c`. A failure marks the client dead and logs the drop (once —
+    _mk_ws_send has usually logged it already, at the raise). Returns whether the frame was accepted."""
     try:
         c["send"](s)
         return True
     except Exception as e:
         c["alive"] = False
-        if not c.get("dropLogged"):
-            c["dropLogged"] = True
-            try:
-                sys.stderr.write("ws drop: app=%s wid=%s slot=%s queued=%dB frame=%dB — %s\n"
-                                 % (c.get("app"), c.get("wid") or "-", _perf_slot(key) if key else "-",
-                                    int(c.get("qbytes") or 0), len(s), e))
-                if "bytes behind" in str(e):   # the kernel's own drop (a socket that simply died is not news)
-                    _WS_DROP_SEQ[0] += 1
-                    _WS_DROPS.append({"seq": _WS_DROP_SEQ[0], "t": time.time(),
-                                      "text": "The %s pane's live connection was dropped: it had %.1f MB of "
-                                              "updates waiting and had stopped reading them. It reconnects on "
-                                              "its own." % (c.get("app") or "?", int(c.get("qbytes") or 0) / 1e6)})
-                    del _WS_DROPS[:-20]
-            except Exception:
-                pass
+        _note_ws_drop(c, e, len(s), key)
         return False
 
 
