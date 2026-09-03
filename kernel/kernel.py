@@ -570,6 +570,7 @@ def _version_info():
             "acctLabel": _claude_account_label(),   # which login this box holds ("" = none) — the gear's Billing row
             "fileEditing": _file_editing_on(),   # dashboard raw-mode editing opt-in → gates the viewer's Edit
             "thinkingSummaries": _thinking_summaries_on(),   # per-install: SDK sessions ask for reasoning summaries (gear checkbox)
+            "userTodos": _user_todos_on(),   # per-install: the "Waiting on you" feature switch, default OFF (gear checkbox)
             "updateMode": _update_mode(),    # ask|auto|off (the boot release check) → the gear dropdown
             "updateAvail": _UPDATE_AVAIL[0],   # newer release the boot check found ("" = none/unknown)
             "judgeModel": jd._triage_model(), "indexModel": jd._index_model(),      # current per-tier judge models → the gear dropdowns
@@ -3222,6 +3223,8 @@ def _prune_notify_cards(live_ids):
 # it). Registration rides POST /usertodo from the postal bus's add_user_todo, the way set_working
 # rides POST /working. Same mtime+size cache as _session_flags; _atomic_write publish.
 _user_todos_cache = {}   # str(path) -> ((mtime_ns,size), dict)
+_user_todos_bad = {}     # str(path) -> (mtime_ns,size) of a file VERSION that is not a todo store (_user_todos:
+#                          read as empty, loudly; _write_user_todos refuses to overwrite that version)
 _user_todos_lock = threading.RLock()  # store read-modify-writes from route/WS/pusher threads (the
 #                                       _comments_lock doctrine): every mutation below reads, edits a
 #                                       copy, and publishes under this lock, or two postal buses
@@ -3235,6 +3238,12 @@ _user_todos_lock = threading.RLock()  # store read-modify-writes from route/WS/p
 
 
 def _user_todos():
+    """The store, mtime+size cached. A file that is NOT a todo store (2026-09-03: the feature switch
+    was once hand-written here as {"enabled": true, "gt": …} — the switch's own file is
+    USER_TODOS_SWITCH_FILE — and the next register would have replaced the whole ledger with a fresh
+    one holding a single row) reads as EMPTY, says so on stderr ONCE per file version, and pins that
+    version in _user_todos_bad so _write_user_todos refuses to overwrite it: fail loudly, never
+    silently replace the store. Unparsable JSON is treated the same way — it is not a store either."""
     p = jd.STATE / "user-todos.json"
     try:
         st = p.stat(); key = (st.st_mtime_ns, st.st_size)
@@ -3245,16 +3254,48 @@ def _user_todos():
         return hit[1]
     try:
         d = json.loads(p.read_text())
-        if not isinstance(d, dict):
-            d = {}
-    except Exception:
+        found = ", ".join(sorted(map(str, d)))[:200] if isinstance(d, dict) else type(d).__name__
+    except Exception as e:
+        d, found = None, "unparsable JSON (%s)" % e
+    if not _user_todo_store_shaped(d):
+        if _user_todos_bad.get(str(p)) != key:
+            _user_todos_bad[str(p)] = key
+            sys.stderr.write("user-todos: %s is not a todo store (top-level keys must be session ids, "
+                             "each mapping to a list of records; found: %s). Reading it as EMPTY and "
+                             "refusing to overwrite it until it is fixed or removed. The on/off switch "
+                             "lives in %s, not here.\n" % (p, found or "<empty object>", USER_TODOS_SWITCH_FILE))
         d = {}
+    else:
+        _user_todos_bad.pop(str(p), None)
     _user_todos_cache[str(p)] = (key, d)
     return d
 
 
+def _user_todo_store_shaped(d):
+    """True iff `d` has the store's shape: a dict whose every top-level key is a session id (the
+    safe-id shape) and whose every value is a LIST of records. The empty store is shaped. A value
+    that is not a list (a bool, a number, a dict) is what a settings blob looks like, never a ledger."""
+    return isinstance(d, dict) and all(isinstance(k, str) and _safe_id(k) and isinstance(v, list)
+                                       for k, v in d.items())
+
+
 def _write_user_todos(cur):
-    _atomic_write(jd.STATE / "user-todos.json", json.dumps(cur, sort_keys=True))
+    """Publish the store. REFUSES (RuntimeError, loud) while the file on disk is still the version
+    _user_todos flagged as not-a-store: every writer copies the (empty) read and would otherwise
+    replace the unreadable ledger with a one-row one. A fixed or removed file (its stat key changed)
+    lets the write through again."""
+    p = jd.STATE / "user-todos.json"
+    bad = _user_todos_bad.get(str(p))
+    if bad is not None:
+        try:
+            st = p.stat(); key = (st.st_mtime_ns, st.st_size)
+        except OSError:
+            key = None                               # the file is gone: nothing left to protect
+        if key == bad:
+            sys.stderr.write("user-todos: refusing to overwrite %s: it is not a todo store (see the "
+                             "earlier line). Fix or remove the file first.\n" % p)
+            raise RuntimeError("user-todos store is not a todo store; write refused (%s)" % p)
+    _atomic_write(p, json.dumps(cur, sort_keys=True))
 
 
 def _add_user_todo(sid, text, detail=""):
@@ -3350,7 +3391,15 @@ def _open_user_todos(sid):
     """The still-open todos for one session, oldest first — the exact shape the chat payload ships
     (id, text, createdT, optional detail). STORE VALUES ONLY: this rides the dedup-compared chat
     payload, so a derived per-build value here (an age, a `now`) would defeat _send_client's
-    serialized-payload dedup and re-send the full chat every push — the firstSeen lesson."""
+    serialized-payload dedup and re-send the full chat every push — the firstSeen lesson.
+
+    Also THE display gate for the feature switch (_user_todos_on, the user 2026-09-03): OFF → [] for
+    every sid, so build_session's field + split-card event, build_feed's marker map / escalation
+    floor / placeholder, the nudge stand-down and the SessionStart block all go quiet from this one
+    read — the client needs no logic of its own — while the store keeps every row for the day the
+    switch flips back on."""
+    if not _user_todos_on():
+        return []
     out = []
     for t in _user_todos().get(sid) or []:
         if not isinstance(t, dict) or t.get("resolved") or not t.get("id"):
@@ -3422,7 +3471,11 @@ def _user_todo_fp(sid):
     when this sid's rows are unchanged, so the fold busts exactly the owning session's cache.
     Cheap: _user_todos() is the mtime-cached dict, and one sid's rows are a handful of records."""
     rows = _user_todos().get(str(sid))
-    return json.dumps(rows, sort_keys=True) if rows else None
+    if not rows:
+        return None                                  # no rows: the switch changes nothing this card shows
+    # the switch (2026-09-03) folds in too: a flip changes the split card with NO store write, and a
+    # sid-less prefix keeps the fold byte-stable across builds while the switch holds
+    return ("on:" if _user_todos_on() else "off:") + json.dumps(rows, sort_keys=True)
 
 
 def _user_todo_idle(sid, ps, who_working, sess_awaiting_why, perm_state, aerr, peer_wait=None):
@@ -4483,6 +4536,75 @@ def _set_thinking_summaries(enabled, gt=None):
             sys.stderr.write("setting thinking-summaries: write failed (%s) — nothing applied\n" % e)
             return None
         return stamp
+
+
+# ── user todos: the feature switch (the user 2026-09-03) ──────────────────────────────────────────
+# "Waiting on you" — a session flags a decision or input it needs from the person it works for
+# (add_user_todo / withdraw_user_todo on the postal bus), the transcript-bottom card shows it with
+# Reply/Dismiss, and the SessionStart hook re-hands a resumed session its open asks — is switchable,
+# DEFAULT OFF, per install. Four surfaces gate on the switch, each LOUDLY, never a silent no-op:
+#   - the kernel: POST /usertodo and /usertodo/withdraw answer 409 with a one-line reason, the
+#     userTodoAnswer / userTodoDismiss ops warn-toast, /usertodo/context reports enabled:false;
+#   - the postal bus: the two tools leave its tools/list, and a call anyway is refused plainly
+#     (postal_service._user_todos_on reads THIS file — a separate process, so the file is the seam);
+#   - the SessionStart hook (hooks/romp-usertodo-context.sh) injects nothing;
+#   - every UI surface: _open_user_todos returns [] so the payloads ship no rows (the card, the tab
+#     glyph, the feed marker, the badge and the escalation floor all read those fields).
+# The STORE is untouched by the switch — turning it back on shows every stored row again — and the
+# boot notice (_user_todos_off_boot_notice) says when rows sit stored behind an OFF switch. PER-INSTALL
+# like thinking summaries: not in federation's KERNEL_SETTING set, never propagated — the answer is
+# this kernel's alone. The switch file is NOT user-todos.json: that is the store itself (sid →
+# records), and a settings blob written there reads as a corrupt store (_user_todos guards it).
+USER_TODOS_SWITCH_FILE = "user-todos-enabled.json"   # {"enabled": bool, "gt": ms}; postal_service reads the same name
+_USER_TODOS_OFF_ERR = "user todos are turned off on this machine"   # the routes' 409 body + the bus's refusal stem
+_USER_TODOS_OFF_WARN = ("User todos are turned off on this machine, so nothing was sent and nothing changed. "
+                        "Turn them on in the gear to answer or dismiss this request.")
+
+
+def _user_todos_on():
+    """OFF unless this install's switch file says yes: absent, unreadable or malformed all read False —
+    the opt-in must be provable, and reading never creates the file (shipping never turns it on)."""
+    try:
+        return bool(json.loads((jd.STATE / USER_TODOS_SWITCH_FILE).read_text()).get("enabled"))
+    except Exception:
+        return False
+
+
+def _set_user_todos(enabled, gt=None):
+    """Returns the applied gesture stamp (epoch ms), or None when a stale `gt` stood down (the
+    gesture-time ordering block above _NUDGE_LOCK; per-install or not, two dashboards on ONE kernel
+    still race) or the write failed (OSError: loud on stderr, nothing applied; caught HERE like its
+    siblings' so the WS reader loop never reads it as a socket failure). Read-check-write under
+    _SETTINGS_LOCK. Flips the SWITCH only: every stored todo stays on disk either way."""
+    with _SETTINGS_LOCK:
+        try:
+            prev = json.loads((jd.STATE / USER_TODOS_SWITCH_FILE).read_text())
+        except Exception:
+            prev = None
+        if _setting_stale("user-todos", gt, _gt_int(prev.get("gt")) if isinstance(prev, dict) else 0):
+            return None
+        stamp = gt if gt is not None else int(time.time() * 1000)
+        try:
+            _atomic_write(jd.STATE / USER_TODOS_SWITCH_FILE, json.dumps({"enabled": bool(enabled), "gt": stamp}))
+        except OSError as e:
+            sys.stderr.write("setting user-todos: write failed (%s) — nothing applied\n" % e)
+            return None
+        return stamp
+
+
+def _user_todos_off_boot_notice():
+    """Boot: when the switch is OFF but the store holds OPEN rows, say so ONCE on stderr — nothing
+    important drops silently (every existing install flipped to OFF on 2026-09-03 with whatever asks
+    were open at the time still on disk). Reads the store directly: _open_user_todos is gated by
+    the very switch this reports on. Returns the count (0 = no line)."""
+    if _user_todos_on():
+        return 0
+    n = sum(1 for rows in _user_todos().values() if isinstance(rows, list)
+            for t in rows if isinstance(t, dict) and t.get("id") and not t.get("resolved"))
+    if n:
+        sys.stderr.write("romp-kernel: %d user todo(s) are stored but the feature is off. Turn it on in "
+                         "the gear (User todos) to see them.\n" % n)
+    return n
 
 
 # ── automatic updates of THIS machine (the user 2026-08-09) ───────────────────────────────────────
@@ -11394,7 +11516,12 @@ def _drive(msg, client):
         # (_deliver_send_batch); recalled/dropped → never stamped, the ask still stands.
         tid = str(msg["todoId"])
         hit = next((x for x in _open_user_todos(sid) if x["id"] == tid), None)
-        if hit is None:
+        if not _user_todos_on():
+            # The feature switch (the user 2026-09-03) — checked FIRST: the gated read above answers
+            # [] while OFF, so without this the click read as "already settled", which is not what
+            # happened. A dashboard can still show a row it was handed before the switch flipped.
+            client["send"](json.dumps({"type": "warn", "text": _USER_TODOS_OFF_WARN}))
+        elif hit is None:
             # LOUD: the row the user clicked was stale (the agent withdrew it, or a second dashboard
             # answered first) — a silent no-op would read as an answer that reached the session.
             client["send"](json.dumps({"type": "warn",
@@ -11431,7 +11558,9 @@ def _drive(msg, client):
     elif t == "userTodoDismiss" and msg.get("todoId"):
         # the user clears a USER TODO without a reply — for moot and stale items; nothing reaches
         # the session. LOUD when the id is already cleared, for the same stale-row reason as above.
-        if not _resolve_user_todo(sid, str(msg["todoId"]), "dismissed"):
+        if not _user_todos_on():
+            client["send"](json.dumps({"type": "warn", "text": _USER_TODOS_OFF_WARN}))   # the switch, as above
+        elif not _resolve_user_todo(sid, str(msg["todoId"]), "dismissed"):
             client["send"](json.dumps({"type": "warn",
                                        "text": "That request was already settled — the agent withdrew "
                                                "it, or it was answered moments ago."}))
@@ -28201,6 +28330,8 @@ def _setting_kept_value(name):
         return _update_mode()
     if name == "thinking-summaries":
         return _thinking_summaries_on()
+    if name == "user-todos":
+        return _user_todos_on()
     return jd._state_str(name, "")   # the judge-tier stores are bare value files
 
 
@@ -29567,7 +29698,9 @@ def _fleet_view_sig(now, tmux):
                  # user todos (plans/user-todos.md): the feed's marker map, the widened badge and the
                  # escalation floor all read this store, so a register/answer/dismiss/withdraw must
                  # bust the FEED cache the way it already busts the owning session's chat cache
-                 (jd.STATE / "user-todos.json", "__utodos__")):
+                 (jd.STATE / "user-todos.json", "__utodos__"),
+                 # …and the feature switch (2026-09-03): a flip changes every one of those reads
+                 (jd.STATE / USER_TODOS_SWITCH_FILE, "__utswitch__")):
         try:
             sig[k] = os.stat(p).st_mtime
         except OSError:
@@ -35345,6 +35478,13 @@ class Handler(BaseHTTPRequestHandler):
                 text = str((body or {}).get("text") or "").strip() if isinstance(body, dict) else ""
                 if not sid or not text:
                     return self._send(400, json.dumps({"ok": False, "error": "id and text required"}), "application/json")
+                if not _user_todos_on():
+                    # The feature switch (the user 2026-09-03): refuse in one plain line — never a
+                    # silent no-op the bus would echo back as saved. Nothing is written; rows already
+                    # stored stay on disk for the day the switch flips back on. Checked on the kernel
+                    # the bus asked, before any forward: the switch is per machine, and the remote
+                    # kernel's own copy of this route applies its own answer to a forwarded ask.
+                    return self._send(409, json.dumps({"ok": False, "error": _USER_TODOS_OFF_ERR}), "application/json")
                 r = _host_for_sid(sid)
                 if r is not None:                                   # remote session → forward over its -L tunnel
                     res = _remote_forward(r, "/usertodo", {"id": sid, "text": text,
@@ -35370,6 +35510,9 @@ class Handler(BaseHTTPRequestHandler):
                 tid = str((body or {}).get("todoId") or "")
                 if not sid or not tid:
                     return self._send(400, json.dumps({"ok": False, "error": "id and todoId required"}), "application/json")
+                if not _user_todos_on():
+                    # the switch, as on /usertodo above: a loud 409, nothing stamped, the row stays open
+                    return self._send(409, json.dumps({"ok": False, "error": _USER_TODOS_OFF_ERR}), "application/json")
                 r = _host_for_sid(sid)
                 if r is not None:                                   # remote session → forward over its -L tunnel
                     res = _remote_forward(r, "/usertodo/withdraw", {"id": sid, "todoId": tid})
@@ -35404,7 +35547,13 @@ class Handler(BaseHTTPRequestHandler):
                 sid = str((body or {}).get("id") or "")
                 if not sid:
                     return self._send(400, json.dumps({"ok": False, "error": "id required"}), "application/json")
-                return self._send(200, json.dumps({"ok": True, "block": _user_todo_context_block(sid)}),
+                # `enabled` rides along (the user 2026-09-03): the switch's OFF is a 200 with an EMPTY
+                # block — the block helper is already gated (_open_user_todos) — plus the flag stated
+                # outright, so the hook can stay silent on the authoritative answer rather than infer
+                # it, and a caller can tell "off" from "nothing open".
+                _on = _user_todos_on()
+                return self._send(200, json.dumps({"ok": True, "enabled": _on,
+                                                   "block": _user_todo_context_block(sid) if _on else ""}),
                                   "application/json")
             if u.path == "/deliver":
                 # Live-deliver a postal banner to a session — the deliver-time WAKE. The bus drains its maildir
@@ -35983,6 +36132,17 @@ class Handler(BaseHTTPRequestHandler):
             # backend reads the store at each session's next connect, so nothing else to do here.
             if _set_thinking_summaries(bool(msg["enabled"]), gt=_gesture_ms(msg)) is None:
                 _tell_stale_gesture(client)
+        elif msg and msg.get("type") == "setUserTodos" and msg.get("enabled") is not None:
+            # The gear's User todos checkbox (the user 2026-09-03) — kernel-side like setThinkingSummaries
+            # and PER-INSTALL like it: deliberately NOT in federation.ts's KERNEL_SETTING set, so the
+            # answer is this kernel's alone and is never broadcast to another machine; gt-gated all the
+            # same. A flip changes what every payload shows with no store write (_open_user_todos gates
+            # on the switch), so mark the views dirty and wake the pusher: the card, glyph and marker
+            # repaint now, not at the next unrelated rebuild.
+            if _set_user_todos(bool(msg["enabled"]), gt=_gesture_ms(msg)) is None:
+                _tell_stale_gesture(client)
+            else:
+                _mark_views_dirty()
         elif msg and msg.get("type") == "askClear" and msg.get("itemId"):
             # a cleared card drops any composer citation chip pointing INTO it (the user 2026-07-01) — the
             # goal is gone, so following up on it makes no sense. Chips can cite a SUB-goal of the card
@@ -37052,6 +37212,10 @@ def main():
                              "loss-reopen seam\n" % _n)       # the dead kernel left them (see the pass's docstring)
     except Exception:
         sys.stderr.write("user-todo loss boot pass: %s\n" % traceback.format_exc())
+    try:                                                      # open asks stored behind an OFF feature switch
+        _user_todos_off_boot_notice()                         # (the default since 2026-09-03): one stderr line,
+    except Exception:                                         # so nothing important drops silently
+        sys.stderr.write("user-todos switch notice: %s\n" % traceback.format_exc())
     try:                                                      # tmux pastes whose verdict died with a previous
         _n = _tmux_paste_loss_boot_pass()                     # kernel: a stale pending-paste mark is a loss —
         if _n:                                                # re-offer it to the same seam (the SDK pass's

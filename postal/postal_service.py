@@ -72,6 +72,7 @@ NAMES_DIR = Path(os.environ.get("ROMP_STATE_DIR")
                  or Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state"))) / "romp") / "names"
 TLDIR = STATE.parent / "timeline"     # append-only logs for the timeline view (messages.jsonl)
 SESSION_FLAGS = STATE.parent / "session-flags.json"   # the kernel's per-session view flags {sid:{flag:true}}; we honour postalServiceOff (legacy: postalOff)
+USER_TODOS_SWITCH = STATE.parent / "user-todos-enabled.json"   # the kernel's per-install user-todos switch {"enabled": bool, "gt": ms} (kernel USER_TODOS_SWITCH_FILE); NOT user-todos.json, which is the todo STORE
 
 
 # ── serve-token gate (Jupyter's model; the same 0600 file the kernel mints) ─────
@@ -738,6 +739,19 @@ def _postal_off(sid):
         return bool(isinstance(f, dict) and (f.get("postalServiceOff") or f.get("postalOff")))
     except Exception:
         return False
+
+def _user_todos_on():
+    """The kernel's per-install USER TODOS switch (the user 2026-09-03: the feature is off by default
+    and per machine). Read from the file on EVERY call — the bus is a separate long-lived process, so
+    the file is the seam, and a gear flip must take effect at the next tools/list or call with no
+    restart. Absent, unreadable or malformed all read False (the opt-in must be provable), the
+    kernel's own _user_todos_on rule; reading never creates the file."""
+    try:
+        d = json.loads(USER_TODOS_SWITCH.read_text())
+        return bool(isinstance(d, dict) and d.get("enabled"))
+    except Exception:
+        return False
+
 
 def _git_branch(d):
     """Current git branch of a dir (for the agent list — same-branch is what makes
@@ -2988,6 +3002,24 @@ MCP_TOOLS = [
                                     "id": {"type": "string", "description": "optional specific message id (from check_sent) to recall just that one"}}}},
 ]
 
+USER_TODO_TOOLS = ("add_user_todo", "withdraw_user_todo")   # the pair the user-todos switch governs
+# What a call anyway hears while the switch is off (a session that connected while it was on still
+# holds the tool). Plain and LOUD — the agent must not believe the need was filed — and in the voice
+# the descriptions use (test_injected_voice.py scans it): no tracking-system nouns.
+USER_TODOS_OFF_ADD = ("User todos are turned off on this machine, so this was not saved and the person you "
+                      "work for will NOT see it. Say what you need in your next reply instead.")
+USER_TODOS_OFF_WITHDRAW = ("User todos are turned off on this machine, so there is nothing to withdraw. "
+                           "Nothing changed.")
+
+
+def _tools_offered():
+    """The tools/list answer: MCP_TOOLS, minus the two user-todo tools while the kernel's per-install
+    switch is off (the user 2026-09-03) — a tool that cannot succeed is not offered, so no session
+    learns a capability this machine has turned off. Read at LIST time, per call (_user_todos_on)."""
+    if _user_todos_on():
+        return MCP_TOOLS
+    return [t for t in MCP_TOOLS if t["name"] not in USER_TODO_TOOLS]
+
 def _mcp_call(name, args):
     me, mid = my_name(), my_id()
     _heartbeat(mid, me)
@@ -3064,6 +3096,10 @@ def _mcp_call(name, args):
         # Register a need with the person the agent works for (plans/user-todos.md) — the kernel
         # owns the store (POST /usertodo, the set_working/_publish_working shape) and mints the id.
         # `mid` is the calling SESSION (a subagent's call files under its parent — see MCP_TOOLS).
+        if not _user_todos_on():
+            # the per-install switch (the user 2026-09-03): refused BEFORE any post, plainly — the
+            # kernel's route would answer 409 anyway, but the agent hears why, not "try again"
+            return USER_TODOS_OFF_ADD, True
         if not mid:
             return "Not inside a romp session.", True
         text = str(args.get("text") or "").strip()
@@ -3082,6 +3118,8 @@ def _mcp_call(name, args):
     if name == "withdraw_user_todo":
         # Take back a flagged need, by id. An unknown or already-cleared id is a LOUD, plain
         # answer — never a silent success (plans/user-todos.md).
+        if not _user_todos_on():
+            return USER_TODOS_OFF_WITHDRAW, True     # the switch, as for add_user_todo above
         if not mid:
             return "Not inside a romp session.", True
         tid = str(args.get("id") or "").strip()
@@ -3151,7 +3189,7 @@ def mcp():
             elif method == "ping":
                 reply({"jsonrpc": "2.0", "id": mid_, "result": {}})
             elif method == "tools/list":
-                reply({"jsonrpc": "2.0", "id": mid_, "result": {"tools": MCP_TOOLS}})
+                reply({"jsonrpc": "2.0", "id": mid_, "result": {"tools": _tools_offered()}})   # the user-todo pair only while the switch is on
             elif method == "tools/call":
                 params = msg.get("params") or {}
                 text, is_err = _mcp_call(params.get("name", ""), params.get("arguments") or {})

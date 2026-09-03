@@ -112,11 +112,16 @@ class _StoreSandbox(unittest.TestCase):
         self.saved = jd.STATE
         jd.STATE = Path(self.td.name)
         km._user_todos_cache.clear()
+        km._user_todos_bad.clear()
+        km._set_user_todos(True)                     # the feature switch is OFF by default (2026-09-03);
+        #                                              these suites pin the ON behavior — the OFF side
+        #                                              lives in test_user_todos_switch.py
 
     def tearDown(self):
         jd.STATE = self.saved
         self.td.cleanup()
         km._user_todos_cache.clear()
+        km._user_todos_bad.clear()
 
 
 class StoreRoundTrip(_StoreSandbox):
@@ -633,6 +638,7 @@ class BuildSessionSeam(unittest.TestCase):
         jd.GOALDIR.mkdir(parents=True)
         km._parse_cache.clear()
         km._user_todos_cache.clear()
+        km._set_user_todos(True)                     # switch ON (default OFF since 2026-09-03) — see _StoreSandbox
         rows = [
             {"type": "user", "uuid": "u1", "timestamp": jd.iso(NOW - 90) if hasattr(jd, "iso") else "2026-06-01T00:00:00Z",
              "sessionId": SID, "message": {"role": "user", "content": "wire the login routes"}},

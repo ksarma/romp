@@ -46,6 +46,7 @@ class _FeedWorld(unittest.TestCase):
         jd.GOALDIR.mkdir(parents=True)
         jd.NAMES.mkdir(parents=True)
         km._user_todos_cache.clear()
+        km._set_user_todos(True)                     # the feature switch is OFF by default (2026-09-03)
         self.sessions = [{"sid": SID, "name": "web", "path": "/nonexistent/%s.jsonl" % SID,
                           "anchor": 0, "mtime": 0}]
         self.patches = [

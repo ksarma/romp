@@ -95,6 +95,7 @@ class InjectedBodiesSpeakAsTheUser(unittest.TestCase):
             {"rompUuid": SID, "seq": 4, "nodes": _nodes(), "placements": {}, "status": {}}))
         # open user todos for the context block below — the same synthetic notes-api world
         km._user_todos_cache.clear()
+        km._set_user_todos(True)                     # the feature switch is OFF by default (2026-09-03)
         km._add_user_todo(SID, "Need the auth-scheme decision to wire login — building the open "
                                "routes meanwhile")
         km._add_user_todo(SID, "Need a staging API key before the load test can run")
@@ -296,6 +297,10 @@ class UserTodoToolDescriptionsKeepTheVeil(unittest.TestCase):
         pm.my_name = lambda: "api"
         pm.my_id = lambda: SID
         pm._heartbeat = lambda *a, **k: None
+        # the per-install switch (2026-09-03) is OFF by default: turn it on for the live branches,
+        # then off again for the two refusals a still-connected session hears
+        pm.USER_TODOS_SWITCH.parent.mkdir(parents=True, exist_ok=True)
+        pm.USER_TODOS_SWITCH.write_text(json.dumps({"enabled": True, "gt": 1}))
         try:
             results = {}
             canned["res"] = {"ok": True, "todoId": "ut-9f2c1a34"}
@@ -309,12 +314,18 @@ class UserTodoToolDescriptionsKeepTheVeil(unittest.TestCase):
             results["withdraw: withdrawn"] = pm._mcp_call("withdraw_user_todo", {"id": "ut-9f2c1a34"})[0]
             canned["res"] = {"ok": False}
             results["withdraw: no open note"] = pm._mcp_call("withdraw_user_todo", {"id": "ut-deadbeef"})[0]
+            pm.USER_TODOS_SWITCH.write_text(json.dumps({"enabled": False, "gt": 2}))
+            results["add: switch off"] = pm._mcp_call("add_user_todo", {"text": "Need the port"})[0]
+            results["withdraw: switch off"] = pm._mcp_call("withdraw_user_todo", {"id": "ut-9f2c1a34"})[0]
         finally:
             pm._kernel_post, pm.my_name, pm.my_id, pm._heartbeat = saved
+            pm.USER_TODOS_SWITCH.unlink()
         # the sweep rendered the real branches, not seven copies of one fallback
         self.assertIn("Noted", results["add: noted"])
         self.assertIn("Withdrawn", results["withdraw: withdrawn"])
         self.assertIn("Nothing changed", results["withdraw: no open note"])
+        self.assertIn("turned off on this machine", results["add: switch off"])
+        self.assertIn("turned off on this machine", results["withdraw: switch off"])
         for name, text in results.items():
             for word, why in ROMP_WORDS:
                 with self.subTest(result=name, word=word):
