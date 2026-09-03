@@ -3298,6 +3298,92 @@ def _write_user_todos(cur):
     _atomic_write(p, json.dumps(cur, sort_keys=True))
 
 
+# ── the lifecycle LOG (the user 2026-09-03) ───────────────────────────────────────────────────────
+# STATE/user-todos-log.jsonl: one JSON line per lifecycle event (filed, answered, dismissed,
+# withdrawn, lost), appended and NEVER rewritten, so the store can be rebuilt exactly if it is ever
+# lost or corrupted — the recovery that motivated it was lossy because dashboard answers and
+# dismissals left no trace outside the single store file. Appended from the store's own choke
+# points, AFTER the store write succeeded: _add_user_todo (filed), _resolve_user_todo (answered /
+# dismissed / withdrawn — it knows the kind and holds the row), _reopen_user_todo (lost — the ONE
+# un-stamp, whichever delivery failure called it: the loss seam or the user's own recall). A log
+# failure is loud on stderr and never blocks the todo operation. Independent of the feature switch:
+# while OFF no event happens, so nothing is logged — the writer itself is not gated. Bounded by
+# ROTATION, not a per-line cap: past _USER_TODOS_LOG_ROTATE_BYTES the file is renamed to
+# user-todos-log.1.jsonl (one older generation kept) and a fresh one starts. _user_todos_from_log
+# folds lines back into the store shape, so a recovery is one call instead of a transcript scrape.
+# Line shape: {"t", "sid", "id", "kind", "text", "detail"} plus "reply" on an answered line — the
+# DELIVERED answer text (the anchored "Re: <ask> — <reply>" body, or the merged tmux batch): the
+# stamp is delivery-keyed, and at a parked drain or a merged paste the body is all that exists.
+USER_TODOS_LOG_FILE = "user-todos-log.jsonl"
+_USER_TODOS_LOG_ROTATE_BYTES = 5 * 1024 * 1024
+
+
+def _user_todos_log_write(line):
+    """The IO half: rotate when the file is over the bound, then ONE append of line + newline
+    (open "a": an atomic append for a line this size). Raises on failure — the caller is loud."""
+    p = jd.STATE / USER_TODOS_LOG_FILE
+    try:
+        if p.stat().st_size > _USER_TODOS_LOG_ROTATE_BYTES:
+            os.replace(p, p.with_name("user-todos-log.1.jsonl"))
+    except OSError:
+        pass                                         # no file yet: nothing to rotate
+    with open(p, "a", encoding="utf-8") as f:
+        f.write(line + "\n")
+
+
+def _log_user_todo_event(sid, tid, kind, text, detail="", reply=None):
+    """Append one lifecycle line. Called after the store write landed; a failure here is one loud
+    stderr line and nothing else — the todo operation already succeeded and must not unwind."""
+    rec = {"t": int(time.time()), "sid": str(sid), "id": str(tid), "kind": str(kind),
+           "text": str(text or ""), "detail": str(detail or "")}
+    if kind == "answered":
+        rec["reply"] = str(reply or "")
+    try:
+        _user_todos_log_write(json.dumps(rec, sort_keys=True))
+    except Exception as e:
+        sys.stderr.write("user-todos: lifecycle log append failed for %s %s (%s): %s. The store "
+                         "write itself succeeded; only the log line is missing.\n"
+                         % (kind, tid, str(sid)[:8], e))
+
+
+def _user_todos_from_log(lines):
+    """Fold lifecycle lines (JSON strings or parsed dicts, oldest first) into the STORE shape — a
+    recovery helper, pure: filed → an open row; answered / dismissed / withdrawn → the row's
+    resolved stamp (a resolution whose filing was rotated away synthesizes its row from the line's
+    own text, so the history survives); lost → the answered stamp lifted, the row open again.
+    Junk lines are skipped. Only sids with rows come back, like the store itself."""
+    store = {}
+    for ln in lines:
+        try:
+            rec = json.loads(ln) if isinstance(ln, str) else ln
+        except ValueError:
+            continue
+        if not isinstance(rec, dict):
+            continue
+        sid, tid, kind = str(rec.get("sid") or ""), str(rec.get("id") or ""), str(rec.get("kind") or "")
+        if not sid or not tid:
+            continue
+        rows = store.setdefault(sid, [])
+        hit = next((t for t in rows if t.get("id") == tid), None)
+        if kind == "filed":
+            if hit is None:
+                row = {"id": tid, "text": str(rec.get("text") or ""), "createdT": int(rec.get("t") or 0)}
+                if str(rec.get("detail") or "").strip():
+                    row["detail"] = str(rec["detail"])
+                rows.append(row)
+        elif kind in ("answered", "dismissed", "withdrawn"):
+            if hit is None:
+                hit = {"id": tid, "text": str(rec.get("text") or ""), "createdT": 0}
+                if str(rec.get("detail") or "").strip():
+                    hit["detail"] = str(rec["detail"])
+                rows.append(hit)
+            hit["resolved"] = {"kind": kind, "t": int(rec.get("t") or 0)}
+        elif kind == "lost":
+            if hit is not None:
+                hit.pop("resolved", None)
+    return {s: r for s, r in store.items() if r}
+
+
 def _add_user_todo(sid, text, detail=""):
     """Register a user todo for `sid`; returns the minted id ("ut-" + 8 hex) — the agent's handle
     for withdraw_user_todo, so it must never collide within the session's list. `detail` is the
@@ -3315,6 +3401,7 @@ def _add_user_todo(sid, text, detail=""):
         lst.append(rec)
         cur[sid] = lst
         _write_user_todos(cur)
+        _log_user_todo_event(sid, tid, "filed", rec["text"], rec.get("detail", ""))   # after the store landed
     return tid
 
 
@@ -3328,7 +3415,7 @@ def _add_user_todo(sid, text, detail=""):
 _USER_TODO_RESOLVED_KEEP = 64
 
 
-def _resolve_user_todo(sid, tid, kind):
+def _resolve_user_todo(sid, tid, kind, reply=None):
     """Stamp one clearing event (answered / dismissed / withdrawn) onto a STILL-OPEN todo. False
     when the id is unknown or already cleared — every caller must be LOUD about that, never a
     silent success (the withdraw contract) — and a second stamp never overwrites the first: the
@@ -3346,7 +3433,9 @@ def _resolve_user_todo(sid, tid, kind):
     The LOSS path hits the same wall the same way (round 3, 2026-08-22): an evicted row's answer
     that then dies with its holder reopens nothing, and _user_todo_answer_lost logs that no-op
     just as loudly — for an evicted row that line is the only record left that the user still
-    owes the session an answer, because no card can show an ask the cap removed."""
+    owes the session an answer, because no card can show an ask the cap removed.
+
+    `reply` (answered only) is the delivered answer text, logged on the lifecycle line."""
     with _user_todos_lock:
         cur = dict(_user_todos())                    # copy: never mutate the cached dict in place
         lst = [dict(t) for t in cur.get(sid) or [] if isinstance(t, dict)]
@@ -3363,6 +3452,7 @@ def _resolve_user_todo(sid, tid, kind):
             lst = [t for i, t in enumerate(lst) if i not in drop]
         cur[sid] = lst
         _write_user_todos(cur)
+        _log_user_todo_event(sid, tid, str(kind), hit.get("text"), hit.get("detail", ""), reply=reply)
     return True
 
 
@@ -3384,6 +3474,7 @@ def _reopen_user_todo(sid, tid):
         del hit["resolved"]
         cur[sid] = lst
         _write_user_todos(cur)
+        _log_user_todo_event(sid, tid, "lost", hit.get("text"), hit.get("detail", ""))   # the answer never arrived
     return True
 
 
@@ -3633,7 +3724,7 @@ def _stamp_user_todo_answered(sid, tid, text, nonce=None):
     with _user_todos_lock:
         stood_down = _tmux_paste_consume_refused(sid, tid, nonce)
         if not stood_down:
-            _resolve_user_todo(sid, tid, "answered")
+            _resolve_user_todo(sid, tid, "answered", reply=text)
     if stood_down:
         _notify_ut_unlatch(sid, tid)
         sys.stderr.write("user-todos: %s's answer for %s was refused by the pane before its "

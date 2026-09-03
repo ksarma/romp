@@ -44,7 +44,9 @@ one machine at a time: each kernel keeps its own copy, and the choice does not s
 attached machines. While it is off, sessions on that machine are not offered the tools that flag
 or withdraw a request, nothing is listed, and nothing is handed back on resume. Requests flagged
 earlier stay stored and reappear when you turn it back on; the kernel's log says how many are
-waiting.
+waiting. Every filing, answer, dismissal and withdrawal is also appended to `user-todos-log.jsonl`
+beside the store under Romp's state directory, one line per event and never rewritten, so the list
+can be rebuilt if the store is ever lost.
 
 These are for scripting and for agents rather than daily use:
 
