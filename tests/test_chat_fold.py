@@ -115,12 +115,16 @@ class Sess:
         self.t += dt
         return self.t
 
-    def turn(self, i, tools=("Edit",), close=True):
-        """One complete turn: prompt, a tool round (use + result), a closing reply."""
+    def turn(self, i, tools=("Edit",), close=True, rounds=1):
+        """One complete turn: prompt, `rounds` tool rounds (use + result), a closing reply."""
         recs = []
         u = self.uid(); recs.append(uline(self.tick(), "step %d: tighten the notes-api search" % i, u, self.last))
-        a = self.uid(); recs.append(aline(self.tick(), "Round %d: adjusting `search.py`." % i, a, u, tools=tools, stop="tool_use"))
-        r = self.uid(); recs.append(trline(self.tick(), "tu_%s_0" % a, r, a, content="ok\n"))
+        prev = u
+        for k in range(rounds):
+            a = self.uid(); recs.append(aline(self.tick(), "Round %d: adjusting `search.py`." % k, a, prev, tools=tools, stop="tool_use"))
+            r = self.uid(); recs.append(trline(self.tick(), "tu_%s_0" % a, r, a, content="ok\n"))
+            prev = r
+        r = prev
         self.last = r
         if close:
             b = self.uid(); recs.append(aline(self.tick(), "Step %d done." % i, b, r))
@@ -211,14 +215,25 @@ class Replay(_Fold):
         self.grow(3)
         b0 = km._CHAT_FOLD_STATS["bypass"]
         e = km._chat_fold_get(SID)
+        self.assertIsNotNone(e, "three turns sealed an entry to protect")
+        before = _dump(e["events"])
         m = km.build_session(SID, self.s.now, self.s.tm, path_override=str(self.s.tpath))
         self.assertEqual(m.get("type"), "session")
         self.assertEqual(km._CHAT_FOLD_STATS["bypass"], b0 + 1)
         self.assertIs(km._chat_fold_get(SID), e, "an override render must not touch the live prefix")
+        self.assertEqual(_dump(e["events"]), before)
 
 
 class Gates(_Fold):
+    def assert_folding(self):
+        """The fast path is live right now: one more build folds. Called BEFORE a gate event, so a build with
+        the fold disabled (which still runs the gate code and bumps g:*) cannot pass these tests."""
+        f0 = km._CHAT_FOLD_STATS["fold"]
+        self.s.build()
+        self.assertEqual(km._CHAT_FOLD_STATS["fold"], f0 + 1, "the fast path must be live before the gate event")
+
     def _demotes(self, reason, label):
+        """The gate fires: the build demotes with g:<reason>."""
         g = "g:" + reason
         n0 = km._CHAT_FOLD_STATS.get(g, 0)
         inc = self.equiv(label)
@@ -236,6 +251,7 @@ class Gates(_Fold):
         a2 = s.uid(); s.append([aline(s.tick(), "Will do.", a2, u2)])
         self.equiv("two turns, tool open")
         self.assertIn("tu_%s_0" % a1, km._chat_fold_get(SID)["open_tools"])
+        self.assert_folding()
         r = s.uid(); s.append([trline(s.tick(), "tu_%s_0" % a1, r, a2, content="edited late")])
         inc = self._demotes("tool-fill", "late tool result")
         card = next(ev for ev in inc["events"] if ev.get("kind") == "tool")
@@ -246,6 +262,7 @@ class Gates(_Fold):
         st = jd.STATE / "states"; st.mkdir(exist_ok=True)
         e = km._chat_fold_get(SID)
         t_in = e["last_t"] - 3                          # a recovery note timed INSIDE the sealed prefix
+        self.assert_folding()
         with open(st / (SID + ".jsonl"), "a") as f:
             f.write(json.dumps({"t": t_in, "retriesRecovered": 2}) + "\n")
         n0 = km._CHAT_FOLD_STATS.get("g:note", 0) + km._CHAT_FOLD_STATS.get("g:turnfp", 0)
@@ -255,13 +272,31 @@ class Gates(_Fold):
         self.assertTrue(any(ev.get("kind") == "retried" for ev in inc["events"]))
 
     def test_a_seam_change_demotes(self):
-        self.grow(3)
-        jd.GOALDIR.mkdir(parents=True, exist_ok=True)
+        # a seam that really splits a sealed segment (its t strictly inside the segment's span, its segs
+        # naming the segment): the tail past the seam gets new seg ids, so old events' tlIds move and the
+        # payload itself differs without the gate — not only the counter
+        s = self.s
+        s.append(s.turn(0, rounds=2))                     # two tool rounds: a span with a result strictly inside it
+        s.append(s.turn(1))
+        s.append(s.turn(2))
+        pre = self.equiv("three turns, two rounds in the first")
+        before = {ev.get("uuid"): ev.get("tlId") for ev in pre["events"] if ev.get("uuid")}
         e = km._chat_fold_get(SID)
+        seg_keys = list(e["seg"][2].keys())               # _seg_key(seg id) of every sealed segment
+        self.assertTrue(seg_keys)
+        parsed = km._parse(str(s.tpath), SID, s.now)
+        t0 = parsed["turns"][0]
+        first_result_t = next(a["t"] for a in t0["atoms"] if a.get("type") == "user" and any(
+            isinstance(b, dict) and b.get("type") == "tool_result"
+            for b in ((a.get("message") or {}).get("content") or []) if isinstance((a.get("message") or {}).get("content"), list)))
+        self.assert_folding()
+        jd.GOALDIR.mkdir(parents=True, exist_ok=True)
         (jd.GOALDIR / (SID + ".json")).write_text(json.dumps({
             "rompUuid": SID, "seq": 1, "nodes": {}, "placements": {}, "status": {},
-            "seams": [{"segs": ["nowhere"], "t": e["last_t"] - 1, "top": SID + ":g1", "text": "Ship it"}]}))
-        self._demotes("seam", "seam written")
+            "seams": [{"segs": seg_keys, "t": first_result_t, "top": SID + ":g1", "text": "Ship it"}]}))
+        inc = self._demotes("seam", "seam written")
+        after = {ev.get("uuid"): ev.get("tlId") for ev in inc["events"] if ev.get("uuid")}
+        self.assertNotEqual(before, after, "the seam moved at least one sealed event's timeline anchor")
 
     def test_a_path_token_that_resolves_later_demotes(self):
         s = self.s
@@ -273,6 +308,7 @@ class Gates(_Fold):
         ev = next(ev for ev in inc["events"] if ev.get("kind") == "user" and "notes.md" in (ev.get("md") or ""))
         self.assertEqual(ev.get("pathLinks"), {}, "tokens exist but none resolved yet")
         self.assertTrue(km._chat_fold_get(SID)["pl_pending"], "the sealed prefix remembers the pending token")
+        self.assert_folding()
         (s.cdir / "docs").mkdir()
         (s.cdir / "docs" / "notes.md").write_text("# summary\n")
         inc2 = self._demotes("path-link", "file appeared")
@@ -282,10 +318,32 @@ class Gates(_Fold):
     def test_a_rewrite_that_shortens_the_transcript_demotes(self):
         self.grow(4)
         recs = [json.loads(l) for l in self.s.tpath.read_text().splitlines() if l.strip()]
+        self.assert_folding()
         self.s.rewrite(recs[:-4])                       # the last turn is gone: a rewind, not an append
         n0 = km._CHAT_FOLD_STATS.get("g:parse", 0) + km._CHAT_FOLD_STATS.get("g:shrink", 0)
         self.equiv("shortened")
         self.assertGreater(km._CHAT_FOLD_STATS.get("g:parse", 0) + km._CHAT_FOLD_STATS.get("g:shrink", 0), n0)
+
+    def test_an_orphan_that_already_landed_does_not_demote_forever(self):
+        # a states orphanReply row whose uuid is a reply the disk KEPT: the flush skips it (landed), so it
+        # renders nothing — and a sealed prefix must not remember it as rendered, or the landed gate fires
+        # on every later build for good (landedTextUuids only grows): a silent return to full rebuilds
+        self.grow(3)
+        parsed = km._parse(str(self.s.tpath), SID, self.s.now)
+        landed = parsed["landedTextUuids"]
+        self.assertTrue(landed)
+        st = jd.STATE / "states"; st.mkdir(exist_ok=True)
+        with open(st / (SID + ".jsonl"), "a") as f:
+            f.write(json.dumps({"t": self.s.t - 50, "orphanReply": {"uuid": landed[0], "text": "a reply the disk kept"}}) + "\n")
+        self.equiv("landed orphan row")                   # this build may demote once (the note set moved)
+        self.s.append(self.s.turn(3))
+        self.equiv("next turn")
+        f0, l0 = km._CHAT_FOLD_STATS["fold"], km._CHAT_FOLD_STATS.get("g:landed", 0)
+        for i in range(4, 7):
+            self.s.append(self.s.turn(i))
+            self.equiv("turn %d" % i)
+        self.assertGreaterEqual(km._CHAT_FOLD_STATS["fold"] - f0, 3, "the fast path must resume after a landed orphan")
+        self.assertEqual(km._CHAT_FOLD_STATS.get("g:landed", 0), l0, "a never-rendered orphan must not trip the landed gate")
 
     def test_a_new_complete_turn_extends_the_prefix(self):
         self.grow(2)

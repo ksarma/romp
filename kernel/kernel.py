@@ -21514,8 +21514,14 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
                               tuple(tuple(sorted(_x.items())) for _x in gestures[:_cur[4]])),
                     "gest_skipped": {(_g["t"], _g["cmd"]) for _g in gestures[:_cur[4]]
                                      if (_g["t"], _g["cmd"]) in _live_cmd_keys},
-                    "orphan_uuids": {_o["uuid"] for _o in orphans[:_cur[3]] if _o.get("uuid")},
-                    "orphan_texts": [_o["text"].strip() for _o in orphans[:_cur[3]] if (_o.get("text") or "").strip()],
+                    # only the orphans actually RENDERED into the prefix (review find 2026-09-03): one the
+                    # flush skipped — its uuid already landed, or its text already on disk — can never be
+                    # retired by a later event, and recording it made the landed gate fire on every build
+                    # for good (landedTextUuids only grows), a silent return to full rebuilds
+                    "orphan_uuids": (set(_fe["orphan_uuids"]) if _fold_ok else set())
+                                    | {str(_e["uuid"])[len("orphan:"):] for _e in _newpart if _e.get("orphaned")},
+                    "orphan_texts": (list(_fe["orphan_texts"]) if _fold_ok else [])
+                                    + [(_e.get("md") or "").strip() for _e in _newpart if _e.get("orphaned")],
                     "open_tools": _open_tools, "skill_unfilled": _skill_unf,
                     "postal_raw": _praw, "postal_cards": _pcards,
                     "postal_key": _pk, "judge_gen": _judge_gen[0], "pl_pending": _plp,
