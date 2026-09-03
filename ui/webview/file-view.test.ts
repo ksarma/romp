@@ -936,7 +936,8 @@ test("the title bar carries a session chip resolved from the sid — never inven
     "between the path and the actions");
   // the signatures every opener and the relay pin depend on are exactly as they were
   assert.match(VIEW, /export function openFileView\(path: string, sid\?: string \| null\): boolean \{/);
-  assert.match(VIEW, /export function initFileView\(poster: \(m: Record<string, unknown>\) => void\): void \{/);
+  // (the optional onRelay — the Files pane's own relay contract, 2026-09-03 — leaves the poster's shape alone)
+  assert.match(VIEW, /export function initFileView\(poster: \(m: Record<string, unknown>\) => void,\n\s*onRelay\?: \(m: \{ path: string; sid\?: unknown; identity\?: unknown \}\) => void\): void \{/);
 });
 
 test("both hosting documents register a resolver beside their initFileView boot", () => {

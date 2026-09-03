@@ -972,13 +972,18 @@ function pdfBlock(objUrl: string, path: string): HTMLElement {
  *  openPath); the sid rides along so a remote session's file still resolves against the host that
  *  owns it. A REAL open answers the shell with viewFileOpened — the shell arms its pane-restore
  *  flag only on that ack, so a lost relay (or a dirty-edit veto, which opens nothing) can never
- *  leave a stale armed flag behind. */
-export function initFileView(poster: (m: Record<string, unknown>) => void): void {
+ *  leave a stale armed flag behind. That ack and viaRelay are the FEED's contract; a document with
+ *  a relay contract of its own passes `onRelay` and takes the relayed message whole instead (the
+ *  Files pane, 2026-09-03: it caches the identity the relay carries, keeps its recent list, and
+ *  owes the shell no pane restore, since the pane stays up). */
+export function initFileView(poster: (m: Record<string, unknown>) => void,
+                             onRelay?: (m: { path: string; sid?: unknown; identity?: unknown }) => void): void {
   post = poster;
   window.addEventListener("message", (e: MessageEvent) => {
     const m = e.data;
     if (!m) return;
     if (m.romp === "viewFile" && typeof m.path === "string" && m.path) {
+      if (onRelay) { onRelay(m); return; }   // this document's own contract (the Files pane) — not the feed's
       // gated on the verdict: a dirty-edit veto keeps the PREVIOUS viewer, which must not be
       // re-tagged as relay-opened (a false announce on ITS close) and earns no ack (arm-on-ack —
       // the shell must not arm a restore for an open that never happened)

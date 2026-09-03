@@ -9,7 +9,7 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-const SHEETS = ["styles.css", "feed.css", "fleet-pane.css", "waiting-pane.css"];
+const SHEETS = ["styles.css", "feed.css", "fleet-pane.css", "waiting-pane.css", "files-pane.css"];
 
 function scan(css: string): { finalDepth: number; strayCloseLines: number[] } {
   let depth = 0, line = 1, i = 0;
