@@ -173,6 +173,121 @@ def transcript_path(cwd: str, fsid: str) -> str:
                     "projects", proj, fsid + ".jsonl")   # per-kernel Claude root (plans/multi-kernel.md phase 2)
 
 
+# ── moving a live session's working directory (the user 2026-09-01, who wanted a session to follow a
+# subproject promoted to its own repo) ────────────────────────────────────────────────────────────
+# Claude Code 2.1.257 has a `set_cwd` control request — the headless twin of the interactive /cd. On
+# `ok` the CLI itself chdirs, MOVES the current transcript (`<lastSid>.jsonl` + its `<lastSid>/`
+# sidecar folder) to the new cwd's project slug (a file already at the destination is set aside as
+# `.superseded-<ts>` first, never overwritten), appends a `{type: relocated, sessionId, relocatedCwd}`
+# record (forks strip it; a later non-fork resume restores it) plus an isMeta notice that tells the
+# model its environment block is stale, re-resolves project settings/hooks/skills/MCP, fires the
+# CwdChanged hook (NOT SessionStart — romp registers no CwdChanged hook, so nothing romp-side re-runs),
+# and emits (with no query sent) an init SystemMessage, a turn-less ResultMessage (num_turns 0) and two
+# commands_changed SystemMessages. Verified 2026-09-02 on SDK 0.2.132 + CLI 2.1.257 (hermetic
+# CLAUDE_CONFIG_DIR) and against the CLI binary: `ok {cwd, changed, transcript_relocated}` (a same-dir
+# request is `ok, changed: false` and emits nothing); `needs_trust {directory, trust_root?}` → re-send
+# with trust_accepted + trusted_directory (trust is recorded per git root in the CLI's config);
+# `rejected {reason, message}` with reason ∈ not_found / not_a_directory / unsafe_path /
+# blocked_by_rule (a `Cd(...)` permission rule) / busy ("A turn is in progress — the working directory
+# can only change while the session is idle…"); a relocation failure comes back as a control error and
+# the CLI rolls its chdir back. Nothing here ever COPIES a transcript: the same fsid under two project
+# slugs makes every future --resume fail ("No conversation found" — the CLI's id-scan fallback refuses
+# ambiguity), so the CLI moves the current file and romp moves the rest, both by rename.
+MOVE_CONTROL_TIMEOUT = 30.0   # the set_cwd round trip (a rename + a settings re-resolve; seconds at most)
+MOVE_CONNECT_WAIT = 60.0      # a dormant session's CLI coming up for the move (resume + handshake)
+_NO_CONTROL_SENDER = ("this Claude Agent SDK exposes no _send_control_request on its client — romp needs it "
+                      "to send set_cwd; nothing was changed")
+
+
+def true_case(path: str) -> str:
+    """`path` (absolute) with every component in its true on-disk casing — the kernel's _true_case,
+    duplicated tiny so the backend can canonicalise a move target without a kernel import. The cwd
+    STRING is load-bearing: the CLI encodes its projects dir from its own getcwd (true case) while
+    romp derives transcript paths from the stored string, so a case variant would point every consumer
+    at a slug that does not exist (the silent wrong-case launch, the user 2026-07-17)."""
+    out = "/"
+    for comp in [c for c in path.split("/") if c]:
+        try:
+            names = os.listdir(out)
+        except OSError:
+            names = []
+        if comp not in names:
+            m = [e for e in names if e.lower() == comp.lower()]
+            if len(m) == 1:
+                comp = m[0]
+        out = os.path.join(out, comp)
+    return out
+
+
+def canon_dir(raw: str) -> tuple[str, str]:
+    """(canonical path, "") for an EXISTING directory — ~ expanded, symlinks and trailing slash via
+    realpath, casing via true_case — or ("", why not). Never creates: a move goes to a folder the user
+    already has (the create-session picker owns the "make it" offer)."""
+    p = os.path.expanduser(str(raw or "").strip())
+    if not p:
+        return "", "no folder given"
+    if not os.path.isabs(p):
+        return "", "the folder must be an absolute path: %s" % p
+    if not os.path.isdir(p):
+        return "", ("not a directory: %s" if os.path.exists(p) else "directory not found: %s") % p
+    return true_case(os.path.realpath(p)), ""
+
+
+def known_fsids(state_dir: Path, sid: str, reg: dict | None = None) -> set[str]:
+    """Every transcript fsid romp has on record for `sid`: the sid itself, the reg's lastSid, each
+    /clear episode head (episodes/<sid>.jsonl, fsid per row) and both ends of every resume fork
+    (states/<sid>.jsonl resumeFork rows). These are the files that share the session's project slug and
+    that romp's episode/lineage readers derive from the stored cwd — the set a move has to carry."""
+    out = {str(sid)}
+    reg = reg if reg is not None else (read_reg(state_dir, sid) or {})
+    if reg.get("lastSid"):
+        out.add(str(reg["lastSid"]))
+    for sub, pick in (("episodes", lambda r: [r.get("fsid")]),
+                      ("states", lambda r: [(r.get("resumeFork") or {}).get(k) for k in ("from", "to")])):
+        try:
+            lines = (Path(state_dir) / sub / (str(sid) + ".jsonl")).read_text().splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            try:
+                r = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(r, dict):
+                out.update(str(v) for v in pick(r) if v)
+    return out
+
+
+def relocate_transcripts(old_cwd: str, new_cwd: str, fsids, log=None) -> list[str]:
+    """Move the transcripts of `fsids` (each `.jsonl` and its `<fsid>/` sidecar folder) from
+    `old_cwd`'s project slug to `new_cwd`'s, by RENAME within the projects tree. A source that is not
+    there is skipped silently (the CLI already moved the current one; a fsid may never have written a
+    sidecar); an existing TARGET is never overwritten — logged and left, since two candidates mean a
+    collision only a person should resolve. Returns the fsids whose file moved."""
+    moved = []
+    if not old_cwd or not new_cwd or os.path.realpath(old_cwd) == os.path.realpath(new_cwd):
+        return moved
+    for fsid in sorted(fsids):
+        src = transcript_path(old_cwd, fsid)
+        dst = transcript_path(new_cwd, fsid)
+        for a, b in ((src, dst), (src[:-len(".jsonl")], dst[:-len(".jsonl")])):
+            if not os.path.exists(a):
+                continue
+            if os.path.exists(b):
+                if log:
+                    log("move: %s already exists — leaving %s where it is" % (b, a), problem=True)
+                continue
+            try:
+                os.makedirs(os.path.dirname(b), exist_ok=True)
+                os.rename(a, b)
+                if a == src:
+                    moved.append(fsid)
+            except OSError as e:
+                if log:
+                    log("move: could not relocate %s -> %s: %s" % (a, b, e), problem=True)
+    return moved
+
+
 def last_record_uuid(path, tail_bytes: int = 262144) -> str:
     """The uuid of the LAST uuid-bearing record in a transcript — the conversation's current
     leaf. Reads only the file's tail (a transcript can be tens of MB; the leaf is always within
@@ -1972,6 +2087,14 @@ class SdkSession:
         self._wake: asyncio.Event | None = None
         self._reconnect = False                 # the current break is a reconnect (not a shutdown)
         self._reconnect_when_idle = False        # a reconnect was requested mid-turn → apply at turn end
+        # The handshake as a cross-thread EVENT: set the moment a ClaudeSDKClient is up, cleared when
+        # it goes down — what a kernel-thread caller that needs the control channel (SdkBackend.move on
+        # a just-revived session) waits on, instead of polling for self.client.
+        self._connected = threading.Event()
+        # A set_cwd the CLI accepted emits a turn-less ResultMessage (num_turns 0) with no query behind
+        # it; this flag, armed by move() before the request and spent by that result, keeps the settle
+        # side effects (turn-completed, waiting, refreshes, the rename ping) off a turn that never was.
+        self._move_settle_expected = False
         self.ended = False
         # input + ask bridging
         # Queued user turns are held in a VISIBLE list (not flushed into the SDK) until the
@@ -2785,6 +2908,7 @@ class SdkSession:
                     # ready to take a message (measured live 2026-08-10: connect done ~1.5s after
                     # create, the ready chip landing at 5-12s with the cycle).
                     self.backend._push_session(self.sid)
+                    self._connected.set()   # the control channel exists from here (move() waits on this)
                     self._last_cost_total = 0.0   # a fresh CLI process starts its cumulative cost at zero
                     self._last_usage_totals = {}  # …and its cumulative token counters
                     # The CLI is demonstrably up, so any recorded launch failure is HISTORY — clear it
@@ -2849,6 +2973,7 @@ class SdkSession:
                             except Exception as e:                 # a genuine stream/transport error — surface it
                                 self.backend._log(f"sdk session {self.name}: {type(e).__name__}: {e}")
                         self.client = None
+                        self._connected.clear()
             except Exception as e:
                 # A REWIND-armed connect the CLI refused (a bad --resume-session-at target exits 1 with
                 # "No message found" BEFORE the handshake) must not crash-loop: the flag would re-apply on
@@ -3220,6 +3345,8 @@ class SdkSession:
             # "claude" (claude-opus-4-8, us.anthropic.claude-…); keep the last good one otherwise.
             if m and "claude" in m.lower():
                 self._learn_model(pretty_model(m), raw=str(m))
+        elif isinstance(msg, ResultMessage) and self._consume_move_settle(msg):
+            pass   # the accepted move's turn-less result — nothing ended, so nothing settles (see the def)
         elif isinstance(msg, ResultMessage):
             # total_cost_usd is CUMULATIVE per CLI process (the result event's totalCostUSD counter, beside
             # total_duration/lines) — fold only THIS turn's delta, or every result re-adds the whole
@@ -3325,6 +3452,23 @@ class SdkSession:
                 self.backend._record_rate_limit(msg.rate_limit_info)
         # Forward the raw message to the kernel for live chat/event use.
         self.backend._forward(self, msg)
+
+    def _consume_move_settle(self, msg) -> bool:
+        """Is this ResultMessage the turn-less one an accepted set_cwd emits (verified 2026-09-02:
+        `ResultMessage(result='', num_turns=0)` right after the init, with no query sent)? Two facts
+        must agree: move() ARMED _move_settle_expected before its request (the response and the result
+        race on two threads, so arming after `ok` could lose), and the result says num_turns == 0 — a
+        real turn, even an interrupted one, reports its API round trips. Spent on the match, so the
+        NEXT zero-turn result (there is none in normal traffic) settles as before. Without this guard
+        the settle path ran on a turn that never was: a false _turn_completed, a redundant 'waiting'
+        write, the rename ping fired as its own turn, and a parked effort reconnect consumed early."""
+        if not getattr(self, "_move_settle_expected", False):   # getattr: __new__-built test doubles
+            return False
+        if getattr(msg, "num_turns", None) != 0:
+            return False
+        self._move_settle_expected = False
+        self.backend._log("sdk %s: the move's turn-less result arrived — not a turn end" % self.sid[:8])
+        return True
 
     # ---- the permission/AskUserQuestion callback (the headless-parity piece) ----
 
@@ -4327,6 +4471,7 @@ class SdkBackend:
         self._log_cb = log
         self.sessions: dict[str, SdkSession] = {}
         self._lock = threading.Lock()
+        self._turn_seq: dict = {}                 # sid -> turns ended this kernel life (turn_seq; under _lock)
         self._seed_writes: dict = {}              # tok → {sid, value, prior, priorTok}: set_model's optimistic
         #                                             writes to the SHARED sdk-defaults `model`, pending the
         #                                             CLI's verdict (see _seed_write_pending); under _defaults_lock
@@ -4441,6 +4586,13 @@ class SdkBackend:
             queue delivers via the __init__ seed. Each reg is read FRESH inside the loop — the boot
             reseed may have re-queued a lost send after `regs` was listed.
         Everything else stays lazy/dormant. Loud one-line summary whenever anything was recovered."""
+        for r in regs:
+            if r.get("cwdPending"):   # a move cut by the kernel's death — settle it before anything resumes
+                try:
+                    self._heal_cwd_pending(r)
+                except Exception:
+                    self._log("boot reconcile: cwdPending heal for %s failed: %s"
+                              % (r.get("sid"), traceback.format_exc()))
         try:
             alive = [r for r in regs if r.get("alive") and r.get("sid")]
             reaped = 0
@@ -6493,6 +6645,222 @@ class SdkBackend:
             s.name = new_name
         return True
 
+    def move(self, sid: str, new_cwd: str) -> str:
+        """Move a session's working directory to `new_cwd` by wrapping the CLI's own `set_cwd` control
+        request (the user 2026-09-01, who wanted a session to follow a subproject promoted to its own
+        repo; the mechanism notes sit above `true_case`). "" on success; "busy" when a turn is in
+        flight — the kernel parks the op and retries at turn end; any other string is the reason the
+        move did not happen, verbatim for the user's error card (fail loudly, never quietly stay put).
+
+        Order of operations, and why:
+          * canonicalise first (realpath + true case; an existing directory, never created) — the
+            stored string is what every transcript path is derived from;
+          * a DORMANT session is revived first, in the OLD cwd, where its transcript is — never resumed
+            in the new dir "to save a step": `--resume` from another cwd finds the file by scan and then
+            keeps WRITING where it found it (the CLI adopts the found project dir), which would leave the
+            transcript behind under the old slug with romp pointing at the new one;
+          * `busy` is answered BEFORE anything is written (the kernel's park is the retry);
+          * TWO-PHASE write: `cwdPending: <new>` lands in the reg before the request, so a kernel that
+            dies between the CLI's `ok` (transcript already moved) and the reg write leaves a flag the
+            boot reconcile settles by checking which slug actually holds the transcript
+            (_heal_cwd_pending); a rejection drops the flag and changes nothing else;
+          * `needs_trust` is answered by re-sending with trust accepted: the user picked this folder for
+            the session — that pick IS the trust decision, and the CLI latches it durably in its config
+            (the same latch an interactive /cd's prompt would set), so a later resume there never asks;
+          * on `ok`: the live cwd, the reg (cwd + a durable movedFrom), the names/ discovery file (name
+            and colours preserved) and the PRIOR-EPISODE transcripts (the CLI moves only the current
+            <lastSid>.jsonl + folder; the older fsids of this sid — /clear episodes, resume forks — have
+            no writer, so romp renames them) all follow. Comment threads (threadOf regs) keep their own
+            reg.cwd and stay where they are in v1 — their transcripts stay consistent with their own reg.
+
+        Nothing is injected into the session: the CLI's own isMeta notice already tells the model where
+        it is now and loads the new folder's CLAUDE.md. No SessionStart hook fires. Not moved by anyone:
+        the old project's auto-memory, per-project allowedTools/MCP in the CLI's config, and the old
+        repo's .claude/settings.local.json — they are keyed on the folder, not the session."""
+        reg = read_reg(self.state_dir, sid)
+        if not reg:
+            return "romp has no record of this session"
+        if reg.get("threadOf"):
+            return "a comment thread keeps its own folder — move the session it belongs to"
+        target, err = canon_dir(new_cwd)
+        if err:
+            return err
+        old = str(reg.get("cwd") or "")
+        if target == old:
+            # already there: nothing to ask the CLI and nothing to record. A flag written here would equal
+            # `cwd`, and the boot heal's location test cannot tell "pending == current" from "under BOTH
+            # slugs" — a kernel death inside that round trip left a flag it reported as a problem forever.
+            return ""
+        if not reg.get("alive"):
+            # dormant → revive in the OLD cwd (that is where the transcript is), then move like any live one
+            self.resume(str(reg.get("name") or sid), sid)
+        s = self._ensure(sid)
+        if s is None:
+            return "the session could not be started (see the kernel log)"
+        deadline = time.time() + MOVE_CONNECT_WAIT
+        while not s._connected.wait(0.5):   # event-based; the loop only re-checks the two exits
+            if not s.thread.is_alive():
+                le = self.launch_error(sid) or {}
+                return "the session's CLI did not start: %s" % (le.get("text") or "see the kernel log")
+            if time.time() > deadline:
+                return "the session's CLI did not come up within %ds" % int(MOVE_CONNECT_WAIT)
+        if self.busy(sid):
+            return "busy"
+        claim = self._claim_cwd_pending(sid, target)
+        if claim:
+            return claim
+        s._move_settle_expected = True   # armed BEFORE the request — see _consume_move_settle
+        r, err = self._set_cwd_request(s, target)
+        if not err and isinstance(r, dict) and r.get("status") == "needs_trust":
+            r, err = self._set_cwd_request(s, target, trust=str(r.get("directory") or target))
+        ok = not err and isinstance(r, dict) and r.get("status") == "ok"
+        if not ok:
+            if err == _NO_CONTROL_SENDER:
+                s._move_settle_expected = False                 # nothing was sent
+                self._update_reg_dropping(sid, ("cwdPending",))
+                return err
+            if isinstance(r, dict) and r.get("status") == "rejected":
+                s._move_settle_expected = False                 # the CLI answered: it did nothing
+                self._update_reg_dropping(sid, ("cwdPending",))
+                if r.get("reason") == "busy":
+                    return "busy"
+                return str(r.get("message") or r.get("reason") or "the CLI rejected the move")
+            # No usable answer — a control error, a timeout, an unknown shape. The CLI relocates FIRST
+            # and replies after, so a lost reply can mean a move that happened: dropping the flag here
+            # would leave romp deriving the transcript path from the old folder while the file sits
+            # under the new one (a blind feed, and the next --resume writes to the wrong place). The
+            # transcript's location decides, exactly as the boot heal decides a kernel death mid-move.
+            why = err or ("unexpected reply to set_cwd: %r" % (r,))
+            self._heal_cwd_pending(read_reg(self.state_dir, sid) or {"sid": sid, "cwdPending": target, "cwd": old})
+            after = read_reg(self.state_dir, sid) or {}
+            if after.get("cwd") == target and not after.get("cwdPending"):
+                # it moved (and the CLI's turn-less result is still expected — the arm stands)
+                self._log("sdk %s: set_cwd's reply was lost (%s) but the transcript is under %s — the move stands"
+                          % (sid[:8], why, target))
+                return ""
+            s._move_settle_expected = False
+            if after.get("cwdPending"):
+                return ("the move's outcome is uncertain: %s — the transcript was not found under exactly one of "
+                        "%s and %s, so nothing was changed; the next kernel start re-checks (see the kernel log)"
+                        % (why, old or "its folder", target))
+            return "the move failed: %s — the session stays in %s" % (why, old or "its folder")
+        new = r.get("cwd") if isinstance(r.get("cwd"), str) and r.get("cwd") else target
+        if r.get("changed") is False or new == old:
+            s._move_settle_expected = False                     # no relocation → no turn-less result is coming
+            self._update_reg_dropping(sid, ("cwdPending",))     # already there — nothing to record
+            return ""
+        self._finish_move(s, sid, old, new)
+        return ""
+
+    def _claim_cwd_pending(self, sid: str, target: str) -> str:
+        """Set the two-phase flag ONLY when no move is pending. Two concurrent move() calls for one sid (a
+        dashboard and `romp move`, or a double click) must not both send set_cwd — the second would race
+        the first's rename and reg write. The check and the write are one step under _reg_lock. "" when
+        claimed; otherwise the reason, verbatim for the user's error card. A flag an earlier kernel left
+        unsettled (the boot heal's BOTH/NEITHER case) refuses too, and says where to look."""
+        with self._reg_lock:
+            reg = read_reg(self.state_dir, sid)
+            if reg is None:
+                return "romp has no record of this session"
+            pend = reg.get("cwdPending")
+            if pend:
+                return ("a move to %s is already pending for this session — in flight, or left unsettled by an "
+                        "earlier kernel (see the kernel log)" % pend)
+            reg["cwdPending"] = target
+            write_reg(self.state_dir, sid, reg)
+            return ""
+
+    @staticmethod
+    def _set_cwd_request(s, path: str, trust: str | None = None):
+        """The ONE place romp speaks the SDK's PRIVATE control-request sender. Python SDK 0.2.132 has no
+        public wrapper for set_cwd (the TypeScript SDK already ships `setCwd(path, {trustAccepted,
+        trustedDirectory})`); when the Python SDK grows one, swap this body for it and nothing else
+        changes. `trust` is the directory a `needs_trust` answer named — the re-send accepts it.
+        Returns _call_on_loop's (response, error) pair; a client without the sender is the named
+        _NO_CONTROL_SENDER error, never a guess at another route."""
+        q = getattr(s.client, "_query", None)
+        send = getattr(q, "_send_control_request", None)
+        if not callable(send):
+            return None, _NO_CONTROL_SENDER
+        req = {"subtype": "set_cwd", "path": path}
+        if trust:
+            req.update(trust_accepted=True, trusted_directory=trust)
+        return s._call_on_loop(lambda: send(req), "move (trust)" if trust else "move", timeout=MOVE_CONTROL_TIMEOUT)
+
+    def _finish_move(self, s, sid: str, old: str, new: str) -> None:
+        """Everything romp records about a session's cwd follows the CLI's `ok` — the live object (the
+        next reconnect's --resume must look where the transcript now is), the reg (cwd, a durable
+        movedFrom; cwdPending spent), the names/ file (discovery re-scans on its mtime), and the
+        prior-episode transcripts the CLI did not move. Also the boot heal's finishing half."""
+        if s is not None:
+            s.cwd = new
+        self._update_reg_dropping(sid, ("cwdPending",), cwd=new,
+                                  movedFrom={"cwd": old, "t": int(time.time())})
+        reg = read_reg(self.state_dir, sid) or {}
+        try:
+            parts = (Path(self.state_dir) / "names" / sid).read_text().rstrip("\n").split("\t")
+        except OSError:
+            parts = [str(reg.get("name") or sid), old]
+        parts += ["", "", ""]
+        write_name(self.state_dir, sid, parts[0] or str(reg.get("name") or sid), new, parts[2], parts[3])
+        moved = relocate_transcripts(old, new, known_fsids(self.state_dir, sid, reg), log=self._log)
+        self._log("sdk %s: moved %r -> %r (%d prior transcript file(s) followed)"
+                  % (sid[:8], old, new, len(moved)))
+        self._poke()
+
+    def _update_reg_dropping(self, sid: str, drop=(), **fields) -> None:
+        """_update_reg that also REMOVES keys — a spent two-phase flag (cwdPending) must leave the reg,
+        not linger as a null every reader has to know about. Same lock, same unreadable-reg guard."""
+        with self._reg_lock:
+            reg = read_reg(self.state_dir, sid)
+            if reg is None:
+                if _reg_path(self.state_dir, sid).exists():
+                    sys.stderr.write("update_reg: %s unreadable — skipping a %s write rather than "
+                                     "gutting the reg\n" % (sid[:8], "/".join(sorted(fields) + list(drop))))
+                    return
+                reg = {"sid": sid}
+            for k in drop:
+                reg.pop(k, None)
+            reg.update(fields)
+            write_reg(self.state_dir, sid, reg)
+
+    def _heal_cwd_pending(self, reg: dict) -> None:
+        """Settle a reg the previous kernel left mid-move (cwdPending set: the request went out, the reg
+        never learned the answer). The transcript's location is the fact that decides it — exactly ONE
+        of the two project slugs should hold `<lastSid>.jsonl`: under the pending cwd the CLI said `ok`
+        and only romp's half is missing (finish it); still under the old cwd the move never happened
+        (drop the flag). Neither or both is a state this code must not guess at: say so loudly and
+        leave the flag for a person."""
+        sid = str(reg.get("sid") or "")
+        pend = str(reg.get("cwdPending") or "")
+        cur = str(reg.get("cwd") or "")
+        fsid = str(reg.get("lastSid") or sid)
+        if not sid or not pend:
+            return
+        if pend == cur:
+            # a move to the folder the session was already in, cut mid-flight (a reg from before move()
+            # short-circuited that case): nothing moved and nothing can be learned from the location
+            # test below — both slugs are ONE slug, so it would read "under BOTH" and file a problem
+            # on every boot for as long as the flag lived
+            self._log("boot reconcile: %s had a move to its own folder pending — nothing to settle; cleared" % sid[:8])
+            self._update_reg_dropping(sid, ("cwdPending",))
+            return
+        at_new = os.path.exists(transcript_path(pend, fsid))
+        at_old = bool(cur) and os.path.exists(transcript_path(cur, fsid))
+        if at_new and not at_old:
+            self._log("boot reconcile: %s was mid-move to %s — the transcript is there; finishing romp's half"
+                      % (sid[:8], pend))
+            self._finish_move(self.sessions.get(sid), sid, cur, pend)
+        elif at_old and not at_new:
+            self._log("boot reconcile: %s had a move to %s pending that never happened — cleared" % (sid[:8], pend))
+            self._update_reg_dropping(sid, ("cwdPending",))
+        else:
+            self._log("boot reconcile: %s has cwdPending=%s but its transcript %s is %s — leaving the flag; "
+                      "check %s and %s by hand"
+                      % (sid[:8], pend, fsid, "under BOTH slugs" if at_new else "under NEITHER slug",
+                         transcript_path(cur, fsid) if cur else "(no cwd)", transcript_path(pend, fsid)),
+                      problem=True)
+
     def set_model(self, sid: str, value: str) -> bool:
         """Change the session's model. Persisted in the registry (so a reconnect keeps it) and applied
         LIVE on a connected session via the SDK control channel (set_model_live) — the designed API,
@@ -7541,6 +7909,16 @@ class SdkBackend:
 
     def _turn_completed(self, sid: str):
         """A turn's ResultMessage landed — the session is demonstrably able to finish turns again, so
-        re-arm the crash-resume budget (_heal_cut_session's one-resume-per-cut bound)."""
+        re-arm the crash-resume budget (_heal_cut_session's one-resume-per-cut bound), and count the
+        turn end (turn_seq — the event a parked move waits on after the CLI answered `busy`)."""
         with self._lock:
             self._heal_attempts.pop(sid, None)
+            self._turn_seq[sid] = self._turn_seq.get(sid, 0) + 1
+
+    def turn_seq(self, sid: str) -> int:
+        """How many of this session's turns have ENDED (ResultMessages seen) this kernel life. The kernel's
+        parked move keys its retry on this after the CLI answered `busy`: a turn the CLI knows about that
+        romp's inflight does not (one the CLI started itself — a hook, a background task's notification)
+        still ends with a ResultMessage, and that end is the event, not a timer."""
+        with self._lock:
+            return self._turn_seq.get(sid, 0)

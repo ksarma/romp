@@ -1650,6 +1650,11 @@ body.chat-theme-yatharth .meta-btn.mode-risky, body.chat-theme-yatharth .meta-it
   border: 1px solid var(--box-border); border-radius: 6px; outline: none; }
 .fork-name:focus { border-color: var(--accent); }
 .fork-name.bad { border-color: #ff6a6a; }
+/* the move dialog's one-line verdict under its path box (the user 2026-09-01): the picker's dir-hint
+   tones, as a line of its own — dim by default, amber warn, red bad; empty until the kernel answers */
+.move-dir-hint { min-height: 1.2em; font-family: var(--sans); font-size: 0.82em; color: var(--dim); }
+.move-dir-hint.warn { color: #e0a030; }
+.move-dir-hint.bad { color: #e5484d; }
 /* pending-rewind overlay: turns after an edited message belong to the branch being abandoned — they
    dim until the kernel's rewound payload replaces them (reconcileRewind retires the flag then). */
 .turn.rewound { opacity: 0.35; transition: opacity 0.2s ease; }

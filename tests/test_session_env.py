@@ -467,7 +467,7 @@ class DrivePlumbing(unittest.TestCase):
         self.assertIn('_park_op(sid, ("env", value))', src)
         self.assertIn('elif op[0] == "env":', src)
         self.assertIn("be.set_env(sid, op[1])", src)
-        self.assertIn('("model", "effort", "fast", "env")', src,
+        self.assertIn('("model", "effort", "fast", "env", "cwd")', src,
                       "a repeat env pick REPLACES the earlier parked one in place, like model/effort")
 
     def test_the_create_path_passes_env_through(self):
