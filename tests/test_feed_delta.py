@@ -13,7 +13,8 @@ Pinned here: a client that announced FEED_DELTA_CAP gets a {type:"feedDelta"} on
 a clock-only tick (a `now` step, a `trgb` step) sends nothing on EITHER path; removals ride the delta —
 cards and ledgers, including a ledger removed across a ledger-less build in between; a 2-card change is a
 small fraction of the full frame; a client that did not announce keeps receiving full frames, `trgb`
-included (an older bundle destructures it unguarded); deltas never carry `trgb`; a page that announced READY_GATE_CAP is HELD — the real pusher cycle and every other
+included (an older bundle destructures it unguarded); deltas never carry `trgb`; `_strip_trgb` removes the
+tint and nothing else; a page that announced READY_GATE_CAP is HELD — the real pusher cycle and every other
 push path send it nothing — until its bundle's `ready`, which is served the cached full frame at once,
 stamped with the clock as of the serve (a frame built hours earlier must not anchor the pane's ages hours
 in the past); a socket that did not announce is ready from accept; needFullFeed re-bases; the ready handler
@@ -704,6 +705,53 @@ class ReadyGate(unittest.TestCase):
         self.assertNotIn("_client_ready", src)
         src = KSRC[KSRC.index("def _broadcast_restarting("):KSRC.index("def _push_all(")]
         self.assertNotIn("_client_ready", src)
+
+
+class StripTrgbIsExact(unittest.TestCase):
+    """`_strip_trgb` removes the tint and NOTHING else (the 2026-09-03 review: a strip that also dropped
+    `summary` passed every test — a summary-only change then rode no delta and busted no dedup)."""
+
+    def test_the_strip_removes_only_trgb_at_the_top_and_in_every_tree_node(self):
+        card = _card(9)
+        before = json.dumps(card, sort_keys=True)
+        out = km._strip_trgb(card)
+        self.assertEqual(json.dumps(card, sort_keys=True), before, "the input is not mutated")
+        exp = dict(card); del exp["trgb"]
+        exp["tree"] = [{k: v for k, v in n.items() if k != "trgb"} for n in card["tree"]]
+        self.assertEqual(out, exp)
+        self.assertEqual(sorted(out), sorted(k for k in card if k != "trgb"))
+        for n, m in zip(out["tree"], card["tree"]):
+            self.assertEqual(sorted(n), sorted(k for k in m if k != "trgb"))
+        self.assertIs(km._strip_trgb("not a card"), "not a card")
+
+    def test_every_other_field_moves_the_signature_and_the_parts(self):
+        base = _feed(n=3)
+        sig0 = km._dedup_sig(base, json.dumps(base))
+        cards0, leds0, _rest0, rest_ms0 = km._feed_parts(base)
+        def moved(f, what):
+            self.assertNotEqual(km._dedup_sig(f, json.dumps(f)), sig0, what)
+            return km._feed_parts(f)
+        for k in _card(1):                                           # every top-level card field
+            if k == "trgb":
+                continue
+            f = _feed(n=3); f["asks"][1][k] = [] if k == "tree" else "changed"
+            self.assertNotEqual(moved(f, k)[0], cards0, "card field %r" % k)
+        for k in _card(1)["tree"][0]:                                # every tree-node field
+            if k == "trgb":
+                continue
+            f = _feed(n=3); f["asks"][1]["tree"][2][k] = [{"id": "x"}] if k == "children" else "changed"
+            self.assertNotEqual(moved(f, k)[0], cards0, "node field %r" % k)
+        for k in base:                                               # every top-level frame field
+            if k in ("type", "asks", "ledgers") or k in km._DEDUP_VOLATILE:
+                continue
+            f = _feed(n=3); f[k] = "changed"
+            self.assertNotEqual(moved(f, k)[3], rest_ms0, "frame field %r" % k)
+        f = _feed(n=3); f["ledgers"][0]["status"] = {"state": "waiting"}
+        self.assertNotEqual(moved(f, "ledgers")[1], leds0)
+        # …and the tint alone, at the top or in a node, moves neither
+        f = _feed(n=3); f["asks"][1]["trgb"] = [0, 0, 0]; f["asks"][1]["tree"][2]["trgb"] = [0, 0, 0]
+        self.assertEqual(km._dedup_sig(f, json.dumps(f)), sig0)
+        self.assertEqual(km._feed_parts(f)[0], cards0)
 
 
 if __name__ == "__main__":
