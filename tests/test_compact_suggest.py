@@ -9,9 +9,12 @@ observed as the authoritative token counter falling back below the latched thres
 silent forever, acted+regrown+idle = one fresh suggestion per threshold (the manager's amendment).
 Workers (their roster tags), comment-thread forks, and mid-turn sessions are excluded at fire
 time. The voice render is pinned in test_injected_voice.py. SYNTHETIC fixtures only."""
+import contextlib
+import io
 import json
 import os
 import tempfile
+import threading
 import unittest
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
@@ -33,7 +36,9 @@ IDLE = NOW - 7200          # settled two hours ago — past the hour gate
 FRESH = NOW - 120          # settled two minutes ago — inside it
 
 
-class CompactSuggest(unittest.TestCase):
+class _Fixture(unittest.TestCase):
+    """The shared hermetic world: opted-in install, idle-settled session, captured sends."""
+
     def setUp(self):
         self.td = tempfile.TemporaryDirectory()
         self.saved_state = jd.STATE
@@ -68,6 +73,8 @@ class CompactSuggest(unittest.TestCase):
         km._autonudge_cache.clear()
         return (km._auto_nudge_data().get("compactSuggested") or {}).get(SID, [])
 
+
+class CompactSuggest(_Fixture):
     # ── the crossing latch ──
     def test_a_crossing_fires_once_and_latches(self):
         self.assertTrue(self._tick(450_000))
@@ -223,6 +230,197 @@ class CompactSuggest(unittest.TestCase):
         rows = [json.loads(l) for l in p.read_text().splitlines()]
         self.assertEqual([r["verdict"] for r in rows], ["compact-suggested"])
         self.assertEqual(rows[0]["evT"], 450_000, "the row carries the token count it fired on")
+
+
+class ConcurrentSendRace(_Fixture):
+    """The double-send race (2026-09-01): the tick checked the compactSuggested
+    latch under _NUDGE_LOCK, released it, sent, and latched only after — so two concurrent entries
+    (the pusher's periodic pass racing a settings-WS re-tick) both passed the same unlatched check
+    and injected the suggestion twice into one session. The fire is now CLAIMED under the lock
+    before the send (a fresh re-read re-derives what is still due, so the loser stands down), and
+    a failed send rolls the claim back for the next tick's retry. Deterministic, events only — the
+    first entry is held between its check and its send until the second has fully landed (the
+    TwoFlushRace idiom, test_setting_gesture_order.py)."""
+
+    def test_two_concurrent_entries_inject_once(self):
+        first_at_gate = threading.Event()
+        second_done = threading.Event()
+
+        def gated(sid):
+            # _settle_event_key sits between the latch check and the send on every entry path;
+            # stalling the first entry here holds it in exactly the window the race needs
+            if threading.current_thread().name == "first":
+                first_at_gate.set()
+                second_done.wait(10)
+            return IDLE
+
+        km._settle_event_key = gated
+        got = {}
+        t = threading.Thread(target=lambda: got.__setitem__("first", self._tick(450_000)),
+                             name="first")
+        t.start()
+        try:
+            self.assertTrue(first_at_gate.wait(10), "the first entry passed its latch check")
+            got["second"] = self._tick(450_000)     # the concurrent entry runs to completion
+        finally:
+            second_done.set()
+            t.join(10)
+        self.assertFalse(t.is_alive(), "both entries finished")
+        self.assertEqual(len(self.sent), 1,
+                         "two entries past the same unlatched check must still inject exactly once")
+        self.assertEqual(sorted((got["first"], got["second"])), [False, True],
+                         "exactly one entry claims the fire; the other stands down")
+        self.assertEqual(self._latched(), [400_000], "one claim, latched once")
+
+    def test_a_failed_send_unlatches_so_the_next_tick_retries(self):
+        test = self
+        attempts = []
+
+        class BlinkingBackend:
+            def send(self, sid, body):
+                attempts.append(body)
+                if len(attempts) == 1:
+                    raise RuntimeError("stream blink")
+                test.sent.append(body)
+
+        be = BlinkingBackend()
+        km.Sessions.backend_for = staticmethod(lambda sid: be)
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertFalse(self._tick(450_000), "a failed send reports no fire")
+        self.assertEqual(self._latched(), [],
+                         "the claim rolls back — no durable latch for a send that never went out")
+        self.assertTrue(self._tick(450_000), "the next tick retries the same crossing")
+        self.assertEqual(len(self.sent), 1)
+        self.assertEqual(len(attempts), 2)
+
+
+class DebtWriterRace(_Fixture):
+    """The claim's SIDE DOOR (2026-09-01): the ledger's debt writers ran an
+    unlocked read→write span — a snapshot of the whole blob held across a LIVE send, written back
+    whole — so a debt reminder straddling a concurrent claim erased the compactSuggested latch
+    (last-writer-wins over every key), and the next tick re-derived the crossing as due and sent
+    the suggestion a SECOND time; the mirror straddle of a failed send's rollback RESURRECTED a
+    latch whose fire never went out, so the retry stood down forever. The writers now hold
+    _NUDGE_LOCK for their record write and RE-READ the blob fresh under it, mutating only the
+    debt keys they own — the claim survives the straddle, the rollback survives it too, and the
+    debt writer's own record still lands (neither writer's output is lost). Deterministic, events
+    only — the debt writer is held inside its send across the other entry's whole claim (the
+    TwoFlushRace idiom). SYNTHETIC sids throughout."""
+
+    YSID = "11111111-2222-3333-4444-ffffffffffff"      # the debtor owing a reply
+    ASKER = "11111111-2222-3333-4444-aaaaaaaaaaaa"     # the peer still waiting on it
+    DEBT_KEY = "%s>%s:1000" % (ASKER, YSID)
+
+    def setUp(self):
+        super().setUp()
+        self._orig_debt_asks = km._debt_asks
+        # one synthetic unanswered ask the debtor owes — the writers' blob read-modify-write is
+        # the thing under test, not the postal wait maps
+        km._debt_asks = lambda sid, alive: [
+            (self.ASKER, "peer", 1000, "question", "where do things stand?")]
+
+    def tearDown(self):
+        km._debt_asks = self._orig_debt_asks
+        super().tearDown()
+
+    def _debt_recorded(self):
+        km._autonudge_cache.clear()
+        return self.DEBT_KEY in (km._auto_nudge_data().get("debtNudged") or {})
+
+    def test_a_debt_writer_straddling_a_claim_never_erases_it(self):
+        b_in_send = threading.Event()
+        claim_done = threading.Event()
+        sent_y, got = [], {}
+        test = self
+
+        class XBackend:                                # the suggestion's recipient
+            def send(self, sid, body):
+                test.sent.append(body)
+
+        class YBackend:                                # the debtor: the reminder send holds the
+            def send(self, sid, body):                 # writer in exactly the straddle window —
+                sent_y.append(body)                    # blob read behind it, record write ahead
+                b_in_send.set()
+                claim_done.wait(10)
+        km.Sessions.backend_for = staticmethod(
+            lambda sid: XBackend() if sid == SID else YBackend())
+
+        tb = threading.Thread(target=lambda: got.__setitem__(
+            "debt", km._fire_debt_reminder(self.YSID, NOW, {self.ASKER})), name="debt")
+        tb.start()
+        try:
+            self.assertTrue(b_in_send.wait(10), "the debt writer reached its send")
+            got["tick"] = self._tick(450_000)          # claim + send, inside the straddle
+            self.assertTrue(got["tick"])
+            self.assertEqual(self._latched(), [400_000], "the claim landed")
+        finally:
+            claim_done.set()
+            tb.join(10)
+        self.assertFalse(tb.is_alive(), "the debt writer finished")
+        self.assertTrue(got["debt"], "the reminder went out")
+        self.assertEqual(self._latched(), [400_000],
+                         "the debt record write must not erase the concurrent claim")
+        self.assertFalse(self._tick(450_000),
+                         "the crossing stays claimed — no re-derived second fire")
+        self.assertEqual(len(self.sent), 1, "one suggestion, never two")
+        self.assertEqual(len(sent_y), 1)
+        self.assertTrue(self._debt_recorded(),
+                        "…and the debt writer's own key lands too — both writers' outputs "
+                        "survive the interleaving")
+
+    def test_a_debt_writer_straddling_a_rollback_never_resurrects_the_latch(self):
+        claim_landed = threading.Event()
+        b_in_send = threading.Event()
+        rollback_done = threading.Event()
+        sent_y, got = [], {}
+        test = self
+
+        class XGatedFail:                              # the claimed fire never goes out — and the
+            def send(self, sid, body):                 # failure is held until the debt writer has
+                claim_landed.set()                     # read the blob WITH the claim in it
+                test.assertTrue(b_in_send.wait(10), "the debt writer read while the claim stood")
+                raise RuntimeError("stream blink")
+
+        class YBackend:
+            def send(self, sid, body):
+                sent_y.append(body)
+                b_in_send.set()
+                rollback_done.wait(10)                 # record write held past the rollback
+        km.Sessions.backend_for = staticmethod(
+            lambda sid: XGatedFail() if sid == SID else YBackend())
+
+        def run_claimer():
+            with contextlib.redirect_stderr(io.StringIO()):
+                got["tick"] = self._tick(450_000)
+
+        ta = threading.Thread(target=run_claimer, name="claimer")
+        ta.start()
+        self.assertTrue(claim_landed.wait(10), "the claim landed before the failing send")
+        tb = threading.Thread(target=lambda: got.__setitem__(
+            "debt", km._fire_debt_reminder(self.YSID, NOW, {self.ASKER})), name="debt")
+        tb.start()
+        try:
+            ta.join(10)                                # the send fails; the rollback lands
+            self.assertFalse(ta.is_alive(), "the claimer finished")
+            self.assertEqual(self._latched(), [], "the rollback landed")
+        finally:
+            rollback_done.set()
+            tb.join(10)
+        self.assertFalse(tb.is_alive(), "the debt writer finished")
+        self.assertFalse(got["tick"], "a failed send reports no fire")
+        self.assertTrue(got["debt"], "the reminder went out")
+        self.assertEqual(self._latched(), [],
+                         "the debt record write must not resurrect a latch whose fire never "
+                         "went out")
+
+        class XBackend:                                # a working backend for the retry
+            def send(self, sid, body):
+                test.sent.append(body)
+        km.Sessions.backend_for = staticmethod(
+            lambda sid: XBackend() if sid == SID else YBackend())
+        self.assertTrue(self._tick(450_000), "the next tick retries the same crossing")
+        self.assertEqual(len(self.sent), 1)
+        self.assertTrue(self._debt_recorded(), "…and the debt key still lands")
 
 
 if __name__ == "__main__":
