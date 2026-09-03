@@ -2416,13 +2416,23 @@ def _asm_fold(entry, delta, leaf_recs, leaf_key, leaf_stem, rompuuid, postal_ind
     return _asm_serve(entry)
 
 
-def _assemble(leaf_path, candidate_files, links, rompuuid, postal_index, sdk_human, leaf_override):
+def _assemble(leaf_path, candidate_files, links, rompuuid, postal_index, sdk_human, leaf_override,
+              mode_out=None):
     """(atoms, landed, cut_t) for parse_session — atoms are caller-owned copies. The one entry
-    point that decides bypass vs serve vs fold vs full; see the block comment above."""
+    point that decides bypass vs serve vs fold vs full; see the block comment above. `mode_out`,
+    when a list, receives the path taken ("serve" | "fold" | "full" | "bypass" | "fallback"): the
+    kernel's chat-payload fold (issue 903) keys the validity of its cached prefix on it — a serve or
+    a fold leaves every previously emitted atom in place (heals aside, which ride the postal index),
+    while a full parse may have re-emitted history. Kept OUT of the returned tree on purpose: the
+    golden fixtures and the fold==full replay compare that tree byte for byte."""
+    def _mode(m):
+        if mode_out is not None:
+            mode_out.append(m)
     if leaf_override:
         # A pending cut changes the walk anchor and is transient: always a plain full parse,
         # never cached — a cut parse's truncated emit state must not seed later folds.
         _ASM_STATS["bypass"] += 1
+        _mode("bypass")
         ad = FileAdapter(candidate_files, leaf_path, leaf_override=leaf_override, resume_links=links)
         ad.sdk_human = sdk_human
         cut_t = None
@@ -2444,17 +2454,21 @@ def _assemble(leaf_path, candidate_files, links, rompuuid, postal_index, sdk_hum
                     _asm_heal(entry, rompuuid, postal_index)
                     if not delta:
                         _ASM_STATS["serve"] += 1
+                        _mode("serve")
                         return _asm_serve(entry)
                     served = _asm_fold(entry, delta, leaf_recs, str(leaf_path),
                                        Path(leaf_path).stem, rompuuid, postal_index)
                     if served is not None:
+                        _mode("fold")
                         return served
                 with _ASM_LOCK:                   # gate/invariance demotion: the entry is stale
                     _ASM_CACHE.pop(key, None)
+            _mode("full")
             return _asm_full(key, leaf_path, candidate_files, links, rompuuid,
                              postal_index, sdk_human)
     except Exception as e:
         _ASM_STATS["fallback"] += 1
+        _mode("fallback")
         if not _ASM_WARNED[0] or _ASM_STATS["fallback"] in (10, 100, 1000, 10000):
             _ASM_WARNED[0] = True    # once, then at count milestones — a PERSISTENT fold bug
             #                          must not hide behind a single line in an old log
@@ -2470,7 +2484,7 @@ def _assemble(leaf_path, candidate_files, links, rompuuid, postal_index, sdk_hum
 
 def parse_session(leaf_path, rompuuid=None, name=None, color="#888888", dir=None,
                   candidate_files=None, states=None, postal_log=None, now=None, sdk_human=False,
-                  leaf_override=None):
+                  leaf_override=None, asm_mode_out=None):
     """Build one session's Session -> Turn -> Atom tree from the on-disk transcript graph.
 
     leaf_path        the newest (leaf) transcript file; the walk's start pointer.
@@ -2486,6 +2500,8 @@ def parse_session(leaf_path, rompuuid=None, name=None, color="#888888", dir=None
     postal_log       timeline/messages.jsonl path or rows -> peer rompUuid.
     leaf_override    start the walk at this record instead of the file's last (a PENDING
                      bare rollback — the kernel's pending_cut); ignored if absent from the graph.
+    asm_mode_out     a list, when given, that receives the assembly path taken (see _assemble);
+                     never part of the returned tree.
     """
     leaf_path = Path(leaf_path)
     if dir is None:
@@ -2508,7 +2524,7 @@ def parse_session(leaf_path, rompuuid=None, name=None, color="#888888", dir=None
     # the new records through the shared emit code; everything else is a full parse. atoms/landed
     # come back caller-owned (fresh top-level dicts), so the mutations below never reach the cache.
     atoms, landed, cut_t = _assemble(leaf_path, candidate_files, links, rompuuid,
-                                     postal_index, sdk_human, leaf_override)
+                                     postal_index, sdk_human, leaf_override, mode_out=asm_mode_out)
     orphans = synthesize_orphans(_srows, atoms, landed_text_uuids=landed)
     #                                            # salvaged replies FIRST: they are real atoms the turn
     #                                              grouping must absorb (idle spans overlay afterwards)

@@ -599,6 +599,9 @@ def _version_info():
             # counters, no paths — safe for the auth-exempt route. Deploy verification reads the live
             # fold rate here instead of trusting an offline replay number (T210).
             "parse": dict(em._ASM_STATS),
+            # the chat-payload fold's counters (issue 903) — the same shape as "parse", read by
+            # `romp version` beside it: fold/full/bypass/fallback plus g:<reason> demotes
+            "chatfold": dict(_CHAT_FOLD_STATS),
             "drainRefused": dict(_DRAIN_REFUSED),   # T224: refused /busy?drain=1 arms — count (lifetime
             #                                          total), episodeCount (the current/last episode),
             #                                          open episode, last time; the silent degrade made visible
@@ -15927,6 +15930,7 @@ def _ask_thread(fn, *a):
 # with >1 queued message). Cached by the transcript's (mtime, size) like _parse, since build_session calls
 # this on every push.
 _queued_parse_cache = {}      # path → ((mtime, size), [pending queued texts])
+_parse_mode = {}                                  # path → the assembly path the LAST parse took (see _parse)
 
 
 def _genuine_queued(text):
@@ -18278,6 +18282,102 @@ def _feed_goals(sid):
 # exact point content changed (a new event OR a tool output that just filled an earlier card). Diffing by
 # CONTENT (not a fixed window) is robust to _hydrate_postal turning one event into several cards mid-array.
 _prev_chat_events = {}                           # sid → the events list from the previous build (to diff against)
+# ── the chat-payload FOLD (issue 903, 2026-09-03) ──────────────────────────────────────────────────
+# build_session reshaped a working session's WHOLE event list on every push (0.3-1 ms/event; 26k
+# events = 26 s per cycle, 60-75 s push cadence on an 11-session install). The reshape of an ENDED
+# turn is a pure function of that turn's atoms plus a short list of cross-cutting inputs (side-store
+# notes, goal-store seams, the postal index, filesystem-verified path links, tool results and Skill
+# payloads that can land in a later turn), so each build now starts from a cached PREFIX — the
+# rendered events of whole ended turns — and reshapes only the turns after it (always including the
+# last turn, which carries the live-atom merge and every overlay). Every cross-turn dependency is a
+# counted DEMOTE GATE (g:<reason>): when it cannot prove the prefix still renders identically it
+# rebuilds from turn 0, the same "wrong means full, never divergent" stance the parse's assembly
+# fold takes (event_model._assemble). One implementation: a full build IS the fold with an empty
+# prefix. The prefix dicts are handed back by IDENTITY — _prev_chat_events, _built_chat and this
+# cache share them — so nothing may write into a prefix event in place; every such write (tool
+# output fill, skillMd, interrupt cause, tlId, askAnswer) either happens in the tail or demotes.
+_chat_fold = {}                                  # sid → entry (see _chat_fold_commit); bounded, LRU-evicted
+_chat_fold_lock = threading.Lock()               # the dict ops only — builds run outside it
+_CHAT_FOLD_MAX = 256
+_CHAT_FOLD_STATS = {"full": 0, "fold": 0, "bypass": 0, "fallback": 0}   # + g:<reason>; /version "chatfold"
+_chat_fold_warned = [False]
+_chat_fold_last = {}                             # the last build's {fold, k, n, prefix, tail} for the perf line
+
+
+def _chat_fold_get(sid):
+    with _chat_fold_lock:
+        e = _chat_fold.get(sid)
+        if e is not None:
+            _chat_fold.pop(sid, None)
+            _chat_fold[sid] = e                  # a served entry is a USED entry (LRU touch)
+        return e
+
+
+def _chat_fold_put(sid, entry):
+    with _chat_fold_lock:
+        _chat_fold.pop(sid, None)
+        while len(_chat_fold) >= _CHAT_FOLD_MAX:
+            _chat_fold.pop(next(iter(_chat_fold)))   # oldest-used first, one at a time — never clear-at-cap
+        _chat_fold[sid] = entry
+
+
+def _chat_fold_demote(reason):
+    """Count WHY a build could not reuse its cached prefix (g:<reason>) — the hit-rate diagnosis
+    this cache lives or dies by, mirroring event_model._asm_demote."""
+    k = "g:" + reason
+    _CHAT_FOLD_STATS[k] = _CHAT_FOLD_STATS.get(k, 0) + 1
+
+
+def _chat_turn_fp(turn):
+    """A cheap per-turn fingerprint: the turn's identity plus its atom count and end. A fold (the
+    parse's own append path) only ever ADDS atoms, so any change to an earlier turn's atoms shows
+    up here as a count or an end that moved; a full parse is excluded upstream by _parse_mode."""
+    atoms = turn.get("atoms") or []
+    return (turn.get("id"), len(atoms), atoms[0].get("uuid") if atoms else None,
+            atoms[-1].get("uuid") if atoms else None, atoms[-1].get("t") if atoms else None,
+            bool(turn.get("ended")))
+
+
+def _chat_seam_open_at(events, lo):
+    """Index of the first interrupt marker at/after `lo` whose cause scan (_stamp_interrupt_causes)
+    ran to the END of `events` without deciding — a seam whose resume notice may still land in a
+    later turn. Such a marker must not be sealed into the prefix: the notice would have to stamp it
+    (and drop its settle replies) in place. None when every marker in range is decided."""
+    for i in range(lo, len(events)):
+        ev = events[i]
+        if not ev.get("interruptMarker"):
+            continue
+        decided = False
+        for nxt in events[i + 1:]:
+            if nxt.get("kind") != "user":
+                continue
+            if nxt.get("rompSystem") or nxt.get("interruptMarker") or nxt.get("human"):
+                decided = True
+                break
+        if not decided:
+            return i
+    return None
+
+
+def _chat_postal_relevant(ev):
+    """The raw (pre-hydration) events _hydrate_postal can turn into something else — the ones whose
+    rendering depends on the postal index and the judges' captions rather than the transcript."""
+    k = ev.get("kind")
+    if k == "tool":
+        nm = ev.get("name") or ""
+        return bool(_SEND_TOOL_RE.search(nm)) or nm == "Bash" or _reads_mail(ev)
+    if k == "user":
+        return bool(em.POSTAL_RE.findall(ev.get("md") or ""))
+    return False
+
+
+def _chat_postal_key():
+    """The postal index's identity — messages.jsonl (mtime_ns, size), the same key _postal_index memoizes on."""
+    try:
+        st = os.stat(jd.STATE / "timeline" / "messages.jsonl")
+        return (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return None
 _prev_chat_ledger = {}                           # sid → the previous build's ledger (so a delta carries it only when changed)
 
 # Wire tail-windowing (the user 2026-06-25, who found startup slow): delta-send already trims STEADY-STATE pushes,
@@ -18299,7 +18399,10 @@ def _chat_diff(prev, cur):
         return 0
     n = min(len(prev), len(cur))
     i = 0
-    while i < n and prev[i] == cur[i]:
+    while i < n:
+        a, b = prev[i], cur[i]
+        if a is not b and a != b:      # identity first: the chat fold hands back the SAME prefix dicts
+            break                      # (issue 903), so the compare is O(changed tail), not O(all)
         i += 1
     return i
 
@@ -18390,13 +18493,20 @@ def _parse(path, sid, now):
     anchor = os.path.join(os.path.dirname(path), sid + ".jsonl")
     if os.path.basename(path) != sid + ".jsonl" and os.path.exists(anchor):
         cands.append(anchor)
+    _mode = []
     session = em.parse_session(path, rompuuid=sid, candidate_files=cands,
-                               postal_log=str(jd.MESSAGES), now=now,
+                               postal_log=str(jd.MESSAGES), now=now, asm_mode_out=_mode,
                                # SDK/Codex session: composer input arrives programmatic (promptSource "sdk"),
                                # so the unmarked prompt is the HUMAN — same flag for both backends
                                sdk_human=bool((_be and _be.owns(sid)) or ((_cx := _codex()) and _cx.owns(sid))),
                                states=str(states) if states.exists() else None,   # idle transitions → idle atoms (see above)
                                leaf_override=cut or None)   # pending bare rollback → render the cut conversation NOW
+    # the assembly path this parse took, read by the chat-payload fold (issue 903) right after the
+    # call: a serve/fold left every earlier atom in place, a full/bypass/fallback may have re-emitted
+    # history. Keyed by path, written by the thread that parsed; the fold reads it under the same
+    # parse it just made, so a racing parse of the same path can only make it MORE conservative
+    # (a "full" read where a "fold" happened) — never less.
+    _parse_mode[path] = _mode[-1] if _mode else "full"
     if key is not None:
         if len(_parse_cache) > 256:              # backstop: bounded by fleet size, but never unbounded
             _parse_cache.clear()
@@ -20105,23 +20215,26 @@ def _session_meta(path):
     worktrees beside the registered clone, so the registered dir alone reads 'main' forever; the user
     2026-08-13). Zero extra parsing: every assistant record already passes the line filter (each carries
     cwd/version stamps), so this only walks content blocks of lines the loop was parsing anyway."""
-    try:
-        sti = os.stat(path)
-        key = (sti.st_mtime, sti.st_size)
-    except OSError:
-        key = None
+    # FOLDS over the incremental record list (issue 903, 2026-09-03): the (mtime,size)-keyed whole-file
+    # re-read cost O(transcript bytes) per append — json.loads on every stamped line of a 100 MB file,
+    # every push, for every working session. em._read_jsonl_incremental already serves the parsed
+    # records append-incrementally (the parse reads the same list, so this adds no I/O), and its
+    # contract — a grown file returns a NEW list whose prefix objects are the SAME — is the identity
+    # gate here: newest-of-each-field wins, so folding only the appended records over the carried
+    # meta is exact; a rewrite (prefix identity lost) re-folds from record 0.
+    recs = em._read_jsonl_incremental(path)
     hit = _session_meta_cache.get(path)
-    if hit is not None and key is not None and hit[0] == key:
-        return hit[1]
+    start = 0
     meta = {"cwd": "", "gitBranch": "", "version": "", "permissionMode": "", "lastEditPath": ""}
+    if hit is not None:
+        n0, last0, meta0 = hit
+        if n0 == len(recs) and (n0 == 0 or recs[-1] is last0):
+            return meta0
+        if 0 < n0 < len(recs) and recs[n0 - 1] is last0:
+            meta, start = dict(meta0), n0
     try:
-        with open(path, errors="replace") as f:
-            for line in f:
-                if '"cwd"' not in line and '"version"' not in line and '"permissionMode"' not in line:
-                    continue
-                try:
-                    o = json.loads(line)
-                except Exception:
+        for o in recs[start:]:
+                if not isinstance(o, dict):
                     continue
                 if o.get("cwd"):
                     meta["cwd"] = o["cwd"]
@@ -20142,12 +20255,11 @@ def _session_meta(path):
                                     meta["lastEditPath"] = fp
                     except Exception:
                         pass
-    except OSError:
+    except Exception:
         pass
-    if key is not None:
-        if len(_session_meta_cache) > 256:                   # bounded by fleet size; never unbounded
-            _session_meta_cache.clear()
-        _session_meta_cache[path] = (key, meta)
+    if len(_session_meta_cache) > 256:                       # bounded by fleet size; never unbounded
+        _session_meta_cache.clear()
+    _session_meta_cache[path] = (len(recs), recs[-1] if recs else None, meta)
     return meta
 
 
@@ -20752,21 +20864,11 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
             if et and et not in already and et not in tx_user and not _echo_overtaken(a, echo_floor):
                 queued = queued + [et]; already.add(et)
     session = parsed if path_override else _merge_live_atoms(parsed, sid, shown_texts=queued)
-    caps = _captions(sid)
     events, by_tool = [], {}                  # by_tool: tool_use_id → its tool event (fill output later)
     uuid2seg, seg_anchors = {}, {}            # atom uuid → seg id; seg id → (promptId, workId) for the dot/bar split
     seg_trig, seg_work = {}, {}               # goal-node DEEP-LINK anchors: prompt = the segment's trigger
     _bs_store = jd.load_goals(sid)            # seam-aware seg ids (mirror the judge's split)
-    for turn in session["turns"]:             #   (user msg), work = its reply (preferred) — matches build_feed
-        for seg in _segs_seam(turn, _bs_store):
-            w, r = _seg_anchors(seg["atoms"])
-            seg_anchors[seg["id"]] = (seg.get("trigger"), w)   # timeline DOT/BAR hover ids (workId = first assistant)
-            seg_trig[_seg_key(seg["id"])] = seg.get("trigger")   # keyed timestamp-invariant so a drifted goal-trail seg still resolves
-            seg_work[_seg_key(seg["id"])] = r or _seg_jump(seg["atoms"])   # readable reply, else the first LANDABLE
-            #                                  work atom — never a thinking-only uuid (matches build_feed's seg_uuid)
-            for at in seg["atoms"]:
-                if at.get("uuid"):
-                    uuid2seg[at["uuid"]] = seg["id"]
+    #                                          (the per-turn seg loop runs below, after the fold decision)
     last_t = None
     last_model = ""                           # the model on the most recent assistant message (system-card meta)
     # Persistent "Recovered after N retries" notes (the user 2026-07-08): interleave each durable recovery
@@ -20809,18 +20911,152 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
     # retry). NB: build the disk-text set from the SAME session["turns"] atoms this loop renders.
     orphans = _past_floor(_orphan_replies(sid)); _oi = 0
     _disk_texts = set()
-    for _t in session["turns"]:
-        for _a in _t["atoms"]:
-            if _a.get("type") == "assistant" and not _a.get("isApiError"):
-                _tx = _atom_md(_a).strip()
-                if _tx:
-                    _disk_texts.add(_tx)
+    _turn_texts = {}                          # turn index → that turn's disk texts (built on demand, see the fold)
+    def _texts_of_turn(_i):
+        if _i not in _turn_texts:
+            _disk_texts = set()               # this turn's share; the build unions the turns it needs below
+            for _a in session["turns"][_i]["atoms"]:
+                if _a.get("type") == "assistant" and not _a.get("isApiError"):
+                    _tx = _atom_md(_a).strip()
+                    if _tx:
+                        _disk_texts.add(_tx)
+            _turn_texts[_i] = _disk_texts
+        return _turn_texts[_i]
     # Replies the disk kept on ANY branch of the transcript graph (parse-side landed_text_uuids),
     # including branches a chat-delete rollback abandoned. A marker for one of those is not a loss:
     # session["turns"] can't dedup it (the record left the kept path with the fork), and without
     # this uuid check the marker re-emitted the deleted exchange's reply as a ghost bubble once the
     # rollback was consumed (the user 2026-08-03).
     _landed_uuids = set(parsed.get("landedTextUuids") or ())
+    _pl_memo = {}   # per-BUILD-pass cache for _path_links: one repo listing serves every message here
+    # ── THE FOLD DECISION (issue 903; see _chat_fold at module level) ──────────────────────────
+    # `_fk` is the first turn this build reshapes; turns before it come from the cached prefix. The
+    # last turn is never cached (live atoms, overlays). Every gate names the exact input whose change
+    # could render an earlier turn differently, and demotes to _fk = 0 when it moved.
+    _turns = session["turns"]
+    _n_pref = len(_turns) - 1                 # candidate prefix: every turn but the last
+    _fk, _fe, _fold_ok, _fold_why = 0, None, False, None
+    _pref_len = 0
+    _seams_sig = json.dumps((_bs_store or {}).get("seams") or [], sort_keys=True, default=str)
+    _pk = _chat_postal_key()
+    if path_override:
+        _CHAT_FOLD_STATS["bypass"] += 1
+    elif _n_pref > 0:
+        try:
+            _fe = _chat_fold_get(sid)
+            if _fe is None:
+                _fold_why = "cold"
+            elif _fe["path"] != sess["path"] or _fe["n"] > _n_pref:
+                _fold_why = "path" if _fe["path"] != sess["path"] else "shrink"
+            elif parsed is not _fe["parsed"] and _parse_mode.get(sess["path"], "full") not in ("serve", "fold"):
+                _fold_why = "parse"                   # a full/bypass/fallback parse may have re-emitted history
+            elif parsed is not _fe["parsed"] and any(_chat_turn_fp(_turns[_i]) != _fe["fps"][_i]
+                                                     for _i in range(_fe["n"])):
+                _fold_why = "turnfp"                  # an earlier turn's atoms moved (a states-row atom, a heal)
+            elif _fe["seams"] != _seams_sig:
+                _fold_why = "seam"                    # seg ids → tlId / deep-link anchors of old events
+            elif _fe["floor"] != (_note_floor, len(_epi_rows_for_notes)):
+                _fold_why = "episode"                 # a /clear moved the durable-note floor
+            elif _fe["notes"] != tuple(tuple(tuple(sorted(_x.items())) for _x in _lst
+                                             if _fe["last_t"] is not None and (_x.get("t") or 0) <= _fe["last_t"])
+                                       for _lst in (recoveries, gaveups, efforts, orphans, gestures)):
+                # a full build flushes every note timed at or before the prefix's last atom INTO the
+                # prefix — so the set of such notes must be exactly the one the prefix was sealed with;
+                # a row that landed later with an earlier stamp (an orphan salvage, a recovery) demotes
+                _fold_why = "note"
+            elif _fe["gest_skipped"] - _live_cmd_keys:
+                _fold_why = "gesture"                 # a gesture chip the live tail pruned now renders durably
+            elif _fe["orphan_uuids"] & _landed_uuids:
+                _fold_why = "landed"                  # an interleaved orphan reply landed on some branch after all
+            else:
+                _k = _fe["n"]
+                _tail_tr = set()
+                _tail_skill = False
+                for _t in _turns[_k:]:
+                    for _a in _t["atoms"]:
+                        if _a.get("skillMd"):
+                            _tail_skill = True
+                        if _a.get("type") == "user":
+                            _c = (_a.get("message") or {}).get("content")
+                            if isinstance(_c, list):
+                                for _b in _c:
+                                    if isinstance(_b, dict) and _b.get("type") == "tool_result":
+                                        _tail_tr.add(_b.get("tool_use_id"))
+                if _tail_tr & _fe["open_tools"]:
+                    _fold_why = "tool-fill"           # a tool_result for a prefix tool card (an opener intervened)
+                elif _tail_skill and _fe["skill_unfilled"]:
+                    _fold_why = "skill-fill"          # a Skill payload may fold into a prefix Skill card
+                else:
+                    _tail_texts = set()
+                    for _i in range(_k, len(_turns)):
+                        _tail_texts |= _texts_of_turn(_i)
+                    for _ot in _fe["orphan_texts"]:
+                        if _ot in _tail_texts or any(dt.startswith(_ot) or _ot.startswith(dt) for dt in _tail_texts):
+                            _fold_why = "orphan"      # a new reply retires an interleaved orphan in the prefix
+                            break
+            if _fold_why is None and _fe["postal_pending"] and (_pk != _fe["postal_key"] or _judge_gen[0] != _fe["judge_gen"]):
+                # a card without its caption yet, or ids the log could not resolve: re-hydrate just those raw
+                # events against the current index; a different card means the prefix must be rebuilt
+                _cards = _hydrate_postal(list(_fe["postal_raw"]), _postal_index(), sid)
+                if _cards != _fe["postal_cards"]:
+                    _fold_why = "postal"
+                else:
+                    _fe["postal_key"], _fe["judge_gen"] = _pk, _judge_gen[0]
+            if _fold_why is None and _fe["pl_pending"]:
+                # unresolved path tokens are retried on every build BY DESIGN (a mention precedes the file):
+                # retry exactly those, and rebuild if one now resolves
+                for _u, _md, _ix in _fe["pl_pending"]:
+                    _hit = _PATH_LINK_CACHE.get((sid, _u))
+                    if _hit is not None and not _hit[1]:
+                        continue                      # no misses left to retry
+                    _ev0 = _fe["events"][_ix]
+                    if _path_links(_md, sid, _u, _pl_memo) != _ev0.get("pathLinks") or \
+                            (_path_pins(sid, _u) or None) != _ev0.get("pathPins"):
+                        _fold_why = "path-link"
+                        break
+            _fold_ok = _fold_why is None
+        except Exception:
+            _fold_ok, _fold_why = False, "fallback"
+            _CHAT_FOLD_STATS["fallback"] += 1
+            if not _chat_fold_warned[0] or _CHAT_FOLD_STATS["fallback"] in (10, 100, 1000):
+                _chat_fold_warned[0] = True
+                sys.stderr.write("chat fold: gate check failed (%s) — rebuilding in full (stats %r)\n"
+                                 % (traceback.format_exc().strip().splitlines()[-1], dict(_CHAT_FOLD_STATS)))
+    if _fold_ok:
+        _fk = _fe["n"]
+        _CHAT_FOLD_STATS["fold"] += 1
+        events = list(_fe["events"])              # a NEW list of the SAME dicts — never written into (see above)
+        _pref_len = len(events)
+        uuid2seg, seg_anchors, seg_trig, seg_work = (dict(_fe["seg"][0]), dict(_fe["seg"][1]),
+                                                     dict(_fe["seg"][2]), dict(_fe["seg"][3]))
+        _ri, _gi, _ei, _oi, _cgi = _fe["cursors"]
+        last_t, last_model = _fe["last_t"], _fe["last_model"]
+        _disk_texts = set(_fe["disk_texts"])
+    elif not path_override:
+        _CHAT_FOLD_STATS["full"] += 1
+        if _fold_why not in (None, "cold"):
+            _chat_fold_demote(_fold_why)
+    for _i in range(_fk, len(_turns)):
+        _disk_texts |= _texts_of_turn(_i)
+    _chat_fold_last.update({"fold": int(_fold_ok), "k": _fk, "n": len(_turns), "prefix": _pref_len,
+                            "why": _fold_why or ""})
+    # per-turn seg maps for the turns this build reshapes (the prefix's came with the entry)
+    _seg_by_turn = {}                         # turn index → its (uuid2seg, seg_anchors, seg_trig, seg_work) items
+    for _ti in range(_fk, len(_turns)):
+        turn = _turns[_ti]
+        _u2s, _sa, _st, _sw = {}, {}, {}, {}
+        for seg in _segs_seam(turn, _bs_store):
+            w, r = _seg_anchors(seg["atoms"])
+            _sa[seg["id"]] = (seg.get("trigger"), w)   # timeline DOT/BAR hover ids (workId = first assistant)
+            _st[_seg_key(seg["id"])] = seg.get("trigger")   # keyed timestamp-invariant so a drifted goal-trail seg still resolves
+            _sw[_seg_key(seg["id"])] = r or _seg_jump(seg["atoms"])   # readable reply, else the first LANDABLE
+            #                                  work atom — never a thinking-only uuid (matches build_feed's seg_uuid)
+            for at in seg["atoms"]:
+                if at.get("uuid"):
+                    _u2s[at["uuid"]] = seg["id"]
+        _seg_by_turn[_ti] = (_u2s, _sa, _st, _sw)
+        uuid2seg.update(_u2s); seg_anchors.update(_sa); seg_trig.update(_st); seg_work.update(_sw)
+    _tsnap = {}                               # turn index → (note cursors, last_t, last_model) at its START
     def _flush_recoveries(upto):
         nonlocal _ri, _ei, _oi, _gi, _cgi
         while _oi < len(orphans) and (upto is None or orphans[_oi]["t"] <= upto):
@@ -20851,8 +21087,11 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
             _e = efforts[_ei]; _ei += 1
             events.append({"kind": "effortApplied", "effort": _e["effort"], "ts": iso(_e["t"]),
                            "uuid": "effort:%d" % _e["t"]})
-    _pl_memo = {}   # per-BUILD-pass cache for _path_links: one repo listing serves every message here
-    for turn in session["turns"]:
+    _tstart = {}                              # turn index → len(events) at its start (raw, pre-hydration)
+    for _ti in range(_fk, len(_turns)):
+        turn = _turns[_ti]
+        _tsnap[_ti] = ((_ri, _gi, _ei, _oi, _cgi), last_t, last_model)
+        _tstart[_ti] = len(events)
         for a in turn["atoms"]:
             t = a.get("t"); ts = iso(t) if t else None
             if t:
@@ -21095,6 +21334,20 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
                                "md": a.get("content") or ""})
     _flush_recoveries(tail_cap_t)                       # a recovery on the still-open tail turn (t past the last atom) → bottom of the flow
     #                                                     (tail_cap_t: an episode render stops at its /clear — later notes belong to the next episode)
+    # The post-passes run over the TAIL only (issue 903): the prefix was hydrated, stamped and tlId'd
+    # when it was sealed, and its inputs were gated above. `_raw_tail` keeps the pre-hydration events
+    # so the commit can record which of them the postal index can still change.
+    _prefix, events = events[:_pref_len], events[_pref_len:]   # `events` is the TAIL until the join below
+    _raw_tail = list(events)
+    _raw_turn = {}                            # id(raw event) / raw uuid → the turn index it was emitted in
+    _bounds = sorted((_ix, _ti) for _ti, _ix in _tstart.items())
+    _bstarts = [b[0] for b in _bounds]
+    for _j, _ev in enumerate(_raw_tail):
+        _abs = _pref_len + _j
+        _ti = _bounds[bisect.bisect_right(_bstarts, _abs) - 1][1] if _bounds else _fk
+        _raw_turn[id(_ev)] = _ti
+        if _ev.get("uuid") and _ev["uuid"] not in _raw_turn:
+            _raw_turn[_ev["uuid"]] = _ti
     events = _hydrate_postal(events, _postal_index(), sid)   # swap postal traffic for clean in/out cards (no boilerplate)
     _stamp_interrupt_causes(events)                     # a restart/crash resume notice names the seam's cause
     for ev in events:
@@ -21109,6 +21362,77 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
             # the lossy output-string scrape is all there is. The attach loop's authoritative fill
             # (askAnswerFilled) already handled every record that has one — never run both.
             _ask_fill_chosen(ev["askAnswer"], ev.get("output") or "")
+    events = _prefix + events                           # the sealed prefix (same dicts) + this build's tail
+    if not path_override and _n_pref > 0:
+        # ── COMMIT the prefix: whole ENDED turns, sealed at a turn boundary the tail cannot reach back
+        # across. Recorded from the events as built (a scan of the NEW part only), so the loop body above
+        # stays exactly what it was.
+        try:
+            def _turn_of(_ev):
+                return _raw_turn.get(id(_ev), _raw_turn.get(_ev.get("uuid"), _fk))
+            _np = _n_pref
+            while True:
+                _b = next((_i for _i in range(_pref_len, len(events)) if _turn_of(events[_i]) >= _np),
+                          len(events))
+                _open = _chat_seam_open_at(events[:_b], _pref_len)   # an undecided seam holds the boundary
+                if _open is None or _turn_of(events[_open]) <= _fk:
+                    break
+                _np = _turn_of(events[_open])
+            if _np > _fk and _b > _pref_len or (_fold_ok and _np == _fk):
+                _newpart = events[_pref_len:_b]
+                _newids = {id(_e) for _e in _newpart}
+                _open_tools = set(_fe["open_tools"]) if _fold_ok else set()
+                _open_tools |= {_tid for _tid, _ev in by_tool.items() if id(_ev) in _newids and not _ev.get("output")}
+                _skill_unf = (_fe["skill_unfilled"] if _fold_ok else 0) + sum(
+                    1 for _e in _newpart if _e.get("kind") == "tool" and _e.get("name") == "Skill" and not _e.get("skillMd"))
+                _cur = _tsnap[_np][0] if _np in _tsnap else _fe["cursors"]
+                _lt, _lm = (_tsnap[_np][1], _tsnap[_np][2]) if _np in _tsnap else (_fe["last_t"], _fe["last_model"])
+                _raw_new = [_e for _e in _raw_tail if _raw_turn.get(id(_e), _fk) < _np]
+                _praw = (list(_fe["postal_raw"]) if _fold_ok else []) + [_e for _e in _raw_new if _chat_postal_relevant(_e)]
+                _pcards = _hydrate_postal(list(_praw), _postal_index(), sid) if _praw else []
+                _ppend = any(not (_c.get("kind") == "postal-service" and _c.get("summary")) for _c in _pcards)
+                _plp = list(_fe["pl_pending"]) if _fold_ok else []
+                for _i in range(_pref_len, _b):
+                    _e = events[_i]
+                    if _e.get("kind") in ("user", "assistant") and _e.get("uuid") and _e.get("md"):
+                        _hit = _PATH_LINK_CACHE.get((sid, _e["uuid"]))
+                        if _hit is not None and _hit[1]:
+                            _plp.append((_e["uuid"], _e["md"], _i))
+                _seg_pref = [dict(_fe["seg"][_q]) if _fold_ok else {} for _q in range(4)]
+                for _ti in range(_fk, _np):
+                    for _q in range(4):
+                        _seg_pref[_q].update(_seg_by_turn[_ti][_q])
+                _dt = set(_fe["disk_texts"]) if _fold_ok else set()
+                for _ti in range(_fk, _np):
+                    _dt |= _texts_of_turn(_ti)
+                _chat_fold_put(sid, {
+                    "path": sess["path"], "parsed": parsed, "n": _np,
+                    "fps": [_chat_turn_fp(_turns[_i]) for _i in range(_np)],
+                    "events": events[:_b],
+                    "seg": tuple(_seg_pref), "cursors": _cur, "last_t": _lt, "last_model": _lm,
+                    "disk_texts": _dt, "seams": _seams_sig,
+                    "floor": (_note_floor, len(_epi_rows_for_notes)),
+                    "notes": (tuple(tuple(sorted(_x.items())) for _x in recoveries[:_cur[0]]),
+                              tuple(tuple(sorted(_x.items())) for _x in gaveups[:_cur[1]]),
+                              tuple(tuple(sorted(_x.items())) for _x in efforts[:_cur[2]]),
+                              tuple(tuple(sorted(_x.items())) for _x in orphans[:_cur[3]]),
+                              tuple(tuple(sorted(_x.items())) for _x in gestures[:_cur[4]])),
+                    "gest_skipped": {(_g["t"], _g["cmd"]) for _g in gestures[:_cur[4]]
+                                     if (_g["t"], _g["cmd"]) in _live_cmd_keys},
+                    "orphan_uuids": {_o["uuid"] for _o in orphans[:_cur[3]] if _o.get("uuid")},
+                    "orphan_texts": [_o["text"].strip() for _o in orphans[:_cur[3]] if (_o.get("text") or "").strip()],
+                    "open_tools": _open_tools, "skill_unfilled": _skill_unf,
+                    "postal_raw": _praw, "postal_cards": _pcards, "postal_pending": _ppend,
+                    "postal_key": _pk, "judge_gen": _judge_gen[0], "pl_pending": _plp})
+            _chat_fold_last["prefix_next"] = _b
+        except Exception:
+            _CHAT_FOLD_STATS["fallback"] += 1
+            with _chat_fold_lock:
+                _chat_fold.pop(sid, None)
+            if not _chat_fold_warned[0] or _CHAT_FOLD_STATS["fallback"] in (10, 100, 1000):
+                _chat_fold_warned[0] = True
+                sys.stderr.write("chat fold: commit failed (%s) — this session rebuilds in full until it succeeds (stats %r)\n"
+                                 % (traceback.format_exc().strip().splitlines()[-1], dict(_CHAT_FOLD_STATS)))
     if path_override:
         # Historical episode render: the transcript events only — none of the LIVE overlays below (todo,
         # queued, compacting, api-error, status chip) describe a closed episode, and the boundary/system
@@ -27137,10 +27461,16 @@ def _resolve_path_token(tok, sid, memo):
     repo-relative path from the file list, which the same click-time resolution reaches. `memo` is the
     per-build cache — the file index is built at most once per build pass, and only when some token
     actually misses tier 1."""
-    ap = _resolve_open_path(tok, sid)
+    cwd = memo.get("cwd")
+    if cwd is None:                                       # once per build, not once per token: off the
+        cwd = memo["cwd"] = _cwd_of(sid)                  # pusher's names snapshot this was a registry
+        #                                                   file read per token (36k reads in one build,
+        #                                                   measured on the issue-903 replay)
+    ap = os.path.expanduser(str(tok))                     # _resolve_open_path's rule, with the cwd already in hand
+    if not os.path.isabs(ap) and cwd:
+        ap = os.path.join(cwd, ap)
     if os.path.isabs(ap) and os.path.isfile(ap):
         return tok                                        # tier 1 — exact, exactly today's click
-    cwd = _cwd_of(sid)
     if not cwd:
         return None                                       # nowhere to resolve a repo-relative fix
     if "idx" not in memo:
@@ -27562,7 +27892,10 @@ def _push(targets, connect=False, tmux=None):
                     # the deduped= on the matching send say which half is at fault.
                     _perf("chatbuild", sid=str(s["sid"])[:8], cached=0, active=int(is_active),
                           ms=round((time.monotonic() - _t0) * 1000, 1),
-                          events=(len(m.get("events") or []) if m else 0))
+                          events=(len(m.get("events") or []) if m else 0),
+                          fold=_chat_fold_last.get("fold", 0), k=_chat_fold_last.get("k", 0),
+                          prefix=_chat_fold_last.get("prefix", 0),   # events reused from the sealed prefix
+                          why=_chat_fold_last.get("why", ""))         # the demote reason on a full build
                 if not m:
                     continue
                 _note_chat_divergence(s["sid"], m.get("name") or "",
@@ -27602,6 +27935,8 @@ def _push(targets, connect=False, tmux=None):
                     _built_chat.pop(sid, None)
                     _prev_chat_events.pop(sid, None)
                     _prev_chat_ledger.pop(sid, None)
+                    with _chat_fold_lock:
+                        _chat_fold.pop(sid, None)
             _retry_parked_creates()   # lag-parked comment creates ride every pusher cycle (T106)
             # COMMENT THREADS: one {type:"comments"} frame per session that has ever had one (its
             # comments/ store exists — an ~free stat for everyone else). Each frame rides its OWN
@@ -33873,7 +34208,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         if msg and msg.get("type") == "activeTab":
             client["active"] = msg.get("id")   # tab switch → next push builds the now-active tab first
-            return
+            _pusher_wake.set()                 # …and that push starts when the in-flight cycle ends, not
+            return                             #    after the 0.5 s backstop (the tab switch IS the event)
         if msg and msg.get("type") == "needFull" and msg.get("id"):
             # The client REJECTED a delta because it started past what it holds (render.ts chatTail's gap
             # branch) — it is missing events and cannot self-repair. Our own per-client bookkeeping can't
