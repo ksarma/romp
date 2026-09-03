@@ -965,6 +965,10 @@ test("resolver ladder: a named session, then a host-prefixed 8-char stub, then n
 test("the chip's dress is in BOTH sheets: a fixed-width pill that never yields to the path", () => {
   for (const css of [CHAT_CSS, FEED_CSS]) {
     assert.match(css, /\.fileview-sess \{ flex: 0 0 auto; display: inline-flex;/);
-    assert.match(css, /\.fileview-sess \.host-prefix \{/, "the host: token quiet inside the coloured pill (the .wt-sess idiom)");
+    // color:inherit so the host: token takes the pill's own fg — the global .host-prefix{color:var(--dim)}
+    // otherwise wins over the inline white and the token is near-invisible on a coloured pill (the
+    // 2026-09-03 review: ~1:1 contrast for a remote session's chip). opacity keeps it quiet without dimming
+    // to gray.
+    assert.match(css, /\.fileview-sess \.host-prefix \{ color: inherit; opacity: 0\.75; \}/, "the host: token uses the pill's fg, quiet");
   }
 });
