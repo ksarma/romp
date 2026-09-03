@@ -4447,7 +4447,7 @@ def _conserve_tick(now):
     if not be or not hasattr(be, "conserve_close"):
         return
     with _clients_lock:
-        viewer = any(c.get("alive", True) and c.get("app") in ("chat", "fleet", "timeline", "feed", "waiting")
+        viewer = any(c.get("alive", True) and c.get("app") in ("chat", "fleet", "timeline", "feed", "waiting", "files")
                      for c in _clients)
     if viewer:
         _conserve_last_viewer[0] = now
@@ -31188,6 +31188,42 @@ def _waiting_page():
                _shim("waiting", v, caps=FEED_DELTA_CAP + "," + READY_GATE_CAP), v, v))
 
 
+# "Files" — the file VIEWER as its own column of the dashboard (the user 2026-09-03: a file opened over the
+# chat or the feed covers what the person was reading and goes the moment they look away; a pane keeps the
+# file up beside the chat and the feed, and holds a recent-files list when nothing is open). The viewer is
+# REQUEST/RESPONSE, not a feed consumer: bytes come over HTTP /file (fileUrl, host-routed for a remote
+# session's file), and its WS ops — saveFile → fileSaved/fileSaveFailed, fileGitLink, listDir → dirListing —
+# answer the SENDING client. So app=files needs none of the feed-frame plumbing (want_feed, the send loop,
+# the ready fast-serve): _push builds nothing for it, and its socket carries keepalives and its own replies.
+# What it does need: this page (the chat's styles.css for the viewer's dress; files-pane.css read live for
+# the layout and the pane-resident variant; NO _pane_spin — an empty pane is not a loading state), the shim
+# with the ready hold alone, federation.js after it (so a host:sid op routes to the owning kernel through the
+# fake acquireVsCodeApi), then ui/webview/files.ts, and a seat in the conserve-memory viewer list (or an open
+# Files pane alone reads as a closed dashboard). The shell's viewFile relay brings the pane forward and
+# forwards a chat file-link click into it when fileLinkPane is "pane" (render.ts openPath). Browser shell
+# only for now: the VS Code extension's panel mirror is a separate change (UPSTREAM.md).
+def _files_page():
+    try:
+        files_css = (UI / "webview" / "files-pane.css").read_text()
+    except OSError:
+        return ("<!DOCTYPE html><html><body style='font-family:Inter,system-ui,-apple-system,sans-serif;color:#999;"
+                "background:#1e1e1e;padding:12px'>romp's Files pane needs the ui/ modules "
+                "(webview/files-pane.css).</body></html>")
+    v = _dist_ver()
+    return ("<!DOCTYPE html><html lang=en><head><meta charset=UTF-8>"
+            "<meta name=viewport content='width=device-width,initial-scale=1'>"
+            "<link rel=icon type=image/svg+xml href=/media/romp-swirl-glyph.svg><title>Romp · files</title>"
+            # the chat's stylesheet provides the viewer's dress (.fileview-*, the file browser, the code
+            # palette); files-pane.css (in the <style> AFTER it) owns the page layout and the pane-resident
+            # variant keyed on body.fileview-pane, so the two mirrored viewer sheets stay byte-equal.
+            "<link href=/dist/styles.css?v=%d rel=stylesheet>"
+            "<style>%s\n%s</style></head><body class=fileview-pane>"
+            "<div id=files-empty></div>"
+            "<script>%s</script><script src=/dist/federation.js?v=%d></script>"   # multi-kernel manager: after the shim
+            "<script src=/dist/files.js?v=%d></script></body></html>"
+            % (v, THEME_CSS, files_css, _shim("files", v, caps=READY_GATE_CAP), v, v))
+
+
 # The romp-tl-* wrapper styles live in ui/webview/timeline-pane.css — ONE file, read live here (like the
 # view JS itself) and bundled into the VS Code VSIX by vscode-extension/esbuild.js, so the two hosts cannot drift.
 
@@ -34805,6 +34841,9 @@ class Handler(BaseHTTPRequestHandler):
             if p == "/waiting":
                 _client_seen[0] = time.time()
                 return self._send(200, _waiting_page(), "text/html; charset=utf-8", cache="no-cache")
+            if p == "/files":
+                _client_seen[0] = time.time()
+                return self._send(200, _files_page(), "text/html; charset=utf-8", cache="no-cache")
             if p == "/sw.js":
                 # the push service worker (see _SW_JS). Behind the gate on purpose: the browser's
                 # register() fetch is same-origin and carries the cookie, and only an authed shell

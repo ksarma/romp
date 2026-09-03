@@ -6771,6 +6771,29 @@ class ServeSecurity(unittest.TestCase):
         self.assertIn("document.getElementById('waiting-list')", body)
         self.assertIn("window.addEventListener('romp:wsdown',function(){if(ready()){badge(true);}else{show();}});", body)
 
+    def test_files_page_served(self):
+        # "Files" (2026-09-03): /files serves the file viewer as its own pane, rendered by dist/files.js. It
+        # connects as its OWN app (app=files) with the ready hold alone: the viewer is request/response (HTTP
+        # /file for the bytes, op replies to the sending client), never a feed consumer. The chat's styles.css
+        # supplies the viewer's dress; files-pane.css is inlined live for the layout and the pane-resident
+        # variant. No romp loader: an empty pane is not a loading state.
+        import urllib.request
+        with urllib.request.urlopen("http://127.0.0.1:%d/files?token=testtok" % self.port, timeout=5) as r:
+            self.assertEqual(r.status, 200)
+            body = r.read().decode("utf-8", "replace")
+        self.assertIn("<body class=fileview-pane>", body)
+        self.assertIn("<div id=files-empty></div>", body)
+        self.assertIn("/dist/styles.css", body)
+        self.assertIn("/dist/federation.js", body)
+        self.assertIn("/dist/files.js", body)
+        self.assertLess(body.index("/dist/federation.js"), body.index("/dist/files.js"), "manager before the bundle")
+        self.assertIn("app=files", body)
+        self.assertIn('var CAPS="readyGate"', body)
+        self.assertNotIn('var CAPS="feedDelta', body)
+        self.assertIn("body.fileview-pane #romp-fileview{", body, "files-pane.css is inlined live")
+        self.assertNotIn("id=pane-spin", body)
+        self.assertNotIn("rel=manifest", body)   # a pane, not an install target
+
     def test_landing_fleet_is_its_own_pane_toggled_from_the_rail(self):
         # Fleet is its OWN pane now (the user 2026-06-24): the old .show-fleet SWAP (Fleet living inside the
         # chat pane) is gone. Fleet is the middle pane, toggled by the far-left rail's Fleet button (po-fleet).

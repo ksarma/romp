@@ -185,7 +185,7 @@ class Plumbing(unittest.TestCase):
         self.assertIn('if not (served and client.get("app") in ("feed", "waiting")):', SRC)
 
     def test_an_open_waiting_pane_counts_as_a_viewer_for_conserve_memory(self):
-        self.assertIn('c.get("app") in ("chat", "fleet", "timeline", "feed", "waiting")', SRC)
+        self.assertIn('c.get("app") in ("chat", "fleet", "timeline", "feed", "waiting", "files")', SRC)
 
     def test_the_page_rides_the_feed_pane_caps_and_the_shared_dress(self):
         page = km._waiting_page()

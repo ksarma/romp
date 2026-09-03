@@ -625,9 +625,10 @@ class ShimAnnouncesForTheFeedPage(unittest.TestCase):
         self.assertIn('_shim("feed", v, caps=FEED_DELTA_CAP + "," + READY_GATE_CAP)', KSRC)
         # the Waiting on you pane (2026-09-03) rides the feed frame with the feed page's caps: deltas + the hold
         self.assertIn('_shim("waiting", v, caps=FEED_DELTA_CAP + "," + READY_GATE_CAP)', KSRC)
-        for app in ("chat", "fleet", "timeline"):
+        # the Files pane (2026-09-03) is request/response, never a feed consumer: the hold alone, no deltas
+        for app in ("chat", "fleet", "timeline", "files"):
             self.assertIn('_shim("%s", v, caps=READY_GATE_CAP)' % app, KSRC, app)
-        self.assertEqual(KSRC.count("_shim("), 6, "the definition and the five panes — a sixth caller must announce too")
+        self.assertEqual(KSRC.count("_shim("), 7, "the definition and the six panes — a seventh caller must announce too")
 
 
 def _connect(port, query):
