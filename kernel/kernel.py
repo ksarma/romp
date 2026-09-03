@@ -10533,7 +10533,9 @@ def _drive(msg, client):
         sys.stderr.write("kill: %s via endSession WS op\n" % sid)   # kill attribution (the user 2026-07-16)
         be.kill(sid); _record_death(sid, int(time.time()), "kill")   # the one SDK event with no designed reviver
         _comment_kill_all(sid, be)   # its comment threads must not outlive it as unreachable running CLIs
-        _send_to_app("chat", {"type": "closed", "id": sid}); _push_soon()
+        _send_to_app("chat", {"type": "closed", "id": sid})
+        _confirm_close_now(sid)      # the kill IS the event: the fresh tab set rides it, not the next pusher cycle
+        _push_soon()
     elif t == "renameSession" and msg.get("name"):
         new = str(msg["name"]).strip()
         if not NAME_RE.match(new):
@@ -27857,7 +27859,7 @@ def _push(targets, connect=False, tmux=None):
     want_tl = any(c["app"] == "timeline" for c in targets)
     chat_clients = [c for c in targets if c["app"] == "chat"]
     try:
-        chat_list = _chat_tab_sessions(now, tmux)   # living + recently-died-while-shown, minus ×-hidden
+        chat_list = _chat_tab_sessions(now, tmux)   # live + explicitly kept-open (read-only reopened dead) — nothing else
         tab_order = [s["sid"] for s in chat_list]
         # order audit: a PERMUTED push (survivors swapped slots vs the previous push) is the reorder bug
         # leaving the kernel — log it with the stack. Set churn (a tab appearing/dying) is routine → skipped.
@@ -28187,6 +28189,37 @@ _pusher_wake = threading.Event()
 # an unchanged fleet sig — or the very push meant to show the change serves the stale pre-change payload
 # (the user 2026-07-05: a reply on a distilled card lagged its fly-to-Working by the 5s sig time-bucket).
 _views_dirty = [0.0]
+
+
+def _confirm_close_now(sid):
+    """The chat's CLOSE CONFIRMATION, sent off-cycle the moment a session is ended (T233, the user
+    2026-09-03: a false "Couldn't close X — romp still has it open" toast on a session this kernel had
+    killed within the same second). The client accepts exactly one confirmation — a tabOrder push that no
+    longer lists the id — and until now the only sender was the pusher's tabs-first send, whose cycle on a
+    loaded box runs 20-40s; past the client's 15s backstop, a still-listing order reads as a refused close.
+    The kill is the event, so the confirmation rides it: a fresh tab set computed off a FRESH liveness read
+    (the death is already recorded, so the ended session is gone from it), the same shape as the pusher's
+    tabs-first send, through the same per-client dedup slot — the next cycle's identical send is a no-op.
+    `_push_soon()` still follows for everything else the kill changed. Returns whether the fresh set is
+    indeed without the id (False = the end did not take; the client's own backstop then says so, honestly).
+    Off-cycle by design: `_tmux_sessions()` outside a pusher cycle is a live Sessions.live() read."""
+    try:
+        now = int(time.time())
+        chat_list = _chat_tab_sessions(now, _tmux_sessions())
+        tab_order = [s["sid"] for s in chat_list]
+        tab_meta = [{"id": s["sid"], "name": s.get("name", ""), "color": _name_color(s["sid"])} for s in chat_list]
+        frame = {"type": "tabOrder", "order": tab_order, "tabs": tab_meta, "views": _views_client()}
+        with _clients_lock:
+            targets = [c for c in _clients if c["app"] == "chat"]
+        for c in targets:
+            try:
+                _send_client(c, ("taborder",), frame)
+            except Exception:
+                c["alive"] = False
+        return sid not in tab_order
+    except Exception:
+        sys.stderr.write("confirm-close %s: %s\n" % (sid, traceback.format_exc()))
+        return False
 
 
 def _push_soon():
