@@ -6,8 +6,10 @@ and the /sessions + /version polls failing left no mark. _tunnel_status derives 
 actually crossed the tunnel; an alive tunnel with nobody answering is 'no-kernel', surfaced in the
 popover with the next step. The /send remote forward reports a dead far kernel instead of ok:true.
 Synthetic fixtures only."""
+import json
 import os
 import unittest
+from unittest import mock
 from importlib.machinery import SourceFileLoader
 import tempfile
 
@@ -40,6 +42,109 @@ class TunnelStatus(unittest.TestCase):
         self.assertEqual(km._tunnel_status(False, False, False), "down")
 
 
+class ExpectedRestart(unittest.TestCase):
+    """T238: a restart the DIALING side caused (its p2p update) must read as 'restarting after update',
+    never as a dead far kernel — no red no-kernel, no terminated ssh, no backoff step — until the event
+    that ends it (the far kernel answers again, or reports the new sha) or a can-never-trap cap."""
+
+    def _row(self, **kw):
+        r = {"host": "TESTHOST", "status": "up", "fails": 2, "next_try": 50.0, "misses": 0,
+             "restartExpected": {"sha": "1" * 40, "t": 1000.0}}
+        r.update(kw)
+        return r
+
+    def test_an_unanswered_poll_during_an_expected_restart_reads_restarting(self):
+        r = self._row()
+        st = km._expected_restart_status(r, "no-kernel", None, now=1005.0)
+        self.assertEqual(st, "restarting")
+        self.assertEqual(r["misses"], 0, "a restart gap is not a miss — nothing tears the ssh down")
+        self.assertEqual((r["fails"], r["next_try"]), (2, 50.0), "no backoff step")
+        self.assertIn("gapT", r["restartExpected"], "the gap's start is recorded — the cap counts from here")
+
+    def test_the_far_kernel_answering_again_ends_it(self):
+        r = self._row()
+        km._expected_restart_status(r, "no-kernel", None, now=1005.0)
+        st = km._expected_restart_status(r, "up", "2" * 40, now=1008.0)
+        self.assertEqual(st, "up")
+        self.assertNotIn("restartExpected", r, "the answer after the gap is the event that ends it")
+
+    def test_the_new_sha_showing_up_ends_it_even_without_a_gap(self):
+        # a quiet-window restart may land minutes later; a poll that already reports the pushed sha
+        # proves the restart happened whether or not we saw the gap
+        r = self._row()
+        st = km._expected_restart_status(r, "up", "1" * 40, now=1300.0)
+        self.assertEqual(st, "up")
+        self.assertNotIn("restartExpected", r)
+
+    def test_the_cap_ends_it_loudly_and_the_ordinary_path_resumes(self):
+        r = self._row()
+        km._expected_restart_status(r, "no-kernel", None, now=1005.0)
+        before = len(km.TUNNEL_LOG.read_text().splitlines()) if km.TUNNEL_LOG.exists() else 0
+        st = km._expected_restart_status(r, "no-kernel", None, now=1005.0 + km.RESTART_EXPECT_GAP_S + 1)
+        self.assertEqual(st, "no-kernel", "past the cap the row is honestly a dead far kernel")
+        self.assertNotIn("restartExpected", r)
+        appended = [json.loads(x) for x in km.TUNNEL_LOG.read_text().splitlines()[before:] if x.strip()]
+        self.assertTrue(any(x.get("event") == "restart-expected-expired" for x in appended), appended)
+
+    def test_a_restart_that_never_comes_expires_too(self):
+        # the far kernel keeps answering the OLD sha long past any quiet window: stop expecting
+        r = self._row()
+        st = km._expected_restart_status(r, "up", "2" * 40, now=1000.0 + km.RESTART_EXPECT_MAX_S + 1)
+        self.assertEqual(st, "up")
+        self.assertNotIn("restartExpected", r)
+
+    def test_an_explicit_restart_with_no_sha_ends_only_by_its_gap(self):
+        r = self._row(restartExpected={"sha": "", "t": 1000.0})
+        km._expected_restart_status(r, "up", "2" * 40, now=1002.0)
+        self.assertIn("restartExpected", r, "the old kernel answers the same sha — that is not the end")
+        km._expected_restart_status(r, "no-kernel", None, now=1004.0)
+        self.assertEqual(km._expected_restart_status(r, "up", "2" * 40, now=1008.0), "up")
+        self.assertNotIn("restartExpected", r)
+
+    def test_a_never_coming_restart_is_said_on_the_row(self):
+        r = self._row()
+        km._expected_restart_status(r, "up", "2" * 40, now=1000.0 + km.RESTART_EXPECT_MAX_S + 1)
+        self.assertIn("never restarted", r.get("detail") or "", "not just a dial-log line")
+
+    def test_the_expectation_ages_out_while_the_tunnel_is_down_too(self):
+        r = self._row()
+        km._expected_restart_status(r, "down", None, now=1000.0 + km.RESTART_EXPECT_MAX_S + 1)
+        self.assertNotIn("restartExpected", r, "never a permanent latch, whatever the row is doing")
+
+    def test_a_refused_demand_redial_with_a_dead_ssh_is_a_real_demand(self):
+        proc = mock.Mock()
+        proc.poll = lambda: 1                    # the ssh itself died
+        km._remotes["TESTHOST"] = self._row(proc=proc)
+        self.addCleanup(km._remotes.pop, "TESTHOST", None)
+        km._demand_redial("TESTHOST", "refused")
+        self.assertEqual((km._remotes["TESTHOST"]["fails"], km._remotes["TESTHOST"]["next_try"]), (0, 0),
+                         "a dead ssh during the expectation still earns the redial")
+
+    def test_no_expectation_changes_nothing(self):
+        r = self._row()
+        r.pop("restartExpected")
+        self.assertEqual(km._expected_restart_status(r, "no-kernel", None, now=1005.0), "no-kernel")
+
+    def test_a_refused_demand_redial_is_a_no_op_while_the_restart_is_expected(self):
+        terminated = []
+        proc = mock.Mock()
+        proc.poll = lambda: None
+        proc.terminate = lambda: terminated.append(1)
+        km._remotes["TESTHOST"] = self._row(proc=proc)
+        self.addCleanup(km._remotes.pop, "TESTHOST", None)
+        km._demand_redial("TESTHOST", "refused")
+        self.assertEqual(terminated, [], "a data-path hit during our own restart must not kill a healthy ssh")
+        self.assertEqual((km._remotes["TESTHOST"]["fails"], km._remotes["TESTHOST"]["next_try"]), (2, 50.0))
+
+    def test_a_quiet_pending_audit_row_names_the_cut_beyond_the_usual_window(self):
+        # the quiet window can defer the restart for minutes; the cut row must still carry the reason
+        km._audit_restart_request("p2p-update", reason="from TESTHOST to 1111111", when="quiet",
+                                  t=int(2000 - 600))
+        self.assertIn("p2p-update", km._recent_restart_reason(now=2000))
+        km._audit_restart_request("rail-button", t=int(3000 - 600))
+        self.assertEqual(km._recent_restart_reason(now=3000), "", "an immediate request keeps the 90s window")
+
+
 class SourcePins(unittest.TestCase):
     def setUp(self):
         self.src = open(os.path.join(BIN, "romp-kernel")).read()
@@ -53,6 +158,15 @@ class SourcePins(unittest.TestCase):
     def test_popover_labels_and_colors_the_new_status(self):
         self.assertIn("'no-kernel':'kernel not answering'", self.src)
         self.assertIn("t.status==='no-kernel'", self.src)
+
+    def test_the_strip_labels_an_expected_restart_and_never_paints_it_red(self):
+        self.assertTrue("restarting:'restarting after update" in self.src, "strip label for the expected restart")
+        self.assertTrue("t.status==='no-kernel'||t.status==='error')return 'warn'" in self.src,
+                        "the warn (red) line names no-kernel and error only — restarting is a wait")
+
+    def test_the_supervisor_consults_the_expectation_before_it_judges_the_far_kernel(self):
+        self.assertTrue("_expected_restart_status(r, st, rsha, now)" in self.src,
+                        "the supervisor consults the expectation before judging the far kernel")
 
     def test_send_remote_forward_reports_a_dead_far_kernel(self):
         self.assertIn("isn't answering — message not delivered", self.src)

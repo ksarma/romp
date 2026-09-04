@@ -12709,6 +12709,10 @@ def _demand_redial(host, kind):
         if not r or r.get("checkin_peer"):
             return
         alive = _tunnel_proc_alive(r)
+        if kind == "refused" and alive and isinstance(r.get("restartExpected"), dict):
+            return                                   # the far kernel is restarting because WE updated it
+            #                                          (T238): the ssh is healthy — never terminate it. A
+            #                                          DEAD ssh is a real demand and falls through (review)
         if alive and r.get("status") in ("starting", "authorizing"):
             return                                   # a dial is mid-flight — the demand is already served
         r["fails"], r["next_try"] = 0, 0
@@ -12736,6 +12740,65 @@ def _tunnel_status(proc_alive, port_up, remote_answered):
     if port_up:
         return "no-kernel"
     return "starting"
+
+
+RESTART_EXPECT_GAP_S = 120.0      # cap on an expected restart's UNANSWERED stretch — a kernel boot is ~2s; this
+#                                   can never trap a row: past it the ordinary no-kernel path resumes, loudly
+RESTART_EXPECT_MAX_S = 20 * 60.0  # a restart that never comes: the far manager's quiet window is capped at 15
+#                                   min (QUIET_MAX_DEFER_MS), so an expectation older than this is stale
+
+
+def _expected_restart_status(r, st, rsha, now):
+    """Reinterpret a tunnel row's polled status while a restart WE caused is expected (T238). After a
+    p2p update or an explicit remote restart the far kernel goes away for ~2s; the supervisor used to
+    read that gap as a dead far kernel — 'no-kernel' (red), a data-path hit terminating the healthy
+    ssh, a backoff step — so a 2s restart the puller itself caused showed as 15-60s of "unreachable"
+    on a merge day, nine times in three hours. With r["restartExpected"] = {sha, t} stamped by the
+    apply, an unanswered poll reads 'restarting' instead, and the row's ladder/misses are left alone.
+    Event-keyed ends: the far kernel ANSWERS again after the gap, or reports the pushed sha (a
+    quiet-window restart may land minutes later). Two can-never-trap caps, both loud on the dial log:
+    RESTART_EXPECT_GAP_S from the first unanswered poll, and RESTART_EXPECT_MAX_S for an expectation
+    whose restart never comes. Pure on (row, status, polled sha, now); mutates only the row."""
+    exp = r.get("restartExpected")
+    if not isinstance(exp, dict):
+        return st
+    aged = now - float(exp.get("t") or now) > RESTART_EXPECT_MAX_S
+    if st == "up":
+        gap0 = exp.get("gapT")
+        want = str(exp.get("sha") or "")
+        if gap0 is not None or (want and rsha and _shas_agree(rsha, want)):
+            # the far kernel answered after its gap, or already reports the pushed sha (a quiet-window
+            # restart may land minutes later). An EXPLICIT restart carries no sha — only the gap ends it,
+            # since the old kernel answers the very sha it already ran (review find)
+            r.pop("restartExpected", None)
+            _tunnel_log(r.get("host") or "?", "restart-expected-ended", sha=want[:12],
+                        gapS=(round(now - gap0, 1) if gap0 is not None else 0), sawNewSha=bool(want and rsha))
+        elif aged:
+            r.pop("restartExpected", None)
+            _tunnel_log(r.get("host") or "?", "restart-expected-expired", sha=want[:12],
+                        note="the far kernel kept answering the old build past the quiet-window cap")
+            if want:
+                # SAY it on the row, not just the dial log: the update landed on disk but that kernel never
+                # restarted into it (a manager that owns no kernel, a quiet window that never came)
+                r["detail"] = ("pushed %s there, but that kernel never restarted into it — restart it from "
+                               "its popover" % want[:8])
+        return st
+    if st in ("down", "starting") and aged:
+        r.pop("restartExpected", None)   # never a permanent latch, whatever the row is doing (review find)
+        _tunnel_log(r.get("host") or "?", "restart-expected-expired", sha=str(exp.get("sha") or "")[:12],
+                    note="aged out while the tunnel itself was %s" % st)
+        return st
+    if st == "no-kernel":
+        gap0 = exp.get("gapT")
+        if gap0 is None:
+            exp["gapT"] = gap0 = now             # the restart began: count the cap from here
+        if now - gap0 <= RESTART_EXPECT_GAP_S:
+            return "restarting"
+        r.pop("restartExpected", None)
+        _tunnel_log(r.get("host") or "?", "restart-expected-expired", sha=str(exp.get("sha") or "")[:12],
+                    gapS=round(now - gap0, 1), cap=RESTART_EXPECT_GAP_S,
+                    note="the far kernel did not come back — treating it as a dead far kernel again")
+    return st
 
 
 def _remote_public(r):
@@ -14198,6 +14261,16 @@ def _update_remote(host):
     if rdirty:
         return False, "remote %s has uncommitted changes — commit or discard them there first (won't clobber)" % host
     if rhead and rhead == lfull:
+        with _remotes_lock:
+            rr = _remotes.get(host)
+            if rr is not None and rr.get("kernel_sha") and not _shas_agree(rr["kernel_sha"], lfull) \
+                    and not isinstance(rr.get("restartExpected"), dict):
+                # the checkout already holds our build but the KERNEL still answers the old one: a
+                # restart is pending there (a quiet window we asked for and then forgot across our own
+                # restart, or one nobody asked for) — expect it again rather than read its gap as death
+                rr["restartExpected"] = {"sha": lfull, "t": time.time(), "quiet": None}
+                return True, ("already up to date (%s) — that kernel has not restarted into it yet"
+                              % (_local_head(short=True) or lfull[:8]))
         return True, "already up to date (%s)" % (_local_head(short=True) or lfull[:8])
     # (2) push local HEAD to a scratch ref on the remote (non-checked-out → no denyCurrentBranch issue)
     env = dict(os.environ, GIT_SSH_COMMAND="%s %s" % (SSH_BIN, " ".join(_SSH_OPTS)))
@@ -14227,6 +14300,29 @@ def _update_remote(host):
         # can't run (or the port never returns) we relaunch romp-serve bare as a last resort so the host isn't
         # left dead. The port poll confirms whichever path brought it back.
         'if [ ! -x "$R/bin/romp-serve" ]; then echo "NOLAUNCH:$NEW"; exit 0; fi; '
+        # NEVER AN ANONYMOUS SIGTERM (T238, the T121 rule): a restart-audit row lands BEFORE whichever
+        # restart happens, so the far kernel's cut row carries WHO and WHY (the p2p update, from this
+        # machine, to this sha) — nine restarts in three hours had no reason on record. The restart
+        # goes THROUGH THE FAR MANAGER'S QUIET WINDOW (restart-all --quiet: no in-flight turn is cut,
+        # the 15-minute backstop still lands the deploy, a second apply arriving while one is pending
+        # coalesces into the same bounce) — but ONLY when that manager actually OWNS the kernel on the
+        # polled port (its /status lists it): a manager owning nothing, or a bare kernel beside a
+        # crash-looping managed one, answers 202 and restarts nothing, which would have turned this
+        # into a silent never-restart (review find). SYNCED:<sha>:QUIET = deferred; SYNCED:<sha>:FALLBACK
+        # = the immediate path below ran (no owning manager reachable — node absent, no manager, or
+        # the polled kernel is bare). The quiet audit row says when=quiet; the fallback writes its own
+        # row without it, so the cut row joins the right request with the right window.
+        'OWNED=0; if command -v node >/dev/null 2>&1 && [ -x "$R/bin/romp-manager" ]; then '
+        'OWNED="$("$R/bin/romp-manager" status 2>/dev/null | python3 -c "import json,sys; d=json.load(sys.stdin); '
+        'print(1 if any(int(k.get(\'port\') or 0)==%d for k in (d.get(\'kernels\') or [])) else 0)" 2>/dev/null || echo 0)"; fi; '
+        'if [ "$OWNED" = 1 ]; then '
+        'python3 -c "import json,time;print(json.dumps({\'t\':int(time.time()),\'action\':\'p2p-update\','
+        '\'reason\':\'from %s to %s\',\'when\':\'quiet\'}))" >>"$LOGDIR/restart-audit.jsonl" 2>/dev/null || true; '
+        'if "$R/bin/romp-manager" restart-all --quiet >>"$LOGDIR/update.log" 2>&1; then echo "SYNCED:$NEW:QUIET"; exit 0; fi; fi; '
+        # LAST RESORT (no owning manager answering on this host): the immediate path below — audit row,
+        # kill, then `ensure` upgrades the host to a supervised kernel.
+        'python3 -c "import json,time;print(json.dumps({\'t\':int(time.time()),\'action\':\'p2p-update\','
+        '\'reason\':\'from %s to %s (immediate: no owning manager)\'}))" >>"$LOGDIR/restart-audit.jsonl" 2>/dev/null || true; '
         # SELF-MATCH GUARD. `pkill -f` matches its pattern against every process's FULL COMMAND LINE —
         # including this apply script's own, because the pattern text sits literally inside it. The plain
         # spelling therefore killed the apply shell AT THIS LINE, before it could restart the kernel or
@@ -14239,8 +14335,10 @@ def _update_remote(host):
         'if command -v node >/dev/null 2>&1 && [ -x "$R/bin/romp-manager" ]; then "$R/bin/romp-manager" ensure >>"$LOGDIR/update.log" 2>&1 || true; fi; '
         'UP=0; for i in 1 2 3 4 5 6 7 8; do sleep 1; if bash -c "exec 3<>/dev/tcp/127.0.0.1/%d" 2>/dev/null; then UP=1; break; fi; done; '
         'if [ "$UP" = 0 ]; then nohup "$R/bin/romp-serve" >>"$LOGDIR/kernel.log" 2>&1 </dev/null &  sleep 1; fi; '
-        'echo "SYNCED:$NEW"'
-    ) % (shlex.quote(rdir), _P2P_REF, _P2P_REF, _P2P_REF, _P2P_REF, _P2P_REF, kport)
+        'echo "SYNCED:$NEW:FALLBACK"'
+    ) % (shlex.quote(rdir), _P2P_REF, _P2P_REF, _P2P_REF, _P2P_REF, _P2P_REF,
+         kport, _local_machine_label(), (_local_head(short=True) or lfull[:8]),
+         _local_machine_label(), (_local_head(short=True) or lfull[:8]), kport)
     # The apply KILLS the running kernel before booting its replacement, so it must be immune to the
     # ssh dying between the two halves — exactly what a flaky link does (the user 2026-07-11:
     # every drop mid-apply left the host kernel-LESS, and each banner Retry re-killed whatever a
@@ -14251,18 +14349,46 @@ def _update_remote(host):
     # AFTER the boot has been launched. Falls back to plain bash where setsid doesn't exist (macOS).
     guarded_apply = ('APPLY=%s; if command -v setsid >/dev/null 2>&1; then exec setsid bash -c "$APPLY"; '
                      'else exec bash -c "$APPLY"; fi' % shlex.quote(apply_cmd))
+    # The dialing side EXPECTS the restart it is about to cause (T238) — stamped BEFORE the apply runs:
+    # an idle far kernel is SIGTERMed within milliseconds of the manager's 202, and the fallback path
+    # kills it mid-ssh, so a stamp after the ssh returned arrived after the gap it was meant to explain
+    # (review find). The expected sha is the NEW build, which the old kernel cannot report, so the
+    # sha-agreement end cannot fire early. Popped again below if the apply did not restart anything.
+    def _expect(quiet):
+        with _remotes_lock:
+            rr = _remotes.get(host)
+            if rr is not None:
+                rr["restartExpected"] = {"sha": lfull, "t": time.time(), "quiet": quiet}
+    def _unexpect():
+        with _remotes_lock:
+            rr = _remotes.get(host)
+            if rr is not None:
+                rr.pop("restartExpected", None)
+    _expect(None)
     try:
         a = subprocess.run([SSH_BIN] + _SSH_OPTS + ["--", host, guarded_apply], capture_output=True, text=True, timeout=60)
     except subprocess.TimeoutExpired:
+        # the detached apply keeps running there — the restart may still come, so the expectation stays
         return False, ("pushed, but confirming the restart timed out — the detached restart keeps "
                        "running on %s; check the popover in a minute" % host)
     except Exception as e:
+        _unexpect()
         return False, "pushed, but the remote reset/restart failed: " + str(e)[:150]
     aout = (a.stdout or "").strip()
     tag, _, rest = aout.partition(":")
     tag, rest = tag.strip(), rest.strip()
     if tag == "SYNCED":
-        return True, "synced to %s + restarting" % (rest or _local_head(short=True) or "HEAD")
+        short, _, mode = rest.partition(":")
+        mode = mode.strip()
+        _expect(mode == "QUIET")
+        short = short.strip() or _local_head(short=True) or "HEAD"
+        if mode == "QUIET":
+            return True, "synced to %s — restarting at its next quiet window" % short
+        if mode == "FALLBACK":
+            return True, ("synced to %s + restarting now (no manager owns that kernel there — an "
+                          "immediate restart)" % short)
+        return True, "synced to %s + restarting" % short
+    _unexpect()                                   # nothing restarted: DIVERGED / RESETFAIL / NOLAUNCH / error
     if tag == "DIVERGED":
         # Two very different causes land here, and the old wording only described the first, which is
         # why a rewritten local history read as an unexplained refusal (the user 2026-07-22): either the
@@ -14492,12 +14618,22 @@ def _restart_remote_kernel(host):
     apply_cmd = (
         'LOGDIR="${ROMP_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/romp}"; mkdir -p "$LOGDIR"; R=%s; '
         'if [ ! -x "$R/bin/romp-serve" ]; then echo NOLAUNCH; exit 0; fi; '
+        # never an anonymous SIGTERM (T238): the far kernel's cut row names this explicit restart
+        'python3 -c "import json,time;print(json.dumps({\'t\':int(time.time()),\'action\':\'remote-restart\','
+        '\'reason\':\'requested from %s\'}))" >>"$LOGDIR/restart-audit.jsonl" 2>/dev/null || true; '
         'pkill -f "bin/romp-kern[e]l" 2>/dev/null; '
         'if command -v node >/dev/null 2>&1 && [ -x "$R/bin/romp-manager" ]; then "$R/bin/romp-manager" ensure >>"$LOGDIR/update.log" 2>&1 || true; fi; '
         'UP=0; for i in 1 2 3 4 5 6 7 8; do sleep 1; if bash -c "exec 3<>/dev/tcp/127.0.0.1/%d" 2>/dev/null; then UP=1; break; fi; done; '
         'if [ "$UP" = 0 ]; then nohup "$R/bin/romp-serve" >>"$LOGDIR/kernel.log" 2>&1 </dev/null &  sleep 1; fi; '
         'echo "RESTARTED:$UP"'
-    ) % (shlex.quote(rdir), kport)
+    ) % (shlex.quote(rdir), _local_machine_label(), kport)
+    with _remotes_lock:
+        rr = _remotes.get(host)
+        if rr is not None:
+            # the supervisor expects the gap this restart is about to cause — stamped BEFORE the ssh,
+            # with NO sha: a same-build restart brings back the sha the old kernel already answers, so
+            # a sha-agreement end would fire before the kill; only the observed gap ends it (review)
+            rr["restartExpected"] = {"sha": "", "t": time.time(), "quiet": False}
     guarded = ('APPLY=%s; if command -v setsid >/dev/null 2>&1; then exec setsid bash -c "$APPLY"; '
                'else exec bash -c "$APPLY"; fi' % shlex.quote(apply_cmd))
     try:
@@ -14509,6 +14645,10 @@ def _restart_remote_kernel(host):
     out = (a.stdout or "").strip()
     if out.startswith("RESTARTED"):
         return True, "restarted (same build)"
+    with _remotes_lock:                           # nothing restarted — stop expecting a gap
+        rr = _remotes.get(host)
+        if rr is not None:
+            rr.pop("restartExpected", None)
     if out == "NOLAUNCH":
         return False, "found no romp/romp-serve launcher to restart the kernel"
     return False, (_ssh_err(a.stderr) or out or "remote restart failed").strip()[:180]
@@ -14703,11 +14843,27 @@ def _recent_restart_reason(window=90, now=None):
             return ""
         rec = json.loads(tail[-1])
         t0 = int(now if now is not None else time.time())
+        if isinstance(rec, dict) and rec.get("when") == "quiet":
+            # a QUIET-WINDOW request is pending until the restart it asked for lands — up to the far
+            # manager's 15-minute backstop — so it names the cut well past the immediate window (T238)
+            window = max(window, RESTART_EXPECT_MAX_S)
         if isinstance(rec, dict) and isinstance(rec.get("t"), int) and t0 - rec["t"] <= window:
             return str(rec.get("action") or "") + (": " + str(rec["reason"]) if rec.get("reason") else "")
     except Exception:
         pass
     return ""
+
+
+def _local_machine_label():
+    """This machine's name as the far side's audit row should carry it — the hostname, SANITIZED to
+    [A-Za-z0-9._-]: it is interpolated into a shell script the far host runs, so a quote, $ or
+    backtick in a hostname must never break the apply or silently drop the audit row (review find)."""
+    try:
+        raw = socket.gethostname() or ""
+    except Exception:
+        raw = ""
+    clean = re.sub(r"[^A-Za-z0-9._-]+", "-", raw).strip("-")[:64]
+    return clean or "this-machine"
 
 
 def _restart_this_kernel(reason="", manager_port=_PORT_FROM_ENV):
@@ -14931,6 +15087,8 @@ def _tunnel_supervisor():
                         _note_poll(r, st == "up")
                     else:
                         st = _tunnel_status(_tunnel_proc_alive(r), up, sids is not None)
+                        st = _expected_restart_status(r, st, rsha, now)   # our own p2p restart is not a
+                        #                                                    dead far kernel (T238)
                         # A LIVE ssh is not proof of a live tunnel (the user 2026-07-29). ssh answers the
                         # local connect from its own listener, so a proc whose transport is gone looks
                         # exactly like a healthy tunnel with no romp behind it — and this branch only
@@ -14943,7 +15101,10 @@ def _tunnel_supervisor():
                         # answered at all means the path is gone. Kill it and let the branch above re-dial —
                         # once, on the transition, never on a timer.
                         silent = (st == "no-kernel" and r.get("_probe") == "timeout")
-                        if _note_poll(r, not silent):
+                        if st == "restarting":
+                            pass                    # the gap of a restart WE caused: no miss, no teardown,
+                            #                         no ladder step — the expectation's own caps bound it
+                        elif _note_poll(r, not silent):
                             _tunnel_log(r["host"], "stale-tunnel",
                                         pid=(r["proc"].pid if r.get("proc") else 0),
                                         misses=int(r.get("misses") or 0),
@@ -14984,6 +15145,9 @@ def _tunnel_supervisor():
                         #                                    so a later down row can date what it remembers
                         if r.get("detail"):
                             r["detail"] = ""               # any parked error/hint is moot once it answers
+                    elif st == "restarting":
+                        r["detail"] = ("restarting after an update pushed from this machine — back in a "
+                                       "moment; nothing to do")
                     elif st == "no-kernel" and not r.get("booting"):
                         cur = r.get("detail") or ""
                         if not cur or cur.startswith("no kernel answering"):
@@ -30621,12 +30785,13 @@ function fillHosts(){if(!dl)return;var hs=[];
 dl.innerHTML=hs.map(function(h){return '<option value=\"'+h+'\"></option>';}).join('');}
 function loadHosts(){fetch('/ssh-hosts',{cache:'no-store'}).then(function(r){return r.json();}).then(function(d){
 _cfg=(d&&d.hosts)||[];fillHosts();}).catch(function(){});}
-var LBL={up:'connected',authorizing:'authorizing\\u2026',connecting:'connecting\\u2026',starting:'connecting\\u2026','no-kernel':'kernel not answering',down:'reconnecting\\u2026',error:'error'};
+var LBL={up:'connected',authorizing:'authorizing\\u2026',connecting:'connecting\\u2026',starting:'connecting\\u2026','no-kernel':'kernel not answering',restarting:'restarting after update\\u2026',down:'reconnecting\\u2026',error:'error'};
 // Every status explains itself on hover (the user 2026-07-22: learn it from tooltips, not the CLI).
 var TIP={up:'Connected: the ssh tunnel is open and that machine\\u2019s romp kernel is answering through it. Its sessions appear in your tabs and timeline.',
 authorizing:'Opening an ssh connection and reading that machine\\u2019s access token. Needs `ssh <host>` to work without a prompt.',
 connecting:'The ssh tunnel is up; waiting for the remote kernel to answer on its port.',
 starting:'The ssh tunnel is up; waiting for the remote kernel to answer on its port.',
+restarting:'This machine just pushed its build there; that kernel is restarting into it and will answer again in a moment. Nothing to do.',
 'no-kernel':'The tunnel is open but no romp kernel is answering on that machine. Re-dial re-opens the link in case it is only wedged; Start pushes this machine\\u2019s romp there and boots it.',
 down:'The ssh tunnel is not up. romp keeps retrying on its own, waiting longer between tries the longer it stays down, so a machine that comes back is picked up without you doing anything. Try now dials immediately.',
 error:'The connection failed. Hover the status text for the reason romp got back. romp keeps retrying in the background.'};
