@@ -45,7 +45,8 @@ tag order, each with a header in the tag's color, and the untagged sessions afte
 at the end. A session with several tags sits under the first of them in your tag order; its
 other tags still filter. Click a header to fold that section down to a count, plus one pip
 when a member is working or waiting on you; the section of the tab you are reading never
-folds, and the `archived` section starts folded. Drag a header to reorder the groups, which
+folds (its header says so, and a click there changes nothing), and the `archived` section
+starts folded. Drag a header to reorder the groups, which
 reorders the tags on every surface (the timeline's tag table shows the same order). To move
 a tab into another group, right-click it and pick **Move to <tag>** under **Tags**: one click
 adds that tag and drops the tab's current group tag, leaving its other tags alone. The row's

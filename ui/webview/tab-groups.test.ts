@@ -11,7 +11,7 @@ import * as path from "node:path";
 import { viewTagUnion } from "./session-views";
 import { sectionTabs, anySectioned, homeTag, parseTabGroups, readTabGroups, writeTabGroups, isSectionCollapsed,
          toggleSectionCollapsed, setSectionCollapsed, planStrip, reorderTagOrder, applyTagOrder, TABGROUPS_KEY,
-         DEFAULT_COLLAPSED } from "./tab-groups";
+         DEFAULT_COLLAPSED, type TabSection } from "./tab-groups";
 
 const ui = (...p: string[]) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", ...p), "utf8");
 const RENDER = ui("webview", "render.ts");
@@ -115,7 +115,7 @@ test("the strip renders sections when the switch is on and some tag holds a visi
   assert.match(RENDER, /const plan = planStrip\(visibleIds, viewTagUnion\(effViews\(\)\), readTabGroups\(\), activeId, phoneLayout\(\),/,
     "the pure module owns the rule; the phone layout and the create in flight are its inputs");
   assert.match(RENDER, /collapsedTabIds = plan\.folded;/);
-  assert.match(RENDER, /if \("head" in item\) \{ bar\.appendChild\(makeGroupHead\(item\.head, item\.folded\)\); continue; \}/);
+  assert.match(RENDER, /if \("head" in item\) \{ bar\.appendChild\(makeGroupHead\(item\.head, item\.folded, item\.active\)\); continue; \}/);
 });
 
 test("executed: planStrip — sections + folds; the flat strip when off or untagged; the ACTIVE tab's section never folds", () => {
@@ -124,14 +124,16 @@ test("executed: planStrip — sections + folds; the flat strip when off or untag
   const p = planStrip(["web", "old1", "loose", "old2"], unions, st, "web", false);
   assert.equal(p.sectioned, true);
   assert.deepEqual(p.items, [
-    { head: { name: "infra", color: "#4EC9B0", ids: ["web"] }, folded: false }, { id: "web" },
-    { head: { name: "archived", color: "#6b7280", ids: ["old1", "old2"] }, folded: true },
-    { head: { name: null, color: "", ids: ["loose"] }, folded: false }, { id: "loose" },
-  ], "archived starts folded: its header alone stands in for old1/old2");
+    { head: { name: "infra", color: "#4EC9B0", ids: ["web"] }, folded: false, active: true }, { id: "web" },
+    { head: { name: "archived", color: "#6b7280", ids: ["old1", "old2"] }, folded: true, active: false },
+    { head: { name: null, color: "", ids: ["loose"] }, folded: false, active: false }, { id: "loose" },
+  ], "archived starts folded: its header alone stands in for old1/old2; infra holds the active tab");
   assert.deepEqual([...p.folded], ["old1", "old2"], "the ids keyboard cycling skips");
   const active = planStrip(["web", "old1", "loose"], unions, st, "old1", false);
-  assert.equal((active.items[2] as { folded: boolean }).folded, false, "the active tab's section renders open whatever the store says");
+  assert.deepEqual(active.items[2], { head: { name: "archived", color: "#6b7280", ids: ["old1"] }, folded: false, active: true },
+    "the active tab's section renders open whatever the store says, and is marked as holding it");
   assert.deepEqual([...active.folded], []);
+  assert.ok(!planStrip(["web", "old1"], unions, st, null, false).items.some((i) => "head" in i && i.active), "no active tab: no section holds it");
   const off = planStrip(["web", "old1"], unions, { ...st, on: false }, null, false);
   assert.deepEqual(off.items, [{ id: "web" }, { id: "old1" }], "switch off: the flat strip");
   assert.equal(off.sectioned, false);
@@ -157,6 +159,43 @@ test("executed: the PHONE layout renders the flat strip — every visible id, no
   assert.match(RENDER, /function phoneLayout\(\): boolean \{\s*\n\s*try \{ return window\.matchMedia\(PHONE_LAYOUT_MEDIA\)\.matches; \} catch \{ return false; \}/);
   // …and the phone layout offers no switch, on either mount
   assert.match(RENDER, /\.\.\.\(phoneLayout\(\) \? \{\} : \{\s*\n\s*groupToggle: \{ label: "Group tabs by tag"/);
+  // crossing the boundary (an iPad rotation) re-plans the strip: the CSS side of the same rule flips
+  // the instant the media query does, so a plan sampled per render only went stale under the phone
+  // list (folded tabs absent from the scrape) until the next push. The flip IS the event — one
+  // listener on the same MediaQueryList, beside the fold-state listeners; no resize polling.
+  assert.match(RENDER, /try \{ window\.matchMedia\(PHONE_LAYOUT_MEDIA\)\.addEventListener\("change", \(\) => renderTabs\(\)\); \} catch \{/);
+  assert.ok(RENDER.indexOf("window.addEventListener(TABGROUPS_EVENT, () => renderTabs());") < RENDER.indexOf('matchMedia(PHONE_LAYOUT_MEDIA).addEventListener("change"'),
+    "installed once at module scope with the other strip listeners, never inside a render");
+});
+
+test("executed + pinned: the section holding the ACTIVE tab is unfoldable while active — no fold action on its header, a title that says so, a click that stores nothing", () => {
+  // planStrip renders the active tab's section open whatever the store says, so a fold click there
+  // used to store folded=true that could not render: "click to fold this group" did nothing visible
+  // on every click, and the stored fold bit when the user switched to another section
+  const unions = viewTagUnion(V);
+  const st = parseTabGroups(null);
+  const marks = (activeId: string | null) => planStrip(["web", "api", "tests", "loose"], unions, st, activeId, false).items
+    .filter((i): i is { head: TabSection; folded: boolean; active: boolean } => "head" in i).map((i) => [i.head.name, i.active]);
+  assert.deepEqual(marks("web"), [["qa", false], ["infra", true], [null, false]], "exactly the section holding the active tab");
+  assert.deepEqual(marks("tests"), [["qa", true], ["infra", false], [null, false]]);
+  assert.deepEqual(marks(null), [["qa", false], ["infra", false], [null, false]]);
+  // a user-folded section holding the active tab: open AND marked (the fold stays stored for later)
+  const folded = setSectionCollapsed(st, "infra", true);
+  const inf = planStrip(["web", "tests"], unions, folded, "web", false).items
+    .find((i) => "head" in i && i.head.name === "infra") as { head: TabSection; folded: boolean; active: boolean };
+  assert.deepEqual([inf.folded, inf.active], [false, true]);
+  // render.ts: that header carries NO fold action (a distinct data-act the delegate flashes and
+  // otherwise ignores), a title that says why, and no pointer cursor promising a click
+  const head = RENDER.slice(RENDER.indexOf("function makeGroupHead("), RENDER.indexOf("function sectionHeadOf("));
+  assert.match(head, /function makeGroupHead\(sec: TabSection, collapsed: boolean, holdsActive = false\): HTMLElement \{/);
+  assert.match(head, /head\.dataset\.act = holdsActive \? "group-active" : "toggle-group";/);
+  assert.match(head, /\? `\$\{name\} — this group holds the active tab; drag to reorder the groups`/);
+  assert.match(head, /\+ \(holdsActive \? " holds-active" : ""\)\);/);
+  assert.match(head, /head\.draggable = true;/, "it still drags to reorder the groups");
+  const del = RENDER.slice(RENDER.indexOf('"group-active": () => {'), RENDER.indexOf('"group-active": () => {') + 120);
+  assert.match(del, /^"group-active": \(\) => \{ \/\* [^*]*\*\/ \},/, "a no-op: the delegate's flash is the whole acknowledgement");
+  assert.ok(!del.includes("writeTabGroups"), "…and nothing is stored");
+  assert.match(CSS, /\.tab-group-head\.holds-active \{ cursor: default; \}/);
 });
 
 test("executed: a create in flight sections under the FIRST requested tag in tagOrder — its future home — from the first paint", () => {
@@ -239,7 +278,7 @@ test("the picker's Tags row is for SDK sessions: disabled behind a note on the t
 });
 
 test("headers are click-safe: data-act on the node, the action on the stable #tabs delegate, one render path via the event", () => {
-  assert.match(RENDER, /head\.dataset\.act = "toggle-group";/);
+  assert.match(RENDER, /head\.dataset\.act = holdsActive \? "group-active" : "toggle-group";/);
   assert.match(RENDER, /"toggle-group": \(el\) => \{\s*\n\s*const name = el\.dataset\.group;\s*\n\s*if \(name\) writeTabGroups\(setSectionCollapsed\(readTabGroups\(\), name, el\.dataset\.folded !== "1"\)\);/);
   assert.match(RENDER, /window\.addEventListener\(TABGROUPS_EVENT, \(\) => renderTabs\(\)\);/, "the same-window delivery");
   assert.match(RENDER, /window\.addEventListener\("storage", \(e\) => \{ if \(e\.key === TABGROUPS_KEY\) renderTabs\(\); \}\);/, "…and a sibling pane's");

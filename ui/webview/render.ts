@@ -4561,23 +4561,29 @@ function releaseTabStrip(): void {
 // order the timeline's tag-pill drag writes too, so the two surfaces cannot disagree. The untagged
 // trail is unlabeled by the user's ruling: a separator, so the last group's tabs and the loose ones
 // never read as one run.
-function makeGroupHead(sec: TabSection, collapsed: boolean): HTMLElement {
+function makeGroupHead(sec: TabSection, collapsed: boolean, holdsActive = false): HTMLElement {
   if (sec.name === null) {
     const sep = el("div", "tab-group-sep");
     sep.title = "sessions in no tag";
     return sep;
   }
   const name = sec.name;
-  const head = el("div", "tab-group-head" + (collapsed ? " collapsed" : ""));
+  const head = el("div", "tab-group-head" + (collapsed ? " collapsed" : "") + (holdsActive ? " holds-active" : ""));
   head.dataset.group = name;
-  head.dataset.act = "toggle-group";
-  // the state this header RENDERED — the click derives the new state from it, not from the store: the
-  // active tab's section renders open whatever the store says (below), so toggling the stored bit
-  // there inverted the click and changed nothing on screen
+  // The section holding the ACTIVE tab is UNFOLDABLE while it is active — planStrip renders it open
+  // whatever the store says (keyboard focus must never land on a hidden node) — so its header carries
+  // NO fold action: a click there used to store folded=true that could not render, so "click to fold
+  // this group" did nothing visible on every click and then bit when the user switched tabs.
+  // group-active is a no-op the delegate still flashes (the click is acknowledged); the header still
+  // drags to reorder the groups. Every other header derives the click from the state it RENDERED
+  // (data-folded), never from the store.
+  head.dataset.act = holdsActive ? "group-active" : "toggle-group";
   head.dataset.folded = collapsed ? "1" : "0";
-  head.title = collapsed
-    ? `${name} — ${sec.ids.length} session${sec.ids.length === 1 ? "" : "s"} folded; click to open`
-    : `${name} — click to fold this group; drag to reorder the groups`;
+  head.title = holdsActive
+    ? `${name} — this group holds the active tab; drag to reorder the groups`
+    : collapsed
+      ? `${name} — ${sec.ids.length} session${sec.ids.length === 1 ? "" : "s"} folded; click to open`
+      : `${name} — click to fold this group; drag to reorder the groups`;
   const dot = el("span", "tab-group-dot");
   if (sec.color) dot.style.background = sec.color;
   head.appendChild(dot);
@@ -4812,7 +4818,7 @@ function renderTabs() {
                          provisionalId ? { id: provisionalId, tags: provisionalTags } : null);
   collapsedTabIds = plan.folded;
   for (const item of plan.items) {
-    if ("head" in item) { bar.appendChild(makeGroupHead(item.head, item.folded)); continue; }
+    if ("head" in item) { bar.appendChild(makeGroupHead(item.head, item.folded, item.active)); continue; }
     const id = item.id;
     const s = sessions.get(id);
     if (!s) { bar.appendChild(makePlaceholderTab(id)); continue; }
@@ -13895,6 +13901,11 @@ window.addEventListener("storage", (e) => {
 // window (the CustomEvent) or a sibling pane (the storage event) — re-renders the strip
 window.addEventListener("storage", (e) => { if (e.key === TABGROUPS_KEY) renderTabs(); });
 window.addEventListener(TABGROUPS_EVENT, () => renderTabs());
+// …and so does crossing the phone/desktop boundary (an iPad rotation): renderTabs samples
+// phoneLayout() per render, and the kernel's CSS swaps the strip for its scraped session list the
+// instant the same media rule flips — so the DOM kept the desktop plan (folded tabs absent from the
+// scrape) under the phone list until the next push happened to re-render. The flip IS the event.
+try { window.matchMedia(PHONE_LAYOUT_MEDIA).addEventListener("change", () => renderTabs()); } catch { /* no matchMedia */ }
 setupComposer();
 setupSettings();
 // Tab-bar clicks are DELEGATED to the stable #tabs container (installed once), not hung on the per-tab nodes
@@ -14216,6 +14227,9 @@ setupSettings();
       const name = el.dataset.group;
       if (name) writeTabGroups(setSectionCollapsed(readTabGroups(), name, el.dataset.folded !== "1"));
     },
+    // the header of the section holding the ACTIVE tab (makeGroupHead): unfoldable while active, so
+    // the click stores nothing — the delegate's flash is the whole acknowledgement
+    "group-active": () => { /* acknowledged by the flash; nothing to store */ },
     close: (el) => {
       const id = el.dataset.id;
       if (!id || !vscodeApi) return;

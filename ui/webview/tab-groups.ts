@@ -123,8 +123,8 @@ export function toggleSectionCollapsed(st: TabGroupsState, name: string): TabGro
   return setSectionCollapsed(st, name, !isSectionCollapsed(st, name));
 }
 
-/** One strip item: a section header (folded or open) or a tab. */
-export type StripItem = { head: TabSection; folded: boolean } | { id: string };
+/** One strip item: a section header (folded or open; `active` = it holds the active tab) or a tab. */
+export type StripItem = { head: TabSection; folded: boolean; active: boolean } | { id: string };
 export interface StripPlan {
   items: StripItem[];
   folded: Set<string>;   // the ids a folded header stands in for — keyboard cycling skips them
@@ -139,7 +139,10 @@ export interface StripPlan {
  *  - `pending`: a provisional tab (a create in flight) with the tags the request named. Its future
  *    home is the first of those in tagOrder — the kernel's own home-tag rule — so it renders there
  *    from the first paint instead of landing in the untagged trail and jumping when the frame arrives.
- *  - The ACTIVE tab's section never renders folded: keyboard focus must never land on a hidden node. */
+ *  - The ACTIVE tab's section never renders folded: keyboard focus must never land on a hidden node.
+ *    Its header is marked `active`, and render.ts gives that header no fold action: a fold stored
+ *    there could not render (nothing changed on screen, on every click) and then bit when the user
+ *    switched tabs. The section is unfoldable while it holds the active tab. */
 export function planStrip(visibleIds: readonly string[], unions: readonly TagUnion[], st: TabGroupsState,
                           activeId: string | null, phone: boolean,
                           pending?: { id: string; tags: readonly string[] } | null): StripPlan {
@@ -156,8 +159,9 @@ export function planStrip(visibleIds: readonly string[], unions: readonly TagUni
     return { items, folded, sectioned };
   }
   for (const sec of sectionTabs(visibleIds, u)) {
-    const f = sec.name !== null && isSectionCollapsed(st, sec.name) && !(activeId !== null && sec.ids.includes(activeId));
-    items.push({ head: sec, folded: f });
+    const active = activeId !== null && sec.ids.includes(activeId);
+    const f = sec.name !== null && !active && isSectionCollapsed(st, sec.name);
+    items.push({ head: sec, folded: f, active });
     if (f) { for (const id of sec.ids) folded.add(id); continue; }
     for (const id of sec.ids) items.push({ id });
   }
