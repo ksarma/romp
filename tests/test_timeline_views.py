@@ -669,3 +669,49 @@ class TagInheritance(unittest.TestCase):
             km._timeline_views = real_read
         self.assertEqual(got, [["pool"]])
         self.assertIn(self.C, self._members("pool"), "the inherit's write landed; the dashboard's stale copy could not strip it")
+
+    def test_a_tag_edit_cannot_land_inside_the_heals_read_to_write_window(self):
+        # _heal_timeline_views (fsid churn: a /clear or revive of a TAGGED session, run from the
+        # session-order builder on push and handler threads) takes _views_lock like every other
+        # writer. Unlocked, a POST /tag edit landing between the heal's read and its write was lost
+        # one way or the other: the heal's stale copy overwrote the edit (the added member gone while
+        # _edit_tag had already answered success), or the stale-writer guard refused the heal's copy
+        # and the /clear'd session's new fsid fell out of its tag for good (the heal fires once per
+        # new sid). Locked, the edit waits and both land. The sibling of the setTimelineViews pin
+        # above; a mutant that drops the heal's lock survived the whole suite until this one.
+        T0 = int(time.time()) - 100
+        served = {"active": "all", "at": T0, "tags": [{"id": "g1", "name": "pool", "color": "", "mtime": T0,
+                                                      "members": [{"host": "", "sid": "old"}]}]}
+        km._atomic_write(km._views_path(), json.dumps(served))
+        km._flags_cache.clear()
+        entered, release = threading.Event(), threading.Event()
+        real_read = km._timeline_views
+        healing = []
+        def stalled_read():
+            v = real_read()
+            if threading.current_thread() in healing and not entered.is_set():
+                entered.set()             # parked INSIDE the heal's window: after its read, before its write
+                release.wait(5)
+            return v
+        km._timeline_views = stalled_read
+        def heal():
+            healing.append(threading.current_thread())
+            km._heal_timeline_views("old", "new")
+        edited = []
+        t1 = threading.Thread(target=heal, daemon=True)
+        t2 = threading.Thread(target=lambda: edited.append(km._edit_tag("pool", add=["other"])), daemon=True)
+        try:
+            t1.start()
+            self.assertTrue(entered.wait(5), "the heal parks inside its window")
+            t2.start()
+            t2.join(0.5)
+            self.assertTrue(t2.is_alive(), "POST /tag's edit waits for the lock — it cannot land inside the window")
+            self.assertEqual(self._members("pool"), ["old"], "…and nothing reached the store meanwhile")
+        finally:
+            release.set()
+            t1.join(5)
+            t2.join(5)
+            km._timeline_views = real_read
+        self.assertEqual(sorted(self._members("pool")), ["new", "old", "other"], "both writers landed whole, in turn")
+        self.assertEqual(len(edited), 1)
+        self.assertIsNone(edited[0][1], "the edit was not refused")
