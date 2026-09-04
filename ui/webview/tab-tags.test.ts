@@ -75,6 +75,21 @@ test("presentation: one chip per NAME, identity dot, ✕ — and never a host pr
   assert.doesNotMatch(fly.slice(0, 2500), /host-prefix|hostNameNodes/, "kernels are plumbing — no host chrome in the flyout");
 });
 
+test("one-click MOVE between groups (tab groups, 2026-09-04): 'Move to <name>' adds the target and drops the HOME tag on ONE blob; '+' adds without moving", () => {
+  const fly = RENDER.slice(RENDER.indexOf('const sub = el("div", "ctx-menu ctx-sub ctx-sub-tags");'), RENDER.indexOf("// New tag… — an inline input"));
+  assert.match(fly, /const home = readTabGroups\(\)\.on \? holding\(\)\[0\] : undefined;/,
+    "the home tag is the FIRST holder in the union order — the same rule that sections the strip; only while the strip is sectioned");
+  assert.match(fly, /lb\.textContent = "Move to " \+ g\.name; bodyE\.appendChild\(lb\);/);
+  assert.match(fly, /moveUnion\(home, g\); build\(\); sb\.textContent = subText\(\);/, "the row IS the move");
+  assert.match(fly, /plus\.title = "add this tag too — the session stays in its current group";/, "…and multi-tag stays one click away");
+  assert.match(fly, /lb\.textContent = "\+ " \+ g\.name; bodyE\.appendChild\(lb\);/, "with no home tag, + <name> is the move");
+  const mv = RENDER.slice(RENDER.indexOf("const moveUnion = (from: TagUnion, to: TagUnion)"), RENDER.indexOf("// HOVER-INTENT open"));
+  assert.match(mv, /const added = applyUnionEdit\(nv, to, \{ add: \[id\] \}\);\s*\n\s*const removed = applyUnionEdit\(nv, from, \{ remove: \[id\] \}\);\s*\n\s*if \(added \|\| removed\) postViews\(nv\);/,
+    "two edits, ONE blob, one post — the strip never shows the half-moved state");
+  assert.match(RENDER, /const applyUnionEdit = \(nv: SessionViews, g: TagUnion, edit: \{ add\?: string\[\]; remove\?: string\[\] \}\): boolean =>/,
+    "editUnion and moveUnion share the one edit — never a forked implementation");
+});
+
 test("the menu groups BY KIND: [Rename+colors] / [toggles+billing+Tags] / [Browse] (the user 2026-08-24, final ruling)", () => {
   // supersedes 644's single top section: aesthetic controls together at the top, the
   // behavior/membership controls as the middle section, Browse alone at the bottom

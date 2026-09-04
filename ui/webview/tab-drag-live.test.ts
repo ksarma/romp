@@ -39,7 +39,10 @@ test("the slot comes from the VIRTUAL layout — boundaries that cannot move und
   // now tested against dragslot.ts's simulated wrap of the NON-dragged tabs, widths snapshotted
   // once at dragstart.
   const body = between('tabs.addEventListener("dragover"', "});");
-  assert.match(body, /const others = Array\.from\(tabs\.querySelectorAll<HTMLElement>\("\.tab\[data-id\]"\)\)\.filter\(\(t\) => t !== dragged\);/,
+  // section headers + the untagged separator (tab groups, 2026-09-04) take width in the real
+  // layout, so they join the virtual one as boxes — otherwise the simulated wrap drifts from the
+  // strip's on every sectioned row
+  assert.match(body, /const others = Array\.from\(tabs\.querySelectorAll<HTMLElement>\("\.tab\[data-id\], \.tab-group-head, \.tab-group-sep"\)\)\.filter\(\(t\) => t !== dragged\);/,
     "the dragged tab never participates in its own hit geometry");
   assert.match(body, /dragSlotIndex\(boxes, dragGeom\.containerW, dragGeom\.gapX, dragGeom\.rowH,/);
   assert.match(body, /if \(ref !== dragged && dragged\.nextElementSibling !== ref\)/,
@@ -68,6 +71,13 @@ test("drop commits through the SAME reorderTo — neighbor + side, hidden-view i
   const body = between('tabs.addEventListener("drop"', "});");
   assert.match(body, /if \(prev\?\.dataset\?\.id\) reorderTo\(draggedId, prev\.dataset\.id, true\);/);
   assert.match(body, /else if \(next\?\.dataset\?\.id\) reorderTo\(draggedId, next\.dataset\.id, false\);/);
+  // the neighbours are TABS (tab groups, 2026-09-04): a section header or separator beside the
+  // dropped tab is skipped, so a drop at a section's edge still names the nearest tab and its side
+  assert.match(body, /const prev = tabBefore\(dragged\.previousElementSibling\);/);
+  assert.match(body, /const next = tabAfter\(dragged\.nextElementSibling\);/);
+  // …and a drop changes no membership: a tab landing in another section re-sections on the next
+  // render — the tab menu's "Move to" rows are the membership path (v1)
+  assert.doesNotMatch(body, /editUnion|moveUnion|editTag/, "no tag write on a tab drop");
   // …and reorderTo still persists exactly as before
   const rt = between("function reorderTo(", "\n}");
   assert.match(rt, /commitTabOrder\(\);/);

@@ -49,8 +49,9 @@ test("one real choice renders WRITTEN OUT in the buttons' place, naming the logi
 
 test("the pick rides createSession, omitted when the row is hidden or written-out", () => {
   assert.match(RENDER, /function pickerAuthChoice\(\): string/);
-  assert.match(RENDER, /host: hostSel, \.\.\.\(auth \? \{ auth \} : \{\}\) \}\);/);
-  assert.match(RENDER, /interface CreateReq \{ name: string; backend: string; dir: string; host: string; auth\?: string \}/);
+  // (the picker's Tags row rides the same create since tab groups, 2026-09-04 — omitted the same way when nothing is picked)
+  assert.match(RENDER, /host: hostSel, \.\.\.\(auth \? \{ auth \} : \{\}\), \.\.\.\(tags\.length \? \{ tags \} : \{\}\) \}\);/);
+  assert.match(RENDER, /interface CreateReq \{ name: string; backend: string; dir: string; host: string; auth\?: string; tags\?: string\[\] \}/);
   // text mode sends nothing — the kernel default IS the single choice, and a stale .sel from a
   // previously-selected both-offering host must not ride along
   assert.match(RENDER, /if \(!sel \|\| sel\.style\.display === "none"\) return "";/);

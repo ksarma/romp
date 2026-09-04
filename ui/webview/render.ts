@@ -30,6 +30,8 @@ import { isClearCmd, openTopTitles, clearConfirmDetail, endConfirmDetail } from 
 import { prebuildPlan, type ViewState } from "./prebuild";
 import { reconcileTabOrder } from "./tab-order";
 import { writeViewOrder } from "./view-order";
+import { sectionTabs, anySectioned, readTabGroups, writeTabGroups, isSectionCollapsed, toggleSectionCollapsed,
+         reorderTagOrder, applyTagOrder, TABGROUPS_KEY, TABGROUPS_EVENT, type TabSection } from "./tab-groups";
 import { titleWithKey, chordOf, effectiveChord, loadOverrides } from "./keybindings";
 import { DEFAULT_CHORDS } from "./commands";
 import { NavHistory } from "./nav-history";
@@ -547,7 +549,12 @@ function assertPeekFor(id: string): void {
   if (next !== peekId) { peekId = next; renderTabs(); }
 }
 function tabInView(id: string): boolean { return id === peekId || chatVisible(id); }
-function visibleOrder(): string[] { return order.filter(tabInView); }
+// TAB SECTIONS (tab-groups.ts): the ids the last render folded away under a collapsed section
+// header. Keyboard cycling walks the VISIBLE order, and a folded tab is not visible — the active
+// tab's section never renders folded, so the active id is always in it.
+let collapsedTabIds = new Set<string>();
+let draggedGroup: string | null = null;   // a section header mid-drag (reorders tagOrder) — never a tab
+function visibleOrder(): string[] { return order.filter((id) => tabInView(id) && !collapsedTabIds.has(id)); }
 function revealSession(id: string) { postViews(revealIn(effViews(), id)); }
 
 let paletteColors: string[] = [];
@@ -4533,6 +4540,79 @@ function releaseTabStrip(): void {
   tabPointerHeld = false;
   if (renderPendingWhilePressed) { renderPendingWhilePressed = false; setTimeout(() => renderTabs(), 0); }
 }
+
+// A SECTION HEADER for the tab strip (tab groups on tags, the user 2026-09-04): the tag's dot and
+// name at the tab's own type size; folded, the count and one pip for the gist. It carries
+// data-act="toggle-group" for the stable #tabs delegate (click-safe: the strip rebuilds on every
+// push) and drags to reorder the GROUPS — the drop rewrites tagOrder, the kernel-persisted union
+// order the timeline's tag-pill drag writes too, so the two surfaces cannot disagree. The untagged
+// trail is unlabeled by the user's ruling: a separator, so the last group's tabs and the loose ones
+// never read as one run.
+function makeGroupHead(sec: TabSection, collapsed: boolean): HTMLElement {
+  if (sec.name === null) {
+    const sep = el("div", "tab-group-sep");
+    sep.title = "sessions in no tag";
+    return sep;
+  }
+  const name = sec.name;
+  const head = el("div", "tab-group-head" + (collapsed ? " collapsed" : ""));
+  head.dataset.group = name;
+  head.dataset.act = "toggle-group";
+  head.title = collapsed
+    ? `${name} — ${sec.ids.length} session${sec.ids.length === 1 ? "" : "s"} folded; click to open`
+    : `${name} — click to fold this group; drag to reorder the groups`;
+  const dot = el("span", "tab-group-dot");
+  if (sec.color) dot.style.background = sec.color;
+  head.appendChild(dot);
+  const label = el("span", "tab-group-name");
+  label.textContent = name;
+  head.appendChild(label);
+  if (collapsed) {
+    const n = el("span", "tab-group-count");
+    n.textContent = String(sec.ids.length);
+    head.appendChild(n);
+    // the folded gist: a pip when a member is working, red when one is blocked or waiting on you
+    const states = sec.ids.map((id) => sessions.get(id)?.status?.state || "");
+    const blocked = states.some((st) => st === "blocked" || st === "needsInput" || st === "awaiting");
+    if (blocked || states.includes("working")) {
+      const pip = el("span", "tab-group-pip" + (blocked ? " blocked" : ""));
+      pip.title = blocked ? "a session in this group is blocked or waiting on you" : "a session in this group is working";
+      head.appendChild(pip);
+    }
+  }
+  head.draggable = true;
+  head.addEventListener("dragstart", (e) => {
+    draggedGroup = name;
+    if (e.dataTransfer) { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setDragImage(dragImageBlank(), 0, 0); }
+    head.classList.add("dragging");
+    hideTabTip();
+  });
+  // dragend closes the gesture whether it dropped or cancelled: release the click-safe hold the
+  // pointerdown latched (the drag swallowed the pointerup) and flush a push deferred mid-drag
+  head.addEventListener("dragend", () => {
+    draggedGroup = null;
+    head.classList.remove("dragging");
+    document.getElementById("tabs")?.querySelectorAll(".tab-group-head.drop-target").forEach((h) => h.classList.remove("drop-target"));
+    tabPointerHeld = false;
+    const pending = renderPendingWhilePressed;
+    renderPendingWhilePressed = false;
+    if (pending) setTimeout(() => renderTabs(), 0);
+  });
+  return head;
+}
+/** The section header a strip node belongs to: itself for a header, else the nearest header before
+ *  it; null past the untagged separator or on a flat strip. */
+function sectionHeadOf(node: HTMLElement): HTMLElement | null {
+  let n: Element | null = node;
+  while (n) {
+    const h = n as HTMLElement;
+    if (h.classList.contains("tab-group-head") && h.dataset.group) return h;
+    if (h.classList.contains("tab-group-sep")) return null;
+    n = n.previousElementSibling;
+  }
+  return null;
+}
+
 // A loading PLACEHOLDER tab (the user 2026-06-26): name + identity color from the kernel's tabOrder push,
 // shown while the session's build_session is still in flight so the strip's full width is reserved up front
 // (no one-by-one pop-in). CLICKABLE (the user 2026-08-25: "I'd like to click it so when the session
@@ -4696,7 +4776,32 @@ function renderTabs() {
     // then would kick the user off the very tab they just opened (the no-flap rule)
     setTimeout(() => { if (activeId !== next && activeId && !tabInView(activeId)) setActive(next); }, 0);
   }
-  for (const id of visibleIds) {
+  // TAB SECTIONS (the user 2026-09-04): groups are tags. With sectioning on (per browser — the
+  // tag-lens menu's "Group tabs by tag") and some tag holding a visible tab, the strip renders one
+  // header per HOME tag in tagOrder — the rule revealIn already states, so a tab's section and its
+  // reveal agree — then that section's tabs, and the untagged trail behind a plain separator
+  // (tab-groups.ts owns the rule). A folded section renders its header alone, with the count and
+  // a pip when a member is working or blocked, so the gist survives the fold (progressive
+  // disclosure). The ACTIVE tab's section never renders folded — keyboard focus must never land
+  // on a hidden node — and visibleOrder() drops the folded ids so ←/→ skip them.
+  const tgState = readTabGroups();
+  const unions = viewTagUnion(effViews());
+  const sectioned = tgState.on && anySectioned(visibleIds, unions);
+  collapsedTabIds = new Set<string>();
+  const plan: Array<{ head: TabSection; collapsed: boolean } | { id: string }> = [];
+  if (sectioned) {
+    for (const sec of sectionTabs(visibleIds, unions)) {
+      const collapsed = sec.name !== null && isSectionCollapsed(tgState, sec.name) && !(activeId !== null && sec.ids.includes(activeId));
+      plan.push({ head: sec, collapsed });
+      if (collapsed) { for (const id of sec.ids) collapsedTabIds.add(id); continue; }
+      for (const id of sec.ids) plan.push({ id });
+    }
+  } else {
+    for (const id of visibleIds) plan.push({ id });
+  }
+  for (const item of plan) {
+    if ("head" in item) { bar.appendChild(makeGroupHead(item.head, item.collapsed)); continue; }
+    const id = item.id;
     const s = sessions.get(id);
     if (!s) { bar.appendChild(makePlaceholderTab(id)); continue; }
     const tab = el("div", "tab" + (id === activeId ? " active" : ""));
@@ -4873,6 +4978,11 @@ function renderTabs() {
         v.actives = Object.assign({}, v.actives, { chat: l });
         postViews(v);
       },
+      // "Group tabs by tag" (tab groups, the user 2026-09-04): the per-browser sectioned-strip
+      // switch, at the foot beside Configure tags… — the write notifies and the strip re-renders.
+      // Desktop only: the phone page hides the strip itself, so its mount below offers no switch.
+      groupToggle: { label: "Group tabs by tag", on: () => readTabGroups().on,
+                     toggle: () => { const st = readTabGroups(); writeTabGroups({ ...st, on: !st.on }); } },
       onConfigure: () => { vscodeApi?.postMessage({ type: "openTagsDialog" }); },
     });
   });
@@ -5234,6 +5344,12 @@ function showTabMenu(e: MouseEvent, id: string) {
       // DERIVED — the kernel drops them from the echo — so mutating the copy is presentation-only;
       // the remote's own next push is the durable truth (a refused edit re-appears there).
       const nv = JSON.parse(JSON.stringify(effViews() || {})) as SessionViews;
+      const dirty = applyUnionEdit(nv, g, edit);
+      if (dirty) postViews(nv);
+    };
+    // the edit itself, applied to a blob the caller posts — so a MOVE between groups (below) is two
+    // edits on ONE blob, posted once
+    const applyUnionEdit = (nv: SessionViews, g: TagUnion, edit: { add?: string[]; remove?: string[] }): boolean => {
       let dirty = false;
       const nvRemote = (rt: SessionTag) => (nv.remoteTags || []).find((x) => x.id === rt.id);
       if (edit.add?.length) {
@@ -5261,7 +5377,15 @@ function showTabMenu(e: MouseEvent, id: string) {
           if (mine) { mine.members = (mine.members || []).filter((m) => !edit.remove!.includes(m)); dirty = true; }
         }
       }
-      if (dirty) postViews(nv);
+      return dirty;
+    };
+    // a MOVE between groups (tab groups, the user 2026-09-04): add the target tag, drop the HOME
+    // tag, leave every other tag alone — one blob, so the strip never shows the half-moved state
+    const moveUnion = (from: TagUnion, to: TagUnion) => {
+      const nv = JSON.parse(JSON.stringify(effViews() || {})) as SessionViews;
+      const added = applyUnionEdit(nv, to, { add: [id] });
+      const removed = applyUnionEdit(nv, from, { remove: [id] });
+      if (added || removed) postViews(nv);
     };
     // HOVER-INTENT open (T163, the user 2026-08-28: hovering down to Tags should open the submenu
     // without another click): the feed's 120ms intent debounce — enough to skip a graze, never a
@@ -5297,13 +5421,30 @@ function showTabMenu(e: MouseEvent, id: string) {
         }
         const others = unionFor().filter((g) => !g.members.includes(id));
         if (holding().length && others.length) sub.appendChild(el("div", "ctx-sep"));
+        // ONE-CLICK MOVE (tab groups on tags, the user 2026-09-04): a session's section is its HOME
+        // tag — the first holder in tagOrder — so while the strip is sectioned and the session has
+        // one, each other tag's row reads "Move to <name>": one click adds that tag and drops the
+        // home tag, leaving any other tag alone (they filter, they do not section). The row's "+"
+        // adds without moving. With no home tag, "+ <name>" IS the move.
+        const home = readTabGroups().on ? holding()[0] : undefined;
         for (const g of others) {
           const row = el("div", "ctx-item ctx-item-toggle");
           const chip = el("span", "ctx-tag-dot"); chip.style.background = g.color || "var(--dim)"; row.appendChild(chip);
           const bodyE = el("span", "ctx-item-body");
-          const lb = el("span", "ctx-item-label"); lb.textContent = "+ " + g.name; bodyE.appendChild(lb);
-          row.appendChild(bodyE);
-          row.addEventListener("click", (e2) => { e2.stopPropagation(); editUnion(g, { add: [id] }); build(); sb.textContent = subText(); });
+          const lb = el("span", "ctx-item-label");
+          if (home) {
+            lb.textContent = "Move to " + g.name; bodyE.appendChild(lb);
+            row.appendChild(bodyE);
+            const plus = el("button", "ctx-tag-x ctx-tag-plus") as HTMLButtonElement;
+            plus.type = "button"; plus.textContent = "+"; plus.title = "add this tag too — the session stays in its current group";
+            plus.addEventListener("click", (e2) => { e2.stopPropagation(); editUnion(g, { add: [id] }); build(); sb.textContent = subText(); });
+            row.appendChild(plus);
+            row.addEventListener("click", (e2) => { e2.stopPropagation(); moveUnion(home, g); build(); sb.textContent = subText(); });
+          } else {
+            lb.textContent = "+ " + g.name; bodyE.appendChild(lb);
+            row.appendChild(bodyE);
+            row.addEventListener("click", (e2) => { e2.stopPropagation(); editUnion(g, { add: [id] }); build(); sb.textContent = subText(); });
+          }
           sub.appendChild(row);
         }
         if (holding().length || others.length) sub.appendChild(el("div", "ctx-sep"));
@@ -6110,7 +6251,7 @@ function dirKey(e: KeyboardEvent): boolean {
 // warned into a toast the "Opening…" cue was covering, so the create looked like it silently did
 // nothing for 30 seconds (the user 2026-07-28). The request is remembered so "Create it" can re-send
 // exactly the same create with mkdir set, host and backend included.
-interface CreateReq { name: string; backend: string; dir: string; host: string; auth?: string }
+interface CreateReq { name: string; backend: string; dir: string; host: string; auth?: string; tags?: string[] }
 let lastCreate: CreateReq | null = null;
 
 function startCreate(req: CreateReq, mkdir = false): void {
@@ -6242,6 +6383,15 @@ function openPicker(pick = false, prompt?: string, allowNew = false) {
     auWrap.append(auLabel, mkAu("login", "Login", "Bill this session to the machine's Claude login (subscription usage)."),
                   mkAu("key", "API key", "Bill this session to the API key the manager's environment carries (per-token)."),
                   auFixed);
+    // per-session TAGS row (tab groups on tags, the user 2026-09-04): the tags the new session
+    // joins, so its tab lands in that group. Prefilled on every open with the ACTIVE tab's tags —
+    // VISIBLE and editable, never a silent inherit (the user's ruling): a session started beside the
+    // one you are looking at joins its group unless you unpick it. Chips in the Backend row's
+    // grammar, each toggling on its own (a session may hold several tags); rebuilt per open
+    // (openPicker below), hidden with no tags to offer and in pick-mode.
+    const tgWrap = el("div", "picker-backend picker-tags");
+    const tgLabel = el("span", "picker-backend-label"); tgLabel.textContent = "Tags";
+    tgWrap.appendChild(tgLabel);
     // per-session HOST picker (federation, the user 2026-07-02): local | each attached SSH host — the new
     // session is created BY that host's kernel (over its tunnel) and appears prefixed `host:name`. The
     // options are rebuilt on every open (hosts attach/detach live); the row hides with no hosts attached.
@@ -6279,8 +6429,11 @@ function openPicker(pick = false, prompt?: string, allowNew = false) {
       // billing: the picker's Billing row when it is showing (both choices real on that host); ""
       // omits the field and the kernel's own default stands (the user 2026-08-08)
       const auth = pickerAuthChoice();
+      // tags: the Tags row's selected chips (prefilled from the active tab, edited or not) ride the
+      // create as names; the owning kernel resolves them by name, minting a missing one like POST /tag
+      const tags = Array.from(tgWrap.querySelectorAll<HTMLElement>(".picker-be-opt.sel")).map((x) => x.dataset.tag || "").filter(Boolean);
       startCreate({ name, backend: beSel?.dataset.be || loadSettings().backend,
-                    dir: dirInput.value.trim(), host: hostSel, ...(auth ? { auth } : {}) });
+                    dir: dirInput.value.trim(), host: hostSel, ...(auth ? { auth } : {}), ...(tags.length ? { tags } : {}) });
     });
     actions.appendChild(newSess);
     // CREATE controls first, the resume list LAST (the user 2026-08-12): typing in the name box
@@ -6300,6 +6453,7 @@ function openPicker(pick = false, prompt?: string, allowNew = false) {
     box.appendChild(dirWrap);
     box.appendChild(beWrap);
     box.appendChild(auWrap);
+    box.appendChild(tgWrap);
     box.appendChild(hostWrap);
     box.appendChild(actions);
     box.appendChild(altHead);
@@ -6377,6 +6531,24 @@ function openPicker(pick = false, prompt?: string, allowNew = false) {
         if (dirIn) { dirIn.value = dirPrefill(h); askDirComplete(dirIn.value); }
       });
       hostWrapEl.appendChild(b);
+    }
+  }
+  const tgWrapEl = overlay.querySelector(".picker-tags") as HTMLElement | null;
+  if (tgWrapEl) {   // rebuild the Tags chips each open: the unions are live, and the prefill is the ACTIVE tab's
+    const unions = viewTagUnion(effViews());
+    const preset = new Set(activeId ? unions.filter((u) => u.members.includes(activeId!)).map((u) => u.name) : []);
+    tgWrapEl.style.display = pick || !unions.length ? "none" : "";
+    tgWrapEl.querySelectorAll(".picker-be-opt").forEach((x) => x.remove());
+    for (const u of unions) {
+      const b = el("button", "picker-be-opt" + (preset.has(u.name) ? " sel" : "")) as HTMLButtonElement;
+      b.type = "button"; b.dataset.tag = u.name;
+      const d = el("span", "picker-tag-dot"); d.style.background = u.color || "var(--dim)"; b.appendChild(d);
+      b.appendChild(document.createTextNode(u.name));
+      b.title = preset.has(u.name)
+        ? `the session you are looking at is in ${u.name} — the new one joins it too unless you unpick this`
+        : `put the new session in ${u.name}`;
+      b.addEventListener("click", () => b.classList.toggle("sel"));   // multi-select: each chip on its own
+      tgWrapEl.appendChild(b);
     }
   }
   applyBrowseState("");   // fresh open defaults back to local — enabled unless this kernel has no desktop
@@ -13653,6 +13825,10 @@ window.addEventListener("storage", (e) => {
     setActive(sid);
   } catch { /* malformed echo — the kernel frame corrects momentarily */ }
 });
+// TAB SECTIONS state (tab-groups.ts): a fold/open or the "Group tabs by tag" switch — from this
+// window (the CustomEvent) or a sibling pane (the storage event) — re-renders the strip
+window.addEventListener("storage", (e) => { if (e.key === TABGROUPS_KEY) renderTabs(); });
+window.addEventListener(TABGROUPS_EVENT, () => renderTabs());
 setupComposer();
 setupSettings();
 // Tab-bar clicks are DELEGATED to the stable #tabs container (installed once), not hung on the per-tab nodes
@@ -13965,6 +14141,12 @@ setupSettings();
     // focus to the body — so Enter afterward did nothing). Now focus the (rebuilt) active tab, so the model
     // is consistent: tab focused → Enter drops into the message box; Escape there returns to the tabs.
     select: (el) => { const id = el.dataset.id; if (id) { setActive(id); focusActiveTab(); } },
+    // a section header (tab groups): fold or open that group. The write notifies (TABGROUPS_EVENT)
+    // and the listener re-renders — one render path for a local toggle and a sibling pane's alike.
+    "toggle-group": (el) => {
+      const name = el.dataset.group;
+      if (name) writeTabGroups(toggleSectionCollapsed(readTabGroups(), name));
+    },
     close: (el) => {
       const id = el.dataset.id;
       if (!id || !vscodeApi) return;
@@ -14039,6 +14221,18 @@ setupSettings();
   // (flipTabs). The no-op guard (already sitting immediately before the reference node) is what
   // keeps a pointer resting inside one slot from churning the DOM on every dragover tick.
   tabs.addEventListener("dragover", (e) => {
+    if (draggedGroup) {
+      // a GROUP drag (tab groups): the target is the section under the pointer — its header, or
+      // the header a hovered tab belongs to — and it wears the accent insertion cue; the drop
+      // commits. No live reorder of headers: the order is a kernel write, not a DOM position.
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+      const over = (e.target as Element | null)?.closest?.(".tab-group-head[data-group], .tab[data-id]") as HTMLElement | null;
+      const target = over ? sectionHeadOf(over) : null;
+      for (const h of Array.from(tabs.querySelectorAll(".tab-group-head.drop-target"))) if (h !== target) h.classList.remove("drop-target");
+      if (target && target.dataset.group !== draggedGroup) target.classList.add("drop-target");
+      return;
+    }
     if (!draggedId || !dragGeom) return;
     e.preventDefault();   // the whole strip is a valid drop target
     if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
@@ -14051,8 +14245,13 @@ setupSettings();
     if (e.clientX >= dr.left && e.clientX <= dr.right && e.clientY >= dr.top && e.clientY <= dr.bottom) return;
     // the virtual layout: the OTHER tabs in current DOM order, widths from the dragstart snapshot —
     // boundaries that cannot move in response to the insert they cause (dragslot.ts owns the math)
-    const others = Array.from(tabs.querySelectorAll<HTMLElement>(".tab[data-id]")).filter((t) => t !== dragged);
-    const boxes = others.map((t) => ({ id: t.dataset.id!, w: dragGeom!.widths.get(t.dataset.id!) ?? t.getBoundingClientRect().width }));
+    // …plus the section headers and separator (tab groups): they take width in the real layout, so
+    // they join the virtual one as boxes — the simulated wrap then matches the strip's, and a slot
+    // just before a header is the end of the previous section. A drop changes no membership (the
+    // tab re-sections on the next render); "Move to" in the tab menu is the membership path.
+    const others = Array.from(tabs.querySelectorAll<HTMLElement>(".tab[data-id], .tab-group-head, .tab-group-sep")).filter((t) => t !== dragged);
+    const boxes = others.map((t) => ({ id: t.dataset.id || " head:" + (t.dataset.group || ""),
+                                       w: (t.dataset.id ? dragGeom!.widths.get(t.dataset.id) : undefined) ?? t.getBoundingClientRect().width }));
     const br = tabs.getBoundingClientRect();
     const idx = dragSlotIndex(boxes, dragGeom.containerW, dragGeom.gapX, dragGeom.rowH,
                               e.clientX - br.left, e.clientY - br.top);
@@ -14065,12 +14264,29 @@ setupSettings();
   // filtered view HIDES (present in `order`, absent from the DOM) keep their places: a wholesale
   // order-from-DOM write would silently drop them.
   tabs.addEventListener("drop", (e) => {
+    if (draggedGroup) {
+      // a GROUP drop (tab groups): the dragged tag takes the target section's slot in tagOrder —
+      // the FULL union order, written through the same views path the timeline's pill drag uses
+      // (postViews → setTimelineViews), so both surfaces read one order. pendingSessionViews
+      // shows it instantly; the kernel's echo settles it.
+      e.preventDefault();
+      const to = tabs.querySelector<HTMLElement>(".tab-group-head.drop-target")?.dataset.group;
+      if (to && to !== draggedGroup) {
+        const v = effViews();
+        postViews(applyTagOrder(v, reorderTagOrder(viewTagUnion(v).map((u) => u.name), draggedGroup, to)));
+      }
+      return;
+    }
     if (!draggedId) return;
     e.preventDefault();
     const dragged = tabs.querySelector<HTMLElement>(`.tab[data-id="${CSS.escape(draggedId)}"]`);
     if (!dragged) return;
-    const prev = dragged.previousElementSibling as HTMLElement | null;
-    const next = dragged.nextElementSibling as HTMLElement | null;
+    // the neighbours are TABS: a section header or separator beside the dropped tab is skipped, so
+    // a drop at a section's edge still names the nearest tab and its side
+    const tabBefore = (n: Element | null) => { while (n && !(n as HTMLElement).dataset?.id) n = n.previousElementSibling; return n as HTMLElement | null; };
+    const tabAfter = (n: Element | null) => { while (n && !(n as HTMLElement).dataset?.id) n = n.nextElementSibling; return n as HTMLElement | null; };
+    const prev = tabBefore(dragged.previousElementSibling);
+    const next = tabAfter(dragged.nextElementSibling);
     if (prev?.dataset?.id) reorderTo(draggedId, prev.dataset.id, true);
     else if (next?.dataset?.id) reorderTo(draggedId, next.dataset.id, false);
     tabDragCommitted = true;   // dragend must not treat this as a cancel (it fires next)
