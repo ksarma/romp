@@ -9787,6 +9787,19 @@ def _auth_key_present():
     return bool(str(getattr(be, "work_key", "") or "") if be else "")
 
 
+def _work_key_fp():
+    """The first 12 hex of the sha256 of the key sessions currently launch on — "" when there is
+    none. The ONE renderable form of a key (keysource.fingerprint): enough for an operator to
+    confirm a keyswap landed and that the kernel reads the same value `romp keyswap` wrote, useless
+    to anyone who reads it. Never a fragment of the key itself — the same rule _auth_key_present
+    keeps for the browser, applied to the terminal."""
+    be = _sdk()
+    try:
+        return getattr(be, "work_key_fp", lambda: "")()
+    except Exception:
+        return ""
+
+
 def _auth_both():
     """True when this machine offers BOTH billing choices (a signed-in login and a manager-env key) —
     the condition for the per-session auth selector to exist anywhere (picker, gear). Cheap per-push:
@@ -33963,6 +33976,51 @@ class Handler(BaseHTTPRequestHandler):
                 res = _compact_request(who)
                 status = res.pop("_status", 200)
                 return self._send(status, json.dumps(res), "application/json")
+            if u.path == "/keycycle":
+                # `romp keyswap … --cycle <names>` / `--cycle-all` (the user 2026-09-04). The API key
+                # rides a session's LAUNCH environment, so a running CLI keeps the key it started with;
+                # this reconnects the named sessions so they re-present the CURRENT one, each resuming
+                # its own conversation with history intact. It is the alternative to restarting the
+                # manager, which would cut every open turn and kill every subagent under it.
+                #
+                # The kernel takes NO key from the client — not a value, not a path. The swap is a file
+                # the operator (or `romp keyswap`) rewrote; all this route does is make live sessions
+                # re-read it. So the door cannot be used to point a session at a key of the caller's
+                # choosing, and the response carries only a FINGERPRINT (sha256 head) so the caller can
+                # confirm that the kernel reads what it just wrote without either side printing a key.
+                # Body: {"sessions": [<id-or-name>…]} or {"all": true}.
+                try:
+                    b = json.loads(raw_body or b"{}")
+                except Exception:
+                    b = {}
+                b = b if isinstance(b, dict) else {}
+                be = _sdk()
+                if be is None:
+                    return self._send(503, json.dumps({"ok": False, "error": "no SDK backend"}),
+                                      "application/json")
+                keyfp = _work_key_fp()
+                rows = []
+                if b.get("all"):
+                    # every LIVE SDK session: the dormant ones need nothing (their next launch reads
+                    # the file), and cycle_key says so per session rather than guessing here
+                    who_list = [(getattr(s, "name", "") or sid, sid)
+                                for sid, s in list(be.sessions.items())]
+                else:
+                    raw = b.get("sessions") or []
+                    if not isinstance(raw, list):   # a bare string would iterate its CHARACTERS
+                        return self._send(400, json.dumps({"ok": False,
+                                                           "error": "sessions must be a list"}),
+                                          "application/json")
+                    who_list = [(str(w), _sid_of(str(w))) for w in raw if str(w or "").strip()]
+                for who, sid in who_list:
+                    try:
+                        status = be.cycle_key(sid)
+                    except Exception as e:
+                        status = "error: %s" % str(e)[:80]
+                    rows.append({"session": _name_of(sid) or who, "status": status})
+                _push_soon()
+                return self._send(200, json.dumps({"ok": True, "keyFp": keyfp, "rows": rows}),
+                                  "application/json")
             if u.path in ("/interrupt", "/end"):
                 # Headless session control (2026-07-05): interrupt/end existed ONLY as WS drive ops, so
                 # a session could be FED without a browser (POST /send, postal) but never STOPPED — a

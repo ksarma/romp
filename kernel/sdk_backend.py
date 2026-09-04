@@ -44,6 +44,10 @@ from pathlib import Path
 # consistent colour without cross-backend "used" bookkeeping.
 from importlib.machinery import SourceFileLoader as _SFL
 _pal = _SFL("romp_palette", str(Path(__file__).resolve().parent / "palette.py")).load_module()
+# The LIVE source of the manager's API key (keysource.py — stdlib only, loaded the same way so the
+# module works from bin/ symlinks too). `romp keyswap` loads the identical file, so the writer and
+# the reader can never disagree about which path holds the key or how its line is parsed.
+_keysrc = _SFL("romp_keysource", str(Path(__file__).resolve().parent / "keysource.py")).load_module()
 
 
 def _bin_on_path_env(environ) -> dict:
@@ -1780,24 +1784,75 @@ def _cli_refusal(e: BaseException) -> bool:
 
 
 _WORK_KEY: str | None = None   # process-lifetime stash; None = not yet claimed from the environment
+_KEY_FILE_CHECKED = False      # the startup-vs-file agreement check (one line, once per process)
 
 
-def work_api_key() -> str:
-    """The API key the manager's environment carried at startup (service.env, or however the manager
-    was launched), CLAIMED OUT of os.environ on first read — "" when it carried none. The SDK's
-    transport hands the CLI this process's environment wholesale (options.env merges OVER it), so an
-    ambient ANTHROPIC_API_KEY bills EVERY session to the key no matter what auth the user picked for
-    it; popping it here makes the key explicit per session — _options injects it only where the
-    session's auth says so, and a login session launches with a genuinely clean environment (the CLI
-    treats even an EMPTY var as "API-key mode, no key" and refuses with "Not logged in" — verified
-    live 2026-08-08 — so removal, not blanking, is the only correct strip). Module-level so a
-    re-constructed backend (tests, the WS handler's lazy construction) still finds the key after the
-    first pop; the kernel process never re-execs itself, so a manager restart re-inherits the
-    service env and a fresh process re-stashes."""
+def startup_api_key() -> str:
+    """The API key the manager's environment carried AT STARTUP, CLAIMED OUT of os.environ on first
+    read — "" when it carried none. The SDK's transport hands the CLI this process's environment
+    wholesale (options.env merges OVER it), so an ambient ANTHROPIC_API_KEY bills EVERY session to
+    the key no matter what auth the user picked for it; popping it here makes the key explicit per
+    session — _options injects it only where the session's auth says so, and a login session
+    launches with a genuinely clean environment (the CLI treats even an EMPTY var as "API-key mode,
+    no key" and refuses with "Not logged in" — verified live 2026-08-08 — so removal, not blanking,
+    is the only correct strip). Module-level so a re-constructed backend (tests, the WS handler's
+    lazy construction) still finds the key after the first pop.
+
+    This is now the FALLBACK, not the source: work_api_key() prefers the live env file. It still
+    matters on its own — a box whose key never rides service.env (an apiKeyHelper machine, a
+    foreground `romp up` from a shell that exported one) has no file line to read, and there the
+    startup claim is the whole answer, exactly as before."""
     global _WORK_KEY
     if _WORK_KEY is None:
         _WORK_KEY = os.environ.pop("ANTHROPIC_API_KEY", "") or ""
     return _WORK_KEY
+
+
+def work_api_key() -> str:
+    """The key a session started RIGHT NOW should bill: the live `ANTHROPIC_API_KEY=` line of the
+    manager's env file (`~/.config/romp/service.env`), falling back to what the process environment
+    carried at startup. "" when neither exists.
+
+    Live, because the alternative was a restart (the user 2026-09-04): the key used to be popped
+    once at boot, so moving the sessions to another org key meant `systemctl --user restart
+    romp-manager` — which cuts every session's open turn and kills every subagent under it. Reading
+    the file instead makes the swap cost one reconnect per session (`romp keyswap <name> --cycle…`,
+    which resumes each conversation with its history intact) and nothing at all for a session that
+    is next launched or revived anyway.
+
+    The read is cheap and event-keyed: keysource caches on the file's own (inode, mtime_ns, size),
+    so a repeated call is a stat and a rewrite invalidates by construction. The value is never
+    written back into os.environ — the one-claimer property above is what keeps an ambient key from
+    billing every session, and a live source must not undo it."""
+    startup = startup_api_key()      # ALWAYS first: the pop must happen even when the file answers
+    live = _keysrc.read_key()
+    _check_key_file_agrees(startup, live)
+    return live or startup
+
+
+def _check_key_file_agrees(startup: str, live: str) -> None:
+    """Say ONCE, on stderr (the kernel's log wire), whether the file this process reads holds the
+    same key its environment was started with. Both sides are fingerprints, never values.
+
+    Worth the six lines: this is the one way the live read can go quietly wrong. The launchers do
+    not parse identically to each other — systemd's EnvironmentFile strips one layer of quotes, the
+    macOS launcher's `export` does not — so a quoted value, a stray duplicate line, or a key that
+    reaches the manager some other way makes the file disagree with the environment, and every
+    session would then launch on a key nobody chose. Disagreement at startup is a configuration
+    fact the operator can fix in a minute, and silence about it would surface hours later as
+    inexplicable 401s."""
+    global _KEY_FILE_CHECKED
+    if _KEY_FILE_CHECKED:
+        return
+    _KEY_FILE_CHECKED = True
+    if not startup or not live or startup == live:
+        return
+    sys.stderr.write(
+        "work key: the manager env file sets a DIFFERENT key than this process started with "
+        "(file sha256:%s, startup sha256:%s) — sessions launch on the file's. If that is not what "
+        "you meant, check %s for a quoted or duplicated %s line.\n"
+        % (_keysrc.fingerprint(live), _keysrc.fingerprint(startup),
+           _keysrc.service_env_path(), _keysrc.KEY_VAR))
 
 
 def _expected_auth() -> str:
@@ -2764,15 +2819,22 @@ class SdkSession:
         if isinstance(info, dict) and self._adopt_fast_state(info):
             self.backend._poke()
 
-    def effective_auth(self) -> str:
+    def effective_auth(self, key=None) -> str:
         """'key' or 'login' — what _options launches this session with. An explicit pick wins; unset
         preserves the pre-selector world, where a manager environment that carried a key billed every
         session to it (so absent a choice, the key still wins when one exists). 'key' with no key to
         inject falls to login rather than launching with a var the CLI would refuse on — _options
-        logs that fall loudly (it is a misconfiguration, not a preference)."""
+        logs that fall loudly (it is a misconfiguration, not a preference).
+
+        `key` lets a caller supply the key it already read, so a connect decides and injects on ONE
+        read: the source is live now (a keyswap can land between two reads), and re-reading here
+        could have _options inject a key the decision was never made against. Absent, it reads the
+        backend's live key exactly as it always did."""
         if self.auth == "login":
             return "login"
-        return "key" if self.backend.work_key else "login"
+        if key is None:
+            key = self.backend.work_key
+        return "key" if key else "login"
 
     async def _do_refresh_usage(self):
         """Pull the EXACT account-wide /usage snapshot from the CLI — the designed data behind the /usage
@@ -4625,9 +4687,12 @@ class SdkBackend:
         #                                           pollable session exists again, so the 60s rail timer
         #                                           logs the condition once per episode, not per call
         self._fork_children_memo = None           # (sdk/ dir mtime_ns, {parent sid: [child lineage]}) — fork_children()
-        self.work_key = work_api_key()            # the manager env's API key, claimed out of os.environ
-        #   ("" = none): per-session auth injects it via _options; its presence is the "key" half of
-        #   the availability the kernel publishes to the picker/gear (the user 2026-08-08)
+        self._work_key_pin: str | None = None     # a test's explicit `be.work_key = …` (see the property)
+        startup_api_key()                         # claim any ambient key OUT of os.environ, right here:
+        #   the transport merges options.env over this process's env, so an ambient key would bill
+        #   EVERY session whatever its pick. The VALUE is read per launch off `work_key` below, live,
+        #   so a keyswap needs no kernel restart (the user 2026-09-04).
+        self._key_fp_said = None                  # last key fingerprint written to the log (change-only)
         # Backend PROBLEMS, kept in a bounded ring so the dashboard can show them (see _log): until
         # 2026-07-28 every SDK failure went to the kernel log alone, which nobody tails, so a session
         # whose stream died or whose model switch was refused just looked odd with no way to find out.
@@ -4679,6 +4744,69 @@ class SdkBackend:
         # in-progress sessions). A session that genuinely FINISHED a turn before the restart already logged
         # "waiting" (ResultMessage), so it stays nudge-eligible. The dormant in-flight→waiting DISPLAY heal lives
         # independently in live_sessions, so the feed/fleet still render dormant sessions as waiting.
+
+    @property
+    def work_key(self) -> str:
+        """The manager's API key, READ LIVE per access (work_api_key: the env file's current line,
+        else the startup claim). A property rather than the frozen attribute it used to be, so
+        every existing reader becomes hot-swap-aware at once — _options' injection, effective_auth
+        and default_auth's key/login fallback, set_auth's refusal to pick a key that isn't there,
+        and the kernel's has-a-key bool for the picker. Cheap enough for all of them: the parse is
+        cached on the file's stat identity, so an access is a stat.
+
+        Assignment PINS a value for this backend and stops the live read (`be.work_key = ""` — how
+        the tests stand up a keyless manager). A pin is deliberate and never set by romp itself."""
+        if self._work_key_pin is not None:
+            return self._work_key_pin
+        return work_api_key()
+
+    @work_key.setter
+    def work_key(self, value) -> None:
+        self._work_key_pin = str(value or "")
+
+    def work_key_fp(self) -> str:
+        """The renderable form of the key sessions launch on: the sha256 head, "" for none. The
+        kernel's /keycycle answer carries this so an operator can confirm the kernel re-read the
+        file they just wrote — the value itself never leaves this process."""
+        return _keysrc.fingerprint(self.work_key)
+
+    def _note_work_key(self, key: str) -> None:
+        """Log WHICH key a launch is billing, as a fingerprint, and only when it changes. That makes
+        a keyswap visible in the Log panel — "the kernel now reads sha256:… " — which is the only
+        way an operator can confirm the swap landed, since no surface may carry the key itself. The
+        change-only rule keeps it off every ordinary connect."""
+        fp = _keysrc.fingerprint(key)
+        if fp and fp != self._key_fp_said:
+            self._key_fp_said = fp
+            self._log("work key: sessions now launch on the key sha256:%s (read from %s)"
+                      % (fp, _keysrc.service_env_path()))
+
+    def cycle_key(self, sid: str) -> str:
+        """Re-present the CURRENT work key to one LIVE session by reconnecting it — the apply half of
+        `romp keyswap --cycle` (the user 2026-09-04).
+
+        The key rides the launch environment, so it is connect-time exactly like --effort and the
+        auth pick: a running CLI keeps the key it started with until it is replaced. request_reconnect
+        is the same mechanism set_effort/set_auth/set_env use — resume continues the same conversation
+        with its history intact, immediately when the session is idle and at the end of the current
+        turn when it is busy. Nothing is persisted, because nothing about the SESSION changed: which
+        key the box uses is not a per-session setting.
+
+        Returns what happened, for the CLI to print per session: "cycling" (a live key-billed session
+        is reconnecting), "login" (billed to the machine login — the key would not be injected, so a
+        reconnect would cost a turn for nothing), "dormant" (no live CLI — its next launch reads the
+        new key anyway), "unknown" (this backend has no such session)."""
+        if not self.owns(sid):
+            return "unknown"
+        s = self.sessions.get(sid)
+        if s is None:
+            return "dormant"
+        if s.effective_auth() != "key":
+            return "login"
+        s.request_reconnect()
+        self._log("keyswap (%s): reconnecting to pick up the current work key (sha256:%s)"
+                  % (s.name, _keysrc.fingerprint(self.work_key)))
+        return "cycling"
 
     def _heal_stale_awaiting(self, sid: str) -> None:
         """Clear a stale awaiting:true overlay for a NOT-running session. A dormant SDK session can't have live
@@ -5774,10 +5902,15 @@ class SdkBackend:
         # login on its own; a key session gets the key injected here, explicitly. options.env merges
         # OVER the inherited env in the SDK's transport, which is exactly the one-way door we need —
         # inject or stay silent; never blank (an empty var reads as "API-key mode, no key" to the CLI).
-        launch_keyed = sess.effective_auth() == "key"
+        # The key is read ONCE here, per connect, and the value the auth decision was made on is the
+        # value injected: the source is live now (a keyswap can land between two reads). An empty read
+        # decides login — blanking the var would leave the CLI in key-mode-without-a-key.
+        work_key = self.work_key
+        launch_keyed = sess.effective_auth(work_key) == "key"
         if launch_keyed:
-            kw["env"] = dict(kw["env"], ANTHROPIC_API_KEY=self.work_key,
-                             **key_fast_org_env(self.work_key, self._log))
+            self._note_work_key(work_key)
+            kw["env"] = dict(kw["env"], ANTHROPIC_API_KEY=work_key,
+                             **key_fast_org_env(work_key, self._log))
         elif sess.auth == "key":
             # picked "key", but this manager's env carries none — falling to login silently would bill
             # the wrong account with nothing to see; say so where the Log panel shows it.

@@ -23,6 +23,30 @@ os.environ.pop("ROMP_STATE_DIR", None)  # a live kernel exports this to its sess
 # safe against every consumer. Import-time, so collection-time code is floored too.
 os.environ["ROMP_MANAGER_PORT"] = "1"
 
+# No test may read the REAL service.env (2026-09-04): sdk_backend.work_api_key now reads the manager
+# env file LIVE (kernel/keysource.py) instead of popping os.environ once, so on a machine running a
+# live romp every auth test would otherwise resolve the developer's ACTUAL API key — quietly billing
+# nothing, but making the key material a test input, putting it one assertion message away from a
+# terminal, and making the pinned fixture-key tests pass or fail on whether this box happens to have
+# a key configured. Pointed at a path inside the temp state root that is never created, so every read
+# is the "no file" case and the startup-pop fallback governs, exactly as before the live source
+# existed. Both spellings, because keysource accepts both. Import-time (collection is floored too)
+# plus a per-test re-assert below, on the same reasoning as the manager port.
+_NO_SERVICE_ENV = os.path.join(os.environ["XDG_STATE_HOME"], "no-such-service.env")
+os.environ["ROMP_SERVICE_ENV_FILE"] = _NO_SERVICE_ENV
+os.environ["ROMP_SERVICE_ENV"] = _NO_SERVICE_ENV
+
+
+@pytest.fixture(autouse=True)
+def _no_real_service_env():
+    """Re-asserted, not defaulted: a module-level write in one test file executes during collection
+    and would otherwise hold for the whole run. A test that needs its own env file points the vars at
+    a temp path in setUp, which runs AFTER this fixture (pytest fills fixtures in the item's setup
+    phase, before TestCase.run calls setUp) — so per-test intent still wins."""
+    for var in ("ROMP_SERVICE_ENV_FILE", "ROMP_SERVICE_ENV"):
+        os.environ[var] = _NO_SERVICE_ENV
+    yield
+
 
 @pytest.fixture(autouse=True)
 def _dead_manager_port():
