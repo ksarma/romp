@@ -26811,13 +26811,27 @@ WS_QUEUE_BYTES = int(os.environ.get("ROMP_WS_QUEUE_BYTES", str(16 * 1024 * 1024)
 # Isolating the blocking write on a thread the shared loops never wait for is what actually holds.
 def _ws_sender(q, sock, lock, client):
     """Drain one client's queue onto its socket. Blocking here is FINE and is the entire point — it blocks
-    only this client's own thread. A dead socket ends the thread and marks the client for reaping."""
+    only this client's own thread. A dead socket ends the thread and marks the client for reaping.
+    A `str` item is a text message to frame; a `bytes` item is an already-framed CONTROL frame (the
+    liveness ping) written as-is under the same lock, so it can never interleave with a text frame."""
     while True:
         s = q.get()
         if s is None:                          # teardown sentinel from the handler's finally
             return
         try:
-            _ws_send(sock, lock, s)
+            if isinstance(s, bytes):
+                # The liveness clock starts when the ping reaches the SOCKET, not when the beat queued it: a
+                # peer with a queue backlog is not judged on time the ping spent behind it. Stamped BEFORE the
+                # write under the client lock, so a pong (which can only echo bytes already written) can
+                # never be cleared before its ping is recorded. Only the oldest unanswered ping counts.
+                if s[:1] == b"\x89":
+                    with client["qlock"]:
+                        if client.get("pingAt") is None:
+                            client["pingAt"] = _ws_clock()
+                with lock:
+                    sock.sendall(s)
+            else:
+                _ws_send(sock, lock, s)
         except OSError:
             client["alive"] = False
             return
@@ -26844,6 +26858,96 @@ def _mk_ws_send(q, sock, client):
             client["qbytes"] += len(s)
         q.put(s)                               # unbounded; the byte budget above is the real bound
     return send
+
+
+_ws_clock = time.monotonic   # the liveness clock: an INTERVAL clock (a suspend/resume or an NTP step must
+#                              not read as thirty seconds of silence); one seam so tests drive the beats
+
+
+def _ws_outq(sock):
+    """Bytes this socket has accepted but the peer has not yet acknowledged (Linux SIOCOUTQ, macOS SO_NWRITE),
+    or None where unknown. A nonzero count that keeps falling across beats is a peer that is alive and
+    draining — a slow tunnel behind a large payload — however late its pong; a count that does not move is a
+    peer that has stopped acknowledging."""
+    try:
+        if sys.platform.startswith("linux"):
+            import fcntl, termios
+            return int.from_bytes(fcntl.ioctl(sock.fileno(), termios.TIOCOUTQ, b"\0\0\0\0"), sys.byteorder)
+        if sys.platform == "darwin":
+            return int(sock.getsockopt(socket.SOL_SOCKET, 0x1024))   # SO_NWRITE
+    except (OSError, ValueError, AttributeError):
+        return None
+    return None
+
+
+def _ws_ping_frame(payload: bytes) -> bytes:
+    """A PING control frame (RFC 6455 §5.5.2: FIN + opcode 0x9, payload ≤125 bytes). Every conforming peer —
+    a browser, Node's `ws`, wscat — answers it with a PONG echoing the payload, with no application code."""
+    data = payload[:125]
+    return bytes([0x89, len(data)]) + data
+
+
+def _new_ws_client(app, wid, sock, lock=None, q=None, start_sender=True):
+    """One connected dashboard pane: its queue, its sender thread and the liveness bookkeeping the heartbeat
+    reads. `since` and `lastIn` stamp the last moment the PEER proved itself alive (any inbound frame: a
+    message or a pong); `pingAt` is the send time of the OLDEST unanswered ping, None when nothing is
+    outstanding. Factored out of the handler so the liveness rules are testable on a loopback pair."""
+    q = q if q is not None else queue.Queue()
+    lock = lock if lock is not None else threading.Lock()
+    now = _ws_clock()
+    client = {"app": app, "wid": wid, "alive": True, "qbytes": 0, "qlock": threading.Lock(),
+              "sock": sock, "since": now, "lastIn": now, "pingAt": None,
+              "inRead": True}      # False while the handler thread is inside a dispatch (see _keepalive_all)
+    client["send"] = _mk_ws_send(q, sock, client)
+    client["q"] = q
+    if start_sender:
+        threading.Thread(target=_ws_sender, args=(q, sock, lock, client), daemon=True, name="ws-send").start()
+    return client, q, lock
+
+
+def _register_ws_client(client):
+    """Add a connected pane to _clients — and retire any OTHER socket the same pane INSTANCE held. The
+    instance id (`iid`) is minted by the shim once per page load and sent on every connect of that page,
+    so a second socket carrying it means the page reconnected after its silence watchdog: its side of the
+    old socket is dead however open a forwarder keeps ours (the 2026-09-03 phantoms: VS Code's port
+    forwarder never closed the devbox end). The reconnect IS the event; the ping timeout is the backstop
+    for pages that never come back (a reload mints a new id, so its old socket falls to the pings).
+    The DASHBOARD id (wid) is deliberately not the key (review 2026-09-03): a duplicated browser tab
+    inherits it through sessionStorage, and the VS Code extension's status pipe and its feed panel share
+    one — keyed on wid, the twins retired each other every 1.5 s for as long as both lived. A socket that
+    reports no instance id is never superseded."""
+    with _clients_lock:
+        twins = [c for c in _clients if c is not client and c.get("app") == client.get("app")
+                 and client.get("iid") and c.get("iid") == client.get("iid") and c.get("sock") is not None]
+        _clients.append(client)
+    for c in twins:
+        _drop_dead_ws_client(c, "superseded by a reconnect of the same %s pane" % client.get("app"))
+
+
+def _note_ws_inbound(client, now=None):
+    """The peer spoke (a message or a pong): it is alive as of now, and no ping is outstanding."""
+    lk = client.get("qlock")
+    if lk is not None:
+        with lk:
+            client["lastIn"] = now if now is not None else _ws_clock()
+            client["pingAt"] = None
+            client.pop("outq", None)
+    else:
+        client["lastIn"] = now if now is not None else _ws_clock()
+        client["pingAt"] = None
+
+
+def _drop_dead_ws_client(client, why):
+    """Mark a peer dead and shut its socket: the handler thread's blocking read returns EOF, its finally
+    removes the client from _clients, and the sender thread ends on the sentinel. Logged once per client."""
+    if not client.get("alive"):
+        return
+    client["alive"] = False
+    sys.stderr.write("ws: dropping %s client — %s\n" % (client.get("app"), why))
+    try:
+        client["sock"].shutdown(socket.SHUT_RDWR)
+    except (OSError, AttributeError):
+        pass
 
 
 def _ws_send(sock, lock, text):
@@ -26911,7 +27015,7 @@ def _ws_recv(rfile):
 _WS_MAX_MESSAGE = 80 * 1024 * 1024
 
 
-def _ws_recv_message(rfile, on_ping):
+def _ws_recv_message(rfile, on_ping, on_pong=None):
     """Read frames until one COMPLETE data message is assembled → (opcode, payload), or (None, None)
     on close/EOF/overrun. Browsers FRAGMENT large sends (RFC 6455 §5.4 — Chrome splits at ~128 KB),
     and the old per-frame loop handed each fragment straight to json.loads: a phone photo's dropFile
@@ -26928,7 +27032,9 @@ def _ws_recv_message(rfile, on_ping):
         if op == 0x9:                          # ping → pong (libraries ping by default and hang up without one)
             on_ping(payload or b"")
             continue
-        if op == 0xA:                          # unsolicited pong — nothing to do
+        if op == 0xA:                          # a pong — the peer is alive (answers our liveness ping)
+            if on_pong is not None:
+                on_pong(payload or b"")
             continue
         if op == 0x0:                          # continuation of an in-flight fragmented message
             if frag is None:
@@ -26964,19 +27070,64 @@ def _send_to_app(app, msg):
 # client on a fixed cadence (bypassing the dedup); the shim stamps lastRecv on every frame and force-reconnects
 # when the keepalive stops arriving (→ onclose → reconnect → reload-resync). 'ka' frames are ignored by bundles.
 KEEPALIVE_S = float(os.environ.get("ROMP_WS_KEEPALIVE", "10"))   # heartbeat cadence (s); the shim re-connects at ~3x this
+# How long a PING may go unanswered before the peer is dead (s). The keepalive used to be one-way: the
+# kernel sent a frame and expected nothing back, so a peer whose forwarder swallowed the close — VS Code's
+# port forwarder keeps the devbox-side connection open after the browser pane has gone — stayed a "live
+# dashboard" forever, receiving every full payload the pusher built. Measured 2026-09-03: 84 client
+# connections on one kernel, 73 of them silent for over five minutes, all phantoms, all sharing one
+# multiplexed channel with the three real panes. Now every beat is also a PING (RFC 6455), which every
+# conforming peer answers without application code; a peer that has not answered the oldest outstanding
+# ping within this window is dropped — the missing pong is the event. Three beats, like the shim's own
+# silence watchdog on the other side.
+WS_DEAD_S = float(os.environ.get("ROMP_WS_DEAD", "0")) or 3 * KEEPALIVE_S
 
-def _keepalive_all():
+def _keepalive_all(now=None):
     # `dv` = the current dist build token (the same value baked into every page's ?v= urls). Riding the
     # keepalive makes build-drift detection EVENT-based on every surface with a live socket: a page whose
     # LOADEDV is older raises the reload banner within one heartbeat of a rebuild — no per-page /version
     # polling. The VS Code extension compares it against its bundled build stamp the same way (the user
     # 2026-07-13: a stale tab sat silent through several rebuilds; drift must always show a banner).
     s = json.dumps({"type": "ka", "dv": _dist_ver()})
+    now = _ws_clock() if now is None else now
     with _clients_lock:
         targets = list(_clients)
     for c in targets:
+        # LIVENESS (2026-09-03): a ping whose pong never came within WS_DEAD_S means the peer is gone —
+        # however open the forwarder in between keeps the socket. Clients from before the factory (no
+        # `sock`) are never judged: they cannot be shut down, and they cannot have been pinged.
+        pa = c.get("pingAt")                     # any pong or message clears this (see _note_ws_inbound), so an
+        if pa is not None and c.get("sock") is not None and (now - pa) >= WS_DEAD_S:   # outstanding ping IS the silence…
+            why = None
+            # …only while the handler thread is parked in its READ. Inside a dispatch (`ready` builds every
+            # tab synchronously on that thread — tens of seconds on a cold kernel) the pong sits unread in
+            # the receive buffer: unread is not missing. The handler resets the clock when it re-enters the
+            # read (review 2026-09-03).
+            if not c.get("inRead", True):
+                pass
+            else:
+                # …and never a peer that is still DRAINING: sendall returning means the ping entered the socket,
+                # not that it left the machine — a slow tunnel with megabytes queued ahead of it cannot pong in
+                # time. Unsent bytes that fell since the last beat prove the peer alive; unsent bytes that have
+                # not moved for a whole window prove it gone (a zero window nobody drains).
+                oq = _ws_outq(c["sock"])
+                if oq:
+                    prev = c.get("outq")
+                    if prev is None or prev[0] != oq:
+                        c["outq"] = (oq, now)         # draining (or first look) → alive, judge again next beat
+                    elif (now - prev[1]) >= WS_DEAD_S:
+                        why = "not acknowledging: %d bytes unsent for %ds" % (oq, int(now - prev[1]))
+                else:
+                    why = "no pong for %ds (last heard %ds ago)" % (int(now - pa), int(now - c.get("lastIn", 0)))
+            if why:
+                _drop_dead_ws_client(c, why)
+                continue
+            # not judged this beat — but still BEATEN: the ka must keep flowing to a client the kernel is
+            # busy serving, or the shim's own silence watchdog closes a connection that is merely waiting
+            # on a long build (review 2026-09-03, residual).
         try:
             c["send"](s)
+            if c.get("sock") is not None:
+                c["send"](_ws_ping_frame(str(int(now)).encode()))   # pingAt is stamped by the sender, on the wire
         except Exception:
             c["alive"] = False
 
@@ -27244,6 +27395,230 @@ def _client_reset_chat_base(client):
     snt = client.get("sent", {})
     for k in [k for k in snt if isinstance(k, tuple) and k and k[0] == "chat"]:
         snt.pop(k, None)
+
+
+# View deltas (2026-09-03). The timeline's bars and the feed used to cross the wire WHOLE on every change —
+# 2.95 MB and 0.86 MB here — and on a board of many working sessions something changes every few seconds,
+# so a dashboard on a forwarded or tunnelled link streamed ~0.5 MB/s of mostly-unchanged JSON and its
+# panes starved (the VS Code port-forwarder incident). A pane that connects with ?delta=1 (the shim does)
+# receives a frame per change carrying only the collection entries that changed, keyed the way each
+# collection is keyed, plus the small remainder when it changed; the shim reassembles the full message
+# and hands the bundle exactly what it received before, so no bundle changes. Per client per slot the
+# kernel keeps what the client holds as serialized strings (the compare is a string compare; the memory
+# is the payload's own size), and a client that cannot apply a delta says so (needSlot) and gets a full.
+_DELTA_SLOTS = {
+    # frame type: (dedup key, {collection: how its entries are keyed}). Kinds — "dict": an object keyed by its
+    # own keys; "byid": a list keyed by item id; "bykeys:a,b,c": a list keyed by a composite of item fields
+    # (an id-less list whose items are unique on those fields); "dictlist:id": an object of lists, every
+    # item keyed by (object key, item field) — the timeline's lanes, where a lane of 200 bars must not
+    # cross whole because one bar was appended (measured 2026-09-03: 507 KB per appended segment at lane
+    # granularity, ~2 KB at bar granularity).
+    "bars": (("timelinebars",), {"turns": "dictlist:id", "judging": "bykeys:sid,t,judge,t1", "messages": "byid"}),
+    "feed": (("feed",), {"asks": "byid:itemId"}),   # a card's identity across builds is its itemId, not an id
+}
+_DELTA_SEP = "\u001f"          # joins composite keys; never appears in an id or a sid
+_DELTA_MAX_FRACTION = 0.6      # a delta this large a fraction of the full payload is sent as the full instead
+_delta_parts_cache = {}        # frame type -> (payload object identity, parts) — one split per BUILD, shared by clients
+
+
+def _delta_key(kind, it, prefix=""):
+    """The key of one list item under `kind` ('byid' / 'bykeys:…'), or None when the item cannot be keyed
+    (then the caller falls back to a positional key, which is still exact)."""
+    if not isinstance(it, dict):
+        return None
+    if kind.startswith(("byid", "dictlist:")):
+        field = "id" if kind == "byid" else kind.split(":", 1)[1]
+        v = it.get(field)
+        return None if v is None or v == "" else prefix + str(v)   # "" would spell a lane's bare-prefix marker
+    if kind.startswith("bykeys:"):
+        return prefix + _DELTA_SEP.join(str(it.get(f)) for f in kind.split(":", 1)[1].split(","))
+    return None
+
+
+def _delta_split(kind, value):
+    """Entries of one collection as {key: (object, json)} plus the key order, per the kind table above. A
+    list item that cannot be keyed, or a duplicate key, takes a positional key ('#n') — exact, since the
+    shim rebuilds in key order, just less delta-friendly."""
+    ents, order = {}, []
+    enc = json.JSONEncoder(default=str).encode          # one encoder for the thousand entries, not one each
+    def put(kk, v, pre=""):
+        if kk is None or kk in ents:
+            n = len(order)
+            while True:                            # positional, with its lane prefix so the shim files it by lane —
+                kk = pre + "#%d" % n               # and never on a real id that happens to spell "#n"
+                if kk not in ents:
+                    break
+                n += 1
+        ents[kk] = (v, enc(v)); order.append(kk)
+    if kind == "dict" and isinstance(value, dict):
+        for kk, v in value.items():
+            put(str(kk), v)
+    elif kind.startswith(("byid", "bykeys:")) and isinstance(value, list):
+        for it in value:
+            put(_delta_key(kind, it), it)
+    elif kind.startswith("dictlist:") and isinstance(value, dict):
+        for dk, lst in value.items():
+            if _DELTA_SEP in str(dk):
+                raise ValueError("lane key carries the separator")
+            pre = str(dk) + _DELTA_SEP
+            if not isinstance(lst, list) or not lst:
+                put(pre, lst)                      # an empty or non-list lane: one entry under its bare prefix
+                continue
+            for it in lst:
+                put(_delta_key(kind, it, pre), it, pre)
+    return ents, order
+
+
+def _delta_parts(ftype, payload):
+    """The payload split into its keyed collections and the remainder, computed once per payload object."""
+    hit = _delta_parts_cache.get(ftype)
+    if hit is not None and hit[0] is payload:
+        return hit[1]
+    kinds = _DELTA_SLOTS[ftype][1]
+    try:
+        colls = {name: _delta_split(kind, payload.get(name)) for name, kind in kinds.items()}
+    except ValueError:
+        parts = None                                   # a payload the protocol cannot key: this build goes whole
+    else:
+        rest = {kk: v for kk, v in payload.items() if kk not in kinds}
+        rest_sig = json.dumps({kk: v for kk, v in rest.items() if kk not in _DEDUP_VOLATILE}, sort_keys=True, default=str)
+        parts = (colls, rest, rest_sig)
+    _delta_parts_cache[ftype] = (payload, parts)
+    return parts
+
+
+def _js_key_order(keys):
+    """The order JavaScript enumerates these object keys in: canonical array indices ascending first, then
+    the rest in insertion order — the order the shim appends a delta's new keys in, so the kernel must
+    predict it to know what the client holds."""
+    idx, rest = [], []
+    for kk in keys:
+        is_index = (kk.isascii() and kk.isdigit() and len(kk) <= 10 and (kk == "0" or kk[0] != "0")
+                    and int(kk) < 4294967295)      # canonical array index: ASCII digits only, below 2^32-1
+        (idx if is_index else rest).append(kk)
+    return sorted(idx, key=int) + rest
+
+
+def _client_order(held, order, ents):
+    """The flat key order a client derives from a delta that carries no `order`: its held keys that survive,
+    then the new keys as it enumerates the frame's `set`."""
+    have = set(ents)
+    kept = [kk for kk in held if kk in have]
+    seen = set(held)
+    return kept + _js_key_order([kk for kk in order if kk not in seen])
+
+
+def _order_shape(kind, order):
+    """What a key order means for the assembled value: for a dict-of-lists, the groups in first-appearance
+    order each with its keys in relative order (a bar appended to the FIRST lane lands at the end of the
+    flat order and still assembles into its own lane); for the rest, the order itself."""
+    if not kind.startswith("dictlist:"):
+        return order
+    groups = {}
+    for kk in order:
+        groups.setdefault(kk.partition(_DELTA_SEP)[0], []).append(kk)
+    return list(groups.items())
+
+
+def _send_slot(c, ftype, payload, pre, sig):
+    """Send a bars/feed payload to one client: whole for a client without delta support (exactly as before),
+    else as a delta against what that client holds. `pre`/`sig` are the shared full serialization and
+    dedup signature the pusher computed once per build."""
+    key = _DELTA_SLOTS[ftype][0]
+    if not c.get("delta"):
+        _send_client(c, key, payload, pre=pre, sig=sig)
+        return
+    try:
+        _send_slot_delta(c, key, ftype, payload, pre, sig)
+    except Exception:
+        # One client's frame must never take the pusher down with it (every dashboard would freeze until a
+        # restart): say so, forget what that client holds, and send the whole payload — which carries no
+        # key list, so the client holds nothing either and the next cycle starts the stream afresh.
+        sys.stderr.write("view-delta %s: %s\n" % (ftype, traceback.format_exc()))
+        c.get("dstate", {}).pop(ftype, None)
+        c.get("sent", {}).pop(key, None)
+        _send_client(c, key, payload, pre=pre, sig=sig)
+
+
+def _send_slot_delta(c, key, ftype, payload, pre, sig):
+    rs = c.get("resync")
+    if rs and ftype in rs:                             # the shim said it could not apply a delta (a base it does
+        rs.discard(ftype)                              # not hold): forget what we believe it holds; whole, re-based
+        c.get("dstate", {}).pop(ftype, None)
+        c.get("sent", {}).pop(key, None)
+    parts = _delta_parts(ftype, payload)
+    states = c.setdefault("dstate", {})
+    if parts is None:                                  # cannot be keyed: whole, and the client holds nothing
+        states.pop(ftype, None)
+        _send_client(c, key, payload, pre=pre, sig=sig)
+        return
+    colls, rest, rest_sig = parts
+    st = states.get(ftype)
+    now = time.time()
+    if st is None:                                     # nothing held → the full frame, and remember it
+        # The frame carries the kernel's key list per collection (`_keys`, which the shim strips before the
+        # bundle sees the message): every key is minted HERE, once — a shim deriving keys from field values
+        # would spell null/None, true/True, 1/1.0 differently from Python and hold keys the kernel never sent.
+        keys = json.dumps({n: o for n, (_e, o) in colls.items()})
+        pre_k = pre[:-1] + ',"_keys":' + keys + "}" if pre.endswith("}") else json.dumps(dict(payload, _keys=json.loads(keys)), default=str)
+        # The keyed full must actually GO: a whole frame sent moments ago without keys (the failure path, or an
+        # unkeyable build) filled the dedup slot with this same signature, and a deduped keyed full would leave
+        # the kernel holding state for a client that holds nothing (review 2026-09-03).
+        c.get("sent", {}).pop(key, None)
+        _send_client(c, key, payload, pre=pre_k, sig=sig)
+        if c.get("sent", {}).get(key, (None,))[0] == sig:      # it went (or was already held) → rebase
+            states[ftype] = {"rev": 0, "rest": rest_sig,
+                             "coll": {n: {kk: e[1] for kk, e in ents.items()} for n, (ents, _o) in colls.items()},
+                             "order": {n: list(o) for n, (_e, o) in colls.items()}, "at": now}
+        return
+    frame = {"type": "delta", "slot": ftype, "base": st["rev"], "rev": st["rev"] + 1, "coll": {}}
+    changed = False
+    if rest_sig != st["rest"]:
+        frame["rest"] = rest; frame["restAll"] = 1; changed = True    # the WHOLE remainder: keys it lacks are gone
+    else:
+        for vk in _DEDUP_VOLATILE:                     # the clock fields still ride, so the pane's `now` advances
+            if vk in rest:
+                frame.setdefault("rest", {})[vk] = rest[vk]
+    kinds = _DELTA_SLOTS[ftype][1]
+    next_order = {}
+    for name, (ents, order) in colls.items():
+        held = st["coll"].get(name, {})
+        set_ = {kk: e[0] for kk, e in ents.items() if held.get(kk) != e[1]}
+        dele = [kk for kk in held if kk not in ents]
+        entry = {}
+        if set_:
+            entry["set"] = set_
+        if dele:
+            entry["del"] = dele
+        # the order crosses only when what the client would derive on its own assembles differently; and
+        # the kernel remembers the order the CLIENT holds, which is that derived order, not the payload's
+        implied = _client_order(st["order"].get(name, []), order, ents)
+        if _order_shape(kinds[name], implied) != _order_shape(kinds[name], order):
+            entry["order"] = order; next_order[name] = list(order)
+        else:
+            next_order[name] = implied
+        if entry:
+            frame["coll"][name] = entry; changed = True
+    if not changed:
+        if now - st.get("at", 0) < _DEDUP_REPOST_S:    # unchanged: nothing to send (the repost keeps the fade alive)
+            return
+    s = json.dumps(frame, default=str)
+    if len(s) >= _DELTA_MAX_FRACTION * len(pre):       # not worth a delta → the full frame, rebased
+        states.pop(ftype, None)
+        c.get("sent", {}).pop(key, None)
+        _send_slot(c, ftype, payload, pre, sig)
+        return
+    _perf("send", slot=_perf_slot(key), bytes=len(s), deduped=0, delta=1)
+    try:
+        c["send"](s)
+    except Exception:
+        c["alive"] = False
+        return
+    st["rev"] += 1; st["rest"] = rest_sig; st["at"] = now
+    for name, (ents, _order) in colls.items():
+        st["coll"][name] = {kk: e[1] for kk, e in ents.items()}
+        st["order"][name] = next_order[name]
+    c.setdefault("sent", {})[key] = (sig, now)          # the dedup slot follows, so a later full send dedups honestly
 
 
 def _send_client(c, key, msg, pre=None, sig=None):
@@ -28711,7 +29086,7 @@ def _push(targets, connect=False, tmux=None):
                     feed_ms = json.dumps(feed)
                     feed_sig = _dedup_sig(feed, feed_ms)
                     _feed_wire = (feed_src, feed.get("ledgers"), feed, feed_ms, feed_sig)
-            _send_client(c, ("feed",), feed, pre=feed_ms, sig=feed_sig)
+            _send_slot(c, "feed", feed, feed_ms, feed_sig)
         elif c["app"] == "timeline" and timeline is not None:
             if bars_ms is None:
                 w = _bars_wire
@@ -28723,7 +29098,7 @@ def _push(targets, connect=False, tmux=None):
                     bars_ms = json.dumps(bars)
                     bars_sig = _dedup_sig(bars, bars_ms)
                     _bars_wire = (timeline, tl_warming, bars, bars_ms, bars_sig)
-            _send_client(c, ("timelinebars",), bars, pre=bars_ms, sig=bars_sig)
+            _send_slot(c, "bars", bars, bars_ms, bars_sig)
     with _clients_lock:
         _clients[:] = [c for c in _clients if c.get("alive", True)]
 
@@ -29702,6 +30077,10 @@ def _shim(app, v=0):
 // (a focus, a jump) at the dashboard that asked instead of at every one that is open (the user 2026-07-29).
 var wid=new URLSearchParams(location.search).get("wid")||"";
 try{if(!wid)wid=window.sessionStorage.getItem("romp:wid")||"";}catch(e){}
+// This PAGE's instance id — minted once per load, never stored: every connect of this page carries it, so the
+// kernel retires this page's previous socket on a reconnect, and never another page's (a duplicated tab copies
+// sessionStorage, and with it wid; it must not copy this).
+var IID="";try{IID=(window.crypto&&crypto.randomUUID)?crypto.randomUUID():"";}catch(e){}if(!IID)IID=String(Math.random()).slice(2)+"-"+Date.now();
 var APP="%s";var LOADEDV=%d;var lastRecv=0;var STALE_MS=30000;   // watchdog: no frame (incl. keepalive) for this long → the socket is dead → reconnect
 var connT=0;   // when the current socket's connect() attempt started — the progress watchdog's reference point
 // Tell the shell this pane's WS state so it can show ONE "disconnected" banner (the user 2026-06-27): a real
@@ -29769,7 +30148,7 @@ else selfBar("A newer romp build is available.","build");}
 function connect(){if(ws&&(ws.readyState===0||ws.readyState===1))return;   // one live attempt at a time — a lost timer + the watchdog can both call in
 connT=Date.now();var proto=location.protocol==="https:"?"wss://":"ws://";
 var active="";try{var st0=JSON.parse(localStorage.getItem(SK)||"null");active=(st0&&st0.activeId)||"";}catch(e){}
-ws=new WebSocket(proto+location.host+"/ws?app=%s"+(wid?"&wid="+encodeURIComponent(wid):"")+(active?"&active="+encodeURIComponent(active):""));
+ws=new WebSocket(proto+location.host+"/ws?app=%s&delta=1&iid="+encodeURIComponent(IID)+(wid?"&wid="+encodeURIComponent(wid):"")+(active?"&active="+encodeURIComponent(active):""));
 // onopen: flush the queue; a RECONNECT (after a drop) also PROMPTS a reload — the fresh socket resyncs live via
 // the kernel's next push, and the banner offers a full reload for anything a live push doesn't cover. This
 // replaces the old silent location.reload() (the user: don't foist a reload; let me click — [[prefer-reload-banner-not-auto]]).
@@ -29793,6 +30172,11 @@ if(msg&&msg.type==="restarting"){restartAnnounced=Date.now();staleDiag("restart-
 // the first REAL frame after a reconnect is the kernel's connect-time push — the resync itself, so the
 // "what you see may be stale" prompt is answered and retires (see clearStale). Keepalives return above.
 if(freshPending){freshPending=false;clearStale();}
+// VIEW DELTAS (2026-09-03): the bars/feed slots arrive as {type:"delta"} frames carrying only the changed
+// entries; reassemble the full message from what this pane holds and hand the bundle exactly what it
+// used to receive. A delta whose base is not the revision held here cannot be applied → ask for a full.
+if(msg&&msg.type==="delta"){var full=applyDelta(msg);if(!full){send({type:"needSlot",slot:msg.slot});return;}msg=full;}
+else if(msg&&DELTA_KINDS[msg.type]){var keys=msg._keys;delete msg._keys;LAST[msg.type]=keys?{rev:0,msg:msg,maps:buildMaps(msg,keys)}:null;}
 if(window.__rompFed){window.__rompFed.inbound("",msg);}else{window.dispatchEvent(new MessageEvent("message",{data:msg}));}};
 // onclose: flag the shell, RE-SHOW this pane's romp loader (the user 2026-06-29, who wanted the swirling loader on
 // kernel restart), + RETRY (don't blind-reload — on a real outage the reload just fails into a dead page).
@@ -29800,6 +30184,31 @@ ws.onclose=function(){netState("down");try{window.dispatchEvent(new Event("romp:
 setTimeout(connect,(restartAnnounced&&Date.now()-restartAnnounced<30000)?250:1500);};   // announced death → tight redial (the frame is the event; the blind 1.5s stays for unannounced drops)
 ws.onerror=function(){try{ws.close();}catch(e){}};}
 function send(m){var s=JSON.stringify(m);if(ws&&ws.readyState===1)ws.send(s);else queue.push(s);}
+// The delta reassembler. DELTA_KINDS mirrors the kernel's _DELTA_SLOTS: which top-level collections of each
+// slot are keyed, and how — "dict" (an object keyed by its own keys), "byid" (a list keyed by item id),
+// "bysid" (a list grouped by item sid, one entry per group). LAST holds, per slot, the revision, the last
+// full message handed to the bundle, and per-collection maps {order:[keys], items:{key:value}}. A delta
+// builds a NEW message object (the bundle may still hold the previous one) reusing every unchanged part.
+var DELTA_KINDS={bars:{turns:"dictlist:id",judging:"bykeys:sid,t,judge,t1",messages:"byid"},feed:{asks:"byid:itemId"}};var LAST={};var SEP="\u001f";
+function buildMaps(m,keys){var kinds=DELTA_KINDS[m.type]||{},maps={};for(var name in kinds){var kind=kinds[name],v=m[name],order=((keys||{})[name]||[]).slice(),items={},pos={};
+for(var i=0;i<order.length;i++){var kk=order[i];
+if(kind==="dict"){items[kk]=v[kk];}
+else if(kind.indexOf("dictlist:")===0){var cut=kk.indexOf(SEP),dk=cut<0?kk:kk.slice(0,cut),rest=cut<0?"":kk.slice(cut+1),lane=v[dk];if(rest===""){items[kk]=lane;}else{var j=pos[dk]||0;pos[dk]=j+1;items[kk]=lane[j];}}
+else{items[kk]=v[i];}}
+maps[name]={order:order,items:items};}return maps;}
+function assemble(kind,map){var i,kk;if(kind==="dict"){var o={};for(i=0;i<map.order.length;i++){kk=map.order[i];if(map.items.hasOwnProperty(kk))o[kk]=map.items[kk];}return o;}
+if(kind.indexOf("dictlist:")===0){var d={};for(i=0;i<map.order.length;i++){kk=map.order[i];if(!map.items.hasOwnProperty(kk))continue;var cut=kk.indexOf(SEP);var dk=cut<0?kk:kk.slice(0,cut),rest=cut<0?"":kk.slice(cut+1);
+if(rest===""){d[dk]=map.items[kk];continue;}   // a bare-prefix entry: the lane's own (empty or non-list) value
+if(!d.hasOwnProperty(dk))d[dk]=[];d[dk].push(map.items[kk]);}return d;}
+var out=[];for(i=0;i<map.order.length;i++){kk=map.order[i];if(map.items.hasOwnProperty(kk))out.push(map.items[kk]);}return out;}
+function applyDelta(d){var last=LAST[d.slot];if(!last||last.rev!==d.base)return null;var kinds=DELTA_KINDS[d.slot]||{};var m={};for(var k0 in last.msg)m[k0]=last.msg[k0];
+if(d.rest){if(d.restAll){for(var k1 in m){if(!kinds[k1]&&!(k1 in d.rest))delete m[k1];}}for(var rk in d.rest)m[rk]=d.rest[rk];}
+var coll=d.coll||{};for(var name in coll){var kind=kinds[name];if(!kind)continue;var c=coll[name],map=last.maps[name]||{order:[],items:{}};var items={};for(var ik in map.items)items[ik]=map.items[ik];var order=map.order.slice();
+if(c.del){for(var x=0;x<c.del.length;x++){delete items[c.del[x]];}}
+if(c.set){for(var sk in c.set){if(!items.hasOwnProperty(sk))order.push(sk);items[sk]=c.set[sk];}}
+if(c.order){order=c.order.slice();}else{order=order.filter(function(kk){return items.hasOwnProperty(kk);});}
+last.maps[name]={order:order,items:items};m[name]=assemble(kind,last.maps[name]);}
+last.rev=d.rev;last.msg=m;return m;}
 window.__rompLocalSend=send;window.__rompApp=APP;   // federation.ts (the multi-kernel manager) routes local sends + knows the app through these
 var SK="romp-vscode-state-%s";   // persist webview state to localStorage so UI prefs survive a refresh
 window.acquireVsCodeApi=function(){return{postMessage:function(m){if(window.__rompFed){window.__rompFed.outbound(m);}else{send(m);}},
@@ -35038,6 +35447,15 @@ class Handler(BaseHTTPRequestHandler):
             client["active"] = msg.get("id")   # tab switch → next push builds the now-active tab first
             _pusher_wake.set()                 # …and that push starts when the in-flight cycle ends, not
             return                             #    after the 0.5 s backstop (the tab switch IS the event)
+        if msg and msg.get("type") == "needSlot" and msg.get("slot") in _DELTA_SLOTS:
+            # The shim could not apply a view delta (its base revision did not match what it holds — a
+            # frame it never saw, a reload mid-stream): forget what we believe it holds and re-send the
+            # whole slot now, from which the delta stream re-bases (the chat's needFull, for views).
+            # Flagged for the pusher's thread rather than done here: the pusher may be mid-frame for this very
+            # client, and two threads over its held state would rebase a full the dedup then swallowed.
+            client.setdefault("resync", set()).add(str(msg["slot"]))
+            _pusher_wake.set()
+            return
         if msg and msg.get("type") == "needFull" and msg.get("id"):
             # The client REJECTED a delta because it started past what it holds (render.ts chatTail's gap
             # branch) — it is missing events and cannot self-repair. Our own per-client bookkeeping can't
@@ -35784,6 +36202,7 @@ class Handler(BaseHTTPRequestHandler):
         q = parse_qs(urlparse(self.path).query)
         app = (q.get("app") or ["chat"])[0]
         wid = (q.get("wid") or [""])[0]         # which DASHBOARD this pane belongs to → _send_to_view aims at one
+        iid = (q.get("iid") or [""])[0]         # which page INSTANCE: a reconnect carrying it retires its old socket
         active = (q.get("active") or [""])[0]   # the tab this client is looking at → _push builds it FIRST
         self.send_response(101)
         self.send_header("Upgrade", "websocket")
@@ -35796,23 +36215,28 @@ class Handler(BaseHTTPRequestHandler):
         # Frames are ENQUEUED, never written by the caller: one wedged client must not stall the shared
         # push/heartbeat loops (see _ws_sender). Pongs still ride self.wfile — they are ≤125-byte control
         # frames answered on this client's own handler thread, and both paths serialise on the same `lock`.
-        q = queue.Queue()
-        client = {"app": app, "wid": wid, "alive": True, "qbytes": 0, "qlock": threading.Lock()}
-        client["send"] = _mk_ws_send(q, self.connection, client)
-        threading.Thread(target=_ws_sender, args=(q, self.connection, lock, client),
-                         daemon=True, name="ws-send").start()
+        # `q` above is the connect QUERY; the client's send queue gets its own name — a Queue.get("delta")
+        # would block this handler forever (caught by tests/test_kernel.py's socket-error loop test)
+        client, sendq, lock = _new_ws_client(app, wid, self.connection, lock=lock)
         if active:
             client["active"] = active                  # active-tab-first streaming (the user 2026-06-24)
-        with _clients_lock:
-            _clients.append(client)
+        if (q.get("delta") or [""])[0] == "1":
+            client["delta"] = True                     # the shim reassembles view deltas (see _send_slot)
+        if iid:
+            client["iid"] = iid
+        _register_ws_client(client)
         try:
             while client["alive"]:
                 # one COMPLETE message per iteration — fragments reassembled, pings answered inline
                 # (browsers fragment large sends: a phone photo's dropFile spans dozens of frames)
+                client["inRead"] = True                # parked in the read: silence here is the peer's
                 op, payload = _ws_recv_message(
-                    self.rfile, lambda payload: _ws_pong(self.wfile, lock, payload or b""))
+                    self.rfile, lambda payload: _ws_pong(self.wfile, lock, payload or b""),
+                    on_pong=lambda payload: _note_ws_inbound(client))
                 if op is None:                         # EOF / close / a client overran the reassembly cap
                     break
+                _note_ws_inbound(client)               # any message proves the peer alive
+                client["inRead"] = False               # in a dispatch: pongs wait unread, not judged
                 # webview→kernel messages: on "ready", push the initial state to this client
                 try:
                     msg = json.loads(payload.decode("utf-8", "replace"))
@@ -35824,11 +36248,13 @@ class Handler(BaseHTTPRequestHandler):
                     raise   # a genuine socket failure → let the outer handler tear the connection down
                 except Exception:
                     sys.stderr.write("ws handler [%s]: %s\n" % ((msg or {}).get("type"), traceback.format_exc()))
+                finally:
+                    _note_ws_inbound(client)           # pings sent during the dispatch were unjudgeable: fresh clock
         except (BrokenPipeError, ConnectionResetError, OSError):
             pass
         finally:
             client["alive"] = False
-            q.put(None)                        # end this client's sender thread
+            sendq.put(None)                    # end this client's sender thread
             with _clients_lock:
                 if client in _clients:
                     _clients.remove(client)
