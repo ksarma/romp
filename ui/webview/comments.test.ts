@@ -529,7 +529,7 @@ test("agentCount is the reply-arrived detector's datum — records of the exchan
 
 test("busy latches at the SEND gesture and clears exactly on the reply-arrived record (source pins)", () => {
   // create: the gesture latches under the synth tid, before any kernel round-trip
-  assert.match(UI, /cmtAwaitBase\.set\(synth\.tid, \{ you: 0, youT: 0, agents: 0 \}\);\s+\/\/ the SEND gesture latches the pulse/);
+  assert.match(UI, /cmtAwaitBase\.set\(synth\.tid, \{ \.\.\.CMT_LATCH_ZERO \}\);\s+\/\/ the SEND gesture latches the pulse/);
   // follow-up: re-latches at ITS send, with the thread's projected counts at that moment as the base (T237)
   assert.match(UI, /cmtAwaitBase\.set\(cur\.th\.tid, cmtLatchOf\(cur\.th\)\);/);
   // the create's latch carries onto the real thread at adopt (the synth tid retires)

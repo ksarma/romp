@@ -6569,26 +6569,34 @@ let cmtShippedImgs: string[] = [];
 // the projection's 40-message cap) and the kernel's owed bit owns the wash from there. Against an OLDER
 // kernel (no bit) it keeps the T102 contract: cleared by the reply-arrived event — the agent's reply record
 // landing (agentCount rising past the base) with the thread settled. No push counting, no timers.
-type CmtLatch = { you: number; youT: number; agents: number };
+type CmtLatch = { you: number; youT: number; agents: number; queued: number; events: number };
 const cmtAwaitBase = new Map<string, CmtLatch>();
 const cmtYouRows = (th: CommentThread) => (th.msgs || []).filter((m) => m.who === "you");
 const cmtLatchOf = (th: CommentThread): CmtLatch => {
   const you = cmtYouRows(th);
-  return { you: you.length, youT: you.length ? (you[you.length - 1].t || 0) : 0, agents: agentCount(th) };
+  return { you: you.length, youT: you.length ? (you[you.length - 1].t || 0) : 0, agents: agentCount(th),
+           queued: th.queued || 0, events: ((th.events || []) as unknown[]).length };
 };
-/** Does this frame's thread release the send latch? Against a kernel that ships replyOwed (T237), only the
- *  USER'S OWN send landing does — a "you" row newer than the click's newest, or more "you" rows than then
- *  (the count alone never grows on a thread at the projection's 40-message cap). Never an agent row: the
- *  backend HOLDS a follow-up sent mid-turn until the turn ends, so the agent's partials (whose merged row's
- *  time advances) and the reply itself land BEFORE the send is written — clearing on them dropped the
- *  green while the send was still queued (round-2 review). Against an older kernel (no bit) the T102
- *  reply-arrived clear stands. A thread leaving "open" or erroring releases either way. */
+const CMT_LATCH_ZERO: CmtLatch = { you: 0, youT: 0, agents: 0, queued: 0, events: 0 };
+/** Does this frame's thread release the send latch? Against a kernel that ships replyOwed (T237), the
+ *  KERNEL'S ACKNOWLEDGEMENT of the send does — any of: the user's own "you" row newer than the click's
+ *  newest (or more "you" rows than then; the count alone never grows on a thread at the projection's
+ *  40-message cap); the backend now HOLDING the send (queued grew — a follow-up typed mid-turn waits there
+ *  until the turn ends, owed but in no projection yet); the send consumed as a slash command (the
+ *  transcript grew — new events — while the kernel says nothing is owed); or the kernel marking the thread
+ *  unreachable (a broken thread owes nothing). Never an agent row alone: the agent's partials and the
+ *  reply itself land BEFORE a held send is written, and clearing on them dropped the green while the send
+ *  was still queued (round-2 review). Against an older kernel (no bit) the T102 reply-arrived clear
+ *  stands. A thread leaving "open" or erroring releases either way. */
 function cmtLatchReleased(t: CommentThread, base: CmtLatch): boolean {
   if (t.status !== "open" || !!t.error) return true;
   if (typeof t.replyOwed === "boolean") {
     const you = cmtYouRows(t);
     const newestYouT = you.length ? (you[you.length - 1].t || 0) : 0;
-    return you.length > base.you || newestYouT > base.youT;
+    if (you.length > base.you || newestYouT > base.youT) return true;   // written
+    if ((t.queued || 0) > base.queued) return true;                       // held by the backend — the kernel owes it now
+    if (t.unreachable) return true;                                       // nothing can land — no green promise
+    return ((t.events || []) as unknown[]).length > base.events && t.replyOwed === false;   // consumed as a command
   }
   return agentCount(t) > base.agents && !threadBusy(t.state);
 }
@@ -7352,7 +7360,7 @@ function commentSendFromPop(pop: HTMLElement): void {
       unread: false, replyOwed: true, promotedName: "", msgs: [], name: nm || "comment", color: create.color || "" };
     const cur0 = commentThreads.get(create.sid) || [];
     commentThreads.set(create.sid, [...cur0.filter((t) => t.tid !== synth.tid), synth]);
-    cmtAwaitBase.set(synth.tid, { you: 0, youT: 0, agents: 0 });   // the SEND gesture latches the pulse — before any kernel round-trip (T102); released once a frame carries the send (T237)
+    cmtAwaitBase.set(synth.tid, { ...CMT_LATCH_ZERO });   // the SEND gesture latches the pulse — before any kernel round-trip (T102); released once a frame acknowledges the send (T237)
     applyCommentMarks(create.sid);
     vscodeApi.postMessage({ type: "commentCreate", id: create.sid, uuid: create.uuid, exact: create.exact,
       text, name: nm, model: create.model || "", effort: create.effort || "",

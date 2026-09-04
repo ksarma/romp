@@ -26,14 +26,15 @@ const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "
 
 test("the kernel ships replyOwed beside unread, both from the thread's own turn-end", () => {
   assert.match(KERNEL, /def _thread_turn_read\(tsid, reg, state\):/);
-  assert.match(KERNEL, /def _turn_landed\(turn\):/);
+  assert.match(KERNEL, /def _turn_landed\(turn, cut_t=0\.0\):/, "an interrupt at or before the backend's machineCut stamp is romp's cut, not the user's stop");
   assert.match(KERNEL, /def _turn_is_meta\(turn\):/, "compaction boundaries and command-only turns are not landings");
   assert.match(KERNEL, /if landed:\s*\n\s*return False, interrupted/, "the end_turn / interrupt record IS the landing");
   assert.match(KERNEL, /print\("\[comments\] thread %s: transcript parse failed/, "a parse failure is shouted, never swallowed");
   assert.match(KERNEL, /def _agent_landed_after\(events, msgs, seen\):/);
   assert.match(KERNEL, /turn_open, interrupted, turns = _thread_turn_read\(tsid, reg, state\) if status == "open" else \(False, False, \[\]\)/);
   assert.match(KERNEL, /unread = \(not turn_open\) and _agent_landed_after\(events, msgs, seen\)/);
-  assert.match(KERNEL, /reply_owed = status == "open" and \(turn_open\s*\n\s*or \(not msgs and _thread_owes_first_reply\(tsid, reg, th, turns\)\)\s*\n\s*or \(bool\(msgs\) and msgs\[-1\]\["who"\] == "you" and not interrupted\)\)/);
+  assert.match(KERNEL, /owes_first = status == "open" and not msgs and _thread_owes_first_reply\(tsid, reg, th, turns\)/);
+  assert.match(KERNEL, /or \(bool\(msgs\) and msgs\[-1\]\["who"\] == "you" and not interrupted\)\)/);
   assert.match(KERNEL, /def _thread_owes_first_reply\(tsid, reg, th, turns\):/, "a missing transcript owes nothing, loudly");
   assert.match(KERNEL, /if tail and tail\[-1\]\.get\("type"\) == "idle":\s*\n\s*return False, False, turns/, "an idle tail after a trailing boundary reads dead, not owed");
   assert.match(KERNEL, /"unread": unread, "replyOwed": reply_owed,/);
@@ -52,7 +53,10 @@ test("the client keys the green wash on the kernel's replyOwed; the gesture latc
   // an OLDER kernel (no replyOwed bit) keeps the T102 agent-count-with-settled-state clear
   assert.match(RENDER, /if \(base !== undefined && cmtLatchReleased\(t, base\)\) cmtAwaitBase\.delete\(t\.tid\);/);
   assert.match(RENDER, /cmtAwaitBase\.set\(cur\.th\.tid, cmtLatchOf\(cur\.th\)\);/, "a follow-up latches on its thread's counts at the click");
-  assert.match(RENDER, /cmtAwaitBase\.set\(synth\.tid, \{ you: 0, youT: 0, agents: 0 \}\);/, "the create gesture latches its synthetic thread");
+  assert.match(RENDER, /cmtAwaitBase\.set\(synth\.tid, \{ \.\.\.CMT_LATCH_ZERO \}\);/, "the create gesture latches its synthetic thread");
+  assert.match(COMMENTS, /queued\?: number;/); assert.match(COMMENTS, /unreachable\?: boolean \| null;/);
+  assert.match(KERNEL, /"queued": queued,/); assert.match(KERNEL, /"unreachable": unreachable or None,/);
+  assert.match(KERNEL, /reply_owed = status == "open" and \(turn_open or queued > 0 or owes_first/);
   assert.match(RENDER, /else if \(m\.type === "commentSendFailed" && m\.tid\) \{\s*\n\s*cmtAwaitBase\.delete\(String\(m\.tid\)\);/, "a refused send releases its latch");
   assert.match(RENDER, /unread: false, replyOwed: true, promotedName: "", msgs: \[\], name: nm \|\| "comment"/,
     "the synthetic thread owes its reply from the click");
@@ -88,7 +92,7 @@ function markFor(th: CommentThread, latched = false): Set<string> {
   const inflightSrc = "const commentInFlight = (th) => {" + RENDER.split("const commentInFlight = (th: CommentThread): boolean => {")[1].split("\n};")[0] + "\n};";
   const styleSrc = "function styleCommentMark(m, th) {" + RENDER.split("function styleCommentMark(m: HTMLElement, th: CommentThread): void {")[1].split("\n}")[0] + "\n}";
   const prelude = `
-    const cmtAwaitBase = new Map(${latched ? '[["t1", { you: 0, youT: 0, agents: 0 }]]' : ""});
+    const cmtAwaitBase = new Map(${latched ? '[["t1", { you: 0, youT: 0, agents: 0, queued: 0, events: 0 }]]' : ""});
     const cmtInterrupted = new Set();
     const threadStuck = (st) => st === "permission" || st === "picker";
     const replyOwed = (th) => { const l = th.msgs.length ? th.msgs[th.msgs.length - 1] : null; return !!l && l.who === "you"; };
@@ -140,8 +144,11 @@ test("the CSS intent stands: green wash while busy, yellow tiers for base/unread
 });
 
 // ── executed: the latch RELEASE rule (cmtLatchReleased) over the frame sequences the review named ──────────
-function latchReleased(t: CommentThread, base: { you: number; youT: number; agents: number }): boolean {
-  const src = "function cmtLatchReleased(t, base) {" + RENDER.split("function cmtLatchReleased(t: CommentThread, base: CmtLatch): boolean {")[1].split("\n}")[0] + "\n}";
+type LatchBase = { you: number; youT: number; agents: number; queued?: number; events?: number };
+function latchReleased(t: CommentThread, base0: LatchBase): boolean {
+  const base = { queued: 0, events: 0, ...base0 };
+  const src = ("function cmtLatchReleased(t, base) {" + RENDER.split("function cmtLatchReleased(t: CommentThread, base: CmtLatch): boolean {")[1].split("\n}")[0] + "\n}")
+    .replace(/ as unknown\[\]/g, "");   // the one TypeScript cast in the body — plain JS for new Function
   const prelude = `
     const cmtYouRows = (th) => (th.msgs || []).filter((m) => m.who === "you");
     const agentCount = (th) => (th.msgs || []).filter((m) => m.who === "agent").length;
@@ -180,4 +187,19 @@ test("leaving open, or a launch error, releases either way", () => {
   assert.equal(latchReleased(base({ replyOwed: true, status: "resolved", msgs: [] }), b), true);
   assert.equal(latchReleased(base({ replyOwed: true, error: "could not start", msgs: [] }), b), true);
   assert.equal(latchReleased(base({ replyOwed: true, msgs: [] }), b), false, "a fresh thread holds until its send lands");
+});
+
+test("the kernel's other acknowledgements release the latch: a held send, a consumed slash command, an unreachable thread", () => {
+  const b = { you: 1, youT: 50, agents: 1, queued: 0, events: 2 };
+  // the follow-up typed mid-turn is HELD: queued grew — the kernel owes it now
+  assert.equal(latchReleased(base({ replyOwed: true, queued: 1, msgs: [you(50), agent(100)] }), b), true);
+  // the reply lands while the send is still queued: kernel says owed (queued) — released to the kernel is fine, and
+  // the kernel keeps the green; with NO queue seen and no new "you" row the latch still holds
+  assert.equal(latchReleased(base({ replyOwed: false, unread: true, msgs: [you(50), agent(105)], events: [1, 2] as unknown[] }), b), false);
+  // a slash command typed in the popover: no "you" row ever, the transcript grew, the kernel owes nothing
+  assert.equal(latchReleased(base({ replyOwed: false, msgs: [you(50), agent(100)], events: [1, 2, 3, 4] as unknown[] }), b), true);
+  // …but a grown transcript while the kernel still owes (agent partials) does not release
+  assert.equal(latchReleased(base({ replyOwed: true, msgs: [you(50), agent(104)], events: [1, 2, 3] as unknown[] }), b), false);
+  // a broken thread: nothing can land
+  assert.equal(latchReleased(base({ replyOwed: false, unreachable: true, msgs: [] }), { ...b, you: 0, youT: 0, events: 0 }), true);
 });

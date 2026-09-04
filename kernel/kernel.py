@@ -8681,12 +8681,12 @@ def _thread_messages(tsid, cut_uuid, floor_t=0):
             txt = _comment_msg_text(r)
             if r.get("type") == "user" and txt.lstrip().startswith("<task-notification>"):
                 txt = ""                            # harness bookkeeping for the AGENT (a parent bg task died
-            if r.get("type") == "user" and (em.COMMAND_NAME_ANY_RE.search(txt) or em.LOCAL_STDOUT_RE.match(txt)
-                                            or txt.lstrip().startswith("<local-command-caveat>")):
-                txt = ""                            # a slash command's invocation/output wrapper: the CLI's own
-                                                    # bookkeeping, not something the user SAID — it must not read as
-                                                    # "the user's message is newest" and owe a reply (T237 review)
                 #                                     with the fork) — never the user's own words (2026-08-17)
+            if r.get("type") == "user" and em.CMD_WRAP_RE.match(txt):
+                txt = ""                            # a slash command's invocation/output wrapper (the record BEGINS
+                                                    # with one — the event model's own anchored test; prose that merely
+                                                    # quotes a tag is the user's message): the CLI's bookkeeping, not
+                                                    # something the user SAID — it must not owe a reply (T237 review)
             if txt and txt != boot_nudge and not (r.get("type") == "user" and "<!-- romp-" in txt):
                 rows.append({"who": "you" if r.get("type") == "user" else "agent",
                              "text": txt[:4000],
@@ -8757,12 +8757,17 @@ def _turn_is_meta(turn):
                 or (atoms and all(a.get("command") for a in atoms)))
 
 
-def _turn_landed(turn):
+def _turn_landed(turn, cut_t=0.0):
     """(landed, interrupted): the reply RECORD is in — an assistant atom stopped with end_turn — or the
-    CLI's own interrupt record closed the turn (the user stopped it; nothing more is coming)."""
+    CLI's own interrupt record closed the turn (the user stopped it; nothing more is coming). `cut_t` is
+    the backend's newest machineCut stamp (_last_machine_cut): an interrupt record at or before it is a
+    cut ROMP made and is resuming (crash / restart), not the user's stop — the turn stays in progress
+    (T237 review: otherwise the mark flapped yellow → green → yellow across every resume)."""
     atoms = turn.get("atoms") or []
     tail = next((a for a in reversed(atoms) if not a.get("command") and a.get("type") != "idle"), None)
     if tail is not None and em.is_interrupt_record(tail):
+        if cut_t and cut_t >= float(tail.get("t") or 0):
+            return False, False                     # romp's own cut, being resumed — nothing landed, nobody stopped it
         return True, True
     last_sr = None
     for a in atoms:
@@ -8802,7 +8807,7 @@ def _thread_turn_read(tsid, reg, state):
     at = next((i for i in range(len(turns) - 1, -1, -1) if not _turn_is_meta(turns[i])), None)
     if at is None:
         return busy_state, False, turns             # only boundaries / commands so far
-    landed, interrupted = _turn_landed(turns[at])
+    landed, interrupted = _turn_landed(turns[at], _last_machine_cut(tsid)[0])
     if landed:
         return False, interrupted, turns            # the reply RECORD is in (or the user stopped it), whatever the backend still says
     if busy_state:
@@ -8849,6 +8854,8 @@ def _agent_landed_after(events, msgs, seen):
     empty (the popover holds its loader) → nothing is unread."""
     if events:
         for e in events:
+            if e.get("command") or e.get("interruptSettle"):
+                continue                            # a slash command's confirmation / the interrupt's null settle: not a reply
             if e.get("kind") in ("assistant", "tool") and int(em.parse_z(e.get("ts")) or 0) > seen:
                 return True
         return False
@@ -8909,10 +8916,17 @@ def _comments_frame(sid, tmux=None):
         reg = _thread_reg(tsid)
         turn_open, interrupted, turns = _thread_turn_read(tsid, reg, state) if status == "open" else (False, False, [])
         unread = (not turn_open) and _agent_landed_after(events, msgs, seen)
-        # owed: the turn is in progress, the FRESH thread has no exchange yet, or the user's message is the
-        # newest — unless that newest "message" is the CLI's own interrupt record (the user stopped it)
-        reply_owed = status == "open" and (turn_open
-                                           or (not msgs and _thread_owes_first_reply(tsid, reg, th, turns))
+        queued = 0                                  # sends the backend HOLDS (a follow-up typed mid-turn waits for the
+        if be and status == "open" and hasattr(be, "pending_queued"):   # turn to end before it is even written) —
+            try:                                    # owed, and not yet in any projection (T237 review)
+                queued = len(be.pending_queued(tsid) or [])
+            except Exception:
+                queued = 0
+        owes_first = status == "open" and not msgs and _thread_owes_first_reply(tsid, reg, th, turns)
+        unreachable = status == "open" and not msgs and not owes_first and not reg.get("forkOf")
+        # owed: the turn is in progress, a send is held, the FRESH thread has no exchange yet, or the user's
+        # message is the newest — unless that newest "message" is the CLI's own interrupt record
+        reply_owed = status == "open" and (turn_open or queued > 0 or owes_first
                                            or (bool(msgs) and msgs[-1]["who"] == "you" and not interrupted))
         # (T102: the push-count settle — settledPushes — is RETIRED. The client's pulse is exchange-
         # scoped now: latched at the send gesture, cleared by the reply RECORD arriving in msgs; the
@@ -8939,6 +8953,8 @@ def _comments_frame(sid, tmux=None):
                         "exact": str(th.get("exact") or "")[:500], "status": status,
                         "createdT": th.get("createdT") or 0, "state": state, "error": err,
                         "unread": unread, "replyOwed": reply_owed,   # yellow / green — see the docstring (T237)
+                        "queued": queued,                              # sends the backend holds, not yet in any projection
+                        "unreachable": unreachable or None,            # a broken thread (missing transcript / lost cut): owes nothing
                         "promotedName": th.get("promotedName") or "",
                         "model": (reg.get("liveModel") or reg.get("model") or "") if reg else "",
                         "effort": (reg.get("effort") or "") if reg else "",
@@ -21652,6 +21668,8 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
                                            "uuid": a.get("uuid"), "ts": ts})
                             continue
                         ev = {"kind": "assistant", "md": txt, "uuid": a.get("uuid"), "ts": ts}
+                        if a.get("command"):
+                            ev["command"] = True    # a slash command's own output (<local-command-stdout>), not a reply (T237)
                         sp = _space_paths(txt, sid, a.get("uuid"))
                         if sp:
                             ev["spacePaths"] = sp   # backticked filenames WITH spaces, filesystem-verified → whole-span links
