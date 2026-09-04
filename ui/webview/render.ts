@@ -929,11 +929,14 @@ document.addEventListener("click", (e) => {
 // no setting check shell-side can swallow a click.
 //
 // panesOn is the shell's pane set as the shell last told it — {romp:"panes", on:{chat,feed,files,…}},
-// posted on every pane toggle (its apply(), the exact event of the set changing) and on this iframe's
-// load (kernel.py _LANDING_COLLAPSE_JS), so a chat that boots or reloads after the shell hears it too.
-// A cache of the owner's state refreshed by the owner's own event, never a per-click guess (no
-// reading the parent's DOM, no polling). Standalone /chat never hears one and reads as all-off, which
-// the framed gate makes moot anyway.
+// where on means ON SCREEN: a desktop column toggled on, or on a phone the one tab showing (a po flag
+// left true by a desktop session must not steer a phone's links into a tab nobody is looking at).
+// Posted on every pane toggle (the shell's apply()), on a mobile tab switch or layout flip, and on this
+// iframe's load (kernel.py _LANDING_COLLAPSE_JS / _LANDING_MOBILE_JS), so a chat that boots or reloads
+// after the shell hears it too; the shell's storage/rebind re-applies re-send an unchanged set, which is
+// redundant and harmless. A cache of the owner's state refreshed by the owner's own events, never a
+// per-click guess (no reading the parent's DOM, no polling). Standalone /chat never hears one and reads
+// as all-off, which the framed gate makes moot anyway.
 let panesOn: Record<string, boolean> = {};
 function fileLinkRoute(pane: unknown, framed: boolean, filesOpen: boolean): "feed" | "pane" | "here" {
   if (!framed) return "here";
