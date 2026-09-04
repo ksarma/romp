@@ -7717,11 +7717,23 @@ class SdkBackend:
         d = self._live.get(sid)
         if not d:
             return
+        # `tx_user_texts` may be a MAPPING text → the newest record time carrying it (the kernel's
+        # _merge_live_atoms ships that since T237b): an echo then lands by text only through a record
+        # written AT OR AFTER its own send — a fork copies the parent's history, and "ok" / "go ahead" /
+        # a deliberate re-send repeat earlier texts, which used to retire the echo of a send the CLI still
+        # held. A plain set (older callers) keeps the unfloored match.
+        text_t = tx_user_texts if isinstance(tx_user_texts, dict) else None
+        def _by_text(a, et):
+            if not et:
+                return False
+            if text_t is None:
+                return et in tx_user_texts
+            return et in text_t and float(text_t[et] or 0) >= float(a.get("t") or 0)
         echo_removed = False
         for k in list(d.keys()):
             a = d[k]
             et = a.get("_echo_text")
-            landed = a.get("uuid") in tx_uuids or (et and et in tx_user_texts)
+            landed = a.get("uuid") in tx_uuids or _by_text(a, et)
             stale_echo = (bool(et) and human_floor and a.get("t", 0) <= human_floor
                           and not a.get("command") and _path_bearing(et))
             # A COMMAND atom (the CLI's streamed /model, /compact feedback) from a TURN-LESS control

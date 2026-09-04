@@ -398,6 +398,18 @@ class ThreadProjection(CommentBase):
             return list(self.queued)
         def live_atoms(self, sid):
             return list(self.live)
+        def prune_live(self, sid, tx_uuids, tx_user_texts=(), human_floor=0):
+            # the real backend's text retirement, floored when the caller ships text → newest record time
+            keep = []
+            for a in self.live:
+                et = (a.get("_echo_text") or "").strip()
+                if isinstance(tx_user_texts, dict):
+                    landed = et in tx_user_texts and float(tx_user_texts[et] or 0) >= float(a.get("t") or 0)
+                else:
+                    landed = et in tx_user_texts
+                if not landed:
+                    keep.append(a)
+            type(self).live = keep
         def live_sessions(self):
             return {}
         def session_since(self, sid):
@@ -439,11 +451,12 @@ class ThreadProjection(CommentBase):
                                 state="working")
         self.assertFalse(th["unread"], "an intermediate record is not a finished reply")
         self.assertTrue(th["replyOwed"], "the reply is still being worked on")
-        # (vi) the backend's state flaps to "" between records — the transcript's open turn still holds busy
+        # (vi) between records the backend still reports working (a live turn always snapshots
+        # working/waiting/retrying — session_state reads "" only when no process exists, T237b B)
         th = self._frame_thread(self._thread_side(self._partial_text(t + 110, "Let me check the code.", "cp1", "cu1"),
-                                                  self._tool_result(t + 112, "cr1", "cp1", "cp1")), state="")
+                                                  self._tool_result(t + 112, "cr1", "cp1", "cp1")), state="working")
         self.assertFalse(th["unread"])
-        self.assertTrue(th["replyOwed"], "a state flap between records must not drop the in-flight wash")
+        self.assertTrue(th["replyOwed"], "the in-flight wash holds through the tool call")
         # the turn ENDS (end_turn) — the reply has landed: yellow now, owed no more
         th = self._frame_thread(self._thread_side(self._partial_text(t + 110, "Let me check the code.", "cp1", "cu1"),
                                                   self._tool_result(t + 112, "cr1", "cp1", "cp1"),
@@ -519,10 +532,13 @@ class ThreadProjection(CommentBase):
         recs = self._thread_side(self._partial_text(t + 110, "Let me check the code.", "cp1", "cu1"),
                                  self._tool_result(t + 112, "cr1", "cp1", "cp1"),
                                  boundary(t + 113, "cb1", "cr1"))
-        for state in ("compacting", ""):
+        for state in ("compacting", "working"):
             th = self._frame_thread(recs, state=state)
             self.assertFalse(th["unread"], "state=%r" % state)
             self.assertTrue(th["replyOwed"], "a compaction mid-reply is not the reply — state=%r" % state)
+        # …but with NO process ("" — T237b B) the compacted, unlanded turn is dead: nothing more is coming
+        th = self._frame_thread(recs, state="")
+        self.assertFalse(th["replyOwed"], "no process after the compaction → owe nothing")
         # …and the reply landing after the boundary flips both
         th = self._frame_thread(recs + [aline(t + 130, "Jitter prevents thundering herds.", "ca1", parent="cb1")], state="")
         self.assertTrue(th["unread"]); self.assertFalse(th["replyOwed"])
@@ -699,7 +715,7 @@ class ThreadProjection(CommentBase):
         finally:
             self._State.live = []
 
-    def test_the_frame_ships_the_newest_record_uuid_beyond_the_projection_caps(self):
+    def test_the_newest_record_uuid_moves_when_a_consumed_slash_command_lands(self):
         t = self.now - 500
         self._seed_thread(seen=self.now)
         recs = self._thread_side(aline(t + 120, "Jitter prevents thundering herds.", "ca1", parent="cu1"))
@@ -723,6 +739,115 @@ class ThreadProjection(CommentBase):
             self.assertTrue(th["replyOwed"], "a held send is owed")
         finally:
             self._State.queued = []
+
+    # ── T237b (the manager's post-merge review, 2026-09-04) ─────────────────────────────────────────────
+    def test_a_dormant_thread_with_an_unended_turn_owes_nothing(self):
+        # (B) cut mid-reply with NO interrupt record (SIGKILL / the drain reaping the CLI) and never resumed
+        # (boot reconcile skips a thread with no persisted queue): its states tail says working, the backend
+        # says "" — no process exists. Not a reply in progress: owe nothing; the partial that landed is
+        # what there is to read
+        t = self.now - 500
+        self._seed_thread(seen=self.now - 450)
+        states = jd.STATE / "states" / (THREAD + ".jsonl")
+        states.parent.mkdir(parents=True, exist_ok=True)
+        states.write_text(json.dumps({"t": t + 100, "state": "working"}) + "\n")
+        recs = self._thread_side(self._partial_text(t + 110, "Let me check the code.", "cp1", "cu1"),
+                                 self._tool_result(t + 112, "cr1", "cp1", "cp1"))
+        try:
+            for _ in range(2):                    # nothing changes between pushes — the verdict must not either
+                th = self._frame_thread(recs, state="")
+                self.assertFalse(th["replyOwed"], "no process → nothing is coming")
+                self.assertTrue(th["unread"], "the partial that landed is newer than the watermark")
+            # the same transcript with a live process is a reply in progress
+            th = self._frame_thread(recs, state="working")
+            self.assertTrue(th["replyOwed"]); self.assertFalse(th["unread"])
+        finally:
+            states.unlink()
+
+    def test_a_machine_cut_stays_open_before_the_resumed_process_exists(self):
+        # (C) a restart-cut thread WITH a persisted queue, during the boot stagger: state "" before the
+        # spawn, the interrupt record at/before the machineCut stamp — being resumed, so open: no unread
+        # flick on the rail and dot, the wash owed throughout
+        t = self.now - 500
+        self._seed_thread(seen=self.now - 450)
+        recs = self._thread_side(self._partial_text(t + 110, "Let me check the code.", "cp1", "cu1"),
+                                 uline(t + 115, "[Request interrupted by user]", "ci1", parent="cp1"))
+        states = jd.STATE / "states" / (THREAD + ".jsonl")
+        states.parent.mkdir(parents=True, exist_ok=True)
+        states.write_text(json.dumps({"t": t + 120, "machineCut": "restart"}) + "\n")
+        self._State.queued = ["and the cap?"]
+        try:
+            km._machine_cut_cache.clear() if hasattr(km, "_machine_cut_cache") and hasattr(km._machine_cut_cache, "clear") else None
+            th = self._frame_thread(recs, state="")
+            self.assertTrue(th["replyOwed"]); self.assertFalse(th["unread"], "romp's cut, being resumed — nothing landed")
+        finally:
+            self._State.queued = []
+            states.unlink()
+
+    def test_live_echoes_are_read_before_the_projection_build_prunes_them(self):
+        # (A) build_session → _merge_live_atoms → prune_live runs inside _thread_events; the fold used to read
+        # live_atoms AFTER it — a repeat-text send (its text already in the fork-copied history) was retired
+        # by the unfloored text match before the fold ever saw it, and the frame read "nothing owed" while
+        # the CLI held the send. The fold reads first, and the prune is floored at the send's own time.
+        t = self.now - 500
+        self._seed_thread(seen=self.now)
+        recs = self._thread_side(aline(t + 120, "Jitter prevents thundering herds.", "ca1", parent="cu1"))
+        repeat = "how should the retry loop back off?"     # verbatim in the copied parent history (u1)
+        self._State.live = [{"type": "user", "author": "human", "t": t + 130, "uuid": "echo:r", "_echo_text": repeat}]
+        try:
+            th = self._frame_thread(recs, state="")
+            self.assertTrue(th["events"], "the projection was built (and its prune ran)")
+            self.assertEqual(th["queued"], 1, "the send the CLI holds is counted — read before the prune, and the prune is floored")
+            self.assertTrue(th["replyOwed"])
+            self.assertEqual(len(self._State.live), 1, "the floored prune keeps an echo no record at/after its send carries")
+            # its own record lands → retired by the same floored rule
+            self._State.live = [dict(self._State.live[0])]
+            th = self._frame_thread(recs + [uline(t + 131, repeat, "cu2", parent="ca1")], state="")
+            self.assertEqual(th["queued"], 0)
+            self.assertEqual(self._State.live, [], "landed by a record written after the send")
+        finally:
+            self._State.live = []
+
+    def test_the_backends_prune_floor_is_the_at_or_after_send_rule(self):
+        # (A) the real prune_live: handed text → newest record time, an echo is retired by text only through
+        # a record at or after its send; a plain set keeps the older unfloored match for older callers
+        be = sb.SdkBackend.__new__(sb.SdkBackend)
+        be._live = {THREAD: {"e1": {"uuid": "e1", "t": 130, "_echo_text": "ok"},
+                             "e2": {"uuid": "e2", "t": 130, "_echo_text": "and the cap?"}}}
+        be._persist_echoes = lambda sid: None
+        sb.SdkBackend.prune_live(be, THREAD, set(), {"ok": 100, "and the cap?": 131}, 0)
+        self.assertEqual(sorted(be._live[THREAD]), ["e1"], "an earlier 'ok' is not this send's landing; a later record is")
+        be._live = {THREAD: {"e1": {"uuid": "e1", "t": 130, "_echo_text": "ok"}}}
+        sb.SdkBackend.prune_live(be, THREAD, set(), {"ok"}, 0)
+        self.assertNotIn(THREAD, be._live, "a plain set keeps the unfloored match")
+
+    def test_a_broken_thread_tells_the_user_in_the_popover(self):
+        # (D) the missing-transcript verdict reached only stderr while the popover held its loader forever;
+        # it now rides the frame's error channel, in the user's words
+        self._seed_thread()
+        (self.proj / (THREAD + ".jsonl")).unlink()
+        km._thread_msgs_cache.clear(); km._parse_cache.clear(); jd._PARSE_CACHE.clear()
+        km._thread_unreadable_warned.clear()
+        km._sdk = lambda: self._State("")
+        th = km._comments_frame(PARENT)["threads"][0]
+        self.assertTrue(th["unreachable"])
+        self.assertIn("can't be found", th["error"], "the popover shows the verdict instead of the loader")
+        for word in ("kernel", "frame", "card", "board"):
+            self.assertNotIn(word, th["error"].lower())
+
+    def test_the_fork_boot_window_is_fresh_not_broken(self):
+        # nit: forkOf just spent, the process live, the transcript not yet on disk — owed quietly, not shouted
+        import contextlib, io
+        self._seed_thread()
+        (self.proj / (THREAD + ".jsonl")).unlink()
+        km._thread_msgs_cache.clear(); km._parse_cache.clear(); jd._PARSE_CACHE.clear()
+        km._thread_unreadable_warned.clear()
+        km._sdk = lambda: self._State("working")
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            th = km._comments_frame(PARENT)["threads"][0]
+        self.assertTrue(th["replyOwed"]); self.assertFalse(th["unreachable"]); self.assertEqual(th["error"], "")
+        self.assertNotIn("transcript missing", err.getvalue())
 
     def test_a_slash_command_after_a_landed_reply_owes_nothing(self):
         # the CLI's <command-name>/<local-command-stdout> wrapper records are bookkeeping, not the user's
