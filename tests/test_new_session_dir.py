@@ -198,7 +198,7 @@ class CreateSessionDirFork(_Wire):
         self.spawned = []
         self._real_sdk = km._create_sdk_session
         self._real_ready = km._sdk_ready
-        km._create_sdk_session = lambda nm, cwd, auth="", client=None: self.spawned.append((nm, cwd)) or "TESTSID"
+        km._create_sdk_session = lambda nm, cwd, auth="", client=None, **kw: self.spawned.append((nm, cwd)) or ("TESTSID", {})
         km._sdk_ready = lambda: True
         self.addCleanup(setattr, km, "_create_sdk_session", self._real_sdk)
         self.addCleanup(setattr, km, "_sdk_ready", self._real_ready)
@@ -231,6 +231,72 @@ class CreateSessionDirFork(_Wire):
         self.send({"type": "createSession", "name": "web", "dir": self.tmp, "backend": "sdk"})
         self.assertEqual(len(self.spawned), 1)
         self.assertNotIn("createDirMissing", [m.get("type") for m in self.sent])
+
+
+class CreateSessionTags(_Wire):
+    """createSession's `tags` + `parent` (tab groups on tags, the user 2026-09-04): the picker posts the
+    Tags row it prefilled from the active tab; the kernel hands both to _create_sdk_session so they
+    land BEFORE the first push. The same loud contract as POST /new: an unknown parent or a malformed
+    tags list refuses the create with a warn frame and nothing is spawned; a refused tag edit after a
+    successful spawn is warned, never swallowed. Synthetic sids only."""
+
+    PARENT = "11111111-2222-3333-4444-555555555555"
+
+    def setUp(self):
+        super().setUp()
+        self.spawned = []
+        self.extra = {}
+        saved = (km._create_sdk_session, km._sdk_ready, km._spawn_session)
+        km._create_sdk_session = lambda nm, cwd, auth="", client=None, **kw: (
+            self.spawned.append((nm, dict(kw))), ("TESTSID", dict(self.extra)))[1]
+        km._sdk_ready = lambda: True
+        km._spawn_session = lambda nm, cwd=None: self.spawned.append((nm, "tmux"))
+        self.addCleanup(lambda: (setattr(km, "_create_sdk_session", saved[0]),
+                                 setattr(km, "_sdk_ready", saved[1]),
+                                 setattr(km, "_spawn_session", saved[2])))
+        (km.jd.STATE / "names").mkdir(parents=True, exist_ok=True)
+        (km.jd.STATE / "names" / self.PARENT).write_text("web\t/tmp\t#123456\twhite\n")
+
+    def test_tags_and_a_known_parent_reach_the_create_as_keyword_args(self):
+        self.send({"type": "createSession", "name": "api", "dir": self.tmp, "backend": "sdk",
+                   "tags": ["pool", " infra "], "parent": self.PARENT})
+        self.assertEqual(len(self.spawned), 1)
+        nm, kw = self.spawned[0]
+        self.assertEqual(nm, "api")
+        self.assertEqual(kw.get("tags"), ["pool", "infra"], "names trimmed; applied inside the create, before its push")
+        self.assertEqual(kw.get("parent"), self.PARENT)
+
+    def test_no_tags_asked_none_threaded(self):
+        self.send({"type": "createSession", "name": "api", "dir": self.tmp, "backend": "sdk"})
+        nm, kw = self.spawned[0]
+        self.assertEqual(kw.get("tags"), [])
+        self.assertEqual(kw.get("parent"), "")
+
+    def test_an_unknown_parent_refuses_loudly_and_spawns_nothing(self):
+        r = self.send({"type": "createSession", "name": "api", "dir": self.tmp, "backend": "sdk",
+                       "parent": "99999999-0000-0000-0000-000000000000"})
+        self.assertEqual(r["type"], "warn")
+        self.assertIn("not a session this kernel knows", r["text"])
+        self.assertEqual(self.spawned, [], "a child must never spawn outside the group it was asked into")
+
+    def test_a_malformed_tags_list_refuses_loudly(self):
+        r = self.send({"type": "createSession", "name": "api", "dir": self.tmp, "backend": "sdk", "tags": ["", "x"]})
+        self.assertEqual(r["type"], "warn")
+        self.assertIn("tags must be", r["text"])
+        self.assertEqual(self.spawned, [])
+
+    def test_a_refused_tag_edit_after_the_spawn_is_warned_never_swallowed(self):
+        self.extra = {"tags": [], "tagError": 'two tags are named "pool"'}
+        r = self.send({"type": "createSession", "name": "api", "dir": self.tmp, "backend": "sdk", "tags": ["pool"]})
+        self.assertEqual(len(self.spawned), 1, "the session exists — the refusal rides beside it")
+        self.assertEqual(r["type"], "warn")
+        self.assertIn('two tags are named "pool"', r["text"])
+
+    def test_a_tmux_create_with_tags_refuses_instead_of_dropping_them(self):
+        r = self.send({"type": "createSession", "name": "term1", "dir": self.tmp, "backend": "tmux", "tags": ["pool"]})
+        self.assertEqual(r["type"], "warn")
+        self.assertIn("SDK backend", r["text"])
+        self.assertEqual(self.spawned, [], "no tmux spawn with the tags silently gone")
 
 
 class NativeDialogAvailability(unittest.TestCase):

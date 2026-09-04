@@ -764,6 +764,29 @@ class CommentOps(CommentBase):
         err = km._comment_promote(PARENT, tid, "bad name!")
         self.assertIn("letters, digits", err)
 
+    def _tag_members(self, name):
+        km._flags_cache.clear()
+        t = next((t for t in km._timeline_views()["tags"] if t["name"] == name), None)
+        return sorted(m["sid"] for m in (t or {"members": []})["members"])
+
+    def test_a_thread_inherits_no_tags_at_create_but_does_when_promoted(self):
+        # tab groups on tags (the user 2026-09-04): a comment thread has no tab, so tagging its hidden
+        # sid at create would only inflate the member lists — it inherits the parent's tags at the
+        # moment it BECOMES a tab (promote), before the connect that precedes the direct push
+        km._flags_cache.clear()
+        km._set_timeline_views({"active": "all", "tags": [{"id": "g1", "name": "pool", "members": [PARENT]},
+                                                          {"id": "g2", "name": "other", "members": ["x"]}]})
+        _, tid = km._comment_create(PARENT, "a1", "exponential backoff", "Why?")
+        self.assertEqual(self._tag_members("pool"), [PARENT], "the thread fork stays out of the parent's tags")
+        self._promotable(tid)
+        seen_at_connect = []
+        real_connect = self.be.connect
+        self.be.connect = lambda sid: (seen_at_connect.append(self._tag_members("pool")), real_connect(sid))[1]
+        self.assertIsNone(km._comment_promote(PARENT, tid, "sidework"))
+        self.assertEqual(self._tag_members("pool"), sorted([PARENT, tid]), "promoted = a tab now, in the parent's group")
+        self.assertEqual(self._tag_members("other"), ["x"], "a tag the parent is not in is untouched")
+        self.assertIn(tid, seen_at_connect[0], "membership landed before connect, ahead of the direct push")
+
     def test_the_promoting_latch_refuses_resolve_delete_and_reply(self):
         # promote seeds for seconds on a big transcript; ops landing in that window must refuse
         # THROUGH the CAS, or a racing resolve kills the just-promoted board session

@@ -115,6 +115,16 @@ class ForkRoute(unittest.TestCase):
         self.assertFalse(r.get("ok"))
         self.assertIn("SDK backend", r.get("error") or "")
 
+    def test_the_route_reaches_the_one_fork_op_that_inherits_tags(self):
+        # tab groups on tags (the user 2026-09-04): /fork and the WS forkSession op both land in
+        # _fork_session, which copies the parent's tag memberships onto the fork BEFORE connect — so
+        # the headless fork gets exactly the dashboard's behavior (test_kernel_fork.py executes it)
+        import inspect
+        src = inspect.getsource(self._saved[2])           # the real _fork_session, saved by setUp
+        self.assertIn("_inherit_tag_membership(parent_sid, sid)", src)
+        self.assertLess(src.index("_inherit_tag_membership(parent_sid, sid)"), src.index("be.connect(sid)"),
+                        "membership lands before the connect that precedes the direct push")
+
 
 if __name__ == "__main__":
     unittest.main()

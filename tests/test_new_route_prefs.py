@@ -93,7 +93,7 @@ class NewRoutePrefs(unittest.TestCase):
         km._sdk_ready = lambda: True
         # the create path owns the prefs now — applied between spawn and connect, so the FIRST
         # connect carries them (the 2026-08-16 -m drop); the stub mirrors that seam
-        km._create_sdk_session = (lambda nm, cwd, auth="", prefs=None, client=None, env=None:
+        km._create_sdk_session = (lambda nm, cwd, auth="", prefs=None, client=None, env=None, **kw:
                                   (SID2, km._apply_new_session_prefs(SID2, prefs or {})))
         r = self._post({"name": "opt", "dir": self.dir,
                         "model": "claude-fable-5", "effort": "ultracode"})
@@ -150,7 +150,7 @@ class NewRouteEnv(unittest.TestCase):
         km._set_env_or_park = lambda be, sid, v: self.calls.append(("env", sid, v))
         km.Sessions.backend_for = staticmethod(lambda sid: self._SdkBe())
         km._sdk_ready = lambda: True
-        km._create_sdk_session = (lambda nm, cwd, auth="", prefs=None, client=None, env=None:
+        km._create_sdk_session = (lambda nm, cwd, auth="", prefs=None, client=None, env=None, **kw:
                                   (self.created.append((nm, auth, env)),
                                    (SID2, km._apply_new_session_prefs(SID2, prefs or {})))[1])
         km._push_soon = lambda: None
@@ -280,6 +280,161 @@ class NewRouteEnv(unittest.TestCase):
         self.assertFalse(body["ok"], "no tmux spawn, no env silently dropped")
         self.assertIn("SDK", body["error"])
         time.sleep(0.2)                       # the tmux spawn is threaded — give a regression a beat
+        self.assertEqual(self.spawns, [], "the refusal must come BEFORE the spawn thread starts")
+
+
+class NewRouteTags(unittest.TestCase):
+    """POST /new's `parent` + `tags` (tab groups on tags, the user 2026-09-04). `romp new` run inside a
+    session sends its own ROMP_SID as `parent`, so the child inherits the parent's tag memberships;
+    `--in <tag>` rides as `tags`. Both land inside _create_sdk_session BEFORE its direct push (the
+    stub mirrors that seam through the real _tag_new_session). Validated up front like env — an
+    unknown parent or a malformed list is a 400 and nothing is created. The idempotent existing:true
+    open never INHERITS (no creation event) but re-asserts an explicit --in like model/effort/env; a
+    thread's name tags nothing and says so; the tmux backend refuses. The `tags` echo is the child's
+    names after everything, so the CLI is loud when a kernel drops the ask. Synthetic sids only."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.srv = ThreadingHTTPServer(("127.0.0.1", 0), km.Handler)
+        cls.port = cls.srv.server_address[1]
+        threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
+        cls.dir = tempfile.mkdtemp()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.srv.shutdown()
+
+    def setUp(self):
+        self.td = tempfile.TemporaryDirectory()
+        self.created = []
+        self.spawns = []
+        self._saved = (km._live_names, km._tmux_sessions, km.Sessions.backend_for, km._sdk_ready,
+                       km._create_sdk_session, km._push_soon, km._spawn_session, km._mark_views_dirty,
+                       km.jd.STATE)
+        km.jd.STATE = __import__("pathlib").Path(self.td.name)
+        km._flags_cache.clear()
+        (km.jd.STATE / "names").mkdir(parents=True, exist_ok=True)
+        (km.jd.STATE / "names" / SID).write_text("web\t/tmp\t#123456\twhite\n")
+        km._tmux_sessions = lambda: []
+        km._live_names = lambda *_: {}
+        km.Sessions.backend_for = staticmethod(lambda sid: object())
+        km._sdk_ready = lambda: True
+        km._mark_views_dirty = lambda: None
+        km._push_soon = lambda: None
+        km._spawn_session = lambda nm, cwd=None: self.spawns.append(nm)
+
+        def create(nm, cwd, auth="", prefs=None, client=None, env=None, parent="", tags=()):
+            # the real seam: tags land INSIDE the create, before its push — mirrored here
+            self.created.append((nm, parent, list(tags)))
+            extra = km._apply_new_session_prefs(SID2, prefs or {})
+            if parent or tags:
+                extra["tags"], terr = km._tag_new_session(SID2, parent, tags)
+                if terr:
+                    extra["tagError"] = terr
+            return SID2, extra
+        km._create_sdk_session = create
+
+    def tearDown(self):
+        (km._live_names, km._tmux_sessions, km.Sessions.backend_for, km._sdk_ready,
+         km._create_sdk_session, km._push_soon, km._spawn_session, km._mark_views_dirty,
+         km.jd.STATE) = self._saved
+        km._flags_cache.clear()
+        self.td.cleanup()
+
+    def _post(self, body):
+        req = urllib.request.Request("http://127.0.0.1:%d/new" % self.port,
+                                     data=json.dumps(body).encode(),
+                                     headers={"X-Romp-Token": os.environ["ROMP_SERVE_TOKEN"],
+                                              "Content-Type": "application/json"}, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=5) as r:
+                return r.status, json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            return e.code, json.loads(e.read() or b"{}")
+
+    def _members(self, name):
+        t = next((t for t in km._timeline_views()["tags"] if t["name"] == name), None)
+        return sorted(m["sid"] for m in (t or {"members": []})["members"])
+
+    def test_a_fresh_spawn_inherits_its_parents_tags_and_echoes_them(self):
+        km._set_timeline_views({"active": "all", "tags": [{"id": "g1", "name": "pool", "members": [SID]}]})
+        code, body = self._post({"name": "api", "dir": self.dir, "parent": SID})
+        self.assertEqual(code, 200)
+        self.assertTrue(body["ok"], body)
+        self.assertEqual(self.created, [("api", SID, [])], "the parent reaches the create — inheritance rides it")
+        self.assertEqual(body.get("tags"), ["pool"], "the echo the CLI checks")
+        self.assertEqual(self._members("pool"), sorted([SID, SID2]), "the child joined; the parent kept it")
+
+    def test_in_tags_join_named_tags_created_on_first_use_and_echo_with_the_inherited(self):
+        km._set_timeline_views({"active": "all", "tags": [{"id": "g1", "name": "pool", "members": [SID]}]})
+        code, body = self._post({"name": "api", "dir": self.dir, "parent": SID, "tags": ["infra"]})
+        self.assertEqual(code, 200)
+        self.assertEqual(sorted(body.get("tags") or []), ["infra", "pool"])
+        self.assertEqual(self._members("infra"), [SID2], "--in mints the tag like POST /tag would")
+
+    def test_a_parent_with_no_tags_is_an_honest_empty_echo(self):
+        code, body = self._post({"name": "api", "dir": self.dir, "parent": SID})
+        self.assertEqual(code, 200)
+        self.assertEqual(body.get("tags"), [], "asked → echoed, even when there was nothing to inherit")
+
+    def test_no_parent_no_tags_no_echo(self):
+        code, body = self._post({"name": "api", "dir": self.dir})
+        self.assertEqual(code, 200)
+        self.assertNotIn("tags", body, "not asked → not echoed (the model/effort/env contract)")
+        self.assertEqual(self.created, [("api", "", [])])
+
+    def test_a_live_parent_name_resolves_like_fork_does(self):
+        km._live_names = lambda *_: {"web": SID}
+        km._set_timeline_views({"active": "all", "tags": [{"id": "g1", "name": "pool", "members": [SID]}]})
+        code, body = self._post({"name": "api", "dir": self.dir, "parent": "web"})
+        self.assertEqual(code, 200)
+        self.assertEqual(body.get("tags"), ["pool"])
+
+    def test_an_unknown_parent_is_a_400_and_nothing_is_created(self):
+        code, body = self._post({"name": "api", "dir": self.dir, "parent": "99999999-0000-0000-0000-000000000000"})
+        self.assertEqual(code, 400, "an unknown parent refuses the WHOLE request — never a child spawned outside its group")
+        self.assertFalse(body["ok"])
+        self.assertIn("not a session this kernel knows", body["error"])
+        self.assertEqual(self.created, [])
+
+    def test_a_malformed_tags_list_is_a_400(self):
+        for junk in ("pool", ["pool", ""], [3], {"a": 1}):
+            code, body = self._post({"name": "api", "dir": self.dir, "tags": junk})
+            self.assertEqual(code, 400, "malformed tags %r must 400, not spawn untagged" % (junk,))
+            self.assertIn("tags must be", body["error"])
+        self.assertEqual(self.created, [])
+
+    def test_existing_open_never_inherits_but_reasserts_an_explicit_in(self):
+        km._live_names = lambda *_: {"api": SID2}
+        km._set_timeline_views({"active": "all", "tags": [{"id": "g1", "name": "pool", "members": [SID]}]})
+        code, body = self._post({"name": "api", "dir": self.dir, "parent": SID})
+        self.assertEqual(code, 200)
+        self.assertTrue(body["existing"])
+        self.assertEqual(self._members("pool"), [SID], "no creation event → no inheritance (the ruling)")
+        self.assertEqual(body.get("tags"), [], "…and the echo tells the truth about the running session")
+        code, body = self._post({"name": "api", "dir": self.dir, "parent": SID, "tags": ["infra"]})
+        self.assertEqual(body.get("tags"), ["infra"], "an explicit --in re-asserts, like model/effort/env")
+        self.assertEqual(self._members("infra"), [SID2])
+        self.assertEqual(self._members("pool"), [SID], "still no inheritance")
+        self.assertEqual(self.created, [], "nothing created on either open")
+
+    def test_a_refused_tag_edit_rides_beside_the_ack(self):
+        km._set_timeline_views({"active": "all", "tags": [
+            {"id": "g1", "name": "twin", "members": []}, {"id": "g2", "name": "twin", "members": []}]})
+        code, body = self._post({"name": "api", "dir": self.dir, "tags": ["twin"]})
+        self.assertEqual(code, 200)
+        self.assertTrue(body["ok"], "the session exists — the refusal cannot undo it")
+        self.assertEqual(body.get("tags"), [])
+        self.assertIn("two tags are named", body.get("tagError") or "", "…so it is named, never swallowed")
+
+    def test_the_tmux_backend_refuses_tags_and_parent_outright(self):
+        code, body = self._post({"name": "term1", "dir": self.dir, "backend": "tmux", "tags": ["pool"]})
+        self.assertEqual(code, 200)
+        self.assertFalse(body["ok"], "no tmux spawn with the tags silently dropped")
+        self.assertIn("SDK backend", body["error"])
+        code, body = self._post({"name": "term1", "dir": self.dir, "backend": "tmux", "parent": SID})
+        self.assertFalse(body["ok"])
+        time.sleep(0.2)
         self.assertEqual(self.spawns, [], "the refusal must come BEFORE the spawn thread starts")
 
 

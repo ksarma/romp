@@ -433,3 +433,108 @@ class TimelineViews(unittest.TestCase):
             self.assertEqual(dirty, [], "no gratuitous views-dirty wake for a pure focus")
         finally:
             km._mark_views_dirty = saved
+
+
+class TagInheritance(unittest.TestCase):
+    """Tab groups are TAGS (the user 2026-09-04): a session spawned from another — a fork, a `romp new`
+    from inside a session, a promoted comment thread — joins every local tag holding its parent, at
+    the creation event. _inherit_tag_membership is _heal_timeline_views' sibling for a child with a
+    NEW name (the name-keyed heal never fires for it). COPY, never move; no-op for an untagged
+    parent; idempotent; local tags only (a remote-homed tag is the accepted v1 gap). _tag_new_session
+    is the /new + createSession composite: inherit, then join the named tags (created on first use),
+    and echo the child's names. Synthetic sids only."""
+
+    P = "11111111-2222-3333-4444-555555555555"
+    C = "66666666-7777-8888-9999-000000000000"
+
+    def setUp(self):
+        self.td = tempfile.TemporaryDirectory()
+        self.saved = (jd.STATE, km._mark_views_dirty)
+        jd.STATE = Path(self.td.name)
+        km._flags_cache.clear()
+        self.dirty = []
+        km._mark_views_dirty = lambda: self.dirty.append(1)
+
+    def tearDown(self):
+        jd.STATE, km._mark_views_dirty = self.saved
+        self.td.cleanup()
+
+    def _members(self, name):
+        t = next(t for t in km._timeline_views()["tags"] if t["name"] == name)
+        return [m["sid"] for m in t["members"] if m["host"] == ""]
+
+    def test_the_child_joins_every_local_tag_holding_the_parent_and_the_parent_keeps_them(self):
+        km._set_timeline_views({"active": "all", "tags": [
+            {"id": "g1", "name": "pool", "members": [self.P, "other"]},
+            {"id": "g2", "name": "infra", "members": [self.P]},
+            {"id": "g3", "name": "unrelated", "members": ["other"]}]})
+        got = km._inherit_tag_membership(self.P, self.C)
+        self.assertEqual(sorted(got), ["infra", "pool"], "the inherited names come back — the /new echo")
+        self.assertEqual(sorted(self._members("pool")), sorted([self.C, self.P, "other"]), "COPY: the parent keeps its tag")
+        self.assertEqual(sorted(self._members("infra")), sorted([self.C, self.P]))
+        self.assertEqual(self._members("unrelated"), ["other"], "a tag the parent is not in is untouched")
+        self.assertTrue(self.dirty, "the write wakes the pusher so the sectioned strip re-renders now")
+
+    def test_an_untagged_parent_is_a_no_op_that_writes_nothing(self):
+        km._set_timeline_views({"active": "all", "tags": [{"id": "g1", "name": "pool", "members": ["other"]}]})
+        before = (jd.STATE / "timeline-views.json").read_bytes()
+        self.dirty.clear()
+        self.assertEqual(km._inherit_tag_membership(self.P, self.C), [])
+        self.assertEqual((jd.STATE / "timeline-views.json").read_bytes(), before, "no store write at all")
+        self.assertEqual(self.dirty, [], "…and no gratuitous wake")
+        self.assertEqual(km._inherit_tag_membership("", self.C), [], "a missing parent is not an error")
+        self.assertEqual(km._inherit_tag_membership(self.P, self.P), [], "self-inheritance is meaningless")
+
+    def test_idempotent_a_second_run_adds_nothing(self):
+        km._set_timeline_views({"active": "all", "tags": [{"id": "g1", "name": "pool", "members": [self.P]}]})
+        km._inherit_tag_membership(self.P, self.C)
+        km._inherit_tag_membership(self.P, self.C)
+        self.assertEqual(sorted(self._members("pool")), sorted([self.C, self.P]), "the normalizer dedups pairs")
+
+    def test_a_remote_homed_parent_tag_is_not_inherited_here_the_documented_v1_gap(self):
+        # the parent held only by kernel alpha's tag (a remoteTags entry, read-only here): this kernel
+        # cannot write that store, so the child inherits nothing — documented, not silent divergence
+        saved = dict(km._remotes)
+        try:
+            km._remotes.clear()
+            km._remotes["alpha"] = {"host": "alpha", "status": "up", "views": {"tags": [
+                {"id": "g9", "name": "team", "members": [{"host": "viewer", "sid": self.P}]}]}}
+            self.assertEqual(km._inherit_tag_membership(self.P, self.C), [])
+            self.assertEqual(km._timeline_views()["tags"], [], "no local tag minted to mirror the remote one")
+        finally:
+            km._remotes.clear(); km._remotes.update(saved)
+
+    def test_tag_new_session_inherits_then_joins_the_named_tags_and_echoes_the_union(self):
+        km._set_timeline_views({"active": "all", "tags": [{"id": "g1", "name": "pool", "members": [self.P]}]})
+        names, err = km._tag_new_session(self.C, self.P, ["infra"])
+        self.assertIsNone(err)
+        self.assertEqual(sorted(names), ["infra", "pool"], "the echo is the child's names AFTER both steps")
+        self.assertEqual(self._members("infra"), [self.C], "a named tag is created on first use, like POST /tag")
+        self.assertIn(self.C, self._members("pool"))
+
+    def test_tag_new_session_reports_a_refused_edit_beside_what_did_land(self):
+        km._set_timeline_views({"active": "all", "tags": [
+            {"id": "g1", "name": "twin", "members": []}, {"id": "g2", "name": "twin", "members": []}]})
+        names, err = km._tag_new_session(self.C, "", ["twin", "infra"])
+        self.assertIn("two tags are named", err or "", "the first refusal is named — never swallowed")
+        self.assertEqual(names, ["infra"], "the tags that could land, did")
+
+    def test_resolve_parent_sid_live_name_known_sid_and_the_loud_unknown(self):
+        (jd.STATE / "names").mkdir(parents=True, exist_ok=True)
+        (jd.STATE / "names" / self.P).write_text("web\t/tmp\t#123456\twhite\n")
+        live = {"api": self.C}
+        self.assertEqual(km._resolve_parent_sid("api", live), (self.C, None), "a live name resolves")
+        self.assertEqual(km._resolve_parent_sid(self.P, live), (self.P, None), "a sid with a names/ entry resolves")
+        self.assertEqual(km._resolve_parent_sid("", live), ("", None), "nothing named = nothing to inherit, no error")
+        sid, err = km._resolve_parent_sid("99999999-0000-0000-0000-000000000000", live)
+        self.assertIsNone(sid)
+        self.assertIn("not a session this kernel knows", err)
+        sid, err = km._resolve_parent_sid("nope", live)
+        self.assertIsNone(sid, "an unknown name is refused too")
+
+    def test_tags_error_shapes(self):
+        self.assertIsNone(km._tags_error(["pool", "infra"]))
+        self.assertIsNone(km._tags_error([]))
+        self.assertIn("list", km._tags_error("pool"))
+        self.assertIn("non-empty", km._tags_error(["pool", ""]))
+        self.assertIn("non-empty", km._tags_error([3]))
