@@ -25,12 +25,15 @@ const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kern
 const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "styles.css"), "utf8");
 
 test("the kernel ships replyOwed beside unread, both from the thread's own turn-end", () => {
-  assert.match(KERNEL, /def _thread_turn_open\(tsid, reg, state\):/);
-  assert.match(KERNEL, /if turns\[-1\]\.get\("ended"\):\s*\n\s*return False/, "the end_turn / interrupt record IS the landing");
+  assert.match(KERNEL, /def _thread_turn_read\(tsid, reg, state\):/);
+  assert.match(KERNEL, /def _turn_landed\(turn\):/);
+  assert.match(KERNEL, /def _turn_is_meta\(turn\):/, "compaction boundaries and command-only turns are not landings");
+  assert.match(KERNEL, /if landed:\s*\n\s*return False, interrupted/, "the end_turn / interrupt record IS the landing");
+  assert.match(KERNEL, /print\("\[comments\] thread %s: transcript parse failed/, "a parse failure is shouted, never swallowed");
   assert.match(KERNEL, /def _agent_landed_after\(events, msgs, seen\):/);
-  assert.match(KERNEL, /turn_open = status == "open" and _thread_turn_open\(tsid, reg, state\)/);
+  assert.match(KERNEL, /turn_open, interrupted = _thread_turn_read\(tsid, reg, state\) if status == "open" else \(False, False\)/);
   assert.match(KERNEL, /unread = \(not turn_open\) and _agent_landed_after\(events, msgs, seen\)/);
-  assert.match(KERNEL, /reply_owed = status == "open" and \(turn_open or not msgs or msgs\[-1\]\["who"\] == "you"\)/);
+  assert.match(KERNEL, /reply_owed = status == "open" and \(turn_open or not msgs or \(msgs\[-1\]\["who"\] == "you" and not interrupted\)\)/);
   assert.match(KERNEL, /"unread": unread, "replyOwed": reply_owed,/);
   assert.match(KERNEL, /yellow — means "a FINISHED reply you have not seen"/, "the rule is stated in the docstring");
 });
@@ -42,12 +45,14 @@ test("the client keys the green wash on the kernel's replyOwed; the gesture latc
     "kernel truth when present; the msgs-derived fallback only for an older kernel");
   assert.match(inflight, /return owed && !cmtInterrupted\.has\(th\.tid\);/);
   assert.doesNotMatch(inflight, /agentCount|threadBusy/, "no reply-arrived heuristic in the wash");
-  // the latch clears when a frame carries the SEND (its projected message count grew) — never on an
-  // agent-count-vs-state heuristic
-  assert.match(RENDER, /if \(base !== undefined && \(t\.msgs\.length > base \|\| t\.status !== "open" \|\| !!t\.error\)\) cmtAwaitBase\.delete\(t\.tid\);/);
-  assert.doesNotMatch(RENDER, /agentCount\(t\) > base && !threadBusy\(t\.state\)/);
-  assert.match(RENDER, /cmtAwaitBase\.set\(cur\.th\.tid, cur\.th\.msgs\.length\);/, "a follow-up latches on the message count at its click");
-  assert.match(RENDER, /cmtAwaitBase\.set\(synth\.tid, 0\);/, "the create gesture latches its synthetic thread");
+  // the latch clears when a frame carries the SEND — a message newer than the click's newest, or more
+  // messages than then (the count alone misses a thread at the projection's 40-message cap) — and only
+  // an OLDER kernel (no replyOwed bit) keeps the T102 agent-count-with-settled-state clear
+  assert.match(RENDER, /const sendLanded = t\.msgs\.length > base\.n \|\| newestT > base\.t;/);
+  assert.match(RENDER, /const legacyReplyArrived = agentCount\(t\) > base\.agents && !threadBusy\(t\.state\);/);
+  assert.match(RENDER, /const clear = \(typeof t\.replyOwed === "boolean" \? sendLanded : legacyReplyArrived\) \|\| t\.status !== "open" \|\| !!t\.error;/);
+  assert.match(RENDER, /cmtAwaitBase\.set\(cur\.th\.tid, cmtLatchOf\(cur\.th\)\);/, "a follow-up latches on its thread's counts at the click");
+  assert.match(RENDER, /cmtAwaitBase\.set\(synth\.tid, \{ n: 0, t: 0, agents: 0 \}\);/, "the create gesture latches its synthetic thread");
   assert.match(RENDER, /unread: false, replyOwed: true, promotedName: "", msgs: \[\], name: nm \|\| "comment"/,
     "the synthetic thread owes its reply from the click");
   assert.match(COMMENTS, /replyOwed\?: boolean;/);
@@ -78,10 +83,11 @@ test("no timer anywhere in the colour path", () => {
 
 // ── executed: the mark's classes for the kernel's frames (no jsdom dependency here — a minimal element shim) ──
 function markFor(th: CommentThread, latched = false): Set<string> {
+  // the latch map's VALUE shape is irrelevant to the wash (has() alone is read) — a zeroed latch stands in
   const inflightSrc = "const commentInFlight = (th) => {" + RENDER.split("const commentInFlight = (th: CommentThread): boolean => {")[1].split("\n};")[0] + "\n};";
   const styleSrc = "function styleCommentMark(m, th) {" + RENDER.split("function styleCommentMark(m: HTMLElement, th: CommentThread): void {")[1].split("\n}")[0] + "\n}";
   const prelude = `
-    const cmtAwaitBase = new Map(${latched ? '[["t1", 0]]' : ""});
+    const cmtAwaitBase = new Map(${latched ? '[["t1", { n: 0, t: 0, agents: 0 }]]' : ""});
     const cmtInterrupted = new Set();
     const threadStuck = (st) => st === "permission" || st === "picker";
     const replyOwed = (th) => { const l = th.msgs.length ? th.msgs[th.msgs.length - 1] : null; return !!l && l.who === "you"; };

@@ -529,17 +529,17 @@ test("agentCount is the reply-arrived detector's datum — records of the exchan
 
 test("busy latches at the SEND gesture and clears exactly on the reply-arrived record (source pins)", () => {
   // create: the gesture latches under the synth tid, before any kernel round-trip
-  assert.match(UI, /cmtAwaitBase\.set\(synth\.tid, 0\);\s+\/\/ the SEND gesture latches the pulse/);
-  // follow-up: re-latches at ITS send, with the projected message count at that moment as the base (T237)
-  assert.match(UI, /cmtAwaitBase\.set\(cur\.th\.tid, cur\.th\.msgs\.length\);/);
+  assert.match(UI, /cmtAwaitBase\.set\(synth\.tid, \{ n: 0, t: 0, agents: 0 \}\);\s+\/\/ the SEND gesture latches the pulse/);
+  // follow-up: re-latches at ITS send, with the thread's projected counts at that moment as the base (T237)
+  assert.match(UI, /cmtAwaitBase\.set\(cur\.th\.tid, cmtLatchOf\(cur\.th\)\);/);
   // the create's latch carries onto the real thread at adopt (the synth tid retires)
   assert.match(UI, /if \(k\.startsWith\("pending:"\)\) \{ cmtAwaitBase\.set\(tid, cmtAwaitBase\.get\(k\)!\); cmtAwaitBase\.delete\(k\); \}/);
   // the ONE clearing site (T237): the comments frame whose projection carries the SEND (more messages
   // than at the click) — or the thread leaving "open"/erroring. From that frame the KERNEL's replyOwed
   // owns the wash: it reads the thread's transcript with the event model's own turn-end, so a mid-turn
   // interim (the specimen's 'checking…' text) or a backend state flap can never clear the pulse early.
-  assert.match(UI, /if \(base !== undefined && \(t\.msgs\.length > base \|\| t\.status !== "open" \|\| !!t\.error\)\) cmtAwaitBase\.delete\(t\.tid\);/,
-    "the latch covers only the pre-round-trip instant; no agent-count-vs-state heuristic on the clear side");
+  assert.match(UI, /const clear = \(typeof t\.replyOwed === "boolean" \? sendLanded : legacyReplyArrived\) \|\| t\.status !== "open" \|\| !!t\.error;/,
+    "against a T237 kernel the latch covers only the pre-round-trip instant; an older kernel keeps the T102 reply-arrived clear");
   // the mark's predicate: the latch, then the kernel's owed bit (an older kernel: the records' own owed
   // reading); never a timer, never the client's state read
   assert.match(UI, /if \(cmtAwaitBase\.has\(th\.tid\)\) return true;/);

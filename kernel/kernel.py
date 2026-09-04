@@ -8737,29 +8737,77 @@ def _comment_thread_row_created(tsid):
     return _comment_created_memo.get(tsid)
 
 
-def _thread_turn_open(tsid, reg, state):
-    """Is the thread's reply still being WORKED ON? The transcript decides, with the chat's own working
-    predicate (_session_working over the event model's turns: the last turn has not ENDED — no end_turn
-    stop, no interrupt, not idle at its tail). The backend's live `state` is only the fallback when the
-    transcript cannot be read (pre-fork, unreadable): it can flap to ""/waiting between the records of
-    one turn and linger "working" for a push after the final record — neither is the landing event
-    (T237, the user 2026-09-03: the mark went yellow while the thread had only started responding)."""
+_thread_parse_warned = set()                        # (tsid, error) pairs already shouted — once per cause
+
+
+def _turn_is_meta(turn):
+    """A turn with nothing of the exchange in it: a compaction boundary the CLI wrote (mid-reply, before
+    the assistant resumed) or a slash-command-only turn. _finalize_turn marks these ENDED, but neither is
+    a reply landing — skip them when reading whether the thread's reply is done."""
+    atoms = turn.get("atoms") or []
+    if any(a.get("type") == "assistant" for a in atoms):
+        return False
+    first = atoms[0] if atoms else {}
+    return bool((first.get("type") == "system" and first.get("subtype") == "compact_boundary")
+                or (atoms and all(a.get("command") for a in atoms)))
+
+
+def _turn_landed(turn):
+    """(landed, interrupted): the reply RECORD is in — an assistant atom stopped with end_turn — or the
+    CLI's own interrupt record closed the turn (the user stopped it; nothing more is coming)."""
+    atoms = turn.get("atoms") or []
+    tail = next((a for a in reversed(atoms) if not a.get("command") and a.get("type") != "idle"), None)
+    if tail is not None and em.is_interrupt_record(tail):
+        return True, True
+    last_sr = None
+    for a in atoms:
+        if a.get("type") == "assistant":
+            last_sr = (a.get("message") or {}).get("stop_reason")
+    return last_sr in em.END_STOPS, False
+
+
+def _thread_turn_read(tsid, reg, state):
+    """(turn_open, interrupted) for the thread — is its reply still being WORKED ON, and did the user's
+    interrupt close it? The transcript decides: the newest turn that carries the exchange (compaction
+    boundaries and slash-command turns skipped) has LANDED iff its assistant stopped with end_turn or the
+    CLI's interrupt record closed it — whatever the backend's state still says. An unlanded turn is open
+    while the backend is busy, else per the chat's own working read (_session_working: idle-terminated or
+    suspended → dead, not owed). The backend's live `state` alone decides only when there is nothing to
+    read yet (pre-fork, no turns): it flaps to ""/waiting between the records of one turn and lingers
+    "working" for a push after the final record — neither is the landing event (T237, the user
+    2026-09-03: the mark went yellow while the thread had only started responding)."""
     if reg.get("forkOf"):
-        return True                                 # the fork hasn't landed: the first reply is ahead
+        return True, False                          # the fork hasn't landed: the first reply is ahead
     busy_state = state in ("working", "retrying", "compacting")
     try:
         path = _thread_transcript_path(reg, tsid)
         session = _parse(path, tsid, int(time.time())) if path else None   # the real (mtime-cached) parse — _parse_cached never parses
-    except Exception:
+    except Exception as e:                          # LOUD, then the backend's word: a silent fallback would re-create the very symptom
+        key = (tsid, repr(e)[:200])
+        if key not in _thread_parse_warned:
+            _thread_parse_warned.add(key)
+            print("[comments] thread %s: transcript parse failed (%r) — reading the reply state from the backend instead"
+                  % (tsid[:8], e), file=sys.stderr)
         session = None
     turns = (session or {}).get("turns") or []
     if not turns:
-        return busy_state                           # nothing to read yet: the backend's word is all there is
-    if turns[-1].get("ended"):
-        return False                                # the end_turn / interrupt record IS the landing, whatever the backend still says
+        return busy_state, False                    # nothing to read yet: the backend's word is all there is
+    at = next((i for i in range(len(turns) - 1, -1, -1) if not _turn_is_meta(turns[i])), None)
+    if at is None:
+        return busy_state, False                    # only boundaries / commands so far
+    landed, interrupted = _turn_landed(turns[at])
+    if landed:
+        return False, interrupted                   # the reply RECORD is in (or the user stopped it), whatever the backend still says
     if busy_state:
-        return True                                 # mid-turn: tool calls, intermediate text — the reply is still coming
-    return bool(_session_working(turns))            # backend quiet on an unended turn: the chat's own read (idle-terminated / suspended → dead, not owed)
+        return True, False                          # mid-turn: tool calls, intermediate text, a compaction — the reply is still coming
+    # backend quiet on an unlanded turn: the chat's own working read, over the turns up to the exchange
+    # turn — a trailing compaction boundary is bookkeeping, not an ended reply
+    return bool(_session_working(turns[:at + 1])), False
+
+
+def _thread_turn_open(tsid, reg, state):
+    """Is the thread's reply still being worked on? (_thread_turn_read's first half.)"""
+    return _thread_turn_read(tsid, reg, state)[0]
 
 
 def _agent_landed_after(events, msgs, seen):
@@ -8826,9 +8874,11 @@ def _comments_frame(sid, tmux=None):
         seen = int(th.get("lastSeenT") or 0)
         events = [] if status == "promoted" else _thread_events(tsid, str(th.get("cutUuid") or ""), now, tmux)
         reg = _thread_reg(tsid)
-        turn_open = status == "open" and _thread_turn_open(tsid, reg, state)
+        turn_open, interrupted = _thread_turn_read(tsid, reg, state) if status == "open" else (False, False)
         unread = (not turn_open) and _agent_landed_after(events, msgs, seen)
-        reply_owed = status == "open" and (turn_open or not msgs or msgs[-1]["who"] == "you")
+        # owed: the turn is in progress, nothing has landed yet, or the user's message is the newest — unless
+        # that newest "message" is the CLI's own interrupt record (the user stopped it: nothing more is owed)
+        reply_owed = status == "open" and (turn_open or not msgs or (msgs[-1]["who"] == "you" and not interrupted))
         # (T102: the push-count settle — settledPushes — is RETIRED. The client's pulse is exchange-
         # scoped now: latched at the send gesture, cleared by the reply RECORD arriving in msgs; the
         # frame's msgs already carry that event, so no per-push counter rides here anymore.)

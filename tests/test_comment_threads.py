@@ -396,8 +396,6 @@ class ThreadProjection(CommentBase):
             return 0
         def session_meta(self, sid):
             return {}
-        def __getattr__(self, name):              # any other backend read the parse path grows: neutral, never a crash
-            return lambda *a, **k: None
 
     def _thread_side(self, *tail):
         t = self.now - 500
@@ -503,6 +501,47 @@ class ThreadProjection(CommentBase):
         self.assertEqual((th["msgs"], th["events"]), ([], []))
         self.assertTrue(th["replyOwed"])
         self.assertFalse(th["unread"])
+
+    def test_a_compaction_boundary_mid_reply_is_not_a_landing(self):
+        # the CLI writes a compact_boundary system record mid-reply; the event model files it as its own
+        # ENDED turn (no assistant atoms) — that is bookkeeping, not the reply: still owed, not unread,
+        # whether the backend reads compacting or has flapped to ""
+        t = self.now - 500
+        self._seed_thread(seen=self.now - 450)
+        recs = self._thread_side(self._partial_text(t + 110, "Let me check the code.", "cp1", "cu1"),
+                                 self._tool_result(t + 112, "cr1", "cp1", "cp1"),
+                                 boundary(t + 113, "cb1", "cr1"))
+        for state in ("compacting", ""):
+            th = self._frame_thread(recs, state=state)
+            self.assertFalse(th["unread"], "state=%r" % state)
+            self.assertTrue(th["replyOwed"], "a compaction mid-reply is not the reply — state=%r" % state)
+        # …and the reply landing after the boundary flips both
+        th = self._frame_thread(recs + [aline(t + 130, "Jitter prevents thundering herds.", "ca1", parent="cb1")], state="")
+        self.assertTrue(th["unread"]); self.assertFalse(th["replyOwed"])
+
+    def test_the_users_interrupt_closes_the_turn_and_owes_nothing(self):
+        # the CLI's own "[Request interrupted by user]" record ends the turn: nothing more is coming, so
+        # no reply is owed (the mark must not stay green), and what did land is simply there to read
+        t = self.now - 500
+        self._seed_thread(seen=self.now - 450)
+        stop = uline(t + 115, "[Request interrupted by user]", "ci1", parent="cp1")
+        th = self._frame_thread(self._thread_side(self._partial_text(t + 110, "Let me check the code.", "cp1", "cu1"), stop),
+                                state="waiting")
+        self.assertFalse(th["replyOwed"], "an interrupted send owes nothing until the next send")
+        self.assertTrue(th["unread"], "the partial reply that did land is newer than the watermark")
+
+    def test_agent_landed_after_reads_the_events_arm_when_events_exist(self):
+        # the projection the popover renders decides: assistant/tool events newer than the watermark
+        ev = lambda kind, t: {"kind": kind, "ts": iso(t), "uuid": "e-%d" % t}
+        seen = self.now - 450
+        self.assertTrue(km._agent_landed_after([ev("user", seen - 10), ev("assistant", seen + 5)], [], seen))
+        self.assertTrue(km._agent_landed_after([ev("tool", seen + 5)], [], seen), "a tool event is agent content")
+        self.assertFalse(km._agent_landed_after([ev("assistant", seen - 5)], [{"who": "agent", "t": seen + 9, "text": "x"}], seen),
+                         "with events present, msgs are not consulted — the popover shows the events")
+        self.assertFalse(km._agent_landed_after([ev("user", seen + 5), {"kind": "branch"}], [], seen),
+                         "user events and ts-less inserts are not agent content")
+        self.assertTrue(km._agent_landed_after([], [{"who": "agent", "t": seen + 1, "text": "x"}], seen), "no events → the msgs projection")
+        self.assertFalse(km._agent_landed_after([], [{"who": "agent", "t": seen, "text": "x"}], seen), "t == seen is already seen")
 
     def test_a_users_follow_up_owes_a_reply_again(self):
         t = self.now - 500

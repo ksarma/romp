@@ -69,7 +69,10 @@ export function replyOwed(th: CommentThread): boolean {
 // the exchange's own records: never wall clocks (cross-host transcripts skew) and never push counts
 // (the banned proxy — the old two-quiet-pushes settle counter killed the create-window green
 // while the fork booted, and any stall in its 0→1→2 stepping parked green forever with no event to
-// clear it). agentCount is the reply-arrived detector's datum; render.ts holds the per-send base.
+// clear it). agentCount is that reply-arrived detector's datum; render.ts holds the per-send base.
+// Since T237 the KERNEL ships replyOwed (read from the thread's transcript with the event model's own
+// turn-end), and the latch covers only the pre-round-trip instant against such a kernel; the
+// agentCount clear stays the contract for an older kernel that ships no bit.
 export function agentCount(th: CommentThread): number {
   return (th.msgs || []).filter((m) => m.who === "agent").length;
 }

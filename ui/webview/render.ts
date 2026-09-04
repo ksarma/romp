@@ -50,7 +50,7 @@ import { initStrip, fmtReset } from "./strip";
 import { apiErrorReason } from "./api-error-reason";
 import { mathBlock, mathInline } from "./math";
 import { setTip, pruneTip } from "./tip";
-import { replyOwed, threadsByAnchor, threadBusy, threadStuck, findAnchorRange, sliceRanges, prunePending, type CommentThread } from "./comments";
+import { agentCount, replyOwed, threadsByAnchor, threadBusy, threadStuck, findAnchorRange, sliceRanges, prunePending, type CommentThread } from "./comments";
 import { dragSlotIndex } from "./dragslot";
 
 for (const [name, lang] of Object.entries({
@@ -6560,14 +6560,19 @@ const commentPending = new Map<string, { text: string; t: number; imgPaths?: str
 // image paths shipped into the OPEN popover's box (the droppedPath ack) and not yet sent — the next
 // send attaches them to its pending entry so the echo renders the same thumbnails the chat's does
 let cmtShippedImgs: string[] = [];
-// THE EXCHANGE LATCH (T102, the user 2026-08-26): tid → the agent-message count at the newest SEND.
-// Set at the send GESTURE (create seeds 0 under the synth tid, transferred on adopt; a reply stamps
-// the count at its send), cleared ONLY by the reply-arrived event — the agent's reply record landing
-// in th.msgs (agentCount rising past the base; see the comments frame handler). Follow-ups re-latch
-// identically, each until ITS reply arrives. No push counting, no thread-state proxy: the old
-// push-count settle killed the create-window green while the fork booted (its frames read
-// all-quiet) and any stall in its stepping parked green forever — both ends of the reported bug.
-const cmtAwaitBase = new Map<string, number>();
+// THE SEND LATCH (T102, the user 2026-08-26; rescoped T237): tid → what the thread's projection held at
+// the newest SEND gesture — its message count, its newest message's time, its agent-message count. Set
+// at the gesture (create seeds zeros under the synth tid, transferred on adopt; a follow-up stamps its
+// thread's counts), BEFORE any kernel round-trip. Against a kernel that ships replyOwed (T237) the latch
+// covers ONLY the pre-round-trip instant: it clears once a frame's projection carries the send (a message
+// newer than the click's newest, or more messages than then — the count alone misses a thread already at
+// the projection's 40-message cap) and the kernel's owed bit owns the wash from there. Against an OLDER
+// kernel (no bit) it keeps the T102 contract: cleared by the reply-arrived event — the agent's reply record
+// landing (agentCount rising past the base) with the thread settled. No push counting, no timers.
+type CmtLatch = { n: number; t: number; agents: number };
+const cmtAwaitBase = new Map<string, CmtLatch>();
+const cmtLatchOf = (th: CommentThread): CmtLatch => ({
+  n: th.msgs.length, t: th.msgs.length ? (th.msgs[th.msgs.length - 1].t || 0) : 0, agents: agentCount(th) });
 // Creates in flight (T106 lab find, 2026-08-26): a comment made seconds after a reply lands can be
 // refused by the kernel's parse lag ("isn't in the transcript yet"). The payload holds here from the
 // send; a TRANSIENT nack keeps the optimistic mark + latch alive and the create RE-POSTS when the
@@ -7328,7 +7333,7 @@ function commentSendFromPop(pop: HTMLElement): void {
       unread: false, replyOwed: true, promotedName: "", msgs: [], name: nm || "comment", color: create.color || "" };
     const cur0 = commentThreads.get(create.sid) || [];
     commentThreads.set(create.sid, [...cur0.filter((t) => t.tid !== synth.tid), synth]);
-    cmtAwaitBase.set(synth.tid, 0);   // the SEND gesture latches the pulse — before any kernel round-trip (T102); cleared once a frame carries the send (T237)
+    cmtAwaitBase.set(synth.tid, { n: 0, t: 0, agents: 0 });   // the SEND gesture latches the pulse — before any kernel round-trip (T102); cleared once a frame carries the send (T237)
     applyCommentMarks(create.sid);
     vscodeApi.postMessage({ type: "commentCreate", id: create.sid, uuid: create.uuid, exact: create.exact,
       text, name: nm, model: create.model || "", effort: create.effort || "",
@@ -7341,7 +7346,7 @@ function commentSendFromPop(pop: HTMLElement): void {
   const cur = openCommentThread();
   if (!cur) return;
   vscodeApi.postMessage({ type: "commentReply", id: cur.sid, tid: cur.th.tid, text });
-  cmtAwaitBase.set(cur.th.tid, cur.th.msgs.length);   // a follow-up RE-LATCHES at its own send — until a frame carries that send; then the kernel's replyOwed owns it (T102 → T237)
+  cmtAwaitBase.set(cur.th.tid, cmtLatchOf(cur.th));   // a follow-up RE-LATCHES at its own send — until a frame carries that send; then the kernel's replyOwed owns it (T102 → T237)
   cmtInterrupted.delete(cur.th.tid);                  // a fresh send re-owes a reply — the stop tombstone retires (T138)
   cur.th.state = "working";                     // optimistic: the pulse rides the SEND, not the
   applyCommentMarks(cur.sid);                   // round-trip (the kernel's next frame confirms)
@@ -12720,10 +12725,17 @@ window.addEventListener("message", (e: MessageEvent) => {
     // clear (the latch side never re-derives from state), so the boot-flap class T102 removed
     // cannot re-green anything. Leaving "open" (or erroring) still clears immediately.
     for (const t of threads) {
-      // the gesture latch covers ONLY the pre-round-trip instant (T237): once a frame's projection carries
-      // the send (its message count grew past the count at the click), the kernel's replyOwed owns the wash
       const base = cmtAwaitBase.get(t.tid);
-      if (base !== undefined && (t.msgs.length > base || t.status !== "open" || !!t.error)) cmtAwaitBase.delete(t.tid);
+      if (base === undefined) continue;
+      // T237: against a kernel that ships replyOwed the latch covers ONLY the pre-round-trip instant — it
+      // clears once a frame's projection carries the SEND (a message newer than the click's newest, or more
+      // messages than at the click; the count alone never grows on a thread at the 40-message cap) and the
+      // kernel's owed bit owns the wash from there. An older kernel keeps the T102 reply-arrived clear.
+      const newestT = t.msgs.length ? (t.msgs[t.msgs.length - 1].t || 0) : 0;
+      const sendLanded = t.msgs.length > base.n || newestT > base.t;
+      const legacyReplyArrived = agentCount(t) > base.agents && !threadBusy(t.state);
+      const clear = (typeof t.replyOwed === "boolean" ? sendLanded : legacyReplyArrived) || t.status !== "open" || !!t.error;
+      if (clear) cmtAwaitBase.delete(t.tid);
     }
     // prune latches only for tids NO session's thread list knows (T237): this frame lists ONE session's
     // threads, and pruning against it dropped every other session's latch — and any tid a frame
