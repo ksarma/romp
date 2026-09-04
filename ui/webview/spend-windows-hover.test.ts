@@ -29,10 +29,19 @@ test("the version-skew arm: an older host's calendar month is filed honestly and
 
 test("a ledger younger than 30 days marks the rolling row with its reach", () => {
   assert.match(KERNEL, /win\["month"\]\["since"\] = oldest/, "the kernel states how far back the ledger truly goes");
-  assert.match(KERNEL, /if\(k==='month'&&v\.since\)lab\+=' \\u00b7 since '\+esc\(v\.since\);/, "…and the hover shows it on the row");
-  assert.match(KERNEL, /if\(v\.since&&\(!t\.since\|\|v\.since<t\.since\)\)t\.since=v\.since;/, "across hosts, the OLDEST reach caveats the sum");
+  assert.match(KERNEL, /if\(k==='month'&&v\.since\)lab\+=' \\u00b7 complete since '\+esc\(v\.since\);/, "…and the hover shows it on the row");
+  // T235b: folded to the YOUNGEST ledger — the summed window is complete only from there (MIN overstated coverage)
+  assert.match(KERNEL, /if\(v\.since&&\(!t\.since\|\|v\.since>t\.since\)\)t\.since=v\.since;/, "across hosts, the youngest reach bounds the sum");
 });
 
 test("the strip's cell title carries both rows too", () => {
   assert.match(STRIP, /\["month", "1 month"\], \["monthToDate", "this month"\]\] as const/);
+});
+
+test("T235b: the collapsed API cell follows the hover's skew rule, and the since caveat folds to the youngest ledger", () => {
+  const cell = KERNEL.slice(KERNEL.indexOf("function apiCellHTML"), KERNEL.indexOf("// The collapsed rail is the AGGREGATE story"));
+  assert.match(cell, /_spendLegacyMonth/, "a legacy host's calendar month is never folded into the rolling segment");
+  assert.match(cell, /var monthCav=legacyN>0;/, "…and the month segment wears the ⚠ glyph — the words live on the rich tip's rolling row, the ONE hover surface");
+  assert.match(KERNEL, /if\(v\.since&&\(!t\.since\|\|v\.since>t\.since\)\)t\.since=v\.since;/, "MAX — complete only from the youngest reach");
+  assert.match(KERNEL, /' \\u00b7 complete since '\+esc\(v\.since\)/);
 });

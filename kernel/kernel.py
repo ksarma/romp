@@ -13,7 +13,7 @@ Run:  bin/romp-kernel   → opens http://127.0.0.1:29855
 """
 import json, os, queue, random, re, signal, socket, sys, time, threading, traceback, base64, bisect, errno, hashlib, hmac, struct, subprocess, shutil, shlex, http.client, uuid, tempfile, stat, gzip, copy
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from importlib.machinery import SourceFileLoader
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs, quote, unquote, urlencode
@@ -24718,9 +24718,13 @@ def _spend_windows(keyed_only=False):
         return _sum(v for k, v in hours.items() if k in keys)
 
     def _rolling_days(n):
-        # the recorder keys day buckets by LOCAL strftime date — build the key set the same way, so
-        # the window is "the last n local dates through today" on this host regardless of its zone
-        keys = {time.strftime("%Y-%m-%d", time.localtime(now - i * 86400)) for i in range(n + 1)}
+        # the recorder keys day buckets by LOCAL date — build the key set as DATES, not seconds (T235b,
+        # romp_ui's adversarial pass): `now - i*86400` crossed a DST shift one hour short, so every
+        # early-morning reading for weeks after spring-forward skipped the transition date and shifted
+        # the window a day older — month could read below week again in that hour. Date arithmetic
+        # keeps "the last n local dates through today" exact on every host regardless of its zone.
+        today = datetime.fromtimestamp(now).date()
+        keys = {(today - timedelta(days=i)).isoformat() for i in range(n + 1)}
         return _sum(v for k, v in days.items() if k in keys), keys
 
     month = time.strftime("%Y-%m", time.localtime(now))   # explicit clock: the frozen-clock tests govern it
@@ -30187,19 +30191,27 @@ return html;}
 // constant 'API' \u2014 no fragment of any key, not even a last-4 tail, reaches a surface (2026-08-08,
 // evening: a tail is still key material, and the hover's HOST names already tell whose spend is
 // whose). The full per-window, per-host breakdown is the hover's job.
-function apiCellHTML(live){var sum={day:{usd:0,tok:0},month:{usd:0,tok:0}},any=false;
+function apiCellHTML(live){var sum={day:{usd:0,tok:0},month:{usd:0,tok:0}},any=false,legacyN=0;
 live.forEach(function(e){var sp=e.det._spend;if(!sp)return;any=true;
+// VERSION SKEW, the hover's rule (T235b): a host on the previous build ships a CALENDAR month and no
+// monthToDate — spendDet filed it under 'this month' and left no rolling 'month' here, so it never
+// joins this rolling segment (two windows summed into one number is the lie T235 removed). Its DAY
+// still counts, so day can exceed month in the cell for that host — the caveat on the segment says why.
+if(e.det._spendLegacyMonth)legacyN++;
 // day||fiveHour: an older remote kernel ships no 'day' window yet (version skew) \u2014 its 5h burn is the
 // closest honest stand-in until it updates, and dropping it entirely would blank that host's spend
-var d=sp.day||sp.fiveHour,m=sp.month;
+var d=sp.day||sp.fiveHour,m=sp.month;   // m: the ROLLING month only (a legacy host has none here)
 if(d){sum.day.usd+=d.usd;sum.day.tok+=d.tok||0;}
 if(m){sum.month.usd+=m.usd;sum.month.tok+=m.tok||0;}});
 if(!any)return '';
-var seg=function(k,lbl){return '<div class=ru-name>'+lbl+'</div>'
+// the caveat is a GLYPH here, never a native title (the rail's one hover surface is the rich tip, which
+// already reads "N machines not counted (older build)" on its rolling-month row — one explanation, one place)
+var seg=function(k,lbl,cav){return '<div class=ru-name>'+lbl+(cav?' \u26a0':'')+'</div>'
 +'<div class=ru-pct>'+fmtUsd(sum[k].usd)+' \u00b7 '+fmtTok(sum[k].tok)+' tok</div>';};
+var monthCav=legacyN>0;   // some machine's calendar month was left out of this rolling segment (T235b)
 return '<div class="ru-w ru-api">'
 +'<div class=ru-name>API</div>'
-+seg('day','1 day')+seg('month','1 month')
++seg('day','1 day')+seg('month','1 month',monthCav)
 +'</div>';}
 // The collapsed rail is the AGGREGATE story (the user 2026-08-08; supersedes the one-set-per-account
 // rendering of 2026-07-30): one set of window bars for the whole fleet plus one API cell, never a
@@ -30326,7 +30338,7 @@ if(sp.week&&typeof sp.week.usd==='number')per.push({host:e.host,usd:sp.week.usd}
 SPEND_WINS.forEach(function(w){var v=sp[w[0]];if(!v)return;
 var t=(sum[w[0]]=sum[w[0]]||{label:w[1],usd:0,tok:0,turns:0});
 t.usd+=v.usd;t.tok+=v.tok;t.turns+=v.turns;
-if(v.since&&(!t.since||v.since<t.since))t.since=v.since;});   // the OLDEST reach among hosts caveats the sum
+if(v.since&&(!t.since||v.since>t.since))t.since=v.since;});   // the YOUNGEST ledger bounds the sum (T235b): it is complete only from there
 if(e.det._spendLegacyMonth)legacyN++;
 var ss=e.det._spendSeries;
 if(ss&&ss.usd){if(!series){series={h0:ss.h0,usd:ss.usd.slice()};}
@@ -30343,7 +30355,7 @@ var h='<div class="ru-tip-win ru-tip-fleetspend"><div class=ru-tip-name><span>AP
 // the rolling month's caveats ride its label: a ledger younger than 30 days ("since <date>"), and
 // the machines whose older build could contribute only a calendar month (left out, counted)
 var lab=v.label;
-if(k==='month'&&v.since)lab+=' \u00b7 since '+esc(v.since);
+if(k==='month'&&v.since)lab+=' \u00b7 complete since '+esc(v.since);
 if(k==='month'&&legacyN)lab+=' \u00b7 '+legacyN+' machine'+(legacyN>1?'s':'')+' not counted (older build)';
 return '<div class=ru-tip-row><span class=ru-tip-k>'+lab+'</span>'
 +'<span class=ru-tip-v>'+fmtUsd(v.usd)+' \u00b7 '+fmtTok(v.tok)+' tok \u00b7 '+(v.turns||0)+' turns</span></div>';}).join('');

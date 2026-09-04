@@ -85,9 +85,12 @@ test("the web rail's API cell is numbers under a constant label — no spend bar
   assert.ok(usageJS.includes("function apiCellHTML(live)"));
   assert.ok(usageJS.includes("'<div class=ru-name>API</div>'"));
   assert.ok(!usageJS.includes("_tail"), "no tail plumbing survives in the rail JS");
-  assert.ok(usageJS.includes("seg('day','1 day')+seg('month','1 month')"));
-  assert.ok(usageJS.includes("var d=sp.day||sp.fiveHour,m=sp.month;"), "older remote kernels stay visible");
-  assert.ok(usageJS.includes("var seg=function(k,lbl){return '<div class=ru-name>'+lbl+'</div>'"));
+  // the month segment carries the version-skew caveat (T235b): a legacy host's calendar month is left
+  // out of the rolling segment, and the segment's title says how many machines were not counted
+  assert.ok(usageJS.includes("seg('day','1 day')+seg('month','1 month',monthCav)"));
+  assert.ok(usageJS.includes("var d=sp.day||sp.fiveHour,m=sp.month;   // m: the ROLLING month only (a legacy host has none here)"), "older remote kernels stay visible on the day segment");
+  assert.ok(usageJS.includes("var seg=function(k,lbl,cav){return '<div class=ru-name>'+lbl+(cav?' \\u26a0':'')+'</div>'"),
+    "the caveat is a glyph on the segment — no native title (the rich tip is the ONE hover surface and carries the words)");
   assert.ok(usageJS.includes("'<div class=ru-pct>'+fmtUsd(sum[k].usd)+' \\u00b7 '+fmtTok(sum[k].tok)+' tok</div>'"));
   // the graph and the budget fills are gone: no spend track, no spend color ramp, no shared scale
   assert.ok(!usageJS.includes("spendColor"), "the budget-fill ramp died with the spend bars");

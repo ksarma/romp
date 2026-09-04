@@ -99,5 +99,62 @@ class SpendWindows(unittest.TestCase):
         self.assertEqual(w["monthToDate"], {"usd": 0.0, "tok": 0, "turns": 0})
 
 
+
+class RollingMonthAcrossDst(SpendWindows):
+    """T235b (romp_ui's adversarial pass): `now - i*86400` skips a LOCAL date across a DST shift —
+    every 00:00-01:00 reading in the weeks after spring-forward omitted the transition date, so the
+    30-day set held 29 dates and month could read below week again in that hour. Date arithmetic
+    keeps the recorder's local-date keying without the skip."""
+
+    def _with_tz(self, tz, fn):
+        old = os.environ.get("TZ")
+        os.environ["TZ"] = tz
+        time.tzset()
+        try:
+            return fn()
+        finally:
+            if old is None:
+                os.environ.pop("TZ", None)
+            else:
+                os.environ["TZ"] = old
+            time.tzset()
+
+    def test_the_window_holds_31_consecutive_local_dates_inside_a_dst_hour(self):
+        def run():
+            frozen = time.mktime((2026, 3, 9, 0, 30, 0, 0, 0, -1))   # 00:30 the day after spring-forward
+            km.time.time = lambda: frozen
+            # $1 on each of the 31 dates the window should hold (today back through 30 days ago),
+            # $1000 on the dates just beyond — a skipped transition date shifts the set one day OLDER,
+            # so the seconds-arithmetic bug reads 30 + 1000, never 31 (built by DATE, not seconds)
+            import datetime as _dt
+            today = _dt.date.fromtimestamp(frozen)
+            days = {(today - _dt.timedelta(days=n)).isoformat(): self._bucket(1.0 if n <= 30 else 1000.0)
+                    for n in range(40)}
+            self._ledger(days, {})
+            w = km._spend_windows()
+            return w["month"]["usd"], "2026-03-08" in days
+        usd, has_dst_date = self._with_tz("America/Los_Angeles", run)
+        self.assertTrue(has_dst_date)
+        self.assertEqual(usd, 31.0, "exactly today plus the 30 dates before it — the transition date 2026-03-08 must not be skipped for an older one")
+
+
+class DisplayCaveatsFollowTheData(unittest.TestCase):
+    """T235b, source pins on the kernel-served rail JS: the summed rolling month is complete only
+    from the YOUNGEST ledger (fold `since` with MAX, and say so), and the collapsed API cell follows
+    the hover's version-skew rule instead of silently dropping or mixing a legacy host's month."""
+    JS = Path(os.path.join(os.path.dirname(HERE), "kernel", "kernel.py")).read_text()
+
+    def test_since_folds_to_the_youngest_ledger_and_says_complete_since(self):
+        self.assertIn("if(v.since&&(!t.since||v.since>t.since))t.since=v.since;", self.JS,
+                      "MAX: the sum is complete only from the youngest host's reach")
+        self.assertIn("' \\u00b7 complete since '+esc(v.since)", self.JS)
+        self.assertNotIn("v.since<t.since", self.JS, "the MIN fold overstated coverage")
+
+    def test_the_collapsed_cell_carries_the_legacy_caveat(self):
+        cell = self.JS[self.JS.index("function apiCellHTML"):self.JS.index("// The collapsed rail is the AGGREGATE story")]
+        self.assertIn("_spendLegacyMonth", cell, "the cell counts the hosts whose month it cannot fold in")
+        self.assertIn("var monthCav=legacyN>0;", cell, "…and the month segment wears the caveat glyph (no native title — the rich tip explains)")
+
+
 if __name__ == "__main__":
     unittest.main()
