@@ -8682,6 +8682,11 @@ def _thread_messages(tsid, cut_uuid, floor_t=0):
             if r.get("type") == "user" and txt.lstrip().startswith("<task-notification>"):
                 txt = ""                            # harness bookkeeping for the AGENT (a parent bg task died
                 #                                     with the fork) — never the user's own words (2026-08-17)
+            if r.get("type") == "user" and em.CMD_WRAP_RE.match(txt):
+                txt = ""                            # a slash command's invocation/output wrapper (the record BEGINS
+                                                    # with one — the event model's own anchored test; prose that merely
+                                                    # quotes a tag is the user's message): the CLI's bookkeeping, not
+                                                    # something the user SAID — it must not owe a reply (T237 review)
             if txt and txt != boot_nudge and not (r.get("type") == "user" and "<!-- romp-" in txt):
                 rows.append({"who": "you" if r.get("type") == "user" else "agent",
                              "text": txt[:4000],
@@ -8737,10 +8742,147 @@ def _comment_thread_row_created(tsid):
     return _comment_created_memo.get(tsid)
 
 
+_thread_parse_warned = set()                        # (tsid, error) pairs already shouted — once per cause
+
+
+def _turn_is_meta(turn):
+    """A turn with nothing of the exchange in it: a compaction boundary the CLI wrote (mid-reply, before
+    the assistant resumed) or a slash-command-only turn. _finalize_turn marks these ENDED, but neither is
+    a reply landing — skip them when reading whether the thread's reply is done."""
+    atoms = turn.get("atoms") or []
+    if any(a.get("type") == "assistant" for a in atoms):
+        return False
+    first = atoms[0] if atoms else {}
+    return bool((first.get("type") == "system" and first.get("subtype") == "compact_boundary")
+                or (atoms and all(a.get("command") for a in atoms)))
+
+
+def _turn_landed(turn, cut_t=0.0):
+    """(landed, interrupted): the reply RECORD is in — an assistant atom stopped with end_turn — or the
+    CLI's own interrupt record closed the turn (the user stopped it; nothing more is coming). `cut_t` is
+    the backend's newest machineCut stamp (_last_machine_cut): an interrupt record at or before it is a
+    cut ROMP made and is resuming (crash / restart), not the user's stop — the turn stays in progress
+    (T237 review: otherwise the mark flapped yellow → green → yellow across every resume)."""
+    atoms = turn.get("atoms") or []
+    # the CLI's null settle ("No response requested.", model "<synthetic>") follows every stop record it
+    # writes — the same signals _interrupt_settle reads; it is part of the stop, never the reply, so the tail
+    # and the stop reason look past it (round-4 review: with the settle as tail the machineCut guard was
+    # never reached and the settle's own end_turn read as a landing)
+    def _settle(a):
+        if a.get("type") != "assistant":
+            return False
+        m = a.get("message") or {}
+        return m.get("model") == "<synthetic>" or (a.get("text") or "").strip() == "No response requested."
+    tail = next((a for a in reversed(atoms) if not a.get("command") and a.get("type") != "idle" and not _settle(a)), None)
+    if tail is not None and em.is_interrupt_record(tail):
+        if cut_t and cut_t >= float(tail.get("t") or 0):
+            return False, False                     # romp's own cut, being resumed — nothing landed, nobody stopped it
+        return True, True
+    last_sr = None
+    for a in atoms:
+        if a.get("type") == "assistant" and not _settle(a):
+            last_sr = (a.get("message") or {}).get("stop_reason")
+    return last_sr in em.END_STOPS, False
+
+
+def _thread_turn_read(tsid, reg, state):
+    """(turn_open, interrupted, turns) for the thread — is its reply still being WORKED ON, did the user's
+    interrupt close it, and what the transcript held (the parsed turns; [] when nothing could be read).
+    The transcript decides: the newest turn that carries the exchange (compaction boundaries and
+    slash-command turns skipped) has LANDED iff its assistant stopped with end_turn or the CLI's
+    interrupt record closed it — whatever the backend's state still says. An unlanded turn is open while
+    the backend is busy, else per the chat's own working read (_session_working: idle-terminated or
+    suspended → dead, not owed — the idle atoms a stop mints after a trailing compaction boundary fold
+    into THAT turn, so the read looks there too). The backend's live `state` alone decides only when
+    there is nothing to read yet (pre-fork, no turns): it flaps to ""/waiting between the records of one
+    turn and lingers "working" for a push after the final record — neither is the landing event (T237,
+    the user 2026-09-03: the mark went yellow while the thread had only started responding)."""
+    if reg.get("forkOf"):
+        return True, False, []                      # the fork hasn't landed: the first reply is ahead
+    busy_state = state in ("working", "retrying", "compacting")
+    try:
+        path = _thread_transcript_path(reg, tsid)
+        session = _parse(path, tsid, int(time.time())) if path else None   # the real (mtime-cached) parse — _parse_cached never parses
+    except Exception as e:                          # LOUD, then the backend's word: a silent fallback would re-create the very symptom
+        key = (tsid, repr(e)[:200])
+        if key not in _thread_parse_warned:
+            _thread_parse_warned.add(key)
+            print("[comments] thread %s: transcript parse failed (%r) — reading the reply state from the backend instead"
+                  % (tsid[:8], e), file=sys.stderr)
+        session = None
+    turns = (session or {}).get("turns") or []
+    if not turns:
+        return busy_state, False, []                # nothing to read yet: the backend's word is all there is
+    at = next((i for i in range(len(turns) - 1, -1, -1) if not _turn_is_meta(turns[i])), None)
+    if at is None:
+        return busy_state, False, turns             # only boundaries / commands so far
+    landed, interrupted = _turn_landed(turns[at], _last_machine_cut(tsid)[0])
+    if landed:
+        return False, interrupted, turns            # the reply RECORD is in (or the user stopped it), whatever the backend still says
+    if busy_state:
+        return True, False, turns                   # mid-turn: tool calls, intermediate text, a compaction — the reply is still coming
+    # backend quiet on an unlanded turn: the chat's own working read. A trailing compaction boundary is
+    # bookkeeping, not an ended reply — but the idle atoms a stop mints AFTER it fold into that boundary
+    # turn, so an idle tail there means the turn died idle-terminated: dead, not owed (T237 review)
+    tail = [a for t in turns[at + 1:] for a in (t.get("atoms") or []) if not a.get("command")]
+    if tail and tail[-1].get("type") == "idle":
+        return False, False, turns
+    return bool(_session_working(turns[:at + 1])), False, turns
+
+
+def _thread_turn_open(tsid, reg, state):
+    """Is the thread's reply still being worked on? (_thread_turn_read's first value.)"""
+    return _thread_turn_read(tsid, reg, state)[0]
+
+
+_thread_unreadable_warned = set()
+
+
+def _thread_owes_first_reply(tsid, reg, th, turns):
+    """An open thread with NO exchange yet owes its first reply only while that is the fresh state — the
+    fork pending (forkOf), or a transcript that reads and holds the cut with nothing after it. A MISSING
+    or unreadable transcript, or one the cut is not in, is a broken thread: shout once, owe nothing —
+    a green wash promising a reply that will never come is the lie this change exists to end."""
+    if reg.get("forkOf"):
+        return True
+    cut = str(th.get("cutUuid") or "")
+    if turns and (not cut or any(a.get("uuid") == cut for t in turns for a in (t.get("atoms") or []))):
+        return True
+    key = (tsid, "missing" if not turns else "cut-missing")
+    if key not in _thread_unreadable_warned:
+        _thread_unreadable_warned.add(key)
+        print("[comments] thread %s: %s — its mark owes no reply (open, but nothing can land)"
+              % (tsid[:8], "transcript missing or unreadable" if not turns else "cut record %s not in its transcript" % cut[:8]),
+              file=sys.stderr)
+    return False
+
+
+def _agent_landed_after(events, msgs, seen):
+    """Agent content newer than the read watermark, read from the projection the popover RENDERS: the
+    events when it has them (assistant/tool events after the cut), else the msgs projection; both
+    empty (the popover holds its loader) → nothing is unread."""
+    if events:
+        for e in events:
+            if e.get("command") or e.get("interruptSettle"):
+                continue                            # a slash command's confirmation / the interrupt's null settle: not a reply
+            if e.get("kind") in ("assistant", "tool") and int(em.parse_z(e.get("ts")) or 0) > seen:
+                return True
+        return False
+    return any(m["who"] == "agent" and m["t"] > seen for m in msgs)
+
+
 def _comments_frame(sid, tmux=None):
     """The chat pane's {type:"comments"} frame for parent session `sid`, or None when it has never
     had a thread. Built per push for sessions WITH a store (few) — _send_client's dedup keeps an
-    unchanged frame off the wire."""
+    unchanged frame off the wire.
+
+    Two per-thread bits carry the mark's colour, and the kernel is their ONE truth (T237, the user
+    2026-09-03, twice): `unread` — yellow — means "a FINISHED reply you have not seen": the thread's
+    turn has ended (_thread_turn_open false) AND agent content newer than lastSeenT exists in the
+    projection the popover renders. `replyOwed` — the green in-flight wash — means a reply is still
+    owed: the thread has no exchange yet, the user's message is the newest, or the turn is in progress.
+    Neither is a client-side latch or a timer: an intermediate record of a multi-record turn flips
+    nothing; the end_turn record flips both in the same frame the popover can show the reply."""
     p = _comments_path(sid)
     if not p.exists():
         return None
@@ -8779,9 +8921,53 @@ def _comments_frame(sid, tmux=None):
         msgs = [] if status == "promoted" else _thread_messages(
             tsid, str(th.get("cutUuid") or ""), floor_t=(0 if th.get("cutUuid") else int(th.get("createdT") or 0)))
         seen = int(th.get("lastSeenT") or 0)
-        unread = any(m["who"] == "agent" and m["t"] > seen for m in msgs)
         events = [] if status == "promoted" else _thread_events(tsid, str(th.get("cutUuid") or ""), now, tmux)
         reg = _thread_reg(tsid)
+        turn_open, interrupted, turns = _thread_turn_read(tsid, reg, state) if status == "open" else (False, False, [])
+        unread = (not turn_open) and _agent_landed_after(events, msgs, seen)
+        # sends the backend has taken but the transcript does not hold yet — owed, and in no projection.
+        # Two windows, one number: the backend's queue (a follow-up typed mid-turn waits there until the
+        # turn ends) and the fed-but-unwritten send (popped to the CLI, which writes its record at its next
+        # boundary). The backend's own INPUT ECHO atom spans both — it lives from the send until the record
+        # lands (prune_live) — so count echoes the way the chat's queued indicator does (build_session:
+        # not already in the transcript's user texts, not overtaken by a later human turn, never a slash
+        # command's echo, which is consumed without a reply) — the same fold, not a twin (round-3/4 review).
+        queued = 0
+        if be and status == "open":
+            try:
+                queued = len(be.pending_queued(tsid) or []) if hasattr(be, "pending_queued") else 0
+            except Exception:
+                queued = 0
+            try:
+                live = be.live_atoms(tsid) if hasattr(be, "live_atoms") else []
+            except Exception:
+                live = []
+            if live:
+                # an echo has LANDED when a user record written at or after its own send carries its text —
+                # never any earlier record: a fork copies the parent's history, and "ok" / "go ahead" / a
+                # deliberate re-send repeat earlier texts, which read as "already in the transcript" and hid a
+                # send the CLI still held (round-5 review). A `dropped` echo (the backend adjudicated the send
+                # LOST — a reconnect with it in flight; the popover shows "never delivered") owes nothing.
+                user_atoms = [a for tr in turns for a in (tr.get("atoms") or []) if a.get("type") == "user"]
+                def _landed(e):
+                    et = (e.get("_echo_text") or "").strip()
+                    since = float(e.get("t") or 0) - 2                 # the send's own time, a little skew allowed
+                    return any(et in _atom_user_texts(a) for a in user_atoms if float(a.get("t") or 0) >= since)
+                floor = _human_turn_floor({"turns": turns}) if turns else 0
+                held = [a for a in live if (a.get("_echo_text") or "").strip() and not a.get("command")
+                        and not a.get("dropped") and not _landed(a) and not _echo_overtaken(a, floor)]
+                queued = max(queued, len(held))
+        # the newest record the projection shows (or the transcript holds): the client's "did the transcript
+        # move?" datum, independent of the 80-event / 40-message caps on the shipped projections
+        last_uuid = ((events[-1].get("uuid") if events else None)
+                     or next((a.get("uuid") for tr in reversed(turns) for a in reversed(tr.get("atoms") or []) if a.get("uuid")), None)
+                     or "")
+        owes_first = status == "open" and not msgs and _thread_owes_first_reply(tsid, reg, th, turns)
+        unreachable = status == "open" and not msgs and not owes_first and not reg.get("forkOf")
+        # owed: the turn is in progress, a send is held, the FRESH thread has no exchange yet, or the user's
+        # message is the newest — unless that newest "message" is the CLI's own interrupt record
+        reply_owed = status == "open" and (turn_open or queued > 0 or owes_first
+                                           or (bool(msgs) and msgs[-1]["who"] == "you" and not interrupted))
         # (T102: the push-count settle — settledPushes — is RETIRED. The client's pulse is exchange-
         # scoped now: latched at the send gesture, cleared by the reply RECORD arriving in msgs; the
         # frame's msgs already carry that event, so no per-push counter rides here anymore.)
@@ -8806,7 +8992,11 @@ def _comments_frame(sid, tmux=None):
                         "name": th.get("name") or "", "color": th.get("color") or "",
                         "exact": str(th.get("exact") or "")[:500], "status": status,
                         "createdT": th.get("createdT") or 0, "state": state, "error": err,
-                        "unread": unread, "promotedName": th.get("promotedName") or "",
+                        "unread": unread, "replyOwed": reply_owed,   # yellow / green — see the docstring (T237)
+                        "queued": queued,                              # sends the backend holds or has fed, not yet in the transcript
+                        "lastUuid": last_uuid,                         # the newest record shown/held — the client's cap-proof "transcript moved" datum
+                        "unreachable": unreachable or None,            # a broken thread (missing transcript / lost cut): owes nothing
+                        "promotedName": th.get("promotedName") or "",
                         "model": (reg.get("liveModel") or reg.get("model") or "") if reg else "",
                         "effort": (reg.get("effort") or "") if reg else "",
                         "sinceEpoch": since_ms,
@@ -21519,6 +21709,8 @@ def build_session(sid, now, tmux=None, path_override=None, tail_cap_t=None):
                                            "uuid": a.get("uuid"), "ts": ts})
                             continue
                         ev = {"kind": "assistant", "md": txt, "uuid": a.get("uuid"), "ts": ts}
+                        if a.get("command"):
+                            ev["command"] = True    # a slash command's own output (<local-command-stdout>), not a reply (T237)
                         sp = _space_paths(txt, sid, a.get("uuid"))
                         if sp:
                             ev["spacePaths"] = sp   # backticked filenames WITH spaces, filesystem-verified → whole-span links
