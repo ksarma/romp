@@ -272,7 +272,9 @@ def _scan_bg_tasks(path, want_all=False):
 def _bg_fresh(want_all=False):
     """A fresh pairing state. `all`: keep every task's row (the launch-ordered history view); otherwise a
     task that reaches a terminal status is dropped from the state at once — the running-only view can
-    never show it again (no branch below ever returns an existing task to "running"), so a long-lived
+    never show it again (no record the harness emits returns an existing task to "running"; a literal
+    <status>running</status> notification after a terminal one is the one shape the old whole-file walk
+    would have resurrected, and the fold refuses), so a long-lived
     transcript's fold state stays the size of its in-flight work, not its history. `done` is that view's
     tombstone set: transcripts DO replay records — a duplicate async ack (same tool-use id, even the same
     uuid) can land after the terminal notification — and with the row gone such a replay would pass the
@@ -455,6 +457,9 @@ def scan_bg_tasks_cached(path, cache, want_all=False):
     is the caller's dict (the kernel keeps a running-only and an every-task cache; the judge its own), so
     the two views never invalidate each other and a test's `.clear()` still forces a re-fold."""
     state = fold_records(cache, path, lambda: _bg_fresh(want_all), _bg_step)
+    if state["all"] != bool(want_all):                    # the view is baked into the state at init: a cache handed to
+        raise ValueError("bg fold cache for %s is shaped for want_all=%r, asked for %r"   # both views would answer
+                         % (path, state["all"], bool(want_all)))                          # one of them wrong
     return _bg_finish(state, want_all)
 
 
@@ -584,13 +589,19 @@ def fold_records(cache, path, init, step):
 
     Lives here (moved from the kernel, 2026-09-03) so the judge's readers can fold too — the
     background-task pairing below is shared by both."""
-    recs = _read_jsonl_incremental(path)
     key = str(path)
-    hit = cache.get(key)
+    recs = _read_jsonl_incremental(path)
+    ent = _pinned_entry(key, recs)                        # the reader's entry for THIS read, pinned by identity: another
+    if ent is _UNPINNED:                                  # thread (the judge pool, a handler) may advance the shared entry
+        recs = _read_jsonl_incremental(path)              # past our records before we look at its tail, and a newer tail
+        ent = _pinned_entry(key, recs)                    # folded onto an older prefix would skip the records between. A
+        if ent is _UNPINNED:                              # lost pin re-reads once — the newer entry pins cleanly, so the
+            ent = None                                    # answer is current, not a poll behind; lost twice, the fold
+    hit = cache.get(key)                                  # answers without the tail, never with the wrong one
     if hit is not None:
         n0, last0, state0 = hit
         if n0 == len(recs) and (n0 == 0 or recs[-1] is last0):
-            return _fold_eof_fragment(key, state0, step)   # unchanged records; a newline-less tail may still sit past them
+            return _fold_eof_fragment(key, ent, state0, step)   # unchanged records; a newline-less tail may still sit past them
         if 0 < n0 < len(recs) and recs[n0 - 1] is last0:
             state, start = copy.deepcopy(state0), n0
         else:
@@ -603,36 +614,78 @@ def fold_records(cache, path, init, step):
     if len(cache) > 256:                                  # bounded by the session count; never unbounded
         cache.clear()
     cache[key] = (len(recs), recs[-1] if recs else None, state)
-    return _fold_eof_fragment(key, state, step)
+    return _fold_eof_fragment(key, ent, state, step)
 
 
-def _trailing_record(path):
-    """The complete JSON record sitting past _read_jsonl_incremental's consumed offset WITHOUT its newline
-    yet, or None. The incremental reader leaves such a line unconsumed by design (a writer caught
-    mid-append must not enter the cache torn); the readers folded here used to walk the text to EOF and
-    saw a final newline-less record — so the fold reads it provisionally (see _fold_eof_fragment)."""
+_UNPINNED = object()
+
+
+def _pinned_entry(key, recs):
+    """The shared reader's cache entry for `key` if it still describes the read that returned `recs` (its
+    records list IS `recs`), None when the reader holds nothing for the path, _UNPINNED when another thread
+    has advanced the entry past that read."""
     with _JSONL_CACHE_LOCK:
-        hit = _JSONL_CACHE.get(path)
-    if hit is None or hit[1] <= hit[2]:                   # nothing past the consumed offset (the common case)
+        ent = _JSONL_CACHE.get(key)
+    if ent is not None and ent[4] is recs:
+        return ent
+    if ent is None and not recs:
+        return None                                        # the reader holds nothing because there is nothing (or no file)
+    return _UNPINNED                                       # advanced past our read — or evicted from under it (LRU)
+
+
+_TRAILING_CACHE = {}          # path -> ((mtime, size, offset), record|None): the tail verdict per file version, so a
+#                               torn tail that never completes (a CLI killed mid-write) costs one read, not one per poll.
+#                               LRU at _TRAILING_CACHE_MAX (the least recently used entry goes, never the whole memo:
+#                               a clear-at-cap above the cap re-reads every pending tail per poll — see _JSONL_CACHE_MAX)
+_TRAILING_CACHE_MAX = 256
+_TRAILING_LOCK = threading.Lock()   # the memo is shared by the pusher, the handler threads and the judge pools: the
+#                                     LRU pop/reinsert/evict are several dict ops, not one (an unlocked evict raised
+#                                     KeyError under two inserters at the cap, reproduced 2026-09-04)
+
+
+def _trailing_record(path, ent):
+    """The complete JSON record sitting past _read_jsonl_incremental's consumed offset WITHOUT its newline
+    yet, or None. `ent` is the reader's cache entry for the read being folded (mtime, size, offset, tail,
+    records; None when there is none). The incremental reader leaves such a line unconsumed by design (a
+    writer caught mid-append must not enter the cache torn); the readers folded here used to walk the text
+    to EOF and saw a final newline-less record — so the fold reads it provisionally (see _fold_eof_fragment).
+    The verdict is memoized per (mtime, size, offset): an unchanged file answers from memory, whether its
+    tail was a record or a torn fragment, with no I/O and no failed parse per poll (review find, 2026-09-04:
+    a CLI killed mid-write left a torn line that every fold reader re-read and re-failed on every push)."""
+    if ent is None or ent[1] <= ent[2]:                   # nothing past the consumed offset (the common case)
         return None
+    ver = (ent[0], ent[1], ent[2])
+    with _TRAILING_LOCK:
+        hit = _TRAILING_CACHE.get(path)
+        if hit is not None and hit[0] == ver:
+            _TRAILING_CACHE.pop(path, None)               # a served verdict is a used one: to the LRU tail
+            _TRAILING_CACHE[path] = hit
+            return hit[1]
+    o = None
     try:
         with open(path, "rb") as fh:
-            fh.seek(hit[2])
-            frag = fh.read(hit[1] - hit[2]).strip()
-        if not frag or b"\n" in frag:
-            return None
-        o = json.loads(frag.decode("utf-8", "replace"))
+            fh.seek(ent[2])
+            frag = fh.read(ent[1] - ent[2]).strip()
+        if frag and b"\n" not in frag:
+            o = json.loads(frag.decode("utf-8", "replace"))
     except (OSError, ValueError):
-        return None
-    return o if isinstance(o, dict) else None
+        o = None
+    o = o if isinstance(o, dict) else None
+    with _TRAILING_LOCK:                                  # the read above ran unlocked; two readers of one version
+        _TRAILING_CACHE.pop(path, None)                   # agree on the verdict, so the last writer wins harmlessly
+        while len(_TRAILING_CACHE) >= _TRAILING_CACHE_MAX:
+            del _TRAILING_CACHE[next(iter(_TRAILING_CACHE))]   # the least recently used goes first
+        _TRAILING_CACHE[path] = (ver, o)
+    return o
 
 
-def _fold_eof_fragment(key, state, step):
+def _fold_eof_fragment(key, ent, state, step):
     """fold_records' answer with a newline-less final record folded in PROVISIONALLY: applied to a copy,
     never to the cached state, so the record is folded for good exactly once — when its newline lands and
     the incremental reader serves it as a record. Keeps the old whole-file readers' answer (they saw that
-    final line) without giving up the cache's torn-write safety."""
-    frag = _trailing_record(key)
+    final line) without giving up the cache's torn-write safety. `ent` is the reader's entry for the very
+    read being folded (fold_records pins it by the identity of its records list), never a fresh lookup."""
+    frag = _trailing_record(key, ent)
     if frag is None:
         return state
     return step(copy.deepcopy(state), frag)

@@ -5923,7 +5923,7 @@ _BG_SCAN_CACHE = {}                       # path -> em.fold_records entry (runni
 
 
 def _bg_unresolved(path):
-    """The transcript's still-RUNNING background launches (em._scan_bg_tasks pairing), mtime+size-cached.
+    """The transcript's still-RUNNING background launches (em._scan_bg_tasks pairing), folded append-incrementally.
     The DURABLE awaited-work source: the pairing lives in the transcript, so unlike any live backend
     snapshot it survives a kernel restart and covers tmux CLIs whose tasks outlive the kernel."""
     # folds append-incrementally since 2026-09-03: a changed transcript steps only its appended records

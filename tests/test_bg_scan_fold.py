@@ -14,6 +14,7 @@ import os
 import tempfile
 import time
 import unittest
+from unittest import mock
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
@@ -371,6 +372,146 @@ class LastState(unittest.TestCase):
         finally:
             del sb.open
         self.assertLess(sum(sizes), self.p.stat().st_size // 4, "one block from the end, not the file")
+
+
+class FoldTailSafety(unittest.TestCase):
+    """The newline-less tail is read from the SAME cache entry that served the records being folded, and its
+    verdict is memoized per file version (review finds, 2026-09-04)."""
+
+    def setUp(self):
+        self.td = tempfile.TemporaryDirectory()
+        self.p = os.path.join(self.td.name, "t.jsonl")
+        em._TRAILING_CACHE.clear()
+
+    def tearDown(self):
+        self.td.cleanup()
+
+    @staticmethod
+    def _step(st, o):
+        return st + [o["n"]]
+
+    def test_a_tail_another_thread_exposed_is_never_folded_onto_an_older_prefix(self):
+        # thread A (the pusher) has read one record; the writer appends a newline-closed record and a newline-less
+        # one; thread B (a judge worker) reads and advances the SHARED reader entry past record 2; A resumes its fold
+        # with ITS one record. The tail past B's offset (3) belongs to B's read — folded onto A's prefix it would
+        # skip 2, and a one-poll "nothing running" feeds the settle gate and the awaiting lift, both irreversible.
+        cache = {}
+        _append(self.p, {"n": 1})
+        recs_a = em._read_jsonl_incremental(self.p)
+        self.assertEqual(em.fold_records(cache, self.p, list, self._step), [1])
+        with open(self.p, "a") as f:
+            f.write(json.dumps({"n": 2}) + "\n" + json.dumps({"n": 3}))
+        _bump(self.p)
+        em._read_jsonl_incremental(self.p)                                    # B advances the shared entry
+        real, calls = em._read_jsonl_incremental, []
+
+        def stale_once(path):                                                 # A's first read is the stale one…
+            calls.append(path)
+            return recs_a if len(calls) == 1 else real(path)
+        with mock.patch.object(em, "_read_jsonl_incremental", stale_once):
+            self.assertEqual(em.fold_records(cache, self.p, list, self._step), [1, 2, 3],
+                             "the lost pin re-read: 2 for good and 3 provisionally — never 3 folded onto 1")
+        self.assertEqual(len(calls), 2, "…and one re-read pinned cleanly")
+        self.assertEqual(cache[self.p][0], 2, "3 waits for its newline before it enters the cache")
+        with mock.patch.object(em, "_read_jsonl_incremental", lambda path: recs_a):   # lost twice (a stale reader)
+            self.assertEqual(em.fold_records(cache, self.p, list, self._step), [1],
+                             "no pin at all: the fold answers its own records without a tail, not with the wrong one")
+
+    def test_b_a_torn_tail_costs_one_read_per_file_version_not_one_per_poll(self):
+        cache = {}
+        _append(self.p, {"n": 1})
+        with open(self.p, "a") as f:
+            f.write('{"n": 2')                                                 # a writer killed mid-append
+        _bump(self.p)
+        self.assertEqual(em.fold_records(cache, self.p, list, self._step), [1])
+        real_open, opened = open, []
+
+        def spy(path, *a, **k):
+            opened.append(str(path))
+            return real_open(path, *a, **k)
+        with mock.patch("builtins.open", spy):
+            for _ in range(3):
+                self.assertEqual(em.fold_records(cache, self.p, list, self._step), [1])
+        self.assertEqual([o for o in opened if o == self.p], [], "an unchanged torn tail is not re-read per poll")
+        with open(self.p, "a") as f:
+            f.write("}")                                                       # the record completes, still no newline
+        _bump(self.p)
+        self.assertEqual(em.fold_records(cache, self.p, list, self._step), [1, 2], "a new file version is re-read")
+        with open(self.p, "a") as f:
+            f.write("\n")
+        _bump(self.p)
+        self.assertEqual(em.fold_records(cache, self.p, list, self._step), [1, 2])
+        self.assertEqual(cache[self.p][0], 2)
+
+    def test_d_the_tail_memo_evicts_its_least_recently_used_entry_never_the_whole_memo(self):
+        ent = (1.0, 10, 5, b"", [])                                            # a tail past the offset; the file is absent
+        for i in range(300):
+            self.assertIsNone(em._trailing_record("/nonexistent/TESTHOST/%d" % i, ent))
+        self.assertEqual(len(em._TRAILING_CACHE), em._TRAILING_CACHE_MAX)
+        self.assertIn("/nonexistent/TESTHOST/299", em._TRAILING_CACHE)
+        self.assertNotIn("/nonexistent/TESTHOST/43", em._TRAILING_CACHE, "the oldest went first")
+        em._trailing_record("/nonexistent/TESTHOST/44", ent)                    # a hit moves to the tail…
+        em._trailing_record("/nonexistent/TESTHOST/300", ent)                   # …so the next eviction skips it
+        self.assertIn("/nonexistent/TESTHOST/44", em._TRAILING_CACHE)
+        self.assertNotIn("/nonexistent/TESTHOST/45", em._TRAILING_CACHE)
+
+    def test_e_the_tail_memo_survives_concurrent_inserters_at_its_cap(self):
+        # the LRU pop / reinsert / evict are several dict operations: unlocked, two inserters at the cap took the same
+        # oldest key and the second `del` raised KeyError out of fold_records — an abandoned push or judge cycle
+        ent = (1.0, 10, 5, b"", [])
+        for i in range(em._TRAILING_CACHE_MAX):
+            em._trailing_record("/nonexistent/TESTHOST/seed/%d" % i, ent)
+        errors = []
+
+        def inserter(tag):
+            for i in range(400):
+                try:
+                    em._trailing_record("/nonexistent/TESTHOST/%s/%d" % (tag, i), (float(i), 10, 5, b"", []))
+                except Exception as e:                                          # noqa: BLE001 — the test collects them
+                    errors.append(e)
+        prev = __import__("sys").getswitchinterval()
+        __import__("sys").setswitchinterval(1e-6)
+        try:
+            ts = [__import__("threading").Thread(target=inserter, args=("t%d" % k,)) for k in range(8)]
+            for t in ts:
+                t.start()
+            for t in ts:
+                t.join(60)
+        finally:
+            __import__("sys").setswitchinterval(prev)
+        self.assertFalse(any(t.is_alive() for t in ts))
+        self.assertEqual(errors, [])
+        self.assertLessEqual(len(em._TRAILING_CACHE), em._TRAILING_CACHE_MAX)
+
+    def test_f_a_pin_lost_to_eviction_re_reads_and_keeps_the_tail(self):
+        # the reader's entry can be evicted (its own LRU) between the read and the pin: a None entry with records in
+        # hand is a lost pin, not "the reader holds nothing" — it re-reads once and answers with the tail, as for a pin
+        # lost to a peer's advance
+        cache = {}
+        _append(self.p, {"n": 1})
+        with open(self.p, "a") as f:
+            f.write(json.dumps({"n": 2}))                                      # complete, no newline yet
+        _bump(self.p)
+        real, calls = em._read_jsonl_incremental, []
+
+        def evicted_once(path):
+            recs = real(path)
+            calls.append(path)
+            if len(calls) == 1:
+                with em._JSONL_CACHE_LOCK:
+                    em._JSONL_CACHE.pop(str(path), None)                       # gone from under the fold
+            return recs
+        with mock.patch.object(em, "_read_jsonl_incremental", evicted_once):
+            self.assertEqual(em.fold_records(cache, self.p, list, self._step), [1, 2], "re-read once; the tail rides")
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(cache[self.p][0], 1)
+
+    def test_c_a_bg_cache_shaped_for_the_other_view_is_refused_loudly(self):
+        _append(self.p, _launch("toolu_1", "a"))
+        cache = {}
+        self.assertEqual([t["id"] for t in em.scan_bg_tasks_cached(self.p, cache, want_all=False)], ["toolu_1"])
+        with self.assertRaises(ValueError):
+            em.scan_bg_tasks_cached(self.p, cache, want_all=True)
 
 
 if __name__ == "__main__":
