@@ -101,6 +101,7 @@ class DeliveryRidesTheSettle(unittest.TestCase):
         km._pending_ops.clear()
         km._moving.clear()
         km._drain_hold.clear()
+        km._refresh_parse_failures.clear()
         km._pusher_wake.clear()
         km._producer_wake.clear()
 
@@ -110,6 +111,7 @@ class DeliveryRidesTheSettle(unittest.TestCase):
         km._pending_ops.clear()
         km._moving.clear()
         km._drain_hold.clear()
+        km._refresh_parse_failures.clear()
 
     def test_parked_op_delivers_on_settle_while_a_judge_pass_is_stuck(self):
         gate = threading.Event()             # the judge tiers block here: a closer sweep that never returns
@@ -323,6 +325,7 @@ class TmuxBusyFromHookState(unittest.TestCase):
         km._pending_ops.clear()
         km._moving.clear()
         km._drain_hold.clear()
+        km._refresh_parse_failures.clear()
         km._pusher_wake.clear()
 
     def tearDown(self):
@@ -331,6 +334,7 @@ class TmuxBusyFromHookState(unittest.TestCase):
         km._pending_ops.clear()
         km._moving.clear()
         km._drain_hold.clear()
+        km._refresh_parse_failures.clear()
 
     def test_busy_reads_the_hook_state_words(self):
         # the class default: the cache is stale (None), so the transcript cannot be consulted and the row stands
@@ -624,6 +628,71 @@ class TmuxBusyFromHookState(unittest.TestCase):
             self.assertEqual(parsed, [paths[SID]], "no second parse while the file has not moved")
             self.assertEqual(self.sent, [(SID, "a correction")])
         self.assertEqual(sdk.calls, [], "the SDK-shaped sid stayed parked behind its turn — and was never parsed")
+
+    def test_one_unreadable_transcript_does_not_starve_the_other_parked_sids_refresh(self):
+        # the refresh runs per sid under its own guard: a parse that raises for one parked tmux sid (whatever raised
+        # inside _parse — the reg read, the path discovery, an assembly bug; an unreadable transcript file does NOT
+        # raise, the readers swallow it) is logged and the NEXT parked sid's moved transcript is still re-parsed this
+        # cycle — before, one raise ended the loop, and every other parked sid rode its stale hook row cycle after
+        # cycle, the very hold this job exists to lift. The failing sid is retried every cycle (nothing enters the
+        # parse cache), so its line is count-gated: the first with a traceback, then at 10, 100, 1000.
+        now = int(time.time())
+        td = tempfile.mkdtemp()
+        self.addCleanup(lambda: __import__("shutil").rmtree(td, ignore_errors=True))
+
+        def z(t):
+            return datetime.fromtimestamp(t, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+        def transcript(sid):
+            recs = [{"type": "user", "timestamp": z(now - 90), "uuid": "u1", "parentUuid": None,
+                     "promptSource": "typed", "message": {"role": "user", "content": "please frobnicate"}},
+                    {"type": "assistant", "timestamp": z(now - 70), "uuid": "a1", "parentUuid": "u1",
+                     "message": {"role": "assistant", "content": [{"type": "text", "text": "frobnicating"}],
+                                 "stop_reason": None}},
+                    {"type": "user", "timestamp": z(now - 5), "uuid": "u2", "parentUuid": "a1",
+                     "message": {"role": "user", "content": "[Request interrupted by user]"}}]
+            path = os.path.join(td, sid + ".jsonl")
+            with open(path, "w") as f:
+                f.write("".join(json.dumps(r) + "\n" for r in recs))
+            return path
+        paths = {SID: transcript(SID), SID2: transcript(SID2)}
+        self.rows[SID] = dict(_tmux_row("working"), since=now - 60)      # both rows stale after a pane Esc
+        self.rows[SID2] = dict(_tmux_row("working"), since=now - 60)
+        km._pending_ops[SID] = [("send", "first", "human")]              # iterated first: its parse will raise
+        km._pending_ops[SID2] = [("send", "second", "human")]
+        parsed = []
+        real_parse = km._parse
+
+        def parse(path, sid, now):
+            parsed.append(path)
+            if path == paths[SID]:
+                raise ValueError("unreadable transcript")
+            return real_parse(path, sid, now)
+        err = io.StringIO()
+        with mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda sid: km._TMUX)), \
+             mock.patch.object(km, "_path_of", lambda sid, now=None: paths.get(str(sid))), \
+             mock.patch.object(km, "_parse_cached", REAL_PARSE_CACHED), \
+             mock.patch.object(km, "_parse", parse), \
+             mock.patch.object(km, "_downtime", []), redirect_stderr(err):
+            km._pusher_cycle()
+        self.assertEqual(parsed, [paths[SID], paths[SID2]], "the raise did not end the loop: the second sid was parsed")
+        self.assertEqual(self.sent, [(SID2, "second")], "the second sid's interrupt record overruled its row: delivered")
+        self.assertEqual([op[1] for op in km._pending_ops.get(SID, [])], ["first"],
+                         "the unreadable sid stays held on its hook row, never dropped")
+        self.assertEqual(err.getvalue().count("parked-parse refresh"), 1, "one line names the sid that failed")
+        self.assertIn(SID, err.getvalue())
+        self.assertIn("Traceback", err.getvalue(), "the first failure carries its traceback")
+        with mock.patch.object(km.Sessions, "backend_for", staticmethod(lambda sid: km._TMUX)), \
+             mock.patch.object(km, "_path_of", lambda sid, now=None: paths.get(str(sid))), \
+             mock.patch.object(km, "_parse_cached", REAL_PARSE_CACHED), \
+             mock.patch.object(km, "_parse", parse), \
+             mock.patch.object(km, "_downtime", []), redirect_stderr(err):
+            for _ in range(11):
+                km._pusher_cycle()                                   # the failing sid is retried every cycle…
+        self.assertEqual(parsed.count(paths[SID]), 12)
+        self.assertEqual(parsed.count(paths[SID2]), 1, "…the healthy sid, delivered and no longer parked, is not")
+        self.assertEqual(err.getvalue().count("parked-parse refresh"), 2, "…and the line is count-gated: 1 and 10")
+        self.assertIn("(failure 10)", err.getvalue())
 
     def test_cancelling_the_last_parked_op_drops_the_sids_hold(self):
         km._pending_ops[SID] = [("send", "one", "human"), ("compact",)]
