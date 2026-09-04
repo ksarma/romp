@@ -30,8 +30,9 @@ import { isClearCmd, openTopTitles, clearConfirmDetail, endConfirmDetail } from 
 import { prebuildPlan, type ViewState } from "./prebuild";
 import { reconcileTabOrder } from "./tab-order";
 import { writeViewOrder } from "./view-order";
-import { sectionTabs, anySectioned, readTabGroups, writeTabGroups, isSectionCollapsed, toggleSectionCollapsed,
+import { planStrip, readTabGroups, writeTabGroups, setSectionCollapsed,
          reorderTagOrder, applyTagOrder, TABGROUPS_KEY, TABGROUPS_EVENT, type TabSection } from "./tab-groups";
+import { tabStateClass, sectionPip, SECTION_PIP_TITLE } from "./tab-state";
 import { titleWithKey, chordOf, effectiveChord, loadOverrides } from "./keybindings";
 import { DEFAULT_CHORDS } from "./commands";
 import { NavHistory } from "./nav-history";
@@ -554,7 +555,19 @@ function tabInView(id: string): boolean { return id === peekId || chatVisible(id
 // tab's section never renders folded, so the active id is always in it.
 let collapsedTabIds = new Set<string>();
 let draggedGroup: string | null = null;   // a section header mid-drag (reorders tagOrder) — never a tab
+// the tags a create in flight named (openProvisional): the provisional tab sections under its future
+// home from the first paint (planStrip's `pending`), instead of landing loose and jumping on the frame
+let provisionalTags: string[] = [];
 function visibleOrder(): string[] { return order.filter((id) => tabInView(id) && !collapsedTabIds.has(id)); }
+// THE PHONE LAYOUT: the kernel's chat page swaps the tab strip for its own session list (#mhdr/#mlist,
+// built by scraping every rendered tab) under EXACTLY this media rule (_CHAT_MOBILE_CSS in kernel.py)
+// — the same string here, so what the CSS hides and what the plan flattens cannot disagree. Sections
+// are desktop-only: the phone list has no header to unfold and no switch, so a folded section there
+// made its sessions unreachable (tests pin the two strings equal).
+const PHONE_LAYOUT_MEDIA = "(pointer:coarse) and (max-width:1024px)";
+function phoneLayout(): boolean {
+  try { return window.matchMedia(PHONE_LAYOUT_MEDIA).matches; } catch { return false; }
+}
 function revealSession(id: string) { postViews(revealIn(effViews(), id)); }
 
 let paletteColors: string[] = [];
@@ -4558,6 +4571,10 @@ function makeGroupHead(sec: TabSection, collapsed: boolean): HTMLElement {
   const head = el("div", "tab-group-head" + (collapsed ? " collapsed" : ""));
   head.dataset.group = name;
   head.dataset.act = "toggle-group";
+  // the state this header RENDERED — the click derives the new state from it, not from the store: the
+  // active tab's section renders open whatever the store says (below), so toggling the stored bit
+  // there inverted the click and changed nothing on screen
+  head.dataset.folded = collapsed ? "1" : "0";
   head.title = collapsed
     ? `${name} — ${sec.ids.length} session${sec.ids.length === 1 ? "" : "s"} folded; click to open`
     : `${name} — click to fold this group; drag to reorder the groups`;
@@ -4571,12 +4588,13 @@ function makeGroupHead(sec: TabSection, collapsed: boolean): HTMLElement {
     const n = el("span", "tab-group-count");
     n.textContent = String(sec.ids.length);
     head.appendChild(n);
-    // the folded gist: a pip when a member is working, red when one is blocked or waiting on you
-    const states = sec.ids.map((id) => sessions.get(id)?.status?.state || "");
-    const blocked = states.some((st) => st === "blocked" || st === "needsInput" || st === "awaiting");
-    if (blocked || states.includes("working")) {
-      const pip = el("span", "tab-group-pip" + (blocked ? " blocked" : ""));
-      pip.title = blocked ? "a session in this group is blocked or waiting on you" : "a session in this group is working";
+    // the folded gist: one pip by the TAB's own state rule (tab-state.ts) — red for a member blocked
+    // on you or waiting for you, gold for working, amber for an API error retrying on its own (the
+    // tab strip renders that amber too; a red pip there was a false interrupt)
+    const kind = sectionPip(sec.ids.map((id) => sessions.get(id)?.status));
+    if (kind) {
+      const pip = el("span", "tab-group-pip" + (kind === "working" ? "" : " " + kind));
+      pip.title = SECTION_PIP_TITLE[kind];
       head.appendChild(pip);
     }
   }
@@ -4712,7 +4730,10 @@ function paintTabRowLines(bar: HTMLElement): void {
   for (const old of Array.from(bar.querySelectorAll(":scope > .tab-row-line"))) old.remove();
   const rows = new Map<number, number>();   // rowTop → rowBottom (max tab bottom in that row)
   for (const t of Array.from(bar.children) as HTMLElement[]) {
-    if (!t.classList.contains("tab")) continue;
+    // tabs, and the section headers + untagged separator (tab groups): a wrapped row made only of
+    // folded headers is a row too — without a line under it the headers sat directly on the tabs
+    // below, reading as captions for tabs that are not theirs (the T134 floating look, back)
+    if (!(t.classList.contains("tab") || t.classList.contains("tab-group-head") || t.classList.contains("tab-group-sep"))) continue;
     const top = t.offsetTop, bot = t.offsetTop + t.offsetHeight;
     rows.set(top, Math.max(rows.get(top) ?? 0, bot));
   }
@@ -4783,24 +4804,15 @@ function renderTabs() {
   // (tab-groups.ts owns the rule). A folded section renders its header alone, with the count and
   // a pip when a member is working or blocked, so the gist survives the fold (progressive
   // disclosure). The ACTIVE tab's section never renders folded — keyboard focus must never land
-  // on a hidden node — and visibleOrder() drops the folded ids so ←/→ skip them.
-  const tgState = readTabGroups();
-  const unions = viewTagUnion(effViews());
-  const sectioned = tgState.on && anySectioned(visibleIds, unions);
-  collapsedTabIds = new Set<string>();
-  const plan: Array<{ head: TabSection; collapsed: boolean } | { id: string }> = [];
-  if (sectioned) {
-    for (const sec of sectionTabs(visibleIds, unions)) {
-      const collapsed = sec.name !== null && isSectionCollapsed(tgState, sec.name) && !(activeId !== null && sec.ids.includes(activeId));
-      plan.push({ head: sec, collapsed });
-      if (collapsed) { for (const id of sec.ids) collapsedTabIds.add(id); continue; }
-      for (const id of sec.ids) plan.push({ id });
-    }
-  } else {
-    for (const id of visibleIds) plan.push({ id });
-  }
-  for (const item of plan) {
-    if ("head" in item) { bar.appendChild(makeGroupHead(item.head, item.collapsed)); continue; }
+  // on a hidden node — and visibleOrder() drops the folded ids so ←/→ skip them. DESKTOP ONLY: on
+  // the phone layout (phoneLayout — the kernel page's own media rule) the plan is the flat strip,
+  // since the phone's session list is scraped from every rendered tab and has no header to unfold.
+  // A create in flight (the provisional tab) sections under the tags its request named.
+  const plan = planStrip(visibleIds, viewTagUnion(effViews()), readTabGroups(), activeId, phoneLayout(),
+                         provisionalId ? { id: provisionalId, tags: provisionalTags } : null);
+  collapsedTabIds = plan.folded;
+  for (const item of plan.items) {
+    if ("head" in item) { bar.appendChild(makeGroupHead(item.head, item.folded)); continue; }
     const id = item.id;
     const s = sessions.get(id);
     if (!s) { bar.appendChild(makePlaceholderTab(id)); continue; }
@@ -4847,16 +4859,11 @@ function renderTabs() {
     }
     if (id === peekId) tab.classList.add("tab-peek");   // ephemeral peek — ghost/dashed dress (styles.css)
     const st = s.status.state;
-    if (st === "working") tab.classList.add("tab-working");
-    // "blocked" is an API error. An on-YOU one — "prompt is too long" (compact), a monthly spend cap (raise it,
-    // the user 2026-07-14), a spent model allowance (switch model, the user 2026-08-01), or a safeguards
-    // refusal (rewrite the ask, the user 2026-08-15) — is alarm-red dashed; a TRANSIENT API error is auto-retrying and needs no attention → the
-    // amber retrying treatment, not red (the user 2026-06-29).
-    else if (st === "blocked") tab.classList.add((s.status.apiTooLong || s.status.apiSpendLimit || s.status.apiModelLimit || s.status.apiAuthErr || s.status.apiRefusal) ? "tab-blocked" : "tab-retrying");
-    else if (st === "needsInput" || st === "awaiting") tab.classList.add("tab-awaiting");   // legacy name = an older remote kernel
-    else if (st === "retrying") tab.classList.add("tab-retrying");       // amber: soft-blocked on an API auto-retry
-    else if (st === "compacting" || st === "clearing") tab.classList.add("tab-compacting");   // both: a context op in flight
-    else if (st === "closed") tab.classList.add("tab-closed");       // dead session: read-only, struck-through label
+    // the state class — working gold, an on-YOU block alarm-red dashed vs a transient API error's
+    // amber auto-retry, awaiting, compacting, closed — is tab-state.ts's rule, shared with the
+    // folded section header's pip so the two can never disagree on what is red
+    const stateCls = tabStateClass(s.status);
+    if (stateCls) tab.classList.add(stateCls);
     if (s.status.faded) tab.classList.add("at-rest");
     // The FULL four-state pip language the feed's .fwork-dot and the sessions pane's .fl-workdot speak
     // (the user 2026-08-10, closing the strip's two-state gap): WORKING a gold dot; AWAITING-BG the same
@@ -4980,9 +4987,11 @@ function renderTabs() {
       },
       // "Group tabs by tag" (tab groups, the user 2026-09-04): the per-browser sectioned-strip
       // switch, at the foot beside Configure tags… — the write notifies and the strip re-renders.
-      // Desktop only: the phone page hides the strip itself, so its mount below offers no switch.
-      groupToggle: { label: "Group tabs by tag", on: () => readTabGroups().on,
-                     toggle: () => { const st = readTabGroups(); writeTabGroups({ ...st, on: !st.on }); } },
+      // Desktop only: the phone layout renders the flat strip (planStrip), so it offers no switch —
+      // neither here nor on the phone mount below.
+      ...(phoneLayout() ? {} : {
+        groupToggle: { label: "Group tabs by tag", on: () => readTabGroups().on,
+                       toggle: () => { const st = readTabGroups(); writeTabGroups({ ...st, on: !st.on }); } } }),
       onConfigure: () => { vscodeApi?.postMessage({ type: "openTagsDialog" }); },
     });
   });
@@ -5817,6 +5826,7 @@ function openProvisional(req: CreateReq): void {
   pendingNewSession = display;
   const id = mintProvisionalId(Date.now().toString(36) + Math.random().toString(36).slice(2));
   provisionalId = id;
+  provisionalTags = req.tags?.slice() ?? [];   // its future home: the strip sections it there from the first paint
   // state "opening", NOT "working": updateStatusline renders the working chip with an elapsed timer off
   // sinceEpoch, and a provisional tab has no honest work clock — the seed showed "Working" + a giant
   // number for however long the first kernel payload took (the user 2026-08-10, who read it as "a random
@@ -5842,6 +5852,7 @@ function openProvisional(req: CreateReq): void {
 function dropProvisional(): { queued: string[]; draft: string } {
   const id = provisionalId;
   provisionalId = null;
+  provisionalTags = [];
   pendingNewSession = null;
   if (provisionalTimer) { clearTimeout(provisionalTimer); provisionalTimer = undefined; }
   const queued = provisionalQueue.slice();
@@ -6070,12 +6081,32 @@ function requestSessionList(host: string): void {
 // sessionList reply carries authAvail (an older kernel never answers with one).
 let pickerAuthAvail: { login?: boolean; key?: boolean; acct?: string; default?: string } | null = null;
 
+// the picker's selected Backend chip — the Backend row alone (the Billing, Host and Tags rows wear the
+// same chip grammar, and a selected tag chip must never read as a backend)
+function pickerBackendChoice(): string {
+  const beSel = document.querySelector("#picker .picker-backend:not(.picker-host):not(.picker-auth):not(.picker-tags) .picker-be-opt.sel") as HTMLElement | null;
+  return beSel?.dataset.be || loadSettings().backend;
+}
+
+// the Tags row exists only for SDK sessions (tab groups, 2026-09-04): the kernel refuses tags on a
+// tmux create — a terminal session's id is unknown until it starts — so on the tmux pick the row stays
+// in place but disabled behind a short note, and the create handler sends no `tags`. Before this a
+// chip prefilled from a tagged active tab turned every terminal create into a refusal.
+function syncPickerTags(): void {
+  const wrap = document.querySelector("#picker .picker-tags") as HTMLElement | null;
+  if (!wrap) return;
+  const sdk = pickerBackendChoice() === "sdk";
+  wrap.classList.toggle("disabled", !sdk);
+  wrap.querySelectorAll<HTMLButtonElement>(".picker-be-opt").forEach((b) => { b.disabled = !sdk; });
+  const note = wrap.querySelector(".picker-tags-note") as HTMLElement | null;
+  if (note) note.style.display = sdk ? "none" : "";
+}
+
 function syncPickerAuth(): void {
   const wrap = document.querySelector("#picker .picker-auth") as HTMLElement | null;
   if (!wrap) return;
-  const beSel = document.querySelector("#picker .picker-backend:not(.picker-host):not(.picker-auth) .picker-be-opt.sel") as HTMLElement | null;
   const a = pickerAuthAvail;
-  const show = !pickMode && !!(a && (a.login || a.key)) && (beSel?.dataset.be || loadSettings().backend) === "sdk";
+  const show = !pickMode && !!(a && (a.login || a.key)) && pickerBackendChoice() === "sdk";
   wrap.style.display = show ? "" : "none";
   if (!show) return;
   const both = !!(a!.login && a!.key);
@@ -6364,8 +6395,8 @@ function openPicker(pick = false, prompt?: string, allowNew = false) {
     };
     beWrap.append(beLabel, mkBe("sdk", "SDK", "Runs via the Claude Agent SDK."),   // not "headless" — same full chat UI (the user 2026-07-12)
                   mkBe("tmux", "tmux", "Drives a real terminal pane (tmux)."));   // SDK first — the de-facto default (the user 2026-07-02)
-    // the billing row exists only for SDK sessions — re-decide on every backend toggle
-    beWrap.addEventListener("click", () => syncPickerAuth());
+    // the billing and Tags rows exist only for SDK sessions — re-decide on every backend toggle
+    beWrap.addEventListener("click", () => { syncPickerAuth(); syncPickerTags(); });
     // per-session BILLING row (the user 2026-08-08): Login | API key buttons when the selected host
     // offers both; with ONE real choice the same spot writes it out as plain text (the user
     // 2026-08-09) — see syncPickerAuth. Same segmented-toggle grammar as Backend above.
@@ -6388,10 +6419,16 @@ function openPicker(pick = false, prompt?: string, allowNew = false) {
     // VISIBLE and editable, never a silent inherit (the user's ruling): a session started beside the
     // one you are looking at joins its group unless you unpick it. Chips in the Backend row's
     // grammar, each toggling on its own (a session may hold several tags); rebuilt per open
-    // (openPicker below), hidden with no tags to offer and in pick-mode.
+    // (openPicker below), hidden with no tags to offer and in pick-mode. SDK sessions only: on the
+    // tmux pick the chips disable behind a note and no `tags` ride the create (syncPickerTags) — the
+    // kernel refuses tags on a terminal create, and a prefilled chip used to turn one into a refusal.
     const tgWrap = el("div", "picker-backend picker-tags");
     const tgLabel = el("span", "picker-backend-label"); tgLabel.textContent = "Tags";
     tgWrap.appendChild(tgLabel);
+    const tgNote = el("span", "picker-auth-fixed picker-tags-note");   // the Billing row's written-out text style
+    tgNote.textContent = "Tags apply to SDK sessions";
+    tgNote.style.display = "none";
+    tgWrap.appendChild(tgNote);
     // per-session HOST picker (federation, the user 2026-07-02): local | each attached SSH host — the new
     // session is created BY that host's kernel (over its tunnel) and appears prefixed `host:name`. The
     // options are rebuilt on every open (hosts attach/detach live); the row hides with no hosts attached.
@@ -6430,9 +6467,13 @@ function openPicker(pick = false, prompt?: string, allowNew = false) {
       // omits the field and the kernel's own default stands (the user 2026-08-08)
       const auth = pickerAuthChoice();
       // tags: the Tags row's selected chips (prefilled from the active tab, edited or not) ride the
-      // create as names; the owning kernel resolves them by name, minting a missing one like POST /tag
-      const tags = Array.from(tgWrap.querySelectorAll<HTMLElement>(".picker-be-opt.sel")).map((x) => x.dataset.tag || "").filter(Boolean);
-      startCreate({ name, backend: beSel?.dataset.be || loadSettings().backend,
+      // create as names; the owning kernel resolves them by name, minting a missing one like POST /tag.
+      // SDK sessions only — a tmux create carries none (the row is disabled for it; the kernel would refuse)
+      const backend = beSel?.dataset.be || loadSettings().backend;
+      const tags = backend === "sdk"
+        ? Array.from(tgWrap.querySelectorAll<HTMLElement>(".picker-be-opt.sel")).map((x) => x.dataset.tag || "").filter(Boolean)
+        : [];
+      startCreate({ name, backend,
                     dir: dirInput.value.trim(), host: hostSel, ...(auth ? { auth } : {}), ...(tags.length ? { tags } : {}) });
     });
     actions.appendChild(newSess);
@@ -6548,8 +6589,9 @@ function openPicker(pick = false, prompt?: string, allowNew = false) {
         ? `the session you are looking at is in ${u.name} — the new one joins it too unless you unpick this`
         : `put the new session in ${u.name}`;
       b.addEventListener("click", () => b.classList.toggle("sel"));   // multi-select: each chip on its own
-      tgWrapEl.appendChild(b);
+      tgWrapEl.insertBefore(b, tgWrapEl.querySelector(".picker-tags-note"));   // chips before the tmux note
     }
+    syncPickerTags();   // the backend toggle was just reset to the gear default above
   }
   applyBrowseState("");   // fresh open defaults back to local — enabled unless this kernel has no desktop
   const di = document.getElementById("picker-dir") as HTMLInputElement | null;
@@ -14141,11 +14183,14 @@ setupSettings();
     // focus to the body — so Enter afterward did nothing). Now focus the (rebuilt) active tab, so the model
     // is consistent: tab focused → Enter drops into the message box; Escape there returns to the tabs.
     select: (el) => { const id = el.dataset.id; if (id) { setActive(id); focusActiveTab(); } },
-    // a section header (tab groups): fold or open that group. The write notifies (TABGROUPS_EVENT)
-    // and the listener re-renders — one render path for a local toggle and a sibling pane's alike.
+    // a section header (tab groups): fold or open that group — the new state is the opposite of the
+    // one the header RENDERED (data-folded), never a toggle of the stored bit: the active tab's
+    // section renders open whatever the store says, so a stored toggle there inverted the click. The
+    // write notifies (TABGROUPS_EVENT) and the listener re-renders — one render path for a local
+    // toggle and a sibling pane's alike.
     "toggle-group": (el) => {
       const name = el.dataset.group;
-      if (name) writeTabGroups(toggleSectionCollapsed(readTabGroups(), name));
+      if (name) writeTabGroups(setSectionCollapsed(readTabGroups(), name, el.dataset.folded !== "1"));
     },
     close: (el) => {
       const id = el.dataset.id;

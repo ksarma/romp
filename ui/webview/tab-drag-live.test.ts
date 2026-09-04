@@ -44,6 +44,16 @@ test("the slot comes from the VIRTUAL layout — boundaries that cannot move und
   // strip's on every sectioned row
   assert.match(body, /const others = Array\.from\(tabs\.querySelectorAll<HTMLElement>\("\.tab\[data-id\], \.tab-group-head, \.tab-group-sep"\)\)\.filter\(\(t\) => t !== dragged\);/,
     "the dragged tab never participates in its own hit geometry");
+  // the boxes are measured by getBoundingClientRect, which excludes margins — so no strip member
+  // may carry a horizontal margin, or the virtual row holds more than the real one and the slot
+  // hops in a band at every wrap boundary (the separator's 6px gutters were margin: a 12px drift)
+  assert.match(body, /\?\? t\.getBoundingClientRect\(\)\.width \}\)\);/);
+  const sep = CSS.match(/^\.tab-group-sep \{[^}]*\}/m)![0];
+  assert.doesNotMatch(sep, /margin/, "the separator's gutters are padding inside a 13px box, so its rect IS its footprint");
+  assert.match(sep, /box-sizing: border-box; width: 13px; padding: 8px 6px;/);
+  assert.match(sep, /background-clip: content-box;/, "…and the 1px line is the content box");
+  const head = CSS.match(/^\.tab-group-head \{[^}]*\}/m)![0];
+  assert.doesNotMatch(head, /margin/, "headers carry no horizontal margin either");
   assert.match(body, /dragSlotIndex\(boxes, dragGeom\.containerW, dragGeom\.gapX, dragGeom\.rowH,/);
   assert.match(body, /if \(ref !== dragged && dragged\.nextElementSibling !== ref\)/,
     "already-in-place is a no-op, so a pointer resting in one slot never churns the DOM");

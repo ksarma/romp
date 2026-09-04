@@ -106,13 +106,62 @@ export function isSectionCollapsed(st: TabGroupsState, name: string): boolean {
   return DEFAULT_COLLAPSED.has(name);
 }
 
-export function toggleSectionCollapsed(st: TabGroupsState, name: string): TabGroupsState {
-  const folded = isSectionCollapsed(st, name);
+/** Set a section's fold state EXPLICITLY. The header's click passes the state it RENDERED, not the
+ *  stored one: the active tab's section renders open whatever the store says, and toggling the
+ *  stored bit there inverted the click — "fold" on a stored-folded, rendered-open `archived` stored
+ *  it OPEN for good, with nothing visible changing. Minimal storage: a name is listed only where it
+ *  differs from the default set. */
+export function setSectionCollapsed(st: TabGroupsState, name: string, folded: boolean): TabGroupsState {
   const collapsed = st.collapsed.filter((n) => n !== name);
   const expanded = st.expanded.filter((n) => n !== name);
-  if (folded) { if (DEFAULT_COLLAPSED.has(name)) expanded.push(name); }
-  else collapsed.push(name);
+  if (folded) { if (!DEFAULT_COLLAPSED.has(name)) collapsed.push(name); }
+  else if (DEFAULT_COLLAPSED.has(name)) expanded.push(name);
   return { on: st.on, collapsed, expanded };
+}
+
+export function toggleSectionCollapsed(st: TabGroupsState, name: string): TabGroupsState {
+  return setSectionCollapsed(st, name, !isSectionCollapsed(st, name));
+}
+
+/** One strip item: a section header (folded or open) or a tab. */
+export type StripItem = { head: TabSection; folded: boolean } | { id: string };
+export interface StripPlan {
+  items: StripItem[];
+  folded: Set<string>;   // the ids a folded header stands in for — keyboard cycling skips them
+  sectioned: boolean;
+}
+
+/** The strip PLAN render.ts paints, pure so the rule executes in node tests.
+ *  - `phone`: the kernel's phone chat page hides the strip and builds its own session list by scraping
+ *    every rendered tab; it has no header to unfold and no switch, so a folded section there made its
+ *    sessions unreachable (`archived` starts folded). Sectioning is DESKTOP-ONLY: on the phone layout
+ *    the plan is the flat strip, always — every visible id, nothing folded.
+ *  - `pending`: a provisional tab (a create in flight) with the tags the request named. Its future
+ *    home is the first of those in tagOrder — the kernel's own home-tag rule — so it renders there
+ *    from the first paint instead of landing in the untagged trail and jumping when the frame arrives.
+ *  - The ACTIVE tab's section never renders folded: keyboard focus must never land on a hidden node. */
+export function planStrip(visibleIds: readonly string[], unions: readonly TagUnion[], st: TabGroupsState,
+                          activeId: string | null, phone: boolean,
+                          pending?: { id: string; tags: readonly string[] } | null): StripPlan {
+  let u = unions;
+  if (pending && pending.tags.length && visibleIds.includes(pending.id)) {
+    u = unions.map((x) => (pending.tags.includes(x.name) && !x.members.includes(pending.id)
+      ? { ...x, members: [...x.members, pending.id] } : x));
+  }
+  const sectioned = !phone && st.on && anySectioned(visibleIds, u);
+  const items: StripItem[] = [];
+  const folded = new Set<string>();
+  if (!sectioned) {
+    for (const id of visibleIds) items.push({ id });
+    return { items, folded, sectioned };
+  }
+  for (const sec of sectionTabs(visibleIds, u)) {
+    const f = sec.name !== null && isSectionCollapsed(st, sec.name) && !(activeId !== null && sec.ids.includes(activeId));
+    items.push({ head: sec, folded: f });
+    if (f) { for (const id of sec.ids) folded.add(id); continue; }
+    for (const id of sec.ids) items.push({ id });
+  }
+  return { items, folded, sectioned };
 }
 
 /** The header drag: `from` takes `to`'s slot in the FULL union order (every name, not only the

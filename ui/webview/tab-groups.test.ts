@@ -10,13 +10,15 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { viewTagUnion } from "./session-views";
 import { sectionTabs, anySectioned, homeTag, parseTabGroups, readTabGroups, writeTabGroups, isSectionCollapsed,
-         toggleSectionCollapsed, reorderTagOrder, applyTagOrder, TABGROUPS_KEY, DEFAULT_COLLAPSED } from "./tab-groups";
+         toggleSectionCollapsed, setSectionCollapsed, planStrip, reorderTagOrder, applyTagOrder, TABGROUPS_KEY,
+         DEFAULT_COLLAPSED } from "./tab-groups";
 
 const ui = (...p: string[]) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", ...p), "utf8");
 const RENDER = ui("webview", "render.ts");
 const CSS = ui("webview", "styles.css");
 const MENU = ui("webview", "tag-menu.ts");
 const VIEWS = ui("webview", "session-views.ts");
+const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kernel.py"), "utf8");
 
 // the notes-api demo world: web + api in "infra", tests in "qa", a loose one; api ALSO in qa
 const V = {
@@ -110,32 +112,138 @@ test("executed: applyTagOrder writes tagOrder AND re-sorts the local tags array 
 });
 
 test("the strip renders sections when the switch is on and some tag holds a visible tab (source pins)", () => {
-  assert.match(RENDER, /const sectioned = tgState\.on && anySectioned\(visibleIds, unions\);/);
-  assert.match(RENDER, /for \(const sec of sectionTabs\(visibleIds, unions\)\)/, "the pure module owns the rule");
-  assert.match(RENDER, /if \("head" in item\) \{ bar\.appendChild\(makeGroupHead\(item\.head, item\.collapsed\)\); continue; \}/);
-  // flat strip when off / untagged: the same ids, no headers
-  assert.match(RENDER, /\} else \{\s*\n\s*for \(const id of visibleIds\) plan\.push\(\{ id \}\);/);
+  assert.match(RENDER, /const plan = planStrip\(visibleIds, viewTagUnion\(effViews\(\)\), readTabGroups\(\), activeId, phoneLayout\(\),/,
+    "the pure module owns the rule; the phone layout and the create in flight are its inputs");
+  assert.match(RENDER, /collapsedTabIds = plan\.folded;/);
+  assert.match(RENDER, /if \("head" in item\) \{ bar\.appendChild\(makeGroupHead\(item\.head, item\.folded\)\); continue; \}/);
 });
 
-test("a folded section renders its header alone with a count + one pip; the ACTIVE tab's section never folds; cycling skips folded ids", () => {
-  assert.match(RENDER, /const collapsed = sec\.name !== null && isSectionCollapsed\(tgState, sec\.name\) && !\(activeId !== null && sec\.ids\.includes\(activeId\)\);/,
-    "auto-expand on activate — keyboard focus can never land on a hidden node");
-  assert.match(RENDER, /if \(collapsed\) \{ for \(const id of sec\.ids\) collapsedTabIds\.add\(id\); continue; \}/);
+test("executed: planStrip — sections + folds; the flat strip when off or untagged; the ACTIVE tab's section never folds", () => {
+  const unions = viewTagUnion({ ...V, tags: [...V.tags, { id: "g4", name: "archived", color: "#6b7280", members: ["old1", "old2"] }] });
+  const st = parseTabGroups(null);
+  const p = planStrip(["web", "old1", "loose", "old2"], unions, st, "web", false);
+  assert.equal(p.sectioned, true);
+  assert.deepEqual(p.items, [
+    { head: { name: "infra", color: "#4EC9B0", ids: ["web"] }, folded: false }, { id: "web" },
+    { head: { name: "archived", color: "#6b7280", ids: ["old1", "old2"] }, folded: true },
+    { head: { name: null, color: "", ids: ["loose"] }, folded: false }, { id: "loose" },
+  ], "archived starts folded: its header alone stands in for old1/old2");
+  assert.deepEqual([...p.folded], ["old1", "old2"], "the ids keyboard cycling skips");
+  const active = planStrip(["web", "old1", "loose"], unions, st, "old1", false);
+  assert.equal((active.items[2] as { folded: boolean }).folded, false, "the active tab's section renders open whatever the store says");
+  assert.deepEqual([...active.folded], []);
+  const off = planStrip(["web", "old1"], unions, { ...st, on: false }, null, false);
+  assert.deepEqual(off.items, [{ id: "web" }, { id: "old1" }], "switch off: the flat strip");
+  assert.equal(off.sectioned, false);
+  assert.deepEqual(planStrip(["loose"], unions, st, null, false).items, [{ id: "loose" }], "an untagged world: flat");
+});
+
+test("executed: the PHONE layout renders the flat strip — every visible id, nothing folded, whatever the store says (sectioning is desktop-only)", () => {
+  // the kernel's phone chat page hides #tabs and builds its session list by scraping every rendered
+  // tab; it has no header to unfold and no switch, so a folded section there (archived, by default)
+  // made its sessions unreachable from the only switcher
+  const unions = viewTagUnion({ ...V, tags: [...V.tags, { id: "g4", name: "archived", color: "#6b7280", members: ["old1", "old2"] }] });
+  for (const st of [parseTabGroups(null), { on: true, collapsed: ["infra", "qa"], expanded: [] }]) {
+    const p = planStrip(["web", "old1", "loose", "old2", "tests"], unions, st, null, true);
+    assert.equal(p.sectioned, false);
+    assert.deepEqual(p.items, [{ id: "web" }, { id: "old1" }, { id: "loose" }, { id: "old2" }, { id: "tests" }], "the flat strip, in strip order");
+    assert.deepEqual([...p.folded], [], "visibleOrder excludes nothing on the phone");
+  }
+  // render.ts decides "phone" by the SAME media rule the kernel's page uses to swap the strip for its
+  // list (_CHAT_MOBILE_CSS) — one string on each side, pinned equal here, so they cannot drift
+  const media = RENDER.match(/const PHONE_LAYOUT_MEDIA = "([^"]+)";/)![1];
+  assert.equal(media, "(pointer:coarse) and (max-width:1024px)");
+  assert.ok(KERNEL.includes('"@media ' + media + '{"'), "the kernel's phone CSS gate is the very same rule");
+  assert.match(RENDER, /function phoneLayout\(\): boolean \{\s*\n\s*try \{ return window\.matchMedia\(PHONE_LAYOUT_MEDIA\)\.matches; \} catch \{ return false; \}/);
+  // …and the phone layout offers no switch, on either mount
+  assert.match(RENDER, /\.\.\.\(phoneLayout\(\) \? \{\} : \{\s*\n\s*groupToggle: \{ label: "Group tabs by tag"/);
+});
+
+test("executed: a create in flight sections under the FIRST requested tag in tagOrder — its future home — from the first paint", () => {
+  // the kernel tags a new session before its first push so the tab never lands untagged and jumps;
+  // the client's provisional tab used to land in the untagged trail (a client-minted id in no
+  // union) and move into its group when the frame arrived — the very jump the kernel avoids
+  const unions = viewTagUnion(V);
+  const st = parseTabGroups(null);
+  const p = planStrip(["web", "prov1", "loose"], unions, st, "prov1", false, { id: "prov1", tags: ["infra", "qa"] });
+  assert.deepEqual(p.items.map((i) => ("head" in i ? "#" + i.head.name : i.id)), ["#qa", "prov1", "#infra", "web", "#null", "loose"],
+    "qa is first in tagOrder of the requested tags → qa is its home (the kernel's own home-tag rule)");
+  const none = planStrip(["web", "prov1"], unions, st, "prov1", false, { id: "prov1", tags: [] });
+  assert.deepEqual(none.items.map((i) => ("head" in i ? "#" + i.head.name : i.id)), ["#infra", "web", "#null", "prov1"], "no tags asked → the untagged trail");
+  assert.deepEqual(V.tags.map((t) => t.members), [["tests", "api"], ["web", "api"], []], "the unions themselves are untouched");
+  assert.match(RENDER, /provisionalTags = req\.tags\?\.slice\(\) \?\? \[\];/, "openProvisional keeps the request's tags…");
+  assert.match(RENDER, /provisionalId \? \{ id: provisionalId, tags: provisionalTags \} : null\);/, "…and the plan sections the provisional under them");
+  const drop = RENDER.slice(RENDER.indexOf("function dropProvisional("), RENDER.indexOf("function adoptProvisional("));
+  assert.match(drop, /provisionalTags = \[\];/, "retired with the provisional");
+});
+
+test("executed: the header click sets the fold state from what it RENDERED — never a toggle of the stored bit", () => {
+  // the active tab's section renders open whatever the store says; a stored toggle there inverted
+  // the click: "fold" on default-folded archived (rendered open for the active tab) stored it OPEN
+  // for good, and nothing visible changed
+  const d = parseTabGroups(null);
+  // archived: stored folded, rendered OPEN (active tab inside) → the click says "fold" → still folded, stored minimally
+  assert.deepEqual(setSectionCollapsed(d, "archived", true), { on: true, collapsed: [], expanded: [] });
+  assert.equal(isSectionCollapsed(setSectionCollapsed(d, "archived", true), "archived"), true);
+  assert.deepEqual(toggleSectionCollapsed(d, "archived"), { on: true, collapsed: [], expanded: ["archived"] },
+    "…where the stored toggle would have OPENED it");
+  // infra folded by the user, then rendered open (active tab inside), click "fold" → stays folded
+  const folded = setSectionCollapsed(d, "infra", true);
+  assert.deepEqual(setSectionCollapsed(folded, "infra", true), folded);
+  assert.deepEqual(setSectionCollapsed(folded, "infra", false), d, "and a rendered-folded click opens it");
+  assert.deepEqual(setSectionCollapsed(setSectionCollapsed(d, "archived", false), "archived", true), d, "re-folding a default-folded section drops the memory");
+  // the header carries its rendered state; the delegate reads it
+  const head = RENDER.slice(RENDER.indexOf("function makeGroupHead("), RENDER.indexOf("function sectionHeadOf("));
+  assert.match(head, /head\.dataset\.folded = collapsed \? "1" : "0";/);
+  assert.match(RENDER, /if \(name\) writeTabGroups\(setSectionCollapsed\(readTabGroups\(\), name, el\.dataset\.folded !== "1"\)\);/,
+    "rendered open → fold; rendered folded → open");
+});
+
+test("a folded section renders its header alone with a count + one pip by the TAB's state rule; cycling skips folded ids", () => {
   assert.match(RENDER, /function visibleOrder\(\): string\[\] \{ return order\.filter\(\(id\) => tabInView\(id\) && !collapsedTabIds\.has\(id\)\); \}/,
     "every cycling path walks visibleOrder (session-views.test pins the three callers)");
   const head = RENDER.slice(RENDER.indexOf("function makeGroupHead("), RENDER.indexOf("function sectionHeadOf("));
   assert.match(head, /n\.textContent = String\(sec\.ids\.length\);/, "the count");
-  assert.match(head, /el\("span", "tab-group-pip" \+ \(blocked \? " blocked" : ""\)\)/, "one summary pip: working, or red for blocked/waiting");
+  assert.match(head, /const kind = sectionPip\(sec\.ids\.map\(\(id\) => sessions\.get\(id\)\?\.status\)\);/,
+    "one summary pip, classified by tab-state.ts — the same rule the tab itself wears (tab-state.test)");
+  assert.match(head, /pip\.title = SECTION_PIP_TITLE\[kind\];/);
   assert.ok(!head.includes('"tab-dot"'), "never a .tab-dot — the kernel's mobile scrape keys on the tab pips' vocabulary");
   assert.match(head, /const sep = el\("div", "tab-group-sep"\);/, "the untagged trail is UNLABELED (the ruling): a separator, not a header");
+  // the tab's own class comes from the same function
+  assert.match(RENDER, /const stateCls = tabStateClass\(s\.status\);\s*\n\s*if \(stateCls\) tab\.classList\.add\(stateCls\);/);
+  assert.match(CSS, /\.tab-group-pip\.retrying \{ background: #e67e22; \}/, "amber, the tab's .tab-retrying hue");
+});
+
+test("row hairlines count section headers and the separator as row members (T134's floating look must not return)", () => {
+  // a wrapped row made only of folded headers got no line: the painter grouped `.tab` children only
+  const painter = RENDER.slice(RENDER.indexOf("function paintTabRowLines("), RENDER.indexOf("let tabRowObserver"));
+  assert.match(painter, /if \(!\(t\.classList\.contains\("tab"\) \|\| t\.classList\.contains\("tab-group-head"\) \|\| t\.classList\.contains\("tab-group-sep"\)\)\) continue;/);
+  // the separator's offsetTop is the row's: gutters are padding, not margin (see the drag-live pin)
+  assert.match(CSS, /\.tab-group-sep \{ flex: 0 0 auto; box-sizing: border-box; width: 13px; padding: 8px 6px; background: var\(--box-border\); background-clip: content-box; \}/);
+});
+
+test("the picker's Tags row is for SDK sessions: disabled behind a note on the tmux pick, and no `tags` ride a tmux create", () => {
+  // the kernel refuses tags on a tmux create (a terminal session's id is unknown until it starts);
+  // the row, prefilled from a tagged active tab, used to turn every terminal create into a refusal
+  const sync = RENDER.slice(RENDER.indexOf("function syncPickerTags("), RENDER.indexOf("function syncPickerAuth("));
+  assert.match(sync, /const sdk = pickerBackendChoice\(\) === "sdk";/);
+  assert.match(sync, /wrap\.classList\.toggle\("disabled", !sdk\);/);
+  assert.match(sync, /\.forEach\(\(b\) => \{ b\.disabled = !sdk; \}\);/);
+  assert.match(sync, /note\.style\.display = sdk \? "none" : "";/);
+  assert.match(RENDER, /tgNote\.textContent = "Tags apply to SDK sessions";/);
+  assert.match(RENDER, /beWrap\.addEventListener\("click", \(\) => \{ syncPickerAuth\(\); syncPickerTags\(\); \}\);/, "re-decided on every backend toggle");
+  assert.match(RENDER, /syncPickerTags\(\);\s+\/\/ the backend toggle was just reset/, "…and on every open, after the backend reset");
+  assert.match(RENDER, /const tags = backend === "sdk"\s*\n\s*\? Array\.from\(tgWrap\.querySelectorAll<HTMLElement>\("\.picker-be-opt\.sel"\)\)/, "the create handler sends none for tmux");
+  assert.match(RENDER, /:not\(\.picker-host\):not\(\.picker-auth\):not\(\.picker-tags\) \.picker-be-opt\.sel/, "a selected tag chip never reads as the backend pick");
+  assert.match(CSS, /\.picker-tags\.disabled \.picker-be-opt \{ opacity: 0\.45; cursor: default; pointer-events: none; \}/);
 });
 
 test("headers are click-safe: data-act on the node, the action on the stable #tabs delegate, one render path via the event", () => {
   assert.match(RENDER, /head\.dataset\.act = "toggle-group";/);
-  assert.match(RENDER, /"toggle-group": \(el\) => \{\s*\n\s*const name = el\.dataset\.group;\s*\n\s*if \(name\) writeTabGroups\(toggleSectionCollapsed\(readTabGroups\(\), name\)\);/);
+  assert.match(RENDER, /"toggle-group": \(el\) => \{\s*\n\s*const name = el\.dataset\.group;\s*\n\s*if \(name\) writeTabGroups\(setSectionCollapsed\(readTabGroups\(\), name, el\.dataset\.folded !== "1"\)\);/);
   assert.match(RENDER, /window\.addEventListener\(TABGROUPS_EVENT, \(\) => renderTabs\(\)\);/, "the same-window delivery");
   assert.match(RENDER, /window\.addEventListener\("storage", \(e\) => \{ if \(e\.key === TABGROUPS_KEY\) renderTabs\(\); \}\);/, "…and a sibling pane's");
-  assert.match(RENDER, /if \(name\) writeTabGroups\(toggleSectionCollapsed/);
+  assert.match(RENDER, /if \(name\) writeTabGroups\(setSectionCollapsed/);
   assert.doesNotMatch(RENDER.slice(RENDER.indexOf('"toggle-group": (el) => {'), RENDER.indexOf('"toggle-group": (el) => {') + 300), /renderTabs\(\)/,
     "the toggle does not render itself — the event does, so a local toggle and a sibling pane's take one path");
 });
@@ -180,5 +288,5 @@ test("the section chrome reuses the strip's type sizes — labels match labels (
   assert.match(CSS, /\.tab-group-count \{ font-size: 0\.82em; opacity: 0\.7; \}/, "the count at the sub-line size every menu uses");
   assert.match(CSS, /\.tab-group-dot \{ flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%;/, "the tab pip's 7px dot");
   assert.match(CSS, /\.tab-group-pip\.blocked \{ background: var\(--st-blocked-bg\); \}/, "status colours keep their meaning");
-  assert.match(CSS, /\.tab-group-sep \{ flex: 0 0 auto; width: 1px;/);
+  assert.match(CSS, /\.tab-group-sep \{ flex: 0 0 auto; box-sizing: border-box; width: 13px; padding: 8px 6px;/, "a 1px line inside 6px gutters (padding, so its rect is its footprint)");
 });

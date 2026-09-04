@@ -415,7 +415,12 @@ body.tabbar-resizing { cursor: ns-resize; user-select: none; }
 .tab-group-count { font-size: 0.82em; opacity: 0.7; }
 .tab-group-pip { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; background: var(--st-working-bg); }
 .tab-group-pip.blocked { background: var(--st-blocked-bg); }
-.tab-group-sep { flex: 0 0 auto; width: 1px; margin: 8px 6px; background: var(--box-border); }
+.tab-group-pip.retrying { background: #e67e22; }   /* the tab's own amber (.tab.tab-retrying): an API error retrying on its own */
+/* the separator's 6px gutters are PADDING, not margin, and the 1px line is the content box: its box
+   is then the full 13px it occupies in the row, so the tab drag's virtual layout (which measures
+   getBoundingClientRect widths) wraps where the real strip wraps, and paintTabRowLines reads its
+   offsetTop as the row's. */
+.tab-group-sep { flex: 0 0 auto; box-sizing: border-box; width: 13px; padding: 8px 6px; background: var(--box-border); background-clip: content-box; }
 .tab-usertodo { flex: 0 0 auto; color: rgba(255, 255, 255, 0.75); font-size: 10px; line-height: 1; }
 /* Vertical context gauge right of the name (the user 2026-08-08): the statusline battery rotated
    upright — fills bottom-up with the context-used %, in the SAME global-colormap colour (fill set
@@ -2572,6 +2577,8 @@ body.picker-lifted > #picker.kb-tight { align-items: flex-start; padding: 12px 1
    tag's identity dot; several may be selected — a session can hold several tags */
 .picker-tags { flex-wrap: wrap; }
 .picker-tag-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; vertical-align: middle; }
+/* the tmux pick: the chips stay in place, disabled, behind the note (tags apply to SDK sessions) */
+.picker-tags.disabled .picker-be-opt { opacity: 0.45; cursor: default; pointer-events: none; }
 .picker-list { overflow-y: auto; }
 /* The resume list's heading (the user 2026-08-12): the list sits LAST in the dialog — typing in the
    name box re-filters it, and its changing height used to jump every control below it — so this line
