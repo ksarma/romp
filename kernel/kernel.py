@@ -26909,6 +26909,8 @@ def _new_ws_client(app, wid, sock, lock=None, q=None, start_sender=True):
     lock = lock if lock is not None else threading.Lock()
     now = _ws_clock()
     client = {"app": app, "wid": wid, "alive": True, "qbytes": 0, "qlock": threading.Lock(),
+              "dlock": threading.RLock(),   # serializes _send_slot per client: the handler's connect push and the
+              #                               pusher both send slots to one client (see _send_slot)
               "sock": sock, "since": now, "lastIn": now, "pingAt": None,
               "inRead": True}      # False while the handler thread is inside a dispatch (see _keepalive_all)
     client["send"] = _mk_ws_send(q, sock, client)
@@ -27035,8 +27037,8 @@ def _ws_recv_message(rfile, on_ping, on_pong=None):
     (a multi-MB base64 message) dissolved into one unparseable JSON prefix plus a train of silently
     dropped continuation frames, so the 📎 pick looked like it did nothing (the user 2026-08-10,
     Chrome on a phone; small desktop files sat under the threshold, which is why it never surfaced).
-    Control frames may interleave between fragments: pings are answered via on_ping, pongs are
-    dropped, close ends the read."""
+    Control frames may interleave between fragments: pings are answered via on_ping, pongs go to
+    on_pong (the liveness beat's answer) or are dropped without one, close ends the read."""
     frag_op, frag = None, None
     while True:
         op, payload, fin = _ws_recv(rfile)
@@ -27108,6 +27110,10 @@ def _keepalive_all(now=None):
         # LIVENESS (2026-09-03): a ping whose pong never came within WS_DEAD_S means the peer is gone —
         # however open the forwarder in between keeps the socket. Clients from before the factory (no
         # `sock`) are never judged: they cannot be shut down, and they cannot have been pinged.
+        in_read = c.get("inRead", True)          # read BEFORE the stamp: the handler ends a dispatch by clearing pingAt
+        #                                          and THEN setting inRead — read the other way round, a beat between
+        #                                          those two writes paired a stale ping with a fresh read state and
+        #                                          dropped a live peer (review find, 2026-09-04)
         pa = c.get("pingAt")                     # any pong or message clears this (see _note_ws_inbound), so an
         if pa is not None and c.get("sock") is not None and (now - pa) >= WS_DEAD_S:   # outstanding ping IS the silence…
             why = None
@@ -27115,7 +27121,7 @@ def _keepalive_all(now=None):
             # tab synchronously on that thread — tens of seconds on a cold kernel) the pong sits unread in
             # the receive buffer: unread is not missing. The handler resets the clock when it re-enters the
             # read (review 2026-09-03).
-            if not c.get("inRead", True):
+            if not in_read:
                 pass
             else:
                 # …and never a peer that is still DRAINING: sendall returning means the ping entered the socket,
@@ -27397,17 +27403,44 @@ def _dedup_sig(msg, s):
     return s
 
 
+def _client_lock(c):
+    """The client's slot lock (see _send_slot): made once by _new_ws_client; a client dict made without one (a
+    test, an older caller) gets one here. `get` first — setdefault would build and discard an RLock per call,
+    and _send_client runs per slot per client per cycle."""
+    lk = c.get("dlock")
+    return lk if lk is not None else c.setdefault("dlock", threading.RLock())
+
+
+def _client_reset_chat_sid(client, sid):
+    """needFull's per-sid half of _client_reset_chat_base: forget the tail we believe this client holds for ONE
+    session and drop its dedup slot — under the client's slot lock, for the same reason (review find,
+    2026-09-04): the pusher's _send_chat must land as a whole before or after these pops, or a tail decided
+    before them lands after them, echat is written back, and the repair push sends a chatTail the renderer
+    cannot apply (render.ts latches awaitingFull until a full session lands: the tab froze until reconnect)."""
+    with _client_lock(client):
+        client.get("echat", {}).pop(sid, None)
+        client.get("sent", {}).pop(("chat", sid), None)
+
+
 def _client_reset_chat_base(client):
     """Forget every session tail we believe this client holds. Both suppressors must go: the echat
     entries (their absence is what routes _send_chat down its full-session path) AND the ("chat", sid)
     dedup slots (_DEDUP_REPOST_S would otherwise eat the re-send as unchanged for 60s). The needFull
     handler does this per-sid; `ready` does it for the whole client — a renderer that just evaluated
     holds NOTHING, whatever this socket was sent before its listener existed (the stuck-« opening … »
-    class, the user 2026-09-02)."""
-    client.get("echat", {}).clear()
-    snt = client.get("sent", {})
-    for k in [k for k in snt if isinstance(k, tuple) and k and k[0] == "chat"]:
-        snt.pop(k, None)
+    class, the user 2026-09-02).
+    Under the client's slot lock (2026-09-04): this runs on the handler thread while the pusher's
+    _send_client inserts keys into the same `sent` dict — unserialized, the comprehension below raised
+    "dictionary changed size during iteration" (reproduced 161/200 runs at the default switch interval,
+    rarer live), the `ready` dispatch died in the handler's generic except, and the _push_one repair this
+    exists for was skipped for that pane, once per renderer life. The same lock serializes the two — and
+    _send_chat holds it across its read-decide-send-write, so a pusher chat send lands as a whole either
+    before the reset (its slot and tail entry are cleared, _push_one re-sends) or after it."""
+    with _client_lock(client):
+        client.get("echat", {}).clear()
+        snt = client.get("sent", {})
+        for k in [k for k in snt if isinstance(k, tuple) and k and k[0] == "chat"]:
+            snt.pop(k, None)
 
 
 # View deltas (2026-09-03). The timeline's bars and the feed used to cross the wire WHOLE on every change —
@@ -27432,6 +27465,7 @@ _DELTA_SLOTS = {
 _DELTA_SEP = "\u001f"          # joins composite keys; never appears in an id or a sid
 _DELTA_MAX_FRACTION = 0.6      # a delta this large a fraction of the full payload is sent as the full instead
 _delta_parts_cache = {}        # frame type -> (payload object identity, parts) — one split per BUILD, shared by clients
+_delta_unkeyable_said = set()  # (frame type, why) already written to stderr: an unkeyable shape is said once, not per cycle
 
 
 def _delta_key(kind, it, prefix=""):
@@ -27479,6 +27513,12 @@ def _delta_split(kind, value):
                 continue
             for it in lst:
                 put(_delta_key(kind, it, pre), it, pre)
+    else:
+        # a value the kind cannot key (None where a list belongs, a list where a dict does): NOT zero entries —
+        # that split carried the value nowhere, and the client kept its assembled [] / {} while the kernel held
+        # something else, with no resync ever asked (review find, 2026-09-04). Unkeyable → the whole frame goes.
+        raise ValueError("%s collection is a %s, not a %s" % (
+            kind, type(value).__name__, "dict" if kind == "dict" or kind.startswith("dictlist:") else "list"))
     return ents, order
 
 
@@ -27489,9 +27529,17 @@ def _delta_parts(ftype, payload):
         return hit[1]
     kinds = _DELTA_SLOTS[ftype][1]
     try:
-        colls = {name: _delta_split(kind, payload.get(name)) for name, kind in kinds.items()}
-    except ValueError:
+        colls = {}
+        for name, kind in kinds.items():
+            try:
+                colls[name] = _delta_split(kind, payload.get(name))
+            except ValueError as e:
+                raise ValueError("%s: %s" % (name, e)) from None     # name the collection for the log line
+    except ValueError as e:
         parts = None                                   # a payload the protocol cannot key: this build goes whole
+        if (ftype, str(e)) not in _delta_unkeyable_said:   # …and says so once: a silent whole is a silent perf loss
+            _delta_unkeyable_said.add((ftype, str(e)))
+            sys.stderr.write("view-delta %s: payload cannot be keyed (%s); sending whole frames\n" % (ftype, e))
     else:
         rest = {kk: v for kk, v in payload.items() if kk not in kinds}
         rest_sig = json.dumps({kk: v for kk, v in rest.items() if kk not in _DEDUP_VOLATILE}, sort_keys=True, default=str)
@@ -27536,7 +27584,19 @@ def _order_shape(kind, order):
 def _send_slot(c, ftype, payload, pre, sig):
     """Send a bars/feed payload to one client: whole for a client without delta support (exactly as before),
     else as a delta against what that client holds. `pre`/`sig` are the shared full serialization and
-    dedup signature the pusher computed once per build."""
+    dedup signature the pusher computed once per build.
+    One thread at a time per client (review find, 2026-09-04): the socket handler's connect push (`ready` →
+    _push_one, on the handler thread) and the pusher's cycle both reach here for the same client, and both
+    read and write its held delta state. Unserialized, one interleaving — both find nothing held, a rebuild
+    lands between them, the handler's dedup slot is written first but its bytes go second — left the client
+    holding payload A while the kernel believed B, and every later delta was computed against B: silent
+    divergence until the next full. Before deltas the same race touched only the dedup dict, where a double
+    full was harmless. Re-entrant: the size fallback in _send_slot_delta calls back in on the same thread."""
+    with _client_lock(c):                             # one per client, made by _new_ws_client
+        _send_slot_locked(c, ftype, payload, pre, sig)
+
+
+def _send_slot_locked(c, ftype, payload, pre, sig):
     key = _DELTA_SLOTS[ftype][0]
     if not c.get("delta"):
         _send_client(c, key, payload, pre=pre, sig=sig)
@@ -27653,17 +27713,18 @@ def _send_client(c, key, msg, pre=None, sig=None):
     WebSocket client; the log makes the next one obvious."""
     s = pre if pre is not None else json.dumps(msg)
     sig = sig if sig is not None else _dedup_sig(msg, s)
-    prev = c.setdefault("sent", {}).get(key)
-    now = time.time()
-    if prev is not None and prev[0] == sig and (now - prev[1]) < _DEDUP_REPOST_S:
-        _perf("send", slot=_perf_slot(key), bytes=len(s), deduped=1)
-        return
-    c["sent"][key] = (sig, now)
-    _perf("send", slot=_perf_slot(key), bytes=len(s), deduped=0)
-    try:
-        c["send"](s)
-    except Exception:
-        c["alive"] = False
+    with _client_lock(c):    # the dedup dict is shared with the handler thread's `ready`
+        prev = c.setdefault("sent", {}).get(key)      # reset (_client_reset_chat_base) — one writer at a time
+        now = time.time()
+        if prev is not None and prev[0] == sig and (now - prev[1]) < _DEDUP_REPOST_S:
+            _perf("send", slot=_perf_slot(key), bytes=len(s), deduped=1)
+            return
+        c["sent"][key] = (sig, now)
+        _perf("send", slot=_perf_slot(key), bytes=len(s), deduped=0)
+        try:
+            c["send"](s)                              # enqueue only (never blocks): the lock is held for microseconds
+        except Exception:
+            c["alive"] = False
 
 
 def _send_chat(c, m, ms, change_from, led_changed):
@@ -27682,7 +27743,19 @@ def _send_chat(c, m, ms, change_from, led_changed):
     `ms` is the payload's full serialization, LAZY (the 2026-08-10 CPU fix, round two): None until some
     client actually takes the untrimmed full-send branch — the only consumer — at which point it is
     materialized ONCE and RETURNED, so the caller can hand it to the next client and keep it in the build
-    cache. The steady-state delta path never serializes the whole payload at all."""
+    cache. The steady-state delta path never serializes the whole payload at all.
+
+    Under the client's slot lock, read-decide-send-write as one step (2026-09-04): the handler thread's
+    `ready` reset (_client_reset_chat_base) clears echat and the dedup slots so its connect push sends the
+    full session to a renderer that holds nothing. With only the inner _send_client locked, a pusher send
+    DECIDED before the reset (pc read, tail branch chosen) could land after it — the popped slot let the
+    tail through and the write-back re-populated echat — and the connect push then found a held tail and
+    sent a chatTail the renderer had to refuse (needFull) and repair on a second round trip."""
+    with _client_lock(c):
+        return _send_chat_locked(c, m, ms, change_from, led_changed)
+
+
+def _send_chat_locked(c, m, ms, change_from, led_changed):
     sid = m["id"]
     evs = m.get("events") or []
     total = len(evs)
@@ -30199,7 +30272,8 @@ ws.onerror=function(){try{ws.close();}catch(e){}};}
 function send(m){var s=JSON.stringify(m);if(ws&&ws.readyState===1)ws.send(s);else queue.push(s);}
 // The delta reassembler. DELTA_KINDS mirrors the kernel's _DELTA_SLOTS: which top-level collections of each
 // slot are keyed, and how — "dict" (an object keyed by its own keys), "byid" (a list keyed by item id),
-// "bysid" (a list grouped by item sid, one entry per group). LAST holds, per slot, the revision, the last
+// "bykeys:a,b" (a list keyed by a composite of item fields), "dictlist:id" (an object of lists, each item keyed by its
+// lane and id). LAST holds, per slot, the revision, the last
 // full message handed to the bundle, and per-collection maps {order:[keys], items:{key:value}}. A delta
 // builds a NEW message object (the bundle may still hold the previous one) reusing every unchanged part.
 var DELTA_KINDS={bars:{turns:"dictlist:id",judging:"bykeys:sid,t,judge,t1",messages:"byid"},feed:{asks:"byid:itemId"}};var LAST={};var SEP="\u001f";
@@ -35479,8 +35553,7 @@ class Handler(BaseHTTPRequestHandler):
             # whole session (_send_chat's full path fires when echat has no entry for the sid) and the
             # delta stream re-bases from there. Per-CLIENT, so one stale pane never re-sends for the rest.
             sid = str(msg["id"])
-            client.get("echat", {}).pop(sid, None)
-            client.get("sent", {}).pop(("chat", sid), None)   # …and drop the dedup slot, so the full send lands
+            _client_reset_chat_sid(client, sid)               # …and drop the dedup slot, so the full send lands
             self._push_one(client)                            # repair NOW, not on the next 0.5-3s tick
             return
         if msg and msg.get("type") == "loadOlder" and msg.get("id"):

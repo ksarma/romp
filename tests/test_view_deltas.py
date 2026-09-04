@@ -18,7 +18,11 @@ import subprocess
 import tempfile
 import time
 import unittest
+import io
+import threading
+from contextlib import redirect_stderr
 from importlib.machinery import SourceFileLoader
+from unittest import mock
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "bin")
@@ -487,6 +491,263 @@ process.stdout.write(JSON.stringify({refused:r===null,rev:LAST.bars.rev}));"""
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(json.loads(r.stdout), {"refused": True, "rev": 0}, "a base mismatch is refused and nothing moves")
 
+class TwoThreadsOneClient(unittest.TestCase):
+    """The socket handler's connect push (`ready` runs _push_one on the handler thread) and the pusher's cycle
+    both reach _send_slot for the same client, and both read and write that client's held delta state.
+    Review find (2026-09-04): unserialized, one interleaving — both see nothing held, a rebuild lands between
+    them, the handler's dedup slot is written first but its bytes go second — left the client holding payload
+    A while the kernel believed B, and every later delta was computed against B: silent divergence until the
+    next full. The pre-PR race was on the stateless dedup dict alone, where a double full was harmless."""
+
+    def setUp(self):
+        km._delta_parts_cache.clear()
+        km._delta_unkeyable_said.clear()      # the said-once latch is module-global: each test starts unsaid
+        self._frac = km._DELTA_MAX_FRACTION
+        km._DELTA_MAX_FRACTION = 10.0
+
+    def tearDown(self):
+        km._DELTA_MAX_FRACTION = self._frac
+
+    def test_a_a_second_sender_waits_for_the_first_frame_and_the_client_ends_holding_the_newer_payload(self):
+        c = _Client()
+        gate, entered = threading.Event(), threading.Event()
+        real_send = c["send"]
+
+        def parked_send(s):                     # thread A parks INSIDE its frame: dedup slot written, state not yet
+            entered.set()
+            gate.wait(5)
+            real_send(s)
+        c["send"] = parked_send
+        bar = lambda i: {"id": "seg-%d" % i, "t": i, "end": i + 1, "open": False}
+        pa = _bars({S1: [bar(1)]}, [], [], now=1)
+        pb = _bars({S1: [bar(1), bar(2)]}, [], [], now=2)
+
+        def push(p):
+            pre = json.dumps(p)
+            km._send_slot(c, "bars", p, pre, km._dedup_sig(p, pre))
+        ta = threading.Thread(target=push, args=(pa,)); ta.start()
+        self.assertTrue(entered.wait(5), "thread A is inside its frame")
+        tb = threading.Thread(target=push, args=(pb,)); tb.start()
+        tb.join(0.3)
+        self.assertTrue(tb.is_alive(), "thread B is still inside _send_slot (with the lock, waiting for A; the frame "
+                                       "order below is what pins the lock — without it B parks in the same gate)")
+        self.assertEqual(c.frames, [], "nothing has crossed yet")
+        gate.set(); ta.join(5); tb.join(5)
+        self.assertFalse(ta.is_alive() or tb.is_alive())
+        last = None                             # replay what the wire carried through the shim's mirror
+        for fr in c.frames:
+            if fr.get("type") == "delta":
+                out = _py_apply(last, fr)
+                self.assertIsNotNone(out, "the client could apply every delta it was sent")
+            else:
+                keys = fr.get("_keys")
+                msg = {kk: v for kk, v in fr.items() if kk != "_keys"}
+                last = {"rev": 0, "msg": msg, "maps": _py_maps(msg, keys)}
+        self.assertEqual([f["type"] for f in c.frames], ["bars", "delta"], "A's keyed full, then B's delta against it")
+        self.assertEqual(last["msg"], pb, "the client holds the newer payload…")
+        self.assertEqual(c["dstate"]["bars"]["rev"], 1, "…and the kernel's belief about it agrees")
+        self.assertEqual(c["dstate"]["bars"]["coll"]["turns"], {S1 + SEP + "seg-1": json.dumps(bar(1)), S1 + SEP + "seg-2": json.dumps(bar(2))})
+
+    def test_b_a_collection_that_is_neither_list_nor_dict_goes_whole_and_is_logged_once(self):
+        # _delta_split used to split an unexpected value (None where a list belongs) into ZERO entries, and the
+        # remainder did not carry it either: the client kept its assembled [] while the kernel held None, with no
+        # resync ever asked. Now the payload is unkeyable → the whole frame goes, and stderr says so once per shape.
+        st = _Stream("bars")
+        p1 = _bars({S1: [{"id": "seg-1", "t": 1, "end": 2, "open": False}]}, [], [{"id": "m1", "sent": 1}], now=1)
+        st.push(p1)
+        p2 = dict(p1, messages=None, now=2)
+        p3 = dict(p2, now=3, warming=True)      # a real change (`now` alone is volatile and dedups)
+        err = io.StringIO()
+        with redirect_stderr(err):
+            frames = st.push(p2)
+            frames2 = st.push(p3)
+        self.assertEqual(frames, [p2], "unkeyable: the whole payload crossed, no keys, no empty split")
+        self.assertEqual(frames2, [p3])
+        self.assertNotIn("bars", st.c.get("dstate", {}), "the kernel holds nothing for a client it sent a keyless whole")
+        self.assertEqual(err.getvalue().count("cannot be keyed"), 1, "said once, not once per cycle")
+        self.assertIn("messages", err.getvalue())
+
+    def test_c_the_beat_reads_the_read_state_before_the_ping_stamp(self):
+        # the handler ends a dispatch with two writes: pingAt = None, THEN inRead = True. A beat reading pingAt
+        # first could pair the stale stamp with the fresh read state and drop a live peer as silent. Modelled
+        # exactly: whichever of the two keys the beat reads FIRST sees the pre-end state, the second the post state.
+        class _Handoff(dict):
+            def __init__(self):
+                super().__init__(app="timeline", wid="w1", alive=True, sock=object(), send=lambda s: None,
+                                 qlock=threading.Lock(), lastIn=0.0)
+                self.reads = 0
+
+            def get(self, k, d=None):
+                if k in ("pingAt", "inRead"):
+                    self.reads += 1
+                    pre = self.reads == 1
+                    return (0.0 if pre else None) if k == "pingAt" else (False if pre else True)
+                return super().get(k, d)
+        c = _Handoff()
+        dropped = []
+        with mock.patch.object(km, "_drop_dead_ws_client", lambda cl, why: dropped.append(why)), \
+             mock.patch.object(km, "_clients", [c]):
+            km._keepalive_all(now=km.WS_DEAD_S + 1)
+        self.assertEqual(dropped, [], "a live peer finishing its dispatch is never judged silent")
+        self.assertEqual(c.reads, 2, "both keys were read once, read state first")
+
+    def test_d_the_ready_reset_and_a_chat_send_serialize_on_the_clients_lock(self):
+        # pre-existing (predates the PR), closed with the same lock: the handler thread's `ready` reset iterated the
+        # client's dedup dict while the pusher's _send_client inserted keys into it — "dictionary changed size during
+        # iteration", the ready dispatch dying in the handler's generic except, and the _push_one repair skipped.
+        client, _q, _lock = km._new_ws_client("chat", "w1", object(), start_sender=False)
+        client["send"] = lambda s: None
+        client.setdefault("sent", {})[("chat", S1)] = ("sig", 0.0); client["echat"] = {S1: 1}
+        client["dlock"].acquire()                       # "another thread" holds the client's lock…
+        done = []
+        t1 = threading.Thread(target=lambda: (km._client_reset_chat_base(client), done.append("reset")))
+        t2 = threading.Thread(target=lambda: (km._send_client(client, ("chat", S2), {"type": "chat"}), done.append("send")))
+        t1.start(); t2.start(); t1.join(0.3); t2.join(0.3)
+        try:
+            self.assertEqual(done, [], "…and both the reset and the send wait for it")
+        finally:
+            client["dlock"].release()
+        t1.join(5); t2.join(5)
+        self.assertEqual(sorted(done), ["reset", "send"])
+        self.assertNotIn(("chat", S1), client["sent"], "the reset cleared the slot it found (whichever ran first)")
+        self.assertEqual(client["echat"], {})
+        # and the interleaving itself, driven hard: many resets against many inserts, no RuntimeError
+        client2, _q2, _l2 = km._new_ws_client("chat", "w2", object(), start_sender=False)
+        client2["send"] = lambda s: None
+        errors = []
+        stop = threading.Event()
+
+        def inserter():
+            i = 0
+            while not stop.is_set():
+                try:
+                    km._send_client(client2, ("chat", "s%d" % i), {"type": "chat"})
+                except RuntimeError as e:
+                    errors.append(e)
+                i += 1
+
+        def resetter():
+            for _ in range(300):
+                try:
+                    km._client_reset_chat_base(client2)
+                except RuntimeError as e:
+                    errors.append(e)
+        prev = __import__("sys").getswitchinterval()
+        __import__("sys").setswitchinterval(1e-6)
+        try:
+            ti = threading.Thread(target=inserter); tr = threading.Thread(target=resetter)
+            ti.start(); tr.start(); tr.join(30); stop.set(); ti.join(30)
+        finally:
+            __import__("sys").setswitchinterval(prev)
+        self.assertFalse(tr.is_alive() or ti.is_alive())
+        self.assertEqual(errors, [])
+
+    def test_f_the_chat_sender_holds_the_clients_lock_across_its_read_decide_send_write(self):
+        # the reset clears echat AND the slots; a pusher chat send DECIDED before the reset (tail branch chosen from
+        # the old echat) and landed after it slipped its tail through the popped slot and wrote echat back, and the
+        # connect push then sent a chatTail to a renderer holding nothing. Discriminating shape: echat holds a tail
+        # base, the send is parked at the lock before it can read echat, the reset lands (re-entrant, from the lock's
+        # holder) and the lock is released — the fold sends the FULL session; a lock only around the inner
+        # _send_client would have read echat first and sent the chatTail.
+        client, _q, _lock = km._new_ws_client("chat", "w1", object(), start_sender=False)
+        frames = []
+        client["send"] = lambda s: frames.append(json.loads(s)["type"])
+        client["echat"] = {S1: ("u1", 0)}
+        client.setdefault("sent", {})[("chat", S1)] = ("sig", time.time())
+        m = {"type": "session", "id": S1, "events": [{"uuid": "u1", "kind": "prompt"}, {"uuid": "u2", "kind": "text"}],
+             "status": "ready"}
+        client["dlock"].acquire()
+        t = threading.Thread(target=lambda: km._send_chat(client, m, None, 1, False), daemon=True)
+        t.start(); t.join(0.3)
+        try:
+            self.assertTrue(t.is_alive(), "the chat send waits for the client's lock before reading anything")
+            self.assertEqual(frames, [])
+            km._client_reset_chat_base(client)          # the reset lands first (re-entrant: this thread holds the lock)
+            self.assertEqual(client["echat"], {})
+        finally:
+            client["dlock"].release()
+        t.join(5)
+        self.assertFalse(t.is_alive())
+        self.assertEqual(frames, ["session"], "decided after the reset: the whole session, not a tail")
+        self.assertEqual(client["echat"][S1], ("u1", 0))
+
+    def test_g_the_needfull_reset_takes_the_same_lock(self):
+        # the per-sid reset behind needFull popped echat[sid] and the dedup slot with no lock — the same race as the
+        # ready reset, and worse on the client: render.ts latches awaitingFull until a full session lands, so a
+        # chatTail sent instead left the tab frozen until reconnect. It now runs under the client's slot lock.
+        client, _q, _lock = km._new_ws_client("chat", "w1", object(), start_sender=False)
+        frames = []
+        client["send"] = lambda s: frames.append(json.loads(s)["type"])
+        client["echat"] = {S1: ("u1", 0), S2: ("x1", 0)}
+        client.setdefault("sent", {})[("chat", S1)] = ("sig", time.time())
+        client["dlock"].acquire()
+        done = []
+        tr = threading.Thread(target=lambda: (km._client_reset_chat_sid(client, S2), done.append("reset")), daemon=True)
+        tr.start(); tr.join(0.3)
+        self.assertTrue(tr.is_alive(), "the per-sid reset waits for the lock")
+        m = {"type": "session", "id": S1, "events": [{"uuid": "u1", "kind": "prompt"}, {"uuid": "u2", "kind": "text"}],
+             "status": "ready"}
+        ts = threading.Thread(target=lambda: km._send_chat(client, m, None, 1, False), daemon=True)
+        ts.start(); ts.join(0.3)
+        try:
+            self.assertTrue(ts.is_alive())
+            km._client_reset_chat_sid(client, S1)       # needFull for S1 lands before the parked send decides
+        finally:
+            client["dlock"].release()
+        tr.join(5); ts.join(5)
+        self.assertEqual(done, ["reset"])
+        self.assertNotIn(S2, client["echat"], "the parked per-sid reset ran once released")
+        self.assertEqual(frames, ["session"], "the send, decided after the needFull reset, is the whole session")
+
+    def test_h_the_lock_spans_the_send_decision_and_write_back_not_just_the_echat_read(self):
+        # test_f/test_g park the sender BEFORE it reads echat, so a lock around the read alone would also pass them.
+        # Here the sender has already DECIDED the tail and is parked inside _send_client: a reset arriving now must
+        # still wait, or the tail lands after the pops, echat is written back, and the repair push finds a held tail.
+        client, _q, _lock = km._new_ws_client("chat", "w1", object(), start_sender=False)
+        client["send"] = lambda s: None
+        client["echat"] = {S1: ("u1", 0)}
+        client.setdefault("sent", {})[("chat", S1)] = ("sig", time.time())
+        m = {"type": "session", "id": S1, "events": [{"uuid": "u1", "kind": "prompt"}, {"uuid": "u2", "kind": "text"}],
+             "status": "ready"}
+        gate, inside = threading.Event(), threading.Event()
+        real = km._send_client
+
+        def parked(c, key, msg, pre=None, sig=None):    # the tail branch was chosen; park before the bytes go
+            inside.set()
+            gate.wait(5)
+            return real(c, key, msg, pre=pre, sig=sig)
+        done = []
+        with mock.patch.object(km, "_send_client", parked):
+            ts = threading.Thread(target=lambda: km._send_chat(client, m, None, 1, False), daemon=True); ts.start()
+            self.assertTrue(inside.wait(5), "the sender decided its tail and is parked inside the send")
+            tr = threading.Thread(target=lambda: (km._client_reset_chat_base(client), done.append("reset")), daemon=True)
+            tr.start(); tr.join(0.3)
+            self.assertEqual(done, [], "the reset waits: the sender holds the lock through decision, send and write-back")
+            gate.set(); ts.join(5); tr.join(5)
+        self.assertFalse(ts.is_alive() or tr.is_alive())
+        self.assertEqual(done, ["reset"])
+        self.assertEqual(client["echat"], {}, "the reset ran after the whole send: the write-back did not survive it")
+        self.assertNotIn(("chat", S1), client["sent"])
+
+    def test_e_the_size_fallback_re_enters_the_slot_send_under_the_held_lock_and_completes(self):
+        # _send_slot_delta's 60% fallback calls _send_slot again on the SAME thread while the client's lock is held:
+        # the lock must be re-entrant — with a plain Lock the pusher hangs here forever (verified writing the fold)
+        km._DELTA_MAX_FRACTION = self._frac             # the real threshold
+        bar = lambda i: {"id": "seg-%d" % i, "t": i, "end": i + 1, "open": False}
+        st = _Stream("bars")
+        p1 = _bars({S1: [bar(i) for i in range(3)]}, [], [], now=1)
+        p2 = _bars({S1: [bar(i + 10) for i in range(3)]}, [], [], now=2)   # everything changed: no delta is smaller
+        done = []
+        # BOTH pushes on the guarded thread: with a plain Lock even the first (full) frame deadlocks in-thread
+        # (_send_slot → _send_client both take it), so a push on the main thread would hang the suite, not fail it
+        t = threading.Thread(target=lambda: (st.push(p1), done.append(st.push(p2))), daemon=True); t.start(); t.join(5)
+        self.assertFalse(t.is_alive(), "the fallback re-entered the lock and returned")
+        self.assertEqual([f["type"] for f in done[0]], ["bars"], "sent whole, and the stream re-based")
+        self.assertEqual(st.held, p2)
+        self.assertEqual(st.c["dstate"]["bars"]["rev"], 0)
+
+
+
 
 if __name__ == "__main__":
     unittest.main()
@@ -545,4 +806,3 @@ class HandlerWiring(unittest.TestCase):
         self.assertIn('send({type:"needSlot",slot:msg.slot})', js)
         self.assertIn("var IID=", js)
         self.assertNotIn('sessionStorage.setItem("romp:iid"', js, "the page id is never stored: a duplicated tab must not inherit it")
-
