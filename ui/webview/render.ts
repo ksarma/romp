@@ -916,6 +916,10 @@ document.addEventListener("click", (e) => {
 //   • Web dashboard, Files-pane preference set (fileLinkPane: "pane", 2026-09-03) → the same relay,
 //     aimed at the FILES pane: the viewer as its own column, which stays up beside the chat and the
 //     feed instead of covering either (ui/webview/files.ts).
+//   • Web dashboard, Files pane OPEN (the user 2026-09-04) → the Files pane, whatever the setting says.
+//     The pane being open IS the intent — a click that opened as a modal over the chat while the
+//     pane sat there empty was the bug. The setting decides only where a link goes while the pane is
+//     CLOSED.
 //
 // The route decision is fileLinkRoute, pure so the branch is testable: it names the TARGET — "feed",
 // "pane", or "here" (the in-document modal) — and a preference relays ONLY when a shell exists to
@@ -923,13 +927,23 @@ document.addEventListener("click", (e) => {
 // either preference quietly means "here". The gate lives at THIS end deliberately: the shell forwards
 // whatever arrives (browseFiles' contract), so a message never sent is a click that opens in place —
 // no setting check shell-side can swallow a click.
-function fileLinkRoute(pane: unknown, framed: boolean): "feed" | "pane" | "here" {
-  return framed && (pane === "feed" || pane === "pane") ? pane : "here";
+//
+// panesOn is the shell's pane set as the shell last told it — {romp:"panes", on:{chat,feed,files,…}},
+// posted on every pane toggle (its apply(), the exact event of the set changing) and on this iframe's
+// load (kernel.py _LANDING_COLLAPSE_JS), so a chat that boots or reloads after the shell hears it too.
+// A cache of the owner's state refreshed by the owner's own event, never a per-click guess (no
+// reading the parent's DOM, no polling). Standalone /chat never hears one and reads as all-off, which
+// the framed gate makes moot anyway.
+let panesOn: Record<string, boolean> = {};
+function fileLinkRoute(pane: unknown, framed: boolean, filesOpen: boolean): "feed" | "pane" | "here" {
+  if (!framed) return "here";
+  if (filesOpen) return "pane";
+  return pane === "feed" || pane === "pane" ? pane : "here";
 }
 function openPath(path: string, sid?: string | null): void {
   if (!vscodeApi) return;
   if (location.protocol === "http:" || location.protocol === "https:") {
-    const route = fileLinkRoute(settings.fileLinkPane, window.parent !== window);
+    const route = fileLinkRoute(settings.fileLinkPane, window.parent !== window, panesOn.files === true);
     if (route !== "here") {
       // Fire-and-forget by nature: postMessage to a live parent never throws, so there is no
       // catchable failure here and no honest in-document fallback to offer. The one real loss mode
@@ -12416,6 +12430,17 @@ window.addEventListener("message", (e: MessageEvent) => {
   }
   // the shell's palette / shell-focus chords: the chat owns the nav trail, the shell just asks
   if (m.romp === "chatNav") { navHist.go(m.dir === 1 ? 1 : -1); return; }
+  // the shell's pane set — which panes are on, by key — the cache openPath routes file links by (panesOn
+  // above; the shell posts it on every toggle and on this iframe's load). Whole-set replace: a key the
+  // shell stopped naming must not linger as on.
+  if (m.romp === "panes") {
+    if (m.on && typeof m.on === "object") {
+      const on: Record<string, boolean> = {};
+      for (const k of Object.keys(m.on)) on[k] = m.on[k] === true;
+      panesOn = on;
+    }
+    return;
+  }
   // the pipe's down edge also clears awaitingFull (the VS Code twin of the shim's romp:wsdown — an ask
   // lost with the pipe must not suppress the re-ask after the reconnect's resync; see requestFullSession)
   if (m.type === "pipeState") { if (!m.up) awaitingFull.clear(); pipeBanner(!!m.up, Number(m.queued) || 0); return; }

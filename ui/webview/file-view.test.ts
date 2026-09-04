@@ -32,27 +32,63 @@ test("openPath routes by HOST: the in-pane viewer modal on the web, the editor i
   assert.match(RENDER, /vscodeApi\.postMessage\(sid \? \{ type: "openFile", path, id: sid \} : \{ type: "openFile", path \}\);/);
 });
 
-// executed: openPath's web-side three-way branch (the user 2026-08-20). The DEFAULT is upstream's
-// design — the viewer opens over the pane that was clicked; the fileLinkPane preference ("feed",
-// gear.js) relays the open to the shell so the viewer opens in the FEED pane and the transcript
-// stays readable while the file is up. The GATE lives here at the click site, not in the shell:
-// the shell forwards whatever arrives (browseFiles' contract), so a message that is never sent is
-// a click that opens in place — no message can be silently swallowed by a shell-side setting check.
-test("fileLinkRoute: a pane preference relays only when framed, naming its target; everything else opens here", () => {
-  const fileLinkRoute = (pane: unknown, framed: boolean): "feed" | "pane" | "here" =>
-    framed && (pane === "feed" || pane === "pane") ? pane : "here";
-  assert.equal(fileLinkRoute("feed", true), "feed", "setting=feed & framed → hand the open to the shell, for the feed");
-  assert.equal(fileLinkRoute("pane", true), "pane", "setting=pane & framed → the shell, for the Files pane (2026-09-03)");
-  assert.equal(fileLinkRoute("feed", false), "here", "standalone /chat: no shell, no feed pane — open in place");
-  assert.equal(fileLinkRoute("pane", false), "here", "standalone /chat: no Files pane either — open in place");
-  assert.equal(fileLinkRoute("chat", true), "here", "the default: exactly the pre-setting behavior");
-  assert.equal(fileLinkRoute(undefined, true), "here", "an unset store reads as the default");
-  assert.equal(fileLinkRoute("purple", true), "here", "a foreign stored value falls to the default");
-  // replica ↔ source, and the wiring: openPath consults it with the LIVE framed bit and posts up, the
-  // message naming its target pane and carrying the session's identity for the Files pane's chip
-  assert.match(RENDER, /return framed && \(pane === "feed" \|\| pane === "pane"\) \? pane : "here";/);
-  assert.match(RENDER, /const route = fileLinkRoute\(settings\.fileLinkPane, window\.parent !== window\);\n\s*if \(route !== "here"\) \{/);
+// executed: openPath's web-side branch (the user 2026-08-20). The DEFAULT is upstream's design — the
+// viewer opens over the pane that was clicked; the fileLinkPane preference ("feed"/"pane", gear.js)
+// relays the open to the shell so the viewer opens in the FEED pane (the transcript stays readable
+// while the file is up) or the FILES pane (its own column). The GATE lives here at the click site,
+// not in the shell: the shell forwards whatever arrives (browseFiles' contract), so a message that is
+// never sent is a click that opens in place — no message can be silently swallowed by a shell-side
+// setting check. Since 2026-09-04 an OPEN Files pane takes the click whatever the setting says (the
+// user: the pane being open IS the intent; a click that opened as a modal over the chat while the
+// pane sat empty was the bug) — the setting decides only where a link goes while the pane is closed.
+test("fileLinkRoute: an open Files pane takes the click; otherwise the preference relays only when framed", () => {
+  const fileLinkRoute = (pane: unknown, framed: boolean, filesOpen: boolean): "feed" | "pane" | "here" => {
+    if (!framed) return "here";
+    if (filesOpen) return "pane";
+    return pane === "feed" || pane === "pane" ? pane : "here";
+  };
+  // the Files pane is OPEN: every setting value routes there (the 2026-09-04 rule)
+  for (const setting of ["chat", "feed", "pane", undefined, "purple"]) {
+    assert.equal(fileLinkRoute(setting, true, true), "pane", `Files pane open & framed, setting=${String(setting)} → the Files pane, whatever the setting`);
+  }
+  // the Files pane is CLOSED: the setting's own table, exactly as before
+  assert.equal(fileLinkRoute("feed", true, false), "feed", "setting=feed & framed → hand the open to the shell, for the feed");
+  assert.equal(fileLinkRoute("pane", true, false), "pane", "setting=pane & framed → the shell, for the Files pane (2026-09-03) — which brings the closed pane forward");
+  assert.equal(fileLinkRoute("chat", true, false), "here", "the default: exactly the pre-setting behavior");
+  assert.equal(fileLinkRoute(undefined, true, false), "here", "an unset store reads as the default");
+  assert.equal(fileLinkRoute("purple", true, false), "here", "a foreign stored value falls to the default");
+  // UNFRAMED (standalone /chat): no shell, no other pane — "here" regardless of setting or pane bit
+  for (const setting of ["chat", "feed", "pane", undefined]) {
+    for (const open of [true, false]) {
+      assert.equal(fileLinkRoute(setting, false, open), "here", `standalone /chat, setting=${String(setting)}, filesOpen=${open} → open in place`);
+    }
+  }
+  // replica ↔ source: the pure function's exact body, so the executed table above is the shipped logic
+  assert.match(RENDER, /function fileLinkRoute\(pane: unknown, framed: boolean, filesOpen: boolean\): "feed" \| "pane" \| "here" \{\n\s*if \(!framed\) return "here";\n\s*if \(filesOpen\) return "pane";\n\s*return pane === "feed" \|\| pane === "pane" \? pane : "here";\n\}/);
+  // the wiring: openPath consults it with the LIVE framed bit AND the shell's Files-pane bit, and posts up,
+  // the message naming its target pane and carrying the session's identity for the Files pane's chip
+  assert.match(RENDER, /const route = fileLinkRoute\(settings\.fileLinkPane, window\.parent !== window, panesOn\.files === true\);\n\s*if \(route !== "here"\) \{/);
   assert.match(RENDER, /const to = sid \|\| activeId \|\| null;\n\s*const s = to \? \(sessions\.get\(to\) \?\? tabMeta\.get\(to\)\) : undefined;\n\s*window\.parent\.postMessage\(\{ romp: "viewFile", path, sid: to, pane: route,\n\s*identity: s && s\.name \? \{ name: s\.name, color: s\.color \?\? null \} : null \}, "\*"\);/);
+});
+
+// The Files-pane bit openPath routes by is the SHELL's pane set, cached from the shell's own broadcast —
+// {romp:"panes", on:{key:bool}} on every toggle (the shell's apply()) and on this iframe's load (kernel.py
+// _LANDING_COLLAPSE_JS; pinned in tests/test_pane_state_broadcast.py) — never a per-click read of the
+// parent's DOM or a poll. Whole-set replace, so a key the shell stops naming cannot linger as on.
+test("the chat caches the shell's pane set from its romp:panes broadcast, and openPath reads the Files bit from it", () => {
+  assert.match(RENDER, /let panesOn: Record<string, boolean> = \{\};/);
+  assert.match(RENDER, /if \(m\.romp === "panes"\) \{\n\s*if \(m\.on && typeof m\.on === "object"\) \{\n\s*const on: Record<string, boolean> = \{\};\n\s*for \(const k of Object\.keys\(m\.on\)\) on\[k\] = m\.on\[k\] === true;\n\s*panesOn = on;\n\s*\}\n\s*return;\n\s*\}/);
+  assert.match(RENDER, /fileLinkRoute\(settings\.fileLinkPane, window\.parent !== window, panesOn\.files === true\)/);
+  assert.equal((RENDER.match(/panesOn\.files/g) || []).length, 1, "one reader: openPath's route decision");
+  // executed: the listener's fold, as the source spells it — strict booleans in, unknown keys dropped on the next set
+  const fold = (on: Record<string, unknown>): Record<string, boolean> => {
+    const out: Record<string, boolean> = {};
+    for (const k of Object.keys(on)) out[k] = on[k] === true;
+    return out;
+  };
+  assert.deepEqual(fold({ chat: true, feed: false, files: true }), { chat: true, feed: false, files: true });
+  assert.deepEqual(fold({ files: "yes" }), { files: false }, "only a real true counts as on");
+  assert.equal(fold({ chat: true }).files, undefined, "a set that stops naming a pane leaves it off (=== true fails)");
 });
 
 test("every file-link surface in the chat goes through openPath — no direct openFile posts left", () => {

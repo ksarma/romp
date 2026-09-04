@@ -33053,7 +33053,9 @@ _STALE_JS = (
 # hides the pane + the gutters between visible panes). Fixed visual order — Chat, Fleet, Feed, Timeline left
 # to right (timeline is the bottom BAND). Default Chat+Feed+Timeline on, Fleet off (the user 2026-06-25);
 # state persists in localStorage and ?panes=chat,timeline bookmarks a set. Exposes window.__rompPaneToggle(
-# key,to?) so the legacy toggleFleet postMessage (_LANDING_FLEET_JS) routes through the same path.
+# key,to?) so the legacy toggleFleet postMessage (_LANDING_FLEET_JS) routes through the same path. Since
+# 2026-09-04 it also TELLS the panes the set ({romp:'panes',on:{…}} into every pane iframe, on every apply
+# and on each iframe's load; keys spliced from _PANE_ORDER by _landing()) — the chat routes file links by it.
 _LANDING_COLLAPSE_JS = """
 (function(){
   var PK='romp-panes',po={chat:true,fleet:false,feed:true,timeline:true,waiting:false,files:false};
@@ -33062,6 +33064,18 @@ _LANDING_COLLAPSE_JS = """
   if(qp!==null){po={chat:false,fleet:false,feed:false,timeline:false,waiting:false,files:false};qp.split(',').forEach(function(k){k=k.trim();if(k in po)po[k]=true;});}
   function saveP(){try{localStorage.setItem(PK,JSON.stringify(po));}catch(e){}}
   var LBL={chat:'chat',fleet:'fleet',feed:'feed',timeline:'timeline',waiting:'Waiting pane',files:'Files pane'};
+  // The pane KEYS, spliced in by _landing() from _PANE_ORDER — the one list of panes, so a pane added there
+  // is broadcast below without anyone remembering this block. The panes learn which panes are on from the
+  // shell, the owner of that state: {romp:'panes',on:{key:bool}} goes to every pane iframe on every apply()
+  // — the exact event of the set changing (a toggle, the boot apply, another tab's storage event) — and
+  // again on each iframe's own load, so a pane that boots or reloads after the shell still hears the
+  // current set (the focus ring's "wire now + on every (re)load", _LANDING_FOCUS_JS). The chat routes a
+  // file-link click by it (render.ts fileLinkRoute, the user 2026-09-04: an OPEN Files pane takes the click
+  // whatever the fileLinkPane setting says — the pane being open IS the intent).
+  var KEYS=__PANE_KEYS__;
+  function panesMsg(){var on={};KEYS.forEach(function(k){on[k]=!!po[k];});return {romp:'panes',on:on};}
+  function tell(f,m){try{f&&f.contentWindow&&f.contentWindow.postMessage(m,'*');}catch(e){}}
+  function broadcast(){var m=panesMsg();KEYS.forEach(function(k){tell(document.getElementById('f-'+k),m);});}
   function apply(){
     document.body.classList.toggle('po-chat',!!po.chat);
     document.body.classList.toggle('po-fleet',!!po.fleet);
@@ -33076,14 +33090,17 @@ _LANDING_COLLAPSE_JS = """
       var h=(window.__rompKeyHint&&window.__rompKeyHint('pane.'+(k==='fleet'?'outline':k)))||'';
       b.title=(po[k]?'hide':'show')+' the '+(LBL[k]||k)+(h?' ('+h+')':'');});
     try{window.dispatchEvent(new Event('romp-panes'));}catch(e){}   // nudge the timeline band to auto-fit when toggled
+    broadcast();
   }
   function togglePane(k,to){if(!(k in po))return;var nv=(to===undefined)?!po[k]:!!to;
+    if(nv===!!po[k])return;   // already so (the viewFile relay's bring-forward on an open pane): nothing changed, so no re-apply and no broadcast claiming one
     if(nv&&!po[k]&&window.__rompGrowFair)window.__rompGrowFair(k);   // newly shown → fair width, not a sliver
     po[k]=nv;apply();saveP();}
   window.__rompPaneToggle=togglePane;
   Array.prototype.forEach.call(document.querySelectorAll('.rail-btn[data-pane]'),function(b){
     b.addEventListener('click',function(){togglePane(b.getAttribute('data-pane'));});});
   apply();
+  KEYS.forEach(function(k){var f=document.getElementById('f-'+k);if(f)f.addEventListener('load',function(){tell(f,panesMsg());});});
   window.addEventListener('romp:keys',apply);   // a rebind (or palette-main's boot nudge) refreshes the titles
   window.addEventListener('storage',apply);     // …including one made in another tab
 })();
@@ -34191,7 +34208,9 @@ def _landing():
             "<script>" + _LANDING_REMOTES_JS + "</script>"
             "<script>" + _LANDING_MOBILE_JS + "</script>"
             "<script>" + _LANDING_PUSH_JS + "</script>"
-            "<script>" + _LANDING_COLLAPSE_JS + "</script>"
+            # the pane controller broadcasts the pane set to every pane iframe by KEY — spliced from
+            # _PANE_ORDER (the one list of panes), never a second hand-written list
+            "<script>" + _LANDING_COLLAPSE_JS.replace("__PANE_KEYS__", json.dumps([k for k, _ in _PANE_ORDER])) + "</script>"
             # the command palette (Cmd/Ctrl+P) and the session quick-switcher hotkey (Cmd/Ctrl+O):
             # a dist bundle (ui/webview/palette-main.ts) like age-color-global above. Loaded last —
             # it reads the __romp* globals lazily, at command run time, so order is cosmetic.
