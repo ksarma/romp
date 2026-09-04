@@ -1943,14 +1943,17 @@ if [[ -n "$session_arg" ]] && ! $use_tmux && ! $resume; then
     # parent + tags (tab groups are tags, the user 2026-09-04): run from INSIDE a romp session, the
     # new one names that session as its parent (ROMP_SID — the STABLE sid every SDK session's CLI
     # env carries; never CLAUDE_CODE_SESSION_ID, the transcript fsid) and inherits its tags in the
-    # kernel; --no-inherit withholds the parent. --in tags ride as "tags"; argv[7] counts them so
-    # the env pairs still split cleanly behind them.
+    # kernel; --no-inherit withholds the parent. The parent is marked parentAuto: nobody typed it,
+    # so a kernel that never ran the calling session (a scratch kernel on another port) creates the
+    # session untagged and echoes parentIgnored instead of refusing with a 400 naming a sid the
+    # user never saw. --in tags ride as "tags"; argv[7] counts them so the env pairs still split
+    # cleanly behind them.
     _parent=""; if ! $no_inherit; then _parent="${ROMP_SID:-}"; fi
     _payload="$(python3 -c 'import json,sys
 d = {"name": sys.argv[1], "dir": sys.argv[2], "backend": "sdk"}
 sys.argv[3] and d.update(model=sys.argv[3])
 sys.argv[4] and d.update(effort=sys.argv[4])
-sys.argv[6] and d.update(parent=sys.argv[6])
+sys.argv[6] and d.update(parent=sys.argv[6], parentAuto=True)
 n = int(sys.argv[7]); tags = sys.argv[8:8 + n]
 tags and d.update(tags=tags)
 env = dict(kv.split("=", 1) for kv in sys.argv[8 + n:])
@@ -1987,19 +1990,51 @@ print(json.dumps(d))' "$session_arg" "$_dir" "$model_arg" "$effort_arg" "$_noenv
         # echo's PRESENCE (is None), never its truthiness.
         # The same discipline covers tags: a `tags` echo (the session's tag names after inheriting
         # and --in) comes back whenever a parent or --in was sent — absent means an older kernel
-        # dropped the ask; present but missing a name asked for means the kernel refused that tag
-        # edit (it says why in tagError) — either way, say so.
+        # dropped the ask. Which name each --in landed as rides `tagsApplied`, positional to the
+        # request (`tagsRequested`): the store trims and clamps names, so a name that came back
+        # respelled was APPLIED ("applied as"), and only a null slot means the kernel refused that
+        # tag edit (it says why in tagError) — either way, say so. The tags line prints only when
+        # tags were asked for or applied: a flagless in-session `romp new` has nothing to report.
         _tagask="${in_args[*]-}$_parent"
+        if [[ -n "$_parent" ]]; then
+            # the auto parent this shell's ROMP_SID named was unknown to the kernel that answered
+            # (a kernel that never ran this session): created untagged, said once, not an error
+            _pign="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("parentIgnored") or "")' "$_resp" 2>/dev/null || true)"
+            [[ -n "$_pign" ]] && echo "romp new: the kernel that answered did not run this shell's session ($_pign), so \"$session_arg\" starts in no tags"
+        fi
         if [[ -n "$model_arg$effort_arg$_noenv$_tagask" || ${#env_args[@]} -gt 0 ]]; then
-            _applied="$(python3 -c 'import json,sys; r=json.loads(sys.argv[1]); parts=["%s %s" % (k, r[k]) for k in ("model","effort") if r.get(k)]; e=r.get("env"); e is None or parts.append("env " + (",".join("%s=%s" % kv for kv in sorted(e.items())) or "cleared")); t=r.get("tags"); t is None or parts.append("tags " + (", ".join(t) or "none")); print(", ".join(parts))' "$_resp" 2>/dev/null || true)"
+            _applied="$(python3 -c 'import json,sys; r=json.loads(sys.argv[1]); parts=["%s %s" % (k, r[k]) for k in ("model","effort") if r.get(k)]; e=r.get("env"); e is None or parts.append("env " + (",".join("%s=%s" % kv for kv in sorted(e.items())) or "cleared")); t=r.get("tags"); t is None or not (t or sys.argv[2] != "0") or parts.append("tags " + (", ".join(t) or "none")); print(", ".join(parts))' "$_resp" "${#in_args[@]}" 2>/dev/null || true)"
             [[ -n "$_applied" ]] && echo "romp new: applied $_applied"
             _envask="${env_args[*]-}$_noenv"
-            _dropped="$(python3 -c 'import json,sys; r=json.loads(sys.argv[1]); print("/".join(lab for k,lab,a in (("model","--model",sys.argv[2]),("effort","--effort",sys.argv[3]),("env","--env",sys.argv[4]),("tags","tags",sys.argv[5])) if a and r.get(k) is None))' "$_resp" "$model_arg" "$effort_arg" "$_envask" "$_tagask" 2>/dev/null || echo "--model/--effort/--env/tags")"
+            # the tags ask is named for what it was: --in, or the inheritance a parent implies
+            _taglab=""; if [[ ${#in_args[@]} -gt 0 ]]; then _taglab="--in"; elif [[ -n "$_parent" ]]; then _taglab="the parent's tags"; fi
+            _dropped="$(python3 -c 'import json,sys; r=json.loads(sys.argv[1]); print("/".join(lab for k,lab,a in (("model","--model",sys.argv[2]),("effort","--effort",sys.argv[3]),("env","--env",sys.argv[4]),("tags",sys.argv[6],sys.argv[5])) if a and r.get(k) is None))' "$_resp" "$model_arg" "$effort_arg" "$_envask" "$_tagask" "$_taglab" 2>/dev/null || echo "--model/--effort/--env/--in")"
             if [[ -n "$_dropped" ]]; then
-                echo "romp new: WARNING — the kernel did not acknowledge $_dropped (older kernel?); model/effort can be set from the dashboard" >&2
+                _hint="model/effort can be set from the dashboard"
+                if [[ -n "$_taglab" && "$_dropped" == "$_taglab" ]]; then
+                    _hint="tag it once it is up: romp tag <tag> --add $session_arg"
+                elif [[ -n "$_taglab" && "$_dropped" == *"$_taglab"* ]]; then
+                    _hint="$_hint; tags once it is up: romp tag <tag> --add $session_arg"
+                fi
+                echo "romp new: WARNING — the kernel did not acknowledge $_dropped (older kernel?); $_hint" >&2
             fi
             if [[ ${#in_args[@]} -gt 0 ]]; then
-                _missing="$(python3 -c 'import json,sys; r=json.loads(sys.argv[1]); t=r.get("tags"); print("" if t is None else ", ".join(n for n in sys.argv[2:] if n not in t))' "$_resp" "${in_args[@]}" 2>/dev/null || true)"
+                # line 1: the --in names the kernel did NOT apply; line 2: the ones it applied under
+                # another spelling. Positional against tagsApplied when the kernel sends it; a kernel
+                # with only the `tags` echo falls back to a name match (no "applied as" possible there).
+                _tagnote="$(python3 -c 'import json,sys
+r = json.loads(sys.argv[1]); asked = sys.argv[2:]
+t = r.get("tags")
+if t is None: print(); print(); raise SystemExit      # no echo at all: the acknowledge warning covers it
+ap = r.get("tagsApplied")
+if isinstance(ap, list) and len(ap) == len(asked):
+    print(", ".join(a for a, p in zip(asked, ap) if p is None))
+    print(", ".join("%s as %s" % (json.dumps(a), p) for a, p in zip(asked, ap) if p is not None and p != a))
+else:
+    print(", ".join(a for a in asked if a not in t)); print()' "$_resp" "${in_args[@]}" 2>/dev/null || true)"
+                _missing="$(printf '%s\n' "$_tagnote" | sed -n 1p)"
+                _renamed="$(printf '%s\n' "$_tagnote" | sed -n 2p)"
+                [[ -n "$_renamed" ]] && echo "romp new: --in applied $_renamed"
                 if [[ -n "$_missing" ]]; then
                     _why="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("tagError") or "")' "$_resp" 2>/dev/null || true)"
                     echo "romp new: WARNING — the kernel did not apply --in $_missing${_why:+ ($_why)}" >&2

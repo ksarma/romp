@@ -476,8 +476,11 @@ MOCK
     [ "$status" -eq 0 ]
     grep '/new' "$MOCK_LOG" | grep -q '"tags": \["pool", "infra"\]'
     grep '/new' "$MOCK_LOG" | grep -q '"parent": "11111111-2222-3333-4444-555555555555"'
-    # the stub acks with NO tags echo — the older-kernel warning, naming what was dropped
-    [[ "$output" == *"did not acknowledge tags"* ]]
+    # the stub acks with NO tags echo — the older-kernel warning, naming what was dropped (the --in,
+    # not model/effort) and what to do instead
+    [[ "$output" == *"did not acknowledge --in"* ]]
+    [[ "$output" == *"romp tag <tag> --add ideabox"* ]]
+    [[ "$output" != *"model/effort"* ]]
     # --no-inherit: no parent in the payload, and a bare ack is then no warning at all
     : > "$MOCK_LOG"
     run run_romp new --no-inherit ideabox
@@ -537,6 +540,96 @@ MOCK
     run run_romp help
     [[ "$output" == *"romp new --in <tag> <name>"* ]]
     [[ "$output" == *"romp new --no-inherit <name>"* ]]
+}
+
+@test "new (in a session, no --in): a kernel that drops the parent ask is warned about the inherited tags; an empty echo prints nothing" {
+    # the parent-only ask — ROMP_SID set, no --in. A bare {"ok": true} means an older kernel never
+    # saw `parent`: say so, naming the inherited tags (not model/effort). A kernel echoing
+    # "tags": [] answered the ask with nothing to inherit, which is not worth a line.
+    _stub_curl
+    touch "$MOCK_LOG"
+    export ROMP_SERVE_TOKEN=testtok
+    export ROMP_SID=11111111-2222-3333-4444-555555555555
+    run run_romp new ideabox
+    [ "$status" -eq 0 ]
+    grep '/new' "$MOCK_LOG" | grep -q '"parentAuto": true'
+    [[ "$output" == *"did not acknowledge the parent's tags"* ]]
+    [[ "$output" == *"romp tag <tag> --add ideabox"* ]]
+    [[ "$output" != *"model/effort"* ]]
+    cat > "$MOCK_DIR/curl" << 'MOCK'
+#!/usr/bin/env bash
+[[ " $* " == *" --config - "* ]] && cat >/dev/null   # drain the piped token config (see _stub_curl)
+echo '{"ok": true, "id": "66666666-7777-8888-9999-000000000000", "dir": "/tmp/x", "tags": [], "tagsRequested": [], "tagsApplied": []}'
+MOCK
+    chmod +x "$MOCK_DIR/curl"
+    run run_romp new ideabox
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"applied tags"* ]]
+    [[ "$output" != *"WARNING"* ]]
+    # …while an inherited tag IS reported
+    sed -i 's/"tags": \[\]/"tags": ["pool"]/' "$MOCK_DIR/curl"
+    run run_romp new ideabox
+    [[ "$output" == *"applied tags pool"* ]]
+}
+
+@test "new --in: a name the kernel applied under its stored spelling is 'applied as', never a false 'did not apply'" {
+    # the store trims and clamps tag names; the kernel echoes each --in's stored spelling by position
+    # (tagsApplied) — a respelled name was applied, only a null slot was refused
+    cat > "$MOCK_DIR/curl" << 'MOCK'
+#!/usr/bin/env bash
+echo "curl $*" >> "$MOCK_LOG"
+[[ " $* " == *" --config - "* ]] && cat >/dev/null   # drain the piped token config (see _stub_curl)
+url=""
+for a in "$@"; do [[ "$a" == http* ]] && url="$a"; done
+if [[ "$url" == */new ]]; then
+  echo '{"ok": true, "id": "66666666-7777-8888-9999-000000000000", "dir": "/tmp/x", "tags": ["pool", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"], "tagsRequested": [" pool", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "twin"], "tagsApplied": ["pool", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", null], "tagError": "two tags are named \"twin\""}'
+else
+  echo '{"ok": true}'
+fi
+MOCK
+    chmod +x "$MOCK_DIR/curl"
+    touch "$MOCK_LOG"
+    export ROMP_SERVE_TOKEN=testtok
+    run run_romp new --in " pool" --in aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --in twin ideabox
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'--in applied " pool" as pool, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" as aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'* ]]
+    [[ "$output" == *"did not apply --in twin (two tags are named"* ]]
+    [[ "$output" != *"did not apply --in  pool"* ]]
+    [[ "$output" != *"did not apply --in aaaa"* ]]
+    # against a kernel with only the `tags` echo (no positional pair) the name match still stands
+    sed -i 's/, "tagsRequested".*"tagError"/, "tagError"/' "$MOCK_DIR/curl"
+    run run_romp new --in pool --in twin ideabox
+    [[ "$output" == *"did not apply --in twin"* ]]
+    [[ "$output" != *"did not apply --in pool"* ]]
+}
+
+@test "new (in a session): an auto parent the kernel does not know is one plain notice, never an error" {
+    # the CLI's parent is ROMP_SID, sent as parentAuto; a kernel that never ran this session (a
+    # scratch kernel on another port) creates the session untagged and echoes parentIgnored — the
+    # CLI says so once and warns about nothing
+    cat > "$MOCK_DIR/curl" << 'MOCK'
+#!/usr/bin/env bash
+echo "curl $*" >> "$MOCK_LOG"
+[[ " $* " == *" --config - "* ]] && cat >/dev/null   # drain the piped token config (see _stub_curl)
+url=""
+for a in "$@"; do [[ "$a" == http* ]] && url="$a"; done
+if [[ "$url" == */new ]]; then
+  echo '{"ok": true, "id": "66666666-7777-8888-9999-000000000000", "dir": "/tmp/x", "tags": [], "tagsRequested": [], "tagsApplied": [], "parentIgnored": "11111111-2222-3333-4444-555555555555"}'
+else
+  echo '{"ok": true}'
+fi
+MOCK
+    chmod +x "$MOCK_DIR/curl"
+    touch "$MOCK_LOG"
+    export ROMP_SERVE_TOKEN=testtok
+    export ROMP_SID=11111111-2222-3333-4444-555555555555
+    run run_romp new ideabox
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'started "ideabox"'* ]]
+    [[ "$output" == *"did not run this shell's session (11111111-2222-3333-4444-555555555555)"* ]]
+    [[ "$output" == *'"ideabox" starts in no tags'* ]]
+    [[ "$output" != *"WARNING"* ]]
+    [[ "$output" != *"applied tags"* ]]
 }
 
 @test "new -m: a failed send is loud and names the retry (the session IS up)" {
