@@ -398,12 +398,13 @@ class ThreadProjection(CommentBase):
             return list(self.queued)
         def live_atoms(self, sid):
             return list(self.live)
+        unfloored = False                         # True → retire by bare text like the pre-T237b prune (order-sensitive)
         def prune_live(self, sid, tx_uuids, tx_user_texts=(), human_floor=0):
             # the real backend's text retirement, floored when the caller ships text → newest record time
             keep = []
             for a in self.live:
                 et = (a.get("_echo_text") or "").strip()
-                if isinstance(tx_user_texts, dict):
+                if isinstance(tx_user_texts, dict) and not type(self).unfloored:
                     landed = et in tx_user_texts and float(tx_user_texts[et] or 0) >= float(a.get("t") or 0)
                 else:
                     landed = et in tx_user_texts
@@ -610,9 +611,9 @@ class ThreadProjection(CommentBase):
         quoting = "the CLI writes a <command-name>/model</command-name> record first — why is that a command?"
         recs = self._thread_side(aline(t + 120, "Jitter prevents thundering herds.", "ca1", parent="cu1"),
                                  uline(t + 130, quoting, "cq1", parent="ca1"))
-        th = self._frame_thread(recs, state="")
+        th = self._frame_thread(recs, state="working")
         self.assertEqual([m["who"] for m in th["msgs"]], ["you", "agent", "you"])
-        self.assertTrue(th["replyOwed"], "the user asked again — a reply is owed")
+        self.assertTrue(th["replyOwed"], "the user asked again, a process is on it — a reply is owed")
 
     def test_a_command_confirmation_or_settle_event_is_not_a_landed_reply(self):
         # round-3 review: the events arm skips a slash command's own output (an assistant atom flagged
@@ -709,9 +710,9 @@ class ThreadProjection(CommentBase):
             self.assertEqual(th["queued"], 1, "the earlier identical text is not THIS send's landing")
             self.assertTrue(th["replyOwed"])
             # …until a record written at/after the send carries it
-            th = self._frame_thread(recs + [uline(t + 131, repeat, "cu2", parent="ca1")], state="")
+            th = self._frame_thread(recs + [uline(t + 131, repeat, "cu2", parent="ca1")], state="working")
             self.assertEqual(th["queued"], 0, "landed by its own record")
-            self.assertTrue(th["replyOwed"], "the user's message is newest — owed by the transcript now")
+            self.assertTrue(th["replyOwed"], "the user's message is newest and a process is on it — owed by the transcript now")
         finally:
             self._State.live = []
 
@@ -816,6 +817,16 @@ class ThreadProjection(CommentBase):
             th = self._frame_thread(recs + [uline(t + 131, repeat, "cu2", parent="ca1")], state="")
             self.assertEqual(th["queued"], 0)
             self.assertEqual(self._State.live, [], "landed by a record written after the send")
+            # the read ORDER alone, with an unfloored prune (an older backend's shape): the projection build
+            # retires the repeat-text echo, yet the fold — having read live_atoms first — still counts it
+            self._State.live = [{"type": "user", "author": "human", "t": t + 130, "uuid": "echo:r2", "_echo_text": repeat}]
+            self._State.unfloored = True
+            try:
+                th = self._frame_thread(recs, state="")
+                self.assertEqual(th["queued"], 1, "read before the (unfloored) prune retired it")
+                self.assertEqual(self._State.live, [], "…and the prune did retire it — so the order is what kept the count")
+            finally:
+                self._State.unfloored = False
         finally:
             self._State.live = []
 
@@ -860,6 +871,48 @@ class ThreadProjection(CommentBase):
         self.assertTrue(th["replyOwed"]); self.assertFalse(th["unreachable"]); self.assertEqual(th["error"], "")
         self.assertNotIn("transcript missing", err.getvalue())
 
+    def test_a_sigkill_cut_thread_with_a_queue_reads_resuming_before_its_process_spawns(self):
+        # scoped review: a kernel crash / SIGKILL writes NO interrupt record; boot reconcile still resumes a
+        # thread WITH a persisted queue (machineCut "restart" stamped, spawn staggered). Until the spawn the
+        # backend reads "" — that is a pending resume, not a dead thread: open, no unread flick
+        t = self.now - 500
+        self._seed_thread(seen=self.now - 450)
+        recs = self._thread_side(self._partial_text(t + 110, "Let me check the code.", "cp1", "cu1"),
+                                 self._tool_result(t + 112, "cr1", "cp1", "cp1"))
+        states = jd.STATE / "states" / (THREAD + ".jsonl")
+        states.parent.mkdir(parents=True, exist_ok=True)
+        states.write_text(json.dumps({"t": t + 100, "state": "working"}) + "\n"
+                          + json.dumps({"t": t + 120, "machineCut": "restart"}) + "\n")
+        self._State.queued = ["resume me", "and the cap?"]
+        try:
+            km._machine_cut_cache.clear() if hasattr(km, "_machine_cut_cache") and hasattr(km._machine_cut_cache, "clear") else None
+            th = self._frame_thread(recs, state="")
+            self.assertTrue(th["replyOwed"])
+            self.assertFalse(th["unread"], "a pending resume is in progress — no yellow flick before the spawn")
+        finally:
+            self._State.queued = []
+            states.unlink()
+
+    def test_a_dormant_thread_whose_last_row_is_the_users_owes_nothing(self):
+        # scoped review: cut before any output — the user's follow-up is the newest record, no process, nothing
+        # queued: the reply will never come, so the trailing-"you" arm must not re-owe it
+        t = self.now - 500
+        self._seed_thread(seen=self.now)
+        recs = self._thread_side(aline(t + 120, "Jitter prevents thundering herds.", "ca1", parent="cu1"),
+                                 uline(t + 130, "and the cap?", "cu2", parent="ca1"))
+        th = self._frame_thread(recs, state="")
+        self.assertFalse(th["replyOwed"], "no process, nothing queued: nothing is coming")
+        th = self._frame_thread(recs, state="working")
+        self.assertTrue(th["replyOwed"], "a live process on it is a reply in progress")
+
+    def test_the_echo_is_stamped_before_the_send_is_handed_to_the_cli(self):
+        # scoped review: the frame's landing floor is record.t >= echo.t with no skew, which holds by
+        # construction only if the echo's stamp is taken BEFORE enqueue hands the text to the CLI
+        import inspect
+        src = inspect.getsource(sb.SdkBackend.send)
+        self.assertLess(src.index("int(time.time())"), src.index("s.enqueue(text)"),
+                        "the echo's time is minted before the enqueue, so the CLI's record can never predate it")
+
     def test_a_slash_command_after_a_landed_reply_owes_nothing(self):
         # the CLI's <command-name>/<local-command-stdout> wrapper records are bookkeeping, not the user's
         # message: they neither show as "you" rows nor re-owe a reply
@@ -903,8 +956,8 @@ class ThreadProjection(CommentBase):
         t = self.now - 500
         self._seed_thread(seen=self.now)
         th = self._frame_thread(self._thread_side(aline(t + 120, "Jitter prevents thundering herds.", "ca1", parent="cu1"),
-                                                  uline(t + 200, "and the cap?", "cu2", parent="ca1")), state="")
-        self.assertTrue(th["replyOwed"], "the user's message is the newest — a reply is owed")
+                                                  uline(t + 200, "and the cap?", "cu2", parent="ca1")), state="working")
+        self.assertTrue(th["replyOwed"], "the user's message is the newest and a process is on it — a reply is owed")
         self.assertFalse(th["unread"], "nothing new from the agent since the last look")
 
     def test_no_store_no_frame(self):

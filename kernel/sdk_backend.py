@@ -6142,7 +6142,8 @@ class SdkBackend:
             # from the instant of the send. Cleared event-based by the lastSid-flipping init (the fresh
             # conversation exists) / the turn's ResultMessage.
             s._clearing = True
-        s.enqueue(text)
+        sent_t = int(time.time())              # the echo's stamp, minted BEFORE the CLI can see the text: the
+        s.enqueue(text)                         # record it writes is then at or after it by construction (T237b)
         # optimistic input echo: show the user's own message INSTANTLY (neither the transcript nor the
         # stream has it yet at send time — only we know the text). Synthetic uuid; pruned by text once the
         # transcript writes the real user atom.
@@ -6156,7 +6157,7 @@ class SdkBackend:
         # card summary about romp-injected echoed as a GRAY romp card.
         injected = "<!-- romp-injected -->" in text
         echo = {
-            "type": "user", "uuid": key, "session_id": sid, "t": int(time.time()), "parentUuid": None,
+            "type": "user", "uuid": key, "session_id": sid, "t": sent_t, "parentUuid": None,
             "author": "romp" if injected else "human", "_echo_text": text,
             "message": {"role": "user", "content": [{"type": "text", "text": text}]}}
         if injected and "<!-- romp-auto -->" in text:

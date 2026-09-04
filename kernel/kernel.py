@@ -8837,10 +8837,14 @@ def _thread_turn_read(tsid, reg, state, queued=0):
         return True, False, turns                   # mid-turn: tool calls, intermediate text, a compaction — the reply is still coming
     if state == "":
         # "" is the backend's authoritative "no process exists" (session_state: only a dead/absent SdkSession
-        # reads ""; a live turn always snapshots working/waiting/retrying). An unlanded turn on a thread with
-        # no process is DEAD — cut without an interrupt record (SIGKILL, the drain reaping the CLI, a cut
-        # before any output) and never resumed (boot reconcile skips a thread with no persisted queue) —
-        # not a reply in progress: owe nothing; whatever partial landed reads as what there is (T237b B)
+        # reads ""; a live turn always snapshots working/waiting/retrying). With a send still QUEUED the
+        # thread is a resume in waiting — boot reconcile resumes exactly the threads with a persisted queue,
+        # spawning them in a stagger (a SIGKILL cut writes no interrupt record, so there is no "cut" verdict
+        # to key on) — so the unlanded turn is in progress, not dead. With NOTHING queued an unlanded turn on
+        # a thread with no process is DEAD — cut and never to be resumed — not a reply in progress: owe
+        # nothing; whatever partial landed reads as what there is (T237b B, and the scoped review)
+        if queued > 0:
+            return True, False, turns
         return False, False, turns
     # backend quiet on an unlanded turn: the chat's own working read. A trailing compaction boundary is
     # bookkeeping, not an ended reply — but the idle atoms a stop mints AFTER it fold into that boundary
@@ -9018,8 +9022,11 @@ def _comments_frame(sid, tmux=None):
                    "anchored to is gone. Start a new comment to continue.")
         # owed: the turn is in progress, a send is held, the FRESH thread has no exchange yet, or the user's
         # message is the newest — unless that newest "message" is the CLI's own interrupt record
+        # …and never when no process exists and nothing is queued: a dormant thread whose newest row is the
+        # user's (cut before any output) has no reply coming (scoped review)
         reply_owed = status == "open" and (turn_open or queued > 0 or owes_first
-                                           or (bool(msgs) and msgs[-1]["who"] == "you" and not interrupted))
+                                           or (bool(msgs) and msgs[-1]["who"] == "you" and not interrupted
+                                               and (state != "" or queued > 0)))
         # (T102: the push-count settle — settledPushes — is RETIRED. The client's pulse is exchange-
         # scoped now: latched at the send gesture, cleared by the reply RECORD arriving in msgs; the
         # frame's msgs already carry that event, so no per-push counter rides here anymore.)
