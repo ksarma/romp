@@ -897,13 +897,39 @@ def _same_window(a, b) -> bool:
     return abs(a - b) <= WINDOW_SLACK
 
 
+def _lines_from_end(p: Path, block: int = 65536):
+    """The file's lines LAST to first, newline-stripped, read backwards in blocks — so a reader that
+    wants the newest record touches the tail of the file, not all of it. Exactly the lines forward
+    iteration would yield: a trailing newline closes the last line rather than opening an empty one."""
+    with open(p, "rb") as f:
+        f.seek(0, os.SEEK_END)
+        pos = f.tell()
+        rest = b""
+        first = True
+        while pos > 0:
+            n = min(block, pos)
+            pos -= n
+            f.seek(pos)
+            data = f.read(n) + rest
+            parts = data.split(b"\n")
+            rest = parts[0]
+            for raw in reversed(parts[1:]):
+                if first:
+                    first = False
+                    if raw == b"" and data.endswith(b"\n"):
+                        continue                      # the newline that closed the last line
+                yield raw.decode("utf-8", "replace")
+        yield rest.decode("utf-8", "replace")
+
+
 def last_state(state_dir: Path, sid: str) -> dict:
+    """The literal last line of states/<sid>.jsonl as a record ({} when absent, blank, or unparseable).
+    Reads the file's tail only (2026-09-03): every caller wanted the newest record and paid a full
+    forward walk of a log that only ever grows — megabytes per call for a long-lived session, on the
+    kernel's push path."""
     p = Path(state_dir) / "states" / (sid + ".jsonl")
     try:
-        line = ""
-        with open(p) as f:
-            for line in f:
-                pass
+        line = next(_lines_from_end(p), "")
         return json.loads(line) if line.strip() else {}
     except (OSError, ValueError):
         return {}
@@ -915,22 +941,20 @@ def last_state_value(state_dir: Path, sid: str) -> str:
     overlay (the boot heal itself appends awaiting:false) — so anything keying on the state tail
     (the boot reconcile's cut-turn detector) must read through the overlays, not the last line."""
     p = Path(state_dir) / "states" / (sid + ".jsonl")
-    val = ""
     try:
-        with open(p) as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    rec = json.loads(line)
-                except ValueError:
-                    continue
-                if isinstance(rec, dict) and "state" in rec:
-                    val = str(rec["state"])
+        for line in _lines_from_end(p):              # newest first; the first STATE record wins
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(rec, dict) and "state" in rec:
+                return str(rec["state"])
     except OSError:
         pass
-    return val
+    return ""
 
 
 def last_awaiting(state_dir: Path, sid: str) -> bool | None:
