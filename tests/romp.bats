@@ -79,6 +79,7 @@ MOCK
 
     export PATH="$MOCK_DIR:$PATH"
     unset TMUX            # default: outside tmux → attach-session branch
+    unset ROMP_SID        # default: outside a romp session — `romp new` names no parent (tests export it on purpose)
     # Hermetic HOME: bin/romp probes $HOME/.claude/romp-postal.mcp.json (would
     # nondeterministically append --mcp-config on a dev machine) and writes the
     # names map under XDG_STATE_HOME (was polluting the REAL state dir).
@@ -122,6 +123,10 @@ _stub_curl() {
     cat > "$MOCK_DIR/curl" << 'MOCK'
 #!/usr/bin/env bash
 echo "curl $*" >> "$MOCK_LOG"
+# drain the token config romp pipes in (`_romp_token_cfg | curl --config - …`): real curl always reads
+# it, but a mock that exits first hands the writer SIGPIPE, and under the script's pipefail that read
+# as a false "not reachable" — one random kernel-API test failed per run (2026-09-04)
+[[ " $* " == *" --config - "* ]] && cat >/dev/null
 url=""
 for a in "$@"; do [[ "$a" == http* ]] && url="$a"; done
 if [[ -n "${MOCK_CURL_FAIL_SEND:-}" && "$url" == */send ]]; then exit 22; fi
@@ -187,6 +192,10 @@ MOCK
     cat > "$MOCK_DIR/curl" << 'MOCK'
 #!/usr/bin/env bash
 echo "curl $*" >> "$MOCK_LOG"
+# drain the token config romp pipes in (`_romp_token_cfg | curl --config - …`): real curl always reads
+# it, but a mock that exits first hands the writer SIGPIPE, and under the script's pipefail that read
+# as a false "not reachable" — one random kernel-API test failed per run (2026-09-04)
+[[ " $* " == *" --config - "* ]] && cat >/dev/null
 url=""
 for a in "$@"; do [[ "$a" == http* ]] && url="$a"; done
 if [[ "$url" == */new ]]; then
@@ -256,6 +265,10 @@ MOCK
     cat > "$MOCK_DIR/curl" << 'MOCK'
 #!/usr/bin/env bash
 echo "curl $*" >> "$MOCK_LOG"
+# drain the token config romp pipes in (`_romp_token_cfg | curl --config - …`): real curl always reads
+# it, but a mock that exits first hands the writer SIGPIPE, and under the script's pipefail that read
+# as a false "not reachable" — one random kernel-API test failed per run (2026-09-04)
+[[ " $* " == *" --config - "* ]] && cat >/dev/null
 echo '{"ok": true, "id": "11111111-2222-3333-4444-555555555555", "queued": true, "dir": "/srv/notes-api/web"}'
 MOCK
     chmod +x "$MOCK_DIR/curl"
@@ -265,6 +278,7 @@ MOCK
     # a refusal rides the kernel's own words
     cat > "$MOCK_DIR/curl" << 'MOCK'
 #!/usr/bin/env bash
+[[ " $* " == *" --config - "* ]] && cat >/dev/null   # drain the piped token config (see _stub_curl)
 echo '{"ok": false, "error": "directory not found: /nowhere"}'
 MOCK
     chmod +x "$MOCK_DIR/curl"
@@ -448,6 +462,81 @@ MOCK
     run run_romp new -m "text" --tag "two words" ideabox
     [ "$status" -eq 2 ]
     [[ "$output" == *"--tag must be one word"* ]]
+}
+
+@test "new --in / parent: the payload carries the tags and the calling session's ROMP_SID; --no-inherit withholds the parent" {
+    # tab groups are tags (the user 2026-09-04): run from inside a romp session, `romp new` names
+    # that session as the new one's parent (its STABLE sid, ROMP_SID — never the transcript fsid)
+    # so the kernel copies its tags onto the child; --in <tag> joins tags by name, repeatable.
+    _stub_curl
+    touch "$MOCK_LOG"
+    export ROMP_SERVE_TOKEN=testtok
+    export ROMP_SID=11111111-2222-3333-4444-555555555555
+    run run_romp new --in pool --in infra ideabox
+    [ "$status" -eq 0 ]
+    grep '/new' "$MOCK_LOG" | grep -q '"tags": \["pool", "infra"\]'
+    grep '/new' "$MOCK_LOG" | grep -q '"parent": "11111111-2222-3333-4444-555555555555"'
+    # the stub acks with NO tags echo — the older-kernel warning, naming what was dropped
+    [[ "$output" == *"did not acknowledge tags"* ]]
+    # --no-inherit: no parent in the payload, and a bare ack is then no warning at all
+    : > "$MOCK_LOG"
+    run run_romp new --no-inherit ideabox
+    [ "$status" -eq 0 ]
+    run bash -c "grep '/new' '$MOCK_LOG' | grep -q '\"parent\"'"
+    [ "$status" -ne 0 ]
+    run run_romp new --no-inherit ideabox
+    [[ "$output" != *"WARNING"* ]]
+    # outside a session there is no parent to name
+    unset ROMP_SID
+    : > "$MOCK_LOG"
+    run run_romp new ideabox
+    [ "$status" -eq 0 ]
+    run bash -c "grep '/new' '$MOCK_LOG' | grep -q '\"parent\"'"
+    [ "$status" -ne 0 ]
+    run bash -c "grep '/new' '$MOCK_LOG' | grep -q '\"tags\"'"
+    [ "$status" -ne 0 ]
+}
+
+@test "new --in: the kernel's tags echo is reported, and a name it did not apply is a loud warning with the reason" {
+    cat > "$MOCK_DIR/curl" << 'MOCK'
+#!/usr/bin/env bash
+echo "curl $*" >> "$MOCK_LOG"
+# drain the token config romp pipes in (`_romp_token_cfg | curl --config - …`): real curl always reads
+# it, but a mock that exits first hands the writer SIGPIPE, and under the script's pipefail that read
+# as a false "not reachable" — one random kernel-API test failed per run (2026-09-04)
+[[ " $* " == *" --config - "* ]] && cat >/dev/null
+url=""
+for a in "$@"; do [[ "$a" == http* ]] && url="$a"; done
+if [[ "$url" == */new ]]; then
+  echo '{"ok": true, "id": "66666666-7777-8888-9999-000000000000", "dir": "/tmp/x", "tags": ["pool"], "tagError": "two tags are named \"twin\""}'
+else
+  echo '{"ok": true}'
+fi
+MOCK
+    chmod +x "$MOCK_DIR/curl"
+    touch "$MOCK_LOG"
+    export ROMP_SERVE_TOKEN=testtok
+    run run_romp new --in pool --in twin ideabox
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"applied tags pool"* ]]
+    [[ "$output" == *"did not apply --in twin"* ]]
+    [[ "$output" == *"two tags are named"* ]]
+    [[ "$output" != *"did not acknowledge"* ]]
+}
+
+@test "new --in: needs a value, is refused with -t (tag a terminal session afterwards), and help lists it" {
+    run run_romp new --in
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"[--in <tag>]"* ]]
+    touch "$MOCK_LOG"
+    run run_romp new -t --in pool ideabox
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"--in needs the default (SDK) session"* ]]
+    [[ "$output" == *"romp tag pool --add ideabox"* ]]
+    [ "$(grep -c 'tmux new-session' "$MOCK_LOG")" -eq 0 ]
+    run run_romp help
+    [[ "$output" == *"romp new --in <tag> <name>"* ]]
+    [[ "$output" == *"romp new --no-inherit <name>"* ]]
 }
 
 @test "new -m: a failed send is loud and names the retry (the session IS up)" {

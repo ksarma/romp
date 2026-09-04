@@ -637,6 +637,8 @@ EOF
     _romp_cmd "romp new --effort <level> <name>" -      "Reasoning effort for the SDK session (e.g. high, ultracode); re-asserted if <name> already runs"
     _romp_cmd "romp new --env NAME=VALUE <name>" -      "Per-session env var for the SDK session (repeatable; toggles, never secrets); a re-run on a running <name> replaces the whole set"
     _romp_cmd "romp new --no-env <name>"   -            "Clear a running SDK session's per-session env (declares the empty set)"
+    _romp_cmd "romp new --in <tag> <name>" -            "Put the new SDK session in a tag (repeatable; a new name creates the tag) — its tab lands in that group"
+    _romp_cmd "romp new --no-inherit <name>" -          "Run from inside a session, a new session joins that session's tags by default; this starts it outside them"
     _romp_cmd "romp resume [<id>]"         -            "Resume a past conversation (full-screen picker; or an exact UUID)"
     _romp_cmd "romp status"                romp-manager "Show manager + kernel status"
     _romp_cmd "romp refresh"               romp-manager "Restart the postal bus + all romp kernels (picks up new code — run after an update)"
@@ -1727,6 +1729,8 @@ model_arg=""
 effort_arg=""
 env_args=()
 no_env=false
+in_args=()
+no_inherit=false
 use_tmux=false
 msg_arg=""
 tag_arg=""
@@ -1740,7 +1744,7 @@ case "${1:-}" in
                 --detach)  detach=true; shift ;;
                 -d)        shift
                            if [[ $# -eq 0 || "$1" == -* ]]; then
-                               echo "usage: romp new [-t] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] [--env NAME=VALUE] [--no-env] <name>" >&2; exit 2
+                               echo "usage: romp new [-t] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] [--env NAME=VALUE] [--no-env] [--in <tag>] [--no-inherit] <name>" >&2; exit 2
                            fi
                            dir_arg="$1"; shift ;;
                 -m|--message) shift
@@ -1749,7 +1753,7 @@ case "${1:-}" in
                            # last two-step on the idea-to-working path). Empty text is a usage
                            # error, not a silent no-op.
                            if [[ $# -eq 0 || -z "$1" ]]; then
-                               echo "usage: romp new [-t] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] [--env NAME=VALUE] [--no-env] <name>" >&2; exit 2
+                               echo "usage: romp new [-t] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] [--env NAME=VALUE] [--no-env] [--in <tag>] [--no-inherit] <name>" >&2; exit 2
                            fi
                            msg_arg="$1"; shift ;;
                 --tag)     shift
@@ -1759,7 +1763,7 @@ case "${1:-}" in
                            # as the user's typed words. Rides POST /send's "tag" field — the
                            # kernel validates and appends the render-hint marker itself.
                            if [[ $# -eq 0 || -z "$1" || "$1" == -* ]]; then
-                               echo "usage: romp new [-t] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] [--env NAME=VALUE] [--no-env] <name>" >&2; exit 2
+                               echo "usage: romp new [-t] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] [--env NAME=VALUE] [--no-env] [--in <tag>] [--no-inherit] <name>" >&2; exit 2
                            fi
                            tag_arg="$1"; shift ;;
                 --model)   shift
@@ -1770,14 +1774,14 @@ case "${1:-}" in
                            # note here once said the CLI resolved "fable" to Opus 5 and so required
                            # full ids; not reproducible on any installed CLI (corrected 2026-09-01).
                            if [[ $# -eq 0 || -z "$1" || "$1" == -* ]]; then
-                               echo "usage: romp new [-t] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] [--env NAME=VALUE] [--no-env] <name>" >&2; exit 2
+                               echo "usage: romp new [-t] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] [--env NAME=VALUE] [--no-env] [--in <tag>] [--no-inherit] <name>" >&2; exit 2
                            fi
                            model_arg="$1"; shift ;;
                 --effort)  shift
                            # per-spawn effort (e.g. high, ultracode) — ultracode is per-session
                            # by design, never a machine default, so /new is its sanctioned door.
                            if [[ $# -eq 0 || -z "$1" || "$1" == -* ]]; then
-                               echo "usage: romp new [-t] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] [--env NAME=VALUE] [--no-env] <name>" >&2; exit 2
+                               echo "usage: romp new [-t] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] [--env NAME=VALUE] [--no-env] [--in <tag>] [--no-inherit] <name>" >&2; exit 2
                            fi
                            effort_arg="$1"; shift ;;
                 --env)     shift
@@ -1792,7 +1796,7 @@ case "${1:-}" in
                            # in service.env / the apiKeyHelper, since this payload is copied into
                            # per-sid files and the session registry.
                            if [[ $# -eq 0 || -z "$1" || "$1" == -* ]]; then
-                               echo "usage: romp new [-t] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] [--env NAME=VALUE] [--no-env] <name>" >&2; exit 2
+                               echo "usage: romp new [-t] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] [--env NAME=VALUE] [--no-env] [--in <tag>] [--no-inherit] <name>" >&2; exit 2
                            fi
                            if [[ "$1" != *=* || ! "${1%%=*}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
                                echo "romp new: --env expects NAME=VALUE with NAME matching [A-Za-z_][A-Za-z0-9_]* (got: $1)" >&2; exit 2
@@ -1806,15 +1810,30 @@ case "${1:-}" in
                            # presence-checked consumers still see). Sends "env": {}; any --env
                            # entries alongside simply fill the declaration.
                            no_env=true ;;
+                --in)      shift
+                           # the tag(s) the new session joins (tab groups are tags, the user
+                           # 2026-09-04): its tab lands in that group's section of the strip.
+                           # Repeatable; a tag that does not exist yet is created, exactly as
+                           # `romp tag <name> --add` would. `--tag` was already the -m message
+                           # label, hence the different word.
+                           if [[ $# -eq 0 || -z "$1" || "$1" == -* ]]; then
+                               echo "usage: romp new [-t] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] [--env NAME=VALUE] [--no-env] [--in <tag>] [--no-inherit] <name>" >&2; exit 2
+                           fi
+                           in_args+=("$1"); shift ;;
+                --no-inherit)
+                           # by default a session started from INSIDE a romp session (ROMP_SID set)
+                           # names that session as its parent and joins the parent's tags — a
+                           # session's children land in its group. This opts the new one out.
+                           no_inherit=true; shift ;;
                 -*)        echo "romp new: unknown option: $1" >&2; exit 2 ;;
                 *)         if [[ -n "$session_arg" ]]; then
-                               echo "usage: romp new [-t] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] [--env NAME=VALUE] [--no-env] <name>" >&2; exit 2
+                               echo "usage: romp new [-t] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] [--env NAME=VALUE] [--no-env] [--in <tag>] [--no-inherit] <name>" >&2; exit 2
                            fi
                            session_arg="$1"; shift ;;
             esac
         done
         if [[ -z "$session_arg" ]]; then
-            echo "usage: romp new [-t] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] [--env NAME=VALUE] [--no-env] <name>" >&2; exit 2
+            echo "usage: romp new [-t] [-d <dir>] [-m <text>] [--tag <label>] [--model <id>] [--effort <level>] [--env NAME=VALUE] [--no-env] [--in <tag>] [--no-inherit] <name>" >&2; exit 2
         fi
         if [[ -n "$tag_arg" && -z "$msg_arg" ]]; then
             # a tag labels the -m text; without -m there is nothing to label
@@ -1833,6 +1852,11 @@ case "${1:-}" in
             # model/effort inside Claude itself and takes env from the tmux server's environment.
             # Refuse loudly rather than dropping the flags (no silent divergence).
             echo "romp new: --model/--effort/--env need the default (SDK) session — with -t, pick model/effort inside Claude itself (env comes from the tmux environment)" >&2; exit 2
+        fi
+        if [[ ${#in_args[@]} -gt 0 ]] && $use_tmux; then
+            # a terminal session's id is not known until it starts, so nothing could tag it at
+            # spawn; say so rather than drop the flag (tag it afterwards with `romp tag`)
+            echo "romp new: --in needs the default (SDK) session — tag a terminal session after it starts: romp tag ${in_args[0]} --add $session_arg" >&2; exit 2
         fi
         ;;
     resume|--resume)
@@ -1916,7 +1940,22 @@ if [[ -n "$session_arg" ]] && ! $use_tmux && ! $resume; then
     # argv[5] is the --no-env flag: it sends the EXPLICIT empty declaration ("env": {}) — absent still
     # means "don't touch", so a plain `romp new` never carries an env key at all.
     _noenv=""; if $no_env; then _noenv=1; fi
-    _payload="$(python3 -c 'import json,sys; d={"name": sys.argv[1], "dir": sys.argv[2], "backend": "sdk"}; sys.argv[3] and d.update(model=sys.argv[3]); sys.argv[4] and d.update(effort=sys.argv[4]); env=dict(kv.split("=",1) for kv in sys.argv[6:]); (env or sys.argv[5]) and d.update(env=env); print(json.dumps(d))' "$session_arg" "$_dir" "$model_arg" "$effort_arg" "$_noenv" ${env_args[@]+"${env_args[@]}"})"
+    # parent + tags (tab groups are tags, the user 2026-09-04): run from INSIDE a romp session, the
+    # new one names that session as its parent (ROMP_SID — the STABLE sid every SDK session's CLI
+    # env carries; never CLAUDE_CODE_SESSION_ID, the transcript fsid) and inherits its tags in the
+    # kernel; --no-inherit withholds the parent. --in tags ride as "tags"; argv[7] counts them so
+    # the env pairs still split cleanly behind them.
+    _parent=""; if ! $no_inherit; then _parent="${ROMP_SID:-}"; fi
+    _payload="$(python3 -c 'import json,sys
+d = {"name": sys.argv[1], "dir": sys.argv[2], "backend": "sdk"}
+sys.argv[3] and d.update(model=sys.argv[3])
+sys.argv[4] and d.update(effort=sys.argv[4])
+sys.argv[6] and d.update(parent=sys.argv[6])
+n = int(sys.argv[7]); tags = sys.argv[8:8 + n]
+tags and d.update(tags=tags)
+env = dict(kv.split("=", 1) for kv in sys.argv[8 + n:])
+(env or sys.argv[5]) and d.update(env=env)
+print(json.dumps(d))' "$session_arg" "$_dir" "$model_arg" "$effort_arg" "$_noenv" "$_parent" "${#in_args[@]}" ${in_args[@]+"${in_args[@]}"} ${env_args[@]+"${env_args[@]}"})"
     # No -f here: the kernel answers a bad /new payload with a 400 whose JSON body NAMES the
     # problem (reserved env names, bad session names — every validation refusal), and -f discards
     # exactly that body (exit 22), masking it as the connection-failure message below. Without -f
@@ -1946,13 +1985,25 @@ if [[ -n "$session_arg" ]] && ! $use_tmux && ! $resume; then
         # code and `romp refresh`), and the aggregate check read that partial ack as full success.
         # An env echo of {} is the clear-all ack ("env cleared"), so the dropped check keys on the
         # echo's PRESENCE (is None), never its truthiness.
-        if [[ -n "$model_arg$effort_arg$_noenv" || ${#env_args[@]} -gt 0 ]]; then
-            _applied="$(python3 -c 'import json,sys; r=json.loads(sys.argv[1]); parts=["%s %s" % (k, r[k]) for k in ("model","effort") if r.get(k)]; e=r.get("env"); e is None or parts.append("env " + (",".join("%s=%s" % kv for kv in sorted(e.items())) or "cleared")); print(", ".join(parts))' "$_resp" 2>/dev/null || true)"
+        # The same discipline covers tags: a `tags` echo (the session's tag names after inheriting
+        # and --in) comes back whenever a parent or --in was sent — absent means an older kernel
+        # dropped the ask; present but missing a name asked for means the kernel refused that tag
+        # edit (it says why in tagError) — either way, say so.
+        _tagask="${in_args[*]-}$_parent"
+        if [[ -n "$model_arg$effort_arg$_noenv$_tagask" || ${#env_args[@]} -gt 0 ]]; then
+            _applied="$(python3 -c 'import json,sys; r=json.loads(sys.argv[1]); parts=["%s %s" % (k, r[k]) for k in ("model","effort") if r.get(k)]; e=r.get("env"); e is None or parts.append("env " + (",".join("%s=%s" % kv for kv in sorted(e.items())) or "cleared")); t=r.get("tags"); t is None or parts.append("tags " + (", ".join(t) or "none")); print(", ".join(parts))' "$_resp" 2>/dev/null || true)"
             [[ -n "$_applied" ]] && echo "romp new: applied $_applied"
             _envask="${env_args[*]-}$_noenv"
-            _dropped="$(python3 -c 'import json,sys; r=json.loads(sys.argv[1]); print("/".join("--"+k for k,a in (("model",sys.argv[2]),("effort",sys.argv[3]),("env",sys.argv[4])) if a and r.get(k) is None))' "$_resp" "$model_arg" "$effort_arg" "$_envask" 2>/dev/null || echo "--model/--effort/--env")"
+            _dropped="$(python3 -c 'import json,sys; r=json.loads(sys.argv[1]); print("/".join(lab for k,lab,a in (("model","--model",sys.argv[2]),("effort","--effort",sys.argv[3]),("env","--env",sys.argv[4]),("tags","tags",sys.argv[5])) if a and r.get(k) is None))' "$_resp" "$model_arg" "$effort_arg" "$_envask" "$_tagask" 2>/dev/null || echo "--model/--effort/--env/tags")"
             if [[ -n "$_dropped" ]]; then
                 echo "romp new: WARNING — the kernel did not acknowledge $_dropped (older kernel?); model/effort can be set from the dashboard" >&2
+            fi
+            if [[ ${#in_args[@]} -gt 0 ]]; then
+                _missing="$(python3 -c 'import json,sys; r=json.loads(sys.argv[1]); t=r.get("tags"); print("" if t is None else ", ".join(n for n in sys.argv[2:] if n not in t))' "$_resp" "${in_args[@]}" 2>/dev/null || true)"
+                if [[ -n "$_missing" ]]; then
+                    _why="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("tagError") or "")' "$_resp" 2>/dev/null || true)"
+                    echo "romp new: WARNING — the kernel did not apply --in $_missing${_why:+ ($_why)}" >&2
+                fi
             fi
         fi
         # -m: deliver the first prompt through the same kernel route `romp send` uses, so one
