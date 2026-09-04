@@ -1577,3 +1577,60 @@ PY
     [ "$status" -eq 0 ]
     [[ "$output" == *"--env NAME=VALUE"* ]]
 }
+
+# ─── romp keyswap — switch the sessions' API key with no restart ──────
+# End-to-end through the dispatcher and the real cli/keyswap.py, against a temp
+# env file (ROMP_SERVICE_ENV_FILE): the mock-PATH shadowing other dispatch tests
+# use cannot shadow romp-keyswap, since bin/romp prepends its own bin dir. Fake
+# keys only, and the point of the assertions is that no key value is printed.
+
+_keyswap_files() {
+    export ROMP_SERVICE_ENV_FILE="$TEST_DIR/service.env"
+    printf 'ROMP_PERF=1\nANTHROPIC_API_KEY=sk-ant-TEST-0000\nROMP_EXPECTED_AUTH=key\n' \
+        > "$ROMP_SERVICE_ENV_FILE"
+    chmod 600 "$ROMP_SERVICE_ENV_FILE"
+    printf 'ANTHROPIC_API_KEY=sk-ant-TEST-1111\n' > "$ROMP_SERVICE_ENV_FILE.lowprio"
+    chmod 600 "$ROMP_SERVICE_ENV_FILE.lowprio"
+}
+
+@test "keyswap: bare reports the live key and its candidates, by fingerprint only" {
+    command -v python3 >/dev/null 2>&1 || skip "python3 not available"
+    touch "$MOCK_LOG"
+    _keyswap_files
+    run run_romp keyswap
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"sha256:"* ]]
+    [[ "$output" == *"lowprio"* ]]
+    [[ "$output" != *"sk-ant-TEST"* ]]          # never a key value on a surface
+    grep -q 'ANTHROPIC_API_KEY=sk-ant-TEST-0000' "$ROMP_SERVICE_ENV_FILE"   # read-only
+}
+
+@test "keyswap: a named source rewrites only the key line and keeps mode 600" {
+    command -v python3 >/dev/null 2>&1 || skip "python3 not available"
+    touch "$MOCK_LOG"
+    _keyswap_files
+    run run_romp keyswap lowprio
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"no manager restart needed"* ]]
+    [[ "$output" != *"sk-ant-TEST"* ]]
+    grep -q 'ANTHROPIC_API_KEY=sk-ant-TEST-1111' "$ROMP_SERVICE_ENV_FILE"
+    grep -q 'ROMP_PERF=1' "$ROMP_SERVICE_ENV_FILE"                 # every other line survives
+    grep -q 'ROMP_EXPECTED_AUTH=key' "$ROMP_SERVICE_ENV_FILE"
+    [ "$(ls -l "$ROMP_SERVICE_ENV_FILE" | cut -c1-10)" = "-rw-------" ]
+}
+
+@test "keyswap: an unknown source is a loud refusal that touches nothing" {
+    command -v python3 >/dev/null 2>&1 || skip "python3 not available"
+    touch "$MOCK_LOG"
+    _keyswap_files
+    run run_romp keyswap nosuch
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"no such key file"* ]]
+    grep -q 'ANTHROPIC_API_KEY=sk-ant-TEST-0000' "$ROMP_SERVICE_ENV_FILE"
+}
+
+@test "keyswap: help names it (the presence-checked command list)" {
+    run run_romp -h
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"romp keyswap"* ]]
+}
