@@ -32995,6 +32995,10 @@ class Handler(BaseHTTPRequestHandler):
                                 for sid, s in list(be.sessions.items())]
                 else:
                     raw = b.get("sessions") or []
+                    if not isinstance(raw, list):   # a bare string would iterate its CHARACTERS
+                        return self._send(400, json.dumps({"ok": False,
+                                                           "error": "sessions must be a list"}),
+                                          "application/json")
                     who_list = [(str(w), _sid_of(str(w))) for w in raw if str(w or "").strip()]
                 for who, sid in who_list:
                     try:

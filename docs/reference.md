@@ -380,10 +380,10 @@ without either side showing the key.
 
 **One restart, once:** a kernel that is already running when this feature is
 installed neither reads the file live nor knows the `--cycle` route, so it is
-still on the key it booted with. Take the update with `romp refresh` (or
-`systemctl --user restart romp-manager` on Linux) a single time; every swap
-after that is restart-free. `romp keyswap --cycle-all` says so plainly if it
-meets an older kernel.
+still on the key it booted with. Take the update a single time with `romp
+refresh` — or `romp refresh --quiet`, which waits for the sessions to finish
+their turns first — and every swap after that is restart-free. `romp keyswap
+--cycle-all` says so plainly if it meets an older kernel.
 
 Remote kernels each have their own `service.env` and their own key: run
 `romp keyswap` on that machine.

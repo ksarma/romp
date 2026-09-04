@@ -590,6 +590,11 @@ class KeycycleRoute(unittest.TestCase):
         self.assertEqual(len(resp["rows"]), 2, "one bad session must not abandon the rest")
         self.assertIn("boom", resp["rows"][0]["status"])
 
+    def test_a_sessions_value_that_is_not_a_list_is_a_400(self):
+        code, resp = self._with(self._Fake({}), {"sessions": "web"})
+        self.assertEqual(code, 400, "a bare string would otherwise iterate its characters")
+        self.assertFalse(resp.get("ok"))
+
     def test_the_route_needs_the_serve_token(self):
         import urllib.error
         import urllib.request
