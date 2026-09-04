@@ -117,6 +117,13 @@ def _cycle(sessions, all_, out):
         out("            next launch or revive. Re-run `romp keyswap --cycle…` once romp is up.")
         return 1
     body = _post(u, "/keycycle", {"all": True} if all_ else {"sessions": sessions})
+    if body.get("error") == "HTTP 404":
+        # The one restart this feature genuinely needs: a kernel started before this code has no
+        # /keycycle route AND no live key read, so it is still on the key it booted with.
+        out("cycle       NOT DONE — the running kernel predates `romp keyswap` (no /keycycle route).")
+        out("            Take the patch once with `romp refresh`, and every swap after that is")
+        out("            restart-free. The file is already swapped.")
+        return 1
     if not body.get("ok"):
         out("cycle       FAILED — %s" % (body.get("error") or body.get("detail") or "unknown"))
         return 1
@@ -222,8 +229,8 @@ def main(argv, out=None):
     out("effect      new and revived sessions bill this key immediately; no manager restart needed")
     if cycle or cycle_all:
         return _cycle(cycle, cycle_all, out)
-    out("running      keep the key they launched with — reconnect them with")
-    out("             romp keyswap %s --cycle-all   (or --cycle <session,…>)" % args[0])
+    out("running     sessions keep the key they launched with — reconnect them with")
+    out("            romp keyswap %s --cycle-all   (or --cycle <session,…>)" % args[0])
     return 0
 
 

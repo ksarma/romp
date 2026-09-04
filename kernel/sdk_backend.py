@@ -2795,15 +2795,22 @@ class SdkSession:
         if isinstance(info, dict) and self._adopt_fast_state(info):
             self.backend._poke()
 
-    def effective_auth(self) -> str:
+    def effective_auth(self, key=None) -> str:
         """'key' or 'login' — what _options launches this session with. An explicit pick wins; unset
         preserves the pre-selector world, where a manager environment that carried a key billed every
         session to it (so absent a choice, the key still wins when one exists). 'key' with no key to
         inject falls to login rather than launching with a var the CLI would refuse on — _options
-        logs that fall loudly (it is a misconfiguration, not a preference)."""
+        logs that fall loudly (it is a misconfiguration, not a preference).
+
+        `key` lets a caller supply the key it already read, so a connect decides and injects on ONE
+        read: the source is live now (a keyswap can land between two reads), and re-reading here
+        could have _options inject a key the decision was never made against. Absent, it reads the
+        backend's live key exactly as it always did."""
         if self.auth == "login":
             return "login"
-        return "key" if self.backend.work_key else "login"
+        if key is None:
+            key = self.backend.work_key
+        return "key" if key else "login"
 
     async def _do_refresh_usage(self):
         """Pull the EXACT account-wide /usage snapshot from the CLI — the designed data behind the /usage
@@ -4729,6 +4736,12 @@ class SdkBackend:
     def work_key(self, value) -> None:
         self._work_key_pin = str(value or "")
 
+    def work_key_fp(self) -> str:
+        """The renderable form of the key sessions launch on: the sha256 head, "" for none. The
+        kernel's /keycycle answer carries this so an operator can confirm the kernel re-read the
+        file they just wrote — the value itself never leaves this process."""
+        return _keysrc.fingerprint(self.work_key)
+
     def _note_work_key(self, key: str) -> None:
         """Log WHICH key a launch is billing, as a fingerprint, and only when it changes. That makes
         a keyswap visible in the Log panel — "the kernel now reads sha256:… " — which is the only
@@ -5861,12 +5874,11 @@ class SdkBackend:
         # login on its own; a key session gets the key injected here, explicitly. options.env merges
         # OVER the inherited env in the SDK's transport, which is exactly the one-way door we need —
         # inject or stay silent; never blank (an empty var reads as "API-key mode, no key" to the CLI).
-        # The key is read ONCE here, per connect, and the same value is what gets injected: the source
-        # is live now (a keyswap can land between two reads), so a second read could hand the CLI a key
-        # the auth decision was never made against. An empty read also means DON'T inject — falling to
-        # login is right, and blanking the var would leave the CLI in key-mode-without-a-key.
+        # The key is read ONCE here, per connect, and the value the auth decision was made on is the
+        # value injected: the source is live now (a keyswap can land between two reads). An empty read
+        # decides login — blanking the var would leave the CLI in key-mode-without-a-key.
         work_key = self.work_key
-        launch_keyed = sess.effective_auth() == "key" and bool(work_key)
+        launch_keyed = sess.effective_auth(work_key) == "key"
         if launch_keyed:
             self._note_work_key(work_key)
             kw["env"] = dict(kw["env"], ANTHROPIC_API_KEY=work_key,

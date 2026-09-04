@@ -9504,11 +9504,8 @@ def _work_key_fp():
     to anyone who reads it. Never a fragment of the key itself — the same rule _auth_key_present
     keeps for the browser, applied to the terminal."""
     be = _sdk()
-    ks = getattr(sys.modules.get("romp_sdk_backend"), "_keysrc", None)
-    if be is None or ks is None:
-        return ""
     try:
-        return ks.fingerprint(be.work_key)
+        return getattr(be, "work_key_fp", lambda: "")()
     except Exception:
         return ""
 
