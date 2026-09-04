@@ -1118,7 +1118,9 @@ export class FederationManager {
     this.hostSeq = this.hostSeq.filter((h) => h !== host);
     // drop that host's tabs from the panes (else they linger stale), then re-emit the merged order.
     for (const sid of this.perHostSids[host] || []) {
-      window.dispatchEvent(new MessageEvent("message", { data: { type: "closed", id: sid } }));
+      // Stamped `hostDrop`: this is NOT the session's end — its kernel is simply out of reach — so the pane
+      // keeps the session's unsent draft for its return instead of clearing it like a close (T236).
+      window.dispatchEvent(new MessageEvent("message", { data: { type: "closed", id: sid, hostDrop: true } }));
     }
     delete this.perHostOrder[host];
     delete this.perHostTabs[host];

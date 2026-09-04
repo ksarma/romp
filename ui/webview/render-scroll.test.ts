@@ -22,7 +22,7 @@ test("upsert tells append from fork by transcript OVERLAP, not the first uuid (s
 test("a content refresh appends (preserves scroll); only a fork drops the DOM", () => {
   assert.match(RENDER, /if \(forked\) \{[\s\S]{0,120}?v\.el\.remove\(\)/,
     "the cached DOM is dropped only on a fork, not on every push");
-  assert.match(RENDER, /if \(existed && !forked && !firstBuild\) \{\s*appendActive\(\);/,
+  assert.match(RENDER, /if \(existed && !forked && !firstBuild && !adopted\) \{\s*appendActive\(\);/,   // !adopted: T236 — an adoption is a first show
     "a refresh of the active tab appends instead of snapping to the bottom");
 });
 
