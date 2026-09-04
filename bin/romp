@@ -1998,9 +1998,26 @@ print(json.dumps(d))' "$session_arg" "$_dir" "$model_arg" "$effort_arg" "$_noenv
         _tagask="${in_args[*]-}$_parent"
         if [[ -n "$_parent" ]]; then
             # the auto parent this shell's ROMP_SID named was unknown to the kernel that answered
-            # (a kernel that never ran this session): created untagged, said once, not an error
-            _pign="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("parentIgnored") or "")' "$_resp" 2>/dev/null || true)"
-            [[ -n "$_pign" ]] && echo "romp new: the kernel that answered did not run this shell's session ($_pign), so \"$session_arg\" starts in no tags"
+            # (a kernel that never ran this session): nothing inherited, said once, not an error.
+            # The rest of the line follows the ECHO, so it cannot contradict the "applied" line
+            # below: an explicit --in still lands beside an ignored parent (tagsApplied names what
+            # landed), and a name that already runs inherits nothing by design (no creation event).
+            # "starts in no tags" was false in both cases (review finding, 2026-09-04).
+            _pign=""; _pexist=""; _pnames=""
+            _pinfo="$(python3 -c 'import json,sys
+r = json.loads(sys.argv[1]); a = [t for t in (r.get("tagsApplied") or []) if t]
+print("\x1f".join([r.get("parentIgnored") or "", "existing" if r.get("existing") else "", ", ".join(a)]))' "$_resp" 2>/dev/null || true)"
+            IFS=$'\x1f' read -r _pign _pexist _pnames <<<"$_pinfo" || true   # \x1f: a tab would collapse an empty middle field
+            if [[ -n "$_pign" ]]; then
+                _pwhy="the kernel that answered did not run this shell's session ($_pign)"
+                if [[ -n "$_pexist" ]]; then
+                    echo "romp new: \"$session_arg\" inherited no tags: it was already running, and $_pwhy"
+                elif [[ -n "$_pnames" ]]; then
+                    echo "romp new: \"$session_arg\" inherited no tags: $_pwhy; --in applied: $_pnames"
+                else
+                    echo "romp new: \"$session_arg\" inherited no tags: $_pwhy"
+                fi
+            fi
         fi
         if [[ -n "$model_arg$effort_arg$_noenv$_tagask" || ${#env_args[@]} -gt 0 ]]; then
             _applied="$(python3 -c 'import json,sys; r=json.loads(sys.argv[1]); parts=["%s %s" % (k, r[k]) for k in ("model","effort") if r.get(k)]; e=r.get("env"); e is None or parts.append("env " + (",".join("%s=%s" % kv for kv in sorted(e.items())) or "cleared")); t=r.get("tags"); t is None or not (t or sys.argv[2] != "0") or parts.append("tags " + (", ".join(t) or "none")); print(", ".join(parts))' "$_resp" "${#in_args[@]}" 2>/dev/null || true)"

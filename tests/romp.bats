@@ -626,10 +626,57 @@ MOCK
     run run_romp new ideabox
     [ "$status" -eq 0 ]
     [[ "$output" == *'started "ideabox"'* ]]
-    [[ "$output" == *"did not run this shell's session (11111111-2222-3333-4444-555555555555)"* ]]
-    [[ "$output" == *'"ideabox" starts in no tags'* ]]
+    [[ "$output" == *'"ideabox" inherited no tags: the kernel that answered did not run this shell'"'"'s session (11111111-2222-3333-4444-555555555555)'* ]]
+    [[ "$output" != *"--in applied"* ]]
+    [[ "$output" != *"already running"* ]]
     [[ "$output" != *"WARNING"* ]]
     [[ "$output" != *"applied tags"* ]]
+}
+
+@test "new (in a session): the unknown-parent notice follows the echo — --in still applied, an already-running name inherited nothing" {
+    # the notice used to say the session "starts in no tags" whenever parentIgnored came back, and
+    # the very next line then said "applied tags infra" (an explicit --in lands beside an ignored
+    # parent) or "is already running" (nothing starts). Each line is derived from the ack now.
+    cat > "$MOCK_DIR/curl" << 'MOCK'
+#!/usr/bin/env bash
+echo "curl $*" >> "$MOCK_LOG"
+[[ " $* " == *" --config - "* ]] && cat >/dev/null   # drain the piped token config (see _stub_curl)
+url=""
+for a in "$@"; do [[ "$a" == http* ]] && url="$a"; done
+if [[ "$url" == */new ]]; then
+  echo '{"ok": true, "id": "66666666-7777-8888-9999-000000000000", "dir": "/tmp/x", "tags": ["infra", "qa"], "tagsRequested": ["infra", "qa"], "tagsApplied": ["infra", "qa"], "parentIgnored": "11111111-2222-3333-4444-555555555555"}'
+else
+  echo '{"ok": true}'
+fi
+MOCK
+    chmod +x "$MOCK_DIR/curl"
+    touch "$MOCK_LOG"
+    export ROMP_SERVE_TOKEN=testtok
+    export ROMP_SID=11111111-2222-3333-4444-555555555555
+    # --in beside the ignored parent: inherited nothing, but the named tags landed — one line says both
+    run run_romp new --in infra --in qa ideabox
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'started "ideabox"'* ]]
+    [[ "$output" == *'"ideabox" inherited no tags: the kernel that answered did not run this shell'"'"'s session (11111111-2222-3333-4444-555555555555); --in applied: infra, qa'* ]]
+    [[ "$output" == *"applied tags infra, qa"* ]]
+    [[ "$output" != *"starts in no tags"* ]]
+    [[ "$output" != *"already running"* ]]
+    # a refused --in (a null slot) is not "applied": the notice names only what landed
+    sed -i 's/"tagsApplied": \["infra", "qa"\]/"tagsApplied": ["infra", null]/' "$MOCK_DIR/curl"
+    run run_romp new --in infra --in qa ideabox
+    [[ "$output" == *"; --in applied: infra"* ]]
+    [[ "$output" != *"--in applied: infra, qa"* ]]
+    # the name was already running: nothing starts and nothing is inherited (no creation event); the
+    # notice says so once, after the "is already running" line, and never "starts"
+    sed -i 's/"dir": "\/tmp\/x", "tags": \["infra", "qa"\], "tagsRequested": \["infra", "qa"\], "tagsApplied": \["infra", null\]/"existing": true, "tags": ["pool"], "tagsRequested": [], "tagsApplied": []/' "$MOCK_DIR/curl"
+    run run_romp new ideabox
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"ideabox" is already running; see the dashboard (romp)'* ]]
+    [[ "$output" == *'"ideabox" inherited no tags: it was already running, and the kernel that answered did not run this shell'"'"'s session (11111111-2222-3333-4444-555555555555)'* ]]
+    [[ "$output" == *"applied tags pool"* ]]
+    [[ "$output" != *"starts in no tags"* ]]
+    [[ "$output" != *"--in applied"* ]]
+    [[ "$output" != *"WARNING"* ]]
 }
 
 @test "new -m: a failed send is loud and names the retry (the session IS up)" {
