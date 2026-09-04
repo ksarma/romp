@@ -24,6 +24,9 @@ setup() {
     # reading the developer's machine instead of the code. Clear the whole instance set; the
     # tests that want them set them explicitly.
     unset ROMP_SERVE_PORT ROMP_KERNEL_PORT ROMP_POSTAL_PORT ROMP_MANAGER_PORT ROMP_STATE_DIR CLAUDE_CONFIG_DIR ROMP_TMUX_SOCKET
+    # The env-file path is baked (and, when non-default, exported) into the unit too; a developer shell
+    # that carries either variable must not leak it into the default-install assertions below.
+    unset ROMP_SERVICE_ENV_FILE XDG_CONFIG_HOME
 }
 
 teardown() { rm -rf "$TEST_DIR"; }
@@ -277,7 +280,8 @@ EOF2
     [ -z "$(sed -n '/^EnvironmentFile=-/{n;p;}' "$unit")" ]
     ROMP_OS_OVERRIDE=Darwin run "$SVC" install
     [ "$status" -eq 0 ]
-    ! grep -q "ROMP_SERVE_PORT\|ROMP_STATE_DIR\|ROMP_TMUX_SOCKET" "$ROMP_LAUNCHD_DIR/com.romp.manager.plist"
+    run grep -q "ROMP_SERVE_PORT\|ROMP_STATE_DIR\|ROMP_TMUX_SOCKET" "$ROMP_LAUNCHD_DIR/com.romp.manager.plist"
+    [ "$status" -ne 0 ]        # (a bare `! cmd` that is not the test's last statement can never fail it)
 }
 
 @test "the rendered unit and plist stay well-formed with the instance env present" {
@@ -309,4 +313,39 @@ EOF2
     XDG_CONFIG_HOME="$HOME/.config" ROMP_OS_OVERRIDE=Linux run "$SVC" install
     [ "$status" -eq 0 ]
     grep -Fq "EnvironmentFile=-$HOME/.config/romp/service.env" "$ROMP_SYSTEMD_DIR/romp-manager.service"
+}
+
+@test "install carries a non-default env-file path into the unit (quoted) and the plist (escaped); a default install does not" {
+    # kernel/keysource.py resolves the env file from the SERVICE's environment, which never sees the
+    # installing shell's ROMP_SERVICE_ENV_FILE — so a non-default path baked into EnvironmentFile= alone
+    # was read by systemd and not by the kernel's live key read (romp keyswap rewrote a file the kernel
+    # never looked at). The resolved path now rides the unit and the plist whenever it is not the default.
+    # every character class systemd or XML would mangle: a space (word-split), a double quote and a
+    # backslash (quoting), a percent sign (specifier expansion), an ampersand (XML)
+    local odd='alt "q" \b %z & dir'
+    export ROMP_SERVICE_ENV_FILE="$TEST_DIR/$odd/service.env"
+    mkdir -p "$TEST_DIR/$odd"
+    ROMP_OS_OVERRIDE=Linux run "$SVC" install
+    [ "$status" -eq 0 ]
+    local unit="$ROMP_SYSTEMD_DIR/romp-manager.service"
+    local exp_env='Environment="ROMP_SERVICE_ENV_FILE='"$TEST_DIR"'/alt \"q\" \\b %%z & dir/service.env"'   # quoted, escaped, % doubled
+    grep -Fq "$exp_env" "$unit"
+    local exp_file='EnvironmentFile=-'"$TEST_DIR"'/alt "q" \b %%z & dir/service.env'                         # % doubled here too
+    grep -Fq "$exp_file" "$unit"
+    [ -z "$(sed -n '/^EnvironmentFile=-/{n;p;}' "$unit")" ]                                     # the seam is unchanged
+    ROMP_OS_OVERRIDE=Darwin run "$SVC" install
+    [ "$status" -eq 0 ]
+    local plist="$ROMP_LAUNCHD_DIR/com.romp.manager.plist"
+    local exp_plist='<key>ROMP_SERVICE_ENV_FILE</key><string>'"$TEST_DIR"'/alt &quot;q&quot; \b %z &amp; dir/service.env</string>'
+    grep -Fq "$exp_plist" "$plist"
+    command -v python3 >/dev/null 2>&1 && python3 -c "import plistlib,sys; plistlib.load(open(sys.argv[1],'rb'))" "$plist"
+    unset ROMP_SERVICE_ENV_FILE
+    ROMP_OS_OVERRIDE=Linux run "$SVC" install
+    [ "$status" -eq 0 ]
+    run grep -q "ROMP_SERVICE_ENV_FILE" "$unit"
+    [ "$status" -ne 0 ]        # (a bare `! cmd` that is not the test's last statement can never fail it)
+    ROMP_OS_OVERRIDE=Darwin run "$SVC" install
+    [ "$status" -eq 0 ]
+    run grep -q "ROMP_SERVICE_ENV_FILE" "$plist"
+    [ "$status" -ne 0 ]
 }

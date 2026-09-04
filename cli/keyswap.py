@@ -9,7 +9,9 @@
   * a session already running keeps the key its CLI process started with, because the key rides
     the launch environment — `--cycle <names>` or `--cycle-all` reconnects those sessions so they
     re-present the new one, each resuming its own conversation with its history intact;
-  * the manager itself never restarts, so no session loses an open turn and no subagent is killed.
+  * the manager itself never restarts, so no session loses an open turn; a session with subagents or
+    background tasks in flight is skipped by --cycle (a reconnect would kill them) and named, so you
+    cycle it again once they are done.
 
 No key value is ever printed, logged or passed over the wire. The only rendered form is the first
 12 hex of its sha256 ("sha256:1a2b3c…"), which is enough to see that the swap landed and that the
@@ -38,6 +40,23 @@ ks = SourceFileLoader("romp_keysource", str(ROOT / "kernel" / "keysource.py")).l
 KPORTS = ["http://127.0.0.1:29855", "http://127.0.0.1:7878", "http://127.0.0.1:7432"]
 
 
+def _kernel_urls():
+    """Where the local kernel may answer. ROMP_KERNEL_PORT / ROMP_SERVE_PORT when set — the port
+    bin/romp and the installer resolve — and ONLY that one: a renumbered second-OS-user instance must
+    never hand its serve token to whatever answers on the primary user's default port (review find,
+    2026-09-04). Unset, the defaults `romp version` and `romp update` probe."""
+    for var in ("ROMP_KERNEL_PORT", "ROMP_SERVE_PORT"):
+        p = (os.environ.get(var) or "").strip()
+        if not p:
+            continue
+        if not (p.isdigit() and 0 < int(p) < 65536):
+            # an unusable override is refused, never silently replaced by the default ports — that
+            # replacement is exactly the token-to-the-wrong-kernel path this function exists to close
+            raise ValueError("%s=%r is not a port" % (var, p))
+        return ["http://127.0.0.1:%s" % p]
+    return list(KPORTS)
+
+
 def _token():
     """The serve token — required on every kernel request, loopback included (Jupyter's model).
     Same resolution romp-update uses: env override, else the 0600 state file."""
@@ -54,7 +73,11 @@ def _token():
 
 def _kernel():
     """The base URL of the running local kernel, or None."""
-    for u in KPORTS:
+    try:
+        urls = _kernel_urls()
+    except ValueError:
+        return None                                  # the callers report it (they check _kernel_urls first)
+    for u in urls:
         try:
             with urllib.request.urlopen(u + "/version", timeout=1.5) as r:   # /version is auth-exempt
                 if r.status == 200:
@@ -108,15 +131,62 @@ def _candidates(path, out):
         out("  %-14s %s%s" % (n, _fp(k) if k else "(no %s line)" % ks.KEY_VAR, mark))
 
 
-def _cycle(sessions, all_, out):
-    """Reconnect the named sessions through the kernel, and report what it did per session."""
+def _kernel_check(path, out):
+    """Compare what the KERNEL reads with what the FILE says — the check the operator procedure used
+    to ask for by eye (review find, 2026-09-04). The two can differ: the service was installed with
+    another env-file path that never reached the kernel's environment, the file is unreadable to the
+    kernel, the kernel still holds its startup key because the file has no key line, or the kernel
+    predates this feature. Reads the fingerprint through /keycycle with no sessions named — a read,
+    nothing cycles. Returns 0 when they agree (or no kernel is up to ask), 1 when they do not — or when
+    the port override is unusable, which is a misconfiguration to fix, not "no kernel"."""
+    try:
+        _kernel_urls()
+    except ValueError as e:
+        out("kernel      NOT ASKED — %s; fix the variable and re-run" % e)
+        return 1
+    u = _kernel()
+    if not u:
+        out("kernel      not running — sessions read the file when it is")
+        return 0
+    body = _post(u, "/keycycle", {"sessions": []})
+    if body.get("error") == "HTTP 404":
+        out("kernel      predates `romp keyswap` (no /keycycle route): it is still on the key it booted")
+        out("            with. Take the patch once with `romp refresh`; every swap after that is restart-free.")
+        return 1
+    if not body.get("ok"):
+        out("kernel      could not be asked — %s" % (body.get("error") or body.get("detail") or "unknown"))
+        return 1
+    return _compare(body.get("keyFp") or "", path, out)
+
+
+def _compare(kfp, path, out):
+    """Print the kernel's fingerprint and, when it is not the file's, say so and why it may be."""
+    out("kernel      reads %s" % (("sha256:" + kfp) if kfp else "(none)"))
+    if kfp == ks.fingerprint(ks.read_key(path)):
+        return 0
+    out("MISMATCH    the kernel is not reading this file's key. Usual causes: the service was installed")
+    out("            with another env-file path that the kernel's environment does not carry (re-run")
+    out("            `romp service install`), the file is unreadable to the kernel, or the file has no")
+    out("            %s line and the kernel still holds its startup key." % ks.KEY_VAR)
+    return 1
+
+
+def _cycle(sessions, all_, out, path=None):
+    """Reconnect the named sessions through the kernel, and report what it did per session. The
+    kernel's fingerprint is READ and compared with the file's FIRST: cycling a session while the kernel
+    reads another file would re-present the kernel's unchanged key, so a mismatch refuses to cycle."""
+    try:
+        _kernel_urls()
+    except ValueError as e:
+        out("cycle       NOT DONE — %s; fix the variable and re-run" % e)
+        return 1
     u = _kernel()
     if not u:
         out("cycle       NOT DONE — no running kernel found (is romp on? `romp status`).")
         out("            The file is already swapped: every session picks the new key up at its")
         out("            next launch or revive. Re-run `romp keyswap --cycle…` once romp is up.")
         return 1
-    body = _post(u, "/keycycle", {"all": True} if all_ else {"sessions": sessions})
+    body = _post(u, "/keycycle", {"sessions": []})          # the read: which key does the kernel hold?
     if body.get("error") == "HTTP 404":
         # The one restart this feature genuinely needs: a kernel started before this code has no
         # /keycycle route AND no live key read, so it is still on the key it booted with.
@@ -127,21 +197,35 @@ def _cycle(sessions, all_, out):
     if not body.get("ok"):
         out("cycle       FAILED — %s" % (body.get("error") or body.get("detail") or "unknown"))
         return 1
-    out("kernel      reads %s" % (("sha256:" + body["keyFp"]) if body.get("keyFp") else "(none)"))
+    if _compare(body.get("keyFp") or "", path or ks.service_env_path(), out):
+        out("cycle       NOT DONE — the kernel is not on this file's key, so a reconnect would re-present")
+        out("            the key it already has. Fix the mismatch above first, then cycle.")
+        return 1
+    body = _post(u, "/keycycle", {"all": True} if all_ else {"sessions": sessions})
+    if not body.get("ok"):
+        out("cycle       FAILED — %s" % (body.get("error") or body.get("detail") or "unknown"))
+        return 1
     rows = body.get("rows") or []
     if not rows:
         out("cycle       no sessions matched")
         return 0
     for r in rows:
         out("  %-14s %s" % (str(r.get("session"))[:14], _explain(str(r.get("status") or ""))))
+    if any(str(r.get("status")) == "working" for r in rows):
+        out("            re-run the same --cycle once those are quiet; sessions already moved read \"current\"")
     return 0
 
 
 def _explain(status):
     return {
-        "cycling": "reconnecting now (idle) or at the end of its turn — history kept",
+        "cycling": "reconnecting now — history kept",
+        "current": "already on this key — nothing to do",
         "login":   "skipped: bills the machine login, not the key",
         "dormant": "not running — its next launch reads the new key",
+        "working": "skipped: a turn, subagents or background tasks are in flight (a reconnect would kill "
+                   "the work) — cycle it again when it is quiet; its next launch reads the new key anyway. "
+                   "A standing background task (a dev server, a monitor) never goes quiet: end it, or "
+                   "revive the session",
         "unknown": "no such session",
     }.get(status, status)
 
@@ -188,10 +272,11 @@ def main(argv, out=None):
         out("live key    %s" % _fp(ks.read_key(path)))
         _candidates(path, out)
         if cycle or cycle_all:
-            return _cycle(cycle, cycle_all, out)
+            return _cycle(cycle, cycle_all, out, path)
+        rc = _kernel_check(path, out)
         out("")
         out("swap with:  romp keyswap <name> [--cycle <session,…> | --cycle-all]")
-        return 0
+        return rc
     src = ks.sibling_path(args[0], path)
     if not os.path.exists(src):
         sys.stderr.write("romp keyswap: no such key file: %s\n" % src)
@@ -222,16 +307,19 @@ def main(argv, out=None):
                              "check %s by hand\n" % (_fp(landed), _fp(new), path))
             return 1
         out("service.env %s" % res["path"])
+        if res.get("target") and res["target"] != res["path"]:
+            out("            (a link: written through to %s)" % res["target"])
         out("key line    %s -> %s  (%d lines, mode %o%s)"
             % (_fp(res["old"]), _fp(new), res["lines"], res["mode"],
                ", tightened from a group/other-readable mode" if res["tightened"] else ""))
         out("source      %s" % src)
     out("effect      new and revived sessions bill this key immediately; no manager restart needed")
     if cycle or cycle_all:
-        return _cycle(cycle, cycle_all, out)
+        return _cycle(cycle, cycle_all, out, path)
+    rc = _kernel_check(path, out)
     out("running     sessions keep the key they launched with — reconnect them with")
     out("            romp keyswap %s --cycle-all   (or --cycle <session,…>)" % args[0])
-    return 0
+    return rc
 
 
 if __name__ == "__main__":

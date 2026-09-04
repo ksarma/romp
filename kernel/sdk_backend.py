@@ -1844,8 +1844,10 @@ def _check_key_file_agrees(startup: str, live: str) -> None:
     global _KEY_FILE_CHECKED
     if _KEY_FILE_CHECKED:
         return
-    _KEY_FILE_CHECKED = True
-    if not startup or not live or startup == live:
+    if not startup or not live:
+        return                       # nothing to compare YET: the file may gain its line later (review find,
+    _KEY_FILE_CHECKED = True         # 2026-09-04: the one shot was spent on a first read with nothing to say)
+    if startup == live:
         return
     sys.stderr.write(
         "work key: the manager env file sets a DIFFERENT key than this process started with "
@@ -2087,6 +2089,9 @@ class SdkSession:
         self.retry_info = None                        # the CURRENT storm's latest api_retry detail (attempt/max, error status+message, next-attempt epoch) → the chat retrying element's extra context (the user 2026-07-10); lives and dies with `retrying`
         self._interrupted = False                    # user interrupted the in-flight turn → snapshot reads 'waiting' (display only; inflight stays event-driven)
         self._intr_level = 0                         # interrupt escalation rung this episode (interrupt_action); reset on settle / fresh turn
+        self._launched_key_fp = None                 # fingerprint of the work key this session's CURRENT client launched on
+        #   ("" = launched on the login); set per connect in _options, read by cycle_key so `romp keyswap --cycle`
+        #   is idempotent — a session already on the live key is "current", never reconnected again
         self._subagents: dict[str, dict] = {}        # LIVE subagents (Task/Agent AND Workflow-run agents): agent_id ->
         #   {"type","since"}. Fed by the SubagentStart hook — the exact, event-based "what's running right now"
         #   signal the tmux backend never had; drained by SubagentStop, a Workflow run's per-agent progress list,
@@ -2443,23 +2448,39 @@ class SdkSession:
         if self._wake is not None:
             self._wake.set()
 
-    def request_reconnect(self):
+    def request_reconnect(self, defer=True):
         """Apply a connect-time option change (effort) by reconnecting the client — resume continues the same
         conversation. Reconnect NOW when idle; defer to the end of the current turn when busy. No-op if the
-        session is shutting down or not yet connected (the new value is in the registry → it applies on connect)."""
+        session is shutting down or not yet connected (the new value is in the registry → it applies on connect).
+
+        `defer=False` (the key cycle, 2026-09-04): reconnect ONLY if the session is still quiet when the loop
+        gets to it — nothing in flight, nothing queued, no live subagent or background task. The deferred
+        end-of-turn reconnect fires without re-checking the work that turn launched, so a key cycle never
+        arms it: a turn that arrived between the caller's check and this one drops the request, with a log
+        line, and the operator cycles again when the session is quiet (cycle_key reads "current" once it is)."""
         if self.loop is None or self.ended:
             return
-        self.loop.call_soon_threadsafe(self._do_request_reconnect)
+        self.loop.call_soon_threadsafe(self._do_request_reconnect, defer)
 
-    def _do_request_reconnect(self):
+    def _do_request_reconnect(self, defer=True):
         # a rewind-HELD queue must not defer the reconnect: those turns can't start until the
         # reconnect arms them (the input gate) — deferring on their account would deadlock the rewind
         held = bool(self._rewind_to and not self._rewind_armed)
         if self.inflight == 0 and (held or not self._pending):
+            if not defer:
+                with self._sub_lock:             # the loop-side re-check the key cycle relies on: live work
+                    busy_work = bool(self._subagents or self._bg_tasks)   # that registered since the caller looked
+                if busy_work:
+                    self.backend._log("keyswap (%s): live work registered before the reconnect ran — not "
+                                      "cycled; cycle it again when it is quiet" % self.name)
+                    return
             self._reconnect = True
             self._wake_set()
-        else:
+        elif defer:
             self._reconnect_when_idle = True   # the ResultMessage handler fires it when the turn ends
+        else:
+            self.backend._log("keyswap (%s): became busy before the reconnect ran — not cycled; cycle it "
+                              "again when it is quiet" % self.name)
 
     def _reconcile_stranded(self):
         """RECONCILE ACROSS A RECONNECT, at the loop's top where no client is connected so nothing can
@@ -4764,13 +4785,27 @@ class SdkBackend:
     def work_key(self, value) -> None:
         self._work_key_pin = str(value or "")
 
+    def _work_key_and_source(self) -> tuple:
+        """(key, source) in ONE read of the file — "file" (the env file's line), "startup" (the claim
+        made at boot, because the file has no usable line), "pin" (a test's explicit value), "" (no
+        key anywhere). _options wants both, and must not read the file twice per connect: a keyswap
+        can land between two reads, and the source named in the log must be the source injected."""
+        if self._work_key_pin is not None:
+            return self._work_key_pin, ("pin" if self._work_key_pin else "")
+        startup = startup_api_key()
+        live = _keysrc.read_key()
+        _check_key_file_agrees(startup, live)
+        if live:
+            return live, "file"
+        return startup, ("startup" if startup else "")
+
     def work_key_fp(self) -> str:
         """The renderable form of the key sessions launch on: the sha256 head, "" for none. The
         kernel's /keycycle answer carries this so an operator can confirm the kernel re-read the
         file they just wrote — the value itself never leaves this process."""
         return _keysrc.fingerprint(self.work_key)
 
-    def _note_work_key(self, key: str) -> None:
+    def _note_work_key(self, key: str, source: str = "file") -> None:
         """Log WHICH key a launch is billing, as a fingerprint, and only when it changes. That makes
         a keyswap visible in the Log panel — "the kernel now reads sha256:… " — which is the only
         way an operator can confirm the swap landed, since no surface may carry the key itself. The
@@ -4778,8 +4813,12 @@ class SdkBackend:
         fp = _keysrc.fingerprint(key)
         if fp and fp != self._key_fp_said:
             self._key_fp_said = fp
-            self._log("work key: sessions now launch on the key sha256:%s (read from %s)"
-                      % (fp, _keysrc.service_env_path()))
+            if source == "startup":  # the fallback: say so, rather than name a file that does not hold the key
+                src = ("the environment this manager started with; %s has no %s line the kernel can use"
+                       % (_keysrc.service_env_path(), _keysrc.KEY_VAR))
+            else:
+                src = "read from %s" % _keysrc.service_env_path()
+            self._log("work key: sessions now launch on the key sha256:%s (%s)" % (fp, src))
 
     def cycle_key(self, sid: str) -> str:
         """Re-present the CURRENT work key to one LIVE session by reconnecting it — the apply half of
@@ -4788,14 +4827,26 @@ class SdkBackend:
         The key rides the launch environment, so it is connect-time exactly like --effort and the
         auth pick: a running CLI keeps the key it started with until it is replaced. request_reconnect
         is the same mechanism set_effort/set_auth/set_env use — resume continues the same conversation
-        with its history intact, immediately when the session is idle and at the end of the current
-        turn when it is busy. Nothing is persisted, because nothing about the SESSION changed: which
-        key the box uses is not a per-session setting.
+        with its history intact — called here in its immediate-only form (defer=False): a session that
+        is not quiet is skipped, never handed the end-of-turn reconnect. Nothing is persisted, because
+        nothing about the SESSION changed: which key the box uses is not a per-session setting.
 
-        Returns what happened, for the CLI to print per session: "cycling" (a live key-billed session
-        is reconnecting), "login" (billed to the machine login — the key would not be injected, so a
-        reconnect would cost a turn for nothing), "dormant" (no live CLI — its next launch reads the
-        new key anyway), "unknown" (this backend has no such session)."""
+        Returns what happened, for the CLI to print per session: "cycling" (a quiet, live, key-billed
+        session is reconnecting NOW), "current" (its client already launched on the live key — nothing
+        to re-present, so a repeated --cycle-all converges instead of churning every idle session),
+        "login" (billed to the machine login — the key would not be injected, so a reconnect would cost
+        a turn for nothing), "dormant" (no live CLI — its next launch reads the new key anyway),
+        "working" (a turn, a queued turn, live subagents or background tasks are in flight — see below),
+        "unknown" (this backend has no such session).
+
+        "working": a reconnect abandons the CLI process, and the subagents and background tasks INSIDE
+        it die with it (_drop_live_work) — the very loss the keyswap exists to avoid, and one an idle-
+        looking session can carry (a session waiting on a background agent has nothing in flight of its
+        own). A BUSY session is skipped too, rather than handed the deferred end-of-turn reconnect the
+        settings switches use: that reconnect fires unconditionally when the turn ends, so work the turn
+        launches after this check would die with it (second review pass, 2026-09-04). So "cycling" means
+        exactly one thing — an immediate reconnect of a session with nothing in flight — and the operator
+        re-runs --cycle-all until every session reads "current" (review find, 2026-09-04)."""
         if not self.owns(sid):
             return "unknown"
         s = self.sessions.get(sid)
@@ -4803,7 +4854,14 @@ class SdkBackend:
             return "dormant"
         if s.effective_auth() != "key":
             return "login"
-        s.request_reconnect()
+        fp = self.work_key_fp()
+        if fp and getattr(s, "_launched_key_fp", None) == fp:
+            return "current"
+        with s._sub_lock:
+            live_work = len(s._subagents) + len(s._bg_tasks)
+        if live_work or s.inflight > 0 or s._pending:
+            return "working"
+        s.request_reconnect(defer=False)
         self._log("keyswap (%s): reconnecting to pick up the current work key (sha256:%s)"
                   % (s.name, _keysrc.fingerprint(self.work_key)))
         return "cycling"
@@ -5905,10 +5963,10 @@ class SdkBackend:
         # The key is read ONCE here, per connect, and the value the auth decision was made on is the
         # value injected: the source is live now (a keyswap can land between two reads). An empty read
         # decides login — blanking the var would leave the CLI in key-mode-without-a-key.
-        work_key = self.work_key
+        work_key, key_src = self._work_key_and_source()
         launch_keyed = sess.effective_auth(work_key) == "key"
         if launch_keyed:
-            self._note_work_key(work_key)
+            self._note_work_key(work_key, key_src)
             kw["env"] = dict(kw["env"], ANTHROPIC_API_KEY=work_key,
                              **key_fast_org_env(work_key, self._log))
         elif sess.auth == "key":
@@ -5917,6 +5975,7 @@ class SdkBackend:
             self._log("auth (%s): session is set to the API key but the manager environment carries "
                       "none (service.env) — launching on the login instead" % sess.name, problem=True)
         sess._launched_keyed = launch_keyed
+        sess._launched_key_fp = _keysrc.fingerprint(work_key) if launch_keyed else ""
         return ClaudeAgentOptions(**kw)
 
     # ---- lifecycle (kernel-thread API) ----

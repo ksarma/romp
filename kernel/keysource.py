@@ -134,10 +134,16 @@ def write_key(key: str, path: str | None = None) -> dict:
     mode is the original file's, narrowed to 0600 if it granted group or other any access at all;
     a new file is 0600.
 
-    Returns {"path", "old", "new", "mode", "tightened", "lines"} — `old`/`new` are the raw values,
-    for the caller to fingerprint. Raises OSError on a real failure (the caller reports it).
+    A SYMLINKED env file is written THROUGH (2026-09-04): a dotfiles-managed `service.env` is a link,
+    and an `os.replace` onto the link's own name would swap the link for a plain file and leave its
+    target — what the operator's repo tracks and what a re-link would restore — on the old key.
+
+    Returns {"path", "old", "new", "mode", "tightened", "lines", "target"} — `old`/`new` are the raw
+    values, for the caller to fingerprint; `target` is the file actually rewritten (the link's target,
+    else `path`). Raises OSError on a real failure (the caller reports it).
     """
-    p = path or service_env_path()
+    given = path or service_env_path()
+    p = os.path.realpath(given) if os.path.islink(given) else given
     try:
         with open(p, "r", encoding="utf-8", errors="replace") as fh:
             body = fh.read()
@@ -186,5 +192,5 @@ def write_key(key: str, path: str | None = None) -> dict:
         except OSError:
             pass
         raise
-    return {"path": p, "old": old, "new": key, "mode": mode, "tightened": tightened,
-            "lines": len(lines)}
+    return {"path": given, "old": old, "new": key, "mode": mode, "tightened": tightened,
+            "lines": len(lines), "target": p}

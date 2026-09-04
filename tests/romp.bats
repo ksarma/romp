@@ -1599,6 +1599,10 @@ PY
 
 _keyswap_files() {
     export ROMP_SERVICE_ENV_FILE="$TEST_DIR/service.env"
+    # romp keyswap now asks the running kernel which key it reads (a /keycycle read) on every run, and
+    # honours ROMP_KERNEL_PORT as the ONLY port it probes — pin a dead port so a developer box with a
+    # live kernel on the default port stays out of these cases (CI has no kernel either way)
+    export ROMP_KERNEL_PORT=1
     printf 'ROMP_PERF=1\nANTHROPIC_API_KEY=sk-ant-TEST-0000\nROMP_EXPECTED_AUTH=key\n' \
         > "$ROMP_SERVICE_ENV_FILE"
     chmod 600 "$ROMP_SERVICE_ENV_FILE"

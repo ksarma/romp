@@ -193,6 +193,25 @@ class AtomicRewrite(_EnvFile):
         ks.write_key(NEW_KEY, self.path)
         self.assertEqual(open(self.path).read(), "ROMP_PERF=1\n%s=%s\n" % (ks.KEY_VAR, NEW_KEY))
 
+    def test_a_symlinked_env_file_is_written_through_and_stays_a_link(self):
+        # a dotfiles-managed service.env is a symlink; os.replace onto the link's own name would swap the link
+        # for a plain file and leave its target (what the repo tracks) on the old key (review find, reproduced)
+        target_dir = tempfile.mkdtemp()
+        target = os.path.join(target_dir, "service.env")
+        with open(target, "w") as f:
+            f.write("ROMP_PERF=1\n%s=%s\n" % (ks.KEY_VAR, OLD_KEY))
+        os.chmod(target, 0o600)
+        link = os.path.join(self.d, "linked.env")
+        os.symlink(target, link)
+        res = ks.write_key(NEW_KEY, link)
+        self.assertTrue(os.path.islink(link), "the link is still a link")
+        self.assertEqual(os.path.realpath(link), os.path.realpath(target))
+        self.assertEqual(ks.parse_key(open(target).read()), NEW_KEY, "the TARGET carries the new key")
+        self.assertIn("ROMP_PERF=1", open(target).read())
+        self.assertEqual(res["path"], link)
+        self.assertEqual(os.path.realpath(res["target"]), os.path.realpath(target))
+        self.assertEqual(ks.read_key(link), NEW_KEY)
+
     def test_a_missing_file_is_created_0600(self):
         p = os.path.join(self.d, "fresh.env")
         ks.write_key(NEW_KEY, p)
@@ -264,7 +283,7 @@ class LiveSpawnEnv(_Backend):
         src = open(os.path.join(ROOT, "kernel", "sdk_backend.py")).read()
         self.assertEqual(src.count("ANTHROPIC_API_KEY=work_key"), 1,
                          "one injection site only — a second would need its own live read")
-        self.assertIn("work_key = self.work_key", src)
+        self.assertIn("work_key, key_src = self._work_key_and_source()", src)
 
     def test_the_key_is_read_once_per_connect_so_a_launch_cannot_straddle_a_swap(self):
         reads = []
@@ -336,6 +355,28 @@ class StartupFallback(_Backend):
                          "an ambient key bills EVERY session — constructing a backend must still strip it")
         self.assertEqual(be.work_key, OLD_KEY, "and the FILE still decides what a launch bills")
 
+    def test_the_agreement_check_is_not_spent_on_a_read_with_nothing_to_compare(self):
+        # the one-shot used to be consumed by the FIRST read even when the file had no key line, so a
+        # disagreement that appeared later (the line added, quoted differently) was never reported
+        import io
+        from contextlib import redirect_stderr
+        sb._KEY_FILE_CHECKED = False
+        with open(self.path, "w") as f:
+            f.write("ROMP_PERF=1\n")                                  # no key line yet
+        err = io.StringIO()
+        with redirect_stderr(err):
+            self.assertEqual(self.be.work_key, self.BOOT, "the startup claim governs")
+        self.assertFalse(sb._KEY_FILE_CHECKED, "nothing to compare: the check is still armed")
+        self.assertEqual(err.getvalue(), "")
+        with open(self.path, "w") as f:
+            f.write("ROMP_PERF=1\n%s=%s\n" % (ks.KEY_VAR, NEW_KEY))    # a DIFFERENT key appears in the file
+        with redirect_stderr(err):
+            self.assertEqual(self.be.work_key, NEW_KEY)
+            self.be.work_key                                          # a second read says nothing more
+        self.assertTrue(sb._KEY_FILE_CHECKED)
+        self.assertEqual(err.getvalue().count("DIFFERENT key"), 1, "said once, when there was something to say")
+        self.assertNotIn(NEW_KEY, err.getvalue()); self.assertNotIn(self.BOOT, err.getvalue())
+
     def test_a_disagreement_between_the_file_and_the_startup_env_is_said_once(self):
         sb._KEY_FILE_CHECKED = False
         sb._WORK_KEY = BOOT_KEY
@@ -364,7 +405,8 @@ class CycleReconnects(_Backend):
         s.sid = sid
         s.name = "live"
         self.reconnects = getattr(self, "reconnects", [])
-        s.request_reconnect = lambda: self.reconnects.append(sid)
+        self.defers = getattr(self, "defers", [])
+        s.request_reconnect = lambda defer=True: (self.reconnects.append(sid), self.defers.append(defer))
         self.be.sessions[sid] = s
         return s
 
@@ -374,6 +416,41 @@ class CycleReconnects(_Backend):
         self.assertEqual(self.be.cycle_key(sid), "cycling")
         self.assertEqual(self.reconnects, [sid],
                          "reconnect is what applies a connect-time option — and resume keeps the history")
+        self.assertEqual(self.defers, [False], "immediate-only: a key cycle never arms the end-of-turn reconnect")
+
+    def test_the_defer_flag_rides_the_loop_callback(self):
+        # the seam between the kernel-thread request and the loop-side re-check: request_reconnect(defer=False)
+        # must schedule _do_request_reconnect WITH defer=False — a call_soon_threadsafe that dropped the argument
+        # passed every other test and silently restored the end-of-turn reconnect for key cycles (fourth pass)
+        s = self._sess(7, auth="key")
+        scheduled = []
+
+        class _Loop:
+            def call_soon_threadsafe(self, cb, *args):
+                scheduled.append((cb, args))
+        s.loop = _Loop()
+        s.request_reconnect(defer=False)
+        s.request_reconnect()
+        self.assertEqual([(cb.__name__, args) for cb, args in scheduled],
+                         [("_do_request_reconnect", (False,)), ("_do_request_reconnect", (True,))])
+        s.ended = True
+        s.request_reconnect(defer=False)
+        self.assertEqual(len(scheduled), 2, "an ended session schedules nothing")
+
+    def test_the_loop_side_recheck_drops_a_key_cycle_that_found_the_session_busy(self):
+        # the kernel-thread check and the loop callback are two moments; a turn fed in between used to take
+        # _do_request_reconnect's else branch and arm the unconditional end-of-turn reconnect (third review pass)
+        s = self._sess(7, auth="key")
+        s._pending.append("a turn that arrived in between")
+        s._do_request_reconnect(defer=False)
+        self.assertFalse(s._reconnect); self.assertFalse(s._reconnect_when_idle, "not deferred: dropped")
+        self.assertTrue(any("before the reconnect ran" in m for m in self.logged))
+        s._do_request_reconnect(defer=True)                             # the settings switches still defer
+        self.assertTrue(s._reconnect_when_idle)
+        s._reconnect_when_idle = False; s._pending.clear()
+        s._subagents["agent-1"] = {"type": "local_agent", "since": 1.0}   # live work registered in between
+        s._do_request_reconnect(defer=False)
+        self.assertFalse(s._reconnect); self.assertFalse(s._reconnect_when_idle)
 
     def test_a_login_billed_session_is_left_alone(self):
         sid = self.be.spawn("n", "/tmp", auth="login")
@@ -387,6 +464,59 @@ class CycleReconnects(_Backend):
         self.assertEqual(self.be.cycle_key(sid), "dormant",
                          "no live CLI — its next launch reads the new key anyway")
         self.assertEqual(self.be.cycle_key("11111111-2222-3333-4444-999999999999"), "unknown")
+
+    def test_a_session_with_subagents_or_background_tasks_in_flight_is_skipped_not_cycled(self):
+        # a reconnect abandons the CLI process and _drop_live_work retires every subagent and background task
+        # inside it — the loss the keyswap exists to avoid, on a session that LOOKS idle (nothing of its own in
+        # flight while it waits on a background agent). Named, never cycled under its work (review find).
+        sid = self.be.spawn("n", "/tmp")
+        s = self._live(sid)
+        s._subagents["agent-1"] = {"type": "local_agent", "since": 1.0}
+        self.assertEqual(self.be.cycle_key(sid), "working")
+        self.assertEqual(self.reconnects, [], "no reconnect while a subagent runs")
+        s._subagents.clear()
+        s._bg_tasks["toolu_1"] = {"desc": "a long build", "type": "", "since": 2.0}
+        self.assertEqual(self.be.cycle_key(sid), "working")
+        self.assertEqual(self.reconnects, [], "…nor while a background task runs")
+        s._bg_tasks.clear()
+        self.assertEqual(self.be.cycle_key(sid), "cycling", "work all back → it cycles")
+        self.assertEqual(self.reconnects, [sid])
+
+    def test_a_busy_session_is_skipped_too_so_no_deferred_reconnect_can_kill_work_the_turn_starts_later(self):
+        # the settings switches hand a busy session a deferred end-of-turn reconnect that fires unconditionally;
+        # a background task the turn launches AFTER this check would die with it. "cycling" therefore means an
+        # immediate reconnect of a quiet session, nothing else (second review pass).
+        sid = self.be.spawn("n", "/tmp")
+        s = self._live(sid)
+        s.inflight = 1
+        self.assertEqual(self.be.cycle_key(sid), "working")
+        s.inflight = 0
+        s._pending.append("a queued turn")
+        self.assertEqual(self.be.cycle_key(sid), "working")
+        s._pending.clear()
+        self.assertEqual(self.reconnects, [], "never armed while a turn was in flight or queued")
+        self.assertEqual(self.be.cycle_key(sid), "cycling")
+        self.assertEqual(self.reconnects, [sid])
+
+    def test_a_session_whose_client_already_launched_on_the_live_key_is_current(self):
+        # idempotence: the operator re-runs --cycle-all until every session reads "current"; a session that
+        # already moved must not be reconnected again on every run
+        sid = self.be.spawn("n", "/tmp")
+        s = self._live(sid)
+        s._launched_key_fp = self.be.work_key_fp()
+        self.assertEqual(self.be.cycle_key(sid), "current")
+        self.assertEqual(self.reconnects, [])
+        s._launched_key_fp = "000000000000"                          # launched on some other key
+        self.assertEqual(self.be.cycle_key(sid), "cycling")
+        self.assertEqual(self.reconnects, [sid])
+
+    def test_a_connect_records_the_fingerprint_of_the_key_it_launched_on(self):
+        s = self._sess(9, auth="key")
+        self.be._options(s, dict)
+        self.assertEqual(s._launched_key_fp, ks.fingerprint(ks.read_key(self.path)))
+        s2 = self._sess(8, auth="login")
+        self.be._options(s2, dict)
+        self.assertEqual(s2._launched_key_fp, "")
 
     def test_nothing_about_the_session_is_persisted_because_nothing_about_it_changed(self):
         sid = self.be.spawn("n", "/tmp")
@@ -461,16 +591,20 @@ class KeyswapCli(_EnvFile):
             "rows": [{"session": "web", "status": "cycling"}, {"session": "api", "status": "dormant"}]}
         rc, said = self.run_cli("lowprio", "--cycle", "web,api")
         self.assertEqual(rc, 0)
-        self.assertEqual(self.posted[0][1], "/keycycle")
-        self.assertEqual(self.posted[0][2], {"sessions": ["web", "api"]})
+        self.assertEqual(self.posted[0][1:], ("/keycycle", {"sessions": []}), "the read comes first")
+        self.assertEqual(self.posted[-1][1], "/keycycle")
+        self.assertEqual(self.posted[-1][2], {"sessions": ["web", "api"]})
         self.assertIn("history kept", said)
         self.assertIn("sha256:" + ks.fingerprint(NEW_KEY), said,
                       "the kernel's own fingerprint is how the operator confirms it re-read the file")
 
     def test_cycle_all_asks_for_all_and_never_names_a_session_itself(self):
         cli._kernel = lambda: "http://127.0.0.1:29855"
+        cli._post = lambda u, p, b: self.posted.append((u, p, b)) or {
+            "ok": True, "keyFp": ks.fingerprint(NEW_KEY), "rows": []}
         rc, _ = self.run_cli("lowprio", "--cycle-all")
-        self.assertEqual(self.posted[0][2], {"all": True})
+        self.assertEqual([b for _u, _p, b in self.posted], [{"sessions": []}, {"all": True}],
+                         "the read, then the cycle — and never a session named by the CLI itself")
 
     def test_the_swap_still_lands_when_no_kernel_is_reachable(self):
         rc, said = self.run_cli("lowprio", "--cycle-all")
@@ -484,6 +618,97 @@ class KeyswapCli(_EnvFile):
         rc, said = self.run_cli("lowprio", "--cycle-all")
         self.assertEqual(rc, 1)
         self.assertIn("romp refresh", said)
+
+    def test_the_kernels_fingerprint_is_compared_with_the_files_and_a_mismatch_is_loud(self):
+        # the operator procedure used to be "compare the two sha256 lines by eye"; the CLI now asks the kernel
+        # (a /keycycle read that names no session) and says MISMATCH when the kernel reads another key — the
+        # symptom of a path the kernel's environment does not carry, an unreadable file, or a startup fallback
+        cli._kernel = lambda: "http://127.0.0.1:29855"
+        cli._post = lambda u, p, b: self.posted.append((u, p, b)) or {"ok": True, "keyFp": "deadbeefcafe", "rows": []}
+        rc, said = self.run_cli()
+        self.assertEqual(self.posted[0][1:], ("/keycycle", {"sessions": []}), "a read: no session named")
+        self.assertEqual(rc, 1)
+        self.assertIn("MISMATCH", said)
+        self.assertIn("sha256:deadbeefcafe", said)
+        self.posted.clear()
+        cli._post = lambda u, p, b: self.posted.append((u, p, b)) or {
+            "ok": True, "keyFp": ks.fingerprint(ks.read_key(self.path)), "rows": []}
+        rc, said = self.run_cli()
+        self.assertEqual(rc, 0)
+        self.assertNotIn("MISMATCH", said)
+        self.assertIn("kernel      reads sha256:" + ks.fingerprint(ks.read_key(self.path)), said)
+        # after a swap the same check runs against the NEW key
+        cli._post = lambda u, p, b: {"ok": True, "keyFp": ks.fingerprint(NEW_KEY), "rows": []}
+        rc, said = self.run_cli("lowprio")
+        self.assertEqual(rc, 0); self.assertNotIn("MISMATCH", said)
+        cli._post = lambda u, p, b: {"ok": True, "keyFp": ks.fingerprint(OLD_KEY), "rows": []}
+        rc, said = self.run_cli("lowprio")                             # already swapped; the kernel still on the old
+        self.assertEqual(rc, 1); self.assertIn("MISMATCH", said)
+
+    def test_cycle_reads_and_compares_first_and_refuses_to_cycle_on_a_mismatch(self):
+        # cycling while the kernel reads another file would re-present the kernel's unchanged key to every
+        # named session; the read comes first and a mismatch stops the cycle before any reconnect
+        cli._kernel = lambda: "http://127.0.0.1:29855"
+        cli._post = lambda u, p, b: self.posted.append((u, p, b)) or {"ok": True, "keyFp": "deadbeefcafe",
+                                                                      "rows": [{"session": "web", "status": "cycling"}]}
+        rc, said = self.run_cli("lowprio", "--cycle", "web")
+        self.assertEqual(rc, 1)
+        self.assertIn("MISMATCH", said)
+        self.assertIn("NOT DONE", said)
+        self.assertEqual([b for _u, _p, b in self.posted], [{"sessions": []}], "the read only — nothing was cycled")
+        self.posted.clear()
+        cli._post = lambda u, p, b: self.posted.append((u, p, b)) or {
+            "ok": True, "keyFp": ks.fingerprint(NEW_KEY),
+            "rows": [{"session": "web", "status": "working"}, {"session": "api", "status": "current"}]}
+        rc, said = self.run_cli("lowprio", "--cycle", "web,api")
+        self.assertEqual(rc, 0)
+        self.assertEqual([b for _u, _p, b in self.posted], [{"sessions": []}, {"sessions": ["web", "api"]}])
+        self.assertIn("skipped: a turn, subagents or background tasks are in flight", said)
+        self.assertIn("already on this key", said)
+        self.assertIn("re-run the same --cycle", said)
+
+    def test_the_probe_itself_honours_the_override_and_refuses_an_unusable_one(self):
+        # _kernel() must USE _kernel_urls(): a revert of that one line passed every test (second review pass)
+        import io
+        import unittest.mock as mock
+        from contextlib import redirect_stderr
+        cli._kernel = self._kernel_before                            # the real probe, with urlopen stubbed
+        seen = []
+
+        def refuse(url, timeout=None):
+            seen.append(url)
+            raise OSError("refused")
+        with mock.patch.object(cli.urllib.request, "urlopen", refuse), \
+             mock.patch.dict(os.environ, {"ROMP_KERNEL_PORT": "45678"}):
+            self.assertIsNone(cli._kernel())
+        self.assertEqual(seen, ["http://127.0.0.1:45678/version"], "the override port, and nothing else, was probed")
+        seen.clear()
+        with mock.patch.object(cli.urllib.request, "urlopen", refuse), \
+             mock.patch.dict(os.environ, {"ROMP_KERNEL_PORT": "not-a-port"}):
+            self.assertIsNone(cli._kernel())
+            self.assertEqual(seen, [], "an unusable override probes nothing: the defaults are not a fallback")
+            # …and every surface says so with a non-zero exit, instead of "kernel not running" and rc 0
+            rc, said = self.run_cli()
+            self.assertEqual(rc, 1); self.assertIn("NOT ASKED", said); self.assertIn("not a port", said)
+            rc, said = self.run_cli("lowprio")
+            self.assertEqual(rc, 1); self.assertIn("NOT ASKED", said)
+            self.assertEqual(ks.read_key(self.path), NEW_KEY, "the file swap itself still landed")
+            rc, said = self.run_cli("lowprio", "--cycle-all")
+            self.assertEqual(rc, 1); self.assertIn("NOT DONE", said)
+        self.assertEqual(self.posted, [], "nothing was posted anywhere")
+
+    def test_the_kernel_port_override_is_the_only_port_probed(self):
+        # a renumbered second-OS-user instance must never hand its serve token to whatever answers on the
+        # primary user's default port (review find): with the override set, that port and nothing else
+        import unittest.mock as mock
+        with mock.patch.dict(os.environ, {"ROMP_KERNEL_PORT": "45678"}):
+            self.assertEqual(cli._kernel_urls(), ["http://127.0.0.1:45678"])
+        with mock.patch.dict(os.environ, {"ROMP_SERVE_PORT": "45679"}, clear=False):
+            os.environ.pop("ROMP_KERNEL_PORT", None)
+            self.assertEqual(cli._kernel_urls(), ["http://127.0.0.1:45679"])
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("ROMP_KERNEL_PORT", None); os.environ.pop("ROMP_SERVE_PORT", None)
+            self.assertEqual(cli._kernel_urls(), cli.KPORTS)
 
     def test_junk_options_are_refused_rather_than_read_as_a_source_name(self):
         self.assertEqual(self.run_cli("--wat")[0], 2)
@@ -596,6 +821,24 @@ class KeycycleRoute(unittest.TestCase):
         self.assertEqual(len(resp["rows"]), 2, "one bad session must not abandon the rest")
         self.assertIn("boom", resp["rows"][0]["status"])
 
+    def test_an_empty_session_list_is_a_read_of_the_fingerprint_and_cycles_nothing(self):
+        from unittest import mock
+        fake = self._Fake({"s-web": object()})
+        woke = []
+        with mock.patch.object(self.km, "_sdk", lambda: fake), \
+             mock.patch.object(self.km, "_sid_of", lambda w: "s-" + w), \
+             mock.patch.object(self.km, "_name_of", lambda sid: str(sid)[2:]), \
+             mock.patch.object(self.km, "_push_soon", lambda: woke.append(1)):
+            code, body = self._post({"sessions": []})
+            self.assertEqual(code, 200)
+            self.assertEqual(body["keyFp"], ks.fingerprint(NEW_KEY))
+            self.assertEqual(body["rows"], [])
+            self.assertEqual(fake.asked, [], "nothing was cycled")
+            self.assertEqual(woke, [], "a read does not wake the dashboard pusher")
+            code, body = self._post({"sessions": ["web"]})
+            self.assertEqual([r["status"] for r in body["rows"]], ["cycling"])
+            self.assertEqual(woke, [1], "a cycle does")
+
     def test_a_sessions_value_that_is_not_a_list_is_a_400(self):
         code, resp = self._with(self._Fake({}), {"sessions": "web"})
         self.assertEqual(code, 400, "a bare string would otherwise iterate its characters")
@@ -639,11 +882,23 @@ class NothingLeaksTheKey(_Backend):
         self.assertEqual(len(said), 2)
         self.assertIn(ks.fingerprint(NEW_KEY), said[1])
 
+    def test_the_announcement_names_the_startup_environment_when_the_file_has_no_line(self):
+        sb._WORK_KEY = OLD_KEY                                        # the boot claim (restored by tearDown)
+        with open(self.path, "w") as f:
+            f.write("ROMP_PERF=1\n")                                  # no key line: the startup claim is injected
+        self.assertEqual(self._launch_env()[ks.KEY_VAR], OLD_KEY)
+        said = [m for m in self.logged if m.startswith("work key:")]
+        self.assertEqual(len(said), 1)
+        self.assertIn("sha256:" + ks.fingerprint(OLD_KEY), said[0])
+        self.assertIn("environment this manager started with", said[0])
+        self.assertNotIn("read from", said[0], "never claim the file holds a key it does not")
+        self.assertNotIn(OLD_KEY, said[0])
+
     def test_a_cycle_log_line_carries_the_fingerprint_only(self):
         sid = self.be.spawn("n", "/tmp")
         s = self._sess(8, auth="key")
         s.sid, s.name = sid, "live"
-        s.request_reconnect = lambda: None
+        s.request_reconnect = lambda defer=True: None
         self.be.sessions[sid] = s
         self.be.cycle_key(sid)
         line = [l for l in self.logged if "keyswap" in l][0]
