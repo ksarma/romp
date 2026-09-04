@@ -13,6 +13,8 @@ and the reveal rule. Synthetic only."""
 import json
 import os
 import tempfile
+import threading
+import time
 import unittest
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
@@ -538,3 +540,132 @@ class TagInheritance(unittest.TestCase):
         self.assertIn("list", km._tags_error("pool"))
         self.assertIn("non-empty", km._tags_error(["pool", ""]))
         self.assertIn("non-empty", km._tags_error([3]))
+
+    def test_a_remote_member_wearing_the_parents_sid_does_not_count_as_holding_it(self):
+        # the LOCAL-member check: members are (host, sid) pairs and only a host=="" pair is this
+        # kernel's session — a remote kernel's member carrying the same sid string is another host's
+        # session. Matching on sid alone would copy that tag onto the child.
+        km._set_timeline_views({"active": "all", "tags": [{"id": "g1", "name": "team", "members": ["alpha:" + self.P]}]})
+        before = (jd.STATE / "timeline-views.json").read_bytes()
+        self.dirty.clear()
+        self.assertEqual(km._inherit_tag_membership(self.P, self.C), [], "not held here → nothing inherited")
+        self.assertEqual((jd.STATE / "timeline-views.json").read_bytes(), before, "no store write at all")
+        self.assertEqual(self.dirty, [])
+
+    def test_the_inherit_copies_the_store_and_stamps_the_tag_so_a_stale_echo_cannot_strip_the_child(self):
+        # _timeline_views() hands out ONE cached object per file version. An in-place append on it
+        # would make the setter's prev == new at write time, so the tag's mtime would not move — and a
+        # dashboard echoing the blob it was served BEFORE the inherit would pass the stale-writer guard
+        # and silently strip the child (the 2026-08-31 loss class the guard exists for).
+        T0 = int(time.time()) - 100
+        served = {"active": "all", "at": T0, "tags": [{"id": "g1", "name": "pool", "color": "", "mtime": T0,
+                                                      "members": [{"host": "", "sid": self.P}]}]}
+        km._atomic_write(km._views_path(), json.dumps(served))
+        km._flags_cache.clear()
+        cached = km._timeline_views()
+        self.assertEqual(km._inherit_tag_membership(self.P, self.C), ["pool"])
+        self.assertEqual([m["sid"] for m in cached["tags"][0]["members"]], [self.P], "the cached blob was not mutated")
+        self.assertGreater(km._timeline_views()["tags"][0]["mtime"], T0, "the write moved the tag's mtime")
+        km._set_timeline_views(json.loads(json.dumps(served)))     # the stale echo: the pre-inherit blob, whole
+        self.assertIn(self.C, self._members("pool"), "the guard kept the newer membership — the child survives")
+
+    def test_tag_ack_echoes_the_request_positionally_with_the_stored_spelling(self):
+        # the store trims a name and clamps it to _VIEWS_MAX_NAME; compared raw against `tags`, an
+        # applied name read as "not applied" (the CLI's false warning) — tagsApplied says what each
+        # request landed as, by position, so "applied as <name>" and "not applied" are distinct
+        km._set_timeline_views({"active": "all", "tags": [{"id": "g1", "name": "pool", "members": [self.P]}]})
+        long = "a" * (km._VIEWS_MAX_NAME + 5)
+        a = km._tag_ack(self.C, self.P, [" pool ", long, "infra"])
+        self.assertEqual(a["tagsRequested"], [" pool ", long, "infra"], "as sent, in order")
+        self.assertEqual(a["tagsApplied"], ["pool", "a" * km._VIEWS_MAX_NAME, "infra"], "trimmed, clamped, minted")
+        self.assertEqual(sorted(a["tags"]), sorted(["pool", "a" * km._VIEWS_MAX_NAME, "infra"]), "the session's names after both")
+        self.assertNotIn("tagError", a)
+        self.assertEqual(km._tag_new_session(self.C, "", ["infra"]), (a["tags"], None),
+                         "_tag_new_session is the (names, error) view of the same call")
+
+    def test_tag_ack_marks_a_refused_slot_none_beside_the_ones_that_landed(self):
+        km._set_timeline_views({"active": "all", "tags": [
+            {"id": "g1", "name": "twin", "members": []}, {"id": "g2", "name": "twin", "members": []}]})
+        a = km._tag_ack(self.C, "", ["twin", "qa"])
+        self.assertEqual(a["tagsApplied"], [None, "qa"])
+        self.assertEqual(a["tags"], ["qa"])
+        self.assertIn("two tags are named", a["tagError"])
+
+    def test_resolve_parent_sid_maps_a_comment_thread_to_the_session_it_lives_in(self):
+        # a thread's CLI carries the THREAD's sid as ROMP_SID, and a thread holds no tags (it has no
+        # tab) — so a `romp new` run inside a thread inherits from the tab-bearing session it is of
+        T = "77777777-8888-9999-0000-111111111111"
+        P = self.P
+        class Be:
+            def owns(self, sid): return sid in (T, P)
+            def thread_of(self, sid): return P if sid == T else ""
+        saved = km.Sessions.backend_for
+        km.Sessions.backend_for = staticmethod(lambda sid: Be())
+        try:
+            self.assertEqual(km._resolve_parent_sid(T, {}), (P, None), "the thread's tag parent is its threadOf")
+            self.assertEqual(km._resolve_parent_sid(P, {}), (P, None), "a session is its own")
+        finally:
+            km.Sessions.backend_for = saved
+
+    def test_parent_from_request_honours_the_clis_auto_marker_for_an_unknown_parent_only(self):
+        # `romp new` sends ROMP_SID as parent by default (parentAuto); aimed at a kernel that never
+        # ran the caller, that is "nothing to inherit", named in the ack — not a 400 for a sid the
+        # user never typed. An explicit parent (no marker: the picker, a raw caller) still refuses.
+        U = "99999999-0000-0000-0000-000000000000"
+        self.assertEqual(km._parent_from_request({"parent": U, "parentAuto": True}, {}), ("", None, U))
+        sid, err, ign = km._parent_from_request({"parent": U}, {})
+        self.assertIsNone(sid)
+        self.assertIn("not a session this kernel knows", err)
+        self.assertEqual(ign, "")
+        (jd.STATE / "names").mkdir(parents=True, exist_ok=True)
+        (jd.STATE / "names" / self.P).write_text("web\t/tmp\t#123456\twhite\n")
+        self.assertEqual(km._parent_from_request({"parent": self.P, "parentAuto": True}, {}), (self.P, None, ""),
+                         "a known auto parent inherits as ever")
+        self.assertEqual(km._parent_from_request({}, {}), ("", None, ""))
+
+    def test_a_dashboards_full_blob_write_cannot_land_inside_the_inherits_read_to_write_window(self):
+        # the WS setTimelineViews write takes _views_lock like every other writer. Unlocked, a
+        # dashboard blob landing between the inherit's read and its write either had its own added
+        # member clobbered by the inherit's stale-read write, or made the inherit's write fail the
+        # stale-writer guard while the inherit still returned the tag name (a child reported tagged,
+        # not tagged). Locked, it waits: the inherit lands whole first, and the dashboard's blob is
+        # then judged whole by the guard (its stale copy of the tag refused, loudly — never silently).
+        T0 = int(time.time()) - 100
+        served = {"active": "all", "at": T0, "tags": [{"id": "g1", "name": "pool", "color": "", "mtime": T0,
+                                                      "members": [{"host": "", "sid": self.P}]}]}
+        km._atomic_write(km._views_path(), json.dumps(served))
+        km._flags_cache.clear()
+        entered, release = threading.Event(), threading.Event()
+        real_read = km._timeline_views
+        inheriting = []
+        def stalled_read():
+            v = real_read()
+            if threading.current_thread() in inheriting and not entered.is_set():
+                entered.set()             # parked INSIDE the locked window: after the read, before the write
+                release.wait(5)
+            return v
+        km._timeline_views = stalled_read
+        got = []
+        def inherit():
+            inheriting.append(threading.current_thread())
+            got.append(km._inherit_tag_membership(self.P, self.C))
+        client = {"app": "timeline", "alive": True, "send": lambda s: None}
+        dash = json.loads(json.dumps(served))
+        dash["tags"][0]["members"].append({"host": "", "sid": "other"})
+        t1 = threading.Thread(target=inherit, daemon=True)
+        t2 = threading.Thread(target=lambda: km.Handler._dispatch_ws(object.__new__(km.Handler),
+                                                                      {"type": "setTimelineViews", "views": dash}, client), daemon=True)
+        try:
+            t1.start()
+            self.assertTrue(entered.wait(5), "the inherit parks inside its window")
+            t2.start()
+            t2.join(0.5)
+            self.assertTrue(t2.is_alive(), "the full-blob write waits for the lock — it cannot land inside the window")
+            self.assertEqual(self._members("pool"), [self.P], "…and nothing reached the store meanwhile")
+        finally:
+            release.set()
+            t1.join(5)
+            t2.join(5)
+            km._timeline_views = real_read
+        self.assertEqual(got, [["pool"]])
+        self.assertIn(self.C, self._members("pool"), "the inherit's write landed; the dashboard's stale copy could not strip it")

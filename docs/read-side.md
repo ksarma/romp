@@ -336,10 +336,15 @@ jobs:
 - **Inheritance.** A session spawned from another joins the parent's tags at the
   creation event: a fork, a promoted comment thread, and `romp new` run inside a
   session (it sends its `ROMP_SID` as `parent`; `--no-inherit` withholds it and
-  `--in <tag>` adds tags). Opening a running session inherits nothing, and a
-  comment thread inherits nothing until it is promoted, since it has no tab.
-  Only the local kernel's tags are inherited; a parent held only by a remote
-  kernel's tag is a known gap.
+  `--in <tag>` adds tags; a thread's `ROMP_SID` resolves to the session the
+  thread belongs to). Opening a running session inherits nothing: `/new`
+  re-asserts an explicit `--in` on it, while the picker's createSession op
+  warns and leaves the running session's tags alone, because its Tags row is a
+  prefill from the active tab rather than an ask. A comment thread inherits
+  nothing until it is promoted, since it has no tab. Only the local kernel's
+  tags are inherited; a parent held only by a remote kernel's tag is a known gap.
+  Every writer of the views blob, the WS `setTimelineViews` full-blob write
+  included, runs under `_views_lock`.
 
 The exact project directory still defines the **comms group** sketched above.
 The directory-to-tag auto-tagging rule and the URL-hash view selection once

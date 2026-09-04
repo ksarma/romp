@@ -328,9 +328,7 @@ class NewRouteTags(unittest.TestCase):
             self.created.append((nm, parent, list(tags)))
             extra = km._apply_new_session_prefs(SID2, prefs or {})
             if parent or tags:
-                extra["tags"], terr = km._tag_new_session(SID2, parent, tags)
-                if terr:
-                    extra["tagError"] = terr
+                extra.update(km._tag_ack(SID2, parent, tags))
             return SID2, extra
         km._create_sdk_session = create
 
@@ -436,6 +434,52 @@ class NewRouteTags(unittest.TestCase):
         self.assertFalse(body["ok"])
         time.sleep(0.2)
         self.assertEqual(self.spawns, [], "the refusal must come BEFORE the spawn thread starts")
+
+    def test_a_normalized_in_name_echoes_positionally_as_applied_not_as_dropped(self):
+        # the store trims and clamps names (_edit_tag, _VIEWS_MAX_NAME); the CLI compared its raw
+        # --in against `tags` and warned "did not apply" for a tag that WAS applied. tagsRequested /
+        # tagsApplied are positional, so it can say "applied as <name>" instead
+        long = "a" * (km._VIEWS_MAX_NAME + 5)
+        code, body = self._post({"name": "api", "dir": self.dir, "tags": [" pool ", long]})
+        self.assertEqual(code, 200)
+        self.assertEqual(body["tagsRequested"], [" pool ", long], "as sent")
+        self.assertEqual(body["tagsApplied"], ["pool", "a" * km._VIEWS_MAX_NAME], "what each landed as")
+        self.assertEqual(sorted(body["tags"]), sorted(["pool", "a" * km._VIEWS_MAX_NAME]))
+        self.assertEqual(self._members("pool"), [SID2])
+
+    def test_an_unknown_auto_parent_creates_the_session_untagged_and_says_so(self):
+        # the CLI's default parent is its own ROMP_SID (parentAuto); against a kernel that never ran
+        # the caller — a scratch kernel on another port — that must not be a 400 naming a sid the
+        # user never typed. Untagged, with parentIgnored in the ack and the tags ask still answered.
+        U = "99999999-0000-0000-0000-000000000000"
+        code, body = self._post({"name": "api", "dir": self.dir, "parent": U, "parentAuto": True})
+        self.assertEqual(code, 200)
+        self.assertTrue(body["ok"], body)
+        self.assertEqual(body.get("parentIgnored"), U)
+        self.assertEqual(body.get("tags"), [], "the ask was answered: nothing inherited")
+        self.assertEqual(self.created, [("api", "", [])], "created with no parent")
+        # an explicit --in beside the ignored parent still lands, and its echo wins
+        code, body = self._post({"name": "api", "dir": self.dir, "parent": U, "parentAuto": True, "tags": ["infra"]})
+        self.assertEqual(body.get("tags"), ["infra"])
+        self.assertEqual(body.get("parentIgnored"), U)
+        # without the marker the same parent is the 400 the explicit contract promises
+        code, body = self._post({"name": "api", "dir": self.dir, "parent": U})
+        self.assertEqual(code, 400)
+
+    def test_a_threads_name_answers_the_tags_ask_with_nothing_applied_and_the_reason(self):
+        TSID = "77777777-8888-9999-0000-111111111111"
+        saved = km._thread_names
+        km._thread_names = lambda: {"side": (TSID, SID)}
+        try:
+            code, body = self._post({"name": "side", "dir": self.dir, "tags": ["pool"], "parent": SID})
+        finally:
+            km._thread_names = saved
+        self.assertEqual(code, 200)
+        self.assertTrue(body.get("thread"))
+        self.assertEqual(body.get("tags"), [])
+        self.assertEqual(body.get("tagsApplied"), [None], "positional: the one --in did not land")
+        self.assertIn("comment thread", body.get("tagError") or "", "…and the CLI's warning carries why")
+        self.assertEqual(self.created, [])
 
 
 if __name__ == "__main__":

@@ -787,6 +787,24 @@ class CommentOps(CommentBase):
         self.assertEqual(self._tag_members("other"), ["x"], "a tag the parent is not in is untouched")
         self.assertIn(tid, seen_at_connect[0], "membership landed before connect, ahead of the direct push")
 
+    def test_a_session_spawned_from_inside_a_thread_inherits_the_threads_parents_tags(self):
+        # a thread's CLI carries the THREAD's sid as ROMP_SID, so `romp new` run from its shell names
+        # the thread as parent; the thread holds no tags (no tab), but it lives in the parent's chat —
+        # _resolve_parent_sid walks up to the threadOf session, and the child lands in ITS group
+        CHILD = "66666666-7777-8888-9999-000000000000"
+        km._flags_cache.clear()
+        km._set_timeline_views({"active": "all", "tags": [{"id": "g1", "name": "pool", "members": [PARENT]}]})
+        _, tid = km._comment_create(PARENT, "a1", "exponential backoff", "Why?")
+        self._promotable(tid)                       # the thread's reg, threadOf = PARENT
+        reg = lambda sid: json.loads((jd.SDKDIR / (sid + ".json")).read_text()) if (jd.SDKDIR / (sid + ".json")).exists() else None
+        self.be.owns = lambda sid: reg(sid) is not None                       # SdkBackend.owns: a reg exists
+        self.be.thread_of = lambda sid: str((reg(sid) or {}).get("threadOf") or "")   # SdkBackend.thread_of
+        self.assertEqual(km._resolve_parent_sid(tid, {}), (PARENT, None), "the thread resolves to the session it is of")
+        names, err = km._tag_new_session(CHILD, km._resolve_parent_sid(tid, {})[0], [])
+        self.assertIsNone(err)
+        self.assertEqual(names, ["pool"], "the child inherits from the session the thread is of")
+        self.assertEqual(self._tag_members("pool"), sorted([PARENT, CHILD]), "…and the thread itself still holds none")
+
     def test_the_promoting_latch_refuses_resolve_delete_and_reply(self):
         # promote seeds for seconds on a big transcript; ops landing in that window must refuse
         # THROUGH the CAS, or a racing resolve kills the just-promoted board session

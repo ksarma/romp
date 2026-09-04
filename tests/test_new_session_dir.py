@@ -298,6 +298,71 @@ class CreateSessionTags(_Wire):
         self.assertIn("SDK backend", r["text"])
         self.assertEqual(self.spawned, [], "no tmux spawn with the tags silently gone")
 
+    LIVE = "22222222-3333-4444-5555-666666666666"
+
+    def _live_api(self):
+        # a running session named "api", a private views store, and the focus reveal captured
+        saved = (km._live_names, km._reveal_chat_for, km._mark_views_dirty, km.jd.STATE)
+        focused = []
+        km._live_names = lambda *_: {"api": self.LIVE}
+        km._reveal_chat_for = lambda client, m: focused.append(m)
+        km._mark_views_dirty = lambda: None
+        km.jd.STATE = Path(tempfile.mkdtemp())
+        km._flags_cache.clear()
+        def restore():
+            km._live_names, km._reveal_chat_for, km._mark_views_dirty, km.jd.STATE = saved
+            km._flags_cache.clear()
+        self.addCleanup(restore)
+        km._set_timeline_views({"active": "all", "tags": [{"id": "g1", "name": "pool", "members": [self.PARENT]}]})
+        return focused
+
+    def test_a_live_name_with_tags_is_focused_and_warned_never_tagged_and_never_silently_dropped(self):
+        # the picker's Tags row is a PREFILL from the active tab, not an ask: applying it to a running
+        # session would move that session into the active tab's group unasked, and dropping it
+        # silently breaks the fail-loudly rule. So: focus as ever, then one loud warn naming the path.
+        focused = self._live_api()
+        self.send({"type": "createSession", "name": "api", "dir": self.tmp, "backend": "sdk", "tags": ["pool", "infra"]})
+        self.assertEqual(focused, [{"type": "focus", "id": self.LIVE}], "the running session is focused first")
+        self.assertEqual([m["type"] for m in self.sent], ["warn"])
+        self.assertIn('"api" is already running; its tags were not changed', self.sent[0]["text"])
+        self.assertIn("Tags menu", self.sent[0]["text"])
+        self.assertEqual(self.spawned, [])
+        tags = km._timeline_views()["tags"]
+        self.assertEqual([t["name"] for t in tags], ["pool"], "infra was never minted")
+        self.assertNotIn(self.LIVE, [m["sid"] for m in tags[0]["members"]], "the running session did not move")
+        # no tags → the idempotent open stays silent, as before
+        self.sent.clear()
+        self.send({"type": "createSession", "name": "api", "dir": self.tmp, "backend": "sdk"})
+        self.assertEqual(self.sent, [])
+        self.assertEqual(len(focused), 2)
+
+    def test_parent_and_tags_are_validated_before_the_live_name_check(self):
+        focused = self._live_api()
+        r = self.send({"type": "createSession", "name": "api", "dir": self.tmp, "backend": "sdk", "tags": ["", 3]})
+        self.assertEqual(r["type"], "warn")
+        self.assertIn("tags must be", r["text"])
+        r = self.send({"type": "createSession", "name": "api", "dir": self.tmp, "backend": "sdk",
+                       "parent": "99999999-0000-0000-0000-000000000000"})
+        self.assertIn("not a session this kernel knows", r["text"])
+        self.assertEqual(focused, [], "a malformed request is refused whether or not the name runs — nothing focused")
+        self.assertEqual(self.spawned, [])
+
+    def test_the_op_and_the_docs_say_how_the_live_name_case_differs_from_post_new(self):
+        # the two doors disagree on a running name ON PURPOSE — /new's `tags` is always an explicit
+        # --in (re-asserted like model/effort); the picker's is a prefill (warned, not applied). The
+        # op's comment and the UPSTREAM.md row both state the difference, not a match.
+        src = inspect.getsource(km.Handler._dispatch_ws)
+        op = src[src.index('msg.get("type") == "createSession"'):src.index('msg.get("type") == "cancelCreate"')]
+        live_arm = op[op.index("elif nm in live:"):op.index("elif _thread_name_refusal(nm, _thread_names())")]
+        self.assertIn("its tags were not changed", live_arm)
+        self.assertIn("existing:true arm differs on purpose", live_arm)
+        self.assertNotIn("the same contract as", op)
+        root = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+        up = open(os.path.join(root, "UPSTREAM.md")).read()
+        self.assertIn("a name that already runs: `/new` re-asserts an explicit `--in`, the picker's op warns instead", up)
+        guide = open(os.path.join(root, "docs", "guide.md")).read()
+        self.assertIn("from\nthe picker, a name that already runs is focused and the Tags row is not applied", guide)
+
 
 class NativeDialogAvailability(unittest.TestCase):
     """Browse… (and 📎) reach a dialog on the KERNEL's machine, and that machine may have no way to show

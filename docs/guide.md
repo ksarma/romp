@@ -213,8 +213,12 @@ children land beside it in the tab strip. `romp new --no-inherit` starts one
 outside them; `romp new --in <tag>` names the tags directly (repeatable). The
 **+** picker shows the tags of the tab you are looking at pre-selected in its
 **Tags** row, where you can unpick or add before creating. Opening a name that
-already runs inherits nothing; an explicit `--in` still applies to it. Comment
-threads have no tab and inherit nothing until they are broken out.
+already runs inherits nothing: `romp new --in` still applies to it, while from
+the picker, a name that already runs is focused and the Tags row is not applied
+(a message says so; the row is a prefill, and applying it would move the
+running session). Comment threads have no tab and inherit nothing until they
+are broken out; `romp new` run inside a thread inherits from the session the
+thread belongs to.
 
 Search reaches inside sessions, not just across their names. As sessions run, a
 lightweight index judge writes each one a headline and an abstract of what it
