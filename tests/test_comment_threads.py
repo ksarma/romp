@@ -673,6 +673,32 @@ class ThreadProjection(CommentBase):
         finally:
             self._State.live = []
 
+    def test_a_dropped_echo_and_a_repeat_text_send_are_read_right(self):
+        # round-5 review, two faults in the echo fold: (1) an echo the backend flagged `dropped` (the send was
+        # LOST on a reconnect; the popover shows "never delivered") counted as held → green forever; (2) an
+        # echo whose text repeats ANY earlier user text (copied history, "ok", a re-send) read as landed
+        t = self.now - 500
+        self._seed_thread(seen=self.now)
+        recs = self._thread_side(aline(t + 120, "Jitter prevents thundering herds.", "ca1", parent="cu1"))
+        try:
+            self._State.live = [{"type": "user", "author": "human", "t": t + 130, "uuid": "echo:1",
+                                 "_echo_text": "and the cap?", "dropped": True}]
+            th = self._frame_thread(recs, state="")
+            self.assertEqual(th["queued"], 0, "a dropped send is not held")
+            self.assertFalse(th["replyOwed"], "the kernel adjudicated it lost — no green promise")
+            # a re-send of the thread's opening question (its text is already in the copied history)
+            repeat = "how should the retry loop back off?"
+            self._State.live = [{"type": "user", "author": "human", "t": t + 130, "uuid": "echo:2", "_echo_text": repeat}]
+            th = self._frame_thread(recs, state="")
+            self.assertEqual(th["queued"], 1, "the earlier identical text is not THIS send's landing")
+            self.assertTrue(th["replyOwed"])
+            # …until a record written at/after the send carries it
+            th = self._frame_thread(recs + [uline(t + 131, repeat, "cu2", parent="ca1")], state="")
+            self.assertEqual(th["queued"], 0, "landed by its own record")
+            self.assertTrue(th["replyOwed"], "the user's message is newest — owed by the transcript now")
+        finally:
+            self._State.live = []
+
     def test_the_frame_ships_the_newest_record_uuid_beyond_the_projection_caps(self):
         t = self.now - 500
         self._seed_thread(seen=self.now)

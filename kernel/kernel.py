@@ -8943,10 +8943,19 @@ def _comments_frame(sid, tmux=None):
             except Exception:
                 live = []
             if live:
-                tx_user = {t for tr in turns for a in (tr.get("atoms") or []) for t in _atom_user_texts(a)}
+                # an echo has LANDED when a user record written at or after its own send carries its text —
+                # never any earlier record: a fork copies the parent's history, and "ok" / "go ahead" / a
+                # deliberate re-send repeat earlier texts, which read as "already in the transcript" and hid a
+                # send the CLI still held (round-5 review). A `dropped` echo (the backend adjudicated the send
+                # LOST — a reconnect with it in flight; the popover shows "never delivered") owes nothing.
+                user_atoms = [a for tr in turns for a in (tr.get("atoms") or []) if a.get("type") == "user"]
+                def _landed(e):
+                    et = (e.get("_echo_text") or "").strip()
+                    since = float(e.get("t") or 0) - 2                 # the send's own time, a little skew allowed
+                    return any(et in _atom_user_texts(a) for a in user_atoms if float(a.get("t") or 0) >= since)
                 floor = _human_turn_floor({"turns": turns}) if turns else 0
                 held = [a for a in live if (a.get("_echo_text") or "").strip() and not a.get("command")
-                        and (a.get("_echo_text") or "").strip() not in tx_user and not _echo_overtaken(a, floor)]
+                        and not a.get("dropped") and not _landed(a) and not _echo_overtaken(a, floor)]
                 queued = max(queued, len(held))
         # the newest record the projection shows (or the transcript holds): the client's "did the transcript
         # move?" datum, independent of the 80-event / 40-message caps on the shipped projections
