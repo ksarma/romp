@@ -11,7 +11,7 @@ zero protocol change at switchover. WS is hand-rolled on the stdlib socket (no d
 
 Run:  bin/romp-kernel   → opens http://127.0.0.1:29855
 """
-import json, os, queue, random, re, signal, socket, sys, time, threading, traceback, base64, bisect, errno, hashlib, hmac, struct, subprocess, shutil, shlex, http.client, uuid, tempfile, stat, gzip, copy
+import json, os, queue, random, re, signal, socket, sys, time, threading, traceback, base64, bisect, errno, hashlib, hmac, struct, subprocess, shutil, shlex, http.client, uuid, tempfile, stat, gzip
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from importlib.machinery import SourceFileLoader
@@ -17621,7 +17621,7 @@ def _cmd_gestures(sid):
 # Surface run_in_background tasks in the chat: a launch (a tool_use with run_in_background:true) paired with
 # its <task-notification> result. The harness folds those notifications into "system reminders" inline; this
 # pulls them out as structured rows for a dedicated box (#bg-tasks) between the transcript and the composer.
-_bgtasks_cache = {}   # path -> ((mtime,size), [task dicts, no output])
+_bgtasks_cache = {}   # path -> em.fold_records entry (the running-only pairing state)
 
 
 # _result_text / _parse_task_notification / _scan_bg_tasks moved to event_model (2026-08-08): the judge's
@@ -17706,7 +17706,7 @@ def _bg_scan_cached(path):
     return em.scan_bg_tasks_cached(path, _bgtasks_cache, want_all=False)
 
 
-_bgall_cache = {}             # path -> ((mtime,size), [every task, launch-ordered])
+_bgall_cache = {}             # path -> em.fold_records entry (every task, launch-ordered)
 
 
 def _bg_scan_all_cached(path):
