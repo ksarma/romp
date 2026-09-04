@@ -6569,10 +6569,29 @@ let cmtShippedImgs: string[] = [];
 // the projection's 40-message cap) and the kernel's owed bit owns the wash from there. Against an OLDER
 // kernel (no bit) it keeps the T102 contract: cleared by the reply-arrived event — the agent's reply record
 // landing (agentCount rising past the base) with the thread settled. No push counting, no timers.
-type CmtLatch = { n: number; t: number; agents: number };
+type CmtLatch = { you: number; youT: number; agents: number };
 const cmtAwaitBase = new Map<string, CmtLatch>();
-const cmtLatchOf = (th: CommentThread): CmtLatch => ({
-  n: th.msgs.length, t: th.msgs.length ? (th.msgs[th.msgs.length - 1].t || 0) : 0, agents: agentCount(th) });
+const cmtYouRows = (th: CommentThread) => (th.msgs || []).filter((m) => m.who === "you");
+const cmtLatchOf = (th: CommentThread): CmtLatch => {
+  const you = cmtYouRows(th);
+  return { you: you.length, youT: you.length ? (you[you.length - 1].t || 0) : 0, agents: agentCount(th) };
+};
+/** Does this frame's thread release the send latch? Against a kernel that ships replyOwed (T237), only the
+ *  USER'S OWN send landing does — a "you" row newer than the click's newest, or more "you" rows than then
+ *  (the count alone never grows on a thread at the projection's 40-message cap). Never an agent row: the
+ *  backend HOLDS a follow-up sent mid-turn until the turn ends, so the agent's partials (whose merged row's
+ *  time advances) and the reply itself land BEFORE the send is written — clearing on them dropped the
+ *  green while the send was still queued (round-2 review). Against an older kernel (no bit) the T102
+ *  reply-arrived clear stands. A thread leaving "open" or erroring releases either way. */
+function cmtLatchReleased(t: CommentThread, base: CmtLatch): boolean {
+  if (t.status !== "open" || !!t.error) return true;
+  if (typeof t.replyOwed === "boolean") {
+    const you = cmtYouRows(t);
+    const newestYouT = you.length ? (you[you.length - 1].t || 0) : 0;
+    return you.length > base.you || newestYouT > base.youT;
+  }
+  return agentCount(t) > base.agents && !threadBusy(t.state);
+}
 // Creates in flight (T106 lab find, 2026-08-26): a comment made seconds after a reply lands can be
 // refused by the kernel's parse lag ("isn't in the transcript yet"). The payload holds here from the
 // send; a TRANSIENT nack keeps the optimistic mark + latch alive and the create RE-POSTS when the
@@ -7333,7 +7352,7 @@ function commentSendFromPop(pop: HTMLElement): void {
       unread: false, replyOwed: true, promotedName: "", msgs: [], name: nm || "comment", color: create.color || "" };
     const cur0 = commentThreads.get(create.sid) || [];
     commentThreads.set(create.sid, [...cur0.filter((t) => t.tid !== synth.tid), synth]);
-    cmtAwaitBase.set(synth.tid, { n: 0, t: 0, agents: 0 });   // the SEND gesture latches the pulse — before any kernel round-trip (T102); cleared once a frame carries the send (T237)
+    cmtAwaitBase.set(synth.tid, { you: 0, youT: 0, agents: 0 });   // the SEND gesture latches the pulse — before any kernel round-trip (T102); released once a frame carries the send (T237)
     applyCommentMarks(create.sid);
     vscodeApi.postMessage({ type: "commentCreate", id: create.sid, uuid: create.uuid, exact: create.exact,
       text, name: nm, model: create.model || "", effort: create.effort || "",
@@ -12725,17 +12744,10 @@ window.addEventListener("message", (e: MessageEvent) => {
     // clear (the latch side never re-derives from state), so the boot-flap class T102 removed
     // cannot re-green anything. Leaving "open" (or erroring) still clears immediately.
     for (const t of threads) {
+      // T237: the latch covers ONLY the pre-round-trip instant — released once a frame's projection carries
+      // the user's own send (see cmtLatchReleased); the kernel's owed bit owns the wash from there
       const base = cmtAwaitBase.get(t.tid);
-      if (base === undefined) continue;
-      // T237: against a kernel that ships replyOwed the latch covers ONLY the pre-round-trip instant — it
-      // clears once a frame's projection carries the SEND (a message newer than the click's newest, or more
-      // messages than at the click; the count alone never grows on a thread at the 40-message cap) and the
-      // kernel's owed bit owns the wash from there. An older kernel keeps the T102 reply-arrived clear.
-      const newestT = t.msgs.length ? (t.msgs[t.msgs.length - 1].t || 0) : 0;
-      const sendLanded = t.msgs.length > base.n || newestT > base.t;
-      const legacyReplyArrived = agentCount(t) > base.agents && !threadBusy(t.state);
-      const clear = (typeof t.replyOwed === "boolean" ? sendLanded : legacyReplyArrived) || t.status !== "open" || !!t.error;
-      if (clear) cmtAwaitBase.delete(t.tid);
+      if (base !== undefined && cmtLatchReleased(t, base)) cmtAwaitBase.delete(t.tid);
     }
     // prune latches only for tids NO session's thread list knows (T237): this frame lists ONE session's
     // threads, and pruning against it dropped every other session's latch — and any tid a frame
@@ -12787,6 +12799,7 @@ window.addEventListener("message", (e: MessageEvent) => {
   // a reply the kernel refused: drop its optimistic bubble (it must not read as 'still thinking'
   // forever) and hand the words back for review-and-resend — the toast says why it failed
   else if (m.type === "commentSendFailed" && m.tid) {
+    cmtAwaitBase.delete(String(m.tid));           // a refused send owes nothing — the latch it armed goes with it (T237 review)
     const pl = commentPending.get(String(m.tid));
     if (pl && pl.length) {
       const lost = pl.pop()!;

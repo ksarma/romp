@@ -391,7 +391,11 @@ class ThreadProjection(CommentBase):
         def pending_cut(self, sid):
             return ""
         def owns(self, sid):
-            return False
+            return True                           # the thread is a live SDK session: build_session runs, events are REAL
+        def pending_queued(self, sid):
+            return []
+        def live_atoms(self, sid):
+            return []
         def session_since(self, sid):
             return 0
         def session_meta(self, sid):
@@ -542,6 +546,79 @@ class ThreadProjection(CommentBase):
                          "user events and ts-less inserts are not agent content")
         self.assertTrue(km._agent_landed_after([], [{"who": "agent", "t": seen + 1, "text": "x"}], seen), "no events → the msgs projection")
         self.assertFalse(km._agent_landed_after([], [{"who": "agent", "t": seen, "text": "x"}], seen), "t == seen is already seen")
+
+    def test_the_frame_tests_read_unread_from_real_events(self):
+        # the events projection is populated in this harness (the stub OWNS the thread), so the frame-level
+        # unread verdicts above are decided by the arm the popover renders in production — not msgs alone
+        t = self.now - 500
+        self._seed_thread(seen=self.now - 450)
+        th = self._frame_thread(self._thread_side(aline(t + 120, "Jitter prevents thundering herds.", "ca1", parent="cu1")), state="")
+        self.assertTrue(th["events"], "build_session's events reach the frame")
+        self.assertIn("assistant", [e.get("kind") for e in th["events"]])
+        saved = km._thread_messages
+        km._thread_messages = lambda *a, **k: [{"who": "you", "text": "Why jitter at all?", "t": t + 100}]
+        try:
+            th = self._frame_thread(self._thread_side(aline(t + 120, "Jitter prevents thundering herds.", "ca1", parent="cu1")), state="")
+            self.assertTrue(th["unread"], "with events present, unread reads the EVENTS — a blinded msgs projection changes nothing")
+        finally:
+            km._thread_messages = saved
+
+    def test_a_stop_after_a_mid_reply_compaction_reads_dead_not_owed(self):
+        # round-2 review: the idle atoms a stop mints AFTER a trailing compaction boundary fold into the
+        # boundary turn; skipping that turn dropped the evidence and left the mark green for good
+        t = self.now - 500
+        self._seed_thread(seen=self.now - 450)
+        recs = self._thread_side(self._partial_text(t + 110, "Let me check the code.", "cp1", "cu1"),
+                                 self._tool_result(t + 112, "cr1", "cp1", "cp1"),
+                                 boundary(t + 113, "cb1", "cr1"))
+        states = jd.STATE / "states" / (THREAD + ".jsonl")
+        states.parent.mkdir(parents=True, exist_ok=True)
+        states.write_text("".join(json.dumps(r) + "\n" for r in (
+            {"t": t + 100, "state": "working"}, {"t": t + 114, "state": "waiting"}, {"t": t + 116, "state": "idle"})))
+        try:
+            for state in ("waiting", ""):
+                th = self._frame_thread(recs, state=state)
+                self.assertFalse(th["replyOwed"], "a thread that stopped after compacting owes nothing — state=%r" % state)
+        finally:
+            states.unlink()
+
+    def test_a_slash_command_after_a_landed_reply_owes_nothing(self):
+        # the CLI's <command-name>/<local-command-stdout> wrapper records are bookkeeping, not the user's
+        # message: they neither show as "you" rows nor re-owe a reply
+        t = self.now - 500
+        self._seed_thread(seen=self.now)
+        recs = self._thread_side(aline(t + 120, "Jitter prevents thundering herds.", "ca1", parent="cu1"),
+                                 uline(t + 130, "<command-name>/model</command-name>\n<command-message>model</command-message>\n<command-args>sonnet</command-args>", "cc1", parent="ca1"),
+                                 uline(t + 131, "<local-command-stdout>Set model to sonnet</local-command-stdout>", "cc2", parent="cc1"))
+        th = self._frame_thread(recs, state="")
+        self.assertEqual([m["who"] for m in th["msgs"]], ["you", "agent"], "the command wrappers are not conversation")
+        self.assertFalse(th["replyOwed"])
+        self.assertFalse(th["unread"])
+
+    def test_a_missing_transcript_owes_nothing_and_is_shouted(self):
+        # round-2 review: `not msgs` used to owe a reply forever over a MISSING transcript, in silence
+        import contextlib, io
+        self._seed_thread()
+        (self.proj / (THREAD + ".jsonl")).unlink()
+        km._thread_msgs_cache.clear(); km._parse_cache.clear(); jd._PARSE_CACHE.clear()
+        km._thread_unreadable_warned.clear()
+        km._sdk = lambda: self._State("")
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            th = km._comments_frame(PARENT)["threads"][0]
+            th2 = km._comments_frame(PARENT)["threads"][0]
+        self.assertEqual(th["msgs"], [])
+        self.assertFalse(th["replyOwed"], "nothing can land: no green promise")
+        self.assertFalse(th2["replyOwed"])
+        self.assertEqual(err.getvalue().count("transcript missing or unreadable"), 1, "shouted once, not per push")
+        # …while a genuinely fresh thread (fork pending) still owes its first reply, quietly
+        (jd.SDKDIR / (THREAD + ".json")).write_text(json.dumps(
+            {"sid": THREAD, "name": "thread-x", "cwd": self.cdir, "lastSid": PARENT,
+             "alive": True, "threadOf": PARENT, "forkOf": PARENT}))
+        err2 = io.StringIO()
+        with contextlib.redirect_stderr(err2):
+            th = km._comments_frame(PARENT)["threads"][0]
+        self.assertTrue(th["replyOwed"]); self.assertEqual(err2.getvalue(), "")
 
     def test_a_users_follow_up_owes_a_reply_again(self):
         t = self.now - 500
