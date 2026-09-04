@@ -34201,7 +34201,8 @@ class Handler(BaseHTTPRequestHandler):
                     except Exception as e:
                         status = "error: %s" % str(e)[:80]
                     rows.append({"session": _name_of(sid) or who, "status": status})
-                _push_soon()
+                if any(r["status"] == "cycling" for r in rows):
+                    _push_soon()                      # something changed; a fingerprint READ ({"sessions": []}) did not
                 return self._send(200, json.dumps({"ok": True, "keyFp": keyfp, "rows": rows}),
                                   "application/json")
             if u.path in ("/interrupt", "/end"):

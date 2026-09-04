@@ -353,9 +353,11 @@ Then:
     romp keyswap lowprio --cycle web,api
 
 `romp keyswap <name>` rewrites **only** the `ANTHROPIC_API_KEY=` line, in
-place, keeping every other line of the file byte for byte — a temp file and a
-rename, so no reader ever sees the file half-written, and the mode stays `600`
-(a looser one is tightened). It refuses a source file with no key line rather
+place, keeping every other line of the file as it was (line endings come out
+as LF) — a temp file and a rename, so no reader ever sees the file
+half-written, and the mode stays `600` (a looser one is tightened). A
+symlinked `service.env` is written through: the target changes, the link
+stays. It refuses a source file with no key line rather
 than writing an empty key, which the CLI would read as "API-key mode, no key".
 
 After the rewrite:
@@ -366,9 +368,12 @@ After the rewrite:
   the key is handed over at launch. `--cycle-all` (or `--cycle <session,…>`)
   reconnects them so they re-present the new one. A reconnect resumes the same
   conversation with its history intact — the same mechanism a reasoning-effort
-  or billing switch uses — immediately if the session is idle, at the end of
-  the current turn if it is busy. Sessions billing the machine login are
-  skipped, and dormant ones are reported as needing nothing;
+  or billing switch uses — and only for a session that is quiet right now. Sessions billing the machine login are
+  skipped, dormant ones are reported as needing nothing, a session already
+  launched on the live key reads `current`, and a session with a turn,
+  subagents or background tasks in flight is skipped and named — a reconnect
+  would kill that work — so you re-run the same `--cycle` once it is quiet,
+  until every session reads `current`;
 * **the judges and the model catalog** pick the new key up on their next call,
   with no cycling at all.
 
@@ -388,8 +393,12 @@ their turns first — and every swap after that is restart-free. `romp keyswap
 Remote kernels each have their own `service.env` and their own key: run
 `romp keyswap` on that machine.
 
-`ROMP_SERVICE_ENV_FILE` overrides the path of the file, for both the installer
-and the live read.
+`ROMP_SERVICE_ENV_FILE` overrides the path of the file. The installer bakes
+the path it resolved into the unit and, when that is not the default, exports
+it to the service as well, so the kernel's live read and the installer name
+one file; a service installed before that carries only the default. `romp
+keyswap` asks the running kernel which key it reads and says `MISMATCH` when
+that is not the file's — the check to make after a swap.
 
 ## Where things live
 
