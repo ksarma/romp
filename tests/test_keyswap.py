@@ -281,8 +281,8 @@ class LiveSpawnEnv(_Backend):
             ks.read_key = orig
         self.assertEqual(len(reads), 1, "two reads could return two different keys")
 
-    def test_an_emptied_file_falls_to_login_rather_than_injecting_a_blank(self):
-        self.write_env("", lines=["ROMP_PERF=1"])
+    def test_an_empty_key_line_falls_to_login_rather_than_injecting_a_blank(self):
+        self.write_env("", lines=["ROMP_PERF=1"])       # `ANTHROPIC_API_KEY=` with nothing after it
         env = self._launch_env(4)
         self.assertNotIn("ANTHROPIC_API_KEY", env,
                          "an empty var reads as key-mode-without-a-key to the CLI — removal, never blanking")
@@ -309,9 +309,15 @@ class StartupFallback(_Backend):
     BOOT = BOOT_KEY
 
     def test_a_file_with_no_key_line_falls_back_to_the_startup_claim(self):
-        self.write_env("", lines=["ROMP_PERF=1"])
+        with open(self.path, "w") as fh:                # genuinely no assignment, not an empty one
+            fh.write("ROMP_PERF=1\n")
+        ks._CACHE = ((), "")
         self.assertEqual(self.be.work_key, BOOT_KEY)
         self.assertEqual(self._launch_env(1).get("ANTHROPIC_API_KEY"), BOOT_KEY)
+
+    def test_an_empty_key_line_falls_back_too(self):
+        self.write_env("", lines=["ROMP_PERF=1"])       # `ANTHROPIC_API_KEY=` with nothing after it
+        self.assertEqual(self.be.work_key, BOOT_KEY)
 
     def test_a_missing_file_falls_back_too(self):
         os.unlink(self.path)

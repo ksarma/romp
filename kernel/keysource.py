@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import tempfile
 
 KEY_VAR = "ANTHROPIC_API_KEY"
 
@@ -168,8 +169,10 @@ def write_key(key: str, path: str | None = None) -> dict:
         except OSError:
             mode = 0o600
     d = os.path.dirname(p) or "."
-    tmp = os.path.join(d, ".%s.keyswap.%d" % (os.path.basename(p), os.getpid()))
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    # mkstemp: same directory (so the rename is atomic — a cross-filesystem one is a copy), a name
+    # nothing can collide with, and 0600 from the moment the file exists, so the key is never
+    # briefly readable by anyone else.
+    fd, tmp = tempfile.mkstemp(dir=d, prefix="." + os.path.basename(p) + ".keyswap.")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(out)
