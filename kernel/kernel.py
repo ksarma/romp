@@ -20083,6 +20083,7 @@ _TMUX_PROMPT_HOLD_S = 3.0        # the prompt hold's clock FALLBACK: after the d
                                  # (a paste tmux refused, a builtin that opens no prompt turn), until this many seconds
 _drain_hold: dict = {}           # sid -> (time.monotonic() deadline, until_busy); _apply_pending_ops skips the sid
                                  # while the hold is open (_drain_hold_open)
+_refresh_parse_failures: dict = {}   # sid -> consecutive cycles its parked-parse refresh raised (_refresh_parked_parses)
 
 
 def _hold_drain(sid, seconds, until_busy=False):
@@ -20584,9 +20585,21 @@ def _refresh_parked_parses(now):
             be = None
         if be is None or not getattr(be, "corroborates_with_transcript", False):
             continue                                  # its busy() is the whole truth: nothing here reads its cache
-        path = _path_of(sid)
-        if path and _parse_cached(path) is None:
-            _parse(path, sid, now)
+        try:                                          # per sid: one sid whose parse raises must not starve the
+            path = _path_of(sid)                      # OTHER parked sids' refresh, cycle after cycle (review find,
+            if path and _parse_cached(path) is None:  # 2026-09-04) — that sid stays held on its hook row, and the
+                _parse(path, sid, now)                # failure is on the record
+            _refresh_parse_failures.pop(sid, None)    # a parse that came back clears its count
+        except Exception:
+            # the failing sid is retried every cycle (a parse that raises writes nothing to _parse_cache), so the
+            # line is count-gated like _chat_fold_warned: the first with its traceback, then at 10, 100, 1000
+            n = _refresh_parse_failures.get(sid, 0) + 1
+            if len(_refresh_parse_failures) > 256:
+                _refresh_parse_failures.clear()
+            _refresh_parse_failures[sid] = n
+            if n in (1, 10, 100, 1000):
+                sys.stderr.write("parked-parse refresh %s (failure %d): %s\n"
+                                 % (sid, n, traceback.format_exc() if n == 1 else repr(sys.exc_info()[1])))
 
 
 def _apply_pending_ops():
