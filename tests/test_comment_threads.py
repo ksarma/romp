@@ -780,6 +780,17 @@ class ThreadProjection(CommentBase):
             km._machine_cut_cache.clear() if hasattr(km, "_machine_cut_cache") and hasattr(km._machine_cut_cache, "clear") else None
             th = self._frame_thread(recs, state="")
             self.assertTrue(th["replyOwed"]); self.assertFalse(th["unread"], "romp's cut, being resumed — nothing landed")
+            # …but a cut thread with NO process and NOTHING queued was never resumed, or its resume died
+            # again before writing a record (the crash-loop stand-down): the cut is over — dead, owe nothing,
+            # the partial reads as what there is (the manager's pre-read, T237b)
+            self._State.queued = []
+            km._machine_cut_cache.clear() if hasattr(km, "_machine_cut_cache") and hasattr(km._machine_cut_cache, "clear") else None
+            th = self._frame_thread(recs, state="")
+            self.assertFalse(th["replyOwed"], "no process, nothing queued: the resume is over or never happened")
+            self.assertTrue(th["unread"])
+            # a live resumed process keeps it open regardless of the queue
+            th = self._frame_thread(recs, state="working")
+            self.assertTrue(th["replyOwed"]); self.assertFalse(th["unread"])
         finally:
             self._State.queued = []
             states.unlink()

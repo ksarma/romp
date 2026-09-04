@@ -8789,7 +8789,7 @@ def _turn_landed(turn, cut_t=0.0):
     return "landed" if last_sr in em.END_STOPS else "open"
 
 
-def _thread_turn_read(tsid, reg, state):
+def _thread_turn_read(tsid, reg, state, queued=0):
     """(turn_open, interrupted, turns) for the thread — is its reply still being WORKED ON, did the user's
     interrupt close it, and what the transcript held (the parsed turns; [] when nothing could be read).
     The transcript decides: the newest turn that carries the exchange (compaction boundaries and
@@ -8823,9 +8823,14 @@ def _thread_turn_read(tsid, reg, state):
         return busy_state, False, turns             # only boundaries / commands so far
     verdict = _turn_landed(turns[at], _last_machine_cut(tsid)[0])
     if verdict == "cut":
-        return True, False, turns                   # romp's own cut, being resumed: open WHATEVER the backend reports — during the
-                                                    # boot stagger the thread has no process yet ("" below) and the interrupt record
-                                                    # reads ended; neither is the landing (T237b C)
+        # romp's own cut, being resumed: open while the backend is busy on it OR the thread's persisted queue
+        # still holds the send that earned it a resume (the boot stagger: no process yet, queue non-empty).
+        # With no process AND nothing queued the resume is over or never happened — the crash-loop
+        # stand-down leaves a thread "cut for the next restart", which for a thread never comes — so the
+        # cut is dead: owe nothing, the partial reads as what there is (T237b C, the manager's pre-read)
+        if busy_state or queued > 0:
+            return True, False, turns
+        return False, True, turns                   # "interrupted" for the owed read: the newest "you" row IS the stop record
     if verdict in ("landed", "interrupted"):
         return False, verdict == "interrupted", turns   # the reply RECORD is in (or the user stopped it), whatever the backend still says
     if busy_state:
@@ -8963,7 +8968,17 @@ def _comments_frame(sid, tmux=None):
                 _thread_backend_shout(tsid, "live_atoms", e)
         events = [] if status == "promoted" else _thread_events(tsid, str(th.get("cutUuid") or ""), now, tmux)
         reg = _thread_reg(tsid)
-        turn_open, interrupted, turns = _thread_turn_read(tsid, reg, state) if status == "open" else (False, False, [])
+        # the backend's queue (persisted for a dormant thread) is read BEFORE the turn read: a machine cut
+        # stays open only while something is still queued behind it or a process is on it (T237b C)
+        pending_n = 0
+        if be and status == "open" and hasattr(be, "pending_queued"):
+            try:
+                pending_n = len(be.pending_queued(tsid) or [])
+            except Exception as e:
+                pending_n = 0
+                _thread_backend_shout(tsid, "pending_queued", e)
+        turn_open, interrupted, turns = (_thread_turn_read(tsid, reg, state, pending_n) if status == "open"
+                                         else (False, False, []))
         unread = (not turn_open) and _agent_landed_after(events, msgs, seen)
         # sends the backend has taken but the transcript does not hold yet — owed, and in no projection.
         # Two windows, one number: the backend's queue (a follow-up typed mid-turn waits there until the
@@ -8972,13 +8987,8 @@ def _comments_frame(sid, tmux=None):
         # lands (prune_live) — so count echoes the way the chat's queued indicator does (build_session:
         # not already in the transcript's user texts, not overtaken by a later human turn, never a slash
         # command's echo, which is consumed without a reply) — the same fold, not a twin (round-3/4 review).
-        queued = 0
+        queued = pending_n
         if be and status == "open":
-            try:
-                queued = len(be.pending_queued(tsid) or []) if hasattr(be, "pending_queued") else 0
-            except Exception as e:
-                queued = 0
-                _thread_backend_shout(tsid, "pending_queued", e)
             if live:
                 # an echo has LANDED when a user record written at or after its own send carries its text —
                 # never any earlier record: a fork copies the parent's history, and "ok" / "go ahead" / a
