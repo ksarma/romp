@@ -25,17 +25,24 @@ const KERNEL = fs.readFileSync(path.resolve(process.cwd(), "..", "kernel", "kern
 const CSS = fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", "styles.css"), "utf8");
 
 test("the kernel ships replyOwed beside unread, both from the thread's own turn-end", () => {
-  assert.match(KERNEL, /def _thread_turn_read\(tsid, reg, state\):/);
+  assert.match(KERNEL, /def _thread_turn_read\(tsid, reg, state, queued=0\):/, "the queue (persisted for a dormant thread) is read before the turn read (T237b C)");
   assert.match(KERNEL, /def _turn_landed\(turn, cut_t=0\.0\):/, "an interrupt at or before the backend's machineCut stamp is romp's cut, not the user's stop");
   assert.match(KERNEL, /def _turn_is_meta\(turn\):/, "compaction boundaries and command-only turns are not landings");
-  assert.match(KERNEL, /if landed:\s*\n\s*return False, interrupted/, "the end_turn / interrupt record IS the landing");
+  assert.match(KERNEL, /if verdict in \("landed", "interrupted"\):\s*\n\s*return False, verdict == "interrupted", turns/, "the end_turn / interrupt record IS the landing");
+  assert.match(KERNEL, /if verdict == "cut":/, "romp's own cut is its own verdict (T237b C)");
+  assert.match(KERNEL, /if busy_state or queued > 0:\s*\n\s*return True, False, turns\s*\n\s*return False, True, turns/,
+    "a cut stays open while the backend is busy on it or a send is still queued behind it; with neither the resume is over — dead, the stop record is not the user's message");
+  assert.match(KERNEL, /if state == "":\s*\n[\s\S]{0,1400}?if queued > 0:\s*\n\s*return True, False, turns\s*\n\s*return False, False, turns/,
+    "no process → an unlanded turn is dead unless a send is still queued (a resume in waiting) (T237b B)");
   assert.match(KERNEL, /print\("\[comments\] thread %s: transcript parse failed/, "a parse failure is shouted, never swallowed");
   assert.match(KERNEL, /def _agent_landed_after\(events, msgs, seen\):/);
-  assert.match(KERNEL, /turn_open, interrupted, turns = _thread_turn_read\(tsid, reg, state\) if status == "open" else \(False, False, \[\]\)/);
+  assert.match(KERNEL, /turn_open, interrupted, turns = \(_thread_turn_read\(tsid, reg, state, pending_n\) if status == "open"\s*\n\s*else \(False, False, \[\]\)\)/);
   assert.match(KERNEL, /unread = \(not turn_open\) and _agent_landed_after\(events, msgs, seen\)/);
-  assert.match(KERNEL, /owes_first = status == "open" and not msgs and _thread_owes_first_reply\(tsid, reg, th, turns\)/);
-  assert.match(KERNEL, /or \(bool\(msgs\) and msgs\[-1\]\["who"\] == "you" and not interrupted\)\)/);
-  assert.match(KERNEL, /def _thread_owes_first_reply\(tsid, reg, th, turns\):/, "a missing transcript owes nothing, loudly");
+  assert.match(KERNEL, /owes_first = status == "open" and not msgs and _thread_owes_first_reply\(tsid, reg, th, turns, state\)/);
+  assert.match(KERNEL, /or \(bool\(msgs\) and msgs\[-1\]\["who"\] == "you" and not interrupted\s*\n\s*and \(state != "" or queued > 0\)\)\)/,
+    "the user's newest message owes a reply only while a process exists or a send is queued (T237b)");
+  assert.match(KERNEL, /def _thread_owes_first_reply\(tsid, reg, th, turns, state=""\):/, "a missing transcript owes nothing, loudly — and the verdict reaches the popover (T237b D)");
+  assert.match(KERNEL, /if unreachable and not err:/, "the broken-thread verdict rides the frame's error channel");
   assert.match(KERNEL, /if tail and tail\[-1\]\.get\("type"\) == "idle":\s*\n\s*return False, False, turns/, "an idle tail after a trailing boundary reads dead, not owed");
   assert.match(KERNEL, /"unread": unread, "replyOwed": reply_owed,/);
   assert.match(KERNEL, /yellow — means "a FINISHED reply you have not seen"/, "the rule is stated in the docstring");

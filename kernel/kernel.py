@@ -8758,7 +8758,11 @@ def _turn_is_meta(turn):
 
 
 def _turn_landed(turn, cut_t=0.0):
-    """(landed, interrupted): the reply RECORD is in — an assistant atom stopped with end_turn — or the
+    """The exchange turn's VERDICT: "landed" (the reply RECORD is in — an assistant atom stopped with
+    end_turn), "interrupted" (the CLI's own interrupt record closed it: the user stopped it), "cut" (that
+    same record at or before the backend's machineCut stamp: romp's own cut, being resumed — in progress
+    whatever the backend reports, T237b), or "open" (nothing has ended it).
+    Was (landed, interrupted): the reply RECORD is in — an assistant atom stopped with end_turn — or the
     CLI's own interrupt record closed the turn (the user stopped it; nothing more is coming). `cut_t` is
     the backend's newest machineCut stamp (_last_machine_cut): an interrupt record at or before it is a
     cut ROMP made and is resuming (crash / restart), not the user's stop — the turn stays in progress
@@ -8776,16 +8780,16 @@ def _turn_landed(turn, cut_t=0.0):
     tail = next((a for a in reversed(atoms) if not a.get("command") and a.get("type") != "idle" and not _settle(a)), None)
     if tail is not None and em.is_interrupt_record(tail):
         if cut_t and cut_t >= float(tail.get("t") or 0):
-            return False, False                     # romp's own cut, being resumed — nothing landed, nobody stopped it
-        return True, True
+            return "cut"                            # romp's own cut, being resumed — nothing landed, nobody stopped it
+        return "interrupted"
     last_sr = None
     for a in atoms:
         if a.get("type") == "assistant" and not _settle(a):
             last_sr = (a.get("message") or {}).get("stop_reason")
-    return last_sr in em.END_STOPS, False
+    return "landed" if last_sr in em.END_STOPS else "open"
 
 
-def _thread_turn_read(tsid, reg, state):
+def _thread_turn_read(tsid, reg, state, queued=0):
     """(turn_open, interrupted, turns) for the thread — is its reply still being WORKED ON, did the user's
     interrupt close it, and what the transcript held (the parsed turns; [] when nothing could be read).
     The transcript decides: the newest turn that carries the exchange (compaction boundaries and
@@ -8796,7 +8800,8 @@ def _thread_turn_read(tsid, reg, state):
     into THAT turn, so the read looks there too). The backend's live `state` alone decides only when
     there is nothing to read yet (pre-fork, no turns): it flaps to ""/waiting between the records of one
     turn and lingers "working" for a push after the final record — neither is the landing event (T237,
-    the user 2026-09-03: the mark went yellow while the thread had only started responding)."""
+    the user 2026-09-03: the mark went yellow while the thread had only started responding). "" is NOT a
+    flap: it is the backend saying no process exists (T237b B)."""
     if reg.get("forkOf"):
         return True, False, []                      # the fork hasn't landed: the first reply is ahead
     busy_state = state in ("working", "retrying", "compacting")
@@ -8804,7 +8809,7 @@ def _thread_turn_read(tsid, reg, state):
         path = _thread_transcript_path(reg, tsid)
         session = _parse(path, tsid, int(time.time())) if path else None   # the real (mtime-cached) parse — _parse_cached never parses
     except Exception as e:                          # LOUD, then the backend's word: a silent fallback would re-create the very symptom
-        key = (tsid, repr(e)[:200])
+        key = (tsid, type(e).__name__)              # once per cause — repr() can carry an address and shout per push
         if key not in _thread_parse_warned:
             _thread_parse_warned.add(key)
             print("[comments] thread %s: transcript parse failed (%r) — reading the reply state from the backend instead"
@@ -8816,11 +8821,31 @@ def _thread_turn_read(tsid, reg, state):
     at = next((i for i in range(len(turns) - 1, -1, -1) if not _turn_is_meta(turns[i])), None)
     if at is None:
         return busy_state, False, turns             # only boundaries / commands so far
-    landed, interrupted = _turn_landed(turns[at], _last_machine_cut(tsid)[0])
-    if landed:
-        return False, interrupted, turns            # the reply RECORD is in (or the user stopped it), whatever the backend still says
+    verdict = _turn_landed(turns[at], _last_machine_cut(tsid)[0])
+    if verdict == "cut":
+        # romp's own cut, being resumed: open while the backend is busy on it OR the thread's persisted queue
+        # still holds the send that earned it a resume (the boot stagger: no process yet, queue non-empty).
+        # With no process AND nothing queued the resume is over or never happened — the crash-loop
+        # stand-down leaves a thread "cut for the next restart", which for a thread never comes — so the
+        # cut is dead: owe nothing, the partial reads as what there is (T237b C, the manager's pre-read)
+        if busy_state or queued > 0:
+            return True, False, turns
+        return False, True, turns                   # "interrupted" for the owed read: the newest "you" row IS the stop record
+    if verdict in ("landed", "interrupted"):
+        return False, verdict == "interrupted", turns   # the reply RECORD is in (or the user stopped it), whatever the backend still says
     if busy_state:
         return True, False, turns                   # mid-turn: tool calls, intermediate text, a compaction — the reply is still coming
+    if state == "":
+        # "" is the backend's authoritative "no process exists" (session_state: only a dead/absent SdkSession
+        # reads ""; a live turn always snapshots working/waiting/retrying). With a send still QUEUED the
+        # thread is a resume in waiting — boot reconcile resumes exactly the threads with a persisted queue,
+        # spawning them in a stagger (a SIGKILL cut writes no interrupt record, so there is no "cut" verdict
+        # to key on) — so the unlanded turn is in progress, not dead. With NOTHING queued an unlanded turn on
+        # a thread with no process is DEAD — cut and never to be resumed — not a reply in progress: owe
+        # nothing; whatever partial landed reads as what there is (T237b B, and the scoped review)
+        if queued > 0:
+            return True, False, turns
+        return False, False, turns
     # backend quiet on an unlanded turn: the chat's own working read. A trailing compaction boundary is
     # bookkeeping, not an ended reply — but the idle atoms a stop mints AFTER it fold into that boundary
     # turn, so an idle tail there means the turn died idle-terminated: dead, not owed (T237 review)
@@ -8836,15 +8861,29 @@ def _thread_turn_open(tsid, reg, state):
 
 
 _thread_unreadable_warned = set()
+_thread_backend_warned = set()
 
 
-def _thread_owes_first_reply(tsid, reg, th, turns):
+def _thread_backend_shout(tsid, what, e):
+    """A backend read the comments frame depends on raised: say so once per (thread, read, cause) instead of
+    quietly reading 0 / [] — a silent fallback would hide the very failure (T237b nit)."""
+    key = (tsid, what, type(e).__name__)
+    if key not in _thread_backend_warned:
+        _thread_backend_warned.add(key)
+        print("[comments] thread %s: backend %s failed (%r) — reading it as empty" % (tsid[:8], what, e), file=sys.stderr)
+
+
+def _thread_owes_first_reply(tsid, reg, th, turns, state=""):
     """An open thread with NO exchange yet owes its first reply only while that is the fresh state — the
-    fork pending (forkOf), or a transcript that reads and holds the cut with nothing after it. A MISSING
-    or unreadable transcript, or one the cut is not in, is a broken thread: shout once, owe nothing —
-    a green wash promising a reply that will never come is the lie this change exists to end."""
+    fork pending (forkOf), the fork just spent with its process live and the transcript not yet on disk
+    (`state` non-empty: the CLI will write it), or a transcript that reads and holds the cut with nothing
+    after it. A MISSING or unreadable transcript with no process, or one the cut is not in, is a broken
+    thread: shout once, owe nothing — a green wash promising a reply that will never come is the lie this
+    change exists to end (the caller routes the verdict to the popover's error note, T237b D)."""
     if reg.get("forkOf"):
         return True
+    if not turns and state:
+        return True                                 # the fork-boot window: a live process, its transcript a beat behind
     cut = str(th.get("cutUuid") or "")
     if turns and (not cut or any(a.get("uuid") == cut for t in turns for a in (t.get("atoms") or []))):
         return True
@@ -8921,9 +8960,29 @@ def _comments_frame(sid, tmux=None):
         msgs = [] if status == "promoted" else _thread_messages(
             tsid, str(th.get("cutUuid") or ""), floor_t=(0 if th.get("cutUuid") else int(th.get("createdT") or 0)))
         seen = int(th.get("lastSeenT") or 0)
+        # the backend's live echoes are read BEFORE the events projection is built (T237b A): build_session
+        # → _merge_live_atoms → prune_live retires echoes as their records land — reading after it could
+        # never see a send the prune had just retired against an EARLIER identical text
+        live = []
+        if be and status == "open" and hasattr(be, "live_atoms"):
+            try:
+                live = list(be.live_atoms(tsid) or [])
+            except Exception as e:
+                live = []
+                _thread_backend_shout(tsid, "live_atoms", e)
         events = [] if status == "promoted" else _thread_events(tsid, str(th.get("cutUuid") or ""), now, tmux)
         reg = _thread_reg(tsid)
-        turn_open, interrupted, turns = _thread_turn_read(tsid, reg, state) if status == "open" else (False, False, [])
+        # the backend's queue (persisted for a dormant thread) is read BEFORE the turn read: a machine cut
+        # stays open only while something is still queued behind it or a process is on it (T237b C)
+        pending_n = 0
+        if be and status == "open" and hasattr(be, "pending_queued"):
+            try:
+                pending_n = len(be.pending_queued(tsid) or [])
+            except Exception as e:
+                pending_n = 0
+                _thread_backend_shout(tsid, "pending_queued", e)
+        turn_open, interrupted, turns = (_thread_turn_read(tsid, reg, state, pending_n) if status == "open"
+                                         else (False, False, []))
         unread = (not turn_open) and _agent_landed_after(events, msgs, seen)
         # sends the backend has taken but the transcript does not hold yet — owed, and in no projection.
         # Two windows, one number: the backend's queue (a follow-up typed mid-turn waits there until the
@@ -8932,16 +8991,8 @@ def _comments_frame(sid, tmux=None):
         # lands (prune_live) — so count echoes the way the chat's queued indicator does (build_session:
         # not already in the transcript's user texts, not overtaken by a later human turn, never a slash
         # command's echo, which is consumed without a reply) — the same fold, not a twin (round-3/4 review).
-        queued = 0
+        queued = pending_n
         if be and status == "open":
-            try:
-                queued = len(be.pending_queued(tsid) or []) if hasattr(be, "pending_queued") else 0
-            except Exception:
-                queued = 0
-            try:
-                live = be.live_atoms(tsid) if hasattr(be, "live_atoms") else []
-            except Exception:
-                live = []
             if live:
                 # an echo has LANDED when a user record written at or after its own send carries its text —
                 # never any earlier record: a fork copies the parent's history, and "ok" / "go ahead" / a
@@ -8951,8 +9002,8 @@ def _comments_frame(sid, tmux=None):
                 user_atoms = [a for tr in turns for a in (tr.get("atoms") or []) if a.get("type") == "user"]
                 def _landed(e):
                     et = (e.get("_echo_text") or "").strip()
-                    since = float(e.get("t") or 0) - 2                 # the send's own time, a little skew allowed
-                    return any(et in _atom_user_texts(a) for a in user_atoms if float(a.get("t") or 0) >= since)
+                    since = float(e.get("t") or 0)                     # the send's own stamp: the record the CLI writes for
+                    return any(et in _atom_user_texts(a) for a in user_atoms if float(a.get("t") or 0) >= since)   # it is at or after it
                 floor = _human_turn_floor({"turns": turns}) if turns else 0
                 held = [a for a in live if (a.get("_echo_text") or "").strip() and not a.get("command")
                         and not a.get("dropped") and not _landed(a) and not _echo_overtaken(a, floor)]
@@ -8962,12 +9013,20 @@ def _comments_frame(sid, tmux=None):
         last_uuid = ((events[-1].get("uuid") if events else None)
                      or next((a.get("uuid") for tr in reversed(turns) for a in reversed(tr.get("atoms") or []) if a.get("uuid")), None)
                      or "")
-        owes_first = status == "open" and not msgs and _thread_owes_first_reply(tsid, reg, th, turns)
+        owes_first = status == "open" and not msgs and _thread_owes_first_reply(tsid, reg, th, turns, state)
         unreachable = status == "open" and not msgs and not owes_first and not reg.get("forkOf")
+        if unreachable and not err:
+            # the broken-thread verdict reaches the USER, not just the kernel log (T237b D): the popover's
+            # error note replaces the "opening the thread…" loader it would otherwise hold forever
+            err = ("This thread's conversation can't be found — its transcript is missing or the passage it was "
+                   "anchored to is gone. Start a new comment to continue.")
         # owed: the turn is in progress, a send is held, the FRESH thread has no exchange yet, or the user's
         # message is the newest — unless that newest "message" is the CLI's own interrupt record
+        # …and never when no process exists and nothing is queued: a dormant thread whose newest row is the
+        # user's (cut before any output) has no reply coming (scoped review)
         reply_owed = status == "open" and (turn_open or queued > 0 or owes_first
-                                           or (bool(msgs) and msgs[-1]["who"] == "you" and not interrupted))
+                                           or (bool(msgs) and msgs[-1]["who"] == "you" and not interrupted
+                                               and (state != "" or queued > 0)))
         # (T102: the push-count settle — settledPushes — is RETIRED. The client's pulse is exchange-
         # scoped now: latched at the send gesture, cleared by the reply RECORD arriving in msgs; the
         # frame's msgs already carry that event, so no per-push counter rides here anymore.)
@@ -20935,8 +20994,15 @@ def _merge_live_atoms(session, sid, shown_texts=()):
                        and _atom_prose_chars(a) > 0}
     tx_uuids -= (live_text_uuids - tx_text_uuids)
     tx_texts = {t for turn in session["turns"] for a in turn["atoms"] for t in _atom_user_texts(a)}
+    # text → the NEWEST record time carrying it: prune_live retires an echo by text only through a record
+    # written at or after the echo's send (T237b A) — the plain set above keeps the display dedup below
+    tx_text_t = {}
+    for turn in session["turns"]:
+        for a in turn["atoms"]:
+            for t in _atom_user_texts(a):
+                tx_text_t[t] = max(tx_text_t.get(t, 0), float(a.get("t") or 0))
     human_floor = _human_turn_floor(session)
-    be.prune_live(sid, tx_uuids, tx_texts, human_floor)
+    be.prune_live(sid, tx_uuids, tx_text_t, human_floor)
     hide = tx_texts | {t.strip() for t in shown_texts if t}    # transcript dups + already-shown queued msgs
     fresh = [a for a in live if a.get("uuid") not in tx_uuids
              and not (a.get("_echo_text") and a["_echo_text"].strip() in hide)]
