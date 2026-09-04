@@ -107,9 +107,31 @@ test("recent files: recorded only on a REAL open, painted as re-open rows in the
 test("close returns to the empty state: the placeholder repaints on the viewer element's removal, never a hidden pane", () => {
   // closeFileView only removes #romp-fileview; the body's childList mutation IS the close event, and one
   // observer covers every open/close path (relay, recent row, browser rows and back, ✕, Esc, Reload)
-  assert.match(SRC, /new MutationObserver\(paint\)\.observe\(document\.body, \{ childList: true \}\);/);
+  assert.match(SRC, /new MutationObserver\(onBodyChange\)\.observe\(document\.body, \{ childList: true \}\);/);
+  assert.match(SRC, /function onBodyChange\(\): void \{\n\s*paint\(\);/, "the repaint still rides the observer");
   assert.match(SRC, /const open = !!document\.getElementById\("romp-fileview"\);\n\s*empty\.hidden = open;\n\s*if \(open\) return;/);
   assert.doesNotMatch(SRC, /setInterval|setTimeout/, "event-based, no polling");
+});
+
+// The close is also told to the SHELL (the 2026-09-04 review): on a phone the viewFile relay switched tabs
+// to show this pane, and closing the file otherwise stranded the person on the Files tab's recent list
+// (the feed route resets to chat on viewFileClosed; this pane never posted anything). The shell restores
+// the tab the click came from, mobile only (kernel.py filesViewerClosed; tests/test_pane_state_broadcast.py).
+test("the viewer's close EDGE posts filesViewerClosed up to the shell — once, framed only, never on an open-over-open", () => {
+  assert.match(SRC, /let viewerUp = !!document\.getElementById\("romp-fileview"\);/);
+  assert.match(SRC, /const up = !!document\.getElementById\("romp-fileview"\);\n\s*if \(viewerUp && !up && window\.parent !== window\) window\.parent\.postMessage\(\{ romp: "filesViewerClosed" \}, "\*"\);\n\s*viewerUp = up;/);
+  assert.equal((SRC.match(/filesViewerClosed/g) || []).length, 2, "one post site (plus its comment)");
+  // executed: the edge detector as the source spells it — a post only on up→down, framed
+  const run = (states: boolean[], framed: boolean): number => {
+    let viewerUp = states[0], posts = 0;
+    for (const up of states.slice(1)) { if (viewerUp && !up && framed) posts++; viewerUp = up; }
+    return posts;
+  };
+  assert.equal(run([false, true, false], true), 1, "open then close → one notice");
+  assert.equal(run([false, true, true, false], true), 1, "the Reload replace / open-over-open (still up when the observer runs) is not a close");
+  assert.equal(run([false, true, false, true, false], true), 2, "two closes → two notices");
+  assert.equal(run([false, false], true), 0, "an unrelated body mutation with nothing open posts nothing");
+  assert.equal(run([false, true, false], false), 0, "unframed (no shell): nothing to tell");
 });
 
 test("the pane-resident variant is keyed on the page's body class and lives ONLY in the pane sheet", () => {
@@ -143,24 +165,50 @@ test("the shell's viewFile relay, executed: pane:'pane' brings the Files pane fo
   assert.ok(arms.endsWith("}});"));
   arms = arms.slice(0, -3);
   const armsFn = new Function("window", "document", "m", arms) as (w: unknown, d: unknown, m: unknown) => void;
-  const run = (m: unknown) => {
+  // a shell to send messages through: desktop by default; `mobile` answers __rompMobileOn true with `tab` showing
+  const shell = (opts: { mobile?: boolean; tab?: string } = {}) => {
     const toggles: Array<[string, boolean]> = [], tabs: string[] = [];
     const posted: Record<string, unknown[]> = { "f-files": [], "f-feed": [], "f-chat": [] };
-    const win: any = { __rompPaneToggle: (p: string, on: boolean) => toggles.push([p, on]), __rompMobileTab: (t: string) => tabs.push(t) };
+    const win: any = { __rompPaneToggle: (p: string, on: boolean) => toggles.push([p, on]), __rompMobileTab: (t: string) => tabs.push(t),
+      __rompMobileOn: () => !!opts.mobile };
     const doc = {
-      body: { classList: { contains: (c: string) => c === "po-feed" } },   // feed on, files off
+      body: { classList: { contains: (c: string) => c === "po-feed" },   // feed on, files off
+              getAttribute: (a: string) => (a === "data-tab" ? opts.tab ?? "chat" : null) },
       getElementById: (id: string) => (id in posted ? { contentWindow: { postMessage: (x: unknown) => posted[id].push(x) } } : null),
     };
-    armsFn(win, doc, m);
-    return { toggles, tabs, posted, pend: win.__rompFeedWasOffViewPend };
+    const send = (m: unknown) => { armsFn(win, doc, m); return { toggles, tabs, posted, pend: win.__rompFeedWasOffViewPend, from: win.__rompFilesTabFrom }; };
+    return { send, win };
   };
+  const run = (m: unknown) => shell().send(m);
   const identity = { name: "web", color: { bg: "#123456", fg: "#ffffff" } };
   const pane = run({ romp: "viewFile", pane: "pane", path: "/repo/notes-api/src/app.py", sid: SID, identity });
   assert.deepEqual(pane.toggles, [["files", true]], "the Files pane comes forward; the feed is not touched");
-  assert.deepEqual(pane.tabs, ["files"]);
+  assert.deepEqual(pane.tabs, [], "DESKTOP: no mobile tab switch — the column is already visible, and show() would only persist a stale romp-mobile-tab");
+  assert.equal(pane.from, undefined, "…and nothing to remember");
   assert.deepEqual(pane.posted["f-files"], [{ romp: "viewFile", path: "/repo/notes-api/src/app.py", sid: SID, identity }]);
   assert.deepEqual(pane.posted["f-feed"], [], "nothing reaches the feed");
   assert.equal(pane.pend, undefined, "the feed's was-off stash is never armed by the Files route");
+  // MOBILE (one tab at a time): the relay brings the Files tab forward and remembers the tab the click came
+  // from; the Files pane's viewer close (files.ts posts filesViewerClosed) puts that tab back, once
+  const phone = shell({ mobile: true, tab: "chat" });
+  const onPhone = phone.send({ romp: "viewFile", pane: "pane", path: "/repo/notes-api/src/app.py", sid: SID, identity });
+  assert.deepEqual(onPhone.tabs, ["files"]);
+  assert.equal(onPhone.from, "chat", "the tab the click came from is remembered");
+  assert.deepEqual(onPhone.toggles, [["files", true]], "the desktop bring-forward still runs (harmless; keeps po in step)");
+  const closed = phone.send({ romp: "filesViewerClosed" });
+  assert.deepEqual(closed.tabs, ["files", "chat"], "close → back to the remembered tab");
+  assert.equal(closed.from, null, "…and the memory is consumed");
+  assert.deepEqual(phone.send({ romp: "filesViewerClosed" }).tabs, ["files", "chat"], "a second close with nothing remembered switches nothing");
+  // a phone already ON the Files tab: nothing to switch, nothing to remember
+  const already = shell({ mobile: true, tab: "files" }).send({ romp: "viewFile", pane: "pane", path: "/p", sid: SID });
+  assert.deepEqual(already.tabs, []); assert.equal(already.from, undefined);
+  // desktop close: a no-op even if a memory were left (a rotation to desktop between open and close)
+  const desk = shell(); desk.win.__rompFilesTabFrom = "chat";
+  const deskClosed = desk.send({ romp: "filesViewerClosed" });
+  assert.deepEqual(deskClosed.tabs, []); assert.equal(deskClosed.from, null, "dropped, never replayed later");
+  // an older shell script without __rompMobileOn (no such thing after this change, but the arm must not throw)
+  const bareWin = shell(); delete bareWin.win.__rompMobileOn;
+  assert.deepEqual(bareWin.send({ romp: "viewFile", pane: "pane", path: "/p", sid: SID }).tabs, []);
   // a remote session's file: the prefixed sid rides through untouched (files.ts hands it to fileUrl, host-routed)
   const remote = run({ romp: "viewFile", pane: "pane", path: "/repo/notes-api/README.md", sid: "TESTHOST:" + SID2, identity: { name: "TESTHOST:api", color: null } });
   assert.equal((remote.posted["f-files"][0] as any).sid, "TESTHOST:" + SID2);

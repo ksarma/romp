@@ -119,9 +119,11 @@ other machines' requests.
 ### Files
 
 The Files pane holds the file viewer in a column of its own, beside the chat
-and the feed, so an open file covers neither. Set the gear's **File links open
-in** to **The Files pane** and a file link clicked in the chat opens here; the
-pane comes forward on its own and stays up until you close the file. Selecting
+and the feed, so an open file covers neither. While the pane is open, a file
+link clicked in the chat opens here. When it is closed, the gear's **File
+links open in** setting decides where a link opens; set it to **The Files
+pane** and the pane comes forward on its own and stays up until you close the
+file. Selecting
 a passage in it puts the quote in the chat's composer, as it does from the
 viewer over the chat. When no file is open, the pane lists the files most
 recently open here; click one to open it again. The pane is off by default;

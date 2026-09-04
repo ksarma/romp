@@ -97,8 +97,13 @@ class RefitsWhenTheVisibleHeightChanges(unittest.TestCase):
         # it must apply on a desktop/tablet layout too, so the fit and its listeners come BEFORE the
         # #mtabs early return — that ordering is the whole reason a landscape tablet gets a real height
         fit_at = self.js.index("fit();window.addEventListener('resize',fit)")
-        bar_at = self.js.index("var bar=document.getElementById('mtabs');if(!bar)return;")
+        bar_at = self.js.index("var bar=document.getElementById('mtabs');")
         self.assertLess(fit_at, bar_at)
+        # the early return still follows the lookup (the layout probe __rompMobileOn sits between them since
+        # 2026-09-04 — defined before the return so it answers false on a page with no tab bar)
+        ret_at = self.js.index("if(!bar)return;")
+        self.assertLess(bar_at, ret_at)
+        self.assertLess(self.js.index("window.__rompMobileOn=mobileOn;"), ret_at)
 
 
 if __name__ == "__main__":

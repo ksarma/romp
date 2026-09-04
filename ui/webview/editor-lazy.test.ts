@@ -8,13 +8,55 @@ import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { langNameFor } from "./editor-chunk";
+import { langNameFor, extensionsFor } from "./editor-chunk";
+import { EditorState } from "@codemirror/state";
+import { EditorView } from "@codemirror/view";
 
 const W = (f: string) => fs.readFileSync(path.resolve(process.cwd(), "..", "ui", "webview", f), "utf8");
 const VIEW = W("file-view.ts");
 const CHUNK = W("editor-chunk.ts");
 const RENDER = W("render.ts");
 const ESBUILD = fs.readFileSync(path.resolve(process.cwd(), "esbuild.js"), "utf8");
+
+// ── long lines wrap while editing, as they do in the read view (the user 2026-09-04) ─────────────
+// The read view has always soft-wrapped since 2026-08-24 (no toggle — the user's call then); edit mode
+// did not: CodeMirror's default is a horizontal scroll and the textarea fallback wore white-space: pre.
+// Both now wrap the same way the view does. Executed against the real extension set: EditorState
+// needs no DOM, so the state the editor mounts is built here and inspected.
+
+test("the editor's state carries lineWrapping — a display facet, so the buffer is untouched", () => {
+  const noop = () => {};
+  const doc = "a line long enough to wrap\r\n".replace(/\r\n/g, "\n") + "x".repeat(400) + "\n";
+  const state = EditorState.create({ doc, extensions: extensionsFor("ts", { onChange: noop, onSave: noop }) });
+  // EditorView.lineWrapping IS contentAttributes.of({class: "cm-lineWrapping"}) — the class the view's
+  // stylesheet keys pre-wrap on; its presence in the facet is the wrapping, before any DOM exists
+  const attrs = state.facet(EditorView.contentAttributes);
+  assert.ok(attrs.some((a) => typeof a === "object" && a !== null && (a as { class?: string }).class === "cm-lineWrapping"),
+    "lineWrapping is in the mounted extension set");
+  assert.equal(state.doc.toString(), doc, "wrapping is visual: the document is byte-identical, newlines included");
+  // the pure set is what mount() builds the view from — the executed check above is the shipped set
+  assert.match(CHUNK, /state: EditorState\.create\(\{ doc: opts\.text, extensions: extensionsFor\(opts\.ext, opts\) \}\),/);
+  assert.match(CHUNK, /\.\.\.langExt\(ext\),\n(?:\s*\/\/[^\n]*\n)*\s*EditorView\.lineWrapping,\n\s*rompTheme,/,
+    "lineWrapping sits in extensionsFor, unconditionally — no toggle, like the view");
+  // a plain-text file (no highlighter) wraps too
+  const plain = EditorState.create({ doc: "x", extensions: extensionsFor("", { onChange: noop, onSave: noop }) });
+  assert.ok(plain.facet(EditorView.contentAttributes).some((a) => (a as { class?: string }).class === "cm-lineWrapping"));
+});
+
+test("the textarea fallback wraps the same way: wrap=soft, and both sheets say pre-wrap", () => {
+  // SOFT: visual only — the value keeps its own newlines, so nothing marks the buffer dirty and the
+  // CRLF restore sees the same text (wrap=hard would insert line breaks into the value)
+  assert.match(VIEW, /ta\.spellcheck = false;\n(?:\s*\/\/[^\n]*\n)*\s*ta\.wrap = "soft";/);
+  assert.doesNotMatch(VIEW, /ta\.wrap = "hard"/);
+  // the sheet does the wrapping: white-space: pre on a textarea defeats wrap=soft; pre-wrap + the read
+  // view's own overflow-wrap so an unbroken token wraps too (.fileview-pre.fileview-wrap's exact pair)
+  for (const sheet of ["styles.css", "feed.css"]) {
+    const css = W(sheet);
+    assert.match(css, /\.fileview-editor \{[^}]*white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 4; \}/, sheet);
+    assert.doesNotMatch(css, /\.fileview-editor \{[^}]*white-space: pre;/, sheet + " must not keep the no-wrap rule");
+    assert.match(css, /\.fileview-pre\.fileview-wrap \{ white-space: pre-wrap; overflow-wrap: anywhere;/, sheet + ": the read view's pair, mirrored");
+  }
+});
 
 // ── lazy discipline: the chunk rides its own entry; no main-bundle source may import it ──────────
 

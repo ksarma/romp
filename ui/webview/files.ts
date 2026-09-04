@@ -113,8 +113,19 @@ initFileBrowse((m) => vscodeApi?.postMessage(m));
   });
 })();
 // the viewer's element coming and going IS the open/close event: one observer on the body covers every
-// path (the relay, a recent row, the browser's rows and its "‹ Files" back, ✕, Escape, the Reload replace)
-new MutationObserver(paint).observe(document.body, { childList: true });
+// path (the relay, a recent row, the browser's rows and its "‹ Files" back, ✕, Escape, the Reload replace).
+// The CLOSE edge is also told to the shell ({romp:"filesViewerClosed"}): on a phone the relay switched tabs
+// to show this pane, and the shell puts the person back on the tab the click came from (a no-op on desktop,
+// where the column simply shows its recent list again). Edge, not every mutation: the Reload replace and an
+// open-over-open remove and re-add within one batch, so the viewer is still up when the observer runs.
+let viewerUp = !!document.getElementById("romp-fileview");
+function onBodyChange(): void {
+  paint();
+  const up = !!document.getElementById("romp-fileview");
+  if (viewerUp && !up && window.parent !== window) window.parent.postMessage({ romp: "filesViewerClosed" }, "*");
+  viewerUp = up;
+}
+new MutationObserver(onBodyChange).observe(document.body, { childList: true });
 
 paint();
 vscodeApi?.postMessage({ type: "ready" });   // lifts the shim's hold: this socket carries keepalives and op replies only

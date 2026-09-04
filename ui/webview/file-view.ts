@@ -348,8 +348,9 @@ export function openFileView(path: string, sid?: string | null): boolean {
   const acts = el("div", "fileview-acts");
 
   // ── format toggles (the user 2026-08-09) ── A markdown file opens RENDERED, its Raw form one click
-  // away; everything else keeps the code view, whose long lines the Wrap toggle can soft-wrap. Both
-  // choices persist per browser (FMT_KEY above). These buttons are built once per open and never
+  // away; everything else keeps the code view, whose long lines always soft-wrap (the user 2026-08-24 —
+  // no Wrap toggle; edit mode wraps the same way, see enterEdit). The choice persists per browser
+  // (FMT_KEY above). These buttons are built once per open and never
   // re-rendered by kernel pushes — the viewer is a static overlay — so direct listeners are click-safe
   // here, same as Copy path below.
   const fmt = loadFmt();
@@ -629,6 +630,11 @@ export function openFileView(path: string, sid?: string | null): boolean {
     ta = el("textarea", "fileview-editor") as HTMLTextAreaElement;
     ta.value = text!;                           // the browser normalizes CRLF→LF on assignment…
     ta.spellcheck = false;
+    // long lines soft-wrap here as they do in the read view and the CodeMirror editor (the user
+    // 2026-09-04; the view has always wrapped since 2026-08-24). SOFT: the wrap is visual only — the
+    // value keeps its own newlines and nothing marks the buffer dirty (wrap=hard would insert them).
+    // The sheet's white-space: pre-wrap on .fileview-editor does the wrapping; pre would defeat it.
+    ta.wrap = "soft";
     ta.addEventListener("input", () => { dirty = ta!.value !== norm(text!); });   // …so compare normalized
     ta.addEventListener("keydown", (e) => {     // the editor's own save chord; Esc falls through to onKey
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") { e.preventDefault(); doSave(); }

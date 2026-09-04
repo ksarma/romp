@@ -98,29 +98,36 @@ export interface MountOpts {
   onSave: () => void;         // Mod-s inside the editor — same chord the textarea honored
 }
 
+/** The editor's extension set, apart from the view so a test can build an EditorState from it without a
+ *  DOM and check what the state carries (editor-lazy.test.ts). */
+export function extensionsFor(ext: string, opts: Pick<MountOpts, "onChange" | "onSave">): Extension[] {
+  return [
+    lineNumbers(), highlightActiveLine(), drawSelection(),
+    history(),
+    indentOnInput(), bracketMatching(), closeBrackets(),
+    autocompletion({ override: [completeAnyWord] }),   // LOCAL word completion — no servers, by design
+    search({ top: true }),
+    highlightSelectionMatches(),
+    syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+    ...langExt(ext),
+    // long lines soft-wrap while editing, as they do in the read view (the user 2026-09-04; the view has
+    // always wrapped since 2026-08-24, with no toggle) — a display facet, so the buffer, its newlines and
+    // the cursor are untouched, and the textarea fallback wraps the same way (file-view.ts enterFallback)
+    EditorView.lineWrapping,
+    rompTheme,
+    keymap.of([
+      { key: "Mod-s", run: () => { opts.onSave(); return true; } },
+      ...closeBracketsKeymap, ...defaultKeymap, ...searchKeymap,
+      ...historyKeymap, ...completionKeymap, indentWithTab,
+    ]),
+    EditorView.updateListener.of((u) => { if (u.docChanged) opts.onChange(); }),
+  ];
+}
+
 export function mount(host: HTMLElement, opts: MountOpts): EditorHandle {
   const view = new EditorView({
     parent: host,
-    state: EditorState.create({
-      doc: opts.text,
-      extensions: [
-        lineNumbers(), highlightActiveLine(), drawSelection(),
-        history(),
-        indentOnInput(), bracketMatching(), closeBrackets(),
-        autocompletion({ override: [completeAnyWord] }),   // LOCAL word completion — no servers, by design
-        search({ top: true }),
-        highlightSelectionMatches(),
-        syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
-        ...langExt(opts.ext),
-        rompTheme,
-        keymap.of([
-          { key: "Mod-s", run: () => { opts.onSave(); return true; } },
-          ...closeBracketsKeymap, ...defaultKeymap, ...searchKeymap,
-          ...historyKeymap, ...completionKeymap, indentWithTab,
-        ]),
-        EditorView.updateListener.of((u) => { if (u.docChanged) opts.onChange(); }),
-      ],
-    }),
+    state: EditorState.create({ doc: opts.text, extensions: extensionsFor(opts.ext, opts) }),
   });
   return {
     value: () => view.state.doc.toString(),
