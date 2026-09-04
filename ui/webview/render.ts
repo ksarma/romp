@@ -6569,34 +6569,35 @@ let cmtShippedImgs: string[] = [];
 // the projection's 40-message cap) and the kernel's owed bit owns the wash from there. Against an OLDER
 // kernel (no bit) it keeps the T102 contract: cleared by the reply-arrived event — the agent's reply record
 // landing (agentCount rising past the base) with the thread settled. No push counting, no timers.
-type CmtLatch = { you: number; youT: number; agents: number; queued: number; events: number };
+type CmtLatch = { you: number; youT: number; agents: number; queued: number; last: string };
 const cmtAwaitBase = new Map<string, CmtLatch>();
 const cmtYouRows = (th: CommentThread) => (th.msgs || []).filter((m) => m.who === "you");
 const cmtLatchOf = (th: CommentThread): CmtLatch => {
   const you = cmtYouRows(th);
   return { you: you.length, youT: you.length ? (you[you.length - 1].t || 0) : 0, agents: agentCount(th),
-           queued: th.queued || 0, events: ((th.events || []) as unknown[]).length };
+           queued: th.queued || 0, last: th.lastUuid || "" };
 };
-const CMT_LATCH_ZERO: CmtLatch = { you: 0, youT: 0, agents: 0, queued: 0, events: 0 };
+const CMT_LATCH_ZERO: CmtLatch = { you: 0, youT: 0, agents: 0, queued: 0, last: "" };
 /** Does this frame's thread release the send latch? Against a kernel that ships replyOwed (T237), the
  *  KERNEL'S ACKNOWLEDGEMENT of the send does — any of: the user's own "you" row newer than the click's
  *  newest (or more "you" rows than then; the count alone never grows on a thread at the projection's
- *  40-message cap); the backend now HOLDING the send (queued grew — a follow-up typed mid-turn waits there
- *  until the turn ends, owed but in no projection yet); the send consumed as a slash command (the
- *  transcript grew — new events — while the kernel says nothing is owed); or the kernel marking the thread
- *  unreachable (a broken thread owes nothing). Never an agent row alone: the agent's partials and the
- *  reply itself land BEFORE a held send is written, and clearing on them dropped the green while the send
- *  was still queued (round-2 review). Against an older kernel (no bit) the T102 reply-arrived clear
- *  stands. A thread leaving "open" or erroring releases either way. */
+ *  40-message cap); the backend now holding or having fed the send (queued grew — its input echo lives from
+ *  the send until the record lands, so this covers the mid-turn follow-up the backend queues AND the send
+ *  the CLI has but has not written); the send consumed as a slash command (the newest record moved —
+ *  lastUuid, cap-proof — while the kernel says nothing is owed); or the kernel marking the thread
+ *  unreachable (a broken thread owes nothing). Never an agent row alone, and never "the transcript grew"
+ *  alone: the agent's partials and the reply itself land BEFORE a held send is written, and clearing on
+ *  them dropped the green while the send was still owed (round-2/4 review). Against an older kernel (no
+ *  bit) the T102 reply-arrived clear stands. A thread leaving "open" or erroring releases either way. */
 function cmtLatchReleased(t: CommentThread, base: CmtLatch): boolean {
   if (t.status !== "open" || !!t.error) return true;
   if (typeof t.replyOwed === "boolean") {
     const you = cmtYouRows(t);
     const newestYouT = you.length ? (you[you.length - 1].t || 0) : 0;
     if (you.length > base.you || newestYouT > base.youT) return true;   // written
-    if ((t.queued || 0) > base.queued) return true;                       // held by the backend — the kernel owes it now
+    if ((t.queued || 0) > base.queued) return true;                       // held or fed by the backend — the kernel owes it now
     if (t.unreachable) return true;                                       // nothing can land — no green promise
-    return ((t.events || []) as unknown[]).length > base.events && t.replyOwed === false;   // consumed as a command
+    return !!t.lastUuid && t.lastUuid !== base.last && t.replyOwed === false;   // consumed as a command: moved, nothing owed
   }
   return agentCount(t) > base.agents && !threadBusy(t.state);
 }

@@ -393,10 +393,13 @@ class ThreadProjection(CommentBase):
         def owns(self, sid):
             return True                           # the thread is a live SDK session: build_session runs, events are REAL
         queued = []
+        live = []
         def pending_queued(self, sid):
             return list(self.queued)
         def live_atoms(self, sid):
-            return []
+            return list(self.live)
+        def live_sessions(self):
+            return {}
         def session_since(self, sid):
             return 0
         def session_meta(self, sid):
@@ -620,22 +623,64 @@ class ThreadProjection(CommentBase):
         # the backend's machineCut stamp says whose stop it was — romp's cut keeps the reply in progress
         t = self.now - 500
         self._seed_thread(seen=self.now - 450)
-        recs = self._thread_side(self._partial_text(t + 110, "Let me check the code.", "cp1", "cu1"),
+        settle = lambda sr: {"type": "assistant", "timestamp": iso(t + 115), "uuid": "cs1", "parentUuid": "ci1",
+                             "message": {"role": "assistant", "model": "<synthetic>", "stop_reason": sr,
+                                         "content": [{"type": "text", "text": "No response requested."}]}}
+        base = self._thread_side(self._partial_text(t + 110, "Let me check the code.", "cp1", "cu1"),
                                  uline(t + 115, "[Request interrupted by user]", "ci1", parent="cp1"))
         states = jd.STATE / "states" / (THREAD + ".jsonl")
         states.parent.mkdir(parents=True, exist_ok=True)
-        states.write_text(json.dumps({"t": t + 116, "machineCut": "crash"}) + "\n")
+        states.write_text(json.dumps({"t": t + 120, "machineCut": "restart"}) + "\n")
         try:
-            km._machine_cut_cache.clear() if hasattr(km, "_machine_cut_cache") and hasattr(km._machine_cut_cache, "clear") else None
-            th = self._frame_thread(recs, state="working")
-            self.assertTrue(th["replyOwed"], "romp cut it and is resuming — still owed")
-            self.assertFalse(th["unread"], "nothing landed yet")
+            # the shape every restart cut writes: stop record THEN the CLI's null settle (round-4 review: with
+            # the settle as the turn's tail the stamp was never consulted and its end_turn read as a landing)
+            for recs in (base, base + [settle("end_turn")], base + [settle("stop_sequence")]):
+                km._machine_cut_cache.clear() if hasattr(km, "_machine_cut_cache") and hasattr(km._machine_cut_cache, "clear") else None
+                th = self._frame_thread(recs, state="working")
+                self.assertTrue(th["replyOwed"], "romp cut it and is resuming — still owed (%d records)" % len(recs))
+                self.assertFalse(th["unread"], "nothing landed yet (%d records)" % len(recs))
         finally:
             states.unlink()
+        recs = base
         # a genuine stop (no machine-cut stamp at or after it) still closes the turn
         km._machine_cut_cache.clear() if hasattr(km, "_machine_cut_cache") and hasattr(km._machine_cut_cache, "clear") else None
         th = self._frame_thread(recs, state="waiting")
         self.assertFalse(th["replyOwed"]); self.assertTrue(th["unread"])
+
+    def test_a_send_fed_to_the_cli_but_unwritten_is_owed_via_its_echo(self):
+        # round-4 review: the backend pops a queued send to the CLI within milliseconds, so `_pending` is
+        # empty while the CLI still holds it unwritten; the backend's own INPUT ECHO atom spans that window
+        # (it lives until the record lands) — counted exactly as the chat's queued indicator counts it
+        t = self.now - 500
+        self._seed_thread(seen=self.now)
+        recs = self._thread_side(aline(t + 120, "Jitter prevents thundering herds.", "ca1", parent="cu1"))
+        echo = {"type": "user", "author": "human", "t": t + 130, "uuid": "echo:1", "_echo_text": "and the cap?"}
+        self._State.live = [echo]
+        try:
+            th = self._frame_thread(recs, state="")
+            self.assertEqual(th["queued"], 1, "the echo is a held send")
+            self.assertTrue(th["replyOwed"], "owed while the CLI holds it")
+            # a slash command's echo is consumed without a reply — never owed
+            self._State.live = [dict(echo, _echo_text="/model sonnet", command=True)]
+            th = self._frame_thread(recs, state="")
+            self.assertEqual(th["queued"], 0); self.assertFalse(th["replyOwed"])
+            # an echo the transcript has caught up on is retired by the same text rule the chat uses
+            self._State.live = [echo]
+            th = self._frame_thread(recs + [uline(t + 130, "and the cap?", "cu2", parent="ca1"),
+                                            aline(t + 140, "Cap it at two minutes.", "ca2", parent="cu2")], state="")
+            self.assertEqual(th["queued"], 0, "landed → not held")
+            self.assertFalse(th["replyOwed"])
+        finally:
+            self._State.live = []
+
+    def test_the_frame_ships_the_newest_record_uuid_beyond_the_projection_caps(self):
+        t = self.now - 500
+        self._seed_thread(seen=self.now)
+        recs = self._thread_side(aline(t + 120, "Jitter prevents thundering herds.", "ca1", parent="cu1"))
+        a = self._frame_thread(recs, state="")["lastUuid"]
+        b = self._frame_thread(recs + [uline(t + 130, "<command-name>/model</command-name>", "cc1", parent="ca1"),
+                                       uline(t + 131, "<local-command-stdout>Set model to sonnet</local-command-stdout>", "cc2", parent="cc1")], state="")["lastUuid"]
+        self.assertTrue(a and b and a != b, "a consumed slash command moves the newest record though msgs does not change")
 
     def test_a_send_the_backend_holds_is_owed_before_any_projection_sees_it(self):
         # round-3 review: a follow-up typed mid-turn waits in the backend until the turn ends; the frame

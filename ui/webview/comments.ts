@@ -19,7 +19,8 @@ export type CommentThread = {
   error?: string;             // the thread CLI's launch error, when it could not start
   unread: boolean;            // a FINISHED agent reply newer than the read watermark — yellow (kernel truth, T237)
   replyOwed?: boolean;        // a reply is still owed (no exchange yet / user's message newest / turn in progress / a send held) — the green wash (kernel truth, T237; absent on an older kernel)
-  queued?: number;            // sends the backend holds for this thread, not yet in any projection (T237)
+  queued?: number;            // sends the backend holds or has fed for this thread, not yet in the transcript (T237)
+  lastUuid?: string;          // the newest record shown/held — "did the transcript move?" without the projection caps (T237)
   unreachable?: boolean | null;   // a broken thread (missing transcript / lost cut): the kernel owes nothing and says so (T237)
   sinceEpoch?: number;        // ms epoch the thread's current state began — the popover chip's timer
   mode?: string;              // the thread's permission mode — the popover statusline's Auto badge

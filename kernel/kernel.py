@@ -8764,14 +8764,23 @@ def _turn_landed(turn, cut_t=0.0):
     cut ROMP made and is resuming (crash / restart), not the user's stop — the turn stays in progress
     (T237 review: otherwise the mark flapped yellow → green → yellow across every resume)."""
     atoms = turn.get("atoms") or []
-    tail = next((a for a in reversed(atoms) if not a.get("command") and a.get("type") != "idle"), None)
+    # the CLI's null settle ("No response requested.", model "<synthetic>") follows every stop record it
+    # writes — the same signals _interrupt_settle reads; it is part of the stop, never the reply, so the tail
+    # and the stop reason look past it (round-4 review: with the settle as tail the machineCut guard was
+    # never reached and the settle's own end_turn read as a landing)
+    def _settle(a):
+        if a.get("type") != "assistant":
+            return False
+        m = a.get("message") or {}
+        return m.get("model") == "<synthetic>" or (a.get("text") or "").strip() == "No response requested."
+    tail = next((a for a in reversed(atoms) if not a.get("command") and a.get("type") != "idle" and not _settle(a)), None)
     if tail is not None and em.is_interrupt_record(tail):
         if cut_t and cut_t >= float(tail.get("t") or 0):
             return False, False                     # romp's own cut, being resumed — nothing landed, nobody stopped it
         return True, True
     last_sr = None
     for a in atoms:
-        if a.get("type") == "assistant":
+        if a.get("type") == "assistant" and not _settle(a):
             last_sr = (a.get("message") or {}).get("stop_reason")
     return last_sr in em.END_STOPS, False
 
@@ -8916,12 +8925,34 @@ def _comments_frame(sid, tmux=None):
         reg = _thread_reg(tsid)
         turn_open, interrupted, turns = _thread_turn_read(tsid, reg, state) if status == "open" else (False, False, [])
         unread = (not turn_open) and _agent_landed_after(events, msgs, seen)
-        queued = 0                                  # sends the backend HOLDS (a follow-up typed mid-turn waits for the
-        if be and status == "open" and hasattr(be, "pending_queued"):   # turn to end before it is even written) —
-            try:                                    # owed, and not yet in any projection (T237 review)
-                queued = len(be.pending_queued(tsid) or [])
+        # sends the backend has taken but the transcript does not hold yet — owed, and in no projection.
+        # Two windows, one number: the backend's queue (a follow-up typed mid-turn waits there until the
+        # turn ends) and the fed-but-unwritten send (popped to the CLI, which writes its record at its next
+        # boundary). The backend's own INPUT ECHO atom spans both — it lives from the send until the record
+        # lands (prune_live) — so count echoes the way the chat's queued indicator does (build_session:
+        # not already in the transcript's user texts, not overtaken by a later human turn, never a slash
+        # command's echo, which is consumed without a reply) — the same fold, not a twin (round-3/4 review).
+        queued = 0
+        if be and status == "open":
+            try:
+                queued = len(be.pending_queued(tsid) or []) if hasattr(be, "pending_queued") else 0
             except Exception:
                 queued = 0
+            try:
+                live = be.live_atoms(tsid) if hasattr(be, "live_atoms") else []
+            except Exception:
+                live = []
+            if live:
+                tx_user = {t for tr in turns for a in (tr.get("atoms") or []) for t in _atom_user_texts(a)}
+                floor = _human_turn_floor({"turns": turns}) if turns else 0
+                held = [a for a in live if (a.get("_echo_text") or "").strip() and not a.get("command")
+                        and (a.get("_echo_text") or "").strip() not in tx_user and not _echo_overtaken(a, floor)]
+                queued = max(queued, len(held))
+        # the newest record the projection shows (or the transcript holds): the client's "did the transcript
+        # move?" datum, independent of the 80-event / 40-message caps on the shipped projections
+        last_uuid = ((events[-1].get("uuid") if events else None)
+                     or next((a.get("uuid") for tr in reversed(turns) for a in reversed(tr.get("atoms") or []) if a.get("uuid")), None)
+                     or "")
         owes_first = status == "open" and not msgs and _thread_owes_first_reply(tsid, reg, th, turns)
         unreachable = status == "open" and not msgs and not owes_first and not reg.get("forkOf")
         # owed: the turn is in progress, a send is held, the FRESH thread has no exchange yet, or the user's
@@ -8953,7 +8984,8 @@ def _comments_frame(sid, tmux=None):
                         "exact": str(th.get("exact") or "")[:500], "status": status,
                         "createdT": th.get("createdT") or 0, "state": state, "error": err,
                         "unread": unread, "replyOwed": reply_owed,   # yellow / green — see the docstring (T237)
-                        "queued": queued,                              # sends the backend holds, not yet in any projection
+                        "queued": queued,                              # sends the backend holds or has fed, not yet in the transcript
+                        "lastUuid": last_uuid,                         # the newest record shown/held — the client's cap-proof "transcript moved" datum
                         "unreachable": unreachable or None,            # a broken thread (missing transcript / lost cut): owes nothing
                         "promotedName": th.get("promotedName") or "",
                         "model": (reg.get("liveModel") or reg.get("model") or "") if reg else "",
