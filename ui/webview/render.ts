@@ -37,7 +37,7 @@ import { titleWithKey, chordOf, effectiveChord, loadOverrides } from "./keybindi
 import { DEFAULT_CHORDS } from "./commands";
 import { NavHistory } from "./nav-history";
 import { StagedStack } from "./staged-messages";
-import { mintProvisionalId, isProvisionalId, provisionalName, adoptsProvisional } from "./provisional";
+import { mintProvisionalId, isProvisionalId, provisionalName, adoptsProvisional, focusResolvesProvisional } from "./provisional";
 import { onlyTag, matchesOnly } from "./only-filter";
 import { numberDiff, type DiffRow } from "./diff-lines";
 import { parseAgentNotif, type AgentNotif } from "./agent-notif";
@@ -5879,6 +5879,26 @@ function adoptProvisional(realId: string): void {
     registerOptimistic(realId, text);      // …and the bubble carries over to the tab that now owns it
   }
   if (draft) { persistDrafts(); const ta = document.getElementById("composer-input") as HTMLTextAreaElement | null; if (ta) growComposer(ta); }
+}
+
+// The create RESOLVED TO A RUNNING SESSION: the kernel answered it by focusing the session that already
+// runs under that name (focusResolvesProvisional, in the focus handler). Retire the provisional tab
+// QUIETLY — no dialog, the focus stays on the real tab — and keep whatever was typed into it as that
+// session's draft. Held, not sent: it was typed for a session believed new, and the running one has a
+// thread the user has not looked at yet (adoptProvisional sends because a NEW session has none). Before
+// this the focus left the tab pending, so the warn that followed a tagged request read as the create's
+// FAILURE ("Couldn't start api" over a body saying api is running, the view yanked back onto a
+// struck-through dead tab), and an untagged one waited 90 s for the backstop to say the same.
+function resolveProvisionalToExisting(realId: string): void {
+  const { queued, draft } = dropProvisional();     // …and the 90 s backstop goes with it
+  const held = [...queued, draft].filter(Boolean).join("\n\n");
+  if (!held) return;
+  drafts.set(realId, [drafts.get(realId) ?? "", held].filter(Boolean).join("\n\n"));   // BEFORE the switch — setActive fills the box from drafts
+  persistDrafts();
+  // dropProvisional's reselect may already have landed on the real tab (it was the previously active
+  // one): setActive then early-returns, so fill the box here rather than leave the text in the map only
+  const ta = document.getElementById("composer-input") as HTMLTextAreaElement | null;
+  if (activeId === realId && ta) { ta.value = drafts.get(realId) ?? ""; growComposer(ta); }
 }
 
 // A create that FAILED. The kernel's own words are the message wherever it gave any (a bad name, an
@@ -12671,6 +12691,10 @@ window.addEventListener("message", (e: MessageEvent) => {
     revealSelfPane();   // every focus is someone jumping HERE — on mobile, come forward (incl. from a remote kernel)
     closingTabs.delete(m.id);   // an explicit reveal outranks a pending close-suppression: closing a tab and
     //                             reopening it from the picker inside the ack window must show it at once
+    // a create naming a RUNNING session is answered by this focus, never by a new session (see
+    // resolveProvisionalToExisting): the pending tab is done — retire it before the switch below, so the
+    // real tab is what stays active, and a warn that follows finds no create pending and toasts
+    if (focusResolvesProvisional(m.id, sessions.get(m.id)?.name, pendingNewSession, provisionalId)) resolveProvisionalToExisting(m.id);
     if (revivePending && m.id === revivePending) clearReviveLoader();   // the revive landed — the loader's success event
     assertPeekFor(m.id);   // an out-of-view focus peeks even on the already-active fast path below (setActive is skipped there)
     // `live` (the user 2026-07-08): land on the LIVE TAIL. A blocked card's picker/permission prompt IS the
