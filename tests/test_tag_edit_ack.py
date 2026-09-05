@@ -624,6 +624,75 @@ class ReadCacheAfterWrite(_Wire):
         self.assertGreater(b["seq"], a["seq"])
 
 
+class LegacyStoreStampedOnce(_Wire):
+    """A store from before the write sequence (every install upgrading, round 3 of the 2026-09-05
+    review): served seq-less, it left every client on the null rule — adopt anything — until the
+    first write, so the seq gate could not protect that first write against a frame the pusher built
+    before it. The first READ stamps it once, through the setter (one write); after that the file is
+    left alone. A store that does not exist is NOT created: the null rule is right for a deleted or
+    recreated store, whose first write starts past what any client holds."""
+
+    def _writes(self):
+        n = [0]
+        real = km._atomic_write
+
+        def counting(path, text, mode=None):
+            n[0] += 1
+            return real(path, text, mode)
+        km._atomic_write = counting
+        return n, lambda: setattr(km, "_atomic_write", real)
+
+    def test_a_seq_less_file_is_stamped_on_its_first_read_and_only_then(self):
+        p = km._views_path()
+        legacy = {"active": "all", "tags": [{"id": "gL", "name": "legacy", "color": "#3b82f6",
+                                              "members": [{"host": "", "sid": SID1}]}]}
+        p.write_text(json.dumps(legacy))
+        n, restore = self._writes()
+        try:
+            v = km._timeline_views()
+            self.assertEqual(n[0], 1, "exactly one write: the stamp")
+            self.assertIsInstance(v.get("seq"), int, "the served blob carries a seq from its first read")
+            self.assertTrue(v["seq"] > 0)
+            on_disk = json.loads(p.read_text())
+            self.assertEqual(on_disk["seq"], v["seq"], "…and the file does too")
+            self.assertEqual(on_disk["tags"][0]["members"], [{"host": "", "sid": SID1}], "nothing else changed")
+            self.assertNotIn("mtime", on_disk["tags"][0], "an unchanged tag gets no edit stamp from the migration")
+            self.assertEqual(self.notices, [], "a stamp is not a refusal: nothing is said")
+            before = p.read_bytes()
+            km._flags_cache.clear()                      # a cold cache (a restart): the stamped file is fine as-is
+            v2 = km._timeline_views()
+            self.assertEqual(n[0], 1, "the second read writes nothing")
+            self.assertEqual(p.read_bytes(), before, "byte-identical")
+            self.assertEqual(v2["seq"], v["seq"])
+            self.assertEqual(km._views_client()["seq"], v["seq"], "every frame now carries it — the gate protects the first write")
+            # …and that first write orders after it
+            a = self.post({"type": "setTimelineViews", "writeId": "w1", "views": km._views_client()})
+            self.assertGreater(a["seq"], v["seq"])
+        finally:
+            restore()
+
+    def test_a_missing_store_is_served_seq_less_and_not_created(self):
+        n, restore = self._writes()
+        try:
+            v = km._timeline_views()
+            self.assertNotIn("seq", v, "no file → the null rule: a client adopts whatever the first write brings")
+            self.assertEqual(n[0], 0)
+            self.assertFalse(km._views_path().exists(), "reading does not create the store")
+        finally:
+            restore()
+
+    def test_an_unreadable_file_is_served_empty_and_never_overwritten(self):
+        p = km._views_path()
+        p.write_text("{not json")
+        n, restore = self._writes()
+        try:
+            self.assertEqual(km._timeline_views()["tags"], [])
+            self.assertEqual(n[0], 0, "a corrupt file is left for a human — the stamp never replaces it with an empty store")
+            self.assertEqual(p.read_text(), "{not json")
+        finally:
+            restore()
+
+
 class WebBootWiring(unittest.TestCase):
     """The kernel-served timeline page: the inline _TIMELINE_BOOT twin of timeline-boot.ts exposes
     the targeted-edit bridge and routes both acks to the panel (timeline-boot.test.ts pins the two

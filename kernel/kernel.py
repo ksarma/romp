@@ -2424,6 +2424,13 @@ def _ordered_alive(now, tmux):
 _VIEWS_MAX_TAGS = 32
 _VIEWS_MAX_NAME = 40
 _views_lock = threading.Lock()   # read-modify-write on the views blob from handler threads (_comments_lock precedent)
+# The store's FILE write and the cache refresh behind it, and the reader's re-stamp of a file it
+# found changed under it (_timeline_views) — serialized together, so a re-stamp is judged against
+# the file as it is at that moment and can never land over an edit written in between. Re-entrant:
+# the reader's re-stamp goes through _set_timeline_views, which takes it again. Readers never take
+# _views_lock (a plain Lock a locked writer already holds when it reads), so the order is always
+# _views_lock → _views_file_lock and nothing waits the other way.
+_views_file_lock = threading.RLock()
 
 
 def _views_path():
@@ -2586,16 +2593,63 @@ def _timeline_views():
         return hit[1]
     try:
         d = json.loads(p.read_text())
+        parsed = isinstance(d, dict)
     except Exception:
+        d, parsed = {}, False
+    if not parsed:
         d = {}
-    # ONE-TIME MIGRATION (the user 2026-08-24, retiring hide-from-chat outright: "we want to get
-    # rid of that hide from chat thing"): a stored blob still carrying hidden entries maps them
-    # into an "archived" TAG on THIS kernel — preserving the user's intent record and keeping them
-    # out of the untagged view. They WILL show under All: nothing can hide from All
-    # post-retirement — that is All's meaning now, and the feed's needs-you machinery carries
-    # anything that matters. Minted only when hidden entries exist; idempotent (the write drops the
-    # hidden key, so the next read has nothing to migrate).
-    hid = [str(x) for x in (d.get("hidden") or []) if isinstance(x, str) and x] if isinstance(d, dict) else []
+    fix = _views_restamp(d, hit) if parsed else None
+    if fix is not None:
+        # The file goes back through the write door BEFORE it is served (the cases in
+        # _views_restamp), as ONE write: the setter is handed its diff base explicitly, because
+        # reading it through this function would find the same un-stamped file and re-enter here
+        # (until 2026-09-05 the hidden migration did exactly that — 321 nested writes for one read,
+        # ending only when Python's recursion limit tripped inside the setter's own try). The base
+        # is the file's OWN content: the re-stamp orders the file (its seq moves past the last one
+        # this kernel served or wrote, the floor) without judging it — the stale-writer guard rules
+        # on dashboard writes at the door, and a file written outside the kernel may follow a
+        # delete or a restore, where the cached blob describes a store that no longer exists and
+        # judging against it would resurrect what was deleted. Under the file lock, with a
+        # re-check: a writer may have replaced the file since the stat above — its own edit, or
+        # this same re-stamp from another thread — and that newer content is judged afresh rather
+        # than written over.
+        why, d2 = fix
+        with _views_file_lock:
+            try:
+                st2 = p.stat()
+            except OSError:
+                return _norm_timeline_views({})
+            if (st2.st_mtime_ns, st2.st_size) != key:
+                return _timeline_views()
+            try:
+                floor = int(hit[1].get("seq") or 0) if hit is not None else 0
+            except (TypeError, ValueError):
+                floor = 0
+            _set_timeline_views(d2, base=_norm_timeline_views(d), seq_floor=floor)
+            sys.stderr.write("romp-kernel: views store re-stamped on read: %s\n" % why)
+        return _timeline_views()          # the write refreshed the cache under the file's new key
+    d = _norm_timeline_views(d)
+    _flags_cache[str(p)] = (key, d)
+    return d
+
+
+def _views_restamp(d, hit):
+    """Why a views file just read (a parsed dict) must go back through the write door before it is
+    served, and the dict to write — or None when it is fine as-is. Each case is one write and then
+    never again for that content, so a clean store round-trips byte-identical.
+    - ONE-TIME MIGRATION (the user 2026-08-24, retiring hide-from-chat outright): a stored blob
+      still carrying hidden entries maps them into an "archived" TAG on THIS kernel — preserving
+      the user's intent record and keeping them out of the untagged view. They WILL show under
+      All: nothing can hide from All post-retirement — that is All's meaning now, and the feed's
+      needs-you machinery carries anything that matters. Minted only when hidden entries exist;
+      idempotent (the write drops the hidden key, so the next read has nothing to migrate).
+    - A STORE WITHOUT A WRITE SEQUENCE (every install upgrading to the 2026-09-05 stamp): served
+      seq-less, it would leave every client on the null rule — adopt anything — until the first
+      write, so the seq gate could not protect that first write against a frame the pusher built
+      before it. Stamped once, on the first read; a store that does not exist stays unstamped (the
+      null rule is right for a deleted or recreated store, which starts past what any client holds
+      on its first write)."""
+    hid = [str(x) for x in (d.get("hidden") or []) if isinstance(x, str) and x]
     if hid:
         raw = d.get("tags") if isinstance(d.get("tags"), list) else (d.get("groups") if isinstance(d.get("groups"), list) else [])
         tags = [t for t in raw if isinstance(t, dict)]
@@ -2605,13 +2659,17 @@ def _timeline_views():
             tags = tags + [arch]
         arch["members"] = [m for m in (arch.get("members") or []) if m] + hid
         d = dict(d); d["tags"] = tags; d.pop("groups", None); d.pop("hidden", None)
-        _set_timeline_views(d)                       # persist the mapping; the fresh mtime re-keys the cache
-    d = _norm_timeline_views(d)
-    _flags_cache[str(p)] = (key, d)
-    return d
+        return "hidden entries migrated into the archived tag", d
+    try:
+        seq = int(d.get("seq") or 0)
+    except (TypeError, ValueError):
+        seq = 0
+    if not seq:
+        return "a store from before the write sequence, stamped once", d
+    return None
 
 
-def _set_timeline_views(blob):
+def _set_timeline_views(blob, base=None, seq_floor=0):
     # Per-tag mtime, stamped at the store's ONE write door by diffing against the previous blob
     # (tag federation v2, the user 2026-08-29): a pending edit queued for an unreachable host must
     # be able to tell, at late-apply time, whether the host's copy changed AFTER the user's ruling —
@@ -2619,12 +2677,18 @@ def _set_timeline_views(blob):
     # The stamp rides /views to every peer for free. Only set when a tag actually changes, so
     # untouched legacy stores round-trip byte-identical; a client echoing a blob without mtimes
     # merely resets the field, which reads as "no newer information" — the safe direction.
+    # `base` — the previous blob to diff against, when the caller already holds it: the reader's
+    # re-stamp path (_timeline_views) passes the file's own content, since reading it here would
+    # find the same un-stamped file and re-enter the reader; `seq_floor` is the last seq that path
+    # served, so the re-stamped file orders after it. Every other caller leaves both alone.
     v = _norm_timeline_views(blob)
-    try:
-        prev_blob = _timeline_views()
-        prev = {t["id"]: t for t in (prev_blob.get("tags") or [])}
-    except Exception:
-        prev_blob, prev = {}, {}
+    if base is None:
+        try:
+            base = _timeline_views()
+        except Exception:
+            base = {}
+    prev_blob = base
+    prev = {t["id"]: t for t in (prev_blob.get("tags") or [])}
     now = int(time.time())
     # ── the stale-writer guard (the user 2026-08-31: a tag silently lost all 7 of its members) ──
     # The full-blob path (setTimelineViews) is last-writer-wins by design, so a dashboard whose
@@ -2700,10 +2764,11 @@ def _set_timeline_views(blob):
         prev_seq = int(prev_blob.get("seq") or 0)
     except (TypeError, ValueError):
         prev_seq = 0
-    v["seq"] = max(prev_seq + 1, int(time.time() * 1000))
+    v["seq"] = max(prev_seq + 1, int(seq_floor or 0) + 1, int(time.time() * 1000))
     text = json.dumps(v, sort_keys=True)
-    _atomic_write(_views_path(), text)
-    _views_cache_refresh(text)
+    with _views_file_lock:
+        _atomic_write(_views_path(), text)
+        _views_cache_refresh(text)
     return rows
 
 

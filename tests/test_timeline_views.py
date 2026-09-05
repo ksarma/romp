@@ -177,7 +177,17 @@ class TimelineViews(unittest.TestCase):
         raw = {"active": "all", "hidden": ["s7", "s8"], "tags": [{"id": "g1", "name": "pool", "members": ["s2"]}]}
         (jd.STATE / "timeline-views.json").write_text(json.dumps(raw))
         km._flags_cache.clear()
-        v = km._timeline_views()
+        # ONE write (round 3 of the 2026-09-05 review): the migration used to persist through the
+        # setter, whose own read of the previous blob found the same un-migrated file and re-entered
+        # the migration — 321 nested writes for one read, ending only at the recursion limit
+        writes = []
+        real = km._atomic_write
+        km._atomic_write = lambda path, text, mode=None: (writes.append(1), real(path, text, mode))[1]
+        try:
+            v = km._timeline_views()
+        finally:
+            km._atomic_write = real
+        self.assertEqual(len(writes), 1, "the migration is one write")
         self.assertNotIn("hidden", v)
         arch = next(t for t in v["tags"] if t["name"] == "archived")
         self.assertEqual(arch["members"], [{"host": "", "sid": "s7"}, {"host": "", "sid": "s8"}])
