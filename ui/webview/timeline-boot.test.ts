@@ -50,15 +50,19 @@ test("dispatchFrame routes kernel frames to the panel", () => {
     setActiveChat: (a: any) => calls.push(["setActiveChat", a]),
     setHover: (m: any) => calls.push(["setHover", m.type]),
     refreshModels: () => calls.push(["refreshModels"]),   // the kernel's models frame: the pick memory moved
+    viewsAck: (m: any) => calls.push(["viewsAck", m.type, m.writeId]),   // the kernel's answer to one of this page's views writes
   };
   assert.equal(dispatchFrame(panel, { type: "data", data: { lanes: [] } }), true);
   assert.equal(dispatchFrame(panel, { type: "bars" }), true);
   assert.equal(dispatchFrame(panel, { type: "activeChat", activeChat: "s1" }), true);
   assert.equal(dispatchFrame(panel, { type: "hover", sid: "s1" }), true);
   assert.equal(dispatchFrame(panel, { type: "models", rev: 3 }), true);
+  assert.equal(dispatchFrame(panel, { type: "tagEditAck", writeId: "w1", ok: true }), true, "a targeted tag edit's ack");
+  assert.equal(dispatchFrame(panel, { type: "viewsAck", writeId: "w2", ok: false }), true, "a whole-blob write's ack");
   assert.equal(dispatchFrame(panel, { type: "ka" }), false);
   assert.equal(dispatchFrame(null, { type: "data" }), false);
-  assert.deepEqual(calls.map((c) => c[0]), ["update", "applyBars", "setActiveChat", "setHover", "refreshModels"]);
+  assert.deepEqual(calls.map((c) => c[0]), ["update", "applyBars", "setActiveChat", "setHover", "refreshModels", "viewsAck", "viewsAck"]);
+  assert.deepEqual(calls.slice(5), [["viewsAck", "tagEditAck", "w1"], ["viewsAck", "viewsAck", "w2"]], "both acks land on the one panel door");
 });
 
 test("dispatchFrame tolerates a panel without the optional methods", () => {
@@ -90,6 +94,8 @@ test("bridges post the same kernel ops as the web boot", () => {
   b.__rompTimelineDismiss("id2");
   b.__rompTimelineHover("s1", ["g1"], 5, 9);
   b.__rompTimelineHover();
+  b.__rompTimelineSetViews({ active: "all", tags: [] }, "w7");
+  b.__rompTimelineTagEdit({ writeId: "w8", op: "rename", name: "tag 2", newName: "notes-api" });
   assert.deepEqual(sent, [
     { type: "compact", name: "sess" },
     { type: "sendCommand", name: "sess", cmd: "/model" },
@@ -97,6 +103,9 @@ test("bridges post the same kernel ops as the web boot", () => {
     { type: "dismissLane", id: "id2" },
     { type: "timelineHover", sid: "s1", segIds: ["g1"], t0: 5, t1: 9 },
     { type: "timelineHover", off: true },
+    // the views writes carry the id the kernel's ack names; a targeted edit's fields ARE the op
+    { type: "setTimelineViews", views: { active: "all", tags: [] }, writeId: "w7" },
+    { type: "tagEdit", writeId: "w8", op: "rename", name: "tag 2", newName: "notes-api" },
   ]);
 });
 

@@ -48,22 +48,24 @@ test("executed: the trigger label and the N-more cue (live sessions outside the 
   assert.equal(viewMoreCount(V("untagged", ["s1"]), sessions), 1, "tagged s2 sits outside untagged; legacy-hidden s1 shows");
 });
 
-test("executed: an optimistic edit holds until the kernel echoes it — then yields to authority", () => {
+test("executed: an optimistic edit holds until the kernel echoes it exactly — and a frame that does not match never yields it", () => {
   const p: any = Object.create(TimelinePanel.prototype);
-  p._views = null; p._pendingViews = V("g1"); p._pendingViewsAge = 0;
+  p._views = null; p._pendingViews = V("g1"); p._viewsWrites = [{ id: "w1", name: "" }];
   p._reconcileViews();
   assert.ok(p._pendingViews, "no echo yet → still pending");
   // the kernel echoes the same shape with re-sorted lists → canonical comparison clears it
   p._views = { active: "g1", hidden: [], tags: [{ id: "g1", name: "pool", color: "#DD42FF", members: ["s3", "s2"] }] };
   p._reconcileViews();
   assert.equal(p._pendingViews, null, "echo match (order-insensitive) clears the pending edit");
-  // a pending edit the kernel never echoes yields after three pushes — the kernel is authoritative
-  p._pendingViews = V("g1"); p._pendingViewsAge = 0;
+  assert.deepEqual(p._viewsWrites, [], "…and nothing is in flight any more");
+  // a frame that does NOT echo the edit says nothing about it (it may predate the write, or the
+  // kernel may have refused it) — so no number of them yields the copy; the write's ACK settles
+  // it (timeline-views-ack.test.ts). The three-frame yield that lived here dropped good edits and
+  // kept refused ones alike (the user 2026-09-05).
+  p._pendingViews = V("g1"); p._viewsWrites = [{ id: "w2", name: "" }];
   p._views = { active: "all", hidden: [], tags: [] };
-  p._reconcileViews(); p._reconcileViews();
-  assert.ok(p._pendingViews, "two silent pushes → still holding");
-  p._reconcileViews();
-  assert.equal(p._pendingViews, null, "the third silent push adopts the kernel's blob");
+  for (let i = 0; i < 6; i++) p._reconcileViews();
+  assert.ok(p._pendingViews, "six silent pushes → still holding the user's edit");
 });
 
 test("executed: the echo key compares per-surface lenses and ignores the retired hidden set", () => {
@@ -73,7 +75,7 @@ test("executed: the echo key compares per-surface lenses and ignores the retired
   // visibly flapped (revert-then-jump-back) until the kernel's real echo arrived
   const p: any = Object.create(TimelinePanel.prototype);
   p._pendingViews = { active: "all", tags: [G], actives: { timeline: { tags: ["pool"] } } };
-  p._pendingViewsAge = 0;
+  p._viewsWrites = [];
   p._views = { active: "all", tags: [G] };   // the pre-edit blob — no lens on it yet
   p._reconcileViews();
   assert.ok(p._pendingViews, "a stale frame without the lens edit must not clear the pending copy");
@@ -84,8 +86,8 @@ test("executed: the echo key compares per-surface lenses and ignores the retired
   assert.equal(p._pendingViews, null, "the echo carrying the lens clears the pending edit");
   // …and the RETIRED hidden set (2026-08-24) is OUT of the key: the kernel drops it, so a local
   // copy still carrying a legacy hidden entry must compare EQUAL to the echo that shed it —
-  // serializing hidden made every such edit ride the 3-push yield instead of clearing on echo
-  p._pendingViews = { active: "all", hidden: ["s9"], tags: [] }; p._pendingViewsAge = 0;
+  // serializing hidden held every such edit's optimistic copy hostage instead of clearing on echo
+  p._pendingViews = { active: "all", hidden: ["s9"], tags: [] }; p._viewsWrites = [];
   p._views = { active: "all", tags: [] };
   p._reconcileViews();
   assert.equal(p._pendingViews, null, "hidden is retired — it cannot hold an echo hostage");
@@ -341,7 +343,9 @@ test("_setViews posts through the host hook with a GUARDED, atomic Obsidian fall
   assert.match(SRC, /process\.versions && process\.versions\.electron/);
   assert.match(SRC, /process\.env\.ROMP_STATE_DIR\n?\s*\|\| path\.join\(process\.env\.XDG_STATE_HOME \|\| path\.join\(os\.homedir\(\), '\.local', 'state'\), 'romp'\)/);
   assert.match(SRC, /fs\.renameSync\(fp \+ '\.tmp', fp\);/);
-  assert.match(SRC, /this\._pendingViews = v; this\._pendingViewsAge = 0;/);
+  // the file IS the store on that path: the write settles on the spot (no kernel ack to wait for)
+  assert.match(SRC, /fs\.renameSync\(fp \+ '\.tmp', fp\);\s*\n\s*this\._views = v; this\._pendingViews = null;/);
+  assert.match(SRC, /_setViews\(v\) \{\s*\n\s*this\._pendingViews = v;/);
   assert.match(SRC, /this\._reconcileViews\(\);\s*\/\/ \.\.\.and an optimistic view edit/);
 });
 

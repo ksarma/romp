@@ -46,6 +46,9 @@ export function dispatchFrame(panel: any, m: any): boolean {
   // dashboard) or its catalog grew: the lane picker re-reads /models so its family rows send the fresh default
   if (m.type === "models" && panel.refreshModels) { panel.refreshModels(); return true; }
   if (m.type === "tagEditFailed" && panel.tagEditFailed) { panel.tagEditFailed(m); return true; }
+  // the kernel's answer to one of THIS page's views writes (a targeted tag edit, or a whole-blob lens/
+  // order write): the panel adopts the returned blob and settles or reverts its optimistic copy
+  if ((m.type === "tagEditAck" || m.type === "viewsAck") && panel.viewsAck) { panel.viewsAck(m); return true; }
   return false;
 }
 
@@ -88,7 +91,9 @@ export function bridgeFunctions(post: Post): Record<string, (...a: any[]) => voi
     // `{ floating: true }` so the kernel forgets the family's remembered pin
     __rompTimelineSendCommand: (name: string, cmd: string, extra?: Record<string, unknown>) => post({ type: "sendCommand", name, cmd, ...(extra || {}) }),
     __rompTimelineSetFlag: (id: string, flag: string, value: unknown) => post({ type: "setSessionFlag", id, flag, value: !!value }),
-    __rompTimelineSetViews: (views: unknown) => post({ type: "setTimelineViews", views }),
+    __rompTimelineSetViews: (views: unknown, writeId?: unknown) => post({ type: "setTimelineViews", views, writeId }),
+    // one targeted tag edit {writeId, op, name, …} — the op's fields ARE the message (the kernel's tagEdit op)
+    __rompTimelineTagEdit: (edit: unknown) => post({ type: "tagEdit", ...((edit && typeof edit === "object") ? edit as Record<string, unknown> : {}) }),
     __rompTimelineEditTag: (edit: unknown) => post({ type: "editTag", edit }),
     __rompTimelineDismiss: (id: string) => post({ type: "dismissLane", id }),
     __rompTimelineHover: (sid?: string, segIds?: unknown[], t0?: number, t1?: number) =>

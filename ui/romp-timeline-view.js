@@ -864,10 +864,11 @@ class TimelinePanel {
     this._pendingFlags = {};     // sid → {flag: value}: an optimistic eye-toggle held STICKY across pushes until the kernel's data confirms it (no flicker-back)
     this._dismissed = new Set(); // sids cleared via the dead-lane Clear pill, held STICKY the same way (see _reconcileDismissed)
     this._views = null;          // the kernel-echoed views blob (data.views); null until the first push
-    this._pendingViews = null;   // an optimistic edit held sticky until a push echoes it (see _reconcileViews)
+    this._pendingViews = null;   // an optimistic edit held until the kernel ACKS the write (viewsAck) or echoes it exactly (_reconcileViews)
+    this._viewsWrites = [];      // the writes in flight, oldest first: {id, name} — the pending copy clears when the LAST one is acked
+    this._viewsWriteSeq = 0;     // writeId mint — a per-page counter beside the ms stamp, so two same-ms gestures never share one
     this._pendingTagEdits = {};  // remote-tag edits held optimistically until the owner's poll echoes (federation v1): id → {tag: shape|null(=deleted), age}
-    this._tagEditErr = null;     // the LOUD failure of the last remote-tag edit ({host, name, error}), shown in the dialog until dismissed
-    this._pendingViewsAge = 0;   // pushes since the edit — the kernel is authoritative, so a stale pending yields
+    this._tagEditErr = null;     // the LOUD failure of the last tag edit ({host, name, error}), shown in the dialog until dismissed
     this._viewsMenu = null;      // the Show-dropdown element, when open
     this._viewsDialog = null;    // the sessions/group dialog backdrop, when open
     this._viewsDialogKey = null; // its Escape hook {doc, fn}, removed on every close path
@@ -2854,14 +2855,20 @@ class TimelinePanel {
   // One union group = one tag identity. Edits stay routed under the hood: an ADD lands on the LOCAL
   // store when the name exists locally, else the tag's single home; a REMOVE removes the
   // (name, member) pair from EVERY store holding it — a removal never half-works; rename/recolor/
-  // delete fan out to every home the same way. Local writes post the whole blob (unchanged);
-  // remote writes ride _editRemoteTag (optimistic overlay + loud tagEditFailed, federation v1).
+  // delete fan out to every home the same way. Local writes are TARGETED ops by tag name
+  // (_postTagEdit — the user 2026-09-05: posting the whole blob from the un-echoed copy made the
+  // kernel judge a create-then-rename burst stale against this dialog's own first write, and the
+  // renames and assignments were lost); remote writes ride _editRemoteTag (optimistic overlay +
+  // loud tagEditFailed, federation v1).
   _editTagUnion(g, edit) {
     if (edit.add && edit.add.length) {
       if (g.localId) {
         const nv = JSON.parse(JSON.stringify(this._curViews()));
         const t = viewTags(nv).find((x) => x.id === g.localId);
-        if (t) { t.members = Array.from(new Set((t.members || []).concat(edit.add))); this._setViews(nv); }
+        if (t) {
+          t.members = Array.from(new Set((t.members || []).concat(edit.add)));
+          this._postTagEdit(nv, { op: 'addMember', name: g.name, sids: edit.add.slice() });
+        }
       } else if (g.remotes.length) this._editRemoteTag(g.remotes[0], { add: edit.add.slice() });
     }
     if (edit.remove && edit.remove.length) {
@@ -2870,7 +2877,7 @@ class TimelinePanel {
         const t = viewTags(nv).find((x) => x.id === g.localId);
         if (t && (t.members || []).some((m) => edit.remove.indexOf(m) >= 0)) {
           t.members = (t.members || []).filter((m) => edit.remove.indexOf(m) < 0);
-          this._setViews(nv);
+          this._postTagEdit(nv, { op: 'removeMember', name: g.name, sids: edit.remove.slice() });
         }
       }
       for (const rt of g.remotes)
@@ -2883,11 +2890,16 @@ class TimelinePanel {
         if (edit.delete) {
           nv.tags = viewTags(nv).filter((x) => x.id !== g.localId); delete nv.groups;
           if (nv.active === g.localId) nv.active = 'all';
+          this._postTagEdit(nv, { op: 'delete', name: g.name });
         } else {
           const t = viewTags(nv).find((x) => x.id === g.localId);
-          if (t) { if (edit.rename) t.name = edit.rename; if (edit.color) t.color = edit.color; }
+          if (t) {
+            // two ops when both arrive (the kernel applies them in order on one socket): the
+            // recolor addresses the tag by the name the rename just gave it
+            if (edit.rename) { t.name = edit.rename; this._postTagEdit(nv, { op: 'rename', name: g.name, newName: edit.rename }); }
+            if (edit.color) { t.color = edit.color; this._postTagEdit(nv, { op: 'recolor', name: edit.rename || g.name, color: edit.color }); }
+          }
         }
-        this._setViews(nv);
       }
       for (const rt of g.remotes)
         this._editRemoteTag(rt, { rename: edit.rename, color: edit.color, delete: !!edit.delete });
@@ -2941,35 +2953,84 @@ class TimelinePanel {
       const nv = JSON.parse(JSON.stringify(this._curViews()));
       const used = new Set(viewTags(nv).map((t) => t.color));
       const color = (this._palette || []).find((c) => !used.has(c)) || (this._palette || [])[0] || '#1EA1EB';
-      nv.tags = viewTags(nv).concat([{ id: 'g' + Date.now().toString(36),
-        name: ni.value.trim().slice(0, 40), color, members: rowIds.slice() }]);
+      const tg = { id: 'g' + Date.now().toString(36), name: ni.value.trim().slice(0, 40), color, members: rowIds.slice() };
+      nv.tags = viewTags(nv).concat([tg]);
       delete nv.groups;
       this._tagAddFor = null;
-      this._setViews(nv); rebuild();
+      // ONE targeted create carrying the first members — the tag and its membership land together
+      this._postTagEdit(nv, { op: 'create', name: tg.name, color, id: tg.id, sids: rowIds.slice() }); rebuild();
     });
     box.appendChild(ni);
     ni.focus();
   }
 
+  // The optimistic copy's ONE frame-driven clear: a push whose blob equals it exactly (the write's own
+  // echo, order-insensitive). The three-frame yield that used to sit here is gone (the user
+  // 2026-09-05): a frame that does not match carries no information about the write — it may
+  // predate it, or the kernel may have refused it — so counting frames dropped good edits and kept
+  // refused ones alike. The write's ACK (viewsAck) is the event that settles it either way.
   _reconcileViews() {
     if (!this._pendingViews) return;
     if (this._views && this._viewsKey(this._views) === this._viewsKey(this._pendingViews)) {
-      this._pendingViews = null; this._pendingViewsAge = 0; return;
+      this._pendingViews = null; this._viewsWrites = [];
     }
-    // the kernel is authoritative: if three pushes came back without echoing the edit (it normalized
-    // differently, or another dashboard overwrote it), adopt the kernel's blob rather than pinning
-    // a stale optimistic view forever
-    if (++this._pendingViewsAge >= 3) { this._pendingViews = null; this._pendingViewsAge = 0; }
   }
 
-  // Persist the whole views blob. Web/VS Code: the host WS hook (→ kernel setTimelineViews, which
-  // normalizes + rebroadcasts). Obsidian/headless fallback: write the same timeline-views.json the
-  // kernel reads (it re-normalizes on read). Optimistic + sticky, like the lane flags.
+  // One TARGETED tag edit: `nv` is the optimistic copy (the gesture already applied) shown until
+  // the kernel answers; `edit` is the op — {op: create|rename|recolor|addMember|removeMember|delete,
+  // name, newName?, color?, id?, sids?} — which the kernel applies by tag NAME through its /tag
+  // merge, so it is never judged stale against this dialog's own earlier writes (the 2026-09-05
+  // loss). Answered on this socket by tagEditAck → viewsAck below. No targeted bridge (an Obsidian
+  // panel writing the file, a headless run) → the whole-blob write, as before.
+  _postTagEdit(nv, edit) {
+    if (typeof window === 'undefined' || typeof window.__rompTimelineTagEdit !== 'function') { this._setViews(nv); return; }
+    this._pendingViews = nv;
+    const writeId = this._mintWriteId();
+    this._viewsWrites.push({ id: writeId, name: edit.name });
+    try { window.__rompTimelineTagEdit(Object.assign({ writeId }, edit)); } catch (e) { /* the host hook threw — the ack never comes; the echo match still clears */ }
+    this.draw();
+  }
+
+  _mintWriteId() {
+    this._viewsWriteSeq = (this._viewsWriteSeq || 0) + 1;
+    return 'w' + Date.now().toString(36) + '-' + this._viewsWriteSeq.toString(36);
+  }
+
+  // The kernel's answer to ONE of this page's writes — {type: tagEditAck|viewsAck, writeId, ok,
+  // views, error?, refused?: [{name, reason}]}. `views` is the post-write client blob: adopted as
+  // the base whatever the verdict (it is the newest truth, stamps included). ok → this write is
+  // settled; the optimistic copy clears once NOTHING is in flight (a later gesture may still be
+  // pending). Refused → the copy reverts AT ONCE — the store's blob is what stands — and the reason
+  // shows in the dialog, rebuilt in place if open (the tagEditFailed door's rendering).
+  viewsAck(m) {
+    if (!m) return;
+    const i = this._viewsWrites.findIndex((w) => w.id === m.writeId);
+    const mine = i >= 0 ? this._viewsWrites.splice(i, 1)[0] : null;
+    if (m.views) this._views = m.views;
+    if (m.ok === false) {
+      this._pendingViews = null; this._viewsWrites = [];
+      const names = (m.refused || []).map((r) => r && r.name).filter(Boolean);
+      this._tagEditErr = { host: '', name: names.join(', ') || (mine && mine.name) || '',
+                           error: m.error || (m.refused || []).map((r) => r.reason).filter(Boolean).join('; ') || 'refused' };
+      if (this._viewsDialog && this._viewsDialogBuild) this._viewsDialogBuild();
+    } else if (!this._viewsWrites.length) {
+      this._pendingViews = null;
+    }
+    this.draw();
+  }
+
+  // Persist the whole views blob — the lens and order edits, which have no targeted op. Web/VS
+  // Code: the host WS hook (→ kernel setTimelineViews, which normalizes + rebroadcasts, and answers
+  // viewsAck with the stale-writer guard's refusals, if any). Obsidian/headless fallback: write the
+  // same timeline-views.json the kernel reads (it re-normalizes on read) — the write IS the store
+  // write there, so the copy is adopted as the base on the spot. Optimistic, like the lane flags.
   _setViews(v) {
-    this._pendingViews = v; this._pendingViewsAge = 0;
+    this._pendingViews = v;
     try {
       if (typeof window !== 'undefined' && typeof window.__rompTimelineSetViews === 'function') {
-        window.__rompTimelineSetViews(v);
+        const writeId = this._mintWriteId();
+        this._viewsWrites.push({ id: writeId, name: '' });
+        window.__rompTimelineSetViews(v, writeId);
       } else if (typeof process !== 'undefined' && process.versions && process.versions.electron) {
         // Obsidian only — the Electron guard keeps a bare-node test run from ever touching the real
         // file (the 2026-07-02 _persistOrder lesson). Resolve the state root the way the kernel does
@@ -2982,6 +3043,7 @@ class TimelinePanel {
         const fp = path.join(root, 'timeline-views.json');
         fs.writeFileSync(fp + '.tmp', JSON.stringify(v));
         fs.renameSync(fp + '.tmp', fp);
+        this._views = v; this._pendingViews = null;   // the file IS the store: the write settled, no ack to wait for
       }
     } catch (e) { /* no host hook + no Node fs → session-local only */ }
     this.draw();
@@ -3454,7 +3516,9 @@ class TimelinePanel {
           const tg = { id: 'g' + Date.now().toString(36), name: 'tag ' + (viewTags(nv).length + 1), color, members: [] };
           nv.tags = viewTags(nv).concat([tg]); delete nv.groups;
           this._tagEditorFor = tg.name;   // a new tag opens straight into its rename input
-          this._setViews(nv);
+          // a TARGETED create (the name typed next is a rename by this name — never a whole-blob
+          // post the kernel could judge stale against this very create; the 2026-09-05 loss)
+          this._postTagEdit(nv, { op: 'create', name: tg.name, color, id: tg.id });
           build();
         });
       }
